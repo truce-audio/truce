@@ -1,0 +1,10 @@
+[package]
+name = "truce-aax"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+truce-core = { workspace = true }
+truce-params = { workspace = true }

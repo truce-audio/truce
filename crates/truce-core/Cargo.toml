@@ -1,0 +1,10 @@
+[package]
+name = "truce-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Core types for the truce audio plugin framework"
+
+[dependencies]
+truce-params = { workspace = true }

@@ -1,0 +1,28 @@
+[package]
+name = "truce-loader"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+log = "0.4"
+truce-core = { workspace = true }
+truce-gui = { workspace = true }
+truce-params = { workspace = true }
+truce-gpu = { workspace = true, optional = true }
+
+[dependencies.libloading]
+version = "0.8"
+optional = true
+
+[dependencies.parking_lot]
+version = "0.12"
+optional = true
+
+[dev-dependencies]
+truce-params-derive = { workspace = true }
+
+[features]
+default = []
+shell = ["dep:libloading", "dep:parking_lot"]
+gpu = ["dep:truce-gpu"]

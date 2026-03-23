@@ -1,0 +1,22 @@
+[package]
+name = "truce-standalone"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Standalone host wrapper for truce plugins"
+
+[dependencies]
+truce-core = { workspace = true }
+truce-params = { workspace = true }
+cpal = "0.15"
+crossterm = "0.28"
+minifb = { version = "0.28", optional = true }
+
+[features]
+default = []
+gui = ["dep:truce-gui", "dep:minifb"]
+
+[dependencies.truce-gui]
+workspace = true
+optional = true

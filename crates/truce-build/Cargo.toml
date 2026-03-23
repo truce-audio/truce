@@ -1,0 +1,11 @@
+[package]
+name = "truce-build"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Build-time helper that reads truce.toml and emits plugin metadata as compile-time environment variables"
+
+[dependencies]
+toml = "0.8"
+serde = { version = "1", features = ["derive"] }

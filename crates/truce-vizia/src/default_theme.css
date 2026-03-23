@@ -1,0 +1,191 @@
+/* truce-vizia default dark theme */
+
+* {
+    font-size: 11px;
+    color: #e6e6eb;
+}
+
+:root {
+    background-color: #1f1f24;
+    layout-type: column;
+}
+
+/* -- Typography -- */
+
+label {
+    color: #e6e6eb;
+}
+
+label.param-name {
+    font-size: 9px;
+    color: #8c8c99;
+    top: 2px;
+}
+
+label.param-value {
+    font-size: 9px;
+    color: #b0b0ba;
+}
+
+label.header-title {
+    font-size: 13px;
+    font-weight: bold;
+    color: #e6e6eb;
+    child-left: 1s;
+    child-right: 1s;
+}
+
+/* -- Header bar -- */
+
+.header {
+    background-color: #282830;
+    height: auto;
+    padding-left: 10px;
+    padding-right: 10px;
+    padding-top: 5px;
+    padding-bottom: 5px;
+    border-bottom-width: 1px;
+    border-color: #3a3a44;
+}
+
+.header label {
+    child-left: 0px;
+}
+
+/* -- Separator -- */
+
+.separator {
+    height: 1px;
+    background-color: #3a3a44;
+    width: 1s;
+}
+
+/* -- Knob -- */
+
+knob {
+    width: 40px;
+    height: 40px;
+    background-color: #1f1f24;
+}
+
+knob .knob-track {
+    background-color: #3a3a44;
+    color: #4d99f2;
+}
+
+.knob-head {
+    background-color: transparent;
+    border-width: 0px;
+    border-color: transparent;
+}
+
+.knob-tick {
+    background-color: #e6e6eb;
+    width: 4px;
+    height: 4px;
+    corner-radius: 2px;
+}
+
+/* -- Slider -- */
+
+slider {
+    height: 18px;
+}
+
+slider .track {
+    background-color: #3a3a44;
+    border-radius: 4px;
+    height: 6px;
+}
+
+slider .active {
+    background-color: #4d99f2;
+    border-radius: 4px;
+    height: 6px;
+}
+
+slider .thumb {
+    background-color: #e6e6eb;
+    border-radius: 7px;
+    width: 14px;
+    height: 14px;
+    border-width: 2px;
+    border-color: #4d99f2;
+}
+
+/* -- Switch / Toggle -- */
+
+switch {
+    width: 30px;
+    height: 18px;
+    background-color: #3a3a44;
+    border-radius: 9px;
+}
+
+switch:checked {
+    background-color: #4d99f2;
+}
+
+switch .switch-handle {
+    width: 16px;
+    height: 16px;
+    corner-radius: 8px;
+    background-color: #e6e6eb;
+    top: 1px;
+    left: 1px;
+}
+
+switch:checked .switch-handle {
+    left: 13px;
+}
+
+switch .switch-handle-bg {
+    height: 18px;
+    corner-radius: 9px;
+}
+
+/* -- Param widget containers -- */
+
+.param-widget {
+    width: auto;
+    height: auto;
+    layout-type: column;
+    row-between: 3px;
+}
+
+.param-widget label {
+    child-left: 1s;
+    child-right: 1s;
+}
+
+.param-widget knob {
+    child-left: 1s;
+    child-right: 1s;
+}
+
+.param-widget switch {
+    child-left: 1s;
+    child-right: 1s;
+}
+
+.param-widget slider {
+    width: 1s;
+}
+
+/* -- Body (content area below header) -- */
+
+.body {
+    width: 1s;
+    height: 1s;
+}
+
+/* -- Controls row -- */
+
+.controls-row {
+    height: auto;
+}
+
+/* Bottom-align each widget so labels line up */
+.controls-row > .param-widget {
+    top: 1s;
+}

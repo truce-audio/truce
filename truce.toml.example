@@ -1,0 +1,55 @@
+# truce plugin project configuration
+# Copy this file to truce.toml and edit for your project.
+#
+# Plugin metadata comes from this file (+ Cargo.toml for version fallback):
+#   - vendor name, url, AU manufacturer: [vendor] section
+#   - plugin-specific IDs: [[plugin]] sections
+#   - version: per-plugin "version" field, or CARGO_PKG_VERSION if omitted
+#
+# The plugin_info!() macro reads these at compile time via truce-build.
+
+[macos]
+# Code signing identity for plugin bundles (AU, VST3).
+# Run "security find-identity -v -p codesigning" to list available identities.
+# Set to "-" for ad-hoc signing (development only).
+signing_identity = "-"
+
+# Minimum macOS deployment target.
+deployment_target = "11.0"
+
+# Path to the AAX SDK root directory (for Pro Tools plugin builds).
+# Falls back to the AAX_SDK_PATH environment variable if not set.
+# aax_sdk_path = "/path/to/aax-sdk"
+
+[vendor]
+name = "My Company"
+id = "com.mycompany"
+url = "https://mycompany.com"
+au_manufacturer = "MyCo"
+
+# Each [[plugin]] entry defines a plugin to build and install.
+
+[[plugin]]
+name = "My Effect"
+suffix = "effect"
+crate = "my-effect"
+# version = "1.0.0"            # optional, defaults to Cargo.toml version
+au_type = "aufx"                 # aufx = effect, aumu = instrument
+au_subtype = "MyFx"              # 4-char AU v2 subtype code
+au3_subtype = "MyF3"             # 4-char AU v3 subtype (optional, defaults to au_subtype)
+au_tag = "Effects"
+
+# [[plugin]]
+# name = "My Synth"
+# suffix = "synth"
+# crate = "my-synth"
+# version = "2.0.0"
+# au_type = "aumu"
+# au_subtype = "MySn"
+# au3_subtype = "MyS3"
+# au_tag = "Synthesizer"
+
+# --- Windows (planned, not yet implemented) ---
+# [windows]
+# signing_cert = ""              # Authenticode cert (empty = unsigned)
+# install_scope = "user"         # "user" (no admin) or "system" (admin)

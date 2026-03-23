@@ -1,0 +1,109 @@
+use std::sync::Arc;
+
+/// A raw pointer wrapper that is `Send + Sync`.
+///
+/// Used to capture `*const Params` in EditorContext closures without
+/// the `ptr as usize` hack. Safe because `Params` fields use atomic
+/// storage — concurrent reads from the GUI thread while the audio
+/// thread writes are safe by design.
+///
+/// The pointed-to data must outlive the `SendPtr`. In the plugin
+/// context, the plugin instance (which owns the params) always
+/// outlives the editor.
+pub struct SendPtr<T>(*const T);
+
+impl<T> SendPtr<T> {
+    /// Wrap a raw pointer.
+    pub fn new(ptr: *const T) -> Self {
+        Self(ptr)
+    }
+
+    /// Dereference the pointer.
+    ///
+    /// # Safety
+    /// The pointed-to data must still be alive.
+    pub unsafe fn get(&self) -> &T {
+        &*self.0
+    }
+
+    /// Get the raw pointer.
+    pub fn as_ptr(&self) -> *const T {
+        self.0
+    }
+}
+
+impl<T> Clone for SendPtr<T> {
+    fn clone(&self) -> Self {
+        Self(self.0)
+    }
+}
+
+impl<T> Copy for SendPtr<T> {}
+
+// SAFETY: The pointed-to data is accessed only from the GUI thread
+// (EditorContext closures run on the main/GUI thread). The data is
+// pinned (Box::into_raw'd plugin instance) and outlives the editor.
+// For Params types, concurrent reads are safe because they use
+// AtomicF64. For Plugin types, access is single-threaded (GUI only).
+unsafe impl<T> Send for SendPtr<T> {}
+unsafe impl<T> Sync for SendPtr<T> {}
+
+/// Raw platform window handle for GUI parenting.
+#[derive(Clone, Copy, Debug)]
+pub enum RawWindowHandle {
+    AppKit(*mut std::ffi::c_void), // NSView*
+    Win32(*mut std::ffi::c_void),  // HWND
+    X11(u64),                      // X11 Window ID
+}
+
+/// Plugin GUI editor.
+pub trait Editor: Send {
+    /// Initial window size in logical points.
+    ///
+    /// On a 2x Retina display, `(400, 300)` produces an 800x600 pixel window.
+    /// On a 1x display, it produces a 400x300 pixel window.
+    fn size(&self) -> (u32, u32);
+
+    /// Create the GUI as a child of the host-provided parent window.
+    fn open(&mut self, parent: RawWindowHandle, context: EditorContext);
+
+    /// Destroy the GUI.
+    fn close(&mut self);
+
+    /// Called ~60fps on the host's UI thread for repaint/animation.
+    fn idle(&mut self) {}
+
+    /// Host requests a resize. Return true to accept.
+    fn set_size(&mut self, _width: u32, _height: u32) -> bool {
+        false
+    }
+
+    /// Whether the plugin supports resizing.
+    fn can_resize(&self) -> bool {
+        false
+    }
+
+    /// DPI scale factor changed.
+    fn set_scale_factor(&mut self, _factor: f64) {}
+}
+
+/// Context passed to Editor::open(). Provides communication
+/// with the host and parameter store.
+///
+/// All fields are `Arc`-wrapped, so cloning is cheap (reference count bump).
+#[derive(Clone)]
+pub struct EditorContext {
+    pub begin_edit: Arc<dyn Fn(u32) + Send + Sync>,
+    pub set_param: Arc<dyn Fn(u32, f64) + Send + Sync>,
+    pub end_edit: Arc<dyn Fn(u32) + Send + Sync>,
+    pub request_resize: Arc<dyn Fn(u32, u32) -> bool + Send + Sync>,
+    /// Read a parameter's normalized value from the plugin (for host→GUI sync).
+    pub get_param: Arc<dyn Fn(u32) -> f64 + Send + Sync>,
+    /// Read a parameter's plain value from the plugin.
+    pub get_param_plain: Arc<dyn Fn(u32) -> f64 + Send + Sync>,
+    /// Format a parameter's current value as a display string.
+    pub format_param: Arc<dyn Fn(u32) -> String + Send + Sync>,
+    /// Read a meter value (0.0–1.0) by meter ID. Used for level meters.
+    /// Returns 0.0 if the meter ID doesn't exist.
+    pub get_meter: Arc<dyn Fn(u32) -> f32 + Send + Sync>,
+}

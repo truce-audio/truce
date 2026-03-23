@@ -1,0 +1,14 @@
+[package]
+name = "truce-au"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Audio Unit v3 format wrapper for truce"
+
+[dependencies]
+truce-core = { workspace = true }
+truce-params = { workspace = true }
+
+[build-dependencies]
+cc = "1"

@@ -1,0 +1,16 @@
+[package]
+name = "truce-gui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Built-in GUI for truce plugins"
+
+[dependencies]
+truce-core = { workspace = true }
+truce-params = { workspace = true }
+tiny-skia = "0.12"
+fontdue = "0.9"
+
+[build-dependencies]
+cc = "1"

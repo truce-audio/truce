@@ -1,0 +1,36 @@
+[package]
+name = "truce-example-arpeggio"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = ["clap", "vst3"]
+clap = ["dep:truce-clap", "dep:clap-sys"]
+vst3 = ["dep:truce-vst3"]
+vst2 = ["dep:truce-vst2"]
+aax = ["dep:truce-aax"]
+au = ["dep:truce-au"]
+dev = ["truce/dev"]
+
+[dependencies]
+truce = { workspace = true }
+truce-core = { workspace = true }
+truce-params = { workspace = true }
+truce-params-derive = { workspace = true }
+truce-clap = { workspace = true, optional = true }
+truce-vst3 = { workspace = true, optional = true }
+truce-vst2 = { workspace = true, optional = true }
+truce-aax = { workspace = true, optional = true }
+truce-au = { workspace = true, optional = true }
+clap-sys = { version = "0.5", optional = true }
+truce-gui = { workspace = true }
+truce-loader = { workspace = true }
+
+[dev-dependencies]
+truce-test = { workspace = true }
+

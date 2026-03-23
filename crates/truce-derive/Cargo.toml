@@ -1,0 +1,16 @@
+[package]
+name = "truce-derive"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Proc macros for truce plugins, providing plugin_info!() to generate metadata from truce.toml at compile time"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full"] }
+toml = "0.8"
+serde = { version = "1", features = ["derive"] }

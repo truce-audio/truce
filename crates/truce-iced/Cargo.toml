@@ -1,0 +1,21 @@
+[package]
+name = "truce-iced"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Iced GUI backend for truce plugins"
+
+[dependencies]
+truce-core = { workspace = true }
+truce-params = { workspace = true }
+truce-gui = { workspace = true }
+
+iced = { version = "0.13", default-features = false, features = ["canvas", "wgpu"] }
+iced_runtime = "0.13"
+iced_wgpu = "0.13"
+iced_graphics = "0.13"
+pollster = "0.4"
+
+[build-dependencies]
+cc = "1"

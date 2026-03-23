@@ -1,0 +1,11 @@
+[package]
+name = "truce-xtask"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Build, bundle, and install truce audio plugins"
+repository = "https://github.com/truce-audio/truce"
+
+[dependencies]
+toml = "0.8"
+serde = { version = "1", features = ["derive"] }

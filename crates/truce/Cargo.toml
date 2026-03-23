@@ -1,0 +1,29 @@
+[package]
+name = "truce"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Audio plugin framework — write once, build VST3, CLAP, AU, AAX"
+
+[dependencies]
+truce-core = { workspace = true }
+truce-params = { workspace = true }
+truce-params-derive = { workspace = true }
+truce-loader = { workspace = true }
+truce-derive = { workspace = true }
+
+[features]
+default = ["clap"]
+clap = ["dep:truce-clap"]
+vst3 = ["dep:truce-vst3"]
+dev = ["truce-loader/shell"]
+gpu = ["truce-loader/gpu"]
+
+[dependencies.truce-clap]
+workspace = true
+optional = true
+
+[dependencies.truce-vst3]
+workspace = true
+optional = true

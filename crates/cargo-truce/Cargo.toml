@@ -1,0 +1,18 @@
+[package]
+name = "cargo-truce"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Build tool for truce audio plugins"
+repository = "https://github.com/truce-audio/truce"
+keywords = ["audio", "plugin", "vst", "clap", "daw"]
+categories = ["multimedia::audio", "development-tools::build-utils"]
+
+[[bin]]
+name = "cargo-truce"
+path = "src/main.rs"
+
+[dependencies]
+truce-xtask = { path = "../truce-xtask" }
+toml = "0.8"
+serde = { version = "1", features = ["derive"] }
