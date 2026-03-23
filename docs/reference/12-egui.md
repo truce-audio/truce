@@ -1,0 +1,226 @@
+## egui Integration
+
+`truce-egui` provides an [egui](https://github.com/emilk/egui)-based GUI
+backend for truce plugins. It gives you access to egui's full widget library,
+layout system, text input, and ecosystem while retaining truce's parameter
+binding and host integration.
+
+### When to use truce-egui
+
+Use the built-in `layout()` GUI (chapter 8) when the standard knobs, sliders,
+toggles, and meters are sufficient. For an iced-based GUI, see
+[GUI — Option B](08-gui.md). Use `truce-egui` when you need:
+
+- Custom layouts (tabs, scrolling, collapsible sections)
+- Text input fields
+- Dropdown menus, graphs, tables, color pickers
+- Any egui widget or third-party egui crate
+
+### Quick start
+
+Add `truce-egui` and `egui` to your plugin's `Cargo.toml`:
+
+```toml
+[dependencies]
+truce-egui = { workspace = true }
+egui = "0.31"
+```
+
+Override `custom_editor()` in your `PluginLogic` to return an `EguiEditor`:
+
+```rust
+use truce::prelude::*;
+use truce_egui::{EguiEditor, ParamState};
+use truce_egui::widgets::param_knob;
+
+use MyParamsParamId as P;
+
+pub struct MyPlugin {
+    params: MyParams,
+}
+
+impl PluginLogic for MyPlugin {
+    // ... new(), params_mut(), reset(), process() as usual ...
+
+    fn custom_editor(&self) -> Option<Box<dyn truce_core::editor::Editor>> {
+        Some(Box::new(
+            EguiEditor::new((640, 480), |ctx: &egui::Context, state: &ParamState| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    ui.heading("My Plugin");
+                    param_knob(ui, state, P::Gain, "Gain");
+                });
+            })
+        ))
+    }
+}
+```
+
+The rest of the plugin (`truce::plugin!`, params, DSP) stays exactly the same.
+The only change is adding `custom_editor()`.
+
+### Window size
+
+`EguiEditor::new((width, height), ui_fn)` takes the window size in **pixels**
+(physical). On a 2x Retina display, a 640x480 pixel window is 320x240 logical
+points. egui handles the scaling automatically via `pixels_per_point`.
+
+### ParamState
+
+`ParamState` is the bridge between egui widgets and truce's host automation.
+It wraps the `EditorContext` callbacks provided by the host.
+
+| Method | Description |
+|--------|-------------|
+| `state.get(id)` | Normalized value (0.0-1.0) |
+| `state.get_plain(id)` | Plain value (in the param's native range) |
+| `state.format(id)` | Host-formatted display string |
+| `state.meter(id)` | Meter level (0.0-1.0) |
+| `state.set_immediate(id, v)` | Set value in one shot (begin+set+end) |
+| `state.begin_gesture(id)` | Start a drag gesture |
+| `state.set_value(id, v)` | Update during a drag |
+| `state.end_gesture(id)` | End a drag gesture |
+
+For click/toggle interactions, use `set_immediate()`. For continuous drags
+(knobs, sliders, XY pads), use the `begin_gesture` / `set_value` /
+`end_gesture` sequence so the host records proper automation.
+
+### Helper widgets
+
+`truce-egui` ships optional helper widgets that wrap egui primitives with the
+correct gesture protocol. Import from `truce_egui::widgets`:
+
+```rust
+use truce_egui::widgets::{
+    param_knob,      // Rotary knob (vertical drag)
+    param_slider,    // Horizontal slider (egui::Slider)
+    param_toggle,    // On/off switch
+    param_selector,  // Cycling button for enum/discrete params
+    param_xy_pad,    // 2D pad controlling two params
+    level_meter,     // Vertical meter bars (display-only)
+};
+```
+
+Usage:
+
+```rust
+use GainParamsParamId as P;
+
+#[repr(u32)]
+#[derive(Clone, Copy)]
+pub enum Meter { Left = 100, Right = 101 }
+impl From<Meter> for u32 { fn from(m: Meter) -> u32 { m as u32 } }
+
+fn my_ui(ctx: &egui::Context, state: &ParamState) {
+    egui::CentralPanel::default().show(ctx, |ui| {
+        ui.horizontal(|ui| {
+            param_knob(ui, state, P::Gain, "Gain");
+            param_knob(ui, state, P::Pan, "Pan");
+            param_toggle(ui, state, P::Bypass, "Bypass");
+            level_meter(ui, state, &[Meter::Left.into(), Meter::Right.into()], "Output");
+        });
+        param_xy_pad(ui, state, P::Pan, P::Gain, "Pan / Gain");
+    });
+}
+```
+
+These are optional conveniences. You can always use raw egui widgets and
+call `ParamState` methods directly:
+
+```rust
+let mut value = state.get(id) as f32;
+let response = ui.add(egui::Slider::new(&mut value, 0.0..=1.0));
+if response.drag_started() { state.begin_gesture(id); }
+if response.changed()      { state.set_value(id, value as f64); }
+if response.drag_stopped()  { state.end_gesture(id); }
+```
+
+### Theming
+
+`truce_egui::theme::dark()` returns egui `Visuals` matching truce-gui's
+default dark theme. Apply it with `.with_visuals()`:
+
+```rust
+EguiEditor::new((640, 480), my_ui)
+    .with_visuals(truce_egui::theme::dark())
+```
+
+If omitted, `dark()` is applied automatically. Pass your own `egui::Visuals`
+to customize colors, spacing, and fonts.
+
+### Stateful UIs (EditorUi trait)
+
+For complex UIs with internal state (tab selection, animation, caches),
+implement the `EditorUi` trait instead of using a closure:
+
+```rust
+use truce_egui::{EditorUi, ParamState};
+
+struct MyEditorUi {
+    selected_tab: usize,
+}
+
+impl EditorUi for MyEditorUi {
+    fn ui(&mut self, ctx: &egui::Context, state: &ParamState) {
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.selectable_value(&mut self.selected_tab, 0, "Controls");
+                ui.selectable_value(&mut self.selected_tab, 1, "Settings");
+            });
+            match self.selected_tab {
+                0 => { /* draw controls */ }
+                1 => { /* draw settings */ }
+                _ => {}
+            }
+        });
+    }
+}
+
+// In custom_editor():
+EguiEditor::with_ui((640, 480), MyEditorUi { selected_tab: 0 })
+```
+
+### Snapshot testing
+
+`truce-egui` includes headless rendering for snapshot tests. It creates a
+wgpu device without a window, runs your UI function, and compares the result
+against a reference PNG:
+
+```rust
+#[test]
+fn gui_snapshot() {
+    truce_egui::snapshot::assert_snapshot(
+        "snapshots",           // directory (relative to workspace root)
+        "my_plugin_default",   // snapshot name
+        640, 480,              // width, height in pixels
+        2.0,                   // pixels_per_point
+        0,                     // max allowed pixel differences
+        |ctx, state| my_ui(ctx, state),
+    );
+}
+```
+
+On the first run, the reference PNG is created. On subsequent runs, the
+rendered output is compared pixel-by-pixel. Delete the PNG to regenerate.
+
+The snapshot uses `ParamState::mock()` internally, which returns `0.5` for
+all param values, `0.0` for meters, and `"pN"` for formatted strings.
+
+### Building and installing
+
+Build and install like any truce plugin:
+
+```sh
+cargo xtask install -p gain-egui
+```
+
+The `custom_editor()` method works with all plugin formats (CLAP, VST3,
+VST2, AU, AAX) without any format-specific code.
+
+### Example
+
+See `crates/truce-egui/examples/gain-egui/` for a complete working example
+with knobs, sliders, toggle, XY pad, meters, and snapshot test.
+
+---
+
+[← Previous](11-building.md) | [Index](README.md)
