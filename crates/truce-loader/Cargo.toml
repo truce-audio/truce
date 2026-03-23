@@ -10,7 +10,7 @@ log = "0.4"
 truce-core = { workspace = true }
 truce-gui = { workspace = true }
 truce-params = { workspace = true }
-truce-gpu = { workspace = true, optional = true }
+truce-gpu = { git = "https://github.com/truce-audio/truce", optional = true }
 
 [dependencies.libloading]
 version = "0.8"

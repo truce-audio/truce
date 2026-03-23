@@ -1491,10 +1491,10 @@ dependencies = [
  "truce-aax",
  "truce-au",
  "truce-clap",
- "truce-core",
- "truce-gui",
+ "truce-core 0.1.2",
+ "truce-gui 0.1.2",
  "truce-loader",
- "truce-params",
+ "truce-params 0.1.2",
  "truce-params-derive",
  "truce-test",
  "truce-vizia",
@@ -4413,10 +4413,10 @@ name = "truce"
 version = "0.1.2"
 dependencies = [
  "truce-clap",
- "truce-core",
+ "truce-core 0.1.2",
  "truce-derive",
  "truce-loader",
- "truce-params",
+ "truce-params 0.1.2",
  "truce-params-derive",
  "truce-vst3",
 ]
@@ -4425,8 +4425,8 @@ dependencies = [
 name = "truce-aax"
 version = "0.1.2"
 dependencies = [
- "truce-core",
- "truce-params",
+ "truce-core 0.1.2",
+ "truce-params 0.1.2",
 ]
 
 [[package]]
@@ -4434,8 +4434,8 @@ name = "truce-au"
 version = "0.1.2"
 dependencies = [
  "cc",
- "truce-core",
- "truce-params",
+ "truce-core 0.1.2",
+ "truce-params 0.1.2",
 ]
 
 [[package]]
@@ -4451,15 +4451,23 @@ name = "truce-clap"
 version = "0.1.2"
 dependencies = [
  "clap-sys",
- "truce-core",
- "truce-params",
+ "truce-core 0.1.2",
+ "truce-params 0.1.2",
 ]
 
 [[package]]
 name = "truce-core"
 version = "0.1.2"
 dependencies = [
- "truce-params",
+ "truce-params 0.1.2",
+]
+
+[[package]]
+name = "truce-core"
+version = "0.1.2"
+source = "git+https://github.com/truce-audio/truce#817a9e33b1513a35585c96b6381cdcc254638c04"
+dependencies = [
+ "truce-params 0.1.2 (git+https://github.com/truce-audio/truce)",
 ]
 
 [[package]]
@@ -4486,7 +4494,7 @@ dependencies = [
  "png 0.18.1",
  "pollster",
  "raw-window-handle 0.5.2",
- "truce-core",
+ "truce-core 0.1.2",
  "wgpu 24.0.5",
 ]
 
@@ -4499,10 +4507,10 @@ dependencies = [
  "truce-aax",
  "truce-au",
  "truce-clap",
- "truce-core",
- "truce-gui",
+ "truce-core 0.1.2",
+ "truce-gui 0.1.2",
  "truce-loader",
- "truce-params",
+ "truce-params 0.1.2",
  "truce-params-derive",
  "truce-test",
  "truce-vst2",
@@ -4518,10 +4526,10 @@ dependencies = [
  "truce-aax",
  "truce-au",
  "truce-clap",
- "truce-core",
- "truce-gui",
+ "truce-core 0.1.2",
+ "truce-gui 0.1.2",
  "truce-loader",
- "truce-params",
+ "truce-params 0.1.2",
  "truce-params-derive",
  "truce-test",
  "truce-vst2",
@@ -4537,10 +4545,10 @@ dependencies = [
  "truce-aax",
  "truce-au",
  "truce-clap",
- "truce-core",
- "truce-gui",
+ "truce-core 0.1.2",
+ "truce-gui 0.1.2",
  "truce-loader",
- "truce-params",
+ "truce-params 0.1.2",
  "truce-params-derive",
  "truce-test",
  "truce-vst2",
@@ -4557,11 +4565,11 @@ dependencies = [
  "truce-aax",
  "truce-au",
  "truce-clap",
- "truce-core",
+ "truce-core 0.1.2",
  "truce-egui",
- "truce-gui",
+ "truce-gui 0.1.2",
  "truce-loader",
- "truce-params",
+ "truce-params 0.1.2",
  "truce-params-derive",
  "truce-test",
  "truce-vst2",
@@ -4578,11 +4586,11 @@ dependencies = [
  "truce-aax",
  "truce-au",
  "truce-clap",
- "truce-core",
- "truce-gui",
+ "truce-core 0.1.2",
+ "truce-gui 0.1.2",
  "truce-iced",
  "truce-loader",
- "truce-params",
+ "truce-params 0.1.2",
  "truce-params-derive",
  "truce-test",
  "truce-vst2",
@@ -4598,10 +4606,10 @@ dependencies = [
  "truce-aax",
  "truce-au",
  "truce-clap",
- "truce-core",
- "truce-gui",
+ "truce-core 0.1.2",
+ "truce-gui 0.1.2",
  "truce-loader",
- "truce-params",
+ "truce-params 0.1.2",
  "truce-params-derive",
  "truce-standalone",
  "truce-test",
@@ -4618,10 +4626,10 @@ dependencies = [
  "truce-aax",
  "truce-au",
  "truce-clap",
- "truce-core",
- "truce-gui",
+ "truce-core 0.1.2",
+ "truce-gui 0.1.2",
  "truce-loader",
- "truce-params",
+ "truce-params 0.1.2",
  "truce-params-derive",
  "truce-test",
  "truce-vst2",
@@ -4640,9 +4648,28 @@ dependencies = [
  "objc",
  "pollster",
  "raw-window-handle 0.5.2",
- "truce-core",
- "truce-gui",
- "truce-params",
+ "truce-core 0.1.2",
+ "truce-gui 0.1.2",
+ "truce-params 0.1.2",
+ "wgpu 24.0.5",
+]
+
+[[package]]
+name = "truce-gpu"
+version = "0.1.2"
+source = "git+https://github.com/truce-audio/truce#817a9e33b1513a35585c96b6381cdcc254638c04"
+dependencies = [
+ "baseview 0.1.0 (git+https://github.com/RustAudio/baseview.git)",
+ "bytemuck",
+ "cocoa 0.26.1",
+ "fontdue",
+ "lyon_tessellation",
+ "objc",
+ "pollster",
+ "raw-window-handle 0.5.2",
+ "truce-core 0.1.2 (git+https://github.com/truce-audio/truce)",
+ "truce-gui 0.1.2 (git+https://github.com/truce-audio/truce)",
+ "truce-params 0.1.2 (git+https://github.com/truce-audio/truce)",
  "wgpu 24.0.5",
 ]
 
@@ -4653,8 +4680,20 @@ dependencies = [
  "cc",
  "fontdue",
  "tiny-skia 0.12.0",
- "truce-core",
- "truce-params",
+ "truce-core 0.1.2",
+ "truce-params 0.1.2",
+]
+
+[[package]]
+name = "truce-gui"
+version = "0.1.2"
+source = "git+https://github.com/truce-audio/truce#817a9e33b1513a35585c96b6381cdcc254638c04"
+dependencies = [
+ "cc",
+ "fontdue",
+ "tiny-skia 0.12.0",
+ "truce-core 0.1.2 (git+https://github.com/truce-audio/truce)",
+ "truce-params 0.1.2 (git+https://github.com/truce-audio/truce)",
 ]
 
 [[package]]
@@ -4667,9 +4706,9 @@ dependencies = [
  "iced_runtime",
  "iced_wgpu",
  "pollster",
- "truce-core",
- "truce-gui",
- "truce-params",
+ "truce-core 0.1.2",
+ "truce-gui 0.1.2",
+ "truce-params 0.1.2",
 ]
 
 [[package]]
@@ -4679,16 +4718,24 @@ dependencies = [
  "libloading 0.8.9",
  "log",
  "parking_lot 0.12.5",
- "truce-core",
- "truce-gpu",
- "truce-gui",
- "truce-params",
+ "truce-core 0.1.2",
+ "truce-gpu 0.1.2 (git+https://github.com/truce-audio/truce)",
+ "truce-gui 0.1.2",
+ "truce-params 0.1.2",
  "truce-params-derive",
 ]
 
 [[package]]
 name = "truce-params"
 version = "0.1.2"
+dependencies = [
+ "bitflags 2.11.0",
+]
+
+[[package]]
+name = "truce-params"
+version = "0.1.2"
+source = "git+https://github.com/truce-audio/truce#817a9e33b1513a35585c96b6381cdcc254638c04"
 dependencies = [
  "bitflags 2.11.0",
 ]
@@ -4709,9 +4756,9 @@ dependencies = [
  "cpal",
  "crossterm",
  "minifb",
- "truce-core",
- "truce-gui",
- "truce-params",
+ "truce-core 0.1.2",
+ "truce-gui 0.1.2",
+ "truce-params 0.1.2",
 ]
 
 [[package]]
@@ -4719,9 +4766,9 @@ name = "truce-test"
 version = "0.1.2"
 dependencies = [
  "png 0.18.1",
- "truce-core",
- "truce-gui",
- "truce-params",
+ "truce-core 0.1.2",
+ "truce-gui 0.1.2",
+ "truce-params 0.1.2",
 ]
 
 [[package]]
@@ -4733,7 +4780,7 @@ dependencies = [
  "objc",
  "png 0.18.1",
  "raw-window-handle 0.5.2",
- "truce-core",
+ "truce-core 0.1.2",
  "vizia",
 ]
 
@@ -4742,8 +4789,8 @@ name = "truce-vst2"
 version = "0.1.2"
 dependencies = [
  "cc",
- "truce-core",
- "truce-params",
+ "truce-core 0.1.2",
+ "truce-params 0.1.2",
 ]
 
 [[package]]
@@ -4751,8 +4798,8 @@ name = "truce-vst3"
 version = "0.1.2"
 dependencies = [
  "cc",
- "truce-core",
- "truce-params",
+ "truce-core 0.1.2",
+ "truce-params 0.1.2",
 ]
 
 [[package]]
