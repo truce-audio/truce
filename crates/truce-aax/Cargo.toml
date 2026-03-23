@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
+description = "AAX format wrapper for truce (dlopen bridge, no SDK dependency)"
 
 [dependencies]
 truce-core = { workspace = true }

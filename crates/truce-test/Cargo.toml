@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
+description = "Test utilities for truce plugins (render, state, params, GUI snapshots)"
 
 [dependencies]
 truce-core = { workspace = true }
