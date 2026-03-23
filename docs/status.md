@@ -143,15 +143,6 @@ cargo-truce     — scaffolding CLI (cargo truce new)
 
 ## What's remaining
 
-**Recently completed:**
-- truce-iced — full iced 0.13 GUI backend with auto mode (GridLayout to iced UI, zero code), custom mode (IcedPlugin trait with view()/update()), 6 canvas widgets, manual wgpu rendering pipeline (no iced compositor, uses CAMetalLayer directly), offscreen GPU snapshot testing, gain-iced example plugin
-- Typed parameter IDs — `#[derive(Params)]` generates `{StructName}ParamId` enum with `#[repr(u32)]` and `From<T> for u32`. All widget/layout constructors accept `impl Into<u32>`. Examples use `GainParamsParamId as P` for `P::Gain`, `P::Pan`, etc.
-- Meter enums — user-defined `#[repr(u32)]` enum for meter IDs with `From<T> for u32`. `ProcessContext::set_meter()` accepts `impl Into<u32>`. Prevents mixing param/meter IDs at compile time.
-- Arc<P> for params — shells store `Arc<P>` instead of owned `P`. EditorContext closures capture `Arc<P>` clones. GUI editors receive the real params instance. `SendPtr` eliminated for params in all 5 format wrappers.
-- Smoother interior mutability — smoother fields use atomics. `snap_smoothers(&self)`, `set_sample_rate(&self)`, `smoothed_next(&self)` all take `&self`. Enables Arc sharing between audio and GUI threads.
-- Unified snapshot system — `assert_gui_snapshot_raw()` in truce-test accepts raw RGBA pixels from any backend. Both built-in and iced snapshots use the same comparison infrastructure. Iced snapshots use headless wgpu.
-- GPU rendering backend — truce-gpu crate with wgpu/Metal backend, `cargo xtask install --gpu`. Used by both built-in GUI and iced backend.
-
 **Near-term:**
 - Windows + Linux platform layers
 - CLAP GUI→host slider sync in Reaper
