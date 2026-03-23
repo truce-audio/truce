@@ -67,6 +67,26 @@ impl<P: Params + 'static> HotShell<P> {
             bus_layouts,
         }
     }
+
+    /// Try to get a custom editor from the loaded plugin.
+    pub fn try_custom_editor(&self) -> Option<Box<dyn Editor>> {
+        let loader = self.loader.lock();
+        let plugin = loader.plugin()?;
+        plugin.custom_editor()
+    }
+
+    /// Try to create a `BuiltinEditor` from the loaded plugin's layout.
+    /// Returns `None` if no plugin is loaded or the layout has zero size.
+    pub fn try_builtin_editor(&self) -> Option<truce_gui::editor::BuiltinEditor<P>> {
+        let loader = self.loader.lock();
+        let plugin = loader.plugin()?;
+        let layout = plugin.layout();
+        if layout.width == 0 || layout.height == 0 {
+            return None;
+        }
+        drop(loader);
+        Some(truce_gui::editor::BuiltinEditor::new_grid(Arc::clone(&self.params), layout))
+    }
 }
 
 impl<P: Params + 'static> Plugin for HotShell<P> {
@@ -174,26 +194,11 @@ impl<P: Params + 'static> Plugin for HotShell<P> {
     }
 
     fn editor(&mut self) -> Option<Box<dyn Editor>> {
-        let loader = self.loader.lock();
-        let plugin = loader.plugin()?;
-
-        // Check for custom editor first (e.g., truce-egui)
-        if let Some(editor) = plugin.custom_editor() {
+        if let Some(editor) = self.try_custom_editor() {
             return Some(editor);
         }
-
-        let layout = plugin.layout();
-        if layout.width == 0 || layout.height == 0 {
-            return None;
-        }
-
-        drop(loader);
-        let params_arc = Arc::clone(&self.params);
-        let inner = truce_gui::editor::BuiltinEditor::new_grid(params_arc, layout);
-        #[cfg(feature = "gpu")]
-        { return Some(Box::new(truce_gpu::GpuEditor::new(inner))); }
-        #[cfg(not(feature = "gpu"))]
-        Some(Box::new(inner))
+        self.try_builtin_editor()
+            .map(|e| Box::new(e) as Box<dyn Editor>)
     }
 
     fn latency(&self) -> u32 {
@@ -537,6 +542,7 @@ macro_rules! export_hot {
         info: $info:expr,
         bus_layouts: [$($layout:expr),* $(,)?],
         logic_dylib: $dylib_name:expr,
+        editor: { $($editor_body:tt)* },
     ) => {
         struct __HotShellWrapper {
             inner: $crate::shell::HotShell<$params>,
@@ -611,7 +617,13 @@ macro_rules! export_hot {
             }
 
             fn editor(&mut self) -> Option<Box<dyn truce_core::editor::Editor>> {
-                self.inner.editor()
+                if let Some(e) = self.inner.try_custom_editor() {
+                    return Some(e);
+                }
+                if let Some(builtin) = self.inner.try_builtin_editor() {
+                    return Some($($editor_body)*(builtin));
+                }
+                None
             }
 
             fn latency(&self) -> u32 { self.inner.latency() }

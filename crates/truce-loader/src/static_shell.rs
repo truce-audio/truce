@@ -52,6 +52,21 @@ impl<P: Params + Default + 'static, L: PluginLogic + 'static> StaticShell<P, L> 
     pub fn logic_ref_mut(&mut self) -> &mut L {
         &mut self.logic
     }
+
+    /// Try to get a custom editor from the plugin logic.
+    pub fn try_custom_editor(&self) -> Option<Box<dyn truce_core::editor::Editor>> {
+        self.logic.custom_editor()
+    }
+
+    /// Try to create a `BuiltinEditor` from the plugin's layout.
+    /// Returns `None` if the layout has zero size.
+    pub fn try_builtin_editor(&self) -> Option<truce_gui::editor::BuiltinEditor<P>> {
+        let layout = self.logic.layout();
+        if layout.width == 0 || layout.height == 0 {
+            return None;
+        }
+        Some(truce_gui::editor::BuiltinEditor::new_grid(Arc::clone(&self.params), layout))
+    }
 }
 
 impl<P: Params + Default + 'static, L: PluginLogic + 'static> Plugin for StaticShell<P, L> {
@@ -136,20 +151,11 @@ impl<P: Params + Default + 'static, L: PluginLogic + 'static> Plugin for StaticS
     }
 
     fn editor(&mut self) -> Option<Box<dyn truce_core::editor::Editor>> {
-        // Check for custom editor first (e.g., truce-egui)
         if let Some(editor) = self.logic.custom_editor() {
             return Some(editor);
         }
-        let layout = self.logic.layout();
-        if layout.width == 0 || layout.height == 0 {
-            return None;
-        }
-        let params_arc = Arc::clone(&self.params);
-        let inner = truce_gui::editor::BuiltinEditor::new_grid(params_arc, layout);
-        #[cfg(feature = "gpu")]
-        { return Some(Box::new(truce_gpu::GpuEditor::new(inner))); }
-        #[cfg(not(feature = "gpu"))]
-        Some(Box::new(inner))
+        self.try_builtin_editor()
+            .map(|e| Box::new(e) as Box<dyn truce_core::editor::Editor>)
     }
 
     fn latency(&self) -> u32 { self.logic.latency() }
@@ -192,6 +198,7 @@ macro_rules! export_static {
         info: $info:expr,
         bus_layouts: [$($layout:expr),* $(,)?],
         logic: $logic:ty,
+        editor: { $($editor_body:tt)* },
     ) => {
         struct __HotShellWrapper {
             inner: $crate::static_shell::StaticShell<$params, $logic>,
@@ -232,7 +239,13 @@ macro_rules! export_static {
             }
 
             fn editor(&mut self) -> Option<Box<dyn truce_core::editor::Editor>> {
-                self.inner.editor()
+                if let Some(e) = self.inner.try_custom_editor() {
+                    return Some(e);
+                }
+                if let Some(builtin) = self.inner.try_builtin_editor() {
+                    return Some($($editor_body)*(builtin));
+                }
+                None
             }
 
             fn latency(&self) -> u32 { self.inner.latency() }

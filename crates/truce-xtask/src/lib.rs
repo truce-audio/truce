@@ -378,6 +378,7 @@ truce_loader::export_hot! {{
     info: plugin_info!(),
     bus_layouts: [BusLayout::stereo()],
     logic_dylib: "{logic_lib}",
+    editor: {{ |builtin| -> Box<dyn truce_core::editor::Editor> {{ Box::new(builtin) }} }},
 }}
 
 #[cfg(feature = "static-logic")]
@@ -386,6 +387,7 @@ truce_loader::export_static! {{
     info: plugin_info!(),
     bus_layouts: [BusLayout::stereo()],
     logic: {logic_lib}::{struct_name},
+    editor: {{ |builtin| -> Box<dyn truce_core::editor::Editor> {{ Box::new(builtin) }} }},
 }}
 
 #[cfg(feature = "clap")]
