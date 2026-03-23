@@ -28,16 +28,28 @@ changes without restarting the DAW.
 ## Quick Start
 
 ```sh
-# Build and install all formats
-cargo truce install
+# Install the CLI (one-time)
+cargo install --git https://github.com/truce-audio/truce cargo-truce
 
-# Or specific formats
+# Scaffold a new plugin
+cargo truce new my-plugin
+cd my-plugin
+
+# Build and install (CLAP by default)
 cargo truce install --clap
-cargo truce install --au3 -p gain
 
-# Run tests
-cargo truce test
-cargo truce validate
+# Open your DAW, scan for plugins, load "MyPlugin"
+```
+
+Other formats:
+
+```sh
+cargo truce install              # all formats
+cargo truce install --vst3       # VST3
+cargo truce install --au3        # AU v3 (requires Xcode)
+cargo truce install --aax        # AAX (requires AAX SDK)
+cargo truce test                 # run tests
+cargo truce validate             # auval + pluginval + clap-validator
 ```
 
 ## Minimal Example
