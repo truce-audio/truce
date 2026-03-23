@@ -175,9 +175,7 @@ crates/
 - [Tutorials](docs/reference/) — parameters, processing, synth, GUI, hot reload (11 parts)
 - [Hot Reload](docs/reference/09-hot-reload.md) — sub-second DSP iteration
 - [Layout](docs/layout.md) — row and grid layouts, widget reference
-**Reference:**
 - [Status](docs/status.md) — what's built, what's next
-- API reference: `cargo doc --open`
 
 ## Configuration
 
