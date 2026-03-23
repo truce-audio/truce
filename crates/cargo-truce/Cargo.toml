@@ -13,6 +13,6 @@ name = "cargo-truce"
 path = "src/main.rs"
 
 [dependencies]
-truce-xtask = { path = "../truce-xtask" }
+truce-xtask = { version = "0.1.2", path = "../truce-xtask" }
 toml = "0.8"
 serde = { version = "1", features = ["derive"] }
