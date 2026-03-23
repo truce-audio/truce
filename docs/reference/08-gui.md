@@ -7,7 +7,7 @@
 
 The default rendering backend is CPU-based (tiny-skia). A wgpu-based
 GPU backend is available behind the `gpu` feature flag — enable it
-with `cargo xtask install --gpu`. When the GPU backend is enabled,
+with `cargo truce install --gpu`. When the GPU backend is enabled,
 it is used automatically; if GPU initialization fails at runtime, the
 CPU backend is used as a fallback.
 

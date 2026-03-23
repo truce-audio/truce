@@ -16,7 +16,7 @@ version. This is required for hot-reload (shell and logic dylib
 must use the same compiler). Run `rustup show` to confirm the
 pinned version is installed.
 
-The build tool is `cargo xtask` — it handles building, bundling,
+The build tool is `cargo truce` — it handles building, bundling,
 signing, installing, and cache clearing for all formats.
 
 ---

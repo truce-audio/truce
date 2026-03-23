@@ -36,30 +36,30 @@ The recommended way to build and install plugins:
 
 ```sh
 # Build and install all formats (CLAP + VST3 + VST2 + AU v2 + AU v3 + AAX)
-cargo xtask install
+cargo truce install
 
 # Install specific formats
-cargo xtask install --clap       # CLAP only (no sudo needed)
-cargo xtask install --vst3       # VST3 only
-cargo xtask install --vst2       # VST2 only
-cargo xtask install --au2        # AU v2 only (.component, needs Developer ID)
-cargo xtask install --au3        # AU v3 only (.appex, requires Xcode)
-cargo xtask install --aax        # AAX only (requires AAX SDK)
-cargo xtask install --gpu        # enable wgpu GPU rendering backend
-cargo xtask install -p gain      # Single plugin, all formats
-cargo xtask install --au3 -p gain # AU v3 only, just Gain
+cargo truce install --clap       # CLAP only (no sudo needed)
+cargo truce install --vst3       # VST3 only
+cargo truce install --vst2       # VST2 only
+cargo truce install --au2        # AU v2 only (.component, needs Developer ID)
+cargo truce install --au3        # AU v3 only (.appex, requires Xcode)
+cargo truce install --aax        # AAX only (requires AAX SDK)
+cargo truce install --gpu        # enable wgpu GPU rendering backend
+cargo truce install -p gain      # Single plugin, all formats
+cargo truce install --au3 -p gain # AU v3 only, just Gain
 
 # Install without rebuilding
-cargo xtask install --no-build
+cargo truce install --no-build
 
 # Check what's installed
-cargo xtask status
+cargo truce status
 
 # Run AU validation
-cargo xtask validate
+cargo truce validate
 
 # Clear all AU/DAW caches (useful when things get stuck)
-cargo xtask clean
+cargo truce clean
 ```
 
 ### Manual building
@@ -103,13 +103,13 @@ cp target/release/libtruce_example_gain.dylib \
 
 ```sh
 # Use xtask (handles plist, signing, cache clearing)
-cargo xtask install --au2
+cargo truce install --au2
 ```
 
 **AU v3 (macOS only, requires Xcode):**
 
 ```sh
-cargo xtask install --au3
+cargo truce install --au3
 ```
 
 ### Host compatibility
@@ -126,7 +126,7 @@ cargo xtask install --au3
 \* GarageBand does not show custom GUI for any third-party plugin.
 See the per-format sections above for host details and cache management.
 
-Use `cargo xtask install` for all formats, or `cargo xtask install -p gain --au3`
+Use `cargo truce install` for all formats, or `cargo truce install -p gain --au3`
 for a specific plugin and format.
 
 ### Standalone mode
@@ -167,16 +167,16 @@ fn main() {
 
 ```sh
 # Run all validators (auval + pluginval)
-cargo xtask validate
+cargo truce validate
 
 # AU validation only
-cargo xtask validate --auval
+cargo truce validate --auval
 
 # VST3 validation only (requires pluginval installed)
-cargo xtask validate --pluginval
+cargo truce validate --pluginval
 
 # Run the 80+ in-process regression tests
-cargo xtask test
+cargo truce test
 ```
 
 ### CI example (GitHub Actions)

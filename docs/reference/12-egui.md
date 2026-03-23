@@ -210,7 +210,7 @@ all param values, `0.0` for meters, and `"pN"` for formatted strings.
 Build and install like any truce plugin:
 
 ```sh
-cargo xtask install -p gain-egui
+cargo truce install -p gain-egui
 ```
 
 The `custom_editor()` method works with all plugin formats (CLAP, VST3,

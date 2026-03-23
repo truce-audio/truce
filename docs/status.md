@@ -83,7 +83,7 @@ via the `breaks` parameter.
 `--features dev` on the same crate. No shell/logic split needed.
 
 ```bash
-cargo xtask install --dev    # install hot-reload shells + debug dylibs
+cargo truce install --dev    # install hot-reload shells + debug dylibs
 cargo watch -x build         # iterate
 ```
 
@@ -93,28 +93,27 @@ CRC32 content check, macOS codesign, leak-don't-close.
 
 ## Build system
 
-Build logic lives in `truce-xtask` (library crate). Both the
-truce workspace and scaffolded plugin projects use it via a thin
-`xtask/` binary.
+Build logic lives in `truce-xtask` (library crate). `cargo-truce`
+provides the user-facing CLI.
 
 ```sh
-cargo xtask install              # all formats, static
-cargo xtask install --dev        # all formats, hot-reload
-cargo xtask install --gpu        # all formats, GPU rendering
-cargo xtask install --gpu --dev  # GPU + hot-reload
-cargo xtask install --clap       # CLAP only
-cargo xtask install -p gain      # single plugin
-cargo xtask test                 # run all tests
-cargo xtask validate             # auval + pluginval + clap-validator
-cargo xtask clean                # clear all caches
+cargo truce install              # all formats, static
+cargo truce install --dev        # all formats, hot-reload
+cargo truce install --gpu        # all formats, GPU rendering
+cargo truce install --gpu --dev  # GPU + hot-reload
+cargo truce install --clap       # CLAP only
+cargo truce install -p gain      # single plugin
+cargo truce test                 # run all tests
+cargo truce validate             # auval + pluginval + clap-validator
+cargo truce clean                # clear all caches
 ```
 
-New projects are scaffolded with `cargo-truce`:
+New projects are scaffolded with `cargo truce new`:
 
 ```sh
-cargo truce new my-plugin        # creates project with xtask included
+cargo truce new my-plugin
 cd my-plugin
-cargo xtask build                # build CLAP + VST3 bundles
+cargo truce build                # build CLAP + VST3 bundles
 ```
 
 ## Crate structure

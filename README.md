@@ -29,15 +29,15 @@ changes without restarting the DAW.
 
 ```sh
 # Build and install all formats
-cargo xtask install
+cargo truce install
 
 # Or specific formats
-cargo xtask install --clap
-cargo xtask install --au3 -p gain
+cargo truce install --clap
+cargo truce install --au3 -p gain
 
 # Run tests
-cargo xtask test
-cargo xtask validate
+cargo truce test
+cargo truce validate
 ```
 
 ## Minimal Example
@@ -97,7 +97,7 @@ No DAW restart. Same crate, same code — just a feature flag:
 
 ```bash
 # One-time: build and install hot-reload shell
-cargo xtask install --dev
+cargo truce install --dev
 
 # Iterate: rebuild the logic dylib (debug, fast)
 cargo watch -x "build -p my-plugin"
@@ -140,7 +140,7 @@ custom GUI for any third-party plugin (Apple limitation).
 - **Built-in GUI** — knobs, sliders, toggles, selectors, meters, XY pads (tiny-skia CPU rendering, optional wgpu GPU backend via `--gpu` flag). TrueType font rendering (fontdue, JetBrains Mono)
 - **Declarative params** — `#[derive(Params)]` + `#[param(...)]` with smoothing, ranges, units
 - **`truce::plugin!`** — one macro generates all format exports + GUI + state serialization
-- **`cargo xtask`** — build, bundle, sign, install, validate, clean
+- **`cargo truce`** — build, bundle, sign, install, validate, clean
 - **Zero-copy audio** — format wrappers pass host buffers directly
 - **Thread-safe params** — atomic storage, lock-free access from any thread
 - **Automated tests** — render, state, params, GUI snapshots, binary validation

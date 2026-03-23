@@ -5,7 +5,7 @@
 Scaffold a new plugin:
 
 ```bash
-cargo xtask new my-gain
+cargo truce new my-gain
 ```
 
 Or create manually:
@@ -212,12 +212,12 @@ The easiest way to build and install:
 
 ```sh
 # Build and install all formats
-cargo xtask install
+cargo truce install
 
 # Or install specific formats
-cargo xtask install --clap
-cargo xtask install --au2
-cargo xtask install --aax          # AAX (requires AAX SDK + Pro Tools Developer)
+cargo truce install --clap
+cargo truce install --au2
+cargo truce install --aax          # AAX (requires AAX SDK + Pro Tools Developer)
 ```
 
 Or manually:

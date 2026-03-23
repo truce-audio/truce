@@ -20,7 +20,7 @@ dev = ["truce/dev"]    # ← add this
 
 ```bash
 # One-time: build and install the hot-reload shell (release)
-cargo xtask install --dev
+cargo truce install --dev
 
 # Iterate: rebuild the logic dylib (debug, fast)
 cargo watch -x "build -p my-plugin"
@@ -33,7 +33,7 @@ a hot-reload shell instead of a static binary. The shell watches
 When you're done iterating, build the release version:
 
 ```bash
-cargo xtask install    # no --dev = static, zero overhead
+cargo truce install    # no --dev = static, zero overhead
 ```
 
 Zero code changes between dev and release.
