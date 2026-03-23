@@ -1,22 +1,20 @@
-## egui Integration
+# egui Integration
 
-`truce-egui` provides an [egui](https://github.com/emilk/egui)-based GUI
-backend for truce plugins. It gives you access to egui's full widget library,
-layout system, text input, and ecosystem while retaining truce's parameter
-binding and host integration.
+[egui](https://github.com/emilk/egui) is an immediate-mode GUI library.
+`truce-egui` wraps it as a truce `Editor`, giving you access to egui's
+full widget library, layout system, text input, and ecosystem while
+retaining truce's parameter binding and host integration.
 
-### When to use truce-egui
+## When to Use egui
 
-Use the built-in `layout()` GUI (chapter 8) when the standard knobs, sliders,
-toggles, and meters are sufficient. For an iced-based GUI, see
-[GUI — Option B](08-gui.md). Use `truce-egui` when you need:
+Use egui when you need capabilities beyond the built-in GUI:
 
 - Custom layouts (tabs, scrolling, collapsible sections)
 - Text input fields
 - Dropdown menus, graphs, tables, color pickers
-- Any egui widget or third-party egui crate
+- Any third-party egui crate
 
-### Quick start
+## Setup
 
 Add `truce-egui` and `egui` to your plugin's `Cargo.toml`:
 
@@ -26,6 +24,8 @@ truce-egui = { workspace = true }
 egui = "0.31"
 ```
 
+## Quick Start
+
 Override `custom_editor()` in your `PluginLogic` to return an `EguiEditor`:
 
 ```rust
@@ -34,10 +34,6 @@ use truce_egui::{EguiEditor, ParamState};
 use truce_egui::widgets::param_knob;
 
 use MyParamsParamId as P;
-
-pub struct MyPlugin {
-    params: MyParams,
-}
 
 impl PluginLogic for MyPlugin {
     // ... new(), params_mut(), reset(), process() as usual ...
@@ -58,23 +54,22 @@ impl PluginLogic for MyPlugin {
 The rest of the plugin (`truce::plugin!`, params, DSP) stays exactly the same.
 The only change is adding `custom_editor()`.
 
-### Window size
+## Window Size
 
 `EguiEditor::new((width, height), ui_fn)` takes the window size in **pixels**
 (physical). On a 2x Retina display, a 640x480 pixel window is 320x240 logical
 points. egui handles the scaling automatically via `pixels_per_point`.
 
-### ParamState
+## ParamState
 
-`ParamState` is the bridge between egui widgets and truce's host automation.
-It wraps the `EditorContext` callbacks provided by the host.
+`ParamState` bridges egui widgets to truce's host automation:
 
 | Method | Description |
 |--------|-------------|
-| `state.get(id)` | Normalized value (0.0-1.0) |
+| `state.get(id)` | Normalized value (0.0–1.0) |
 | `state.get_plain(id)` | Plain value (in the param's native range) |
 | `state.format(id)` | Host-formatted display string |
-| `state.meter(id)` | Meter level (0.0-1.0) |
+| `state.meter(id)` | Meter level (0.0–1.0) |
 | `state.set_immediate(id, v)` | Set value in one shot (begin+set+end) |
 | `state.begin_gesture(id)` | Start a drag gesture |
 | `state.set_value(id, v)` | Update during a drag |
@@ -84,10 +79,10 @@ For click/toggle interactions, use `set_immediate()`. For continuous drags
 (knobs, sliders, XY pads), use the `begin_gesture` / `set_value` /
 `end_gesture` sequence so the host records proper automation.
 
-### Helper widgets
+## Helper Widgets
 
-`truce-egui` ships optional helper widgets that wrap egui primitives with the
-correct gesture protocol. Import from `truce_egui::widgets`:
+`truce-egui` ships helper widgets that wrap egui primitives with the
+correct gesture protocol:
 
 ```rust
 use truce_egui::widgets::{
@@ -134,10 +129,10 @@ if response.changed()      { state.set_value(id, value as f64); }
 if response.drag_stopped()  { state.end_gesture(id); }
 ```
 
-### Theming
+## Theming
 
-`truce_egui::theme::dark()` returns egui `Visuals` matching truce-gui's
-default dark theme. Apply it with `.with_visuals()`:
+`truce_egui::theme::dark()` returns egui `Visuals` matching the built-in
+dark theme. Apply it with `.with_visuals()`:
 
 ```rust
 EguiEditor::new((640, 480), my_ui)
@@ -147,7 +142,7 @@ EguiEditor::new((640, 480), my_ui)
 If omitted, `dark()` is applied automatically. Pass your own `egui::Visuals`
 to customize colors, spacing, and fonts.
 
-### Stateful UIs (EditorUi trait)
+## Stateful UIs (EditorUi Trait)
 
 For complex UIs with internal state (tab selection, animation, caches),
 implement the `EditorUi` trait instead of using a closure:
@@ -179,7 +174,7 @@ impl EditorUi for MyEditorUi {
 EguiEditor::with_ui((640, 480), MyEditorUi { selected_tab: 0 })
 ```
 
-### Snapshot testing
+## Snapshot Testing
 
 `truce-egui` includes headless rendering for snapshot tests. It creates a
 wgpu device without a window, runs your UI function, and compares the result
@@ -205,22 +200,7 @@ rendered output is compared pixel-by-pixel. Delete the PNG to regenerate.
 The snapshot uses `ParamState::mock()` internally, which returns `0.5` for
 all param values, `0.0` for meters, and `"pN"` for formatted strings.
 
-### Building and installing
-
-Build and install like any truce plugin:
-
-```sh
-cargo truce install -p gain-egui
-```
-
-The `custom_editor()` method works with all plugin formats (CLAP, VST3,
-VST2, AU, AAX) without any format-specific code.
-
-### Example
+## Example
 
 See `crates/truce-egui/examples/gain-egui/` for a complete working example
 with knobs, sliders, toggle, XY pad, meters, and snapshot test.
-
----
-
-[← Previous](11-building.md) | [Index](README.md)

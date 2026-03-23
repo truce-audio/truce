@@ -275,6 +275,6 @@ cargo truce validate    # auval + pluginval + clap-validator
   MIDI, channel layouts, state, custom formatting
 - [Layout](layout.md) — all widget types, grid layouts, layout DSL
 - [Hot Reload](reference/09-hot-reload.md) — detailed hot-reload setup
-- [egui Integration](reference/12-egui.md) — egui GUI backend
+- [GUI Backends](gui/) — egui, vizia, iced, raw window handle
 - [Examples](../examples/) — gain, gain-iced, EQ, synth, transpose, arpeggio
 - API reference: `cargo doc --open`

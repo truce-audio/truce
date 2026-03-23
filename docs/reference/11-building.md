@@ -214,4 +214,4 @@ jobs:
 
 ---
 
-[← Previous](10-state.md) | [Next →](12-egui.md) | [Index](README.md)
+[← Previous](10-state.md) | [Index](README.md)

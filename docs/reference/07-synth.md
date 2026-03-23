@@ -1,5 +1,3 @@
-> **Note:** Some code examples use the older `Plugin` + `PluginExport` API. The current API uses `PluginLogic` + `truce::plugin!`. See [quickstart](../quickstart.md) for up-to-date examples.
-
 ## Building a synthesizer
 
 Here is the actual synth example from `examples/synth/` showing
