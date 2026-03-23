@@ -38,7 +38,7 @@ target_include_directories(TruceAAXTemplate PRIVATE
     ${AAX_SDK_PATH}/Interfaces/ACF
     ${AAX_SDK_PATH}/Extensions/Topology
     ${AAX_SDK_PATH}/Extensions/GUI
-    ${CMAKE_CURRENT_SOURCE_DIR}/../crates/truce-aax/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
 target_link_libraries(TruceAAXTemplate PRIVATE ${AAX_LIB_TARGET})

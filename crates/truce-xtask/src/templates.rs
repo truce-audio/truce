@@ -31,4 +31,5 @@ pub mod aax {
     pub const PARAMETERS_CPP: &str = include_str!("../templates/aax/TruceAAX_Parameters.cpp");
     pub const PARAMETERS_H: &str = include_str!("../templates/aax/TruceAAX_Parameters.h");
     pub const INFO_PLIST_IN: &str = include_str!("../templates/aax/Info.plist.in");
+    pub const BRIDGE_HEADER: &str = include_str!("../../truce-aax/include/truce_aax_bridge.h");
 }

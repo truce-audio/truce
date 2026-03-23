@@ -1077,6 +1077,7 @@ fn build_aax_template(_root: &Path, sdk_path: &Path) -> Res {
     fs::write(src_dir.join("TruceAAX_Parameters.cpp"), templates::aax::PARAMETERS_CPP)?;
     fs::write(src_dir.join("TruceAAX_Parameters.h"), templates::aax::PARAMETERS_H)?;
     fs::write(src_dir.join("Info.plist.in"), templates::aax::INFO_PLIST_IN)?;
+    fs::write(src_dir.join("truce_aax_bridge.h"), templates::aax::BRIDGE_HEADER)?;
 
     let build_dir = template_dir.join("build");
     let status = Command::new("cmake")
