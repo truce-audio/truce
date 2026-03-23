@@ -131,7 +131,7 @@ custom GUI for any third-party plugin (Apple limitation).
 | [synth](examples/synth/) | Instrument | 16-voice polyphonic, ADSR, filter, 4 waveforms |
 | [transpose](examples/transpose/) | MIDI | Note transposition with stuck-note prevention |
 | [arpeggio](examples/arpeggio/) | MIDI | Tempo-synced arpeggiator, 4 patterns |
-| [passthru](examples/passthru/) | Effect | Minimal hello-world pass-through |
+
 
 ## Features
 
@@ -175,11 +175,7 @@ crates/
 - [Tutorials](docs/reference/) — parameters, processing, synth, GUI, hot reload (11 parts)
 - [Hot Reload](docs/reference/09-hot-reload.md) — sub-second DSP iteration
 - [Layout](docs/layout.md) — row and grid layouts, widget reference
-- [Testing](docs/testing.md) — test utilities, assertions, validation
-- [Validation](docs/validation.md) — auval, pluginval, clap-validator
-
 **Reference:**
-- [Design](docs/design.md) — framework architecture
 - [Status](docs/status.md) — what's built, what's next
 - API reference: `cargo doc --open`
 
