@@ -10,21 +10,6 @@ changes without restarting the DAW.
 
 ![Gain plugin GUI](snapshots/gain_default.png)
 
-## Why truce?
-
-| | truce | JUCE | nih-plug |
-|---|---|---|---|
-| Language | Rust | C++ | Rust |
-| License | MIT / Apache-2.0 | AGPLv3 / $40-175/mo | ISC |
-| CLAP | ✅ | Community only | ✅ |
-| VST3 | ✅ | ✅ | ✅ |
-| AU | ✅ (v2 + v3) | ✅ | ❌ |
-| AAX | ✅ | ✅ | ❌ |
-| VST2 | ✅ | Deprecated | ❌ |
-| Hot reload | ✅ (`--features dev`) | ❌ | ❌ |
-| Built-in GUI | ✅ (6 widget types) | ✅ (comprehensive) | BYO |
-| Formats total | **6** | 4 | **2** |
-
 ## Quick Start
 
 ```sh
@@ -214,6 +199,21 @@ au_subtype = "MyFx"
 - macOS: Xcode CLI tools (`xcode-select --install`). Full Xcode for AU v3.
 - Windows: MSVC build tools (planned, macOS-first currently)
 - AAX: Avid AAX SDK (optional, obtain from [developer.avid.com](https://developer.avid.com))
+
+## Comparisons
+
+| | truce | JUCE | nih-plug |
+|---|---|---|---|
+| Language | Rust | C++ | Rust |
+| License | MIT / Apache-2.0 | AGPLv3 / $40-175/mo | ISC |
+| CLAP | ✅ | Community only | ✅ |
+| VST3 | ✅ | ✅ | ✅ |
+| AU | ✅ (v2 + v3) | ✅ | ❌ |
+| AAX | ✅ | ✅ | ❌ |
+| VST2 | ✅ | Deprecated | ❌ |
+| Hot reload | ✅ (`--features dev`) | ❌ | ❌ |
+| Built-in GUI | ✅ (6 widget types) | ✅ (comprehensive) | BYO |
+| Formats total | **6** | 4 | **2** |
 
 ## License
 
