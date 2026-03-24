@@ -38,8 +38,11 @@ struct PluginDef {
     crate_name: String,
     #[serde(default)]
     version: Option<String>,
+    #[serde(default)]
+    fourcc: Option<String>,
     au_type: String,
-    au_subtype: String,
+    #[serde(default)]
+    au_subtype: Option<String>,
     #[serde(default)]
     aax_category: Option<String>,
 }
@@ -97,8 +100,11 @@ pub fn emit_plugin_env() {
     println!("cargo:rustc-env=TRUCE_PLUGIN_ID={plugin_id}");
     println!("cargo:rustc-env=TRUCE_VENDOR_NAME={}", config.vendor.name);
     println!("cargo:rustc-env=TRUCE_VENDOR_URL={}", config.vendor.url);
+    let resolved_fourcc = plugin.fourcc.as_ref()
+        .or(plugin.au_subtype.as_ref())
+        .expect("truce.toml: each [[plugin]] requires `fourcc` or `au_subtype`");
+    println!("cargo:rustc-env=TRUCE_FOURCC={resolved_fourcc}");
     println!("cargo:rustc-env=TRUCE_AU_TYPE={}", plugin.au_type);
-    println!("cargo:rustc-env=TRUCE_AU_SUBTYPE={}", plugin.au_subtype);
     println!(
         "cargo:rustc-env=TRUCE_AU_MANUFACTURER={}",
         config.vendor.au_manufacturer

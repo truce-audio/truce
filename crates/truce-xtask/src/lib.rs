@@ -475,8 +475,11 @@ struct PluginDef {
     suffix: String,
     #[serde(rename = "crate")]
     crate_name: String,
+    #[serde(default)]
+    fourcc: Option<String>,
     au_type: String,
-    au_subtype: String,
+    #[serde(default)]
+    au_subtype: Option<String>,
     #[serde(default)]
     au3_subtype: Option<String>,
     #[serde(default = "default_au_tag")]
@@ -484,8 +487,13 @@ struct PluginDef {
 }
 
 impl PluginDef {
+    fn resolved_fourcc(&self) -> &str {
+        self.fourcc.as_deref()
+            .or(self.au_subtype.as_deref())
+            .expect("truce.toml: each [[plugin]] requires `fourcc` or `au_subtype`")
+    }
     fn au3_sub(&self) -> &str {
-        self.au3_subtype.as_deref().unwrap_or(&self.au_subtype)
+        self.au3_subtype.as_deref().unwrap_or(self.resolved_fourcc())
     }
     fn fw_name(&self) -> String {
         let cap = format!("{}{}", self.suffix[..1].to_uppercase(), &self.suffix[1..]);
@@ -1059,7 +1067,7 @@ fn install_au(root: &Path, p: &PluginDef, config: &Config) -> Res {
         vendor_id = config.vendor.id,
         vendor = config.vendor.name,
         au_type = p.au_type,
-        au_subtype = p.au_subtype,
+        au_subtype = p.resolved_fourcc(),
         au_mfr = config.vendor.au_manufacturer,
         au_tag = p.au_tag,
     );
@@ -2076,10 +2084,10 @@ fn cmd_validate(args: &[String]) -> Res {
             for p in &plugins {
                 eprint!(
                     "  {} ({} {} {}) ... ",
-                    p.name, p.au_type, p.au_subtype, config.vendor.au_manufacturer
+                    p.name, p.au_type, p.resolved_fourcc(), config.vendor.au_manufacturer
                 );
                 let output = Command::new("auval")
-                    .args(["-v", &p.au_type, &p.au_subtype, &config.vendor.au_manufacturer])
+                    .args(["-v", &p.au_type, p.resolved_fourcc(), &config.vendor.au_manufacturer])
                     .output()?;
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 if stdout.contains("VALIDATION SUCCEEDED") {

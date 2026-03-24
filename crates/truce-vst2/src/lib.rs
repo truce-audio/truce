@@ -397,7 +397,7 @@ pub fn register_vst2<P: PluginExport>() {
 
     let descriptor = Box::leak(Box::new(Vst2PluginDescriptor {
         component_type: info.au_type,
-        component_subtype: info.au_subtype,
+        component_subtype: info.fourcc,
         name: name.into_raw(),
         vendor: vendor.into_raw(),
         version: 1,

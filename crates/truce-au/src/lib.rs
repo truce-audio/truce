@@ -399,7 +399,7 @@ pub fn register_au<P: PluginExport>() {
 
     let descriptor = Box::leak(Box::new(AuPluginDescriptor {
         component_type: info.au_type,
-        component_subtype: info.au_subtype,
+        component_subtype: info.fourcc,
         component_manufacturer: info.au_manufacturer,
         name: name.into_raw(),
         vendor: vendor.into_raw(),

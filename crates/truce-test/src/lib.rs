@@ -238,7 +238,7 @@ pub fn assert_valid_info<P: PluginExport>() {
     assert!(!info.clap_id.is_empty(), "CLAP ID is empty");
     assert!(!info.vst3_id.is_empty(), "VST3 ID is empty");
     assert!(info.au_type != [0; 4], "AU type is zero");
-    assert!(info.au_subtype != [0; 4], "AU subtype is zero");
+    assert!(info.fourcc != [0; 4], "FourCC is zero");
     assert!(info.au_manufacturer != [0; 4], "AU manufacturer is zero");
 }
 
@@ -253,7 +253,7 @@ pub fn assert_au_type_codes_ascii<P: PluginExport>() {
     let info = P::info();
     for (label, code) in [
         ("au_type", info.au_type),
-        ("au_subtype", info.au_subtype),
+        ("fourcc", info.fourcc),
         ("au_manufacturer", info.au_manufacturer),
     ] {
         for (i, &byte) in code.iter().enumerate() {
@@ -273,7 +273,7 @@ pub fn assert_fourcc_roundtrip<P: PluginExport>() {
     let info = P::info();
     for (label, code) in [
         ("au_type", info.au_type),
-        ("au_subtype", info.au_subtype),
+        ("fourcc", info.fourcc),
         ("au_manufacturer", info.au_manufacturer),
     ] {
         let packed = ((code[0] as u32) << 24)

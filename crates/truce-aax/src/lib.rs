@@ -166,9 +166,9 @@ pub fn register_aax<P: PluginExport>() {
             num_outputs: layout.total_output_channels(),
             num_params: 0, // filled below
             manufacturer_id: fourcc(&info.au_manufacturer),
-            product_id: fourcc(&info.au_subtype),
+            product_id: fourcc(&info.fourcc),
             // plugin_id must differ from product_id — XOR with a salt
-            plugin_id: fourcc(&info.au_subtype) ^ 0x01010101,
+            plugin_id: fourcc(&info.fourcc) ^ 0x01010101,
             is_instrument: is_instrument as i32,
             category,
             has_editor: 0, // filled below

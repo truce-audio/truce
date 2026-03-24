@@ -31,8 +31,11 @@ struct PluginDef {
     crate_name: String,
     #[serde(default)]
     version: Option<String>,
+    #[serde(default)]
+    fourcc: Option<String>,
     au_type: String,
-    au_subtype: String,
+    #[serde(default)]
+    au_subtype: Option<String>,
     #[serde(default)]
     aax_category: Option<String>,
 }
@@ -112,8 +115,10 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
         plugin.name.to_lowercase().replace(' ', "")
     );
 
+    let resolved_fourcc = plugin.fourcc.as_ref()
+        .or(plugin.au_subtype.as_ref())
+        .expect("truce.toml: each [[plugin]] requires `fourcc` or `au_subtype`");
     let au_type = &plugin.au_type;
-    let au_subtype = &plugin.au_subtype;
     let au_manufacturer = &config.vendor.au_manufacturer;
 
     let aax_category = match &plugin.aax_category {
@@ -130,8 +135,8 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
             category: #category,
             vst3_id: #plugin_id,
             clap_id: #plugin_id,
+            fourcc: ::truce::core::info::fourcc(#resolved_fourcc.as_bytes()),
             au_type: ::truce::core::info::fourcc(#au_type.as_bytes()),
-            au_subtype: ::truce::core::info::fourcc(#au_subtype.as_bytes()),
             au_manufacturer: ::truce::core::info::fourcc(#au_manufacturer.as_bytes()),
             aax_id: None,
             aax_category: #aax_category,

@@ -182,7 +182,7 @@ name = "{display}"
 suffix = "{name}"
 crate = "{crate_name}"
 au_type = "{au_type}"
-au_subtype = "{au_sub}"
+fourcc = "{au_sub}"
 au_tag = "{au_tag}"
 "#,
             display = struct_name,
