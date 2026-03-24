@@ -20,7 +20,6 @@ use truce_params::Params;
 
 use crate::loader::NativeLoader;
 
-
 // ---------------------------------------------------------------------------
 // HotShell — the Plugin implementation that delegates to the dylib
 // ---------------------------------------------------------------------------
@@ -183,7 +182,6 @@ impl<P: Params + 'static> Plugin for HotShell<P> {
     }
 
     fn editor(&mut self) -> Option<Box<dyn Editor>> {
-        eprintln!("[truce-hot] editor() called, dylib: {}", self.dylib_path.display());
         let params_ptr = Arc::as_ptr(&self.params) as *const ();
         let gui_loader = NativeLoader::new(self.dylib_path.clone(), params_ptr);
 
@@ -258,11 +256,9 @@ impl<P: Params + 'static> HotEditor<P> {
         let watcher = std::thread::Builder::new()
             .name("truce-gui-reload".into())
             .spawn(move || {
-                eprintln!("[truce-hot] GUI reload watcher thread started");
                 loop {
                     std::thread::sleep(std::time::Duration::from_millis(500));
                     if gui_loader.is_reload_pending() {
-                        eprintln!("[truce-hot] GUI dylib change detected, reloading...");
                         if gui_loader.reload() {
                             if let Some(plugin) = gui_loader.plugin() {
                                 let layout = plugin.layout();
@@ -273,7 +269,6 @@ impl<P: Params + 'static> HotEditor<P> {
                                     if let Ok(mut guard) = inner_for_thread.lock() {
                                         *guard = new_builtin;
                                     }
-                                    eprintln!("[truce-hot] GUI layout reloaded");
                                 }
                             }
                         }

@@ -93,7 +93,7 @@ fn gain_ui(ctx: &egui::Context, state: &ParamState) {
     egui::CentralPanel::default().show(ctx, |ui| {
         ui.vertical_centered(|ui| {
             ui.add_space(8.0);
-            ui.heading("Gain (egui)");
+            ui.heading("Gain (eguiiii)");
             ui.add_space(12.0);
         });
 

@@ -91,6 +91,13 @@ Native Rust ABI, ABI canary + vtable probe verification.
 `truce-loader` crate handles dylib loading, file watching,
 CRC32 content check, macOS codesign, leak-don't-close.
 
+**GUI hot-reload (built-in GUI):** Layout changes now update
+seamlessly in `--dev` mode. The `HotEditor` wrapper watches for dylib
+changes and swaps the `BuiltinEditor` inside a shared mutex — no
+window flash, no manual close/reopen. DSP changes continue to work as
+before. Custom editors (egui, vizia, iced) still require manually
+closing and reopening the plugin window.
+
 ## Build system
 
 Build logic lives in `truce-xtask` (library crate). `cargo-truce`

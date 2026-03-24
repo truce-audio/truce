@@ -43,9 +43,17 @@ Zero code changes between dev and release.
 | What you edit | Recompile? | How fast? |
 |---------------|-----------|-----------|
 | DSP algorithm | Yes | ~2s |
-| Widget layout | Yes | ~2s |
+| Widget layout (built-in GUI) | Yes | ~2s |
 | Meter logic | Yes | ~2s |
 | MIDI processing | Yes | ~2s |
+
+**GUI hot-reload (built-in GUI):** When using `--dev` mode, editing
+`layout()` and rebuilding automatically updates the plugin GUI without
+closing or reopening the window. The `HotEditor` wrapper delegates to
+`GpuEditor` for rendering and spawns a background thread to watch for
+dylib changes. On change, the new `BuiltinEditor` is swapped in via a
+shared mutex — no window flash. Custom editors (egui, vizia, iced) still
+require manually closing and reopening the plugin window.
 
 ### What does NOT reload
 

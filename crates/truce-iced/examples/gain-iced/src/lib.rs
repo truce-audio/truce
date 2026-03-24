@@ -80,7 +80,7 @@ impl IcedPlugin<GainParams> for GainUi {
         let header: Element<'a, Message<GainMsg>> = container(
             Row::new()
                 .push(
-                    text("GAIN (iced)")
+                    text("GAIN (iceddd)")
                         .size(14)
                         .color(iced::Color::from_rgb(0.75, 0.75, 0.80)),
                 )
