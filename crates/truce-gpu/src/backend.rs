@@ -888,8 +888,8 @@ impl WgpuBackend {
         ))
         .ok()?;
 
-        // Use Rgba8UnormSrgb for headless (no surface caps to query)
-        let texture_format = wgpu::TextureFormat::Rgba8UnormSrgb;
+        // Use non-sRGB to match the windowed path (which picks !is_srgb())
+        let texture_format = wgpu::TextureFormat::Rgba8Unorm;
 
         // MSAA texture
         let msaa_texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -1091,7 +1091,7 @@ impl WgpuBackend {
 
         let w = self.width;
         let h = self.height;
-        let format = wgpu::TextureFormat::Rgba8UnormSrgb;
+        let format = wgpu::TextureFormat::Rgba8Unorm;
 
         // Offscreen resolve target
         let target_texture = self.device.create_texture(&wgpu::TextureDescriptor {
