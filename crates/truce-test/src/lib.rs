@@ -647,6 +647,12 @@ fn save_png(path: &std::path::Path, pixels: &[u8], w: u32, h: u32) {
     let mut encoder = png::Encoder::new(file, w, h);
     encoder.set_color(png::ColorType::Rgba);
     encoder.set_depth(png::BitDepth::Eight);
+    // 144 DPI (2x Retina) — renders at half pixel size in viewers/GitHub
+    encoder.set_pixel_dims(Some(png::PixelDimensions {
+        xppu: 5669, // 144 DPI in pixels per meter
+        yppu: 5669,
+        unit: png::Unit::Meter,
+    }));
     let mut writer = encoder.write_header()
         .unwrap_or_else(|e| panic!("Failed to write PNG header: {e}"));
     writer.write_image_data(pixels)

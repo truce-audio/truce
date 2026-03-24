@@ -21,12 +21,15 @@ pub fn render_to_pixels<P: Params + 'static>(
 ) -> (Vec<u8>, u32, u32) {
     let w = layout.width;
     let h = layout.height;
+    let scale = 2.0; // Match Retina display resolution for sharp snapshots
 
     let mut editor = BuiltinEditor::new_grid(params, layout);
-    let mut backend = WgpuBackend::headless(w, h, 1.0)
+    let mut backend = WgpuBackend::headless(w, h, scale)
         .expect("Failed to create headless GPU backend for snapshot");
 
     editor.render_to(&mut backend);
     let pixels = backend.read_pixels();
-    (pixels, w, h)
+    let phys_w = (w as f32 * scale) as u32;
+    let phys_h = (h as f32 * scale) as u32;
+    (pixels, phys_w, phys_h)
 }
