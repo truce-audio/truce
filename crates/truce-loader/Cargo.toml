@@ -19,6 +19,7 @@ version = "0.12"
 optional = true
 
 [dev-dependencies]
+truce = { workspace = true }
 truce-params-derive = { workspace = true }
 
 [features]

@@ -70,7 +70,7 @@ macro_rules! __plugin_impl {
             bus_layouts: [$($layout),*],
             logic: $logic,
             editor: {
-                |builtin| -> Box<dyn ::truce_core::editor::Editor> {
+                |builtin| -> Box<dyn $crate::core::editor::Editor> {
                     #[cfg(feature = "gpu")]
                     { return Box::new($crate::__reexport::GpuEditor::new(builtin)); }
                     #[cfg(not(feature = "gpu"))]
@@ -156,12 +156,12 @@ macro_rules! __plugin_dev {
             }
         }
 
-        impl ::truce_core::plugin::Plugin for __HotShellWrapper {
-            fn info() -> ::truce_core::info::PluginInfo where Self: Sized {
+        impl $crate::core::plugin::Plugin for __HotShellWrapper {
+            fn info() -> $crate::core::info::PluginInfo where Self: Sized {
                 $crate::prelude::plugin_info!()
             }
 
-            fn bus_layouts() -> Vec<::truce_core::bus::BusLayout> where Self: Sized {
+            fn bus_layouts() -> Vec<$crate::core::bus::BusLayout> where Self: Sized {
                 vec![$($layout),*]
             }
 
@@ -175,10 +175,10 @@ macro_rules! __plugin_dev {
 
             fn process(
                 &mut self,
-                buffer: &mut ::truce_core::buffer::AudioBuffer,
-                events: &::truce_core::events::EventList,
-                context: &mut ::truce_core::process::ProcessContext,
-            ) -> ::truce_core::process::ProcessStatus {
+                buffer: &mut $crate::core::buffer::AudioBuffer,
+                events: &$crate::core::events::EventList,
+                context: &mut $crate::core::process::ProcessContext,
+            ) -> $crate::core::process::ProcessStatus {
                 self.inner.process(buffer, events, context)
             }
 
@@ -190,7 +190,7 @@ macro_rules! __plugin_dev {
                 self.inner.load_state(data);
             }
 
-            fn editor(&mut self) -> Option<Box<dyn ::truce_core::editor::Editor>> {
+            fn editor(&mut self) -> Option<Box<dyn $crate::core::editor::Editor>> {
                 if let Some(e) = self.inner.try_custom_editor() {
                     return Some(e);
                 }
@@ -208,13 +208,13 @@ macro_rules! __plugin_dev {
             fn get_meter(&self, meter_id: u32) -> f32 { self.inner.get_meter(meter_id) }
         }
 
-        impl ::truce_core::export::PluginExport for __HotShellWrapper {
+        impl $crate::core::export::PluginExport for __HotShellWrapper {
             type Params = $params;
 
             fn create() -> Self {
                 let params = <$params>::new();
-                let info = <Self as ::truce_core::plugin::Plugin>::info();
-                let bus_layouts = <Self as ::truce_core::plugin::Plugin>::bus_layouts();
+                let info = <Self as $crate::core::plugin::Plugin>::info();
+                let bus_layouts = <Self as $crate::core::plugin::Plugin>::bus_layouts();
                 let path = Self::dylib_path();
                 Self {
                     inner: $crate::__reexport::HotShell::new(params, path, info, bus_layouts),

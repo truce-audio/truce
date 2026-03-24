@@ -582,12 +582,12 @@ macro_rules! export_hot {
             }
         }
 
-        impl truce_core::plugin::Plugin for __HotShellWrapper {
-            fn info() -> truce_core::info::PluginInfo where Self: Sized {
+        impl $crate::__macro_deps::truce_core::plugin::Plugin for __HotShellWrapper {
+            fn info() -> $crate::__macro_deps::truce_core::info::PluginInfo where Self: Sized {
                 $info
             }
 
-            fn bus_layouts() -> Vec<truce_core::bus::BusLayout> where Self: Sized {
+            fn bus_layouts() -> Vec<$crate::__macro_deps::truce_core::bus::BusLayout> where Self: Sized {
                 vec![$($layout),*]
             }
 
@@ -601,10 +601,10 @@ macro_rules! export_hot {
 
             fn process(
                 &mut self,
-                buffer: &mut truce_core::buffer::AudioBuffer,
-                events: &truce_core::events::EventList,
-                context: &mut truce_core::process::ProcessContext,
-            ) -> truce_core::process::ProcessStatus {
+                buffer: &mut $crate::__macro_deps::truce_core::buffer::AudioBuffer,
+                events: &$crate::__macro_deps::truce_core::events::EventList,
+                context: &mut $crate::__macro_deps::truce_core::process::ProcessContext,
+            ) -> $crate::__macro_deps::truce_core::process::ProcessStatus {
                 self.inner.process(buffer, events, context)
             }
 
@@ -616,7 +616,7 @@ macro_rules! export_hot {
                 self.inner.load_state(data);
             }
 
-            fn editor(&mut self) -> Option<Box<dyn truce_core::editor::Editor>> {
+            fn editor(&mut self) -> Option<Box<dyn $crate::__macro_deps::truce_core::editor::Editor>> {
                 if let Some(e) = self.inner.try_custom_editor() {
                     return Some(e);
                 }
@@ -631,13 +631,13 @@ macro_rules! export_hot {
             fn get_meter(&self, meter_id: u32) -> f32 { self.inner.get_meter(meter_id) }
         }
 
-        impl truce_core::export::PluginExport for __HotShellWrapper {
+        impl $crate::__macro_deps::truce_core::export::PluginExport for __HotShellWrapper {
             type Params = $params;
 
             fn create() -> Self {
                 let params = <$params>::new();
-                let info = <Self as truce_core::plugin::Plugin>::info();
-                let bus_layouts = <Self as truce_core::plugin::Plugin>::bus_layouts();
+                let info = <Self as $crate::__macro_deps::truce_core::plugin::Plugin>::info();
+                let bus_layouts = <Self as $crate::__macro_deps::truce_core::plugin::Plugin>::bus_layouts();
                 let path = Self::dylib_path();
                 Self {
                     inner: $crate::shell::HotShell::new(params, path, info, bus_layouts),

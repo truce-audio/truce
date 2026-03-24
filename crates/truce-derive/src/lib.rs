@@ -102,8 +102,8 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
     let version = plugin.version.as_deref().unwrap_or(&pkg_version).to_string();
 
     let category = match plugin.au_type.as_str() {
-        "aumu" => quote! { ::truce_core::PluginCategory::Instrument },
-        _ => quote! { ::truce_core::PluginCategory::Effect },
+        "aumu" => quote! { ::truce::core::PluginCategory::Instrument },
+        _ => quote! { ::truce::core::PluginCategory::Effect },
     };
 
     let plugin_id = format!(
@@ -122,7 +122,7 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
     };
 
     let expanded = quote! {
-        ::truce_core::PluginInfo {
+        ::truce::core::PluginInfo {
             name: #name,
             vendor: #vendor,
             url: #url,
@@ -130,9 +130,9 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
             category: #category,
             vst3_id: #plugin_id,
             clap_id: #plugin_id,
-            au_type: ::truce_core::info::fourcc(#au_type.as_bytes()),
-            au_subtype: ::truce_core::info::fourcc(#au_subtype.as_bytes()),
-            au_manufacturer: ::truce_core::info::fourcc(#au_manufacturer.as_bytes()),
+            au_type: ::truce::core::info::fourcc(#au_type.as_bytes()),
+            au_subtype: ::truce::core::info::fourcc(#au_subtype.as_bytes()),
+            au_manufacturer: ::truce::core::info::fourcc(#au_manufacturer.as_bytes()),
             aax_id: None,
             aax_category: #aax_category,
         }

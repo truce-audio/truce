@@ -217,7 +217,7 @@ fn parse_range_tokens(range: &str) -> proc_macro2::TokenStream {
         if parts.len() == 2 {
             let min: f64 = parts[0].parse().unwrap_or(0.0);
             let max: f64 = parts[1].parse().unwrap_or(1.0);
-            return quote! { truce_params::ParamRange::Linear { min: #min, max: #max } };
+            return quote! { ::truce::params::ParamRange::Linear { min: #min, max: #max } };
         }
     }
     if let Some(inner) = range.strip_prefix("log(").and_then(|s| s.strip_suffix(')')) {
@@ -225,7 +225,7 @@ fn parse_range_tokens(range: &str) -> proc_macro2::TokenStream {
         if parts.len() == 2 {
             let min: f64 = parts[0].parse().unwrap_or(20.0);
             let max: f64 = parts[1].parse().unwrap_or(20000.0);
-            return quote! { truce_params::ParamRange::Logarithmic { min: #min, max: #max } };
+            return quote! { ::truce::params::ParamRange::Logarithmic { min: #min, max: #max } };
         }
     }
     if let Some(inner) = range.strip_prefix("discrete(").and_then(|s| s.strip_suffix(')')) {
@@ -233,28 +233,28 @@ fn parse_range_tokens(range: &str) -> proc_macro2::TokenStream {
         if parts.len() == 2 {
             let min: i64 = parts[0].parse().unwrap_or(0);
             let max: i64 = parts[1].parse().unwrap_or(1);
-            return quote! { truce_params::ParamRange::Discrete { min: #min, max: #max } };
+            return quote! { ::truce::params::ParamRange::Discrete { min: #min, max: #max } };
         }
     }
     if let Some(inner) = range.strip_prefix("enum(").and_then(|s| s.strip_suffix(')')) {
         let count: usize = inner.trim().parse().unwrap_or(2);
-        return quote! { truce_params::ParamRange::Enum { count: #count } };
+        return quote! { ::truce::params::ParamRange::Enum { count: #count } };
     }
     // Default
-    quote! { truce_params::ParamRange::Discrete { min: 0, max: 1 } }
+    quote! { ::truce::params::ParamRange::Discrete { min: 0, max: 1 } }
 }
 
 /// Parse a unit string into ParamUnit tokens.
 fn parse_unit_tokens(unit: &str) -> proc_macro2::TokenStream {
     match unit {
-        "dB" | "Db" | "db" => quote! { truce_params::ParamUnit::Db },
-        "Hz" | "hz" => quote! { truce_params::ParamUnit::Hz },
-        "ms" => quote! { truce_params::ParamUnit::Milliseconds },
-        "s" => quote! { truce_params::ParamUnit::Seconds },
-        "%" => quote! { truce_params::ParamUnit::Percent },
-        "st" => quote! { truce_params::ParamUnit::Semitones },
-        "pan" => quote! { truce_params::ParamUnit::Pan },
-        _ => quote! { truce_params::ParamUnit::None },
+        "dB" | "Db" | "db" => quote! { ::truce::params::ParamUnit::Db },
+        "Hz" | "hz" => quote! { ::truce::params::ParamUnit::Hz },
+        "ms" => quote! { ::truce::params::ParamUnit::Milliseconds },
+        "s" => quote! { ::truce::params::ParamUnit::Seconds },
+        "%" => quote! { ::truce::params::ParamUnit::Percent },
+        "st" => quote! { ::truce::params::ParamUnit::Semitones },
+        "pan" => quote! { ::truce::params::ParamUnit::Pan },
+        _ => quote! { ::truce::params::ParamUnit::None },
     }
 }
 
@@ -263,15 +263,15 @@ fn parse_flags_tokens(flags: &str) -> proc_macro2::TokenStream {
     let mut parts = Vec::new();
     for flag in flags.split('|').map(|s| s.trim().to_lowercase()) {
         match flag.as_str() {
-            "automatable" => parts.push(quote! { truce_params::ParamFlags::AUTOMATABLE }),
-            "hidden" => parts.push(quote! { truce_params::ParamFlags::HIDDEN }),
-            "readonly" => parts.push(quote! { truce_params::ParamFlags::READONLY }),
-            "bypass" => parts.push(quote! { truce_params::ParamFlags::IS_BYPASS }),
+            "automatable" => parts.push(quote! { ::truce::params::ParamFlags::AUTOMATABLE }),
+            "hidden" => parts.push(quote! { ::truce::params::ParamFlags::HIDDEN }),
+            "readonly" => parts.push(quote! { ::truce::params::ParamFlags::READONLY }),
+            "bypass" => parts.push(quote! { ::truce::params::ParamFlags::IS_BYPASS }),
             _ => {}
         }
     }
     if parts.is_empty() {
-        quote! { truce_params::ParamFlags::AUTOMATABLE }
+        quote! { ::truce::params::ParamFlags::AUTOMATABLE }
     } else {
         quote! { #(#parts)|* }
     }
@@ -280,17 +280,17 @@ fn parse_flags_tokens(flags: &str) -> proc_macro2::TokenStream {
 /// Parse a smoothing string into SmoothingStyle tokens.
 fn parse_smooth_tokens(smooth: &str) -> proc_macro2::TokenStream {
     if smooth == "none" {
-        return quote! { truce_params::SmoothingStyle::None };
+        return quote! { ::truce::params::SmoothingStyle::None };
     }
     if let Some(inner) = smooth.strip_prefix("linear(").and_then(|s| s.strip_suffix(')')) {
         let ms: f64 = inner.trim().parse().unwrap_or(20.0);
-        return quote! { truce_params::SmoothingStyle::Linear(#ms) };
+        return quote! { ::truce::params::SmoothingStyle::Linear(#ms) };
     }
     if let Some(inner) = smooth.strip_prefix("exp(").and_then(|s| s.strip_suffix(')')) {
         let ms: f64 = inner.trim().parse().unwrap_or(5.0);
-        return quote! { truce_params::SmoothingStyle::Exponential(#ms) };
+        return quote! { ::truce::params::SmoothingStyle::Exponential(#ms) };
     }
-    quote! { truce_params::SmoothingStyle::None }
+    quote! { ::truce::params::SmoothingStyle::None }
 }
 
 /// Generate a constructor call for a field with `#[param(...)]` attributes.
@@ -306,31 +306,31 @@ fn gen_field_constructor(f: &ParamField) -> proc_macro2::TokenStream {
     let range = match &a.range {
         Some(r) => parse_range_tokens(r),
         None => match f.kind {
-            ParamKind::Bool => quote! { truce_params::ParamRange::Discrete { min: 0, max: 1 } },
+            ParamKind::Bool => quote! { ::truce::params::ParamRange::Discrete { min: 0, max: 1 } },
             ParamKind::Enum => {
                 // Auto-infer variant count from the enum type's ParamEnum impl
                 if let Some(ref enum_ty) = f.enum_type {
-                    quote! { truce_params::ParamRange::Enum { count: <#enum_ty as truce_params::ParamEnum>::variant_count() } }
+                    quote! { ::truce::params::ParamRange::Enum { count: <#enum_ty as ::truce::params::ParamEnum>::variant_count() } }
                 } else {
-                    quote! { truce_params::ParamRange::Enum { count: 2 } }
+                    quote! { ::truce::params::ParamRange::Enum { count: 2 } }
                 }
             }
-            _ => quote! { truce_params::ParamRange::Linear { min: 0.0, max: 1.0 } },
+            _ => quote! { ::truce::params::ParamRange::Linear { min: 0.0, max: 1.0 } },
         },
     };
 
     let unit = match &a.unit {
         Some(u) => parse_unit_tokens(u),
-        None => quote! { truce_params::ParamUnit::None },
+        None => quote! { ::truce::params::ParamUnit::None },
     };
 
     let flags = match &a.flags {
         Some(fl) => parse_flags_tokens(fl),
-        None => quote! { truce_params::ParamFlags::AUTOMATABLE },
+        None => quote! { ::truce::params::ParamFlags::AUTOMATABLE },
     };
 
     let info = quote! {
-        truce_params::ParamInfo {
+        ::truce::params::ParamInfo {
             id: #id,
             name: #name,
             short_name: #short_name,
@@ -346,13 +346,13 @@ fn gen_field_constructor(f: &ParamField) -> proc_macro2::TokenStream {
         ParamKind::Float => {
             let smooth = match &a.smooth {
                 Some(s) => parse_smooth_tokens(s),
-                None => quote! { truce_params::SmoothingStyle::None },
+                None => quote! { ::truce::params::SmoothingStyle::None },
             };
-            quote! { truce_params::FloatParam::new(#info, #smooth) }
+            quote! { ::truce::params::FloatParam::new(#info, #smooth) }
         }
-        ParamKind::Bool => quote! { truce_params::BoolParam::new(#info) },
-        ParamKind::Int => quote! { truce_params::IntParam::new(#info) },
-        ParamKind::Enum => quote! { truce_params::EnumParam::new(#info) },
+        ParamKind::Bool => quote! { ::truce::params::BoolParam::new(#info) },
+        ParamKind::Int => quote! { ::truce::params::IntParam::new(#info) },
+        ParamKind::Enum => quote! { ::truce::params::EnumParam::new(#info) },
     }
 }
 
@@ -494,7 +494,7 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
                 },
                 _ => quote! {
                     x if x == self.#ident.id() => {
-                        Some(truce_params::format_param_value(&self.#ident.info, value))
+                        Some(::truce::params::format_param_value(&self.#ident.info, value))
                     }
                 },
             }
@@ -652,8 +652,8 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
 
         #param_id_enum
 
-        impl truce_params::Params for #struct_name {
-            fn param_infos(&self) -> Vec<truce_params::ParamInfo> {
+        impl ::truce::params::Params for #struct_name {
+            fn param_infos(&self) -> Vec<::truce::params::ParamInfo> {
                 #infos_expr
             }
 
@@ -862,7 +862,7 @@ pub fn derive_param_enum(input: TokenStream) -> TokenStream {
     let name_strs: Vec<_> = variant_names.iter().map(|n| n.as_str()).collect();
 
     let expanded = quote! {
-        impl truce_params::ParamEnum for #enum_name {
+        impl ::truce::params::ParamEnum for #enum_name {
             fn from_index(index: usize) -> Self {
                 match index {
                     #(#from_index_arms)*

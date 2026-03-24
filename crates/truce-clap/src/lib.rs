@@ -3,6 +3,11 @@
 //! Provides the [`export_clap!`] macro to expose any
 //! `PluginExport` implementation as a CLAP plugin.
 
+#[doc(hidden)]
+pub mod __macro_deps {
+    pub use truce_core;
+}
+
 use std::ffi::{c_char, c_void, CStr, CString};
 use std::marker::PhantomData;
 use std::ptr;
@@ -1489,7 +1494,7 @@ macro_rules! export_clap {
             use ::clap_sys::version::CLAP_VERSION;
 
             use ::truce_clap::DescriptorHolder;
-            use ::truce_core::plugin::Plugin;
+            use ::truce_clap::__macro_deps::truce_core::plugin::Plugin;
 
             static DESCRIPTOR: OnceLock<DescriptorHolder> = OnceLock::new();
 

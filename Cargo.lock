@@ -4680,6 +4680,7 @@ dependencies = [
  "libloading 0.8.9",
  "log",
  "parking_lot 0.12.5",
+ "truce",
  "truce-core",
  "truce-gui",
  "truce-params",

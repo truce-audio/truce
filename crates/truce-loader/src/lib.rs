@@ -25,6 +25,11 @@
 //! pub fn truce_vtable_probe() -> Box<dyn PluginLogic> { Box::new(ProbePlugin) }
 //! ```
 
+#[doc(hidden)]
+pub mod __macro_deps {
+    pub use truce_core;
+}
+
 mod safe_types;
 mod traits;
 mod canary;
