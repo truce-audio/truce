@@ -239,8 +239,13 @@ impl WindowHandler for EguiWindowHandler {
                 if let baseview::WindowEvent::Resized(info) = win {
                     let pw = info.physical_size().width;
                     let ph = info.physical_size().height;
-                    self.size = (pw, ph);
-                    self.scale_factor = info.scale() as f32;
+                    let scale = info.scale() as f32;
+                    // Store logical size — egui screen_rect uses logical points
+                    self.size = (
+                        (pw as f32 / scale) as u32,
+                        (ph as f32 / scale) as u32,
+                    );
+                    self.scale_factor = scale;
                     if let Some(renderer) = self.renderer.as_mut() {
                         renderer.resize(pw, ph);
                     }
