@@ -17,22 +17,20 @@ struct SmootherParams {
 }
 
 struct SmootherPlugin {
-    params: SmootherParams,
+    params: std::sync::Arc<SmootherParams>,
     samples: Vec<f32>,
 }
 
-impl truce_loader::PluginLogic for SmootherPlugin {
-    fn new() -> Self {
+impl SmootherPlugin {
+    fn new(params: std::sync::Arc<SmootherParams>) -> Self {
         Self {
-            params: SmootherParams::new(),
+            params,
             samples: Vec::new(),
         }
     }
+}
 
-    fn params_mut(&mut self) -> Option<&mut dyn Params> {
-        Some(&mut self.params)
-    }
-
+impl truce_loader::PluginLogic for SmootherPlugin {
     fn reset(&mut self, sr: f64, _bs: usize) {
         self.params.set_sample_rate(sr);
     }
@@ -59,8 +57,10 @@ impl truce_loader::PluginLogic for SmootherPlugin {
 
 #[test]
 fn smoother_ramps_gradually() {
-    let mut shell = truce_loader::static_shell::StaticShell::<SmootherParams, SmootherPlugin>::new(
-        SmootherParams::new(),
+    let params = std::sync::Arc::new(SmootherParams::new());
+    let logic = SmootherPlugin::new(std::sync::Arc::clone(&params));
+    let mut shell = truce_loader::static_shell::StaticShell::<SmootherParams, SmootherPlugin>::from_parts(
+        params, logic,
     );
     shell.reset(44100.0, 64);
 

@@ -56,7 +56,7 @@ macro_rules! plugin {
 macro_rules! __plugin_impl {
     ($logic:ty, $params:ty, [$($layout:expr),*]) => {
         // Always export the PluginLogic for dylib use (hot-reload or testing).
-        $crate::__reexport::export_plugin!($logic);
+        $crate::__reexport::export_plugin!($logic, $params);
 
         /// Type alias for use in tests and external references.
         pub type Plugin = __HotShellWrapper;

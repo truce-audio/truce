@@ -47,20 +47,20 @@ pub use canary::{AbiCanary, ProbePlugin, verify_probe};
 #[cfg(feature = "shell")]
 pub use loader::NativeLoader;
 
-/// Export the three `#[no_mangle]` functions required by the shell.
+/// Export the `#[no_mangle]` functions required by the shell.
 ///
-/// ```ignore
-/// struct MyPlugin { /* ... */ }
-/// impl PluginLogic for MyPlugin { /* ... */ }
-///
-/// export_plugin!(MyPlugin);
-/// ```
+/// `params_ptr` is a raw `Arc<Params>` pointer from the shell.
+/// The plugin receives shared params — one copy, no sync.
 #[macro_export]
 macro_rules! export_plugin {
-    ($ty:ty) => {
+    ($logic:ty, $params:ty) => {
         #[no_mangle]
-        pub fn truce_create() -> Box<dyn $crate::PluginLogic> {
-            Box::new(<$ty as $crate::PluginLogic>::new())
+        pub fn truce_create(params_ptr: *const ()) -> Box<dyn $crate::PluginLogic> {
+            let params: std::sync::Arc<$params> = unsafe {
+                std::sync::Arc::increment_strong_count(params_ptr as *const $params);
+                std::sync::Arc::from_raw(params_ptr as *const $params)
+            };
+            Box::new(<$logic>::new(params))
         }
 
         #[no_mangle]

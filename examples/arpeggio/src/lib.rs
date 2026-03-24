@@ -35,7 +35,7 @@ pub struct ArpParams {
 // --- Plugin ---
 
 pub struct Arpeggio {
-    pub params: ArpParams,
+    pub params: std::sync::Arc<ArpParams>,
     held_notes: Vec<u8>,
     sample_rate: f64,
     /// Samples since the last arp trigger
@@ -49,7 +49,21 @@ pub struct Arpeggio {
     /// Simple RNG state for random pattern
     rng: u32,
 }
+
 impl Arpeggio {
+    pub fn new(params: std::sync::Arc<ArpParams>) -> Self {
+        Self {
+            params,
+            held_notes: Vec::new(),
+            sample_rate: 44100.0,
+            sample_counter: 0,
+            step_index: 0,
+            current_note: None,
+            going_up: true,
+            rng: 12345,
+        }
+    }
+
     fn build_sequence(&self) -> Vec<u8> {
         if self.held_notes.is_empty() {
             return Vec::new();
@@ -94,23 +108,6 @@ impl Arpeggio {
 }
 
 impl PluginLogic for Arpeggio {
-    fn new() -> Self {
-        Self {
-            params: ArpParams::new(),
-            held_notes: Vec::new(),
-            sample_rate: 44100.0,
-            sample_counter: 0,
-            step_index: 0,
-            current_note: None,
-            going_up: true,
-            rng: 12345,
-        }
-    }
-
-    fn params_mut(&mut self) -> Option<&mut dyn Params> {
-        Some(&mut self.params)
-    }
-
     fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {
         self.sample_rate = sample_rate;
         self.params.set_sample_rate(sample_rate);

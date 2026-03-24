@@ -296,18 +296,16 @@ pub struct {struct_name}Params {{
 {params}
 
 pub struct {struct_name} {{
-    params: {struct_name}Params,
+    params: Arc<{struct_name}Params>,
+}}
+
+impl {struct_name} {{
+    pub fn new(params: Arc<{struct_name}Params>) -> Self {{
+        Self {{ params }}
+    }}
 }}
 
 impl PluginLogic for {struct_name} {{
-    fn new() -> Self {{
-        Self {{ params: {struct_name}Params::new() }}
-    }}
-
-    fn params_mut(&mut self) -> Option<&mut dyn Params> {{
-        Some(&mut self.params)
-    }}
-
     fn reset(&mut self, sr: f64, _bs: usize) {{
         self.params.set_sample_rate(sr);
     }}

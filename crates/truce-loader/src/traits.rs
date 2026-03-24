@@ -1,4 +1,8 @@
 //! The PluginLogic trait — the single trait plugin developers implement.
+//!
+//! Construction (`new()`) is an inherent method on each plugin struct,
+//! not part of this trait. The `plugin!` macro calls it with
+//! `Arc<Params>` so the plugin shares params with the shell and GUI.
 
 use truce_core::buffer::AudioBuffer;
 use truce_core::events::EventList;
@@ -9,27 +13,16 @@ use truce_gui::widgets::WidgetType;
 
 /// The trait for hot-reloadable plugin logic.
 ///
-/// Implement this in your logic dylib. The shell loads it via
-/// `Box<dyn PluginLogic>` and delegates audio processing and GUI
-/// rendering to it.
+/// Implement this on your plugin struct. Construction happens via an
+/// inherent `new(params: Arc<YourParams>)` method — the `plugin!` macro
+/// calls it and passes the shared `Arc<Params>`.
 ///
 /// All methods use safe Rust types. No `unsafe`, no `#[repr(C)]`,
 /// no raw pointers.
 pub trait PluginLogic: Send + 'static {
-    /// Create a new instance with default state.
-    fn new() -> Self where Self: Sized;
 
     /// Reset for a new sample rate / block size.
     fn reset(&mut self, sample_rate: f64, max_block_size: usize);
-
-    /// Return a mutable reference to the plugin's Params, if it owns one.
-    ///
-    /// If this returns Some, the shell automatically syncs parameter
-    /// values from host automation events and advances smoothers before
-    /// each process() call. The developer never calls sync manually.
-    ///
-    /// Return None if the plugin reads params via `context.param(id)` instead.
-    fn params_mut(&mut self) -> Option<&mut dyn truce_params::Params> { None }
 
     /// Process one block of audio.
     fn process(

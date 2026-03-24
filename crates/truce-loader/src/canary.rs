@@ -144,7 +144,6 @@ fn rustc_hash() -> u64 {
 pub struct ProbePlugin;
 
 impl PluginLogic for ProbePlugin {
-    fn new() -> Self { Self }
     fn reset(&mut self, _sr: f64, _bs: usize) {}
 
     fn process(

@@ -70,23 +70,22 @@ const NUM_BANDS: usize = 3;
 const MAX_CHANNELS: usize = 2;
 
 pub struct Eq {
-    pub params: EqParams,
+    pub params: std::sync::Arc<EqParams>,
     filters: [[Biquad; NUM_BANDS]; MAX_CHANNELS],
     sample_rate: f64,
 }
-impl PluginLogic for Eq {
-    fn new() -> Self {
+
+impl Eq {
+    pub fn new(params: std::sync::Arc<EqParams>) -> Self {
         Self {
-            params: EqParams::new(),
+            params,
             filters: [[Biquad::new(); NUM_BANDS]; MAX_CHANNELS],
             sample_rate: 44100.0,
         }
     }
+}
 
-    fn params_mut(&mut self) -> Option<&mut dyn Params> {
-        Some(&mut self.params)
-    }
-
+impl PluginLogic for Eq {
     fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {
         self.sample_rate = sample_rate;
         self.params.set_sample_rate(sample_rate);
@@ -266,9 +265,9 @@ mod tests {
 
     #[test]
     fn gui_snapshot() {
-        let eq = Eq::new();
-        let layout = eq.layout();
         let params = std::sync::Arc::new(EqParams::new());
+        let eq = Eq::new(std::sync::Arc::clone(&params));
+        let layout = eq.layout();
         truce_test::assert_gui_snapshot_grid::<EqParams>(
             "eq_default", params, layout, 0,
         );

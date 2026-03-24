@@ -61,11 +61,20 @@ pub struct SynthParams {
 const MAX_VOICES: usize = 16;
 
 pub struct Synth {
-    pub params: SynthParams,
+    pub params: std::sync::Arc<SynthParams>,
     voices: Vec<Voice>,
     sample_rate: f64,
 }
+
 impl Synth {
+    pub fn new(params: std::sync::Arc<SynthParams>) -> Self {
+        Self {
+            params,
+            voices: Vec::with_capacity(MAX_VOICES),
+            sample_rate: 44100.0,
+        }
+    }
+
     fn note_on(&mut self, note: u8, velocity: f32) {
         let freq = midi_note_to_freq(note);
         let attack = self.params.attack.value() as f64;
@@ -98,18 +107,6 @@ impl Synth {
 }
 
 impl PluginLogic for Synth {
-    fn new() -> Self {
-        Self {
-            params: SynthParams::new(),
-            voices: Vec::with_capacity(MAX_VOICES),
-            sample_rate: 44100.0,
-        }
-    }
-
-    fn params_mut(&mut self) -> Option<&mut dyn Params> {
-        Some(&mut self.params)
-    }
-
     fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {
         self.sample_rate = sample_rate;
         self.voices.clear();
@@ -295,9 +292,9 @@ mod tests {
 
     #[test]
     fn gui_snapshot() {
-        let synth = Synth::new();
-        let layout = synth.layout();
         let params = std::sync::Arc::new(SynthParams::new());
+        let synth = Synth::new(std::sync::Arc::clone(&params));
+        let layout = synth.layout();
         truce_test::assert_gui_snapshot_grid::<SynthParams>(
             "synth_default", params, layout, 0,
         );

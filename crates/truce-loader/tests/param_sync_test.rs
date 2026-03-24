@@ -18,22 +18,20 @@ struct TestParams {
 }
 
 struct TestPlugin {
-    params: TestParams,
+    params: std::sync::Arc<TestParams>,
     last_gain_plain: f64,
 }
 
-impl truce_loader::PluginLogic for TestPlugin {
-    fn new() -> Self {
+impl TestPlugin {
+    fn new(params: std::sync::Arc<TestParams>) -> Self {
         Self {
-            params: TestParams::new(),
+            params,
             last_gain_plain: 0.0,
         }
     }
+}
 
-    fn params_mut(&mut self) -> Option<&mut dyn Params> {
-        Some(&mut self.params)
-    }
-
+impl truce_loader::PluginLogic for TestPlugin {
     fn reset(&mut self, sr: f64, _bs: usize) {
         self.params.set_sample_rate(sr);
     }
@@ -61,8 +59,10 @@ fn plain_param_not_double_denormalized() {
     // If it uses set_normalized, -27.0 dB would be treated as normalized
     // and denormalized to -60 + (-27 * 66) = way out of range.
 
-    let mut shell = truce_loader::static_shell::StaticShell::<TestParams, TestPlugin>::new(
-        TestParams::new(),
+    let params = std::sync::Arc::new(TestParams::new());
+    let logic = TestPlugin::new(std::sync::Arc::clone(&params));
+    let mut shell = truce_loader::static_shell::StaticShell::<TestParams, TestPlugin>::from_parts(
+        params, logic,
     );
     shell.reset(44100.0, 512);
 

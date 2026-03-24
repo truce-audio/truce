@@ -34,7 +34,7 @@ mod test {
             return;
         }
 
-        let loader = NativeLoader::new(path);
+        let loader = NativeLoader::new(path, std::ptr::null());
         let plugin = loader.plugin().expect("plugin should be loaded");
 
         // Verify we got a real plugin (not the probe).
@@ -50,7 +50,7 @@ mod test {
             return;
         }
 
-        let mut loader = NativeLoader::new(path);
+        let mut loader = NativeLoader::new(path, std::ptr::null());
         let plugin = loader.plugin_mut().expect("plugin should be loaded");
         plugin.reset(44100.0, 512);
 
@@ -92,7 +92,7 @@ mod test {
             return;
         }
 
-        let loader = NativeLoader::new(path);
+        let loader = NativeLoader::new(path, std::ptr::null());
         let plugin = loader.plugin().expect("plugin should be loaded");
 
         let layout = plugin.layout();
@@ -109,7 +109,7 @@ mod test {
             return;
         }
 
-        let mut loader = NativeLoader::new(path);
+        let mut loader = NativeLoader::new(path, std::ptr::null());
         let plugin = loader.plugin_mut().expect("plugin should be loaded");
 
         let state = plugin.save_state();

@@ -155,20 +155,16 @@ impl IcedPlugin<GainParams> for GainUi {
 // --- Plugin ---
 
 pub struct GainIced {
-    params: GainParams,
+    params: Arc<GainParams>,
+}
+
+impl GainIced {
+    pub fn new(params: Arc<GainParams>) -> Self {
+        Self { params }
+    }
 }
 
 impl PluginLogic for GainIced {
-    fn new() -> Self {
-        Self {
-            params: GainParams::new(),
-        }
-    }
-
-    fn params_mut(&mut self) -> Option<&mut dyn Params> {
-        Some(&mut self.params)
-    }
-
     fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {
         self.params.set_sample_rate(sample_rate);
         self.params.snap_smoothers();

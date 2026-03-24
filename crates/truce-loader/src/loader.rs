@@ -18,6 +18,9 @@ pub struct NativeLoader {
     dylib_path: PathBuf,
     library: Option<Library>,
     plugin: Option<Box<dyn PluginLogic>>,
+    /// Raw pointer to the shell's `Arc<Params>` (type-erased).
+    /// Passed to `truce_create()` so the plugin shares the same params.
+    params_ptr: *const (),
     last_modified: SystemTime,
     last_hash: u32,
     reload_pending: Arc<AtomicBool>,
@@ -32,7 +35,7 @@ pub struct NativeLoader {
 unsafe impl Send for NativeLoader {}
 
 impl NativeLoader {
-    pub fn new(dylib_path: PathBuf) -> Self {
+    pub fn new(dylib_path: PathBuf, params_ptr: *const ()) -> Self {
         let reload_pending = Arc::new(AtomicBool::new(false));
 
         // Spawn file watcher thread.
@@ -47,6 +50,7 @@ impl NativeLoader {
             dylib_path,
             library: None,
             plugin: None,
+            params_ptr,
             last_modified: SystemTime::UNIX_EPOCH,
             last_hash: 0,
             reload_pending,
@@ -126,7 +130,7 @@ impl NativeLoader {
         drop(probe);
 
         // Load the real plugin.
-        let create_fn: Symbol<fn() -> Box<dyn PluginLogic>> =
+        let create_fn: Symbol<fn(*const ()) -> Box<dyn PluginLogic>> =
             match unsafe { lib.get(b"truce_create") } {
                 Ok(f) => f,
                 Err(e) => {
@@ -134,7 +138,7 @@ impl NativeLoader {
                     return false;
                 }
             };
-        let plugin = create_fn();
+        let plugin = create_fn(self.params_ptr);
 
         self.library = Some(lib);
         self.plugin = Some(plugin);

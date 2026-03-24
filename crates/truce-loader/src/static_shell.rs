@@ -34,10 +34,12 @@ pub struct StaticShell<P: Params, L: PluginLogic> {
 unsafe impl<P: Params, L: PluginLogic> Send for StaticShell<P, L> {}
 
 impl<P: Params + Default + 'static, L: PluginLogic + 'static> StaticShell<P, L> {
-    pub fn new(params: P) -> Self {
+    /// Create from pre-constructed parts. The plugin logic should
+    /// hold an `Arc::clone` of the same params.
+    pub fn from_parts(params: Arc<P>, logic: L) -> Self {
         Self {
-            params: Arc::new(params),
-            logic: L::new(),
+            params,
+            logic,
             meters: Arc::new(std::array::from_fn(|_| AtomicU32::new(0))),
             sample_rate: 44100.0,
         }
@@ -101,16 +103,7 @@ impl<P: Params + Default + 'static, L: PluginLogic + 'static> Plugin for StaticS
             }
         }
 
-        // Sync the plugin's own params from the shell's params.
-        // Uses set_plain WITHOUT snap_smoothers — smoothers advance naturally
-        // via smoothed_next() in the plugin's process(). (Regression: see smoother_test)
-        if let Some(plugin_params) = self.logic.params_mut() {
-            for info in self.params.param_infos() {
-                if let Some(value) = self.params.get_plain(info.id) {
-                    plugin_params.set_plain(info.id, value);
-                }
-            }
-        }
+        // No sync needed — plugin reads from the same Arc<Params>.
 
         // Build a ProcessContext with param/meter callbacks for the logic.
         let params = &self.params;
@@ -250,8 +243,10 @@ macro_rules! export_static {
             type Params = $params;
 
             fn create() -> Self {
+                let params = std::sync::Arc::new(<$params>::new());
+                let logic = <$logic>::new(std::sync::Arc::clone(&params));
                 Self {
-                    inner: $crate::static_shell::StaticShell::new(<$params>::new()),
+                    inner: $crate::static_shell::StaticShell::from_parts(params, logic),
                 }
             }
 

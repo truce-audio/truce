@@ -28,18 +28,16 @@ pub struct GainParams {
 // --- Plugin ---
 
 pub struct GainEgui {
-    params: GainParams,
+    params: std::sync::Arc<GainParams>,
+}
+
+impl GainEgui {
+    pub fn new(params: std::sync::Arc<GainParams>) -> Self {
+        Self { params }
+    }
 }
 
 impl PluginLogic for GainEgui {
-    fn new() -> Self {
-        Self { params: GainParams::new() }
-    }
-
-    fn params_mut(&mut self) -> Option<&mut dyn Params> {
-        Some(&mut self.params)
-    }
-
     fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {
         self.params.set_sample_rate(sample_rate);
         self.params.snap_smoothers();

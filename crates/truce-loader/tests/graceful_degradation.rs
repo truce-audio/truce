@@ -11,7 +11,7 @@ mod test {
     fn missing_dylib_no_crash() {
         // Point at a nonexistent dylib.
         let path = PathBuf::from("/tmp/nonexistent_plugin_dylib.dylib");
-        let loader = NativeLoader::new(path);
+        let loader = NativeLoader::new(path, std::ptr::null());
 
         // Plugin should be None (not loaded), not a crash.
         assert!(loader.plugin().is_none(), "should not load a nonexistent dylib");
@@ -23,7 +23,7 @@ mod test {
         let path = PathBuf::from("/tmp/truce_test_corrupt.dylib");
         std::fs::write(&path, b"not a valid dylib").ok();
 
-        let loader = NativeLoader::new(path.clone());
+        let loader = NativeLoader::new(path.clone(), std::ptr::null());
         assert!(loader.plugin().is_none(), "should not load a corrupt dylib");
 
         // Cleanup.

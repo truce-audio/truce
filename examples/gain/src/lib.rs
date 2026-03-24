@@ -27,18 +27,16 @@ pub struct GainParams {
 // --- Plugin ---
 
 pub struct Gain {
-    params: GainParams,
+    params: std::sync::Arc<GainParams>,
+}
+
+impl Gain {
+    pub fn new(params: std::sync::Arc<GainParams>) -> Self {
+        Self { params }
+    }
 }
 
 impl PluginLogic for Gain {
-    fn new() -> Self {
-        Self { params: GainParams::new() }
-    }
-
-    fn params_mut(&mut self) -> Option<&mut dyn Params> {
-        Some(&mut self.params)
-    }
-
     fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {
         self.params.set_sample_rate(sample_rate);
         self.params.snap_smoothers();
@@ -183,9 +181,9 @@ mod tests {
 
     #[test]
     fn gui_snapshot() {
-        let gain = Gain::new();
-        let layout = gain.layout();
         let params = std::sync::Arc::new(GainParams::new());
+        let gain = Gain::new(std::sync::Arc::clone(&params));
+        let layout = gain.layout();
         truce_test::assert_gui_snapshot_grid::<GainParams>(
             "gain_default", params, layout, 0,
         );

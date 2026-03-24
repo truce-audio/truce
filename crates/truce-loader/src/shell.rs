@@ -56,9 +56,11 @@ unsafe impl<P: Params> Send for HotShell<P> {}
 
 impl<P: Params + 'static> HotShell<P> {
     pub fn new(params: P, dylib_path: PathBuf, info: PluginInfo, bus_layouts: Vec<BusLayout>) -> Self {
-        let loader = NativeLoader::new(dylib_path);
+        let params = Arc::new(params);
+        let params_ptr = Arc::as_ptr(&params) as *const ();
+        let loader = NativeLoader::new(dylib_path, params_ptr);
         Self {
-            params: Arc::new(params),
+            params,
             loader: Arc::new(Mutex::new(loader)),
             meters: Arc::new(std::array::from_fn(|_| AtomicU32::new(0))),
             sample_rate: 44100.0,
@@ -141,15 +143,7 @@ impl<P: Params + 'static> Plugin for HotShell<P> {
         }
         self.params.snap_smoothers();
 
-        // Sync the plugin's own params from the shell's params.
-        // Uses set_plain WITHOUT snap_smoothers — smoothers advance naturally.
-        if let Some(plugin_params) = plugin.params_mut() {
-            for info in self.params.param_infos() {
-                if let Some(value) = self.params.get_plain(info.id) {
-                    plugin_params.set_plain(info.id, value);
-                }
-            }
-        }
+        // No sync needed — plugin reads from the same Arc<Params>.
 
         // Build a ProcessContext with param/meter callbacks for the logic.
         let params = &self.params;
