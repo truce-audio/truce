@@ -31,6 +31,7 @@ members = [
     "crates/truce-iced/examples/gain-iced",
     "crates/truce-vizia",
     "crates/truce-vizia/examples/gain-vizia",
+    "crates/truce-shim-types",
 ]
 
 [workspace.package]
@@ -65,3 +66,4 @@ truce-gpu = { version = "0.1.3", path = "crates/truce-gpu" }
 truce-egui = { version = "0.1.3", path = "crates/truce-egui" }
 truce-iced = { version = "0.1.3", path = "crates/truce-iced" }
 truce-vizia = { version = "0.1.3", path = "crates/truce-vizia" }
+truce-shim-types = { version = "0.1.3", path = "crates/truce-shim-types" }

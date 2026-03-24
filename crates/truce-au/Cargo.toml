@@ -12,3 +12,4 @@ truce-params = { workspace = true }
 
 [build-dependencies]
 cc = "1"
+truce-shim-types = { workspace = true }

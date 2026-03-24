@@ -9,3 +9,4 @@ repository = "https://github.com/truce-audio/truce"
 [dependencies]
 toml = "0.8"
 serde = { version = "1", features = ["derive"] }
+truce-shim-types = { workspace = true }

@@ -11,7 +11,8 @@ fn main() {
     println!("cargo:rerun-if-changed=shim/au_v2_shim.c");
     println!("cargo:rerun-if-changed=shim/au_v2_view.m");
     println!("cargo:rerun-if-changed=shim/au_shim_common.c");
-    println!("cargo:rerun-if-changed=shim/au_shim_types.h");
+    let shim_include = truce_shim_types::include_dir();
+    println!("cargo:rerun-if-changed={}", shim_include.join("au_shim_types.h").display());
 
     // Unique ObjC class name per plugin.
     let plugin_id = std::env::var("TRUCE_AU_PLUGIN_ID").unwrap_or_default();
@@ -60,6 +61,7 @@ fn main() {
     let factory_class_name = format!("TruceAUFactory_{}", sanitized);
 
     build
+        .include(&shim_include)
         .flag("-fobjc-arc")
         .flag("-fmodules")
         .flag("-fvisibility=default")

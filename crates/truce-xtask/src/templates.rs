@@ -8,6 +8,7 @@
 // ---------------------------------------------------------------------------
 
 pub mod au3 {
+    pub use truce_shim_types::AU_SHIM_TYPES_H as SHIM_TYPES_H;
     pub const SWIFT_SOURCE: &str = include_str!("../templates/au3/AudioUnitFactory.swift");
     pub const BRIDGING_HEADER: &str = include_str!("../templates/au3/BridgingHeader.h");
     pub const APP_MAIN_M: &str = include_str!("../templates/au3/main.m");

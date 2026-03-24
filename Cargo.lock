@@ -4437,6 +4437,7 @@ dependencies = [
  "cc",
  "truce-core",
  "truce-params",
+ "truce-shim-types",
 ]
 
 [[package]]
@@ -4704,6 +4705,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "truce-shim-types"
+version = "0.1.3"
+
+[[package]]
 name = "truce-standalone"
 version = "0.1.3"
 dependencies = [
@@ -4762,6 +4767,7 @@ version = "0.1.3"
 dependencies = [
  "serde",
  "toml 0.8.23",
+ "truce-shim-types",
 ]
 
 [[package]]

@@ -1204,7 +1204,8 @@ fn install_all_au_v3_filtered(
     let sign_id = &config.macos.signing_identity;
     let team_id = extract_team_id(sign_id);
     let dt = &config.macos.deployment_target;
-    let shim_dir = root.join("crates/truce-au/shim");
+    // shim_dir used to point at root/crates/truce-au/shim, but now
+    // au_shim_types.h is embedded and written to build_dir/AUExt.
 
     for p in plugins {
         let fw_name = p.fw_name();
@@ -1305,6 +1306,7 @@ fn install_all_au_v3_filtered(
 
             fs::write(build_dir.join("AUExt/AudioUnitFactory.swift"), templates::au3::SWIFT_SOURCE)?;
             fs::write(build_dir.join("AUExt/BridgingHeader.h"), templates::au3::BRIDGING_HEADER)?;
+            fs::write(build_dir.join("AUExt/au_shim_types.h"), templates::au3::SHIM_TYPES_H)?;
             fs::write(build_dir.join("AUExt/AUExt.entitlements"), templates::au3::APPEX_ENTITLEMENTS)?;
             fs::write(build_dir.join("App/main.m"), templates::au3::APP_MAIN_M)?;
             fs::write(build_dir.join("App/App.entitlements"), templates::au3::APP_ENTITLEMENTS)?;
@@ -1336,7 +1338,7 @@ fn install_all_au_v3_filtered(
                     &team_id,
                     &format!("{}.v3", p.suffix),
                     &format!("{}.v3.ext", p.suffix),
-                    shim_dir.to_str().unwrap(),
+                    build_dir.join("AUExt").to_str().unwrap(),
                     fw_build.to_str().unwrap(),
                     &fw_name,
                 ),
