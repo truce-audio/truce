@@ -86,15 +86,15 @@ use SynthParamsParamId as P;
 const MAX_VOICES: usize = 16;
 
 pub struct Synth {
-    pub params: SynthParams,
+    pub params: Arc<SynthParams>,
     voices: Vec<Voice>,
     sample_rate: f64,
 }
 
 impl Synth {
-    pub fn new() -> Self {
+    pub fn new(params: Arc<SynthParams>) -> Self {
         Self {
-            params: SynthParams::new(),
+            params,
             voices: Vec::with_capacity(MAX_VOICES),
             sample_rate: 44100.0,
         }
@@ -186,9 +186,8 @@ impl Plugin for Synth {
 
 impl PluginExport for Synth {
     type Params = SynthParams;
-    fn create() -> Self { Self::new() }
+    fn create(params: Arc<SynthParams>) -> Self { Self::new(params) }
     fn params(&self) -> &SynthParams { &self.params }
-    fn params_mut(&mut self) -> &mut SynthParams { &mut self.params }
 }
 
 truce_clap::export_clap!(Synth);

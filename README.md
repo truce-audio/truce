@@ -49,15 +49,13 @@ pub struct GainParams {
     pub gain: FloatParam,
 }
 
-pub struct Gain { params: GainParams }
+pub struct Gain { params: Arc<GainParams> }
+
+impl Gain {
+    pub fn new(params: Arc<GainParams>) -> Self { Self { params } }
+}
 
 impl PluginLogic for Gain {
-    fn new() -> Self { Self { params: GainParams::new() } }
-
-    fn params_mut(&mut self) -> Option<&mut dyn Params> {
-        Some(&mut self.params)
-    }
-
     fn reset(&mut self, sr: f64, _bs: usize) {
         self.params.set_sample_rate(sr);
     }

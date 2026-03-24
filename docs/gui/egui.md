@@ -36,7 +36,7 @@ use truce_egui::widgets::param_knob;
 use MyParamsParamId as P;
 
 impl PluginLogic for MyPlugin {
-    // ... new(), params_mut(), reset(), process() as usual ...
+    // ... reset(), process() as usual ...
 
     fn custom_editor(&self) -> Option<Box<dyn truce_core::editor::Editor>> {
         Some(Box::new(
