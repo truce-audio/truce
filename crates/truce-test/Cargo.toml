@@ -10,4 +10,5 @@ description = "Test utilities for truce plugins (render, state, params, GUI snap
 truce-core = { workspace = true }
 truce-params = { workspace = true }
 truce-gui = { workspace = true }
+truce-gpu = { workspace = true }
 png = "0.18"

@@ -155,7 +155,7 @@ impl<P: Params + Default + 'static, L: PluginLogic + 'static> Plugin for StaticS
             return Some(editor);
         }
         self.try_builtin_editor()
-            .map(|e| Box::new(e) as Box<dyn truce_core::editor::Editor>)
+            .map(|e| Box::new(truce_gpu::GpuEditor::new(e)) as Box<dyn truce_core::editor::Editor>)
     }
 
     fn latency(&self) -> u32 { self.logic.latency() }
@@ -198,7 +198,6 @@ macro_rules! export_static {
         info: $info:expr,
         bus_layouts: [$($layout:expr),* $(,)?],
         logic: $logic:ty,
-        editor: { $($editor_body:tt)* },
     ) => {
         struct __HotShellWrapper {
             inner: $crate::static_shell::StaticShell<$params, $logic>,
@@ -239,13 +238,7 @@ macro_rules! export_static {
             }
 
             fn editor(&mut self) -> Option<Box<dyn $crate::__macro_deps::truce_core::editor::Editor>> {
-                if let Some(e) = self.inner.try_custom_editor() {
-                    return Some(e);
-                }
-                if let Some(builtin) = self.inner.try_builtin_editor() {
-                    return Some($($editor_body)*(builtin));
-                }
-                None
+                self.inner.editor()
             }
 
             fn latency(&self) -> u32 { self.inner.latency() }

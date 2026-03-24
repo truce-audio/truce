@@ -56,7 +56,7 @@ fn print_help() {
 Usage: cargo xtask <command> [options]
 
 Commands:
-  install [--clap] [--vst3] [--vst2] [--au2] [--au3] [--aax] [--dev] [--gpu] [--no-build] [-p <suffix>]
+  install [--clap] [--vst3] [--vst2] [--au2] [--au3] [--aax] [--dev] [--no-build] [-p <suffix>]
       Build and install plugins. Default: all formats, all plugins.
       --clap       CLAP only (no sudo)
       --vst3       VST3 only
@@ -65,7 +65,6 @@ Commands:
       --au3        AU v3 only (.appex, requires Xcode)
       --aax        AAX only (requires pre-built template)
       --dev        Build hot-reload shells (use with cargo watch for iteration)
-      --gpu        Enable GPU rendering (wgpu/Metal backend)
       --no-build   Skip build, install existing artifacts
       -p <suffix>  Install only the plugin with this suffix (e.g. -p gain)
 
@@ -378,7 +377,6 @@ truce_loader::export_hot! {{
     info: plugin_info!(),
     bus_layouts: [BusLayout::stereo()],
     logic_dylib: "{logic_lib}",
-    editor: {{ |builtin| -> Box<dyn truce_core::editor::Editor> {{ Box::new(builtin) }} }},
 }}
 
 #[cfg(feature = "static-logic")]
@@ -387,7 +385,6 @@ truce_loader::export_static! {{
     info: plugin_info!(),
     bus_layouts: [BusLayout::stereo()],
     logic: {logic_lib}::{struct_name},
-    editor: {{ |builtin| -> Box<dyn truce_core::editor::Editor> {{ Box::new(builtin) }} }},
 }}
 
 #[cfg(feature = "clap")]
@@ -641,7 +638,6 @@ fn cmd_install(args: &[String]) -> Res {
     let mut aax = false;
     let mut no_build = false;
     let mut dev_mode = false;
-    let mut gpu_mode = false;
     let mut plugin_filter: Option<String> = None;
 
     let mut i = 0;
@@ -655,7 +651,6 @@ fn cmd_install(args: &[String]) -> Res {
             "--aax" => aax = true,
             "--no-build" => no_build = true,
             "--dev" => dev_mode = true,
-            "--gpu" => gpu_mode = true,
             "-p" => {
                 i += 1;
                 if i >= args.len() {
@@ -710,7 +705,6 @@ fn cmd_install(args: &[String]) -> Res {
     // Compute extra features string
     let mut extra_features = Vec::new();
     if dev_mode { extra_features.push("dev"); }
-    if gpu_mode { extra_features.push("gpu"); }
     let features_str = extra_features.join(",");
 
     // --- Build ---
@@ -719,17 +713,18 @@ fn cmd_install(args: &[String]) -> Res {
             if !extra_features.is_empty() {
                 let label = extra_features.join(" + ");
                 eprintln!("Building CLAP + VST3 ({label})...");
-                let mut args: Vec<&str> = Vec::new();
-                for p in &plugins {
-                    args.push("-p");
-                    args.push(&p.crate_name);
-                }
-                args.extend_from_slice(&["--features", &features_str]);
-                cargo_build(&[], &args, dt)?;
             } else {
                 eprintln!("Building CLAP + VST3...");
-                cargo_build(&[], &[], dt)?;
             }
+            let mut args: Vec<&str> = Vec::new();
+            for p in &plugins {
+                args.push("-p");
+                args.push(&p.crate_name);
+            }
+            if !extra_features.is_empty() {
+                args.extend_from_slice(&["--features", &features_str]);
+            }
+            cargo_build(&[], &args, dt)?;
             for p in &plugins {
                 let src = root.join(format!(
                     "target/release/lib{}.dylib",

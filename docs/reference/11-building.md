@@ -45,7 +45,6 @@ cargo truce install --vst2       # VST2 only
 cargo truce install --au2        # AU v2 only (.component, needs Developer ID)
 cargo truce install --au3        # AU v3 only (.appex, requires Xcode)
 cargo truce install --aax        # AAX only (requires AAX SDK)
-cargo truce install --gpu        # enable wgpu GPU rendering backend
 cargo truce install -p gain      # Single plugin, all formats
 cargo truce install --au3 -p gain # AU v3 only, just Gain
 

@@ -637,16 +637,8 @@ pub fn assert_gui_snapshot_grid<P: Params + 'static>(
     layout: truce_gui::layout::GridLayout,
     max_diff_pixels: usize,
 ) {
-    use truce_core::editor::Editor;
-    use truce_gui::BuiltinEditor;
-
-    let mut editor =
-        BuiltinEditor::new_with_layout(params, truce_gui::layout::Layout::Grid(layout));
-    editor.render();
-    let pixels = editor.pixel_data().expect("render produced no pixel data");
-    let (w, h) = editor.size();
-
-    assert_gui_snapshot_raw(name, pixels, w, h, max_diff_pixels);
+    let (pixels, w, h) = truce_gpu::snapshot::render_to_pixels(params, layout);
+    assert_gui_snapshot_raw(name, &pixels, w, h, max_diff_pixels);
 }
 
 fn save_png(path: &std::path::Path, pixels: &[u8], w: u32, h: u32) {

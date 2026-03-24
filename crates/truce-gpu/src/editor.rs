@@ -61,6 +61,10 @@ impl<P: Params + 'static> WindowHandler for GpuWindowHandler<P> {
             }
             gpu.present();
         }
+        // If gpu is None, GPU init failed. The window will be blank.
+        // This shouldn't happen on any Mac with Metal support.
+        // A CPU fallback through baseview isn't possible without a
+        // software rendering surface.
     }
 
     fn on_event(&mut self, _window: &mut Window, event: Event) -> EventStatus {
@@ -176,7 +180,8 @@ impl<P: Params + 'static> Editor for GpuEditor<P> {
                 if gpu.is_some() {
                     eprintln!("[truce-gpu] GPU backend active (wgpu/baseview, scale={scale})");
                 } else {
-                    eprintln!("[truce-gpu] GPU init failed");
+                    eprintln!("[truce-gpu] GPU init failed — plugin window will be blank. \
+                              Build with --no-default-features to use CPU rendering.");
                 }
 
                 GpuWindowHandler {

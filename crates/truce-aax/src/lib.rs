@@ -577,7 +577,12 @@ pub unsafe fn _editor_create<P: PluginExport>(
     let info = match &inst.editor {
         Some(editor) => {
             let (w, h) = editor.size();
-            TruceAaxEditorInfo { has_editor: 1, width: w, height: h }
+            let scale = editor.scale_factor();
+            TruceAaxEditorInfo {
+                has_editor: 1,
+                width: (w as f64 * scale) as u32,
+                height: (h as f64 * scale) as u32,
+            }
         }
         None => TruceAaxEditorInfo { has_editor: 0, width: 0, height: 0 },
     };
@@ -672,10 +677,10 @@ pub unsafe fn _editor_get_size<P: PluginExport>(
     let inst = &*(ctx as *mut AaxInstance<P>);
     match &inst.editor {
         Some(editor) => {
-            // editor.size() returns logical points — pass through.
             let (ew, eh) = editor.size();
-            *w = ew;
-            *h = eh;
+            let scale = editor.scale_factor();
+            *w = (ew as f64 * scale) as u32;
+            *h = (eh as f64 * scale) as u32;
             1
         }
         None => 0,

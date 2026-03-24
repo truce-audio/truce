@@ -198,7 +198,7 @@ impl<P: Params + 'static> Plugin for HotShell<P> {
             return Some(editor);
         }
         self.try_builtin_editor()
-            .map(|e| Box::new(e) as Box<dyn Editor>)
+            .map(|e| Box::new(truce_gpu::GpuEditor::new(e)) as Box<dyn Editor>)
     }
 
     fn latency(&self) -> u32 {
@@ -542,7 +542,6 @@ macro_rules! export_hot {
         info: $info:expr,
         bus_layouts: [$($layout:expr),* $(,)?],
         logic_dylib: $dylib_name:expr,
-        editor: { $($editor_body:tt)* },
     ) => {
         struct __HotShellWrapper {
             inner: $crate::shell::HotShell<$params>,
@@ -617,13 +616,7 @@ macro_rules! export_hot {
             }
 
             fn editor(&mut self) -> Option<Box<dyn $crate::__macro_deps::truce_core::editor::Editor>> {
-                if let Some(e) = self.inner.try_custom_editor() {
-                    return Some(e);
-                }
-                if let Some(builtin) = self.inner.try_builtin_editor() {
-                    return Some($($editor_body)*(builtin));
-                }
-                None
+                self.inner.editor()
             }
 
             fn latency(&self) -> u32 { self.inner.latency() }

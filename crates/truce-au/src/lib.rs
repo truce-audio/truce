@@ -289,8 +289,9 @@ unsafe extern "C" fn cb_gui_get_size<P: PluginExport>(
     let inst = &*(ctx as *mut AuInstance<P>);
     if let Some(ref editor) = inst.editor {
         let (ew, eh) = editor.size();
-        *w = ew;
-        *h = eh;
+        let scale = editor.scale_factor();
+        *w = (ew as f64 * scale) as u32;
+        *h = (eh as f64 * scale) as u32;
     }
 }
 

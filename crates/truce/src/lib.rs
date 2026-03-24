@@ -19,9 +19,6 @@ pub mod __reexport {
 
     #[cfg(feature = "dev")]
     pub use truce_loader::shell::HotShell;
-
-    #[cfg(feature = "gpu")]
-    pub use truce_gpu::GpuEditor;
 }
 
 /// Prelude — import everything a plugin author needs.

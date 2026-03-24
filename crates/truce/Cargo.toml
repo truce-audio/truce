@@ -18,13 +18,8 @@ default = ["clap"]
 clap = ["dep:truce-clap"]
 vst3 = ["dep:truce-vst3"]
 dev = ["truce-loader/shell"]
-gpu = ["dep:truce-gpu"]
 
 [dependencies.truce-clap]
-workspace = true
-optional = true
-
-[dependencies.truce-gpu]
 workspace = true
 optional = true
 

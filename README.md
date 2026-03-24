@@ -149,7 +149,7 @@ custom GUI for any third-party plugin (Apple limitation).
 
 - **6 plugin formats** from one codebase (CLAP, VST3, VST2, AU v2, AU v3, AAX)
 - **Hot reload** — edit DSP/layout, rebuild, hear changes without restarting the DAW
-- **Built-in GUI** — knobs, sliders, toggles, selectors, meters, XY pads (tiny-skia CPU rendering, optional wgpu GPU backend via `--gpu` flag). TrueType font rendering (fontdue, JetBrains Mono)
+- **Built-in GUI** — knobs, sliders, toggles, selectors, meters, XY pads (wgpu GPU rendering). TrueType font rendering (fontdue, JetBrains Mono)
 - **Declarative params** — `#[derive(Params)]` + `#[param(...)]` with smoothing, ranges, units
 - **`truce::plugin!`** — one macro generates all format exports + GUI + state serialization
 - **`cargo truce`** — build, bundle, sign, install, validate, clean

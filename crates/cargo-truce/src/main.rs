@@ -133,7 +133,6 @@ vst2 = ["dep:truce-vst2"]
 au = ["dep:truce-au"]
 aax = ["dep:truce-aax"]
 dev = ["truce/dev"]
-gpu = ["truce/gpu"]
 
 [dependencies]
 truce = {{ git = "https://github.com/truce-audio/truce" }}

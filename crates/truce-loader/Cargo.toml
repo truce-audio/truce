@@ -10,6 +10,8 @@ log = "0.4"
 truce-core = { workspace = true }
 truce-gui = { workspace = true }
 truce-params = { workspace = true }
+truce-gpu = { workspace = true }
+
 [dependencies.libloading]
 version = "0.8"
 optional = true

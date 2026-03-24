@@ -9,10 +9,7 @@ or format compatibility.
 The default. Define a `layout()` method and truce renders it
 automatically — no custom editor code needed.
 
-The default rendering backend is CPU-based (tiny-skia). A wgpu-based
-GPU backend is available behind the `gpu` feature flag — enable it
-with `cargo truce install --gpu`. If GPU initialization fails at runtime,
-the CPU backend is used as a fallback.
+The rendering backend is GPU-based (wgpu/Metal) by default.
 
 Text is rendered using fontdue (TrueType rasterization) with JetBrains
 Mono Regular embedded at compile time.

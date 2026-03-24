@@ -83,6 +83,14 @@ pub trait Editor: Send {
         false
     }
 
+    /// Current DPI scale factor (Retina = 2.0, normal = 1.0).
+    ///
+    /// Format wrappers multiply `size()` by this when reporting to hosts
+    /// that expect physical pixels.
+    fn scale_factor(&self) -> f64 {
+        1.0
+    }
+
     /// DPI scale factor changed.
     fn set_scale_factor(&mut self, _factor: f64) {}
 }

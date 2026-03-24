@@ -97,10 +97,9 @@ Build logic lives in `truce-xtask` (library crate). `cargo-truce`
 provides the user-facing CLI.
 
 ```sh
-cargo truce install              # all formats, static
+cargo truce install              # all formats, GPU rendering (default)
 cargo truce install --dev        # all formats, hot-reload
-cargo truce install --gpu        # all formats, GPU rendering
-cargo truce install --gpu --dev  # GPU + hot-reload
+cargo truce install -p gain      # single plugin
 cargo truce install --clap       # CLAP only
 cargo truce install -p gain      # single plugin
 cargo truce test                 # run all tests

@@ -9,14 +9,13 @@ rust-version.workspace = true
 crate-type = ["cdylib", "rlib"]
 
 [features]
-default = ["clap", "vst3", "gpu"]
+default = ["clap", "vst3"]
 clap = ["dep:truce-clap", "dep:clap-sys"]
 vst3 = ["dep:truce-vst3"]
 vst2 = ["dep:truce-vst2"]
 aax = ["dep:truce-aax"]
 au = ["dep:truce-au"]
 dev = ["truce/dev"]
-gpu = ["truce/gpu"]
 
 [dependencies]
 truce = { workspace = true }

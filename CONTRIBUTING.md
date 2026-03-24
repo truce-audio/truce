@@ -56,7 +56,7 @@ See [docs/status.md](docs/status.md) for a full crate-by-crate breakdown.
 ```sh
 cargo truce install --clap           # build + install CLAP only (fastest)
 cargo truce install --dev            # hot-reload shells
-cargo truce install --gpu            # wgpu GPU rendering
+cargo truce install -p gain          # single plugin
 cargo truce install -p gain          # single plugin
 cargo truce clean                    # clear AU and DAW plugin caches
 cargo truce validate --auval         # AU validator only

@@ -4415,7 +4415,6 @@ dependencies = [
  "truce-clap",
  "truce-core",
  "truce-derive",
- "truce-gpu",
  "truce-loader",
  "truce-params",
  "truce-params-derive",
@@ -4683,6 +4682,7 @@ dependencies = [
  "parking_lot 0.12.5",
  "truce",
  "truce-core",
+ "truce-gpu",
  "truce-gui",
  "truce-params",
  "truce-params-derive",
@@ -4726,6 +4726,7 @@ version = "0.1.6"
 dependencies = [
  "png 0.18.1",
  "truce-core",
+ "truce-gpu",
  "truce-gui",
  "truce-params",
 ]

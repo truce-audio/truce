@@ -69,14 +69,6 @@ macro_rules! __plugin_impl {
             info: $crate::prelude::plugin_info!(),
             bus_layouts: [$($layout),*],
             logic: $logic,
-            editor: {
-                |builtin| -> Box<dyn $crate::core::editor::Editor> {
-                    #[cfg(feature = "gpu")]
-                    { return Box::new($crate::__reexport::GpuEditor::new(builtin)); }
-                    #[cfg(not(feature = "gpu"))]
-                    { Box::new(builtin) }
-                }
-            },
         }
 
         // --- Dev mode (hot-reload) ---
@@ -191,16 +183,7 @@ macro_rules! __plugin_dev {
             }
 
             fn editor(&mut self) -> Option<Box<dyn $crate::core::editor::Editor>> {
-                if let Some(e) = self.inner.try_custom_editor() {
-                    return Some(e);
-                }
-                if let Some(builtin) = self.inner.try_builtin_editor() {
-                    #[cfg(feature = "gpu")]
-                    { return Some(Box::new($crate::__reexport::GpuEditor::new(builtin))); }
-                    #[cfg(not(feature = "gpu"))]
-                    { return Some(Box::new(builtin) as _); }
-                }
-                None
+                self.inner.editor()
             }
 
             fn latency(&self) -> u32 { self.inner.latency() }

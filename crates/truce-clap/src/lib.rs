@@ -1146,9 +1146,9 @@ unsafe extern "C" fn gui_get_size<P: PluginExport>(
     let data = data_from_plugin::<P>(plugin);
     if let Some(ref editor) = data.editor {
         let (w, h) = editor.size();
-        // editor.size() returns logical points — pass through directly.
-        *width = w;
-        *height = h;
+        let scale = editor.scale_factor();
+        *width = (w as f64 * scale) as u32;
+        *height = (h as f64 * scale) as u32;
         return true;
     }
     false

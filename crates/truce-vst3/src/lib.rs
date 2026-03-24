@@ -452,9 +452,9 @@ unsafe extern "C" fn cb_gui_get_size<P: PluginExport>(
     let inst = &*(ctx as *mut Vst3Instance<P>);
     if let Some(ref editor) = inst.editor {
         let (ew, eh) = editor.size();
-        // editor.size() returns logical points — pass through directly.
-        *w = ew;
-        *h = eh;
+        let scale = editor.scale_factor();
+        *w = (ew as f64 * scale) as u32;
+        *h = (eh as f64 * scale) as u32;
     }
 }
 

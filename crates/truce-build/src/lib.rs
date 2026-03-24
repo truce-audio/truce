@@ -54,8 +54,8 @@ struct PluginDef {
 /// Sets:
 /// - `TRUCE_PLUGIN_NAME` — display name
 /// - `TRUCE_PLUGIN_ID` — `{vendor.id}.{suffix}` (used as CLAP + VST3 ID)
+/// - `TRUCE_FOURCC` — 4-char plugin identifier (e.g., "TGan")
 /// - `TRUCE_AU_TYPE` — 4-char AU type (e.g., "aufx")
-/// - `TRUCE_AU_SUBTYPE` — 4-char AU subtype (e.g., "TGan")
 /// - `TRUCE_AU_MANUFACTURER` — 4-char AU manufacturer (e.g., "Trce")
 /// - `TRUCE_CATEGORY` — "Effect" or "Instrument" (derived from au_type)
 pub fn emit_plugin_env() {

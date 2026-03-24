@@ -656,6 +656,13 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
         (self.layout.width(), self.layout.height())
     }
 
+    fn scale_factor(&self) -> f64 {
+        // BuiltinEditor reports size in logical points. The NSView is created
+        // in points and AppKit handles Retina scaling. Return 1.0 so format
+        // wrappers pass the logical size to the host unchanged.
+        1.0
+    }
+
     fn open(&mut self, parent: RawWindowHandle, context: EditorContext) {
         let (w, h) = self.size();
         self.backend = CpuBackend::new(w, h);

@@ -212,7 +212,6 @@ cargo truce install --vst3         # VST3 (for Ableton, FL Studio)
 cargo truce install --au2          # AU v2 (for Logic Pro)
 cargo truce install --au3          # AU v3 (for Logic Pro, Ableton)
 cargo truce install --aax          # AAX (for Pro Tools, needs SDK)
-cargo truce install --gpu          # enable wgpu GPU rendering backend
 ```
 
 ---

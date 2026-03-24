@@ -20,8 +20,7 @@ pub use render::RenderBackend;
 pub use theme::Theme;
 
 /// Get the platform's display scale factor (Retina = 2.0, normal = 1.0).
-/// Use this to convert pixel dimensions from `Editor::size()` to logical
-/// points for host APIs (CLAP, VST3, VST2).
+/// Also available via `Editor::scale_factor()` on `BuiltinEditor`.
 #[cfg(target_os = "macos")]
 pub fn backing_scale() -> f64 {
     unsafe { platform::truce_platform_backing_scale() }

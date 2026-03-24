@@ -6,16 +6,12 @@ automatically. No custom editor code needed.
 
 ## Rendering
 
-Two rendering backends:
+The built-in GUI renders using wgpu (Metal/DX12/Vulkan) with lyon
+tessellation. GPU rendering is always on — no feature flags needed.
 
-| Backend | Crate | Activation | Notes |
-|---------|-------|------------|-------|
-| CPU | `truce-gui` | Default | Software rasterization via tiny-skia |
-| GPU | `truce-gpu` | `cargo truce install --gpu` | wgpu (Metal/DX12/Vulkan), lyon tessellation |
-
-Both render identically — the GPU backend implements the same
-`RenderBackend` trait. If GPU initialization fails at runtime, the CPU
-backend is used as a fallback.
+The CPU backend (`truce-gui`, tiny-skia) is used internally for snapshot
+testing and as the rendering abstraction layer. The GPU backend implements
+the same `RenderBackend` trait and renders identically.
 
 Text is rendered with fontdue (TrueType rasterization) using JetBrains
 Mono Regular, embedded at compile time.
