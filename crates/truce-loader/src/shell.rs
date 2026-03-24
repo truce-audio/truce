@@ -4,7 +4,6 @@
 //! delegating all logic to the PluginLogic trait object in the
 //! hot-reloadable dylib.
 
-use std::ffi::c_void;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
@@ -18,12 +17,6 @@ use truce_core::info::PluginInfo;
 use truce_core::process::{ProcessContext, ProcessStatus};
 use truce_core::plugin::Plugin;
 use truce_params::Params;
-
-use truce_gui::backend_cpu::CpuBackend;
-use truce_gui::interaction::WidgetRegion;
-use truce_gui::layout::PluginLayout;
-use truce_gui::platform::{PlatformView, ViewCallbacks};
-use truce_gui::widgets::WidgetType as WidgetKind;
 
 use crate::loader::NativeLoader;
 
@@ -40,6 +33,7 @@ use crate::loader::NativeLoader;
 pub struct HotShell<P: Params> {
     pub params: Arc<P>,
     loader: Arc<Mutex<NativeLoader>>,
+    dylib_path: PathBuf,
     /// Meter values written by DSP, read by GUI.
     meters: Arc<[AtomicU32; 256]>,
     sample_rate: f64,
@@ -58,10 +52,11 @@ impl<P: Params + 'static> HotShell<P> {
     pub fn new(params: P, dylib_path: PathBuf, info: PluginInfo, bus_layouts: Vec<BusLayout>) -> Self {
         let params = Arc::new(params);
         let params_ptr = Arc::as_ptr(&params) as *const ();
-        let loader = NativeLoader::new(dylib_path, params_ptr);
+        let loader = NativeLoader::new(dylib_path.clone(), params_ptr);
         Self {
             params,
             loader: Arc::new(Mutex::new(loader)),
+            dylib_path,
             meters: Arc::new(std::array::from_fn(|_| AtomicU32::new(0))),
             sample_rate: 44100.0,
             max_block_size: 1024,
@@ -188,11 +183,22 @@ impl<P: Params + 'static> Plugin for HotShell<P> {
     }
 
     fn editor(&mut self) -> Option<Box<dyn Editor>> {
-        if let Some(editor) = self.try_custom_editor() {
-            return Some(editor);
+        eprintln!("[truce-hot] editor() called, dylib: {}", self.dylib_path.display());
+        let params_ptr = Arc::as_ptr(&self.params) as *const ();
+        let gui_loader = NativeLoader::new(self.dylib_path.clone(), params_ptr);
+
+        // Custom editor path (egui, vizia, iced)
+        if let Some(custom) = self.try_custom_editor() {
+            return Some(Box::new(HotEditor::<P>::new_custom(custom)));
         }
-        self.try_builtin_editor()
-            .map(|e| Box::new(truce_gpu::GpuEditor::new(e)) as Box<dyn Editor>)
+
+        // Built-in editor path (layout + GPU)
+        let builtin = self.try_builtin_editor()?;
+        let inner = Arc::new(std::sync::Mutex::new(builtin));
+        let gpu = truce_gpu::GpuEditor::new_shared(Arc::clone(&inner));
+        Some(Box::new(HotEditor::new_builtin(
+            gpu, inner, gui_loader, Arc::clone(&self.params),
+        )))
     }
 
     fn latency(&self) -> u32 {
@@ -210,314 +216,129 @@ impl<P: Params + 'static> Plugin for HotShell<P> {
             .map(|v| f32::from_bits(v.load(Ordering::Relaxed)))
             .unwrap_or(0.0)
     }
+
 }
 
 // ---------------------------------------------------------------------------
-// HotEditor — delegates rendering to the dylib's render() method
+// HotEditor — wraps editors for GUI hot-reload
 // ---------------------------------------------------------------------------
 
+enum HotEditorInner<P: Params> {
+    /// Built-in GUI: swap BuiltinEditor inside shared mutex on reload.
+    /// GPU rendering continues seamlessly.
+    Builtin {
+        gpu: truce_gpu::GpuEditor<P>,
+        inner: Arc<std::sync::Mutex<truce_gui::editor::BuiltinEditor<P>>>,
+    },
+    /// Custom GUI (egui, vizia, iced): close/reopen on reload.
+    Custom {
+        editor: Box<dyn Editor>,
+    },
+}
+
 struct HotEditor<P: Params> {
-    loader: Arc<Mutex<NativeLoader>>,
-    meters: Arc<[AtomicU32; 256]>,
-    params_for_gui: Arc<P>,
-    layout: PluginLayout,
-    regions: Vec<WidgetRegion>,
-    backend: Option<CpuBackend>,
-    interaction: HotInteraction,
-    context: Option<EditorContext>,
-    view: Option<PlatformView>,
-    self_ptr: *mut c_void,
+    kind: HotEditorInner<P>,
+    /// Background thread handle for the GUI reload watcher.
+    _watcher: Option<std::thread::JoinHandle<()>>,
 }
 
 unsafe impl<P: Params> Send for HotEditor<P> {}
 
 impl<P: Params + 'static> HotEditor<P> {
-    fn new(
-        loader: Arc<Mutex<NativeLoader>>,
-        meters: Arc<[AtomicU32; 256]>,
-        layout: PluginLayout,
-        params_for_gui: Arc<P>,
+    fn new_builtin(
+        gpu: truce_gpu::GpuEditor<P>,
+        inner: Arc<std::sync::Mutex<truce_gui::editor::BuiltinEditor<P>>>,
+        mut gui_loader: NativeLoader,
+        params: Arc<P>,
     ) -> Self {
-        // Build initial regions from the layout.
-        let mut interaction_state = truce_gui::interaction::InteractionState::new();
-        interaction_state.build_regions(&layout);
-        let regions = interaction_state.knob_regions;
+        // Spawn a background thread that watches for dylib changes
+        // and swaps the BuiltinEditor inside the shared mutex.
+        let inner_for_thread = Arc::clone(&inner);
+        let params_for_thread = Arc::clone(&params);
+        let watcher = std::thread::Builder::new()
+            .name("truce-gui-reload".into())
+            .spawn(move || {
+                eprintln!("[truce-hot] GUI reload watcher thread started");
+                loop {
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                    if gui_loader.is_reload_pending() {
+                        eprintln!("[truce-hot] GUI dylib change detected, reloading...");
+                        if gui_loader.reload() {
+                            if let Some(plugin) = gui_loader.plugin() {
+                                let layout = plugin.layout();
+                                if layout.width > 0 && layout.height > 0 {
+                                    let new_builtin = truce_gui::editor::BuiltinEditor::new_grid(
+                                        Arc::clone(&params_for_thread), layout,
+                                    );
+                                    if let Ok(mut guard) = inner_for_thread.lock() {
+                                        *guard = new_builtin;
+                                    }
+                                    eprintln!("[truce-hot] GUI layout reloaded");
+                                }
+                            }
+                        }
+                    }
+                }
+            })
+            .ok();
 
         Self {
-            loader,
-            meters,
-            params_for_gui,
-            layout,
-            regions,
-            backend: None,
-            interaction: HotInteraction::new(),
-            context: None,
-            view: None,
-            self_ptr: std::ptr::null_mut(),
+            kind: HotEditorInner::Builtin { gpu, inner },
+            _watcher: watcher,
         }
     }
 
-    fn on_mouse_down(&mut self, x: f32, y: f32) {
-        let hit_result = {
-            let loader = self.loader.lock();
-            let Some(plugin) = loader.plugin() else { return };
-            plugin.hit_test(&self.regions, x, y)
-        };
-
-        let Some(idx) = hit_result else { return };
-        let region = &self.regions[idx];
-
-        if let Some(ref ctx) = self.context {
-            let param_id = region.param_id;
-            let current = (ctx.get_param)(param_id);
-
-            match region.widget_type {
-                WidgetKind::Toggle => {
-                    let new_val = if current > 0.5 { 0.0 } else { 1.0 };
-                    (ctx.begin_edit)(param_id);
-                    (ctx.set_param)(param_id, new_val);
-                    (ctx.end_edit)(param_id);
-                    self.regions[idx].normalized_value = new_val as f32;
-                }
-                WidgetKind::Meter => {}
-                _ => {
-                    (ctx.begin_edit)(param_id);
-                    self.interaction.begin_drag(idx, param_id, current, y, region);
-                }
-            }
+    fn new_custom(editor: Box<dyn Editor>) -> Self {
+        // Custom editors don't get background reload (yet).
+        // Developer closes/reopens the window manually.
+        Self {
+            kind: HotEditorInner::Custom { editor },
+            _watcher: None,
         }
     }
-
-    fn on_mouse_dragged(&mut self, x: f32, y: f32) {
-        let Some(ref drag) = self.interaction.dragging else { return };
-        let Some(ref ctx) = self.context else { return };
-
-        let new_val = match drag.kind {
-            WidgetKind::Slider => {
-                let margin = 6.0;
-                let rel = (x - drag.region_x - margin) / (drag.region_w - margin * 2.0);
-                (rel as f64).clamp(0.0, 1.0)
-            }
-            _ => {
-                let dy = drag.start_y - y;
-                let delta = dy as f64 / 200.0;
-                (drag.start_value + delta).clamp(0.0, 1.0)
-            }
-        };
-        (ctx.set_param)(drag.param_id, new_val);
-    }
-
-    fn on_mouse_up(&mut self, _x: f32, _y: f32) {
-        if let Some(drag) = self.interaction.dragging.take() {
-            if let Some(ref ctx) = self.context {
-                (ctx.end_edit)(drag.param_id);
-            }
-        }
-    }
-
-    fn on_scroll(&mut self, x: f32, y: f32, delta_y: f32) {
-        let hit_result = {
-            let loader = self.loader.lock();
-            let Some(plugin) = loader.plugin() else { return };
-            plugin.hit_test(&self.regions, x, y)
-        };
-        let Some(idx) = hit_result else { return };
-        let region = &self.regions[idx];
-
-        if region.widget_type == WidgetKind::Meter { return; }
-
-        if let Some(ref ctx) = self.context {
-            let param_id = region.param_id;
-            let current = (ctx.get_param)(param_id);
-            let delta = delta_y as f64 / 200.0;
-            let new_val = (current + delta).clamp(0.0, 1.0);
-            (ctx.begin_edit)(param_id);
-            (ctx.set_param)(param_id, new_val);
-            (ctx.end_edit)(param_id);
-        }
-    }
-
-    fn on_double_click(&mut self, x: f32, y: f32) {
-        let hit_result = {
-            let loader = self.loader.lock();
-            let Some(plugin) = loader.plugin() else { return };
-            plugin.hit_test(&self.regions, x, y)
-        };
-        let Some(idx) = hit_result else { return };
-        let region = &self.regions[idx];
-
-        if let Some(ref ctx) = self.context {
-            let param_id = region.param_id;
-            let default = self.params_for_gui.get_normalized(param_id).unwrap_or(0.5);
-            (ctx.begin_edit)(param_id);
-            (ctx.set_param)(param_id, default);
-            (ctx.end_edit)(param_id);
-        }
-    }
-
-    fn on_mouse_moved(&mut self, x: f32, y: f32) -> bool {
-        let loader = self.loader.lock();
-        let Some(plugin) = loader.plugin() else { return false };
-        let hit = plugin.hit_test(&self.regions, x, y);
-        drop(loader);
-        self.interaction.hover_idx = hit;
-        hit.is_some()
-    }
-}
-
-// C callbacks for the platform view.
-
-unsafe extern "C" fn hot_cb_render<P: Params + 'static>(
-    ctx: *mut c_void,
-    out_w: *mut u32,
-    out_h: *mut u32,
-) -> *const u8 {
-    let editor = &mut *(ctx as *mut HotEditor<P>);
-
-    // Update region values from host params and meters.
-    let hover = editor.interaction.hover_idx;
-    let _drag_param = editor.interaction.dragging.as_ref().map(|d| d.param_id);
-    for region in &mut editor.regions {
-        if let Some(ref ectx) = editor.context {
-            region.normalized_value = (ectx.get_param)(region.param_id) as f32;
-        }
-        if region.widget_type == WidgetKind::Meter {
-            if let Some(slot) = editor.meters.get(region.param_id as usize) {
-                region.normalized_value = f32::from_bits(slot.load(Ordering::Relaxed));
-            }
-        }
-    }
-
-    let backend = match editor.backend.as_mut() {
-        Some(b) => b,
-        None => {
-            *out_w = 0;
-            *out_h = 0;
-            return std::ptr::null();
-        }
-    };
-
-    // Call the dylib's render() with the CpuBackend.
-    {
-        let loader = editor.loader.lock();
-        if let Some(plugin) = loader.plugin() {
-            plugin.render(backend);
-        }
-    }
-
-    *out_w = backend.width();
-    *out_h = backend.height();
-    backend.data().as_ptr()
-}
-
-unsafe extern "C" fn hot_cb_mouse_down<P: Params + 'static>(ctx: *mut c_void, x: f32, y: f32) {
-    let editor = &mut *(ctx as *mut HotEditor<P>);
-    editor.on_mouse_down(x, y);
-}
-
-unsafe extern "C" fn hot_cb_mouse_dragged<P: Params + 'static>(ctx: *mut c_void, x: f32, y: f32) {
-    let editor = &mut *(ctx as *mut HotEditor<P>);
-    editor.on_mouse_dragged(x, y);
-}
-
-unsafe extern "C" fn hot_cb_mouse_up<P: Params + 'static>(ctx: *mut c_void, x: f32, y: f32) {
-    let editor = &mut *(ctx as *mut HotEditor<P>);
-    editor.on_mouse_up(x, y);
-}
-
-unsafe extern "C" fn hot_cb_scroll<P: Params + 'static>(ctx: *mut c_void, x: f32, y: f32, dy: f32) {
-    let editor = &mut *(ctx as *mut HotEditor<P>);
-    editor.on_scroll(x, y, dy);
-}
-
-unsafe extern "C" fn hot_cb_double_click<P: Params + 'static>(ctx: *mut c_void, x: f32, y: f32) {
-    let editor = &mut *(ctx as *mut HotEditor<P>);
-    editor.on_double_click(x, y);
-}
-
-unsafe extern "C" fn hot_cb_mouse_moved<P: Params + 'static>(ctx: *mut c_void, x: f32, y: f32) -> u8 {
-    let editor = &mut *(ctx as *mut HotEditor<P>);
-    editor.on_mouse_moved(x, y) as u8
 }
 
 impl<P: Params + 'static> Editor for HotEditor<P> {
     fn size(&self) -> (u32, u32) {
-        (self.layout.width, self.layout.height)
+        match &self.kind {
+            HotEditorInner::Builtin { gpu, .. } => gpu.size(),
+            HotEditorInner::Custom { editor } => editor.size(),
+        }
     }
 
     fn open(&mut self, parent: RawWindowHandle, context: EditorContext) {
-        let (w, h) = self.size();
-        self.backend = CpuBackend::new(w, h);
-        self.context = Some(context);
-
-        let parent_ptr = match parent {
-            RawWindowHandle::AppKit(ptr) => ptr,
-            #[allow(unused)]
-            _ => std::ptr::null_mut(),
-        };
-
-        if !parent_ptr.is_null() {
-            let self_ptr = self as *mut HotEditor<P> as *mut c_void;
-            self.self_ptr = self_ptr;
-
-            let callbacks = ViewCallbacks {
-                render: Some(hot_cb_render::<P>),
-                mouse_down: Some(hot_cb_mouse_down::<P>),
-                mouse_dragged: Some(hot_cb_mouse_dragged::<P>),
-                mouse_up: Some(hot_cb_mouse_up::<P>),
-                scroll: Some(hot_cb_scroll::<P>),
-                double_click: Some(hot_cb_double_click::<P>),
-                mouse_moved: Some(hot_cb_mouse_moved::<P>),
-            };
-
-            self.view = unsafe { PlatformView::new(parent_ptr, w, h, self_ptr, &callbacks) };
+        match &mut self.kind {
+            HotEditorInner::Builtin { gpu, .. } => gpu.open(parent, context),
+            HotEditorInner::Custom { editor } => editor.open(parent, context),
         }
     }
 
     fn close(&mut self) {
-        self.view = None;
-        self.context = None;
-        self.backend = None;
-        self.self_ptr = std::ptr::null_mut();
+        match &mut self.kind {
+            HotEditorInner::Builtin { gpu, .. } => gpu.close(),
+            HotEditorInner::Custom { editor } => editor.close(),
+        }
     }
 
     fn idle(&mut self) {
-        // Platform view handles its own repaint timer.
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Simplified interaction state for the hot editor
-// ---------------------------------------------------------------------------
-
-struct HotInteraction {
-    hover_idx: Option<usize>,
-    dragging: Option<HotDragState>,
-}
-
-struct HotDragState {
-    param_id: u32,
-    start_value: f64,
-    start_y: f32,
-    kind: WidgetKind,
-    region_x: f32,
-    region_w: f32,
-}
-
-impl HotInteraction {
-    fn new() -> Self {
-        Self { hover_idx: None, dragging: None }
+        match &mut self.kind {
+            HotEditorInner::Builtin { gpu, .. } => gpu.idle(),
+            HotEditorInner::Custom { editor } => editor.idle(),
+        }
     }
 
-    fn begin_drag(&mut self, _idx: usize, param_id: u32, current: f64, mouse_y: f32, region: &WidgetRegion) {
-        self.dragging = Some(HotDragState {
-            param_id,
-            start_value: current,
-            start_y: mouse_y,
-            kind: region.widget_type,
-            region_x: region.x,
-            region_w: region.w,
-        });
+    fn scale_factor(&self) -> f64 {
+        match &self.kind {
+            HotEditorInner::Builtin { gpu, .. } => gpu.scale_factor(),
+            HotEditorInner::Custom { editor } => editor.scale_factor(),
+        }
+    }
+
+    fn can_resize(&self) -> bool {
+        match &self.kind {
+            HotEditorInner::Builtin { gpu, .. } => gpu.can_resize(),
+            HotEditorInner::Custom { editor } => editor.can_resize(),
+        }
     }
 }
 

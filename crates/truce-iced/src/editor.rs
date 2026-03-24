@@ -472,10 +472,9 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
         frame.present();
     }
 
-    /// Convert pixel coordinates to logical and queue a cursor move event.
+    /// Queue a cursor move event. Coordinates are in logical points.
     fn queue_cursor_move(&mut self, x: f32, y: f32) {
-        let scale = self.scale_factor as f32;
-        self.cursor_position = Point::new(x / scale, y / scale);
+        self.cursor_position = Point::new(x, y);
         self.pending_events
             .push(Event::Mouse(iced::mouse::Event::CursorMoved {
                 position: self.cursor_position,

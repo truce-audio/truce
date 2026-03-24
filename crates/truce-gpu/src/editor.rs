@@ -14,7 +14,7 @@ use truce_gui::render::RenderBackend;
 use truce_params::Params;
 
 use crate::backend::WgpuBackend;
-use crate::platform::{ParentWindow, query_backing_scale};
+use crate::platform::ParentWindow;
 
 /// GPU-accelerated editor.
 ///
@@ -36,6 +36,14 @@ impl<P: Params + 'static> GpuEditor<P> {
             size,
             window: None,
         }
+    }
+
+    /// Create from a pre-existing shared reference.
+    /// Used by `HotEditor` to share the inner `BuiltinEditor` so it can
+    /// swap the layout on hot-reload while GPU rendering continues.
+    pub fn new_shared(inner: Arc<Mutex<BuiltinEditor<P>>>) -> Self {
+        let size = inner.lock().unwrap().size();
+        Self { inner, size, window: None }
     }
 }
 
@@ -149,7 +157,7 @@ impl<P: Params + 'static> Editor for GpuEditor<P> {
     }
 
     fn open(&mut self, parent: RawWindowHandle, context: EditorContext) {
-        let system_scale = query_backing_scale(&parent);
+        let system_scale = truce_gui::backing_scale();
         let (lw, lh) = self.size; // logical points
 
         // Set up the inner editor's context for param access

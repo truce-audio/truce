@@ -101,13 +101,8 @@
 // ---------------------------------------------------------------------------
 
 - (NSPoint)eventPoint:(NSEvent *)event {
-    NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];
-    CGFloat scale = self.window ? self.window.backingScaleFactor
-                                : [NSScreen mainScreen].backingScaleFactor;
-    if (scale < 1.0) scale = 1.0;
-    p.x *= scale;
-    p.y *= scale;
-    return p;
+    // Return logical points — iced works in points, not pixels.
+    return [self convertPoint:event.locationInWindow fromView:nil];
 }
 
 - (void)mouseDown:(NSEvent *)event {

@@ -90,55 +90,44 @@ pub fn gain_vizia_ui(cx: &mut vizia::prelude::Context) {
     use vizia::prelude::*;
 
     VStack::new(cx, |cx| {
-        // Header bar (full width, ignores parent padding)
+        // Header
         HStack::new(cx, |cx| {
             Label::new(cx, "Gain (vizia)").class("header-title");
         })
         .class("header");
 
-        // Body — padded on all sides via an inner container
+        // Controls row
         HStack::new(cx, |cx| {
-            // Spacer elements for margins — morphorm's child-space/padding
-            // properties don't constrain stretch-width children, so explicit
-            // spacers are the reliable way to inset content.
-            Element::new(cx).width(Pixels(10.0));
-            VStack::new(cx, |cx| {
-                // Controls row
-                HStack::new(cx, |cx| {
-                    ParamKnob::new(cx, ID_GAIN, "Gain");
-                    ParamKnob::new(cx, ID_PAN, "Pan");
-                    ParamToggle::new(cx, ID_BYPASS, "Bypass");
-                    LevelMeter::new(cx, &[METER_L, METER_R], "Level")
-                        .width(Pixels(24.0))
-                        .height(Pixels(50.0));
-                })
-                .class("controls-row")
-                .horizontal_gap(Pixels(10.0))
-                .height(Auto);
-
-                // Separator
-                Element::new(cx)
-                    .class("separator")
-                    .top(Pixels(4.0))
-                    .bottom(Pixels(4.0));
-
-                // Sliders
-                ParamSlider::new(cx, ID_GAIN, "Gain")
-                    .width(Stretch(1.0));
-                ParamSlider::new(cx, ID_PAN, "Pan")
-                    .width(Stretch(1.0))
-                    .top(Pixels(2.0));
-            })
-            .width(Stretch(1.0))
-            .top(Pixels(6.0))
-            .bottom(Pixels(6.0));
-            Element::new(cx).width(Pixels(10.0));
+            ParamKnob::new(cx, ID_GAIN, "Gain");
+            ParamKnob::new(cx, ID_PAN, "Pan");
+            ParamToggle::new(cx, ID_BYPASS, "Bypass");
+            LevelMeter::new(cx, &[METER_L, METER_R], "Level")
+                .width(Pixels(24.0))
+                .height(Pixels(50.0));
         })
-        .width(Stretch(1.0))
-        .height(Stretch(1.0));
-    })
-    .width(Stretch(1.0))
-    .height(Stretch(1.0));
+        .horizontal_gap(Pixels(10.0))
+        .height(Auto)
+        .left(Pixels(10.0))
+        .right(Pixels(10.0))
+        .top(Pixels(10.0));
+
+        // Separator
+        Element::new(cx)
+            .class("separator")
+            .top(Pixels(8.0))
+            .bottom(Pixels(8.0))
+            .left(Pixels(10.0))
+            .right(Pixels(10.0));
+
+        // Sliders
+        VStack::new(cx, |cx| {
+            ParamSlider::new(cx, ID_GAIN, "Gain");
+            ParamSlider::new(cx, ID_PAN, "Pan")
+                .top(Pixels(4.0));
+        })
+        .left(Pixels(10.0))
+        .right(Pixels(10.0));
+    });
 }
 
 truce::plugin! {

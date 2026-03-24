@@ -32,42 +32,6 @@ unsafe impl HasRawWindowHandle for ParentWindow {
     }
 }
 
-/// Query the backing scale factor from the parent NSView's window.
-#[cfg(target_os = "macos")]
-pub fn query_backing_scale(parent: &RawWindowHandle) -> f64 {
-    use objc::{msg_send, sel, sel_impl};
-
-    let ns_view_ptr = match parent {
-        RawWindowHandle::AppKit(ptr) => *ptr,
-        _ => return 1.0,
-    };
-
-    if ns_view_ptr.is_null() {
-        return 1.0;
-    }
-
-    unsafe {
-        let ns_view = ns_view_ptr as cocoa::base::id;
-        let window: cocoa::base::id = msg_send![ns_view, window];
-        let scale: f64 = if !window.is_null() {
-            msg_send![window, backingScaleFactor]
-        } else {
-            let screen: cocoa::base::id = msg_send![objc::class!(NSScreen), mainScreen];
-            if !screen.is_null() {
-                msg_send![screen, backingScaleFactor]
-            } else {
-                2.0
-            }
-        };
-        if scale < 1.0 { 1.0 } else { scale }
-    }
-}
-
-#[cfg(not(target_os = "macos"))]
-pub fn query_backing_scale(_parent: &RawWindowHandle) -> f64 {
-    1.0
-}
-
 /// Bridge a baseview raw-window-handle 0.5 to a wgpu surface.
 ///
 /// # Safety

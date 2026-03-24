@@ -95,6 +95,7 @@ struct EguiWindowHandler {
     start_time: std::time::Instant,
     size: (u32, u32),
     scale_factor: f32,
+    last_cursor_pos: egui::Pos2,
 }
 
 impl EguiWindowHandler {
@@ -157,6 +158,7 @@ impl WindowHandler for EguiWindowHandler {
                     CursorMoved { position, modifiers } => {
                         self.modifiers = convert_kb_modifiers(&modifiers);
                         let pos = egui::pos2(position.x as f32, position.y as f32);
+                        self.last_cursor_pos = pos;
                         self.pending_events
                             .push(egui::Event::PointerMoved(pos));
                         EventStatus::Captured
@@ -165,7 +167,7 @@ impl WindowHandler for EguiWindowHandler {
                         self.modifiers = convert_kb_modifiers(&modifiers);
                         if let Some(btn) = convert_mouse_button(&button) {
                             self.pending_events.push(egui::Event::PointerButton {
-                                pos: egui::Pos2::ZERO, // egui uses last known pos
+                                pos: self.last_cursor_pos,
                                 button: btn,
                                 pressed: true,
                                 modifiers: self.modifiers,
@@ -177,7 +179,7 @@ impl WindowHandler for EguiWindowHandler {
                         self.modifiers = convert_kb_modifiers(&modifiers);
                         if let Some(btn) = convert_mouse_button(&button) {
                             self.pending_events.push(egui::Event::PointerButton {
-                                pos: egui::Pos2::ZERO,
+                                pos: self.last_cursor_pos,
                                 button: btn,
                                 pressed: false,
                                 modifiers: self.modifiers,
@@ -390,6 +392,7 @@ impl Editor for EguiEditor {
                     start_time: std::time::Instant::now(),
                     size,
                     scale_factor: scale,
+                    last_cursor_pos: egui::Pos2::ZERO,
                 }
             },
         );

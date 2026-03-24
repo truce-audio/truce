@@ -4635,10 +4635,8 @@ version = "0.1.6"
 dependencies = [
  "baseview 0.1.0 (git+https://github.com/RustAudio/baseview.git)",
  "bytemuck",
- "cocoa 0.26.1",
  "fontdue",
  "lyon_tessellation",
- "objc",
  "pollster",
  "raw-window-handle 0.5.2",
  "truce-core",
