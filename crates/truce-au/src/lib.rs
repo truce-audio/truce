@@ -10,7 +10,6 @@ use std::ffi::CString;
 use std::os::raw::c_char;
 use std::slice;
 
-use truce_core::buffer::AudioBuffer;
 use truce_core::events::{Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
 use truce_core::process::ProcessContext;

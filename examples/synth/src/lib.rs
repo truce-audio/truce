@@ -1,4 +1,5 @@
 use truce::prelude::*;
+use truce_gui::layout::{GridLayout, GridWidget};
 
 mod voice;
 use voice::Voice;
@@ -155,7 +156,6 @@ impl PluginLogic for Synth {
     }
 
     fn layout(&self) -> truce_gui::layout::GridLayout {
-        use truce_gui::layout::{GridLayout, GridWidget};
         GridLayout::build("TRUCE SYNTH", "V0.1", 4, 70.0, vec![
             GridWidget::selector(P::Waveform, "Wave").cols(2),
             GridWidget::knob(P::Volume, "Volume"),

@@ -4,6 +4,7 @@
 //! multi-parameter DSP, filter state management, and parameter groups.
 
 use truce::prelude::*;
+use truce_gui::layout::{GridLayout, GridWidget};
 
 mod biquad;
 use biquad::Biquad;
@@ -133,7 +134,6 @@ impl PluginLogic for Eq {
     }
 
     fn layout(&self) -> truce_gui::layout::GridLayout {
-        use truce_gui::layout::{GridLayout, GridWidget};
         GridLayout::build("EQ", "V0.1", 3, 70.0, vec![
             GridWidget::knob(P::LowFreq, "Freq"),
             GridWidget::knob(P::LowGain, "Gain"),

@@ -1,4 +1,5 @@
 use truce::prelude::*;
+use truce_gui::layout::{GridLayout, GridWidget};
 
 // --- Parameters ---
 
@@ -82,7 +83,6 @@ impl PluginLogic for Transpose {
     }
 
     fn layout(&self) -> truce_gui::layout::GridLayout {
-        use truce_gui::layout::{GridLayout, GridWidget};
         GridLayout::build("TRANSPOSE", "V0.1", 2, 80.0, vec![
             GridWidget::knob(P::Semitones, "Semitones"),
             GridWidget::knob(P::Octave, "Octave"),

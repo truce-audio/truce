@@ -9,7 +9,6 @@ use std::os::raw::c_char;
 use std::slice;
 use std::sync::{Arc, OnceLock};
 
-use truce_core::buffer::AudioBuffer;
 use truce_core::editor::{EditorContext, RawWindowHandle};
 use truce_core::events::{Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;

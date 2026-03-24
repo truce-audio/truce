@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use iced::widget::{column, container, horizontal_space, row, text, Column, Row};
+use iced::widget::{container, horizontal_space, text, Column, Row};
 use iced::{alignment, Element, Length, Task};
 use truce::prelude::*;
 use truce_iced::{
