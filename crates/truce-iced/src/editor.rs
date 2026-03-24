@@ -178,7 +178,7 @@ impl<P: Params + 'static> IcedEditor<P, AutoPlugin> {
         Self {
             params,
             size,
-            scale_factor: 1.0,
+            scale_factor: truce_gui::backing_scale(),
             runtime: None,
             layout: Some(layout),
             meter_ids,
@@ -192,7 +192,7 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedEditor<P, M> {
         Self {
             params,
             size,
-            scale_factor: 1.0,
+            scale_factor: truce_gui::backing_scale(),
             runtime: None,
             layout: None,
             meter_ids: Vec::new(),
@@ -715,6 +715,27 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
 
     fn idle(&mut self) {
         // Timer-driven rendering in cb_render handles everything.
+    }
+
+    fn can_resize(&self) -> bool {
+        true
+    }
+
+    fn set_size(&mut self, width: u32, height: u32) -> bool {
+        self.size = (width, height);
+        if let Some(ref mut runtime) = self.runtime {
+            runtime.size = (width, height);
+            if let Some(ref mut render) = runtime.render {
+                let scale = self.scale_factor;
+                render.viewport = iced_graphics::Viewport::with_physical_size(
+                    Size::new(width, height), scale,
+                );
+                render.surface_config.width = width;
+                render.surface_config.height = height;
+                render.surface.configure(&render.device, &render.surface_config);
+            }
+        }
+        true
     }
 
     fn set_scale_factor(&mut self, factor: f64) {

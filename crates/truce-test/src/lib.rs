@@ -531,19 +531,19 @@ pub fn assert_empty_state_no_crash<P: PluginExport>() {
 // GUI snapshot tests
 // ---------------------------------------------------------------------------
 
-/// Resolve the workspace `snapshots/` directory.
+/// Resolve the workspace `screenshots/` directory.
 ///
 /// Walks up from `CARGO_MANIFEST_DIR` looking for a `Cargo.toml`
 /// containing `[workspace]`. Works regardless of how deeply nested
 /// the calling crate is.
-pub fn workspace_snapshots_dir() -> std::path::PathBuf {
+pub fn workspace_screenshots_dir() -> std::path::PathBuf {
     let mut dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     loop {
         let toml = dir.join("Cargo.toml");
         if toml.exists() {
             if let Ok(s) = std::fs::read_to_string(&toml) {
                 if s.contains("[workspace]") {
-                    let snap = dir.join("snapshots");
+                    let snap = dir.join("screenshots");
                     std::fs::create_dir_all(&snap).ok();
                     return snap;
                 }
@@ -575,7 +575,7 @@ pub fn assert_gui_snapshot_raw(
     height: u32,
     max_diff_pixels: usize,
 ) {
-    let dir = workspace_snapshots_dir();
+    let dir = workspace_screenshots_dir();
     let ref_path = dir.join(format!("{name}.png"));
 
     if !ref_path.exists() {

@@ -8,7 +8,7 @@ Write your plugin once. Build CLAP, VST3, VST2, AU v2, AU v3, AAX,
 and standalone from a single Rust codebase. Hot-reload DSP and GUI
 changes without restarting the DAW.
 
-![Gain plugin GUI](snapshots/gain_default.png)
+![Gain plugin GUI](screenshots/gain_default.png)
 
 ## Quick Start
 
@@ -144,7 +144,7 @@ custom GUI for any third-party plugin (Apple limitation).
 - **`cargo truce`** — build, bundle, sign, install, validate, clean
 - **Zero-copy audio** — format wrappers pass host buffers directly
 - **Thread-safe params** — atomic storage, lock-free access from any thread
-- **Automated tests** — render, state, params, GUI snapshots, binary validation
+- **Automated tests** — render, state, params, GUI screenshots, binary validation
 - **All plugins pass auval + pluginval + clap-validator**
 
 ## Crate Structure

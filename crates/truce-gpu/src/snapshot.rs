@@ -21,7 +21,7 @@ pub fn render_to_pixels<P: Params + 'static>(
 ) -> (Vec<u8>, u32, u32) {
     let w = layout.width;
     let h = layout.height;
-    let scale = 2.0; // Match Retina display resolution for sharp snapshots
+    let scale = 2.0; // Match Retina display resolution for sharp screenshots
 
     let mut editor = BuiltinEditor::new_grid(params, layout);
     let mut backend = WgpuBackend::headless(w, h, scale)

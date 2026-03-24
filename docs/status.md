@@ -151,7 +151,7 @@ cargo-truce     — scaffolding CLI (cargo truce new)
 **Near-term:**
 - Windows + Linux platform layers
 - CLAP GUI→host slider sync in Reaper
-- truce-iced Phase 4 (Windows/Linux embedding, resize, HiDPI polish)
+- truce-iced Phase 4: Windows/Linux embedding (macOS resize + HiDPI done)
 
 **Future:**
 - WebView GUI

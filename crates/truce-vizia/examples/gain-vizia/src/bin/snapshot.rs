@@ -16,7 +16,7 @@ fn main() {
         .unwrap()
         .parent()
         .unwrap()
-        .join("snapshots")
+        .join("screenshots")
         .join("gain_vizia_default.png");
 
     std::fs::create_dir_all(path.parent().unwrap()).ok();

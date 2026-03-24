@@ -46,7 +46,7 @@ cargo truce doctor
 crates/           # all library crates (truce-core, truce-params, etc.)
 examples/         # example plugins (gain, eq, synth, transpose, arpeggio)
 docs/             # documentation (quickstart, reference, gui guides)
-snapshots/        # GUI snapshot reference PNGs
+screenshots/        # GUI snapshot reference PNGs
 ```
 
 See [docs/status.md](docs/status.md) for a full crate-by-crate breakdown.
@@ -93,7 +93,7 @@ cargo truce validate                 # auval + pluginval + clap-validator
 ```
 
 If you add a new widget or change rendering, update or add GUI snapshot
-tests. Snapshots live in `snapshots/` and are compared pixel-by-pixel.
+tests. Snapshots live in `screenshots/` and are compared pixel-by-pixel.
 Delete a PNG to regenerate it.
 
 ### Code Style

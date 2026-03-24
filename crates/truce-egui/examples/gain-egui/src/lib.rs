@@ -171,7 +171,7 @@ mod tests {
     #[test]
     fn gui_snapshot() {
         truce_egui::snapshot::assert_snapshot(
-            "snapshots", "gain_egui_default",
+            "screenshots", "gain_egui_default",
             320, 310, 2.0, 0,
             |ctx, state| gain_ui(ctx, state),
         );

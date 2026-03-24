@@ -184,7 +184,7 @@ against a reference PNG:
 #[test]
 fn gui_snapshot() {
     truce_egui::snapshot::assert_snapshot(
-        "snapshots",           // directory (relative to workspace root)
+        "screenshots",           // directory (relative to workspace root)
         "my_plugin_default",   // snapshot name
         640, 480,              // width, height in pixels
         2.0,                   // pixels_per_point
