@@ -137,6 +137,7 @@ gpu = ["truce/gpu"]
 
 [dependencies]
 truce = {{ git = "https://github.com/truce-audio/truce" }}
+truce-gui = {{ git = "https://github.com/truce-audio/truce" }}
 truce-clap = {{ git = "https://github.com/truce-audio/truce", optional = true }}
 truce-vst3 = {{ git = "https://github.com/truce-audio/truce", optional = true }}
 truce-vst2 = {{ git = "https://github.com/truce-audio/truce", optional = true }}

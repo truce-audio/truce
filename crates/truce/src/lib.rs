@@ -44,7 +44,6 @@ pub mod prelude {
     // PluginLogic types from hotload prelude (which re-exports from core/gui)
     pub use truce_loader::prelude::{
         ProcessResult, PluginLogic,
-        PluginLayout, KnobRow, KnobDef, WidgetKind,
         Color, Theme, WidgetRegion, RenderBackend,
         Transport,
         Smoother, SmoothingStyle,

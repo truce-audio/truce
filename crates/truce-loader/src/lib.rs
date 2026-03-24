@@ -81,9 +81,6 @@ pub mod prelude {
     pub use crate::traits::*;
     pub use crate::canary::{AbiCanary, ProbePlugin};
 
-    // Layout types from truce-gui
-    pub use truce_gui::layout::{PluginLayout, KnobRow, KnobDef, WidgetKind};
-
     // Re-export param types so the developer can own params in their struct.
     pub use truce_params::{Params, FloatParam, BoolParam, IntParam, EnumParam, ParamEnum};
     pub use truce_params::{Smoother, SmoothingStyle};
