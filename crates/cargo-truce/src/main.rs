@@ -167,6 +167,8 @@ truce-test = {{ git = "https://github.com/truce-audio/truce" }}
         format!("{name}/truce.toml"),
         format!(
             r#"[macos]
+# Ad-hoc signing works for CLAP, VST3, VST2, AU v2.
+# AU v3 requires a Developer ID: "Developer ID Application: Your Name (TEAMID)"
 signing_identity = "-"
 
 [vendor]

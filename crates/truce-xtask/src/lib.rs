@@ -545,6 +545,20 @@ fn load_config() -> std::result::Result<Config, BoxErr> {
 type Res = std::result::Result<(), Box<dyn std::error::Error>>;
 type BoxErr = Box<dyn std::error::Error>;
 
+/// Read the [features] table from the project's Cargo.toml.
+fn detect_available_features() -> std::collections::HashSet<String> {
+    let root = project_root();
+    if let Ok(content) = fs::read_to_string(root.join("Cargo.toml")) {
+        if let Ok(doc) = content.parse::<toml::Table>() {
+            if let Some(toml::Value::Table(feat)) = doc.get("features") {
+                return feat.keys().cloned().collect();
+            }
+        }
+    }
+    // Fallback: assume all formats (workspace with multiple crates)
+    ["clap", "vst3", "vst2", "au", "aax"].iter().map(|s| s.to_string()).collect()
+}
+
 fn project_root() -> PathBuf {
     // Walk up from the current directory looking for truce.toml.
     // This works from both `cargo xtask` (workspace) and `cargo truce`
@@ -643,12 +657,15 @@ fn cmd_install(args: &[String]) -> Res {
     }
 
     if !clap && !vst3 && !vst2 && !au2 && !au3 && !aax {
-        clap = true;
-        vst3 = true;
-        vst2 = true;
-        au2 = true;
-        au3 = true;
-        aax = true;
+        // No format flags specified — enable all formats that the project supports.
+        // Check which features are defined in the first plugin's Cargo.toml.
+        let available = detect_available_features();
+        clap = available.contains("clap");
+        vst3 = available.contains("vst3");
+        vst2 = available.contains("vst2");
+        au2 = available.contains("au");
+        au3 = available.contains("au");
+        aax = available.contains("aax");
     }
 
     // Filter plugins if -p specified
@@ -1204,8 +1221,14 @@ fn install_all_au_v3_filtered(
     let sign_id = &config.macos.signing_identity;
     let team_id = extract_team_id(sign_id);
     let dt = &config.macos.deployment_target;
-    // shim_dir used to point at root/crates/truce-au/shim, but now
-    // au_shim_types.h is embedded and written to build_dir/AUExt.
+
+    if team_id.is_empty() {
+        eprintln!("AU v3: skipping — requires a Developer ID signing identity with a team ID.");
+        eprintln!("  Set signing_identity in truce.toml to your Developer ID certificate,");
+        eprintln!("  e.g., \"Developer ID Application: Your Name (TEAMID)\"");
+        eprintln!("  Ad-hoc signing (\"-\") is not supported for AU v3 appex bundles.");
+        return Ok(());
+    }
 
     for p in plugins {
         let fw_name = p.fw_name();
