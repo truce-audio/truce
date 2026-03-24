@@ -6,7 +6,7 @@ use voice::Voice;
 
 // --- Waveform enum ---
 
-#[derive(Clone, Copy, PartialEq, Eq, ParamEnum)]
+#[derive(ParamEnum)]
 pub enum Waveform {
     Sine,
     Saw,

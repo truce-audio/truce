@@ -3,7 +3,7 @@ use truce_gui::layout::{GridLayout, GridWidget};
 
 // --- Arp pattern enum ---
 
-#[derive(Clone, Copy, PartialEq, Eq, ParamEnum)]
+#[derive(ParamEnum)]
 pub enum ArpPattern {
     Up,
     Down,

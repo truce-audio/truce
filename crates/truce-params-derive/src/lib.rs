@@ -763,14 +763,15 @@ fn snake_to_pascal(ident: &syn::Ident) -> syn::Ident {
 
 /// Derive `ParamEnum` for a C-like enum.
 ///
-/// Generates all 5 required methods: `from_index`, `to_index`, `name`,
-/// `variant_count`, and `variant_names`.
+/// Generates `Clone`, `Copy`, `PartialEq`, `Eq`, and all 5 `ParamEnum`
+/// methods: `from_index`, `to_index`, `name`, `variant_count`, and
+/// `variant_names`.
 ///
 /// Display names default to the variant identifier. Use `#[name = "..."]`
 /// on a variant to override:
 ///
 /// ```ignore
-/// #[derive(Clone, Copy, PartialEq, Eq, ParamEnum)]
+/// #[derive(ParamEnum)]
 /// pub enum ArpPattern {
 ///     Up,
 ///     Down,
@@ -862,6 +863,17 @@ pub fn derive_param_enum(input: TokenStream) -> TokenStream {
     let name_strs: Vec<_> = variant_names.iter().map(|n| n.as_str()).collect();
 
     let expanded = quote! {
+        impl Clone for #enum_name {
+            fn clone(&self) -> Self { *self }
+        }
+        impl Copy for #enum_name {}
+        impl PartialEq for #enum_name {
+            fn eq(&self, other: &Self) -> bool {
+                ::truce::params::ParamEnum::to_index(self) == ::truce::params::ParamEnum::to_index(other)
+            }
+        }
+        impl Eq for #enum_name {}
+
         impl ::truce::params::ParamEnum for #enum_name {
             fn from_index(index: usize) -> Self {
                 match index {

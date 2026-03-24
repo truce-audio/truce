@@ -55,7 +55,7 @@ Enums need `#[derive(ParamEnum)]` — the derive generates all required
 trait methods automatically:
 
 ```rust
-#[derive(Clone, Copy, PartialEq, Eq, ParamEnum)]
+#[derive(ParamEnum)]
 pub enum Waveform {
     Sine,
     Saw,
@@ -67,7 +67,7 @@ pub enum Waveform {
 Use `#[name = "..."]` on a variant to override its display name:
 
 ```rust
-#[derive(Clone, Copy, PartialEq, Eq, ParamEnum)]
+#[derive(ParamEnum)]
 pub enum ArpPattern {
     Up,
     Down,
