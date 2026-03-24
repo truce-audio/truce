@@ -15,52 +15,52 @@ use EqParamsParamId as P;
 
 #[derive(Params)]
 pub struct EqParams {
-    #[param(id = 0, name = "Low Freq", short_name = "LFreq",
+    #[param(name = "Low Freq", short_name = "LFreq",
             group = "Low", range = "log(20, 1000)",
             default = 200.0, unit = "Hz", smooth = "exp(10)")]
     pub low_freq: FloatParam,
 
-    #[param(id = 1, name = "Low Gain", short_name = "LGain",
+    #[param(name = "Low Gain", short_name = "LGain",
             group = "Low", range = "linear(-18, 18)",
             unit = "dB", smooth = "exp(10)")]
     pub low_gain: FloatParam,
 
-    #[param(id = 2, name = "Low Q", short_name = "LQ",
+    #[param(name = "Low Q", short_name = "LQ",
             group = "Low", range = "log(0.1, 10)",
             default = 0.707, smooth = "exp(10)")]
     pub low_q: FloatParam,
 
-    #[param(id = 3, name = "Mid Freq", short_name = "MFreq",
+    #[param(name = "Mid Freq", short_name = "MFreq",
             group = "Mid", range = "log(200, 8000)",
             default = 1000.0, unit = "Hz", smooth = "exp(10)")]
     pub mid_freq: FloatParam,
 
-    #[param(id = 4, name = "Mid Gain", short_name = "MGain",
+    #[param(name = "Mid Gain", short_name = "MGain",
             group = "Mid", range = "linear(-18, 18)",
             unit = "dB", smooth = "exp(10)")]
     pub mid_gain: FloatParam,
 
-    #[param(id = 5, name = "Mid Q", short_name = "MQ",
+    #[param(name = "Mid Q", short_name = "MQ",
             group = "Mid", range = "log(0.1, 10)",
             default = 0.707, smooth = "exp(10)")]
     pub mid_q: FloatParam,
 
-    #[param(id = 6, name = "High Freq", short_name = "HFreq",
+    #[param(name = "High Freq", short_name = "HFreq",
             group = "High", range = "log(1000, 20000)",
             default = 5000.0, unit = "Hz", smooth = "exp(10)")]
     pub high_freq: FloatParam,
 
-    #[param(id = 7, name = "High Gain", short_name = "HGain",
+    #[param(name = "High Gain", short_name = "HGain",
             group = "High", range = "linear(-18, 18)",
             unit = "dB", smooth = "exp(10)")]
     pub high_gain: FloatParam,
 
-    #[param(id = 8, name = "High Q", short_name = "HQ",
+    #[param(name = "High Q", short_name = "HQ",
             group = "High", range = "log(0.1, 10)",
             default = 0.707, smooth = "exp(10)")]
     pub high_q: FloatParam,
 
-    #[param(id = 9, name = "Output", short_name = "Out",
+    #[param(name = "Output", short_name = "Out",
             range = "linear(-18, 18)", unit = "dB", smooth = "exp(5)")]
     pub output: FloatParam,
 }

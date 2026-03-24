@@ -19,10 +19,11 @@ impl ParamSelector {
     /// number of enum variants.
     pub fn new<'a>(
         cx: &'a mut Context,
-        id: u32,
+        id: impl Into<u32>,
         label: &str,
         num_options: u32,
     ) -> Handle<'a, VStack> {
+        let id = id.into();
         let label = label.to_string();
 
         VStack::new(cx, move |cx| {

@@ -64,15 +64,15 @@ use truce_params_derive::Params;
 
 #[derive(Params)]
 pub struct GainParams {
-    #[param(id = 0, name = "Gain", range = "linear(-60, 6)",
+    #[param(name = "Gain", range = "linear(-60, 6)",
             unit = "dB", smooth = "exp(5)")]
     pub gain: FloatParam,
 
-    #[param(id = 1, name = "Pan", range = "linear(-1, 1)",
+    #[param(name = "Pan", range = "linear(-1, 1)",
             unit = "pan", smooth = "exp(5)")]
     pub pan: FloatParam,
 
-    #[param(id = 2, name = "Bypass", short_name = "Byp",
+    #[param(name = "Bypass", short_name = "Byp",
             flags = "automatable | bypass")]
     pub bypass: BoolParam,
 }
@@ -145,8 +145,9 @@ Key structural points:
 
 - **`#[derive(Params)]` + `#[param(...)]`** generates the constructor,
   `Default`, the entire `Params` trait impl, and a `GainParamsParamId`
-  enum (`#[repr(u32)]`) with typed variants for each parameter.
-  No manual boilerplate — no `pub const ID_*` constants needed.
+  enum (`#[repr(u32)]`) with typed variants for each parameter
+  (and meter, if `#[meter]` fields are present). IDs are auto-assigned
+  by field order. No manual boilerplate — no `pub const ID_*` constants needed.
 - **`PluginLogic`** is the trait you implement. It covers `reset()`,
   `process()`, `layout()`, and optional lifecycle methods. `new()` is
   an inherent method on your struct (not part of the trait) — it takes

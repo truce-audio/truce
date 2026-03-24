@@ -5,24 +5,25 @@ use truce_gui::layout::{GridLayout, GridWidget};
 
 use GainParamsParamId as P;
 
-#[repr(u32)]
-#[derive(Clone, Copy)]
-pub enum Meter { Left = 100, Right = 101 }
-impl From<Meter> for u32 { fn from(m: Meter) -> u32 { m as u32 } }
-
 #[derive(Params)]
 pub struct GainParams {
-    #[param(id = 0, name = "Gain", range = "linear(-60, 6)",
+    #[param(name = "Gain", range = "linear(-60, 6)",
             unit = "dB", smooth = "exp(5)")]
     pub gain: FloatParam,
 
-    #[param(id = 1, name = "Pan", range = "linear(-1, 1)",
+    #[param(name = "Pan", range = "linear(-1, 1)",
             unit = "pan", smooth = "exp(5)")]
     pub pan: FloatParam,
 
-    #[param(id = 2, name = "Bypass", short_name = "Byp",
+    #[param(name = "Bypass", short_name = "Byp",
             flags = "automatable | bypass")]
     pub bypass: BoolParam,
+
+    #[meter]
+    pub meter_left: MeterSlot,
+
+    #[meter]
+    pub meter_right: MeterSlot,
 }
 
 // --- Plugin ---
@@ -45,8 +46,8 @@ impl PluginLogic for Gain {
 
     fn process(&mut self, buffer: &mut AudioBuffer, _events: &EventList, context: &mut ProcessContext) -> ProcessStatus {
         if self.params.bypass.value() {
-            context.set_meter(Meter::Left, 0.0);
-            context.set_meter(Meter::Right, 0.0);
+            context.set_meter(P::MeterLeft, 0.0);
+            context.set_meter(P::MeterRight, 0.0);
             return ProcessStatus::Normal;
         }
 
@@ -67,10 +68,10 @@ impl PluginLogic for Gain {
         }
 
         if buffer.num_output_channels() >= 1 {
-            context.set_meter(Meter::Left, buffer.output_peak(0));
+            context.set_meter(P::MeterLeft, buffer.output_peak(0));
         }
         if buffer.num_output_channels() >= 2 {
-            context.set_meter(Meter::Right, buffer.output_peak(1));
+            context.set_meter(P::MeterRight, buffer.output_peak(1));
         }
 
         ProcessStatus::Normal
@@ -82,7 +83,7 @@ impl PluginLogic for Gain {
             GridWidget::slider(P::Pan, "Pan"),
             GridWidget::toggle(P::Bypass, "Bypass"),
             GridWidget::xy_pad(P::Pan, P::Gain, "XY"),
-            GridWidget::meter(&[Meter::Left.into(), Meter::Right.into()], "Level").rows(2),
+            GridWidget::meter(&[P::MeterLeft.into(), P::MeterRight.into()], "Level").rows(2),
         ], vec![])
     }
 }

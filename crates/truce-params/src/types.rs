@@ -185,3 +185,43 @@ impl<E: ParamEnum> EnumParam<E> {
         E::from_index(value.round() as usize).name().to_string()
     }
 }
+
+// ---------------------------------------------------------------------------
+// MeterSlot
+// ---------------------------------------------------------------------------
+
+/// A meter slot with an auto-assigned ID.
+///
+/// Declare in your params struct with `#[meter]`:
+/// ```ignore
+/// #[derive(Params)]
+/// pub struct MyParams {
+///     #[meter]
+///     pub meter_left: MeterSlot,
+/// }
+/// ```
+pub struct MeterSlot {
+    pub id: u32,
+}
+
+impl MeterSlot {
+    pub fn new(id: u32) -> Self {
+        Self { id }
+    }
+
+    pub fn id(&self) -> u32 {
+        self.id
+    }
+}
+
+impl From<MeterSlot> for u32 {
+    fn from(m: MeterSlot) -> u32 {
+        m.id
+    }
+}
+
+impl From<&MeterSlot> for u32 {
+    fn from(m: &MeterSlot) -> u32 {
+        m.id
+    }
+}

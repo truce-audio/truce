@@ -4,25 +4,27 @@ use truce_egui::widgets::{param_knob, param_slider, param_toggle, param_xy_pad, 
 
 // --- Parameters ---
 
-pub const ID_GAIN: u32 = 0;
-pub const ID_PAN: u32 = 1;
-pub const ID_BYPASS: u32 = 2;
-pub const METER_L: u32 = 100;
-pub const METER_R: u32 = 101;
+use GainParamsParamId as P;
 
 #[derive(Params)]
 pub struct GainParams {
-    #[param(id = 0, name = "Gain", range = "linear(-60, 6)",
+    #[param(name = "Gain", range = "linear(-60, 6)",
             unit = "dB", smooth = "exp(5)")]
     pub gain: FloatParam,
 
-    #[param(id = 1, name = "Pan", range = "linear(-1, 1)",
+    #[param(name = "Pan", range = "linear(-1, 1)",
             unit = "pan", smooth = "exp(5)")]
     pub pan: FloatParam,
 
-    #[param(id = 2, name = "Bypass", short_name = "Byp",
+    #[param(name = "Bypass", short_name = "Byp",
             flags = "automatable | bypass")]
     pub bypass: BoolParam,
+
+    #[meter]
+    pub meter_left: MeterSlot,
+
+    #[meter]
+    pub meter_right: MeterSlot,
 }
 
 // --- Plugin ---
@@ -50,8 +52,8 @@ impl PluginLogic for GainEgui {
         context: &mut ProcessContext,
     ) -> ProcessStatus {
         if self.params.bypass.value() {
-            context.set_meter(METER_L, 0.0);
-            context.set_meter(METER_R, 0.0);
+            context.set_meter(P::MeterLeft, 0.0);
+            context.set_meter(P::MeterRight, 0.0);
             return ProcessStatus::Normal;
         }
 
@@ -72,10 +74,10 @@ impl PluginLogic for GainEgui {
         }
 
         if buffer.num_output_channels() >= 1 {
-            context.set_meter(METER_L, buffer.output_peak(0));
+            context.set_meter(P::MeterLeft, buffer.output_peak(0));
         }
         if buffer.num_output_channels() >= 2 {
-            context.set_meter(METER_R, buffer.output_peak(1));
+            context.set_meter(P::MeterRight, buffer.output_peak(1));
         }
 
         ProcessStatus::Normal
@@ -101,33 +103,33 @@ fn gain_ui(ctx: &egui::Context, state: &ParamState) {
         ui.add_space(8.0);
 
         ui.horizontal(|ui| {
-            param_knob(ui, state, ID_GAIN, "Gain");
+            param_knob(ui, state, P::Gain, "Gain");
             ui.add_space(16.0);
-            param_knob(ui, state, ID_PAN, "Pan");
+            param_knob(ui, state, P::Pan, "Pan");
             ui.add_space(16.0);
-            param_toggle(ui, state, ID_BYPASS, "Bypass");
+            param_toggle(ui, state, P::Bypass, "Bypass");
             ui.add_space(16.0);
-            level_meter(ui, state, &[METER_L, METER_R], "Level");
+            level_meter(ui, state, &[P::MeterLeft.into(), P::MeterRight.into()], "Level");
         });
 
         ui.add_space(8.0);
 
         ui.horizontal(|ui| {
-            param_xy_pad(ui, state, ID_PAN, ID_GAIN, "Pan / Gain");
+            param_xy_pad(ui, state, P::Pan, P::Gain, "Pan / Gain");
             ui.add_space(16.0);
             ui.vertical(|ui| {
                 ui.add_space(4.0);
                 ui.label("Gain:");
-                param_slider(ui, state, ID_GAIN);
+                param_slider(ui, state, P::Gain);
                 ui.add_space(4.0);
                 ui.label("Pan:");
-                param_slider(ui, state, ID_PAN);
+                param_slider(ui, state, P::Pan);
                 ui.add_space(8.0);
                 ui.label(
                     egui::RichText::new(format!(
                         "Gain: {}  Pan: {}",
-                        state.format(ID_GAIN),
-                        state.format(ID_PAN)
+                        state.format(P::Gain),
+                        state.format(P::Pan)
                     ))
                     .small()
                     .color(ui.visuals().widgets.noninteractive.fg_stroke.color),

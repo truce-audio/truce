@@ -20,44 +20,52 @@ impl ParamState {
     }
 
     /// Get a parameter's normalized value (0.0-1.0).
-    pub fn get(&self, id: u32) -> f64 {
+    pub fn get(&self, id: impl Into<u32>) -> f64 {
+        let id = id.into();
         (self.ctx.get_param)(id)
     }
 
     /// Get a parameter's plain value (in its native range).
-    pub fn get_plain(&self, id: u32) -> f64 {
+    pub fn get_plain(&self, id: impl Into<u32>) -> f64 {
+        let id = id.into();
         (self.ctx.get_param_plain)(id)
     }
 
     /// Get a parameter's formatted display string.
-    pub fn format(&self, id: u32) -> String {
+    pub fn format(&self, id: impl Into<u32>) -> String {
+        let id = id.into();
         (self.ctx.format_param)(id)
     }
 
     /// Begin + set + end in one shot (for clicks/toggles).
-    pub fn set_immediate(&self, id: u32, normalized: f64) {
+    pub fn set_immediate(&self, id: impl Into<u32>, normalized: f64) {
+        let id = id.into();
         (self.ctx.begin_edit)(id);
         (self.ctx.set_param)(id, normalized);
         (self.ctx.end_edit)(id);
     }
 
     /// Begin a drag gesture (call once on mouse-down).
-    pub fn begin_gesture(&self, id: u32) {
+    pub fn begin_gesture(&self, id: impl Into<u32>) {
+        let id = id.into();
         (self.ctx.begin_edit)(id);
     }
 
     /// Update during a drag gesture.
-    pub fn set_value(&self, id: u32, normalized: f64) {
+    pub fn set_value(&self, id: impl Into<u32>, normalized: f64) {
+        let id = id.into();
         (self.ctx.set_param)(id, normalized);
     }
 
     /// End a drag gesture (call once on mouse-up).
-    pub fn end_gesture(&self, id: u32) {
+    pub fn end_gesture(&self, id: impl Into<u32>) {
+        let id = id.into();
         (self.ctx.end_edit)(id);
     }
 
     /// Read a meter value (0.0-1.0) by meter ID.
-    pub fn meter(&self, id: u32) -> f32 {
+    pub fn meter(&self, id: impl Into<u32>) -> f32 {
+        let id = id.into();
         (self.ctx.get_meter)(id)
     }
 

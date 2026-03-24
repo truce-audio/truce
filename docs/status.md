@@ -50,9 +50,10 @@ truce::plugin! { logic: Gain, params: GainParams }
 
 One import, one trait, one macro. `#[derive(Params)]` generates a
 `{StructName}ParamId` enum with `#[repr(u32)]` and `From<T> for u32`.
-All widget/layout constructors accept `impl Into<u32>`. Meter IDs use
-a separate `#[repr(u32)]` enum to prevent mixing param/meter IDs at
-compile time. Format wrappers store `Arc<P>` for params, enabling
+All widget/layout constructors accept `impl Into<u32>`. Meter IDs are
+auto-assigned starting at 256 via `#[meter]` fields on `MeterSlot`,
+and meter variants (e.g., `P::MeterLeft`) are included in the same
+`ParamId` enum. Format wrappers store `Arc<P>` for params, enabling
 safe sharing between audio and GUI threads without raw pointers.
 
 ## GUI
@@ -72,7 +73,7 @@ Two GUI backends, same 6 widget types:
 | Slider | `GridWidget::slider(P::Pan, "Pan")` | 1×1 |
 | Toggle | `GridWidget::toggle(P::Bypass, "Bypass")` | 1×1 |
 | Selector | `GridWidget::selector(P::Mode, "Mode")` | 1×1 |
-| Meter | `GridWidget::meter(&[Meter::Left.into(), Meter::Right.into()], "Level")` | 1×1 |
+| Meter | `GridWidget::meter(&[P::MeterLeft.into(), P::MeterRight.into()], "Level")` | 1×1 |
 | XY Pad | `GridWidget::xy_pad(P::Pan, P::Gain, "XY")` | 2×2 |
 
 Column/row spanning via `.cols(n)` / `.rows(n)`. Section breaks

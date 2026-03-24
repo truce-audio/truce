@@ -22,7 +22,8 @@ pub struct SelectorWidget<'a, M> {
 }
 
 impl<'a, M: Clone + Debug + 'static> SelectorWidget<'a, M> {
-    pub fn new(id: u32, params: &'a ParamState<impl Params>) -> Self {
+    pub fn new(id: impl Into<u32>, params: &'a ParamState<impl Params>) -> Self {
+        let id = id.into();
         let value = params.get(id);
         let infos = params.params().param_infos();
         let info = infos.iter().find(|i| i.id == id);

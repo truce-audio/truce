@@ -44,7 +44,7 @@ use truce::prelude::*;
 
 #[derive(Params)]
 pub struct GainParams {
-    #[param(id = 0, name = "Gain", range = "linear(-60, 6)",
+    #[param(name = "Gain", range = "linear(-60, 6)",
             unit = "dB", smooth = "exp(5)")]
     pub gain: FloatParam,
 }
@@ -74,7 +74,7 @@ impl PluginLogic for Gain {
 
     fn layout(&self) -> PluginLayout {
         PluginLayout::build("GAIN", "V0.1", vec![
-            KnobRow { label: None, knobs: vec![KnobDef::knob(0, "Gain")] },
+            KnobRow { label: None, knobs: vec![KnobDef::knob(P::Gain, "Gain")] },
         ], 80.0)
     }
 }

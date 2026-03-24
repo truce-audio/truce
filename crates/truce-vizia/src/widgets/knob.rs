@@ -109,7 +109,8 @@ pub struct ParamKnob;
 
 impl ParamKnob {
     /// Create a parameter knob with custom arc visual.
-    pub fn new<'a>(cx: &'a mut Context, id: u32, label: &str) -> Handle<'a, VStack> {
+    pub fn new<'a>(cx: &'a mut Context, id: impl Into<u32>, label: &str) -> Handle<'a, VStack> {
+        let id = id.into();
         let label = label.to_string();
 
         VStack::new(cx, move |cx| {

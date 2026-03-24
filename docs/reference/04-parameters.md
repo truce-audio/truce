@@ -7,23 +7,24 @@ each field. The derive macro generates:
 
 - `new()` constructor and `Default` impl
 - The full `Params` trait implementation
-- A `{StructName}ParamId` enum with a variant per parameter
-  (`#[repr(u32)]` with `From<T> for u32`)
+- A `{StructName}ParamId` enum with a variant per parameter and
+  meter (`#[repr(u32)]` with `From<T> for u32`). Parameter IDs are
+  auto-assigned by field order (0, 1, 2, ...); meter IDs start at 256.
 
 ```rust
 use truce::prelude::*;
 
 #[derive(Params)]
 pub struct GainParams {
-    #[param(id = 0, name = "Gain", range = "linear(-60, 6)",
+    #[param(name = "Gain", range = "linear(-60, 6)",
             unit = "dB", smooth = "exp(5)")]
     pub gain: FloatParam,
 
-    #[param(id = 1, name = "Pan", range = "linear(-1, 1)",
+    #[param(name = "Pan", range = "linear(-1, 1)",
             unit = "pan", smooth = "exp(5)")]
     pub pan: FloatParam,
 
-    #[param(id = 2, name = "Bypass", flags = "automatable | bypass")]
+    #[param(name = "Bypass", flags = "automatable | bypass")]
     pub bypass: BoolParam,
 }
 ```
@@ -81,7 +82,7 @@ The range is auto-inferred from the variant count — no `range` key
 needed in `#[param(...)]`:
 
 ```rust
-#[param(id = 3, name = "Pattern")]
+#[param(name = "Pattern")]
 pub pattern: EnumParam<ArpPattern>,
 ```
 
@@ -89,7 +90,7 @@ pub pattern: EnumParam<ArpPattern>,
 
 | Key | Example | Notes |
 |-----|---------|-------|
-| `id` | `id = 0` | **Required.** Stable integer ID — never change after release. |
+| `id` | `id = 0` | Optional. Stable integer ID — auto-assigned by field order if omitted. Never change after release. |
 | `name` | `name = "Gain"` | **Required.** Display name in host UI. |
 | `short_name` | `short_name = "Gn"` | Abbreviated name for narrow displays. Defaults to `name`. |
 | `range` | `range = "linear(-60, 6)"` | Value mapping. Auto-inferred for `BoolParam` and `EnumParam`. |
@@ -170,31 +171,41 @@ The host writes automation values to the atomic params. The plugin
 reads them via `smoothed_next()` or `value()`. One copy, no sync
 needed.
 
-### Meter IDs
+### Meters
 
-Meter values (levels, gain reduction) use separate IDs from
-parameters. Define them as a `#[repr(u32)]` enum:
+Meter values (levels, gain reduction) are declared as `MeterSlot`
+fields with the `#[meter]` attribute. IDs are auto-assigned starting
+at 256, and meter variants are included in the generated `ParamId`
+enum:
 
 ```rust
-#[repr(u32)]
-#[derive(Clone, Copy)]
-pub enum Meter { Left = 100, Right = 101 }
-impl From<Meter> for u32 { fn from(m: Meter) -> u32 { m as u32 } }
+#[derive(Params)]
+pub struct GainParams {
+    #[param(name = "Gain", range = "linear(-60, 6)", unit = "dB", smooth = "exp(5)")]
+    pub gain: FloatParam,
+
+    #[meter]
+    pub meter_left: MeterSlot,
+
+    #[meter]
+    pub meter_right: MeterSlot,
+}
 ```
 
 Write from `process()`, display in the GUI:
 
 ```rust
+use GainParamsParamId as P;
+
 // In process():
-context.set_meter(Meter::Left, buffer.output_peak(0));
-context.set_meter(Meter::Right, buffer.output_peak(1));
+context.set_meter(P::MeterLeft, buffer.output_peak(0));
+context.set_meter(P::MeterRight, buffer.output_peak(1));
 
 // In layout():
-GridWidget::meter(&[Meter::Left.into(), Meter::Right.into()], "Level")
+GridWidget::meter(&[P::MeterLeft.into(), P::MeterRight.into()], "Level")
 ```
 
-Using a separate enum prevents mixing parameter and meter IDs at
-compile time.
+No manual `#[repr(u32)]` enum or `From` impl needed.
 
 ### Custom formatting
 
@@ -203,7 +214,7 @@ Use the `format` attribute to specify a method for display:
 ```rust
 #[derive(Params)]
 pub struct SynthParams {
-    #[param(id = 0, name = "Cutoff", range = "log(20, 20000)",
+    #[param(name = "Cutoff", range = "log(20, 20000)",
             unit = "Hz", format = "format_cutoff")]
     pub cutoff: FloatParam,
 }
@@ -227,12 +238,12 @@ sensible format (e.g., `"-12.5 dB"`, `"440 Hz"`, `"100%"`).
 Groups organize parameters in the host's UI:
 
 ```rust
-#[param(id = 1, name = "Cutoff", group = "Filter",
+#[param(name = "Cutoff", group = "Filter",
         range = "log(20, 20000)", default = 8000, unit = "Hz",
         smooth = "exp(5)")]
 pub cutoff: FloatParam,
 
-#[param(id = 2, name = "Resonance", group = "Filter",
+#[param(name = "Resonance", group = "Filter",
         range = "linear(0, 1)", smooth = "exp(5)")]
 pub resonance: FloatParam,
 ```
@@ -262,6 +273,10 @@ pub struct FilterParams {
     pub cutoff: FloatParam,
 }
 ```
+
+Note: when using `#[nested]`, explicit `id` values are recommended
+to keep IDs globally unique across nested structs. Auto-assigned IDs
+are per-struct, so nested structs could collide without explicit IDs.
 
 Nested params are flattened — the host sees all parameters in one
 list. IDs must be globally unique across all nested structs.

@@ -41,23 +41,23 @@ impl ParamModel {
     }
 
     /// Read a parameter's normalized value (0.0–1.0).
-    pub fn get(&self, id: u32) -> f64 {
-        (self.context.get_param)(id)
+    pub fn get(&self, id: impl Into<u32>) -> f64 {
+        (self.context.get_param)(id.into())
     }
 
     /// Read a parameter's plain value (native range).
-    pub fn get_plain(&self, id: u32) -> f64 {
-        (self.context.get_param_plain)(id)
+    pub fn get_plain(&self, id: impl Into<u32>) -> f64 {
+        (self.context.get_param_plain)(id.into())
     }
 
     /// Read a parameter's formatted display string.
-    pub fn format(&self, id: u32) -> String {
-        (self.context.format_param)(id)
+    pub fn format(&self, id: impl Into<u32>) -> String {
+        (self.context.format_param)(id.into())
     }
 
     /// Read a meter value (0.0–1.0).
-    pub fn meter(&self, id: u32) -> f32 {
-        (self.context.get_meter)(id)
+    pub fn meter(&self, id: impl Into<u32>) -> f32 {
+        (self.context.get_meter)(id.into())
     }
 }
 

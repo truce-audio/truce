@@ -14,7 +14,8 @@ impl ParamSlider {
     /// Create a parameter slider with name and value on one line.
     ///
     /// `id` is the parameter ID, `label` is the display name.
-    pub fn new<'a>(cx: &'a mut Context, id: u32, label: &str) -> Handle<'a, VStack> {
+    pub fn new<'a>(cx: &'a mut Context, id: impl Into<u32>, label: &str) -> Handle<'a, VStack> {
+        let id = id.into();
         let label = label.to_string();
 
         VStack::new(cx, move |cx| {

@@ -100,18 +100,13 @@ Usage:
 ```rust
 use GainParamsParamId as P;
 
-#[repr(u32)]
-#[derive(Clone, Copy)]
-pub enum Meter { Left = 100, Right = 101 }
-impl From<Meter> for u32 { fn from(m: Meter) -> u32 { m as u32 } }
-
 fn my_ui(ctx: &egui::Context, state: &ParamState) {
     egui::CentralPanel::default().show(ctx, |ui| {
         ui.horizontal(|ui| {
             param_knob(ui, state, P::Gain, "Gain");
             param_knob(ui, state, P::Pan, "Pan");
             param_toggle(ui, state, P::Bypass, "Bypass");
-            level_meter(ui, state, &[Meter::Left.into(), Meter::Right.into()], "Output");
+            level_meter(ui, state, &[P::MeterLeft.into(), P::MeterRight.into()], "Output");
         });
         param_xy_pad(ui, state, P::Pan, P::Gain, "Pan / Gain");
     });

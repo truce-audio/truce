@@ -11,6 +11,12 @@ use crate::param_model::ParamModel;
 #[derive(Debug, Clone, Copy)]
 pub struct ParamNormLens(pub u32);
 
+impl ParamNormLens {
+    pub fn new(id: impl Into<u32>) -> Self {
+        Self(id.into())
+    }
+}
+
 impl Lens for ParamNormLens {
     type Source = ParamModel;
     type Target = f32;
@@ -23,6 +29,12 @@ impl Lens for ParamNormLens {
 /// Lens reading a parameter's formatted display string.
 #[derive(Debug, Clone, Copy)]
 pub struct ParamFormatLens(pub u32);
+
+impl ParamFormatLens {
+    pub fn new(id: impl Into<u32>) -> Self {
+        Self(id.into())
+    }
+}
 
 impl Lens for ParamFormatLens {
     type Source = ParamModel;
@@ -37,6 +49,12 @@ impl Lens for ParamFormatLens {
 #[derive(Debug, Clone, Copy)]
 pub struct ParamBoolLens(pub u32);
 
+impl ParamBoolLens {
+    pub fn new(id: impl Into<u32>) -> Self {
+        Self(id.into())
+    }
+}
+
 impl Lens for ParamBoolLens {
     type Source = ParamModel;
     type Target = bool;
@@ -49,6 +67,12 @@ impl Lens for ParamBoolLens {
 /// Lens reading a meter value (0.0–1.0) as `f32`.
 #[derive(Debug, Clone, Copy)]
 pub struct MeterLens(pub u32);
+
+impl MeterLens {
+    pub fn new(id: impl Into<u32>) -> Self {
+        Self(id.into())
+    }
+}
 
 impl Lens for MeterLens {
     type Source = ParamModel;

@@ -18,17 +18,17 @@ use ArpParamsParamId as P;
 
 #[derive(Params)]
 pub struct ArpParams {
-    #[param(id = 0, name = "Rate", range = "discrete(1, 8)", default = 4)]
+    #[param(name = "Rate", range = "discrete(1, 8)", default = 4)]
     pub rate: FloatParam,
 
-    #[param(id = 1, name = "Octaves", short_name = "Oct",
+    #[param(name = "Octaves", short_name = "Oct",
             range = "discrete(1, 4)", default = 1)]
     pub octaves: FloatParam,
 
-    #[param(id = 2, name = "Pattern", short_name = "Pat")]
+    #[param(name = "Pattern", short_name = "Pat")]
     pub pattern: EnumParam<ArpPattern>,
 
-    #[param(id = 3, name = "Gate", range = "linear(0.1, 1.0)",
+    #[param(name = "Gate", range = "linear(0.1, 1.0)",
             default = 0.8, unit = "%")]
     pub gate: FloatParam,
 }

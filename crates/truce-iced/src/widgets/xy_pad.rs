@@ -24,7 +24,9 @@ pub struct XYPadWidget<'a, M> {
 }
 
 impl<'a, M: Clone + Debug + 'static> XYPadWidget<'a, M> {
-    pub fn new(x_id: u32, y_id: u32, params: &'a ParamState<impl Params>) -> Self {
+    pub fn new(x_id: impl Into<u32>, y_id: impl Into<u32>, params: &'a ParamState<impl Params>) -> Self {
+        let x_id = x_id.into();
+        let y_id = y_id.into();
         Self {
             x_id,
             y_id,

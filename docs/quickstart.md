@@ -45,15 +45,15 @@ Open `src/lib.rs`. You'll see three things:
 ```rust
 #[derive(Params)]
 pub struct MyGainParams {
-    #[param(id = 0, name = "Gain", range = "linear(-60, 6)",
+    #[param(name = "Gain", range = "linear(-60, 6)",
             unit = "dB", smooth = "exp(5)")]
     pub gain: FloatParam,
 }
 ```
 
 One line per parameter. The `#[param(...)]` attribute defines
-everything: ID, name, range, unit, smoothing. The derive macro
-generates the rest.
+everything: name, range, unit, smoothing. IDs are auto-assigned
+by field order (0, 1, 2, ...). The derive macro generates the rest.
 
 **2. Processing** — what happens to the audio:
 
@@ -139,11 +139,11 @@ Change something in `src/lib.rs`. For example, add a pan parameter:
 ```rust
 #[derive(Params)]
 pub struct MyGainParams {
-    #[param(id = 0, name = "Gain", range = "linear(-60, 6)",
+    #[param(name = "Gain", range = "linear(-60, 6)",
             unit = "dB", smooth = "exp(5)")]
     pub gain: FloatParam,
 
-    #[param(id = 1, name = "Pan", range = "linear(-1, 1)",
+    #[param(name = "Pan", range = "linear(-1, 1)",
             unit = "pan", smooth = "exp(5)")]
     pub pan: FloatParam,
 }
@@ -155,8 +155,8 @@ Update the layout to show it:
 fn layout(&self) -> truce_gui::layout::GridLayout {
     use truce_gui::layout::{GridLayout, GridWidget};
     GridLayout::build("MY GAIN", "V0.1", 2, 80.0, vec![
-        GridWidget::knob(0, "Gain"),
-        GridWidget::slider(1, "Pan"),
+        GridWidget::knob(P::Gain, "Gain"),
+        GridWidget::slider(P::Pan, "Pan"),
     ], vec![])
 }
 ```
@@ -220,7 +220,7 @@ cargo truce install --aax          # AAX (for Pro Tools, needs SDK)
 
 **Add more parameters:**
 ```rust
-#[param(id = 2, name = "Bypass", flags = "automatable | bypass")]
+#[param(name = "Bypass", flags = "automatable | bypass")]
 pub bypass: BoolParam,
 ```
 
@@ -232,10 +232,10 @@ as click-to-cycle selectors.
 fn layout(&self) -> truce_gui::layout::GridLayout {
     use truce_gui::layout::{GridLayout, GridWidget};
     GridLayout::build("MY GAIN", "V0.1", 3, 80.0, vec![
-        GridWidget::knob(0, "Gain"),
-        GridWidget::slider(1, "Pan"),
-        GridWidget::toggle(2, "Bypass"),
-        GridWidget::meter(&[100, 101], "Level").rows(2),
+        GridWidget::knob(P::Gain, "Gain"),
+        GridWidget::slider(P::Pan, "Pan"),
+        GridWidget::toggle(P::Bypass, "Bypass"),
+        GridWidget::meter(&[P::MeterLeft.into(), P::MeterRight.into()], "Level").rows(2),
     ], vec![])
 }
 ```

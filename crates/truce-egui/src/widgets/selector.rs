@@ -13,10 +13,11 @@ use crate::ParamState;
 pub fn param_selector(
     ui: &mut egui::Ui,
     state: &ParamState,
-    id: u32,
+    id: impl Into<u32>,
     label: &str,
     step_count: u32,
 ) -> egui::Response {
+    let id = id.into();
     let current_text = state.format(id);
 
     let desired = egui::vec2(80.0, 40.0);

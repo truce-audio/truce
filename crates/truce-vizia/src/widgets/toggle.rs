@@ -13,7 +13,8 @@ impl ParamToggle {
     ///
     /// `id` is the parameter ID (should be a `Discrete { min: 0, max: 1 }`
     /// or `BoolParam`). `label` is the display name shown below.
-    pub fn new<'a>(cx: &'a mut Context, id: u32, label: &str) -> Handle<'a, VStack> {
+    pub fn new<'a>(cx: &'a mut Context, id: impl Into<u32>, label: &str) -> Handle<'a, VStack> {
+        let id = id.into();
         let label = label.to_string();
 
         VStack::new(cx, move |cx| {

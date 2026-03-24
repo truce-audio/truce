@@ -22,10 +22,12 @@ impl XYPad {
     /// `label` is the display name shown below.
     pub fn new<'a>(
         cx: &'a mut Context,
-        x_id: u32,
-        y_id: u32,
+        x_id: impl Into<u32>,
+        y_id: impl Into<u32>,
         label: &str,
     ) -> Handle<'a, VStack> {
+        let x_id = x_id.into();
+        let y_id = y_id.into();
         let label = label.to_string();
 
         VStack::new(cx, move |cx| {

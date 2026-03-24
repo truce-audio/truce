@@ -3,25 +3,27 @@ use truce_vizia::ViziaEditor;
 
 // --- Parameters ---
 
-pub const ID_GAIN: u32 = 0;
-pub const ID_PAN: u32 = 1;
-pub const ID_BYPASS: u32 = 2;
-pub const METER_L: u32 = 100;
-pub const METER_R: u32 = 101;
+use GainParamsParamId as P;
 
 #[derive(Params)]
 pub struct GainParams {
-    #[param(id = 0, name = "Gain", range = "linear(-60, 6)",
+    #[param(name = "Gain", range = "linear(-60, 6)",
             unit = "dB", smooth = "exp(5)")]
     pub gain: FloatParam,
 
-    #[param(id = 1, name = "Pan", range = "linear(-1, 1)",
+    #[param(name = "Pan", range = "linear(-1, 1)",
             unit = "pan", smooth = "exp(5)")]
     pub pan: FloatParam,
 
-    #[param(id = 2, name = "Bypass", short_name = "Byp",
+    #[param(name = "Bypass", short_name = "Byp",
             flags = "automatable | bypass")]
     pub bypass: BoolParam,
+
+    #[meter]
+    pub meter_left: MeterSlot,
+
+    #[meter]
+    pub meter_right: MeterSlot,
 }
 
 // --- Plugin ---
@@ -49,8 +51,8 @@ impl PluginLogic for GainVizia {
         context: &mut ProcessContext,
     ) -> ProcessStatus {
         if self.params.bypass.value() {
-            context.set_meter(METER_L, 0.0);
-            context.set_meter(METER_R, 0.0);
+            context.set_meter(P::MeterLeft, 0.0);
+            context.set_meter(P::MeterRight, 0.0);
             return ProcessStatus::Normal;
         }
 
@@ -71,10 +73,10 @@ impl PluginLogic for GainVizia {
         }
 
         if buffer.num_output_channels() >= 1 {
-            context.set_meter(METER_L, buffer.output_peak(0));
+            context.set_meter(P::MeterLeft, buffer.output_peak(0));
         }
         if buffer.num_output_channels() >= 2 {
-            context.set_meter(METER_R, buffer.output_peak(1));
+            context.set_meter(P::MeterRight, buffer.output_peak(1));
         }
 
         ProcessStatus::Normal
@@ -98,10 +100,10 @@ pub fn gain_vizia_ui(cx: &mut vizia::prelude::Context) {
 
         // Controls row
         HStack::new(cx, |cx| {
-            ParamKnob::new(cx, ID_GAIN, "Gain");
-            ParamKnob::new(cx, ID_PAN, "Pan");
-            ParamToggle::new(cx, ID_BYPASS, "Bypass");
-            LevelMeter::new(cx, &[METER_L, METER_R], "Level")
+            ParamKnob::new(cx, P::Gain, "Gain");
+            ParamKnob::new(cx, P::Pan, "Pan");
+            ParamToggle::new(cx, P::Bypass, "Bypass");
+            LevelMeter::new(cx, &[P::MeterLeft.into(), P::MeterRight.into()], "Level")
                 .width(Pixels(24.0))
                 .height(Pixels(50.0));
         })
@@ -121,8 +123,8 @@ pub fn gain_vizia_ui(cx: &mut vizia::prelude::Context) {
 
         // Sliders
         VStack::new(cx, |cx| {
-            ParamSlider::new(cx, ID_GAIN, "Gain");
-            ParamSlider::new(cx, ID_PAN, "Pan")
+            ParamSlider::new(cx, P::Gain, "Gain");
+            ParamSlider::new(cx, P::Pan, "Pan")
                 .top(Pixels(4.0));
         })
         .left(Pixels(10.0))

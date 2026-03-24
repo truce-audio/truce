@@ -14,10 +14,12 @@ const DOT_RADIUS: f32 = 6.0;
 pub fn param_xy_pad(
     ui: &mut egui::Ui,
     state: &ParamState,
-    id_x: u32,
-    id_y: u32,
+    id_x: impl Into<u32>,
+    id_y: impl Into<u32>,
     label: &str,
 ) -> egui::Response {
+    let id_x = id_x.into();
+    let id_y = id_y.into();
     let desired = egui::vec2(120.0, 120.0 + LABEL_H);
     let (rect, response) = ui.allocate_exact_size(desired, egui::Sense::drag());
 

@@ -21,10 +21,11 @@ pub struct GestureWrapper {
 }
 
 impl GestureWrapper {
-    pub fn new<F>(cx: &mut Context, param_id: u32, content: F) -> Handle<'_, Self>
+    pub fn new<F>(cx: &mut Context, param_id: impl Into<u32>, content: F) -> Handle<'_, Self>
     where
         F: FnOnce(&mut Context),
     {
+        let param_id = param_id.into();
         Self {
             param_id,
             editing: false,

@@ -19,9 +19,10 @@ const SWEEP: f32 = std::f32::consts::FRAC_PI_2 * 3.0; // 270° = 1.5π
 pub fn param_knob(
     ui: &mut egui::Ui,
     state: &ParamState,
-    id: u32,
+    id: impl Into<u32>,
     label: &str,
 ) -> egui::Response {
+    let id = id.into();
     let desired = egui::vec2(KNOB_SIZE, KNOB_TOTAL_H);
     let (rect, response) = ui.allocate_exact_size(desired, egui::Sense::drag());
 

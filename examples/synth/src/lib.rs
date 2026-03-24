@@ -20,38 +20,38 @@ use SynthParamsParamId as P;
 
 #[derive(Params)]
 pub struct SynthParams {
-    #[param(id = 0, name = "Waveform", short_name = "Wave", default = 1)]
+    #[param(name = "Waveform", short_name = "Wave", default = 1)]
     pub waveform: EnumParam<Waveform>,
 
-    #[param(id = 1, name = "Filter Cutoff", short_name = "Cutoff",
+    #[param(name = "Filter Cutoff", short_name = "Cutoff",
             group = "Filter", range = "log(20, 20000)",
             default = 8000.0, unit = "Hz", smooth = "exp(5)")]
     pub cutoff: FloatParam,
 
-    #[param(id = 2, name = "Filter Resonance", short_name = "Reso",
+    #[param(name = "Filter Resonance", short_name = "Reso",
             group = "Filter", range = "linear(0, 1)", smooth = "exp(5)")]
     pub resonance: FloatParam,
 
-    #[param(id = 3, name = "Attack", short_name = "Atk",
+    #[param(name = "Attack", short_name = "Atk",
             group = "Envelope", range = "log(0.001, 5)",
             default = 0.01, unit = "s")]
     pub attack: FloatParam,
 
-    #[param(id = 4, name = "Decay", short_name = "Dec",
+    #[param(name = "Decay", short_name = "Dec",
             group = "Envelope", range = "log(0.001, 5)",
             default = 0.1, unit = "s")]
     pub decay: FloatParam,
 
-    #[param(id = 5, name = "Sustain", short_name = "Sus",
+    #[param(name = "Sustain", short_name = "Sus",
             group = "Envelope", range = "linear(0, 1)", default = 0.7)]
     pub sustain: FloatParam,
 
-    #[param(id = 6, name = "Release", short_name = "Rel",
+    #[param(name = "Release", short_name = "Rel",
             group = "Envelope", range = "log(0.01, 10)",
             default = 0.3, unit = "s")]
     pub release: FloatParam,
 
-    #[param(id = 7, name = "Volume", short_name = "Vol",
+    #[param(name = "Volume", short_name = "Vol",
             range = "linear(-60, 0)", default = -6.0,
             unit = "dB", smooth = "exp(5)")]
     pub volume: FloatParam,

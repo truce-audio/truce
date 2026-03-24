@@ -22,7 +22,8 @@ pub struct SliderWidget<'a, M> {
 }
 
 impl<'a, M: Clone + Debug + 'static> SliderWidget<'a, M> {
-    pub fn new(id: u32, params: &'a ParamState<impl Params>) -> Self {
+    pub fn new(id: impl Into<u32>, params: &'a ParamState<impl Params>) -> Self {
+        let id = id.into();
         Self {
             id,
             value: params.get(id),

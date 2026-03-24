@@ -41,14 +41,14 @@ Arguments:
 | `GridWidget::slider(P::Pan, "Pan")` | Horizontal slider | 1×1 |
 | `GridWidget::toggle(P::Bypass, "Bypass")` | On/off toggle | 1×1 |
 | `GridWidget::selector(P::Mode, "Mode")` | Click-to-cycle (enums) | 1×1 |
-| `GridWidget::meter(&[Meter::Left.into()], "Level")` | Level meter (one bar per ID) | 1×1 |
+| `GridWidget::meter(&[P::MeterLeft.into()], "Level")` | Level meter (one bar per ID) | 1×1 |
 | `GridWidget::xy_pad(P::Pan, P::Gain, "XY")` | 2D control pad | 2×2 |
 
 ## Spanning
 
 ```rust
 GridWidget::selector(P::Wave, "Wave").cols(2)                       // 2 columns wide
-GridWidget::meter(&[Meter::Left.into(), Meter::Right.into()], "Level").rows(2)  // 2 rows tall
+GridWidget::meter(&[P::MeterLeft.into(), P::MeterRight.into()], "Level").rows(2)  // 2 rows tall
 GridWidget::xy_pad(P::Pan, P::Gain, "XY")                          // defaults to 2×2
 ```
 
@@ -69,20 +69,26 @@ GridLayout::build("EQ", "V0.1", 3, 80.0, vec![
 ])
 ```
 
-## Meter IDs
+## Meters
 
-Meter IDs are separate from parameter IDs. Define a `#[repr(u32)]`
-enum with `From<T> for u32` to prevent mixing param/meter IDs at
-compile time:
+Meters are declared as `MeterSlot` fields with the `#[meter]`
+attribute in your params struct. IDs are auto-assigned starting at
+256, and meter variants are included in the generated `ParamId` enum:
 
 ```rust
-#[repr(u32)]
-#[derive(Clone, Copy)]
-pub enum Meter { Left = 100, Right = 101 }
-impl From<Meter> for u32 { fn from(m: Meter) -> u32 { m as u32 } }
+#[derive(Params)]
+pub struct GainParams {
+    // ... params ...
+
+    #[meter]
+    pub meter_left: MeterSlot,
+
+    #[meter]
+    pub meter_right: MeterSlot,
+}
 ```
 
-Report values via `context.set_meter(Meter::Left, value)` in
+Report values via `context.set_meter(P::MeterLeft, value)` in
 `process()`. `set_meter()` accepts `impl Into<u32>`.
 
 ## Complete Example
@@ -97,7 +103,7 @@ fn layout(&self) -> truce_gui::layout::GridLayout {
         GridWidget::slider(P::Pan, "Pan"),
         GridWidget::toggle(P::Bypass, "Bypass"),
         GridWidget::xy_pad(P::Pan, P::Gain, "XY"),
-        GridWidget::meter(&[Meter::Left.into(), Meter::Right.into()], "Level").rows(2),
+        GridWidget::meter(&[P::MeterLeft.into(), P::MeterRight.into()], "Level").rows(2),
     ], vec![])
 }
 ```

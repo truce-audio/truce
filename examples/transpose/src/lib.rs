@@ -7,11 +7,11 @@ use TransposeParamsParamId as P;
 
 #[derive(Params)]
 pub struct TransposeParams {
-    #[param(id = 0, name = "Semitones", short_name = "Semi",
+    #[param(name = "Semitones", short_name = "Semi",
             range = "discrete(-12, 12)", unit = "st")]
     pub semitones: FloatParam,
 
-    #[param(id = 1, name = "Octave", short_name = "Oct",
+    #[param(name = "Octave", short_name = "Oct",
             range = "discrete(-3, 3)")]
     pub octave: FloatParam,
 }

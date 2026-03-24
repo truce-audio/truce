@@ -9,9 +9,10 @@ use crate::ParamState;
 pub fn param_toggle(
     ui: &mut egui::Ui,
     state: &ParamState,
-    id: u32,
+    id: impl Into<u32>,
     label: &str,
 ) -> egui::Response {
+    let id = id.into();
     let is_on = state.get(id) > 0.5;
 
     let desired = egui::vec2(60.0, 30.0);

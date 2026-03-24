@@ -8,7 +8,7 @@ mod types;
 pub use info::{ParamFlags, ParamInfo, ParamUnit};
 pub use range::ParamRange;
 pub use smooth::{Smoother, SmoothingStyle};
-pub use types::{BoolParam, EnumParam, FloatParam, IntParam, ParamEnum};
+pub use types::{BoolParam, EnumParam, FloatParam, IntParam, MeterSlot, ParamEnum};
 
 /// Format a plain parameter value as a display string based on the parameter's unit.
 ///

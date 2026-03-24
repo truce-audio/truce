@@ -33,8 +33,8 @@ pub mod prelude {
     };
     pub use truce_derive::plugin_info;
     pub use truce_params::{
-        BoolParam, EnumParam, FloatParam, IntParam, ParamEnum, ParamFlags, ParamInfo, ParamRange,
-        ParamUnit, Params,
+        BoolParam, EnumParam, FloatParam, IntParam, MeterSlot, ParamEnum, ParamFlags, ParamInfo,
+        ParamRange, ParamUnit, Params,
     };
     pub use truce_params_derive::{Params, ParamEnum};
 

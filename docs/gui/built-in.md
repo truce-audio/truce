@@ -29,7 +29,7 @@ fn layout(&self) -> truce_gui::layout::GridLayout {
         GridWidget::knob(P::Gain, "Gain"),
         GridWidget::slider(P::Pan, "Pan"),
         GridWidget::toggle(P::Bypass, "Bypass"),
-        GridWidget::meter(&[Meter::Left.into(), Meter::Right.into()], "Level").rows(2),
+        GridWidget::meter(&[P::MeterLeft.into(), P::MeterRight.into()], "Level").rows(2),
         GridWidget::xy_pad(P::Pan, P::Gain, "XY"),
     ], vec![
         (3, "METERS"),  // section label before widget index 3
@@ -67,7 +67,7 @@ enums directly (e.g., `P::Gain`).
 
 ```rust
 // Span 2 rows
-GridWidget::meter(&[100, 101], "Level").rows(2)
+GridWidget::meter(&[P::MeterLeft.into(), P::MeterRight.into()], "Level").rows(2)
 
 // Span 3 columns
 GridWidget::knob(P::Gain, "Gain").cols(3)

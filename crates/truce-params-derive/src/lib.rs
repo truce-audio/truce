@@ -28,6 +28,12 @@ struct NestedField {
     ident: syn::Ident,
 }
 
+/// A meter slot field.
+struct MeterField {
+    ident: syn::Ident,
+    id: Option<u32>,
+}
+
 /// Parsed `#[param(...)]` attributes.
 #[derive(Default)]
 struct ParamAttrs {
@@ -169,21 +175,32 @@ fn has_nested_attr(field: &syn::Field) -> bool {
     field.attrs.iter().any(|a| a.path().is_ident("nested"))
 }
 
+/// Check if a field has `#[meter]` attribute.
+fn has_meter_attr(field: &syn::Field) -> bool {
+    field.attrs.iter().any(|a| a.path().is_ident("meter"))
+}
+
+/// Check if a field type is `MeterSlot`.
+fn is_meter_slot(ty: &Type) -> bool {
+    type_last_segment(ty).map_or(false, |s| s == "MeterSlot")
+}
+
 /// Check if a field has `#[param(...)]` attribute.
 #[allow(dead_code)]
 fn has_param_attr(field: &syn::Field) -> bool {
     field.attrs.iter().any(|a| a.path().is_ident("param"))
 }
 
-/// Collect parameter fields and nested fields from a struct.
-fn collect_fields(fields: &Fields) -> (Vec<ParamField>, Vec<NestedField>) {
+/// Collect parameter fields, nested fields, and meter fields from a struct.
+fn collect_fields(fields: &Fields) -> (Vec<ParamField>, Vec<NestedField>, Vec<MeterField>) {
     let named = match fields {
         Fields::Named(named) => named,
-        _ => return (Vec::new(), Vec::new()),
+        _ => return (Vec::new(), Vec::new(), Vec::new()),
     };
 
     let mut params = Vec::new();
     let mut nested = Vec::new();
+    let mut meters = Vec::new();
 
     for f in &named.named {
         let ident = match f.ident.clone() {
@@ -193,6 +210,11 @@ fn collect_fields(fields: &Fields) -> (Vec<ParamField>, Vec<NestedField>) {
 
         if has_nested_attr(f) {
             nested.push(NestedField { ident });
+            continue;
+        }
+
+        if has_meter_attr(f) || is_meter_slot(&f.ty) {
+            meters.push(MeterField { ident, id: None });
             continue;
         }
 
@@ -207,7 +229,7 @@ fn collect_fields(fields: &Fields) -> (Vec<ParamField>, Vec<NestedField>) {
         }
     }
 
-    (params, nested)
+    (params, nested, meters)
 }
 
 /// Parse a range string like "linear(-60, 24)" into tokens.
@@ -360,7 +382,7 @@ fn gen_field_constructor(f: &ParamField) -> proc_macro2::TokenStream {
 // Main derive macro
 // ============================================================================
 
-#[proc_macro_derive(Params, attributes(param, nested))]
+#[proc_macro_derive(Params, attributes(param, nested, meter))]
 pub fn derive_params(input: TokenStream) -> TokenStream {
     let ast: DeriveInput = syn::parse(input).expect("Failed to parse input for Params derive");
     let struct_name = &ast.ident;
@@ -374,20 +396,46 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
         }
     };
 
-    let (param_fields, nested_fields) = collect_fields(fields);
+    let (mut param_fields, nested_fields, mut meter_fields) = collect_fields(fields);
 
-    if param_fields.is_empty() && nested_fields.is_empty() {
+    if param_fields.is_empty() && nested_fields.is_empty() && meter_fields.is_empty() {
         return syn::Error::new_spanned(
             &ast,
-            "Params derive: no recognized parameter fields (FloatParam, BoolParam, IntParam, EnumParam) or #[nested] fields",
+            "Params derive: no recognized fields (FloatParam, BoolParam, IntParam, EnumParam, MeterSlot, or #[nested])",
         )
         .to_compile_error()
         .into();
     }
 
+    // --- Auto-assign parameter IDs ---
+    // Explicit IDs take priority. Auto-assigned IDs fill gaps starting at 0.
+    {
+        let explicit_ids: HashSet<u32> = param_fields.iter()
+            .filter_map(|f| f.attrs.id)
+            .collect();
+        let mut next_auto = 0u32;
+        for f in &mut param_fields {
+            if f.attrs.id.is_none() {
+                while explicit_ids.contains(&next_auto) {
+                    next_auto += 1;
+                }
+                f.attrs.id = Some(next_auto);
+                next_auto += 1;
+            }
+        }
+    }
+
+    // --- Auto-assign meter IDs (starting at 256) ---
+    {
+        let mut next_meter = 256u32;
+        for m in &mut meter_fields {
+            m.id = Some(next_meter);
+            next_meter += 1;
+        }
+    }
+
     // --- Compile-time validation: duplicate IDs ---
-    let has_attrs = param_fields.iter().any(|f| f.attrs.id.is_some());
-    if has_attrs {
+    {
         let mut seen_ids = HashSet::new();
         for f in &param_fields {
             if let Some(id) = f.attrs.id {
@@ -401,10 +449,8 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
         }
     }
 
-    // --- Determine if we generate new() ---
-    let all_have_attrs = param_fields.iter().all(|f| has_param_attr_by_field(f));
-    let generate_new = all_have_attrs && !param_fields.is_empty()
-        && param_fields.iter().all(|f| f.attrs.id.is_some());
+    // --- Always generate new() ---
+    let generate_new = !param_fields.is_empty() || !meter_fields.is_empty();
 
     // --- Count ---
     let own_count = param_fields.len();
@@ -563,19 +609,26 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
         quote! { self.#ident.id() }
     }).collect();
 
-    // --- Generate new() if all fields have #[param] attributes ---
+    // --- Generate new() ---
     let new_impl = if generate_new {
-        let field_inits: Vec<_> = param_fields.iter().map(|f| {
+        let param_inits: Vec<_> = param_fields.iter().map(|f| {
             let ident = &f.ident;
             let constructor = gen_field_constructor(f);
             quote! { #ident: #constructor }
+        }).collect();
+
+        let meter_inits: Vec<_> = meter_fields.iter().map(|m| {
+            let ident = &m.ident;
+            let id = m.id.unwrap();
+            quote! { #ident: ::truce::params::MeterSlot::new(#id) }
         }).collect();
 
         quote! {
             impl #struct_name {
                 pub fn new() -> Self {
                     Self {
-                        #(#field_inits,)*
+                        #(#param_inits,)*
+                        #(#meter_inits,)*
                     }
                 }
             }
@@ -590,31 +643,49 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
         quote! {}
     };
 
-    // --- Generate ParamId enum ---
-    let param_id_enum = if !param_fields.is_empty() {
+    // --- Generate ParamId enum (includes both params and meters) ---
+    let param_id_enum = if !param_fields.is_empty() || !meter_fields.is_empty() {
         let enum_name = syn::Ident::new(
             &format!("{}ParamId", struct_name),
             struct_name.span(),
         );
 
-        let variants: Vec<_> = param_fields
+        let param_variants: Vec<_> = param_fields
             .iter()
             .map(|f| {
                 let variant = snake_to_pascal(&f.ident);
-                let id = f.attrs.id.unwrap_or(0);
+                let id = f.attrs.id.unwrap();
                 let id_lit = proc_macro2::Literal::u32_unsuffixed(id);
                 quote! { #variant = #id_lit }
             })
             .collect();
 
+        let meter_variants: Vec<_> = meter_fields
+            .iter()
+            .map(|m| {
+                let variant = snake_to_pascal(&m.ident);
+                let id = m.id.unwrap();
+                let id_lit = proc_macro2::Literal::u32_unsuffixed(id);
+                quote! { #variant = #id_lit }
+            })
+            .collect();
+
+        let variants: Vec<_> = param_variants.iter().chain(meter_variants.iter()).cloned().collect();
+
         let from_u32_arms: Vec<_> = param_fields
             .iter()
             .map(|f| {
                 let variant = snake_to_pascal(&f.ident);
-                let id = f.attrs.id.unwrap_or(0);
+                let id = f.attrs.id.unwrap();
                 let id_lit = proc_macro2::Literal::u32_unsuffixed(id);
                 quote! { #id_lit => Some(#enum_name::#variant) }
             })
+            .chain(meter_fields.iter().map(|m| {
+                let variant = snake_to_pascal(&m.ident);
+                let id = m.id.unwrap();
+                let id_lit = proc_macro2::Literal::u32_unsuffixed(id);
+                quote! { #id_lit => Some(#enum_name::#variant) }
+            }))
             .collect();
 
         quote! {
