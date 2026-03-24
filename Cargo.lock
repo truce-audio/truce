@@ -396,7 +396,7 @@ dependencies = [
 
 [[package]]
 name = "cargo-truce"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "serde",
  "toml 0.8.23",
@@ -1484,7 +1484,7 @@ dependencies = [
 
 [[package]]
 name = "gain-vizia"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "clap-sys",
  "truce",
@@ -4410,7 +4410,7 @@ dependencies = [
 
 [[package]]
 name = "truce"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "truce-clap",
  "truce-core",
@@ -4424,7 +4424,7 @@ dependencies = [
 
 [[package]]
 name = "truce-aax"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "truce-core",
  "truce-params",
@@ -4432,7 +4432,7 @@ dependencies = [
 
 [[package]]
 name = "truce-au"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "cc",
  "truce-core",
@@ -4442,7 +4442,7 @@ dependencies = [
 
 [[package]]
 name = "truce-build"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "serde",
  "toml 0.8.23",
@@ -4450,7 +4450,7 @@ dependencies = [
 
 [[package]]
 name = "truce-clap"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "clap-sys",
  "truce-core",
@@ -4459,14 +4459,14 @@ dependencies = [
 
 [[package]]
 name = "truce-core"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "truce-params",
 ]
 
 [[package]]
 name = "truce-derive"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4477,7 +4477,7 @@ dependencies = [
 
 [[package]]
 name = "truce-egui"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "baseview 0.1.0 (git+https://github.com/RustAudio/baseview.git)",
  "cocoa 0.26.1",
@@ -4494,7 +4494,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-arpeggio"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "clap-sys",
  "truce",
@@ -4513,7 +4513,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-eq"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "clap-sys",
  "truce",
@@ -4532,7 +4532,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-gain"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "clap-sys",
  "truce",
@@ -4551,7 +4551,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-gain-egui"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "clap-sys",
  "egui",
@@ -4572,7 +4572,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-gain-iced"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "clap-sys",
  "iced",
@@ -4593,7 +4593,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-synth"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "clap-sys",
  "truce",
@@ -4613,7 +4613,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-transpose"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "clap-sys",
  "truce",
@@ -4632,7 +4632,7 @@ dependencies = [
 
 [[package]]
 name = "truce-gpu"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "baseview 0.1.0 (git+https://github.com/RustAudio/baseview.git)",
  "bytemuck",
@@ -4650,7 +4650,7 @@ dependencies = [
 
 [[package]]
 name = "truce-gui"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "cc",
  "fontdue",
@@ -4661,7 +4661,7 @@ dependencies = [
 
 [[package]]
 name = "truce-iced"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "cc",
  "iced",
@@ -4676,7 +4676,7 @@ dependencies = [
 
 [[package]]
 name = "truce-loader"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "libloading 0.8.9",
  "log",
@@ -4690,14 +4690,14 @@ dependencies = [
 
 [[package]]
 name = "truce-params"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "bitflags 2.11.0",
 ]
 
 [[package]]
 name = "truce-params-derive"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4706,11 +4706,11 @@ dependencies = [
 
 [[package]]
 name = "truce-shim-types"
-version = "0.1.4"
+version = "0.1.5"
 
 [[package]]
 name = "truce-standalone"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "cpal",
  "crossterm",
@@ -4722,7 +4722,7 @@ dependencies = [
 
 [[package]]
 name = "truce-test"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "png 0.18.1",
  "truce-core",
@@ -4732,7 +4732,7 @@ dependencies = [
 
 [[package]]
 name = "truce-vizia"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "baseview 0.1.0 (git+https://github.com/vizia/baseview.git?rev=77fec022db136fb771d5775ae13d088f4f166c04)",
  "cocoa 0.24.1",
@@ -4745,7 +4745,7 @@ dependencies = [
 
 [[package]]
 name = "truce-vst2"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "cc",
  "truce-core",
@@ -4754,7 +4754,7 @@ dependencies = [
 
 [[package]]
 name = "truce-vst3"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "cc",
  "truce-core",
@@ -4763,7 +4763,7 @@ dependencies = [
 
 [[package]]
 name = "truce-xtask"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "serde",
  "toml 0.8.23",

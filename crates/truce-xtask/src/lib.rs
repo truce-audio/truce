@@ -545,13 +545,17 @@ fn load_config() -> std::result::Result<Config, BoxErr> {
 type Res = std::result::Result<(), Box<dyn std::error::Error>>;
 type BoxErr = Box<dyn std::error::Error>;
 
-/// Read the [features] table from the project's Cargo.toml.
-fn detect_available_features() -> std::collections::HashSet<String> {
+/// Read the default features from the project's Cargo.toml.
+fn detect_default_features() -> std::collections::HashSet<String> {
     let root = project_root();
     if let Ok(content) = fs::read_to_string(root.join("Cargo.toml")) {
         if let Ok(doc) = content.parse::<toml::Table>() {
             if let Some(toml::Value::Table(feat)) = doc.get("features") {
-                return feat.keys().cloned().collect();
+                if let Some(toml::Value::Array(defaults)) = feat.get("default") {
+                    return defaults.iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect();
+                }
             }
         }
     }
@@ -659,7 +663,7 @@ fn cmd_install(args: &[String]) -> Res {
     if !clap && !vst3 && !vst2 && !au2 && !au3 && !aax {
         // No format flags specified — enable all formats that the project supports.
         // Check which features are defined in the first plugin's Cargo.toml.
-        let available = detect_available_features();
+        let available = detect_default_features();
         clap = available.contains("clap");
         vst3 = available.contains("vst3");
         vst2 = available.contains("vst2");
