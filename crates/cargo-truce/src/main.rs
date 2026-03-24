@@ -133,6 +133,7 @@ vst2 = ["dep:truce-vst2"]
 au = ["dep:truce-au"]
 aax = ["dep:truce-aax"]
 dev = ["truce/dev"]
+gpu = ["truce/gpu"]
 
 [dependencies]
 truce = {{ git = "https://github.com/truce-audio/truce" }}
@@ -271,8 +272,8 @@ pub struct {struct_name}Params {{
     };
 
     let layout_knob = match kind {
-        "midi" => "GridWidget::knob(0, \"Semitones\")",
-        _ => "GridWidget::knob(0, \"Gain\")",
+        "midi" => "GridWidget::knob(0u32, \"Semitones\")",
+        _ => "GridWidget::knob(0u32, \"Gain\")",
     };
 
     let bus_layouts = match kind {
