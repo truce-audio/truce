@@ -54,7 +54,8 @@ where
     ))
     .expect("Failed to create wgpu device for snapshot");
 
-    let format = wgpu::TextureFormat::Bgra8Unorm;
+    // Use sRGB to match the windowed Metal surface (Bgra8UnormSrgb).
+    let format = wgpu::TextureFormat::Bgra8UnormSrgb;
 
     // Create iced engine + renderer
     let engine = iced_wgpu::Engine::new(&adapter, &device, &queue, format, None);
