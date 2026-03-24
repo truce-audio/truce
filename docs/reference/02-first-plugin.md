@@ -49,8 +49,8 @@ lives in one place.
 
 ### src/lib.rs
 
-Everything -- parameters, plugin logic, `PluginExport` impl, format
-export macros, and the GUI layout -- lives in a single `lib.rs`.
+Everything -- parameters, plugin logic, the `plugin!` macro, and
+the GUI layout -- lives in a single `lib.rs`.
 
 ```rust
 use truce::params::{BoolParam, FloatParam};
@@ -92,16 +92,8 @@ impl Gain {
     }
 }
 
-impl Plugin for Gain {
-    fn info() -> PluginInfo {
-        plugin_info!()  // reads from truce.toml + Cargo.toml
-    }
-
-    fn bus_layouts() -> Vec<BusLayout> {
-        vec![BusLayout::stereo()]
-    }
-
-    fn reset(&self, sample_rate: f64, _max_block_size: usize) {
+impl PluginLogic for Gain {
+    fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {
         self.params.set_sample_rate(sample_rate);
         self.params.snap_smoothers();
     }
@@ -133,34 +125,20 @@ impl Plugin for Gain {
 
         ProcessStatus::Normal
     }
+
+    fn layout(&self) -> truce_gui::layout::PluginLayout {
+        truce_gui::layout!("MY GAIN", "V0.1", 80.0, {
+            row {
+                knob(P::Gain, "Gain")
+                knob(P::Pan, "Pan")
+            }
+        })
+    }
 }
 
-// --- Export (one impl, all formats) ---
+// --- Export (one macro, all formats) ---
 
-impl PluginExport for Gain {
-    type Params = GainParams;
-    fn create(params: Arc<GainParams>) -> Self { Self::new(params) }
-    fn params(&self) -> &GainParams { &self.params }
-}
-
-// --- Format entry points ---
-
-truce_clap::export_clap!(Gain);
-truce_vst3::export_vst3!(Gain);
-// AU is built as a separate binary with --features au
-#[cfg(feature = "au")]
-truce_au::export_au!(Gain);
-
-// --- GUI layout ---
-
-pub fn gui_layout() -> truce_gui::layout::PluginLayout {
-    truce_gui::layout!("MY GAIN", "V0.1", 80.0, {
-        row {
-            knob(P::Gain, "Gain")
-            knob(P::Pan, "Pan")
-        }
-    })
-}
+truce::plugin! { logic: Gain, params: GainParams }
 ```
 
 Key structural points:
@@ -169,13 +147,15 @@ Key structural points:
   `Default`, the entire `Params` trait impl, and a `GainParamsParamId`
   enum (`#[repr(u32)]`) with typed variants for each parameter.
   No manual boilerplate — no `pub const ID_*` constants needed.
-- **`PluginExport`** is a single unified trait. Implement it once and
-  every format uses it.
-- **Export macros** (`export_clap!`, `export_vst3!`, `export_au!`) live
-  right in `lib.rs`. The AU export macro is gated behind
-  `#[cfg(feature = "au")]` because AU is built as a separate binary.
-- **GUI layout** is a public function so both the plugin and standalone
-  binary can use it.
+- **`PluginLogic`** is the trait you implement. It covers `reset()`,
+  `process()`, `layout()`, and optional lifecycle methods. `new()` is
+  an inherent method on your struct (not part of the trait) — it takes
+  `Arc<Params>` shared with the shell.
+- **`truce::plugin!`** replaces the old `PluginExport` impl and
+  per-format export macros (`export_clap!`, `export_vst3!`, etc.).
+  One macro handles all formats.
+- **GUI layout** is defined inside `layout()` on `PluginLogic`, so
+  both the plugin and standalone binary can use it.
 
 ### src/main.rs (standalone entry point)
 

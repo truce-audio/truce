@@ -5,7 +5,7 @@ plugin has extra state (loaded audio files, drawn curves, custom
 wavetables), use `save_state` / `load_state`:
 
 ```rust
-impl Plugin for MyConvolver {
+impl PluginLogic for MyConvolver {
     // ...
 
     fn save_state(&self) -> Option<Vec<u8>> {

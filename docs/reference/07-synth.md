@@ -124,11 +124,7 @@ impl Synth {
     }
 }
 
-impl Plugin for Synth {
-    fn info() -> PluginInfo {
-        plugin_info!()
-    }
-
+impl PluginLogic for Synth {
     fn bus_layouts() -> Vec<BusLayout> {
         // Instrument: no audio input, stereo output
         vec![BusLayout::new().with_output("Main", ChannelConfig::Stereo)]
@@ -180,40 +176,30 @@ impl Plugin for Synth {
         self.voices.retain(|v| !v.is_done());
         if self.voices.is_empty() { ProcessStatus::Tail(0) } else { ProcessStatus::Normal }
     }
+
+    fn layout(&self) -> truce_gui::layout::PluginLayout {
+        truce_gui::layout!("TRUCE SYNTH", "V0.1", 70.0, {
+            row {
+                selector(P::Waveform, "Wave") .span(2)
+                knob(P::Volume, "Volume")
+            }
+            section("FILTER") {
+                knob(P::Cutoff, "Cutoff")
+                knob(P::Resonance, "Reso")
+            }
+            section("ENVELOPE") {
+                knob(P::Attack, "Attack")
+                knob(P::Decay, "Decay")
+                knob(P::Sustain, "Sustain")
+                knob(P::Release, "Release")
+            }
+        })
+    }
 }
 
-// --- Export ---
+// --- Export (one macro, all formats) ---
 
-impl PluginExport for Synth {
-    type Params = SynthParams;
-    fn create(params: Arc<SynthParams>) -> Self { Self::new(params) }
-    fn params(&self) -> &SynthParams { &self.params }
-}
-
-truce_clap::export_clap!(Synth);
-truce_vst3::export_vst3!(Synth);
-truce_au::export_au!(Synth);
-
-// --- GUI layout ---
-
-pub fn gui_layout() -> truce_gui::layout::PluginLayout {
-    truce_gui::layout!("TRUCE SYNTH", "V0.1", 70.0, {
-        row {
-            selector(P::Waveform, "Wave") .span(2)
-            knob(P::Volume, "Volume")
-        }
-        section("FILTER") {
-            knob(P::Cutoff, "Cutoff")
-            knob(P::Resonance, "Reso")
-        }
-        section("ENVELOPE") {
-            knob(P::Attack, "Attack")
-            knob(P::Decay, "Decay")
-            knob(P::Sustain, "Sustain")
-            knob(P::Release, "Release")
-        }
-    })
-}
+truce::plugin! { logic: Synth, params: SynthParams }
 ```
 
 ---

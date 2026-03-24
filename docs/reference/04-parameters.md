@@ -106,7 +106,7 @@ These map to the underlying `ParamRange` enum (`Linear`, `Logarithmic`, `Discret
 ### Smoothing modes
 
 Smoothing prevents audible zipper noise when parameters change.
-Specified as the second argument to `FloatParam::new()`:
+Specified via the `smooth` key in `#[param(...)]`:
 
 ```rust
 // No smoothing -- value jumps instantly.

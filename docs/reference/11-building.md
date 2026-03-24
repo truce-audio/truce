@@ -19,16 +19,16 @@ name = "My Effect"
 suffix = "effect"
 crate = "my-effect"              # cargo package name
 au_type = "aufx"                 # aufx = effect, aumu = instrument
-au_subtype = "MyFx"              # 4-char AU v2 subtype code
-au3_subtype = "MyF3"             # 4-char AU v3 subtype (optional, defaults to au_subtype)
+fourcc = "MyFx"                  # 4-char code (AU subtype, CLAP feature ID, etc.)
+au3_subtype = "MyF3"             # 4-char AU v3 subtype (optional, defaults to fourcc)
 au_tag = "Effects"
 ```
 
 The `[vendor]` section defines your company identity. Each `[[plugin]]`
-entry defines a plugin to build and install. The AU fields (`au_type`,
-`au_subtype`, `au_manufacturer`) must be 4-character codes that uniquely
-identify your plugin in the AU system. `au3_subtype` is optional — if
-omitted, it defaults to `au_subtype` (v2 and v3 share the same subtype).
+entry defines a plugin to build and install. The `fourcc` field and
+AU fields (`au_type`, `au_manufacturer`) must be 4-character codes that
+uniquely identify your plugin. `au3_subtype` is optional — if omitted,
+it defaults to `fourcc` (v2 and v3 share the same code).
 
 ### Building and installing with xtask
 
