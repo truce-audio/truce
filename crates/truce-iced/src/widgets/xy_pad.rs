@@ -52,7 +52,7 @@ impl<'a, M: Clone + Debug + 'static> XYPadWidget<'a, M> {
         let total_h = self.size + if self.label.is_some() { 16.0 } else { 0.0 };
         let program = XYPadProgram {
             x_id: self.x_id,
-            _y_id: self.y_id,
+            y_id: self.y_id,
             x_value: self.x_value as f32,
             y_value: self.y_value as f32,
             label: self.label.unwrap_or("").to_string(),
@@ -78,7 +78,7 @@ impl<'a, M: Clone + Debug + 'static> From<XYPadWidget<'a, M>> for Element<'a, Me
 
 struct XYPadProgram {
     x_id: u32,
-    _y_id: u32,
+    y_id: u32,
     x_value: f32,
     y_value: f32,
     label: String,
@@ -165,10 +165,12 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for XYPadProgram {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 if cursor.position_in(bounds).is_some() {
                     state.dragging = true;
-                    // Begin edit on both axes
                     return (
                         canvas::event::Status::Captured,
-                        Some(Message::Param(ParamMessage::BeginEdit(self.x_id))),
+                        Some(Message::Param(ParamMessage::Batch(vec![
+                            ParamMessage::BeginEdit(self.x_id),
+                            ParamMessage::BeginEdit(self.y_id),
+                        ]))),
                     );
                 }
             }
@@ -176,14 +178,13 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for XYPadProgram {
                 if state.dragging {
                     if let Some(pos) = cursor.position_in(bounds) {
                         let x_norm = (pos.x / s).clamp(0.0, 1.0) as f64;
-                        let _y_norm = (1.0 - pos.y / s).clamp(0.0, 1.0) as f64;
-                        // We can only return one message at a time, so bundle X change.
-                        // The Y axis update is handled via a separate message in the tick.
+                        let y_norm = (1.0 - pos.y / s).clamp(0.0, 1.0) as f64;
                         return (
                             canvas::event::Status::Captured,
-                            Some(Message::Param(ParamMessage::SetNormalized(
-                                self.x_id, x_norm,
-                            ))),
+                            Some(Message::Param(ParamMessage::Batch(vec![
+                                ParamMessage::SetNormalized(self.x_id, x_norm),
+                                ParamMessage::SetNormalized(self.y_id, y_norm),
+                            ]))),
                         );
                     }
                 }
@@ -193,7 +194,10 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for XYPadProgram {
                     state.dragging = false;
                     return (
                         canvas::event::Status::Captured,
-                        Some(Message::Param(ParamMessage::EndEdit(self.x_id))),
+                        Some(Message::Param(ParamMessage::Batch(vec![
+                            ParamMessage::EndEdit(self.x_id),
+                            ParamMessage::EndEdit(self.y_id),
+                        ]))),
                     );
                 }
             }

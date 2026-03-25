@@ -105,6 +105,21 @@ pub(crate) struct IcedProgram<P: Params, M: IcedPlugin<P>> {
     pub(crate) meter_ids: Vec<u32>,
 }
 
+impl<P: Params, M: IcedPlugin<P>> IcedProgram<P, M> {
+    fn apply_param_message(&self, msg: &ParamMessage) {
+        match msg {
+            ParamMessage::BeginEdit(id) => self.editor_handle.begin_edit(*id),
+            ParamMessage::SetNormalized(id, val) => self.editor_handle.set_param(*id, *val),
+            ParamMessage::EndEdit(id) => self.editor_handle.end_edit(*id),
+            ParamMessage::Batch(msgs) => {
+                for m in msgs {
+                    self.apply_param_message(m);
+                }
+            }
+        }
+    }
+}
+
 impl<P: Params + 'static, M: IcedPlugin<P>> iced_runtime::Program for IcedProgram<P, M> {
     type Renderer = IcedRenderer;
     type Theme = iced::Theme;
@@ -113,11 +128,7 @@ impl<P: Params + 'static, M: IcedPlugin<P>> iced_runtime::Program for IcedProgra
     fn update(&mut self, message: Self::Message) -> Task<Self::Message> {
         // Handle param messages — forward to host
         if let Message::Param(ref param_msg) = message {
-            match param_msg {
-                ParamMessage::BeginEdit(id) => self.editor_handle.begin_edit(*id),
-                ParamMessage::SetNormalized(id, val) => self.editor_handle.set_param(*id, *val),
-                ParamMessage::EndEdit(id) => self.editor_handle.end_edit(*id),
-            }
+            self.apply_param_message(param_msg);
         }
 
         match message {

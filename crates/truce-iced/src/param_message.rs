@@ -11,6 +11,8 @@ pub enum ParamMessage {
     SetNormalized(u32, f64),
     /// End an edit gesture (mouse-up).
     EndEdit(u32),
+    /// Multiple parameter messages in one update (e.g. XY pad).
+    Batch(Vec<ParamMessage>),
 }
 
 /// Unified message type wrapping both parameter messages and plugin-specific messages.
