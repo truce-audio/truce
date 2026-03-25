@@ -7,24 +7,24 @@ single crate with `src/lib.rs` and `src/main.rs`.
 ### src/lib.rs
 
 ```rust
-use truce::params::{EnumParam, FloatParam, ParamEnum};
 use truce::prelude::*;
-use truce_params_derive::Params;
+use truce_gui::layout::{GridLayout, GridWidget};
 
 mod voice;
 use voice::Voice;
 
 // --- Waveform enum ---
 
-#[derive(Clone, Copy, PartialEq, Eq, ParamEnum)]
+#[derive(ParamEnum)]
 pub enum Waveform { Sine, Saw, Square, Triangle }
 
 // --- Parameters ---
 
+use SynthParamsParamId as P;
+
 #[derive(Params)]
 pub struct SynthParams {
-    #[param(name = "Waveform", short_name = "Wave",
-            range = "enum(4)", default = 1)]
+    #[param(name = "Waveform", short_name = "Wave", default = 1)]
     pub waveform: EnumParam<Waveform>,
 
     #[param(name = "Filter Cutoff", short_name = "Cutoff",
@@ -57,9 +57,6 @@ pub struct SynthParams {
             smooth = "exp(5)")]
     pub volume: FloatParam,
 }
-
-// Use the generated param ID enum for type-safe references
-use SynthParamsParamId as P;
 
 // --- Plugin ---
 
@@ -152,23 +149,20 @@ impl PluginLogic for Synth {
         if self.voices.is_empty() { ProcessStatus::Tail(0) } else { ProcessStatus::Normal }
     }
 
-    fn layout(&self) -> truce_gui::layout::PluginLayout {
-        truce_gui::layout!("TRUCE SYNTH", "V0.1", 70.0, {
-            row {
-                selector(P::Waveform, "Wave") .span(2)
-                knob(P::Volume, "Volume")
-            }
-            section("FILTER") {
-                knob(P::Cutoff, "Cutoff")
-                knob(P::Resonance, "Reso")
-            }
-            section("ENVELOPE") {
-                knob(P::Attack, "Attack")
-                knob(P::Decay, "Decay")
-                knob(P::Sustain, "Sustain")
-                knob(P::Release, "Release")
-            }
-        })
+    fn layout(&self) -> truce_gui::layout::GridLayout {
+        GridLayout::build("TRUCE SYNTH", "V0.1", 4, 70.0, vec![
+            GridWidget::selector(P::Waveform, "Wave").cols(2),
+            GridWidget::knob(P::Volume, "Volume"),
+            GridWidget::knob(P::Cutoff, "Cutoff"),
+            GridWidget::knob(P::Resonance, "Reso"),
+            GridWidget::knob(P::Attack, "Attack"),
+            GridWidget::knob(P::Decay, "Decay"),
+            GridWidget::knob(P::Sustain, "Sustain"),
+            GridWidget::knob(P::Release, "Release"),
+        ], vec![
+            (3, "FILTER"),
+            (5, "ENVELOPE"),
+        ])
     }
 }
 

@@ -141,14 +141,15 @@ cargo build --release -p truce-example-synth --features standalone
 The standalone entry point imports from the same crate:
 
 ```rust
-use truce_example_gain::{Gain, GainParams, gui_layout};
+use truce_example_gain::{Gain, GainParams};
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
     if args.iter().any(|a| a == "--render-gui") {
         let params = std::sync::Arc::new(GainParams::new());
-        truce_standalone::render_gui_png(params, gui_layout(), "gain-gui.png");
+        let gain = Gain::new(std::sync::Arc::clone(&params));
+        truce_standalone::render_gui_png(params, gain.layout(), "gain-gui.png");
         return;
     }
 
@@ -157,7 +158,9 @@ fn main() {
         return;
     }
 
-    truce_standalone::run_with_gui::<Gain>(gui_layout());
+    let params = std::sync::Arc::new(GainParams::new());
+    let gain = Gain::new(std::sync::Arc::clone(&params));
+    truce_standalone::run_with_gui::<Gain>(gain.layout());
 }
 ```
 
