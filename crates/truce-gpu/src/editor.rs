@@ -66,6 +66,10 @@ struct GpuWindowHandler<P: Params> {
     left_pressed: bool,
     last_click_time: std::time::Instant,
     last_click_pos: (f32, f32),
+    /// Current logical size — used to detect hot-reload size changes.
+    current_size: (u32, u32),
+    /// Host callback to request a window resize.
+    request_resize: Arc<dyn Fn(u32, u32) -> bool + Send + Sync>,
 }
 
 impl<P: Params + 'static> WindowHandler for GpuWindowHandler<P> {
@@ -79,14 +83,24 @@ impl<P: Params + 'static> WindowHandler for GpuWindowHandler<P> {
                         eprintln!("[truce-gpu] WARNING: on_frame called but inner has no context");
                     }
                 }
+
+                // Check if the inner editor's size changed (e.g. after hot reload).
+                let new_size = inner.size();
+                if new_size != self.current_size {
+                    hot_debug!(
+                        "[truce-gpu] size changed: {}x{} -> {}x{}",
+                        self.current_size.0, self.current_size.1,
+                        new_size.0, new_size.1,
+                    );
+                    gpu.resize(new_size.0, new_size.1);
+                    (self.request_resize)(new_size.0, new_size.1);
+                    self.current_size = new_size;
+                }
+
                 inner.render_to(gpu);
             }
             gpu.present();
         }
-        // If gpu is None, GPU init failed. The window will be blank.
-        // This shouldn't happen on any Mac with Metal support.
-        // A CPU fallback through baseview isn't possible without a
-        // software rendering surface.
     }
 
     fn on_event(&mut self, _window: &mut Window, event: Event) -> EventStatus {
@@ -167,7 +181,9 @@ impl<P: Params + 'static> WindowHandler for GpuWindowHandler<P> {
 
 impl<P: Params + 'static> Editor for GpuEditor<P> {
     fn size(&self) -> (u32, u32) {
-        self.size
+        // Read live size from the inner editor so hot-reload changes
+        // are reflected when the host queries our size.
+        self.inner.lock().map(|g| g.size()).unwrap_or(self.size)
     }
 
     fn open(&mut self, parent: RawWindowHandle, context: EditorContext) {
@@ -175,6 +191,8 @@ impl<P: Params + 'static> Editor for GpuEditor<P> {
         let (lw, lh) = self.size; // logical points
 
         hot_debug!("[truce-gpu] open() called, size={}x{}", lw, lh);
+
+        let request_resize = Arc::clone(&context.request_resize);
 
         // Set up the inner editor's context for param access
         if let Ok(mut inner) = self.inner.lock() {
@@ -219,6 +237,8 @@ impl<P: Params + 'static> Editor for GpuEditor<P> {
                     last_click_time: std::time::Instant::now()
                         - std::time::Duration::from_secs(10),
                     last_click_pos: (-100.0, -100.0),
+                    current_size: size,
+                    request_resize,
                 }
             },
         );

@@ -209,7 +209,7 @@ pub struct WgpuBackend {
     /// None for headless mode (snapshot testing). When present, `present()`
     /// renders to the surface frame. When None, use `read_pixels()` instead.
     surface: Option<wgpu::Surface<'static>>,
-    _surface_config: Option<wgpu::SurfaceConfiguration>,
+    surface_config: Option<wgpu::SurfaceConfiguration>,
     pipeline: wgpu::RenderPipeline,
     msaa_texture: wgpu::TextureView,
     vertices: Vec<Vertex>,
@@ -218,7 +218,7 @@ pub struct WgpuBackend {
     font: fontdue::Font,
     atlas_texture: wgpu::Texture,
     atlas_bind_group: wgpu::BindGroup,
-    _viewport_buffer: wgpu::Buffer,
+    viewport_buffer: wgpu::Buffer,
     viewport_bind_group: wgpu::BindGroup,
     clear_color: wgpu::Color,
     width: u32,
@@ -479,7 +479,7 @@ impl WgpuBackend {
             device,
             queue,
             surface: Some(surface),
-            _surface_config: Some(surface_config),
+            surface_config: Some(surface_config),
             pipeline,
             msaa_texture,
             vertices: Vec::with_capacity(4096),
@@ -488,7 +488,7 @@ impl WgpuBackend {
             font,
             atlas_texture,
             atlas_bind_group,
-            _viewport_buffer: viewport_buffer,
+            viewport_buffer,
             viewport_bind_group,
             clear_color: wgpu::Color::BLACK,
             width,
@@ -559,6 +559,40 @@ impl WgpuBackend {
             view_formats: &[],
         });
         tex.create_view(&wgpu::TextureViewDescriptor::default())
+    }
+
+    /// Resize the wgpu surface, MSAA texture, and viewport projection.
+    ///
+    /// `logical_w` and `logical_h` are in logical points (same coordinate
+    /// space as `BuiltinEditor::size()`). Returns `true` if the surface
+    /// was actually reconfigured.
+    pub fn resize(&mut self, logical_w: u32, logical_h: u32) -> bool {
+        let new_w = (logical_w as f32 * self.scale) as u32;
+        let new_h = (logical_h as f32 * self.scale) as u32;
+        if new_w == self.width && new_h == self.height {
+            return false;
+        }
+        self.width = new_w;
+        self.height = new_h;
+
+        if let Some(ref surface) = self.surface {
+            if let Some(ref mut config) = self.surface_config {
+                config.width = new_w;
+                config.height = new_h;
+                surface.configure(&self.device, config);
+                self.msaa_texture = Self::create_msaa_texture(&self.device, config);
+            }
+        }
+
+        // Update the orthographic projection matrix.
+        let matrix = ortho_matrix(new_w as f32, new_h as f32);
+        self.queue.write_buffer(
+            &self.viewport_buffer,
+            0,
+            bytemuck::cast_slice(&matrix),
+        );
+
+        true
     }
 
     // --- Geometry helpers ---
@@ -1066,7 +1100,7 @@ impl WgpuBackend {
             device,
             queue,
             surface: None,
-            _surface_config: None,
+            surface_config: None,
             pipeline,
             msaa_texture: msaa_view,
             vertices: Vec::with_capacity(4096),
@@ -1075,7 +1109,7 @@ impl WgpuBackend {
             font,
             atlas_texture,
             atlas_bind_group,
-            _viewport_buffer: viewport_buffer,
+            viewport_buffer,
             viewport_bind_group,
             clear_color: wgpu::Color::BLACK,
             width: phys_w,
