@@ -365,6 +365,17 @@ impl<P: Params + 'static> BuiltinEditor<P> {
 
     // --- Public API for external backends (truce-gpu) ---
 
+    /// Whether the editor has an active context.
+    pub fn has_context(&self) -> bool {
+        self.context.is_some()
+    }
+
+    /// Take the editor context, leaving `None` in its place.
+    /// Used by hot-reload to preserve the context when swapping editors.
+    pub fn take_context(&mut self) -> Option<EditorContext> {
+        self.context.take()
+    }
+
     /// Set the editor context (host callbacks) without opening the CPU view.
     pub fn set_context(&mut self, context: EditorContext) {
         self.context = Some(context);

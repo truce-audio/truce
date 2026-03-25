@@ -27,3 +27,4 @@ truce-params-derive = { workspace = true }
 [features]
 default = []
 shell = ["dep:libloading", "dep:parking_lot"]
+hot-debug = ["truce-gpu/hot-debug"]

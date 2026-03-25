@@ -156,7 +156,7 @@ impl PluginLogic for Synth {
     }
 
     fn layout(&self) -> truce_gui::layout::GridLayout {
-        GridLayout::build("TRUCE SYNTH", "V0.1", 4, 70.0, vec![
+        GridLayout::build("TRUCE SYNTH aa", "V0.1", 4, 70.0, vec![
             GridWidget::selector(P::Waveform, "Wave").cols(2),
             GridWidget::knob(P::Volume, "Volume"),
             GridWidget::knob(P::Cutoff, "Cutoff"),

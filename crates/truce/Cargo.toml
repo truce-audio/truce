@@ -18,6 +18,7 @@ default = ["clap"]
 clap = ["dep:truce-clap"]
 vst3 = ["dep:truce-vst3"]
 dev = ["truce-loader/shell"]
+hot-debug = ["truce-loader/hot-debug"]
 
 [dependencies.truce-clap]
 workspace = true

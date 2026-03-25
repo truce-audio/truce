@@ -17,3 +17,7 @@ lyon_tessellation = "1"
 fontdue = "0.9"
 baseview = { git = "https://github.com/RustAudio/baseview.git" }
 raw-window-handle = "0.5"
+
+[features]
+default = []
+hot-debug = []

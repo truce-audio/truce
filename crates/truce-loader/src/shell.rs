@@ -5,7 +5,7 @@
 //! hot-reloadable dylib.
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 
 use parking_lot::Mutex;
@@ -19,6 +19,13 @@ use truce_core::plugin::Plugin;
 use truce_params::Params;
 
 use crate::loader::NativeLoader;
+
+macro_rules! hot_debug {
+    ($($arg:tt)*) => {
+        #[cfg(feature = "hot-debug")]
+        eprintln!($($arg)*);
+    };
+}
 
 // ---------------------------------------------------------------------------
 // HotShell — the Plugin implementation that delegates to the dylib
@@ -182,16 +189,19 @@ impl<P: Params + 'static> Plugin for HotShell<P> {
     }
 
     fn editor(&mut self) -> Option<Box<dyn Editor>> {
+        hot_debug!("[truce-hot] editor() called");
         let params_ptr = Arc::as_ptr(&self.params) as *const ();
         let gui_loader = NativeLoader::new(self.dylib_path.clone(), params_ptr);
 
         // Custom editor path (egui, vizia, iced)
         if let Some(custom) = self.try_custom_editor() {
+            hot_debug!("[truce-hot] using custom editor");
             return Some(Box::new(HotEditor::<P>::new_custom(custom)));
         }
 
         // Built-in editor path (layout + GPU)
         let builtin = self.try_builtin_editor()?;
+        hot_debug!("[truce-hot] using builtin editor (GPU path)");
         let inner = Arc::new(std::sync::Mutex::new(builtin));
         let gpu = truce_gpu::GpuEditor::new_shared(Arc::clone(&inner));
         Some(Box::new(HotEditor::new_builtin(
@@ -238,9 +248,18 @@ struct HotEditor<P: Params> {
     kind: HotEditorInner<P>,
     /// Background thread handle for the GUI reload watcher.
     _watcher: Option<std::thread::JoinHandle<()>>,
+    /// Set to true when the editor is dropped so the watcher thread exits.
+    stop: Arc<AtomicBool>,
 }
 
 unsafe impl<P: Params> Send for HotEditor<P> {}
+
+impl<P: Params> Drop for HotEditor<P> {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        hot_debug!("[truce-gui-reload] stop flag set (editor dropped)");
+    }
+}
 
 impl<P: Params + 'static> HotEditor<P> {
     fn new_builtin(
@@ -249,28 +268,55 @@ impl<P: Params + 'static> HotEditor<P> {
         mut gui_loader: NativeLoader,
         params: Arc<P>,
     ) -> Self {
+        let stop = Arc::new(AtomicBool::new(false));
+
         // Spawn a background thread that watches for dylib changes
         // and swaps the BuiltinEditor inside the shared mutex.
         let inner_for_thread = Arc::clone(&inner);
         let params_for_thread = Arc::clone(&params);
+        let stop_flag = Arc::clone(&stop);
         let watcher = std::thread::Builder::new()
             .name("truce-gui-reload".into())
             .spawn(move || {
+                hot_debug!("[truce-gui-reload] watcher thread started");
                 loop {
                     std::thread::sleep(std::time::Duration::from_millis(500));
+                    if stop_flag.load(Ordering::Relaxed) {
+                        hot_debug!("[truce-gui-reload] watcher thread stopping (editor dropped)");
+                        return;
+                    }
                     if gui_loader.is_reload_pending() {
+                        hot_debug!("[truce-gui-reload] reload pending, attempting reload...");
                         if gui_loader.reload() {
+                            hot_debug!("[truce-gui-reload] dylib reloaded successfully");
                             if let Some(plugin) = gui_loader.plugin() {
                                 let layout = plugin.layout();
+                                hot_debug!("[truce-gui-reload] layout: {}x{}", layout.width, layout.height);
                                 if layout.width > 0 && layout.height > 0 {
                                     let new_builtin = truce_gui::editor::BuiltinEditor::new_grid(
                                         Arc::clone(&params_for_thread), layout,
                                     );
                                     if let Ok(mut guard) = inner_for_thread.lock() {
+                                        let had_ctx = guard.take_context();
+                                        hot_debug!("[truce-gui-reload] old editor had context: {}", had_ctx.is_some());
                                         *guard = new_builtin;
+                                        if let Some(ctx) = had_ctx {
+                                            guard.set_context(ctx);
+                                            hot_debug!("[truce-gui-reload] context restored on new editor");
+                                        } else {
+                                            hot_debug!("[truce-gui-reload] WARNING: no context to restore!");
+                                        }
+                                    } else {
+                                        hot_debug!("[truce-gui-reload] ERROR: failed to lock inner mutex");
                                     }
+                                } else {
+                                    hot_debug!("[truce-gui-reload] skipping: layout has zero size");
                                 }
+                            } else {
+                                hot_debug!("[truce-gui-reload] ERROR: no plugin after reload");
                             }
+                        } else {
+                            hot_debug!("[truce-gui-reload] reload failed");
                         }
                     }
                 }
@@ -280,6 +326,7 @@ impl<P: Params + 'static> HotEditor<P> {
         Self {
             kind: HotEditorInner::Builtin { gpu, inner },
             _watcher: watcher,
+            stop,
         }
     }
 
@@ -289,6 +336,7 @@ impl<P: Params + 'static> HotEditor<P> {
         Self {
             kind: HotEditorInner::Custom { editor },
             _watcher: None,
+            stop: Arc::new(AtomicBool::new(false)),
         }
     }
 }

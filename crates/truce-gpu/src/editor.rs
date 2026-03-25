@@ -6,6 +6,13 @@
 
 use std::sync::{Arc, Mutex};
 
+macro_rules! hot_debug {
+    ($($arg:tt)*) => {
+        #[cfg(feature = "hot-debug")]
+        eprintln!($($arg)*);
+    };
+}
+
 use baseview::{Event, EventStatus, Window, WindowHandler, WindowOpenOptions, WindowScalePolicy};
 
 use truce_core::editor::{Editor, EditorContext, RawWindowHandle};
@@ -65,6 +72,13 @@ impl<P: Params + 'static> WindowHandler for GpuWindowHandler<P> {
     fn on_frame(&mut self, _window: &mut Window) {
         if let Some(ref mut gpu) = self.gpu {
             if let Ok(mut inner) = self.inner.lock() {
+                #[cfg(feature = "hot-debug")]
+                if !inner.has_context() {
+                    static WARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+                    if !WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                        eprintln!("[truce-gpu] WARNING: on_frame called but inner has no context");
+                    }
+                }
                 inner.render_to(gpu);
             }
             gpu.present();
@@ -160,9 +174,14 @@ impl<P: Params + 'static> Editor for GpuEditor<P> {
         let system_scale = truce_gui::backing_scale();
         let (lw, lh) = self.size; // logical points
 
+        hot_debug!("[truce-gpu] open() called, size={}x{}", lw, lh);
+
         // Set up the inner editor's context for param access
         if let Ok(mut inner) = self.inner.lock() {
             inner.set_context(context);
+            hot_debug!("[truce-gpu] context set on inner editor");
+        } else {
+            hot_debug!("[truce-gpu] ERROR: failed to lock inner for set_context");
         }
 
         let inner = Arc::clone(&self.inner);

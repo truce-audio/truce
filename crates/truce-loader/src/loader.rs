@@ -4,9 +4,12 @@
 //! compatibility via AbiCanary + vtable probe before use.
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::SystemTime;
+
+/// Global counter so each NativeLoader instance gets a unique ID for temp files.
+static LOADER_ID: AtomicU64 = AtomicU64::new(0);
 
 use libloading::{Library, Symbol};
 
@@ -24,9 +27,13 @@ pub struct NativeLoader {
     last_modified: SystemTime,
     last_hash: u32,
     reload_pending: Arc<AtomicBool>,
+    /// Set to true to stop the file watcher thread.
+    watcher_stop: Arc<AtomicBool>,
     /// Old library handles — leaked to avoid TLS destructor segfaults.
     leaked_handles: Vec<Library>,
     load_counter: u64,
+    /// Unique ID for this loader instance (used in temp file names).
+    instance_id: u64,
 }
 
 // Safety: NativeLoader is only accessed from one thread at a time.
@@ -37,13 +44,15 @@ unsafe impl Send for NativeLoader {}
 impl NativeLoader {
     pub fn new(dylib_path: PathBuf, params_ptr: *const ()) -> Self {
         let reload_pending = Arc::new(AtomicBool::new(false));
+        let watcher_stop = Arc::new(AtomicBool::new(false));
 
         // Spawn file watcher thread.
         let flag = reload_pending.clone();
+        let stop = watcher_stop.clone();
         let path = dylib_path.clone();
         std::thread::Builder::new()
             .name("truce-hot-watcher".into())
-            .spawn(move || watch_loop(&path, &flag))
+            .spawn(move || watch_loop(&path, &flag, &stop))
             .ok();
 
         let mut loader = Self {
@@ -54,8 +63,10 @@ impl NativeLoader {
             last_modified: SystemTime::UNIX_EPOCH,
             last_hash: 0,
             reload_pending,
+            watcher_stop,
             leaked_handles: Vec::new(),
             load_counter: 0,
+            instance_id: LOADER_ID.fetch_add(1, Ordering::Relaxed),
         };
         loader.load();
         loader
@@ -205,7 +216,7 @@ impl NativeLoader {
             .and_then(|s| s.to_str())
             .unwrap_or("plugin");
         let temp = std::env::temp_dir()
-            .join(format!("truce-hot-{stem}-{}.{ext}", self.load_counter));
+            .join(format!("truce-hot-{stem}-{}-{}.{ext}", self.instance_id, self.load_counter));
         std::fs::copy(&self.dylib_path, &temp)?;
         Ok(temp)
     }
@@ -213,6 +224,7 @@ impl NativeLoader {
 
 impl Drop for NativeLoader {
     fn drop(&mut self) {
+        self.watcher_stop.store(true, Ordering::Relaxed);
         // Drop plugin before library (plugin's drop is in the library).
         self.plugin = None;
         // Leaked handles are intentionally not closed.
@@ -220,10 +232,13 @@ impl Drop for NativeLoader {
 }
 
 /// File watcher loop. Polls mtime every 500ms.
-fn watch_loop(path: &std::path::Path, flag: &AtomicBool) {
+fn watch_loop(path: &std::path::Path, flag: &AtomicBool, stop: &AtomicBool) {
     let mut last_mtime = file_mtime(path);
     loop {
         std::thread::sleep(std::time::Duration::from_millis(500));
+        if stop.load(Ordering::Relaxed) {
+            return;
+        }
         let mtime = file_mtime(path);
         if mtime > last_mtime {
             // Wait for compiler to finish writing.
