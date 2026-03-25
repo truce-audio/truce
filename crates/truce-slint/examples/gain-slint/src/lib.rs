@@ -87,23 +87,11 @@ impl PluginLogic for GainSlint {
     fn custom_editor(&self) -> Option<Box<dyn truce_core::editor::Editor>> {
         Some(Box::new(SlintEditor::new((400, 300), |state: ParamState| {
             let ui = GainUi::new().unwrap();
-
-            // UI → host: wire Slint callbacks to param state
-            let s = state.clone();
-            ui.on_gain_changed(move |v| s.set_immediate(P::Gain, v as f64));
-            let s = state.clone();
-            ui.on_pan_changed(move |v| s.set_immediate(P::Pan, v as f64));
-            let s = state.clone();
-            ui.on_bypass_changed(move |v| {
-                s.set_immediate(P::Bypass, if v { 1.0 } else { 0.0 });
-            });
-
-            // host → UI: sync params each frame
-            Box::new(move |state: &ParamState| {
-                ui.set_gain(state.get(P::Gain) as f32);
-                ui.set_pan(state.get(P::Pan) as f32);
-                ui.set_bypass(state.get(P::Bypass) > 0.5);
-            })
+            truce_slint::bind! { state, ui,
+                P::Gain   => gain,
+                P::Pan    => pan,
+                P::Bypass => bypass: bool,
+            }
         })))
     }
 }
