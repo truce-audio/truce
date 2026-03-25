@@ -7,6 +7,7 @@
 use std::sync::Arc;
 
 use iced::{Color, Size};
+use iced_graphics;
 use iced_wgpu::wgpu;
 use truce_params::Params;
 
@@ -59,8 +60,11 @@ where
     // Use sRGB to match the windowed Metal surface (Bgra8UnormSrgb).
     let format = wgpu::TextureFormat::Bgra8UnormSrgb;
 
-    // Create iced engine + renderer
-    let engine = iced_wgpu::Engine::new(&adapter, &device, &queue, format, None);
+    // Create iced engine + renderer (MSAA 4x for smooth edges)
+    let engine = iced_wgpu::Engine::new(
+        &adapter, &device, &queue, format,
+        Some(iced_graphics::Antialiasing::MSAAx4),
+    );
 
     let mut renderer = iced_wgpu::Renderer::new(
         &device,

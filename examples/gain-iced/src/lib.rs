@@ -123,18 +123,17 @@ impl IcedPlugin<GainParams> for GainUi {
         .align_x(alignment::Horizontal::Center)
         .into();
 
-        Column::new()
-            .push(header)
+        let body: Element<'a, Message<GainMsg>> = Column::new()
             .push(top_row)
             .push(bottom_row)
             .push(footer)
             .spacing(gap)
-            .padding(iced::Padding {
-                top: 0.0,
-                right: pad,
-                bottom: pad,
-                left: pad,
-            })
+            .padding(pad)
+            .into();
+
+        Column::new()
+            .push(header)
+            .push(body)
             .into()
     }
 }
