@@ -1,0 +1,74 @@
+import { VerticalBox, HorizontalBox, Slider, Switch, GroupBox } from "std-widgets.slint";
+
+export component GainUi inherits Window {
+    // Properties bound to plugin parameters (normalized 0.0–1.0)
+    in-out property <float> gain: 0.5;
+    in-out property <float> pan: 0.5;
+    in-out property <bool> bypass: false;
+
+    // Callbacks fired when the user changes a value
+    callback gain-changed(float);
+    callback pan-changed(float);
+    callback bypass-changed(bool);
+
+    title: "Gain (slint)";
+    preferred-width: 400px;
+    preferred-height: 300px;
+    background: #1f1f24;
+
+    VerticalBox {
+        padding: 15px;
+        spacing: 12px;
+
+        Text {
+            text: "Gain (slint)";
+            font-size: 16px;
+            font-weight: 700;
+            color: #e6e6eb;
+            horizontal-alignment: center;
+        }
+
+        Rectangle {
+            height: 1px;
+            background: #3a3a44;
+        }
+
+        GroupBox {
+            title: "Gain";
+
+            Slider {
+                minimum: 0;
+                maximum: 1;
+                value <=> root.gain;
+                changed(v) => { root.gain-changed(v); }
+            }
+        }
+
+        GroupBox {
+            title: "Pan";
+
+            Slider {
+                minimum: 0;
+                maximum: 1;
+                value <=> root.pan;
+                changed(v) => { root.pan-changed(v); }
+            }
+        }
+
+        HorizontalBox {
+            alignment: center;
+            spacing: 8px;
+
+            Text {
+                text: "Bypass";
+                color: #b0b0ba;
+                vertical-alignment: center;
+            }
+
+            Switch {
+                checked <=> root.bypass;
+                toggled => { root.bypass-changed(root.bypass); }
+            }
+        }
+    }
+}

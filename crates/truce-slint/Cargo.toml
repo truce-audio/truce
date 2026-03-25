@@ -1,0 +1,20 @@
+[package]
+name = "truce-slint"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Slint-based GUI backend for truce audio plugins"
+
+[dependencies]
+truce-core = { workspace = true }
+slint = { version = "=1.15.1", default-features = false, features = ["compat-1-2", "renderer-software", "std"] }
+baseview = { git = "https://github.com/RustAudio/baseview.git" }
+raw-window-handle = "0.5"
+wgpu = "24"
+pollster = "0.4"
+bytemuck = { version = "1", features = ["derive"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+cocoa = "0.26"
+objc = "0.2"
