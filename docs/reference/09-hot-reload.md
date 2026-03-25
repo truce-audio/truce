@@ -52,7 +52,7 @@ Zero code changes between dev and release.
 closing or reopening the window. The `HotEditor` wrapper delegates to
 `GpuEditor` for rendering and spawns a background thread to watch for
 dylib changes. On change, the new `BuiltinEditor` is swapped in via a
-shared mutex — no window flash. Custom editors (egui, vizia, iced) still
+shared mutex — no window flash. Custom editors (egui, iced) still
 require manually closing and reopening the plugin window.
 
 ### What does NOT reload

@@ -16,7 +16,7 @@ Then work through these tutorials in order:
 | 5 | [Processing Audio](05-processing.md) | Effects, instruments, MIDI, sample-accurate events, transport |
 | 6 | [Channel Layouts](06-channels.md) | Mono, stereo, sidechain, instruments |
 | 7 | [Building a Synth](07-synth.md) | Full polyphonic synth with ADSR, filter, and GUI |
-| 8 | [GUI](08-gui.md) | Built-in GUI, alternative backends (egui, vizia, iced, raw) |
+| 8 | [GUI](08-gui.md) | Built-in GUI, alternative backends (egui, iced, raw) |
 | 9 | [Hot Reload](09-hot-reload.md) | Edit DSP, rebuild, hear changes without restarting the DAW |
 | 10 | [State](10-state.md) | Saving extra state beyond parameters |
 | 11 | [Building & Installing](11-building.md) | All formats, build commands, CI, validation |

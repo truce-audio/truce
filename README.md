@@ -106,7 +106,7 @@ compiles statically with zero overhead.
 `layout()`, rebuild, and the plugin window updates automatically — no
 close/reopen needed, no window flash. The `HotEditor` wrapper watches
 for dylib changes and swaps the layout via a shared mutex. Custom
-editors (egui, vizia, iced) still require manual close/reopen. See the
+editors (egui, iced) still require manual close/reopen. See the
 [hot reload guide](docs/reference/09-hot-reload.md).
 
 ## Format Support

@@ -123,6 +123,5 @@ backend if you need:
 
 - Custom layouts (tabs, scrolling, collapsible sections) → [egui](egui.md)
 - Text input fields → [egui](egui.md)
-- Reactive data binding, CSS-like styling → [Vizia](vizia.md)
 - Elm-architecture, complex state management → [Iced](iced.md)
 - Completely custom rendering → [Raw window handle](raw-window-handle.md)

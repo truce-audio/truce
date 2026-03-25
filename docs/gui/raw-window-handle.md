@@ -14,7 +14,7 @@ This is the nuclear option. Use it when:
 - You need absolute control over every pixel
 
 For most plugins, the [built-in](built-in.md), [egui](egui.md),
-[vizia](vizia.md), or [iced](iced.md) backends are better choices.
+[iced](iced.md) backends are better choices.
 
 ## The Editor Trait
 
@@ -200,5 +200,4 @@ examples:
 | Built-in | `crates/truce-gui/src/editor.rs` | NSView + CALayer + CPU blit |
 | GPU | `crates/truce-gpu/src/editor.rs` | baseview + wgpu |
 | egui | `crates/truce-egui/src/editor.rs` | baseview + egui-wgpu |
-| Vizia | `crates/truce-vizia/src/editor.rs` | baseview + vizia (Skia/GL) |
 | Iced | `crates/truce-iced/src/editor.rs` | CAMetalLayer + iced-wgpu |

@@ -11,7 +11,6 @@ work with CLAP, VST3, VST2, AU, and AAX.
 |---------|-------|-----------|----------|
 | [Built-in](built-in.md) | `truce-gui` / `truce-gpu` | tiny-skia (CPU) or wgpu (GPU) | Standard plugin UIs — knobs, sliders, meters. Zero custom code. |
 | [egui](egui.md) | `truce-egui` | wgpu via egui-wgpu | Custom layouts, text input, graphs, tables, third-party egui widgets |
-| [Vizia](vizia.md) | `truce-vizia` | Skia/GL via vizia | Reactive/declarative UIs, CSS-like styling, complex widget trees |
 | [Iced](iced.md) | `truce-iced` | wgpu/Metal | Elm-architecture fans, auto-generated or fully custom retained-mode UIs |
 | [Raw window handle](raw-window-handle.md) | `truce-core` | Bring your own | Full control — Metal, OpenGL, Skia, HTML canvas, anything |
 
@@ -83,6 +82,5 @@ directly (see [raw window handle](raw-window-handle.md)).
 
 - [Built-in GUI](built-in.md) — zero-code layout-driven UI
 - [egui](egui.md) — immediate-mode UI with full widget library
-- [Vizia](vizia.md) — reactive declarative UI with data binding
 - [Iced](iced.md) — Elm-architecture retained-mode UI
 - [Raw window handle](raw-window-handle.md) — bring your own renderer

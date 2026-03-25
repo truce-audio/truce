@@ -23,11 +23,10 @@ dedicated deep-dive guide:
 |---------|-------|----------|-------|
 | Built-in | `truce-gui` / `truce-gpu` | Standard plugin UIs (knobs, sliders, meters) | [Built-in](../gui/built-in.md) |
 | egui | `truce-egui` | Custom layouts, text input, graphs, third-party widgets | [egui](../gui/egui.md) |
-| Vizia | `truce-vizia` | Reactive data binding, CSS-like styling | [Vizia](../gui/vizia.md) |
 | Iced | `truce-iced` | Elm architecture, auto-generated or custom retained-mode UI | [Iced](../gui/iced.md) |
 | Raw | `truce-core` | Full control — Metal, OpenGL, Skia, anything | [Raw window handle](../gui/raw-window-handle.md) |
 
-All backends integrate the same way — override `custom_editor()` in
+All custom backends integrate the same way — override `custom_editor()` in
 your `PluginLogic` implementation. See the [GUI guide](../gui/) for
 the full comparison and integration details.
 

@@ -193,7 +193,7 @@ impl<P: Params + 'static> Plugin for HotShell<P> {
         let params_ptr = Arc::as_ptr(&self.params) as *const ();
         let gui_loader = NativeLoader::new(self.dylib_path.clone(), params_ptr);
 
-        // Custom editor path (egui, vizia, iced)
+        // Custom editor path (egui, iced)
         if let Some(custom) = self.try_custom_editor() {
             hot_debug!("[truce-hot] using custom editor");
             return Some(Box::new(HotEditor::<P>::new_custom(custom)));
@@ -238,7 +238,7 @@ enum HotEditorInner<P: Params> {
         gpu: truce_gpu::GpuEditor<P>,
         inner: Arc<std::sync::Mutex<truce_gui::editor::BuiltinEditor<P>>>,
     },
-    /// Custom GUI (egui, vizia, iced): close/reopen on reload.
+    /// Custom GUI (egui, iced): close/reopen on reload.
     Custom {
         editor: Box<dyn Editor>,
     },
