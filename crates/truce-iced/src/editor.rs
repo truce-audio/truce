@@ -274,8 +274,14 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
             None => return false,
         };
 
-        let (w, h) = self.size;
-        let scale = self.scale_factor;
+        let (lw, lh) = self.size;
+        // Always use the actual display backing scale for rendering,
+        // not the host-reported scale. CLAP hosts may report 1.0
+        // ("I handle scaling") but the Metal layer still needs physical pixels.
+        let render_scale = truce_gui::backing_scale();
+        self.scale_factor = render_scale;
+        let w = (lw as f64 * render_scale) as u32;
+        let h = (lh as f64 * render_scale) as u32;
 
         // Create wgpu infrastructure from the CAMetalLayer
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
@@ -372,7 +378,7 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
         );
 
         let viewport =
-            iced_graphics::Viewport::with_physical_size(Size::new(w, h), scale);
+            iced_graphics::Viewport::with_physical_size(Size::new(w, h), render_scale);
         let mut debug = iced_runtime::Debug::new();
         let theme = program.plugin.theme();
 
@@ -738,11 +744,13 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
             runtime.size = (width, height);
             if let Some(ref mut render) = runtime.render {
                 let scale = self.scale_factor;
+                let pw = (width as f64 * scale) as u32;
+                let ph = (height as f64 * scale) as u32;
                 render.viewport = iced_graphics::Viewport::with_physical_size(
-                    Size::new(width, height), scale,
+                    Size::new(pw, ph), scale,
                 );
-                render.surface_config.width = width;
-                render.surface_config.height = height;
+                render.surface_config.width = pw;
+                render.surface_config.height = ph;
                 render.surface.configure(&render.device, &render.surface_config);
             }
         }
@@ -755,9 +763,13 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
             runtime.scale_factor = factor.max(1.0);
             // Reconfigure viewport and surface if rendering is active
             if let Some(ref mut render) = runtime.render {
-                let (w, h) = runtime.size;
+                let (lw, lh) = runtime.size;
+                let pw = (lw as f64 * factor) as u32;
+                let ph = (lh as f64 * factor) as u32;
                 render.viewport =
-                    iced_graphics::Viewport::with_physical_size(Size::new(w, h), factor);
+                    iced_graphics::Viewport::with_physical_size(Size::new(pw, ph), factor);
+                render.surface_config.width = pw;
+                render.surface_config.height = ph;
                 render.surface.configure(&render.device, &render.surface_config);
             }
         }

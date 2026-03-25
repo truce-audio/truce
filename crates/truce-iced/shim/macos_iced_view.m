@@ -50,11 +50,12 @@
         metalLayer.device = MTLCreateSystemDefaultDevice();
         metalLayer.pixelFormat = MTLPixelFormatBGRA8Unorm;
         metalLayer.framebufferOnly = YES;
-        metalLayer.drawableSize = CGSizeMake(w, h);
         metalLayer.presentsWithTransaction = YES;
         metalLayer.contentsScale = self.window
             ? self.window.backingScaleFactor
             : [NSScreen mainScreen].backingScaleFactor;
+        // Don't set drawableSize here — let wgpu's surface.configure()
+        // set it from the Rust side so it matches the viewport exactly.
         self.layer = metalLayer;
     }
     return self;
