@@ -11,7 +11,8 @@
 [macos]
 # Code signing identity for plugin bundles (AU, VST3).
 # Run "security find-identity -v -p codesigning" to list available identities.
-# Set to "-" for ad-hoc signing (development only).
+# Ad-hoc signing works for CLAP, VST3, VST2, AU v2.
+# AU v3 requires a Developer ID: "Developer ID Application: Your Name (TEAMID)"
 signing_identity = "-"
 
 # Minimum macOS deployment target.
@@ -33,21 +34,21 @@ au_manufacturer = "MyCo"
 name = "My Effect"
 suffix = "effect"
 crate = "my-effect"
-# version = "1.0.0"            # optional, defaults to Cargo.toml version
-au_type = "aufx"                 # aufx = effect, aumu = instrument
-au_subtype = "MyFx"              # 4-char AU v2 subtype code
-au3_subtype = "MyF3"             # 4-char AU v3 subtype (optional, defaults to au_subtype)
-au_tag = "Effects"
+# version = "1.0.0"              # optional, defaults to Cargo.toml version
+fourcc = "MyFx"                   # 4-char plugin identifier (AU, VST2, AAX)
+au_type = "aufx"                  # aufx = effect, aumu = instrument
+# au3_subtype = "MyF3"           # optional 4-char AU v3 subtype (defaults to fourcc)
+# au_tag = "Effects"             # AU category tag
+# aax_category = "Dynamics"      # AAX category
 
 # [[plugin]]
 # name = "My Synth"
 # suffix = "synth"
 # crate = "my-synth"
-# version = "2.0.0"
+# fourcc = "MySn"
 # au_type = "aumu"
-# au_subtype = "MySn"
-# au3_subtype = "MyS3"
 # au_tag = "Synthesizer"
+# aax_category = "Synthesizer"
 
 # --- Windows (planned, not yet implemented) ---
 # [windows]
