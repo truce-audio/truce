@@ -152,9 +152,9 @@ truce-test = {{ git = "https://github.com/truce-audio/truce" }}
     )?;
 
     // truce.toml
-    let au_type = match kind {
-        "instrument" => "aumu",
-        _ => "aufx",
+    let category = match kind {
+        "instrument" => "instrument",
+        _ => "effect",
     };
     let au_tag = match kind {
         "instrument" => "Synthesizer",
@@ -180,7 +180,7 @@ au_manufacturer = "MyCo"
 name = "{display}"
 suffix = "{name}"
 crate = "{crate_name}"
-au_type = "{au_type}"
+category = "{category}"
 fourcc = "{au_sub}"
 au_tag = "{au_tag}"
 "#,

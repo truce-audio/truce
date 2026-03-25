@@ -7,7 +7,6 @@ Before building, copy `truce.toml.example` to `truce.toml` and edit:
 ```toml
 [macos]
 signing_identity = "-"           # or your Developer ID certificate
-deployment_target = "11.0"
 
 [vendor]
 name = "My Company"
@@ -18,7 +17,7 @@ au_manufacturer = "MyCo"         # 4-char code
 name = "My Effect"
 suffix = "effect"
 crate = "my-effect"              # cargo package name
-au_type = "aufx"                 # aufx = effect, aumu = instrument
+category = "effect"              # "effect" or "instrument"
 fourcc = "MyFx"                  # 4-char code (AU subtype, CLAP feature ID, etc.)
 au3_subtype = "MyF3"             # 4-char AU v3 subtype (optional, defaults to fourcc)
 au_tag = "Effects"
@@ -26,8 +25,8 @@ au_tag = "Effects"
 
 The `[vendor]` section defines your company identity. Each `[[plugin]]`
 entry defines a plugin to build and install. The `fourcc` field and
-AU fields (`au_type`, `au_manufacturer`) must be 4-character codes that
-uniquely identify your plugin. `au3_subtype` is optional — if omitted,
+AU fields (`au_manufacturer`) must be 4-character codes that
+uniquely identify your plugin. The `category` field (`"effect"` or `"instrument"`) determines the AU component type automatically. `au3_subtype` is optional — if omitted,
 it defaults to `fourcc` (v2 and v3 share the same code).
 
 ### Building and installing with xtask

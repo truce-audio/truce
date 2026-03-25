@@ -33,7 +33,9 @@ struct PluginDef {
     version: Option<String>,
     #[serde(default)]
     fourcc: Option<String>,
-    au_type: String,
+    category: String,
+    #[serde(default)]
+    au_type: Option<String>,
     #[serde(default)]
     au_subtype: Option<String>,
     #[serde(default)]
@@ -104,10 +106,16 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
     let pkg_version = std::env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "0.1.0".into());
     let version = plugin.version.as_deref().unwrap_or(&pkg_version).to_string();
 
-    let category = match plugin.au_type.as_str() {
-        "aumu" => quote! { ::truce::core::PluginCategory::Instrument },
+    let category = match plugin.category.as_str() {
+        "instrument" => quote! { ::truce::core::PluginCategory::Instrument },
         _ => quote! { ::truce::core::PluginCategory::Effect },
     };
+    let au_type = plugin.au_type.as_deref().unwrap_or(
+        match plugin.category.as_str() {
+            "instrument" => "aumu",
+            _ => "aufx",
+        }
+    );
 
     let plugin_id = format!(
         "{}.{}",
@@ -118,7 +126,6 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
     let resolved_fourcc = plugin.fourcc.as_ref()
         .or(plugin.au_subtype.as_ref())
         .expect("truce.toml: each [[plugin]] requires `fourcc` or `au_subtype`");
-    let au_type = &plugin.au_type;
     let au_manufacturer = &config.vendor.au_manufacturer;
 
     let aax_category = match &plugin.aax_category {

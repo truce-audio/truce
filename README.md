@@ -193,7 +193,7 @@ au_manufacturer = "MyCo"
 name = "My Effect"
 suffix = "effect"
 crate = "my-effect"
-au_type = "aufx"
+category = "effect"
 au_subtype = "MyFx"
 ```
 

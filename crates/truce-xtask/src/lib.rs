@@ -446,8 +446,6 @@ struct Config {
 struct MacosConfig {
     #[serde(default = "default_signing_identity")]
     signing_identity: String,
-    #[serde(default = "default_deployment_target")]
-    deployment_target: String,
     /// Path to the AAX SDK root directory. Falls back to the AAX_SDK_PATH env var.
     aax_sdk_path: Option<String>,
 }
@@ -455,8 +453,10 @@ struct MacosConfig {
 fn default_signing_identity() -> String {
     "-".to_string()
 }
-fn default_deployment_target() -> String {
-    "11.0".to_string()
+
+/// Read MACOSX_DEPLOYMENT_TARGET from the environment, defaulting to "11.0".
+fn deployment_target() -> String {
+    std::env::var("MACOSX_DEPLOYMENT_TARGET").unwrap_or_else(|_| "11.0".to_string())
 }
 
 #[derive(Deserialize)]
@@ -474,7 +474,9 @@ struct PluginDef {
     crate_name: String,
     #[serde(default)]
     fourcc: Option<String>,
-    au_type: String,
+    category: String,
+    #[serde(default)]
+    au_type: Option<String>,
     #[serde(default)]
     au_subtype: Option<String>,
     #[serde(default)]
@@ -488,6 +490,14 @@ impl PluginDef {
         self.fourcc.as_deref()
             .or(self.au_subtype.as_deref())
             .expect("truce.toml: each [[plugin]] requires `fourcc` or `au_subtype`")
+    }
+    fn resolved_au_type(&self) -> &str {
+        self.au_type.as_deref().unwrap_or(
+            match self.category.as_str() {
+                "instrument" => "aumu",
+                _ => "aufx",
+            }
+        )
     }
     fn au3_sub(&self) -> &str {
         self.au3_subtype.as_deref().unwrap_or(self.resolved_fourcc())
@@ -700,7 +710,7 @@ fn cmd_install(args: &[String]) -> Res {
     };
 
     let root = project_root();
-    let dt = &config.macos.deployment_target;
+    let dt = &deployment_target();
 
     // Compute extra features string
     let mut extra_features = Vec::new();
@@ -1061,7 +1071,7 @@ fn install_au(root: &Path, p: &PluginDef, config: &Config) -> Res {
         suffix = p.suffix,
         vendor_id = config.vendor.id,
         vendor = config.vendor.name,
-        au_type = p.au_type,
+        au_type = p.resolved_au_type(),
         au_subtype = p.resolved_fourcc(),
         au_mfr = config.vendor.au_manufacturer,
         au_tag = p.au_tag,
@@ -1227,7 +1237,7 @@ fn install_all_au_v3_filtered(
 ) -> Res {
     let sign_id = &config.macos.signing_identity;
     let team_id = extract_team_id(sign_id);
-    let dt = &config.macos.deployment_target;
+    let dt = &deployment_target();
 
     if team_id.is_empty() {
         eprintln!("AU v3: skipping — requires a Developer ID signing identity with a team ID.");
@@ -1350,7 +1360,7 @@ fn install_all_au_v3_filtered(
 
             let plist = templates::au3::APPEX_INFO_PLIST
                 .replace("AUVER", &ver)
-                .replace("AUTYPE", &p.au_type)
+                .replace("AUTYPE", &p.resolved_au_type())
                 .replace("AUSUB", au_v3_sub)
                 .replace("AUMFR", &config.vendor.au_manufacturer)
                 .replace(
@@ -1682,7 +1692,7 @@ fn cmd_test() -> Res {
                 let build = Command::new("cargo")
                     .args(["build", "--release", "-p", &p.crate_name,
                            "--no-default-features", "--features", "vst2"])
-                    .env("MACOSX_DEPLOYMENT_TARGET", &config.macos.deployment_target)
+                    .env("MACOSX_DEPLOYMENT_TARGET", &deployment_target())
                     .output()?;
                 if !build.status.success() {
                     eprintln!("BUILD FAILED");
@@ -1690,7 +1700,7 @@ fn cmd_test() -> Res {
                     continue;
                 }
                 let dylib = root.join(format!("target/release/lib{}.dylib", p.dylib_stem()));
-                let is_synth = p.au_type == "aumu";
+                let is_synth = p.resolved_au_type() == "aumu";
                 let mut cmd = Command::new(test_bin.to_str().unwrap());
                 cmd.arg(dylib.to_str().unwrap());
                 if is_synth { cmd.arg("--synth"); }
@@ -2079,10 +2089,10 @@ fn cmd_validate(args: &[String]) -> Res {
             for p in &plugins {
                 eprint!(
                     "  {} ({} {} {}) ... ",
-                    p.name, p.au_type, p.resolved_fourcc(), config.vendor.au_manufacturer
+                    p.name, p.resolved_au_type(), p.resolved_fourcc(), config.vendor.au_manufacturer
                 );
                 let output = Command::new("auval")
-                    .args(["-v", &p.au_type, p.resolved_fourcc(), &config.vendor.au_manufacturer])
+                    .args(["-v", &p.resolved_au_type(), p.resolved_fourcc(), &config.vendor.au_manufacturer])
                     .output()?;
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 if stdout.contains("VALIDATION SUCCEEDED") {
@@ -2105,10 +2115,10 @@ fn cmd_validate(args: &[String]) -> Res {
                 let sub = p.au3_sub();
                 eprint!(
                     "  {} ({} {} {}) ... ",
-                    p.name, p.au_type, sub, config.vendor.au_manufacturer
+                    p.name, p.resolved_au_type(), sub, config.vendor.au_manufacturer
                 );
                 let output = Command::new("auval")
-                    .args(["-v", &p.au_type, sub, &config.vendor.au_manufacturer])
+                    .args(["-v", &p.resolved_au_type(), sub, &config.vendor.au_manufacturer])
                     .output()?;
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 if stdout.contains("VALIDATION SUCCEEDED") {
@@ -2280,7 +2290,7 @@ mod dirs {
 fn cmd_build(args: &[String]) -> Res {
     let config = load_config()?;
     let root = project_root();
-    let dt = &config.macos.deployment_target;
+    let dt = &deployment_target();
 
     let mut plugin_filter: Option<String> = None;
     let mut dev_mode = false;
@@ -2356,7 +2366,7 @@ fn cmd_build(args: &[String]) -> Res {
 fn cmd_run(args: &[String]) -> Res {
     let config = load_config()?;
     let root = project_root();
-    let dt = &config.macos.deployment_target;
+    let dt = &deployment_target();
 
     let mut plugin_filter: Option<String> = None;
     let mut extra_args: Vec<String> = Vec::new();

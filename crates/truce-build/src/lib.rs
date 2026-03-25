@@ -40,7 +40,9 @@ struct PluginDef {
     version: Option<String>,
     #[serde(default)]
     fourcc: Option<String>,
-    au_type: String,
+    category: String,
+    #[serde(default)]
+    au_type: Option<String>,
     #[serde(default)]
     au_subtype: Option<String>,
     #[serde(default)]
@@ -81,10 +83,16 @@ pub fn emit_plugin_env() {
             );
         });
 
-    let category = match plugin.au_type.as_str() {
-        "aumu" => "Instrument",
+    let category = match plugin.category.as_str() {
+        "instrument" => "Instrument",
         _ => "Effect",
     };
+    let au_type = plugin.au_type.as_deref().unwrap_or(
+        match plugin.category.as_str() {
+            "instrument" => "aumu",
+            _ => "aufx",
+        }
+    );
     let plugin_id = format!(
         "{}.{}",
         config.vendor.id,
@@ -104,7 +112,7 @@ pub fn emit_plugin_env() {
         .or(plugin.au_subtype.as_ref())
         .expect("truce.toml: each [[plugin]] requires `fourcc` or `au_subtype`");
     println!("cargo:rustc-env=TRUCE_FOURCC={resolved_fourcc}");
-    println!("cargo:rustc-env=TRUCE_AU_TYPE={}", plugin.au_type);
+    println!("cargo:rustc-env=TRUCE_AU_TYPE={au_type}");
     println!(
         "cargo:rustc-env=TRUCE_AU_MANUFACTURER={}",
         config.vendor.au_manufacturer

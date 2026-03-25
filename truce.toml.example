@@ -15,9 +15,6 @@
 # AU v3 requires a Developer ID: "Developer ID Application: Your Name (TEAMID)"
 signing_identity = "-"
 
-# Minimum macOS deployment target.
-deployment_target = "11.0"
-
 # Path to the AAX SDK root directory (for Pro Tools plugin builds).
 # Falls back to the AAX_SDK_PATH environment variable if not set.
 # aax_sdk_path = "/path/to/aax-sdk"
@@ -35,18 +32,22 @@ name = "My Effect"
 suffix = "effect"
 crate = "my-effect"
 # version = "1.0.0"              # optional, defaults to Cargo.toml version
+category = "effect"               # "effect" or "instrument"
 fourcc = "MyFx"                   # 4-char plugin identifier (AU, VST2, AAX)
-au_type = "aufx"                  # aufx = effect, aumu = instrument
 # au3_subtype = "MyF3"           # optional 4-char AU v3 subtype (defaults to fourcc)
-# au_tag = "Effects"             # AU category tag
-# aax_category = "Dynamics"      # AAX category
+# au_tag = "Effects"             # AU category tag: Effects, EQ, Dynamics,
+                                  #   Delay, Distortion, Reverb, Synthesizer,
+                                  #   Sampler, Pitch
+# aax_category = "Dynamics"      # AAX category: EQ, Dynamics, PitchShift,
+                                  #   Reverb, Delay, Modulation, Harmonic,
+                                  #   NoiseReduction, Dither, SoundField
 
 # [[plugin]]
 # name = "My Synth"
 # suffix = "synth"
 # crate = "my-synth"
 # fourcc = "MySn"
-# au_type = "aumu"
+# category = "instrument"
 # au_tag = "Synthesizer"
 # aax_category = "Synthesizer"
 
