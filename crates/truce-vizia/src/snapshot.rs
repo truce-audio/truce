@@ -10,7 +10,6 @@ use vizia::prelude::*;
 use vizia::vg;
 
 use crate::param_model::ParamModel;
-use crate::theme;
 
 /// Capture view — added to the end of the view tree to read back
 /// the rendered frame from the Skia canvas.
@@ -105,9 +104,7 @@ pub fn capture_snapshot(
     };
 
     Application::new(move |cx| {
-        theme::apply_default_theme(cx);
         ParamModel::new(noop_context.clone()).build(cx);
-
 
         app(cx);
 

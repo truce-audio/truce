@@ -14,7 +14,6 @@ use vizia::prelude::*;
 use truce_core::editor::{Editor, EditorContext, RawWindowHandle};
 
 use crate::param_model::ParamModel;
-use crate::theme;
 
 /// Vizia-based editor implementing truce's `Editor` trait.
 ///
@@ -109,9 +108,6 @@ impl Editor for ViziaEditor {
         let (logical_w, logical_h) = self.size;
 
         let application = Application::new(move |cx| {
-            // Apply the default dark theme.
-            theme::apply_default_theme(cx);
-
             // Register the parameter model so widgets can emit ParamEvent.
             ParamModel::new((*context).clone()).build(cx);
 

@@ -91,6 +91,10 @@ pub fn gain_vizia_ui(cx: &mut vizia::prelude::Context) {
     use truce_vizia::widgets::{ParamKnob, ParamSlider, ParamToggle, LevelMeter};
     use vizia::prelude::*;
 
+    // Opt in to the truce dark theme. Omit this to use vizia's defaults
+    // or provide your own stylesheet.
+    truce_vizia::apply_default_theme(cx);
+
     VStack::new(cx, |cx| {
         // Header
         HStack::new(cx, |cx| {

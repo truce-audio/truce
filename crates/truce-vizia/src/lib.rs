@@ -35,6 +35,7 @@ pub mod widgets;
 pub use editor::ViziaEditor;
 pub use param_lens::{MeterLens, ParamBoolLens, ParamFormatLens, ParamNormLens};
 pub use param_model::{ParamEvent, ParamModel};
+pub use theme::apply_default_theme;
 
 // Re-export vizia so plugin authors can use `vizia::prelude::*`
 // without adding vizia as a direct dependency.
