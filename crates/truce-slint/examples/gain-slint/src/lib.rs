@@ -126,4 +126,20 @@ mod tests {
     fn state_round_trips() {
         truce_test::assert_state_round_trip::<Plugin>();
     }
+
+    #[test]
+    fn gui_snapshot() {
+        truce_slint::snapshot::assert_snapshot(
+            "screenshots", "gain_slint_default",
+            320, 150, 2.0, 0,
+            |state| {
+                let ui = GainUi::new().unwrap();
+                truce_slint::bind! { state, ui,
+                    P::Gain   => gain,
+                    P::Pan    => pan,
+                    P::Bypass => bypass: bool,
+                }
+            },
+        );
+    }
 }

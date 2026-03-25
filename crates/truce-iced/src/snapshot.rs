@@ -24,12 +24,14 @@ use truce_core::editor::EditorContext;
 pub fn render_iced_screenshot<P, M>(
     params: Arc<P>,
     size: (u32, u32),
-) -> Vec<u8>
+    scale: f64,
+) -> (Vec<u8>, u32, u32)
 where
     P: Params + 'static,
     M: IcedPlugin<P>,
 {
-    let (w, h) = size;
+    let w = (size.0 as f64 * scale) as u32;
+    let h = (size.1 as f64 * scale) as u32;
 
     // Create headless wgpu device
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
@@ -101,7 +103,7 @@ where
         meter_ids: Vec::new(),
     };
 
-    let viewport = iced_graphics::Viewport::with_physical_size(Size::new(w, h), 1.0);
+    let viewport = iced_graphics::Viewport::with_physical_size(Size::new(w, h), scale);
     let mut debug = iced_runtime::Debug::new();
     let theme = program.plugin.theme();
 
@@ -227,5 +229,5 @@ where
         }
     }
 
-    rgba
+    (rgba, w, h)
 }

@@ -6344,6 +6344,7 @@ dependencies = [
  "cocoa 0.26.1",
  "objc",
  "paste",
+ "png 0.18.1",
  "pollster",
  "raw-window-handle 0.5.2",
  "slint",

@@ -240,11 +240,12 @@ mod tests {
     #[test]
     fn gui_snapshot_iced() {
         let params = Arc::new(GainParams::new());
-        let pixels =
+        let (pixels, w, h) =
             truce_iced::snapshot::render_iced_screenshot::<GainParams, GainUi>(
                 params,
                 (250, 330),
+                2.0,
             );
-        truce_test::assert_gui_snapshot_raw("gain_iced_default", &pixels, 250, 330, 0);
+        truce_test::assert_gui_snapshot_raw("gain_iced_default", &pixels, w, h, 0);
     }
 }
