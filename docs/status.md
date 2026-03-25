@@ -7,7 +7,7 @@ Updated 2026-03-22.
 6 format wrappers, 6 example plugins, 6 widget types, tested in
 6 DAWs. All formats have custom GUI. Hot-reload via `--features dev`.
 Single `truce::plugin!` macro for all exports. No build.rs needed.
-Two GUI backends: built-in (tiny-skia/wgpu) and iced (retained-mode Elm).
+Four GUI backends: built-in (tiny-skia/wgpu), egui, vizia, and iced.
 
 | Format | Status | Custom GUI | Hosts tested |
 |--------|--------|------------|-------------|
@@ -58,11 +58,13 @@ safe sharing between audio and GUI threads without raw pointers.
 
 ## GUI
 
-Two GUI backends, same 6 widget types:
+Four GUI backends, same 6 widget types:
 
 | Backend | Crate | Mode | Rendering |
 |---------|-------|------|-----------|
 | Built-in | `truce-gui` / `truce-gpu` | Layout-only (zero code) | tiny-skia CPU or wgpu GPU |
+| egui | `truce-egui` | Custom (immediate-mode) | wgpu via egui-wgpu |
+| Vizia | `truce-vizia` | Custom (reactive/declarative) | Skia/GL via vizia |
 | iced | `truce-iced` | Auto (from GridLayout) or custom (IcedPlugin trait) | wgpu/Metal |
 
 6 widget types via `GridLayout::build()` with auto-flow placement:

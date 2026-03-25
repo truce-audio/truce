@@ -98,18 +98,18 @@ Use the `EditorContext` to communicate with the host:
 fn idle(&mut self) {
     let ctx = self.context.as_ref().unwrap();
 
-    // Read current values
-    let gain = ctx.get_param(0);           // normalized 0.0–1.0
-    let gain_plain = ctx.get_param_plain(0); // e.g., -60.0 to 6.0
-    let gain_text = ctx.format_param(0);     // "0.0 dB"
-    let meter_l = ctx.get_meter(100);        // 0.0–1.0
+    // Read current values — fields are Arc<dyn Fn> closures
+    let gain = (ctx.get_param)(0);           // normalized 0.0–1.0
+    let gain_plain = (ctx.get_param_plain)(0); // e.g., -60.0 to 6.0
+    let gain_text = (ctx.format_param)(0);     // "0.0 dB"
+    let meter_l = (ctx.get_meter)(100);        // 0.0–1.0
 
     // Render your UI with these values...
 
     // When the user interacts with a control:
-    ctx.begin_edit(0);
-    ctx.set_param(0, 0.75);  // normalized value
-    ctx.end_edit(0);
+    (ctx.begin_edit)(0);
+    (ctx.set_param)(0, 0.75);  // normalized value
+    (ctx.end_edit)(0);
 }
 ```
 

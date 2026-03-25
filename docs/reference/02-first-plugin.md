@@ -126,13 +126,12 @@ impl PluginLogic for Gain {
         ProcessStatus::Normal
     }
 
-    fn layout(&self) -> truce_gui::layout::PluginLayout {
-        truce_gui::layout!("MY GAIN", "V0.1", 80.0, {
-            row {
-                knob(P::Gain, "Gain")
-                knob(P::Pan, "Pan")
-            }
-        })
+    fn layout(&self) -> truce_gui::layout::GridLayout {
+        use truce_gui::layout::{GridLayout, GridWidget};
+        GridLayout::build("MY GAIN", "V0.1", 2, 80.0, vec![
+            GridWidget::knob(P::Gain, "Gain"),
+            GridWidget::knob(P::Pan, "Pan"),
+        ], vec![])
     }
 }
 
@@ -164,14 +163,15 @@ The standalone binary imports from the same crate using its library
 name. No separate standalone crate needed.
 
 ```rust
-use my_gain::{Gain, GainParams, gui_layout};
+use my_gain::{Gain, GainParams};
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
     if args.iter().any(|a| a == "--render-gui") {
         let params = std::sync::Arc::new(GainParams::new());
-        truce_standalone::render_gui_png(params, gui_layout(), "gain-gui.png");
+        let gain = Gain::new(std::sync::Arc::clone(&params));
+        truce_standalone::render_gui_png(params, gain.layout(), "gain-gui.png");
         return;
     }
 
@@ -180,7 +180,9 @@ fn main() {
         return;
     }
 
-    truce_standalone::run_with_gui::<Gain>(gui_layout());
+    let params = std::sync::Arc::new(GainParams::new());
+    let gain = Gain::new(std::sync::Arc::clone(&params));
+    truce_standalone::run_with_gui::<Gain>(gain.layout());
 }
 ```
 

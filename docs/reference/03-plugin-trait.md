@@ -10,14 +10,11 @@ method on your plugin struct that takes `Arc<Params>`. The
 
 Static metadata (`info()`, `bus_layouts()`) is provided by the
 `truce::plugin!` macro via `plugin_info!()` (reads `truce.toml` +
-`Cargo.toml`) and a default stereo layout. Override `bus_layouts()`
-in `PluginLogic` if you need a custom layout.
+`Cargo.toml`) and a default stereo layout. Override bus layouts via
+the `plugin!` macro's `bus_layouts:` field (not on `PluginLogic`).
 
 ```rust
 pub trait PluginLogic: Send + 'static {
-    /// Called once after construction. Not real-time safe.
-    fn init(&mut self) {}
-
     /// Called when sample rate or max block size changes.
     /// Reset filters, clear delay lines. Not real-time safe.
     fn reset(&mut self, sample_rate: f64, max_block_size: usize);
@@ -31,11 +28,20 @@ pub trait PluginLogic: Send + 'static {
         context: &mut ProcessContext,
     ) -> ProcessStatus;
 
-    /// Supported channel layouts. The host picks one.
-    /// Default: stereo in/out.
-    fn bus_layouts() -> Vec<BusLayout> where Self: Sized {
-        vec![BusLayout::stereo()]
-    }
+    /// Render the GUI into the backend.
+    /// Default: no-op. Override only for custom visuals.
+    fn render(&self, backend: &mut dyn RenderBackend) {}
+
+    /// Whether this plugin uses a custom render() implementation.
+    /// If false (default), the shell uses BuiltinEditor with
+    /// standard widget drawing from layout().
+    fn uses_custom_render(&self) -> bool { false }
+
+    /// Return the widget layout for the built-in GUI.
+    fn layout(&self) -> truce_gui::layout::GridLayout { ... }
+
+    /// Hit test: which widget (if any) is at (x, y)?
+    fn hit_test(&self, widgets: &[WidgetRegion], x: f32, y: f32) -> Option<usize> { ... }
 
     /// Processing latency in samples (for delay compensation).
     /// Return 0 if the plugin adds no latency.
@@ -46,16 +52,13 @@ pub trait PluginLogic: Send + 'static {
     fn tail(&self) -> u32 { 0 }
 
     /// Save extra state beyond parameter values.
-    fn save_state(&self) -> Option<Vec<u8>> { None }
+    fn save_state(&self) -> Vec<u8> { Vec::new() }
 
     /// Restore extra state.
     fn load_state(&mut self, data: &[u8]) {}
 
-    /// GUI layout for the built-in renderer.
-    fn layout(&self) -> truce_gui::layout::PluginLayout { ... }
-
     /// Custom GUI editor. Return None to use the built-in layout.
-    fn custom_editor(&mut self) -> Option<Box<dyn Editor>> { None }
+    fn custom_editor(&self) -> Option<Box<dyn Editor>> { None }
 }
 ```
 
@@ -77,7 +80,7 @@ Host loads plugin binary
 YourPlugin::new(params)       <-- your struct is constructed (inherent method)
     |
     v
-PluginLogic::init()           <-- one-time setup (non-realtime)
+Plugin::init()                <-- one-time setup (non-realtime, on Plugin trait)
     |
     v
 PluginLogic::reset(44100, 512) <-- sample rate and block size known

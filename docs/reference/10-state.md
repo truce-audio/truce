@@ -8,12 +8,12 @@ wavetables), use `save_state` / `load_state`:
 impl PluginLogic for MyConvolver {
     // ...
 
-    fn save_state(&self) -> Option<Vec<u8>> {
+    fn save_state(&self) -> Vec<u8> {
         let state = ExtraState {
             ir_file_path: self.ir_path.clone(),
             custom_curve: self.curve_points.clone(),
         };
-        Some(bincode::serialize(&state).unwrap())
+        bincode::serialize(&state).unwrap()
     }
 
     fn load_state(&mut self, data: &[u8]) {

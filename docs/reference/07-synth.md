@@ -16,28 +16,8 @@ use voice::Voice;
 
 // --- Waveform enum ---
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, ParamEnum)]
 pub enum Waveform { Sine, Saw, Square, Triangle }
-
-impl ParamEnum for Waveform {
-    fn from_index(index: usize) -> Self {
-        match index {
-            0 => Self::Sine, 1 => Self::Saw,
-            2 => Self::Square, _ => Self::Triangle,
-        }
-    }
-    fn to_index(&self) -> usize { *self as usize }
-    fn name(&self) -> &'static str {
-        match self {
-            Self::Sine => "Sine", Self::Saw => "Saw",
-            Self::Square => "Square", Self::Triangle => "Triangle",
-        }
-    }
-    fn variant_count() -> usize { 4 }
-    fn variant_names() -> &'static [&'static str] {
-        &["Sine", "Saw", "Square", "Triangle"]
-    }
-}
 
 // --- Parameters ---
 
@@ -125,11 +105,6 @@ impl Synth {
 }
 
 impl PluginLogic for Synth {
-    fn bus_layouts() -> Vec<BusLayout> {
-        // Instrument: no audio input, stereo output
-        vec![BusLayout::new().with_output("Main", ChannelConfig::Stereo)]
-    }
-
     fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {
         self.sample_rate = sample_rate;
         self.voices.clear();
@@ -199,7 +174,11 @@ impl PluginLogic for Synth {
 
 // --- Export (one macro, all formats) ---
 
-truce::plugin! { logic: Synth, params: SynthParams }
+truce::plugin! {
+    logic: Synth,
+    params: SynthParams,
+    bus_layouts: [BusLayout::new().with_output("Main", ChannelConfig::Stereo)],
+}
 ```
 
 ---

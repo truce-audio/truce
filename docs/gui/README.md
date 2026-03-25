@@ -24,9 +24,10 @@ pub trait Editor: Send {
     fn size(&self) -> (u32, u32);
     fn open(&mut self, parent: RawWindowHandle, context: EditorContext);
     fn close(&mut self);
-    fn idle(&mut self);
+    fn idle(&mut self) {}
     fn set_size(&mut self, width: u32, height: u32) -> bool;
     fn can_resize(&self) -> bool;
+    fn scale_factor(&self) -> f64 { 1.0 }
     fn set_scale_factor(&mut self, factor: f64);
 }
 ```
@@ -56,20 +57,27 @@ automatically based on your `layout()` return value.
 ## EditorContext
 
 All backends receive an `EditorContext` that bridges parameter changes
-to the host. The gesture protocol is the same everywhere:
+to the host. The fields are `Arc<dyn Fn>` closures, so call syntax
+uses parentheses around the field: `(ctx.begin_edit)(id)`.
 
-| Method | When to use |
-|--------|-------------|
-| `begin_edit(id)` | User starts dragging a control |
-| `set_param(id, normalized)` | Value changes during drag |
-| `end_edit(id)` | User releases the control |
-| `get_param(id) -> f64` | Read normalized value (0.0–1.0) |
-| `get_param_plain(id) -> f64` | Read plain value (native range) |
-| `format_param(id) -> String` | Host-formatted display string |
-| `get_meter(id) -> f32` | Read meter level |
+| Field | Call syntax | Description |
+|-------|-------------|-------------|
+| `begin_edit` | `(ctx.begin_edit)(id)` | User starts dragging a control |
+| `set_param` | `(ctx.set_param)(id, normalized)` | Value changes during drag |
+| `end_edit` | `(ctx.end_edit)(id)` | User releases the control |
+| `request_resize` | `(ctx.request_resize)(w, h) -> bool` | Request a window resize |
+| `get_param` | `(ctx.get_param)(id) -> f64` | Read normalized value (0.0–1.0) |
+| `get_param_plain` | `(ctx.get_param_plain)(id) -> f64` | Read plain value (native range) |
+| `format_param` | `(ctx.format_param)(id) -> String` | Host-formatted display string |
+| `get_meter` | `(ctx.get_meter)(id) -> f32` | Read meter level |
 
 For single-shot changes (toggles, selectors), call all three in
 sequence: `begin_edit` → `set_param` → `end_edit`.
+
+Most GUI backends wrap `EditorContext` in a higher-level `ParamState`
+that provides a cleaner API (e.g., `state.get(id)`, `state.begin_gesture(id)`).
+You only need the raw closure syntax when implementing the `Editor` trait
+directly (see [raw window handle](raw-window-handle.md)).
 
 ## Guides
 

@@ -81,12 +81,12 @@ threading, buffer management, and format differences.
 truce::plugin! {
     logic: MyGain,
     params: MyGainParams,
-    bus_layouts: [BusLayout::stereo()],
 }
 ```
 
 One macro. Generates CLAP + VST3 entry points, state serialization,
-parameter hosting, and GUI.
+parameter hosting, and GUI. Defaults to stereo bus layout. For
+instruments or custom layouts, add `bus_layouts: [...]`.
 
 ---
 

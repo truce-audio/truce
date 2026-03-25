@@ -126,7 +126,7 @@ fn process(
     &mut self,
     buffer: &mut AudioBuffer,
     _events: &EventList,
-    ctx: &ProcessContext,
+    ctx: &mut ProcessContext,
 ) -> ProcessStatus {
     let transport = ctx.transport;
 
