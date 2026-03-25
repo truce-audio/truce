@@ -198,5 +198,5 @@ current terms.
 
 ## Example
 
-See `crates/truce-slint/examples/gain-slint/` for a complete working
+See `examples/gain-slint/` for a complete working
 example with custom knob widgets, bypass switch, and snapshot test.

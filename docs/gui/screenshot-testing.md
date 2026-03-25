@@ -58,7 +58,7 @@ fn gui_screenshot() {
 ### Iced
 
 Iced screenshots use `truce_iced::snapshot::render_iced_screenshot`
-internally. See `crates/truce-iced/examples/gain-iced/src/lib.rs`
+internally. See `examples/gain-iced/src/lib.rs`
 for a working example.
 
 ### Slint

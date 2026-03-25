@@ -197,5 +197,5 @@ all param values, `0.0` for meters, and `"pN"` for formatted strings.
 
 ## Example
 
-See `crates/truce-egui/examples/gain-egui/` for a complete working example
+See `examples/gain-egui/` for a complete working example
 with knobs, sliders, toggle, XY pad, meters, and snapshot test.

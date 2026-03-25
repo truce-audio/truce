@@ -4,6 +4,7 @@
 //! Each frame, renders the Slint UI to a pixel buffer via SoftwareRenderer,
 //! uploads it to a wgpu texture, and blits to the surface.
 
+use std::iter;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -127,7 +128,7 @@ impl WindowHandler for SlintWindowHandler {
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
         blit.render(&mut encoder, &view);
-        self.queue.submit(std::iter::once(encoder.finish()));
+        self.queue.submit(iter::once(encoder.finish()));
         frame.present();
     }
 

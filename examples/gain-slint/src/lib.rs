@@ -1,3 +1,5 @@
+use std::f32::consts::FRAC_PI_4;
+
 use truce::prelude::*;
 use truce_slint::{SlintEditor, ParamState};
 
@@ -31,11 +33,11 @@ pub struct GainParams {
 // --- Plugin ---
 
 pub struct GainSlint {
-    params: std::sync::Arc<GainParams>,
+    params: Arc<GainParams>,
 }
 
 impl GainSlint {
-    pub fn new(params: std::sync::Arc<GainParams>) -> Self {
+    pub fn new(params: Arc<GainParams>) -> Self {
         Self { params }
     }
 }
@@ -63,7 +65,7 @@ impl PluginLogic for GainSlint {
             let pan = self.params.pan.smoothed_next();
             let gain_linear = db_to_linear(gain_db as f64) as f32;
 
-            let pan_angle = (pan + 1.0) * std::f32::consts::FRAC_PI_4;
+            let pan_angle = (pan + 1.0) * FRAC_PI_4;
             let gain_l = gain_linear * pan_angle.cos();
             let gain_r = gain_linear * pan_angle.sin();
 

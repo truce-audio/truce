@@ -196,5 +196,5 @@ which accepts raw RGBA pixels from any backend.
 
 ## Example
 
-See `crates/truce-iced/examples/gain-iced/` for a complete working
+See `examples/gain-iced/` for a complete working
 example with auto mode and custom widgets.

@@ -3,6 +3,10 @@
 //! Renders a Slint UI to an RGBA pixel buffer using the SoftwareRenderer.
 //! No GPU or window needed — runs entirely in-process.
 
+use std::fs;
+use std::io::BufReader;
+use std::path::Path;
+
 use slint::platform::software_renderer::PremultipliedRgbaColor;
 use slint::PhysicalSize;
 
@@ -84,11 +88,11 @@ pub fn assert_snapshot(
 ) {
     let (pixels, width, height) = render_to_pixels(width, height, scale, setup);
 
-    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     // Walk up to workspace root (truce-slint → crates → root)
     let root = manifest_dir.parent().unwrap().parent().unwrap();
     let dir = root.join(snapshot_dir);
-    std::fs::create_dir_all(&dir).ok();
+    fs::create_dir_all(&dir).ok();
 
     let ref_path = dir.join(format!("{name}.png"));
 
@@ -131,8 +135,8 @@ pub fn assert_snapshot(
     }
 }
 
-fn save_png(path: &std::path::Path, pixels: &[u8], w: u32, h: u32) {
-    let file = std::fs::File::create(path)
+fn save_png(path: &Path, pixels: &[u8], w: u32, h: u32) {
+    let file = fs::File::create(path)
         .unwrap_or_else(|e| panic!("Failed to create {}: {e}", path.display()));
     let mut encoder = png::Encoder::new(file, w, h);
     encoder.set_color(png::ColorType::Rgba);
@@ -141,10 +145,10 @@ fn save_png(path: &std::path::Path, pixels: &[u8], w: u32, h: u32) {
     writer.write_image_data(pixels).unwrap();
 }
 
-fn load_png(path: &std::path::Path) -> (Vec<u8>, u32, u32) {
-    let file = std::fs::File::open(path)
+fn load_png(path: &Path) -> (Vec<u8>, u32, u32) {
+    let file = fs::File::open(path)
         .unwrap_or_else(|e| panic!("Failed to open {}: {e}", path.display()));
-    let decoder = png::Decoder::new(std::io::BufReader::new(file));
+    let decoder = png::Decoder::new(BufReader::new(file));
     let mut reader = decoder.read_info().unwrap();
     let mut buf = vec![0u8; reader.output_buffer_size().unwrap()];
     let info = reader.next_frame(&mut buf).unwrap();

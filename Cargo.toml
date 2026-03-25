@@ -19,7 +19,7 @@ members = [
     "examples/eq",
     "examples/transpose",
     "examples/arpeggio",
-    "crates/truce-egui/examples/gain-egui",
+    "examples/gain-egui",
     "xtask",
     "crates/truce-loader",
     "crates/truce-derive",
@@ -28,9 +28,9 @@ members = [
     "crates/truce-gpu",
     "crates/truce-egui",
     "crates/truce-iced",
-    "crates/truce-iced/examples/gain-iced",
+    "examples/gain-iced",
     "crates/truce-slint",
-    "crates/truce-slint/examples/gain-slint",
+    "examples/gain-slint",
     "crates/truce-shim-types",
 ]
 
