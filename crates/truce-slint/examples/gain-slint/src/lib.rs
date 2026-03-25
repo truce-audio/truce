@@ -85,7 +85,7 @@ impl PluginLogic for GainSlint {
     }
 
     fn custom_editor(&self) -> Option<Box<dyn truce_core::editor::Editor>> {
-        Some(Box::new(SlintEditor::new((400, 300), |state: ParamState| {
+        Some(Box::new(SlintEditor::new((320, 150), |state: ParamState| {
             let ui = GainUi::new().unwrap();
             truce_slint::bind! { state, ui,
                 P::Gain   => gain,

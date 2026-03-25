@@ -361,7 +361,7 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
             &device,
             &queue,
             surface_format,
-            None,
+            Some(iced_graphics::Antialiasing::MSAAx4),
         );
 
         let mut renderer = iced_wgpu::Renderer::new(

@@ -3,7 +3,7 @@
 use std::fmt::Debug;
 use std::marker::PhantomData;
 
-use iced::widget::canvas::{self, path::Arc, Event, Frame, Geometry, Path, Stroke, Text};
+use iced::widget::canvas::{self, path::Arc, Event, Frame, Geometry, LineCap, Path, Stroke, Text};
 use iced::widget::Canvas;
 use iced::{
     alignment, mouse, Color, Element, Length, Point, Rectangle, Renderer, Theme,
@@ -122,7 +122,8 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for KnobProgram {
             &track,
             Stroke::default()
                 .with_color(theme::KNOB_TRACK)
-                .with_width(3.0),
+                .with_width(3.0)
+                .with_line_cap(LineCap::Round),
         );
 
         // Value arc
@@ -140,7 +141,8 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for KnobProgram {
                 &value_path,
                 Stroke::default()
                     .with_color(theme::KNOB_FILL)
-                    .with_width(3.0),
+                    .with_width(3.0)
+                    .with_line_cap(LineCap::Round),
             );
         }
 
@@ -155,10 +157,6 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for KnobProgram {
                 .with_color(theme::KNOB_POINTER)
                 .with_width(2.0),
         );
-
-        // Center dot
-        let dot = Path::circle(Point::new(cx, cy), 3.0);
-        frame.fill(&dot, theme::KNOB_POINTER);
 
         // Value text
         let value_y = bounds.width + 2.0;
