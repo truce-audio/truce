@@ -259,14 +259,14 @@ au_tag = "{au_tag}"
         "midi" => format!(
             r#"#[derive(Params)]
 pub struct {struct_name}Params {{
-    #[param(id = 0, name = "Semitones", range = "discrete(-12, 12)")]
+    #[param(name = "Semitones", range = "discrete(-12, 12)")]
     pub semitones: FloatParam,
 }}"#
         ),
         _ => format!(
             r#"#[derive(Params)]
 pub struct {struct_name}Params {{
-    #[param(id = 0, name = "Gain", range = "linear(-60, 6)",
+    #[param(name = "Gain", range = "linear(-60, 6)",
             unit = "dB", smooth = "exp(5)")]
     pub gain: FloatParam,
 }}"#
@@ -274,8 +274,8 @@ pub struct {struct_name}Params {{
     };
 
     let layout_knob = match kind {
-        "midi" => "GridWidget::knob(0u32, \"Semitones\")",
-        _ => "GridWidget::knob(0u32, \"Gain\")",
+        "midi" => "GridWidget::knob(P::Semitones, \"Semitones\")",
+        _ => "GridWidget::knob(P::Gain, \"Gain\")",
     };
 
     let bus_layouts = match kind {
@@ -283,9 +283,9 @@ pub struct {struct_name}Params {{
         _ => "BusLayout::stereo()",
     };
 
-    let test_fn = match kind {
-        "instrument" => "render_instrument",
-        _ => "render_effect",
+    let test_body = match kind {
+        "instrument" => "truce_test::render_instrument::<Plugin>(512, 44100.0, &[])",
+        _ => "truce_test::render_effect::<Plugin>(512, 44100.0)",
     };
 
     fs::write(
@@ -294,6 +294,8 @@ pub struct {struct_name}Params {{
             r#"use truce::prelude::*;
 
 {params}
+
+use {struct_name}ParamsParamId as P;
 
 pub struct {struct_name} {{
     params: Arc<{struct_name}Params>,
@@ -332,7 +334,7 @@ mod tests {{
 
     #[test]
     fn builds_and_runs() {{
-        let result = truce_test::{test_fn}::<Plugin>(512, 44100.0);
+        let result = {test_body};
         truce_test::assert_no_nans(&result.output);
     }}
 }}
