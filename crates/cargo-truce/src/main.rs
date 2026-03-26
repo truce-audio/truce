@@ -5,14 +5,19 @@
 //!
 //! Usage:
 //!   cargo truce new my-plugin          # scaffold a new plugin project
+//!   cargo truce new-workspace studio gain reverb synth
 //!   cargo truce install                # build + bundle + sign + install
 //!   cargo truce install --clap         # single format
 //!   cargo truce validate               # run auval + pluginval
 //!   cargo truce doctor                 # check environment
 
+mod scaffold;
+
 use std::fs;
 use std::path::Path;
 use std::process::ExitCode;
+
+use scaffold::{PluginKind, PluginSpec};
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args()
@@ -25,6 +30,10 @@ fn main() -> ExitCode {
     match cmd {
         // Scaffold commands — handled here
         "new" => match cmd_new(&args[1..]) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => { eprintln!("Error: {e}"); ExitCode::FAILURE }
+        },
+        "new-workspace" => match cmd_new_workspace(&args[1..]) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => { eprintln!("Error: {e}"); ExitCode::FAILURE }
         },
@@ -54,7 +63,16 @@ cargo-truce — build tool for truce audio plugins
 
 USAGE:
   cargo truce new <name> [--instrument] [--midi]
-      Scaffold a new plugin project.
+      Scaffold a new single-plugin project.
+
+  cargo truce new-workspace <name> <plugin1> [plugin2 ...] [options]
+      Scaffold a workspace with multiple plugins.
+      Options:
+        --vendor <name>             Vendor display name
+        --vendor-id <id>            Reverse-domain vendor ID
+        --instrument                Default all plugins to instrument type
+        --midi                      Default all plugins to midi type
+        --type:<plugin>=<kind>      Per-plugin type override (effect, instrument, midi)
 
   cargo truce install [--clap] [--vst3] [--vst2] [--au2] [--au3] [--aax] [-p <name>]
       Build, bundle, sign, and install plugins.
@@ -86,17 +104,17 @@ USAGE:
 type Res = Result<(), Box<dyn std::error::Error>>;
 
 // ---------------------------------------------------------------------------
-// new
+// new — single standalone plugin
 // ---------------------------------------------------------------------------
 
 fn cmd_new(args: &[String]) -> Res {
     let mut name: Option<String> = None;
-    let mut kind = "effect";
+    let mut kind = PluginKind::Effect;
 
     for arg in args {
         match arg.as_str() {
-            "--instrument" => kind = "instrument",
-            "--midi" => kind = "midi",
+            "--instrument" => kind = PluginKind::Instrument,
+            "--midi" => kind = PluginKind::Midi,
             s if !s.starts_with('-') && name.is_none() => name = Some(s.to_string()),
             other => return Err(format!("Unknown argument: {other}").into()),
         }
@@ -108,244 +126,18 @@ fn cmd_new(args: &[String]) -> Res {
         return Err(format!("Directory '{name}' already exists").into());
     }
 
-    let struct_name = to_pascal_case(&name);
-    let crate_name = name.clone();
+    let struct_name = scaffold::to_pascal_case(&name);
 
     fs::create_dir_all(format!("{name}/src"))?;
+    fs::write(format!("{name}/Cargo.toml"), scaffold::plugin_cargo_toml_standalone(&name))?;
+    fs::write(format!("{name}/src/lib.rs"), scaffold::plugin_lib_rs(&struct_name, kind))?;
+    fs::write(format!("{name}/.gitignore"), scaffold::gitignore())?;
 
-    // Cargo.toml
-    fs::write(
-        format!("{name}/Cargo.toml"),
-        format!(
-            r#"[package]
-name = "{crate_name}"
-version = "0.1.0"
-edition = "2021"
-
-[lib]
-crate-type = ["cdylib", "rlib"]
-
-[features]
-default = ["clap", "vst3"]
-clap = ["dep:truce-clap", "dep:clap-sys"]
-vst3 = ["dep:truce-vst3"]
-vst2 = ["dep:truce-vst2"]
-au = ["dep:truce-au"]
-aax = ["dep:truce-aax"]
-dev = ["truce/dev"]
-
-[dependencies]
-truce = {{ git = "https://github.com/truce-audio/truce" }}
-truce-gui = {{ git = "https://github.com/truce-audio/truce" }}
-truce-clap = {{ git = "https://github.com/truce-audio/truce", optional = true }}
-truce-vst3 = {{ git = "https://github.com/truce-audio/truce", optional = true }}
-truce-vst2 = {{ git = "https://github.com/truce-audio/truce", optional = true }}
-truce-au = {{ git = "https://github.com/truce-audio/truce", optional = true }}
-truce-aax = {{ git = "https://github.com/truce-audio/truce", optional = true }}
-clap-sys = {{ version = "0.5", optional = true }}
-
-[dev-dependencies]
-truce-test = {{ git = "https://github.com/truce-audio/truce" }}
-"#,
-            crate_name = crate_name,
-        ),
-    )?;
-
-    // truce.toml
-    let category = match kind {
-        "instrument" => "instrument",
-        _ => "effect",
-    };
-    let au_tag = match kind {
-        "instrument" => "Synthesizer",
-        _ => "Effects",
-    };
-    let au_sub = to_fourcc(&name);
-
+    // truce.toml — single plugin
+    let plugin = PluginSpec { name: name.clone(), kind };
     fs::write(
         format!("{name}/truce.toml"),
-        format!(
-            r#"[macos]
-# Ad-hoc signing works for CLAP, VST3, VST2, AU v2.
-# AU v3 requires a Developer ID: "Developer ID Application: Your Name (TEAMID)"
-signing_identity = "-"
-
-[vendor]
-name = "My Company"
-id = "com.mycompany"
-url = "https://mycompany.com"
-au_manufacturer = "MyCo"
-
-[[plugin]]
-name = "{display}"
-suffix = "{name}"
-crate = "{crate_name}"
-category = "{category}"
-fourcc = "{au_sub}"
-au_tag = "{au_tag}"
-"#,
-            display = struct_name,
-        ),
-    )?;
-
-    // src/lib.rs
-    let process_body = match kind {
-        "instrument" => r#"    fn process(&mut self, buffer: &mut AudioBuffer, events: &EventList,
-               _context: &mut ProcessContext) -> ProcessStatus {
-        for event in events.iter() {
-            match &event.body {
-                EventBody::NoteOn { note, velocity, .. } => {
-                    // TODO: start a voice
-                    let _ = (note, velocity);
-                }
-                EventBody::NoteOff { note, .. } => {
-                    // TODO: release the voice
-                    let _ = note;
-                }
-                _ => {}
-            }
-        }
-
-        for ch in 0..buffer.num_output_channels() {
-            for i in 0..buffer.num_samples() {
-                buffer.output(ch)[i] = 0.0;
-            }
-        }
-        ProcessStatus::Normal
-    }"#,
-        "midi" => r#"    fn process(&mut self, _buffer: &mut AudioBuffer, events: &EventList,
-               context: &mut ProcessContext) -> ProcessStatus {
-        for event in events.iter() {
-            match &event.body {
-                EventBody::NoteOn { channel, note, velocity } => {
-                    let shifted = (*note as i16 + self.params.semitones.value() as i16)
-                        .clamp(0, 127) as u8;
-                    context.output_events.push(Event {
-                        sample_offset: event.sample_offset,
-                        body: EventBody::NoteOn {
-                            channel: *channel, note: shifted, velocity: *velocity,
-                        },
-                    });
-                }
-                EventBody::NoteOff { channel, note, velocity } => {
-                    let shifted = (*note as i16 + self.params.semitones.value() as i16)
-                        .clamp(0, 127) as u8;
-                    context.output_events.push(Event {
-                        sample_offset: event.sample_offset,
-                        body: EventBody::NoteOff {
-                            channel: *channel, note: shifted, velocity: *velocity,
-                        },
-                    });
-                }
-                _ => {}
-            }
-        }
-        ProcessStatus::Normal
-    }"#,
-        _ => r#"    fn process(&mut self, buffer: &mut AudioBuffer, _events: &EventList,
-               _context: &mut ProcessContext) -> ProcessStatus {
-        for i in 0..buffer.num_samples() {
-            let gain = db_to_linear(self.params.gain.smoothed_next() as f64) as f32;
-            for ch in 0..buffer.channels() {
-                let (inp, out) = buffer.io(ch);
-                out[i] = inp[i] * gain;
-            }
-        }
-        ProcessStatus::Normal
-    }"#,
-    };
-
-    let params = match kind {
-        "midi" => format!(
-            r#"#[derive(Params)]
-pub struct {struct_name}Params {{
-    #[param(name = "Semitones", range = "discrete(-12, 12)")]
-    pub semitones: FloatParam,
-}}"#
-        ),
-        _ => format!(
-            r#"#[derive(Params)]
-pub struct {struct_name}Params {{
-    #[param(name = "Gain", range = "linear(-60, 6)",
-            unit = "dB", smooth = "exp(5)")]
-    pub gain: FloatParam,
-}}"#
-        ),
-    };
-
-    let layout_knob = match kind {
-        "midi" => "GridWidget::knob(P::Semitones, \"Semitones\")",
-        _ => "GridWidget::knob(P::Gain, \"Gain\")",
-    };
-
-    let bus_layouts = match kind {
-        "instrument" => "BusLayout::new().with_output(\"Main\", ChannelConfig::Stereo)",
-        _ => "BusLayout::stereo()",
-    };
-
-    let test_body = match kind {
-        "instrument" => "truce_test::render_instrument::<Plugin>(512, 44100.0, &[])",
-        _ => "truce_test::render_effect::<Plugin>(512, 44100.0)",
-    };
-
-    fs::write(
-        format!("{name}/src/lib.rs"),
-        format!(
-            r#"use truce::prelude::*;
-
-{params}
-
-use {struct_name}ParamsParamId as P;
-
-pub struct {struct_name} {{
-    params: Arc<{struct_name}Params>,
-}}
-
-impl {struct_name} {{
-    pub fn new(params: Arc<{struct_name}Params>) -> Self {{
-        Self {{ params }}
-    }}
-}}
-
-impl PluginLogic for {struct_name} {{
-    fn reset(&mut self, sr: f64, _bs: usize) {{
-        self.params.set_sample_rate(sr);
-    }}
-
-{process_body}
-
-    fn layout(&self) -> truce_gui::layout::GridLayout {{
-        use truce_gui::layout::{{GridLayout, GridWidget}};
-        GridLayout::build("{struct_name}", "V0.1", 2, 80.0, vec![
-            {layout_knob},
-        ], vec![])
-    }}
-}}
-
-truce::plugin! {{
-    logic: {struct_name},
-    params: {struct_name}Params,
-    bus_layouts: [{bus_layouts}],
-}}
-
-#[cfg(test)]
-mod tests {{
-    use super::*;
-
-    #[test]
-    fn builds_and_runs() {{
-        let result = {test_body};
-        truce_test::assert_no_nans(&result.output);
-    }}
-}}
-"#,
-        ),
-    )?;
-
-    // .gitignore
-    fs::write(
-        format!("{name}/.gitignore"),
-        "/target\n",
+        scaffold::truce_toml("My Company", "com.mycompany", &[plugin], &name),
     )?;
 
     eprintln!("Created {name}/");
@@ -362,27 +154,164 @@ mod tests {{
 }
 
 // ---------------------------------------------------------------------------
-// helpers
+// new-workspace — multi-plugin workspace
 // ---------------------------------------------------------------------------
 
-fn to_pascal_case(s: &str) -> String {
-    s.split('-')
-        .map(|part| {
-            let mut chars = part.chars();
-            match chars.next() {
-                Some(c) => c.to_uppercase().to_string() + chars.as_str(),
-                None => String::new(),
-            }
-        })
-        .collect()
-}
+fn cmd_new_workspace(args: &[String]) -> Res {
+    let mut workspace_name: Option<String> = None;
+    let mut plugin_names: Vec<String> = Vec::new();
+    let mut default_kind = PluginKind::Effect;
+    let mut vendor_name: Option<String> = None;
+    let mut vendor_id: Option<String> = None;
+    let mut type_overrides: Vec<(String, PluginKind)> = Vec::new();
 
-fn to_fourcc(s: &str) -> String {
-    let pascal = to_pascal_case(s);
-    let chars: Vec<char> = pascal.chars().take(4).collect();
-    if chars.len() >= 4 {
-        chars.into_iter().collect()
-    } else {
-        format!("{:X<4}", pascal.chars().take(4).collect::<String>())
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--instrument" => default_kind = PluginKind::Instrument,
+            "--midi" => default_kind = PluginKind::Midi,
+            "--vendor" => {
+                vendor_name = Some(
+                    iter.next()
+                        .ok_or("--vendor requires a value")?
+                        .clone(),
+                );
+            }
+            "--vendor-id" => {
+                vendor_id = Some(
+                    iter.next()
+                        .ok_or("--vendor-id requires a value")?
+                        .clone(),
+                );
+            }
+            s if s.starts_with("--type:") => {
+                // --type:gain=instrument
+                let rest = &s["--type:".len()..];
+                let (pname, kind_str) = rest
+                    .split_once('=')
+                    .ok_or_else(|| format!("Invalid --type flag: {s} (expected --type:<plugin>=<kind>)"))?;
+                let kind = PluginKind::from_str(kind_str)?;
+                type_overrides.push((pname.to_string(), kind));
+            }
+            s if s.starts_with('-') => {
+                return Err(format!("Unknown option: {s}").into());
+            }
+            s if workspace_name.is_none() => {
+                workspace_name = Some(s.to_string());
+            }
+            s => {
+                plugin_names.push(s.to_string());
+            }
+        }
     }
+
+    let workspace_name = workspace_name
+        .ok_or("Usage: cargo truce new-workspace <name> <plugin1> [plugin2 ...] [options]")?;
+
+    if plugin_names.is_empty() {
+        return Err("At least one plugin name is required.\n\
+            Usage: cargo truce new-workspace <name> <plugin1> [plugin2 ...]".into());
+    }
+
+    if Path::new(&workspace_name).exists() {
+        return Err(format!("Directory '{workspace_name}' already exists").into());
+    }
+
+    // Check for duplicate plugin names
+    let mut seen = std::collections::HashSet::new();
+    for pn in &plugin_names {
+        if !seen.insert(pn.as_str()) {
+            return Err(format!("Duplicate plugin name: '{pn}'").into());
+        }
+    }
+
+    // Build plugin specs
+    let plugins: Vec<PluginSpec> = plugin_names
+        .iter()
+        .map(|pn| {
+            let kind = type_overrides
+                .iter()
+                .find(|(n, _)| n == pn)
+                .map(|(_, k)| *k)
+                .unwrap_or(default_kind);
+            PluginSpec { name: pn.clone(), kind }
+        })
+        .collect();
+
+    // Check for fourcc collisions
+    scaffold::check_fourcc_collisions(&plugins)?;
+
+    // Check that all --type: overrides reference actual plugin names
+    for (override_name, _) in &type_overrides {
+        if !plugin_names.contains(override_name) {
+            return Err(format!(
+                "--type:{override_name}=... does not match any plugin name. \
+                 Available plugins: {}",
+                plugin_names.join(", "),
+            ).into());
+        }
+    }
+
+    let vendor = vendor_name.unwrap_or_else(|| scaffold::to_pascal_case(&workspace_name));
+    let vid = vendor_id.unwrap_or_else(|| format!("com.{}", workspace_name.replace('-', "")));
+
+    // Create directory structure
+    for p in &plugins {
+        fs::create_dir_all(format!("{workspace_name}/plugins/{}/src", p.name))?;
+    }
+
+    // Root Cargo.toml
+    fs::write(
+        format!("{workspace_name}/Cargo.toml"),
+        scaffold::workspace_cargo_toml(&workspace_name, &plugins),
+    )?;
+
+    // truce.toml
+    fs::write(
+        format!("{workspace_name}/truce.toml"),
+        scaffold::truce_toml(&vendor, &vid, &plugins, &workspace_name),
+    )?;
+
+    // .gitignore
+    fs::write(
+        format!("{workspace_name}/.gitignore"),
+        scaffold::gitignore(),
+    )?;
+
+    // Per-plugin files
+    for p in &plugins {
+        let crate_name = format!("{workspace_name}-{}", p.name);
+        let struct_name = scaffold::to_pascal_case(&p.name);
+
+        fs::write(
+            format!("{workspace_name}/plugins/{}/Cargo.toml", p.name),
+            scaffold::plugin_cargo_toml_workspace(&crate_name),
+        )?;
+
+        fs::write(
+            format!("{workspace_name}/plugins/{}/src/lib.rs", p.name),
+            scaffold::plugin_lib_rs(&struct_name, p.kind),
+        )?;
+    }
+
+    // Print summary
+    eprintln!("Created {workspace_name}/ with {} plugins:", plugins.len());
+    for p in &plugins {
+        let kind_label = match p.kind {
+            PluginKind::Effect => "effect",
+            PluginKind::Instrument => "instrument",
+            PluginKind::Midi => "midi",
+        };
+        eprintln!("  plugins/{:<20} ({})", p.name, kind_label);
+    }
+    eprintln!();
+    eprintln!("  cd {workspace_name}");
+    eprintln!("  cargo truce install --clap      # build + install all as CLAP");
+    eprintln!("  cargo truce install              # all formats");
+    eprintln!("  cargo truce doctor               # check environment");
+    eprintln!();
+    eprintln!("Edit plugins/*/src/lib.rs to add your DSP.");
+    eprintln!("Edit truce.toml to configure vendor info and AU metadata.");
+
+    Ok(())
 }
