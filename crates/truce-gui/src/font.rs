@@ -6,7 +6,10 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-pub static FONT_DATA: &[u8] = include_bytes!("../fonts/JetBrainsMono-Regular.ttf");
+/// JetBrains Mono Regular TrueType font data.
+///
+/// Shared across all GUI backends for consistent text rendering.
+pub static JETBRAINS_MONO: &[u8] = include_bytes!("../fonts/JetBrainsMono-Regular.ttf");
 
 /// Cached rasterized glyph.
 struct CachedGlyph {
@@ -30,7 +33,7 @@ fn get_or_init_cache() -> std::sync::MutexGuard<'static, Option<GlyphCache>> {
     let mut guard = CACHE.lock().unwrap();
     if guard.is_none() {
         let font = fontdue::Font::from_bytes(
-            FONT_DATA,
+            JETBRAINS_MONO,
             fontdue::FontSettings::default(),
         ).expect("failed to parse embedded font");
         *guard = Some(GlyphCache {

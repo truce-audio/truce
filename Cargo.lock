@@ -6117,6 +6117,7 @@ dependencies = [
  "pollster",
  "raw-window-handle 0.5.2",
  "truce-core",
+ "truce-gui",
  "wgpu 24.0.5",
 ]
 
@@ -6349,6 +6350,7 @@ dependencies = [
  "raw-window-handle 0.5.2",
  "slint",
  "truce-core",
+ "truce-gui",
  "wgpu 24.0.5",
 ]
 

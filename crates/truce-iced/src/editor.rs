@@ -18,6 +18,7 @@ use truce_params::Params;
 // Use iced_wgpu::Renderer directly (matches iced::Renderer when tiny-skia is disabled)
 type IcedRenderer = iced_wgpu::Renderer;
 
+
 use crate::auto_layout;
 use crate::editor_handle::EditorHandle;
 use crate::param_message::{Message, ParamMessage};
@@ -167,6 +168,7 @@ where
     params: Arc<P>,
     size: (u32, u32),
     scale_factor: f64,
+    font: Option<(&'static str, &'static [u8])>,
     runtime: Option<IcedRuntime<P, M>>,
     layout: Option<GridLayout>,
     meter_ids: Vec<u32>,
@@ -190,6 +192,7 @@ impl<P: Params + 'static> IcedEditor<P, AutoPlugin> {
             params,
             size,
             scale_factor: truce_gui::backing_scale(),
+            font: None,
             runtime: None,
             layout: Some(layout),
             meter_ids,
@@ -204,10 +207,22 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedEditor<P, M> {
             params,
             size,
             scale_factor: truce_gui::backing_scale(),
+            font: None,
             runtime: None,
             layout: None,
             meter_ids: Vec::new(),
         }
+    }
+
+    /// Set a custom default font (family name + TrueType data).
+    ///
+    /// ```ignore
+    /// IcedEditor::new(params, (250, 330))
+    ///     .with_font("JetBrains Mono", truce_gui::font::JETBRAINS_MONO)
+    /// ```
+    pub fn with_font(mut self, family: &'static str, data: &'static [u8]) -> Self {
+        self.font = Some((family, data));
+        self
     }
 
     /// Set meter IDs to poll each tick.
@@ -240,6 +255,8 @@ struct IcedRuntime<P: Params, M: IcedPlugin<P>> {
     size: (u32, u32),
     /// Scale factor.
     scale_factor: f64,
+    /// Custom font (family name, TrueType data).
+    font: Option<(&'static str, &'static [u8])>,
 }
 
 /// Holds the full wgpu + iced rendering pipeline.
@@ -370,10 +387,15 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
             Some(iced_graphics::Antialiasing::MSAAx4),
         );
 
+        let default_font = if let Some((family, data)) = self.font {
+            crate::font::apply_font(family, data)
+        } else {
+            iced::Font::DEFAULT
+        };
         let mut renderer = iced_wgpu::Renderer::new(
             &device,
             &engine,
-            iced::Font::DEFAULT,
+            default_font,
             iced::Pixels(14.0),
         );
 
@@ -696,6 +718,7 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
             program: Some(program),
             size: (w, h),
             scale_factor: self.scale_factor.max(1.0),
+            font: self.font,
         });
 
         let self_ptr = self as *mut IcedEditor<P, M> as *mut c_void;

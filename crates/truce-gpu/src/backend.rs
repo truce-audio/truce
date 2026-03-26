@@ -470,7 +470,7 @@ impl WgpuBackend {
 
         // Font
         let font = fontdue::Font::from_bytes(
-            truce_gui::font::FONT_DATA,
+            truce_gui::font::JETBRAINS_MONO,
             fontdue::FontSettings::default(),
         )
         .expect("failed to parse embedded font");
@@ -1091,7 +1091,7 @@ impl WgpuBackend {
         });
 
         let font = fontdue::Font::from_bytes(
-            truce_gui::font::FONT_DATA,
+            truce_gui::font::JETBRAINS_MONO,
             fontdue::FontSettings::default(),
         )
         .expect("failed to parse embedded font");
@@ -1236,7 +1236,7 @@ mod tests {
     #[test]
     fn glyph_atlas_shelf_packing() {
         let font = fontdue::Font::from_bytes(
-            truce_gui::font::FONT_DATA,
+            truce_gui::font::JETBRAINS_MONO,
             fontdue::FontSettings::default(),
         )
         .unwrap();

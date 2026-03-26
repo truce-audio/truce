@@ -200,7 +200,8 @@ impl PluginLogic for GainIced {
                 Arc::new(GainParams::default_for_gui()),
                 (250, 330),
             )
-            .with_meter_ids(vec![P::MeterLeft.into(), P::MeterRight.into()]),
+            .with_meter_ids(vec![P::MeterLeft.into(), P::MeterRight.into()])
+            .with_font("JetBrains Mono", truce_gui::font::JETBRAINS_MONO),
         ))
     }
 }
@@ -244,6 +245,7 @@ mod tests {
                 params,
                 (250, 330),
                 2.0,
+                Some(("JetBrains Mono", truce_gui::font::JETBRAINS_MONO)),
             );
         truce_test::assert_gui_snapshot_raw("gain_iced_default", &pixels, w, h, 0);
     }

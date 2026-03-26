@@ -37,6 +37,7 @@ pub struct EguiEditor {
     /// Shared with the baseview WindowHandler so it survives open/close cycles.
     ui: Arc<Mutex<Box<dyn EditorUi>>>,
     visuals: Option<egui::Visuals>,
+    font: Option<&'static [u8]>,
     scale_factor: Option<f64>,
     /// Active baseview window handle — exists only while editor is open.
     window: Option<baseview::WindowHandle>,
@@ -57,6 +58,7 @@ impl EguiEditor {
             size,
             ui: Arc::new(Mutex::new(Box::new(ui_fn))),
             visuals: None,
+            font: None,
             scale_factor: None,
             window: None,
         }
@@ -68,6 +70,7 @@ impl EguiEditor {
             size,
             ui: Arc::new(Mutex::new(Box::new(ui))),
             visuals: None,
+            font: None,
             scale_factor: None,
             window: None,
         }
@@ -77,6 +80,17 @@ impl EguiEditor {
     /// the default dark theme matching truce-gui.
     pub fn with_visuals(mut self, visuals: egui::Visuals) -> Self {
         self.visuals = Some(visuals);
+        self
+    }
+
+    /// Set a custom default font (TrueType data).
+    ///
+    /// ```ignore
+    /// EguiEditor::new((400, 300), my_ui)
+    ///     .with_font(truce_gui::font::JETBRAINS_MONO)
+    /// ```
+    pub fn with_font(mut self, font_data: &'static [u8]) -> Self {
+        self.font = Some(font_data);
         self
     }
 }
@@ -353,6 +367,7 @@ impl Editor for EguiEditor {
         let egui_ctx = egui::Context::default();
         let visuals = self.visuals.clone().unwrap_or_else(crate::theme::dark);
         egui_ctx.set_visuals(visuals);
+        let font = self.font;
 
         let system_scale = query_backing_scale(&parent);
         let (lw, lh) = self.size; // logical points
@@ -378,6 +393,10 @@ impl Editor for EguiEditor {
                 let phys_h = (size.1 as f32 * scale) as u32;
                 let renderer =
                     unsafe { EguiRenderer::from_window(window, phys_w, phys_h) };
+
+                if let Some(font_data) = font {
+                    crate::font::apply_font(&egui_ctx, font_data);
+                }
 
                 // Request continuous repainting (plugin GUIs need it for meters)
                 egui_ctx.request_repaint();

@@ -29,6 +29,7 @@
 pub mod auto_layout;
 pub mod editor;
 pub mod editor_handle;
+pub mod font;
 pub mod param_message;
 pub mod param_state;
 pub mod platform;

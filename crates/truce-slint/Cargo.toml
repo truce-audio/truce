@@ -8,6 +8,7 @@ description = "Slint-based GUI backend for truce audio plugins"
 
 [dependencies]
 truce-core = { workspace = true }
+truce-gui = { workspace = true }
 slint = { version = "=1.15.1", default-features = false, features = ["compat-1-2", "renderer-software", "std"] }
 baseview = { git = "https://github.com/RustAudio/baseview.git" }
 raw-window-handle = "0.5"

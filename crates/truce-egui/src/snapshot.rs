@@ -13,11 +13,16 @@ pub fn render_to_pixels(
     width: u32,
     height: u32,
     pixels_per_point: f32,
+    font: Option<&'static [u8]>,
     ui_fn: impl Fn(&egui::Context, &ParamState),
 ) -> Vec<u8> {
     let state = ParamState::mock();
     let ctx = egui::Context::default();
     ctx.set_visuals(crate::theme::dark());
+
+    if let Some(font_data) = font {
+        crate::font::apply_font(&ctx, font_data);
+    }
 
     // Run the egui frame
     let mut raw_input = egui::RawInput {
@@ -207,9 +212,10 @@ pub fn assert_snapshot(
     height: u32,
     pixels_per_point: f32,
     max_diff_pixels: usize,
+    font: Option<&'static [u8]>,
     ui_fn: impl Fn(&egui::Context, &ParamState),
 ) {
-    let pixels = render_to_pixels(width, height, pixels_per_point, ui_fn);
+    let pixels = render_to_pixels(width, height, pixels_per_point, font, ui_fn);
     let phys_w = (width as f32 * pixels_per_point) as u32;
     let phys_h = (height as f32 * pixels_per_point) as u32;
 

@@ -26,6 +26,7 @@ pub fn render_iced_screenshot<P, M>(
     params: Arc<P>,
     size: (u32, u32),
     scale: f64,
+    font: Option<(&'static str, &'static [u8])>,
 ) -> (Vec<u8>, u32, u32)
 where
     P: Params + 'static,
@@ -66,10 +67,15 @@ where
         Some(iced_graphics::Antialiasing::MSAAx4),
     );
 
+    let default_font = if let Some((family, data)) = font {
+        crate::font::apply_font(family, data)
+    } else {
+        iced::Font::DEFAULT
+    };
     let mut renderer = iced_wgpu::Renderer::new(
         &device,
         &engine,
-        iced::Font::DEFAULT,
+        default_font,
         iced::Pixels(14.0),
     );
 

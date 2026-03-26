@@ -8,6 +8,7 @@ description = "egui-based GUI backend for truce audio plugins"
 
 [dependencies]
 truce-core = { workspace = true }
+truce-gui = { workspace = true }
 egui = "0.31"
 egui-wgpu = "0.31"
 wgpu = "24"

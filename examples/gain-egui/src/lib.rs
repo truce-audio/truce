@@ -86,7 +86,8 @@ impl PluginLogic for GainEgui {
     fn custom_editor(&self) -> Option<Box<dyn truce_core::editor::Editor>> {
         Some(Box::new(
             EguiEditor::new((320, 310), gain_ui)
-                .with_visuals(truce_egui::theme::dark()),
+                .with_visuals(truce_egui::theme::dark())
+                .with_font(truce_gui::font::JETBRAINS_MONO),
         ))
     }
 }
@@ -175,6 +176,7 @@ mod tests {
         truce_egui::snapshot::assert_snapshot(
             "screenshots", "gain_egui_default",
             320, 310, 2.0, 0,
+            Some(truce_gui::font::JETBRAINS_MONO),
             |ctx, state| gain_ui(ctx, state),
         );
     }

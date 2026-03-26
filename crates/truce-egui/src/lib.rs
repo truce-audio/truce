@@ -20,6 +20,7 @@
 //! ```
 
 pub mod editor;
+pub mod font;
 pub mod param_state;
 pub mod platform;
 pub mod renderer;
