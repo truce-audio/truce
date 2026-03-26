@@ -1,0 +1,48 @@
+// Horizontal parameter slider with label and value text.
+// Named ParamSlider to avoid conflict with Slint's std-widgets Slider.
+
+import { Slider } from "std-widgets.slint";
+
+export component ParamSlider inherits Rectangle {
+    in-out property <float> value: 0.5;
+    in property <string> label: "";
+    in property <string> value-text: "";
+    in property <float> minimum: 0.0;
+    in property <float> maximum: 1.0;
+
+    in property <color> label-color: #8c8c99;
+    in property <color> value-color: #b0b0ba;
+
+    callback changed(float);
+
+    height: 44px;
+
+    VerticalLayout {
+        spacing: 2px;
+
+        Text {
+            text: root.label;
+            font-size: 10px;
+            color: root.label-color;
+        }
+
+        HorizontalLayout {
+            spacing: 6px;
+
+            Slider {
+                minimum: root.minimum;
+                maximum: root.maximum;
+                value <=> root.value;
+                changed(v) => { root.changed(v); }
+            }
+
+            Text {
+                text: root.value-text != "" ? root.value-text : round(root.value * 100) / 100;
+                font-size: 10px;
+                color: root.value-color;
+                vertical-alignment: center;
+                width: 40px;
+            }
+        }
+    }
+}

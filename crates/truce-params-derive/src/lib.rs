@@ -426,6 +426,8 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
     }
 
     // --- Auto-assign meter IDs (starting at 256) ---
+    // Meter enum discriminants start at 256 to avoid colliding with param IDs.
+    // Storage is offset: meter_array[id - 256].
     {
         let mut next_meter = 256u32;
         for m in &mut meter_fields {

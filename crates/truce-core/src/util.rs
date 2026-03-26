@@ -24,6 +24,21 @@ pub fn freq_to_midi_note(freq: f64) -> f64 {
     69.0 + 12.0 * (freq / 440.0).log2()
 }
 
+/// Convert a linear peak level to a smoothed 0.0–1.0 display value for meters.
+///
+/// Maps -60 dB → 0.0, 0 dB → 1.0 (linear scale in dB domain).
+/// Values above 0 dB clamp to 1.0. Silence (< -60 dB) maps to 0.0.
+/// Apply smoothing externally (e.g., exponential decay per frame).
+#[inline]
+pub fn meter_display(linear_peak: f32) -> f32 {
+    if linear_peak < 1e-6 {
+        return 0.0;
+    }
+    let db = 20.0 * linear_peak.log10();
+    // Map -60..0 dB → 0.0..1.0
+    ((db + 60.0) / 60.0).clamp(0.0, 1.0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

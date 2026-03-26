@@ -1,0 +1,118 @@
+// Rotary knob with 270-degree arc, pointer dot, label, and value text.
+// Drag vertically to change value.
+
+export component Knob inherits Rectangle {
+    in-out property <float> value: 0.5;
+    in property <string> label: "";
+    in property <string> value-text: "";
+    in property <float> minimum: 0.0;
+    in property <float> maximum: 1.0;
+
+    in property <color> track-color: #3a3a44;
+    in property <color> fill-color: #4d99f2;
+    in property <color> dot-color: #e6e6eb;
+    in property <color> label-color: #8c8c99;
+    in property <color> value-color: #b0b0ba;
+
+    callback changed(float);
+
+    width: 80px;
+    height: 100px;
+
+    property <float> norm: (value - minimum) / (maximum - minimum);
+    property <float> val-angle: 135 + norm * 270;
+
+    pure function px(a: float) -> float { 30 + 25 * cos(a * 1deg) }
+    pure function py(a: float) -> float { 30 + 25 * sin(a * 1deg) }
+
+    // Track arc (full 270 degrees)
+    Path {
+        x: (parent.width - 60px) / 2;
+        y: 5px;
+        width: 60px;
+        height: 60px;
+        viewbox-x: 0; viewbox-y: 0;
+        viewbox-width: 60; viewbox-height: 60;
+        stroke: root.track-color;
+        stroke-width: 3px;
+
+        MoveTo { x: px(135); y: py(135); }
+        ArcTo {
+            x: px(405); y: py(405);
+            radius-x: 25; radius-y: 25;
+            sweep: true; large-arc: true;
+        }
+    }
+
+    // Value arc
+    Path {
+        x: (parent.width - 60px) / 2;
+        y: 5px;
+        width: 60px;
+        height: 60px;
+        viewbox-x: 0; viewbox-y: 0;
+        viewbox-width: 60; viewbox-height: 60;
+        stroke: root.fill-color;
+        stroke-width: 3px;
+
+        MoveTo { x: px(135); y: py(135); }
+        ArcTo {
+            x: px(root.val-angle); y: py(root.val-angle);
+            radius-x: 25; radius-y: 25;
+            sweep: true;
+            large-arc: root.norm > 0.667;
+        }
+    }
+
+    // Pointer dot
+    Rectangle {
+        x: (parent.width - 60px) / 2 + px(root.val-angle) * 1px - 4px;
+        y: 5px + py(root.val-angle) * 1px - 4px;
+        width: 8px;
+        height: 8px;
+        border-radius: 4px;
+        background: root.dot-color;
+    }
+
+    // Label
+    Text {
+        y: 70px;
+        width: parent.width;
+        text: root.label;
+        font-size: 10px;
+        color: root.label-color;
+        horizontal-alignment: center;
+    }
+
+    // Value text
+    Text {
+        y: 84px;
+        width: parent.width;
+        text: root.value-text != "" ? root.value-text : round(root.value * 100) / 100;
+        font-size: 10px;
+        color: root.value-color;
+        horizontal-alignment: center;
+    }
+
+    // Drag interaction
+    touch := TouchArea {
+        width: parent.width;
+        height: 70px;
+        property <float> start-value;
+
+        pointer-event(ev) => {
+            if ev.kind == PointerEventKind.down && ev.button == PointerEventButton.left {
+                start-value = root.value;
+            }
+        }
+        moved => {
+            if self.pressed {
+                root.value = clamp(
+                    start-value - (touch.mouse-y - touch.pressed-y) / 150px * (root.maximum - root.minimum),
+                    root.minimum, root.maximum,
+                );
+                root.changed(root.value);
+            }
+        }
+    }
+}

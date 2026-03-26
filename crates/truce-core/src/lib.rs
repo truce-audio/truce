@@ -18,4 +18,4 @@ pub use export::PluginExport;
 pub use info::{PluginCategory, PluginInfo};
 pub use plugin::Plugin;
 pub use process::{ProcessContext, ProcessStatus};
-pub use util::{db_to_linear, linear_to_db, midi_note_to_freq};
+pub use util::{db_to_linear, linear_to_db, meter_display, midi_note_to_freq};

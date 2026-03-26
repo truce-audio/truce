@@ -110,7 +110,9 @@ impl<P: Params + Default + 'static, L: PluginLogic + 'static> Plugin for StaticS
         let meters = &self.meters;
         let param_fn = |id: u32| -> f64 { params.get_plain(id).unwrap_or(0.0) };
         let meter_fn = |id: u32, v: f32| {
-            if let Some(slot) = meters.get(id as usize) {
+            // Meter IDs start at 256; storage is offset.
+            let idx = id.wrapping_sub(256) as usize;
+            if let Some(slot) = meters.get(idx) {
                 slot.store(v.to_bits(), Ordering::Relaxed);
             }
         };
@@ -155,7 +157,9 @@ impl<P: Params + Default + 'static, L: PluginLogic + 'static> Plugin for StaticS
     fn tail(&self) -> u32 { self.logic.tail() }
 
     fn get_meter(&self, meter_id: u32) -> f32 {
-        if let Some(slot) = self.meters.get(meter_id as usize) {
+        // Meter IDs start at 256 in the ParamId enum; storage is offset.
+        let idx = meter_id.wrapping_sub(256) as usize;
+        if let Some(slot) = self.meters.get(idx) {
             f32::from_bits(slot.load(Ordering::Relaxed))
         } else {
             0.0

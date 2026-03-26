@@ -99,7 +99,10 @@ impl WindowHandler for SlintWindowHandler {
         // 2. Sync host params → Slint properties
         (self.sync_fn)(&self.state);
 
-        // 3. Render Slint to pixel buffer
+        // 3. Force redraw — params/meters change externally every frame
+        self.slint_window.request_redraw();
+
+        // 4. Render Slint to pixel buffer
         let phys_w = (self.width as f32 * self.scale) as u32;
         let phys_h = (self.height as f32 * self.scale) as u32;
         platform::render_to_rgba(

@@ -153,7 +153,8 @@ impl<P: Params + 'static> Plugin for HotShell<P> {
             params.get_plain(id).unwrap_or(0.0)
         };
         let meter_fn = |id: u32, v: f32| {
-            if let Some(slot) = meters.get(id as usize) {
+            let idx = id.wrapping_sub(256) as usize;
+            if let Some(slot) = meters.get(idx) {
                 slot.store(v.to_bits(), Ordering::Relaxed);
             }
         };
@@ -220,7 +221,8 @@ impl<P: Params + 'static> Plugin for HotShell<P> {
     }
 
     fn get_meter(&self, meter_id: u32) -> f32 {
-        self.meters.get(meter_id as usize)
+        let idx = meter_id.wrapping_sub(256) as usize;
+        self.meters.get(idx)
             .map(|v| f32::from_bits(v.load(Ordering::Relaxed)))
             .unwrap_or(0.0)
     }

@@ -1,0 +1,50 @@
+// Click-to-cycle discrete value selector.
+
+export component Selector inherits Rectangle {
+    in-out property <int> index: 0;
+    in property <int> count: 2;
+    in property <string> label: "";
+    in property <string> text: "";
+
+    in property <color> bg-color: #3a3a44;
+    in property <color> text-color: #e6e6eb;
+    in property <color> label-color: #8c8c99;
+
+    callback changed(int);
+
+    width: 80px;
+    height: 50px;
+
+    VerticalLayout {
+        alignment: center;
+        spacing: 4px;
+
+        Rectangle {
+            height: 24px;
+            border-radius: 4px;
+            background: root.bg-color;
+
+            Text {
+                text: root.text != "" ? root.text : root.index;
+                font-size: 11px;
+                color: root.text-color;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+
+            TouchArea {
+                clicked => {
+                    root.index = root.index >= root.count - 1 ? 0 : root.index + 1;
+                    root.changed(root.index);
+                }
+            }
+        }
+
+        Text {
+            text: root.label;
+            font-size: 10px;
+            color: root.label-color;
+            horizontal-alignment: center;
+        }
+    }
+}

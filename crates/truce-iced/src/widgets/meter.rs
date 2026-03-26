@@ -7,10 +7,12 @@ use iced::widget::canvas::{self, Frame, Geometry, Path};
 use iced::widget::Canvas;
 use iced::{mouse, Element, Length, Point, Rectangle, Renderer, Size, Theme};
 
+use truce_core::meter_display;
+use truce_params::Params;
+
 use crate::param_message::Message;
 use crate::param_state::ParamState;
 use crate::theme;
-use truce_params::Params;
 
 /// Builder for a multi-channel level meter.
 pub struct MeterWidget<'a, M> {
@@ -96,7 +98,8 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for MeterProgram {
 
         for (i, &value) in self.values.iter().enumerate() {
             let x = i as f32 * (bar_w + bar_gap);
-            let fill_h = (value * self.meter_height).clamp(0.0, self.meter_height);
+            let display = meter_display(value);
+            let fill_h = (display * self.meter_height).clamp(0.0, self.meter_height);
 
             // Background
             let bg = Path::rectangle(
@@ -105,9 +108,9 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for MeterProgram {
             );
             frame.fill(&bg, theme::KNOB_TRACK);
 
-            // Fill
+            // Fill (blue, red when clipping)
             if fill_h > 0.0 {
-                let color = if value > 0.9 {
+                let color = if display > 0.95 {
                     theme::METER_CLIP
                 } else {
                     theme::KNOB_FILL

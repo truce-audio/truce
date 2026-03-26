@@ -3,7 +3,7 @@
 use std::f32::consts::PI;
 
 use crate::render::RenderBackend;
-use crate::theme::Theme;
+use crate::theme::{Color, Theme};
 
 /// Widget type for interaction state tracking.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -57,9 +57,6 @@ pub fn draw_knob(
     let px = cx + pointer_len * value_angle.cos();
     let py = cy + pointer_len * value_angle.sin();
     ctx.draw_line(cx, cy, px, py, theme.knob_pointer, 2.0);
-
-    // Center dot
-    ctx.fill_circle(cx, cy, 3.0, theme.surface);
 
     // Hover highlight ring
     if highlighted {
@@ -290,10 +287,16 @@ pub fn draw_meter(
         // Background
         ctx.fill_rect(bx, bar_y, bar_w, bar_h, theme.knob_track);
 
-        // Fill from bottom
-        let fill_h = bar_h * level.clamp(0.0, 1.0);
+        // dB-scaled fill from bottom
+        let display = truce_core::meter_display(level);
+        let fill_h = bar_h * display;
         if fill_h > 0.5 {
-            let color = if level > 0.9 { theme.accent } else { theme.knob_fill };
+            // Blue normally, red when clipping (> -3 dB ≈ display > 0.95)
+            let color = if display > 0.95 {
+                Color::rgb(0.88, 0.27, 0.27)
+            } else {
+                theme.knob_fill
+            };
             ctx.fill_rect(bx, bar_y + bar_h - fill_h, bar_w, fill_h, color);
         }
     }

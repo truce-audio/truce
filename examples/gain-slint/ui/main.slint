@@ -1,131 +1,20 @@
-import { VerticalBox, HorizontalBox, Switch } from "std-widgets.slint";
-
-component Knob inherits Rectangle {
-    in-out property <float> value: 0.5;
-    in property <string> label: "";
-    in property <float> minimum: 0.0;
-    in property <float> maximum: 1.0;
-
-    callback changed(float);
-
-    width: 80px;
-    height: 100px;
-
-    property <float> norm: (value - minimum) / (maximum - minimum);
-
-    // Screen angles: 0°=right, 90°=down.
-    // Knob sweeps 270° clockwise from 135° (lower-left) to 405° (lower-right).
-    property <float> val-angle: 135 + norm * 270;
-
-    // Point on arc at screen angle a (center 30,30, radius 25).
-    pure function px(a: float) -> float { 30 + 25 * cos(a * 1deg) }
-    pure function py(a: float) -> float { 30 + 25 * sin(a * 1deg) }
-
-    // Track arc (gray, full 270°)
-    Path {
-        x: (parent.width - 60px) / 2;
-        y: 5px;
-        width: 60px;
-        height: 60px;
-        // Pin the coordinate system so auto-fit doesn't rescale.
-        viewbox-x: 0; viewbox-y: 0;
-        viewbox-width: 60; viewbox-height: 60;
-        stroke: #3a3a44;
-        stroke-width: 3px;
-
-        MoveTo { x: px(135); y: py(135); }
-        ArcTo {
-            x: px(405); y: py(405);
-            radius-x: 25; radius-y: 25;
-            sweep: true; large-arc: true;
-        }
-    }
-
-    // Value arc (blue)
-    Path {
-        x: (parent.width - 60px) / 2;
-        y: 5px;
-        width: 60px;
-        height: 60px;
-        viewbox-x: 0; viewbox-y: 0;
-        viewbox-width: 60; viewbox-height: 60;
-        stroke: #4d99f2;
-        stroke-width: 3px;
-
-        MoveTo { x: px(135); y: py(135); }
-        ArcTo {
-            x: px(root.val-angle); y: py(root.val-angle);
-            radius-x: 25; radius-y: 25;
-            sweep: true;
-            large-arc: root.norm > 0.667;
-        }
-    }
-
-    // Pointer dot
-    Rectangle {
-        x: (parent.width - 60px) / 2 + px(root.val-angle) * 1px - 4px;
-        y: 5px + py(root.val-angle) * 1px - 4px;
-        width: 8px;
-        height: 8px;
-        border-radius: 4px;
-        background: #e6e6eb;
-    }
-
-    // Label
-    Text {
-        y: 70px;
-        width: parent.width;
-        text: label;
-        font-size: 10px;
-        color: #8c8c99;
-        horizontal-alignment: center;
-    }
-
-    // Value text
-    Text {
-        y: 84px;
-        width: parent.width;
-        text: round(value * 100) / 100;
-        font-size: 10px;
-        color: #b0b0ba;
-        horizontal-alignment: center;
-    }
-
-    // Drag interaction
-    touch := TouchArea {
-        width: parent.width;
-        height: 70px;
-        property <float> start-value;
-
-        pointer-event(ev) => {
-            if ev.kind == PointerEventKind.down && ev.button == PointerEventButton.left {
-                start-value = value;
-            }
-        }
-        moved => {
-            if self.pressed {
-                value = clamp(
-                    start-value - (touch.mouse-y - touch.pressed-y) / 150px * (maximum - minimum),
-                    minimum, maximum,
-                );
-                root.changed(value);
-            }
-        }
-    }
-}
+import { Knob, Meter, ParamSlider, Toggle } from "@truce";
+import { HorizontalBox } from "std-widgets.slint";
 
 export component GainUi inherits Window {
     in-out property <float> gain: 0.5;
     in-out property <float> pan: 0.5;
     in-out property <bool> bypass: false;
+    in-out property <float> meter-left: 0.0;
+    in-out property <float> meter-right: 0.0;
 
     callback gain-changed(float);
     callback pan-changed(float);
     callback bypass-changed(bool);
 
     title: "Gain (slint)";
-    preferred-width: 320px;
-    preferred-height: 150px;
+    preferred-width: 380px;
+    preferred-height: 160px;
     background: #1f1f24;
 
     VerticalLayout {
@@ -151,7 +40,7 @@ export component GainUi inherits Window {
 
         HorizontalBox {
             alignment: center;
-            spacing: 20px;
+            spacing: 12px;
 
             Knob {
                 label: "Gain";
@@ -159,27 +48,23 @@ export component GainUi inherits Window {
                 changed(v) => { root.gain-changed(v); }
             }
 
-            Knob {
+            ParamSlider {
+                width: 120px;
                 label: "Pan";
                 value <=> root.pan;
                 changed(v) => { root.pan-changed(v); }
             }
 
-            VerticalBox {
-                alignment: center;
-                spacing: 4px;
+            Toggle {
+                label: "Bypass";
+                checked <=> root.bypass;
+                toggled(v) => { root.bypass-changed(v); }
+            }
 
-                Switch {
-                    checked <=> root.bypass;
-                    toggled => { root.bypass-changed(root.bypass); }
-                }
-
-                Text {
-                    text: "Bypass";
-                    font-size: 10px;
-                    color: #8c8c99;
-                    horizontal-alignment: center;
-                }
+            Meter {
+                level-left: root.meter-left;
+                level-right: root.meter-right;
+                label: "Level";
             }
         }
     }

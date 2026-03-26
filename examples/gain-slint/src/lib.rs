@@ -87,13 +87,27 @@ impl PluginLogic for GainSlint {
     }
 
     fn custom_editor(&self) -> Option<Box<dyn truce_core::editor::Editor>> {
-        Some(Box::new(SlintEditor::new((320, 150), |state: ParamState| {
+        Some(Box::new(SlintEditor::new((380, 160), |state: ParamState| {
             let ui = GainUi::new().unwrap();
-            truce_slint::bind! { state, ui,
-                P::Gain   => gain,
-                P::Pan    => pan,
-                P::Bypass => bypass: bool,
-            }
+
+            // UI → host
+            let s = state.clone();
+            ui.on_gain_changed(move |v| s.set_immediate(P::Gain, v as f64));
+            let s = state.clone();
+            ui.on_pan_changed(move |v| s.set_immediate(P::Pan, v as f64));
+            let s = state.clone();
+            ui.on_bypass_changed(move |v| {
+                s.set_immediate(P::Bypass, if v { 1.0 } else { 0.0 });
+            });
+
+            // host → UI (params + meters)
+            Box::new(move |state: &ParamState| {
+                ui.set_gain(state.get(P::Gain) as f32);
+                ui.set_pan(state.get(P::Pan) as f32);
+                ui.set_bypass(state.get(P::Bypass) > 0.5);
+                ui.set_meter_left(meter_display(state.meter(P::MeterLeft)));
+                ui.set_meter_right(meter_display(state.meter(P::MeterRight)));
+            })
         })))
     }
 }
@@ -133,14 +147,16 @@ mod tests {
     fn gui_snapshot() {
         truce_slint::snapshot::assert_snapshot(
             "screenshots", "gain_slint_default",
-            320, 150, 2.0, 0,
+            380, 160, 2.0, 0,
             |state| {
                 let ui = GainUi::new().unwrap();
-                truce_slint::bind! { state, ui,
-                    P::Gain   => gain,
-                    P::Pan    => pan,
-                    P::Bypass => bypass: bool,
-                }
+                Box::new(move |state: &truce_slint::ParamState| {
+                    ui.set_gain(state.get(P::Gain) as f32);
+                    ui.set_pan(state.get(P::Pan) as f32);
+                    ui.set_bypass(state.get(P::Bypass) > 0.5);
+                    ui.set_meter_left(meter_display(state.meter(P::MeterLeft)));
+                    ui.set_meter_right(meter_display(state.meter(P::MeterRight)));
+                })
             },
         );
     }

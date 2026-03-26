@@ -1,0 +1,60 @@
+// Vertical level meter with color gradient (green -> yellow -> red).
+
+export component Meter inherits Rectangle {
+    in property <float> level-left: 0.0;
+    in property <float> level-right: 0.0;
+    in property <string> label: "";
+    in property <color> label-color: #8c8c99;
+
+    width: 30px;
+    height: 100px;
+
+    // Meter bars
+    HorizontalLayout {
+        padding-left: 2px;
+        padding-right: 2px;
+        padding-top: 2px;
+        padding-bottom: 16px;
+        spacing: 2px;
+
+        // Left channel
+        Rectangle {
+            background: #2a2a30;
+            border-radius: 2px;
+            clip: true;
+
+            property <float> lv: clamp(root.level-left, 0, 1);
+            Rectangle {
+                y: parent.height * (1.0 - lv);
+                height: parent.height * lv;
+                background: lv > 0.95 ? #e04545 : #4d99f2;
+                border-radius: 2px;
+            }
+        }
+
+        // Right channel
+        Rectangle {
+            background: #2a2a30;
+            border-radius: 2px;
+            clip: true;
+
+            property <float> rv: clamp(root.level-right, 0, 1);
+            Rectangle {
+                y: parent.height * (1.0 - rv);
+                height: parent.height * rv;
+                background: rv > 0.95 ? #e04545 : #4d99f2;
+                border-radius: 2px;
+            }
+        }
+    }
+
+    // Label
+    Text {
+        y: parent.height - 14px;
+        width: parent.width;
+        text: root.label;
+        font-size: 9px;
+        color: root.label-color;
+        horizontal-alignment: center;
+    }
+}

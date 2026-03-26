@@ -107,6 +107,7 @@ impl<'a> AudioBuffer<'a> {
             .fold(0.0f32, |a, &b| a.max(b.abs()))
     }
 
+
     /// Return a sub-block view covering samples `start..start+len`.
     ///
     /// The returned buffer borrows `self` exclusively — you cannot use

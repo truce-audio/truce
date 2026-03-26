@@ -1,0 +1,31 @@
+// On/off toggle switch with label.
+
+import { Switch } from "std-widgets.slint";
+
+export component Toggle inherits Rectangle {
+    in-out property <bool> checked: false;
+    in property <string> label: "";
+    in property <color> label-color: #8c8c99;
+
+    callback toggled(bool);
+
+    width: 60px;
+    height: 40px;
+
+    VerticalLayout {
+        alignment: center;
+        spacing: 4px;
+
+        Switch {
+            checked <=> root.checked;
+            toggled => { root.toggled(root.checked); }
+        }
+
+        Text {
+            text: root.label;
+            font-size: 10px;
+            color: root.label-color;
+            horizontal-alignment: center;
+        }
+    }
+}

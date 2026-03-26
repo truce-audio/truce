@@ -1,5 +1,7 @@
 //! Level meter (display-only) reading truce meter values.
 
+use truce_core::meter_display;
+
 use crate::ParamState;
 
 /// Show a vertical level meter reading truce meter values.
@@ -42,7 +44,8 @@ pub fn level_meter(
         let bar_bottom = bar_top + bar_h;
 
         for (i, &id) in meter_ids.iter().enumerate() {
-            let level = state.meter(id).clamp(0.0, 1.0);
+            let raw = state.meter(id);
+            let display = meter_display(raw);
             let x = start_x + i as f32 * (bar_width + spacing);
 
             let bar_rect = egui::Rect::from_min_size(
@@ -53,14 +56,18 @@ pub fn level_meter(
             // Track background
             painter.rect_filled(bar_rect, 2.0, egui::Color32::from_gray(35));
 
-            // Level bar
-            if level > 0.001 {
-                let level_h = bar_h * level;
+            // Level bar (blue fill, red when clipping)
+            if display > 0.001 {
+                let level_h = bar_h * display;
                 let level_rect = egui::Rect::from_min_max(
                     egui::pos2(x, bar_bottom - level_h),
                     egui::pos2(x + bar_width, bar_bottom),
                 );
-                let color = meter_color(level);
+                let color = if display > 0.95 {
+                    egui::Color32::from_rgb(224, 69, 69)
+                } else {
+                    egui::Color32::from_rgb(77, 153, 242)
+                };
                 painter.rect_filled(level_rect, 2.0, color);
             }
         }
@@ -79,17 +86,3 @@ pub fn level_meter(
     response
 }
 
-/// Color for a meter level: green → yellow → red.
-fn meter_color(level: f32) -> egui::Color32 {
-    if level > 0.9 {
-        egui::Color32::from_rgb(255, 70, 70)
-    } else if level > 0.7 {
-        // Interpolate yellow
-        let t = (level - 0.7) / 0.2;
-        let r = (200.0 + 55.0 * t) as u8;
-        let g = (200.0 - 130.0 * t) as u8;
-        egui::Color32::from_rgb(r, g, 70)
-    } else {
-        egui::Color32::from_rgb(77, 200, 120)
-    }
-}
