@@ -24,6 +24,7 @@ pub struct SliderWidget<'a, M> {
     display: String,
     label: Option<&'a str>,
     width: f32,
+    font: iced::Font,
     _phantom: PhantomData<M>,
 }
 
@@ -36,6 +37,7 @@ impl<'a, M: Clone + Debug + 'static> SliderWidget<'a, M> {
             display: params.label(id).to_string(),
             label: None,
             width: 120.0,
+            font: params.font(),
             _phantom: PhantomData,
         }
     }
@@ -50,6 +52,11 @@ impl<'a, M: Clone + Debug + 'static> SliderWidget<'a, M> {
         self
     }
 
+    pub fn font(mut self, font: iced::Font) -> Self {
+        self.font = font;
+        self
+    }
+
     pub fn into_element(self) -> Element<'a, Message<M>> {
         let total_h = THUMB_RADIUS * 2.0 + 30.0;
         let program = SliderProgram {
@@ -57,6 +64,7 @@ impl<'a, M: Clone + Debug + 'static> SliderWidget<'a, M> {
             value: self.value as f32,
             display: self.display,
             label: self.label.unwrap_or("").to_string(),
+            font: self.font,
         };
 
         Canvas::new(program)
@@ -81,6 +89,7 @@ struct SliderProgram {
     value: f32,
     display: String,
     label: String,
+    font: iced::Font,
 }
 
 #[derive(Default)]
@@ -152,6 +161,7 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for SliderProgram {
             size: iced::Pixels(11.0),
             horizontal_alignment: alignment::Horizontal::Center,
             vertical_alignment: alignment::Vertical::Top,
+            font: self.font,
             ..Text::default()
         });
 
@@ -165,7 +175,8 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for SliderProgram {
                 size: iced::Pixels(10.0),
                 horizontal_alignment: alignment::Horizontal::Center,
                 vertical_alignment: alignment::Vertical::Top,
-                ..Text::default()
+                font: self.font,
+            ..Text::default()
             });
         }
 

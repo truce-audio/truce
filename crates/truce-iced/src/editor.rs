@@ -696,7 +696,13 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
             M::new(self.params.clone())
         };
 
-        let param_state = ParamState::new(self.params.clone());
+        let mut param_state = ParamState::new(self.params.clone());
+        if let Some((family, _)) = self.font {
+            param_state.set_font(iced::Font {
+                family: iced::font::Family::Name(family),
+                ..iced::Font::DEFAULT
+            });
+        }
         let editor_handle = EditorHandle::new(context);
         let program = IcedProgram {
             plugin,

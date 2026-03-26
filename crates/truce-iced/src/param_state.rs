@@ -19,6 +19,8 @@ pub struct ParamState<P: Params> {
     labels: HashMap<u32, String>,
     /// Meter values (0.0–1.0).
     meters: HashMap<u32, f32>,
+    /// Font for canvas-drawn widget labels. Set via the editor's `with_font()`.
+    font: iced::Font,
 }
 
 impl<P: Params> ParamState<P> {
@@ -29,6 +31,7 @@ impl<P: Params> ParamState<P> {
             values: HashMap::new(),
             labels: HashMap::new(),
             meters: HashMap::new(),
+            font: iced::Font::DEFAULT,
         };
         // Initial population
         for info in state.params.param_infos() {
@@ -61,6 +64,16 @@ impl<P: Params> ParamState<P> {
     /// Read a meter value (0.0–1.0).
     pub fn meter(&self, id: impl Into<u32>) -> f32 {
         self.meters.get(&id.into()).copied().unwrap_or(0.0)
+    }
+
+    /// The font set via the editor's `with_font()`, or `Font::DEFAULT`.
+    pub fn font(&self) -> iced::Font {
+        self.font
+    }
+
+    /// Set the font (called by the editor runtime).
+    pub fn set_font(&mut self, font: iced::Font) {
+        self.font = font;
     }
 
     /// Access the underlying params (for info lookups).

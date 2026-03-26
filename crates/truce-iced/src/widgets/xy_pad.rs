@@ -20,6 +20,7 @@ pub struct XYPadWidget<'a, M> {
     y_value: f64,
     label: Option<&'a str>,
     size: f32,
+    font: iced::Font,
     _phantom: PhantomData<M>,
 }
 
@@ -34,6 +35,7 @@ impl<'a, M: Clone + Debug + 'static> XYPadWidget<'a, M> {
             y_value: params.get(y_id),
             label: None,
             size: 120.0,
+            font: params.font(),
             _phantom: PhantomData,
         }
     }
@@ -48,6 +50,11 @@ impl<'a, M: Clone + Debug + 'static> XYPadWidget<'a, M> {
         self
     }
 
+    pub fn font(mut self, font: iced::Font) -> Self {
+        self.font = font;
+        self
+    }
+
     pub fn into_element(self) -> Element<'a, Message<M>> {
         let total_h = self.size + if self.label.is_some() { 16.0 } else { 0.0 };
         let program = XYPadProgram {
@@ -57,6 +64,7 @@ impl<'a, M: Clone + Debug + 'static> XYPadWidget<'a, M> {
             y_value: self.y_value as f32,
             label: self.label.unwrap_or("").to_string(),
             pad_size: self.size,
+            font: self.font,
         };
 
         Canvas::new(program)
@@ -83,6 +91,7 @@ struct XYPadProgram {
     y_value: f32,
     label: String,
     pad_size: f32,
+    font: iced::Font,
 }
 
 #[derive(Default)]
@@ -145,6 +154,7 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for XYPadProgram {
                 size: iced::Pixels(10.0),
                 horizontal_alignment: iced::alignment::Horizontal::Center,
                 vertical_alignment: iced::alignment::Vertical::Top,
+                font: self.font,
                 ..Default::default()
             });
         }

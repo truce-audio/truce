@@ -21,6 +21,7 @@ pub struct MeterWidget<'a, M> {
     label: Option<&'a str>,
     width: f32,
     height: f32,
+    font: iced::Font,
     _phantom: PhantomData<M>,
 }
 
@@ -33,6 +34,7 @@ impl<'a, M: Clone + Debug + 'static> MeterWidget<'a, M> {
             label: None,
             width: 30.0,
             height: 80.0,
+            font: params.font(),
             _phantom: PhantomData,
         }
     }
@@ -48,12 +50,18 @@ impl<'a, M: Clone + Debug + 'static> MeterWidget<'a, M> {
         self
     }
 
+    pub fn font(mut self, font: iced::Font) -> Self {
+        self.font = font;
+        self
+    }
+
     pub fn into_element(self) -> Element<'a, Message<M>> {
         let total_h = self.height + if self.label.is_some() { 16.0 } else { 0.0 };
         let program = MeterProgram {
             values: self.values,
             label: self.label.unwrap_or("").to_string(),
             meter_height: self.height,
+            font: self.font,
         };
 
         Canvas::new(program)
@@ -77,6 +85,7 @@ struct MeterProgram {
     values: Vec<f32>,
     label: String,
     meter_height: f32,
+    font: iced::Font,
 }
 
 impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for MeterProgram {
@@ -132,6 +141,7 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for MeterProgram {
                 size: iced::Pixels(10.0),
                 horizontal_alignment: iced::alignment::Horizontal::Center,
                 vertical_alignment: iced::alignment::Vertical::Top,
+                font: self.font,
                 ..Default::default()
             });
         }

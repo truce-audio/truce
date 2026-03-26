@@ -25,6 +25,7 @@ pub struct KnobWidget<'a, M> {
     display: String,
     label: Option<&'a str>,
     size: f32,
+    font: iced::Font,
     _phantom: PhantomData<M>,
 }
 
@@ -37,6 +38,7 @@ impl<'a, M: Clone + Debug + 'static> KnobWidget<'a, M> {
             display: params.label(id).to_string(),
             label: None,
             size: 60.0,
+            font: params.font(),
             _phantom: PhantomData,
         }
     }
@@ -51,6 +53,11 @@ impl<'a, M: Clone + Debug + 'static> KnobWidget<'a, M> {
         self
     }
 
+    pub fn font(mut self, font: iced::Font) -> Self {
+        self.font = font;
+        self
+    }
+
     /// Convert into an iced Element.
     pub fn into_element(self) -> Element<'a, Message<M>> {
         let total_h = self.size + 30.0; // Extra space for label + value text
@@ -59,6 +66,7 @@ impl<'a, M: Clone + Debug + 'static> KnobWidget<'a, M> {
             value: self.value as f32,
             display: self.display,
             label: self.label.unwrap_or("").to_string(),
+            font: self.font,
         };
 
         Canvas::new(program)
@@ -83,6 +91,7 @@ struct KnobProgram {
     value: f32,
     display: String,
     label: String,
+    font: iced::Font,
 }
 
 #[derive(Default)]
@@ -191,6 +200,7 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for KnobProgram {
             size: iced::Pixels(11.0),
             horizontal_alignment: alignment::Horizontal::Center,
             vertical_alignment: alignment::Vertical::Top,
+            font: self.font,
             ..Text::default()
         });
 
@@ -204,7 +214,8 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for KnobProgram {
                 size: iced::Pixels(10.0),
                 horizontal_alignment: alignment::Horizontal::Center,
                 vertical_alignment: alignment::Vertical::Top,
-                ..Text::default()
+                font: self.font,
+            ..Text::default()
             });
         }
 

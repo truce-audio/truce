@@ -1,7 +1,12 @@
 use std::sync::Arc;
 
 use iced::widget::{container, horizontal_space, text, Column, Row};
-use iced::{alignment, Element, Length, Task};
+use iced::{alignment, Element, Font, Length, Task};
+
+const JETBRAINS_MONO: Font = Font {
+    family: iced::font::Family::Name("JetBrains Mono"),
+    ..Font::DEFAULT
+};
 use truce::prelude::*;
 use truce_iced::{
     knob, meter, param_slider, param_toggle, xy_pad, EditorHandle, IcedEditor, IcedPlugin,
@@ -69,6 +74,7 @@ impl IcedPlugin<GainParams> for GainUi {
                 .push(
                     text("GAIN (iced)")
                         .size(14)
+                        .font(JETBRAINS_MONO)
                         .color(iced::Color::from_rgb(0.75, 0.75, 0.80)),
                 )
                 .push(horizontal_space())
@@ -118,6 +124,7 @@ impl IcedPlugin<GainParams> for GainUi {
             params.label(P::Pan),
         ))
         .size(10)
+        .font(JETBRAINS_MONO)
         .color(iced::Color::from_rgb(0.55, 0.55, 0.60))
         .width(Length::Fill)
         .align_x(alignment::Horizontal::Center)
