@@ -8,7 +8,7 @@ Write your plugin once. Build CLAP, VST3, VST2, AU v2, AU v3, AAX,
 and standalone from a single Rust codebase. Hot-reload DSP and GUI
 changes without restarting the DAW.
 
-![Gain plugin GUI](screenshots/gain_default.png)
+![Built-in GUI](screenshots/gain_default.png)
 
 ## Quick Start
 
@@ -72,10 +72,10 @@ impl PluginLogic for Gain {
         ProcessStatus::Normal
     }
 
-    fn layout(&self) -> PluginLayout {
-        PluginLayout::build("GAIN", "V0.1", vec![
-            KnobRow { label: None, knobs: vec![KnobDef::knob(P::Gain, "Gain")] },
-        ], 80.0)
+    fn layout(&self) -> GridLayout {
+        GridLayout::build("GAIN", "V0.1", 2, 80.0, vec![
+            GridWidget::knob(0, "Gain"),
+        ], vec![])
     }
 }
 
@@ -83,7 +83,7 @@ truce::plugin! { logic: Gain, params: GainParams }
 ```
 
 One import. One trait. One macro. That's a complete plugin with
-smoothed params, a GUI knob, and CLAP + VST3 + AU exports.
+smoothed params, a GPU-rendered GUI knob, and CLAP + VST3 + AU exports.
 
 ## Hot Reload
 
@@ -104,48 +104,66 @@ compiles statically with zero overhead.
 
 **GUI hot-reload:** Built-in GUI layouts also hot-reload. Edit
 `layout()`, rebuild, and the plugin window updates automatically — no
-close/reopen needed, no window flash. The `HotEditor` wrapper watches
-for dylib changes and swaps the layout via a shared mutex. Custom
-editors (egui, iced) still require manual close/reopen. See the
-[hot reload guide](docs/reference/09-hot-reload.md).
+close/reopen needed, no window flash. Custom editors (egui, iced, slint)
+require manual close/reopen.
+
+## GUI Backends
+
+The built-in GUI renders automatically from your `layout()` — no custom
+code needed. For custom UIs, pick a framework:
+
+| Backend | Crate | Best for |
+|---------|-------|----------|
+| Built-in | `truce-gui` | Standard UIs — zero code, knobs/sliders/meters/XY pads |
+| [egui](docs/gui/egui.md) | `truce-egui` | Custom layouts, text input, third-party egui widgets |
+| [Iced](docs/gui/iced.md) | `truce-iced` | Elm architecture, auto-generated or custom retained-mode UIs |
+| [Slint](docs/gui/slint.md) | `truce-slint` | Declarative `.slint` markup, build-time compilation, IDE preview |
+| [Raw](docs/gui/raw-window-handle.md) | `truce-core` | Full control — Metal, OpenGL, Skia, anything |
+
+All backends produce consistent knobs, meters, and controls with a
+shared dark theme.
+
+![egui](screenshots/gain_egui_default.png) ![Iced](screenshots/gain_iced_default.png) ![Slint](screenshots/gain_slint_default.png)
+
+See [GUI backends](docs/gui/README.md) for detailed docs.
 
 ## Format Support
 
 | Format | Reaper | Logic | GarageBand | Ableton | FL Studio | Pro Tools |
 |--------|--------|-------|------------|---------|-----------|-----------|
-| CLAP   | ✅     |       |            |         |           |           |
-| VST3   | ✅     |       |            | ✅      | ✅        |           |
-| VST2   | ✅     |       |            | ✅      | ✅        |           |
-| AU v2  | ✅     | ✅    | ✅         | ✅      |           |           |
-| AU v3  |        | ✅    | ✅         | ✅      |           |           |
-| AAX    |        |       |            |         |           | ✅        |
-
-Custom knob GUI works in all formats. GarageBand does not show
-custom GUI for any third-party plugin (Apple limitation).
+| CLAP   | Yes    |       |            |         |           |           |
+| VST3   | Yes    |       |            | Yes     | Yes       |           |
+| VST2   | Yes    |       |            | Yes     | Yes       |           |
+| AU v2  | Yes    | Yes   | Yes        | Yes     |           |           |
+| AU v3  |        | Yes   | Yes        | Yes     |           |           |
+| AAX    |        |       |            |         |           | Yes       |
 
 ## Examples
 
-| Plugin | Type | What it demonstrates |
-|--------|------|---------------------|
-| [gain](examples/gain/) | Effect | Gain + pan + bypass, meters, XY pad, grid layout |
-| [eq](examples/eq/) | Effect | 3-band parametric EQ, biquad filters |
-| [synth](examples/synth/) | Instrument | 16-voice polyphonic, ADSR, filter, 4 waveforms |
-| [transpose](examples/transpose/) | MIDI | Note transposition with stuck-note prevention |
-| [arpeggio](examples/arpeggio/) | MIDI | Tempo-synced arpeggiator, 4 patterns |
-
+| Plugin | Type | GUI | Screenshot |
+|--------|------|-----|-----------|
+| [gain](examples/gain/) | Effect | Built-in | ![](screenshots/gain_default.png) |
+| [eq](examples/eq/) | Effect | Built-in | ![](screenshots/eq_default.png) |
+| [synth](examples/synth/) | Instrument | Built-in | ![](screenshots/synth_default.png) |
+| [transpose](examples/transpose/) | MIDI | Built-in | ![](screenshots/transpose_default.png) |
+| [arpeggio](examples/arpeggio/) | MIDI | Built-in | ![](screenshots/arpeggio_default.png) |
+| [gain-egui](examples/gain-egui/) | Effect | egui | ![](screenshots/gain_egui_default.png) |
+| [gain-iced](examples/gain-iced/) | Effect | Iced | ![](screenshots/gain_iced_default.png) |
+| [gain-slint](examples/gain-slint/) | Effect | Slint | ![](screenshots/gain_slint_default.png) |
 
 ## Features
 
 - **6 plugin formats** from one codebase (CLAP, VST3, VST2, AU v2, AU v3, AAX)
 - **Hot reload** — edit DSP/layout, rebuild, hear changes without restarting the DAW
-- **Built-in GUI** — knobs, sliders, toggles, selectors, meters, XY pads (wgpu GPU rendering). TrueType font rendering (fontdue, JetBrains Mono)
+- **Built-in GUI** — knobs, sliders, toggles, selectors, meters, XY pads (wgpu GPU rendering)
+- **4 GUI frameworks** — egui, iced, slint, or raw window handle
 - **Declarative params** — `#[derive(Params)]` + `#[param(...)]` with smoothing, ranges, units
 - **`truce::plugin!`** — one macro generates all format exports + GUI + state serialization
 - **`cargo truce`** — build, bundle, sign, install, validate, clean
 - **Zero-copy audio** — format wrappers pass host buffers directly
 - **Thread-safe params** — atomic storage, lock-free access from any thread
 - **Automated tests** — render, state, params, GUI screenshots, binary validation
-- **All plugins pass auval + pluginval + clap-validator**
+- **Automated validation** — `cargo truce validate` runs auval, pluginval, and clap-validator in one command
 
 ## Crate Structure
 
@@ -162,26 +180,30 @@ crates/
 ├── truce-aax           # AAX format wrapper
 ├── truce-au            # Audio Unit (v2 + v3)
 ├── truce-standalone    # Standalone host (cpal audio)
-├── truce-gui           # Built-in GUI (tiny-skia + fontdue, optional wgpu GPU backend, 6 widget types)
+├── truce-gui           # Built-in GUI (wgpu GPU rendering, 6 widgets)
+├── truce-gpu           # wgpu backend for built-in GUI
+├── truce-egui          # egui GUI integration
+├── truce-iced          # Iced GUI integration
+├── truce-slint         # Slint GUI integration
 ├── truce-loader        # Hot-reload (native ABI, PluginLogic trait)
-├── truce-xtask         # Build/bundle/install library (used by xtask)
+├── truce-xtask         # Build/bundle/install library
 ├── truce-test          # Test utilities + GUI snapshot tests
 ├── cargo-truce         # Scaffolding CLI (cargo truce new)
 ```
 
 ## Documentation
 
-**Guides:**
 - [Quickstart](docs/quickstart.md) — zero to hearing your plugin in 5 minutes
-- [Tutorials](docs/reference/) — parameters, processing, synth, GUI, hot reload (11 parts)
-- [Hot Reload](docs/reference/09-hot-reload.md) — sub-second DSP iteration
-- [Layout](docs/layout.md) — row and grid layouts, widget reference
+- [Tutorials](docs/reference/) — parameters, processing, synth, GUI, hot reload
+- [GUI Backends](docs/gui/README.md) — egui, iced, slint, raw window handle
+- [Layout](docs/layout.md) — grid layouts, widget reference
+- [Screenshot Testing](docs/gui/screenshot-testing.md) — headless GUI regression tests
+- [Comparisons](docs/comparisons.md) — truce vs JUCE vs nih-plug
 - [Status](docs/status.md) — what's built, what's next
 
 ## Configuration
 
-Plugin metadata lives in `truce.toml`. Copy `truce.toml.example`
-to get started:
+Plugin metadata lives in `truce.toml`:
 
 ```toml
 [vendor]
@@ -199,25 +221,10 @@ au_subtype = "MyFx"
 
 ## Requirements
 
-- Rust 1.75+ (`rustup update`)
+- Rust 1.75+ (`rustup update`). Slint integration requires 1.88+.
 - macOS: Xcode CLI tools (`xcode-select --install`). Full Xcode for AU v3.
 - Windows: MSVC build tools (planned, macOS-first currently)
 - AAX: Avid AAX SDK (optional, obtain from [developer.avid.com](https://developer.avid.com))
-
-## Comparisons
-
-| | truce | JUCE | nih-plug |
-|---|---|---|---|
-| Language | Rust | C++ | Rust |
-| License | MIT / Apache-2.0 | AGPLv3 / $40-175/mo | ISC |
-| CLAP | ✅ | Community only | ✅ |
-| VST3 | ✅ | ✅ | ✅ |
-| AU | ✅ (v2 + v3) | ✅ | ❌ |
-| AAX | ✅ | ✅ | ❌ |
-| VST2 | ✅ | Deprecated | ❌ |
-| Hot reload | ✅ (`--features dev`) | ❌ | ❌ |
-| Built-in GUI | ✅ (6 widget types) | ✅ (comprehensive) | BYO |
-| Formats total | **6** | 4 | **2** |
 
 ## License
 
