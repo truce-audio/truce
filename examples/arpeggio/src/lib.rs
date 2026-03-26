@@ -223,3 +223,18 @@ truce::plugin! {
     logic: Arpeggio,
     params: ArpParams,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gui_snapshot() {
+        let params = std::sync::Arc::new(ArpParams::new());
+        let arp = Arpeggio::new(std::sync::Arc::clone(&params));
+        let layout = arp.layout();
+        truce_test::assert_gui_snapshot_grid::<ArpParams>(
+            "arpeggio_default", params, layout, 0,
+        );
+    }
+}

@@ -97,17 +97,41 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for KnobProgram {
 
     fn draw(
         &self,
-        _state: &Self::State,
+        state: &Self::State,
         renderer: &Renderer,
         _theme: &Theme,
         bounds: Rectangle,
-        _cursor: mouse::Cursor,
+        cursor: mouse::Cursor,
     ) -> Vec<Geometry> {
         let mut frame = Frame::new(renderer, bounds.size());
 
         let cx = bounds.width / 2.0;
         let cy = bounds.width / 2.0; // Square knob area
         let radius = (bounds.width / 2.0 - 5.0).max(8.0);
+
+        // Hover highlight ring
+        let hovered = state.dragging || cursor.position_in(bounds).is_some_and(|pos| {
+            let dx = pos.x - cx;
+            let dy = pos.y - cy;
+            (dx * dx + dy * dy).sqrt() <= radius + 5.0
+        });
+        if hovered {
+            let hover_ring = Path::new(|b| {
+                b.arc(Arc {
+                    center: Point::new(cx, cy),
+                    radius: radius + 3.0,
+                    start_angle: iced::Radians(START_ANGLE),
+                    end_angle: iced::Radians(END_ANGLE),
+                });
+            });
+            frame.stroke(
+                &hover_ring,
+                Stroke::default()
+                    .with_color(theme::ACCENT)
+                    .with_width(1.5)
+                    .with_line_cap(LineCap::Round),
+            );
+        }
 
         // Track arc (full range background)
         let track = Path::new(|b| {

@@ -3,10 +3,9 @@
 use crate::ParamState;
 
 const KNOB_SIZE: f32 = 60.0;
-const KNOB_TOTAL_H: f32 = 78.0;
+const KNOB_TOTAL_H: f32 = 90.0;
 const KNOB_RADIUS: f32 = 22.0;
 const TRACK_WIDTH: f32 = 3.0;
-const POINTER_RADIUS: f32 = 4.0;
 
 /// 270-degree arc: from bottom-left (135°) to bottom-right (405°).
 const START_ANGLE: f32 = std::f32::consts::FRAC_PI_4 * 3.0; // 135° = 0.75π
@@ -51,6 +50,17 @@ pub fn param_knob(
         let pointer_color = ui.visuals().widgets.active.fg_stroke.color;
         let text_color = ui.visuals().text_color();
         let dim_color = ui.visuals().widgets.noninteractive.fg_stroke.color;
+        let hover_color = egui::Color32::from_gray(115);
+
+        // Hover highlight ring
+        let hovered = response.hovered() || response.dragged();
+        if hovered {
+            let hover_points = arc_points(center, KNOB_RADIUS + 3.0, START_ANGLE, SWEEP, 64);
+            painter.add(egui::Shape::line(
+                hover_points,
+                egui::Stroke::new(1.5, hover_color),
+            ));
+        }
 
         // Track arc (background)
         let track_points = arc_points(center, KNOB_RADIUS, START_ANGLE, SWEEP, 64);
@@ -70,22 +80,27 @@ pub fn param_knob(
             ));
         }
 
-        // Pointer dot at current value position
+        // Pointer line from center to value position
         let value_angle = START_ANGLE + SWEEP * value;
-        let pointer_pos = center + egui::vec2(value_angle.cos(), value_angle.sin()) * KNOB_RADIUS;
-        painter.circle_filled(pointer_pos, POINTER_RADIUS, pointer_color);
+        let pointer_len = KNOB_RADIUS * 0.6;
+        let pointer_end = center + egui::vec2(value_angle.cos(), value_angle.sin()) * pointer_len;
+        painter.line_segment(
+            [center, pointer_end],
+            egui::Stroke::new(2.0, pointer_color),
+        );
 
-        // Value text (centered in knob)
+        // Value text (below knob arc)
         let value_text = state.format(id);
+        let value_y = center.y + KNOB_RADIUS + 8.0;
         painter.text(
-            center,
-            egui::Align2::CENTER_CENTER,
+            egui::pos2(rect.center().x, value_y),
+            egui::Align2::CENTER_TOP,
             &value_text,
-            egui::FontId::proportional(11.0),
+            egui::FontId::proportional(10.0),
             text_color,
         );
 
-        // Label below
+        // Label below value
         painter.text(
             egui::pos2(rect.center().x, rect.bottom() - 2.0),
             egui::Align2::CENTER_BOTTOM,
