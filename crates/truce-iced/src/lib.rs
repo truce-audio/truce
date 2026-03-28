@@ -45,3 +45,25 @@ pub use param_state::ParamState;
 
 // Re-export widget helper functions.
 pub use widgets::{knob, meter, param_selector, param_slider, param_toggle, xy_pad};
+
+use iced::Element;
+use std::fmt::Debug;
+
+/// Convert any truce-iced widget into an `Element` with `.el()`.
+///
+/// Avoids the verbose `Into::<Element<'a, Message<M>>>::into(...)` pattern.
+///
+/// ```ignore
+/// Row::new()
+///     .push(knob(P::Gain, params).label("Gain").el())
+///     .push(knob(P::Pan, params).label("Pan").el())
+/// ```
+pub trait IntoElement<'a, M: Clone + Debug + 'static> {
+    fn el(self) -> Element<'a, Message<M>>;
+}
+
+impl<'a, M: Clone + Debug + 'static, T: Into<Element<'a, Message<M>>>> IntoElement<'a, M> for T {
+    fn el(self) -> Element<'a, Message<M>> {
+        self.into()
+    }
+}

@@ -13,7 +13,7 @@ const WINDOW_H: u32 = 290;
 use truce::prelude::*;
 use truce_iced::{
     knob, meter, xy_pad, EditorHandle, IcedEditor, IcedPlugin,
-    Message, ParamState,
+    IntoElement, Message, ParamState,
 };
 
 // --- Parameters ---
@@ -85,28 +85,19 @@ impl IcedPlugin<GainParams> for GainUi {
         let left: Element<'a, Message<GainMsg>> = Column::new()
             .push(
                 Row::new()
-                    .push(Into::<Element<'a, Message<GainMsg>>>::into(
-                        knob(P::Gain, params).label("Gain").size(60.0),
-                    ))
-                    .push(Into::<Element<'a, Message<GainMsg>>>::into(
-                        knob(P::Pan, params).label("Pan").size(60.0),
-                    ))
+                    .push(knob(P::Gain, params).label("Gain").size(60.0).el())
+                    .push(knob(P::Pan, params).label("Pan").size(60.0).el())
                     .spacing(gap)
                     .align_y(alignment::Vertical::Center),
             )
-            .push(Into::<Element<'a, Message<GainMsg>>>::into(
-                xy_pad(P::Pan, P::Gain, params).label("Pan / Gain").size(130.0),
-            ))
+            .push(xy_pad(P::Pan, P::Gain, params).label("Pan / Gain").size(130.0).el())
             .spacing(gap)
             .into();
 
         // Body: left column + meter spanning full height
         let body: Element<'a, Message<GainMsg>> = Row::new()
             .push(left)
-            .push(Into::<Element<'a, Message<GainMsg>>>::into(
-                meter(&[P::MeterLeft, P::MeterRight], params)
-                    .size(16.0, 222.0),
-            ))
+            .push(meter(&[P::MeterLeft, P::MeterRight], params).size(16.0, 222.0).el())
             .spacing(gap)
             .padding(pad)
             .align_y(alignment::Vertical::Top)
