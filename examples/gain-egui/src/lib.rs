@@ -104,9 +104,9 @@ fn gain_ui(ctx: &egui::Context, state: &ParamState) {
     egui::CentralPanel::default()
         .frame(egui::Frame::central_panel(&ctx.style()).inner_margin(10.0))
         .show(ctx, |ui| {
-        ui.spacing_mut().item_spacing = egui::vec2(10.0, 10.0);
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing = egui::vec2(10.0, 10.0);
+        ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
+        ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(10.0, 0.0);
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(10.0, 10.0);
                 ui.horizontal(|ui| {
