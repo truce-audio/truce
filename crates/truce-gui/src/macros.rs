@@ -135,8 +135,31 @@ macro_rules! grid {
         let mut _widgets: Vec<$crate::layout::GridWidget> = Vec::new();
         let mut _breaks: Vec<(usize, &'static str)> = Vec::new();
         $crate::__grid_items!(_widgets, _breaks, $($body)*);
+        // Convert flat widgets + breaks into Section vec for build()
+        let mut _sections: Vec<$crate::layout::Section> = Vec::new();
+        let mut _cur_widgets: Vec<$crate::layout::GridWidget> = Vec::new();
+        let mut _cur_label: Option<&'static str> = None;
+        for (i, w) in _widgets.into_iter().enumerate() {
+            if let Some(&(_, label)) = _breaks.iter().find(|(idx, _)| *idx == i) {
+                // Flush current section
+                if !_cur_widgets.is_empty() || _cur_label.is_some() {
+                    _sections.push($crate::layout::Section {
+                        label: _cur_label,
+                        widgets: std::mem::take(&mut _cur_widgets),
+                    });
+                }
+                _cur_label = Some(label);
+            }
+            _cur_widgets.push(w);
+        }
+        if !_cur_widgets.is_empty() || _cur_label.is_some() {
+            _sections.push($crate::layout::Section {
+                label: _cur_label,
+                widgets: _cur_widgets,
+            });
+        }
         $crate::layout::GridLayout::build(
-            $title, $version, $cols, $cell, _widgets, _breaks,
+            $title, $version, $cols, $cell, _sections,
         )
     }};
 }

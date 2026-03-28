@@ -913,7 +913,7 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::layout::{GridLayout, GridWidget, Layout};
+    use crate::layout::{GridLayout, GridWidget, Layout, section, widgets};
     use crate::widgets::WidgetType;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Arc;
@@ -1017,10 +1017,10 @@ mod tests {
     /// Build a BuiltinEditor with a dropdown at position 0 and a knob at position 1.
     fn make_editor() -> BuiltinEditor<TestParams> {
         let params = Arc::new(TestParams::new());
-        let layout = GridLayout::build("TEST", "V0.1", 2, 80.0, vec![
+        let layout = GridLayout::build("TEST", "V0.1", 2, 80.0, vec![widgets(vec![
             GridWidget::dropdown(0u32, "Mode"),
             GridWidget::knob(1u32, "Gain"),
-        ], vec![]);
+        ])]);
         let mut editor = BuiltinEditor::new_grid(params, layout);
         // Build interaction regions (normally done in open/render)
         if let Layout::Grid(ref gl) = editor.layout {
@@ -1042,13 +1042,14 @@ mod tests {
     fn make_editor_with_sections() -> BuiltinEditor<TestParams> {
         let params = Arc::new(TestParams::new());
         let layout = GridLayout::build("TEST", "V0.1", 2, 80.0, vec![
-            GridWidget::knob(1u32, "Gain"),
-            GridWidget::knob(1u32, "Gain 2"),
-            GridWidget::dropdown(0u32, "Mode"),   // row 1, after a section break
-            GridWidget::knob(1u32, "Gain 3"),
-        ], vec![
-            (0, "SECTION A"),
-            (2, "SECTION B"),
+            section("SECTION A", vec![
+                GridWidget::knob(1u32, "Gain"),
+                GridWidget::knob(1u32, "Gain 2"),
+            ]),
+            section("SECTION B", vec![
+                GridWidget::dropdown(0u32, "Mode"),
+                GridWidget::knob(1u32, "Gain 3"),
+            ]),
         ]);
         let mut editor = BuiltinEditor::new_grid(params, layout);
         if let Layout::Grid(ref gl) = editor.layout {
@@ -1286,14 +1287,14 @@ mod tests {
     fn make_editor_bottom_dropdown() -> BuiltinEditor<TestParams> {
         let params = Arc::new(TestParams::new());
         // 3 rows of 2, dropdown in the last row (row 2)
-        let layout = GridLayout::build("TEST", "V0.1", 2, 80.0, vec![
+        let layout = GridLayout::build("TEST", "V0.1", 2, 80.0, vec![widgets(vec![
             GridWidget::knob(1u32, "K1"),
             GridWidget::knob(1u32, "K2"),
             GridWidget::knob(1u32, "K3"),
             GridWidget::knob(1u32, "K4"),
             GridWidget::dropdown(0u32, "Mode"),
             GridWidget::knob(1u32, "K5"),
-        ], vec![]);
+        ])]);
         let mut editor = BuiltinEditor::new_grid(params, layout);
         if let Layout::Grid(ref gl) = editor.layout {
             editor.interaction.build_regions_grid(gl);
@@ -1310,10 +1311,10 @@ mod tests {
     /// Build an editor with two dropdowns side by side.
     fn make_editor_two_dropdowns() -> BuiltinEditor<TestParams> {
         let params = Arc::new(TestParams::new());
-        let layout = GridLayout::build("TEST", "V0.1", 2, 80.0, vec![
+        let layout = GridLayout::build("TEST", "V0.1", 2, 80.0, vec![widgets(vec![
             GridWidget::dropdown(0u32, "Mode A"),
             GridWidget::dropdown(0u32, "Mode B"),
-        ], vec![]);
+        ])]);
         let mut editor = BuiltinEditor::new_grid(params, layout);
         if let Layout::Grid(ref gl) = editor.layout {
             editor.interaction.build_regions_grid(gl);
@@ -1330,10 +1331,10 @@ mod tests {
     /// Build an editor with a 20-option dropdown for scroll testing.
     fn make_editor_many_options() -> BuiltinEditor<ManyOptionParams> {
         let params = Arc::new(ManyOptionParams::new());
-        let layout = GridLayout::build("TEST", "V0.1", 2, 80.0, vec![
+        let layout = GridLayout::build("TEST", "V0.1", 2, 80.0, vec![widgets(vec![
             GridWidget::dropdown(0u32, "Note"),
             GridWidget::knob(1u32, "Gain"),
-        ], vec![]);
+        ])]);
         let mut editor = BuiltinEditor::new_grid(params, layout);
         if let Layout::Grid(ref gl) = editor.layout {
             editor.interaction.build_regions_grid(gl);

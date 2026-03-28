@@ -98,7 +98,7 @@ fn gain_ui(ctx: &egui::Context, state: &ParamState) {
             ui.add_space(16.0);
             param_knob(ui, state, P::Pan, "Pan");
             ui.add_space(16.0);
-            level_meter(ui, state, &[P::MeterLeft.into(), P::MeterRight.into()], "Level");
+            level_meter(ui, state, &[P::MeterLeft, P::MeterRight], "Level");
         });
 
         ui.add_space(8.0);

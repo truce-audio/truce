@@ -1,5 +1,5 @@
 use truce::prelude::*;
-use truce_gui::layout::{GridLayout, GridWidget};
+use truce_gui::layout::{GridLayout, dropdown, knob, widgets};
 
 // --- Arp pattern enum ---
 
@@ -210,12 +210,12 @@ impl PluginLogic for Arpeggio {
     }
 
     fn layout(&self) -> truce_gui::layout::GridLayout {
-        GridLayout::build("ARPEGGIO", "V0.1", 2, 80.0, vec![
-            GridWidget::knob(P::Rate, "Rate"),
-            GridWidget::knob(P::Gate, "Gate"),
-            GridWidget::knob(P::Octaves, "Octaves"),
-            GridWidget::dropdown(P::Pattern, "Pattern"),
-        ], vec![])
+        GridLayout::build("ARPEGGIO", "V0.1", 2, 80.0, vec![widgets(vec![
+            knob(P::Rate, "Rate"),
+            knob(P::Gate, "Gate"),
+            knob(P::Octaves, "Octaves"),
+            dropdown(P::Pattern, "Pattern"),
+        ])])
     }
 }
 

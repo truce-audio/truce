@@ -96,7 +96,7 @@ impl IcedPlugin<GainParams> for GainUi {
                 xy_pad(P::Pan, P::Gain, params).label("Pan / Gain").size(130.0),
             ))
             .push(Into::<Element<'a, Message<GainMsg>>>::into(
-                meter(&[P::MeterLeft.into(), P::MeterRight.into()], params)
+                meter(&[P::MeterLeft, P::MeterRight], params)
                     .label("Level")
                     .size(24.0, 130.0),
             ))
@@ -188,7 +188,7 @@ impl PluginLogic for GainIced {
                 Arc::new(GainParams::default_for_gui()),
                 (250, 330),
             )
-            .with_meter_ids(vec![P::MeterLeft.into(), P::MeterRight.into()])
+            .with_meter_ids(vec![P::MeterLeft, P::MeterRight])
             .with_font("JetBrains Mono", truce_gui::font::JETBRAINS_MONO),
         ))
     }

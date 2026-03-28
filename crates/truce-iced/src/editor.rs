@@ -226,8 +226,8 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedEditor<P, M> {
     }
 
     /// Set meter IDs to poll each tick.
-    pub fn with_meter_ids(mut self, ids: Vec<u32>) -> Self {
-        self.meter_ids = ids;
+    pub fn with_meter_ids(mut self, ids: Vec<impl Into<u32>>) -> Self {
+        self.meter_ids = ids.into_iter().map(|id| id.into()).collect();
         self
     }
 }

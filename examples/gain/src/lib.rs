@@ -1,5 +1,5 @@
 use truce::prelude::*;
-use truce_gui::layout::{GridLayout, GridWidget};
+use truce_gui::layout::{GridLayout, knob, meter, xy_pad, widgets};
 
 // --- Parameters ---
 
@@ -68,12 +68,12 @@ impl PluginLogic for Gain {
     }
 
     fn layout(&self) -> truce_gui::layout::GridLayout {
-        GridLayout::build("GAIN", "V0.1", 3, 80.0, vec![
-            GridWidget::knob(P::Gain, "Gain"),
-            GridWidget::knob(P::Pan, "Pan"),
-            GridWidget::meter(&[P::MeterLeft.into(), P::MeterRight.into()], "Level").at(2, 0).rows(3),
-            GridWidget::xy_pad(P::Pan, P::Gain, "XY"),
-        ], vec![])
+        GridLayout::build("GAIN", "V0.1", 3, 80.0, vec![widgets(vec![
+            knob(P::Gain, "Gain"),
+            knob(P::Pan, "Pan"),
+            meter(&[P::MeterLeft, P::MeterRight], "Level").at(2, 0).rows(3),
+            xy_pad(P::Pan, P::Gain, "XY"),
+        ])])
     }
 }
 

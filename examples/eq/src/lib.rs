@@ -4,7 +4,7 @@
 //! multi-parameter DSP, filter state management, and parameter groups.
 
 use truce::prelude::*;
-use truce_gui::layout::{GridLayout, GridWidget};
+use truce_gui::layout::{GridLayout, knob, section, widgets};
 
 mod biquad;
 use biquad::Biquad;
@@ -135,20 +135,22 @@ impl PluginLogic for Eq {
 
     fn layout(&self) -> truce_gui::layout::GridLayout {
         GridLayout::build("EQ", "V0.1", 3, 70.0, vec![
-            GridWidget::knob(P::LowFreq, "Freq"),
-            GridWidget::knob(P::LowGain, "Gain"),
-            GridWidget::knob(P::LowQ, "Q"),
-            GridWidget::knob(P::MidFreq, "Freq"),
-            GridWidget::knob(P::MidGain, "Gain"),
-            GridWidget::knob(P::MidQ, "Q"),
-            GridWidget::knob(P::HighFreq, "Freq"),
-            GridWidget::knob(P::HighGain, "Gain"),
-            GridWidget::knob(P::HighQ, "Q"),
-            GridWidget::knob(P::Output, "Output"),
-        ], vec![
-            (0, "LOW"),
-            (3, "MID"),
-            (6, "HIGH"),
+            section("LOW", vec![
+                knob(P::LowFreq, "Freq"),
+                knob(P::LowGain, "Gain"),
+                knob(P::LowQ, "Q"),
+            ]),
+            section("MID", vec![
+                knob(P::MidFreq, "Freq"),
+                knob(P::MidGain, "Gain"),
+                knob(P::MidQ, "Q"),
+            ]),
+            section("HIGH", vec![
+                knob(P::HighFreq, "Freq"),
+                knob(P::HighGain, "Gain"),
+                knob(P::HighQ, "Q"),
+            ]),
+            widgets(vec![knob(P::Output, "Output")]),
         ])
     }
 }

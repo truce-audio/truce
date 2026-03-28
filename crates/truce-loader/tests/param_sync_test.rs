@@ -48,7 +48,7 @@ impl truce_loader::PluginLogic for TestPlugin {
     }
 
     fn layout(&self) -> truce_gui::layout::GridLayout {
-        truce_gui::layout::GridLayout::build("", "", 1, 80.0, vec![], vec![])
+        truce_gui::layout::GridLayout::build("", "", 1, 80.0, vec![])
     }
 }
 

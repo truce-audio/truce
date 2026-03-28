@@ -68,10 +68,11 @@ pub fn param_dropdown<'a, M: Clone + Debug + 'static>(
 
 /// Create a level meter display.
 pub fn meter<'a, M: Clone + Debug + 'static>(
-    ids: &[u32],
+    ids: &[impl Into<u32> + Copy],
     params: &'a ParamState<impl Params>,
 ) -> MeterWidget<'a, M> {
-    MeterWidget::new(ids, params)
+    let u32_ids: Vec<u32> = ids.iter().map(|id| (*id).into()).collect();
+    MeterWidget::new(&u32_ids, params)
 }
 
 /// Create an XY pad controlling two parameters.

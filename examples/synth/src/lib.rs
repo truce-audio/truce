@@ -1,5 +1,5 @@
 use truce::prelude::*;
-use truce_gui::layout::{GridLayout, GridWidget};
+use truce_gui::layout::{GridLayout, dropdown, knob, section, widgets};
 
 mod voice;
 use voice::Voice;
@@ -157,17 +157,20 @@ impl PluginLogic for Synth {
 
     fn layout(&self) -> truce_gui::layout::GridLayout {
         GridLayout::build("TRUCE SYNTH aa", "V0.1", 4, 70.0, vec![
-            GridWidget::dropdown(P::Waveform, "Wave").cols(2),
-            GridWidget::knob(P::Volume, "Volume"),
-            GridWidget::knob(P::Cutoff, "Cutoff"),
-            GridWidget::knob(P::Resonance, "Reso"),
-            GridWidget::knob(P::Attack, "Attack"),
-            GridWidget::knob(P::Decay, "Decay"),
-            GridWidget::knob(P::Sustain, "Sustain"),
-            GridWidget::knob(P::Release, "Release"),
-        ], vec![
-            (3, "FILTER"),
-            (5, "ENVELOPE"),
+            widgets(vec![
+                dropdown(P::Waveform, "Wave").cols(2),
+                knob(P::Volume, "Volume"),
+            ]),
+            section("FILTER", vec![
+                knob(P::Cutoff, "Cutoff"),
+                knob(P::Resonance, "Reso"),
+            ]),
+            section("ENVELOPE", vec![
+                knob(P::Attack, "Attack"),
+                knob(P::Decay, "Decay"),
+                knob(P::Sustain, "Sustain"),
+                knob(P::Release, "Release"),
+            ]),
         ])
     }
 }

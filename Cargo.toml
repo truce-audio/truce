@@ -35,7 +35,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.6"
+version = "0.1.7"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 rust-version = "1.75"
@@ -47,23 +47,23 @@ keywords = ["audio", "plugin", "vst", "clap", "daw", "aax", "sfx", "effects", "c
 readme = "README.md"
 
 [workspace.dependencies]
-truce = { version = "0.1.6", path = "crates/truce" }
-truce-core = { version = "0.1.6", path = "crates/truce-core" }
-truce-params = { version = "0.1.6", path = "crates/truce-params" }
-truce-params-derive = { version = "0.1.6", path = "crates/truce-params-derive" }
-truce-clap = { version = "0.1.6", path = "crates/truce-clap" }
-truce-vst3 = { version = "0.1.6", path = "crates/truce-vst3" }
-truce-au = { version = "0.1.6", path = "crates/truce-au" }
-truce-standalone = { version = "0.1.6", path = "crates/truce-standalone" }
-truce-gui = { version = "0.1.6", path = "crates/truce-gui" }
-truce-vst2 = { version = "0.1.6", path = "crates/truce-vst2" }
-truce-aax = { version = "0.1.6", path = "crates/truce-aax" }
-truce-test = { version = "0.1.6", path = "crates/truce-test" }
-truce-build = { version = "0.1.6", path = "crates/truce-build" }
-truce-loader = { version = "0.1.6", path = "crates/truce-loader" }
-truce-derive = { version = "0.1.6", path = "crates/truce-derive" }
-truce-gpu = { version = "0.1.6", path = "crates/truce-gpu" }
-truce-egui = { version = "0.1.6", path = "crates/truce-egui" }
-truce-iced = { version = "0.1.6", path = "crates/truce-iced" }
-truce-slint = { version = "0.1.6", path = "crates/truce-slint" }
-truce-shim-types = { version = "0.1.6", path = "crates/truce-shim-types" }
+truce = { version = "0.1.7", path = "crates/truce" }
+truce-core = { version = "0.1.7", path = "crates/truce-core" }
+truce-params = { version = "0.1.7", path = "crates/truce-params" }
+truce-params-derive = { version = "0.1.7", path = "crates/truce-params-derive" }
+truce-clap = { version = "0.1.7", path = "crates/truce-clap" }
+truce-vst3 = { version = "0.1.7", path = "crates/truce-vst3" }
+truce-au = { version = "0.1.7", path = "crates/truce-au" }
+truce-standalone = { version = "0.1.7", path = "crates/truce-standalone" }
+truce-gui = { version = "0.1.7", path = "crates/truce-gui" }
+truce-vst2 = { version = "0.1.7", path = "crates/truce-vst2" }
+truce-aax = { version = "0.1.7", path = "crates/truce-aax" }
+truce-test = { version = "0.1.7", path = "crates/truce-test" }
+truce-build = { version = "0.1.7", path = "crates/truce-build" }
+truce-loader = { version = "0.1.7", path = "crates/truce-loader" }
+truce-derive = { version = "0.1.7", path = "crates/truce-derive" }
+truce-gpu = { version = "0.1.7", path = "crates/truce-gpu" }
+truce-egui = { version = "0.1.7", path = "crates/truce-egui" }
+truce-iced = { version = "0.1.7", path = "crates/truce-iced" }
+truce-slint = { version = "0.1.7", path = "crates/truce-slint" }
+truce-shim-types = { version = "0.1.7", path = "crates/truce-shim-types" }

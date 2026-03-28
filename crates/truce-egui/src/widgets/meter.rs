@@ -12,9 +12,10 @@ use crate::ParamState;
 pub fn level_meter(
     ui: &mut egui::Ui,
     state: &ParamState,
-    meter_ids: &[u32],
+    meter_ids: &[impl Into<u32> + Copy],
     label: &str,
 ) -> egui::Response {
+    let meter_ids: Vec<u32> = meter_ids.iter().map(|id| (*id).into()).collect();
     let bar_count = meter_ids.len().max(1) as f32;
     let bar_width = 8.0;
     let spacing = 4.0;

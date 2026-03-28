@@ -284,6 +284,70 @@ impl GridWidget {
     }
 }
 
+/// A group of widgets with an optional section label.
+///
+/// Used as input to `GridLayout::build()`. Bare `GridWidget`s convert into
+/// ungrouped sections via `From`, so orphan widgets only need `.into()`.
+#[derive(Clone, Debug)]
+pub struct Section {
+    pub label: Option<&'static str>,
+    pub widgets: Vec<GridWidget>,
+}
+
+/// Create a labeled section of widgets for `GridLayout::build()`.
+pub fn section(label: &'static str, widgets: Vec<GridWidget>) -> Section {
+    Section { label: Some(label), widgets }
+}
+
+/// Wrap bare widgets into an unlabeled section (no section header).
+pub fn widgets(widgets: Vec<GridWidget>) -> Section {
+    Section { label: None, widgets }
+}
+
+// -- Short constructors for GridWidget (free functions) --
+
+/// Rotary knob widget.
+pub fn knob(param_id: impl Into<u32>, label: &'static str) -> GridWidget {
+    GridWidget::knob(param_id, label)
+}
+
+/// Horizontal slider widget.
+pub fn slider(param_id: impl Into<u32>, label: &'static str) -> GridWidget {
+    GridWidget::slider(param_id, label)
+}
+
+/// Toggle switch widget.
+pub fn toggle(param_id: impl Into<u32>, label: &'static str) -> GridWidget {
+    GridWidget::toggle(param_id, label)
+}
+
+/// Click-to-cycle selector widget.
+pub fn selector(param_id: impl Into<u32>, label: &'static str) -> GridWidget {
+    GridWidget::selector(param_id, label)
+}
+
+/// Dropdown list widget.
+pub fn dropdown(param_id: impl Into<u32>, label: &'static str) -> GridWidget {
+    GridWidget::dropdown(param_id, label)
+}
+
+/// Level meter widget.
+pub fn meter<I: Into<u32> + Copy>(ids: &[I], label: &'static str) -> GridWidget {
+    let u32_ids: Vec<u32> = ids.iter().map(|id| (*id).into()).collect();
+    GridWidget::meter(&u32_ids, label)
+}
+
+/// XY pad controlling two parameters.
+pub fn xy_pad(param_x: impl Into<u32>, param_y: impl Into<u32>, label: &'static str) -> GridWidget {
+    GridWidget::xy_pad(param_x, param_y, label)
+}
+
+impl From<GridWidget> for Section {
+    fn from(w: GridWidget) -> Self {
+        Section { label: None, widgets: vec![w] }
+    }
+}
+
 /// Grid-based layout for a plugin UI.
 #[derive(Clone, Debug)]
 pub struct GridLayout {
@@ -304,18 +368,35 @@ pub struct GridLayout {
 }
 
 impl GridLayout {
-    /// Build a grid layout from auto-flow widgets and section breaks.
+    /// Build a grid layout from sections containing widgets.
     ///
-    /// `breaks` maps widget indices to section labels: when auto-flow reaches
-    /// that index, it starts a new row and records the section label above it.
+    /// Each entry is either a `Section` (created with `section("LABEL", vec![...])`)
+    /// or a bare `GridWidget` (auto-wrapped via `From`). Example:
+    ///
+    /// ```ignore
+    /// GridLayout::build("EQ", "V0.1", 3, 70.0, vec![
+    ///     section("LOW", vec![
+    ///         GridWidget::knob(P::Freq, "Freq"),
+    ///         GridWidget::knob(P::Gain, "Gain"),
+    ///     ]),
+    ///     GridWidget::knob(P::Output, "Output").into(),
+    /// ])
+    /// ```
     pub fn build(
         title: &'static str,
         version: &'static str,
         cols: u32,
         cell_size: f32,
-        widgets: Vec<GridWidget>,
-        breaks: Vec<(usize, &'static str)>,
+        entries: Vec<Section>,
     ) -> Self {
+        let mut widgets = Vec::new();
+        let mut breaks = Vec::new();
+        for s in entries {
+            if let Some(label) = s.label {
+                breaks.push((widgets.len(), label));
+            }
+            widgets.extend(s.widgets);
+        }
         let mut layout = Self {
             title, version, cols,
             sections: Vec::new(),
