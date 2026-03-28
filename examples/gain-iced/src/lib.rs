@@ -8,7 +8,7 @@ const JETBRAINS_MONO: Font = Font {
     ..Font::DEFAULT
 };
 const WINDOW_W: u32 = 188;
-const WINDOW_H: u32 = 325;
+const WINDOW_H: u32 = 300;
 
 use truce::prelude::*;
 use truce_iced::{
@@ -81,7 +81,7 @@ impl IcedPlugin<GainParams> for GainUi {
         })
         .into();
 
-        // Left column: knobs, XY pad, footer
+        // Left column: knobs, XY pad
         let left: Element<'a, Message<GainMsg>> = Column::new()
             .push(
                 Row::new()
@@ -97,16 +97,6 @@ impl IcedPlugin<GainParams> for GainUi {
             .push(Into::<Element<'a, Message<GainMsg>>>::into(
                 xy_pad(P::Pan, P::Gain, params).label("Pan / Gain").size(130.0),
             ))
-            .push(
-                text(format!(
-                    "Gain: {}  Pan: {}",
-                    params.label(P::Gain),
-                    params.label(P::Pan),
-                ))
-                .size(10)
-                .font(JETBRAINS_MONO)
-                .color(iced::Color::from_rgb(0.55, 0.55, 0.60)),
-            )
             .spacing(gap)
             .into();
 
