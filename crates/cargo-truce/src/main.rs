@@ -39,7 +39,7 @@ fn main() -> ExitCode {
         },
 
         // Build/install commands — forwarded to truce-xtask
-        "install" | "build" | "run" | "test" | "status" | "clean"
+        "install" | "build" | "package" | "run" | "test" | "status" | "clean"
         | "nuke" | "validate" | "doctor" | "log" => {
             truce_xtask::run(&args)
         },

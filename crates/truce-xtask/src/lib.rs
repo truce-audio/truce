@@ -21,6 +21,7 @@ pub fn run(args: &[String]) -> ExitCode {
     let result = match cmd {
         "install" => cmd_install(&args[1..]),
         "build" => cmd_build(&args[1..]),
+        "package" => cmd_package(&args[1..]),
         "run" => cmd_run(&args[1..]),
         "new" => cmd_new(&args[1..]),
         "test" => cmd_test(),
@@ -95,6 +96,10 @@ Commands:
   log
       Stream AU v3 appex logs (NSLog output from the extension process).
       Press Ctrl-C to stop.
+
+  package [-p <suffix>] [--formats clap,vst3,...] [--no-notarize]
+      Build, sign, and package plugins into macOS .pkg installers.
+      Output goes to dist/ directory.
 
   build [-p <suffix>] [--dev]
       Build plugin bundles to target/bundles/ without installing.
@@ -467,6 +472,8 @@ struct Config {
     macos: MacosConfig,
     vendor: VendorConfig,
     plugin: Vec<PluginDef>,
+    #[serde(default)]
+    packaging: PackagingConfig,
 }
 
 #[derive(Deserialize, Default)]
@@ -475,6 +482,26 @@ struct MacosConfig {
     signing_identity: String,
     /// Path to the AAX SDK root directory. Falls back to the AAX_SDK_PATH env var.
     aax_sdk_path: Option<String>,
+    #[serde(default)]
+    packaging: MacosPackagingConfig,
+}
+
+#[derive(Deserialize, Default)]
+struct MacosPackagingConfig {
+    /// Installer signing identity (e.g. "Developer ID Installer: Name (TEAMID)").
+    installer_identity: Option<String>,
+    #[serde(default)]
+    notarize: bool,
+    apple_id: Option<String>,
+    team_id: Option<String>,
+}
+
+#[derive(Deserialize, Default)]
+struct PackagingConfig {
+    #[serde(default)]
+    formats: Vec<String>,
+    welcome_html: Option<String>,
+    license_html: Option<String>,
 }
 
 fn default_signing_identity() -> String {
@@ -641,6 +668,68 @@ fn run_sudo(cmd: &str, args: &[&str]) -> Res {
 fn run_quiet(cmd: &str, args: &[&str]) -> std::result::Result<String, BoxErr> {
     let output = Command::new(cmd).args(args).output()?;
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+/// Whether the signing identity is a real Developer ID (not ad-hoc).
+fn is_production_identity(identity: &str) -> bool {
+    identity != "-"
+}
+
+/// Write entitlements.plist to a temp file and return its path.
+fn write_entitlements_plist() -> PathBuf {
+    let path = PathBuf::from("/tmp/truce_entitlements.plist");
+    let content = r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+</dict>
+</plist>"#;
+    let _ = fs::write(&path, content);
+    path
+}
+
+/// Code-sign a bundle. When `identity` is a Developer ID, adds hardened
+/// runtime, timestamp, and entitlements (required for notarization).
+/// When ad-hoc (`"-"`), performs a simple ad-hoc sign.
+/// If `use_sudo` is true the codesign command runs via sudo.
+fn codesign_bundle(bundle: &str, identity: &str, use_sudo: bool) -> Res {
+    let production = is_production_identity(identity);
+    let entitlements = write_entitlements_plist();
+    let ent_path = entitlements.to_str().unwrap();
+
+    let mut args: Vec<&str> = vec!["--force", "--deep", "--sign", identity];
+    if production {
+        args.extend_from_slice(&["--options", "runtime", "--timestamp"]);
+        args.extend_from_slice(&["--entitlements", ent_path]);
+    }
+    args.push(bundle);
+
+    if use_sudo {
+        run_sudo("codesign", &args)?;
+    } else {
+        let status = Command::new("codesign").args(&args).status()?;
+        if !status.success() {
+            return Err(format!("codesign failed for {bundle}").into());
+        }
+    }
+
+    // Verify signature
+    if production {
+        let verify_args = ["--verify", "--strict", bundle];
+        if use_sudo {
+            run_sudo("codesign", &verify_args)?;
+        } else {
+            let status = Command::new("codesign").args(verify_args).status()?;
+            if !status.success() {
+                return Err(format!("codesign verification failed for {bundle}").into());
+            }
+        }
+    }
+
+    Ok(())
 }
 
 fn cargo_build(env_vars: &[(&str, &str)], extra_args: &[&str], deployment_target: &str) -> Res {
@@ -880,13 +969,13 @@ fn cmd_install(args: &[String]) -> Res {
     // --- Install ---
     for p in &plugins {
         if clap {
-            install_clap(&root, p)?;
+            install_clap(&root, p, &config)?;
         }
         if vst3 {
             install_vst3(&root, p, &config)?;
         }
         if vst2 {
-            install_vst2(&root, p)?;
+            install_vst2(&root, p, &config)?;
         }
         if au2 {
             install_au(&root, p, &config)?;
@@ -912,7 +1001,7 @@ fn cmd_install(args: &[String]) -> Res {
     Ok(())
 }
 
-fn install_clap(root: &Path, p: &PluginDef) -> Res {
+fn install_clap(root: &Path, p: &PluginDef, config: &Config) -> Res {
     let dylib = root.join(format!(
         "target/release/lib{}.dylib",
         p.dylib_stem()
@@ -926,6 +1015,7 @@ fn install_clap(root: &Path, p: &PluginDef) -> Res {
     fs::create_dir_all(&clap_dir)?;
     let dst = clap_dir.join(format!("{}.clap", p.name));
     fs::copy(&dylib, &dst)?;
+    codesign_bundle(dst.to_str().unwrap(), &config.macos.signing_identity, false)?;
     eprintln!("CLAP: {}", dst.display());
     Ok(())
 }
@@ -974,15 +1064,12 @@ fn install_vst3(root: &Path, p: &PluginDef, config: &Config) -> Res {
     let plist_tmp = format!("/tmp/truce_{}_vst3.plist", p.suffix);
     fs::write(&plist_tmp, &plist)?;
     run_sudo("cp", &[&plist_tmp, &format!("{contents}/Info.plist")])?;
-    run_sudo(
-        "codesign",
-        &["--force", "--deep", "--sign", "-", &vst3_bundle],
-    )?;
+    codesign_bundle(&vst3_bundle, &config.macos.signing_identity, true)?;
     eprintln!("VST3: {vst3_bundle}");
     Ok(())
 }
 
-fn install_vst2(root: &Path, p: &PluginDef) -> Res {
+fn install_vst2(root: &Path, p: &PluginDef, config: &Config) -> Res {
     let dylib = root.join(format!(
         "target/release/lib{}_vst2.dylib",
         p.dylib_stem()
@@ -1021,12 +1108,7 @@ fn install_vst2(root: &Path, p: &PluginDef) -> Res {
     fs::write(bundle.join("Contents/Info.plist"), &plist)?;
     fs::write(bundle.join("Contents/PkgInfo"), "BNDL????")?;
 
-    // Ad-hoc sign the bundle (required by some hosts like Ableton)
-    let _ = Command::new("codesign")
-        .args(["--force", "--deep", "--sign", "-"])
-        .arg(&bundle)
-        .status();
-
+    codesign_bundle(bundle.to_str().unwrap(), &config.macos.signing_identity, false)?;
     eprintln!("VST2: {}", bundle.display());
     Ok(())
 }
@@ -1106,16 +1188,7 @@ fn install_au(root: &Path, p: &PluginDef, config: &Config) -> Res {
     let plist_tmp = format!("/tmp/truce_{}_au.plist", p.suffix);
     fs::write(&plist_tmp, &plist)?;
     run_sudo("cp", &[&plist_tmp, &format!("{contents}/Info.plist")])?;
-    run_sudo(
-        "codesign",
-        &[
-            "--force",
-            "--deep",
-            "--sign",
-            &config.macos.signing_identity,
-            &bundle,
-        ],
-    )?;
+    codesign_bundle(&bundle, &config.macos.signing_identity, true)?;
     eprintln!("AU:   {bundle}");
     Ok(())
 }
@@ -1242,12 +1315,7 @@ fn install_aax(root: &Path, p: &PluginDef, config: &Config) -> Res {
     fs::write(&plist_tmp, &plist)?;
     run_sudo("cp", &[&plist_tmp, &format!("{contents}/Info.plist")])?;
 
-    // Ad-hoc sign (sufficient for Pro Tools Developer)
-    run_sudo(
-        "codesign",
-        &["--force", "--deep", "--sign", "-", &bundle],
-    )?;
-
+    codesign_bundle(&bundle, &config.macos.signing_identity, true)?;
     eprintln!("AAX:  {bundle}");
     Ok(())
 }
@@ -1360,10 +1428,17 @@ fn install_all_au_v3_filtered(
                 ),
             )?;
 
-            let _ = Command::new("codesign")
-                .args(["--force", "--sign", sign_id])
-                .arg(&fw_root)
-                .status();
+            {
+                let mut cs_args = vec!["--force", "--sign", sign_id];
+                if is_production_identity(sign_id) {
+                    cs_args.extend_from_slice(&["--options", "runtime", "--timestamp"]);
+                }
+                cs_args.push(fw_root.to_str().unwrap());
+                let status = Command::new("codesign").args(&cs_args).status()?;
+                if !status.success() {
+                    return Err("codesign failed for AU v3 framework".into());
+                }
+            }
 
             // Step 3: Prepare Xcode project from embedded templates
             let _ = fs::remove_dir_all(&build_dir);
@@ -1461,41 +1536,37 @@ fn install_all_au_v3_filtered(
         )?;
 
         // Step 6: Sign inside-out
-        run_sudo(
-            "codesign",
-            &[
-                "--force",
-                "--sign",
-                sign_id,
-                &format!("{app_dir}/Contents/Frameworks/{fw_name}.framework"),
-            ],
-        )?;
+        let production = is_production_identity(sign_id);
+        let runtime_flags: &[&str] = if production {
+            &["--options", "runtime", "--timestamp"]
+        } else {
+            &[]
+        };
+
+        {
+            let fw_path = format!("{app_dir}/Contents/Frameworks/{fw_name}.framework");
+            let mut args = vec!["--force", "--sign", sign_id];
+            args.extend_from_slice(runtime_flags);
+            args.push(&fw_path);
+            run_sudo("codesign", &args)?;
+        }
         let entitlements_appex = build_dir.join("AUExt/AUExt.entitlements");
         let entitlements_app = build_dir.join("App/App.entitlements");
-        run_sudo(
-            "codesign",
-            &[
-                "--force",
-                "--sign",
-                sign_id,
-                "--entitlements",
-                entitlements_appex.to_str().unwrap(),
-                "--generate-entitlement-der",
-                &format!("{app_dir}/Contents/PlugIns/AUExt.appex"),
-            ],
-        )?;
-        run_sudo(
-            "codesign",
-            &[
-                "--force",
-                "--sign",
-                sign_id,
-                "--entitlements",
-                entitlements_app.to_str().unwrap(),
-                "--generate-entitlement-der",
-                &app_dir,
-            ],
-        )?;
+        {
+            let appex_path = format!("{app_dir}/Contents/PlugIns/AUExt.appex");
+            let ent = entitlements_appex.to_str().unwrap();
+            let mut args = vec!["--force", "--sign", sign_id, "--entitlements", ent, "--generate-entitlement-der"];
+            args.extend_from_slice(runtime_flags);
+            args.push(&appex_path);
+            run_sudo("codesign", &args)?;
+        }
+        {
+            let ent = entitlements_app.to_str().unwrap();
+            let mut args = vec!["--force", "--sign", sign_id, "--entitlements", ent, "--generate-entitlement-der"];
+            args.extend_from_slice(runtime_flags);
+            args.push(&app_dir);
+            run_sudo("codesign", &args)?;
+        }
 
         // Step 7: Cache bust + register
         let _ = Command::new("/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister")
@@ -2311,6 +2382,729 @@ mod dirs {
 }
 
 // ---------------------------------------------------------------------------
+// package — build, sign, and create .pkg installers
+// ---------------------------------------------------------------------------
+
+/// Parsed format flags for the package command.
+#[derive(Clone, PartialEq)]
+enum PkgFormat {
+    Clap,
+    Vst3,
+    Vst2,
+    Au2,
+    Aax,
+}
+
+impl PkgFormat {
+    fn parse_list(s: &str) -> Result<Vec<PkgFormat>, BoxErr> {
+        let mut out = Vec::new();
+        for token in s.split(',') {
+            match token.trim() {
+                "clap" => out.push(PkgFormat::Clap),
+                "vst3" => out.push(PkgFormat::Vst3),
+                "vst2" => out.push(PkgFormat::Vst2),
+                "au2" => out.push(PkgFormat::Au2),
+                "aax" => out.push(PkgFormat::Aax),
+                other => return Err(format!("unknown format: {other}").into()),
+            }
+        }
+        Ok(out)
+    }
+
+    fn label(&self) -> &'static str {
+        match self {
+            PkgFormat::Clap => "CLAP",
+            PkgFormat::Vst3 => "VST3",
+            PkgFormat::Vst2 => "VST2",
+            PkgFormat::Au2 => "AU2",
+            PkgFormat::Aax => "AAX",
+        }
+    }
+
+    fn extension(&self) -> &'static str {
+        match self {
+            PkgFormat::Clap => "clap",
+            PkgFormat::Vst3 => "vst3",
+            PkgFormat::Vst2 => "vst",
+            PkgFormat::Au2 => "component",
+            PkgFormat::Aax => "aaxplugin",
+        }
+    }
+
+    fn install_location(&self) -> &'static str {
+        match self {
+            PkgFormat::Clap => "/Library/Audio/Plug-Ins/CLAP/",
+            PkgFormat::Vst3 => "/Library/Audio/Plug-Ins/VST3/",
+            PkgFormat::Vst2 => "/Library/Audio/Plug-Ins/VST/",
+            PkgFormat::Au2 => "/Library/Audio/Plug-Ins/Components/",
+            PkgFormat::Aax => "/Library/Application Support/Avid/Audio/Plug-Ins/",
+        }
+    }
+
+    fn pkg_id_suffix(&self) -> &'static str {
+        match self {
+            PkgFormat::Clap => "clap",
+            PkgFormat::Vst3 => "vst3",
+            PkgFormat::Vst2 => "vst2",
+            PkgFormat::Au2 => "au2",
+            PkgFormat::Aax => "aax",
+        }
+    }
+
+    fn choice_description(&self) -> &'static str {
+        match self {
+            PkgFormat::Clap => "For Reaper, Bitwig",
+            PkgFormat::Vst3 => "For Ableton, FL Studio, Reaper, Cubase",
+            PkgFormat::Vst2 => "Legacy — for hosts without VST3 support",
+            PkgFormat::Au2 => "For Logic Pro, GarageBand, Ableton",
+            PkgFormat::Aax => "For Pro Tools",
+        }
+    }
+}
+
+/// Stage a CLAP bundle into the staging directory.
+fn stage_clap(root: &Path, p: &PluginDef, staging: &Path, identity: &str) -> Res {
+    let dylib = root.join(format!("target/release/lib{}.dylib", p.dylib_stem()));
+    if !dylib.exists() {
+        return Err(format!("Missing: {}", dylib.display()).into());
+    }
+    let dst = staging.join(format!("{}.clap", p.name));
+    fs::copy(&dylib, &dst)?;
+    codesign_bundle(dst.to_str().unwrap(), identity, false)?;
+    Ok(())
+}
+
+/// Stage a VST3 bundle into the staging directory.
+fn stage_vst3(root: &Path, p: &PluginDef, config: &Config, staging: &Path) -> Res {
+    let dylib = root.join(format!("target/release/lib{}.dylib", p.dylib_stem()));
+    if !dylib.exists() {
+        return Err(format!("Missing: {}", dylib.display()).into());
+    }
+    let bundle = staging.join(format!("{}.vst3", p.name));
+    let macos_dir = bundle.join("Contents/MacOS");
+    fs::create_dir_all(&macos_dir)?;
+    fs::copy(&dylib, macos_dir.join(&p.name))?;
+
+    let plist = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleExecutable</key>
+    <string>{name}</string>
+    <key>CFBundleIdentifier</key>
+    <string>{vendor_id}.{suffix}</string>
+    <key>CFBundleName</key>
+    <string>{name}</string>
+    <key>CFBundlePackageType</key>
+    <string>BNDL</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+</dict>
+</plist>"#,
+        name = p.name,
+        suffix = p.suffix,
+        vendor_id = config.vendor.id,
+    );
+    fs::write(bundle.join("Contents/Info.plist"), &plist)?;
+    codesign_bundle(bundle.to_str().unwrap(), &config.macos.signing_identity, false)?;
+    Ok(())
+}
+
+/// Stage a VST2 bundle into the staging directory.
+fn stage_vst2(root: &Path, p: &PluginDef, config: &Config, staging: &Path) -> Res {
+    let dylib = root.join(format!("target/release/lib{}_vst2.dylib", p.dylib_stem()));
+    if !dylib.exists() {
+        return Err(format!("Missing: {}", dylib.display()).into());
+    }
+    let bundle = staging.join(format!("{}.vst", p.name));
+    let macos_dir = bundle.join("Contents/MacOS");
+    fs::create_dir_all(&macos_dir)?;
+    fs::copy(&dylib, macos_dir.join(&p.name))?;
+
+    let plist = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleExecutable</key>
+    <string>{name}</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.truce.{suffix}.vst2</string>
+    <key>CFBundleName</key>
+    <string>{name}</string>
+    <key>CFBundlePackageType</key>
+    <string>BNDL</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+</dict>
+</plist>"#,
+        name = p.name,
+        suffix = p.suffix,
+    );
+    fs::write(bundle.join("Contents/Info.plist"), &plist)?;
+    fs::write(bundle.join("Contents/PkgInfo"), "BNDL????")?;
+    codesign_bundle(bundle.to_str().unwrap(), &config.macos.signing_identity, false)?;
+    Ok(())
+}
+
+/// Stage an AU v2 bundle into the staging directory.
+fn stage_au2(root: &Path, p: &PluginDef, config: &Config, staging: &Path) -> Res {
+    let dylib = root.join(format!("target/release/lib{}_au.dylib", p.dylib_stem()));
+    if !dylib.exists() {
+        return Err(format!("Missing: {}", dylib.display()).into());
+    }
+    let bundle = staging.join(format!("{}.component", p.name));
+    let macos_dir = bundle.join("Contents/MacOS");
+    fs::create_dir_all(&macos_dir)?;
+    fs::copy(&dylib, macos_dir.join(&p.name))?;
+
+    let plist = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleExecutable</key>
+    <string>{name}</string>
+    <key>CFBundleIdentifier</key>
+    <string>{vendor_id}.{suffix}.component</string>
+    <key>CFBundleName</key>
+    <string>{name}</string>
+    <key>CFBundlePackageType</key>
+    <string>BNDL</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>AudioComponents</key>
+    <array>
+        <dict>
+            <key>type</key>
+            <string>{au_type}</string>
+            <key>subtype</key>
+            <string>{au_subtype}</string>
+            <key>manufacturer</key>
+            <string>{au_mfr}</string>
+            <key>name</key>
+            <string>{vendor}: {name}</string>
+            <key>description</key>
+            <string>{name}</string>
+            <key>version</key>
+            <integer>65536</integer>
+            <key>factoryFunction</key>
+            <string>TruceAUFactory</string>
+            <key>sandboxSafe</key>
+            <true/>
+            <key>tags</key>
+            <array>
+                <string>{au_tag}</string>
+            </array>
+        </dict>
+    </array>
+</dict>
+</plist>"#,
+        name = p.name,
+        suffix = p.suffix,
+        vendor_id = config.vendor.id,
+        vendor = config.vendor.name,
+        au_type = p.resolved_au_type(),
+        au_subtype = p.resolved_fourcc(),
+        au_mfr = config.vendor.au_manufacturer,
+        au_tag = p.au_tag,
+    );
+    fs::write(bundle.join("Contents/Info.plist"), &plist)?;
+    codesign_bundle(bundle.to_str().unwrap(), &config.macos.signing_identity, false)?;
+    Ok(())
+}
+
+/// Stage an AAX bundle into the staging directory.
+fn stage_aax(root: &Path, p: &PluginDef, config: &Config, staging: &Path) -> Res {
+    let template = PathBuf::from(
+        "/tmp/truce_aax_template/build/TruceAAXTemplate.aaxplugin/Contents/MacOS/TruceAAXTemplate",
+    );
+    if !template.exists() {
+        if let Some(sdk_path) = resolve_aax_sdk_path(config) {
+            eprintln!("AAX: building template with SDK at {}", sdk_path.display());
+            build_aax_template(root, &sdk_path)?;
+        } else {
+            return Err("AAX SDK not configured. Set [macos].aax_sdk_path in truce.toml or AAX_SDK_PATH env var.".into());
+        }
+    }
+    if !template.exists() {
+        return Err("AAX template build succeeded but binary not found".into());
+    }
+
+    let dylib = root.join(format!("target/release/lib{}_aax.dylib", p.dylib_stem()));
+    if !dylib.exists() {
+        return Err(format!("Missing: {}", dylib.display()).into());
+    }
+
+    let bundle = staging.join(format!("{}.aaxplugin", p.name));
+    let contents = bundle.join("Contents");
+    fs::create_dir_all(contents.join("MacOS"))?;
+    fs::create_dir_all(contents.join("Resources"))?;
+    fs::copy(&template, contents.join("MacOS").join(&p.name))?;
+    fs::copy(&dylib, contents.join("Resources").join(format!("lib{}_aax.dylib", p.dylib_stem())))?;
+
+    let plist = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleExecutable</key>
+    <string>{name}</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.truce.{suffix}.aax</string>
+    <key>CFBundleName</key>
+    <string>{name}</string>
+    <key>CFBundlePackageType</key>
+    <string>TDMw</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+</dict>
+</plist>"#,
+        name = p.name,
+        suffix = p.suffix,
+    );
+    fs::write(contents.join("Info.plist"), &plist)?;
+    codesign_bundle(bundle.to_str().unwrap(), &config.macos.signing_identity, false)?;
+    Ok(())
+}
+
+/// Generate the distribution.xml for the macOS .pkg installer.
+fn generate_distribution_xml(
+    plugin_name: &str,
+    vendor_id: &str,
+    suffix: &str,
+    formats: &[PkgFormat],
+    version: &str,
+    resources: Option<&PackagingConfig>,
+) -> String {
+    let mut choices_outline = String::new();
+    let mut choices = String::new();
+    let mut pkg_refs = String::new();
+
+    for fmt in formats {
+        let id = fmt.pkg_id_suffix();
+        let pkg_id = format!("{vendor_id}.{suffix}.{id}");
+        let label = fmt.label();
+        let desc = fmt.choice_description();
+        let component_file = format!("{plugin_name}-{label}.pkg");
+
+        // AAX disabled by default (requires PACE signing for distribution)
+        let enabled_attr = if *fmt == PkgFormat::Aax {
+            "\n            start_enabled=\"false\""
+        } else {
+            ""
+        };
+
+        choices_outline.push_str(&format!("        <line choice=\"{id}\"/>\n"));
+        choices.push_str(&format!(
+            r#"
+    <choice id="{id}" title="{label}" description="{desc}"{enabled_attr}>
+        <pkg-ref id="{pkg_id}"/>
+    </choice>
+"#
+        ));
+        pkg_refs.push_str(&format!(
+            "    <pkg-ref id=\"{pkg_id}\" version=\"{version}\"\
+             >{component_file}</pkg-ref>\n"
+        ));
+    }
+
+    let welcome = resources
+        .and_then(|r| r.welcome_html.as_deref())
+        .map(|_| "    <welcome file=\"welcome.html\"/>\n")
+        .unwrap_or("");
+    let license = resources
+        .and_then(|r| r.license_html.as_deref())
+        .map(|_| "    <license file=\"license.html\"/>\n")
+        .unwrap_or("");
+
+    format!(
+        r#"<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="2">
+    <title>{plugin_name}</title>
+{welcome}{license}
+    <options customize="always" require-scripts="false"/>
+
+    <choices-outline>
+{choices_outline}    </choices-outline>
+{choices}
+{pkg_refs}</installer-gui-script>
+"#
+    )
+}
+
+/// Write AU cache clearing post-install script for AU component packages.
+fn write_postinstall_script(dir: &Path) -> Res {
+    let scripts_dir = dir.join("scripts");
+    fs::create_dir_all(&scripts_dir)?;
+    let script = scripts_dir.join("postinstall");
+    fs::write(
+        &script,
+        "#!/bin/bash\n\
+         killall -9 AudioComponentRegistrar 2>/dev/null || true\n\
+         rm -rf ~/Library/Caches/AudioUnitCache/ 2>/dev/null || true\n\
+         rm -f ~/Library/Preferences/com.apple.audio.InfoHelper.plist 2>/dev/null || true\n\
+         exit 0\n",
+    )?;
+    // Make executable
+    Command::new("chmod").args(["+x", script.to_str().unwrap()]).status()?;
+    Ok(())
+}
+
+fn cmd_package(args: &[String]) -> Res {
+    let config = load_config()?;
+    let root = project_root();
+    let dt = &deployment_target();
+
+    let mut plugin_filter: Option<String> = None;
+    let mut format_str: Option<String> = None;
+    let mut no_notarize = false;
+
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-p" => {
+                i += 1;
+                plugin_filter = Some(args.get(i).cloned().ok_or("-p requires a plugin suffix")?);
+            }
+            "--formats" => {
+                i += 1;
+                format_str = Some(args.get(i).cloned().ok_or("--formats requires a value")?);
+            }
+            "--no-notarize" => no_notarize = true,
+            other => return Err(format!("unknown flag: {other}").into()),
+        }
+        i += 1;
+    }
+
+    // Resolve formats
+    let formats: Vec<PkgFormat> = if let Some(ref s) = format_str {
+        PkgFormat::parse_list(s)?
+    } else if !config.packaging.formats.is_empty() {
+        PkgFormat::parse_list(&config.packaging.formats.join(","))?
+    } else {
+        // Default: auto-detect from project features
+        let available = detect_default_features();
+        let mut fmts = Vec::new();
+        if available.contains("clap") { fmts.push(PkgFormat::Clap); }
+        if available.contains("vst3") { fmts.push(PkgFormat::Vst3); }
+        if available.contains("vst2") { fmts.push(PkgFormat::Vst2); }
+        if available.contains("au") { fmts.push(PkgFormat::Au2); }
+        if available.contains("aax") { fmts.push(PkgFormat::Aax); }
+        fmts
+    };
+
+    if formats.is_empty() {
+        return Err("no formats to package".into());
+    }
+
+    // Resolve plugins
+    let plugins: Vec<&PluginDef> = if let Some(ref filter) = plugin_filter {
+        let matched: Vec<_> = config.plugin.iter().filter(|p| p.suffix == *filter).collect();
+        if matched.is_empty() {
+            return Err(format!(
+                "No plugin with suffix '{filter}'. Available: {}",
+                config.plugin.iter().map(|p| p.suffix.as_str()).collect::<Vec<_>>().join(", ")
+            ).into());
+        }
+        matched
+    } else {
+        config.plugin.iter().collect()
+    };
+
+    let has_clap = formats.contains(&PkgFormat::Clap);
+    let has_vst3 = formats.contains(&PkgFormat::Vst3);
+    let has_vst2 = formats.contains(&PkgFormat::Vst2);
+    let has_au2 = formats.contains(&PkgFormat::Au2);
+    let has_aax = formats.contains(&PkgFormat::Aax);
+
+    // ---------------------------------------------------------------
+    // Step 1: Build all requested formats (release mode)
+    // ---------------------------------------------------------------
+
+    if has_clap || has_vst3 {
+        eprintln!("Building CLAP + VST3...");
+        let mut build_args: Vec<&str> = Vec::new();
+        for p in &plugins {
+            build_args.push("-p");
+            build_args.push(&p.crate_name);
+        }
+        cargo_build(&[], &build_args, dt)?;
+        // Save a copy since subsequent builds overwrite the dylib
+        for p in &plugins {
+            let src = root.join(format!("target/release/lib{}.dylib", p.dylib_stem()));
+            let saved = root.join(format!("target/release/lib{}_plugin.dylib", p.dylib_stem()));
+            if src.exists() { fs::copy(&src, &saved)?; }
+        }
+    }
+
+    if has_vst2 {
+        eprintln!("Building VST2...");
+        let mut build_args: Vec<&str> = Vec::new();
+        for p in &plugins {
+            build_args.push("-p");
+            build_args.push(&p.crate_name);
+        }
+        build_args.extend_from_slice(&["--no-default-features", "--features", "vst2"]);
+        cargo_build(&[], &build_args, dt)?;
+        for p in &plugins {
+            let src = root.join(format!("target/release/lib{}.dylib", p.dylib_stem()));
+            let dst = root.join(format!("target/release/lib{}_vst2.dylib", p.dylib_stem()));
+            fs::copy(&src, &dst)?;
+        }
+    }
+
+    if has_au2 {
+        eprintln!("Building AU v2...");
+        for p in &plugins {
+            cargo_build(
+                &[("TRUCE_AU_VERSION", "2"), ("TRUCE_AU_PLUGIN_ID", &p.suffix)],
+                &["-p", &p.crate_name, "--no-default-features", "--features", "au"],
+                dt,
+            )?;
+            let src = root.join(format!("target/release/lib{}.dylib", p.dylib_stem()));
+            let dst = root.join(format!("target/release/lib{}_au.dylib", p.dylib_stem()));
+            fs::copy(&src, &dst)?;
+        }
+    }
+
+    if has_aax {
+        eprintln!("Building AAX...");
+        let mut build_args: Vec<&str> = Vec::new();
+        for p in &plugins {
+            build_args.push("-p");
+            build_args.push(&p.crate_name);
+        }
+        build_args.extend_from_slice(&["--no-default-features", "--features", "aax"]);
+        cargo_build(&[], &build_args, dt)?;
+        for p in &plugins {
+            let src = root.join(format!("target/release/lib{}.dylib", p.dylib_stem()));
+            let dst = root.join(format!("target/release/lib{}_aax.dylib", p.dylib_stem()));
+            fs::copy(&src, &dst)?;
+        }
+    }
+
+    // Restore CLAP/VST3 dylib if needed
+    if has_clap || has_vst3 {
+        for p in &plugins {
+            let saved = root.join(format!("target/release/lib{}_plugin.dylib", p.dylib_stem()));
+            let dst = root.join(format!("target/release/lib{}.dylib", p.dylib_stem()));
+            if saved.exists() { fs::copy(&saved, &dst)?; }
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // Step 2–7: Stage, sign, build .pkg per plugin
+    // ---------------------------------------------------------------
+
+    let dist_dir = root.join("dist");
+    fs::create_dir_all(&dist_dir)?;
+
+    let version = "1.0.0"; // TODO: read from Cargo.toml or truce.toml
+
+    for p in &plugins {
+        eprintln!("\n=== Packaging: {} ===", p.name);
+
+        let staging = root.join("target/package").join(&p.suffix);
+        let _ = fs::remove_dir_all(&staging);
+        fs::create_dir_all(&staging)?;
+
+        // Step 2: Stage signed bundles
+        for fmt in &formats {
+            eprint!("  Staging {}... ", fmt.label());
+            let result = match fmt {
+                PkgFormat::Clap => stage_clap(&root, p, &staging, &config.macos.signing_identity),
+                PkgFormat::Vst3 => stage_vst3(&root, p, &config, &staging),
+                PkgFormat::Vst2 => stage_vst2(&root, p, &config, &staging),
+                PkgFormat::Au2 => stage_au2(&root, p, &config, &staging),
+                PkgFormat::Aax => stage_aax(&root, p, &config, &staging),
+            };
+            match result {
+                Ok(()) => eprintln!("ok"),
+                Err(e) => {
+                    eprintln!("FAILED: {e}");
+                    return Err(e);
+                }
+            }
+        }
+
+        // Step 3: Build component .pkg per format
+        let components_dir = staging.join("components");
+        fs::create_dir_all(&components_dir)?;
+
+        // Prepare AU postinstall script
+        let scripts_dir = staging.join("au_scripts");
+        if has_au2 {
+            write_postinstall_script(&scripts_dir)?;
+        }
+
+        for fmt in &formats {
+            let bundle_name = format!("{}.{}", p.name, fmt.extension());
+            let component_path = staging.join(&bundle_name);
+            let pkg_id = format!("{}.{}.{}", config.vendor.id, p.suffix, fmt.pkg_id_suffix());
+            let component_pkg = components_dir.join(format!("{}-{}.pkg", p.name, fmt.label()));
+
+            let mut pkgbuild_args = vec![
+                "--component".to_string(),
+                component_path.to_str().unwrap().to_string(),
+                "--install-location".to_string(),
+                fmt.install_location().to_string(),
+                "--identifier".to_string(),
+                pkg_id,
+                "--version".to_string(),
+                version.to_string(),
+            ];
+
+            // AU2 gets a postinstall script to clear caches
+            if *fmt == PkgFormat::Au2 {
+                pkgbuild_args.push("--scripts".to_string());
+                pkgbuild_args.push(scripts_dir.to_str().unwrap().to_string());
+            }
+
+            pkgbuild_args.push(component_pkg.to_str().unwrap().to_string());
+
+            let pkgbuild_refs: Vec<&str> = pkgbuild_args.iter().map(|s| s.as_str()).collect();
+            eprintln!("  pkgbuild {}...", fmt.label());
+            let status = Command::new("pkgbuild").args(&pkgbuild_refs).status()?;
+            if !status.success() {
+                return Err(format!("pkgbuild failed for {} {}", p.name, fmt.label()).into());
+            }
+        }
+
+        // Step 4: Generate distribution.xml
+        let dist_xml = generate_distribution_xml(
+            &p.name,
+            &config.vendor.id,
+            &p.suffix,
+            &formats,
+            version,
+            Some(&config.packaging),
+        );
+        let dist_xml_path = staging.join("distribution.xml");
+        fs::write(&dist_xml_path, &dist_xml)?;
+
+        // Step 5: Prepare resources (optional welcome/license html)
+        let resources_dir = staging.join("resources");
+        fs::create_dir_all(&resources_dir)?;
+        if let Some(ref html) = config.packaging.welcome_html {
+            let src = root.join(html);
+            if src.exists() {
+                fs::copy(&src, resources_dir.join("welcome.html"))?;
+            }
+        }
+        if let Some(ref html) = config.packaging.license_html {
+            let src = root.join(html);
+            if src.exists() {
+                fs::copy(&src, resources_dir.join("license.html"))?;
+            }
+        }
+
+        // Step 6: productbuild → signed .pkg
+        let pkg_name = format!("{}-{}-macos.pkg", p.name, version);
+        let pkg_path = dist_dir.join(&pkg_name);
+
+        let mut pb_args = vec![
+            "--distribution",
+            dist_xml_path.to_str().unwrap(),
+            "--package-path",
+            components_dir.to_str().unwrap(),
+            "--resources",
+            resources_dir.to_str().unwrap(),
+        ];
+
+        let installer_id = config.macos.packaging.installer_identity.as_deref();
+        if let Some(id) = installer_id {
+            pb_args.push("--sign");
+            pb_args.push(id);
+        }
+
+        pb_args.push(pkg_path.to_str().unwrap());
+
+        eprintln!("  productbuild...");
+        let status = Command::new("productbuild").args(&pb_args).status()?;
+        if !status.success() {
+            return Err(format!("productbuild failed for {}", p.name).into());
+        }
+
+        // Step 7: Notarize + staple (Phase 3)
+        if config.macos.packaging.notarize && !no_notarize {
+            notarize_and_staple(&pkg_path, &config)?;
+        }
+
+        eprintln!("  Package ready: {}", pkg_path.display());
+    }
+
+    eprintln!("\nDone. Installers in {}", dist_dir.display());
+    Ok(())
+}
+
+/// Notarize a .pkg and staple the ticket. (Phase 3)
+fn notarize_and_staple(pkg_path: &Path, config: &Config) -> Res {
+    let pkg = pkg_path.to_str().unwrap();
+
+    // Determine credential source: env vars or truce.toml
+    let apple_id_env = std::env::var("APPLE_ID").unwrap_or_default();
+    let team_id_env = std::env::var("TEAM_ID").unwrap_or_default();
+    let apple_id = config.macos.packaging.apple_id.as_deref().unwrap_or(&apple_id_env);
+    let team_id = config.macos.packaging.team_id.as_deref().unwrap_or(&team_id_env);
+
+    // First try keychain profile, then fall back to explicit credentials
+    let keychain_profile = std::env::var("TRUCE_NOTARY_PROFILE").unwrap_or_else(|_| "TRUCE_NOTARY".to_string());
+
+    eprintln!("  Notarizing {}...", pkg_path.file_name().unwrap().to_str().unwrap());
+    let status = Command::new("xcrun")
+        .args([
+            "notarytool", "submit", pkg,
+            "--keychain-profile", &keychain_profile,
+            "--wait",
+        ])
+        .status();
+
+    match status {
+        Ok(s) if s.success() => {}
+        _ => {
+            // Keychain profile failed — try explicit credentials if available
+            if !apple_id.is_empty() && !team_id.is_empty() {
+                eprintln!("  Keychain profile failed, trying explicit credentials...");
+                let password = std::env::var("APP_SPECIFIC_PASSWORD")
+                    .map_err(|_| "notarization requires APP_SPECIFIC_PASSWORD env var or a keychain profile")?;
+                let status = Command::new("xcrun")
+                    .args([
+                        "notarytool", "submit", pkg,
+                        "--apple-id", apple_id,
+                        "--team-id", team_id,
+                        "--password", &password,
+                        "--wait",
+                    ])
+                    .status()?;
+                if !status.success() {
+                    return Err("notarization failed".into());
+                }
+            } else {
+                return Err(
+                    "notarization failed. Set up credentials via:\n  \
+                     xcrun notarytool store-credentials TRUCE_NOTARY\n  \
+                     or set apple_id/team_id in [macos.packaging] + APP_SPECIFIC_PASSWORD env var"
+                        .into(),
+                );
+            }
+        }
+    }
+
+    // Staple
+    eprintln!("  Stapling...");
+    let status = Command::new("xcrun")
+        .args(["stapler", "staple", pkg])
+        .status()?;
+    if !status.success() {
+        return Err("stapler staple failed".into());
+    }
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // build — produce bundles without installing
 // ---------------------------------------------------------------------------
 
@@ -2373,10 +3167,7 @@ fn cmd_build(args: &[String]) -> Res {
 
             // Codesign
             let bundle = bundles_dir.join(format!("{}.clap", p.name));
-            let _ = Command::new("codesign")
-                .args(["--force", "--deep", "--sign", "-"])
-                .arg(&bundle)
-                .status();
+            codesign_bundle(bundle.to_str().unwrap(), &config.macos.signing_identity, false)?;
 
             eprintln!("  CLAP: {}", bundle.display());
         }
