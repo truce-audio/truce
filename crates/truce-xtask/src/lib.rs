@@ -79,9 +79,11 @@ Commands:
   clean
       Clear all AU/DAW caches and restart audio daemons.
 
-  remove [--clap] [--vst3] [--vst2] [--au2] [--au3] [--aax] [-p <suffix>] [--dry-run] [--yes]
+  remove [--clap] [--vst3] [--vst2] [--au2] [--au3] [--aax] [-p <suffix>] [-n <name>] [--dry-run] [--yes]
       Remove installed plugin bundles for this project.
       Default: all formats, all plugins. Asks for confirmation.
+      -p <suffix>  Filter by plugin suffix (e.g. -p gain)
+      -n <name>    Filter by display name (e.g. -n 'Truce Gain')
       --dry-run    Show what would be removed without deleting
       --yes        Skip confirmation prompt
 
@@ -1837,6 +1839,20 @@ fn cmd_status() -> Res {
     let config = load_config()?;
     let vendor = &config.vendor.name;
 
+    // Build a lookup from plugin display name to suffix for annotations.
+    // Match the longest plugin name first to avoid "Truce Gain" matching
+    // before "Truce Gain Egui".
+    let mut plugins_by_name: Vec<&PluginDef> = config.plugin.iter().collect();
+    plugins_by_name.sort_by(|a, b| b.name.len().cmp(&a.name.len()));
+    let suffix_for = |filename: &str| -> String {
+        for p in &plugins_by_name {
+            if filename.contains(&p.name) {
+                return format!("  (-p {})", p.suffix);
+            }
+        }
+        String::new()
+    };
+
     eprintln!("=== AU v2 Components ===");
     let comp_dir = Path::new("/Library/Audio/Plug-Ins/Components");
     if comp_dir.exists() {
@@ -1844,7 +1860,7 @@ fn cmd_status() -> Res {
             let name = entry?.file_name();
             let name = name.to_string_lossy();
             if name.contains(vendor) {
-                eprintln!("  {name}");
+                eprintln!("  {name}{}", suffix_for(&name));
             }
         }
     }
@@ -1858,7 +1874,7 @@ fn cmd_status() -> Res {
             let name = entry?.file_name();
             let name = name.to_string_lossy();
             if name.contains(vendor) {
-                eprintln!("  {name}");
+                eprintln!("  {name}{}", suffix_for(&name));
             }
         }
     }
@@ -1870,7 +1886,7 @@ fn cmd_status() -> Res {
             let name = entry?.file_name();
             let name = name.to_string_lossy();
             if name.contains(vendor) {
-                eprintln!("  {name}");
+                eprintln!("  {name}{}", suffix_for(&name));
             }
         }
     }
@@ -1882,10 +1898,12 @@ fn cmd_status() -> Res {
             let name = entry?.file_name();
             let name = name.to_string_lossy();
             if name.contains(vendor) {
-                eprintln!("  {name}");
+                eprintln!("  {name}{}", suffix_for(&name));
             }
         }
     }
+
+    eprintln!("\nTo remove: cargo truce remove -p <suffix>  or  -n <name>");
 
     eprintln!("\n=== auval ===");
     if let Ok(output) = run_quiet("auval", &["-a"]) {
@@ -2178,7 +2196,8 @@ fn cmd_remove(args: &[String]) -> Res {
     let mut aax = false;
     let mut dry_run = false;
     let mut yes = false;
-    let mut plugin_filter: Option<String> = None;
+    let mut suffix_filter: Option<String> = None;
+    let mut name_filter: Option<String> = None;
 
     let mut i = 0;
     while i < args.len() {
@@ -2193,10 +2212,18 @@ fn cmd_remove(args: &[String]) -> Res {
             "--yes" | "-y" => yes = true,
             "-p" => {
                 i += 1;
-                plugin_filter = Some(
+                suffix_filter = Some(
                     args.get(i)
                         .cloned()
                         .ok_or("-p requires a plugin suffix")?,
+                );
+            }
+            "-n" => {
+                i += 1;
+                name_filter = Some(
+                    args.get(i)
+                        .cloned()
+                        .ok_or("-n requires a plugin name")?,
                 );
             }
             other => return Err(format!("Unknown flag: {other}").into()),
@@ -2214,8 +2241,8 @@ fn cmd_remove(args: &[String]) -> Res {
         aax = true;
     }
 
-    // Filter plugins
-    let plugins: Vec<&PluginDef> = if let Some(ref filter) = plugin_filter {
+    // Filter plugins by suffix (-p) or display name (-n)
+    let plugins: Vec<&PluginDef> = if let Some(ref filter) = suffix_filter {
         let matched: Vec<_> = config
             .plugin
             .iter()
@@ -2227,7 +2254,27 @@ fn cmd_remove(args: &[String]) -> Res {
                 config
                     .plugin
                     .iter()
-                    .map(|p| p.suffix.as_str())
+                    .map(|p| format!("{} (-p {})", p.name, p.suffix))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+            .into());
+        }
+        matched
+    } else if let Some(ref filter) = name_filter {
+        let filter_lower = filter.to_lowercase();
+        let matched: Vec<_> = config
+            .plugin
+            .iter()
+            .filter(|p| p.name.to_lowercase() == filter_lower)
+            .collect();
+        if matched.is_empty() {
+            return Err(format!(
+                "No plugin with name '{filter}'. Available: {}",
+                config
+                    .plugin
+                    .iter()
+                    .map(|p| format!("\"{}\" (-p {})", p.name, p.suffix))
                     .collect::<Vec<_>>()
                     .join(", ")
             )
