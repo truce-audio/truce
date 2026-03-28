@@ -857,3 +857,285 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::layout::{GridLayout, GridWidget, Layout};
+    use crate::widgets::WidgetType;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::Arc;
+    use truce_params::{ParamInfo, ParamRange, ParamFlags, ParamUnit, Params};
+
+    // -- Mock Params with one enum param (4 options) and one float --
+
+    struct TestParams {
+        values: [AtomicU64; 2],
+    }
+
+    impl TestParams {
+        fn new() -> Self {
+            Self {
+                values: [
+                    AtomicU64::new(0.0f64.to_bits()),
+                    AtomicU64::new(0.0f64.to_bits()),
+                ],
+            }
+        }
+    }
+
+    impl Params for TestParams {
+        fn param_infos(&self) -> Vec<ParamInfo> {
+            vec![
+                ParamInfo {
+                    id: 0,
+                    name: "Mode",
+                    short_name: "Mode",
+                    group: "",
+                    range: ParamRange::Enum { count: 4 },
+                    default_plain: 0.0,
+                    flags: ParamFlags::AUTOMATABLE,
+                    unit: ParamUnit::None,
+                },
+                ParamInfo {
+                    id: 1,
+                    name: "Gain",
+                    short_name: "Gain",
+                    group: "",
+                    range: ParamRange::Linear { min: 0.0, max: 1.0 },
+                    default_plain: 0.5,
+                    flags: ParamFlags::AUTOMATABLE,
+                    unit: ParamUnit::None,
+                },
+            ]
+        }
+
+        fn count(&self) -> usize { 2 }
+
+        fn get_normalized(&self, id: u32) -> Option<f64> {
+            self.values.get(id as usize)
+                .map(|v| f64::from_bits(v.load(Ordering::Relaxed)))
+        }
+
+        fn set_normalized(&self, id: u32, value: f64) {
+            if let Some(v) = self.values.get(id as usize) {
+                v.store(value.to_bits(), Ordering::Relaxed);
+            }
+        }
+
+        fn get_plain(&self, id: u32) -> Option<f64> {
+            let norm = self.get_normalized(id)?;
+            let info = self.param_infos().into_iter().find(|i| i.id == id)?;
+            Some(info.range.denormalize(norm))
+        }
+
+        fn set_plain(&self, id: u32, value: f64) {
+            if let Some(info) = self.param_infos().into_iter().find(|i| i.id == id) {
+                self.set_normalized(id, info.range.normalize(value));
+            }
+        }
+
+        fn format_value(&self, _id: u32, value: f64) -> Option<String> {
+            Some(format!("{:.0}", value))
+        }
+
+        fn parse_value(&self, _id: u32, _text: &str) -> Option<f64> { None }
+        fn snap_smoothers(&self) {}
+        fn set_sample_rate(&self, _: f64) {}
+
+        fn collect_values(&self) -> (Vec<u32>, Vec<f64>) {
+            let ids = vec![0, 1];
+            let vals: Vec<f64> = ids.iter().map(|&id| {
+                self.get_plain(id).unwrap_or(0.0)
+            }).collect();
+            (ids, vals)
+        }
+
+        fn restore_values(&self, values: &[(u32, f64)]) {
+            for &(id, val) in values {
+                self.set_plain(id, val);
+            }
+        }
+
+        fn default_for_gui() -> Self { Self::new() }
+    }
+
+    // -- Helpers --
+
+    /// Build a BuiltinEditor with a dropdown at position 0 and a knob at position 1.
+    fn make_editor() -> BuiltinEditor<TestParams> {
+        let params = Arc::new(TestParams::new());
+        let layout = GridLayout::build("TEST", "V0.1", 2, 80.0, vec![
+            GridWidget::dropdown(0u32, "Mode"),
+            GridWidget::knob(1u32, "Gain"),
+        ], vec![]);
+        let mut editor = BuiltinEditor::new_grid(params, layout);
+        // Build interaction regions (normally done in open/render)
+        if let Layout::Grid(ref gl) = editor.layout {
+            editor.interaction.build_regions_grid(gl);
+            for (idx, gw) in gl.widgets.iter().enumerate() {
+                if let Some(region) = editor.interaction.knob_regions.get_mut(idx) {
+                    region.widget_type = resolve_widget_type(
+                        gw.widget, gw.param_id, &*editor.params,
+                    );
+                }
+            }
+        }
+        // Render once to populate dropdown_anchor_y
+        editor.render();
+        editor
+    }
+
+    /// Build an editor with section breaks to test anchor stability.
+    fn make_editor_with_sections() -> BuiltinEditor<TestParams> {
+        let params = Arc::new(TestParams::new());
+        let layout = GridLayout::build("TEST", "V0.1", 2, 80.0, vec![
+            GridWidget::knob(1u32, "Gain"),
+            GridWidget::knob(1u32, "Gain 2"),
+            GridWidget::dropdown(0u32, "Mode"),   // row 1, after a section break
+            GridWidget::knob(1u32, "Gain 3"),
+        ], vec![
+            (0, "SECTION A"),
+            (2, "SECTION B"),
+        ]);
+        let mut editor = BuiltinEditor::new_grid(params, layout);
+        if let Layout::Grid(ref gl) = editor.layout {
+            editor.interaction.build_regions_grid(gl);
+            for (idx, gw) in gl.widgets.iter().enumerate() {
+                if let Some(region) = editor.interaction.knob_regions.get_mut(idx) {
+                    region.widget_type = resolve_widget_type(
+                        gw.widget, gw.param_id, &*editor.params,
+                    );
+                }
+            }
+        }
+        editor.render();
+        editor
+    }
+
+    /// Find the center of the first dropdown widget's region.
+    fn dropdown_center(editor: &BuiltinEditor<TestParams>) -> (f32, f32) {
+        let region = editor.interaction.knob_regions.iter()
+            .find(|r| r.widget_type == WidgetType::Dropdown)
+            .expect("no dropdown in layout");
+        (region.x + region.w / 2.0, region.y + region.h / 2.0)
+    }
+
+    // -- Tests: dropdown close-on-reclick --
+
+    #[test]
+    fn dropdown_click_opens() {
+        let mut editor = make_editor();
+        let (dx, dy) = dropdown_center(&editor);
+
+        editor.on_mouse_down(dx, dy);
+        assert!(editor.interaction.dropdown_is_open());
+    }
+
+    #[test]
+    fn dropdown_click_toggles_closed() {
+        let mut editor = make_editor();
+        let (dx, dy) = dropdown_center(&editor);
+
+        // Open
+        editor.on_mouse_down(dx, dy);
+        editor.on_mouse_up(dx, dy);
+        assert!(editor.interaction.dropdown_is_open());
+
+        // Click same button again — should close, not reopen
+        editor.on_mouse_down(dx, dy);
+        assert!(!editor.interaction.dropdown_is_open());
+    }
+
+    #[test]
+    fn dropdown_click_outside_closes() {
+        let mut editor = make_editor();
+        let (dx, dy) = dropdown_center(&editor);
+
+        editor.on_mouse_down(dx, dy);
+        editor.on_mouse_up(dx, dy);
+        assert!(editor.interaction.dropdown_is_open());
+
+        // Click far away
+        editor.on_mouse_down(0.0, 0.0);
+        assert!(!editor.interaction.dropdown_is_open());
+    }
+
+    #[test]
+    fn dropdown_click_option_selects_and_closes() {
+        let mut editor = make_editor();
+        let (dx, dy) = dropdown_center(&editor);
+
+        editor.on_mouse_down(dx, dy);
+        editor.on_mouse_up(dx, dy);
+        assert!(editor.interaction.dropdown_is_open());
+
+        // Click the second option (index 1) inside the popup
+        let dd = editor.interaction.dropdown.as_ref().unwrap();
+        let (px, py, _, _) = dd.popup_rect;
+        let item_h = 18.0f32;
+        let padding = 4.0f32;
+        let option_y = py + padding + item_h + item_h / 2.0; // middle of second item
+
+        editor.on_mouse_down(px + 10.0, option_y);
+
+        assert!(!editor.interaction.dropdown_is_open());
+        // Enum{count:4} → step_count=3 → 3 options. Index 1 → norm = 1/2 = 0.5
+        let norm = editor.params.get_normalized(0).unwrap();
+        assert!((norm - 0.5).abs() < 0.01, "expected 0.5, got {norm}");
+    }
+
+    // -- Tests: dropdown anchor positioning --
+
+    #[test]
+    fn dropdown_anchor_set_after_render() {
+        let editor = make_editor();
+        let region = editor.interaction.knob_regions.iter()
+            .find(|r| r.widget_type == WidgetType::Dropdown)
+            .unwrap();
+
+        // Anchor should be within the widget region (below y, above y+h)
+        assert!(region.dropdown_anchor_y > region.y,
+            "anchor {} should be below region.y {}", region.dropdown_anchor_y, region.y);
+        assert!(region.dropdown_anchor_y < region.y + region.h,
+            "anchor {} should be above region bottom {}",
+            region.dropdown_anchor_y, region.y + region.h);
+    }
+
+    #[test]
+    fn dropdown_popup_uses_anchor() {
+        let mut editor = make_editor();
+        let (dx, dy) = dropdown_center(&editor);
+
+        editor.on_mouse_down(dx, dy);
+        editor.on_mouse_up(dx, dy);
+
+        let dd = editor.interaction.dropdown.as_ref().unwrap();
+        let region = &editor.interaction.knob_regions[dd.region_idx];
+
+        // popup_rect.1 (popup_y) must equal the stored anchor
+        assert_eq!(dd.popup_rect.1, region.dropdown_anchor_y);
+    }
+
+    #[test]
+    fn dropdown_anchor_gap_stable_with_sections() {
+        let editor_plain = make_editor();
+        let editor_sections = make_editor_with_sections();
+
+        let r_plain = editor_plain.interaction.knob_regions.iter()
+            .find(|r| r.widget_type == WidgetType::Dropdown)
+            .unwrap();
+        let r_sections = editor_sections.interaction.knob_regions.iter()
+            .find(|r| r.widget_type == WidgetType::Dropdown)
+            .unwrap();
+
+        // The gap from widget vertical center to anchor should be identical
+        // regardless of section offsets shifting the absolute Y position.
+        let gap_plain = r_plain.dropdown_anchor_y - (r_plain.y + r_plain.h / 2.0);
+        let gap_sections = r_sections.dropdown_anchor_y - (r_sections.y + r_sections.h / 2.0);
+        assert!(
+            (gap_plain - gap_sections).abs() < 0.1,
+            "gap_plain={gap_plain}, gap_sections={gap_sections}"
+        );
+    }
+}
