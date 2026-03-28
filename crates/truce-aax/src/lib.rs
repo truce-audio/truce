@@ -7,7 +7,13 @@
 use std::ffi::{c_void, CString};
 use std::os::raw::c_char;
 use std::slice;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
+
+/// Global guard: only one AAX editor can be open at a time.
+/// Stores a closure that closes the currently open editor. This works
+/// around a wgpu/Metal crash when multiple baseview+wgpu windows
+/// coexist in the same process.
+static OPEN_EDITOR: Mutex<Option<Box<dyn FnOnce() + Send>>> = Mutex::new(None);
 
 use truce_core::editor::{EditorContext, RawWindowHandle};
 use truce_core::events::{Event, EventBody, EventList, TransportInfo};
@@ -161,7 +167,15 @@ pub fn register_aax<P: PluginExport>() {
             name: name.as_ptr(),
             vendor: vendor.as_ptr(),
             version: 1,
-            num_inputs: layout.total_input_channels(),
+            // AAX requires all plugins to have audio inputs, even instruments.
+            // If the plugin has no inputs (output-only instrument), advertise
+            // a stereo input matching the output channel count. The audio
+            // buffer will contain silence which the instrument ignores.
+            num_inputs: if layout.total_input_channels() == 0 {
+                layout.total_output_channels().max(2)
+            } else {
+                layout.total_input_channels()
+            },
             num_outputs: layout.total_output_channels(),
             num_params: 0, // filled below
             manufacturer_id: fourcc(&info.au_manufacturer),
@@ -594,6 +608,13 @@ pub unsafe fn _editor_open<P: PluginExport>(
     platform: i32,
     callbacks: *const TruceAaxGuiCallbacks,
 ) {
+    // Close any previously open editor to avoid wgpu multi-window crash.
+    if let Ok(mut guard) = OPEN_EDITOR.lock() {
+        if let Some(close_fn) = guard.take() {
+            close_fn();
+        }
+    }
+
     let inst = &mut *(ctx as *mut AaxInstance<P>);
     let editor = match inst.editor.as_mut() {
         Some(e) => e,
@@ -652,9 +673,23 @@ pub unsafe fn _editor_open<P: PluginExport>(
     };
 
     editor.open(handle, context);
+
+    // Register this editor as the currently open one.
+    {
+        let ctx_addr = ctx as usize;
+        if let Ok(mut guard) = OPEN_EDITOR.lock() {
+            *guard = Some(Box::new(move || unsafe {
+                _editor_close::<P>(ctx_addr as *mut c_void);
+            }));
+        }
+    }
 }
 
 pub unsafe fn _editor_close<P: PluginExport>(ctx: *mut c_void) {
+    // Clear the global guard (don't call the closure — we're already closing).
+    if let Ok(mut guard) = OPEN_EDITOR.lock() {
+        *guard = None;
+    }
     let inst = &mut *(ctx as *mut AaxInstance<P>);
     if let Some(ref mut editor) = inst.editor {
         editor.close();
