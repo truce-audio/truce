@@ -206,7 +206,7 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for KnobProgram {
 
         // Label text
         if !self.label.is_empty() {
-            let label_y = value_y + 14.0;
+            let label_y = value_y + 12.0;
             frame.fill_text(Text {
                 content: self.label.clone(),
                 position: Point::new(cx, label_y),
