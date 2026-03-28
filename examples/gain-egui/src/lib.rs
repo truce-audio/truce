@@ -3,6 +3,9 @@ use truce_egui::{EguiEditor, ParamState};
 use truce_egui::theme::{HEADER_BG, HEADER_TEXT};
 use truce_egui::widgets::{param_knob, param_xy_pad, level_meter};
 
+const WINDOW_W: u32 = 225;
+const WINDOW_H: u32 = 300;
+
 // --- Parameters ---
 
 use GainParamsParamId as P;
@@ -76,7 +79,7 @@ impl PluginLogic for GainEgui {
 
     fn custom_editor(&self) -> Option<Box<dyn truce_core::editor::Editor>> {
         Some(Box::new(
-            EguiEditor::new((320, 310), gain_ui)
+            EguiEditor::new((WINDOW_W, WINDOW_H), gain_ui)
                 .with_visuals(truce_egui::theme::dark())
                 .with_font(truce_gui::font::JETBRAINS_MONO),
         ))
@@ -91,7 +94,7 @@ fn gain_ui(ctx: &egui::Context, state: &ParamState) {
             ui.horizontal_centered(|ui| {
                 ui.add_space(10.0);
                 ui.label(
-                    egui::RichText::new("TRUCE ANALYZER")
+                    egui::RichText::new("TRUCE GAIN (EGUI)")
                         .size(14.0)
                         .color(HEADER_TEXT)
                         .strong(),
@@ -99,18 +102,21 @@ fn gain_ui(ctx: &egui::Context, state: &ParamState) {
             });
         });
     egui::CentralPanel::default().show(ctx, |ui| {
+        let content_h = ui.available_height();
         ui.horizontal(|ui| {
-            param_knob(ui, state, P::Gain, "Gain");
+            ui.vertical(|ui| {
+                ui.horizontal(|ui| {
+                    param_knob(ui, state, P::Gain, "Gain");
+                    ui.add_space(16.0);
+                    param_knob(ui, state, P::Pan, "Pan");
+                });
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    param_xy_pad(ui, state, P::Pan, P::Gain, "Pan / Gain", 140.0, 140.0);
+                });
+            });
             ui.add_space(16.0);
-            param_knob(ui, state, P::Pan, "Pan");
-            ui.add_space(16.0);
-            level_meter(ui, state, &[P::MeterLeft, P::MeterRight], "Level", 100.0);
-        });
-
-        ui.add_space(8.0);
-
-        ui.horizontal(|ui| {
-            param_xy_pad(ui, state, P::Pan, P::Gain, "Pan / Gain");
+            level_meter(ui, state, &[P::MeterLeft, P::MeterRight], "Level", content_h - 35.0);
         });
     });
 }
@@ -150,7 +156,7 @@ mod tests {
     fn gui_snapshot() {
         truce_egui::snapshot::assert_snapshot(
             "screenshots", "gain_egui_default",
-            320, 310, 2.0, 0,
+            WINDOW_W, WINDOW_H, 2.0, 0,
             Some(truce_gui::font::JETBRAINS_MONO),
             |ctx, state| gain_ui(ctx, state),
         );

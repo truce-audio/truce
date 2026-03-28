@@ -7,6 +7,9 @@ const JETBRAINS_MONO: Font = Font {
     family: iced::font::Family::Name("JetBrains Mono"),
     ..Font::DEFAULT
 };
+const WINDOW_W: u32 = 184;
+const WINDOW_H: u32 = 305;
+
 use truce::prelude::*;
 use truce_iced::{
     knob, meter, xy_pad, EditorHandle, IcedEditor, IcedPlugin,
@@ -62,7 +65,7 @@ impl IcedPlugin<GainParams> for GainUi {
         params: &'a ParamState<GainParams>,
     ) -> Element<'a, Message<GainMsg>> {
         let pad = 8.0;
-        let gap = 8.0;
+        let gap = 10.0;
 
         let header: Element<'a, Message<GainMsg>> = container(
             text("GAIN (iced)")
@@ -186,7 +189,7 @@ impl PluginLogic for GainIced {
         Some(Box::new(
             IcedEditor::<GainParams, GainUi>::new(
                 Arc::new(GainParams::default_for_gui()),
-                (250, 330),
+                (WINDOW_W, WINDOW_H),
             )
             .with_meter_ids(vec![P::MeterLeft, P::MeterRight])
             .with_font("JetBrains Mono", truce_gui::font::JETBRAINS_MONO),
@@ -231,7 +234,7 @@ mod tests {
         let (pixels, w, h) =
             truce_iced::snapshot::render_iced_screenshot::<GainParams, GainUi>(
                 params,
-                (250, 330),
+                (WINDOW_W, WINDOW_H),
                 2.0,
                 Some(("JetBrains Mono", truce_gui::font::JETBRAINS_MONO)),
             );

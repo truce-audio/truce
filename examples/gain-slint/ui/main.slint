@@ -12,7 +12,7 @@ export component GainUi inherits Window {
     callback pan-changed(float);
 
     title: "Gain (slint)";
-    preferred-width: 380px;
+    preferred-width: 222px;
     preferred-height: 160px;
     background: #1f1f24;
     default-font-family: "JetBrains Mono";
@@ -30,7 +30,7 @@ export component GainUi inherits Window {
             font-size: 14px;
             font-weight: 700;
             color: #e6e6eb;
-            horizontal-alignment: center;
+            horizontal-alignment: left;
         }
 
         Rectangle {
@@ -40,7 +40,7 @@ export component GainUi inherits Window {
 
         HorizontalBox {
             alignment: center;
-            spacing: 12px;
+            spacing: 6px;
 
             Knob {
                 label: "Gain";

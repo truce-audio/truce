@@ -108,7 +108,7 @@ fn my_ui(ctx: &egui::Context, state: &ParamState) {
             param_toggle(ui, state, P::Bypass, "Bypass");
             level_meter(ui, state, &[P::MeterLeft, P::MeterRight], "Output", 60.0);
         });
-        param_xy_pad(ui, state, P::Pan, P::Gain, "Pan / Gain");
+        param_xy_pad(ui, state, P::Pan, P::Gain, "Pan / Gain", 120.0, 120.0);
     });
 }
 ```
