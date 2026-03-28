@@ -12,7 +12,7 @@ use crate::ParamState;
 /// Default meter width in pixels.
 const METER_W: f32 = 16.0;
 const BAR_GAP: f32 = 2.0;
-const BAR_PAD: f32 = 1.0;
+const BAR_PAD: f32 = 0.0;
 const TRACK_BG: egui::Color32 = egui::Color32::from_rgb(42, 42, 48);
 
 pub fn level_meter(
