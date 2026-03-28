@@ -8,12 +8,6 @@ Write your plugin once. Build CLAP, VST3, VST2, AU v2, AU v3, AAX,
 and standalone from a single Rust codebase. Hot-reload DSP and GUI
 changes without restarting the DAW.
 
-| egui | iced | slint |
-|------|------|-------|
-| ![egui](screenshots/gain_egui_default.png) | ![iced](screenshots/gain_iced_default.png) | ![slint](screenshots/gain_slint_default.png) |
-
-![Built-in GUI](screenshots/gain_default.png)
-
 ## Quick Start
 
 ```sh
@@ -125,11 +119,7 @@ code needed. For custom UIs, pick a framework:
 | [Raw](docs/gui/raw-window-handle.md) | `truce-core` | Full control — Metal, OpenGL, Skia, anything |
 
 All backends produce consistent knobs, meters, and controls with a
-shared dark theme.
-
-![egui](screenshots/gain_egui_default.png) ![Iced](screenshots/gain_iced_default.png) ![Slint](screenshots/gain_slint_default.png)
-
-See [GUI backends](docs/gui/README.md) for detailed docs.
+shared dark theme. See [GUI backends](docs/gui/README.md) for detailed docs.
 
 ## Format Support
 
