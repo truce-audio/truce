@@ -1,4 +1,4 @@
-import { Knob, Meter } from "@truce";
+import { Knob, Meter, XYPad } from "@truce";
 import { HorizontalBox } from "std-widgets.slint";
 import "JetBrainsMono-Regular.ttf";
 
@@ -13,7 +13,7 @@ export component GainUi inherits Window {
 
     title: "Gain (slint)";
     preferred-width: 222px;
-    preferred-height: 160px;
+    preferred-height: 280px;
     background: #1f1f24;
     default-font-family: "JetBrains Mono";
 
@@ -38,23 +38,41 @@ export component GainUi inherits Window {
             background: #3a3a44;
         }
 
-        HorizontalBox {
-            alignment: center;
+        HorizontalLayout {
             spacing: 6px;
 
-            Knob {
-                label: "Gain";
-                value <=> root.gain;
-                changed(v) => { root.gain-changed(v); }
-            }
+            VerticalLayout {
+                spacing: 6px;
 
-            Knob {
-                label: "Pan";
-                value <=> root.pan;
-                changed(v) => { root.pan-changed(v); }
+                HorizontalLayout {
+                    spacing: 6px;
+
+                    Knob {
+                        label: "Gain";
+                        value <=> root.gain;
+                        changed(v) => { root.gain-changed(v); }
+                    }
+
+                    Knob {
+                        label: "Pan";
+                        value <=> root.pan;
+                        changed(v) => { root.pan-changed(v); }
+                    }
+                }
+
+                XYPad {
+                    width: 166px;
+                    height: 120px;
+                    label: "Pan / Gain";
+                    value-x <=> root.pan;
+                    value-y <=> root.gain;
+                    changed-x(v) => { root.pan-changed(v); }
+                    changed-y(v) => { root.gain-changed(v); }
+                }
             }
 
             Meter {
+                height: 226px;
                 level-left: root.meter-left;
                 level-right: root.meter-right;
                 label: "Level";

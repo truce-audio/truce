@@ -7,8 +7,8 @@ const JETBRAINS_MONO: Font = Font {
     family: iced::font::Family::Name("JetBrains Mono"),
     ..Font::DEFAULT
 };
-const WINDOW_W: u32 = 184;
-const WINDOW_H: u32 = 305;
+const WINDOW_W: u32 = 188;
+const WINDOW_H: u32 = 325;
 
 use truce::prelude::*;
 use truce_iced::{
@@ -64,7 +64,7 @@ impl IcedPlugin<GainParams> for GainUi {
         &'a self,
         params: &'a ParamState<GainParams>,
     ) -> Element<'a, Message<GainMsg>> {
-        let pad = 8.0;
+        let pad = 10.0;
         let gap = 10.0;
 
         let header: Element<'a, Message<GainMsg>> = container(
@@ -81,51 +81,46 @@ impl IcedPlugin<GainParams> for GainUi {
         })
         .into();
 
-        // Top row: knob + slider
-        let top_row: Element<'a, Message<GainMsg>> = Row::new()
-            .push(Into::<Element<'a, Message<GainMsg>>>::into(
-                knob(P::Gain, params).label("Gain").size(60.0),
-            ))
-            .push(Into::<Element<'a, Message<GainMsg>>>::into(
-                knob(P::Pan, params).label("Pan").size(60.0),
-            ))
-            .spacing(gap)
-            .align_y(alignment::Vertical::Center)
-            .into();
-
-        // Bottom row: XY pad + meter
-        let bottom_row: Element<'a, Message<GainMsg>> = Row::new()
+        // Left column: knobs, XY pad, footer
+        let left: Element<'a, Message<GainMsg>> = Column::new()
+            .push(
+                Row::new()
+                    .push(Into::<Element<'a, Message<GainMsg>>>::into(
+                        knob(P::Gain, params).label("Gain").size(60.0),
+                    ))
+                    .push(Into::<Element<'a, Message<GainMsg>>>::into(
+                        knob(P::Pan, params).label("Pan").size(60.0),
+                    ))
+                    .spacing(gap)
+                    .align_y(alignment::Vertical::Center),
+            )
             .push(Into::<Element<'a, Message<GainMsg>>>::into(
                 xy_pad(P::Pan, P::Gain, params).label("Pan / Gain").size(130.0),
             ))
+            .push(
+                text(format!(
+                    "Gain: {}  Pan: {}",
+                    params.label(P::Gain),
+                    params.label(P::Pan),
+                ))
+                .size(10)
+                .font(JETBRAINS_MONO)
+                .color(iced::Color::from_rgb(0.55, 0.55, 0.60)),
+            )
+            .spacing(gap)
+            .into();
+
+        // Body: left column + meter spanning full height
+        let body: Element<'a, Message<GainMsg>> = Row::new()
+            .push(left)
             .push(Into::<Element<'a, Message<GainMsg>>>::into(
                 meter(&[P::MeterLeft, P::MeterRight], params)
                     .label("Level")
-                    .size(24.0, 130.0),
+                    .size(24.0, 230.0),
             ))
             .spacing(gap)
-            .align_y(alignment::Vertical::Top)
-            .into();
-
-        // Footer
-        let footer: Element<'a, Message<GainMsg>> = text(format!(
-            "Gain: {}  Pan: {}",
-            params.label(P::Gain),
-            params.label(P::Pan),
-        ))
-        .size(10)
-        .font(JETBRAINS_MONO)
-        .color(iced::Color::from_rgb(0.55, 0.55, 0.60))
-        .width(Length::Fill)
-        .align_x(alignment::Horizontal::Center)
-        .into();
-
-        let body: Element<'a, Message<GainMsg>> = Column::new()
-            .push(top_row)
-            .push(bottom_row)
-            .push(footer)
-            .spacing(gap)
             .padding(pad)
+            .align_y(alignment::Vertical::Top)
             .into();
 
         Column::new()

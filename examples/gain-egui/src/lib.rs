@@ -94,7 +94,7 @@ fn gain_ui(ctx: &egui::Context, state: &ParamState) {
             ui.horizontal_centered(|ui| {
                 ui.add_space(10.0);
                 ui.label(
-                    egui::RichText::new("TRUCE GAIN (EGUI)")
+                    egui::RichText::new("GAIN (egui)")
                         .size(14.0)
                         .color(HEADER_TEXT)
                         .strong(),
