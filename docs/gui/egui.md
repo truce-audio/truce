@@ -106,7 +106,7 @@ fn my_ui(ctx: &egui::Context, state: &ParamState) {
             param_knob(ui, state, P::Gain, "Gain");
             param_knob(ui, state, P::Pan, "Pan");
             param_toggle(ui, state, P::Bypass, "Bypass");
-            level_meter(ui, state, &[P::MeterLeft.into(), P::MeterRight.into()], "Output");
+            level_meter(ui, state, &[P::MeterLeft, P::MeterRight], "Output");
         });
         param_xy_pad(ui, state, P::Pan, P::Gain, "Pan / Gain");
     });

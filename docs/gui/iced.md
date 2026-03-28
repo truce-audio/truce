@@ -138,7 +138,7 @@ knob(P::Gain, params).label("Gain").size(80)
 param_slider(P::Pan, params)
 param_toggle(P::Bypass, params)
 xy_pad(P::Pan, P::Gain, params)
-meter(&[P::MeterLeft.into(), P::MeterRight.into()], params)
+meter(&[P::MeterLeft, P::MeterRight], params)
 ```
 
 These are canvas-based widgets that handle the gesture protocol
