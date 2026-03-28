@@ -1,110 +1,69 @@
 # GUI Backends
 
-truce gives you multiple ways to build your plugin's user interface.
-Every option produces the same CLAP, VST3, VST2, AU, and AAX output —
-your choice of GUI framework has zero impact on DSP, parameters, or
-format compatibility.
+truce supports several GUI backends. They all produce the same plugin
+formats (CLAP, VST3, VST2, AU, AAX) and share the same parameter
+system, so switching between them is straightforward.
 
-## Which one should I use?
+## Starting out
 
-If you're getting started, **use the built-in GUI**. You don't have to
-write any UI code — just define a layout and truce draws the knobs,
-sliders, and meters for you.
-
-If you outgrow it, pick the framework that matches your style:
-
-| Backend | Crate | Best for |
-|---------|-------|----------|
-| **[Built-in](built-in.md)** | `truce-gui` | Standard plugin UIs. Zero custom code. Just define a layout. |
-| **[egui](egui.md)** | `truce-egui` | Custom layouts, text input, graphs, any third-party egui widget. |
-| **[Iced](iced.md)** | `truce-iced` | Elm-architecture fans. Message-driven state management. |
-| **[Slint](slint.md)** | `truce-slint` | Declarative `.slint` markup with IDE live preview. |
-| **[Raw window handle](raw-window-handle.md)** | `truce-core` | Full control — Metal, OpenGL, web views, anything. |
-
-You can switch between backends at any time without touching your DSP
-code. The only thing that changes is the `custom_editor()` method.
-
-## How it works
-
-Every GUI backend implements the `Editor` trait defined in `truce-core`.
-The host calls `open()` with a parent window handle, and the editor
-creates its UI as a child window. Parameters flow through an
-`EditorContext` that bridges your knobs and sliders to the DAW's
-automation system.
-
-You don't need to worry about this plumbing — the backends handle it
-for you. But if you're curious (or building a custom backend), here's
-the trait:
+If you haven't built a plugin GUI before, start with the
+**[built-in GUI](built-in.md)**. You define a layout in code and truce
+renders the widgets for you — no custom editor code required.
 
 ```rust
-pub trait Editor: Send {
-    fn size(&self) -> (u32, u32);
-    fn open(&mut self, parent: RawWindowHandle, context: EditorContext);
-    fn close(&mut self);
-    fn idle(&mut self) {}
-    fn set_size(&mut self, width: u32, height: u32) -> bool;
-    fn can_resize(&self) -> bool;
-    fn scale_factor(&self) -> f64 { 1.0 }
-    fn set_scale_factor(&mut self, factor: f64);
+fn layout(&self) -> GridLayout {
+    GridLayout::build("MY PLUGIN", "V1.0", 2, 80.0, vec![widgets(vec![
+        knob(P::Gain, "Gain"),
+        knob(P::Pan, "Pan"),
+    ])])
 }
 ```
 
-## Connecting a GUI to your plugin
+That gives you a working GUI with knobs, mouse interaction, automation,
+and host integration. Most plugins start here.
 
-All backends follow the same pattern. Override `custom_editor()` in your
-`PluginLogic`:
+## Moving to a framework
 
-```rust
-impl PluginLogic for MyPlugin {
-    // DSP code stays exactly the same...
+When you need something the built-in GUI doesn't support — text input,
+tabs, custom drawing — pick a framework:
 
-    fn custom_editor(&self) -> Option<Box<dyn Editor>> {
-        Some(Box::new(/* your editor here */))
-    }
-}
-```
+- **[egui](egui.md)** — immediate-mode. Write UI code that runs every
+  frame. Large widget library, lots of third-party crates.
+- **[Iced](iced.md)** — Elm architecture. Define a model, emit messages,
+  update state, render a view. Good for complex state management.
+- **[Slint](slint.md)** — declarative markup. Design your UI in `.slint`
+  files, wire properties in Rust. Has an IDE live preview.
 
-If you don't override `custom_editor()`, the built-in GUI is used
-automatically based on your `layout()` return value. That's the
-zero-code path — most plugins start here and never leave.
+All three integrate the same way: override `custom_editor()` and return
+your editor. The rest of your plugin (params, DSP, format export) stays
+the same.
+
+## If you need full control
+
+For an existing rendering pipeline, web views, or anything else,
+implement the `Editor` trait directly. See
+**[raw window handle](raw-window-handle.md)**.
 
 ## Parameter communication
 
-All backends share the same `EditorContext` for talking to the host.
-You rarely need to use it directly — each backend wraps it in a
-friendlier `ParamState` API:
+Every backend wraps the host's parameter callbacks in a `ParamState`
+with the same API:
 
 ```rust
-// Read values
-let gain = state.get(P::Gain);           // normalized 0.0-1.0
-let gain_text = state.format(P::Gain);   // "0.0 dB"
-let meter_l = state.meter(P::MeterLeft); // level 0.0-1.0
-
-// Write values (click/toggle — one shot)
-state.set_immediate(P::Gain, 0.75);
-
-// Write values (drag — gesture protocol)
-state.begin_gesture(P::Gain);
-state.set_value(P::Gain, 0.75);  // call repeatedly during drag
-state.end_gesture(P::Gain);
+state.get(P::Gain)            // normalized 0.0-1.0
+state.format(P::Gain)         // "0.0 dB"
+state.meter(P::MeterLeft)     // level 0.0-1.0
+state.set_immediate(P::Gain, 0.75)  // write (single action)
+state.begin_gesture(P::Gain)        // write (start drag)
+state.set_value(P::Gain, 0.75)      // write (during drag)
+state.end_gesture(P::Gain)          // write (end drag)
 ```
 
-The gesture protocol (`begin_gesture` / `set_value` / `end_gesture`)
-tells the DAW that the user is dragging a control, so it records smooth
-automation rather than a series of discrete jumps. For click interactions
-(toggles, selectors), `set_immediate()` handles the full sequence.
+The gesture protocol tells the DAW that the user is dragging a control,
+so it records smooth automation. For single-click actions (toggles),
+`set_immediate()` handles everything.
 
 ## Screenshot testing
 
-All backends support headless screenshot tests — render the GUI without
-a window and compare pixel-by-pixel against a reference PNG. See
-[screenshot testing](screenshot-testing.md) for details.
-
-## Guides
-
-- **[Built-in GUI](built-in.md)** — start here. Zero-code layout-driven UI.
-- **[egui](egui.md)** — immediate-mode UI with a huge widget library.
-- **[Iced](iced.md)** — Elm-architecture retained-mode UI.
-- **[Slint](slint.md)** — declarative `.slint` markup compiled at build time.
-- **[Raw window handle](raw-window-handle.md)** — bring your own renderer.
-- **[Screenshot testing](screenshot-testing.md)** — pixel-perfect visual regression tests.
+All backends support headless rendering for visual regression tests.
+See **[screenshot testing](screenshot-testing.md)**.

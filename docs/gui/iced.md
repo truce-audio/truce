@@ -1,22 +1,12 @@
 # Iced Integration
 
 [Iced](https://github.com/iced-rs/iced) is a retained-mode GUI framework
-following the Elm architecture: model, message, update, view. `truce-iced`
-wraps it as a truce editor with two modes — auto-generated UI from your
-layout, or fully custom UI via the `IcedPlugin` trait.
+following the Elm architecture. `truce-iced` wraps it so you can use
+iced's layout system and canvas widgets inside a plugin window.
 
-## When to use Iced
+## Getting started
 
-Pick Iced when you want:
-
-- Elm-architecture state management (messages drive all state changes)
-- Auto-generated UI from your existing `layout()` — zero custom code
-- Canvas-based custom drawing with wgpu
-- A retained-mode alternative to egui's immediate mode
-
-## Setup
-
-Add these to your plugin's `Cargo.toml`:
+Add the dependencies:
 
 ```toml
 [dependencies]
@@ -24,9 +14,8 @@ truce-iced = { workspace = true }
 iced = { version = "0.13", default-features = false, features = ["canvas", "wgpu"] }
 ```
 
-## Auto mode (zero custom code)
-
-Generate a UI directly from your `GridLayout`:
+The simplest approach is auto mode — generate a UI from your layout
+with no custom code:
 
 ```rust
 use truce::prelude::*;
@@ -42,27 +31,23 @@ impl PluginLogic for MyPlugin {
 }
 ```
 
-This renders the same widgets as the built-in GUI (knob, slider, toggle,
-selector, dropdown, meter, XY pad) but using iced's rendering pipeline.
-No `IcedPlugin` trait needed.
+This renders the same widgets as the built-in GUI but through iced's
+rendering pipeline.
 
-## Custom mode
+## Custom UI
 
-For full control, implement `IcedPlugin`:
+For full control, implement `IcedPlugin`. Here's a minimal example:
 
 ```rust
 use std::sync::Arc;
 use truce_iced::{
-    knob, meter, xy_pad,
-    IcedEditor, IcedPlugin, IntoElement,
-    Message, ParamState, EditorHandle,
+    knob, meter, IcedEditor, IcedPlugin, IntoElement,
+    Message, ParamState,
 };
-use iced::widget::{container, text, Column, Row};
-use iced::{Element, Task};
-
+use iced::widget::{Column, Row, text};
+use iced::Element;
 use MyParamsParamId as P;
 
-// Your custom message type (use () if you don't need any)
 #[derive(Debug, Clone)]
 pub enum Msg {}
 
@@ -72,8 +57,6 @@ impl IcedPlugin<MyParams> for MyEditor {
     type Message = Msg;
 
     fn new(_params: Arc<MyParams>) -> Self { Self }
-
-    // update() has a default no-op — only override if you handle custom messages
 
     fn view<'a>(
         &'a self,
@@ -94,7 +77,7 @@ impl IcedPlugin<MyParams> for MyEditor {
 }
 ```
 
-Then in `custom_editor()`:
+Wire it up:
 
 ```rust
 fn custom_editor(&self) -> Option<Box<dyn truce_core::editor::Editor>> {
@@ -105,48 +88,51 @@ fn custom_editor(&self) -> Option<Box<dyn truce_core::editor::Editor>> {
 }
 ```
 
-### The `.el()` shorthand
+A few things to note:
 
-Iced normally requires verbose type conversions when pushing widgets
-into `Row` and `Column`. truce-iced provides `.el()` via the
-`IntoElement` trait to simplify this:
+- `type Message = Msg` is your custom message enum. Use `()` if you
+  don't need custom messages.
+- `new()` is required. `update()` defaults to a no-op if you don't
+  override it.
+- `.el()` converts a truce-iced widget into an iced `Element`. Import
+  `IntoElement` to use it.
+
+## The `.el()` shorthand
+
+Iced's type system requires explicit conversions when pushing widgets
+into rows and columns. Without `.el()` you'd write:
 
 ```rust
-use truce_iced::{knob, meter, IntoElement};
-
-// Instead of: .push(Into::<Element<'a, Message<Msg>>>::into(knob(...)))
-// Just write:
-Row::new()
-    .push(knob(P::Gain, params).label("Gain").size(60.0).el())
-    .push(meter(&[P::MeterLeft, P::MeterRight], params).size(16.0, 200.0).el())
+.push(Into::<Element<'a, Message<Msg>>>::into(knob(P::Gain, params).label("Gain")))
 ```
 
-Import `IntoElement` and call `.el()` on any truce-iced widget.
+With `.el()`:
+
+```rust
+.push(knob(P::Gain, params).label("Gain").size(60.0).el())
+```
+
+Import `IntoElement` from `truce_iced` and call `.el()` on any widget.
 
 ## Reading and writing parameters
 
-`ParamState<P>` provides type-safe access to your parameters:
-
 ```rust
 // Read
-let gain = params.get(P::Gain);           // normalized 0.0-1.0
-let gain_db = params.get_plain(P::Gain);  // plain value
-let text = params.label(P::Gain);         // formatted string
-let level = params.meter(P::MeterLeft);   // meter level
+params.get(P::Gain)          // normalized 0.0-1.0
+params.get_plain(P::Gain)    // plain value
+params.label(P::Gain)        // formatted string
+params.meter(P::MeterLeft)   // meter level
 
-// Write — one shot (toggles, selectors)
-params.set_immediate(P::Gain, 0.75);
+// Write (click)
+params.set_immediate(P::Gain, 0.75)
 
-// Write — gesture (knobs, sliders)
-params.begin_gesture(P::Gain);
-params.set_value(P::Gain, new_value);
-params.end_gesture(P::Gain);
+// Write (drag)
+params.begin_gesture(P::Gain)
+params.set_value(P::Gain, new_value)
+params.end_gesture(P::Gain)
 ```
 
 ## Widgets
-
-`truce-iced` provides canvas-based widgets that handle the gesture
-protocol automatically:
 
 ```rust
 use truce_iced::{knob, param_slider, param_toggle, param_selector, xy_pad, meter};
@@ -159,30 +145,20 @@ xy_pad(P::Pan, P::Gain, params).label("XY").size(130.0)
 meter(&[P::MeterLeft, P::MeterRight], params).size(16.0, 200.0)
 ```
 
-All widgets use the builder pattern. Call `.el()` to convert to an
-iced `Element` for layout.
+All use builder pattern. Call `.el()` to push into iced layouts.
 
-## Message routing
+## Handling custom messages
 
-`truce-iced` wraps your custom messages in a `Message<M>` enum:
+If your UI has buttons, tabs, or other interactive elements, define
+messages and handle them in `update()`:
 
 ```rust
-pub enum Message<M> {
-    Param(ParamMessage),   // handled internally by truce-iced
-    Custom(M),             // your messages — handle in update()
+#[derive(Debug, Clone)]
+pub enum Msg {
+    ResetGain,
+    TabChanged(usize),
 }
-```
 
-Parameter messages (knob drags, toggle clicks) are routed automatically.
-You only handle `Message::Custom(...)` in your `update()` method — and
-if you don't have custom messages, you don't need `update()` at all
-(the default is a no-op).
-
-## EditorHandle
-
-For programmatic parameter changes from `update()`:
-
-```rust
 fn update(&mut self, msg: Message<Msg>, params: &ParamState<MyParams>, ctx: &EditorHandle) -> Task<Message<Msg>> {
     match msg {
         Message::Custom(Msg::ResetGain) => {
@@ -196,15 +172,8 @@ fn update(&mut self, msg: Message<Msg>, params: &ParamState<MyParams>, ctx: &Edi
 }
 ```
 
-## Theming
-
-Override `theme()` on your `IcedPlugin`:
-
-```rust
-fn theme(&self) -> iced::Theme {
-    truce_iced::theme::truce_dark_theme()  // default
-}
-```
+Parameter messages (from knob drags, toggle clicks) are handled
+automatically — you never see them in `update()`.
 
 ## Screenshot testing
 
@@ -214,17 +183,17 @@ fn gui_snapshot_iced() {
     let params = Arc::new(MyParams::new());
     let (pixels, w, h) = truce_iced::snapshot::render_iced_screenshot::<MyParams, MyEditor>(
         params,
-        (WINDOW_W, WINDOW_H),   // same constants as your editor
-        2.0,                     // scale
+        (WINDOW_W, WINDOW_H),
+        2.0,
         Some(("JetBrains Mono", truce_gui::font::JETBRAINS_MONO)),
     );
     truce_test::assert_gui_snapshot_raw("my_plugin_iced_default", &pixels, w, h, 0);
 }
 ```
 
-See [screenshot testing](screenshot-testing.md) for details.
+See [screenshot testing](screenshot-testing.md) for more.
 
-## Complete example
+## Example
 
-See `examples/gain-iced/` for a working plugin with custom header,
-knobs, XY pad, level meter, `.el()` usage, and screenshot test.
+`examples/gain-iced/` has a complete plugin with custom header, knobs,
+XY pad, meter, `.el()` usage, and screenshot test.
