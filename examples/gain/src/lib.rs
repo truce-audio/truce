@@ -15,10 +15,6 @@ pub struct GainParams {
             unit = "pan", smooth = "exp(5)")]
     pub pan: FloatParam,
 
-    #[param(name = "Bypass", short_name = "Byp",
-            flags = "automatable | bypass")]
-    pub bypass: BoolParam,
-
     #[meter]
     pub meter_left: MeterSlot,
 
@@ -45,12 +41,6 @@ impl PluginLogic for Gain {
     }
 
     fn process(&mut self, buffer: &mut AudioBuffer, _events: &EventList, context: &mut ProcessContext) -> ProcessStatus {
-        if self.params.bypass.value() {
-            context.set_meter(P::MeterLeft, 0.0);
-            context.set_meter(P::MeterRight, 0.0);
-            return ProcessStatus::Normal;
-        }
-
         for i in 0..buffer.num_samples() {
             let gain_db = self.params.gain.smoothed_next();
             let pan = self.params.pan.smoothed_next();

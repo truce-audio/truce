@@ -19,10 +19,6 @@ pub struct GainParams {
             unit = "pan", smooth = "exp(5)")]
     pub pan: FloatParam,
 
-    #[param(name = "Bypass", short_name = "Byp",
-            flags = "automatable | bypass")]
-    pub bypass: BoolParam,
-
     #[meter]
     pub meter_left: MeterSlot,
 
@@ -54,12 +50,6 @@ impl PluginLogic for GainSlint {
         _events: &EventList,
         context: &mut ProcessContext,
     ) -> ProcessStatus {
-        if self.params.bypass.value() {
-            context.set_meter(P::MeterLeft, 0.0);
-            context.set_meter(P::MeterRight, 0.0);
-            return ProcessStatus::Normal;
-        }
-
         for i in 0..buffer.num_samples() {
             let gain_db = self.params.gain.smoothed_next();
             let pan = self.params.pan.smoothed_next();
@@ -95,16 +85,11 @@ impl PluginLogic for GainSlint {
             ui.on_gain_changed(move |v| s.set_immediate(P::Gain, v as f64));
             let s = state.clone();
             ui.on_pan_changed(move |v| s.set_immediate(P::Pan, v as f64));
-            let s = state.clone();
-            ui.on_bypass_changed(move |v| {
-                s.set_immediate(P::Bypass, if v { 1.0 } else { 0.0 });
-            });
 
             // host → UI (params + meters)
             Box::new(move |state: &ParamState| {
                 ui.set_gain(state.get(P::Gain) as f32);
                 ui.set_pan(state.get(P::Pan) as f32);
-                ui.set_bypass(state.get(P::Bypass) > 0.5);
                 ui.set_meter_left(meter_display(state.meter(P::MeterLeft)));
                 ui.set_meter_right(meter_display(state.meter(P::MeterRight)));
             })
@@ -153,7 +138,6 @@ mod tests {
                 Box::new(move |state: &truce_slint::ParamState| {
                     ui.set_gain(state.get(P::Gain) as f32);
                     ui.set_pan(state.get(P::Pan) as f32);
-                    ui.set_bypass(state.get(P::Bypass) > 0.5);
                     ui.set_meter_left(meter_display(state.meter(P::MeterLeft)));
                     ui.set_meter_right(meter_display(state.meter(P::MeterRight)));
                 })

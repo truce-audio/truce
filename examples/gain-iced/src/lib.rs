@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use iced::widget::{container, horizontal_space, text, Column, Row};
+use iced::widget::{container, text, Column, Row};
 use iced::{alignment, Element, Font, Length, Task};
 
 const JETBRAINS_MONO: Font = Font {
@@ -9,7 +9,7 @@ const JETBRAINS_MONO: Font = Font {
 };
 use truce::prelude::*;
 use truce_iced::{
-    knob, meter, param_toggle, xy_pad, EditorHandle, IcedEditor, IcedPlugin,
+    knob, meter, xy_pad, EditorHandle, IcedEditor, IcedPlugin,
     Message, ParamState,
 };
 
@@ -26,10 +26,6 @@ pub struct GainParams {
     #[param(name = "Pan", range = "linear(-1, 1)",
             unit = "pan", smooth = "exp(5)")]
     pub pan: FloatParam,
-
-    #[param(name = "Bypass", short_name = "Byp",
-            flags = "automatable | bypass")]
-    pub bypass: BoolParam,
 
     #[meter]
     pub meter_left: MeterSlot,
@@ -68,20 +64,11 @@ impl IcedPlugin<GainParams> for GainUi {
         let pad = 8.0;
         let gap = 8.0;
 
-        // Header: title left, bypass right
         let header: Element<'a, Message<GainMsg>> = container(
-            Row::new()
-                .push(
-                    text("GAIN (iced)")
-                        .size(14)
-                        .font(JETBRAINS_MONO)
-                        .color(iced::Color::from_rgb(0.75, 0.75, 0.80)),
-                )
-                .push(horizontal_space())
-                .push(Into::<Element<'a, Message<GainMsg>>>::into(
-                    param_toggle(P::Bypass, params).label("Bypass"),
-                ))
-                .align_y(alignment::Vertical::Center),
+            text("GAIN (iced)")
+                .size(14)
+                .font(JETBRAINS_MONO)
+                .color(iced::Color::from_rgb(0.75, 0.75, 0.80)),
         )
         .padding(pad)
         .width(Length::Fill)
@@ -169,12 +156,6 @@ impl PluginLogic for GainIced {
         _events: &EventList,
         context: &mut ProcessContext,
     ) -> ProcessStatus {
-        if self.params.bypass.value() {
-            context.set_meter(P::MeterLeft, 0.0);
-            context.set_meter(P::MeterRight, 0.0);
-            return ProcessStatus::Normal;
-        }
-
         for i in 0..buffer.num_samples() {
             let gain_db = self.params.gain.smoothed_next();
             let pan = self.params.pan.smoothed_next();

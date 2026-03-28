@@ -1,17 +1,15 @@
-import { Knob, Meter, ParamSlider, Toggle } from "@truce";
+import { Knob, Meter } from "@truce";
 import { HorizontalBox } from "std-widgets.slint";
 import "JetBrainsMono-Regular.ttf";
 
 export component GainUi inherits Window {
     in-out property <float> gain: 0.5;
     in-out property <float> pan: 0.5;
-    in-out property <bool> bypass: false;
     in-out property <float> meter-left: 0.0;
     in-out property <float> meter-right: 0.0;
 
     callback gain-changed(float);
     callback pan-changed(float);
-    callback bypass-changed(bool);
 
     title: "Gain (slint)";
     preferred-width: 380px;
@@ -54,12 +52,6 @@ export component GainUi inherits Window {
                 label: "Pan";
                 value <=> root.pan;
                 changed(v) => { root.pan-changed(v); }
-            }
-
-            Toggle {
-                label: "Bypass";
-                checked <=> root.bypass;
-                toggled(v) => { root.bypass-changed(v); }
             }
 
             Meter {
