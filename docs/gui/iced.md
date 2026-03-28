@@ -129,7 +129,7 @@ fn custom_editor(&self) -> Option<Box<dyn truce_core::editor::Editor>> {
 `truce-iced` provides parameter-aware canvas widgets:
 
 ```rust
-use truce_iced::widgets::{knob, param_slider, param_toggle, xy_pad, meter};
+use truce_iced::{knob, param_slider, param_toggle, xy_pad, meter, IntoElement};
 
 // Knob with builder pattern
 knob(P::Gain, params).label("Gain").size(80)
@@ -142,7 +142,17 @@ meter(&[P::MeterLeft, P::MeterRight], params)
 ```
 
 These are canvas-based widgets that handle the gesture protocol
-automatically.
+automatically. Use `.el()` to convert any widget into an `Element`
+for use with iced's `Row` and `Column`:
+
+```rust
+use truce_iced::{knob, meter, IntoElement};
+
+Row::new()
+    .push(knob(P::Gain, params).label("Gain").size(60.0).el())
+    .push(knob(P::Pan, params).label("Pan").size(60.0).el())
+    .push(meter(&[P::MeterLeft, P::MeterRight], params).size(16.0, 200.0).el())
+```
 
 ## Message Routing
 
