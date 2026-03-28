@@ -135,14 +135,14 @@ See [GUI backends](docs/gui/README.md) for detailed docs.
 
 | Plugin | Type | GUI | Screenshot |
 |--------|------|-----|-----------|
-| [gain](examples/gain/) | Effect | Built-in | <img src="screenshots/gain_default.png" width="50%"> |
-| [eq](examples/eq/) | Effect | Built-in | <img src="screenshots/eq_default.png" width="50%"> |
-| [synth](examples/synth/) | Instrument | Built-in | <img src="screenshots/synth_default.png" width="50%"> |
-| [transpose](examples/transpose/) | MIDI | Built-in | <img src="screenshots/transpose_default.png" width="50%"> |
-| [arpeggio](examples/arpeggio/) | MIDI | Built-in | <img src="screenshots/arpeggio_default.png" width="50%"> |
-| [gain-egui](examples/gain-egui/) | Effect | egui | ![](screenshots/gain_egui_default.png) |
-| [gain-iced](examples/gain-iced/) | Effect | Iced | ![](screenshots/gain_iced_default.png) |
-| [gain-slint](examples/gain-slint/) | Effect | Slint | ![](screenshots/gain_slint_default.png) |
+| [gain](examples/gain/) | Effect | Built-in | <img src="screenshots/gain_default.png" width="300"> |
+| [eq](examples/eq/) | Effect | Built-in | <img src="screenshots/eq_default.png" width="300"> |
+| [synth](examples/synth/) | Instrument | Built-in | <img src="screenshots/synth_default.png" width="300"> |
+| [transpose](examples/transpose/) | MIDI | Built-in | <img src="screenshots/transpose_default.png" width="300"> |
+| [arpeggio](examples/arpeggio/) | MIDI | Built-in | <img src="screenshots/arpeggio_default.png" width="300"> |
+| [gain-egui](examples/gain-egui/) | Effect | egui | <img src="screenshots/gain_egui_default.png" width="300"> |
+| [gain-iced](examples/gain-iced/) | Effect | Iced | <img src="screenshots/gain_iced_default.png" width="300"> |
+| [gain-slint](examples/gain-slint/) | Effect | Slint | <img src="screenshots/gain_slint_default.png" width="300"> |
 
 ## Features
 
