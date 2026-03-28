@@ -1,10 +1,10 @@
 //! Built-in editor using the CPU render backend.
 //!
-//! Renders parameter widgets via `RenderBackend`. Uses tiny-skia and blits
-//! RGBA pixels to a CALayer. For GPU rendering, see the `truce-gpu` crate
+//! Renders parameter widgets via `RenderBackend`. Uses tiny-skia for
+//! software rasterization and baseview + wgpu for window management
+//! and pixel blitting. For GPU rendering, see the `truce-gpu` crate
 //! which provides `GpuEditor` wrapping this editor with wgpu.
 
-use std::ffi::c_void;
 use std::sync::Arc;
 
 use truce_core::editor::{Editor, EditorContext, RawWindowHandle};
@@ -14,7 +14,6 @@ use crate::backend_cpu::CpuBackend;
 use crate::interaction::{DropdownState, InteractionState};
 use crate::layout::{GridLayout, Layout, PluginLayout, compute_section_offsets,
                      GRID_GAP, GRID_PADDING, GRID_HEADER_H, GRID_SECTION_H};
-use crate::platform::{PlatformView, ViewCallbacks};
 use crate::render::RenderBackend;
 use crate::theme::Theme;
 use crate::widgets;
@@ -22,7 +21,7 @@ use crate::widgets;
 /// Built-in editor that renders parameter widgets to a pixel buffer.
 ///
 /// Uses the CPU backend (tiny-skia) for software rasterization. When
-/// `open()` is called, creates a platform view and blits pixels at ~60fps.
+/// `open()` is called, creates a baseview window and blits pixels via wgpu.
 pub struct BuiltinEditor<P: Params> {
     params: Arc<P>,
     layout: Layout,
@@ -30,12 +29,9 @@ pub struct BuiltinEditor<P: Params> {
     backend: Option<CpuBackend>,
     interaction: InteractionState,
     context: Option<EditorContext>,
-    view: Option<PlatformView>,
-    /// Leaked self-pointer for C callbacks. Cleaned up on close().
-    self_ptr: *mut c_void,
+    window: Option<baseview::WindowHandle>,
 }
 
-// Raw window handles and self_ptr are only accessed from the host UI thread.
 unsafe impl<P: Params> Send for BuiltinEditor<P> {}
 
 impl<P: Params + 'static> BuiltinEditor<P> {
@@ -47,8 +43,7 @@ impl<P: Params + 'static> BuiltinEditor<P> {
             backend: None,
             interaction: InteractionState::new(),
             context: None,
-            view: None,
-            self_ptr: std::ptr::null_mut(),
+            window: None,
         }
     }
 
@@ -60,8 +55,7 @@ impl<P: Params + 'static> BuiltinEditor<P> {
             backend: None,
             interaction: InteractionState::new(),
             context: None,
-            view: None,
-            self_ptr: std::ptr::null_mut(),
+            window: None,
         }
     }
 
@@ -73,8 +67,7 @@ impl<P: Params + 'static> BuiltinEditor<P> {
             backend: None,
             interaction: InteractionState::new(),
             context: None,
-            view: None,
-            self_ptr: std::ptr::null_mut(),
+            window: None,
         }
     }
 
@@ -761,56 +754,123 @@ pub unsafe fn update_interaction<P: Params + 'static>(editor: &mut BuiltinEditor
     }
 }
 
-unsafe extern "C" fn cb_render<P: Params + 'static>(
-    ctx: *mut c_void,
-    out_w: *mut u32,
-    out_h: *mut u32,
-) -> *const u8 {
-    let editor = &mut *(ctx as *mut BuiltinEditor<P>);
-    update_interaction(editor);
-    editor.render();
-    let backend = match editor.backend.as_ref() {
-        Some(b) => b,
-        None => return std::ptr::null(),
-    };
-    *out_w = backend.width();
-    *out_h = backend.height();
-    backend.data().as_ptr()
+// ---------------------------------------------------------------------------
+// Baseview WindowHandler — drives the CPU render loop via wgpu blit
+// ---------------------------------------------------------------------------
+
+struct BuiltinWindowHandler<P: Params> {
+    /// Raw pointer to the BuiltinEditor owned by the host. Valid between
+    /// open() and close(). Only accessed from the GUI thread.
+    editor: *mut BuiltinEditor<P>,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    surface: wgpu::Surface<'static>,
+    surface_config: wgpu::SurfaceConfiguration,
+    blit: crate::blit::BlitPipeline,
+    scale: f32,
+    last_cursor: (f32, f32),
+    last_click_time: Option<std::time::Instant>,
+    last_click_pos: (f32, f32),
 }
 
-unsafe extern "C" fn cb_mouse_down<P: Params + 'static>(ctx: *mut c_void, x: f32, y: f32) {
-    let editor = &mut *(ctx as *mut BuiltinEditor<P>);
-    editor.on_mouse_down(x, y);
-}
+// SAFETY: The raw pointer is only accessed from the GUI thread.
+// baseview requires Send for WindowHandler.
+unsafe impl<P: Params> Send for BuiltinWindowHandler<P> {}
 
-unsafe extern "C" fn cb_mouse_dragged<P: Params + 'static>(ctx: *mut c_void, x: f32, y: f32) {
-    let editor = &mut *(ctx as *mut BuiltinEditor<P>);
-    editor.on_mouse_dragged(x, y);
-}
+impl<P: Params + 'static> baseview::WindowHandler for BuiltinWindowHandler<P> {
+    fn on_frame(&mut self, _window: &mut baseview::Window) {
+        let editor = unsafe { &mut *self.editor };
 
-unsafe extern "C" fn cb_mouse_up<P: Params + 'static>(ctx: *mut c_void, x: f32, y: f32) {
-    let editor = &mut *(ctx as *mut BuiltinEditor<P>);
-    editor.on_mouse_up(x, y);
-}
+        unsafe { update_interaction(editor) };
+        editor.render();
 
-unsafe extern "C" fn cb_scroll<P: Params + 'static>(
-    ctx: *mut c_void,
-    x: f32,
-    y: f32,
-    delta_y: f32,
-) {
-    let editor = &mut *(ctx as *mut BuiltinEditor<P>);
-    editor.on_scroll(x, y, delta_y);
-}
+        if let Some(pixels) = editor.pixel_data() {
+            self.blit.update(&self.queue, pixels);
+        }
 
-unsafe extern "C" fn cb_double_click<P: Params + 'static>(ctx: *mut c_void, x: f32, y: f32) {
-    let editor = &mut *(ctx as *mut BuiltinEditor<P>);
-    editor.on_double_click(x, y);
-}
+        let frame = match self.surface.get_current_texture() {
+            Ok(f) => f,
+            Err(_) => return,
+        };
+        let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let mut encoder = self.device.create_command_encoder(
+            &wgpu::CommandEncoderDescriptor { label: None },
+        );
+        self.blit.render(&mut encoder, &view);
+        self.queue.submit(std::iter::once(encoder.finish()));
+        frame.present();
+    }
 
-unsafe extern "C" fn cb_mouse_moved<P: Params + 'static>(ctx: *mut c_void, x: f32, y: f32) -> u8 {
-    let editor = &mut *(ctx as *mut BuiltinEditor<P>);
-    editor.on_mouse_moved(x, y) as u8
+    fn on_event(
+        &mut self,
+        _window: &mut baseview::Window,
+        event: baseview::Event,
+    ) -> baseview::EventStatus {
+        match event {
+            baseview::Event::Mouse(mouse) => {
+                let editor = unsafe { &mut *self.editor };
+                match mouse {
+                    baseview::MouseEvent::CursorMoved { position, .. } => {
+                        let x = position.x as f32 * self.scale;
+                        let y = position.y as f32 * self.scale;
+                        self.last_cursor = (x, y);
+                        editor.on_mouse_moved(x, y);
+                    }
+                    baseview::MouseEvent::ButtonPressed {
+                        button: baseview::MouseButton::Left, ..
+                    } => {
+                        let (x, y) = self.last_cursor;
+                        // Double-click detection (300ms, 4px threshold)
+                        let now = std::time::Instant::now();
+                        let is_double = self.last_click_time.map_or(false, |t| {
+                            now.duration_since(t).as_millis() < 300
+                                && (x - self.last_click_pos.0).abs() < 4.0
+                                && (y - self.last_click_pos.1).abs() < 4.0
+                        });
+                        self.last_click_time = Some(now);
+                        self.last_click_pos = (x, y);
+
+                        if is_double {
+                            editor.on_double_click(x, y);
+                            self.last_click_time = None; // reset so triple-click doesn't fire
+                        } else {
+                            editor.on_mouse_down(x, y);
+                        }
+                    }
+                    baseview::MouseEvent::ButtonReleased {
+                        button: baseview::MouseButton::Left, ..
+                    } => {
+                        let (x, y) = self.last_cursor;
+                        editor.on_mouse_up(x, y);
+                    }
+                    baseview::MouseEvent::WheelScrolled { delta, .. } => {
+                        let dy = match delta {
+                            baseview::ScrollDelta::Lines { y, .. } => y * 10.0,
+                            baseview::ScrollDelta::Pixels { y, .. } => y,
+                        };
+                        let (x, y) = self.last_cursor;
+                        editor.on_scroll(x, y, dy);
+                    }
+                    baseview::MouseEvent::CursorLeft => {
+                        editor.on_mouse_moved(-1.0, -1.0);
+                    }
+                    _ => return baseview::EventStatus::Ignored,
+                }
+                baseview::EventStatus::Captured
+            }
+            baseview::Event::Window(baseview::WindowEvent::Resized(info)) => {
+                let pw = info.physical_size().width;
+                let ph = info.physical_size().height;
+                self.scale = info.scale() as f32;
+                self.surface_config.width = pw;
+                self.surface_config.height = ph;
+                self.surface.configure(&self.device, &self.surface_config);
+                self.blit.resize(&self.device, pw, ph);
+                baseview::EventStatus::Captured
+            }
+            _ => baseview::EventStatus::Ignored,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -849,9 +909,6 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
     }
 
     fn scale_factor(&self) -> f64 {
-        // BuiltinEditor reports size in logical points. The NSView is created
-        // in points and AppKit handles Retina scaling. Return 1.0 so format
-        // wrappers pass the logical size to the host unchanged.
         1.0
     }
 
@@ -869,42 +926,104 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
         // Render initial frame
         self.render();
 
-        // Create platform view if we have a parent window
-        let parent_ptr = match parent {
-            RawWindowHandle::AppKit(ptr) => ptr,
-            #[allow(unused)]
-            _ => std::ptr::null_mut(),
+        let scale = crate::platform::query_backing_scale(&parent);
+        let (lw, lh) = (w as f64, h as f64);
+
+        let options = baseview::WindowOpenOptions {
+            title: String::from("truce"),
+            size: baseview::Size::new(lw, lh),
+            scale: baseview::WindowScalePolicy::SystemScaleFactor,
         };
 
-        if !parent_ptr.is_null() {
-            let self_ptr = self as *mut BuiltinEditor<P> as *mut c_void;
-            self.self_ptr = self_ptr;
+        let parent_wrapper = crate::platform::ParentWindow(parent);
 
-            let callbacks = ViewCallbacks {
-                render: Some(cb_render::<P>),
-                mouse_down: Some(cb_mouse_down::<P>),
-                mouse_dragged: Some(cb_mouse_dragged::<P>),
-                mouse_up: Some(cb_mouse_up::<P>),
-                scroll: Some(cb_scroll::<P>),
-                double_click: Some(cb_double_click::<P>),
-                mouse_moved: Some(cb_mouse_moved::<P>),
-            };
+        let editor_addr = self as *mut BuiltinEditor<P> as usize;
+        let scale_f32 = scale as f32;
+        let phys_w = (lw * scale) as u32;
+        let phys_h = (lh * scale) as u32;
 
-            self.view = unsafe { PlatformView::new(parent_ptr, w, h, self_ptr, &callbacks) };
-        }
+        let window = baseview::Window::open_parented(
+            &parent_wrapper,
+            options,
+            move |window: &mut baseview::Window| {
+                let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+                    backends: wgpu::Backends::PRIMARY,
+                    ..Default::default()
+                });
+
+                let surface = unsafe { crate::platform::create_wgpu_surface(&instance, window) }
+                    .expect("failed to create wgpu surface");
+
+                let adapter = pollster::block_on(instance.request_adapter(
+                    &wgpu::RequestAdapterOptions {
+                        power_preference: wgpu::PowerPreference::LowPower,
+                        compatible_surface: Some(&surface),
+                        force_fallback_adapter: false,
+                    },
+                ))
+                .expect("no suitable GPU adapter");
+
+                let (device, queue) = pollster::block_on(adapter.request_device(
+                    &wgpu::DeviceDescriptor {
+                        label: Some("truce-gui"),
+                        required_features: wgpu::Features::empty(),
+                        required_limits: wgpu::Limits::downlevel_defaults(),
+                        memory_hints: wgpu::MemoryHints::Performance,
+                    },
+                    None,
+                ))
+                .expect("failed to create wgpu device");
+
+                let caps = surface.get_capabilities(&adapter);
+                let format = caps.formats.iter()
+                    .find(|f| f.is_srgb())
+                    .copied()
+                    .unwrap_or(caps.formats[0]);
+
+                let surface_config = wgpu::SurfaceConfiguration {
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                    format,
+                    width: phys_w,
+                    height: phys_h,
+                    present_mode: wgpu::PresentMode::AutoVsync,
+                    desired_maximum_frame_latency: 2,
+                    alpha_mode: wgpu::CompositeAlphaMode::Auto,
+                    view_formats: vec![],
+                };
+                surface.configure(&device, &surface_config);
+
+                let blit = crate::blit::BlitPipeline::new(&device, format, phys_w, phys_h);
+
+                BuiltinWindowHandler {
+                    editor: editor_addr as *mut BuiltinEditor<P>,
+                    device,
+                    queue,
+                    surface,
+                    surface_config,
+                    blit,
+                    scale: scale_f32,
+                    last_cursor: (0.0, 0.0),
+                    last_click_time: None,
+                    last_click_pos: (0.0, 0.0),
+                }
+            },
+        );
+
+        self.window = Some(window);
     }
 
     fn close(&mut self) {
-        self.view = None;
+        if let Some(mut window) = self.window.take() {
+            window.close();
+        }
         self.context = None;
         self.backend = None;
-        self.self_ptr = std::ptr::null_mut();
     }
 
     fn idle(&mut self) {
-        // Platform view handles its own repaint timer.
-        // If no platform view (standalone mode), render for external consumption.
-        if self.view.is_none() {
+        // Baseview drives its own frame loop via on_frame().
+        // If no window (standalone/headless), render for external consumption.
+        if self.window.is_none() {
             self.render();
         }
     }

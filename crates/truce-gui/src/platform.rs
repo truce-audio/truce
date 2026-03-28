@@ -1,89 +1,158 @@
-//! Platform-specific view creation and management.
+//! Platform window bridging for baseview.
 //!
-//! On macOS, creates a child NSView via the ObjC shim in `shim/macos_view.m`.
-//! On other platforms, this is a stub (no-op).
+//! Bridges truce's `RawWindowHandle` to baseview's `HasRawWindowHandle`
+//! (raw-window-handle 0.5), and provides scale factor querying and
+//! wgpu surface creation.
 
-use std::ffi::c_void;
+use raw_window_handle::{HasRawWindowHandle, RawWindowHandle as RwhRawWindowHandle};
+use truce_core::editor::RawWindowHandle;
 
-/// Callbacks from the platform view into Rust.
-#[repr(C)]
-pub struct ViewCallbacks {
-    pub render:
-        Option<unsafe extern "C" fn(ctx: *mut c_void, w: *mut u32, h: *mut u32) -> *const u8>,
-    pub mouse_down: Option<unsafe extern "C" fn(ctx: *mut c_void, x: f32, y: f32)>,
-    pub mouse_dragged: Option<unsafe extern "C" fn(ctx: *mut c_void, x: f32, y: f32)>,
-    pub mouse_up: Option<unsafe extern "C" fn(ctx: *mut c_void, x: f32, y: f32)>,
-    pub scroll: Option<unsafe extern "C" fn(ctx: *mut c_void, x: f32, y: f32, delta_y: f32)>,
-    pub double_click: Option<unsafe extern "C" fn(ctx: *mut c_void, x: f32, y: f32)>,
-    pub mouse_moved: Option<unsafe extern "C" fn(ctx: *mut c_void, x: f32, y: f32) -> u8>,
-}
+/// Newtype bridging truce's `RawWindowHandle` to baseview's
+/// `HasRawWindowHandle` (raw-window-handle 0.5).
+pub struct ParentWindow(pub RawWindowHandle);
 
-#[cfg(target_os = "macos")]
-extern "C" {
-    fn truce_view_create(
-        parent: *mut c_void,
-        width: u32,
-        height: u32,
-        ctx: *mut c_void,
-        callbacks: *const ViewCallbacks,
-    ) -> *mut c_void;
-
-    fn truce_view_destroy(view_handle: *mut c_void);
-
-    /// Returns the main screen's backing scale factor (Retina = 2.0).
-    pub fn truce_platform_backing_scale() -> f64;
-}
-
-/// Opaque handle to a platform view.
-pub struct PlatformView {
-    handle: *mut c_void,
-}
-
-// Safety: the handle is only accessed from the main/GUI thread
-unsafe impl Send for PlatformView {}
-
-impl PlatformView {
-    /// Create a platform view as a child of the given parent window.
-    ///
-    /// # Safety
-    /// `parent` must be a valid NSView* (macOS), HWND (Windows), or X11 Window.
-    /// `ctx` must remain valid for the lifetime of the view.
-    /// `callbacks` must remain valid for the lifetime of the view.
-    #[cfg(target_os = "macos")]
-    pub unsafe fn new(
-        parent: *mut c_void,
-        width: u32,
-        height: u32,
-        ctx: *mut c_void,
-        callbacks: &ViewCallbacks,
-    ) -> Option<Self> {
-        let handle = truce_view_create(parent, width, height, ctx, callbacks);
-        if handle.is_null() {
-            None
-        } else {
-            Some(PlatformView { handle })
-        }
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    pub unsafe fn new(
-        _parent: *mut c_void,
-        _width: u32,
-        _height: u32,
-        _ctx: *mut c_void,
-        _callbacks: &ViewCallbacks,
-    ) -> Option<Self> {
-        None // Not implemented on this platform yet
-    }
-}
-
-impl Drop for PlatformView {
-    fn drop(&mut self) {
-        if !self.handle.is_null() {
-            #[cfg(target_os = "macos")]
-            unsafe {
-                truce_view_destroy(self.handle);
+unsafe impl HasRawWindowHandle for ParentWindow {
+    fn raw_window_handle(&self) -> RwhRawWindowHandle {
+        match self.0 {
+            RawWindowHandle::AppKit(ptr) => {
+                let mut handle = raw_window_handle::AppKitWindowHandle::empty();
+                handle.ns_view = ptr;
+                RwhRawWindowHandle::AppKit(handle)
+            }
+            RawWindowHandle::Win32(ptr) => {
+                let mut handle = raw_window_handle::Win32WindowHandle::empty();
+                handle.hwnd = ptr;
+                RwhRawWindowHandle::Win32(handle)
+            }
+            RawWindowHandle::X11(window_id) => {
+                let mut handle = raw_window_handle::XlibWindowHandle::empty();
+                handle.window = window_id;
+                RwhRawWindowHandle::Xlib(handle)
             }
         }
     }
+}
+
+/// Query the backing scale factor from the parent NSView's window.
+#[cfg(target_os = "macos")]
+pub fn query_backing_scale(parent: &RawWindowHandle) -> f64 {
+    use objc::{msg_send, sel, sel_impl};
+
+    let ns_view_ptr = match parent {
+        RawWindowHandle::AppKit(ptr) => *ptr,
+        _ => return 1.0,
+    };
+
+    if ns_view_ptr.is_null() {
+        return 1.0;
+    }
+
+    unsafe {
+        let ns_view = ns_view_ptr as cocoa::base::id;
+        let window: cocoa::base::id = msg_send![ns_view, window];
+        let scale: f64 = if !window.is_null() {
+            msg_send![window, backingScaleFactor]
+        } else {
+            let screen: cocoa::base::id = msg_send![objc::class!(NSScreen), mainScreen];
+            if !screen.is_null() {
+                msg_send![screen, backingScaleFactor]
+            } else {
+                2.0
+            }
+        };
+        if scale < 1.0 { 1.0 } else { scale }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn query_backing_scale(_parent: &RawWindowHandle) -> f64 {
+    1.0
+}
+
+/// Query the main screen's backing scale factor (no parent window needed).
+#[cfg(target_os = "macos")]
+pub fn main_screen_scale() -> f64 {
+    use objc::{msg_send, sel, sel_impl};
+    unsafe {
+        let screen: cocoa::base::id = msg_send![objc::class!(NSScreen), mainScreen];
+        if !screen.is_null() {
+            let scale: f64 = msg_send![screen, backingScaleFactor];
+            if scale < 1.0 { 1.0 } else { scale }
+        } else {
+            1.0
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn main_screen_scale() -> f64 {
+    1.0
+}
+
+/// Bridge a baseview raw-window-handle 0.5 to a wgpu-compatible
+/// `SurfaceTargetUnsafe` using rwh 0.6 types.
+///
+/// # Safety
+/// The window handle must be valid for the lifetime of the returned surface.
+pub unsafe fn create_wgpu_surface(
+    instance: &wgpu::Instance,
+    window: &baseview::Window,
+) -> Option<wgpu::Surface<'static>> {
+    let rwh = window.raw_window_handle();
+    let surface_target = match rwh {
+        #[cfg(target_os = "macos")]
+        RwhRawWindowHandle::AppKit(handle) => {
+            let ns_view = handle.ns_view;
+            if ns_view.is_null() {
+                return None;
+            }
+            let rwh6_window = wgpu::rwh::RawWindowHandle::AppKit(
+                wgpu::rwh::AppKitWindowHandle::new(
+                    std::ptr::NonNull::new(ns_view)?,
+                ),
+            );
+            let rwh6_display = wgpu::rwh::RawDisplayHandle::AppKit(
+                wgpu::rwh::AppKitDisplayHandle::new(),
+            );
+            wgpu::SurfaceTargetUnsafe::RawHandle {
+                raw_display_handle: rwh6_display,
+                raw_window_handle: rwh6_window,
+            }
+        }
+        #[cfg(target_os = "windows")]
+        RwhRawWindowHandle::Win32(handle) => {
+            let hwnd = handle.hwnd;
+            if hwnd.is_null() {
+                return None;
+            }
+            let rwh6_window = wgpu::rwh::RawWindowHandle::Win32(
+                wgpu::rwh::Win32WindowHandle::new(
+                    std::num::NonZero::new(hwnd as isize)?,
+                ),
+            );
+            let rwh6_display = wgpu::rwh::RawDisplayHandle::Windows(
+                wgpu::rwh::WindowsDisplayHandle::new(),
+            );
+            wgpu::SurfaceTargetUnsafe::RawHandle {
+                raw_display_handle: rwh6_display,
+                raw_window_handle: rwh6_window,
+            }
+        }
+        #[cfg(target_os = "linux")]
+        RwhRawWindowHandle::Xlib(handle) => {
+            let rwh6_window = wgpu::rwh::RawWindowHandle::Xlib(
+                wgpu::rwh::XlibWindowHandle::new(handle.window),
+            );
+            let rwh6_display = wgpu::rwh::RawDisplayHandle::Xlib(
+                wgpu::rwh::XlibDisplayHandle::new(None, 0),
+            );
+            wgpu::SurfaceTargetUnsafe::RawHandle {
+                raw_display_handle: rwh6_display,
+                raw_window_handle: rwh6_window,
+            }
+        }
+        _ => return None,
+    };
+
+    instance.create_surface_unsafe(surface_target).ok()
 }

@@ -11,6 +11,11 @@ truce-core = { workspace = true }
 truce-params = { workspace = true }
 tiny-skia = "0.12"
 fontdue = "0.9"
+baseview = { git = "https://github.com/RustAudio/baseview.git" }
+raw-window-handle = "0.5"
+wgpu = "24"
+pollster = "0.4"
 
-[build-dependencies]
-cc = "1"
+[target.'cfg(target_os = "macos")'.dependencies]
+cocoa = "0.26"
+objc = "0.2"
