@@ -214,7 +214,7 @@ impl PluginLogic for Arpeggio {
             GridWidget::knob(P::Rate, "Rate"),
             GridWidget::knob(P::Gate, "Gate"),
             GridWidget::knob(P::Octaves, "Octaves"),
-            GridWidget::selector(P::Pattern, "Pattern"),
+            GridWidget::dropdown(P::Pattern, "Pattern"),
         ], vec![])
     }
 }
