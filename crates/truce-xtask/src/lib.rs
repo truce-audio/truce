@@ -22,6 +22,7 @@ pub fn run(args: &[String]) -> ExitCode {
         "install" => cmd_install(&args[1..]),
         "build" => cmd_build(&args[1..]),
         "package" => cmd_package(&args[1..]),
+        "remove" => cmd_remove(&args[1..]),
         "run" => cmd_run(&args[1..]),
         "new" => cmd_new(&args[1..]),
         "test" => cmd_test(),
@@ -77,6 +78,12 @@ Commands:
 
   clean
       Clear all AU/DAW caches and restart audio daemons.
+
+  remove [--clap] [--vst3] [--vst2] [--au2] [--au3] [--aax] [-p <suffix>] [--dry-run] [--yes]
+      Remove installed plugin bundles for this project.
+      Default: all formats, all plugins. Asks for confirmation.
+      --dry-run    Show what would be removed without deleting
+      --yes        Skip confirmation prompt
 
   nuke [-p <suffix>]
       Nuclear reset: remove AU v3 apps, disable pluginkit registrations,
@@ -2104,6 +2111,281 @@ fn cmd_nuke(args: &[String]) -> Res {
 
     eprintln!("\nNuke complete. Wait a few seconds, then run:");
     eprintln!("  cargo xtask install --au3");
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// remove — uninstall plugin bundles
+// ---------------------------------------------------------------------------
+
+struct RemoveTarget {
+    format: &'static str,
+    path: PathBuf,
+    needs_sudo: bool,
+}
+
+fn confirm_prompt(message: &str) -> bool {
+    eprint!("{message} [y/N] ");
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input).ok();
+    matches!(input.trim(), "y" | "Y" | "yes" | "YES")
+}
+
+fn unregister_au3(config: &Config, plugin: &PluginDef, app_path: &Path) {
+    let vid = config.vendor.id.trim_start_matches("com.");
+    for pattern in [
+        format!("com.{}.{}.v3.ext", vid, plugin.suffix),
+        format!("com.{}.{}.au", vid, plugin.suffix),
+    ] {
+        let _ = Command::new("pluginkit")
+            .args(["-e", "ignore", "-i", &pattern])
+            .output();
+        let _ = Command::new("pluginkit")
+            .args(["-r", "-i", &pattern])
+            .output();
+    }
+    let _ = Command::new(
+        "/System/Library/Frameworks/CoreServices.framework/\
+         Frameworks/LaunchServices.framework/Support/lsregister",
+    )
+    .args(["-u", app_path.to_str().unwrap_or("")])
+    .output();
+}
+
+fn clear_au_caches() {
+    let home = dirs::home_dir().unwrap();
+    for dir in [
+        home.join("Library/Caches/AudioUnitCache"),
+        home.join("Library/Containers/com.apple.garageband10/Data/Library/Caches/AudioUnitCache"),
+        home.join("Library/Containers/com.apple.logicpro10/Data/Library/Caches/AudioUnitCache"),
+        home.join("Library/Caches/com.apple.logic10/AudioUnitCache"),
+    ] {
+        let _ = fs::remove_dir_all(&dir);
+    }
+    let _ = Command::new("killall")
+        .args(["-9", "AudioComponentRegistrar"])
+        .output();
+}
+
+fn cmd_remove(args: &[String]) -> Res {
+    let config = load_config()?;
+
+    let mut clap = false;
+    let mut vst3 = false;
+    let mut vst2 = false;
+    let mut au2 = false;
+    let mut au3 = false;
+    let mut aax = false;
+    let mut dry_run = false;
+    let mut yes = false;
+    let mut plugin_filter: Option<String> = None;
+
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--clap" => clap = true,
+            "--vst3" => vst3 = true,
+            "--vst2" => vst2 = true,
+            "--au2" => au2 = true,
+            "--au3" => au3 = true,
+            "--aax" => aax = true,
+            "--dry-run" => dry_run = true,
+            "--yes" | "-y" => yes = true,
+            "-p" => {
+                i += 1;
+                plugin_filter = Some(
+                    args.get(i)
+                        .cloned()
+                        .ok_or("-p requires a plugin suffix")?,
+                );
+            }
+            other => return Err(format!("Unknown flag: {other}").into()),
+        }
+        i += 1;
+    }
+
+    // Default: all formats if none specified
+    if !clap && !vst3 && !vst2 && !au2 && !au3 && !aax {
+        clap = true;
+        vst3 = true;
+        vst2 = true;
+        au2 = true;
+        au3 = true;
+        aax = true;
+    }
+
+    // Filter plugins
+    let plugins: Vec<&PluginDef> = if let Some(ref filter) = plugin_filter {
+        let matched: Vec<_> = config
+            .plugin
+            .iter()
+            .filter(|p| p.suffix == *filter)
+            .collect();
+        if matched.is_empty() {
+            return Err(format!(
+                "No plugin with suffix '{filter}'. Available: {}",
+                config
+                    .plugin
+                    .iter()
+                    .map(|p| p.suffix.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+            .into());
+        }
+        matched
+    } else {
+        config.plugin.iter().collect()
+    };
+
+    let home = dirs::home_dir().unwrap();
+
+    // Discover installed bundles
+    let mut targets: Vec<RemoveTarget> = Vec::new();
+
+    for p in &plugins {
+        if clap {
+            let path = home.join(format!("Library/Audio/Plug-Ins/CLAP/{}.clap", p.name));
+            if path.exists() {
+                targets.push(RemoveTarget {
+                    format: "CLAP",
+                    path,
+                    needs_sudo: false,
+                });
+            }
+        }
+        if vst3 {
+            let path = PathBuf::from(format!(
+                "/Library/Audio/Plug-Ins/VST3/{}.vst3",
+                p.name
+            ));
+            if path.exists() {
+                targets.push(RemoveTarget {
+                    format: "VST3",
+                    path,
+                    needs_sudo: true,
+                });
+            }
+        }
+        if vst2 {
+            let path = home.join(format!("Library/Audio/Plug-Ins/VST/{}.vst", p.name));
+            if path.exists() {
+                targets.push(RemoveTarget {
+                    format: "VST2",
+                    path,
+                    needs_sudo: false,
+                });
+            }
+        }
+        if au2 {
+            let path = PathBuf::from(format!(
+                "/Library/Audio/Plug-Ins/Components/{}.component",
+                p.name
+            ));
+            if path.exists() {
+                targets.push(RemoveTarget {
+                    format: "AU v2",
+                    path,
+                    needs_sudo: true,
+                });
+            }
+        }
+        if au3 {
+            let path = PathBuf::from(format!("/Applications/{} v3.app", p.name));
+            if path.exists() {
+                targets.push(RemoveTarget {
+                    format: "AU v3",
+                    path,
+                    needs_sudo: true,
+                });
+            }
+        }
+        if aax {
+            let path = PathBuf::from(format!(
+                "/Library/Application Support/Avid/Audio/Plug-Ins/{}.aaxplugin",
+                p.name
+            ));
+            if path.exists() {
+                targets.push(RemoveTarget {
+                    format: "AAX",
+                    path,
+                    needs_sudo: true,
+                });
+            }
+        }
+    }
+
+    if targets.is_empty() {
+        eprintln!("No installed plugins found to remove.");
+        return Ok(());
+    }
+
+    // Show summary
+    eprintln!("The following plugins will be removed:\n");
+    for t in &targets {
+        eprintln!("  {:<5} {}", t.format, t.path.display());
+    }
+    eprintln!();
+
+    if dry_run {
+        eprintln!("Dry run — nothing was removed.");
+        return Ok(());
+    }
+
+    if !yes && !confirm_prompt(&format!("Remove {} bundle(s)?", targets.len())) {
+        eprintln!("Cancelled.");
+        return Ok(());
+    }
+
+    // Remove bundles
+    let mut removed_au = false;
+    let mut errors = 0u32;
+
+    for t in &targets {
+        // AU v3 special handling: unregister before deleting
+        if t.format == "AU v3" {
+            // Find the plugin def whose name matches this AU v3 app
+            for p in &plugins {
+                let expected = format!("/Applications/{} v3.app", p.name);
+                if t.path == Path::new(&expected) {
+                    unregister_au3(&config, p, &t.path);
+                }
+            }
+            removed_au = true;
+        }
+        if t.format == "AU v2" {
+            removed_au = true;
+        }
+
+        let result = if t.needs_sudo {
+            run_sudo("rm", &["-rf", t.path.to_str().unwrap()])
+        } else {
+            fs::remove_dir_all(&t.path)
+                .or_else(|_| fs::remove_file(&t.path))
+                .map_err(|e| e.into())
+        };
+
+        let name = t.path.file_name().unwrap_or_default().to_string_lossy();
+        match result {
+            Ok(()) => eprintln!("  \u{2713} {:<5} {}", t.format, name),
+            Err(e) => {
+                eprintln!("  \u{2717} {:<5} {} ({})", t.format, name, e);
+                errors += 1;
+            }
+        }
+    }
+
+    // Clear AU caches if any AU bundles were removed
+    if removed_au {
+        clear_au_caches();
+        eprintln!("\nCleared AU caches.");
+    }
+
+    if errors > 0 {
+        eprintln!("\n{errors} error(s). Check permissions or run with sudo.");
+    } else {
+        eprintln!("\nDone. Restart your DAW to rescan.");
+    }
     Ok(())
 }
 
