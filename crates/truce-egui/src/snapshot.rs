@@ -9,14 +9,18 @@ use crate::ParamState;
 ///
 /// `width` and `height` are in logical points. The output pixel buffer
 /// is `width * ppp × height * ppp` physical pixels.
-pub fn render_to_pixels(
+///
+/// Uses `P::default_for_gui()` to provide accurate parameter values
+/// and formatting in the snapshot.
+pub fn render_to_pixels<P: truce_params::Params + 'static>(
     width: u32,
     height: u32,
     pixels_per_point: f32,
     font: Option<&'static [u8]>,
     ui_fn: impl Fn(&egui::Context, &ParamState),
 ) -> Vec<u8> {
-    let state = ParamState::mock();
+    let params = std::sync::Arc::new(P::default_for_gui());
+    let state = ParamState::from_params(params);
     let ctx = egui::Context::default();
     ctx.set_visuals(crate::theme::dark());
 
@@ -205,7 +209,7 @@ pub fn render_to_pixels(
 /// exceeds `max_diff_pixels`.
 ///
 /// The snapshot directory is resolved relative to the workspace root.
-pub fn assert_snapshot(
+pub fn assert_snapshot<P: truce_params::Params + 'static>(
     snapshot_dir: &str,
     name: &str,
     width: u32,
@@ -215,7 +219,7 @@ pub fn assert_snapshot(
     font: Option<&'static [u8]>,
     ui_fn: impl Fn(&egui::Context, &ParamState),
 ) {
-    let pixels = render_to_pixels(width, height, pixels_per_point, font, ui_fn);
+    let pixels = render_to_pixels::<P>(width, height, pixels_per_point, font, ui_fn);
     let phys_w = (width as f32 * pixels_per_point) as u32;
     let phys_h = (height as f32 * pixels_per_point) as u32;
 

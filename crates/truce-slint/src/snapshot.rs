@@ -21,7 +21,7 @@ use crate::platform;
 ///
 /// `scale` is the DPI scale factor (2.0 for Retina). The returned pixel
 /// buffer is `(width * scale) × (height * scale)` physical pixels.
-pub fn render_to_pixels(
+pub fn render_to_pixels<P: truce_params::Params + 'static>(
     width: u32,
     height: u32,
     scale: f32,
@@ -38,7 +38,8 @@ pub fn render_to_pixels(
         scale_factor: scale,
     });
 
-    let state = ParamState::mock();
+    let params = std::sync::Arc::new(P::default_for_gui());
+    let state = ParamState::from_params(params);
     let sync_fn = setup(state.clone());
 
     // Sync params so the UI shows default values.
@@ -77,7 +78,7 @@ pub fn render_to_pixels(
 /// On first run (no reference exists), saves the reference and returns.
 /// On subsequent runs, compares pixel-by-pixel and panics if the diff
 /// exceeds `max_diff_pixels`.
-pub fn assert_snapshot(
+pub fn assert_snapshot<P: truce_params::Params + 'static>(
     snapshot_dir: &str,
     name: &str,
     width: u32,
@@ -86,7 +87,7 @@ pub fn assert_snapshot(
     max_diff_pixels: usize,
     setup: impl FnOnce(ParamState) -> Box<dyn Fn(&ParamState)>,
 ) {
-    let (pixels, width, height) = render_to_pixels(width, height, scale, setup);
+    let (pixels, width, height) = render_to_pixels::<P>(width, height, scale, setup);
 
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     // Walk up to workspace root (truce-slint → crates → root)

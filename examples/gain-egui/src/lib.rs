@@ -154,7 +154,7 @@ mod tests {
 
     #[test]
     fn gui_snapshot() {
-        truce_egui::snapshot::assert_snapshot(
+        truce_egui::snapshot::assert_snapshot::<GainParams>(
             "screenshots", "gain_egui_default",
             WINDOW_W, WINDOW_H, 2.0, 0,
             Some(truce_gui::font::JETBRAINS_MONO),
