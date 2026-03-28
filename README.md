@@ -118,8 +118,7 @@ code needed. For custom UIs, pick a framework:
 | [Slint](docs/gui/slint.md) | `truce-slint` | Declarative `.slint` markup, build-time compilation, IDE preview |
 | [Raw](docs/gui/raw-window-handle.md) | `truce-core` | Full control — Metal, OpenGL, Skia, anything |
 
-All backends produce consistent knobs, meters, and controls with a
-shared dark theme. See [GUI backends](docs/gui/README.md) for detailed docs.
+See [GUI backends](docs/gui/README.md) for detailed docs.
 
 ## Format Support
 
@@ -136,11 +135,11 @@ shared dark theme. See [GUI backends](docs/gui/README.md) for detailed docs.
 
 | Plugin | Type | GUI | Screenshot |
 |--------|------|-----|-----------|
-| [gain](examples/gain/) | Effect | Built-in | ![](screenshots/gain_default.png) |
-| [eq](examples/eq/) | Effect | Built-in | ![](screenshots/eq_default.png) |
-| [synth](examples/synth/) | Instrument | Built-in | ![](screenshots/synth_default.png) |
-| [transpose](examples/transpose/) | MIDI | Built-in | ![](screenshots/transpose_default.png) |
-| [arpeggio](examples/arpeggio/) | MIDI | Built-in | ![](screenshots/arpeggio_default.png) |
+| [gain](examples/gain/) | Effect | Built-in | <img src="screenshots/gain_default.png" width="50%"> |
+| [eq](examples/eq/) | Effect | Built-in | <img src="screenshots/eq_default.png" width="50%"> |
+| [synth](examples/synth/) | Instrument | Built-in | <img src="screenshots/synth_default.png" width="50%"> |
+| [transpose](examples/transpose/) | MIDI | Built-in | <img src="screenshots/transpose_default.png" width="50%"> |
+| [arpeggio](examples/arpeggio/) | MIDI | Built-in | <img src="screenshots/arpeggio_default.png" width="50%"> |
 | [gain-egui](examples/gain-egui/) | Effect | egui | ![](screenshots/gain_egui_default.png) |
 | [gain-iced](examples/gain-iced/) | Effect | Iced | ![](screenshots/gain_iced_default.png) |
 | [gain-slint](examples/gain-slint/) | Effect | Slint | ![](screenshots/gain_slint_default.png) |
