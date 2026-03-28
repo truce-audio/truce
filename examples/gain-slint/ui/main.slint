@@ -11,9 +11,9 @@ export component GainUi inherits Window {
     callback gain-changed(float);
     callback pan-changed(float);
 
-    title: "Gain (slint)";
-    preferred-width: 222px;
-    preferred-height: 280px;
+    title: "GAIN (slint)";
+    preferred-width: 190px;
+    preferred-height: 310px;
     background: #1f1f24;
     default-font-family: "JetBrains Mono";
 
@@ -22,11 +22,11 @@ export component GainUi inherits Window {
         padding-right: 10px;
         padding-top: 6px;
         padding-bottom: 6px;
-        spacing: 4px;
+        spacing: 10px;
         alignment: start;
 
         Text {
-            text: "Gain (slint)";
+            text: "GAIN (slint)";
             font-size: 14px;
             font-weight: 700;
             color: #e6e6eb;
@@ -39,13 +39,13 @@ export component GainUi inherits Window {
         }
 
         HorizontalLayout {
-            spacing: 6px;
+            spacing: 10px;
 
             VerticalLayout {
-                spacing: 6px;
+                spacing: 10px;
 
                 HorizontalLayout {
-                    spacing: 6px;
+                    spacing: 10px;
 
                     Knob {
                         label: "Gain";
@@ -61,8 +61,8 @@ export component GainUi inherits Window {
                 }
 
                 XYPad {
-                    width: 166px;
-                    height: 120px;
+                    width: 130px;
+                    height: 147px;
                     label: "Pan / Gain";
                     value-x <=> root.pan;
                     value-y <=> root.gain;
@@ -72,7 +72,7 @@ export component GainUi inherits Window {
             }
 
             Meter {
-                height: 226px;
+                height: 247px;
                 level-left: root.meter-left;
                 level-right: root.meter-right;
                 label: "Level";

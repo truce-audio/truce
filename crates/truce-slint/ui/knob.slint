@@ -17,8 +17,8 @@ export component Knob inherits Rectangle {
 
     callback changed(float);
 
-    width: 80px;
-    height: 100px;
+    width: 60px;
+    height: 90px;
 
     property <float> norm: (value - minimum) / (maximum - minimum);
     property <float> val-angle: 135 + norm * 270;

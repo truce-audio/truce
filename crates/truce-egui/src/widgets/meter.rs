@@ -9,6 +9,13 @@ use crate::ParamState;
 /// `meter_ids` are the meter IDs to display (one bar per ID). The meter
 /// is display-only (no interaction). `height` sets the bar height in
 /// pixels. Colors change based on level: blue normally, red when clipping.
+/// Default meter width in pixels.
+const METER_W: f32 = 30.0;
+const BAR_GAP: f32 = 2.0;
+const BAR_PAD: f32 = 2.0;
+const LABEL_H: f32 = 14.0;
+const TRACK_BG: egui::Color32 = egui::Color32::from_rgb(42, 42, 48);
+
 pub fn level_meter(
     ui: &mut egui::Ui,
     state: &ParamState,
@@ -17,53 +24,40 @@ pub fn level_meter(
     height: f32,
 ) -> egui::Response {
     let meter_ids: Vec<u32> = meter_ids.iter().map(|id| (*id).into()).collect();
-    let bar_count = meter_ids.len().max(1) as f32;
-    let bar_width = 8.0;
-    let spacing = 4.0;
-    let padding = 8.0;
-    let label_h = 14.0;
+    let channels = meter_ids.len().max(1);
     let bar_h = height;
+    let total_h = bar_h + LABEL_H;
 
-    let total_w = bar_count * bar_width + (bar_count - 1.0) * spacing + padding * 2.0;
-    let total_h = bar_h + label_h + padding;
-
-    let desired = egui::vec2(total_w, total_h);
+    let desired = egui::vec2(METER_W, total_h);
     let (rect, response) = ui.allocate_exact_size(desired, egui::Sense::hover());
 
     if ui.is_rect_visible(rect) {
         let painter = ui.painter_at(rect);
 
-        // Background
-        painter.rect_filled(
-            rect,
-            4.0,
-            ui.visuals().extreme_bg_color,
-        );
-
-        let bars_w = bar_count * bar_width + (bar_count - 1.0) * spacing;
-        let start_x = rect.center().x - bars_w / 2.0;
-        let bar_top = rect.top() + padding / 2.0;
+        let total_gap = BAR_GAP * (channels as f32 - 1.0).max(0.0);
+        let bar_w = ((METER_W - BAR_PAD * 2.0 - total_gap) / channels as f32).max(4.0);
+        let start_x = rect.left() + BAR_PAD;
+        let bar_top = rect.top();
         let bar_bottom = bar_top + bar_h;
 
         for (i, &id) in meter_ids.iter().enumerate() {
             let raw = state.meter(id);
             let display = meter_display(raw);
-            let x = start_x + i as f32 * (bar_width + spacing);
-
-            let bar_rect = egui::Rect::from_min_size(
-                egui::pos2(x, bar_top),
-                egui::vec2(bar_width, bar_h),
-            );
+            let x = start_x + i as f32 * (bar_w + BAR_GAP);
 
             // Track background
-            painter.rect_filled(bar_rect, 2.0, egui::Color32::from_gray(35));
+            let bar_rect = egui::Rect::from_min_size(
+                egui::pos2(x, bar_top),
+                egui::vec2(bar_w, bar_h),
+            );
+            painter.rect_filled(bar_rect, 2.0, TRACK_BG);
 
-            // Level bar (blue fill, red when clipping)
+            // Level fill
             if display > 0.001 {
                 let level_h = bar_h * display;
                 let level_rect = egui::Rect::from_min_max(
                     egui::pos2(x, bar_bottom - level_h),
-                    egui::pos2(x + bar_width, bar_bottom),
+                    egui::pos2(x + bar_w, bar_bottom),
                 );
                 let color = if display > 0.95 {
                     crate::theme::METER_CLIP

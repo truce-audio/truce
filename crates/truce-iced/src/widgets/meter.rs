@@ -115,7 +115,7 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for MeterProgram {
                 Point::new(x, 0.0),
                 Size::new(bar_w, self.meter_height),
             );
-            frame.fill(&bg, theme::KNOB_TRACK);
+            frame.fill(&bg, iced::Color::from_rgb(0.165, 0.165, 0.188));
 
             // Fill (blue, red when clipping)
             if fill_h > 0.0 {

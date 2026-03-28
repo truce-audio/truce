@@ -7,8 +7,8 @@ const JETBRAINS_MONO: Font = Font {
     family: iced::font::Family::Name("JetBrains Mono"),
     ..Font::DEFAULT
 };
-const WINDOW_W: u32 = 188;
-const WINDOW_H: u32 = 300;
+const WINDOW_W: u32 = 190;
+const WINDOW_H: u32 = 310;
 
 use truce::prelude::*;
 use truce_iced::{
@@ -106,7 +106,7 @@ impl IcedPlugin<GainParams> for GainUi {
             .push(Into::<Element<'a, Message<GainMsg>>>::into(
                 meter(&[P::MeterLeft, P::MeterRight], params)
                     .label("Level")
-                    .size(24.0, 230.0),
+                    .size(30.0, 230.0),
             ))
             .spacing(gap)
             .padding(pad)

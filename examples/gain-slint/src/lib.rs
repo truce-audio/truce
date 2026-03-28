@@ -77,7 +77,7 @@ impl PluginLogic for GainSlint {
     }
 
     fn custom_editor(&self) -> Option<Box<dyn truce_core::editor::Editor>> {
-        Some(Box::new(SlintEditor::new((222, 280), |state: ParamState| {
+        Some(Box::new(SlintEditor::new((190, 310), |state: ParamState| {
             let ui = GainUi::new().unwrap();
 
             // UI → host
@@ -132,7 +132,7 @@ mod tests {
     fn gui_snapshot() {
         truce_slint::snapshot::assert_snapshot(
             "screenshots", "gain_slint_default",
-            222, 280, 2.0, 0,
+            190, 310, 2.0, 0,
             |state| {
                 let ui = GainUi::new().unwrap();
                 Box::new(move |state: &truce_slint::ParamState| {
