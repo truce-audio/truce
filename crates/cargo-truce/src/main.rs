@@ -135,9 +135,11 @@ fn cmd_new(args: &[String]) -> Res {
 
     // truce.toml — single plugin
     let plugin = PluginSpec { name: name.clone(), kind };
+    let plugins = [plugin];
+    let fourcc_map = scaffold::resolve_fourccs(&plugins);
     fs::write(
         format!("{name}/truce.toml"),
-        scaffold::truce_toml("My Company", "com.mycompany", &[plugin], &name),
+        scaffold::truce_toml("My Company", "com.mycompany", &plugins, &name, &fourcc_map),
     )?;
 
     eprintln!("Created {name}/");
@@ -238,8 +240,8 @@ fn cmd_new_workspace(args: &[String]) -> Res {
         })
         .collect();
 
-    // Check for fourcc collisions
-    scaffold::check_fourcc_collisions(&plugins)?;
+    // Resolve fourcc codes (handles collisions automatically)
+    let fourcc_map = scaffold::resolve_fourccs(&plugins);
 
     // Check that all --type: overrides reference actual plugin names
     for (override_name, _) in &type_overrides {
@@ -269,7 +271,7 @@ fn cmd_new_workspace(args: &[String]) -> Res {
     // truce.toml
     fs::write(
         format!("{workspace_name}/truce.toml"),
-        scaffold::truce_toml(&vendor, &vid, &plugins, &workspace_name),
+        scaffold::truce_toml(&vendor, &vid, &plugins, &workspace_name, &fourcc_map),
     )?;
 
     // .gitignore

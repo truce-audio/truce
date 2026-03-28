@@ -421,13 +421,40 @@ fn to_pascal_case(s: &str) -> String {
 }
 
 fn to_fourcc(s: &str) -> String {
-    let pascal = to_pascal_case(s);
-    let bytes: Vec<char> = pascal.chars().take(4).collect();
-    if bytes.len() >= 4 {
-        bytes.into_iter().collect()
-    } else {
-        format!("{:X<4}", pascal.chars().take(4).collect::<String>())
+    let segments: Vec<&str> = s.split('-').filter(|seg| !seg.is_empty()).collect();
+
+    let mut code: Vec<char> = segments
+        .iter()
+        .map(|seg| {
+            seg.chars()
+                .next()
+                .unwrap()
+                .to_uppercase()
+                .next()
+                .unwrap()
+        })
+        .collect();
+
+    if code.len() >= 4 {
+        code.truncate(4);
+        return code.into_iter().collect();
     }
+
+    let needed = 4 - code.len();
+    let mut fill: Vec<char> = Vec::new();
+    for seg in segments.iter().rev() {
+        fill.extend(seg.chars().skip(1));
+        if fill.len() >= needed {
+            break;
+        }
+    }
+    code.extend(fill.into_iter().take(needed));
+
+    while code.len() < 4 {
+        code.push('X');
+    }
+
+    code.into_iter().collect()
 }
 
 // ---------------------------------------------------------------------------

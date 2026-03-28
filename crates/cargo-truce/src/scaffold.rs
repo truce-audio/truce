@@ -1,6 +1,6 @@
 //! Shared scaffolding templates for `cargo truce new` and `cargo truce new-workspace`.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum PluginKind {
@@ -272,7 +272,13 @@ mod tests {{
     )
 }
 
-pub fn truce_toml(vendor_name: &str, vendor_id: &str, plugins: &[PluginSpec], workspace_name: &str) -> String {
+pub fn truce_toml(
+    vendor_name: &str,
+    vendor_id: &str,
+    plugins: &[PluginSpec],
+    workspace_name: &str,
+    fourcc_map: &HashMap<String, String>,
+) -> String {
     let mut s = format!(
         r#"[macos]
 # Ad-hoc signing works for CLAP, VST3, VST2, AU v2.
@@ -291,7 +297,7 @@ au_manufacturer = "{au_mfr}"
     for p in plugins {
         let struct_name = to_pascal_case(&p.name);
         let crate_name = format!("{workspace_name}-{}", p.name);
-        let fourcc = to_fourcc(&p.name);
+        let fourcc = &fourcc_map[&p.name];
         s.push_str(&format!(
             r#"
 [[plugin]]
@@ -352,26 +358,41 @@ pub fn gitignore() -> &'static str {
 // Validation
 // ---------------------------------------------------------------------------
 
-/// Check for fourcc collisions among plugin names. Returns an error message
-/// listing the collisions, or Ok(()) if none.
-pub fn check_fourcc_collisions(plugins: &[PluginSpec]) -> Result<(), String> {
-    let mut seen: HashSet<String> = HashSet::new();
-    let mut collisions: Vec<String> = Vec::new();
+/// Assign collision-free fourcc codes to all plugins. When two plugins produce
+/// the same code, the later one gets its last character replaced with '2'–'9',
+/// then 'A'–'Z' until a unique code is found.
+pub fn resolve_fourccs(plugins: &[PluginSpec]) -> HashMap<String, String> {
+    let mut assignments: HashMap<String, String> = HashMap::new();
+    let mut used: HashSet<String> = HashSet::new();
+
     for p in plugins {
-        let fc = to_fourcc(&p.name);
-        if !seen.insert(fc.clone()) {
-            collisions.push(format!("'{}' (fourcc: {fc})", p.name));
+        let mut fc = to_fourcc(&p.name);
+        if !used.contains(&fc) {
+            used.insert(fc.clone());
+            assignments.insert(p.name.clone(), fc);
+            continue;
         }
+        // Collision — mutate last character
+        let base: String = fc.chars().take(3).collect();
+        let mut resolved = false;
+        for suffix in ('2'..='9').chain('A'..='Z') {
+            let candidate = format!("{base}{suffix}");
+            if !used.contains(&candidate) {
+                fc = candidate;
+                resolved = true;
+                break;
+            }
+        }
+        if !resolved {
+            // Extremely unlikely: 34 slots exhausted. Panic is acceptable here
+            // since it means 35+ plugins share the same 3-char prefix.
+            panic!("cannot resolve fourcc collision for '{}'", p.name);
+        }
+        used.insert(fc.clone());
+        assignments.insert(p.name.clone(), fc);
     }
-    if collisions.is_empty() {
-        Ok(())
-    } else {
-        Err(format!(
-            "Fourcc collision detected — these plugins produce the same 4-char code: {}. \
-             Rename one to avoid the collision.",
-            collisions.join(", "),
-        ))
-    }
+
+    assignments
 }
 
 // ---------------------------------------------------------------------------
@@ -390,12 +411,46 @@ pub fn to_pascal_case(s: &str) -> String {
         .collect()
 }
 
+/// Generate a 4-character code from a plugin name using segment initials.
+///
+/// 1. Split on hyphens, take the first character (uppercased) of each segment.
+/// 2. If fewer than 4 initials, backfill from the last segment's remaining
+///    characters first (the differentiator), then earlier segments.
+/// 3. Pad with 'X' if still short.
 pub fn to_fourcc(s: &str) -> String {
-    let pascal = to_pascal_case(s);
-    let chars: Vec<char> = pascal.chars().take(4).collect();
-    if chars.len() >= 4 {
-        chars.into_iter().collect()
-    } else {
-        format!("{:X<4}", pascal.chars().take(4).collect::<String>())
+    let segments: Vec<&str> = s.split('-').filter(|seg| !seg.is_empty()).collect();
+
+    let mut code: Vec<char> = segments
+        .iter()
+        .map(|seg| {
+            seg.chars()
+                .next()
+                .unwrap()
+                .to_uppercase()
+                .next()
+                .unwrap()
+        })
+        .collect();
+
+    if code.len() >= 4 {
+        code.truncate(4);
+        return code.into_iter().collect();
     }
+
+    // Backfill from segments in reverse order (last segment = differentiator)
+    let needed = 4 - code.len();
+    let mut fill: Vec<char> = Vec::new();
+    for seg in segments.iter().rev() {
+        fill.extend(seg.chars().skip(1));
+        if fill.len() >= needed {
+            break;
+        }
+    }
+    code.extend(fill.into_iter().take(needed));
+
+    while code.len() < 4 {
+        code.push('X');
+    }
+
+    code.into_iter().collect()
 }
