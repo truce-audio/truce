@@ -1,22 +1,23 @@
 # Slint Integration
 
 [Slint](https://github.com/slint-ui/slint) is a declarative GUI toolkit
-with its own `.slint` markup language compiled at build time. `truce-slint`
-wraps it as a truce `Editor` using Slint's software renderer, baseview
-for windowing, and wgpu for screen presentation.
+with its own `.slint` markup language. You design your UI visually in
+`.slint` files (with IDE live preview), and Slint compiles them to
+efficient Rust code at build time. `truce-slint` wraps it as a truce
+editor using Slint's software renderer + wgpu for display.
 
-## When to Use Slint
+## When to use Slint
 
-Use slint when you want:
+Pick Slint when you want:
 
-- Declarative UI in `.slint` markup (compiled to Rust at build time)
-- IDE live preview (Slint VS Code extension)
-- Self-contained rendering (no GTK/Qt/Cocoa dependency)
-- Reactive property bindings
+- Declarative UI in `.slint` markup (no imperative widget code)
+- IDE live preview via the Slint VS Code extension
+- Reactive property bindings (change a value, UI updates automatically)
+- Self-contained rendering (no GTK/Qt/Cocoa dependencies)
 
 ## Setup
 
-Add `truce-slint` and `slint` to your plugin's `Cargo.toml`:
+Add these to your plugin's `Cargo.toml`:
 
 ```toml
 [dependencies]
@@ -27,7 +28,7 @@ slint = { version = "=1.15.1", default-features = false, features = ["compat-1-2
 slint-build = "=1.15.1"
 ```
 
-Create a `build.rs`:
+Create a `build.rs` in your plugin's root:
 
 ```rust
 fn main() {
@@ -35,38 +36,63 @@ fn main() {
 }
 ```
 
-## Quick Start
+## Quick start
 
-Define your UI in a `.slint` file:
+### 1. Define your UI in `.slint`
+
+Create `ui/main.slint`:
 
 ```slint
-// ui/main.slint
-import { Slider, Switch, VerticalLayout, HorizontalBox } from "std-widgets.slint";
+import { Knob, Meter, XYPad } from "@truce";
+import { HorizontalBox } from "std-widgets.slint";
 
 export component MyPluginUi inherits Window {
     in-out property <float> gain: 0.5;
-    in-out property <bool> bypass: false;
+    in-out property <float> pan: 0.5;
+    in-out property <float> meter-left: 0.0;
+    in-out property <float> meter-right: 0.0;
+
     callback gain-changed(float);
-    callback bypass-changed(bool);
+    callback pan-changed(float);
+
+    preferred-width: 200px;
+    preferred-height: 150px;
+    background: #1f1f24;
 
     VerticalLayout {
-        Slider {
-            value <=> root.gain;
-            changed(v) => { root.gain-changed(v); }
-        }
-        Switch {
-            checked <=> root.bypass;
-            toggled => { root.bypass-changed(root.bypass); }
+        padding: 10px;
+        spacing: 10px;
+
+        HorizontalBox {
+            spacing: 10px;
+
+            Knob {
+                label: "Gain";
+                value <=> root.gain;
+                changed(v) => { root.gain-changed(v); }
+            }
+
+            Knob {
+                label: "Pan";
+                value <=> root.pan;
+                changed(v) => { root.pan-changed(v); }
+            }
+
+            Meter {
+                level-left: root.meter-left;
+                level-right: root.meter-right;
+            }
         }
     }
 }
 ```
 
-Wire it up in Rust:
+### 2. Wire it up in Rust
 
 ```rust
 use truce::prelude::*;
 use truce_slint::{SlintEditor, ParamState};
+use truce_core::meter_display;
 
 slint::include_modules!();
 
@@ -74,39 +100,56 @@ use MyParamsParamId as P;
 
 impl PluginLogic for MyPlugin {
     fn custom_editor(&self) -> Option<Box<dyn truce_core::editor::Editor>> {
-        Some(Box::new(SlintEditor::new((400, 300), |state: ParamState| {
+        Some(Box::new(SlintEditor::new((200, 150), |state: ParamState| {
             let ui = MyPluginUi::new().unwrap();
-            truce_slint::bind! { state, ui,
-                P::Gain   => gain,
-                P::Bypass => bypass: bool,
-            }
+
+            // UI -> host (user drags a knob)
+            let s = state.clone();
+            ui.on_gain_changed(move |v| s.set_immediate(P::Gain, v as f64));
+            let s = state.clone();
+            ui.on_pan_changed(move |v| s.set_immediate(P::Pan, v as f64));
+
+            // host -> UI (sync every frame)
+            Box::new(move |state: &ParamState| {
+                ui.set_gain(state.get(P::Gain) as f32);
+                ui.set_pan(state.get(P::Pan) as f32);
+                ui.set_meter_left(meter_display(state.meter(P::MeterLeft)));
+                ui.set_meter_right(meter_display(state.meter(P::MeterRight)));
+            })
         })))
     }
 }
 ```
 
-## The `bind!` Macro
+The `(200, 150)` is the window size in logical points. The closure
+receives a `ParamState` and returns a sync function that runs every
+frame to push host values into the Slint UI.
 
-`bind!` eliminates boilerplate by generating both callback wiring
-(UI → host) and the per-frame sync closure (host → UI):
+## The `bind!` macro
+
+For simple float and bool params, `bind!` eliminates the callback
+boilerplate:
 
 ```rust
+let ui = MyPluginUi::new().unwrap();
 truce_slint::bind! { state, ui,
-    P::Gain   => gain,            // float param (default)
-    P::Pan    => pan,             // float param
-    P::Bypass => bypass: bool,    // boolean param
+    P::Gain   => gain,            // float (default)
+    P::Pan    => pan,             // float
+    P::Bypass => bypass: bool,    // boolean
+    P::Mode   => mode: choice(4), // enum with 4 options (ComboBox index)
 }
 ```
 
-This expands to:
-1. `ui.on_gain_changed(...)` / `ui.on_pan_changed(...)` / `ui.on_bypass_changed(...)` — wiring Slint callbacks to `state.set_immediate()`
-2. A returned `Box<dyn Fn(&ParamState)>` that calls `ui.set_gain(...)` / `ui.set_pan(...)` / `ui.set_bypass(...)` each frame
+This generates:
+1. `ui.on_gain_changed(...)`, `ui.on_pan_changed(...)`, etc. — callbacks from Slint to the host
+2. A returned sync closure that calls `ui.set_gain(...)`, `ui.set_pan(...)`, etc. each frame
 
-The macro relies on Slint's naming convention: property `foo` generates
-`set_foo()` and `on_foo_changed()`. Annotate boolean params with `: bool`.
+The macro relies on Slint's naming convention: a property named `foo`
+generates `set_foo()` and `on_foo_changed()`.
 
-For params needing custom conversion (log scales, enums), wire them
-manually alongside the macro:
+### Mixing manual wiring with `bind!`
+
+For params needing custom conversion, wire them manually before `bind!`:
 
 ```rust
 let s = state.clone();
@@ -115,59 +158,81 @@ ui.on_freq_changed(move |hz| {
     s.set_immediate(P::Freq, norm as f64);
 });
 
-// Bind the rest with the macro
+// bind! must come last since it returns the sync closure
 truce_slint::bind! { state, ui,
-    P::Gain   => gain,
-    P::Bypass => bypass: bool,
+    P::Gain => gain,
 }
 ```
 
-Note: when mixing manual wiring with `bind!`, the macro must come last
-since it returns the sync closure (consuming `ui`).
+## Formatted value text
+
+To show formatted values (like "0.0 dB" instead of "0.50"), add string
+properties to your `.slint` file and sync them from Rust:
+
+```slint
+in-out property <string> gain-text: "";
+
+Knob {
+    value <=> root.gain;
+    value-text: root.gain-text;  // shows formatted text instead of raw number
+}
+```
+
+```rust
+// In your sync closure:
+ui.set_gain_text(slint::SharedString::from(state.format(P::Gain)));
+```
+
+## Truce widget library
+
+`truce-slint` provides pre-built `.slint` components you can import:
+
+```slint
+import { Knob, Meter, XYPad, ParamSlider, Toggle, Selector } from "@truce";
+```
+
+| Widget | What it does |
+|--------|-------------|
+| `Knob` | 270-degree rotary control with arc, pointer, value text, label |
+| `Meter` | Dual-channel vertical level meter |
+| `XYPad` | 2D drag pad for two parameters |
+| `ParamSlider` | Horizontal slider |
+| `Toggle` | On/off switch |
+| `Selector` | Click-to-cycle for enum params |
+
+You can also use any of Slint's built-in widgets (`Slider`, `Switch`,
+`ComboBox`, etc.) from `"std-widgets.slint"` and wire them manually.
 
 ## ParamState
 
-Same API as `truce-egui`'s `ParamState`, but `Clone`-able so Slint
-callbacks can capture it:
+Same API as the egui backend, but `Clone`-able so Slint callbacks can
+capture it:
 
 | Method | Description |
 |--------|-------------|
-| `state.get(id)` | Normalized value (0.0–1.0) |
+| `state.get(id)` | Normalized value (0.0-1.0) |
 | `state.get_plain(id)` | Plain value (native range) |
 | `state.format(id)` | Formatted display string |
-| `state.meter(id)` | Meter level (0.0–1.0) |
+| `state.meter(id)` | Meter level (0.0-1.0) |
 | `state.set_immediate(id, v)` | One-shot value change |
 | `state.begin_gesture(id)` | Start drag gesture |
 | `state.set_value(id, v)` | Update during drag |
 | `state.end_gesture(id)` | End drag gesture |
 
-## Custom Widgets in `.slint`
+## Screenshot testing
 
-Slint doesn't have built-in knob or meter widgets. Define them in
-`.slint` markup using `Path` for arcs and `TouchArea` for interaction.
-See the gain-slint example for a complete `Knob` component with:
-- 270° arc track and value indicator
-- Pointer dot
-- Vertical drag interaction
-- Label and value text
-
-Key tip: set `viewbox-width` and `viewbox-height` on Path elements to
-prevent auto-fit scaling from distorting arc geometry.
-
-## Snapshot Testing
-
-`truce-slint` includes headless snapshot rendering using the software
-renderer (no GPU or window needed):
+Slint snapshots use the software renderer — no GPU or window needed,
+making them fast and deterministic:
 
 ```rust
 #[test]
 fn gui_snapshot() {
     truce_slint::snapshot::assert_snapshot(
-        "screenshots",          // directory
-        "my_plugin_default",    // name
-        400, 300,               // logical size
-        2.0,                    // scale (2.0 for Retina)
-        0,                      // max pixel diff
+        "screenshots",
+        "my_plugin_slint_default",
+        WINDOW_W, WINDOW_H,     // same constants as your editor
+        2.0,                     // scale (2.0 for Retina)
+        0,                       // max pixel diff (0 = exact)
         |state| {
             let ui = MyPluginUi::new().unwrap();
             truce_slint::bind! { state, ui,
@@ -178,25 +243,21 @@ fn gui_snapshot() {
 }
 ```
 
+See [screenshot testing](screenshot-testing.md) for details.
+
 ## Architecture
 
-- **Rendering**: Slint SoftwareRenderer → RGBA pixel buffer → wgpu texture → screen
+- **Rendering**: Slint SoftwareRenderer -> RGBA pixels -> wgpu texture -> screen
 - **Windowing**: baseview child window (cross-platform)
-- **Platform**: Custom `slint::platform::Platform` impl set once per process via `set_platform()`
-- **Event loop**: baseview's `on_frame()` drives rendering at ~60fps
-
-## Toolchain
-
-Slint 1.15 requires Rust >= 1.88. If using Homebrew Rust (which may be
-newer), install rustup and pin to a compatible version.
+- **Event loop**: baseview `on_frame()` drives rendering at ~60fps
 
 ## Licensing
 
-Slint offers a royalty-free license for proprietary desktop applications
-(which covers audio plugins). See [slint.dev](https://slint.dev) for
+Slint offers a royalty-free license for proprietary desktop applications,
+which covers audio plugins. See [slint.dev](https://slint.dev) for
 current terms.
 
-## Example
+## Complete example
 
-See `examples/gain-slint/` for a complete working
-example with custom knob widgets, bypass switch, and snapshot test.
+See `examples/gain-slint/` for a working plugin with custom knobs,
+XY pad, level meter, formatted value text, and screenshot test.

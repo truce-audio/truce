@@ -1,32 +1,28 @@
 # Screenshot Testing
 
-## How It Works
+Screenshot tests catch visual regressions by rendering your GUI to an
+image and comparing it against a saved reference. If something changes
+unexpectedly — a widget moves, a color shifts, a label disappears — the
+test fails and saves a `_FAILED.png` so you can see what went wrong.
 
-Screenshot tests render a plugin's GUI to an offscreen GPU texture,
-save the result as a PNG, and compare pixel-by-pixel against a
-reference image. On first run, the reference is created. On subsequent
-runs, any difference beyond a tolerance threshold fails the test.
+## How it works
 
-All screenshots live in `screenshots/` at the workspace root.
-PNGs are saved at 2x (Retina) resolution with 144 DPI metadata so
-they display at logical size in viewers and on GitHub.
+1. The test renders your GUI headlessly (no window needed)
+2. On first run, it saves the result as a reference PNG
+3. On subsequent runs, it compares pixel-by-pixel against the reference
+4. If pixels differ beyond the tolerance, the test fails
 
-## Backends
+All reference PNGs live in `screenshots/` at the workspace root.
+They're saved at 2x resolution with 144 DPI metadata so they look
+correct on GitHub and in image viewers.
 
-| Backend | Screenshot support | How |
-|---------|-------------------|-----|
-| Built-in (`truce-gui` + `truce-gpu`) | Yes | `WgpuBackend::headless()` → offscreen wgpu texture → pixel readback |
-| egui (`truce-egui`) | Yes | Headless wgpu device → `egui_wgpu::Renderer` → pixel readback |
-| Iced (`truce-iced`) | Yes | Headless wgpu device → `iced_wgpu::Renderer` → pixel readback |
-| Slint (`truce-slint`) | Yes | `SoftwareRenderer` → pixel buffer (no GPU needed) |
-
-## Writing a Screenshot Test
+## Adding a screenshot test
 
 ### Built-in GUI
 
 ```rust
 #[test]
-fn gui_screenshot() {
+fn gui_snapshot() {
     let params = std::sync::Arc::new(MyParams::new());
     let plugin = MyPlugin::new(std::sync::Arc::clone(&params));
     let layout = plugin.layout();
@@ -36,20 +32,18 @@ fn gui_screenshot() {
 }
 ```
 
-`assert_gui_snapshot_grid` renders via `truce_gpu::snapshot::render_to_pixels`
-(headless wgpu), then compares against `screenshots/my_plugin_default.png`.
-
 ### egui
 
 ```rust
 #[test]
-fn gui_screenshot() {
+fn gui_snapshot() {
     truce_egui::snapshot::assert_snapshot(
         "screenshots",
         "my_plugin_egui_default",
-        640, 480,
-        2.0,  // pixels_per_point
-        0,    // max_diff (0 = exact match)
+        WINDOW_W, WINDOW_H,  // use the same constants as your editor
+        2.0,                  // scale (2.0 for Retina)
+        0,                    // max pixel differences (0 = exact match)
+        Some(truce_gui::font::JETBRAINS_MONO),
         |ctx, state| my_ui(ctx, state),
     );
 }
@@ -57,21 +51,31 @@ fn gui_screenshot() {
 
 ### Iced
 
-Iced screenshots use `truce_iced::snapshot::render_iced_screenshot`
-internally. See `examples/gain-iced/src/lib.rs`
-for a working example.
+```rust
+#[test]
+fn gui_snapshot_iced() {
+    let params = Arc::new(MyParams::new());
+    let (pixels, w, h) = truce_iced::snapshot::render_iced_screenshot::<MyParams, MyEditor>(
+        params,
+        (WINDOW_W, WINDOW_H),
+        2.0,
+        Some(("JetBrains Mono", truce_gui::font::JETBRAINS_MONO)),
+    );
+    truce_test::assert_gui_snapshot_raw("my_plugin_iced_default", &pixels, w, h, 0);
+}
+```
 
 ### Slint
 
 ```rust
 #[test]
-fn gui_screenshot() {
+fn gui_snapshot() {
     truce_slint::snapshot::assert_snapshot(
         "screenshots",
         "my_plugin_slint_default",
-        320, 150,
-        2.0,  // scale (2.0 for Retina)
-        0,    // max_diff
+        WINDOW_W, WINDOW_H,
+        2.0,
+        0,
         |state| {
             let ui = MyPluginUi::new().unwrap();
             truce_slint::bind! { state, ui,
@@ -82,46 +86,61 @@ fn gui_screenshot() {
 }
 ```
 
-Slint snapshots use the `SoftwareRenderer` — no GPU or window required.
-This makes them fast and deterministic across machines.
+Slint uses a software renderer — no GPU needed. This makes Slint
+snapshots fast and perfectly reproducible across machines.
 
-## Regenerating Screenshots
+## Keeping editor and snapshot sizes in sync
 
-Delete a reference PNG and re-run the test:
+Define your window dimensions as constants and use them in both the
+editor and the snapshot test. This prevents them from drifting apart:
 
-```sh
-rm screenshots/gain_default.png
-cargo test -p truce-example-gain -- gui_screenshot
+```rust
+const WINDOW_W: u32 = 176;
+const WINDOW_H: u32 = 290;
+
+// In custom_editor():
+EguiEditor::new((WINDOW_W, WINDOW_H), my_ui)
+
+// In the test:
+truce_egui::snapshot::assert_snapshot(
+    "screenshots", "my_plugin_default",
+    WINDOW_W, WINDOW_H, 2.0, 0, None, |ctx, state| my_ui(ctx, state),
+);
 ```
 
-Or regenerate all:
+## Regenerating screenshots
+
+When you intentionally change the UI, delete the old reference and
+re-run the test:
 
 ```sh
+# Regenerate one
+rm screenshots/my_plugin_default.png
+cargo test -p my-plugin -- gui_snapshot
+
+# Regenerate all
 rm screenshots/*.png
-cargo test --workspace
+cargo test --workspace -- gui_snapshot
 ```
-
-## Texture Format Matching
-
-Screenshots must use the same texture format as the windowed rendering
-path to produce accurate colors:
-
-| Backend | Windowed format | Screenshot format |
-|---------|----------------|-------------------|
-| Built-in (wgpu) | Non-sRGB (surface default) | `Rgba8Unorm` |
-| egui | `Rgba8UnormSrgb` | `Rgba8UnormSrgb` |
-| Iced | `Bgra8UnormSrgb` (Metal default) | `Bgra8UnormSrgb` |
-| Slint | `PremultipliedRgbaColor` (CPU) | RGBA8 (un-premultiplied) |
-
-Mismatched formats cause screenshots to appear darker or lighter
-than what the DAW shows. If screenshots look wrong, check the format
-in the snapshot code matches the editor's surface format.
 
 ## Tolerance
 
-The `max_diff` parameter controls how many bytes can differ before
-the test fails. Use `0` for exact match. Anti-aliasing differences
-between GPU drivers may require a small tolerance (e.g., `100`).
+The last argument (`max_diff`) controls how many bytes can differ. Use
+`0` for exact match. If anti-aliasing differs between GPU drivers, bump
+it to a small number like `100`.
 
-When a test fails, a `_FAILED.png` is saved next to the reference
-for visual comparison.
+When a test fails, a `_FAILED.png` is saved next to the reference so
+you can open both and compare visually.
+
+## Texture format gotchas
+
+Screenshots must use the same texture format as the live editor, or
+colors will look wrong (typically darker or lighter). The backends
+handle this automatically, but if you're debugging color mismatches:
+
+| Backend | Live format | Screenshot format |
+|---------|------------|-------------------|
+| Built-in | Non-sRGB surface default | `Rgba8Unorm` |
+| egui | `Rgba8UnormSrgb` | `Rgba8UnormSrgb` |
+| Iced | `Bgra8UnormSrgb` | `Bgra8UnormSrgb` |
+| Slint | CPU pixels | RGBA8 |

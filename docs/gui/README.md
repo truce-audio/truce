@@ -1,23 +1,40 @@
 # GUI Backends
 
-truce supports multiple GUI backends. Every backend implements the same
-`Editor` trait from `truce-core`, so your choice of GUI has zero impact
-on DSP code, parameter handling, or format compatibility — all backends
-work with CLAP, VST3, VST2, AU, and AAX.
+truce gives you multiple ways to build your plugin's user interface.
+Every option produces the same CLAP, VST3, VST2, AU, and AAX output —
+your choice of GUI framework has zero impact on DSP, parameters, or
+format compatibility.
 
-## Choosing a Backend
+## Which one should I use?
 
-| Backend | Crate | Rendering | Best for |
-|---------|-------|-----------|----------|
-| [Built-in](built-in.md) | `truce-gui` / `truce-gpu` | tiny-skia (CPU) or wgpu (GPU) | Standard plugin UIs — knobs, sliders, meters. Zero custom code. |
-| [egui](egui.md) | `truce-egui` | wgpu via egui-wgpu | Custom layouts, text input, graphs, tables, third-party egui widgets |
-| [Iced](iced.md) | `truce-iced` | wgpu/Metal | Elm-architecture fans, auto-generated or fully custom retained-mode UIs |
-| [Slint](slint.md) | `truce-slint` | Software renderer + wgpu blit | Declarative `.slint` markup, build-time compilation, IDE live preview |
-| [Raw window handle](raw-window-handle.md) | `truce-core` | Bring your own | Full control — Metal, OpenGL, Skia, HTML canvas, anything |
+If you're getting started, **use the built-in GUI**. You don't have to
+write any UI code — just define a layout and truce draws the knobs,
+sliders, and meters for you.
 
-## How It Works
+If you outgrow it, pick the framework that matches your style:
 
-Every GUI backend implements the `Editor` trait defined in `truce-core`:
+| Backend | Crate | Best for |
+|---------|-------|----------|
+| **[Built-in](built-in.md)** | `truce-gui` | Standard plugin UIs. Zero custom code. Just define a layout. |
+| **[egui](egui.md)** | `truce-egui` | Custom layouts, text input, graphs, any third-party egui widget. |
+| **[Iced](iced.md)** | `truce-iced` | Elm-architecture fans. Message-driven state management. |
+| **[Slint](slint.md)** | `truce-slint` | Declarative `.slint` markup with IDE live preview. |
+| **[Raw window handle](raw-window-handle.md)** | `truce-core` | Full control — Metal, OpenGL, web views, anything. |
+
+You can switch between backends at any time without touching your DSP
+code. The only thing that changes is the `custom_editor()` method.
+
+## How it works
+
+Every GUI backend implements the `Editor` trait defined in `truce-core`.
+The host calls `open()` with a parent window handle, and the editor
+creates its UI as a child window. Parameters flow through an
+`EditorContext` that bridges your knobs and sliders to the DAW's
+automation system.
+
+You don't need to worry about this plumbing — the backends handle it
+for you. But if you're curious (or building a custom backend), here's
+the trait:
 
 ```rust
 pub trait Editor: Send {
@@ -32,18 +49,14 @@ pub trait Editor: Send {
 }
 ```
 
-The host calls `open()` with a parent window handle and an `EditorContext`
-for parameter communication. The editor creates its UI as a child of the
-host window.
+## Connecting a GUI to your plugin
 
-## Integration Pattern
-
-All backends follow the same pattern — override `custom_editor()` in your
-`PluginLogic` implementation:
+All backends follow the same pattern. Override `custom_editor()` in your
+`PluginLogic`:
 
 ```rust
 impl PluginLogic for MyPlugin {
-    // DSP code stays the same regardless of GUI backend...
+    // DSP code stays exactly the same...
 
     fn custom_editor(&self) -> Option<Box<dyn Editor>> {
         Some(Box::new(/* your editor here */))
@@ -52,37 +65,46 @@ impl PluginLogic for MyPlugin {
 ```
 
 If you don't override `custom_editor()`, the built-in GUI is used
-automatically based on your `layout()` return value.
+automatically based on your `layout()` return value. That's the
+zero-code path — most plugins start here and never leave.
 
-## EditorContext
+## Parameter communication
 
-All backends receive an `EditorContext` that bridges parameter changes
-to the host. The fields are `Arc<dyn Fn>` closures, so call syntax
-uses parentheses around the field: `(ctx.begin_edit)(id)`.
+All backends share the same `EditorContext` for talking to the host.
+You rarely need to use it directly — each backend wraps it in a
+friendlier `ParamState` API:
 
-| Field | Call syntax | Description |
-|-------|-------------|-------------|
-| `begin_edit` | `(ctx.begin_edit)(id)` | User starts dragging a control |
-| `set_param` | `(ctx.set_param)(id, normalized)` | Value changes during drag |
-| `end_edit` | `(ctx.end_edit)(id)` | User releases the control |
-| `request_resize` | `(ctx.request_resize)(w, h) -> bool` | Request a window resize |
-| `get_param` | `(ctx.get_param)(id) -> f64` | Read normalized value (0.0–1.0) |
-| `get_param_plain` | `(ctx.get_param_plain)(id) -> f64` | Read plain value (native range) |
-| `format_param` | `(ctx.format_param)(id) -> String` | Host-formatted display string |
-| `get_meter` | `(ctx.get_meter)(id) -> f32` | Read meter level |
+```rust
+// Read values
+let gain = state.get(P::Gain);           // normalized 0.0-1.0
+let gain_text = state.format(P::Gain);   // "0.0 dB"
+let meter_l = state.meter(P::MeterLeft); // level 0.0-1.0
 
-For single-shot changes (toggles, selectors), call all three in
-sequence: `begin_edit` → `set_param` → `end_edit`.
+// Write values (click/toggle — one shot)
+state.set_immediate(P::Gain, 0.75);
 
-Most GUI backends wrap `EditorContext` in a higher-level `ParamState`
-that provides a cleaner API (e.g., `state.get(id)`, `state.begin_gesture(id)`).
-You only need the raw closure syntax when implementing the `Editor` trait
-directly (see [raw window handle](raw-window-handle.md)).
+// Write values (drag — gesture protocol)
+state.begin_gesture(P::Gain);
+state.set_value(P::Gain, 0.75);  // call repeatedly during drag
+state.end_gesture(P::Gain);
+```
+
+The gesture protocol (`begin_gesture` / `set_value` / `end_gesture`)
+tells the DAW that the user is dragging a control, so it records smooth
+automation rather than a series of discrete jumps. For click interactions
+(toggles, selectors), `set_immediate()` handles the full sequence.
+
+## Screenshot testing
+
+All backends support headless screenshot tests — render the GUI without
+a window and compare pixel-by-pixel against a reference PNG. See
+[screenshot testing](screenshot-testing.md) for details.
 
 ## Guides
 
-- [Built-in GUI](built-in.md) — zero-code layout-driven UI
-- [egui](egui.md) — immediate-mode UI with full widget library
-- [Iced](iced.md) — Elm-architecture retained-mode UI
-- [Slint](slint.md) — declarative `.slint` markup compiled at build time
-- [Raw window handle](raw-window-handle.md) — bring your own renderer
+- **[Built-in GUI](built-in.md)** — start here. Zero-code layout-driven UI.
+- **[egui](egui.md)** — immediate-mode UI with a huge widget library.
+- **[Iced](iced.md)** — Elm-architecture retained-mode UI.
+- **[Slint](slint.md)** — declarative `.slint` markup compiled at build time.
+- **[Raw window handle](raw-window-handle.md)** — bring your own renderer.
+- **[Screenshot testing](screenshot-testing.md)** — pixel-perfect visual regression tests.
