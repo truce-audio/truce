@@ -47,18 +47,7 @@ pub enum GainMsg {}
 impl IcedPlugin<GainParams> for GainUi {
     type Message = GainMsg;
 
-    fn new(_params: Arc<GainParams>) -> Self {
-        Self
-    }
-
-    fn update(
-        &mut self,
-        _message: Message<GainMsg>,
-        _params: &ParamState<GainParams>,
-        _ctx: &EditorHandle,
-    ) -> Task<Message<GainMsg>> {
-        Task::none()
-    }
+    fn new(_params: Arc<GainParams>) -> Self { Self }
 
     fn view<'a>(
         &'a self,

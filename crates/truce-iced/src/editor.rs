@@ -34,19 +34,22 @@ use crate::platform::{IcedPlatformView, IcedViewCallbacks};
 /// Plugin authors implement this for full control over the iced view.
 /// For zero-code UIs, use `IcedEditor::from_layout()` instead.
 pub trait IcedPlugin<P: Params>: Sized + 'static {
-    /// Plugin-specific message type.
+    /// Plugin-specific message type. Use `()` if you have no custom messages.
     type Message: Debug + Clone + Send;
 
     /// Create the initial model.
     fn new(params: Arc<P>) -> Self;
 
     /// Handle a message (param change or plugin-specific).
+    /// Default: no-op.
     fn update(
         &mut self,
-        message: Message<Self::Message>,
-        params: &ParamState<P>,
-        ctx: &EditorHandle,
-    ) -> Task<Message<Self::Message>>;
+        _message: Message<Self::Message>,
+        _params: &ParamState<P>,
+        _ctx: &EditorHandle,
+    ) -> Task<Message<Self::Message>> {
+        Task::none()
+    }
 
     /// Build the view.
     fn view<'a>(
@@ -79,15 +82,6 @@ impl<P: Params> IcedPlugin<P> for AutoPlugin {
 
     fn new(_params: Arc<P>) -> Self {
         panic!("AutoPlugin must be created via IcedEditor::from_layout");
-    }
-
-    fn update(
-        &mut self,
-        _message: Message<()>,
-        _params: &ParamState<P>,
-        _ctx: &EditorHandle,
-    ) -> Task<Message<()>> {
-        Task::none()
     }
 
     fn view<'a>(&'a self, params: &'a ParamState<P>) -> iced::Element<'a, Message<()>> {
