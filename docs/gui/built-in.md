@@ -22,17 +22,18 @@ The current layout system uses `GridLayout` with auto-flow placement.
 Define a grid with a column count, cell size, and a list of widgets:
 
 ```rust
-use truce_gui::layout::{GridLayout, GridWidget};
+use truce_gui::layout::{GridLayout, knob, slider, meter, xy_pad, section, widgets};
 
 fn layout(&self) -> truce_gui::layout::GridLayout {
     GridLayout::build("MY PLUGIN", "V1.0", 3, 80.0, vec![
-        GridWidget::knob(P::Gain, "Gain"),
-        GridWidget::slider(P::Pan, "Pan"),
-        GridWidget::toggle(P::Bypass, "Bypass"),
-        GridWidget::meter(&[P::MeterLeft.into(), P::MeterRight.into()], "Level").rows(2),
-        GridWidget::xy_pad(P::Pan, P::Gain, "XY"),
-    ], vec![
-        (3, "METERS"),  // section label before widget index 3
+        widgets(vec![
+            knob(P::Gain, "Gain"),
+            slider(P::Pan, "Pan"),
+        ]),
+        section("METERS", vec![
+            meter(&[P::MeterLeft, P::MeterRight], "Level").rows(2),
+            xy_pad(P::Pan, P::Gain, "XY"),
+        ]),
     ])
 }
 ```
@@ -42,23 +43,23 @@ Arguments to `GridLayout::build`:
 - `version` — version string shown in header
 - `cols` — number of grid columns
 - `cell_size` — pixel size of one grid cell
-- `widgets` — list of widgets (auto-placed left-to-right, top-to-bottom)
-- `breaks` — section labels: `(widget_index, label)` pairs
+- `sections` — list of `section("LABEL", vec![...])` or `widgets(vec![...])` groups
 
 Window size is computed automatically from the grid dimensions.
 
 ## Widget Types
 
-6 widget types, all constructed via `GridWidget`:
+7 widget types via free functions:
 
 | Widget | Constructor | Default span | Input |
 |--------|------------|-------------|-------|
-| Knob | `GridWidget::knob(id, label)` | 1x1 | Vertical drag |
-| Slider | `GridWidget::slider(id, label)` | 1x1 | Horizontal drag |
-| Toggle | `GridWidget::toggle(id, label)` | 1x1 | Click |
-| Selector | `GridWidget::selector(id, label)` | 1x1 | Click to cycle |
-| Meter | `GridWidget::meter(ids, label)` | 1x1 | Display-only |
-| XY Pad | `GridWidget::xy_pad(x_id, y_id, label)` | 2x2 | 2D drag |
+| Knob | `knob(id, label)` | 1x1 | Vertical drag |
+| Slider | `slider(id, label)` | 1x1 | Horizontal drag |
+| Toggle | `toggle(id, label)` | 1x1 | Click |
+| Selector | `selector(id, label)` | 1x1 | Click to cycle |
+| Dropdown | `dropdown(id, label)` | 1x1 | Popup list |
+| Meter | `meter(ids, label)` | 1x1 | Display-only |
+| XY Pad | `xy_pad(x_id, y_id, label)` | 2x2 | 2D drag |
 
 All constructors accept `impl Into<u32>`, so you can pass typed param ID
 enums directly (e.g., `P::Gain`).
@@ -67,13 +68,13 @@ enums directly (e.g., `P::Gain`).
 
 ```rust
 // Span 2 rows
-GridWidget::meter(&[P::MeterLeft.into(), P::MeterRight.into()], "Level").rows(2)
+meter(&[P::MeterLeft, P::MeterRight], "Level").rows(2)
 
 // Span 3 columns
-GridWidget::knob(P::Gain, "Gain").cols(3)
+knob(P::Gain, "Gain").cols(3)
 
 // Explicit grid position (overrides auto-flow)
-GridWidget::knob(P::Gain, "Gain").at(0, 2)
+knob(P::Gain, "Gain").at(0, 2)
 ```
 
 ### Auto-detection

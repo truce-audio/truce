@@ -153,11 +153,11 @@ Update the layout to show it:
 
 ```rust
 fn layout(&self) -> truce_gui::layout::GridLayout {
-    use truce_gui::layout::{GridLayout, GridWidget};
-    GridLayout::build("MY GAIN", "V0.1", 2, 80.0, vec![
-        GridWidget::knob(P::Gain, "Gain"),
-        GridWidget::slider(P::Pan, "Pan"),
-    ], vec![])
+    use truce_gui::layout::{GridLayout, knob, slider, widgets};
+    GridLayout::build("MY GAIN", "V0.1", 2, 80.0, vec![widgets(vec![
+        knob(P::Gain, "Gain"),
+        slider(P::Pan, "Pan"),
+    ])])
 }
 ```
 
@@ -227,16 +227,16 @@ pub bypass: BoolParam,
 Bool params auto-detect as toggle switches. Enum params auto-detect
 as click-to-cycle selectors.
 
-**Add a section label:**
+**Add meters and more widgets:**
 ```rust
 fn layout(&self) -> truce_gui::layout::GridLayout {
-    use truce_gui::layout::{GridLayout, GridWidget};
-    GridLayout::build("MY GAIN", "V0.1", 3, 80.0, vec![
-        GridWidget::knob(P::Gain, "Gain"),
-        GridWidget::slider(P::Pan, "Pan"),
-        GridWidget::toggle(P::Bypass, "Bypass"),
-        GridWidget::meter(&[P::MeterLeft.into(), P::MeterRight.into()], "Level").rows(2),
-    ], vec![])
+    use truce_gui::layout::{GridLayout, knob, slider, toggle, meter, widgets};
+    GridLayout::build("MY GAIN", "V0.1", 3, 80.0, vec![widgets(vec![
+        knob(P::Gain, "Gain"),
+        slider(P::Pan, "Pan"),
+        toggle(P::Bypass, "Bypass"),
+        meter(&[P::MeterLeft, P::MeterRight], "Level").rows(2),
+    ])])
 }
 ```
 

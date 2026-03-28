@@ -16,12 +16,12 @@ values work.
 use MyParamsParamId as P;
 
 fn layout(&self) -> truce_gui::layout::GridLayout {
-    use truce_gui::layout::{GridLayout, GridWidget};
-    GridLayout::build("MY PLUGIN", "V0.1", 3, 80.0, vec![
-        GridWidget::knob(P::Gain, "Gain"),
-        GridWidget::slider(P::Pan, "Pan"),
-        GridWidget::toggle(P::Bypass, "Bypass"),
-    ], vec![])
+    use truce_gui::layout::{GridLayout, knob, slider, toggle, widgets};
+    GridLayout::build("MY PLUGIN", "V0.1", 3, 80.0, vec![widgets(vec![
+        knob(P::Gain, "Gain"),
+        slider(P::Pan, "Pan"),
+        toggle(P::Bypass, "Bypass"),
+    ])])
 }
 ```
 
@@ -30,44 +30,51 @@ Arguments:
 - `version` — version text
 - `cols` — number of grid columns
 - `cell_size` — cell size in pixels (width and height)
-- `widgets` — widget list (auto-flows left-to-right)
-- `breaks` — section breaks: `vec![(index, "LABEL")]`
+- `sections` — list of `section()` or `widgets()` groups
 
 ## Widgets
 
 | Constructor | What | Default span |
 |-------------|------|-------------|
-| `GridWidget::knob(P::Gain, "Gain")` | Rotary knob | 1×1 |
-| `GridWidget::slider(P::Pan, "Pan")` | Horizontal slider | 1×1 |
-| `GridWidget::toggle(P::Bypass, "Bypass")` | On/off toggle | 1×1 |
-| `GridWidget::selector(P::Mode, "Mode")` | Click-to-cycle (enums) | 1×1 |
-| `GridWidget::meter(&[P::MeterLeft.into()], "Level")` | Level meter (one bar per ID) | 1×1 |
-| `GridWidget::xy_pad(P::Pan, P::Gain, "XY")` | 2D control pad | 2×2 |
+| `knob(P::Gain, "Gain")` | Rotary knob | 1×1 |
+| `slider(P::Pan, "Pan")` | Horizontal slider | 1×1 |
+| `toggle(P::Bypass, "Bypass")` | On/off toggle | 1×1 |
+| `selector(P::Mode, "Mode")` | Click-to-cycle (enums) | 1×1 |
+| `dropdown(P::Mode, "Mode")` | Dropdown list (enums) | 1×1 |
+| `meter(&[P::MeterLeft, P::MeterRight], "Level")` | Level meter (one bar per ID) | 1×1 |
+| `xy_pad(P::Pan, P::Gain, "XY")` | 2D control pad | 2×2 |
 
 ## Spanning
 
 ```rust
-GridWidget::selector(P::Wave, "Wave").cols(2)                       // 2 columns wide
-GridWidget::meter(&[P::MeterLeft.into(), P::MeterRight.into()], "Level").rows(2)  // 2 rows tall
-GridWidget::xy_pad(P::Pan, P::Gain, "XY")                          // defaults to 2×2
+dropdown(P::Wave, "Wave").cols(2)                            // 2 columns wide
+meter(&[P::MeterLeft, P::MeterRight], "Level").rows(2)      // 2 rows tall
+xy_pad(P::Pan, P::Gain, "XY")                               // defaults to 2×2
 ```
 
-## Section Breaks
+## Sections
 
-Add labeled section headers between widget groups:
+Group widgets under labeled section headers with `section()`:
 
 ```rust
+use truce_gui::layout::{GridLayout, knob, section, widgets};
+
 GridLayout::build("EQ", "V0.1", 3, 80.0, vec![
-    GridWidget::knob(P::LowFreq, "Low Freq"),
-    GridWidget::knob(P::LowGain, "Low Gain"),
-    GridWidget::knob(P::LowQ, "Low Q"),
-    GridWidget::knob(P::MidFreq, "Mid Freq"),  // index 3: starts "MID" section
-    GridWidget::knob(P::MidGain, "Mid Gain"),
-    GridWidget::knob(P::MidQ, "Mid Q"),
-], vec![
-    (3, "MID"),  // section break before widget at index 3
+    section("LOW", vec![
+        knob(P::LowFreq, "Freq"),
+        knob(P::LowGain, "Gain"),
+        knob(P::LowQ, "Q"),
+    ]),
+    section("MID", vec![
+        knob(P::MidFreq, "Freq"),
+        knob(P::MidGain, "Gain"),
+        knob(P::MidQ, "Q"),
+    ]),
+    widgets(vec![knob(P::Output, "Output")]),
 ])
 ```
+
+Use `widgets(vec![...])` for ungrouped widgets (no section header).
 
 ## Meters
 
@@ -97,13 +104,12 @@ Report values via `context.set_meter(P::MeterLeft, value)` in
 use GainParamsParamId as P;
 
 fn layout(&self) -> truce_gui::layout::GridLayout {
-    use truce_gui::layout::{GridLayout, GridWidget};
-    GridLayout::build("GAIN", "V0.1", 3, 80.0, vec![
-        GridWidget::knob(P::Gain, "Gain"),
-        GridWidget::slider(P::Pan, "Pan"),
-        GridWidget::toggle(P::Bypass, "Bypass"),
-        GridWidget::xy_pad(P::Pan, P::Gain, "XY"),
-        GridWidget::meter(&[P::MeterLeft.into(), P::MeterRight.into()], "Level").rows(2),
-    ], vec![])
+    use truce_gui::layout::{GridLayout, knob, meter, xy_pad, widgets};
+    GridLayout::build("GAIN", "V0.1", 3, 80.0, vec![widgets(vec![
+        knob(P::Gain, "Gain"),
+        knob(P::Pan, "Pan"),
+        xy_pad(P::Pan, P::Gain, "XY"),
+        meter(&[P::MeterLeft, P::MeterRight], "Level").rows(2),
+    ])])
 }
 ```

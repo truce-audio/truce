@@ -127,11 +127,11 @@ impl PluginLogic for Gain {
     }
 
     fn layout(&self) -> truce_gui::layout::GridLayout {
-        use truce_gui::layout::{GridLayout, GridWidget};
-        GridLayout::build("MY GAIN", "V0.1", 2, 80.0, vec![
-            GridWidget::knob(P::Gain, "Gain"),
-            GridWidget::knob(P::Pan, "Pan"),
-        ], vec![])
+        use truce_gui::layout::{GridLayout, knob, widgets};
+        GridLayout::build("MY GAIN", "V0.1", 2, 80.0, vec![widgets(vec![
+            knob(P::Gain, "Gain"),
+            knob(P::Pan, "Pan"),
+        ])])
     }
 }
 

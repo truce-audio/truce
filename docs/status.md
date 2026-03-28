@@ -66,19 +66,20 @@ Four GUI backends, same 6 widget types:
 | egui | `truce-egui` | Custom (immediate-mode) | wgpu via egui-wgpu |
 | iced | `truce-iced` | Auto (from GridLayout) or custom (IcedPlugin trait) | wgpu/Metal |
 
-6 widget types via `GridLayout::build()` with auto-flow placement:
+7 widget types via `GridLayout::build()` with auto-flow placement:
 
 | Widget | Constructor | Default span |
 |--------|------------|-------------|
-| Knob | `GridWidget::knob(P::Gain, "Gain")` | 1×1 |
-| Slider | `GridWidget::slider(P::Pan, "Pan")` | 1×1 |
-| Toggle | `GridWidget::toggle(P::Bypass, "Bypass")` | 1×1 |
-| Selector | `GridWidget::selector(P::Mode, "Mode")` | 1×1 |
-| Meter | `GridWidget::meter(&[P::MeterLeft.into(), P::MeterRight.into()], "Level")` | 1×1 |
-| XY Pad | `GridWidget::xy_pad(P::Pan, P::Gain, "XY")` | 2×2 |
+| Knob | `knob(P::Gain, "Gain")` | 1×1 |
+| Slider | `slider(P::Pan, "Pan")` | 1×1 |
+| Toggle | `toggle(P::Bypass, "Bypass")` | 1×1 |
+| Selector | `selector(P::Mode, "Mode")` | 1×1 |
+| Dropdown | `dropdown(P::Mode, "Mode")` | 1×1 |
+| Meter | `meter(&[P::MeterLeft, P::MeterRight], "Level")` | 1×1 |
+| XY Pad | `xy_pad(P::Pan, P::Gain, "XY")` | 2×2 |
 
-Column/row spanning via `.cols(n)` / `.rows(n)`. Section breaks
-via the `breaks` parameter.
+Column/row spanning via `.cols(n)` / `.rows(n)`. Sections via
+`section("LABEL", vec![...])` groups.
 
 ## Hot-reload
 

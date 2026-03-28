@@ -36,9 +36,9 @@ This generates `GainParamsParamId` with variants `Gain`, `Pan`,
 use GainParamsParamId as P;
 
 // Type-safe param references in layout and meters:
-GridWidget::knob(P::Gain, "Gain");
-GridWidget::slider(P::Pan, "Pan");
-GridWidget::toggle(P::Bypass, "Bypass");
+knob(P::Gain, "Gain");
+slider(P::Pan, "Pan");
+toggle(P::Bypass, "Bypass");
 ```
 
 ### Parameter types
@@ -202,7 +202,7 @@ context.set_meter(P::MeterLeft, buffer.output_peak(0));
 context.set_meter(P::MeterRight, buffer.output_peak(1));
 
 // In layout():
-GridWidget::meter(&[P::MeterLeft.into(), P::MeterRight.into()], "Level")
+meter(&[P::MeterLeft, P::MeterRight], "Level")
 ```
 
 No manual `#[repr(u32)]` enum or `From` impl needed.
