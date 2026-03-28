@@ -3,7 +3,6 @@
 //! These are optional — users can always use raw egui widgets and interact
 //! with `ParamState` directly.
 
-mod dropdown;
 mod knob;
 mod meter;
 mod selector;
@@ -11,7 +10,6 @@ mod slider;
 mod toggle;
 mod xy_pad;
 
-pub use dropdown::param_dropdown;
 pub use knob::param_knob;
 pub use meter::level_meter;
 pub use selector::param_selector;

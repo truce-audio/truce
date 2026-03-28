@@ -3,7 +3,6 @@
 //! Provides parameter-bound widgets that emit `Message::Param` messages
 //! for host communication.
 
-pub mod dropdown;
 pub mod knob;
 pub mod meter;
 pub mod selector;
@@ -18,7 +17,6 @@ use truce_params::Params;
 use crate::param_state::ParamState;
 
 // Re-export widget types for convenience.
-pub use dropdown::DropdownWidget;
 pub use knob::KnobWidget;
 pub use meter::MeterWidget;
 pub use selector::SelectorWidget;
@@ -56,14 +54,6 @@ pub fn param_selector<'a, M: Clone + Debug + 'static>(
     params: &'a ParamState<impl Params>,
 ) -> SelectorWidget<'a, M> {
     SelectorWidget::new(id.into(), params)
-}
-
-/// Create a dropdown (pick list) bound to an enum parameter.
-pub fn param_dropdown<'a, M: Clone + Debug + 'static>(
-    id: impl Into<u32>,
-    params: &'a ParamState<impl Params>,
-) -> DropdownWidget<'a, M> {
-    DropdownWidget::new(id.into(), params)
 }
 
 /// Create a level meter display.
