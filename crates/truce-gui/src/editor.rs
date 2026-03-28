@@ -1190,4 +1190,389 @@ mod tests {
             "gap_plain={gap_plain}, gap_sections={gap_sections}"
         );
     }
+
+    // -- Mock Params with a large enum (20 options) for overflow/scroll tests --
+
+    struct ManyOptionParams {
+        values: [AtomicU64; 2],
+    }
+
+    impl ManyOptionParams {
+        fn new() -> Self {
+            Self {
+                values: [
+                    AtomicU64::new(0.0f64.to_bits()),
+                    AtomicU64::new(0.0f64.to_bits()),
+                ],
+            }
+        }
+    }
+
+    impl Params for ManyOptionParams {
+        fn param_infos(&self) -> Vec<ParamInfo> {
+            vec![
+                ParamInfo {
+                    id: 0,
+                    name: "Note",
+                    short_name: "Note",
+                    group: "",
+                    range: ParamRange::Enum { count: 20 },
+                    default_plain: 0.0,
+                    flags: ParamFlags::AUTOMATABLE,
+                    unit: ParamUnit::None,
+                },
+                ParamInfo {
+                    id: 1,
+                    name: "Gain",
+                    short_name: "Gain",
+                    group: "",
+                    range: ParamRange::Linear { min: 0.0, max: 1.0 },
+                    default_plain: 0.5,
+                    flags: ParamFlags::AUTOMATABLE,
+                    unit: ParamUnit::None,
+                },
+            ]
+        }
+
+        fn count(&self) -> usize { 2 }
+
+        fn get_normalized(&self, id: u32) -> Option<f64> {
+            self.values.get(id as usize)
+                .map(|v| f64::from_bits(v.load(Ordering::Relaxed)))
+        }
+
+        fn set_normalized(&self, id: u32, value: f64) {
+            if let Some(v) = self.values.get(id as usize) {
+                v.store(value.to_bits(), Ordering::Relaxed);
+            }
+        }
+
+        fn get_plain(&self, id: u32) -> Option<f64> {
+            let norm = self.get_normalized(id)?;
+            let info = self.param_infos().into_iter().find(|i| i.id == id)?;
+            Some(info.range.denormalize(norm))
+        }
+
+        fn set_plain(&self, id: u32, value: f64) {
+            if let Some(info) = self.param_infos().into_iter().find(|i| i.id == id) {
+                self.set_normalized(id, info.range.normalize(value));
+            }
+        }
+
+        fn format_value(&self, _id: u32, value: f64) -> Option<String> {
+            Some(format!("{:.0}", value))
+        }
+
+        fn parse_value(&self, _id: u32, _text: &str) -> Option<f64> { None }
+        fn snap_smoothers(&self) {}
+        fn set_sample_rate(&self, _: f64) {}
+
+        fn collect_values(&self) -> (Vec<u32>, Vec<f64>) {
+            let ids = vec![0, 1];
+            let vals: Vec<f64> = ids.iter().map(|&id| self.get_plain(id).unwrap_or(0.0)).collect();
+            (ids, vals)
+        }
+
+        fn restore_values(&self, values: &[(u32, f64)]) {
+            for &(id, val) in values { self.set_plain(id, val); }
+        }
+
+        fn default_for_gui() -> Self { Self::new() }
+    }
+
+    // -- Additional helpers --
+
+    /// Build an editor with a dropdown in the last row (near the window bottom).
+    fn make_editor_bottom_dropdown() -> BuiltinEditor<TestParams> {
+        let params = Arc::new(TestParams::new());
+        // 3 rows of 2, dropdown in the last row (row 2)
+        let layout = GridLayout::build("TEST", "V0.1", 2, 80.0, vec![
+            GridWidget::knob(1u32, "K1"),
+            GridWidget::knob(1u32, "K2"),
+            GridWidget::knob(1u32, "K3"),
+            GridWidget::knob(1u32, "K4"),
+            GridWidget::dropdown(0u32, "Mode"),
+            GridWidget::knob(1u32, "K5"),
+        ], vec![]);
+        let mut editor = BuiltinEditor::new_grid(params, layout);
+        if let Layout::Grid(ref gl) = editor.layout {
+            editor.interaction.build_regions_grid(gl);
+            for (idx, gw) in gl.widgets.iter().enumerate() {
+                if let Some(region) = editor.interaction.knob_regions.get_mut(idx) {
+                    region.widget_type = resolve_widget_type(gw.widget, gw.param_id, &*editor.params);
+                }
+            }
+        }
+        editor.render();
+        editor
+    }
+
+    /// Build an editor with two dropdowns side by side.
+    fn make_editor_two_dropdowns() -> BuiltinEditor<TestParams> {
+        let params = Arc::new(TestParams::new());
+        let layout = GridLayout::build("TEST", "V0.1", 2, 80.0, vec![
+            GridWidget::dropdown(0u32, "Mode A"),
+            GridWidget::dropdown(0u32, "Mode B"),
+        ], vec![]);
+        let mut editor = BuiltinEditor::new_grid(params, layout);
+        if let Layout::Grid(ref gl) = editor.layout {
+            editor.interaction.build_regions_grid(gl);
+            for (idx, gw) in gl.widgets.iter().enumerate() {
+                if let Some(region) = editor.interaction.knob_regions.get_mut(idx) {
+                    region.widget_type = resolve_widget_type(gw.widget, gw.param_id, &*editor.params);
+                }
+            }
+        }
+        editor.render();
+        editor
+    }
+
+    /// Build an editor with a 20-option dropdown for scroll testing.
+    fn make_editor_many_options() -> BuiltinEditor<ManyOptionParams> {
+        let params = Arc::new(ManyOptionParams::new());
+        let layout = GridLayout::build("TEST", "V0.1", 2, 80.0, vec![
+            GridWidget::dropdown(0u32, "Note"),
+            GridWidget::knob(1u32, "Gain"),
+        ], vec![]);
+        let mut editor = BuiltinEditor::new_grid(params, layout);
+        if let Layout::Grid(ref gl) = editor.layout {
+            editor.interaction.build_regions_grid(gl);
+            for (idx, gw) in gl.widgets.iter().enumerate() {
+                if let Some(region) = editor.interaction.knob_regions.get_mut(idx) {
+                    region.widget_type = resolve_widget_type(gw.widget, gw.param_id, &*editor.params);
+                }
+            }
+        }
+        editor.render();
+        editor
+    }
+
+    fn dropdown_center_many(editor: &BuiltinEditor<ManyOptionParams>) -> (f32, f32) {
+        let region = editor.interaction.knob_regions.iter()
+            .find(|r| r.widget_type == WidgetType::Dropdown)
+            .expect("no dropdown in layout");
+        (region.x + region.w / 2.0, region.y + region.h / 2.0)
+    }
+
+    // -- Tests: dropdown overflow/clipping --
+
+    #[test]
+    fn dropdown_flips_upward_when_near_bottom() {
+        let mut editor = make_editor_bottom_dropdown();
+        let (dx, dy) = {
+            let region = editor.interaction.knob_regions.iter()
+                .find(|r| r.widget_type == WidgetType::Dropdown)
+                .unwrap();
+            (region.x + region.w / 2.0, region.y + region.h / 2.0)
+        };
+
+        editor.on_mouse_down(dx, dy);
+        editor.on_mouse_up(dx, dy);
+        assert!(editor.interaction.dropdown_is_open());
+
+        let dd = editor.interaction.dropdown.as_ref().unwrap();
+        let region = &editor.interaction.knob_regions[dd.region_idx];
+        let (_, popup_y, _, popup_h) = dd.popup_rect;
+        let window_h = editor.layout.height() as f32;
+
+        // Popup should not extend past the window bottom
+        assert!(
+            popup_y + popup_h <= window_h + 1.0, // +1 for float rounding
+            "popup bottom {} exceeds window height {window_h}",
+            popup_y + popup_h
+        );
+
+        // If it flipped, popup_y should be above the button
+        let anchor_below = region.dropdown_anchor_y;
+        let anchor_above = anchor_below - 20.0;
+        let item_h = 18.0f32;
+        let padding = 4.0f32;
+        let full_h = dd.options.len() as f32 * item_h + padding * 2.0;
+        if anchor_below + full_h > window_h {
+            // Should have flipped upward: popup top is above the button top
+            assert!(
+                popup_y < anchor_above,
+                "expected upward flip: popup_y={popup_y}, anchor_above={anchor_above}"
+            );
+        }
+    }
+
+    #[test]
+    fn dropdown_clamps_horizontal_near_right_edge() {
+        let mut editor = make_editor_two_dropdowns();
+        // The second dropdown is in column 1 (right side)
+        let region = &editor.interaction.knob_regions[1];
+        assert_eq!(region.widget_type, WidgetType::Dropdown);
+        let dx = region.x + region.w / 2.0;
+        let dy = region.y + region.h / 2.0;
+
+        editor.on_mouse_down(dx, dy);
+        editor.on_mouse_up(dx, dy);
+        assert!(editor.interaction.dropdown_is_open());
+
+        let dd = editor.interaction.dropdown.as_ref().unwrap();
+        let (popup_x, _, popup_w, _) = dd.popup_rect;
+        let window_w = editor.layout.width() as f32;
+
+        assert!(
+            popup_x + popup_w <= window_w + 1.0,
+            "popup right edge {} exceeds window width {window_w}",
+            popup_x + popup_w
+        );
+        assert!(popup_x >= 0.0, "popup_x={popup_x} is negative");
+    }
+
+    #[test]
+    fn dropdown_scroll_long_list() {
+        let mut editor = make_editor_many_options();
+        let (dx, dy) = dropdown_center_many(&editor);
+
+        editor.on_mouse_down(dx, dy);
+        editor.on_mouse_up(dx, dy);
+        assert!(editor.interaction.dropdown_is_open());
+
+        let dd = editor.interaction.dropdown.as_ref().unwrap();
+        // 20-option enum → step_count = 19 → 19 options
+        assert!(dd.options.len() > dd.visible_count,
+            "expected scroll: {} options, {} visible", dd.options.len(), dd.visible_count);
+        assert_eq!(dd.scroll_offset, 0);
+    }
+
+    #[test]
+    fn dropdown_scroll_clamps_to_bounds() {
+        let mut editor = make_editor_many_options();
+        let (dx, dy) = dropdown_center_many(&editor);
+
+        editor.on_mouse_down(dx, dy);
+        editor.on_mouse_up(dx, dy);
+
+        // Scroll up past the top — should stay at 0
+        editor.interaction.dropdown_scroll(-10);
+        assert_eq!(editor.interaction.dropdown.as_ref().unwrap().scroll_offset, 0);
+
+        // Scroll down past the bottom — should clamp
+        editor.interaction.dropdown_scroll(1000);
+        let dd = editor.interaction.dropdown.as_ref().unwrap();
+        let max_offset = dd.options.len().saturating_sub(dd.visible_count);
+        assert_eq!(dd.scroll_offset, max_offset);
+    }
+
+    #[test]
+    fn dropdown_selected_item_visible_on_open() {
+        let mut editor = make_editor_many_options();
+        // Set the value to option 15 out of 19 (normalized = 15/18)
+        editor.params.set_normalized(0, 15.0 / 18.0);
+
+        let (dx, dy) = dropdown_center_many(&editor);
+        editor.on_mouse_down(dx, dy);
+        editor.on_mouse_up(dx, dy);
+
+        let dd = editor.interaction.dropdown.as_ref().unwrap();
+        let selected = dd.selected;
+        // The selected item should be within the visible window
+        assert!(
+            selected >= dd.scroll_offset && selected < dd.scroll_offset + dd.visible_count,
+            "selected={selected} not in visible range {}..{}",
+            dd.scroll_offset, dd.scroll_offset + dd.visible_count
+        );
+    }
+
+    #[test]
+    fn dropdown_scroll_then_select_correct_index() {
+        let mut editor = make_editor_many_options();
+        let (dx, dy) = dropdown_center_many(&editor);
+
+        editor.on_mouse_down(dx, dy);
+        editor.on_mouse_up(dx, dy);
+
+        // Scroll down by 3
+        editor.interaction.dropdown_scroll(3);
+        assert_eq!(editor.interaction.dropdown.as_ref().unwrap().scroll_offset, 3);
+
+        // Click the second visible item (local index 1 → absolute index 4)
+        let dd = editor.interaction.dropdown.as_ref().unwrap();
+        let (px, py, _, _) = dd.popup_rect;
+        let item_h = 18.0f32;
+        let padding = 4.0f32;
+        let click_y = py + padding + item_h + item_h / 2.0; // middle of second visible item
+
+        editor.on_mouse_down(px + 10.0, click_y);
+
+        assert!(!editor.interaction.dropdown_is_open());
+        // Absolute index = scroll_offset(3) + local(1) = 4
+        // 19 options → norm = 4/18
+        let norm = editor.params.get_normalized(0).unwrap();
+        let expected = 4.0 / 18.0;
+        assert!(
+            (norm - expected).abs() < 0.01,
+            "expected {expected:.4}, got {norm:.4}"
+        );
+    }
+
+    #[test]
+    fn dropdown_click_different_dropdown_closes_first() {
+        let mut editor = make_editor_two_dropdowns();
+        let r0 = &editor.interaction.knob_regions[0];
+        let r1 = &editor.interaction.knob_regions[1];
+        let (ax, ay) = (r0.x + r0.w / 2.0, r0.y + r0.h / 2.0);
+        let (bx, by) = (r1.x + r1.w / 2.0, r1.y + r1.h / 2.0);
+
+        // Open dropdown A
+        editor.on_mouse_down(ax, ay);
+        editor.on_mouse_up(ax, ay);
+        assert!(editor.interaction.dropdown_is_open());
+        assert_eq!(editor.interaction.dropdown.as_ref().unwrap().region_idx, 0);
+
+        // Click dropdown B — should close A and open B
+        editor.on_mouse_down(bx, by);
+        editor.on_mouse_up(bx, by);
+        assert!(editor.interaction.dropdown_is_open());
+        assert_eq!(editor.interaction.dropdown.as_ref().unwrap().region_idx, 1);
+    }
+
+    #[test]
+    fn dropdown_hover_tracks_correct_option() {
+        let mut editor = make_editor();
+        let (dx, dy) = dropdown_center(&editor);
+
+        editor.on_mouse_down(dx, dy);
+        editor.on_mouse_up(dx, dy);
+
+        let dd = editor.interaction.dropdown.as_ref().unwrap();
+        let (px, py, pw, _) = dd.popup_rect;
+        let item_h = 18.0f32;
+        let padding = 4.0f32;
+
+        // Hover over the third item (index 2)
+        let hover_y = py + padding + 2.0 * item_h + item_h / 2.0;
+        editor.on_mouse_moved(px + pw / 2.0, hover_y);
+
+        let dd = editor.interaction.dropdown.as_ref().unwrap();
+        assert_eq!(dd.hover_option, Some(2), "expected hover on option 2");
+
+        // Move outside the popup
+        editor.on_mouse_moved(0.0, 0.0);
+        let dd = editor.interaction.dropdown.as_ref().unwrap();
+        assert_eq!(dd.hover_option, None, "hover should clear outside popup");
+    }
+
+    #[test]
+    fn dropdown_popup_within_window_bounds() {
+        // Verify popup never exceeds window in any direction
+        let mut editor = make_editor();
+        let (dx, dy) = dropdown_center(&editor);
+
+        editor.on_mouse_down(dx, dy);
+        editor.on_mouse_up(dx, dy);
+
+        let dd = editor.interaction.dropdown.as_ref().unwrap();
+        let (px, py, pw, ph) = dd.popup_rect;
+        let window_w = editor.layout.width() as f32;
+        let window_h = editor.layout.height() as f32;
+
+        assert!(px >= 0.0, "popup left edge {px} < 0");
+        assert!(py >= 0.0, "popup top edge {py} < 0");
+        assert!(px + pw <= window_w + 1.0, "popup right {} > window {window_w}", px + pw);
+        assert!(py + ph <= window_h + 1.0, "popup bottom {} > window {window_h}", py + ph);
+    }
 }
