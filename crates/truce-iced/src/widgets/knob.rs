@@ -60,7 +60,7 @@ impl<'a, M: Clone + Debug + 'static> KnobWidget<'a, M> {
 
     /// Convert into an iced Element.
     pub fn into_element(self) -> Element<'a, Message<M>> {
-        let total_h = self.size + 30.0; // Extra space for label + value text
+        let total_h = self.size + 22.0; // Extra space for label + value text
         let program = KnobProgram {
             id: self.id,
             value: self.value as f32,
@@ -192,12 +192,12 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for KnobProgram {
         );
 
         // Value text
-        let value_y = bounds.width + 2.0;
+        let value_y = bounds.width / 2.0 + (bounds.width / 2.0 - 5.0) + 2.0; // arc bottom + 2px
         frame.fill_text(Text {
             content: self.display.clone(),
             position: Point::new(cx, value_y),
             color: Color::from_rgb(0.90, 0.90, 0.92),
-            size: iced::Pixels(11.0),
+            size: iced::Pixels(10.0),
             horizontal_alignment: alignment::Horizontal::Center,
             vertical_alignment: alignment::Vertical::Top,
             font: self.font,

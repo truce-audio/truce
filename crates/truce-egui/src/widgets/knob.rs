@@ -3,8 +3,8 @@
 use crate::ParamState;
 
 const KNOB_SIZE: f32 = 60.0;
-const KNOB_TOTAL_H: f32 = 90.0;
-const KNOB_RADIUS: f32 = 22.0;
+const KNOB_TOTAL_H: f32 = 82.0;
+const KNOB_RADIUS: f32 = 25.0;
 const TRACK_WIDTH: f32 = 3.0;
 
 /// 270-degree arc: from bottom-left (135°) to bottom-right (405°).
@@ -43,7 +43,7 @@ pub fn param_knob(
     // Paint
     if ui.is_rect_visible(rect) {
         let painter = ui.painter_at(rect);
-        let center = egui::pos2(rect.center().x, rect.top() + KNOB_RADIUS + 6.0);
+        let center = egui::pos2(rect.center().x, rect.top() + KNOB_RADIUS + 5.0);
 
         let track_color = ui.visuals().widgets.inactive.bg_fill;
         let active_color = ui.visuals().widgets.active.bg_fill;
@@ -91,7 +91,7 @@ pub fn param_knob(
 
         // Value text (below knob arc)
         let value_text = state.format(id);
-        let value_y = center.y + KNOB_RADIUS + 8.0;
+        let value_y = center.y + KNOB_RADIUS + 2.0;
         painter.text(
             egui::pos2(rect.center().x, value_y),
             egui::Align2::CENTER_TOP,
@@ -102,8 +102,8 @@ pub fn param_knob(
 
         // Label below value
         painter.text(
-            egui::pos2(rect.center().x, rect.bottom() - 2.0),
-            egui::Align2::CENTER_BOTTOM,
+            egui::pos2(rect.center().x, value_y + 12.0),
+            egui::Align2::CENTER_TOP,
             label,
             egui::FontId::proportional(10.0),
             dim_color,

@@ -8,6 +8,10 @@ Write your plugin once. Build CLAP, VST3, VST2, AU v2, AU v3, AAX,
 and standalone from a single Rust codebase. Hot-reload DSP and GUI
 changes without restarting the DAW.
 
+| egui | iced | slint |
+|------|------|-------|
+| ![egui](screenshots/gain_egui_default.png) | ![iced](screenshots/gain_iced_default.png) | ![slint](screenshots/gain_slint_default.png) |
+
 ![Built-in GUI](screenshots/gain_default.png)
 
 ## Quick Start

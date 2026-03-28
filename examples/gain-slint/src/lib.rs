@@ -77,7 +77,7 @@ impl PluginLogic for GainSlint {
     }
 
     fn custom_editor(&self) -> Option<Box<dyn truce_core::editor::Editor>> {
-        Some(Box::new(SlintEditor::new((190, 310), |state: ParamState| {
+        Some(Box::new(SlintEditor::new((176, 290), |state: ParamState| {
             let ui = GainUi::new().unwrap();
 
             // UI → host
@@ -90,6 +90,8 @@ impl PluginLogic for GainSlint {
             Box::new(move |state: &ParamState| {
                 ui.set_gain(state.get(P::Gain) as f32);
                 ui.set_pan(state.get(P::Pan) as f32);
+                ui.set_gain_text(slint::SharedString::from(state.format(P::Gain)));
+                ui.set_pan_text(slint::SharedString::from(state.format(P::Pan)));
                 ui.set_meter_left(meter_display(state.meter(P::MeterLeft)));
                 ui.set_meter_right(meter_display(state.meter(P::MeterRight)));
             })
@@ -132,12 +134,14 @@ mod tests {
     fn gui_snapshot() {
         truce_slint::snapshot::assert_snapshot(
             "screenshots", "gain_slint_default",
-            190, 310, 2.0, 0,
+            176, 290, 2.0, 0,
             |state| {
                 let ui = GainUi::new().unwrap();
                 Box::new(move |state: &truce_slint::ParamState| {
                     ui.set_gain(state.get(P::Gain) as f32);
                     ui.set_pan(state.get(P::Pan) as f32);
+                    ui.set_gain_text(slint::SharedString::from(state.format(P::Gain)));
+                    ui.set_pan_text(slint::SharedString::from(state.format(P::Pan)));
                     ui.set_meter_left(meter_display(state.meter(P::MeterLeft)));
                     ui.set_meter_right(meter_display(state.meter(P::MeterRight)));
                 })

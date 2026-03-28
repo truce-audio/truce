@@ -3,8 +3,8 @@ use truce_egui::{EguiEditor, ParamState};
 use truce_egui::theme::{HEADER_BG, HEADER_TEXT};
 use truce_egui::widgets::{param_knob, param_xy_pad, level_meter};
 
-const WINDOW_W: u32 = 190;
-const WINDOW_H: u32 = 310;
+const WINDOW_W: u32 = 176;
+const WINDOW_H: u32 = 290;
 
 // --- Parameters ---
 
@@ -105,7 +105,6 @@ fn gain_ui(ctx: &egui::Context, state: &ParamState) {
         .frame(egui::Frame::central_panel(&ctx.style()).inner_margin(10.0))
         .show(ctx, |ui| {
         ui.spacing_mut().item_spacing = egui::vec2(10.0, 10.0);
-        let content_h = ui.available_height();
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing = egui::vec2(10.0, 10.0);
             ui.vertical(|ui| {
@@ -115,10 +114,9 @@ fn gain_ui(ctx: &egui::Context, state: &ParamState) {
                     param_knob(ui, state, P::Gain, "Gain");
                     param_knob(ui, state, P::Pan, "Pan");
                 });
-                let xy_h = content_h - 100.0 - 14.0; // 90 knobs + 10 spacing + 14 label
-                param_xy_pad(ui, state, P::Pan, P::Gain, "Pan / Gain", 130.0, xy_h);
+                param_xy_pad(ui, state, P::Pan, P::Gain, "Pan / Gain", 130.0, 130.0);
             });
-            level_meter(ui, state, &[P::MeterLeft, P::MeterRight], "Level", content_h - 14.0);
+            level_meter(ui, state, &[P::MeterLeft, P::MeterRight], 222.0);
         });
     });
 }

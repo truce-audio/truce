@@ -5,6 +5,8 @@ import "JetBrainsMono-Regular.ttf";
 export component GainUi inherits Window {
     in-out property <float> gain: 0.5;
     in-out property <float> pan: 0.5;
+    in-out property <string> gain-text: "";
+    in-out property <string> pan-text: "";
     in-out property <float> meter-left: 0.0;
     in-out property <float> meter-right: 0.0;
 
@@ -12,70 +14,76 @@ export component GainUi inherits Window {
     callback pan-changed(float);
 
     title: "GAIN (slint)";
-    preferred-width: 190px;
-    preferred-height: 310px;
+    preferred-width: 176px;
+    preferred-height: 290px;
     background: #1f1f24;
     default-font-family: "JetBrains Mono";
 
     VerticalLayout {
-        padding-left: 10px;
-        padding-right: 10px;
-        padding-top: 6px;
-        padding-bottom: 6px;
-        spacing: 10px;
+        spacing: 0px;
         alignment: start;
 
-        Text {
-            text: "GAIN (slint)";
-            font-size: 14px;
-            font-weight: 700;
-            color: #e6e6eb;
-            horizontal-alignment: left;
-        }
-
+        // Header — 30px, matches egui/iced
         Rectangle {
-            height: 1px;
-            background: #3a3a44;
+            height: 30px;
+            background: #14141a;
+
+            Text {
+                x: 10px;
+                y: (parent.height - self.preferred-height) / 2;
+                text: "GAIN (slint)";
+                font-size: 14px;
+                font-weight: 700;
+                color: #bfbfc8;
+            }
         }
 
-        HorizontalLayout {
-            spacing: 10px;
+        // Content area with 10px padding
+        VerticalLayout {
+            padding-left: 10px;
+            padding-right: 10px;
+            padding-top: 10px;
+            padding-bottom: 10px;
 
-            VerticalLayout {
+            HorizontalLayout {
                 spacing: 10px;
 
-                HorizontalLayout {
+                VerticalLayout {
                     spacing: 10px;
 
-                    Knob {
-                        label: "Gain";
-                        value <=> root.gain;
-                        changed(v) => { root.gain-changed(v); }
+                    HorizontalLayout {
+                        spacing: 10px;
+
+                        Knob {
+                            label: "Gain";
+                            value <=> root.gain;
+                            value-text: root.gain-text;
+                            changed(v) => { root.gain-changed(v); }
+                        }
+
+                        Knob {
+                            label: "Pan";
+                            value <=> root.pan;
+                            value-text: root.pan-text;
+                            changed(v) => { root.pan-changed(v); }
+                        }
                     }
 
-                    Knob {
-                        label: "Pan";
-                        value <=> root.pan;
-                        changed(v) => { root.pan-changed(v); }
+                    XYPad {
+                        width: 130px;
+                        label: "Pan / Gain";
+                        value-x <=> root.pan;
+                        value-y <=> root.gain;
+                        changed-x(v) => { root.pan-changed(v); }
+                        changed-y(v) => { root.gain-changed(v); }
                     }
                 }
 
-                XYPad {
-                    width: 130px;
-                    height: 147px;
-                    label: "Pan / Gain";
-                    value-x <=> root.pan;
-                    value-y <=> root.gain;
-                    changed-x(v) => { root.pan-changed(v); }
-                    changed-y(v) => { root.gain-changed(v); }
+                Meter {
+                    height: 222px;
+                    level-left: root.meter-left;
+                    level-right: root.meter-right;
                 }
-            }
-
-            Meter {
-                height: 247px;
-                level-left: root.meter-left;
-                level-right: root.meter-right;
-                label: "Level";
             }
         }
     }

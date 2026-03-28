@@ -32,7 +32,7 @@ impl<'a, M: Clone + Debug + 'static> MeterWidget<'a, M> {
             _ids: ids.to_vec(),
             values,
             label: None,
-            width: 30.0,
+            width: 16.0,
             height: 80.0,
             font: params.font(),
             _phantom: PhantomData,
@@ -56,7 +56,7 @@ impl<'a, M: Clone + Debug + 'static> MeterWidget<'a, M> {
     }
 
     pub fn into_element(self) -> Element<'a, Message<M>> {
-        let total_h = self.height + if self.label.is_some() { 16.0 } else { 0.0 };
+        let total_h = self.height;
         let program = MeterProgram {
             values: self.values,
             label: self.label.unwrap_or("").to_string(),
@@ -130,20 +130,6 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for MeterProgram {
                 );
                 frame.fill(&bar, color);
             }
-        }
-
-        // Label
-        if !self.label.is_empty() {
-            frame.fill_text(iced::widget::canvas::Text {
-                content: self.label.clone(),
-                position: Point::new(bounds.width / 2.0, self.meter_height + 2.0),
-                color: theme::TEXT_DIM,
-                size: iced::Pixels(10.0),
-                horizontal_alignment: iced::alignment::Horizontal::Center,
-                vertical_alignment: iced::alignment::Vertical::Top,
-                font: self.font,
-                ..Default::default()
-            });
         }
 
         vec![frame.into_geometry()]

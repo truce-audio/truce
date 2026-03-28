@@ -18,7 +18,7 @@ export component Knob inherits Rectangle {
     callback changed(float);
 
     width: 60px;
-    height: 90px;
+    height: 82px;
 
     property <float> norm: (value - minimum) / (maximum - minimum);
     property <float> val-angle: 135 + norm * 270;
@@ -108,7 +108,7 @@ export component Knob inherits Rectangle {
 
     // Value text (below knob arc)
     Text {
-        y: 66px;
+        y: 57px;
         width: parent.width;
         text: root.value-text != "" ? root.value-text : round(root.value * 100) / 100;
         font-size: 10px;
@@ -118,7 +118,7 @@ export component Knob inherits Rectangle {
 
     // Label
     Text {
-        y: 80px;
+        y: 71px;
         width: parent.width;
         text: root.label;
         font-size: 10px;

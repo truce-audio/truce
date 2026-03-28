@@ -1,20 +1,18 @@
-// Vertical level meter with color gradient (green -> yellow -> red).
+// Vertical level meter (display-only).
 
 export component Meter inherits Rectangle {
     in property <float> level-left: 0.0;
     in property <float> level-right: 0.0;
-    in property <string> label: "";
-    in property <color> label-color: #8c8c99;
 
-    width: 30px;
+    width: 16px;
     height: 100px;
 
     // Meter bars
     HorizontalLayout {
-        padding-left: 2px;
-        padding-right: 2px;
-        padding-top: 2px;
-        padding-bottom: 16px;
+        padding-left: 1px;
+        padding-right: 1px;
+        padding-top: 0px;
+        padding-bottom: 0px;
         spacing: 2px;
 
         // Left channel
@@ -46,15 +44,5 @@ export component Meter inherits Rectangle {
                 border-radius: 2px;
             }
         }
-    }
-
-    // Label
-    Text {
-        y: parent.height - 14px;
-        width: parent.width;
-        text: root.label;
-        font-size: 9px;
-        color: root.label-color;
-        horizontal-alignment: center;
     }
 }

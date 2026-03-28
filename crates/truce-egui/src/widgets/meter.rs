@@ -10,25 +10,22 @@ use crate::ParamState;
 /// is display-only (no interaction). `height` sets the bar height in
 /// pixels. Colors change based on level: blue normally, red when clipping.
 /// Default meter width in pixels.
-const METER_W: f32 = 30.0;
+const METER_W: f32 = 16.0;
 const BAR_GAP: f32 = 2.0;
-const BAR_PAD: f32 = 2.0;
-const LABEL_H: f32 = 14.0;
+const BAR_PAD: f32 = 1.0;
 const TRACK_BG: egui::Color32 = egui::Color32::from_rgb(42, 42, 48);
 
 pub fn level_meter(
     ui: &mut egui::Ui,
     state: &ParamState,
     meter_ids: &[impl Into<u32> + Copy],
-    label: &str,
     height: f32,
 ) -> egui::Response {
     let meter_ids: Vec<u32> = meter_ids.iter().map(|id| (*id).into()).collect();
     let channels = meter_ids.len().max(1);
     let bar_h = height;
-    let total_h = bar_h + LABEL_H;
 
-    let desired = egui::vec2(METER_W, total_h);
+    let desired = egui::vec2(METER_W, bar_h);
     let (rect, response) = ui.allocate_exact_size(desired, egui::Sense::hover());
 
     if ui.is_rect_visible(rect) {
@@ -68,15 +65,6 @@ pub fn level_meter(
             }
         }
 
-        // Label
-        let dim_color = ui.visuals().widgets.noninteractive.fg_stroke.color;
-        painter.text(
-            egui::pos2(rect.center().x, rect.bottom() - 2.0),
-            egui::Align2::CENTER_BOTTOM,
-            label,
-            egui::FontId::proportional(10.0),
-            dim_color,
-        );
     }
 
     response

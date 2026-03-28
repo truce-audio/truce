@@ -80,7 +80,8 @@ where
     );
 
     // Build the iced program
-    let param_state = ParamState::new(params.clone());
+    let mut param_state = ParamState::new(params.clone());
+    param_state.set_font(default_font);
     let noop_ctx = EditorContext {
         begin_edit: Arc::new(|_| {}),
         set_param: Arc::new(|_, _| {}),

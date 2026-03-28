@@ -1,126 +1,84 @@
 // XY pad — 2D control for two parameters.
 // Drag anywhere to set both X and Y values simultaneously.
 
-export component XYPad inherits Rectangle {
+export component XYPad inherits VerticalLayout {
     in-out property <float> value-x: 0.5;
     in-out property <float> value-y: 0.5;
     in property <string> label: "";
-
-    in property <color> bg-color: #1a1a1e;
-    in property <color> grid-color: #2d2d35;
-    in property <color> dot-color: #4d99f2;
-    in property <color> crosshair-color: rgba(77, 153, 242, 0.3);
-    in property <color> pad-border-color: #3a3a44;
-    in property <color> label-color: #8c8c99;
 
     callback changed-x(float);
     callback changed-y(float);
 
     width: 120px;
-    height: 134px;
+    spacing: 2px;
 
-    property <length> pad-margin: 4px;
-    property <length> label-h: 14px;
-    property <length> pad-w: root.width - pad-margin * 2;
-    property <length> pad-h: root.height - pad-margin * 2 - label-h;
-    property <length> dot-x: pad-margin + pad-w * value-x;
-    property <length> dot-y: pad-margin + pad-h * (1.0 - value-y);
-
-    // Background
-    Rectangle {
-        x: root.pad-margin;
-        y: root.pad-margin;
-        width: root.pad-w;
-        height: root.pad-h;
-        background: root.bg-color;
-        border-color: touch.has-hover ? root.dot-color : root.pad-border-color;
+    pad := Rectangle {
+        width: root.width;
+        height: root.width;
+        background: #2e2e38;
+        border-color: #737373;
         border-width: 1px;
-        border-radius: 2px;
-    }
 
-    // Center grid lines
-    Rectangle {
-        x: root.pad-margin + root.pad-w / 2 - 0.5px;
-        y: root.pad-margin;
-        width: 1px;
-        height: root.pad-h;
-        background: root.grid-color;
-    }
-    Rectangle {
-        x: root.pad-margin;
-        y: root.pad-margin + root.pad-h / 2 - 0.5px;
-        width: root.pad-w;
-        height: 1px;
-        background: root.grid-color;
-    }
+        property <length> dot-x: pad.width * root.value-x;
+        property <length> dot-y: pad.height * (1.0 - root.value-y);
 
-    // Crosshair lines to dot
-    Rectangle {
-        x: root.dot-x - 0.5px;
-        y: root.pad-margin;
-        width: 1px;
-        height: root.pad-h;
-        background: root.crosshair-color;
-    }
-    Rectangle {
-        x: root.pad-margin;
-        y: root.dot-y - 0.5px;
-        width: root.pad-w;
-        height: 1px;
-        background: root.crosshair-color;
-    }
+        // Crosshair lines (30% opacity accent)
+        Rectangle {
+            x: pad.dot-x - 0.5px;
+            y: 0px;
+            width: 1px;
+            height: pad.height;
+            background: rgba(77, 153, 242, 0.3);
+        }
+        Rectangle {
+            x: 0px;
+            y: pad.dot-y - 0.5px;
+            width: pad.width;
+            height: 1px;
+            background: rgba(77, 153, 242, 0.3);
+        }
 
-    // Dot
-    Rectangle {
-        x: root.dot-x - 5px;
-        y: root.dot-y - 5px;
-        width: 10px;
-        height: 10px;
-        border-radius: 5px;
-        background: root.dot-color;
-    }
-    Rectangle {
-        x: root.dot-x - 3px;
-        y: root.dot-y - 3px;
-        width: 6px;
-        height: 6px;
-        border-radius: 3px;
-        background: white;
+        // Dot
+        Rectangle {
+            x: pad.dot-x - 5px;
+            y: pad.dot-y - 5px;
+            width: 10px;
+            height: 10px;
+            border-radius: 5px;
+            background: #4d99f2;
+        }
+
+        // Drag interaction
+        touch := TouchArea {
+            width: pad.width;
+            height: pad.height;
+
+            moved => {
+                if self.pressed {
+                    root.value-x = clamp(touch.mouse-x / pad.width, 0.0, 1.0);
+                    root.value-y = clamp(1.0 - touch.mouse-y / pad.height, 0.0, 1.0);
+                    root.changed-x(root.value-x);
+                    root.changed-y(root.value-y);
+                }
+            }
+
+            pointer-event(ev) => {
+                if ev.kind == PointerEventKind.down && ev.button == PointerEventButton.left {
+                    root.value-x = clamp(touch.mouse-x / pad.width, 0.0, 1.0);
+                    root.value-y = clamp(1.0 - touch.mouse-y / pad.height, 0.0, 1.0);
+                    root.changed-x(root.value-x);
+                    root.changed-y(root.value-y);
+                }
+            }
+        }
     }
 
     // Label
     Text {
-        y: root.height - root.label-h;
         width: root.width;
         text: root.label;
         font-size: 10px;
-        color: root.label-color;
+        color: #8c8c99;
         horizontal-alignment: center;
-    }
-
-    // Drag interaction
-    touch := TouchArea {
-        x: root.pad-margin;
-        y: root.pad-margin;
-        width: root.pad-w;
-        height: root.pad-h;
-
-        moved => {
-            if self.pressed {
-                root.value-x = clamp(touch.mouse-x / root.pad-w, 0.0, 1.0);
-                root.value-y = clamp(1.0 - touch.mouse-y / root.pad-h, 0.0, 1.0);
-                root.changed-x(root.value-x);
-                root.changed-y(root.value-y);
-            }
-        }
-
-        pointer-event(ev) => {
-            if ev.kind == PointerEventKind.down && ev.button == PointerEventButton.left {
-                root.value-x = clamp(touch.mouse-x / root.pad-w, 0.0, 1.0);
-                root.value-y = clamp(1.0 - touch.mouse-y / root.pad-h, 0.0, 1.0);
-                root.changed-x(root.value-x);
-                root.changed-y(root.value-y);
-            }
-        }
     }
 }
