@@ -1,5 +1,6 @@
 use truce::prelude::*;
 use truce_egui::{EguiEditor, ParamState};
+use truce_egui::theme::{HEADER_BG, HEADER_TEXT};
 use truce_egui::widgets::{param_knob, param_xy_pad, level_meter};
 
 // --- Parameters ---
@@ -83,22 +84,27 @@ impl PluginLogic for GainEgui {
 }
 
 fn gain_ui(ctx: &egui::Context, state: &ParamState) {
-    egui::CentralPanel::default().show(ctx, |ui| {
-        ui.vertical_centered(|ui| {
-            ui.add_space(8.0);
-            ui.heading("Gain (egui)");
-            ui.add_space(12.0);
+    egui::TopBottomPanel::top("header")
+        .exact_height(30.0)
+        .frame(egui::Frame::NONE.fill(HEADER_BG))
+        .show(ctx, |ui| {
+            ui.horizontal_centered(|ui| {
+                ui.add_space(10.0);
+                ui.label(
+                    egui::RichText::new("TRUCE ANALYZER")
+                        .size(14.0)
+                        .color(HEADER_TEXT)
+                        .strong(),
+                );
+            });
         });
-
-        ui.separator();
-        ui.add_space(8.0);
-
+    egui::CentralPanel::default().show(ctx, |ui| {
         ui.horizontal(|ui| {
             param_knob(ui, state, P::Gain, "Gain");
             ui.add_space(16.0);
             param_knob(ui, state, P::Pan, "Pan");
             ui.add_space(16.0);
-            level_meter(ui, state, &[P::MeterLeft, P::MeterRight], "Level");
+            level_meter(ui, state, &[P::MeterLeft, P::MeterRight], "Level", 100.0);
         });
 
         ui.add_space(8.0);

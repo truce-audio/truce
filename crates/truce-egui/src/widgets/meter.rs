@@ -7,13 +7,14 @@ use crate::ParamState;
 /// Show a vertical level meter reading truce meter values.
 ///
 /// `meter_ids` are the meter IDs to display (one bar per ID). The meter
-/// is display-only (no interaction). Colors change based on level:
-/// green → yellow → red.
+/// is display-only (no interaction). `height` sets the bar height in
+/// pixels. Colors change based on level: blue normally, red when clipping.
 pub fn level_meter(
     ui: &mut egui::Ui,
     state: &ParamState,
     meter_ids: &[impl Into<u32> + Copy],
     label: &str,
+    height: f32,
 ) -> egui::Response {
     let meter_ids: Vec<u32> = meter_ids.iter().map(|id| (*id).into()).collect();
     let bar_count = meter_ids.len().max(1) as f32;
@@ -21,7 +22,7 @@ pub fn level_meter(
     let spacing = 4.0;
     let padding = 8.0;
     let label_h = 14.0;
-    let bar_h = 60.0;
+    let bar_h = height;
 
     let total_w = bar_count * bar_width + (bar_count - 1.0) * spacing + padding * 2.0;
     let total_h = bar_h + label_h + padding;
@@ -65,9 +66,9 @@ pub fn level_meter(
                     egui::pos2(x + bar_width, bar_bottom),
                 );
                 let color = if display > 0.95 {
-                    egui::Color32::from_rgb(224, 69, 69)
+                    crate::theme::METER_CLIP
                 } else {
-                    egui::Color32::from_rgb(77, 153, 242)
+                    crate::theme::KNOB_FILL
                 };
                 painter.rect_filled(level_rect, 2.0, color);
             }
