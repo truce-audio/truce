@@ -50,8 +50,7 @@ export component GainUi inherits Window {
                 changed(v) => { root.gain-changed(v); }
             }
 
-            ParamSlider {
-                width: 120px;
+            Knob {
                 label: "Pan";
                 value <=> root.pan;
                 changed(v) => { root.pan-changed(v); }
