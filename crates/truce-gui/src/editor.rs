@@ -185,6 +185,11 @@ impl<P: Params + 'static> BuiltinEditor<P> {
                             normalized, knob_def.label, &value_text,
                             theme, is_hovered, is_open,
                         );
+                        // Store the button box bottom for popup positioning
+                        let anchor_cy = y + knob_size / 2.0 - 8.0;
+                        if let Some(region) = self.interaction.knob_regions.get_mut(region_idx) {
+                            region.dropdown_anchor_y = anchor_cy + 10.0; // cy + box_h/2
+                        }
                     },
                     widgets::WidgetType::Meter => {
                         let default_ids = vec![knob_def.param_id];
@@ -311,6 +316,11 @@ impl<P: Params + 'static> BuiltinEditor<P> {
                         normalized, gw.label, &value_text,
                         theme, is_hovered, is_open,
                     );
+                    // Store the button box bottom for popup positioning
+                    let anchor_cy = y + widget_h / 2.0 - 8.0;
+                    if let Some(region) = self.interaction.knob_regions.get_mut(idx) {
+                        region.dropdown_anchor_y = anchor_cy + 10.0; // cy + box_h/2
+                    }
                 },
                 widgets::WidgetType::Meter => {
                     let default_ids = vec![gw.param_id];
@@ -367,11 +377,9 @@ impl<P: Params + 'static> BuiltinEditor<P> {
                 Some(r) => r,
                 None => return,
             };
-            // Position popup directly below the button box (not the full widget region)
-            let cy = region.y + region.h / 2.0 - 8.0;
-            let box_h = 20.0;
+            // Use the anchor stored at draw time (bottom of the visual button box)
             let popup_x = region.x;
-            let popup_y = cy + box_h / 2.0;
+            let popup_y = region.dropdown_anchor_y;
             let popup_w = region.w;
 
             widgets::draw_dropdown_popup(
@@ -523,10 +531,8 @@ impl<P: Params + 'static> BuiltinEditor<P> {
                     let current_norm = self.params.get_normalized(param_id).unwrap_or(0.0);
                     let selected = (current_norm * (count - 1).max(1) as f64).round() as usize;
                     let region = &self.interaction.knob_regions[idx];
-                    let cy = region.y + region.h / 2.0 - 8.0;
-                    let box_h = 20.0;
                     let popup_x = region.x;
-                    let popup_y = cy + box_h / 2.0;
+                    let popup_y = region.dropdown_anchor_y;
                     let popup_w = region.w.max(80.0);
                     let item_h = 18.0f32;
                     let padding = 4.0f32;

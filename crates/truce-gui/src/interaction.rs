@@ -20,6 +20,9 @@ pub struct WidgetRegion {
     pub cy: f32,
     pub radius: f32,
     pub normalized_value: f32,
+    /// Bottom Y of the dropdown button box, set at draw time.
+    /// Used to position the popup directly below the visual button.
+    pub dropdown_anchor_y: f32,
 }
 
 /// Backward-compatible alias.
@@ -115,6 +118,7 @@ impl InteractionState {
                     cy,
                     radius,
                     normalized_value: 0.0,
+                dropdown_anchor_y: 0.0,
                 });
                 col += span;
             }
@@ -264,6 +268,7 @@ impl InteractionState {
                 x, y, w, h,
                 cx, cy, radius,
                 normalized_value: 0.0,
+                dropdown_anchor_y: 0.0,
             });
         }
     }
