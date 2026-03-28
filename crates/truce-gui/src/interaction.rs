@@ -25,12 +25,30 @@ pub struct WidgetRegion {
 /// Backward-compatible alias.
 pub type KnobRegion = WidgetRegion;
 
+/// State for an open dropdown popup.
+pub struct DropdownState {
+    /// Region index of the dropdown widget that is open.
+    pub region_idx: usize,
+    /// Parameter ID of the open dropdown.
+    pub param_id: u32,
+    /// Popup bounding rect: (x, y, w, h).
+    pub popup_rect: (f32, f32, f32, f32),
+    /// Option labels.
+    pub options: Vec<String>,
+    /// Currently selected index.
+    pub selected: usize,
+    /// Index under the cursor within the popup.
+    pub hover_option: Option<usize>,
+}
+
 /// Tracks the current mouse interaction state.
 pub struct InteractionState {
     pub knob_regions: Vec<WidgetRegion>,
     pub dragging: Option<DragState>,
     /// Region index under the cursor (for hover highlight).
     pub hover_idx: Option<usize>,
+    /// Currently open dropdown popup (at most one at a time).
+    pub dropdown: Option<DropdownState>,
 }
 
 pub struct DragState {
@@ -57,6 +75,7 @@ impl InteractionState {
             knob_regions: Vec::new(),
             dragging: None,
             hover_idx: None,
+            dropdown: None,
         }
     }
 
@@ -116,7 +135,8 @@ impl InteractionState {
                     }
                 }
                 WidgetType::Meter => continue,
-                WidgetType::Slider | WidgetType::Toggle | WidgetType::Selector | WidgetType::XYPad => {
+                WidgetType::Slider | WidgetType::Toggle | WidgetType::Selector
+                | WidgetType::Dropdown | WidgetType::XYPad => {
                     if mx >= region.x && mx <= region.x + region.w
                         && my >= region.y && my <= region.y + region.h
                     {
@@ -180,6 +200,45 @@ impl InteractionState {
     /// End a drag.
     pub fn end_drag(&mut self) {
         self.dragging = None;
+    }
+
+    /// Test if a point is inside the open dropdown popup.
+    /// Returns the option index if hit, or None.
+    pub fn dropdown_popup_hit(&self, mx: f32, my: f32) -> Option<usize> {
+        let dd = self.dropdown.as_ref()?;
+        let (px, py, pw, ph) = dd.popup_rect;
+        if mx < px || mx > px + pw || my < py || my > py + ph {
+            return None;
+        }
+        let item_h = 18.0f32;
+        let padding = 4.0f32;
+        let idx = ((my - py - padding) / item_h) as usize;
+        if idx < dd.options.len() { Some(idx) } else { None }
+    }
+
+    /// Update the hovered option in the open dropdown popup.
+    pub fn dropdown_update_hover(&mut self, mx: f32, my: f32) {
+        if let Some(ref mut dd) = self.dropdown {
+            let (px, py, pw, ph) = dd.popup_rect;
+            if mx >= px && mx <= px + pw && my >= py && my <= py + ph {
+                let item_h = 18.0f32;
+                let padding = 4.0f32;
+                let idx = ((my - py - padding) / item_h) as usize;
+                dd.hover_option = if idx < dd.options.len() { Some(idx) } else { None };
+            } else {
+                dd.hover_option = None;
+            }
+        }
+    }
+
+    /// Whether a dropdown popup is currently open.
+    pub fn dropdown_is_open(&self) -> bool {
+        self.dropdown.is_some()
+    }
+
+    /// Close the dropdown popup.
+    pub fn dropdown_close(&mut self) {
+        self.dropdown = None;
     }
 
     /// Rebuild hit regions from a grid layout.

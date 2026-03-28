@@ -111,4 +111,38 @@ macro_rules! bind {
             $ui.[<set_ $name>]($state.get($id) > 0.5);
         }
     };
+
+    // -- choice (integer index for ComboBox / enum params) --
+    //
+    // Binds an integer property (e.g. ComboBox `current-index`) to an enum
+    // param. `count` is the number of options.
+    //
+    // ```ignore
+    // truce_slint::bind! { state, ui,
+    //     P::Mode => mode: choice(3),
+    // }
+    // ```
+    (@wire $state:expr, $ui:expr, $id:expr, $name:ident : choice($count:expr)) => {
+        {
+            let s = $state.clone();
+            let id: u32 = $id.into();
+            let count: u32 = $count;
+            $crate::paste! {
+                $ui.[<on_ $name _changed>](move |v: i32| {
+                    let norm = if count <= 1 { 0.0 } else { v as f64 / (count - 1) as f64 };
+                    s.set_immediate(id, norm.clamp(0.0, 1.0));
+                });
+            }
+        }
+    };
+    (@sync $state:expr, $ui:expr, $id:expr, $name:ident : choice($count:expr)) => {
+        {
+            let count: u32 = $count;
+            let norm = $state.get($id);
+            let idx = if count <= 1 { 0 } else { (norm * (count - 1) as f64).round() as i32 };
+            $crate::paste! {
+                $ui.[<set_ $name>](idx);
+            }
+        }
+    };
 }

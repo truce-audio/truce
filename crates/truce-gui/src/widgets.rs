@@ -12,6 +12,8 @@ pub enum WidgetType {
     Slider,
     Toggle,
     Selector,
+    /// Dropdown list — click to open a popup of all options.
+    Dropdown,
     Meter,
     XYPad,
 }
@@ -257,6 +259,101 @@ pub fn draw_selector(
     let label_size = 9.0;
     let label_w = ctx.text_width(label, label_size);
     ctx.draw_text(label, cx - label_w / 2.0, y + height + 10.0, label_size, theme.text_dim);
+}
+
+/// Draw a dropdown (closed state) — shows current value with a down arrow.
+///
+/// When open, `draw_dropdown_popup` renders the option list as an overlay.
+pub fn draw_dropdown(
+    ctx: &mut dyn RenderBackend,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    _value: f32,
+    label: &str,
+    value_text: &str,
+    theme: &Theme,
+    highlighted: bool,
+    is_open: bool,
+) {
+    let cx = x + width / 2.0;
+    let cy = y + height / 2.0 - 8.0;
+
+    let val_size = 10.0;
+    let arrow_pad = 14.0;
+    let val_w = ctx.text_width(value_text, val_size);
+    let box_w = (val_w + arrow_pad + 12.0).max(width - 12.0);
+    let box_h = 20.0;
+    let box_x = cx - box_w / 2.0;
+    let box_y = cy - box_h / 2.0;
+    let bg = if is_open || highlighted { theme.accent } else { theme.knob_track };
+    ctx.fill_rect(box_x, box_y, box_w, box_h, bg);
+
+    // Value text (left-aligned with padding)
+    ctx.draw_text(
+        value_text,
+        box_x + 6.0,
+        cy - val_size / 2.0,
+        val_size,
+        theme.text,
+    );
+
+    // Down arrow on the right
+    let arrow_size = 8.0;
+    let arrow = if is_open { "\u{25B2}" } else { "\u{25BC}" }; // ▲ / ▼
+    let aw = ctx.text_width(arrow, arrow_size);
+    ctx.draw_text(arrow, box_x + box_w - aw - 4.0, cy - arrow_size / 2.0, arrow_size, theme.text_dim);
+
+    // Label (below)
+    let label_size = 9.0;
+    let label_w = ctx.text_width(label, label_size);
+    ctx.draw_text(label, cx - label_w / 2.0, y + height + 10.0, label_size, theme.text_dim);
+}
+
+/// Draw the dropdown popup overlay showing all options.
+///
+/// Returns the bounding rect of the popup (x, y, w, h) for hit testing.
+pub fn draw_dropdown_popup(
+    ctx: &mut dyn RenderBackend,
+    x: f32,
+    y: f32,
+    width: f32,
+    options: &[String],
+    selected_index: usize,
+    hover_index: Option<usize>,
+    theme: &Theme,
+) -> (f32, f32, f32, f32) {
+    let item_h = 18.0;
+    let padding = 4.0;
+    let popup_w = width.max(80.0);
+    let popup_h = options.len() as f32 * item_h + padding * 2.0;
+    let popup_x = x;
+    let popup_y = y;
+
+    // Background
+    ctx.fill_rect(popup_x, popup_y, popup_w, popup_h, theme.surface);
+    // Border
+    ctx.draw_line(popup_x, popup_y, popup_x + popup_w, popup_y, theme.text_dim, 1.0);
+    ctx.draw_line(popup_x + popup_w, popup_y, popup_x + popup_w, popup_y + popup_h, theme.text_dim, 1.0);
+    ctx.draw_line(popup_x + popup_w, popup_y + popup_h, popup_x, popup_y + popup_h, theme.text_dim, 1.0);
+    ctx.draw_line(popup_x, popup_y + popup_h, popup_x, popup_y, theme.text_dim, 1.0);
+
+    let text_size = 10.0;
+    for (i, opt) in options.iter().enumerate() {
+        let iy = popup_y + padding + i as f32 * item_h;
+
+        // Highlight selected or hovered item
+        if Some(i) == hover_index {
+            ctx.fill_rect(popup_x + 1.0, iy, popup_w - 2.0, item_h, theme.accent);
+        } else if i == selected_index {
+            ctx.fill_rect(popup_x + 1.0, iy, popup_w - 2.0, item_h, theme.knob_track);
+        }
+
+        ctx.draw_text(opt, popup_x + 6.0, iy + (item_h - text_size) / 2.0, text_size, theme.text);
+    }
+
+    (popup_x, popup_y, popup_w, popup_h)
 }
 
 /// Draw a vertical level meter with one or more channels.

@@ -51,6 +51,8 @@ pub enum WidgetKind {
     Slider,
     Toggle,
     Selector,
+    /// Dropdown list — click to open a popup showing all options.
+    Dropdown,
     /// Level meter. Shows one bar per meter ID. Supports mono, stereo, or multi-channel.
     Meter,
     /// XY pad. Controls two params — X param stored in `param_id`, Y param in `xy_param_y`.
@@ -76,6 +78,11 @@ impl KnobDef {
     /// Selector (click-to-cycle for enum params).
     pub fn selector(param_id: impl Into<u32>, label: &'static str) -> Self {
         Self { param_id: param_id.into(), label, widget: Some(WidgetKind::Selector), span: 1, param_id_y: None, meter_ids: None }
+    }
+
+    /// Dropdown list (click to open a popup showing all options).
+    pub fn dropdown(param_id: impl Into<u32>, label: &'static str) -> Self {
+        Self { param_id: param_id.into(), label, widget: Some(WidgetKind::Dropdown), span: 1, param_id_y: None, meter_ids: None }
     }
 
     /// Level meter with one or more channels (display-only, reads from Plugin::get_meter()).
@@ -228,6 +235,14 @@ impl GridWidget {
         Self {
             col: AUTO, row: AUTO, col_span: 1, row_span: 1,
             param_id: param_id.into(), label, widget: Some(WidgetKind::Selector),
+            param_id_y: None, meter_ids: None,
+        }
+    }
+
+    pub fn dropdown(param_id: impl Into<u32>, label: &'static str) -> Self {
+        Self {
+            col: AUTO, row: AUTO, col_span: 1, row_span: 1,
+            param_id: param_id.into(), label, widget: Some(WidgetKind::Dropdown),
             param_id_y: None, meter_ids: None,
         }
     }

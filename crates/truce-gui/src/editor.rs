@@ -11,7 +11,7 @@ use truce_core::editor::{Editor, EditorContext, RawWindowHandle};
 use truce_params::Params;
 
 use crate::backend_cpu::CpuBackend;
-use crate::interaction::InteractionState;
+use crate::interaction::{DropdownState, InteractionState};
 use crate::layout::{GridLayout, Layout, PluginLayout, compute_section_offsets,
                      GRID_GAP, GRID_PADDING, GRID_HEADER_H, GRID_SECTION_H};
 use crate::platform::{PlatformView, ViewCallbacks};
@@ -177,6 +177,15 @@ impl<P: Params + 'static> BuiltinEditor<P> {
                         normalized, knob_def.label, &value_text,
                         theme, is_hovered,
                     ),
+                    widgets::WidgetType::Dropdown => {
+                        let is_open = self.interaction.dropdown.as_ref()
+                            .map_or(false, |dd| dd.region_idx == region_idx);
+                        widgets::draw_dropdown(
+                            backend, x, y, widget_w, knob_size,
+                            normalized, knob_def.label, &value_text,
+                            theme, is_hovered, is_open,
+                        );
+                    },
                     widgets::WidgetType::Meter => {
                         let default_ids = vec![knob_def.param_id];
                         let ids = knob_def.meter_ids.as_deref()
@@ -220,6 +229,9 @@ impl<P: Params + 'static> BuiltinEditor<P> {
 
             y += knob_size + 30.0;
         }
+
+        // Dropdown popup overlay (rendered last, on top of everything)
+        self.render_dropdown_popup(backend);
     }
 
     fn render_grid_inner(&mut self, backend: &mut dyn RenderBackend) {
@@ -291,6 +303,15 @@ impl<P: Params + 'static> BuiltinEditor<P> {
                     backend, x, y, widget_w, widget_h,
                     normalized, gw.label, &value_text, theme, is_hovered,
                 ),
+                widgets::WidgetType::Dropdown => {
+                    let is_open = self.interaction.dropdown.as_ref()
+                        .map_or(false, |dd| dd.region_idx == idx);
+                    widgets::draw_dropdown(
+                        backend, x, y, widget_w, widget_h,
+                        normalized, gw.label, &value_text,
+                        theme, is_hovered, is_open,
+                    );
+                },
                 widgets::WidgetType::Meter => {
                     let default_ids = vec![gw.param_id];
                     let ids = gw.meter_ids.as_deref().unwrap_or(&default_ids);
@@ -333,6 +354,34 @@ impl<P: Params + 'static> BuiltinEditor<P> {
                     );
                 },
             }
+        }
+
+        // Dropdown popup overlay (rendered last, on top of everything)
+        self.render_dropdown_popup(backend);
+    }
+
+    /// Draw the dropdown popup overlay if one is open.
+    fn render_dropdown_popup(&self, backend: &mut dyn RenderBackend) {
+        if let Some(ref dd) = self.interaction.dropdown {
+            let region = match self.interaction.knob_regions.get(dd.region_idx) {
+                Some(r) => r,
+                None => return,
+            };
+            // Position popup directly below the widget
+            let popup_x = region.x;
+            let popup_y = region.y + region.h;
+            let popup_w = region.w;
+
+            widgets::draw_dropdown_popup(
+                backend,
+                popup_x,
+                popup_y,
+                popup_w,
+                &dd.options,
+                dd.selected,
+                dd.hover_option,
+                &self.theme,
+            );
         }
     }
 
@@ -397,6 +446,32 @@ impl<P: Params + 'static> BuiltinEditor<P> {
     // --- Mouse event handlers (public for external backends) ---
 
     pub fn on_mouse_down(&mut self, x: f32, y: f32) {
+        // If a dropdown popup is open, check if the click is inside it
+        if self.interaction.dropdown_is_open() {
+            if let Some(option_idx) = self.interaction.dropdown_popup_hit(x, y) {
+                // Select the clicked option
+                let dd = self.interaction.dropdown.as_ref().unwrap();
+                let param_id = dd.param_id;
+                let count = dd.options.len();
+                let new_norm = if count <= 1 {
+                    0.0
+                } else {
+                    option_idx as f64 / (count - 1) as f64
+                };
+                self.params.set_normalized(param_id, new_norm);
+                if let Some(ref ctx) = self.context {
+                    (ctx.begin_edit)(param_id);
+                    (ctx.set_param)(param_id, new_norm);
+                    (ctx.end_edit)(param_id);
+                }
+                self.interaction.dropdown_close();
+                return;
+            }
+            // Click outside popup — close it
+            self.interaction.dropdown_close();
+            // Fall through to check if they clicked another widget
+        }
+
         if let Some(idx) = self.interaction.hit_test(x, y) {
             let param_id = self.interaction.knob_regions[idx].param_id;
             let wtype = self.interaction.widget_type_at(idx);
@@ -421,6 +496,36 @@ impl<P: Params + 'static> BuiltinEditor<P> {
                         (ctx.set_param)(param_id, new_norm);
                         (ctx.end_edit)(param_id);
                     }
+                }
+            } else if wtype == Some(crate::widgets::WidgetType::Dropdown) {
+                // Open the dropdown popup
+                if let Some(info) = self.params.param_infos().into_iter().find(|i| i.id == param_id) {
+                    let count = info.range.step_count().max(1) as usize;
+                    let options: Vec<String> = (0..count)
+                        .map(|i| {
+                            let norm = if count <= 1 { 0.0 } else { i as f64 / (count - 1) as f64 };
+                            let plain = info.range.denormalize(norm);
+                            self.params.format_value(param_id, plain)
+                                .unwrap_or_else(|| format!("{:.0}", plain))
+                        })
+                        .collect();
+                    let current_norm = self.params.get_normalized(param_id).unwrap_or(0.0);
+                    let selected = (current_norm * (count - 1).max(1) as f64).round() as usize;
+                    let region = &self.interaction.knob_regions[idx];
+                    let popup_x = region.x;
+                    let popup_y = region.y + region.h;
+                    let popup_w = region.w.max(80.0);
+                    let item_h = 18.0f32;
+                    let padding = 4.0f32;
+                    let popup_h = options.len() as f32 * item_h + padding * 2.0;
+                    self.interaction.dropdown = Some(DropdownState {
+                        region_idx: idx,
+                        param_id,
+                        popup_rect: (popup_x, popup_y, popup_w, popup_h),
+                        options,
+                        selected,
+                        hover_option: None,
+                    });
                 }
             } else {
                 let norm = self.params.get_normalized(param_id).unwrap_or(0.0);
@@ -531,8 +636,12 @@ impl<P: Params + 'static> BuiltinEditor<P> {
     }
 
     pub fn on_mouse_moved(&mut self, x: f32, y: f32) -> bool {
+        // Update dropdown popup hover if open
+        if self.interaction.dropdown_is_open() {
+            self.interaction.dropdown_update_hover(x, y);
+        }
         self.interaction.hover_idx = self.interaction.hit_test(x, y);
-        self.interaction.hover_idx.is_some()
+        self.interaction.hover_idx.is_some() || self.interaction.dropdown_is_open()
     }
 }
 
@@ -648,6 +757,7 @@ fn resolve_widget_type<P: Params>(
         Some(crate::layout::WidgetKind::Slider) => widgets::WidgetType::Slider,
         Some(crate::layout::WidgetKind::Toggle) => widgets::WidgetType::Toggle,
         Some(crate::layout::WidgetKind::Selector) => widgets::WidgetType::Selector,
+        Some(crate::layout::WidgetKind::Dropdown) => widgets::WidgetType::Dropdown,
         Some(crate::layout::WidgetKind::Meter) => widgets::WidgetType::Meter,
         Some(crate::layout::WidgetKind::XYPad) => widgets::WidgetType::XYPad,
         None => {
