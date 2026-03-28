@@ -124,7 +124,7 @@ fn gain_ui(ctx: &egui::Context, state: &ParamState) {
                 param_slider(ui, state, P::Gain);
                 ui.add_space(4.0);
                 ui.label("Pan:");
-                param_slider(ui, state, P::Pan);
+                param_knob(ui, state, P::Pan, "Pan");
                 ui.add_space(8.0);
                 ui.label(
                     egui::RichText::new(format!(

@@ -367,9 +367,11 @@ impl<P: Params + 'static> BuiltinEditor<P> {
                 Some(r) => r,
                 None => return,
             };
-            // Position popup directly below the widget
+            // Position popup directly below the button box (not the full widget region)
+            let cy = region.y + region.h / 2.0 - 8.0;
+            let box_h = 20.0;
             let popup_x = region.x;
-            let popup_y = region.y + region.h;
+            let popup_y = cy + box_h / 2.0;
             let popup_w = region.w;
 
             widgets::draw_dropdown_popup(
@@ -467,8 +469,17 @@ impl<P: Params + 'static> BuiltinEditor<P> {
                 self.interaction.dropdown_close();
                 return;
             }
-            // Click outside popup — close it
+            // Click outside popup — close it. If the click landed on the
+            // same dropdown button, just close (don't reopen).
+            let open_region = self.interaction.dropdown.as_ref().unwrap().region_idx;
             self.interaction.dropdown_close();
+            if let Some(idx) = self.interaction.hit_test(x, y) {
+                if idx == open_region
+                    && self.interaction.widget_type_at(idx) == Some(crate::widgets::WidgetType::Dropdown)
+                {
+                    return;
+                }
+            }
             // Fall through to check if they clicked another widget
         }
 
@@ -512,8 +523,10 @@ impl<P: Params + 'static> BuiltinEditor<P> {
                     let current_norm = self.params.get_normalized(param_id).unwrap_or(0.0);
                     let selected = (current_norm * (count - 1).max(1) as f64).round() as usize;
                     let region = &self.interaction.knob_regions[idx];
+                    let cy = region.y + region.h / 2.0 - 8.0;
+                    let box_h = 20.0;
                     let popup_x = region.x;
-                    let popup_y = region.y + region.h;
+                    let popup_y = cy + box_h / 2.0;
                     let popup_w = region.w.max(80.0);
                     let item_h = 18.0f32;
                     let padding = 4.0f32;

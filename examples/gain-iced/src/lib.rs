@@ -9,7 +9,7 @@ const JETBRAINS_MONO: Font = Font {
 };
 use truce::prelude::*;
 use truce_iced::{
-    knob, meter, param_slider, param_toggle, xy_pad, EditorHandle, IcedEditor, IcedPlugin,
+    knob, meter, param_toggle, xy_pad, EditorHandle, IcedEditor, IcedPlugin,
     Message, ParamState,
 };
 
@@ -97,7 +97,7 @@ impl IcedPlugin<GainParams> for GainUi {
                 knob(P::Gain, params).label("Gain").size(60.0),
             ))
             .push(Into::<Element<'a, Message<GainMsg>>>::into(
-                param_slider(P::Pan, params).label("Pan").width(120.0),
+                knob(P::Pan, params).label("Pan").size(60.0),
             ))
             .spacing(gap)
             .align_y(alignment::Vertical::Center)
