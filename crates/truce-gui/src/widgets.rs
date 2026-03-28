@@ -311,9 +311,10 @@ pub fn draw_dropdown(
     ctx.draw_text(label, cx - label_w / 2.0, y + height + 10.0, label_size, theme.text_dim);
 }
 
-/// Draw the dropdown popup overlay showing all options.
+/// Draw the dropdown popup overlay showing visible options.
 ///
-/// Returns the bounding rect of the popup (x, y, w, h) for hit testing.
+/// `scroll_offset` is the index of the first visible option.
+/// `visible_count` is how many options to draw (may be less than total).
 pub fn draw_dropdown_popup(
     ctx: &mut dyn RenderBackend,
     x: f32,
@@ -322,12 +323,14 @@ pub fn draw_dropdown_popup(
     options: &[String],
     selected_index: usize,
     hover_index: Option<usize>,
+    scroll_offset: usize,
+    visible_count: usize,
     theme: &Theme,
-) -> (f32, f32, f32, f32) {
+) {
     let item_h = 18.0;
     let padding = 4.0;
     let popup_w = width.max(80.0);
-    let popup_h = options.len() as f32 * item_h + padding * 2.0;
+    let popup_h = visible_count as f32 * item_h + padding * 2.0;
     let popup_x = x;
     let popup_y = y;
 
@@ -340,20 +343,31 @@ pub fn draw_dropdown_popup(
     ctx.draw_line(popup_x, popup_y + popup_h, popup_x, popup_y, theme.text_dim, 1.0);
 
     let text_size = 10.0;
-    for (i, opt) in options.iter().enumerate() {
-        let iy = popup_y + padding + i as f32 * item_h;
+    let visible_end = (scroll_offset + visible_count).min(options.len());
+    for (vis_i, abs_i) in (scroll_offset..visible_end).enumerate() {
+        let iy = popup_y + padding + vis_i as f32 * item_h;
 
         // Highlight selected or hovered item
-        if Some(i) == hover_index {
+        if hover_index == Some(abs_i) {
             ctx.fill_rect(popup_x + 1.0, iy, popup_w - 2.0, item_h, theme.accent);
-        } else if i == selected_index {
+        } else if abs_i == selected_index {
             ctx.fill_rect(popup_x + 1.0, iy, popup_w - 2.0, item_h, theme.knob_track);
         }
 
-        ctx.draw_text(opt, popup_x + 6.0, iy + (item_h - text_size) / 2.0, text_size, theme.text);
+        ctx.draw_text(&options[abs_i], popup_x + 6.0, iy + (item_h - text_size) / 2.0, text_size, theme.text);
     }
 
-    (popup_x, popup_y, popup_w, popup_h)
+    // Scroll indicators
+    let arrow_size = 8.0;
+    let cx = popup_x + popup_w / 2.0;
+    if scroll_offset > 0 {
+        let aw = ctx.text_width("\u{25B2}", arrow_size);
+        ctx.draw_text("\u{25B2}", cx - aw / 2.0, popup_y + 1.0, arrow_size, theme.text_dim);
+    }
+    if visible_end < options.len() {
+        let aw = ctx.text_width("\u{25BC}", arrow_size);
+        ctx.draw_text("\u{25BC}", cx - aw / 2.0, popup_y + popup_h - arrow_size - 1.0, arrow_size, theme.text_dim);
+    }
 }
 
 /// Draw a vertical level meter with one or more channels.

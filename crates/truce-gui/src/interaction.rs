@@ -42,6 +42,10 @@ pub struct DropdownState {
     pub selected: usize,
     /// Index under the cursor within the popup.
     pub hover_option: Option<usize>,
+    /// First visible option index (for scrollable popups).
+    pub scroll_offset: usize,
+    /// Number of visible options (may be less than options.len() if clamped).
+    pub visible_count: usize,
 }
 
 /// Tracks the current mouse interaction state.
@@ -207,7 +211,7 @@ impl InteractionState {
     }
 
     /// Test if a point is inside the open dropdown popup.
-    /// Returns the option index if hit, or None.
+    /// Returns the absolute option index (accounting for scroll) if hit, or None.
     pub fn dropdown_popup_hit(&self, mx: f32, my: f32) -> Option<usize> {
         let dd = self.dropdown.as_ref()?;
         let (px, py, pw, ph) = dd.popup_rect;
@@ -216,8 +220,13 @@ impl InteractionState {
         }
         let item_h = 18.0f32;
         let padding = 4.0f32;
-        let idx = ((my - py - padding) / item_h) as usize;
-        if idx < dd.options.len() { Some(idx) } else { None }
+        let local_idx = ((my - py - padding) / item_h) as usize;
+        let abs_idx = dd.scroll_offset + local_idx;
+        if abs_idx < dd.options.len() && local_idx < dd.visible_count {
+            Some(abs_idx)
+        } else {
+            None
+        }
     }
 
     /// Update the hovered option in the open dropdown popup.
@@ -227,8 +236,13 @@ impl InteractionState {
             if mx >= px && mx <= px + pw && my >= py && my <= py + ph {
                 let item_h = 18.0f32;
                 let padding = 4.0f32;
-                let idx = ((my - py - padding) / item_h) as usize;
-                dd.hover_option = if idx < dd.options.len() { Some(idx) } else { None };
+                let local_idx = ((my - py - padding) / item_h) as usize;
+                let abs_idx = dd.scroll_offset + local_idx;
+                dd.hover_option = if abs_idx < dd.options.len() && local_idx < dd.visible_count {
+                    Some(abs_idx)
+                } else {
+                    None
+                };
             } else {
                 dd.hover_option = None;
             }
@@ -243,6 +257,15 @@ impl InteractionState {
     /// Close the dropdown popup.
     pub fn dropdown_close(&mut self) {
         self.dropdown = None;
+    }
+
+    /// Scroll the dropdown popup by `delta` items (positive = down, negative = up).
+    pub fn dropdown_scroll(&mut self, delta: i32) {
+        if let Some(ref mut dd) = self.dropdown {
+            let max_offset = dd.options.len().saturating_sub(dd.visible_count);
+            let new_offset = (dd.scroll_offset as i32 + delta).clamp(0, max_offset as i32) as usize;
+            dd.scroll_offset = new_offset;
+        }
     }
 
     /// Rebuild hit regions from a grid layout.

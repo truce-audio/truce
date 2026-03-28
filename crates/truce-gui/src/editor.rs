@@ -373,23 +373,17 @@ impl<P: Params + 'static> BuiltinEditor<P> {
     /// Draw the dropdown popup overlay if one is open.
     fn render_dropdown_popup(&self, backend: &mut dyn RenderBackend) {
         if let Some(ref dd) = self.interaction.dropdown {
-            let region = match self.interaction.knob_regions.get(dd.region_idx) {
-                Some(r) => r,
-                None => return,
-            };
-            // Use the anchor stored at draw time (bottom of the visual button box)
-            let popup_x = region.x;
-            let popup_y = region.dropdown_anchor_y;
-            let popup_w = region.w;
-
+            let (px, py, pw, _) = dd.popup_rect;
             widgets::draw_dropdown_popup(
                 backend,
-                popup_x,
-                popup_y,
-                popup_w,
+                px,
+                py,
+                pw,
                 &dd.options,
                 dd.selected,
                 dd.hover_option,
+                dd.scroll_offset,
+                dd.visible_count,
                 &self.theme,
             );
         }
@@ -520,6 +514,7 @@ impl<P: Params + 'static> BuiltinEditor<P> {
                 // Open the dropdown popup
                 if let Some(info) = self.params.param_infos().into_iter().find(|i| i.id == param_id) {
                     let count = info.range.step_count().max(1) as usize;
+                    if count == 0 { return; }
                     let options: Vec<String> = (0..count)
                         .map(|i| {
                             let norm = if count <= 1 { 0.0 } else { i as f64 / (count - 1) as f64 };
@@ -531,12 +526,53 @@ impl<P: Params + 'static> BuiltinEditor<P> {
                     let current_norm = self.params.get_normalized(param_id).unwrap_or(0.0);
                     let selected = (current_norm * (count - 1).max(1) as f64).round() as usize;
                     let region = &self.interaction.knob_regions[idx];
-                    let popup_x = region.x;
-                    let popup_y = region.dropdown_anchor_y;
-                    let popup_w = region.w.max(80.0);
+
                     let item_h = 18.0f32;
                     let padding = 4.0f32;
-                    let popup_h = options.len() as f32 * item_h + padding * 2.0;
+                    let window_w = self.layout.width() as f32;
+                    let window_h = self.layout.height() as f32;
+
+                    let anchor_below = region.dropdown_anchor_y; // bottom of button box
+                    let anchor_above = anchor_below - 20.0;      // top of button box (box_h=20)
+                    let popup_w = region.w.max(80.0);
+                    let full_popup_h = options.len() as f32 * item_h + padding * 2.0;
+
+                    // Vertical: prefer below, flip above if needed, pin if neither fits
+                    let (popup_y, avail_h) = if anchor_below + full_popup_h <= window_h {
+                        // Fits below
+                        (anchor_below, full_popup_h)
+                    } else if anchor_above - full_popup_h >= 0.0 {
+                        // Fits above
+                        (anchor_above - full_popup_h, full_popup_h)
+                    } else {
+                        // Neither fits — use whichever side has more space, clamp height
+                        let space_below = window_h - anchor_below;
+                        let space_above = anchor_above;
+                        if space_below >= space_above {
+                            (anchor_below, space_below.max(item_h + padding * 2.0))
+                        } else {
+                            let h = space_above.max(item_h + padding * 2.0);
+                            (anchor_above - h, h)
+                        }
+                    };
+
+                    // Clamp visible count based on available height
+                    let visible_count = ((avail_h - padding * 2.0) / item_h)
+                        .floor()
+                        .max(1.0) as usize;
+                    let visible_count = visible_count.min(options.len());
+                    let popup_h = visible_count as f32 * item_h + padding * 2.0;
+
+                    // Horizontal: clamp to window bounds
+                    let popup_x = region.x.clamp(0.0, (window_w - popup_w).max(0.0));
+
+                    // Scroll so the selected item is visible
+                    let scroll_offset = if selected >= visible_count {
+                        selected - visible_count + 1
+                    } else {
+                        0
+                    };
+
                     self.interaction.dropdown = Some(DropdownState {
                         region_idx: idx,
                         param_id,
@@ -544,6 +580,8 @@ impl<P: Params + 'static> BuiltinEditor<P> {
                         options,
                         selected,
                         hover_option: None,
+                        scroll_offset,
+                        visible_count,
                     });
                 }
             } else {
@@ -640,6 +678,20 @@ impl<P: Params + 'static> BuiltinEditor<P> {
     }
 
     pub fn on_scroll(&mut self, x: f32, y: f32, delta_y: f32) {
+        // If a dropdown popup is open and the cursor is over it, scroll the popup
+        if self.interaction.dropdown_is_open() {
+            if self.interaction.dropdown_popup_hit(x, y).is_some()
+                || self.interaction.dropdown.as_ref().map_or(false, |dd| {
+                    let (px, py, pw, ph) = dd.popup_rect;
+                    x >= px && x <= px + pw && y >= py && y <= py + ph
+                })
+            {
+                let delta = if delta_y > 0.0 { -1 } else { 1 };
+                self.interaction.dropdown_scroll(delta);
+                return;
+            }
+        }
+
         if let Some(idx) = self.interaction.hit_test(x, y) {
             let param_id = self.interaction.knob_regions[idx].param_id;
             let norm = self.params.get_normalized(param_id).unwrap_or(0.0);
