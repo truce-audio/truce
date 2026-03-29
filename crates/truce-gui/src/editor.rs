@@ -552,8 +552,7 @@ impl<P: Params + 'static> BuiltinEditor<P> {
             } else if wtype == Some(crate::widgets::WidgetType::Dropdown) {
                 // Open the dropdown popup
                 if let Some(info) = self.params.param_infos().into_iter().find(|i| i.id == param_id) {
-                    let count = info.range.step_count().max(1) as usize;
-                    if count == 0 { return; }
+                    let count = info.range.step_count().max(1) as usize + 1;
                     let options: Vec<String> = (0..count)
                         .map(|i| {
                             let norm = if count <= 1 { 0.0 } else { i as f64 / (count - 1) as f64 };
