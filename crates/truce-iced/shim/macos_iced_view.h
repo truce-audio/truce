@@ -46,6 +46,8 @@ typedef struct {
 
 /**
  * Create a child NSView and add it to the parent.
+ * If no_timer is non-zero, the repaint timer is NOT started — the host
+ * must call truce_iced_view_tick() from its idle callback instead.
  * Returns an opaque handle.
  */
 void *truce_iced_view_create(
@@ -53,8 +55,14 @@ void *truce_iced_view_create(
     uint32_t width,
     uint32_t height,
     void *ctx,
-    const TruceIcedViewCallbacks *callbacks
+    const TruceIcedViewCallbacks *callbacks,
+    int no_timer
 );
+
+/**
+ * Drive one render tick. Only needed when no_timer was set in create().
+ */
+void truce_iced_view_tick(void *view_handle);
 
 /**
  * Destroy the iced view and stop the timer.

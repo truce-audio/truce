@@ -26,7 +26,10 @@ extern "C" {
         height: u32,
         ctx: *mut c_void,
         callbacks: *const IcedViewCallbacks,
+        no_timer: i32,
     ) -> *mut c_void;
+
+    fn truce_iced_view_tick(view_handle: *mut c_void);
 
     fn truce_iced_view_destroy(view_handle: *mut c_void);
 }
@@ -41,6 +44,9 @@ unsafe impl Send for IcedPlatformView {}
 impl IcedPlatformView {
     /// Create an iced platform view as a child of the given parent window.
     ///
+    /// If `no_timer` is true, the repaint timer is not started — the host
+    /// must call `tick()` from its idle callback instead.
+    ///
     /// # Safety
     /// `parent` must be a valid NSView*. `ctx` and `callbacks` must remain
     /// valid for the lifetime of the view.
@@ -51,8 +57,11 @@ impl IcedPlatformView {
         height: u32,
         ctx: *mut c_void,
         callbacks: &IcedViewCallbacks,
+        no_timer: bool,
     ) -> Option<Self> {
-        let handle = truce_iced_view_create(parent, width, height, ctx, callbacks);
+        let handle = truce_iced_view_create(
+            parent, width, height, ctx, callbacks, no_timer as i32,
+        );
         if handle.is_null() {
             None
         } else {
@@ -67,9 +76,19 @@ impl IcedPlatformView {
         _height: u32,
         _ctx: *mut c_void,
         _callbacks: &IcedViewCallbacks,
+        _no_timer: bool,
     ) -> Option<Self> {
         None
     }
+
+    /// Drive one render tick. Only needed when `no_timer` was set in `new()`.
+    #[cfg(target_os = "macos")]
+    pub fn tick(&self) {
+        unsafe { truce_iced_view_tick(self.handle); }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    pub fn tick(&self) {}
 }
 
 impl Drop for IcedPlatformView {

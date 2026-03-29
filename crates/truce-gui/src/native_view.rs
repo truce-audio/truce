@@ -171,11 +171,8 @@ pub unsafe fn open(
     let frame = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(width, height));
     let ns_view: id = msg_send![ns_view, initWithFrame: frame];
 
-    // Layer-backed view — we set contents directly via [layer setContents:]
-    // (same as JUCE). NSViewLayerContentsRedrawNever (0) tells AppKit to
-    // never call drawRect: — we manage layer contents ourselves.
-    let _: () = msg_send![ns_view, setWantsLayer: YES];
-    let _: () = msg_send![ns_view, setLayerContentsRedrawPolicy: 0isize]; // Never
+    // Layer setup is left to the caller — CgBlit uses setWantsLayer + setContents,
+    // while egui uses a CAMetalLayer for wgpu rendering.
 
     let state = Box::new(NativeViewState { callbacks });
     let state_ptr = Box::into_raw(state) as *mut c_void;
@@ -205,8 +202,12 @@ pub unsafe fn open(
 unsafe fn create_view_class() -> &'static Class {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);
+    // Include the counter address as a unique per-dylib discriminator to avoid
+    // class name collisions when multiple truce plugins are loaded in the same
+    // process (each dylib has its own COUNTER, but the ObjC runtime is shared).
     let class_name = format!(
-        "TruceNativeView_{}",
+        "TruceNativeView_{:x}_{}",
+        &COUNTER as *const _ as usize,
         COUNTER.fetch_add(1, Ordering::Relaxed),
     );
     let mut class = ClassDecl::new(&class_name, class!(NSView))

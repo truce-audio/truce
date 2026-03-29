@@ -166,6 +166,8 @@ where
     runtime: Option<IcedRuntime<P, M>>,
     layout: Option<GridLayout>,
     meter_ids: Vec<u32>,
+    /// True when the no-timer AAX path is active.
+    uses_no_timer: bool,
 }
 
 unsafe impl<P: Params, M: IcedPlugin<P>> Send for IcedEditor<P, M> {}
@@ -190,6 +192,7 @@ impl<P: Params + 'static> IcedEditor<P, AutoPlugin> {
             runtime: None,
             layout: Some(layout),
             meter_ids,
+            uses_no_timer: false,
         }
     }
 }
@@ -205,6 +208,7 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedEditor<P, M> {
             runtime: None,
             layout: None,
             meter_ids: Vec::new(),
+            uses_no_timer: false,
         }
     }
 
@@ -734,7 +738,9 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
             mouse_moved: Some(cb_mouse_moved::<P, M>),
         };
 
-        let view = unsafe { IcedPlatformView::new(parent_ptr, w, h, self_ptr, &callbacks) };
+        let no_timer = truce_gui::editor::should_use_cg_blit();
+        self.uses_no_timer = no_timer;
+        let view = unsafe { IcedPlatformView::new(parent_ptr, w, h, self_ptr, &callbacks, no_timer) };
 
         if let Some(view) = view {
             // Store the view handle (RAII — keeps NSView alive)
@@ -754,6 +760,26 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
     }
 
     fn idle(&mut self) {
+        if self.uses_no_timer {
+            // AAX: host idle drives rendering instead of NSTimer.
+            // Wrap in @autoreleasepool so autoreleased objects from
+            // wgpu/Metal don't escape into Pro Tools' per-callout ARP.
+            if let Some(ref runtime) = self.runtime {
+                if let Some(ref view) = runtime._view {
+                    #[cfg(target_os = "macos")]
+                    unsafe {
+                        extern "C" {
+                            fn objc_autoreleasePoolPush() -> *mut std::ffi::c_void;
+                            fn objc_autoreleasePoolPop(pool: *mut std::ffi::c_void);
+                        }
+                        let pool = objc_autoreleasePoolPush();
+                        view.tick();
+                        objc_autoreleasePoolPop(pool);
+                    }
+                }
+            }
+            return;
+        }
         // Timer-driven rendering in cb_render handles everything.
     }
 

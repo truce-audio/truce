@@ -82,6 +82,78 @@ impl EguiRenderer {
         })
     }
 
+    /// Create from a raw CAMetalLayer pointer (AAX native view path).
+    ///
+    /// # Safety
+    /// `metal_layer` must be a valid `CAMetalLayer*` that remains alive for
+    /// the lifetime of the renderer.
+    #[cfg(target_os = "macos")]
+    pub unsafe fn from_metal_layer(
+        metal_layer: *mut std::ffi::c_void,
+        width: u32,
+        height: u32,
+    ) -> Option<Self> {
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::METAL,
+            ..Default::default()
+        });
+
+        let surface = instance
+            .create_surface_unsafe(wgpu::SurfaceTargetUnsafe::CoreAnimationLayer(
+                metal_layer,
+            ))
+            .ok()?;
+
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::LowPower,
+            compatible_surface: Some(&surface),
+            force_fallback_adapter: false,
+        }))?;
+
+        let (device, queue) = pollster::block_on(adapter.request_device(
+            &wgpu::DeviceDescriptor {
+                label: Some("truce-egui-aax"),
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits::downlevel_defaults(),
+                memory_hints: wgpu::MemoryHints::Performance,
+            },
+            None,
+        ))
+        .ok()?;
+
+        let surface_caps = surface.get_capabilities(&adapter);
+        let surface_format = surface_caps
+            .formats
+            .iter()
+            .find(|f| !f.is_srgb())
+            .copied()
+            .unwrap_or(surface_caps.formats[0]);
+
+        let surface_config = wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format: surface_format,
+            width,
+            height,
+            present_mode: wgpu::PresentMode::AutoVsync,
+            desired_maximum_frame_latency: 2,
+            alpha_mode: wgpu::CompositeAlphaMode::Auto,
+            view_formats: vec![],
+        };
+        surface.configure(&device, &surface_config);
+
+        let egui_rpass = egui_wgpu::Renderer::new(&device, surface_format, None, 1, false);
+
+        Some(Self {
+            device,
+            queue,
+            surface,
+            surface_config,
+            egui_rpass,
+            width,
+            height,
+        })
+    }
+
     /// Paint a frame of egui output to the surface.
     pub fn render(
         &mut self,

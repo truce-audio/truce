@@ -1090,6 +1090,14 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
                     crate::native_view::open(parent_ptr, lw, lh, callbacks)
                 };
 
+                // Set up layer-backed view for CgBlit (setContents: path)
+                unsafe {
+                    use objc::{msg_send, sel, sel_impl};
+                    let ns_view = native.ns_view_ptr() as cocoa::base::id;
+                    let _: () = msg_send![ns_view, setWantsLayer: cocoa::base::YES];
+                    let _: () = msg_send![ns_view, setLayerContentsRedrawPolicy: 0isize];
+                }
+
                 // Now update cg_blit with the actual NSView pointer.
                 // Use logical size (w, h) — the CPU backend renders at
                 // logical resolution. The layer scales to fill the view.

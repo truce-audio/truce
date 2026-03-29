@@ -41,6 +41,10 @@ pub struct EguiEditor {
     scale_factor: Option<f64>,
     /// Active baseview window handle — exists only while editor is open.
     window: Option<baseview::WindowHandle>,
+    /// True when the native NSView + wgpu AAX path is active.
+    uses_aax_native: bool,
+    #[cfg(target_os = "macos")]
+    aax_state: Option<EguiAaxState>,
 }
 
 // WindowHandle contains raw pointers; only accessed from host UI thread.
@@ -61,6 +65,9 @@ impl EguiEditor {
             font: None,
             scale_factor: None,
             window: None,
+            uses_aax_native: false,
+            #[cfg(target_os = "macos")]
+            aax_state: None,
         }
     }
 
@@ -73,6 +80,9 @@ impl EguiEditor {
             font: None,
             scale_factor: None,
             window: None,
+            uses_aax_native: false,
+            #[cfg(target_os = "macos")]
+            aax_state: None,
         }
     }
 
@@ -355,6 +365,148 @@ fn convert_key(key: &keyboard_types::Key) -> Option<egui::Key> {
 }
 
 // ---------------------------------------------------------------------------
+// AAX native view path (macOS only)
+// ---------------------------------------------------------------------------
+
+/// Shared input state between the native view callbacks and idle().
+/// Box'd separately so its address is stable across moves of EguiAaxState.
+#[cfg(target_os = "macos")]
+struct EguiAaxInput {
+    pending_events: Vec<egui::Event>,
+    last_cursor_pos: egui::Pos2,
+}
+
+#[cfg(target_os = "macos")]
+struct EguiAaxState {
+    native_view: truce_gui::native_view::NativeView,
+    renderer: EguiRenderer,
+    egui_ctx: egui::Context,
+    param_state: ParamState,
+    input: Box<EguiAaxInput>,
+    start_time: std::time::Instant,
+    scale_factor: f32,
+}
+
+// SAFETY: Only accessed from the GUI thread.
+#[cfg(target_os = "macos")]
+unsafe impl Send for EguiAaxState {}
+
+#[cfg(target_os = "macos")]
+struct EguiAaxCallbackCtx {
+    input: *mut EguiAaxInput,
+}
+
+#[cfg(target_os = "macos")]
+unsafe extern "C" fn egui_aax_mouse_moved(ctx: *mut std::ffi::c_void, x: f32, y: f32) {
+    let ctx = &*(ctx as *mut EguiAaxCallbackCtx);
+    let input = &mut *ctx.input;
+    let pos = egui::pos2(x, y);
+    input.last_cursor_pos = pos;
+    input.pending_events.push(egui::Event::PointerMoved(pos));
+}
+
+#[cfg(target_os = "macos")]
+unsafe extern "C" fn egui_aax_mouse_dragged(ctx: *mut std::ffi::c_void, x: f32, y: f32) {
+    egui_aax_mouse_moved(ctx, x, y);
+}
+
+#[cfg(target_os = "macos")]
+unsafe extern "C" fn egui_aax_mouse_down(ctx: *mut std::ffi::c_void, x: f32, y: f32) {
+    let ctx = &*(ctx as *mut EguiAaxCallbackCtx);
+    let input = &mut *ctx.input;
+    let pos = egui::pos2(x, y);
+    input.last_cursor_pos = pos;
+    input.pending_events.push(egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        modifiers: egui::Modifiers::NONE,
+    });
+}
+
+#[cfg(target_os = "macos")]
+unsafe extern "C" fn egui_aax_mouse_up(ctx: *mut std::ffi::c_void, x: f32, y: f32) {
+    let ctx = &*(ctx as *mut EguiAaxCallbackCtx);
+    let input = &mut *ctx.input;
+    let pos = egui::pos2(x, y);
+    input.last_cursor_pos = pos;
+    input.pending_events.push(egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+}
+
+#[cfg(target_os = "macos")]
+unsafe extern "C" fn egui_aax_scroll(
+    ctx: *mut std::ffi::c_void, _x: f32, _y: f32, dy: f32,
+) {
+    let ctx = &*(ctx as *mut EguiAaxCallbackCtx);
+    let input = &mut *ctx.input;
+    input.pending_events.push(egui::Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        delta: egui::vec2(0.0, dy),
+        modifiers: egui::Modifiers::NONE,
+    });
+}
+
+#[cfg(target_os = "macos")]
+unsafe extern "C" fn egui_aax_mouse_exited(ctx: *mut std::ffi::c_void) {
+    let ctx = &*(ctx as *mut EguiAaxCallbackCtx);
+    let input = &mut *ctx.input;
+    input.pending_events.push(egui::Event::PointerGone);
+}
+
+#[cfg(target_os = "macos")]
+unsafe extern "C" fn egui_aax_drop_ctx(ctx: *mut std::ffi::c_void) {
+    let _ = Box::from_raw(ctx as *mut EguiAaxCallbackCtx);
+}
+
+/// Create an NSView with a CAMetalLayer and return (NativeView, metal_layer_ptr).
+#[cfg(target_os = "macos")]
+unsafe fn create_native_view_with_metal(
+    parent_ptr: *mut std::ffi::c_void,
+    width: f64,
+    height: f64,
+    callbacks: truce_gui::native_view::NativeViewCallbacks,
+) -> (truce_gui::native_view::NativeView, *mut std::ffi::c_void) {
+    use cocoa::base::id;
+    use objc::{class, msg_send, sel, sel_impl};
+
+    let native_view = truce_gui::native_view::open(parent_ptr, width, height, callbacks);
+    let ns_view = native_view.ns_view_ptr() as id;
+
+    // Create a CAMetalLayer and assign it to the view
+    let metal_layer: id = msg_send![class!(CAMetalLayer), layer];
+    let device: id = {
+        extern "C" { fn MTLCreateSystemDefaultDevice() -> id; }
+        MTLCreateSystemDefaultDevice()
+    };
+    let _: () = msg_send![metal_layer, setDevice: device];
+    let _: () = msg_send![metal_layer, setPixelFormat: 80u64]; // MTLPixelFormatBGRA8Unorm
+    let _: () = msg_send![metal_layer, setFramebufferOnly: true];
+
+    // Get the backing scale factor
+    let window: id = msg_send![ns_view, window];
+    let scale: f64 = if !window.is_null() {
+        msg_send![window, backingScaleFactor]
+    } else {
+        let screen: id = msg_send![class!(NSScreen), mainScreen];
+        msg_send![screen, backingScaleFactor]
+    };
+    let _: () = msg_send![metal_layer, setContentsScale: scale];
+
+    // Layer-hosting mode: set the custom layer FIRST, then enable wantsLayer.
+    // This is the opposite of layer-backed mode (CgBlit).
+    let _: () = msg_send![ns_view, setLayer: metal_layer];
+    let _: () = msg_send![ns_view, setWantsLayer: cocoa::base::YES];
+
+    let layer_ptr = metal_layer as *mut std::ffi::c_void;
+    (native_view, layer_ptr)
+}
+
+// ---------------------------------------------------------------------------
 // Editor trait implementation
 // ---------------------------------------------------------------------------
 
@@ -366,12 +518,86 @@ impl Editor for EguiEditor {
     fn open(&mut self, parent: RawWindowHandle, context: EditorContext) {
         let egui_ctx = egui::Context::default();
         let visuals = self.visuals.clone().unwrap_or_else(crate::theme::dark);
-        egui_ctx.set_visuals(visuals);
+        egui_ctx.set_visuals(visuals.clone());
         let font = self.font;
 
         let system_scale = query_backing_scale(&parent);
         let (lw, lh) = self.size; // logical points
 
+        // --- AAX path: native NSView + Metal layer + wgpu (no baseview) ---
+        #[cfg(target_os = "macos")]
+        if truce_gui::editor::should_use_cg_blit() {
+            self.uses_aax_native = true;
+
+            let parent_ptr = match parent {
+                RawWindowHandle::AppKit(ptr) => ptr,
+                _ => std::ptr::null_mut(),
+            };
+            if parent_ptr.is_null() {
+                return;
+            }
+
+            let scale = system_scale as f32;
+            let phys_w = (lw as f32 * scale) as u32;
+            let phys_h = (lh as f32 * scale) as u32;
+
+            let param_state = ParamState::new(context);
+
+            // Box the input separately so its address is stable for callbacks
+            let mut input = Box::new(EguiAaxInput {
+                pending_events: Vec::new(),
+                last_cursor_pos: egui::Pos2::ZERO,
+            });
+
+            let cb_ctx = Box::new(EguiAaxCallbackCtx {
+                input: &mut *input as *mut EguiAaxInput,
+            });
+            let cb_ctx_ptr = Box::into_raw(cb_ctx) as *mut std::ffi::c_void;
+
+            let callbacks = truce_gui::native_view::NativeViewCallbacks {
+                ctx: cb_ctx_ptr,
+                on_mouse_moved: egui_aax_mouse_moved,
+                on_mouse_dragged: egui_aax_mouse_dragged,
+                on_mouse_down: egui_aax_mouse_down,
+                on_mouse_up: egui_aax_mouse_up,
+                on_scroll: egui_aax_scroll,
+                on_mouse_exited: egui_aax_mouse_exited,
+                drop_ctx: egui_aax_drop_ctx,
+            };
+
+            let (native_view, metal_layer) = unsafe {
+                create_native_view_with_metal(
+                    parent_ptr,
+                    lw as f64,
+                    lh as f64,
+                    callbacks,
+                )
+            };
+
+            let renderer = unsafe {
+                EguiRenderer::from_metal_layer(metal_layer, phys_w, phys_h)
+            };
+
+            if let Some(renderer) = renderer {
+                if let Some(font_data) = font {
+                    crate::font::apply_font(&egui_ctx, font_data);
+                }
+                egui_ctx.request_repaint();
+
+                self.aax_state = Some(EguiAaxState {
+                    native_view,
+                    renderer,
+                    egui_ctx,
+                    param_state,
+                    input,
+                    start_time: std::time::Instant::now(),
+                    scale_factor: scale,
+                });
+            }
+            return;
+        }
+
+        // --- Normal path: baseview + wgpu ---
         let ui = Arc::clone(&self.ui);
         let param_state = ParamState::new(context);
         let size = self.size;
@@ -420,12 +646,71 @@ impl Editor for EguiEditor {
     }
 
     fn close(&mut self) {
+        #[cfg(target_os = "macos")]
+        if self.uses_aax_native {
+            self.aax_state = None;
+            self.uses_aax_native = false;
+            return;
+        }
         if let Some(mut window) = self.window.take() {
             window.close();
         }
     }
 
     fn idle(&mut self) {
+        #[cfg(target_os = "macos")]
+        if self.uses_aax_native {
+            if let Some(ref mut state) = self.aax_state {
+                unsafe {
+                    extern "C" {
+                        fn objc_autoreleasePoolPush() -> *mut std::ffi::c_void;
+                        fn objc_autoreleasePoolPop(pool: *mut std::ffi::c_void);
+                    }
+                    let pool = objc_autoreleasePoolPush();
+
+                    let (lw, lh) = self.size;
+                    let ppp = state.scale_factor;
+
+                    let mut raw_input = egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(lw as f32, lh as f32),
+                        )),
+                        time: Some(state.start_time.elapsed().as_secs_f64()),
+                        modifiers: egui::Modifiers::NONE,
+                        events: std::mem::take(&mut state.input.pending_events),
+                        focused: true,
+                        ..Default::default()
+                    };
+                    raw_input
+                        .viewports
+                        .entry(egui::ViewportId::ROOT)
+                        .or_default()
+                        .native_pixels_per_point = Some(ppp);
+
+                    let ui = &self.ui;
+                    let param_state = &state.param_state;
+                    let output = state.egui_ctx.run(raw_input, |ctx| {
+                        if let Ok(mut ui_fn) = ui.lock() {
+                            ui_fn.ui(ctx, param_state);
+                        }
+                    });
+
+                    let clipped_primitives = state
+                        .egui_ctx
+                        .tessellate(output.shapes, output.pixels_per_point);
+
+                    state.renderer.render(
+                        &output.textures_delta,
+                        &clipped_primitives,
+                        output.pixels_per_point,
+                    );
+
+                    objc_autoreleasePoolPop(pool);
+                }
+            }
+            return;
+        }
         // Baseview drives its own frame loop via on_frame().
     }
 
