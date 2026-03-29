@@ -10,3 +10,5 @@ with iced, giving plugin authors access to a full retained-mode widget toolkit.
 - **`IcedEditor`** — the `Editor` implementation
 - **`IcedPlugin`** — trait for defining your plugin's iced UI
 - **`AutoPlugin`** — auto-generated UI from parameter definitions
+
+Part of [truce](https://github.com/truce-audio/truce).

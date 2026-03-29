@@ -10,3 +10,5 @@ system plugin directories, and validation.
 
 `install`, `build`, `run`, `new`, `test`, `status`, `clean`, `nuke`,
 `validate`, `doctor`, `log`
+
+Part of [truce](https://github.com/truce-audio/truce).

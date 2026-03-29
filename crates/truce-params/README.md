@@ -10,3 +10,5 @@ plugin parameters:
 - **`Smoother` / `SmoothingStyle`** — per-sample parameter smoothing
 - **`ParamInfo`** — metadata (name, unit, flags) for host integration
 - **`format_param_value`** — human-readable display formatting
+
+Part of [truce](https://github.com/truce-audio/truce).

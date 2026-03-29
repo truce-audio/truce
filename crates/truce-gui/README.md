@@ -11,3 +11,5 @@ zero-dependency GUI that works everywhere without a GPU.
 - **`BuiltinEditor`** — the main `Editor` implementation
 - **`RenderBackend`** — trait for plugging in alternative renderers
 - **`Theme`** — visual styling configuration
+
+Part of [truce](https://github.com/truce-audio/truce).

@@ -16,3 +16,5 @@ keyboard-to-MIDI mapping. Useful for quick testing during development.
 ```rust
 truce_standalone::run::<MyPlugin>();
 ```
+
+Part of [truce](https://github.com/truce-audio/truce).

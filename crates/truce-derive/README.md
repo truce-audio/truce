@@ -13,3 +13,5 @@ fn info() -> PluginInfo {
     truce::plugin_info!()
 }
 ```
+
+Part of [truce](https://github.com/truce-audio/truce).

@@ -25,3 +25,5 @@ use truce::prelude::*;
 | `vst3` | Enable VST3 format export |
 | `dev` | Hot-reload support for development |
 | `gpu` | GPU-accelerated GUI rendering |
+
+Part of [truce](https://github.com/truce-audio/truce).

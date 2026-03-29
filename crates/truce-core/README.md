@@ -15,3 +15,5 @@ Defines the fundamental abstractions that all truce crates build on:
 - **Utilities** — `db_to_linear`, `linear_to_db`, `midi_note_to_freq`
 
 Most plugin authors should depend on `truce` directly rather than this crate.
+
+Part of [truce](https://github.com/truce-audio/truce).

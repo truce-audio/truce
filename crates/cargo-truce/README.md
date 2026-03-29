@@ -20,3 +20,5 @@ cargo truce install --clap       # single format
 cargo truce validate             # run auval + pluginval
 cargo truce doctor               # check environment
 ```
+
+Part of [truce](https://github.com/truce-audio/truce).

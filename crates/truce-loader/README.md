@@ -14,3 +14,5 @@ audio processing and GUI rendering to the trait object.
 |---------|-------------|
 | `shell` | Enable dylib loading via `libloading` |
 | `gpu` | GPU rendering support in the shell |
+
+Part of [truce](https://github.com/truce-audio/truce).

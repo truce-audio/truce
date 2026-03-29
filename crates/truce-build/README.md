@@ -23,3 +23,5 @@ fn main() {
 - `TRUCE_AU_TYPE` / `TRUCE_AU_SUBTYPE` / `TRUCE_AU_MANUFACTURER` — AU identifiers
 - `TRUCE_CATEGORY` — `"Effect"` or `"Instrument"`
 - `TRUCE_PLUGIN_VERSION` — optional override from `truce.toml`
+
+Part of [truce](https://github.com/truce-audio/truce).

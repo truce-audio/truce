@@ -12,3 +12,5 @@ parameter binding and host integration.
 - **`EguiEditor`** — the `Editor` implementation
 - **`EditorUi`** — trait for defining your plugin's UI
 - **`ParamState`** — parameter state bridge for egui widgets
+
+Part of [truce](https://github.com/truce-audio/truce).

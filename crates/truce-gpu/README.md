@@ -11,3 +11,5 @@ baseview.
 
 - **`WgpuBackend`** — the `RenderBackend` implementation
 - **`GpuEditor`** — GPU-accelerated `Editor`
+
+Part of [truce](https://github.com/truce-audio/truce).
