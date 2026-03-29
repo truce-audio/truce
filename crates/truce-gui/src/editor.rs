@@ -1078,6 +1078,7 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
                 let callbacks = crate::native_view::NativeViewCallbacks {
                     ctx: ctx_ptr,
                     on_mouse_moved: native_on_mouse_moved::<P>,
+                    on_mouse_dragged: native_on_mouse_dragged::<P>,
                     on_mouse_down: native_on_mouse_down::<P>,
                     on_mouse_up: native_on_mouse_up::<P>,
                     on_scroll: native_on_scroll::<P>,
@@ -1194,9 +1195,8 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
                     let editor = &mut *ctx.editor;
                     update_interaction(editor);
                     editor.render();
-                    match editor.pixel_data() {
-                        Some(pixels) => ctx.cg_blit.blit(pixels),
-                        None => eprintln!("[cg_blit] idle: pixel_data() returned None"),
+                    if let Some(pixels) = editor.pixel_data() {
+                        ctx.cg_blit.blit(pixels);
                     }
 
                     objc_autoreleasePoolPop(pool);
@@ -1230,7 +1230,17 @@ unsafe extern "C" fn native_on_mouse_moved<P: Params + 'static>(
 ) {
     let ctx = &mut *(ctx as *mut NativeEditorCtx<P>);
     let editor = &mut *ctx.editor;
-    editor.on_mouse_moved(x * ctx.scale, y * ctx.scale);
+    // NSView delivers logical points; layout regions are in logical space.
+    editor.on_mouse_moved(x, y);
+}
+
+#[cfg(target_os = "macos")]
+unsafe extern "C" fn native_on_mouse_dragged<P: Params + 'static>(
+    ctx: *mut std::ffi::c_void, x: f32, y: f32,
+) {
+    let ctx = &mut *(ctx as *mut NativeEditorCtx<P>);
+    let editor = &mut *ctx.editor;
+    editor.on_mouse_dragged(x, y);
 }
 
 #[cfg(target_os = "macos")]
@@ -1239,22 +1249,20 @@ unsafe extern "C" fn native_on_mouse_down<P: Params + 'static>(
 ) {
     let ctx = &mut *(ctx as *mut NativeEditorCtx<P>);
     let editor = &mut *ctx.editor;
-    let px = x * ctx.scale;
-    let py = y * ctx.scale;
     // Double-click detection (300ms, 4px threshold)
     let now = std::time::Instant::now();
     let is_double = ctx.last_click_time.map_or(false, |t| {
         now.duration_since(t).as_millis() < 300
-            && (px - ctx.last_click_pos.0).abs() < 4.0
-            && (py - ctx.last_click_pos.1).abs() < 4.0
+            && (x - ctx.last_click_pos.0).abs() < 4.0
+            && (y - ctx.last_click_pos.1).abs() < 4.0
     });
     ctx.last_click_time = Some(now);
-    ctx.last_click_pos = (px, py);
+    ctx.last_click_pos = (x, y);
     if is_double {
-        editor.on_double_click(px, py);
+        editor.on_double_click(x, y);
         ctx.last_click_time = None;
     } else {
-        editor.on_mouse_down(px, py);
+        editor.on_mouse_down(x, y);
     }
 }
 
@@ -1264,7 +1272,7 @@ unsafe extern "C" fn native_on_mouse_up<P: Params + 'static>(
 ) {
     let ctx = &mut *(ctx as *mut NativeEditorCtx<P>);
     let editor = &mut *ctx.editor;
-    editor.on_mouse_up(x * ctx.scale, y * ctx.scale);
+    editor.on_mouse_up(x, y);
 }
 
 #[cfg(target_os = "macos")]
@@ -1273,7 +1281,7 @@ unsafe extern "C" fn native_on_scroll<P: Params + 'static>(
 ) {
     let ctx = &mut *(ctx as *mut NativeEditorCtx<P>);
     let editor = &mut *ctx.editor;
-    editor.on_scroll(x * ctx.scale, y * ctx.scale, dy);
+    editor.on_scroll(x, y, dy);
 }
 
 #[cfg(target_os = "macos")]

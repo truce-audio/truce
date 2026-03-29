@@ -44,6 +44,7 @@ const STATE_IVAR: &str = "truce_native_view_state";
 pub struct NativeViewCallbacks {
     pub ctx: *mut c_void,
     pub on_mouse_moved: unsafe extern "C" fn(ctx: *mut c_void, x: f32, y: f32),
+    pub on_mouse_dragged: unsafe extern "C" fn(ctx: *mut c_void, x: f32, y: f32),
     pub on_mouse_down: unsafe extern "C" fn(ctx: *mut c_void, x: f32, y: f32),
     pub on_mouse_up: unsafe extern "C" fn(ctx: *mut c_void, x: f32, y: f32),
     pub on_scroll: unsafe extern "C" fn(ctx: *mut c_void, x: f32, y: f32, dy: f32),
@@ -217,9 +218,9 @@ unsafe fn create_view_class() -> &'static Class {
     class.add_method(sel!(acceptsFirstMouse:), accepts_first_mouse as extern "C" fn(&Object, Sel, id) -> BOOL);
 
     class.add_method(sel!(mouseMoved:), mouse_moved as extern "C" fn(&Object, Sel, id));
-    class.add_method(sel!(mouseDragged:), mouse_moved as extern "C" fn(&Object, Sel, id));
-    class.add_method(sel!(rightMouseDragged:), mouse_moved as extern "C" fn(&Object, Sel, id));
-    class.add_method(sel!(otherMouseDragged:), mouse_moved as extern "C" fn(&Object, Sel, id));
+    class.add_method(sel!(mouseDragged:), mouse_dragged as extern "C" fn(&Object, Sel, id));
+    class.add_method(sel!(rightMouseDragged:), mouse_dragged as extern "C" fn(&Object, Sel, id));
+    class.add_method(sel!(otherMouseDragged:), mouse_dragged as extern "C" fn(&Object, Sel, id));
     class.add_method(sel!(mouseDown:), mouse_down as extern "C" fn(&Object, Sel, id));
     class.add_method(sel!(mouseUp:), mouse_up as extern "C" fn(&Object, Sel, id));
     class.add_method(sel!(scrollWheel:), scroll_wheel as extern "C" fn(&Object, Sel, id));
@@ -277,6 +278,16 @@ extern "C" fn mouse_moved(this: &Object, _sel: Sel, event: id) {
         msg_send![this, convertPoint: p fromView: nil]
     };
     unsafe { (state.callbacks.on_mouse_moved)(state.callbacks.ctx, point.x as f32, point.y as f32) };
+}
+
+#[cfg(target_os = "macos")]
+extern "C" fn mouse_dragged(this: &Object, _sel: Sel, event: id) {
+    let Some(state) = (unsafe { get_state(this) }) else { return };
+    let point: NSPoint = unsafe {
+        let p: NSPoint = msg_send![event, locationInWindow];
+        msg_send![this, convertPoint: p fromView: nil]
+    };
+    unsafe { (state.callbacks.on_mouse_dragged)(state.callbacks.ctx, point.x as f32, point.y as f32) };
 }
 
 #[cfg(target_os = "macos")]

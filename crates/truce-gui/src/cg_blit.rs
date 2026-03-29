@@ -80,10 +80,6 @@ impl CgBlit {
         let h = self.height as usize;
         let expected = w * h * 4;
         if pixels.len() < expected || self.ns_view.is_null() {
-            eprintln!(
-                "[cg_blit] blit skipped: pixels={} expected={} view_null={}",
-                pixels.len(), expected, self.ns_view.is_null()
-            );
             return;
         }
 
@@ -120,11 +116,6 @@ impl CgBlit {
             if !image.is_null() {
                 let view = self.ns_view as cocoa::base::id;
                 let layer: cocoa::base::id = msg_send![view, layer];
-
-                eprintln!(
-                    "[cg_blit] image=ok layer_null={} w={} h={} pixels={}",
-                    layer.is_null(), w, h, pixels.len()
-                );
 
                 if !layer.is_null() {
                     // Disable implicit CALayer animation (0.25s crossfade)
