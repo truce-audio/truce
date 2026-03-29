@@ -385,11 +385,126 @@ struct EguiAaxState {
     input: Box<EguiAaxInput>,
     start_time: std::time::Instant,
     scale_factor: f32,
+    display_link: *mut std::ffi::c_void,
 }
 
 // SAFETY: Only accessed from the GUI thread.
 #[cfg(target_os = "macos")]
 unsafe impl Send for EguiAaxState {}
+
+// ---------------------------------------------------------------------------
+// CVDisplayLink for high-frequency egui rendering in AAX
+// ---------------------------------------------------------------------------
+
+#[cfg(target_os = "macos")]
+#[link(name = "CoreVideo", kind = "framework")]
+extern "C" {
+    fn CVDisplayLinkCreateWithActiveCGDisplays(link_out: *mut *mut std::ffi::c_void) -> i32;
+    fn CVDisplayLinkSetOutputCallback(
+        link: *mut std::ffi::c_void,
+        callback: extern "C" fn(
+            *mut std::ffi::c_void, *const std::ffi::c_void, *const std::ffi::c_void,
+            u64, *mut u64, *mut std::ffi::c_void,
+        ) -> i32,
+        user_info: *mut std::ffi::c_void,
+    ) -> i32;
+    fn CVDisplayLinkStart(link: *mut std::ffi::c_void) -> i32;
+    fn CVDisplayLinkStop(link: *mut std::ffi::c_void) -> i32;
+    fn CVDisplayLinkRelease(link: *mut std::ffi::c_void);
+}
+
+#[cfg(target_os = "macos")]
+extern "C" {
+    static _dispatch_main_q: std::ffi::c_void;
+    fn dispatch_async_f(
+        queue: *const std::ffi::c_void,
+        context: *mut std::ffi::c_void,
+        work: extern "C" fn(*mut std::ffi::c_void),
+    );
+}
+
+/// CVDisplayLink callback — fires on background thread at VBlank rate.
+/// Dispatches a render to the main thread via GCD.
+#[cfg(target_os = "macos")]
+extern "C" fn egui_display_link_callback(
+    _link: *mut std::ffi::c_void,
+    _now: *const std::ffi::c_void,
+    _output: *const std::ffi::c_void,
+    _flags: u64,
+    _flags_out: *mut u64,
+    ctx: *mut std::ffi::c_void,
+) -> i32 {
+    unsafe {
+        dispatch_async_f(
+            &_dispatch_main_q as *const std::ffi::c_void,
+            ctx,
+            egui_render_on_main,
+        );
+    }
+    0 // kCVReturnSuccess
+}
+
+/// Dispatched to main thread — renders one egui frame.
+#[cfg(target_os = "macos")]
+extern "C" fn egui_render_on_main(ctx: *mut std::ffi::c_void) {
+    if ctx.is_null() {
+        return;
+    }
+    unsafe {
+        extern "C" {
+            fn objc_autoreleasePoolPush() -> *mut std::ffi::c_void;
+            fn objc_autoreleasePoolPop(pool: *mut std::ffi::c_void);
+        }
+
+        let editor = &mut *(ctx as *mut EguiEditor);
+
+        // Guard: only render if AAX state is still alive
+        let (aax_state, ui, size) = match editor.aax_state.as_mut() {
+            Some(state) => (state, &editor.ui, editor.size),
+            None => return,
+        };
+
+        let pool = objc_autoreleasePoolPush();
+
+        let (lw, lh) = size;
+        let ppp = aax_state.scale_factor;
+
+        let mut raw_input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(lw as f32, lh as f32),
+            )),
+            time: Some(aax_state.start_time.elapsed().as_secs_f64()),
+            modifiers: egui::Modifiers::NONE,
+            events: std::mem::take(&mut aax_state.input.pending_events),
+            focused: true,
+            ..Default::default()
+        };
+        raw_input
+            .viewports
+            .entry(egui::ViewportId::ROOT)
+            .or_default()
+            .native_pixels_per_point = Some(ppp);
+
+        let output = aax_state.egui_ctx.run(raw_input, |ctx| {
+            if let Ok(mut ui_fn) = ui.lock() {
+                ui_fn.ui(ctx, &aax_state.param_state);
+            }
+        });
+
+        let clipped_primitives = aax_state
+            .egui_ctx
+            .tessellate(output.shapes, output.pixels_per_point);
+
+        aax_state.renderer.render(
+            &output.textures_delta,
+            &clipped_primitives,
+            output.pixels_per_point,
+        );
+
+        objc_autoreleasePoolPop(pool);
+    }
+}
 
 #[cfg(target_os = "macos")]
 struct EguiAaxCallbackCtx {
@@ -584,6 +699,10 @@ impl Editor for EguiEditor {
                 }
                 egui_ctx.request_repaint();
 
+                // Start CVDisplayLink for 60Hz rendering
+                let mut display_link: *mut std::ffi::c_void = std::ptr::null_mut();
+                unsafe { CVDisplayLinkCreateWithActiveCGDisplays(&mut display_link) };
+
                 self.aax_state = Some(EguiAaxState {
                     native_view,
                     renderer,
@@ -592,7 +711,20 @@ impl Editor for EguiEditor {
                     input,
                     start_time: std::time::Instant::now(),
                     scale_factor: scale,
+                    display_link,
                 });
+
+                if !display_link.is_null() {
+                    unsafe {
+                        let self_ptr = self as *mut EguiEditor as *mut std::ffi::c_void;
+                        CVDisplayLinkSetOutputCallback(
+                            display_link,
+                            egui_display_link_callback,
+                            self_ptr,
+                        );
+                        CVDisplayLinkStart(display_link);
+                    }
+                }
             }
             return;
         }
@@ -648,6 +780,16 @@ impl Editor for EguiEditor {
     fn close(&mut self) {
         #[cfg(target_os = "macos")]
         if self.uses_aax_native {
+            // Stop CVDisplayLink FIRST — synchronous, blocks until
+            // any in-flight callback completes.
+            if let Some(ref state) = self.aax_state {
+                unsafe {
+                    if !state.display_link.is_null() {
+                        CVDisplayLinkStop(state.display_link);
+                        CVDisplayLinkRelease(state.display_link);
+                    }
+                }
+            }
             self.aax_state = None;
             self.uses_aax_native = false;
             return;
@@ -660,55 +802,16 @@ impl Editor for EguiEditor {
     fn idle(&mut self) {
         #[cfg(target_os = "macos")]
         if self.uses_aax_native {
-            if let Some(ref mut state) = self.aax_state {
-                unsafe {
-                    extern "C" {
-                        fn objc_autoreleasePoolPush() -> *mut std::ffi::c_void;
-                        fn objc_autoreleasePoolPop(pool: *mut std::ffi::c_void);
-                    }
-                    let pool = objc_autoreleasePoolPush();
-
-                    let (lw, lh) = self.size;
-                    let ppp = state.scale_factor;
-
-                    let mut raw_input = egui::RawInput {
-                        screen_rect: Some(egui::Rect::from_min_size(
-                            egui::Pos2::ZERO,
-                            egui::vec2(lw as f32, lh as f32),
-                        )),
-                        time: Some(state.start_time.elapsed().as_secs_f64()),
-                        modifiers: egui::Modifiers::NONE,
-                        events: std::mem::take(&mut state.input.pending_events),
-                        focused: true,
-                        ..Default::default()
-                    };
-                    raw_input
-                        .viewports
-                        .entry(egui::ViewportId::ROOT)
-                        .or_default()
-                        .native_pixels_per_point = Some(ppp);
-
-                    let ui = &self.ui;
-                    let param_state = &state.param_state;
-                    let output = state.egui_ctx.run(raw_input, |ctx| {
-                        if let Ok(mut ui_fn) = ui.lock() {
-                            ui_fn.ui(ctx, param_state);
-                        }
-                    });
-
-                    let clipped_primitives = state
-                        .egui_ctx
-                        .tessellate(output.shapes, output.pixels_per_point);
-
-                    state.renderer.render(
-                        &output.textures_delta,
-                        &clipped_primitives,
-                        output.pixels_per_point,
-                    );
-
-                    objc_autoreleasePoolPop(pool);
+            // CVDisplayLink drives rendering at VBlank rate (~60Hz).
+            // idle() is still called by the host at ~30Hz — skip if
+            // display link is active, fall back to idle-driven render
+            // if display link creation failed.
+            if let Some(ref state) = self.aax_state {
+                if !state.display_link.is_null() {
+                    return;
                 }
             }
+            egui_render_on_main(self as *mut EguiEditor as *mut std::ffi::c_void);
             return;
         }
         // Baseview drives its own frame loop via on_frame().
