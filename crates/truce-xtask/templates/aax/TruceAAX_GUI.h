@@ -22,7 +22,11 @@ public:
 
 private:
     bool mEditorExists;
+    bool mViewOpen;
     TruceAaxGuiCallbacks mCallbacks;
+
+    // Only one editor view can be open at a time (wgpu/Metal limitation).
+    static TruceAAX_GUI* sOpenInstance;
 
     static void CB_TouchParam(void* aax_ctx, uint32_t param_id);
     static void CB_SetParam(void* aax_ctx, uint32_t param_id, double normalized);

@@ -1,14 +1,52 @@
 //! Built-in editor using the CPU render backend.
 //!
 //! Renders parameter widgets via `RenderBackend`. Uses tiny-skia for
-//! software rasterization and baseview + wgpu for window management
-//! and pixel blitting. For GPU rendering, see the `truce-gpu` crate
-//! which provides `GpuEditor` wrapping this editor with wgpu.
+//! software rasterization and baseview for window management.
+//! On macOS, pixel blitting uses CoreGraphics (CGImage → CALayer) when
+//! requested via [`request_cg_blit`], avoiding Metal/wgpu entirely.
+//! Otherwise uses wgpu for blitting. For GPU rendering, see the
+//! `truce-gpu` crate which provides `GpuEditor` wrapping this editor.
 
 use std::sync::Arc;
 
 use truce_core::editor::{Editor, EditorContext, RawWindowHandle};
 use truce_params::Params;
+
+// ---------------------------------------------------------------------------
+// CoreGraphics blit opt-in (used by AAX to avoid Metal autorelease crashes)
+// ---------------------------------------------------------------------------
+
+#[cfg(target_os = "macos")]
+use std::sync::atomic::{AtomicBool, Ordering};
+
+#[cfg(target_os = "macos")]
+static USE_CG_BLIT: AtomicBool = AtomicBool::new(false);
+
+/// Request that the built-in GUI use CoreGraphics blitting instead of wgpu
+/// on macOS. Call this before `editor.open()`. This avoids Metal/wgpu
+/// resources that cause autorelease pool crashes when multiple editors
+/// coexist in the same process (e.g. AAX in Pro Tools).
+#[cfg(target_os = "macos")]
+pub fn request_cg_blit(enable: bool) {
+    USE_CG_BLIT.store(enable, Ordering::Relaxed);
+}
+
+/// Returns true if the CgBlit path was requested (AAX on macOS).
+#[cfg(target_os = "macos")]
+pub fn should_use_cg_blit() -> bool {
+    USE_CG_BLIT.load(Ordering::Relaxed)
+}
+
+
+/// No-op on non-macOS platforms.
+#[cfg(not(target_os = "macos"))]
+pub fn request_cg_blit(_enable: bool) {}
+
+/// Always false on non-macOS.
+#[cfg(not(target_os = "macos"))]
+pub fn should_use_cg_blit() -> bool {
+    false
+}
 
 use crate::backend_cpu::CpuBackend;
 use crate::interaction::{DropdownState, InteractionState};
@@ -30,6 +68,8 @@ pub struct BuiltinEditor<P: Params> {
     interaction: InteractionState,
     context: Option<EditorContext>,
     window: Option<baseview::WindowHandle>,
+    #[cfg(target_os = "macos")]
+    native: Option<crate::native_view::NativeView>,
 }
 
 unsafe impl<P: Params> Send for BuiltinEditor<P> {}
@@ -44,6 +84,8 @@ impl<P: Params + 'static> BuiltinEditor<P> {
             interaction: InteractionState::new(),
             context: None,
             window: None,
+            #[cfg(target_os = "macos")]
+            native: None,
         }
     }
 
@@ -56,6 +98,8 @@ impl<P: Params + 'static> BuiltinEditor<P> {
             interaction: InteractionState::new(),
             context: None,
             window: None,
+            #[cfg(target_os = "macos")]
+            native: None,
         }
     }
 
@@ -68,6 +112,8 @@ impl<P: Params + 'static> BuiltinEditor<P> {
             interaction: InteractionState::new(),
             context: None,
             window: None,
+            #[cfg(target_os = "macos")]
+            native: None,
         }
     }
 
@@ -755,18 +801,77 @@ pub unsafe fn update_interaction<P: Params + 'static>(editor: &mut BuiltinEditor
 }
 
 // ---------------------------------------------------------------------------
-// Baseview WindowHandler — drives the CPU render loop via wgpu blit
+// Baseview WindowHandler — drives the CPU render loop
 // ---------------------------------------------------------------------------
+//
+// On macOS + AAX: blits via CoreGraphics (CGImage → CALayer) to avoid Metal
+// autorelease crashes with multiple editor windows.
+// Otherwise: blits via wgpu fullscreen triangle.
+
+fn create_wgpu_backend(window: &mut baseview::Window, phys_w: u32, phys_h: u32) -> BlitBackend {
+    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+        backends: wgpu::Backends::PRIMARY,
+        ..Default::default()
+    });
+
+    let surface = unsafe { crate::platform::create_wgpu_surface(&instance, window) }
+        .expect("failed to create wgpu surface");
+
+    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        power_preference: wgpu::PowerPreference::LowPower,
+        compatible_surface: Some(&surface),
+        force_fallback_adapter: false,
+    }))
+    .expect("no suitable GPU adapter");
+
+    let (device, queue) = pollster::block_on(adapter.request_device(
+        &wgpu::DeviceDescriptor {
+            label: Some("truce-gui"),
+            required_features: wgpu::Features::empty(),
+            required_limits: wgpu::Limits::downlevel_defaults(),
+            memory_hints: wgpu::MemoryHints::Performance,
+        },
+        None,
+    ))
+    .expect("failed to create wgpu device");
+
+    let caps = surface.get_capabilities(&adapter);
+    let format = caps.formats.iter().find(|f| f.is_srgb()).copied().unwrap_or(caps.formats[0]);
+
+    let surface_config = wgpu::SurfaceConfiguration {
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        format,
+        width: phys_w,
+        height: phys_h,
+        present_mode: wgpu::PresentMode::AutoVsync,
+        desired_maximum_frame_latency: 2,
+        alpha_mode: wgpu::CompositeAlphaMode::Auto,
+        view_formats: vec![],
+    };
+    surface.configure(&device, &surface_config);
+
+    let blit = crate::blit::BlitPipeline::new(&device, format, phys_w, phys_h);
+
+    BlitBackend::Wgpu { device, queue, surface, surface_config, blit }
+}
+
+enum BlitBackend {
+    #[cfg(target_os = "macos")]
+    CoreGraphics(crate::cg_blit::CgBlit),
+    Wgpu {
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        surface: wgpu::Surface<'static>,
+        surface_config: wgpu::SurfaceConfiguration,
+        blit: crate::blit::BlitPipeline,
+    },
+}
 
 struct BuiltinWindowHandler<P: Params> {
     /// Raw pointer to the BuiltinEditor owned by the host. Valid between
     /// open() and close(). Only accessed from the GUI thread.
     editor: *mut BuiltinEditor<P>,
-    device: wgpu::Device,
-    queue: wgpu::Queue,
-    surface: wgpu::Surface<'static>,
-    surface_config: wgpu::SurfaceConfiguration,
-    blit: crate::blit::BlitPipeline,
+    backend: BlitBackend,
     scale: f32,
     last_cursor: (f32, f32),
     last_click_time: Option<std::time::Instant>,
@@ -785,20 +890,27 @@ impl<P: Params + 'static> baseview::WindowHandler for BuiltinWindowHandler<P> {
         editor.render();
 
         if let Some(pixels) = editor.pixel_data() {
-            self.blit.update(&self.queue, pixels);
+            match &mut self.backend {
+                #[cfg(target_os = "macos")]
+                BlitBackend::CoreGraphics(cg) => {
+                    cg.blit(pixels);
+                }
+                BlitBackend::Wgpu { device, queue, surface, blit, .. } => {
+                    blit.update(queue, pixels);
+                    let frame = match surface.get_current_texture() {
+                        Ok(f) => f,
+                        Err(_) => return,
+                    };
+                    let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+                    let mut encoder = device.create_command_encoder(
+                        &wgpu::CommandEncoderDescriptor { label: None },
+                    );
+                    blit.render(&mut encoder, &view);
+                    queue.submit(std::iter::once(encoder.finish()));
+                    frame.present();
+                }
+            }
         }
-
-        let frame = match self.surface.get_current_texture() {
-            Ok(f) => f,
-            Err(_) => return,
-        };
-        let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let mut encoder = self.device.create_command_encoder(
-            &wgpu::CommandEncoderDescriptor { label: None },
-        );
-        self.blit.render(&mut encoder, &view);
-        self.queue.submit(std::iter::once(encoder.finish()));
-        frame.present();
     }
 
     fn on_event(
@@ -862,10 +974,18 @@ impl<P: Params + 'static> baseview::WindowHandler for BuiltinWindowHandler<P> {
                 let pw = info.physical_size().width;
                 let ph = info.physical_size().height;
                 self.scale = info.scale() as f32;
-                self.surface_config.width = pw;
-                self.surface_config.height = ph;
-                self.surface.configure(&self.device, &self.surface_config);
-                self.blit.resize(&self.device, pw, ph);
+                match &mut self.backend {
+                    #[cfg(target_os = "macos")]
+                    BlitBackend::CoreGraphics(cg) => {
+                        cg.resize(pw, ph);
+                    }
+                    BlitBackend::Wgpu { device, surface, surface_config, blit, .. } => {
+                        surface_config.width = pw;
+                        surface_config.height = ph;
+                        surface.configure(device, surface_config);
+                        blit.resize(device, pw, ph);
+                    }
+                }
                 baseview::EventStatus::Captured
             }
             _ => baseview::EventStatus::Ignored,
@@ -928,7 +1048,61 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
 
         let scale = crate::platform::query_backing_scale(&parent);
         let (lw, lh) = (w as f64, h as f64);
+        let phys_w = (lw * scale) as u32;
+        let phys_h = (lh * scale) as u32;
 
+        // --- AAX path: native NSView + CgBlit (no baseview) ---
+        #[cfg(target_os = "macos")]
+        if should_use_cg_blit() {
+            let parent_ptr = match parent {
+                RawWindowHandle::AppKit(ptr) => ptr,
+                _ => std::ptr::null_mut(),
+            };
+            if !parent_ptr.is_null() {
+                let editor_ptr = self as *mut BuiltinEditor<P>;
+                let cg_blit = crate::cg_blit::CgBlit::new(
+                    std::ptr::null_mut(), // view not available yet; set after open
+                    w, h,
+                );
+                let scale_f32 = scale as f32;
+                // Box up context for native view callbacks
+                let ctx = Box::new(NativeEditorCtx::<P> {
+                    editor: editor_ptr,
+                    cg_blit,
+                    scale: scale_f32,
+                    last_click_time: None,
+                    last_click_pos: (0.0, 0.0),
+                });
+                let ctx_ptr = Box::into_raw(ctx) as *mut std::ffi::c_void;
+
+                let callbacks = crate::native_view::NativeViewCallbacks {
+                    ctx: ctx_ptr,
+                    on_mouse_moved: native_on_mouse_moved::<P>,
+                    on_mouse_down: native_on_mouse_down::<P>,
+                    on_mouse_up: native_on_mouse_up::<P>,
+                    on_scroll: native_on_scroll::<P>,
+                    on_mouse_exited: native_on_mouse_exited::<P>,
+                    drop_ctx: native_drop_ctx::<P>,
+                };
+
+                let native = unsafe {
+                    crate::native_view::open(parent_ptr, lw, lh, callbacks)
+                };
+
+                // Now update cg_blit with the actual NSView pointer.
+                // Use logical size (w, h) — the CPU backend renders at
+                // logical resolution. The layer scales to fill the view.
+                let ctx = unsafe { &mut *(ctx_ptr as *mut NativeEditorCtx<P>) };
+                ctx.cg_blit = crate::cg_blit::CgBlit::new(
+                    native.ns_view_ptr(), w, h,
+                );
+
+                self.native = Some(native);
+                return;
+            }
+        }
+
+        // --- Normal path: baseview + wgpu ---
         let options = baseview::WindowOpenOptions {
             title: String::from("truce"),
             size: baseview::Size::new(lw, lh),
@@ -936,71 +1110,17 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
         };
 
         let parent_wrapper = crate::platform::ParentWindow(parent);
-
         let editor_addr = self as *mut BuiltinEditor<P> as usize;
         let scale_f32 = scale as f32;
-        let phys_w = (lw * scale) as u32;
-        let phys_h = (lh * scale) as u32;
 
         let window = baseview::Window::open_parented(
             &parent_wrapper,
             options,
             move |window: &mut baseview::Window| {
-                let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-                    backends: wgpu::Backends::PRIMARY,
-                    ..Default::default()
-                });
-
-                let surface = unsafe { crate::platform::create_wgpu_surface(&instance, window) }
-                    .expect("failed to create wgpu surface");
-
-                let adapter = pollster::block_on(instance.request_adapter(
-                    &wgpu::RequestAdapterOptions {
-                        power_preference: wgpu::PowerPreference::LowPower,
-                        compatible_surface: Some(&surface),
-                        force_fallback_adapter: false,
-                    },
-                ))
-                .expect("no suitable GPU adapter");
-
-                let (device, queue) = pollster::block_on(adapter.request_device(
-                    &wgpu::DeviceDescriptor {
-                        label: Some("truce-gui"),
-                        required_features: wgpu::Features::empty(),
-                        required_limits: wgpu::Limits::downlevel_defaults(),
-                        memory_hints: wgpu::MemoryHints::Performance,
-                    },
-                    None,
-                ))
-                .expect("failed to create wgpu device");
-
-                let caps = surface.get_capabilities(&adapter);
-                let format = caps.formats.iter()
-                    .find(|f| f.is_srgb())
-                    .copied()
-                    .unwrap_or(caps.formats[0]);
-
-                let surface_config = wgpu::SurfaceConfiguration {
-                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                    format,
-                    width: phys_w,
-                    height: phys_h,
-                    present_mode: wgpu::PresentMode::AutoVsync,
-                    desired_maximum_frame_latency: 2,
-                    alpha_mode: wgpu::CompositeAlphaMode::Auto,
-                    view_formats: vec![],
-                };
-                surface.configure(&device, &surface_config);
-
-                let blit = crate::blit::BlitPipeline::new(&device, format, phys_w, phys_h);
-
+                let backend = create_wgpu_backend(window, phys_w, phys_h);
                 BuiltinWindowHandler {
                     editor: editor_addr as *mut BuiltinEditor<P>,
-                    device,
-                    queue,
-                    surface,
-                    surface_config,
-                    blit,
+                    backend,
                     scale: scale_f32,
                     last_cursor: (0.0, 0.0),
                     last_click_time: None,
@@ -1013,20 +1133,161 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
     }
 
     fn close(&mut self) {
-        if let Some(mut window) = self.window.take() {
-            window.close();
+        #[cfg(target_os = "macos")]
+        if let Some(mut native) = self.native.take() {
+            native.close();
+            self.context = None;
+            self.backend = None;
+            return;
         }
-        self.context = None;
-        self.backend = None;
+
+        // Wrap in autorelease pool so baseview's internal ObjC teardown
+        // (removeFromSuperview, etc.) drains autoreleased objects here
+        // rather than leaking into the host's pool.
+        #[cfg(target_os = "macos")]
+        {
+            extern "C" {
+                fn objc_autoreleasePoolPush() -> *mut std::ffi::c_void;
+                fn objc_autoreleasePoolPop(pool: *mut std::ffi::c_void);
+            }
+            unsafe {
+                let pool = objc_autoreleasePoolPush();
+                if let Some(mut window) = self.window.take() {
+                    window.close();
+                }
+                self.context = None;
+                self.backend = None;
+                objc_autoreleasePoolPop(pool);
+            }
+            return;
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            if let Some(mut window) = self.window.take() {
+                window.close();
+            }
+            self.context = None;
+            self.backend = None;
+        }
     }
 
     fn idle(&mut self) {
-        // Baseview drives its own frame loop via on_frame().
+        // Native view: host-driven rendering (no timer).
+        #[cfg(target_os = "macos")]
+        if let Some(ref native) = self.native {
+            // Get the NativeEditorCtx from the view's state ivar
+            let ctx_ptr = native.state_ctx();
+            if !ctx_ptr.is_null() {
+                unsafe {
+                    // Wrap in @autoreleasepool so autoreleased objects from
+                    // setNeedsDisplay:/drawRect: drain HERE — not in Pro
+                    // Tools' per-callout ARP. This is what JUCE does
+                    // (JUCE_AUTORELEASEPOOL around every ObjC interaction).
+                    extern "C" {
+                        fn objc_autoreleasePoolPush() -> *mut std::ffi::c_void;
+                        fn objc_autoreleasePoolPop(pool: *mut std::ffi::c_void);
+                    }
+                    let pool = objc_autoreleasePoolPush();
+
+                    let ctx = &mut *(ctx_ptr as *mut NativeEditorCtx<P>);
+                    let editor = &mut *ctx.editor;
+                    update_interaction(editor);
+                    editor.render();
+                    match editor.pixel_data() {
+                        Some(pixels) => ctx.cg_blit.blit(pixels),
+                        None => eprintln!("[cg_blit] idle: pixel_data() returned None"),
+                    }
+
+                    objc_autoreleasePoolPop(pool);
+                }
+            }
+            return;
+        }
         // If no window (standalone/headless), render for external consumption.
         if self.window.is_none() {
             self.render();
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Native view callbacks for AAX (macOS only, no baseview)
+// ---------------------------------------------------------------------------
+
+#[cfg(target_os = "macos")]
+struct NativeEditorCtx<P: Params> {
+    editor: *mut BuiltinEditor<P>,
+    cg_blit: crate::cg_blit::CgBlit,
+    scale: f32,
+    last_click_time: Option<std::time::Instant>,
+    last_click_pos: (f32, f32),
+}
+
+#[cfg(target_os = "macos")]
+unsafe extern "C" fn native_on_mouse_moved<P: Params + 'static>(
+    ctx: *mut std::ffi::c_void, x: f32, y: f32,
+) {
+    let ctx = &mut *(ctx as *mut NativeEditorCtx<P>);
+    let editor = &mut *ctx.editor;
+    editor.on_mouse_moved(x * ctx.scale, y * ctx.scale);
+}
+
+#[cfg(target_os = "macos")]
+unsafe extern "C" fn native_on_mouse_down<P: Params + 'static>(
+    ctx: *mut std::ffi::c_void, x: f32, y: f32,
+) {
+    let ctx = &mut *(ctx as *mut NativeEditorCtx<P>);
+    let editor = &mut *ctx.editor;
+    let px = x * ctx.scale;
+    let py = y * ctx.scale;
+    // Double-click detection (300ms, 4px threshold)
+    let now = std::time::Instant::now();
+    let is_double = ctx.last_click_time.map_or(false, |t| {
+        now.duration_since(t).as_millis() < 300
+            && (px - ctx.last_click_pos.0).abs() < 4.0
+            && (py - ctx.last_click_pos.1).abs() < 4.0
+    });
+    ctx.last_click_time = Some(now);
+    ctx.last_click_pos = (px, py);
+    if is_double {
+        editor.on_double_click(px, py);
+        ctx.last_click_time = None;
+    } else {
+        editor.on_mouse_down(px, py);
+    }
+}
+
+#[cfg(target_os = "macos")]
+unsafe extern "C" fn native_on_mouse_up<P: Params + 'static>(
+    ctx: *mut std::ffi::c_void, x: f32, y: f32,
+) {
+    let ctx = &mut *(ctx as *mut NativeEditorCtx<P>);
+    let editor = &mut *ctx.editor;
+    editor.on_mouse_up(x * ctx.scale, y * ctx.scale);
+}
+
+#[cfg(target_os = "macos")]
+unsafe extern "C" fn native_on_scroll<P: Params + 'static>(
+    ctx: *mut std::ffi::c_void, x: f32, y: f32, dy: f32,
+) {
+    let ctx = &mut *(ctx as *mut NativeEditorCtx<P>);
+    let editor = &mut *ctx.editor;
+    editor.on_scroll(x * ctx.scale, y * ctx.scale, dy);
+}
+
+#[cfg(target_os = "macos")]
+unsafe extern "C" fn native_on_mouse_exited<P: Params + 'static>(
+    ctx: *mut std::ffi::c_void,
+) {
+    let ctx = &mut *(ctx as *mut NativeEditorCtx<P>);
+    let editor = &mut *ctx.editor;
+    editor.on_mouse_moved(-1.0, -1.0);
+}
+
+#[cfg(target_os = "macos")]
+unsafe extern "C" fn native_drop_ctx<P: Params>(ctx: *mut std::ffi::c_void) {
+    let _ = Box::from_raw(ctx as *mut NativeEditorCtx<P>);
 }
 
 #[cfg(test)]

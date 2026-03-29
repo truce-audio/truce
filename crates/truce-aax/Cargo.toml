@@ -8,4 +8,5 @@ description = "AAX format wrapper for truce (dlopen bridge, no SDK dependency)"
 
 [dependencies]
 truce-core = { workspace = true }
+truce-gui = { workspace = true }
 truce-params = { workspace = true }

@@ -5,6 +5,11 @@
 #include <cstdio>
 #include <sstream>
 
+#ifdef __APPLE__
+extern "C" void* objc_autoreleasePoolPush();
+extern "C" void  objc_autoreleasePoolPop(void*);
+#endif
+
 // ---------------------------------------------------------------------------
 // Factory
 // ---------------------------------------------------------------------------
@@ -17,9 +22,12 @@ AAX_IEffectGUI* AAX_CALLBACK TruceAAX_GUI::Create() {
 // Constructor / Destructor
 // ---------------------------------------------------------------------------
 
+TruceAAX_GUI* TruceAAX_GUI::sOpenInstance = nullptr;
+
 TruceAAX_GUI::TruceAAX_GUI()
     : AAX_CEffectGUI()
     , mEditorExists(false)
+    , mViewOpen(false)
     , mCallbacks{} {
 }
 
@@ -54,6 +62,25 @@ void TruceAAX_GUI::CreateViewContainer() {
     void* ctx = GetRustCtx();
     if (!ctx || !g_bridge.editor_open) return;
 
+    // Close any previously open editor.  baseview's NSView teardown
+    // autoreleases ObjC objects (CAMetalLayer, MTLDevice refs, etc.).
+    // Wrapping the close in an explicit autorelease pool flushes those
+    // immediately, preventing a use-after-free when the outer pool drains
+    // during the next CFRunLoop timer tick.
+    if (sOpenInstance && sOpenInstance != this && sOpenInstance->mViewOpen) {
+#ifdef __APPLE__
+        void* pool = objc_autoreleasePoolPush();
+#endif
+        void* prevCtx = sOpenInstance->GetRustCtx();
+        if (prevCtx && g_bridge.editor_close) {
+            g_bridge.editor_close(prevCtx);
+        }
+        sOpenInstance->mViewOpen = false;
+#ifdef __APPLE__
+        objc_autoreleasePoolPop(pool);
+#endif
+    }
+
     void* parentView = GetViewContainerPtr();
     int platform = (int)GetViewContainerType();
 
@@ -65,12 +92,25 @@ void TruceAAX_GUI::CreateViewContainer() {
     mCallbacks.request_resize = CB_RequestResize;
 
     g_bridge.editor_open(ctx, parentView, platform, &mCallbacks);
+    mViewOpen = true;
+    sOpenInstance = this;
 }
 
 void TruceAAX_GUI::DeleteViewContainer() {
+    if (!mViewOpen) return;
     void* ctx = GetRustCtx();
     if (ctx && g_bridge_loaded && g_bridge.editor_close) {
+#ifdef __APPLE__
+        void* pool = objc_autoreleasePoolPush();
         g_bridge.editor_close(ctx);
+        objc_autoreleasePoolPop(pool);
+#else
+        g_bridge.editor_close(ctx);
+#endif
+    }
+    mViewOpen = false;
+    if (sOpenInstance == this) {
+        sOpenInstance = nullptr;
     }
 }
 
@@ -93,6 +133,7 @@ AAX_Result TruceAAX_GUI::GetViewSize(AAX_Point* oViewSize) const {
 }
 
 AAX_Result TruceAAX_GUI::TimerWakeup() {
+    if (!mViewOpen) return AAX_SUCCESS;
     void* ctx = GetRustCtx();
     if (ctx && mEditorExists && g_bridge_loaded && g_bridge.editor_idle) {
         g_bridge.editor_idle(ctx);

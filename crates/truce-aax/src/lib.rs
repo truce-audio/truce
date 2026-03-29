@@ -7,13 +7,8 @@
 use std::ffi::{c_void, CString};
 use std::os::raw::c_char;
 use std::slice;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, OnceLock};
 
-/// Global guard: only one AAX editor can be open at a time.
-/// Stores a closure that closes the currently open editor. This works
-/// around a wgpu/Metal crash when multiple baseview+wgpu windows
-/// coexist in the same process.
-static OPEN_EDITOR: Mutex<Option<Box<dyn FnOnce() + Send>>> = Mutex::new(None);
 
 use truce_core::editor::{EditorContext, RawWindowHandle};
 use truce_core::events::{Event, EventBody, EventList, TransportInfo};
@@ -608,13 +603,6 @@ pub unsafe fn _editor_open<P: PluginExport>(
     platform: i32,
     callbacks: *const TruceAaxGuiCallbacks,
 ) {
-    // Close any previously open editor to avoid wgpu multi-window crash.
-    if let Ok(mut guard) = OPEN_EDITOR.lock() {
-        if let Some(close_fn) = guard.take() {
-            close_fn();
-        }
-    }
-
     let inst = &mut *(ctx as *mut AaxInstance<P>);
     let editor = match inst.editor.as_mut() {
         Some(e) => e,
@@ -672,24 +660,16 @@ pub unsafe fn _editor_open<P: PluginExport>(
         _ => return,
     };
 
+    // Use native NSView + CgBlit for the built-in GUI in AAX.
+    // Avoids baseview's NSTimer which causes per-callout autorelease pool
+    // crashes in Pro Tools when switching between plugin editor windows.
+    truce_gui::editor::request_cg_blit(true);
     editor.open(handle, context);
+    truce_gui::editor::request_cg_blit(false);
 
-    // Register this editor as the currently open one.
-    {
-        let ctx_addr = ctx as usize;
-        if let Ok(mut guard) = OPEN_EDITOR.lock() {
-            *guard = Some(Box::new(move || unsafe {
-                _editor_close::<P>(ctx_addr as *mut c_void);
-            }));
-        }
-    }
 }
 
 pub unsafe fn _editor_close<P: PluginExport>(ctx: *mut c_void) {
-    // Clear the global guard (don't call the closure — we're already closing).
-    if let Ok(mut guard) = OPEN_EDITOR.lock() {
-        *guard = None;
-    }
     let inst = &mut *(ctx as *mut AaxInstance<P>);
     if let Some(ref mut editor) = inst.editor {
         editor.close();

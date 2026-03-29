@@ -6055,6 +6055,7 @@ name = "truce-aax"
 version = "0.1.7"
 dependencies = [
  "truce-core",
+ "truce-gui",
  "truce-params",
 ]
 
