@@ -95,7 +95,7 @@ impl InteractionState {
 
         for row in &layout.rows {
             if row.label.is_some() {
-                y += 12.0;
+                y += 14.0;
             }
 
             let total_cols: u32 = row.knobs.iter().map(|k| k.span.max(1)).sum();

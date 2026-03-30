@@ -167,7 +167,7 @@ impl<P: Params + 'static> BuiltinEditor<P> {
         for row in &pl.rows {
             if let Some(label) = row.label {
                 widgets::draw_section_label(backend, 0.0, y, w as f32, label, theme);
-                y += 12.0;
+                y += 14.0;
             }
 
             let total_cols: u32 = row.knobs.iter().map(|k| k.span.max(1)).sum();

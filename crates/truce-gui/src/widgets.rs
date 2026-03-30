@@ -94,7 +94,7 @@ pub fn draw_header(
     ctx.draw_text(
         title,
         x + 10.0,
-        y + (h - title_size) / 2.0,
+        y + (h - title_size) / 2.0 - 2.0,
         title_size,
         theme.header_text,
     );
@@ -104,7 +104,7 @@ pub fn draw_header(
     ctx.draw_text(
         version,
         x + w - ver_w - 10.0,
-        y + (h - ver_size) / 2.0,
+        y + (h - ver_size) / 2.0 - 2.0,
         ver_size,
         theme.text_dim,
     );

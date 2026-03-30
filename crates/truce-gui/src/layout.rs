@@ -132,7 +132,7 @@ impl PluginLayout {
     pub fn compute_size(rows: &[KnobRow], knob_size: f32) -> (u32, u32) {
         let header_h = 21.0;
         let row_h = knob_size + 19.0;
-        let section_label_h = 12.0;
+        let section_label_h = 14.0;
         let padding = 7.0;
 
         let max_knobs = rows.iter()
@@ -181,7 +181,7 @@ pub const AUTO: u32 = u32::MAX;
 pub const GRID_GAP: f32 = 19.0;
 pub const GRID_PADDING: f32 = 10.0;
 pub const GRID_HEADER_H: f32 = 21.0;
-pub const GRID_SECTION_H: f32 = 12.0;
+pub const GRID_SECTION_H: f32 = 14.0;
 
 /// A widget placed in a grid layout.
 #[derive(Clone, Debug)]
@@ -412,19 +412,22 @@ impl GridLayout {
 
     /// Compute the window size from the grid.
     pub fn compute_size(&self) -> (u32, u32) {
+        let max_col = self.widgets.iter()
+            .map(|w| w.col + w.col_span)
+            .max().unwrap_or(1);
         let max_row = self.widgets.iter()
             .map(|w| w.row + w.row_span)
             .max().unwrap_or(1);
         let section_count = self.sections.len() as f32;
 
-        let w = GRID_PADDING * 2.0 + self.cols as f32 * (self.cell_size + GRID_GAP) - GRID_GAP;
+        let w = GRID_PADDING * 2.0 + max_col as f32 * (self.cell_size + GRID_GAP) - GRID_GAP;
         let bottom_label_h = 22.0; // label + value text below the last row of widgets
         let h = GRID_HEADER_H + GRID_PADDING
             + max_row as f32 * (self.cell_size + GRID_GAP) - GRID_GAP
             + section_count * GRID_SECTION_H
             + bottom_label_h + GRID_PADDING;
 
-        (w.max(300.0) as u32, h as u32)
+        (w.max(200.0) as u32, h as u32)
     }
 
     /// Auto-flow placement without section breaks.
