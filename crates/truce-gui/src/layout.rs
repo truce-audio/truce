@@ -138,7 +138,7 @@ impl PluginLayout {
         let max_knobs = rows.iter()
             .map(|r| r.knobs.iter().map(|k| k.span.max(1) as usize).sum::<usize>())
             .max().unwrap_or(1);
-        let w = (max_knobs as f32 * (knob_size + 7.0) + 13.0).max(200.0);
+        let w = max_knobs as f32 * (knob_size + 7.0) + 13.0;
 
         let mut h = header_h + padding;
         for row in rows {
@@ -427,7 +427,7 @@ impl GridLayout {
             + section_count * GRID_SECTION_H
             + bottom_label_h + GRID_PADDING;
 
-        (w.max(200.0) as u32, h as u32)
+        (w as u32, h as u32)
     }
 
     /// Auto-flow placement without section breaks.
