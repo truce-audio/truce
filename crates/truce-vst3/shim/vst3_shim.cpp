@@ -434,8 +434,66 @@ public:
         return kResultOk;
     }
 
-    tresult setState(void* /*IBStream*/) { return kResultOk; } // TODO: state
-    tresult getState(void* /*IBStream*/) { return kResultOk; } // TODO: state
+    tresult setState(void* stream) {
+        if (!stream || !g_cb || !ctx) return kResultFalse;
+        // IBStream vtable: queryInterface, addRef, release, read, write, seek, tell
+        struct IBStreamVtbl {
+            tresult (*queryInterface)(void*, const TUID, void**);
+            uint32  (*addRef)(void*);
+            uint32  (*release)(void*);
+            tresult (*read)(void*, void*, int32, int32*);
+            tresult (*write)(void*, void*, int32, int32*);
+            tresult (*seek)(void*, int64_t, int32, int64_t*);
+            tresult (*tell)(void*, int64_t*);
+        };
+        auto* vtbl = *reinterpret_cast<IBStreamVtbl**>(stream);
+
+        // Read all available data from the stream
+        uint8_t buf[4096];
+        uint8_t* data = nullptr;
+        int32 total = 0;
+        for (;;) {
+            int32 bytesRead = 0;
+            tresult r = vtbl->read(stream, buf, (int32)sizeof(buf), &bytesRead);
+            if (bytesRead <= 0) break;
+            auto* prev = data;
+            data = (uint8_t*)realloc(data, total + bytesRead);
+            if (!data) { free(prev); return kResultFalse; }
+            memcpy(data + total, buf, bytesRead);
+            total += bytesRead;
+            if (r != kResultOk) break;
+        }
+        if (data && total > 0) {
+            g_cb->state_load(ctx, data, (uint32_t)total);
+        }
+        free(data);
+        return kResultOk;
+    }
+
+    tresult getState(void* stream) {
+        if (!stream || !g_cb || !ctx) return kResultFalse;
+        struct IBStreamVtbl {
+            tresult (*queryInterface)(void*, const TUID, void**);
+            uint32  (*addRef)(void*);
+            uint32  (*release)(void*);
+            tresult (*read)(void*, void*, int32, int32*);
+            tresult (*write)(void*, void*, int32, int32*);
+            tresult (*seek)(void*, int64_t, int32, int64_t*);
+            tresult (*tell)(void*, int64_t*);
+        };
+        auto* vtbl = *reinterpret_cast<IBStreamVtbl**>(stream);
+
+        uint8_t* blob = nullptr;
+        uint32_t len = 0;
+        g_cb->state_save(ctx, &blob, &len);
+        if (blob && len > 0) {
+            int32 written = 0;
+            vtbl->write(stream, blob, (int32)len, &written);
+            g_cb->state_free(blob, len);
+            if (written != (int32)len) return kResultFalse;
+        }
+        return kResultOk;
+    }
 
     // --- IAudioProcessor ---
 
@@ -704,7 +762,13 @@ public:
 
     // --- IEditController ---
 
-    tresult setComponentState(void*) { return kResultOk; }
+    tresult setComponentState(void* stream) {
+        // In single-component mode, the component setState already loaded
+        // the params. The controller just needs to acknowledge success so
+        // the host knows the controller is in sync.
+        (void)stream;
+        return kResultOk;
+    }
     tresult setECState(void*) { return kResultOk; }
     tresult getECState(void*) { return kResultOk; }
 
