@@ -130,15 +130,15 @@ pub struct PluginLayout {
 impl PluginLayout {
     /// Calculate default window size based on the layout.
     pub fn compute_size(rows: &[KnobRow], knob_size: f32) -> (u32, u32) {
-        let header_h = 30.0;
-        let row_h = knob_size + 30.0;
-        let section_label_h = 18.0;
-        let padding = 10.0;
+        let header_h = 21.0;
+        let row_h = knob_size + 19.0;
+        let section_label_h = 12.0;
+        let padding = 7.0;
 
         let max_knobs = rows.iter()
             .map(|r| r.knobs.iter().map(|k| k.span.max(1) as usize).sum::<usize>())
             .max().unwrap_or(1);
-        let w = (max_knobs as f32 * (knob_size + 10.0) + 20.0).max(300.0);
+        let w = (max_knobs as f32 * (knob_size + 7.0) + 13.0).max(200.0);
 
         let mut h = header_h + padding;
         for row in rows {
@@ -178,10 +178,10 @@ impl PluginLayout {
 pub const AUTO: u32 = u32::MAX;
 
 // Grid spacing constants.
-pub const GRID_GAP: f32 = 30.0;
-pub const GRID_PADDING: f32 = 15.0;
-pub const GRID_HEADER_H: f32 = 30.0;
-pub const GRID_SECTION_H: f32 = 18.0;
+pub const GRID_GAP: f32 = 19.0;
+pub const GRID_PADDING: f32 = 10.0;
+pub const GRID_HEADER_H: f32 = 21.0;
+pub const GRID_SECTION_H: f32 = 12.0;
 
 /// A widget placed in a grid layout.
 #[derive(Clone, Debug)]
@@ -374,7 +374,7 @@ impl GridLayout {
     /// or a bare `GridWidget` (auto-wrapped via `From`). Example:
     ///
     /// ```ignore
-    /// GridLayout::build("EQ", "V0.1", 3, 70.0, vec![
+    /// GridLayout::build("EQ", "V0.1", 3, 50.0, vec![
     ///     section("LOW", vec![
     ///         GridWidget::knob(P::Freq, "Freq"),
     ///         GridWidget::knob(P::Gain, "Gain"),
@@ -418,7 +418,7 @@ impl GridLayout {
         let section_count = self.sections.len() as f32;
 
         let w = GRID_PADDING * 2.0 + self.cols as f32 * (self.cell_size + GRID_GAP) - GRID_GAP;
-        let bottom_label_h = 28.0; // label + value text below the last row of widgets
+        let bottom_label_h = 22.0; // label + value text below the last row of widgets
         let h = GRID_HEADER_H + GRID_PADDING
             + max_row as f32 * (self.cell_size + GRID_GAP) - GRID_GAP
             + section_count * GRID_SECTION_H

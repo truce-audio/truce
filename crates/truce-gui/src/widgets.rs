@@ -35,8 +35,8 @@ pub fn draw_knob(
     highlighted: bool,
 ) {
     let cx = x + size / 2.0;
-    let cy = y + size / 2.0 - 8.0; // leave room for label below
-    let radius = size / 2.0 - 6.0;
+    let cy = y + size / 2.0 - 5.0; // leave room for label below
+    let radius = size / 2.0 - 4.0;
 
     // Knob range: from 225° (bottom-left) to -45° (bottom-right), going clockwise
     // In radians: 225° = 5π/4, -45° = -π/4 (or 315° = 7π/4)
@@ -46,35 +46,36 @@ pub fn draw_knob(
     let arc_end = end_angle;
 
     // Track arc (full range background)
-    ctx.stroke_arc(cx, cy, radius, arc_start, arc_end, theme.knob_track, 3.0);
+    ctx.stroke_arc(cx, cy, radius, arc_start, arc_end, theme.knob_track, 2.0);
 
     // Value arc (filled portion)
     let value_angle = arc_start + value * (arc_end - arc_start);
     if value > 0.01 {
-        ctx.stroke_arc(cx, cy, radius, arc_start, value_angle, theme.knob_fill, 3.0);
+        ctx.stroke_arc(cx, cy, radius, arc_start, value_angle, theme.knob_fill, 2.0);
     }
 
     // Pointer line from center to current position
     let pointer_len = radius * 0.6;
     let px = cx + pointer_len * value_angle.cos();
     let py = cy + pointer_len * value_angle.sin();
-    ctx.draw_line(cx, cy, px, py, theme.knob_pointer, 2.0);
+    ctx.draw_line(cx, cy, px, py, theme.knob_pointer, 1.5);
 
     // Hover highlight ring
     if highlighted {
-        ctx.stroke_arc(cx, cy, radius + 3.0, arc_start, arc_end, theme.accent, 1.5);
+        ctx.stroke_arc(cx, cy, radius + 2.0, arc_start, arc_end, theme.accent, 1.0);
     }
 
     // Value text (below knob)
     let val_size = 10.0;
     let val_w = ctx.text_width(value_text, val_size);
-    ctx.draw_text(value_text, cx - val_w / 2.0, y + size - 2.0, val_size, theme.text);
+    ctx.draw_text(value_text, cx - val_w / 2.0, y + size - 9.0, val_size, theme.text);
 
     // Label text (below value)
     let label_size = 9.0;
     let label_w = ctx.text_width(label, label_size);
-    ctx.draw_text(label, cx - label_w / 2.0, y + size + 10.0, label_size, theme.text_dim);
+    ctx.draw_text(label, cx - label_w / 2.0, y + size + 2.0, label_size, theme.text_dim);
 }
+
 
 /// Draw a header bar.
 pub fn draw_header(
@@ -124,9 +125,9 @@ pub fn draw_slider(
     theme: &Theme,
     highlighted: bool,
 ) {
-    let track_y = y + height / 2.0 - 8.0;
-    let track_h = 4.0;
-    let margin = 6.0;
+    let track_y = y + height / 2.0 - 5.0;
+    let track_h = 3.0;
+    let margin = 4.0;
     let track_w = width - margin * 2.0;
 
     // Track background
@@ -140,10 +141,10 @@ pub fn draw_slider(
 
     // Thumb
     let thumb_x = x + margin + fill_w;
-    let thumb_r = 6.0;
+    let thumb_r = 4.0;
     ctx.fill_circle(thumb_x, track_y + track_h / 2.0, thumb_r, theme.knob_pointer);
     if highlighted {
-        ctx.fill_circle(thumb_x, track_y + track_h / 2.0, thumb_r + 2.0, theme.accent);
+        ctx.fill_circle(thumb_x, track_y + track_h / 2.0, thumb_r + 1.5, theme.accent);
         ctx.fill_circle(thumb_x, track_y + track_h / 2.0, thumb_r, theme.knob_pointer);
     }
 
@@ -151,12 +152,12 @@ pub fn draw_slider(
     let val_size = 10.0;
     let cx = x + width / 2.0;
     let val_w = ctx.text_width(value_text, val_size);
-    ctx.draw_text(value_text, cx - val_w / 2.0, y + height - 2.0, val_size, theme.text);
+    ctx.draw_text(value_text, cx - val_w / 2.0, y + height - 9.0, val_size, theme.text);
 
     // Label
     let label_size = 9.0;
     let label_w = ctx.text_width(label, label_size);
-    ctx.draw_text(label, cx - label_w / 2.0, y + height + 10.0, label_size, theme.text_dim);
+    ctx.draw_text(label, cx - label_w / 2.0, y + height + 2.0, label_size, theme.text_dim);
 }
 
 /// Draw a toggle button (on/off).
@@ -176,11 +177,11 @@ pub fn draw_toggle(
 ) {
     let is_on = value > 0.5;
     let cx = x + width / 2.0;
-    let cy = y + height / 2.0 - 8.0;
+    let cy = y + height / 2.0 - 5.0;
 
     // Toggle track (pill shape)
-    let track_w = 32.0;
-    let track_h = 16.0;
+    let track_w = 20.0;
+    let track_h = 10.0;
     let track_x = cx - track_w / 2.0;
     let track_y = cy - track_h / 2.0;
     let bg = if is_on { theme.knob_fill } else { theme.knob_track };
@@ -192,23 +193,23 @@ pub fn draw_toggle(
     } else {
         track_x + track_h / 2.0
     };
-    ctx.fill_circle(thumb_x, cy, track_h / 2.0 - 2.0, theme.knob_pointer);
+    ctx.fill_circle(thumb_x, cy, track_h / 2.0 - 1.0, theme.knob_pointer);
 
     if highlighted {
-        ctx.fill_rect(track_x - 2.0, track_y - 2.0, track_w + 4.0, track_h + 4.0, theme.accent);
+        ctx.fill_rect(track_x - 1.0, track_y - 1.0, track_w + 2.0, track_h + 2.0, theme.accent);
         ctx.fill_rect(track_x, track_y, track_w, track_h, bg);
-        ctx.fill_circle(thumb_x, cy, track_h / 2.0 - 2.0, theme.knob_pointer);
+        ctx.fill_circle(thumb_x, cy, track_h / 2.0 - 1.0, theme.knob_pointer);
     }
 
     // Value text
     let val_size = 10.0;
     let val_w = ctx.text_width(value_text, val_size);
-    ctx.draw_text(value_text, cx - val_w / 2.0, y + height - 2.0, val_size, theme.text);
+    ctx.draw_text(value_text, cx - val_w / 2.0, y + height - 9.0, val_size, theme.text);
 
     // Label
     let label_size = 9.0;
     let label_w = ctx.text_width(label, label_size);
-    ctx.draw_text(label, cx - label_w / 2.0, y + height + 10.0, label_size, theme.text_dim);
+    ctx.draw_text(label, cx - label_w / 2.0, y + height + 2.0, label_size, theme.text_dim);
 }
 
 /// Draw a selector (enum parameter — click to cycle through values).
@@ -227,15 +228,15 @@ pub fn draw_selector(
     highlighted: bool,
 ) {
     let cx = x + width / 2.0;
-    let cy = y + height / 2.0 - 8.0;
+    let cy = y + height / 2.0 - 5.0;
 
     // Background box — size to fit content
     let val_size = 10.0;
     let arrow_size = 8.0;
-    let arrow_pad = 14.0; // space for arrow on each side
+    let arrow_pad = 9.0; // space for arrow on each side
     let val_w = ctx.text_width(value_text, val_size);
-    let box_w = (val_w + arrow_pad * 2.0 + 8.0).max(width - 12.0);
-    let box_h = 20.0;
+    let box_w = (val_w + arrow_pad * 2.0 + 5.0).max(width - 8.0);
+    let box_h = 13.0;
     let box_x = cx - box_w / 2.0;
     let box_y = cy - box_h / 2.0;
     let bg = if highlighted { theme.accent } else { theme.knob_track };
@@ -251,14 +252,14 @@ pub fn draw_selector(
     );
 
     // Left/right arrows
-    ctx.draw_text("<", box_x + 4.0, cy - arrow_size / 2.0, arrow_size, theme.text_dim);
+    ctx.draw_text("<", box_x + 3.0, cy - arrow_size / 2.0, arrow_size, theme.text_dim);
     let gt_w = ctx.text_width(">", arrow_size);
-    ctx.draw_text(">", box_x + box_w - gt_w - 4.0, cy - arrow_size / 2.0, arrow_size, theme.text_dim);
+    ctx.draw_text(">", box_x + box_w - gt_w - 3.0, cy - arrow_size / 2.0, arrow_size, theme.text_dim);
 
     // Label (below)
     let label_size = 9.0;
     let label_w = ctx.text_width(label, label_size);
-    ctx.draw_text(label, cx - label_w / 2.0, y + height + 10.0, label_size, theme.text_dim);
+    ctx.draw_text(label, cx - label_w / 2.0, y + height + 2.0, label_size, theme.text_dim);
 }
 
 /// Draw a dropdown (closed state) — shows current value with a down arrow.
@@ -308,7 +309,7 @@ pub fn draw_dropdown(
     // Label (below)
     let label_size = 9.0;
     let label_w = ctx.text_width(label, label_size);
-    ctx.draw_text(label, cx - label_w / 2.0, y + height + 10.0, label_size, theme.text_dim);
+    ctx.draw_text(label, cx - label_w / 2.0, y + height + 2.0, label_size, theme.text_dim);
 }
 
 /// Draw the dropdown popup overlay showing visible options.
@@ -385,7 +386,7 @@ pub fn draw_meter(
 ) {
     let cx = x + width / 2.0;
     let num = levels.len().max(1);
-    let bar_w = 6.0f32;
+    let bar_w = 4.0f32;
     let gap = 2.0f32;
     let total_bar_w = num as f32 * bar_w + (num as f32 - 1.0).max(0.0) * gap;
     let bar_h = height - 4.0; // fill nearly full height
@@ -452,25 +453,25 @@ pub fn draw_xy_pad(
 
     // Dot at intersection
     let dot_color = if highlighted { theme.accent } else { theme.knob_fill };
-    ctx.fill_circle(dot_x, dot_y, 5.0, dot_color);
-    ctx.fill_circle(dot_x, dot_y, 3.0, theme.knob_pointer);
+    ctx.fill_circle(dot_x, dot_y, 3.0, dot_color);
+    ctx.fill_circle(dot_x, dot_y, 2.0, theme.knob_pointer);
 
     // Border
     if highlighted {
-        ctx.draw_line(pad_x, pad_y, pad_x + pad_w, pad_y, theme.accent, 1.5);
-        ctx.draw_line(pad_x + pad_w, pad_y, pad_x + pad_w, pad_y + pad_h, theme.accent, 1.5);
-        ctx.draw_line(pad_x + pad_w, pad_y + pad_h, pad_x, pad_y + pad_h, theme.accent, 1.5);
-        ctx.draw_line(pad_x, pad_y + pad_h, pad_x, pad_y, theme.accent, 1.5);
+        ctx.draw_line(pad_x, pad_y, pad_x + pad_w, pad_y, theme.accent, 1.0);
+        ctx.draw_line(pad_x + pad_w, pad_y, pad_x + pad_w, pad_y + pad_h, theme.accent, 1.0);
+        ctx.draw_line(pad_x + pad_w, pad_y + pad_h, pad_x, pad_y + pad_h, theme.accent, 1.0);
+        ctx.draw_line(pad_x, pad_y + pad_h, pad_x, pad_y, theme.accent, 1.0);
     }
 
     // Axis labels: X below the widget (like knob labels), Y at top-left inside pad
     let label_size = 8.0;
     let x_label_w = ctx.text_width(label_x, label_size);
     let cx = x + width / 2.0;
-    ctx.draw_text(label_x, cx - x_label_w / 2.0, y + height + 4.0, label_size, theme.text_dim);
+    ctx.draw_text(label_x, cx - x_label_w / 2.0, y + height + 3.0, label_size, theme.text_dim);
 
     if !label_y.is_empty() {
-        ctx.draw_text(label_y, pad_x + 3.0, pad_y + 2.0, label_size, theme.text_dim);
+        ctx.draw_text(label_y, pad_x + 2.0, pad_y + 1.0, label_size, theme.text_dim);
     }
 }
 

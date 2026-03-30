@@ -210,7 +210,7 @@ impl PluginLogic for Arpeggio {
     }
 
     fn layout(&self) -> truce_gui::layout::GridLayout {
-        GridLayout::build("ARPEGGIO", "V0.1", 2, 80.0, vec![widgets(vec![
+        GridLayout::build("ARPEGGIO", "V0.1", 2, 50.0, vec![widgets(vec![
             knob(P::Rate, "Rate"),
             knob(P::Gate, "Gate"),
             knob(P::Octaves, "Octaves"),

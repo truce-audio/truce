@@ -246,7 +246,7 @@ impl PluginLogic for {struct_name} {{
 
     fn layout(&self) -> truce_gui::layout::GridLayout {{
         use truce_gui::layout::{{GridLayout, GridWidget}};
-        GridLayout::build("{struct_name}", "V0.1", 2, 80.0, vec![
+        GridLayout::build("{struct_name}", "V0.1", 2, 50.0, vec![
             {layout_knob}.into(),
         ])
     }}

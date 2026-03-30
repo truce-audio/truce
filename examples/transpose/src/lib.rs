@@ -83,7 +83,7 @@ impl PluginLogic for Transpose {
     }
 
     fn layout(&self) -> truce_gui::layout::GridLayout {
-        GridLayout::build("TRANSPOSE", "V0.1", 2, 80.0, vec![widgets(vec![
+        GridLayout::build("TRANSPOSE", "V0.1", 2, 50.0, vec![widgets(vec![
             knob(P::Semitones, "Semitones"),
             knob(P::Octave, "Octave"),
         ])])

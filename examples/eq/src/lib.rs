@@ -134,7 +134,7 @@ impl PluginLogic for Eq {
     }
 
     fn layout(&self) -> truce_gui::layout::GridLayout {
-        GridLayout::build("EQ", "V0.1", 3, 70.0, vec![
+        GridLayout::build("EQ", "V0.1", 3, 50.0, vec![
             section("LOW", vec![
                 knob(P::LowFreq, "Freq"),
                 knob(P::LowGain, "Gain"),

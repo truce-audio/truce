@@ -155,30 +155,30 @@ impl<P: Params + 'static> BuiltinEditor<P> {
         backend.clear(self.theme.background);
         let theme = &self.theme;
 
-        widgets::draw_header(backend, 0.0, 0.0, w as f32, 30.0, title, version, theme);
+        widgets::draw_header(backend, 0.0, 0.0, w as f32, 20.0, title, version, theme);
 
         let pl = match &self.layout {
             Layout::Rows(pl) => pl,
             _ => return,
         };
-        let mut y = 35.0;
+        let mut y = 24.0;
         let mut render_widget_idx = 0usize;
 
         for row in &pl.rows {
             if let Some(label) = row.label {
                 widgets::draw_section_label(backend, 0.0, y, w as f32, label, theme);
-                y += 18.0;
+                y += 12.0;
             }
 
             let total_cols: u32 = row.knobs.iter().map(|k| k.span.max(1)).sum();
-            let total_w = total_cols as f32 * (knob_size + 10.0) - 10.0;
+            let total_w = total_cols as f32 * (knob_size + 7.0) - 7.0;
             let start_x = (w as f32 - total_w) / 2.0;
 
             let mut col = 0u32;
             for knob_def in row.knobs.iter() {
                 let span = knob_def.span.max(1);
-                let x = start_x + col as f32 * (knob_size + 10.0);
-                let widget_w = span as f32 * (knob_size + 10.0) - 10.0;
+                let x = start_x + col as f32 * (knob_size + 7.0);
+                let widget_w = span as f32 * (knob_size + 7.0) - 7.0;
 
                 let (normalized, value_text) = if let Some(ref ctx) = self.context {
                     let n = (ctx.get_param)(knob_def.param_id) as f32;
@@ -271,7 +271,7 @@ impl<P: Params + 'static> BuiltinEditor<P> {
                 col += span;
             }
 
-            y += knob_size + 30.0;
+            y += knob_size + 19.0;
         }
 
         // Dropdown popup overlay (rendered last, on top of everything)
@@ -290,7 +290,7 @@ impl<P: Params + 'static> BuiltinEditor<P> {
         backend.clear(self.theme.background);
         let theme = &self.theme;
 
-        widgets::draw_header(backend, 0.0, 0.0, w as f32, 30.0, title, version, theme);
+        widgets::draw_header(backend, 0.0, 0.0, w as f32, 20.0, title, version, theme);
 
         let grid = match &self.layout {
             Layout::Grid(g) => g,
@@ -1412,7 +1412,7 @@ mod tests {
     /// Build a BuiltinEditor with a dropdown at position 0 and a knob at position 1.
     fn make_editor() -> BuiltinEditor<TestParams> {
         let params = Arc::new(TestParams::new());
-        let layout = GridLayout::build("TEST", "V0.1", 2, 80.0, vec![widgets(vec![
+        let layout = GridLayout::build("TEST", "V0.1", 2, 50.0, vec![widgets(vec![
             GridWidget::dropdown(0u32, "Mode"),
             GridWidget::knob(1u32, "Gain"),
         ])]);
@@ -1436,7 +1436,7 @@ mod tests {
     /// Build an editor with section breaks to test anchor stability.
     fn make_editor_with_sections() -> BuiltinEditor<TestParams> {
         let params = Arc::new(TestParams::new());
-        let layout = GridLayout::build("TEST", "V0.1", 2, 80.0, vec![
+        let layout = GridLayout::build("TEST", "V0.1", 2, 50.0, vec![
             section("SECTION A", vec![
                 GridWidget::knob(1u32, "Gain"),
                 GridWidget::knob(1u32, "Gain 2"),
@@ -1528,9 +1528,10 @@ mod tests {
         editor.on_mouse_down(px + 10.0, option_y);
 
         assert!(!editor.interaction.dropdown_is_open());
-        // Enum{count:4} → step_count=3 → 3 options. Index 1 → norm = 1/2 = 0.5
+        // Enum{count:4} → step_count=3 → 4 options. Index 1 → norm = 1/3
         let norm = editor.params.get_normalized(0).unwrap();
-        assert!((norm - 0.5).abs() < 0.01, "expected 0.5, got {norm}");
+        let expected = 1.0 / 3.0;
+        assert!((norm - expected).abs() < 0.01, "expected {expected:.4}, got {norm}");
     }
 
     // -- Tests: dropdown anchor positioning --
@@ -1682,7 +1683,7 @@ mod tests {
     fn make_editor_bottom_dropdown() -> BuiltinEditor<TestParams> {
         let params = Arc::new(TestParams::new());
         // 3 rows of 2, dropdown in the last row (row 2)
-        let layout = GridLayout::build("TEST", "V0.1", 2, 80.0, vec![widgets(vec![
+        let layout = GridLayout::build("TEST", "V0.1", 2, 50.0, vec![widgets(vec![
             GridWidget::knob(1u32, "K1"),
             GridWidget::knob(1u32, "K2"),
             GridWidget::knob(1u32, "K3"),
@@ -1706,7 +1707,7 @@ mod tests {
     /// Build an editor with two dropdowns side by side.
     fn make_editor_two_dropdowns() -> BuiltinEditor<TestParams> {
         let params = Arc::new(TestParams::new());
-        let layout = GridLayout::build("TEST", "V0.1", 2, 80.0, vec![widgets(vec![
+        let layout = GridLayout::build("TEST", "V0.1", 2, 50.0, vec![widgets(vec![
             GridWidget::dropdown(0u32, "Mode A"),
             GridWidget::dropdown(0u32, "Mode B"),
         ])]);
@@ -1726,7 +1727,7 @@ mod tests {
     /// Build an editor with a 20-option dropdown for scroll testing.
     fn make_editor_many_options() -> BuiltinEditor<ManyOptionParams> {
         let params = Arc::new(ManyOptionParams::new());
-        let layout = GridLayout::build("TEST", "V0.1", 2, 80.0, vec![widgets(vec![
+        let layout = GridLayout::build("TEST", "V0.1", 2, 50.0, vec![widgets(vec![
             GridWidget::dropdown(0u32, "Note"),
             GridWidget::knob(1u32, "Gain"),
         ])]);
@@ -1896,9 +1897,9 @@ mod tests {
 
         assert!(!editor.interaction.dropdown_is_open());
         // Absolute index = scroll_offset(3) + local(1) = 4
-        // 19 options → norm = 4/18
+        // 20 options → norm = 4/19
         let norm = editor.params.get_normalized(0).unwrap();
-        let expected = 4.0 / 18.0;
+        let expected = 4.0 / 19.0;
         assert!(
             (norm - expected).abs() < 0.01,
             "expected {expected:.4}, got {norm:.4}"
@@ -1938,13 +1939,14 @@ mod tests {
         let (px, py, pw, _) = dd.popup_rect;
         let item_h = 18.0f32;
         let padding = 4.0f32;
+        let last_visible = dd.visible_count - 1;
 
-        // Hover over the third item (index 2)
-        let hover_y = py + padding + 2.0 * item_h + item_h / 2.0;
+        // Hover over the last visible item
+        let hover_y = py + padding + last_visible as f32 * item_h + item_h / 2.0;
         editor.on_mouse_moved(px + pw / 2.0, hover_y);
 
         let dd = editor.interaction.dropdown.as_ref().unwrap();
-        assert_eq!(dd.hover_option, Some(2), "expected hover on option 2");
+        assert_eq!(dd.hover_option, Some(last_visible), "expected hover on last visible option");
 
         // Move outside the popup
         editor.on_mouse_moved(0.0, 0.0);

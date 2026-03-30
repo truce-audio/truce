@@ -3,7 +3,6 @@
 //! Uploads an RGBA pixel buffer to a GPU texture, then draws a fullscreen
 //! textured triangle to present it.
 
-use wgpu::util::DeviceExt;
 
 const BLIT_SHADER: &str = r#"
 struct VertexOutput {

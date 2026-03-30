@@ -5,7 +5,7 @@
 /// use truce_gui::layout;
 ///
 /// fn gui_layout() -> truce_gui::layout::PluginLayout {
-///     layout!("MY PLUGIN", "V1.0", 80.0, {
+///     layout!("MY PLUGIN", "V1.0", 50.0, {
 ///         row {
 ///             knob(ID_GAIN, "Gain")
 ///             slider(ID_PAN, "Pan")
@@ -117,7 +117,7 @@ macro_rules! __layout_widgets {
 /// use truce_gui::grid;
 ///
 /// fn gui_layout() -> truce_gui::layout::GridLayout {
-///     grid!("MY PLUGIN", "V1.0", cols: 4, cell: 80.0, {
+///     grid!("MY PLUGIN", "V1.0", cols: 4, cell: 50.0, {
 ///         knob(ID_GAIN, "Gain")
 ///         slider(ID_PAN, "Pan")
 ///         toggle(ID_BYPASS, "Bypass")

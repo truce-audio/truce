@@ -91,25 +91,25 @@ impl InteractionState {
         self.knob_regions.clear();
 
         let knob_size = layout.knob_size;
-        let mut y = 35.0f32;
+        let mut y = 24.0f32;
 
         for row in &layout.rows {
             if row.label.is_some() {
-                y += 18.0;
+                y += 12.0;
             }
 
             let total_cols: u32 = row.knobs.iter().map(|k| k.span.max(1)).sum();
-            let total_w = total_cols as f32 * (knob_size + 10.0) - 10.0;
+            let total_w = total_cols as f32 * (knob_size + 7.0) - 7.0;
             let start_x = (layout.width as f32 - total_w) / 2.0;
 
             let mut col = 0u32;
             for knob_def in row.knobs.iter() {
                 let span = knob_def.span.max(1);
-                let x = start_x + col as f32 * (knob_size + 10.0);
-                let widget_w = span as f32 * (knob_size + 10.0) - 10.0;
+                let x = start_x + col as f32 * (knob_size + 7.0);
+                let widget_w = span as f32 * (knob_size + 7.0) - 7.0;
                 let cx = x + widget_w / 2.0;
-                let cy = y + knob_size / 2.0 - 8.0;
-                let radius = knob_size / 2.0 - 6.0;
+                let cy = y + knob_size / 2.0 - 5.0;
+                let radius = knob_size / 2.0 - 4.0;
 
                 self.knob_regions.push(WidgetRegion {
                     param_id: knob_def.param_id,
@@ -127,7 +127,7 @@ impl InteractionState {
                 col += span;
             }
 
-            y += knob_size + 30.0;
+            y += knob_size + 19.0;
         }
     }
 
@@ -199,7 +199,7 @@ impl InteractionState {
     /// Update during a horizontal slider drag. Returns (param_id, new_value).
     pub fn update_slider_drag(&self, mouse_x: f32) -> Option<(u32, f64)> {
         let drag = self.dragging.as_ref()?;
-        let margin = 6.0;
+        let margin = 4.0;
         let rel = (mouse_x - drag.region_x - margin) / (drag.region_w - margin * 2.0);
         let new_value = (rel as f64).clamp(0.0, 1.0);
         Some((drag.param_id, new_value))
@@ -282,8 +282,8 @@ impl InteractionState {
             let w = gw.col_span as f32 * (layout.cell_size + GRID_GAP) - GRID_GAP;
             let h = gw.row_span as f32 * (layout.cell_size + GRID_GAP) - GRID_GAP;
             let cx = x + w / 2.0;
-            let cy = y + h / 2.0 - 8.0;
-            let radius = w.min(h) / 2.0 - 6.0;
+            let cy = y + h / 2.0 - 5.0;
+            let radius = w.min(h) / 2.0 - 4.0;
 
             self.knob_regions.push(WidgetRegion {
                 param_id: gw.param_id,
