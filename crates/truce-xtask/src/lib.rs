@@ -625,6 +625,17 @@ fn load_config() -> std::result::Result<Config, BoxErr> {
 type Res = std::result::Result<(), Box<dyn std::error::Error>>;
 type BoxErr = Box<dyn std::error::Error>;
 
+/// Read the workspace version from Cargo.toml (`[workspace.package] version`).
+fn read_workspace_version(root: &Path) -> Option<String> {
+    let content = fs::read_to_string(root.join("Cargo.toml")).ok()?;
+    let doc: toml::Table = content.parse().ok()?;
+    doc.get("workspace")?
+        .get("package")?
+        .get("version")?
+        .as_str()
+        .map(|s| s.to_string())
+}
+
 /// Read the default features from the project's Cargo.toml.
 fn detect_default_features() -> std::collections::HashSet<String> {
     let root = project_root();
@@ -3267,7 +3278,7 @@ fn cmd_package(args: &[String]) -> Res {
     let dist_dir = root.join("dist");
     fs::create_dir_all(&dist_dir)?;
 
-    let version = "1.0.0"; // TODO: read from Cargo.toml or truce.toml
+    let version = read_workspace_version(&root).unwrap_or_else(|| "0.0.0".to_string());
 
     for p in &plugins {
         eprintln!("\n=== Packaging: {} ===", p.name);
@@ -3344,7 +3355,7 @@ fn cmd_package(args: &[String]) -> Res {
             &config.vendor.id,
             &p.suffix,
             &formats,
-            version,
+            &version,
             Some(&config.packaging),
         );
         let dist_xml_path = staging.join("distribution.xml");
