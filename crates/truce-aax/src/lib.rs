@@ -569,6 +569,9 @@ pub unsafe fn _load_state<P: PluginExport>(ctx: *mut std::ffi::c_void, data: *co
         if let Some(extra) = &deserialized.extra {
             inst.plugin.load_state(extra);
         }
+        if let Some(ref mut editor) = inst.editor {
+            editor.state_changed();
+        }
     }
 }
 
@@ -651,6 +654,14 @@ pub unsafe fn _editor_open<P: PluginExport>(
         get_meter: Arc::new(move |id| unsafe {
             let plugin = plugin_ptr.get();
             plugin.get_meter(id)
+        }),
+        get_state: Arc::new(move || unsafe {
+            let plugin = plugin_ptr.get();
+            plugin.save_state().unwrap_or_default()
+        }),
+        set_state: Arc::new(move |data| unsafe {
+            let plugin = &mut *(plugin_ptr.as_ptr() as *mut P);
+            plugin.load_state(&data);
         }),
     };
 

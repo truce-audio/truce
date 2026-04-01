@@ -17,7 +17,7 @@ au_manufacturer = "MyCo"         # 4-char code
 name = "My Effect"
 suffix = "effect"
 crate = "my-effect"              # cargo package name
-category = "effect"              # "effect" or "instrument"
+category = "effect"              # "effect", "instrument", or "midi"
 fourcc = "MyFx"                  # 4-char code (AU subtype, CLAP feature ID, etc.)
 au3_subtype = "MyF3"             # 4-char AU v3 subtype (optional, defaults to fourcc)
 au_tag = "Effects"
@@ -26,8 +26,13 @@ au_tag = "Effects"
 The `[vendor]` section defines your company identity. Each `[[plugin]]`
 entry defines a plugin to build and install. The `fourcc` field and
 AU fields (`au_manufacturer`) must be 4-character codes that
-uniquely identify your plugin. The `category` field (`"effect"` or `"instrument"`) determines the AU component type automatically. `au3_subtype` is optional — if omitted,
-it defaults to `fourcc` (v2 and v3 share the same code).
+uniquely identify your plugin. The `category` field determines the plugin type and host integration:
+
+- `"effect"` — audio effect (CLAP: audio-effect, VST3: Fx, AU: aufx)
+- `"instrument"` — synthesizer/sampler (CLAP: instrument, VST3: Instrument|Synth, AU: aumu)
+- `"midi"` — MIDI note effect like transpose or arpeggiator (CLAP: note-effect, VST3: Fx|Event, AU: aumi)
+
+`au3_subtype` is optional — if omitted, it defaults to `fourcc` (v2 and v3 share the same code).
 
 ### Building and installing with xtask
 

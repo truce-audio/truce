@@ -8,6 +8,7 @@ pub mod midi;
 pub mod plugin;
 pub mod process;
 pub mod state;
+pub mod custom_state;
 pub mod util;
 
 pub use buffer::{AudioBuffer, RawBufferScratch};

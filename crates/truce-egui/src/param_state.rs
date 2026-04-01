@@ -93,6 +93,8 @@ impl ParamState {
                     p3.format_value(id, plain).unwrap_or_else(|| format!("{plain:.2}"))
                 }),
                 get_meter: std::sync::Arc::new(|_| 0.0),
+                get_state: std::sync::Arc::new(|| Vec::new()),
+                set_state: std::sync::Arc::new(|_| {}),
             },
         }
     }

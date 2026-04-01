@@ -12,7 +12,7 @@ renders the widgets for you — no custom editor code required.
 
 ```rust
 fn layout(&self) -> GridLayout {
-    GridLayout::build("MY PLUGIN", "V1.0", 2, 80.0, vec![widgets(vec![
+    GridLayout::build("MY PLUGIN", "V1.0", 2, 50.0, vec![widgets(vec![
         knob(P::Gain, "Gain"),
         knob(P::Pan, "Pan"),
     ])])

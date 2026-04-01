@@ -2,7 +2,7 @@
 
 pub use truce_core as core;
 pub use truce_params as params;
-pub use truce_params_derive::{Params, ParamEnum};
+pub use truce_params_derive::{Params, ParamEnum, State};
 
 #[cfg(feature = "clap")]
 pub use truce_clap as clap_wrapper;
@@ -36,7 +36,8 @@ pub mod prelude {
         BoolParam, EnumParam, FloatParam, IntParam, MeterSlot, ParamEnum, ParamFlags, ParamInfo,
         ParamRange, ParamUnit, Params,
     };
-    pub use truce_params_derive::{Params, ParamEnum};
+    pub use truce_params_derive::{Params, ParamEnum, State};
+    pub use truce_core::custom_state::{State as StateTrait, StateBinding, StateField};
 
     // PluginLogic types from hotload prelude (which re-exports from core/gui)
     pub use truce_loader::prelude::{

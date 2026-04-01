@@ -979,3 +979,106 @@ pub fn derive_param_enum(input: TokenStream) -> TokenStream {
 
     expanded.into()
 }
+
+// ---------------------------------------------------------------------------
+// #[derive(State)] — binary serialization for custom plugin state
+// ---------------------------------------------------------------------------
+
+/// Derive binary serialization for a custom state struct.
+///
+/// The struct must also implement `Default`. Missing fields during
+/// deserialization are filled with defaults (forward compatibility).
+///
+/// Supported field types: `u8`, `u16`, `u32`, `u64`, `i8`, `i16`, `i32`, `i64`,
+/// `f32`, `f64`, `bool`, `String`, `Vec<T>`, `Option<T>`, and nested `State` types.
+///
+/// ```ignore
+/// #[derive(State, Default)]
+/// pub struct MyState {
+///     pub instance_name: String,
+///     pub view_mode: u8,
+///     pub selected_ids: Vec<u32>,
+/// }
+/// ```
+#[proc_macro_derive(State)]
+pub fn derive_state(input: TokenStream) -> TokenStream {
+    let ast: DeriveInput = syn::parse(input).expect("Failed to parse input for State derive");
+    let name = &ast.ident;
+
+    let fields = match &ast.data {
+        Data::Struct(data) => match &data.fields {
+            Fields::Named(named) => &named.named,
+            _ => {
+                return syn::Error::new_spanned(&ast, "State can only be derived on structs with named fields")
+                    .to_compile_error()
+                    .into();
+            }
+        },
+        _ => {
+            return syn::Error::new_spanned(&ast, "State can only be derived on structs")
+                .to_compile_error()
+                .into();
+        }
+    };
+
+    let field_count = fields.len() as u32;
+    let field_idents: Vec<_> = fields.iter().map(|f| f.ident.as_ref().unwrap()).collect();
+
+    let write_fields: Vec<_> = field_idents.iter().map(|ident| {
+        quote! {
+            {
+                let field_start = buf.len();
+                buf.extend_from_slice(&0u32.to_le_bytes());
+                ::truce::core::custom_state::StateField::write_field(&self.#ident, &mut buf);
+                let field_len = (buf.len() - field_start - 4) as u32;
+                buf[field_start..field_start + 4].copy_from_slice(&field_len.to_le_bytes());
+            }
+        }
+    }).collect();
+
+    let read_fields: Vec<_> = field_idents.iter().map(|ident| {
+        quote! {
+            if field_idx < stored_count {
+                if let Some(len_bytes) = cursor.read_bytes(4) {
+                    let field_len = u32::from_le_bytes(len_bytes.try_into().unwrap()) as usize;
+                    let pos_before = cursor.remaining();
+                    if let Some(val) = ::truce::core::custom_state::StateField::read_field(&mut cursor) {
+                        result.#ident = val;
+                    }
+                    let consumed = pos_before - cursor.remaining();
+                    if consumed < field_len {
+                        let _ = cursor.read_bytes(field_len - consumed);
+                    }
+                }
+                field_idx += 1;
+            }
+        }
+    }).collect();
+
+    let expanded = quote! {
+        impl ::truce::core::custom_state::State for #name {
+            fn serialize(&self) -> Vec<u8> {
+                let mut buf = Vec::new();
+                buf.extend_from_slice(&#field_count.to_le_bytes());
+                #(#write_fields)*
+                buf
+            }
+
+            fn deserialize(data: &[u8]) -> Option<Self> {
+                let mut cursor = ::truce::core::custom_state::StateCursor::new(data);
+                let count_bytes = cursor.read_bytes(4)?;
+                let stored_count = u32::from_le_bytes(count_bytes.try_into().ok()?) as usize;
+                let mut result = Self::default();
+                let mut field_idx: usize = 0;
+                #(#read_fields)*
+                while field_idx < stored_count {
+                    if !cursor.skip_field() { break; }
+                    field_idx += 1;
+                }
+                Some(result)
+            }
+        }
+    };
+
+    expanded.into()
+}

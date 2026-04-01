@@ -93,6 +93,14 @@ pub trait Editor: Send {
 
     /// DPI scale factor changed.
     fn set_scale_factor(&mut self, _factor: f64) {}
+
+    /// Plugin state was restored (preset recall, undo, session load).
+    ///
+    /// Called after `load_state()` while the editor is open. Re-read any
+    /// cached state from the plugin. Parameter values are already updated
+    /// and will be picked up on the next render — this is only needed for
+    /// custom state stored outside the parameter system.
+    fn state_changed(&mut self) {}
 }
 
 /// Context passed to Editor::open(). Provides communication
@@ -114,4 +122,9 @@ pub struct EditorContext {
     /// Read a meter value (0.0–1.0) by meter ID. Used for level meters.
     /// Returns 0.0 if the meter ID doesn't exist.
     pub get_meter: Arc<dyn Fn(u32) -> f32 + Send + Sync>,
+    /// Read the plugin's custom state (from `save_state()`).
+    /// Returns empty vec if the plugin has no custom state.
+    pub get_state: Arc<dyn Fn() -> Vec<u8> + Send + Sync>,
+    /// Write custom state back to the plugin (calls `load_state()`).
+    pub set_state: Arc<dyn Fn(Vec<u8>) + Send + Sync>,
 }

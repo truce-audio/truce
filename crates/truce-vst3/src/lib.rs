@@ -347,6 +347,9 @@ unsafe extern "C" fn cb_state_load<P: PluginExport>(
         if let Some(extra) = &deserialized.extra {
             inst.plugin.load_state(extra);
         }
+        if let Some(ref mut editor) = inst.editor {
+            editor.state_changed();
+        }
     }
 }
 
@@ -497,6 +500,14 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
             get_meter: std::sync::Arc::new(move |id| {
                 let plugin = plugin_ptr.get();
                 plugin.get_meter(id)
+            }),
+            get_state: std::sync::Arc::new(move || {
+                let plugin = plugin_ptr.get();
+                plugin.save_state().unwrap_or_default()
+            }),
+            set_state: std::sync::Arc::new(move |data| {
+                let plugin = &mut *(plugin_ptr.as_ptr() as *mut P);
+                plugin.load_state(&data);
             }),
         };
         let handle = truce_core::editor::RawWindowHandle::AppKit(parent);

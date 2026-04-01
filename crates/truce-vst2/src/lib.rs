@@ -31,6 +31,10 @@ struct Vst2Instance<P: PluginExport> {
     editor: Option<Box<dyn truce_core::editor::Editor>>,
     /// AEffect pointer, set by the C shim after creation. Used for host callbacks.
     aeffect_ptr: *mut std::ffi::c_void,
+    /// Whether state has been loaded at least once (via effSetChunk).
+    state_loaded: bool,
+    /// Buffered parent window handle when editor open arrives before state load.
+    pending_editor_parent: Option<*mut std::ffi::c_void>,
 }
 
 extern "C" {
@@ -64,6 +68,8 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
         sample_rate: 44100.0,
         editor: None,
         aeffect_ptr: std::ptr::null_mut(),
+        state_loaded: false,
+        pending_editor_parent: None,
     });
     Box::into_raw(instance) as *mut std::ffi::c_void
 }
@@ -84,6 +90,12 @@ unsafe extern "C" fn cb_reset<P: PluginExport>(
     inst.plugin.reset(sample_rate, max_frames as usize);
     inst.plugin.params().set_sample_rate(sample_rate);
     inst.plugin.params().snap_smoothers();
+
+    // If the host opened the editor before state_load but never called
+    // state_load (new instance, no saved state), flush the pending open now.
+    if let Some(parent) = inst.pending_editor_parent.take() {
+        open_editor_inner(inst, parent);
+    }
 }
 
 unsafe extern "C" fn cb_process<P: PluginExport>(
@@ -257,6 +269,18 @@ unsafe extern "C" fn cb_state_load<P: PluginExport>(
         if let Some(extra) = &deserialized.extra {
             inst.plugin.load_state(extra);
         }
+        // Notify an already-open editor that state changed (undo, preset recall).
+        if inst.pending_editor_parent.is_none() {
+            if let Some(ref mut editor) = inst.editor {
+                editor.state_changed();
+            }
+        }
+    }
+    inst.state_loaded = true;
+
+    // If the host opened the editor before loading state, open it now.
+    if let Some(parent) = inst.pending_editor_parent.take() {
+        open_editor_inner(inst, parent);
     }
 }
 
@@ -321,11 +345,11 @@ unsafe extern "C" fn cb_set_effect_ptr<P: PluginExport>(
     inst.aeffect_ptr = effect;
 }
 
-unsafe extern "C" fn cb_gui_open<P: PluginExport>(
-    ctx: *mut std::ffi::c_void,
+/// Actually open the editor with the given parent window handle.
+unsafe fn open_editor_inner<P: PluginExport>(
+    inst: &mut Vst2Instance<P>,
     parent: *mut std::ffi::c_void,
 ) {
-    let inst = &mut *(ctx as *mut Vst2Instance<P>);
     if let Some(ref mut editor) = inst.editor {
         let params = inst.plugin.params_arc();
         let plugin_ptr = truce_core::editor::SendPtr::new(&inst.plugin as *const P);
@@ -367,9 +391,32 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                 let plugin = plugin_ptr.get();
                 plugin.get_meter(id)
             }),
+            get_state: std::sync::Arc::new(move || {
+                let plugin = plugin_ptr.get();
+                plugin.save_state().unwrap_or_default()
+            }),
+            set_state: std::sync::Arc::new(move |data| {
+                let plugin = &mut *(plugin_ptr.as_ptr() as *mut P);
+                plugin.load_state(&data);
+            }),
         };
         let handle = truce_core::editor::RawWindowHandle::AppKit(parent);
         editor.open(handle, context);
+    }
+}
+
+unsafe extern "C" fn cb_gui_open<P: PluginExport>(
+    ctx: *mut std::ffi::c_void,
+    parent: *mut std::ffi::c_void,
+) {
+    let inst = &mut *(ctx as *mut Vst2Instance<P>);
+    if inst.state_loaded {
+        // State already restored — open immediately.
+        open_editor_inner(inst, parent);
+    } else {
+        // Host opened editor before loading state (Reaper VST2 ordering).
+        // Buffer the parent handle; we'll open after state_load.
+        inst.pending_editor_parent = Some(parent);
     }
 }
 

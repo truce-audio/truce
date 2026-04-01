@@ -947,6 +947,10 @@ unsafe extern "C" fn state_load<P: PluginExport>(
         data.plugin.load_state(extra);
     }
 
+    if let Some(ref mut editor) = data.editor {
+        editor.state_changed();
+    }
+
     true
 }
 
@@ -1258,6 +1262,14 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
         get_meter: Arc::new(move |id| {
             let plugin = unsafe { plugin_ptr.get() };
             plugin.get_meter(id)
+        }),
+        get_state: Arc::new(move || {
+            let plugin = unsafe { plugin_ptr.get() };
+            plugin.save_state().unwrap_or_default()
+        }),
+        set_state: Arc::new(move |data| {
+            let plugin = unsafe { &mut *(plugin_ptr.as_ptr() as *mut P) };
+            plugin.load_state(&data);
         }),
     };
 

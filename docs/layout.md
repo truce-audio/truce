@@ -17,7 +17,7 @@ use MyParamsParamId as P;
 
 fn layout(&self) -> truce_gui::layout::GridLayout {
     use truce_gui::layout::{GridLayout, knob, slider, toggle, widgets};
-    GridLayout::build("MY PLUGIN", "V0.1", 3, 80.0, vec![widgets(vec![
+    GridLayout::build("MY PLUGIN", "V0.1", 3, 50.0, vec![widgets(vec![
         knob(P::Gain, "Gain"),
         slider(P::Pan, "Pan"),
         toggle(P::Bypass, "Bypass"),
@@ -59,7 +59,7 @@ Group widgets under labeled section headers with `section()`:
 ```rust
 use truce_gui::layout::{GridLayout, knob, section, widgets};
 
-GridLayout::build("EQ", "V0.1", 3, 80.0, vec![
+GridLayout::build("EQ", "V0.1", 3, 50.0, vec![
     section("LOW", vec![
         knob(P::LowFreq, "Freq"),
         knob(P::LowGain, "Gain"),
@@ -105,7 +105,7 @@ use GainParamsParamId as P;
 
 fn layout(&self) -> truce_gui::layout::GridLayout {
     use truce_gui::layout::{GridLayout, knob, meter, xy_pad, widgets};
-    GridLayout::build("GAIN", "V0.1", 3, 80.0, vec![widgets(vec![
+    GridLayout::build("GAIN", "V0.1", 3, 50.0, vec![widgets(vec![
         knob(P::Gain, "Gain"),
         knob(P::Pan, "Pan"),
         xy_pad(P::Pan, P::Gain, "XY"),
