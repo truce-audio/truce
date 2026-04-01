@@ -20,6 +20,9 @@ use crate::renderer::EguiRenderer;
 pub trait EditorUi: Send {
     fn ui(&mut self, ctx: &egui::Context, state: &ParamState);
 
+    /// Called once when the editor window opens. Use to create StateBindings.
+    fn opened(&mut self, _state: &ParamState) {}
+
     /// Plugin state was restored (preset recall, undo, session load).
     /// Re-read any cached custom state. Parameter values update automatically.
     fn state_changed(&mut self, _state: &ParamState) {}
@@ -28,6 +31,32 @@ pub trait EditorUi: Send {
 impl<F: FnMut(&egui::Context, &ParamState) + Send> EditorUi for F {
     fn ui(&mut self, ctx: &egui::Context, state: &ParamState) {
         self(ctx, state);
+    }
+}
+
+/// No-op placeholder for `mem::replace` during builder chain.
+struct NopUi;
+impl EditorUi for NopUi {
+    fn ui(&mut self, _ctx: &egui::Context, _state: &ParamState) {}
+}
+
+/// Wraps an EditorUi with an additional state_changed callback.
+struct WithStateChanged {
+    inner: Box<dyn EditorUi>,
+    on_changed: Box<dyn FnMut(&ParamState) + Send>,
+}
+
+impl EditorUi for WithStateChanged {
+    fn ui(&mut self, ctx: &egui::Context, state: &ParamState) {
+        self.inner.ui(ctx, state);
+    }
+
+    fn opened(&mut self, state: &ParamState) {
+        self.inner.opened(state);
+    }
+
+    fn state_changed(&mut self, state: &ParamState) {
+        (self.on_changed)(state);
     }
 }
 
@@ -92,6 +121,34 @@ impl EguiEditor {
             aax_state: None,
             context: None,
         }
+    }
+
+    /// Add a callback for when plugin state is restored (preset recall, undo).
+    ///
+    /// Only needed with the closure API (`EguiEditor::new`). For the struct
+    /// API (`EguiEditor::with_ui`), implement `EditorUi::state_changed` instead.
+    ///
+    /// ```ignore
+    /// EguiEditor::new((400, 300), |ctx, state| { /* ui */ })
+    ///     .on_state_changed(|state| { /* re-read cached state */ })
+    /// ```
+    pub fn on_state_changed(
+        mut self,
+        f: impl FnMut(&ParamState) + Send + 'static,
+    ) -> Self {
+        let old = std::mem::replace(
+            &mut self.ui,
+            Arc::new(Mutex::new(Box::new(NopUi) as Box<dyn EditorUi>)),
+        );
+        let inner = Arc::try_unwrap(old)
+            .ok()
+            .and_then(|m| m.into_inner().ok())
+            .expect("on_state_changed must be called during construction, not after open()");
+        self.ui = Arc::new(Mutex::new(Box::new(WithStateChanged {
+            inner,
+            on_changed: Box::new(f),
+        })));
+        self
     }
 
     /// Set custom visuals (theme). Use `truce_egui::theme::dark()` for
@@ -666,6 +723,9 @@ impl Editor for EguiEditor {
             let phys_h = (lh as f32 * scale) as u32;
 
             let param_state = ParamState::new(context);
+            if let Ok(mut ui) = self.ui.lock() {
+                ui.opened(&param_state);
+            }
 
             // Box the input separately so its address is stable for callbacks
             let mut input = Box::new(EguiAaxInput {
@@ -741,6 +801,9 @@ impl Editor for EguiEditor {
         // --- Normal path: baseview + wgpu ---
         let ui = Arc::clone(&self.ui);
         let param_state = ParamState::new(context);
+        if let Ok(mut ui_fn) = ui.lock() {
+            ui_fn.opened(&param_state);
+        }
         let size = self.size;
 
         let options = WindowOpenOptions {

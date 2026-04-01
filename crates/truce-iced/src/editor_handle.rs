@@ -32,7 +32,18 @@ impl EditorHandle {
         (self.ctx.request_resize)(w, h)
     }
 
-    pub(crate) fn context(&self) -> &EditorContext {
+    /// Access the underlying EditorContext (for `StateBinding::new()`).
+    pub fn context(&self) -> &EditorContext {
         &self.ctx
+    }
+
+    /// Read custom plugin state bytes (from `save_state()`).
+    pub fn get_state(&self) -> Vec<u8> {
+        (self.ctx.get_state)()
+    }
+
+    /// Write custom state back to the plugin (calls `load_state()`).
+    pub fn set_state(&self, data: Vec<u8>) {
+        (self.ctx.set_state)(data);
     }
 }

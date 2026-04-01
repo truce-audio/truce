@@ -76,6 +76,21 @@ impl ParamState {
         (self.ctx.request_resize)(width, height)
     }
 
+    /// Access the underlying EditorContext (for `StateBinding::new()`).
+    pub fn context(&self) -> &EditorContext {
+        &self.ctx
+    }
+
+    /// Read custom plugin state bytes (from `save_state()`).
+    pub fn get_state(&self) -> Vec<u8> {
+        (self.ctx.get_state)()
+    }
+
+    /// Write custom state back to the plugin (calls `load_state()`).
+    pub fn set_state(&self, data: Vec<u8>) {
+        (self.ctx.set_state)(data);
+    }
+
     /// Create a ParamState backed by real parameter defaults.
     /// Uses `P::default_for_gui()` to provide accurate formatting and values.
     pub fn from_params<P: truce_params::Params + 'static>(params: std::sync::Arc<P>) -> Self {
