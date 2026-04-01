@@ -151,6 +151,42 @@ impl EditorUi for MyUi {
 EguiEditor::with_ui((640, 480), MyUi { tab: 0 })
 ```
 
+## Custom state
+
+If your plugin has persistent state beyond parameters (instance names,
+view modes, selections), use `StateBinding<T>` and implement
+`state_changed` on your `EditorUi`:
+
+```rust
+#[derive(State, Default)]
+pub struct MyState {
+    pub instance_name: String,
+    pub view_mode: u8,
+}
+
+struct MyUi {
+    state: StateBinding<MyState>,
+}
+
+impl EditorUi for MyUi {
+    fn ui(&mut self, ctx: &egui::Context, ps: &ParamState) {
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.label(&self.state.get().instance_name);
+        });
+    }
+
+    fn state_changed(&mut self, _ps: &ParamState) {
+        self.state.sync();
+    }
+}
+```
+
+Initialize the binding when the editor opens. `state_changed` is called
+automatically by the framework on preset recall, undo, and session load.
+
+If your plugin only uses `#[param]` fields, you don't need any of this —
+parameter values sync automatically every frame.
+
 ## Screenshot testing
 
 ```rust

@@ -284,4 +284,10 @@ impl<P: Params + 'static> Editor for GpuEditor<P> {
         }
         // Baseview drives its own frame loop via on_frame().
     }
+
+    fn state_changed(&mut self) {
+        if let Ok(mut inner) = self.inner.lock() {
+            inner.state_changed();
+        }
+    }
 }

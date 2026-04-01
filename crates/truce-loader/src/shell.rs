@@ -385,6 +385,13 @@ impl<P: Params + 'static> Editor for HotEditor<P> {
             HotEditorInner::Custom { editor } => editor.can_resize(),
         }
     }
+
+    fn state_changed(&mut self) {
+        match &mut self.kind {
+            HotEditorInner::Builtin { gpu, .. } => gpu.state_changed(),
+            HotEditorInner::Custom { editor } => editor.state_changed(),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

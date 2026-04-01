@@ -190,6 +190,37 @@ state.end_gesture(P::Gain)       // write (end drag)
 
 `ParamState` is `Clone`-able, so Slint callbacks can capture copies.
 
+## Custom state
+
+If your plugin has persistent state beyond parameters, check for
+changes in the sync callback:
+
+```rust
+use std::sync::atomic::{AtomicBool, Ordering};
+
+#[derive(State, Default)]
+pub struct MyState {
+    pub instance_name: String,
+}
+
+let state_dirty = Arc::new(AtomicBool::new(false));
+
+// In the sync closure:
+if state_dirty.swap(false, Ordering::Relaxed) {
+    // Re-read custom state from plugin
+    let data = (state.context().get_state)();
+    if let Some(s) = MyState::deserialize(&data) {
+        ui.set_instance_name(s.instance_name.into());
+    }
+}
+```
+
+Set the flag from `Editor::state_changed()` using a thin wrapper (see
+the [state persistence](../reference/10-state.md) guide for details).
+
+If your plugin only uses `#[param]` fields, you don't need any of this —
+parameter values sync automatically through `ParamState`.
+
 ## Screenshot testing
 
 Slint snapshots use the software renderer — no GPU needed:

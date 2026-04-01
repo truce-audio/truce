@@ -175,6 +175,45 @@ fn update(&mut self, msg: Message<Msg>, params: &ParamState<MyParams>, ctx: &Edi
 Parameter messages (from knob drags, toggle clicks) are handled
 automatically — you never see them in `update()`.
 
+## Custom state
+
+If your plugin has persistent state beyond parameters, use
+`StateBinding<T>` in your `IcedPlugin` model:
+
+```rust
+#[derive(State, Default)]
+pub struct MyState {
+    pub instance_name: String,
+}
+
+pub struct MyEditor {
+    state: StateBinding<MyState>,
+}
+
+impl IcedPlugin<MyParams> for MyEditor {
+    type Message = ();
+
+    fn new(_params: Arc<MyParams>) -> Self {
+        Self { state: StateBinding::default() }
+    }
+
+    fn view<'a>(&'a self, params: &'a ParamState<MyParams>) -> Element<'a, Message<()>> {
+        text(&self.state.get().instance_name).into()
+    }
+
+    fn state_changed(&mut self) {
+        self.state.sync();
+    }
+}
+```
+
+`state_changed` is called when the DAW restores state (preset recall,
+undo, session load). It re-reads the custom state from the plugin so
+the UI stays in sync.
+
+If your plugin only uses `#[param]` fields, you don't need any of this —
+parameter values sync automatically through `ParamState`.
+
 ## Screenshot testing
 
 ```rust

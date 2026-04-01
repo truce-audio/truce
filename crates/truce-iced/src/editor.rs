@@ -66,6 +66,10 @@ pub trait IcedPlugin<P: Params>: Sized + 'static {
     fn title(&self) -> String {
         String::from("Plugin")
     }
+
+    /// Plugin state was restored (preset recall, undo, session load).
+    /// Re-read any cached custom state. Parameter values update automatically.
+    fn state_changed(&mut self) {}
 }
 
 // ---------------------------------------------------------------------------

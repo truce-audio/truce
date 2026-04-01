@@ -902,7 +902,11 @@ static tresult pv_queryInterface(void* s, const TUID iid, void** obj) {
 static uint32 pv_addRef(void* s) { return ++((TrucePlugView*)s)->refCount; }
 static uint32 pv_release(void* s) {
     auto* pv = (TrucePlugView*)s;
-    if (--pv->refCount <= 0) { free(pv); return 0; }
+    if (--pv->refCount <= 0) {
+        if (pv->comp) pv->comp->deferredParent = nullptr;
+        free(pv);
+        return 0;
+    }
     return pv->refCount;
 }
 static tresult pv_isPlatformTypeSupported(void*, FIDString type) {

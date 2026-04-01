@@ -19,6 +19,10 @@ use crate::renderer::EguiRenderer;
 /// closure-based UIs, use `EguiEditor::new()` instead.
 pub trait EditorUi: Send {
     fn ui(&mut self, ctx: &egui::Context, state: &ParamState);
+
+    /// Plugin state was restored (preset recall, undo, session load).
+    /// Re-read any cached custom state. Parameter values update automatically.
+    fn state_changed(&mut self, _state: &ParamState) {}
 }
 
 impl<F: FnMut(&egui::Context, &ParamState) + Send> EditorUi for F {
@@ -45,6 +49,8 @@ pub struct EguiEditor {
     uses_aax_native: bool,
     #[cfg(target_os = "macos")]
     aax_state: Option<EguiAaxState>,
+    /// EditorContext stored at open() for state_changed forwarding.
+    context: Option<truce_core::editor::EditorContext>,
 }
 
 // WindowHandle contains raw pointers; only accessed from host UI thread.
@@ -68,6 +74,7 @@ impl EguiEditor {
             uses_aax_native: false,
             #[cfg(target_os = "macos")]
             aax_state: None,
+            context: None,
         }
     }
 
@@ -83,6 +90,7 @@ impl EguiEditor {
             uses_aax_native: false,
             #[cfg(target_os = "macos")]
             aax_state: None,
+            context: None,
         }
     }
 
@@ -631,6 +639,7 @@ impl Editor for EguiEditor {
     }
 
     fn open(&mut self, parent: RawWindowHandle, context: EditorContext) {
+        self.context = Some(context.clone());
         let egui_ctx = egui::Context::default();
         let visuals = self.visuals.clone().unwrap_or_else(crate::theme::dark);
         egui_ctx.set_visuals(visuals.clone());
@@ -828,5 +837,14 @@ impl Editor for EguiEditor {
 
     fn set_scale_factor(&mut self, factor: f64) {
         self.scale_factor = Some(factor);
+    }
+
+    fn state_changed(&mut self) {
+        if let Some(ref ctx) = self.context {
+            let ps = ParamState::new(ctx.clone());
+            if let Ok(mut ui) = self.ui.lock() {
+                ui.state_changed(&ps);
+            }
+        }
     }
 }
