@@ -22,14 +22,16 @@ impl PluginKind {
     fn category(self) -> &'static str {
         match self {
             Self::Instrument => "instrument",
-            _ => "effect",
+            Self::Midi => "midi",
+            Self::Effect => "effect",
         }
     }
 
     fn au_tag(self) -> &'static str {
         match self {
             Self::Instrument => "Synthesizer",
-            _ => "Effects",
+            Self::Midi => "MIDI",
+            Self::Effect => "Effects",
         }
     }
 
@@ -147,8 +149,8 @@ pub struct {struct_name}Params {{
     };
 
     let layout_knob = match kind {
-        PluginKind::Midi => "GridWidget::knob(P::Semitones, \"Semitones\")",
-        _ => "GridWidget::knob(P::Gain, \"Gain\")",
+        PluginKind::Midi => "knob(P::Semitones, \"Semitones\")",
+        _ => "knob(P::Gain, \"Gain\")",
     };
 
     let process_body = match kind {
@@ -220,8 +222,43 @@ pub struct {struct_name}Params {{
     let bus_layouts = kind.bus_layouts();
     let test_body = kind.test_body();
 
+    let effect_only_tests = match kind {
+        PluginKind::Instrument => "",
+        _ => r#"
+    #[test]
+    fn renders_nonzero_output() {
+        let result = TEST_BODY;
+        truce_test::assert_nonzero(&result.output);
+    }
+
+    #[test]
+    fn bus_config_effect() {
+        truce_test::assert_bus_config_effect::<Plugin>();
+    }"#,
+    };
+    let effect_only_tests = effect_only_tests.replace("TEST_BODY", test_body);
+
+    let plugin_macro = match kind {
+        PluginKind::Instrument => format!(
+            r#"truce::plugin! {{
+    logic: {struct_name},
+    params: {struct_name}Params,
+    bus_layouts: [{bus_layouts}],
+}}"#
+        ),
+        _ => format!(
+            r#"truce::plugin! {{
+    logic: {struct_name},
+    params: {struct_name}Params,
+}}"#
+        ),
+    };
+
+    let upper_name = struct_name.to_uppercase();
+
     format!(
         r#"use truce::prelude::*;
+use truce_gui::layout::{{GridLayout, knob, widgets}};
 
 {params}
 
@@ -240,23 +277,19 @@ impl {struct_name} {{
 impl PluginLogic for {struct_name} {{
     fn reset(&mut self, sr: f64, _bs: usize) {{
         self.params.set_sample_rate(sr);
+        self.params.snap_smoothers();
     }}
 
 {process_body}
 
     fn layout(&self) -> truce_gui::layout::GridLayout {{
-        use truce_gui::layout::{{GridLayout, GridWidget}};
-        GridLayout::build("{struct_name}", "V0.1", 2, 50.0, vec![
-            {layout_knob}.into(),
-        ])
+        GridLayout::build("{upper_name}", "V0.1", 2, 50.0, vec![widgets(vec![
+            {layout_knob},
+        ])])
     }}
 }}
 
-truce::plugin! {{
-    logic: {struct_name},
-    params: {struct_name}Params,
-    bus_layouts: [{bus_layouts}],
-}}
+{plugin_macro}
 
 #[cfg(test)]
 mod tests {{
@@ -266,6 +299,41 @@ mod tests {{
     fn builds_and_runs() {{
         let result = {test_body};
         truce_test::assert_no_nans(&result.output);
+    }}
+{effect_only_tests}
+    #[test]
+    fn info_is_valid() {{
+        truce_test::assert_valid_info::<Plugin>();
+    }}
+
+    #[test]
+    fn has_editor() {{
+        truce_test::assert_has_editor::<Plugin>();
+    }}
+
+    #[test]
+    fn state_round_trips() {{
+        truce_test::assert_state_round_trip::<Plugin>();
+    }}
+
+    #[test]
+    fn param_defaults_match() {{
+        truce_test::assert_param_defaults_match::<Plugin>();
+    }}
+
+    #[test]
+    fn no_duplicate_param_ids() {{
+        truce_test::assert_no_duplicate_param_ids::<Plugin>();
+    }}
+
+    #[test]
+    fn corrupt_state_no_crash() {{
+        truce_test::assert_corrupt_state_no_crash::<Plugin>();
+    }}
+
+    #[test]
+    fn param_normalized_clamped() {{
+        truce_test::assert_param_normalized_clamped::<Plugin>();
     }}
 }}
 "#,
@@ -278,6 +346,7 @@ pub fn truce_toml(
     plugins: &[PluginSpec],
     workspace_name: &str,
     fourcc_map: &HashMap<String, String>,
+    is_workspace: bool,
 ) -> String {
     let mut s = format!(
         r#"[macos]
@@ -296,7 +365,11 @@ au_manufacturer = "{au_mfr}"
 
     for p in plugins {
         let struct_name = to_pascal_case(&p.name);
-        let crate_name = format!("{workspace_name}-{}", p.name);
+        let crate_name = if is_workspace {
+            format!("{workspace_name}-{}", p.name)
+        } else {
+            p.name.clone()
+        };
         let fourcc = &fourcc_map[&p.name];
         s.push_str(&format!(
             r#"

@@ -46,7 +46,7 @@ use clap_sys::id::{clap_id, CLAP_INVALID_ID};
 use clap_sys::plugin::{clap_plugin, clap_plugin_descriptor};
 use clap_sys::plugin_features::{
     CLAP_PLUGIN_FEATURE_AUDIO_EFFECT, CLAP_PLUGIN_FEATURE_INSTRUMENT,
-    CLAP_PLUGIN_FEATURE_SYNTHESIZER,
+    CLAP_PLUGIN_FEATURE_NOTE_EFFECT, CLAP_PLUGIN_FEATURE_SYNTHESIZER,
 };
 use clap_sys::process::{
     clap_process, CLAP_PROCESS_CONTINUE, CLAP_PROCESS_CONTINUE_IF_NOT_QUIET, CLAP_PROCESS_ERROR,
@@ -176,6 +176,7 @@ impl DescriptorHolder {
                     CLAP_PLUGIN_FEATURE_SYNTHESIZER,
                 ]
             }
+            PluginCategory::NoteEffect => vec![CLAP_PLUGIN_FEATURE_NOTE_EFFECT],
             PluginCategory::Effect => vec![CLAP_PLUGIN_FEATURE_AUDIO_EFFECT],
             PluginCategory::Analyzer => vec![CLAP_PLUGIN_FEATURE_AUDIO_EFFECT],
             PluginCategory::Tool => vec![CLAP_PLUGIN_FEATURE_AUDIO_EFFECT],

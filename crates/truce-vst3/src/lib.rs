@@ -569,6 +569,7 @@ pub fn register_vst3<P: PluginExport>() {
     let category = CString::new("Audio Module Class").unwrap_or_default();
     let subcategories = CString::new(match info.category {
         PluginCategory::Instrument => "Instrument|Synth",
+        PluginCategory::NoteEffect => "Fx|Event",
         PluginCategory::Effect => "Fx",
         PluginCategory::Analyzer => "Fx|Analyzer",
         PluginCategory::Tool => "Fx|Tools",

@@ -85,11 +85,13 @@ pub fn emit_plugin_env() {
 
     let category = match plugin.category.as_str() {
         "instrument" => "Instrument",
+        "midi" | "note_effect" => "NoteEffect",
         _ => "Effect",
     };
     let au_type = plugin.au_type.as_deref().unwrap_or(
         match plugin.category.as_str() {
             "instrument" => "aumu",
+            "midi" | "note_effect" => "aumi",
             _ => "aufx",
         }
     );

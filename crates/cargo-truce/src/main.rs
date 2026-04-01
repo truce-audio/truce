@@ -139,7 +139,7 @@ fn cmd_new(args: &[String]) -> Res {
     let fourcc_map = scaffold::resolve_fourccs(&plugins);
     fs::write(
         format!("{name}/truce.toml"),
-        scaffold::truce_toml("My Company", "com.mycompany", &plugins, &name, &fourcc_map),
+        scaffold::truce_toml("My Company", "com.mycompany", &plugins, &name, &fourcc_map, false),
     )?;
 
     eprintln!("Created {name}/");
@@ -271,7 +271,7 @@ fn cmd_new_workspace(args: &[String]) -> Res {
     // truce.toml
     fs::write(
         format!("{workspace_name}/truce.toml"),
-        scaffold::truce_toml(&vendor, &vid, &plugins, &workspace_name, &fourcc_map),
+        scaffold::truce_toml(&vendor, &vid, &plugins, &workspace_name, &fourcc_map, true),
     )?;
 
     // .gitignore

@@ -23,6 +23,8 @@ pub struct PluginInfo {
 pub enum PluginCategory {
     Effect,
     Instrument,
+    /// MIDI note effect (e.g., transpose, arpeggiator). Processes MIDI events.
+    NoteEffect,
     Analyzer,
     Tool,
 }
@@ -32,6 +34,7 @@ pub enum PluginCategory {
 pub const fn category_from_str(s: &str) -> PluginCategory {
     match s.as_bytes() {
         b"Instrument" => PluginCategory::Instrument,
+        b"NoteEffect" => PluginCategory::NoteEffect,
         b"Analyzer" => PluginCategory::Analyzer,
         b"Tool" => PluginCategory::Tool,
         _ => PluginCategory::Effect,
