@@ -326,9 +326,12 @@ class TruceComponent {
 public:
     void* componentHandler;  // IComponentHandler*, stored with addRef
     bool inPerformEdit;       // feedback guard: skip setParamNormalized during performEdit
+    bool stateLoaded;         // true after setState() has run (or on first process if no state chunk)
+    void* deferredParent;     // stashed parent view if editor attached before state loaded
 
     TruceComponent() : ctx(nullptr), sampleRate(44100), maxFrames(1024),
-                       componentHandler(nullptr), inPerformEdit(false) {
+                       componentHandler(nullptr), inPerformEdit(false),
+                       stateLoaded(false), deferredParent(nullptr) {
         if (g_cb) {
             ctx = g_cb->create();
             if (ctx) {
@@ -429,6 +432,15 @@ public:
 
     tresult setActive(TBool state) {
         if (state && g_cb && ctx) {
+            // If we're being activated and no state chunk was received,
+            // this is a fresh instance — allow the editor to open.
+            if (!stateLoaded) {
+                stateLoaded = true;
+                if (deferredParent) {
+                    g_cb->gui_open(ctx, deferredParent);
+                    deferredParent = nullptr;
+                }
+            }
             g_cb->reset(ctx, sampleRate, maxFrames);
         }
         return kResultOk;
@@ -467,6 +479,12 @@ public:
             g_cb->state_load(ctx, data, (uint32_t)total);
         }
         free(data);
+        stateLoaded = true;
+        // If the editor was attached before state was loaded, open it now
+        if (deferredParent) {
+            g_cb->gui_open(ctx, deferredParent);
+            deferredParent = nullptr;
+        }
         return kResultOk;
     }
 
@@ -867,7 +885,8 @@ struct ViewRect { int32 left; int32 top; int32 right; int32 bottom; };
 struct TrucePlugView {
     IPlugViewVtbl* vtbl;
     int32_t refCount;
-    void* ctx;  // Rust plugin context
+    void* ctx;              // Rust plugin context
+    TruceComponent* comp;   // owning component (for state-loaded check)
 };
 
 static tresult pv_queryInterface(void* s, const TUID iid, void** obj) {
@@ -894,11 +913,18 @@ static tresult pv_isPlatformTypeSupported(void*, FIDString type) {
 }
 static tresult pv_attached(void* s, void* parent, FIDString /*type*/) {
     auto* pv = (TrucePlugView*)s;
-    if (g_cb && pv->ctx) g_cb->gui_open(pv->ctx, parent);
+    if (!g_cb || !pv->ctx) return kResultOk;
+    if (pv->comp && !pv->comp->stateLoaded) {
+        // Editor attached before state was restored — defer gui_open
+        pv->comp->deferredParent = parent;
+    } else {
+        g_cb->gui_open(pv->ctx, parent);
+    }
     return kResultOk;
 }
 static tresult pv_removed(void* s) {
     auto* pv = (TrucePlugView*)s;
+    if (pv->comp) pv->comp->deferredParent = nullptr;
     if (g_cb && pv->ctx) g_cb->gui_close(pv->ctx);
     return kResultOk;
 }
@@ -1054,6 +1080,7 @@ void* TruceComponent::createView(FIDString /*name*/) {
     pv->vtbl = &g_plugview_vtbl;
     pv->refCount = 1;
     pv->ctx = ctx;
+    pv->comp = this;
     return pv;
 }
 

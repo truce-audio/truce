@@ -44,6 +44,8 @@ typedef struct {
     int32_t block_size;
     Vst2MidiEventCompact midi_buf[256];
     uint32_t midi_count;
+    int state_loaded;           /* set after effSetChunk or effMainsChanged */
+    void* deferred_parent;      /* stashed parent view if editor opened before state loaded */
 } TruceVst2;
 
 /* ---------------------------------------------------------------------------
@@ -86,12 +88,18 @@ static VstIntPtr dispatcher(AEffect* e, int32_t opcode, int32_t index,
         case effEditOpen: {
             if (!g_vst2_callbacks || !inst->rust_ctx || !ptr) return 0;
             if (!g_vst2_callbacks->gui_has_editor(inst->rust_ctx)) return 0;
-            g_vst2_callbacks->gui_open(inst->rust_ctx, ptr);
+            if (!inst->state_loaded) {
+                /* Editor requested before state restored — defer gui_open */
+                inst->deferred_parent = ptr;
+            } else {
+                g_vst2_callbacks->gui_open(inst->rust_ctx, ptr);
+            }
             return 1;
         }
 
         case effEditClose:
             if (!g_vst2_callbacks || !inst->rust_ctx) return 0;
+            inst->deferred_parent = NULL;
             g_vst2_callbacks->gui_close(inst->rust_ctx);
             return 0;
 
@@ -105,6 +113,14 @@ static VstIntPtr dispatcher(AEffect* e, int32_t opcode, int32_t index,
 
         case effMainsChanged:
             if (value && g_vst2_callbacks && inst->rust_ctx) {
+                /* Fresh instance (no saved state) — allow deferred editor to open */
+                if (!inst->state_loaded) {
+                    inst->state_loaded = 1;
+                    if (inst->deferred_parent) {
+                        g_vst2_callbacks->gui_open(inst->rust_ctx, inst->deferred_parent);
+                        inst->deferred_parent = NULL;
+                    }
+                }
                 g_vst2_callbacks->reset(inst->rust_ctx,
                     (double)inst->sample_rate, (uint32_t)inst->block_size);
             }
@@ -204,6 +220,12 @@ static VstIntPtr dispatcher(AEffect* e, int32_t opcode, int32_t index,
         case effSetChunk: {
             if (!g_vst2_callbacks || !inst->rust_ctx || !ptr) return 0;
             g_vst2_callbacks->state_load(inst->rust_ctx, (const uint8_t*)ptr, (uint32_t)value);
+            inst->state_loaded = 1;
+            /* If the editor was opened before state was restored, open it now */
+            if (inst->deferred_parent) {
+                g_vst2_callbacks->gui_open(inst->rust_ctx, inst->deferred_parent);
+                inst->deferred_parent = NULL;
+            }
             return 0;
         }
 
