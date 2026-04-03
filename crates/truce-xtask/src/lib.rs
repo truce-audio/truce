@@ -1383,7 +1383,7 @@ fn install_all_au_v3_filtered(
         let build_dir = PathBuf::from(format!("/tmp/truce_au_v3_build_{}", p.suffix));
         let fw_build = PathBuf::from(format!("/tmp/truce_au_v3_fw_{}", p.suffix));
 
-        eprintln!("=== AU v3: {} ===", p.name);
+        eprintln!("Building AU v3 ({})...", p.name);
 
         // Pre-clean
         let _ = Command::new("pluginkit")
