@@ -7,9 +7,6 @@ fn main() {
 
     println!("cargo:rerun-if-env-changed=TRUCE_AU_PLUGIN_ID");
     println!("cargo:rerun-if-env-changed=TRUCE_AU_VERSION");
-    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_CLAP");
-    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_VST3");
-    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_VST2");
     println!("cargo:rerun-if-changed=shim/au_shim.m");
     println!("cargo:rerun-if-changed=shim/au_v2_shim.c");
     println!("cargo:rerun-if-changed=shim/au_v2_view.m");
@@ -17,8 +14,7 @@ fn main() {
     let shim_include = truce_shim_types::include_dir();
     println!("cargo:rerun-if-changed={}", shim_include.join("au_shim_types.h").display());
 
-    // Unique ObjC class name per plugin + format to avoid collisions
-    // when multiple format bundles coexist in the same process.
+    // Unique ObjC class name per plugin to avoid collisions between plugins.
     let plugin_id = std::env::var("TRUCE_AU_PLUGIN_ID").unwrap_or_default();
     let sanitized: String = if plugin_id.is_empty() {
         "default".to_string()
@@ -34,25 +30,8 @@ fn main() {
             })
             .collect()
     };
-
-    // Detect the active format to disambiguate ObjC class names across bundles.
-    let format_tag = if std::env::var("CARGO_FEATURE_CLAP").is_ok()
-        && std::env::var("CARGO_FEATURE_VST3").is_ok()
-    {
-        // Default CLAP+VST3 build
-        "cv"
-    } else if std::env::var("CARGO_FEATURE_CLAP").is_ok() {
-        "clap"
-    } else if std::env::var("CARGO_FEATURE_VST3").is_ok() {
-        "vst3"
-    } else if std::env::var("CARGO_FEATURE_VST2").is_ok() {
-        "vst2"
-    } else {
-        "au"
-    };
-
-    let class_name = format!("TruceAU_{}_{}", format_tag, sanitized);
-    let factory_name = format!("TruceAUFactory_{}_{}", format_tag, sanitized);
+    let class_name = format!("TruceAU_{}", sanitized);
+    let factory_name = format!("TruceAUFactory_{}", sanitized);
 
     // TRUCE_AU_VERSION=2 builds only the v2 C shim (for .component)
     // TRUCE_AU_VERSION=3 builds both v3 ObjC shim AND v2 C shim (for .appex).
@@ -79,8 +58,8 @@ fn main() {
         build.file("shim/au_shim.m");
     }
 
-    let factory_class_name = format!("TruceAUFactory_{}_{}", format_tag, sanitized);
-    let view_factory_name = format!("TruceAUView_{}_{}", format_tag, sanitized);
+    let factory_class_name = format!("TruceAUFactory_{}", sanitized);
+    let view_factory_name = format!("TruceAUView_{}", sanitized);
 
     build
         .include(&shim_include)

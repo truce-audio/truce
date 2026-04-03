@@ -241,8 +241,11 @@ class AudioUnitFactory: AUViewController, AUAudioUnitFactory {
         logger.info("factory createAudioUnit")
         // If the view is already loaded (host called loadView before
         // createAudioUnit), set up the GUI now that we have an instance.
+        // Must dispatch to main thread — NSView operations require it.
         if isViewLoaded {
-            setupGUIIfReady()
+            DispatchQueue.main.async { [weak self] in
+                self?.setupGUIIfReady()
+            }
         }
         return au
     }
