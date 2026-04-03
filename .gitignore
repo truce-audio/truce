@@ -1,4 +1,4 @@
 /target
-truce.toml
 aax-template/build/
 .DS_STORE
+.cargo/config.toml
