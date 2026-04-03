@@ -778,9 +778,16 @@ fn is_production_identity(identity: &str) -> bool {
     identity != "-"
 }
 
+/// Return the project-local temp directory (`target/tmp/`), creating it if needed.
+fn tmp_dir() -> PathBuf {
+    let dir = project_root().join("target/tmp");
+    let _ = fs::create_dir_all(&dir);
+    dir
+}
+
 /// Write entitlements.plist to a temp file and return its path.
 fn write_entitlements_plist() -> PathBuf {
-    let path = PathBuf::from("/tmp/truce_entitlements.plist");
+    let path = tmp_dir().join("entitlements.plist");
     let content = r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -1171,7 +1178,7 @@ fn install_vst3(root: &Path, p: &PluginDef, config: &Config) -> Res {
         suffix = p.suffix,
         vendor_id = config.vendor.id,
     );
-    let plist_tmp = format!("/tmp/truce_{}_vst3.plist", p.suffix);
+    let plist_tmp = tmp_dir().join(format!("{}_vst3.plist", p.suffix)).to_string_lossy().to_string();
     fs::write(&plist_tmp, &plist)?;
     run_sudo("cp", &[&plist_tmp, &format!("{contents}/Info.plist")])?;
     codesign_bundle(&vst3_bundle, &config.macos.signing_identity, true)?;
@@ -1295,7 +1302,7 @@ fn install_au(root: &Path, p: &PluginDef, config: &Config) -> Res {
         au_mfr = config.vendor.au_manufacturer,
         au_tag = p.au_tag,
     );
-    let plist_tmp = format!("/tmp/truce_{}_au.plist", p.suffix);
+    let plist_tmp = tmp_dir().join(format!("{}_au.plist", p.suffix)).to_string_lossy().to_string();
     fs::write(&plist_tmp, &plist)?;
     run_sudo("cp", &[&plist_tmp, &format!("{contents}/Info.plist")])?;
     codesign_bundle(&bundle, &config.macos.signing_identity, true)?;
@@ -1309,7 +1316,7 @@ fn install_au(root: &Path, p: &PluginDef, config: &Config) -> Res {
 
 fn build_aax_template(_root: &Path, sdk_path: &Path) -> Res {
     // Write embedded template files to a temp directory
-    let template_dir = PathBuf::from("/tmp/truce_aax_template");
+    let template_dir = tmp_dir().join("aax_template");
     let src_dir = template_dir.join("src");
     let _ = fs::remove_dir_all(&template_dir);
     fs::create_dir_all(&src_dir)?;
@@ -1346,9 +1353,7 @@ fn build_aax_template(_root: &Path, sdk_path: &Path) -> Res {
 }
 
 fn install_aax(root: &Path, p: &PluginDef, config: &Config) -> Res {
-    let template = PathBuf::from(
-        "/tmp/truce_aax_template/build/TruceAAXTemplate.aaxplugin/Contents/MacOS/TruceAAXTemplate",
-    );
+    let template = tmp_dir().join("aax_template/build/TruceAAXTemplate.aaxplugin/Contents/MacOS/TruceAAXTemplate");
     if !template.exists() {
         if let Some(sdk_path) = resolve_aax_sdk_path(config) {
             eprintln!("AAX: building template with SDK at {}", sdk_path.display());
@@ -1421,7 +1426,7 @@ fn install_aax(root: &Path, p: &PluginDef, config: &Config) -> Res {
         name = p.name,
         suffix = p.suffix,
     );
-    let plist_tmp = format!("/tmp/truce_{}_aax.plist", p.suffix);
+    let plist_tmp = tmp_dir().join(format!("{}_aax.plist", p.suffix)).to_string_lossy().to_string();
     fs::write(&plist_tmp, &plist)?;
     run_sudo("cp", &[&plist_tmp, &format!("{contents}/Info.plist")])?;
 
@@ -1462,8 +1467,8 @@ fn build_au_v3(
             config.vendor.id.trim_start_matches("com."),
             p.suffix
         );
-        let build_dir = PathBuf::from(format!("/tmp/truce_au_v3_build_{}", p.suffix));
-        let fw_build = PathBuf::from(format!("/tmp/truce_au_v3_fw_{}", p.suffix));
+        let build_dir = tmp_dir().join(format!("au_v3_build_{}", p.suffix));
+        let fw_build = tmp_dir().join(format!("au_v3_fw_{}", p.suffix));
 
         eprintln!("Building AU v3 ({})...", p.name);
 
@@ -1651,8 +1656,8 @@ fn install_au_v3(
             config.vendor.id.trim_start_matches("com."),
             p.suffix
         );
-        let build_dir = PathBuf::from(format!("/tmp/truce_au_v3_build_{}", p.suffix));
-        let fw_build = PathBuf::from(format!("/tmp/truce_au_v3_fw_{}", p.suffix));
+        let build_dir = tmp_dir().join(format!("au_v3_build_{}", p.suffix));
+        let fw_build = tmp_dir().join(format!("au_v3_fw_{}", p.suffix));
         let built_app = build_dir.join("build/Release/TruceAUv3.app");
         if !built_app.exists() {
             return Err(format!("AU v3 not built for {}. Run build first.", p.name).into());
@@ -2147,11 +2152,12 @@ fn cmd_clean() -> Res {
 
     // Clean AU v3 build temp dirs
     eprintln!("Cleaning AU v3 temp dirs...");
-    if let Ok(entries) = fs::read_dir("/tmp") {
+    let tmp = tmp_dir();
+    if let Ok(entries) = fs::read_dir(&tmp) {
         for entry in entries.flatten() {
             let name = entry.file_name();
             let name = name.to_string_lossy();
-            if name.starts_with("truce_au_v3_build_") || name.starts_with("truce_au_v3_fw_") {
+            if name.starts_with("au_v3_build_") || name.starts_with("au_v3_fw_") {
                 let _ = fs::remove_dir_all(entry.path());
                 eprintln!("  Removed: {}", entry.path().display());
             }
@@ -2240,11 +2246,11 @@ fn cmd_nuke(args: &[String]) -> Res {
     }
 
     // 5. Clean AU v3 temp dirs
-    if let Ok(entries) = fs::read_dir("/tmp") {
+    if let Ok(entries) = fs::read_dir(&tmp_dir()) {
         for entry in entries.flatten() {
             let name = entry.file_name();
             let name = name.to_string_lossy();
-            if name.starts_with("truce_au_v3_build_") || name.starts_with("truce_au_v3_fw_") {
+            if name.starts_with("au_v3_build_") || name.starts_with("au_v3_fw_") {
                 let _ = fs::remove_dir_all(entry.path());
                 eprintln!("  Removed: {}", entry.path().display());
             }
@@ -3150,9 +3156,7 @@ fn stage_au2(root: &Path, p: &PluginDef, config: &Config, staging: &Path) -> Res
 
 /// Stage an AAX bundle into the staging directory.
 fn stage_aax(root: &Path, p: &PluginDef, config: &Config, staging: &Path) -> Res {
-    let template = PathBuf::from(
-        "/tmp/truce_aax_template/build/TruceAAXTemplate.aaxplugin/Contents/MacOS/TruceAAXTemplate",
-    );
+    let template = tmp_dir().join("aax_template/build/TruceAAXTemplate.aaxplugin/Contents/MacOS/TruceAAXTemplate");
     if !template.exists() {
         if let Some(sdk_path) = resolve_aax_sdk_path(config) {
             eprintln!("AAX: building template with SDK at {}", sdk_path.display());
@@ -3208,35 +3212,26 @@ fn stage_aax(root: &Path, p: &PluginDef, config: &Config, staging: &Path) -> Res
 /// We copy it to the staging dir for pkgbuild.
 fn stage_au3(_root: &Path, p: &PluginDef, config: &Config, staging: &Path) -> Res {
     let app_name = format!("{} v3.app", p.name);
-    let installed = PathBuf::from("/Applications").join(&app_name);
-    if !installed.exists() {
-        // Also check the build dir
-        let build_dir = PathBuf::from(format!("/tmp/truce_au_v3_build_{}", p.suffix));
-        let built_app = build_dir.join("build/Release/TruceAUv3.app");
-        if !built_app.exists() {
-            return Err(format!("AU v3 app not found at {} or {}", installed.display(), built_app.display()).into());
-        }
-        // Copy from build dir
-        let dst = staging.join(&app_name);
-        let _ = fs::remove_dir_all(&dst);
-        copy_dir_recursive(&built_app, &dst)?;
-
-        // Copy framework into app
-        let fw_name = p.fw_name();
-        let fw_build = PathBuf::from(format!("/tmp/truce_au_v3_fw_{}", p.suffix));
-        let fw_src = fw_build.join(format!("{fw_name}.framework"));
-        if fw_src.exists() {
-            let fw_dst = dst.join("Contents/Frameworks");
-            fs::create_dir_all(&fw_dst)?;
-            copy_dir_recursive(&fw_src, &fw_dst.join(format!("{fw_name}.framework")))?;
-        }
-
-        codesign_bundle(dst.to_str().unwrap(), &config.macos.signing_identity, false)?;
-        return Ok(());
+    let build_dir = tmp_dir().join(format!("au_v3_build_{}", p.suffix));
+    let built_app = build_dir.join("build/Release/TruceAUv3.app");
+    if !built_app.exists() {
+        return Err(format!("AU v3 app not built: {}. Run the build step first.", built_app.display()).into());
     }
+
     let dst = staging.join(&app_name);
     let _ = fs::remove_dir_all(&dst);
-    copy_dir_recursive(&installed, &dst)?;
+    copy_dir_recursive(&built_app, &dst)?;
+
+    // Copy framework into app
+    let fw_name = p.fw_name();
+    let fw_build = tmp_dir().join(format!("au_v3_fw_{}", p.suffix));
+    let fw_src = fw_build.join(format!("{fw_name}.framework"));
+    if fw_src.exists() {
+        let fw_dst = dst.join("Contents/Frameworks");
+        fs::create_dir_all(&fw_dst)?;
+        copy_dir_recursive(&fw_src, &fw_dst.join(format!("{fw_name}.framework")))?;
+    }
+
     codesign_bundle(dst.to_str().unwrap(), &config.macos.signing_identity, false)?;
     Ok(())
 }
