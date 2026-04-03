@@ -858,6 +858,15 @@ fn cmd_install(args: &[String]) -> Res {
     // --- Build ---
     if !no_build {
         if clap || vst3 {
+            // Build with explicit features to avoid pulling in AU ObjC
+            // classes (which would collide if both AU and CLAP/VST3 bundles
+            // are loaded in the same host process).
+            let mut format_features: Vec<&str> = Vec::new();
+            if clap { format_features.push("clap"); }
+            if vst3 { format_features.push("vst3"); }
+            for f in &extra_features { format_features.push(f); }
+            let features_combined = format_features.join(",");
+
             if !extra_features.is_empty() {
                 let label = extra_features.join(" + ");
                 eprintln!("Building CLAP + VST3 ({label})...");
@@ -869,9 +878,7 @@ fn cmd_install(args: &[String]) -> Res {
                 args.push("-p");
                 args.push(&p.crate_name);
             }
-            if !extra_features.is_empty() {
-                args.extend_from_slice(&["--features", &features_str]);
-            }
+            args.extend_from_slice(&["--no-default-features", "--features", &features_combined]);
             cargo_build(&[], &args, dt)?;
             for p in &plugins {
                 let src = root.join(format!(
