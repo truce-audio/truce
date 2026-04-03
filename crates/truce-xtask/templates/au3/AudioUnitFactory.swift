@@ -279,7 +279,7 @@ class AudioUnitFactory: AUViewController, AUAudioUnitFactory {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        logger.info("viewDidLoad: view.frame=\(self.view.frame.width)x\(self.view.frame.height) auInstance=\(auInstance != nil)")
+        logger.info("viewDidLoad: view.frame=\(self.view.frame.width)x\(self.view.frame.height) auInstance=\(self.auInstance != nil)")
         setupGUIIfReady()
     }
 
@@ -296,7 +296,7 @@ class AudioUnitFactory: AUViewController, AUAudioUnitFactory {
     }
 
     private func setupGUIIfReady() {
-        logger.info("setupGUIIfReady: guiSetUp=\(self.guiSetUp) auInstance=\(auInstance != nil)")
+        logger.info("setupGUIIfReady: guiSetUp=\(self.guiSetUp) auInstance=\(self.auInstance != nil)")
         guard !guiSetUp,
               let ctx = myCtx,
               let cb = g_callbacks,
