@@ -521,15 +521,36 @@ fn default_signing_identity() -> String {
 
 /// Resolve the signing identity: truce.toml → TRUCE_SIGNING_IDENTITY env → ad-hoc.
 fn resolve_signing_identity(config: &Config) -> String {
+    // 1. truce.toml explicit value
     if config.macos.signing_identity != "-" {
         return config.macos.signing_identity.clone();
     }
+    // 2. Environment variable
     if let Ok(id) = std::env::var("TRUCE_SIGNING_IDENTITY") {
         if !id.is_empty() {
             return id;
         }
     }
+    // 3. .cargo/config.toml [env] section
+    if let Some(id) = read_cargo_config_env("TRUCE_SIGNING_IDENTITY") {
+        return id;
+    }
     "-".to_string()
+}
+
+/// Read an env var from .cargo/config.toml's [env] section.
+fn read_cargo_config_env(key: &str) -> Option<String> {
+    let root = project_root();
+    let path = root.join(".cargo/config.toml");
+    let content = fs::read_to_string(&path).ok()?;
+    let doc: toml::Table = content.parse().ok()?;
+    let env = doc.get("env")?.as_table()?;
+    // Supports both `KEY = "value"` and `KEY = { value = "...", force = true }`
+    match env.get(key)? {
+        toml::Value::String(s) => Some(s.clone()),
+        toml::Value::Table(t) => t.get("value")?.as_str().map(|s| s.to_string()),
+        _ => None,
+    }
 }
 
 /// Resolve the installer signing identity: truce.toml → TRUCE_INSTALLER_SIGNING_IDENTITY env → None.
@@ -541,6 +562,9 @@ fn resolve_installer_identity(config: &Config) -> Option<String> {
         if !id.is_empty() {
             return Some(id);
         }
+    }
+    if let Some(id) = read_cargo_config_env("TRUCE_INSTALLER_SIGNING_IDENTITY") {
+        return Some(id);
     }
     None
 }

@@ -43,13 +43,16 @@ machine-specific paths out of the repo.
 | `TRUCE_INSTALLER_SIGNING_IDENTITY` | Installer signing identity (.pkg) | none |
 | `AAX_SDK_PATH` | AAX SDK root directory | none |
 
-Set these in your shell profile, or in `.cargo/config.toml` (gitignored):
+Set these in your shell profile or in `.cargo/config.toml` (gitignored):
 
 ```toml
 [env]
 TRUCE_SIGNING_IDENTITY = "Developer ID Application: Your Name (TEAMID)"
 AAX_SDK_PATH = "/path/to/aax-sdk"
 ```
+
+`cargo truce` reads `.cargo/config.toml` directly, so this works for
+both `cargo truce install` and `cargo truce package`.
 
 All three can be overridden in `truce.toml` under `[macos]` if needed,
 but env vars are preferred.
