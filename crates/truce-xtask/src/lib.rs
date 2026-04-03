@@ -3207,9 +3207,7 @@ fn stage_aax(root: &Path, p: &PluginDef, config: &Config, staging: &Path) -> Res
 }
 
 /// Stage an AU v3 .app bundle into the staging directory.
-///
-/// The .app was built by `install_all_au_v3_filtered` into /Applications/.
-/// We copy it to the staging dir for pkgbuild.
+/// Copies from the xcodebuild output in target/tmp/.
 fn stage_au3(_root: &Path, p: &PluginDef, config: &Config, staging: &Path) -> Res {
     let app_name = format!("{} v3.app", p.name);
     let build_dir = tmp_dir().join(format!("au_v3_build_{}", p.suffix));
@@ -3219,7 +3217,12 @@ fn stage_au3(_root: &Path, p: &PluginDef, config: &Config, staging: &Path) -> Re
     }
 
     let dst = staging.join(&app_name);
-    let _ = fs::remove_dir_all(&dst);
+    // May be root-owned from a previous install-based run
+    if dst.exists() {
+        if fs::remove_dir_all(&dst).is_err() {
+            let _ = Command::new("rm").args(["-rf", dst.to_str().unwrap()]).status();
+        }
+    }
     copy_dir_recursive(&built_app, &dst)?;
 
     // Copy framework into app
