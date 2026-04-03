@@ -11,7 +11,6 @@ import CoreAudioKit
 
 class TruceAUAudioUnit: AUAudioUnit {
     private(set) var rustCtx: UnsafeMutableRawPointer?
-    static var sharedRustCtx: UnsafeMutableRawPointer?
     /// Set to true during GUI→host param sync to prevent observer feedback.
     var isSyncingToHost = false
 
@@ -28,7 +27,6 @@ class TruceAUAudioUnit: AUAudioUnit {
         guard let callbacks = g_callbacks, let descriptor = g_descriptor else { return }
 
         rustCtx = callbacks.pointee.create()
-        TruceAUAudioUnit.sharedRustCtx = rustCtx
         logger.info("AU init: in=\(descriptor.pointee.num_inputs) out=\(descriptor.pointee.num_outputs)")
         let numIn = descriptor.pointee.num_inputs
         let numOut = descriptor.pointee.num_outputs
@@ -241,6 +239,11 @@ class AudioUnitFactory: AUViewController, AUAudioUnitFactory {
         let au = try TruceAUAudioUnit(componentDescription: componentDescription, options: [])
         auInstance = au
         logger.info("factory createAudioUnit")
+        // If the view is already loaded (host called loadView before
+        // createAudioUnit), set up the GUI now that we have an instance.
+        if isViewLoaded {
+            setupGUIIfReady()
+        }
         return au
     }
 
@@ -276,7 +279,7 @@ class AudioUnitFactory: AUViewController, AUAudioUnitFactory {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        logger.info("viewDidLoad: view.frame=\(self.view.frame.width)x\(self.view.frame.height) sharedCtx=\(TruceAUAudioUnit.sharedRustCtx != nil)")
+        logger.info("viewDidLoad: view.frame=\(self.view.frame.width)x\(self.view.frame.height) auInstance=\(auInstance != nil)")
         setupGUIIfReady()
     }
 
@@ -287,13 +290,13 @@ class AudioUnitFactory: AUViewController, AUAudioUnitFactory {
     }
 
 
-    /// Rust context for THIS instance's AU (per-instance, not global).
+    /// Rust context for THIS instance's AU (per-instance).
     private var myCtx: UnsafeMutableRawPointer? {
-        auInstance?.rustCtx ?? TruceAUAudioUnit.sharedRustCtx
+        auInstance?.rustCtx
     }
 
     private func setupGUIIfReady() {
-        logger.info("setupGUIIfReady: guiSetUp=\(self.guiSetUp) sharedCtx=\(TruceAUAudioUnit.sharedRustCtx != nil)")
+        logger.info("setupGUIIfReady: guiSetUp=\(self.guiSetUp) auInstance=\(auInstance != nil)")
         guard !guiSetUp,
               let ctx = myCtx,
               let cb = g_callbacks,
