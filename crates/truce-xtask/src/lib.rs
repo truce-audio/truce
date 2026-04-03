@@ -3252,9 +3252,9 @@ fn generate_distribution_xml(
         let desc = fmt.choice_description();
         let component_file = format!("{plugin_name}-{label}.pkg");
 
-        // AAX disabled by default (requires PACE signing for distribution)
+        // AAX unchecked by default (may need PACE signing for distribution)
         let enabled_attr = if *fmt == PkgFormat::Aax {
-            "\n            start_enabled=\"false\""
+            "\n            selected=\"false\""
         } else {
             ""
         };
