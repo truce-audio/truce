@@ -2,7 +2,7 @@
 
 ### Configuration
 
-Before building, copy `truce.toml.example` to `truce.toml` and edit:
+Before building, create a `truce.toml` in your project root:
 
 ```toml
 [vendor]
@@ -51,8 +51,8 @@ TRUCE_SIGNING_IDENTITY = "Developer ID Application: Your Name (TEAMID)"
 AAX_SDK_PATH = "/path/to/aax-sdk"
 ```
 
-All three can be overridden in `truce.toml` under `[macos]` if needed
-(see `truce.toml.example`), but env vars are preferred.
+All three can be overridden in `truce.toml` under `[macos]` if needed,
+but env vars are preferred.
 
 ### Building and installing with xtask
 

@@ -131,7 +131,7 @@ Commands:
       Show this message.
 
 Configuration is read from truce.toml in the project root.
-Copy truce.toml.example to get started."
+Run 'cargo truce new <name>' to scaffold a new project."
     );
 }
 
@@ -631,7 +631,7 @@ fn load_config() -> std::result::Result<Config, BoxErr> {
     let path = root.join("truce.toml");
     if !path.exists() {
         return Err(format!(
-            "truce.toml not found at {}. Copy truce.toml.example to get started.",
+            "truce.toml not found at {}. Run 'cargo truce new' to scaffold a project.",
             path.display()
         )
         .into());
