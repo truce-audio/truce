@@ -1763,7 +1763,16 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Res {
         let entry = entry?;
         let src_path = entry.path();
         let dst_path = dst.join(entry.file_name());
-        if src_path.is_dir() {
+        let ft = entry.file_type()?;
+        // Preserve symlinks (critical for macOS .framework bundles)
+        #[cfg(unix)]
+        if ft.is_symlink() {
+            let target = fs::read_link(&src_path)?;
+            let _ = fs::remove_file(&dst_path);
+            std::os::unix::fs::symlink(&target, &dst_path)?;
+            continue;
+        }
+        if ft.is_dir() {
             copy_dir_recursive(&src_path, &dst_path)?;
         } else {
             fs::copy(&src_path, &dst_path)?;
@@ -2776,6 +2785,7 @@ enum PkgFormat {
     Vst3,
     Vst2,
     Au2,
+    Au3,
     Aax,
 }
 
@@ -2788,6 +2798,7 @@ impl PkgFormat {
                 "vst3" => out.push(PkgFormat::Vst3),
                 "vst2" => out.push(PkgFormat::Vst2),
                 "au2" => out.push(PkgFormat::Au2),
+                "au3" => out.push(PkgFormat::Au3),
                 "aax" => out.push(PkgFormat::Aax),
                 other => return Err(format!("unknown format: {other}").into()),
             }
@@ -2801,6 +2812,7 @@ impl PkgFormat {
             PkgFormat::Vst3 => "VST3",
             PkgFormat::Vst2 => "VST2",
             PkgFormat::Au2 => "AU2",
+            PkgFormat::Au3 => "AU3",
             PkgFormat::Aax => "AAX",
         }
     }
@@ -2811,6 +2823,7 @@ impl PkgFormat {
             PkgFormat::Vst3 => "vst3",
             PkgFormat::Vst2 => "vst",
             PkgFormat::Au2 => "component",
+            PkgFormat::Au3 => "app",
             PkgFormat::Aax => "aaxplugin",
         }
     }
@@ -2821,6 +2834,7 @@ impl PkgFormat {
             PkgFormat::Vst3 => "/Library/Audio/Plug-Ins/VST3/",
             PkgFormat::Vst2 => "/Library/Audio/Plug-Ins/VST/",
             PkgFormat::Au2 => "/Library/Audio/Plug-Ins/Components/",
+            PkgFormat::Au3 => "/Applications/",
             PkgFormat::Aax => "/Library/Application Support/Avid/Audio/Plug-Ins/",
         }
     }
@@ -2831,7 +2845,22 @@ impl PkgFormat {
             PkgFormat::Vst3 => "vst3",
             PkgFormat::Vst2 => "vst2",
             PkgFormat::Au2 => "au2",
+            PkgFormat::Au3 => "au3",
             PkgFormat::Aax => "aax",
+        }
+    }
+
+    /// Whether pkgbuild recognizes this as a native macOS bundle type.
+    /// If false, we use --root instead of --component.
+    fn is_native_bundle(&self) -> bool {
+        matches!(self, PkgFormat::Vst3 | PkgFormat::Au2 | PkgFormat::Au3)
+    }
+
+    /// Bundle directory name for a given plugin.
+    fn bundle_name(&self, plugin_name: &str) -> String {
+        match self {
+            PkgFormat::Au3 => format!("{} v3.app", plugin_name),
+            _ => format!("{}.{}", plugin_name, self.extension()),
         }
     }
 
@@ -2841,6 +2870,7 @@ impl PkgFormat {
             PkgFormat::Vst3 => "For Ableton, FL Studio, Reaper, Cubase",
             PkgFormat::Vst2 => "Legacy — for hosts without VST3 support",
             PkgFormat::Au2 => "For Logic Pro, GarageBand, Ableton",
+            PkgFormat::Au3 => "Audio Unit v3 (appex)",
             PkgFormat::Aax => "For Pro Tools",
         }
     }
@@ -3053,6 +3083,45 @@ fn stage_aax(root: &Path, p: &PluginDef, config: &Config, staging: &Path) -> Res
     Ok(())
 }
 
+/// Stage an AU v3 .app bundle into the staging directory.
+///
+/// The .app was built by `install_all_au_v3_filtered` into /Applications/.
+/// We copy it to the staging dir for pkgbuild.
+fn stage_au3(_root: &Path, p: &PluginDef, config: &Config, staging: &Path) -> Res {
+    let app_name = format!("{} v3.app", p.name);
+    let installed = PathBuf::from("/Applications").join(&app_name);
+    if !installed.exists() {
+        // Also check the build dir
+        let build_dir = PathBuf::from(format!("/tmp/truce_au_v3_build_{}", p.suffix));
+        let built_app = build_dir.join("build/Release/TruceAUv3.app");
+        if !built_app.exists() {
+            return Err(format!("AU v3 app not found at {} or {}", installed.display(), built_app.display()).into());
+        }
+        // Copy from build dir
+        let dst = staging.join(&app_name);
+        let _ = fs::remove_dir_all(&dst);
+        copy_dir_recursive(&built_app, &dst)?;
+
+        // Copy framework into app
+        let fw_name = p.fw_name();
+        let fw_build = PathBuf::from(format!("/tmp/truce_au_v3_fw_{}", p.suffix));
+        let fw_src = fw_build.join(format!("{fw_name}.framework"));
+        if fw_src.exists() {
+            let fw_dst = dst.join("Contents/Frameworks");
+            fs::create_dir_all(&fw_dst)?;
+            copy_dir_recursive(&fw_src, &fw_dst.join(format!("{fw_name}.framework")))?;
+        }
+
+        codesign_bundle(dst.to_str().unwrap(), &config.macos.signing_identity, false)?;
+        return Ok(());
+    }
+    let dst = staging.join(&app_name);
+    let _ = fs::remove_dir_all(&dst);
+    copy_dir_recursive(&installed, &dst)?;
+    codesign_bundle(dst.to_str().unwrap(), &config.macos.signing_identity, false)?;
+    Ok(())
+}
+
 /// Generate the distribution.xml for the macOS .pkg installer.
 fn generate_distribution_xml(
     plugin_name: &str,
@@ -3174,7 +3243,10 @@ fn cmd_package(args: &[String]) -> Res {
         if available.contains("clap") { fmts.push(PkgFormat::Clap); }
         if available.contains("vst3") { fmts.push(PkgFormat::Vst3); }
         if available.contains("vst2") { fmts.push(PkgFormat::Vst2); }
-        if available.contains("au") { fmts.push(PkgFormat::Au2); }
+        if available.contains("au") {
+            fmts.push(PkgFormat::Au2);
+            fmts.push(PkgFormat::Au3);
+        }
         if available.contains("aax") { fmts.push(PkgFormat::Aax); }
         fmts
     };
@@ -3201,6 +3273,7 @@ fn cmd_package(args: &[String]) -> Res {
     let has_vst3 = formats.contains(&PkgFormat::Vst3);
     let has_vst2 = formats.contains(&PkgFormat::Vst2);
     let has_au2 = formats.contains(&PkgFormat::Au2);
+    let has_au3 = formats.contains(&PkgFormat::Au3);
     let has_aax = formats.contains(&PkgFormat::Aax);
 
     // ---------------------------------------------------------------
@@ -3269,6 +3342,11 @@ fn cmd_package(args: &[String]) -> Res {
         }
     }
 
+    if has_au3 {
+        // AU v3 uses the existing xcodebuild flow (builds per-plugin)
+        install_all_au_v3_filtered(&root, &config, &plugins, false)?;
+    }
+
     // Restore CLAP/VST3 dylib if needed
     if has_clap || has_vst3 {
         for p in &plugins {
@@ -3302,6 +3380,7 @@ fn cmd_package(args: &[String]) -> Res {
                 PkgFormat::Vst3 => stage_vst3(&root, p, &config, &staging),
                 PkgFormat::Vst2 => stage_vst2(&root, p, &config, &staging),
                 PkgFormat::Au2 => stage_au2(&root, p, &config, &staging),
+                PkgFormat::Au3 => stage_au3(&root, p, &config, &staging),
                 PkgFormat::Aax => stage_aax(&root, p, &config, &staging),
             };
             match result {
@@ -3324,21 +3403,46 @@ fn cmd_package(args: &[String]) -> Res {
         }
 
         for fmt in &formats {
-            let bundle_name = format!("{}.{}", p.name, fmt.extension());
+            let bundle_name = fmt.bundle_name(&p.name);
             let component_path = staging.join(&bundle_name);
             let pkg_id = format!("{}.{}.{}", config.vendor.id, p.suffix, fmt.pkg_id_suffix());
             let component_pkg = components_dir.join(format!("{}-{}.pkg", p.name, fmt.label()));
 
-            let mut pkgbuild_args = vec![
-                "--component".to_string(),
-                component_path.to_str().unwrap().to_string(),
-                "--install-location".to_string(),
-                fmt.install_location().to_string(),
+            let mut pkgbuild_args = if fmt.is_native_bundle() {
+                // VST3, AU2: recognized macOS bundle types
+                vec![
+                    "--component".to_string(),
+                    component_path.to_str().unwrap().to_string(),
+                    "--install-location".to_string(),
+                    fmt.install_location().to_string(),
+                ]
+            } else {
+                // CLAP, VST2, AAX: not recognized by pkgbuild --component.
+                // Use --root with a temp directory containing just this bundle,
+                // and set --install-location to the parent directory.
+                let root_dir = staging.join(format!("_pkgroot_{}", fmt.label()));
+                let _ = fs::remove_dir_all(&root_dir);
+                fs::create_dir_all(&root_dir)?;
+                let dst = root_dir.join(&bundle_name);
+                if component_path.is_dir() {
+                    copy_dir_recursive(&component_path, &dst)?;
+                } else {
+                    fs::copy(&component_path, &dst)?;
+                }
+                vec![
+                    "--root".to_string(),
+                    root_dir.to_str().unwrap().to_string(),
+                    "--install-location".to_string(),
+                    fmt.install_location().to_string(),
+                ]
+            };
+
+            pkgbuild_args.extend_from_slice(&[
                 "--identifier".to_string(),
                 pkg_id,
                 "--version".to_string(),
                 version.to_string(),
-            ];
+            ]);
 
             // AU2 gets a postinstall script to clear caches
             if *fmt == PkgFormat::Au2 {
