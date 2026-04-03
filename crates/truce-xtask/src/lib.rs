@@ -697,12 +697,21 @@ fn load_config() -> std::result::Result<Config, BoxErr> {
 type Res = std::result::Result<(), Box<dyn std::error::Error>>;
 type BoxErr = Box<dyn std::error::Error>;
 
-/// Read the workspace version from Cargo.toml (`[workspace.package] version`).
+/// Read the version from Cargo.toml.
+/// Checks `[workspace.package] version` first, then `[package] version`.
 fn read_workspace_version(root: &Path) -> Option<String> {
     let content = fs::read_to_string(root.join("Cargo.toml")).ok()?;
     let doc: toml::Table = content.parse().ok()?;
-    doc.get("workspace")?
-        .get("package")?
+    // Workspace layout: [workspace.package] version
+    if let Some(v) = doc.get("workspace")
+        .and_then(|w| w.get("package"))
+        .and_then(|p| p.get("version"))
+        .and_then(|v| v.as_str())
+    {
+        return Some(v.to_string());
+    }
+    // Single crate: [package] version
+    doc.get("package")?
         .get("version")?
         .as_str()
         .map(|s| s.to_string())
