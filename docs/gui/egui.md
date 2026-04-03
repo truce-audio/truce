@@ -1,12 +1,11 @@
 # egui Integration
 
-[egui](https://github.com/emilk/egui) is an immediate-mode GUI library.
-`truce-egui` wraps it so you can use egui's widgets and layout system
-inside a plugin window.
+`truce-egui` embeds [egui](https://github.com/emilk/egui) into a plugin
+window via wgpu + baseview. You get the full egui API — `CentralPanel`,
+`SidePanel`, `Window`, `Canvas`, third-party crates — with parameter
+hosting handled for you.
 
-## Getting started
-
-Add the dependencies:
+## Setup
 
 ```toml
 [dependencies]
@@ -14,7 +13,7 @@ truce-egui = { workspace = true }
 egui = "0.31"
 ```
 
-Override `custom_editor()` to return an `EguiEditor`:
+Override `custom_editor()` and return an `EguiEditor`:
 
 ```rust
 use truce::prelude::*;
@@ -36,40 +35,34 @@ impl PluginLogic for MyPlugin {
 }
 ```
 
-The closure runs every frame. `(400, 300)` is the window size in logical
-points. Everything else about your plugin stays the same.
+The closure is your egui frame function — it runs every frame, same as
+`eframe::App::update`. `(400, 300)` is the window size in logical points.
 
-## Reading parameter values
+## ParamState
 
-`ParamState` gives you access to parameter values from the host:
-
-```rust
-let gain = state.get(P::Gain);         // normalized 0.0-1.0
-let gain_db = state.get_plain(P::Gain); // plain value, e.g. -60.0
-let text = state.format(P::Gain);       // formatted, e.g. "0.0 dB"
-let level = state.meter(P::MeterLeft);  // meter level 0.0-1.0
-```
-
-## Writing parameter values
-
-For click actions (toggles, selectors):
+`ParamState` is the bridge between egui and the DAW's parameter system.
+It wraps `begin_edit` / `set_param` / `end_edit` into an ergonomic API:
 
 ```rust
+// Read
+state.get(P::Gain)             // normalized 0.0-1.0
+state.get_plain(P::Gain)       // plain value (-60.0 dB)
+state.format(P::Gain)          // display string ("0.0 dB")
+state.meter(P::MeterLeft)      // meter level 0.0-1.0
+
+// Write (one-shot, for clicks/toggles)
 state.set_immediate(P::Bypass, 1.0);
-```
 
-For continuous drags (knobs, sliders), wrap in a gesture so the DAW
-records smooth automation:
-
-```rust
+// Write (continuous drag — records smooth automation)
 state.begin_gesture(P::Gain);
 state.set_value(P::Gain, new_value);  // call each frame during drag
 state.end_gesture(P::Gain);
 ```
 
-## Helper widgets
+## Widgets
 
-`truce-egui` provides widgets that handle the gesture protocol for you:
+`truce-egui` provides parameter-aware widgets that handle the gesture
+protocol internally. Use these or roll your own with raw egui widgets.
 
 ```rust
 use truce_egui::widgets::{
@@ -82,7 +75,7 @@ use truce_egui::widgets::{
 };
 ```
 
-A typical layout:
+Typical layout:
 
 ```rust
 fn my_ui(ctx: &egui::Context, state: &ParamState) {
@@ -97,7 +90,9 @@ fn my_ui(ctx: &egui::Context, state: &ParamState) {
 }
 ```
 
-You can also use raw egui widgets and call `ParamState` directly:
+### Using raw egui widgets
+
+Any egui widget works — just wire the gesture protocol manually:
 
 ```rust
 let mut value = state.get(P::Gain) as f32;
@@ -107,28 +102,38 @@ if response.changed()      { state.set_value(P::Gain, value as f64); }
 if response.drag_stopped() { state.end_gesture(P::Gain); }
 ```
 
-## Theme and colors
+## Theme
 
-The default dark theme is applied automatically. Customize with
-`.with_visuals()`:
+A dark theme is applied by default. Pass any `egui::Visuals` to override
+it — use egui's built-in light/dark themes, the truce defaults, or your
+own:
 
 ```rust
+// Use egui's built-in light theme
+EguiEditor::new((400, 300), my_ui)
+    .with_visuals(egui::Visuals::light())
+
+// Or customize the truce dark theme as a starting point
 EguiEditor::new((400, 300), my_ui)
     .with_visuals(truce_egui::theme::dark())
     .with_font(truce_gui::font::JETBRAINS_MONO)
 ```
 
-Standard colors are exported as constants:
+You can also call `ctx.set_visuals()` inside your frame function to
+switch themes at runtime.
+
+The truce theme exports color constants for consistency with the
+built-in GUI widgets:
 
 ```rust
 use truce_egui::theme::{BACKGROUND, SURFACE, PRIMARY, TEXT, TEXT_DIM,
                          HEADER_BG, HEADER_TEXT, KNOB_FILL, METER_CLIP};
 ```
 
-## Stateful UIs
+## Stateful UIs (EditorUi trait)
 
-For UIs with internal state (tab selection, caches), implement
-`EditorUi` instead of passing a closure:
+The closure API works for simple UIs. For state across frames (tabs,
+caches, animations), implement `EditorUi`:
 
 ```rust
 use truce_egui::{EditorUi, ParamState};
@@ -151,11 +156,20 @@ impl EditorUi for MyUi {
 EguiEditor::with_ui((640, 480), MyUi { tab: 0 })
 ```
 
-## Custom state
+`EditorUi` has three methods:
 
-If your plugin has persistent state beyond parameters (instance names,
-view modes, selections), use `StateBinding<T>` with the `EditorUi`
-lifecycle methods:
+| Method | When | Use for |
+|---|---|---|
+| `opened(&mut self, &ParamState)` | Editor window opens | Initialize `StateBinding`, load resources |
+| `ui(&mut self, &egui::Context, &ParamState)` | Every frame | Draw your UI |
+| `state_changed(&mut self, &ParamState)` | Preset recall, undo, session load | Re-sync cached state |
+
+All have default no-ops. Only `ui()` is required.
+
+## Custom persistent state
+
+If your plugin has state beyond parameters (`save_state` / `load_state`),
+use `StateBinding<T>` to keep the editor in sync:
 
 ```rust
 #[derive(State, Default)]
@@ -170,32 +184,22 @@ struct MyUi {
 
 impl EditorUi for MyUi {
     fn opened(&mut self, ps: &ParamState) {
-        // Create the binding when the editor window opens
         self.state = StateBinding::new(ps.context());
     }
 
-    fn ui(&mut self, ctx: &egui::Context, ps: &ParamState) {
+    fn ui(&mut self, ctx: &egui::Context, _ps: &ParamState) {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.label(&self.state.get().instance_name);
         });
     }
 
     fn state_changed(&mut self, _ps: &ParamState) {
-        // Re-read state after preset recall, undo, or session load
         self.state.sync();
     }
 }
 ```
 
-`EditorUi` has three lifecycle methods:
-
-- **`opened()`** — called once when the editor window opens. Create
-  `StateBinding` here.
-- **`ui()`** — called every frame. Read state with `self.state.get()`.
-- **`state_changed()`** — called when the DAW restores state. Call
-  `sync()` to re-read.
-
-To write state from the GUI (e.g., user renames an instance):
+Write state back from the GUI:
 
 ```rust
 self.state.update(|s| s.instance_name = new_name);
@@ -208,8 +212,8 @@ EguiEditor::new((400, 300), |ctx, state| { /* ui */ })
     .on_state_changed(|state| { /* re-read cached state */ })
 ```
 
-If your plugin only uses `#[param]` fields, you don't need any of this —
-parameter values sync automatically every frame.
+If your plugin only uses `#[param]` fields, skip this section —
+parameters sync automatically every frame.
 
 ## Screenshot testing
 
@@ -225,10 +229,10 @@ fn gui_snapshot() {
 }
 ```
 
-Use the same `WINDOW_W` / `WINDOW_H` constants as your editor so they
-stay in sync. See [screenshot testing](screenshot-testing.md) for more.
+Use the same `WINDOW_W` / `WINDOW_H` constants as your editor.
+See [screenshot testing](screenshot-testing.md) for more.
 
 ## Example
 
-`examples/gain-egui/` has a complete plugin with knobs, XY pad, meter,
-header, and screenshot test.
+`examples/gain-egui/` — complete plugin with knobs, XY pad, meter,
+header, custom font, and screenshot test.
