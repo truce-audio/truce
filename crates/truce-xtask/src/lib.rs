@@ -487,7 +487,7 @@ struct Config {
     packaging: PackagingConfig,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize)]
 struct MacosConfig {
     #[serde(default = "default_signing_identity")]
     signing_identity: String,
@@ -495,6 +495,16 @@ struct MacosConfig {
     aax_sdk_path: Option<String>,
     #[serde(default)]
     packaging: MacosPackagingConfig,
+}
+
+impl Default for MacosConfig {
+    fn default() -> Self {
+        Self {
+            signing_identity: default_signing_identity(),
+            aax_sdk_path: None,
+            packaging: MacosPackagingConfig::default(),
+        }
+    }
 }
 
 #[derive(Deserialize, Default)]
@@ -522,7 +532,7 @@ fn default_signing_identity() -> String {
 /// Resolve the signing identity: truce.toml → TRUCE_SIGNING_IDENTITY env → ad-hoc.
 fn resolve_signing_identity(config: &Config) -> String {
     // 1. truce.toml explicit value
-    if config.macos.signing_identity != "-" {
+    if !config.macos.signing_identity.is_empty() && config.macos.signing_identity != "-" {
         return config.macos.signing_identity.clone();
     }
     // 2. Environment variable
@@ -646,6 +656,13 @@ fn resolve_aax_sdk_path(config: &Config) -> Option<PathBuf> {
             return Some(path);
         }
         eprintln!("warning: AAX_SDK_PATH={p} but directory not found");
+    }
+    if let Some(p) = read_cargo_config_env("AAX_SDK_PATH") {
+        let path = PathBuf::from(&p);
+        if path.exists() {
+            return Some(path);
+        }
+        eprintln!("warning: AAX_SDK_PATH={p} in .cargo/config.toml but directory not found");
     }
     None
 }
@@ -1070,7 +1087,7 @@ fn cmd_install(args: &[String]) -> Res {
     }
 
     if au3 {
-        install_all_au_v3_filtered(&root, &config, &plugins, no_build)?;
+        build_and_install_au_v3(&root, &config, &plugins, no_build)?;
     }
 
     if au2 {
@@ -1408,7 +1425,8 @@ fn install_aax(root: &Path, p: &PluginDef, config: &Config) -> Res {
 // AU v3 appex install (Swift + xcodebuild)
 // ---------------------------------------------------------------------------
 
-fn install_all_au_v3_filtered(
+/// Build AU v3 appex bundles (Rust framework + xcodebuild). Does not install.
+fn build_au_v3(
     root: &Path,
     config: &Config,
     plugins: &[&PluginDef],
@@ -1601,72 +1619,109 @@ fn install_all_au_v3_filtered(
             }
         }
 
-        // Step 5: Install
         let built_app = build_dir.join("build/Release/TruceAUv3.app");
         if !built_app.exists() {
             return Err(format!("Built app not found: {}", built_app.display()).into());
         }
-
-        run_sudo("cp", &["-R", built_app.to_str().unwrap(), &app_dir])?;
-        run_sudo("mkdir", &["-p", &format!("{app_dir}/Contents/Frameworks")])?;
-        let fw_src = fw_build.join(format!("{fw_name}.framework"));
-        run_sudo(
-            "cp",
-            &[
-                "-R",
-                fw_src.to_str().unwrap(),
-                &format!("{app_dir}/Contents/Frameworks/{fw_name}.framework"),
-            ],
-        )?;
-
-        // Step 6: Sign inside-out
-        let production = is_production_identity(sign_id);
-        let runtime_flags: &[&str] = if production {
-            &["--options", "runtime", "--timestamp"]
-        } else {
-            &[]
-        };
-
-        {
-            let fw_path = format!("{app_dir}/Contents/Frameworks/{fw_name}.framework");
-            let mut args = vec!["--force", "--sign", sign_id];
-            args.extend_from_slice(runtime_flags);
-            args.push(&fw_path);
-            run_sudo("codesign", &args)?;
-        }
-        let entitlements_appex = build_dir.join("AUExt/AUExt.entitlements");
-        let entitlements_app = build_dir.join("App/App.entitlements");
-        {
-            let appex_path = format!("{app_dir}/Contents/PlugIns/AUExt.appex");
-            let ent = entitlements_appex.to_str().unwrap();
-            let mut args = vec!["--force", "--sign", sign_id, "--entitlements", ent, "--generate-entitlement-der"];
-            args.extend_from_slice(runtime_flags);
-            args.push(&appex_path);
-            run_sudo("codesign", &args)?;
-        }
-        {
-            let ent = entitlements_app.to_str().unwrap();
-            let mut args = vec!["--force", "--sign", sign_id, "--entitlements", ent, "--generate-entitlement-der"];
-            args.extend_from_slice(runtime_flags);
-            args.push(&app_dir);
-            run_sudo("codesign", &args)?;
-        }
-
-        // Step 7: Cache bust + register
-        let _ = Command::new("/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister")
-            .args(["-f", "-R", &app_dir]).output();
-        let _ = run_sudo("killall", &["-9", "pkd"]);
-        let _ = run_sudo("killall", &["-9", "AudioComponentRegistrar"]);
-        let home = dirs::home_dir().unwrap();
-        let _ = fs::remove_dir_all(home.join("Library/Caches/AudioUnitCache"));
-        std::thread::sleep(std::time::Duration::from_secs(2));
-        let _ = Command::new("pluginkit")
-            .args(["-a", &format!("{app_dir}/Contents/PlugIns/AUExt.appex")])
-            .output();
-
-        eprintln!("  Installed: {app_dir}");
     }
     Ok(())
+}
+
+/// Install pre-built AU v3 appex bundles to /Applications/ and register.
+fn install_au_v3(
+    config: &Config,
+    plugins: &[&PluginDef],
+) -> Res {
+    let sign_id = &config.macos.signing_identity;
+
+    for p in plugins {
+        let fw_name = p.fw_name();
+        let app_dir = format!("/Applications/{} v3.app", p.name);
+        let appex_id = format!(
+            "com.{}.{}.v3.ext",
+            config.vendor.id.trim_start_matches("com."),
+            p.suffix
+        );
+        let build_dir = PathBuf::from(format!("/tmp/truce_au_v3_build_{}", p.suffix));
+        let fw_build = PathBuf::from(format!("/tmp/truce_au_v3_fw_{}", p.suffix));
+        let built_app = build_dir.join("build/Release/TruceAUv3.app");
+        if !built_app.exists() {
+            return Err(format!("AU v3 not built for {}. Run build first.", p.name).into());
+        }
+
+        {
+            // Install to /Applications/
+            run_sudo("cp", &["-R", built_app.to_str().unwrap(), &app_dir])?;
+            run_sudo("mkdir", &["-p", &format!("{app_dir}/Contents/Frameworks")])?;
+            let fw_src = fw_build.join(format!("{fw_name}.framework"));
+            run_sudo(
+                "cp",
+                &[
+                    "-R",
+                    fw_src.to_str().unwrap(),
+                    &format!("{app_dir}/Contents/Frameworks/{fw_name}.framework"),
+                ],
+            )?;
+
+            // Step 6: Sign inside-out
+            let production = is_production_identity(sign_id);
+            let runtime_flags: &[&str] = if production {
+                &["--options", "runtime", "--timestamp"]
+            } else {
+                &[]
+            };
+
+            {
+                let fw_path = format!("{app_dir}/Contents/Frameworks/{fw_name}.framework");
+                let mut args = vec!["--force", "--sign", sign_id];
+                args.extend_from_slice(runtime_flags);
+                args.push(&fw_path);
+                run_sudo("codesign", &args)?;
+            }
+            let entitlements_appex = build_dir.join("AUExt/AUExt.entitlements");
+            let entitlements_app = build_dir.join("App/App.entitlements");
+            {
+                let appex_path = format!("{app_dir}/Contents/PlugIns/AUExt.appex");
+                let ent = entitlements_appex.to_str().unwrap();
+                let mut args = vec!["--force", "--sign", sign_id, "--entitlements", ent, "--generate-entitlement-der"];
+                args.extend_from_slice(runtime_flags);
+                args.push(&appex_path);
+                run_sudo("codesign", &args)?;
+            }
+            {
+                let ent = entitlements_app.to_str().unwrap();
+                let mut args = vec!["--force", "--sign", sign_id, "--entitlements", ent, "--generate-entitlement-der"];
+                args.extend_from_slice(runtime_flags);
+                args.push(&app_dir);
+                run_sudo("codesign", &args)?;
+            }
+
+            // Step 7: Cache bust + register
+            let _ = Command::new("/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister")
+                .args(["-f", "-R", &app_dir]).output();
+            let _ = run_sudo("killall", &["-9", "pkd"]);
+            let _ = run_sudo("killall", &["-9", "AudioComponentRegistrar"]);
+            let home = dirs::home_dir().unwrap();
+            let _ = fs::remove_dir_all(home.join("Library/Caches/AudioUnitCache"));
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            let _ = Command::new("pluginkit")
+                .args(["-a", &format!("{app_dir}/Contents/PlugIns/AUExt.appex")])
+                .output();
+
+            eprintln!("  Installed: {app_dir}");
+        }
+    }
+    Ok(())
+}
+
+fn build_and_install_au_v3(
+    root: &Path,
+    config: &Config,
+    plugins: &[&PluginDef],
+    no_build: bool,
+) -> Res {
+    build_au_v3(root, config, plugins, no_build)?;
+    install_au_v3(config, plugins)
 }
 
 fn generate_pbxproj(
@@ -3398,8 +3453,8 @@ fn cmd_package(args: &[String]) -> Res {
     }
 
     if has_au3 {
-        // AU v3 uses the existing xcodebuild flow (builds per-plugin)
-        install_all_au_v3_filtered(&root, &config, &plugins, false)?;
+        // AU v3: build only, staging handles the rest
+        build_au_v3(&root, &config, &plugins, false)?;
     }
 
     // Restore CLAP/VST3 dylib if needed
