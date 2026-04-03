@@ -1472,12 +1472,6 @@ fn build_au_v3(
 
         eprintln!("Building AU v3 ({})...", p.name);
 
-        // Pre-clean
-        let _ = Command::new("pluginkit")
-            .args(["-e", "ignore", "-i", &appex_id])
-            .output();
-        let _ = run_sudo("rm", &["-rf", &app_dir]);
-
         if !no_build {
             // Step 1: Build Rust framework
             eprintln!("  Building Rust framework...");
@@ -1664,6 +1658,12 @@ fn install_au_v3(
         }
 
         {
+            // Pre-clean
+            let _ = Command::new("pluginkit")
+                .args(["-e", "ignore", "-i", &appex_id])
+                .output();
+            let _ = run_sudo("rm", &["-rf", &app_dir]);
+
             // Install to /Applications/
             run_sudo("cp", &["-R", built_app.to_str().unwrap(), &app_dir])?;
             run_sudo("mkdir", &["-p", &format!("{app_dir}/Contents/Frameworks")])?;
