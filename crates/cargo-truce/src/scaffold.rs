@@ -349,12 +349,7 @@ pub fn truce_toml(
     is_workspace: bool,
 ) -> String {
     let mut s = format!(
-        r#"[macos]
-# Ad-hoc signing works for CLAP, VST3, VST2, AU v2.
-# AU v3 requires a Developer ID: "Developer ID Application: Your Name (TEAMID)"
-signing_identity = "-"
-
-[vendor]
+        r#"[vendor]
 name = "{vendor_name}"
 id = "{vendor_id}"
 url = "https://example.com"

@@ -5,9 +5,6 @@
 Before building, copy `truce.toml.example` to `truce.toml` and edit:
 
 ```toml
-[macos]
-signing_identity = "-"           # or your Developer ID certificate
-
 [vendor]
 name = "My Company"
 id = "com.mycompany"
@@ -33,6 +30,29 @@ uniquely identify your plugin. The `category` field determines the plugin type a
 - `"midi"` — MIDI note effect like transpose or arpeggiator (CLAP: note-effect, VST3: Fx|Event, AU: aumi)
 
 `au3_subtype` is optional — if omitted, it defaults to `fourcc` (v2 and v3 share the same code).
+
+### Build environment
+
+Build-machine settings (signing, SDK paths) are configured via
+environment variables, not `truce.toml`. This keeps secrets and
+machine-specific paths out of the repo.
+
+| Variable | Purpose | Default |
+|---|---|---|
+| `TRUCE_SIGNING_IDENTITY` | Code signing identity | `"-"` (ad-hoc) |
+| `TRUCE_INSTALLER_SIGNING_IDENTITY` | Installer signing identity (.pkg) | none |
+| `AAX_SDK_PATH` | AAX SDK root directory | none |
+
+Set these in your shell profile, or in `.cargo/config.toml` (gitignored):
+
+```toml
+[env]
+TRUCE_SIGNING_IDENTITY = "Developer ID Application: Your Name (TEAMID)"
+AAX_SDK_PATH = "/path/to/aax-sdk"
+```
+
+All three can be overridden in `truce.toml` under `[macos]` if needed
+(see `truce.toml.example`), but env vars are preferred.
 
 ### Building and installing with xtask
 

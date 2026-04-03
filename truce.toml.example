@@ -6,18 +6,14 @@
 #   - plugin-specific IDs: [[plugin]] sections
 #   - version: per-plugin "version" field, or CARGO_PKG_VERSION if omitted
 #
-# The plugin_info!() macro reads these at compile time via truce-build.
-
-[macos]
-# Code signing identity for plugin bundles (AU, VST3).
-# Run "security find-identity -v -p codesigning" to list available identities.
-# Ad-hoc signing works for CLAP, VST3, VST2, AU v2.
-# AU v3 requires a Developer ID: "Developer ID Application: Your Name (TEAMID)"
-signing_identity = "-"
-
-# Path to the AAX SDK root directory (for Pro Tools plugin builds).
-# Falls back to the AAX_SDK_PATH environment variable if not set.
-# aax_sdk_path = "/path/to/aax-sdk"
+# Build environment (signing, SDK paths) is configured via env vars:
+#   TRUCE_SIGNING_IDENTITY           code signing identity (default: "-" for ad-hoc)
+#   TRUCE_INSTALLER_SIGNING_IDENTITY installer signing identity (for .pkg)
+#   AAX_SDK_PATH                     path to AAX SDK root
+#
+# Set these in your shell profile or .cargo/config.toml (not committed):
+#   [env]
+#   TRUCE_SIGNING_IDENTITY = "Developer ID Application: Your Name (TEAMID)"
 
 [vendor]
 name = "My Company"
@@ -51,7 +47,13 @@ fourcc = "MyFx"                   # 4-char plugin identifier (AU, VST2, AAX)
 # au_tag = "Synthesizer"
 # aax_category = "Synthesizer"
 
-# --- Windows (planned, not yet implemented) ---
-# [windows]
-# signing_cert = ""              # Authenticode cert (empty = unsigned)
-# install_scope = "user"         # "user" (no admin) or "system" (admin)
+# --- Optional: override build env vars in truce.toml ---
+# Uncomment to override the env var defaults. Not recommended for
+# shared repos — use env vars instead.
+#
+# [macos]
+# signing_identity = "Developer ID Application: Your Name (TEAMID)"
+# aax_sdk_path = "/path/to/aax-sdk"
+#
+# [macos.packaging]
+# installer_identity = "Developer ID Installer: Your Name (TEAMID)"

@@ -519,6 +519,32 @@ fn default_signing_identity() -> String {
     "-".to_string()
 }
 
+/// Resolve the signing identity: truce.toml → TRUCE_SIGNING_IDENTITY env → ad-hoc.
+fn resolve_signing_identity(config: &Config) -> String {
+    if config.macos.signing_identity != "-" {
+        return config.macos.signing_identity.clone();
+    }
+    if let Ok(id) = std::env::var("TRUCE_SIGNING_IDENTITY") {
+        if !id.is_empty() {
+            return id;
+        }
+    }
+    "-".to_string()
+}
+
+/// Resolve the installer signing identity: truce.toml → TRUCE_INSTALLER_SIGNING_IDENTITY env → None.
+fn resolve_installer_identity(config: &Config) -> Option<String> {
+    if let Some(ref id) = config.macos.packaging.installer_identity {
+        return Some(id.clone());
+    }
+    if let Ok(id) = std::env::var("TRUCE_INSTALLER_SIGNING_IDENTITY") {
+        if !id.is_empty() {
+            return Some(id);
+        }
+    }
+    None
+}
+
 /// Read MACOSX_DEPLOYMENT_TARGET from the environment, defaulting to "11.0".
 fn deployment_target() -> String {
     std::env::var("MACOSX_DEPLOYMENT_TARGET").unwrap_or_else(|_| "11.0".to_string())
@@ -611,9 +637,14 @@ fn load_config() -> std::result::Result<Config, BoxErr> {
         .into());
     }
     let content = fs::read_to_string(&path)?;
-    let config: Config = toml::from_str(&content)?;
+    let mut config: Config = toml::from_str(&content)?;
     if config.plugin.is_empty() {
         return Err("No [[plugin]] entries in truce.toml".into());
+    }
+    // Resolve signing identities from env vars if truce.toml uses defaults
+    config.macos.signing_identity = resolve_signing_identity(&config);
+    if config.macos.packaging.installer_identity.is_none() {
+        config.macos.packaging.installer_identity = resolve_installer_identity(&config);
     }
     Ok(config)
 }

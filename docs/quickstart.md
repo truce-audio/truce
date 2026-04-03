@@ -30,7 +30,7 @@ This creates a standalone project:
 ```
 my-gain/
 ├── Cargo.toml          # crate with cdylib + rlib
-├── truce.toml          # vendor info, AU metadata, signing
+├── truce.toml          # vendor info, plugin IDs, AU metadata
 └── src/lib.rs          ← your plugin code lives here
 ```
 
