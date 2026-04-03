@@ -178,7 +178,8 @@ automatically — you never see them in `update()`.
 ## Custom state
 
 If your plugin has persistent state beyond parameters, use
-`StateBinding<T>` in your `IcedPlugin` model:
+`StateBinding<T>` in your `IcedPlugin` model. Initialize it as
+`default()` and sync on first update:
 
 ```rust
 #[derive(State, Default)]
@@ -188,16 +189,25 @@ pub struct MyState {
 
 pub struct MyEditor {
     state: StateBinding<MyState>,
+    initialized: bool,
 }
 
 impl IcedPlugin<MyParams> for MyEditor {
     type Message = ();
 
     fn new(_params: Arc<MyParams>) -> Self {
-        Self { state: StateBinding::default() }
+        Self { state: StateBinding::default(), initialized: false }
     }
 
-    fn view<'a>(&'a self, params: &'a ParamState<MyParams>) -> Element<'a, Message<()>> {
+    fn update(&mut self, _msg: Message<()>, _params: &ParamState<MyParams>, ctx: &EditorHandle) -> Task<Message<()>> {
+        if !self.initialized {
+            self.state = StateBinding::new(ctx.context());
+            self.initialized = true;
+        }
+        Task::none()
+    }
+
+    fn view<'a>(&'a self, _params: &'a ParamState<MyParams>) -> Element<'a, Message<()>> {
         text(&self.state.get().instance_name).into()
     }
 
@@ -207,9 +217,16 @@ impl IcedPlugin<MyParams> for MyEditor {
 }
 ```
 
-`state_changed` is called when the DAW restores state (preset recall,
-undo, session load). It re-reads the custom state from the plugin so
-the UI stays in sync.
+`state_changed()` is called when the DAW restores state (preset recall,
+undo, session load). It re-reads custom state so the UI stays in sync.
+To write state from the GUI:
+
+```rust
+self.state.update(|s| s.instance_name = new_name);
+```
+
+You can also access state directly via `ctx.get_state()` / `ctx.set_state()`
+on the `EditorHandle`.
 
 If your plugin only uses `#[param]` fields, you don't need any of this —
 parameter values sync automatically through `ParamState`.

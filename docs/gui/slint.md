@@ -192,31 +192,39 @@ state.end_gesture(P::Gain)       // write (end drag)
 
 ## Custom state
 
-If your plugin has persistent state beyond parameters, check for
-changes in the sync callback:
+If your plugin has persistent state beyond parameters, read it via
+`ParamState::get_state()` in the sync callback:
 
 ```rust
-use std::sync::atomic::{AtomicBool, Ordering};
-
 #[derive(State, Default)]
 pub struct MyState {
     pub instance_name: String,
 }
 
-let state_dirty = Arc::new(AtomicBool::new(false));
+// In the setup closure:
+let mut cached_state = MyState::default();
 
-// In the sync closure:
-if state_dirty.swap(false, Ordering::Relaxed) {
-    // Re-read custom state from plugin
-    let data = (state.context().get_state)();
+// In the sync callback (runs every frame):
+let data = state.get_state();
+if !data.is_empty() {
     if let Some(s) = MyState::deserialize(&data) {
-        ui.set_instance_name(s.instance_name.into());
+        if s.instance_name != cached_state.instance_name {
+            ui.set_instance_name(s.instance_name.clone().into());
+            cached_state = s;
+        }
     }
 }
 ```
 
-Set the flag from `Editor::state_changed()` using a thin wrapper (see
-the [state persistence](../reference/10-state.md) guide for details).
+To write state back (e.g., user renames an instance):
+
+```rust
+cached_state.instance_name = new_name;
+state.set_state(cached_state.serialize());
+```
+
+See the [state persistence](../reference/10-state.md) guide for the
+full `#[derive(State)]` pattern.
 
 If your plugin only uses `#[param]` fields, you don't need any of this —
 parameter values sync automatically through `ParamState`.

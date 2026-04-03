@@ -154,8 +154,8 @@ EguiEditor::with_ui((640, 480), MyUi { tab: 0 })
 ## Custom state
 
 If your plugin has persistent state beyond parameters (instance names,
-view modes, selections), use `StateBinding<T>` and implement
-`state_changed` on your `EditorUi`:
+view modes, selections), use `StateBinding<T>` with the `EditorUi`
+lifecycle methods:
 
 ```rust
 #[derive(State, Default)]
@@ -169,6 +169,11 @@ struct MyUi {
 }
 
 impl EditorUi for MyUi {
+    fn opened(&mut self, ps: &ParamState) {
+        // Create the binding when the editor window opens
+        self.state = StateBinding::new(ps.context());
+    }
+
     fn ui(&mut self, ctx: &egui::Context, ps: &ParamState) {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.label(&self.state.get().instance_name);
@@ -176,13 +181,32 @@ impl EditorUi for MyUi {
     }
 
     fn state_changed(&mut self, _ps: &ParamState) {
+        // Re-read state after preset recall, undo, or session load
         self.state.sync();
     }
 }
 ```
 
-Initialize the binding when the editor opens. `state_changed` is called
-automatically by the framework on preset recall, undo, and session load.
+`EditorUi` has three lifecycle methods:
+
+- **`opened()`** — called once when the editor window opens. Create
+  `StateBinding` here.
+- **`ui()`** — called every frame. Read state with `self.state.get()`.
+- **`state_changed()`** — called when the DAW restores state. Call
+  `sync()` to re-read.
+
+To write state from the GUI (e.g., user renames an instance):
+
+```rust
+self.state.update(|s| s.instance_name = new_name);
+```
+
+For the closure API, use `.on_state_changed()`:
+
+```rust
+EguiEditor::new((400, 300), |ctx, state| { /* ui */ })
+    .on_state_changed(|state| { /* re-read cached state */ })
+```
 
 If your plugin only uses `#[param]` fields, you don't need any of this —
 parameter values sync automatically every frame.

@@ -71,7 +71,7 @@ impl PluginLogic for Gain {
     }
 
     fn layout(&self) -> GridLayout {
-        GridLayout::build("GAIN", "V0.1", 2, 80.0, vec![widgets(vec![
+        GridLayout::build("GAIN", "V0.1", 2, 50.0, vec![widgets(vec![
             knob(0, "Gain"),
         ])])
     }
