@@ -631,7 +631,7 @@ fn load_config() -> std::result::Result<Config, BoxErr> {
     let path = root.join("truce.toml");
     if !path.exists() {
         return Err(format!(
-            "truce.toml not found at {}. Run 'cargo truce new' to scaffold a project.",
+            "truce.toml not found at {}. Run 'cargo truce new' to scaffold a project, or create truce.toml manually.",
             path.display()
         )
         .into());
