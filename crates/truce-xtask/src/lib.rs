@@ -3632,9 +3632,13 @@ fn cmd_package(args: &[String]) -> Res {
             return Err(format!("productbuild failed for {}", p.name).into());
         }
 
-        // Step 7: Notarize + staple (Phase 3)
+        // Step 7: Notarize + staple
         if config.macos.packaging.notarize && !no_notarize {
             notarize_and_staple(&pkg_path, &config)?;
+        } else if !config.macos.packaging.notarize {
+            eprintln!("  Skipped notarization (set notarize = true in [macos.packaging])");
+        } else {
+            eprintln!("  Skipped notarization (--no-notarize)");
         }
 
         eprintln!("  Package ready: {}", pkg_path.display());
@@ -3706,6 +3710,7 @@ fn notarize_and_staple(pkg_path: &Path, config: &Config) -> Res {
         return Err("stapler staple failed".into());
     }
 
+    eprintln!("  Notarized and stapled.");
     Ok(())
 }
 
