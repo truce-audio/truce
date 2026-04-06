@@ -3202,6 +3202,14 @@ fn stage_aax(root: &Path, p: &PluginDef, config: &Config, staging: &Path) -> Res
         suffix = p.suffix,
     );
     fs::write(contents.join("Info.plist"), &plist)?;
+
+    // Sign inside-out: inner dylib first, then the outer bundle.
+    // notarization rejects bundles where nested binaries lack hardened
+    // runtime + timestamp.
+    let inner_dylib = contents.join("Resources").join(format!("lib{}_aax.dylib", p.dylib_stem()));
+    codesign_bundle(inner_dylib.to_str().unwrap(), &config.macos.signing_identity, false)?;
+    let inner_exe = contents.join("MacOS").join(&p.name);
+    codesign_bundle(inner_exe.to_str().unwrap(), &config.macos.signing_identity, false)?;
     codesign_bundle(bundle.to_str().unwrap(), &config.macos.signing_identity, false)?;
     Ok(())
 }
@@ -3662,42 +3670,59 @@ fn notarize_and_staple(pkg_path: &Path, config: &Config) -> Res {
     let keychain_profile = std::env::var("TRUCE_NOTARY_PROFILE").unwrap_or_else(|_| "TRUCE_NOTARY".to_string());
 
     eprintln!("  Notarizing {}...", pkg_path.file_name().unwrap().to_str().unwrap());
-    let status = Command::new("xcrun")
+
+    // Submit and capture output to check status + extract submission ID
+    let output = Command::new("xcrun")
         .args([
             "notarytool", "submit", pkg,
             "--keychain-profile", &keychain_profile,
             "--wait",
         ])
-        .status();
+        .output();
 
-    match status {
-        Ok(s) if s.success() => {}
-        _ => {
-            // Keychain profile failed — try explicit credentials if available
-            if !apple_id.is_empty() && !team_id.is_empty() {
-                eprintln!("  Keychain profile failed, trying explicit credentials...");
-                let password = std::env::var("APP_SPECIFIC_PASSWORD")
-                    .map_err(|_| "notarization requires APP_SPECIFIC_PASSWORD env var or a keychain profile")?;
-                let status = Command::new("xcrun")
-                    .args([
-                        "notarytool", "submit", pkg,
-                        "--apple-id", apple_id,
-                        "--team-id", team_id,
-                        "--password", &password,
-                        "--wait",
-                    ])
-                    .status()?;
-                if !status.success() {
-                    return Err("notarization failed".into());
-                }
-            } else {
-                return Err(
-                    "notarization failed. Set up credentials via:\n  \
-                     xcrun notarytool store-credentials TRUCE_NOTARY\n  \
-                     or set apple_id/team_id in [macos.packaging] + APP_SPECIFIC_PASSWORD env var"
-                        .into(),
-                );
+    let (succeeded, output_text) = match output {
+        Ok(o) => {
+            let text = format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
+            // notarytool returns 0 even on Invalid — check the status string
+            let ok = o.status.success() && !text.contains("status: Invalid") && !text.contains("status: Rejected");
+            (ok, text)
+        }
+        Err(_) => (false, String::new()),
+    };
+
+    if !succeeded {
+        // Try explicit credentials as fallback
+        if !apple_id.is_empty() && !team_id.is_empty() {
+            eprintln!("  Keychain profile failed, trying explicit credentials...");
+            let password = std::env::var("APP_SPECIFIC_PASSWORD")
+                .map_err(|_| "notarization requires APP_SPECIFIC_PASSWORD env var or a keychain profile")?;
+            let output = Command::new("xcrun")
+                .args([
+                    "notarytool", "submit", pkg,
+                    "--apple-id", apple_id,
+                    "--team-id", team_id,
+                    "--password", &password,
+                    "--wait",
+                ])
+                .output()?;
+            let text = format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+            if !output.status.success() || text.contains("status: Invalid") || text.contains("status: Rejected") {
+                // Extract submission ID and fetch the log
+                fetch_notarization_log(&text, &keychain_profile);
+                return Err("notarization failed (status: Invalid). See log above for details.".into());
             }
+        } else {
+            // Extract submission ID and fetch the log
+            fetch_notarization_log(&output_text, &keychain_profile);
+            if output_text.contains("status: Invalid") || output_text.contains("status: Rejected") {
+                return Err("notarization failed (status: Invalid). See log above for details.".into());
+            }
+            return Err(
+                "notarization failed. Set up credentials via:\n  \
+                 xcrun notarytool store-credentials TRUCE_NOTARY\n  \
+                 or set apple_id/team_id in [macos.packaging] + APP_SPECIFIC_PASSWORD env var"
+                    .into(),
+            );
         }
     }
 
@@ -3712,6 +3737,30 @@ fn notarize_and_staple(pkg_path: &Path, config: &Config) -> Res {
 
     eprintln!("  Notarized and stapled.");
     Ok(())
+}
+
+/// Extract submission ID from notarytool output and fetch the detailed log.
+fn fetch_notarization_log(output: &str, keychain_profile: &str) {
+    // Look for "id: <uuid>" in the output
+    let id = output.lines()
+        .find(|l| l.trim().starts_with("id:"))
+        .and_then(|l| l.trim().strip_prefix("id:"))
+        .map(|s| s.trim().to_string());
+
+    if let Some(id) = id {
+        eprintln!("  Fetching notarization log for {}...", id);
+        let log_output = Command::new("xcrun")
+            .args(["notarytool", "log", &id, "--keychain-profile", keychain_profile])
+            .output();
+        if let Ok(o) = log_output {
+            let log = String::from_utf8_lossy(&o.stdout);
+            if !log.is_empty() {
+                eprintln!("\n--- Notarization Log ---");
+                eprintln!("{log}");
+                eprintln!("--- End Log ---\n");
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
