@@ -35,6 +35,17 @@ pub(crate) enum TargetArch {
 }
 
 impl TargetArch {
+    /// Architecture of the host running `cargo truce package`. Currently x64
+    /// always — we don't have arm64 Windows as a supported host yet. Used to
+    /// decide which archs can ship AAX (AAX template only builds for the host).
+    fn host() -> Self {
+        if cfg!(target_arch = "aarch64") {
+            TargetArch::Arm64
+        } else {
+            TargetArch::X64
+        }
+    }
+
     /// Rust target triple passed to `cargo build --target`.
     fn triple(self) -> &'static str {
         match self {
@@ -94,13 +105,13 @@ pub(crate) fn cmd_package(args: &[String]) -> Res {
     let plugins = resolve_plugins(&config, opts.plugin_filter.as_deref())?;
     let archs = opts.archs();
 
-    if opts.universal
-        && formats.iter().any(|f| matches!(f, PkgFormat::Aax))
-    {
+    if opts.universal && formats.iter().any(|f| matches!(f, PkgFormat::Aax)) {
         eprintln!(
-            "NOTE: AAX in --universal mode — the current AAX SDK ships x64 libs only. \
-             The ARM64 AAX build is attempted but may fail to link; you can \
-             drop `aax` from --formats to sidestep this."
+            "NOTE: AAX is host-arch-only ({}); --universal won't produce an ARM64 \
+             AAX bundle. Avid's AAX SDK 2.9 ships x64 libs only, and our template \
+             build (vcvars64 + MSVC) is x64-only. CLAP/VST2/VST3 ship universally; \
+             AAX stays single-arch.",
+            TargetArch::host().tag(),
         );
     }
 
@@ -389,7 +400,11 @@ fn build_all_formats(
             }
         }
 
-        if has_aax {
+        // AAX staging is host-arch-only (see stage_aax), so only build the
+        // AAX Rust cdylib for the host arch. The Rust code itself cross-
+        // compiles fine — we're just avoiding orphan binaries that would
+        // have nothing to pair with in the installer.
+        if has_aax && arch == TargetArch::host() {
             eprintln!("Building AAX ({})...", arch.tag());
             let mut build_args: Vec<String> =
                 vec!["--target".into(), triple.into()];
@@ -469,9 +484,16 @@ fn stage_plugin(
                 signable.push(stage_vst2(root, p, staging, arch)?);
             }
             PkgFormat::Aax => {
-                let (wrapper, dylib) = stage_aax(root, p, config, staging, arch)?;
-                signable.push(dylib);
-                signable.push(wrapper);
+                match stage_aax(root, p, config, staging, arch)? {
+                    Some((wrapper, dylib)) => {
+                        signable.push(dylib);
+                        signable.push(wrapper);
+                    }
+                    None => {
+                        eprintln!("skipped (AAX template is built for host arch only)");
+                        continue;
+                    }
+                }
             }
             PkgFormat::Au2 | PkgFormat::Au3 => {
                 return Err("AU is macOS-only; should have been filtered".into());
@@ -542,24 +564,41 @@ fn stage_vst2(
 }
 
 /// Build/stage the AAX bundle for one architecture. Returns
-/// `(wrapper_binary, resources_dylib)` so both get Authenticode-signed.
+/// `Some((wrapper_binary, resources_dylib))` on success so both get
+/// Authenticode-signed, or `None` when the arch can't be staged (today,
+/// anything that isn't the host arch — see below).
 ///
-/// For universal builds both archs end up side-by-side inside
-/// `{Name}.aaxplugin/Contents/{x64,arm64}/`, with arch-tagged Rust cdylibs
-/// in `Contents/Resources/` so they don't collide.
+/// For universal builds the host-arch pass writes under
+/// `{Name}.aaxplugin/Contents/{x64,arm64}/` + `Contents/Resources/`.
+///
+/// ### Cross-arch AAX is intentionally skipped
+///
+/// The AAX template (`TruceAAXTemplate.aaxplugin`) is a C++ bundle that
+/// links against Avid's AAX SDK libraries. Our `build_aax_template()` runs
+/// cmake + MSVC via `vcvars64.bat`, which produces an x64 binary. To
+/// produce an ARM64 template we'd need both:
+///
+/// 1. A cross-compile path via `vcvars_arm64.bat` / `vcvarsx86_arm64.bat`.
+/// 2. ARM64 `AAX_SDK_Interface.lib` / `AAXLibrary.lib` from Avid. As of
+///    AAX SDK 2.9 Avid ships x64 libs only — attempting to link arm64
+///    objects against the x64 libs will fail at link time.
+///
+/// Rather than silently shipping an x64 template inside the arm64 bundle
+/// subdir (which would fail to load at runtime), we skip AAX staging for
+/// non-host archs and warn. CLAP/VST2/VST3 still ship universally; AAX
+/// stays host-arch-only.
 fn stage_aax(
     root: &Path,
     p: &PluginDef,
     config: &Config,
     staging: &Path,
     arch: TargetArch,
-) -> std::result::Result<(PathBuf, PathBuf), crate::BoxErr> {
+) -> std::result::Result<Option<(PathBuf, PathBuf)>, crate::BoxErr> {
+    if arch != TargetArch::host() {
+        return Ok(None);
+    }
+
     // Build the template .aaxplugin wrapper if it isn't there yet.
-    //
-    // NOTE: the AAX template is currently only built for the host arch (x64)
-    // via vcvars64. Cross-compiling the template to ARM64 is not yet wired —
-    // it would need vcvars_arm64.bat. The ARM64 pass here will fail if the
-    // template isn't present; we surface that clearly rather than silently.
     let template = tmp_dir().join("aax_template/build/TruceAAXTemplate.aaxplugin");
     if !template.exists() {
         if let Some(sdk_path) = resolve_aax_sdk_path(config) {
@@ -613,7 +652,7 @@ fn stage_aax(
     fs::copy(&template, &wrapper)?;
     fs::copy(&dylib, &resource_dll)?;
 
-    Ok((wrapper, resource_dll))
+    Ok(Some((wrapper, resource_dll)))
 }
 
 // ---------------------------------------------------------------------------
@@ -1043,12 +1082,18 @@ fn iss_files_block(
             )
         }
         PkgFormat::Aax => {
-            // AAX bundle: arch subdir + arch-tagged resource DLL.
+            // AAX bundle: arch subdir + arch-tagged resource DLL. Non-host
+            // arches are skipped at stage time (see stage_aax); if the arch
+            // subdir doesn't exist in staging, don't emit an .iss reference
+            // to it — ISCC would fail on a missing Source otherwise.
             let src_arch_dir = staging
                 .join("aax")
                 .join(format!("{}.aaxplugin", p.name))
                 .join("Contents")
                 .join(arch.aax_bundle_subdir());
+            if !src_arch_dir.exists() {
+                return String::new();
+            }
             let src_arch_glob = src_arch_dir.join("*");
             let resource_dll = staging
                 .join("aax")
