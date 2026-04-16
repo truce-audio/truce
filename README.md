@@ -6,8 +6,7 @@ Build audio plugins in Rust. One codebase, every format.
 
 Write your plugin once. Build CLAP, VST3, VST2, AU v2, AU v3, AAX,
 and standalone from a single Rust codebase. Hot-reload DSP and GUI
-changes without restarting the DAW. Runs on **macOS** and **Windows**
-(Linux support planned).
+changes without restarting the DAW.
 
 ## Quick Start
 
