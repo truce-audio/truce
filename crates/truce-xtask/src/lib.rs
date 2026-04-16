@@ -1527,6 +1527,17 @@ pub(crate) fn build_aax_template(_root: &Path, sdk_path: &Path) -> Res {
         let vcvars = locate_vcvars64()
             .ok_or("could not locate vcvars64.bat — install VS 2022+ with the C++ workload")?;
 
+        // cmake + ninja aren't necessarily on %PATH% when running outside the
+        // truce repo (truce's .cargo/config.toml historically set it). vcvars
+        // doesn't add them either. Resolve both explicitly and prepend their
+        // directories to the .bat's PATH so the build works from any project.
+        let cmake = locate_cmake()
+            .ok_or("could not locate cmake.exe — install cmake or the VS \"C++ CMake tools\" component")?;
+        let ninja = locate_ninja()
+            .ok_or("could not locate ninja.exe — install ninja or the VS \"C++ CMake tools\" component (which bundles it)")?;
+        let cmake_dir = cmake.parent().unwrap().display().to_string();
+        let ninja_dir = ninja.parent().unwrap().display().to_string();
+
         // CMake 3.20+ rejects `\U` etc. as invalid escape sequences when a
         // backslash path is interpolated into a generated string literal.
         // Convert all paths we pass to cmake to forward slashes.
@@ -1536,9 +1547,12 @@ pub(crate) fn build_aax_template(_root: &Path, sdk_path: &Path) -> Res {
         let bat = format!(
             "@echo off\r\n\
              call \"{vcvars}\" >nul || exit /b 1\r\n\
+             set \"PATH={cmake_dir};{ninja_dir};%PATH%\"\r\n\
              cmake -S \"{src}\" -B \"{build}\" -G Ninja -DCMAKE_BUILD_TYPE=Release \"-DAAX_SDK_PATH={sdk}\" || exit /b 1\r\n\
              cmake --build \"{build}\" || exit /b 1\r\n",
             vcvars = vcvars.display(),
+            cmake_dir = cmake_dir,
+            ninja_dir = ninja_dir,
             src = to_fwd(&template_dir),
             build = to_fwd(&build_dir),
             sdk = to_fwd(sdk_path),
@@ -1554,6 +1568,92 @@ pub(crate) fn build_aax_template(_root: &Path, sdk_path: &Path) -> Res {
         }
     }
     Ok(())
+}
+
+/// Search for `name` (must include `.exe`) on `%PATH%`, returning the first
+/// hit. Cross-platform equivalent of `where.exe`.
+#[cfg(target_os = "windows")]
+fn which_exe(name: &str) -> Option<PathBuf> {
+    let path = env::var_os("PATH")?;
+    for dir in env::split_paths(&path) {
+        let candidate = dir.join(name);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+/// Locate `cmake.exe`. Tries `%PATH%` first, then the CMake that ships with
+/// Visual Studio's "C++ CMake tools" component, then the standalone installer
+/// default. Returns `None` if none are present.
+#[cfg(target_os = "windows")]
+fn locate_cmake() -> Option<PathBuf> {
+    if let Some(p) = which_exe("cmake.exe") {
+        return Some(p);
+    }
+    for vs_install in vs_install_paths() {
+        let bundled = vs_install
+            .join(r"Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe");
+        if bundled.is_file() {
+            return Some(bundled);
+        }
+    }
+    for c in [
+        r"C:\Program Files\CMake\bin\cmake.exe",
+        r"C:\Program Files (x86)\CMake\bin\cmake.exe",
+    ] {
+        let p = PathBuf::from(c);
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    None
+}
+
+/// Locate `ninja.exe`. Same strategy as cmake — the VS CMake component bundles
+/// Ninja next to it, so that's the most common path on machines that have VS
+/// with "C++ CMake tools" installed.
+#[cfg(target_os = "windows")]
+fn locate_ninja() -> Option<PathBuf> {
+    if let Some(p) = which_exe("ninja.exe") {
+        return Some(p);
+    }
+    for vs_install in vs_install_paths() {
+        let bundled = vs_install
+            .join(r"Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja\ninja.exe");
+        if bundled.is_file() {
+            return Some(bundled);
+        }
+    }
+    None
+}
+
+/// Enumerate all VS installation roots known to `vswhere.exe`. Returned in
+/// the order vswhere produces (latest first when called with `-latest`, or
+/// all installs otherwise). We pass no filter here so we also pick up the old
+/// VS 2022 install that's useful for CMake/Ninja even when its C++ workload
+/// is broken.
+#[cfg(target_os = "windows")]
+fn vs_install_paths() -> Vec<PathBuf> {
+    let vswhere = PathBuf::from(
+        r"C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe",
+    );
+    if !vswhere.exists() {
+        return Vec::new();
+    }
+    let out = Command::new(&vswhere)
+        .args(["-all", "-property", "installationPath", "-format", "value"])
+        .output();
+    match out {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout)
+            .lines()
+            .map(|l| l.trim())
+            .filter(|l| !l.is_empty())
+            .map(PathBuf::from)
+            .collect(),
+        _ => Vec::new(),
+    }
 }
 
 /// Locate `vcvars64.bat` via `vswhere.exe`. Returns `None` if VS isn't
@@ -4247,7 +4347,18 @@ fn cmd_doctor() -> Res {
     {
         eprintln!();
         eprintln!("  Windows");
-        check_cmd("cmake", &["--version"], "cmake (AAX template build)");
+        match locate_cmake() {
+            Some(p) => eprintln!("    ✅ cmake (AAX template build): {}", p.display()),
+            None => eprintln!(
+                "    ❌ cmake.exe not found — install cmake or VS \"C++ CMake tools\""
+            ),
+        }
+        match locate_ninja() {
+            Some(p) => eprintln!("    ✅ ninja (AAX template build): {}", p.display()),
+            None => eprintln!(
+                "    ❌ ninja.exe not found — install ninja or VS \"C++ CMake tools\""
+            ),
+        }
 
         eprintln!();
         eprintln!("  Packaging (Windows)");
