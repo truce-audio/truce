@@ -751,6 +751,23 @@ pub(crate) fn release_lib(root: &Path, stem: &str) -> PathBuf {
     root.join("target/release").join(shared_lib_name(stem))
 }
 
+/// Return the release-mode library path for a specific cargo target triple,
+/// or the default `target/release/` when `target` is `None`.
+pub(crate) fn release_lib_for_target(
+    root: &Path,
+    stem: &str,
+    target: Option<&str>,
+) -> PathBuf {
+    match target {
+        Some(t) => root
+            .join("target")
+            .join(t)
+            .join("release")
+            .join(shared_lib_name(stem)),
+        None => release_lib(root, stem),
+    }
+}
+
 /// Return the Windows `%COMMONPROGRAMFILES%` directory (typically `C:\Program Files\Common Files`).
 #[cfg(target_os = "windows")]
 pub(crate) fn common_program_files() -> PathBuf {
@@ -1659,7 +1676,7 @@ fn locate_ninja() -> Option<PathBuf> {
 /// VS 2022 install that's useful for CMake/Ninja even when its C++ workload
 /// is broken.
 #[cfg(target_os = "windows")]
-fn vs_install_paths() -> Vec<PathBuf> {
+pub(crate) fn vs_install_paths() -> Vec<PathBuf> {
     let vswhere = PathBuf::from(
         r"C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe",
     );

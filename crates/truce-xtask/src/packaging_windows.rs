@@ -3,6 +3,13 @@
 //! Flow: build each format (release) → stage into `target\package\windows\{suffix}\`
 //! → Authenticode-sign binaries → PACE-sign AAX if present → render `.iss`
 //! → run `ISCC.exe` → Authenticode-sign the installer → output to `dist\`.
+//!
+//! `--universal` builds for both `x86_64-pc-windows-msvc` and
+//! `aarch64-pc-windows-msvc` and produces a single Inno Setup installer that
+//! runs on both architectures. Bundle formats (VST3, AAX) carry both archs in
+//! architecture-scoped subdirectories inside the bundle and let the host pick
+//! at load time; single-file formats (CLAP, VST2) use Inno Setup `Check:`
+//! directives to install the matching DLL for the installing machine.
 
 use std::collections::HashSet;
 use std::fs;
@@ -10,11 +17,67 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::{
-    build_aax_template, cargo_build, common_program_files, copy_dir_recursive,
-    detect_default_features, load_config, program_files, project_root,
-    read_workspace_version, release_lib, resolve_aax_sdk_path, tmp_dir, Config,
-    PkgFormat, PluginDef, Res, WindowsSigningConfig,
+    build_aax_template, cargo_build, detect_default_features, load_config,
+    project_root, read_workspace_version, release_lib_for_target,
+    resolve_aax_sdk_path, tmp_dir, Config, PkgFormat, PluginDef, Res,
+    WindowsSigningConfig,
 };
+
+// ---------------------------------------------------------------------------
+// Target architectures
+// ---------------------------------------------------------------------------
+
+/// Windows CPU architecture we can build for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TargetArch {
+    X64,
+    Arm64,
+}
+
+impl TargetArch {
+    /// Rust target triple passed to `cargo build --target`.
+    fn triple(self) -> &'static str {
+        match self {
+            TargetArch::X64 => "x86_64-pc-windows-msvc",
+            TargetArch::Arm64 => "aarch64-pc-windows-msvc",
+        }
+    }
+
+    /// Short tag used in staging paths (`target/package/windows/{suffix}/clap/{tag}/…`).
+    fn tag(self) -> &'static str {
+        match self {
+            TargetArch::X64 => "x64",
+            TargetArch::Arm64 => "arm64",
+        }
+    }
+
+    /// Arch sub-directory name inside a VST3 bundle (e.g. `Contents/x86_64-win/`).
+    /// Steinberg defined `x86_64-win` and `arm64-win` for VST3 bundles on Windows.
+    fn vst3_bundle_subdir(self) -> &'static str {
+        match self {
+            TargetArch::X64 => "x86_64-win",
+            TargetArch::Arm64 => "arm64-win",
+        }
+    }
+
+    /// Arch sub-directory name inside an AAX bundle (e.g. `Contents/x64/`).
+    fn aax_bundle_subdir(self) -> &'static str {
+        match self {
+            TargetArch::X64 => "x64",
+            TargetArch::Arm64 => "arm64",
+        }
+    }
+
+    /// Inno Setup `Check:` predicate to guard this arch's `[Files]` entries.
+    /// Returns the Pascal expression that should be true when the arch
+    /// matches the machine running the installer.
+    fn iss_check(self) -> &'static str {
+        match self {
+            TargetArch::X64 => "not IsArm64",
+            TargetArch::Arm64 => "IsArm64",
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Entry point
@@ -29,6 +92,17 @@ pub(crate) fn cmd_package(args: &[String]) -> Res {
 
     let formats = resolve_formats(&config, opts.format_str.as_deref())?;
     let plugins = resolve_plugins(&config, opts.plugin_filter.as_deref())?;
+    let archs = opts.archs();
+
+    if opts.universal
+        && formats.iter().any(|f| matches!(f, PkgFormat::Aax))
+    {
+        eprintln!(
+            "NOTE: AAX in --universal mode — the current AAX SDK ships x64 libs only. \
+             The ARM64 AAX build is attempted but may fail to link; you can \
+             drop `aax` from --formats to sidestep this."
+        );
+    }
 
     // Warn about missing signing credentials unless --no-sign was passed.
     if !opts.no_sign && !config.windows.signing.is_configured() {
@@ -39,28 +113,40 @@ pub(crate) fn cmd_package(args: &[String]) -> Res {
         );
     }
 
-    build_all_formats(&plugins, &formats, &root)?;
+    build_all_formats(&plugins, &formats, &archs, &root)?;
 
     let dist_dir = root.join("dist");
     fs::create_dir_all(&dist_dir)?;
 
     for p in &plugins {
-        eprintln!("\n=== Packaging: {} ===", p.name);
+        eprintln!("\n=== Packaging: {} ({}) ===", p.name, archs_label(&archs));
 
         let staging = root.join("target/package/windows").join(&p.suffix);
         let _ = fs::remove_dir_all(&staging);
         fs::create_dir_all(&staging)?;
 
-        let staged = stage_plugin(&root, p, &config, &formats, &staging)?;
+        let mut all_signable: Vec<PathBuf> = Vec::new();
+        for &arch in &archs {
+            let staged = stage_plugin(&root, p, &config, &formats, &staging, arch)?;
+            all_signable.extend(staged.signable);
+        }
 
         if !opts.no_sign {
-            // AAX: PACE first, Authenticode second. PACE wraps the binary; signing
-            // the wrapped binary last is what Pro Tools actually verifies.
+            // PACE-sign every AAX bundle (one per arch). PACE wraps the binary;
+            // Authenticode signs the wrapped result — so PACE first.
             if formats.iter().any(|f| matches!(f, PkgFormat::Aax)) {
                 let aax_bundle = staging.join(format!("{}.aaxplugin", p.name));
-                pace_sign_aax(&aax_bundle)?;
+                for &arch in &archs {
+                    let inner_wrapper = aax_bundle
+                        .join("Contents")
+                        .join(arch.aax_bundle_subdir())
+                        .join(format!("{}.aaxplugin", p.name));
+                    if inner_wrapper.exists() {
+                        pace_sign_aax(&inner_wrapper)?;
+                    }
+                }
             }
-            sign_files(&staged.signable, &config.windows.signing)?;
+            sign_files(&all_signable, &config.windows.signing)?;
         }
 
         if opts.no_installer {
@@ -71,12 +157,12 @@ pub(crate) fn cmd_package(args: &[String]) -> Res {
             continue;
         }
 
-        let iss = render_iss(&config, p, &formats, &staging, &version, &dist_dir);
+        let iss = render_iss(&config, p, &formats, &archs, &staging, &version, &dist_dir);
         let iss_path = staging.join("installer.iss");
         fs::write(&iss_path, &iss)?;
         run_iscc(&iss_path)?;
 
-        let installer = dist_dir.join(format!("{}-{}-windows-x64.exe", p.name, version));
+        let installer = dist_dir.join(format!("{}-{}-windows.exe", p.name, version));
         if !installer.exists() {
             return Err(format!(
                 "ISCC reported success but installer is missing: {}",
@@ -95,6 +181,10 @@ pub(crate) fn cmd_package(args: &[String]) -> Res {
     Ok(())
 }
 
+fn archs_label(archs: &[TargetArch]) -> String {
+    archs.iter().map(|a| a.tag()).collect::<Vec<_>>().join("+")
+}
+
 // ---------------------------------------------------------------------------
 // Argument parsing
 // ---------------------------------------------------------------------------
@@ -105,6 +195,17 @@ struct Opts {
     format_str: Option<String>,
     no_sign: bool,
     no_installer: bool,
+    universal: bool,
+}
+
+impl Opts {
+    fn archs(&self) -> Vec<TargetArch> {
+        if self.universal {
+            vec![TargetArch::X64, TargetArch::Arm64]
+        } else {
+            vec![TargetArch::X64]
+        }
+    }
 }
 
 fn parse_args(args: &[String]) -> std::result::Result<Opts, crate::BoxErr> {
@@ -126,6 +227,7 @@ fn parse_args(args: &[String]) -> std::result::Result<Opts, crate::BoxErr> {
             }
             "--no-sign" => opts.no_sign = true,
             "--no-installer" => opts.no_installer = true,
+            "--universal" => opts.universal = true,
             // --no-notarize is a macOS concept; accept and ignore on Windows so
             // cross-platform CI scripts don't break.
             "--no-notarize" => {}
@@ -210,12 +312,20 @@ fn resolve_plugins<'a>(
 // Build
 // ---------------------------------------------------------------------------
 
-/// Run the cargo builds for each selected format. Mirrors cmd_package on
-/// macOS: one `cargo build` per format with distinct `--features` so the
-/// ObjC/format-specific code paths can't cross-contaminate.
+/// Run the cargo builds for each selected format × arch. Mirrors cmd_package
+/// on macOS: one `cargo build` per format with distinct `--features` so the
+/// format-specific code paths can't cross-contaminate, plus an outer loop
+/// over architectures.
+///
+/// Within a single arch the dylib at `target/{triple}/release/{stem}.dll` is
+/// overwritten by successive format builds, so we save per-format copies
+/// (`{stem}_plugin`, `{stem}_vst2`, `{stem}_aax`) after each build. Archs
+/// have separate `target/{triple}/` directories so they don't clash with
+/// each other.
 fn build_all_formats(
     plugins: &[&PluginDef],
     formats: &[PkgFormat],
+    archs: &[TargetArch],
     root: &Path,
 ) -> Res {
     let dt = "";  // MACOSX_DEPLOYMENT_TARGET is ignored on Windows
@@ -225,65 +335,99 @@ fn build_all_formats(
     let has_vst2 = formats.iter().any(|f| matches!(f, PkgFormat::Vst2));
     let has_aax = formats.iter().any(|f| matches!(f, PkgFormat::Aax));
 
-    // CLAP+VST3 share the default feature set; build once, then save a copy
-    // of the dylib so later format builds don't clobber it.
-    if has_clap || has_vst3 {
-        eprintln!("Building CLAP + VST3...");
-        let mut build_args: Vec<&str> = Vec::new();
-        for p in plugins {
-            build_args.push("-p");
-            build_args.push(&p.crate_name);
-        }
-        cargo_build(&[], &build_args, dt)?;
-        for p in plugins {
-            let src = release_lib(root, &p.dylib_stem());
-            let saved = release_lib(root, &format!("{}_plugin", p.dylib_stem()));
-            if src.exists() {
-                fs::copy(&src, &saved)?;
+    for &arch in archs {
+        eprintln!("--- Building for {} ---", arch.tag());
+        let triple = arch.triple();
+
+        // CLAP+VST3 share the default feature set; one cargo build covers both.
+        if has_clap || has_vst3 {
+            eprintln!("Building CLAP + VST3 ({})...", arch.tag());
+            let mut build_args: Vec<String> =
+                vec!["--target".into(), triple.into()];
+            for p in plugins {
+                build_args.push("-p".into());
+                build_args.push(p.crate_name.clone());
+            }
+            let arg_refs: Vec<&str> = build_args.iter().map(|s| s.as_str()).collect();
+            cargo_build(&[], &arg_refs, dt)?;
+            for p in plugins {
+                let src = release_lib_for_target(root, &p.dylib_stem(), Some(triple));
+                let saved = release_lib_for_target(
+                    root,
+                    &format!("{}_plugin", p.dylib_stem()),
+                    Some(triple),
+                );
+                if src.exists() {
+                    fs::copy(&src, &saved)?;
+                }
             }
         }
-    }
 
-    if has_vst2 {
-        eprintln!("Building VST2...");
-        let mut build_args: Vec<&str> = Vec::new();
-        for p in plugins {
-            build_args.push("-p");
-            build_args.push(&p.crate_name);
+        if has_vst2 {
+            eprintln!("Building VST2 ({})...", arch.tag());
+            let mut build_args: Vec<String> =
+                vec!["--target".into(), triple.into()];
+            for p in plugins {
+                build_args.push("-p".into());
+                build_args.push(p.crate_name.clone());
+            }
+            build_args.extend_from_slice(&[
+                "--no-default-features".into(),
+                "--features".into(),
+                "vst2".into(),
+            ]);
+            let arg_refs: Vec<&str> = build_args.iter().map(|s| s.as_str()).collect();
+            cargo_build(&[], &arg_refs, dt)?;
+            for p in plugins {
+                let src = release_lib_for_target(root, &p.dylib_stem(), Some(triple));
+                let dst = release_lib_for_target(
+                    root,
+                    &format!("{}_vst2", p.dylib_stem()),
+                    Some(triple),
+                );
+                fs::copy(&src, &dst)?;
+            }
         }
-        build_args.extend_from_slice(&["--no-default-features", "--features", "vst2"]);
-        cargo_build(&[], &build_args, dt)?;
-        for p in plugins {
-            let src = release_lib(root, &p.dylib_stem());
-            let dst = release_lib(root, &format!("{}_vst2", p.dylib_stem()));
-            fs::copy(&src, &dst)?;
-        }
-    }
 
-    if has_aax {
-        eprintln!("Building AAX...");
-        let mut build_args: Vec<&str> = Vec::new();
-        for p in plugins {
-            build_args.push("-p");
-            build_args.push(&p.crate_name);
+        if has_aax {
+            eprintln!("Building AAX ({})...", arch.tag());
+            let mut build_args: Vec<String> =
+                vec!["--target".into(), triple.into()];
+            for p in plugins {
+                build_args.push("-p".into());
+                build_args.push(p.crate_name.clone());
+            }
+            build_args.extend_from_slice(&[
+                "--no-default-features".into(),
+                "--features".into(),
+                "aax".into(),
+            ]);
+            let arg_refs: Vec<&str> = build_args.iter().map(|s| s.as_str()).collect();
+            cargo_build(&[], &arg_refs, dt)?;
+            for p in plugins {
+                let src = release_lib_for_target(root, &p.dylib_stem(), Some(triple));
+                let dst = release_lib_for_target(
+                    root,
+                    &format!("{}_aax", p.dylib_stem()),
+                    Some(triple),
+                );
+                fs::copy(&src, &dst)?;
+            }
         }
-        build_args.extend_from_slice(&["--no-default-features", "--features", "aax"]);
-        cargo_build(&[], &build_args, dt)?;
-        for p in plugins {
-            let src = release_lib(root, &p.dylib_stem());
-            let dst = release_lib(root, &format!("{}_aax", p.dylib_stem()));
-            fs::copy(&src, &dst)?;
-        }
-    }
 
-    // Restore the CLAP/VST3 dylib at its canonical location since later
-    // format builds overwrote it.
-    if has_clap || has_vst3 {
-        for p in plugins {
-            let saved = release_lib(root, &format!("{}_plugin", p.dylib_stem()));
-            let dst = release_lib(root, &p.dylib_stem());
-            if saved.exists() {
-                fs::copy(&saved, &dst)?;
+        // Restore the CLAP/VST3 dylib at its canonical location since later
+        // format builds overwrote it.
+        if has_clap || has_vst3 {
+            for p in plugins {
+                let saved = release_lib_for_target(
+                    root,
+                    &format!("{}_plugin", p.dylib_stem()),
+                    Some(triple),
+                );
+                let dst = release_lib_for_target(root, &p.dylib_stem(), Some(triple));
+                if saved.exists() {
+                    fs::copy(&saved, &dst)?;
+                }
             }
         }
     }
@@ -296,42 +440,40 @@ fn build_all_formats(
 // ---------------------------------------------------------------------------
 
 struct StagedPlugin {
-    /// Files to feed signtool. Order matters for AAX: inner binaries first,
-    /// then the outer bundle root (signtool doesn't sign directories but the
-    /// ordering convention is preserved for future use).
+    /// Files to feed signtool for one arch's staging pass.
     signable: Vec<PathBuf>,
 }
 
+/// Stage a single plugin for one architecture. Multi-arch packaging calls
+/// this once per arch; the bundle formats (VST3, AAX) accumulate arch-scoped
+/// subdirectories in the same bundle root across calls.
 fn stage_plugin(
     root: &Path,
     p: &PluginDef,
     config: &Config,
     formats: &[PkgFormat],
     staging: &Path,
+    arch: TargetArch,
 ) -> std::result::Result<StagedPlugin, crate::BoxErr> {
     let mut signable = Vec::new();
     for fmt in formats {
-        eprint!("  Staging {}... ", fmt.label());
+        eprint!("  Staging {} ({})... ", fmt.label(), arch.tag());
         match fmt {
             PkgFormat::Clap => {
-                signable.push(stage_clap(root, p, staging)?);
+                signable.push(stage_clap(root, p, staging, arch)?);
             }
             PkgFormat::Vst3 => {
-                signable.push(stage_vst3(root, p, staging)?);
+                signable.push(stage_vst3(root, p, staging, arch)?);
             }
             PkgFormat::Vst2 => {
-                signable.push(stage_vst2(root, p, staging)?);
+                signable.push(stage_vst2(root, p, staging, arch)?);
             }
             PkgFormat::Aax => {
-                let (wrapper, dylib) = stage_aax(root, p, config, staging)?;
-                // Sign the inner dylib first, then the wrapper. signtool doesn't
-                // care about order but Pro Tools' verification wants the wrapper
-                // signature to be the outermost.
+                let (wrapper, dylib) = stage_aax(root, p, config, staging, arch)?;
                 signable.push(dylib);
                 signable.push(wrapper);
             }
             PkgFormat::Au2 | PkgFormat::Au3 => {
-                // Filtered out upstream; keep the match exhaustive.
                 return Err("AU is macOS-only; should have been filtered".into());
             }
         }
@@ -340,57 +482,84 @@ fn stage_plugin(
     Ok(StagedPlugin { signable })
 }
 
-fn stage_clap(root: &Path, p: &PluginDef, staging: &Path) -> std::result::Result<PathBuf, crate::BoxErr> {
-    let dll = release_lib(root, &p.dylib_stem());
+fn stage_clap(
+    root: &Path,
+    p: &PluginDef,
+    staging: &Path,
+    arch: TargetArch,
+) -> std::result::Result<PathBuf, crate::BoxErr> {
+    let dll = release_lib_for_target(root, &p.dylib_stem(), Some(arch.triple()));
     if !dll.exists() {
         return Err(format!("Missing: {}", dll.display()).into());
     }
-    let dst_dir = staging.join("clap");
+    let dst_dir = staging.join("clap").join(arch.tag());
     fs::create_dir_all(&dst_dir)?;
     let dst = dst_dir.join(format!("{}.clap", p.name));
     fs::copy(&dll, &dst)?;
     Ok(dst)
 }
 
-fn stage_vst3(root: &Path, p: &PluginDef, staging: &Path) -> std::result::Result<PathBuf, crate::BoxErr> {
-    // VST3 on Windows is a bundle directory:
-    //   {name}.vst3/Contents/x86_64-win/{name}.vst3
-    // The inner file is the DLL with a .vst3 extension. The DAW loads that
-    // file directly, so signtool needs to sign the inner binary.
-    let dll = release_lib(root, &p.dylib_stem());
+fn stage_vst3(
+    root: &Path,
+    p: &PluginDef,
+    staging: &Path,
+    arch: TargetArch,
+) -> std::result::Result<PathBuf, crate::BoxErr> {
+    // VST3 on Windows is a bundle directory. Multi-arch bundles carry both
+    // arch subdirs side-by-side — the host picks at load time.
+    let dll = release_lib_for_target(root, &p.dylib_stem(), Some(arch.triple()));
     if !dll.exists() {
         return Err(format!("Missing: {}", dll.display()).into());
     }
     let bundle_root = staging.join("vst3");
     let bundle = bundle_root.join(format!("{}.vst3", p.name));
-    let arch_dir = bundle.join("Contents").join("x86_64-win");
+    let arch_dir = bundle.join("Contents").join(arch.vst3_bundle_subdir());
     fs::create_dir_all(&arch_dir)?;
     let inner = arch_dir.join(format!("{}.vst3", p.name));
     fs::copy(&dll, &inner)?;
     Ok(inner)
 }
 
-fn stage_vst2(root: &Path, p: &PluginDef, staging: &Path) -> std::result::Result<PathBuf, crate::BoxErr> {
-    let dll = release_lib(root, &format!("{}_vst2", p.dylib_stem()));
+fn stage_vst2(
+    root: &Path,
+    p: &PluginDef,
+    staging: &Path,
+    arch: TargetArch,
+) -> std::result::Result<PathBuf, crate::BoxErr> {
+    let dll = release_lib_for_target(
+        root,
+        &format!("{}_vst2", p.dylib_stem()),
+        Some(arch.triple()),
+    );
     if !dll.exists() {
         return Err(format!("Missing: {}", dll.display()).into());
     }
-    let dst_dir = staging.join("vst2");
+    let dst_dir = staging.join("vst2").join(arch.tag());
     fs::create_dir_all(&dst_dir)?;
     let dst = dst_dir.join(format!("{}.dll", p.name));
     fs::copy(&dll, &dst)?;
     Ok(dst)
 }
 
-/// Build/stage the AAX bundle. Returns `(wrapper_binary, resources_dylib)` so
-/// both get Authenticode-signed.
+/// Build/stage the AAX bundle for one architecture. Returns
+/// `(wrapper_binary, resources_dylib)` so both get Authenticode-signed.
+///
+/// For universal builds both archs end up side-by-side inside
+/// `{Name}.aaxplugin/Contents/{x64,arm64}/`, with arch-tagged Rust cdylibs
+/// in `Contents/Resources/` so they don't collide.
 fn stage_aax(
     root: &Path,
     p: &PluginDef,
     config: &Config,
     staging: &Path,
+    arch: TargetArch,
 ) -> std::result::Result<(PathBuf, PathBuf), crate::BoxErr> {
     // Build the template .aaxplugin wrapper if it isn't there yet.
+    //
+    // NOTE: the AAX template is currently only built for the host arch (x64)
+    // via vcvars64. Cross-compiling the template to ARM64 is not yet wired —
+    // it would need vcvars_arm64.bat. The ARM64 pass here will fail if the
+    // template isn't present; we surface that clearly rather than silently.
     let template = tmp_dir().join("aax_template/build/TruceAAXTemplate.aaxplugin");
     if !template.exists() {
         if let Some(sdk_path) = resolve_aax_sdk_path(config) {
@@ -408,21 +577,39 @@ fn stage_aax(
         return Err("AAX template build succeeded but binary not found".into());
     }
 
-    let dylib = release_lib(root, &format!("{}_aax", p.dylib_stem()));
+    let dylib = release_lib_for_target(
+        root,
+        &format!("{}_aax", p.dylib_stem()),
+        Some(arch.triple()),
+    );
     if !dylib.exists() {
-        return Err(format!("Missing: {}", dylib.display()).into());
+        return Err(format!(
+            "Missing AAX Rust cdylib for {}: {}",
+            arch.tag(),
+            dylib.display()
+        )
+        .into());
     }
 
     let bundle_root = staging.join("aax");
     let bundle = bundle_root.join(format!("{}.aaxplugin", p.name));
     let contents = bundle.join("Contents");
-    let x64_dir = contents.join("x64");
+    let arch_dir = contents.join(arch.aax_bundle_subdir());
     let resources_dir = contents.join("Resources");
-    fs::create_dir_all(&x64_dir)?;
+    fs::create_dir_all(&arch_dir)?;
     fs::create_dir_all(&resources_dir)?;
 
-    let wrapper = x64_dir.join(format!("{}.aaxplugin", p.name));
-    let resource_dll = resources_dir.join(format!("{}_aax.dll", p.dylib_stem()));
+    let wrapper = arch_dir.join(format!("{}.aaxplugin", p.name));
+    // Arch-tagged dylib so multi-arch bundles don't collide in Resources/.
+    // The bridge C++ code scans Resources/*.dll via FindFirstFileA and loads
+    // the first one whose arch matches the current process — arch tagging
+    // in the filename is purely for storage; the binary's own arch header
+    // determines what LoadLibrary accepts.
+    let resource_dll = resources_dir.join(format!(
+        "{}_aax_{}.dll",
+        p.dylib_stem(),
+        arch.tag()
+    ));
     fs::copy(&template, &wrapper)?;
     fs::copy(&dylib, &resource_dll)?;
 
@@ -504,14 +691,11 @@ fn sign_files(files: &[PathBuf], config: &WindowsSigningConfig) -> Res {
 }
 
 fn default_azure_dlib() -> String {
-    // Standard install path of the Azure.CodeSigning.Dlib.dll that ships with
-    // the "Trusted Signing Client Tools" redistributable.
     r"C:\Program Files\Microsoft Trusted Signing Client\bin\x64\Azure.CodeSigning.Dlib.dll"
         .to_string()
 }
 
 fn locate_signtool() -> Option<PathBuf> {
-    // Prefer signtool on %PATH%. Fallback: probe known Windows SDK locations.
     if let Ok(p) = which("signtool.exe") {
         return Some(p);
     }
@@ -524,10 +708,8 @@ fn locate_signtool() -> Option<PathBuf> {
             return Some(p);
         }
     }
-    // Check versioned SDK bins: bin\10.0.*\x64\signtool.exe
     let sdk_bin = PathBuf::from(r"C:\Program Files (x86)\Windows Kits\10\bin");
     if let Ok(entries) = fs::read_dir(&sdk_bin) {
-        // Take the highest-versioned subdir that contains x64\signtool.exe.
         let mut best: Option<PathBuf> = None;
         for e in entries.flatten() {
             let candidate = e.path().join(r"x64\signtool.exe");
@@ -572,8 +754,6 @@ pub(crate) fn locate_wraptool() -> Option<PathBuf> {
     None
 }
 
-/// Cross-platform equivalent of `where.exe`. Returns the first matching
-/// entry on `%PATH%`.
 fn which(name: &str) -> Result<PathBuf, std::io::Error> {
     let path = std::env::var_os("PATH").ok_or_else(|| {
         std::io::Error::new(std::io::ErrorKind::NotFound, "PATH not set")
@@ -644,11 +824,11 @@ fn pace_sign_aax(bundle: &Path) -> Res {
 // Inno Setup
 // ---------------------------------------------------------------------------
 
-/// Render the `.iss` installer script from config + selected formats.
 fn render_iss(
     config: &Config,
     p: &PluginDef,
     formats: &[PkgFormat],
+    archs: &[TargetArch],
     staging: &Path,
     version: &str,
     dist_dir: &Path,
@@ -667,9 +847,6 @@ fn render_iss(
         .or_else(|| config.vendor.url.clone())
         .unwrap_or_default();
 
-    // Stable AppId — drives Inno Setup's "same product? upgrade in place"
-    // behavior. Derived from vendor.id + suffix when the user hasn't
-    // overridden it.
     let app_id = config
         .windows
         .packaging
@@ -701,6 +878,8 @@ fn render_iss(
         .map(|s| root.join(s))
         .filter(|p| p.exists());
 
+    let universal = archs.len() > 1;
+
     let mut setup = String::new();
     setup.push_str("[Setup]\r\n");
     setup.push_str(&format!("AppId={{{{{}}}}}\r\n", iss_escape(&app_id)));
@@ -718,14 +897,24 @@ fn render_iss(
     setup.push_str("DisableDirPage=yes\r\n");
     setup.push_str(&format!("OutputDir={}\r\n", iss_escape_path(dist_dir)));
     setup.push_str(&format!(
-        "OutputBaseFilename={}-{}-windows-x64\r\n",
+        "OutputBaseFilename={}-{}-windows\r\n",
         iss_escape(&p.name),
         iss_escape(version),
     ));
     setup.push_str("Compression=lzma2\r\n");
     setup.push_str("SolidCompression=yes\r\n");
-    setup.push_str("ArchitecturesInstallIn64BitMode=x64compatible\r\n");
-    setup.push_str("ArchitecturesAllowed=x64compatible\r\n");
+    if universal {
+        // x64compatible includes both x64 and ARM64 hosts; that's what we want
+        // for a universal installer. Inno Setup 6.3+ exposes IsArm64 so [Files]
+        // entries can split on arch.
+        setup.push_str("ArchitecturesInstallIn64BitMode=x64compatible\r\n");
+        setup.push_str("ArchitecturesAllowed=x64compatible\r\n");
+    } else {
+        // Single-arch x64 installer. Explicitly rule out ARM64 so the installer
+        // doesn't run on machines where none of its binaries would work.
+        setup.push_str("ArchitecturesInstallIn64BitMode=x64compatible\r\n");
+        setup.push_str("ArchitecturesAllowed=x64compatible and not arm64\r\n");
+    }
     setup.push_str("PrivilegesRequired=admin\r\n");
     setup.push_str("WizardStyle=modern\r\n");
     setup.push_str("UninstallDisplayName=");
@@ -742,13 +931,12 @@ fn render_iss(
     }
     setup.push_str("\r\n");
 
-    // [Components] — one per format, so end users can uncheck formats they
-    // don't want. `default` is checked on first install; `Types: full`
-    // includes the format in the Full install type.
+    // [Types] — full vs custom
     setup.push_str("[Types]\r\n");
     setup.push_str("Name: \"full\"; Description: \"Full installation\"\r\n");
     setup.push_str("Name: \"custom\"; Description: \"Custom installation\"; Flags: iscustom\r\n\r\n");
 
+    // [Components] — one per format.
     setup.push_str("[Components]\r\n");
     for fmt in formats {
         let (name, desc, types) = iss_component_spec(fmt);
@@ -759,18 +947,17 @@ fn render_iss(
     }
     setup.push_str("\r\n");
 
-    // [Files] — one block per format.
+    // [Files] — one block per format × arch.
     setup.push_str("[Files]\r\n");
     for fmt in formats {
-        let block = iss_files_block(fmt, p, staging);
-        setup.push_str(&block);
+        for &arch in archs {
+            let block = iss_files_block(fmt, p, staging, arch, universal);
+            setup.push_str(&block);
+        }
     }
     setup.push_str("\r\n");
 
-    // [UninstallDelete] — Inno removes every file it installed on uninstall.
-    // For bundle directories (.vst3, .aaxplugin) that's the root dir itself;
-    // use `filesandordirs` so any cache files the DAW wrote inside the
-    // bundle also get cleaned up.
+    // [UninstallDelete] — per-format (bundle dirs get wholesale cleanup).
     setup.push_str("[UninstallDelete]\r\n");
     for fmt in formats {
         if let Some(line) = iss_uninstall_line(fmt, &p.name) {
@@ -792,49 +979,100 @@ fn iss_component_spec(fmt: &PkgFormat) -> (&'static str, &'static str, &'static 
     }
 }
 
-fn iss_files_block(fmt: &PkgFormat, p: &PluginDef, staging: &Path) -> String {
+/// Build the `[Files]` entries for one format × arch. For single-file formats
+/// (CLAP, VST2) we gate with a `Check:` directive so only the matching arch's
+/// DLL is installed on a given machine. Bundle formats (VST3, AAX) install
+/// both archs side-by-side; the host picks at load time.
+fn iss_files_block(
+    fmt: &PkgFormat,
+    p: &PluginDef,
+    staging: &Path,
+    arch: TargetArch,
+    universal: bool,
+) -> String {
+    // For single-arch installers the Check: directive is unnecessary — drop it
+    // so the output .iss stays simple.
+    let check_clause = if universal {
+        format!(" Check: {};", arch.iss_check())
+    } else {
+        String::new()
+    };
+
     match fmt {
         PkgFormat::Clap => {
-            let src = staging.join("clap").join(format!("{}.clap", p.name));
+            let src = staging
+                .join("clap")
+                .join(arch.tag())
+                .join(format!("{}.clap", p.name));
             format!(
                 "Source: \"{src}\"; DestDir: \"{{commoncf}}\\CLAP\"; \
-                 Components: clap; Flags: ignoreversion overwritereadonly\r\n",
+                 Components: clap;{check_clause} Flags: ignoreversion overwritereadonly\r\n",
                 src = iss_escape_path(&src),
+                check_clause = check_clause,
             )
         }
         PkgFormat::Vst3 => {
-            // Bundle directory: copy recursively into a destination dir named
-            // after the plugin so the bundle's subdirectories land correctly.
+            // Bundle: copy just this arch's sub-directory. No Check: — hosts
+            // of either arch can coexist on ARM64 machines (x64 hosts run via
+            // emulation), so both sub-dirs should always be present.
             let src_dir = staging
                 .join("vst3")
-                .join(format!("{}.vst3", p.name));
+                .join(format!("{}.vst3", p.name))
+                .join("Contents")
+                .join(arch.vst3_bundle_subdir());
             let src_glob = src_dir.join("*");
             format!(
-                "Source: \"{src}\"; DestDir: \"{{commoncf}}\\VST3\\{name}.vst3\"; \
+                "Source: \"{src}\"; \
+                 DestDir: \"{{commoncf}}\\VST3\\{name}.vst3\\Contents\\{subdir}\"; \
                  Components: vst3; Flags: ignoreversion overwritereadonly recursesubdirs createallsubdirs\r\n",
                 src = iss_escape_path(&src_glob),
                 name = iss_escape(&p.name),
+                subdir = arch.vst3_bundle_subdir(),
             )
         }
         PkgFormat::Vst2 => {
-            let src = staging.join("vst2").join(format!("{}.dll", p.name));
+            let src = staging
+                .join("vst2")
+                .join(arch.tag())
+                .join(format!("{}.dll", p.name));
             format!(
                 "Source: \"{src}\"; DestDir: \"{{pf}}\\Steinberg\\VstPlugins\"; \
-                 Components: vst2; Flags: ignoreversion overwritereadonly\r\n",
+                 Components: vst2;{check_clause} Flags: ignoreversion overwritereadonly\r\n",
                 src = iss_escape_path(&src),
+                check_clause = check_clause,
             )
         }
         PkgFormat::Aax => {
-            let src_dir = staging
+            // AAX bundle: arch subdir + arch-tagged resource DLL.
+            let src_arch_dir = staging
                 .join("aax")
-                .join(format!("{}.aaxplugin", p.name));
-            let src_glob = src_dir.join("*");
-            format!(
-                "Source: \"{src}\"; DestDir: \"{{commoncf}}\\Avid\\Audio\\Plug-Ins\\{name}.aaxplugin\"; \
+                .join(format!("{}.aaxplugin", p.name))
+                .join("Contents")
+                .join(arch.aax_bundle_subdir());
+            let src_arch_glob = src_arch_dir.join("*");
+            let resource_dll = staging
+                .join("aax")
+                .join(format!("{}.aaxplugin", p.name))
+                .join("Contents")
+                .join("Resources")
+                .join(format!("{}_aax_{}.dll", p.dylib_stem(), arch.tag()));
+            let mut out = String::new();
+            out.push_str(&format!(
+                "Source: \"{src}\"; \
+                 DestDir: \"{{commoncf}}\\Avid\\Audio\\Plug-Ins\\{name}.aaxplugin\\Contents\\{subdir}\"; \
                  Components: aax; Flags: ignoreversion overwritereadonly recursesubdirs createallsubdirs\r\n",
-                src = iss_escape_path(&src_glob),
+                src = iss_escape_path(&src_arch_glob),
                 name = iss_escape(&p.name),
-            )
+                subdir = arch.aax_bundle_subdir(),
+            ));
+            out.push_str(&format!(
+                "Source: \"{src}\"; \
+                 DestDir: \"{{commoncf}}\\Avid\\Audio\\Plug-Ins\\{name}.aaxplugin\\Contents\\Resources\"; \
+                 Components: aax; Flags: ignoreversion overwritereadonly\r\n",
+                src = iss_escape_path(&resource_dll),
+                name = iss_escape(&p.name),
+            ));
+            out
         }
         PkgFormat::Au2 | PkgFormat::Au3 => unreachable!(),
     }
@@ -850,7 +1088,6 @@ fn iss_uninstall_line(fmt: &PkgFormat, plugin_name: &str) -> Option<String> {
             "Type: filesandordirs; Name: \"{{commoncf}}\\Avid\\Audio\\Plug-Ins\\{}.aaxplugin\"; Components: aax",
             iss_escape(plugin_name)
         )),
-        // CLAP/VST2 are single files; Inno's per-file uninstall handles them.
         _ => None,
     }
 }
@@ -872,17 +1109,10 @@ fn run_iscc(iss_path: &Path) -> Res {
 // .iss value escaping
 // ---------------------------------------------------------------------------
 
-/// Escape a string value for Inno Setup. Inno Setup's .iss parser treats
-/// `"` as the string delimiter — there's no backslash escape, instead you
-/// double the quote. Most paths avoid quotes entirely but plugin names
-/// could contain them, so we handle it.
 fn iss_escape(s: &str) -> String {
     s.replace('"', "\"\"")
 }
 
-/// Escape a filesystem path for inclusion in an `.iss` string literal.
-/// Inno Setup wants native backslashes, so we make sure paths are normalized
-/// that way (helpful when paths came from cross-platform code that used `/`).
 fn iss_escape_path(p: &Path) -> String {
     let s = p.display().to_string();
     let s = s.replace('/', "\\");
@@ -890,11 +1120,9 @@ fn iss_escape_path(p: &Path) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Doctor hook (called from cmd_doctor)
+// Doctor hook
 // ---------------------------------------------------------------------------
 
-/// Pretty-print packaging-tool availability. Called from the Windows branch
-/// of `cmd_doctor` so `cargo xtask doctor` shows a single unified status.
 pub(crate) fn doctor() {
     match locate_iscc() {
         Some(p) => eprintln!("    ✅ Inno Setup 6 (ISCC.exe) at {}", p.display()),
@@ -914,10 +1142,53 @@ pub(crate) fn doctor() {
             "    ℹ️  wraptool.exe not found — only needed for signed AAX builds"
         ),
     }
+
+    // ARM64 readiness for --universal.
+    let has_rust_arm64 = rustup_has_target("aarch64-pc-windows-msvc");
+    let has_msvc_arm64 = has_arm64_msvc_toolchain();
+    match (has_rust_arm64, has_msvc_arm64) {
+        (true, true) => eprintln!(
+            "    ✅ ARM64 cross-compile available — `cargo truce package --universal` will produce dual-arch installers"
+        ),
+        (true, false) => eprintln!(
+            "    ⚠️  Rust has aarch64-pc-windows-msvc but VS is missing the ARM64 MSVC toolchain — C++ shims won't cross-compile. Install \"MSVC v143 - VS 2022 C++ ARM64/ARM64EC build tools\" via the VS Installer."
+        ),
+        (false, true) => eprintln!(
+            "    ⚠️  VS has ARM64 MSVC but the Rust target isn't installed — run: rustup target add aarch64-pc-windows-msvc"
+        ),
+        (false, false) => eprintln!(
+            "    ℹ️  ARM64 cross-compile not set up (only needed for `--universal`). Add the Rust target and the VS ARM64 toolchain — see `cargo truce package --help`."
+        ),
+    }
 }
 
-// Suppress unused-import warnings when helpers aren't wired yet.
-#[allow(dead_code)]
-fn _unused_ref() {
-    let _ = (common_program_files, program_files, copy_dir_recursive);
+fn rustup_has_target(triple: &str) -> bool {
+    let out = Command::new("rustup")
+        .args(["target", "list", "--installed"])
+        .output();
+    match out {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout)
+            .lines()
+            .any(|l| l.trim() == triple),
+        _ => false,
+    }
+}
+
+/// Look for an `arm64` lib directory under any VS MSVC toolchain version.
+/// Presence of the lib dir is a reliable signal that the "ARM64 build tools"
+/// component was installed. We don't require the cross-compiler binary to
+/// live in a specific path — cc/build will locate it via vcvars_arm64.bat
+/// when the Rust target triple requests it.
+fn has_arm64_msvc_toolchain() -> bool {
+    for vs_root in crate::vs_install_paths() {
+        let msvc_root = vs_root.join(r"VC\Tools\MSVC");
+        if let Ok(versions) = fs::read_dir(&msvc_root) {
+            for v in versions.flatten() {
+                if v.path().join(r"lib\arm64").is_dir() {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
