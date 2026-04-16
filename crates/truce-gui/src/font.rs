@@ -8,8 +8,11 @@ use std::sync::Mutex;
 
 /// JetBrains Mono Regular TrueType font data.
 ///
-/// Shared across all GUI backends for consistent text rendering.
-pub static JETBRAINS_MONO: &[u8] = include_bytes!("../fonts/JetBrainsMono-Regular.ttf");
+/// Shared across all GUI backends for consistent text rendering. The
+/// canonical TTF lives at the workspace root under `fonts/`; see
+/// docs/internal/dedup-fonts.md.
+pub static JETBRAINS_MONO: &[u8] =
+    include_bytes!("../../../fonts/JetBrainsMono-Regular.ttf");
 
 /// Cached rasterized glyph.
 struct CachedGlyph {
