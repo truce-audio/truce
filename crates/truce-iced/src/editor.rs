@@ -715,6 +715,14 @@ impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBase
                     baseview::MouseEvent::ButtonPressed {
                         button: baseview::MouseButton::Left, ..
                     } => {
+                        // Child plugin window needs focus to receive WM_KEYDOWN
+                        // on Windows. See truce-egui editor.rs for rationale.
+                        #[cfg(target_os = "windows")]
+                        {
+                            if !_window.has_focus() {
+                                _window.focus();
+                            }
+                        }
                         runtime.mouse_left_pressed = true;
                         runtime.pending_events.push(Event::Mouse(
                             iced::mouse::Event::ButtonPressed(iced::mouse::Button::Left),

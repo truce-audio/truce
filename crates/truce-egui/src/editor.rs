@@ -253,6 +253,17 @@ impl WindowHandler for EguiWindowHandler {
                         EventStatus::Captured
                     }
                     ButtonPressed { button, modifiers } => {
+                        // On Windows, a WS_CHILD plugin window doesn't receive
+                        // WM_KEYDOWN/WM_CHAR until it has HWND focus. baseview
+                        // doesn't SetFocus on mouse-down, so we do it here —
+                        // otherwise text-edit widgets never see keystrokes
+                        // (the DAW keeps eating them for transport etc.).
+                        #[cfg(target_os = "windows")]
+                        {
+                            if !_window.has_focus() {
+                                _window.focus();
+                            }
+                        }
                         self.modifiers = convert_kb_modifiers(&modifiers);
                         if let Some(btn) = convert_mouse_button(&button) {
                             self.pending_events.push(egui::Event::PointerButton {

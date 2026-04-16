@@ -940,6 +940,15 @@ impl<P: Params + 'static> baseview::WindowHandler for BuiltinWindowHandler<P> {
                     baseview::MouseEvent::ButtonPressed {
                         button: baseview::MouseButton::Left, ..
                     } => {
+                        // WS_CHILD plugin windows don't receive WM_KEYDOWN
+                        // until focused; baseview doesn't SetFocus on click,
+                        // so we do it here. See truce-egui editor.rs.
+                        #[cfg(target_os = "windows")]
+                        {
+                            if !_window.has_focus() {
+                                _window.focus();
+                            }
+                        }
                         let (x, y) = self.last_cursor;
                         // Double-click detection (300ms, 4px threshold)
                         let now = std::time::Instant::now();

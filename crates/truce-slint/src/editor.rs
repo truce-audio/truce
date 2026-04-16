@@ -163,6 +163,14 @@ impl WindowHandler for SlintWindowHandler {
                         button: baseview::MouseButton::Left,
                         ..
                     } => {
+                        // Child plugin window needs focus to receive WM_KEYDOWN
+                        // on Windows. See truce-egui editor.rs for rationale.
+                        #[cfg(target_os = "windows")]
+                        {
+                            if !_window.has_focus() {
+                                _window.focus();
+                            }
+                        }
                         self.slint_window.window().dispatch_event(
                             WindowEvent::PointerPressed {
                                 position: self.last_pos,
