@@ -36,6 +36,23 @@ cargo truce test                 # run tests
 cargo truce validate             # auval + pluginval + clap-validator
 ```
 
+Ship it — produce a signed distributable installer:
+
+```sh
+cargo truce package              # signed .pkg (macOS) or Inno Setup .exe (Windows)
+                                 # → dist/<Plugin>-<version>-<platform>.{pkg,exe}
+
+cargo truce package -p my-plugin --formats clap,vst3,aax   # subset
+cargo truce package --no-sign                              # dev builds, skip signing
+```
+
+On macOS this runs `pkgbuild` + `productbuild` with Developer ID signing
+and optional notarization. On Windows it stages each format,
+Authenticode-signs via `signtool`, PACE-signs AAX via `wraptool`, and
+compiles an Inno Setup installer via `ISCC.exe`. Credentials (Developer
+ID / Azure Trusted Signing / cert thumbprint / `.pfx`) are configured
+per-platform in `truce.toml`.
+
 Scaffolded plugins default to **CLAP + VST3**. VST2, AU, and AAX are
 opt-in per plugin via `Cargo.toml` features. On Windows, `cargo truce
 install` must be run from an Administrator command prompt (plugin
