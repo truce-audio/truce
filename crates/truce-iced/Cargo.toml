@@ -16,6 +16,8 @@ iced_runtime = "0.13"
 iced_wgpu = "0.13"
 iced_graphics = "0.13"
 pollster = "0.4"
+baseview = { git = "https://github.com/RustAudio/baseview.git" }
+raw-window-handle = "0.5"
 
 [build-dependencies]
 cc = "1"

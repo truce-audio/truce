@@ -6297,12 +6297,14 @@ dependencies = [
 name = "truce-iced"
 version = "0.2.0"
 dependencies = [
+ "baseview",
  "cc",
  "iced",
  "iced_graphics",
  "iced_runtime",
  "iced_wgpu",
  "pollster",
+ "raw-window-handle 0.5.2",
  "truce-core",
  "truce-gui",
  "truce-params",
