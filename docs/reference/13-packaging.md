@@ -12,12 +12,13 @@ On macOS this is a `.pkg`. On Windows it's an Inno Setup `.exe`. Both end up in 
 cargo truce package                          # all default-feature formats, sign, notarize
 cargo truce package -p gain                  # single plugin
 cargo truce package --formats clap,vst3,aax  # subset of formats
+cargo truce package --universal              # Windows: dual-arch x64+ARM64 installer
 cargo truce package --no-sign                # skip Authenticode/codesign (dev)
 cargo truce package --no-installer           # Windows: stage files, skip ISCC
 cargo truce package --no-notarize            # macOS: skip Apple notarization
 ```
 
-Output: `dist/<PluginName>-<version>-macos.pkg` or `dist/<PluginName>-<version>-windows-x64.exe`. Version comes from `[workspace.package] version` or `[package] version` in `Cargo.toml`.
+Output: `dist/<PluginName>-<version>-macos.pkg` or `dist/<PluginName>-<version>-windows.exe`. Version comes from `[workspace.package] version` or `[package] version` in `Cargo.toml`.
 
 ---
 
