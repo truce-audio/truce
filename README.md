@@ -137,10 +137,11 @@ By platform:
 | VST2   | Yes   | Yes     | Planned |
 | AU v2  | Yes   | —       | —       |
 | AU v3  | Yes   | —       | —       |
-| AAX    | Yes   | Partial | —       |
+| AAX    | Yes   | Yes     | —       |
 
-AU is macOS-only by design. AAX template builds on Windows aren't
-implemented yet. VST2 is opt-in on all platforms — see note below.
+AU is macOS-only by design. AAX requires the Avid AAX SDK and PACE/iLok
+signing for retail Pro Tools releases. VST2 is opt-in on all platforms —
+see note below.
 
 By host (macOS + Windows combined):
 
@@ -183,6 +184,7 @@ By host (macOS + Windows combined):
 - **Declarative params** — `#[derive(Params)]` + `#[param(...)]` with smoothing, ranges, units
 - **`truce::plugin!`** — one macro generates all format exports + GUI + state serialization
 - **`cargo truce`** — build, bundle, sign, install, validate, clean
+- **`cargo truce package`** — signed distributable installers on both platforms (`.pkg` with notarization on macOS; Inno Setup `.exe` with Authenticode on Windows)
 - **Zero-copy audio** — format wrappers pass host buffers directly
 - **Thread-safe params** — atomic storage, lock-free access from any thread
 - **Automated tests** — render, state, params, GUI screenshots, binary validation
