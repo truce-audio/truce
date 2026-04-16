@@ -202,6 +202,55 @@ Inno Setup generates `unins000.exe` next to the install directory and registers 
 "C:\Program Files\<publisher>\<plugin>\unins000.exe" /VERYSILENT /SUPPRESSMSGBOXES
 ```
 
+### Universal (x64 + ARM64) installers
+
+`cargo truce package --universal` produces a single Windows installer that runs on both x64 and ARM64 machines. Conceptually it's two complete builds stitched into one `.exe`:
+
+```
+Truce Gain-0.3.0-windows.exe            # one installer, both archs
+├── CLAP / VST2 (single-file formats)
+│     Inno Setup's Check: directive installs only the matching DLL
+│     (Check: IsArm64 vs Check: not IsArm64)
+└── VST3 / AAX (bundle formats)
+      Both arch sub-directories installed side-by-side:
+        Plugin.vst3/Contents/x86_64-win/Plugin.vst3
+        Plugin.vst3/Contents/arm64-win/Plugin.vst3
+        Plugin.aaxplugin/Contents/x64/Plugin.aaxplugin
+        Plugin.aaxplugin/Contents/arm64/Plugin.aaxplugin
+      The host chooses the right one at load time.
+```
+
+Windows PE doesn't have a fat-binary equivalent to macOS Mach-O, so every approach compiles both arches separately. `--universal` just bundles and installs them correctly.
+
+Requirements on the build machine:
+
+1. **Rust target**: `rustup target add aarch64-pc-windows-msvc`
+2. **VS ARM64 MSVC toolchain**: install "MSVC v143 - VS 2022 C++ ARM64/ARM64EC build tools" and "Windows 11 SDK (ARM64)" via the Visual Studio Installer.
+
+`cargo truce doctor` reports whether both are in place.
+
+Limitations:
+
+- **AAX**: Avid's AAX SDK 2.9 ships x64 libs only. An ARM64 AAX build is attempted with `--universal` but usually fails to link — drop `aax` from `--formats` if you're not interested in ARM64 AAX. Universal VST3/VST2/CLAP works fully.
+- **Installer size**: roughly 1.7–2× a single-arch installer (lzma2 compresses well but it's still two full Rust binaries).
+- **AAX Resources directory**: because the Rust cdylib filename would clash between archs in a shared `Resources/` dir, `--universal` AAX builds tag the filename with the arch (`{stem}_aax_x64.dll`, `{stem}_aax_arm64.dll`). The bridge C++ code discovers them via `FindFirstFileA` so the naming doesn't matter to the host.
+
+Example `.iss` fragment for CLAP with `--universal`:
+
+```ini
+[Files]
+Source: "...\clap\x64\Plugin.clap"; DestDir: "{commoncf}\CLAP";
+  Components: clap; Check: not IsArm64; Flags: ignoreversion overwritereadonly
+Source: "...\clap\arm64\Plugin.clap"; DestDir: "{commoncf}\CLAP";
+  Components: clap; Check: IsArm64; Flags: ignoreversion overwritereadonly
+```
+
+`IsArm64` is a Pascal predicate available from Inno Setup 6.3 onward — the xtask requires Inno Setup 6.3+ when `--universal` is passed.
+
+### aarch64-apple-darwin from Windows?
+
+Not supported. Apple's toolchain is required, and the SDK isn't redistributable outside macOS. Build the macOS universal on a Mac.
+
 ---
 
 ## What gets packaged

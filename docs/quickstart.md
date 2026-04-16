@@ -212,7 +212,7 @@ You'll find the installer in `dist/`:
 - **macOS**: `dist/MyGain-0.1.0-macos.pkg` — a `.pkg` installer with
   format-selection checkboxes, Developer ID signing, and (if configured)
   notarization + stapling.
-- **Windows**: `dist/My Gain-0.1.0-windows-x64.exe` — an Inno Setup
+- **Windows**: `dist/My Gain-0.1.0-windows.exe` — an Inno Setup
   installer with per-format components, Authenticode signing, and a
   registered uninstaller.
 
