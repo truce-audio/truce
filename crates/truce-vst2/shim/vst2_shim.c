@@ -348,13 +348,15 @@ AEffect* VSTPluginMain(audioMasterCallback audioMaster);
 
 VST2_EXPORT
 AEffect* VSTPluginMain(audioMasterCallback audioMaster) {
+    vst2_log("VSTPluginMain called");
     /* Check host VST version */
     if (audioMaster) {
         VstIntPtr hostVer = audioMaster(NULL, audioMasterVersion, 0, 0, NULL, 0.0f);
-        if (hostVer == 0) return NULL; /* Host doesn't support VST2.4 */
+        if (hostVer == 0) { vst2_log("host VST version check failed"); return NULL; }
     }
 
-    if (!g_vst2_descriptor || !g_vst2_callbacks) return NULL;
+    if (!g_vst2_descriptor || !g_vst2_callbacks) { vst2_log("no descriptor or callbacks"); return NULL; }
+    vst2_log("VSTPluginMain returning AEffect");
 
     TruceVst2* inst = (TruceVst2*)calloc(1, sizeof(TruceVst2));
     if (!inst) return NULL;

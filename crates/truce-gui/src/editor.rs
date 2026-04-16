@@ -807,7 +807,13 @@ pub unsafe fn update_interaction<P: Params + 'static>(editor: &mut BuiltinEditor
 // autorelease crashes with multiple editor windows.
 // Otherwise: blits via wgpu fullscreen triangle.
 
-fn create_wgpu_backend(window: &mut baseview::Window, phys_w: u32, phys_h: u32) -> BlitBackend {
+fn create_wgpu_backend(
+    window: &mut baseview::Window,
+    phys_w: u32,
+    phys_h: u32,
+    logical_w: u32,
+    logical_h: u32,
+) -> BlitBackend {
     let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
         backends: wgpu::Backends::PRIMARY,
         ..Default::default()
@@ -849,7 +855,11 @@ fn create_wgpu_backend(window: &mut baseview::Window, phys_w: u32, phys_h: u32) 
     };
     surface.configure(&device, &surface_config);
 
-    let blit = crate::blit::BlitPipeline::new(&device, format, phys_w, phys_h);
+    // Blit texture is sized to the CPU pixmap (logical dimensions), not the
+    // surface. The shader samples with UV in [0,1] so it stretches to fill
+    // whatever the surface size is. This avoids a width/height mismatch
+    // between the uploaded bytes and the texture layout.
+    let blit = crate::blit::BlitPipeline::new(&device, format, logical_w, logical_h);
 
     BlitBackend::Wgpu { device, queue, surface, surface_config, blit }
 }
@@ -978,11 +988,12 @@ impl<P: Params + 'static> baseview::WindowHandler for BuiltinWindowHandler<P> {
                     BlitBackend::CoreGraphics(cg) => {
                         cg.resize(pw, ph);
                     }
-                    BlitBackend::Wgpu { device, surface, surface_config, blit, .. } => {
+                    BlitBackend::Wgpu { device, surface, surface_config, .. } => {
                         surface_config.width = pw;
                         surface_config.height = ph;
                         surface.configure(device, surface_config);
-                        blit.resize(device, pw, ph);
+                        // Blit texture stays at pixmap (logical) size — the
+                        // shader stretches it to fill the surface.
                     }
                 }
                 baseview::EventStatus::Captured
@@ -1125,7 +1136,31 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
             &parent_wrapper,
             options,
             move |window: &mut baseview::Window| {
-                let backend = create_wgpu_backend(window, phys_w, phys_h);
+                let mut backend = create_wgpu_backend(window, phys_w, phys_h, w, h);
+
+                // Render + present an initial frame synchronously, before
+                // baseview shows the window. Without this, the window briefly
+                // displays whatever garbage is in the surface buffer until the
+                // first `on_frame` tick — especially noticeable on VST2
+                // (Windows), where `effEditOpen` creates and shows the window
+                // in one call.
+                let editor = unsafe { &mut *(editor_addr as *mut BuiltinEditor<P>) };
+                editor.render();
+                if let Some(pixels) = editor.pixel_data() {
+                    if let BlitBackend::Wgpu { device, queue, surface, blit, .. } = &mut backend {
+                        blit.update(queue, pixels);
+                        if let Ok(frame) = surface.get_current_texture() {
+                            let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+                            let mut encoder = device.create_command_encoder(
+                                &wgpu::CommandEncoderDescriptor { label: None },
+                            );
+                            blit.render(&mut encoder, &view);
+                            queue.submit(std::iter::once(encoder.finish()));
+                            frame.present();
+                        }
+                    }
+                }
+
                 BuiltinWindowHandler {
                     editor: editor_addr as *mut BuiltinEditor<P>,
                     backend,

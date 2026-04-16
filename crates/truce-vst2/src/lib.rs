@@ -91,6 +91,13 @@ unsafe extern "C" fn cb_reset<P: PluginExport>(
     inst.plugin.params().set_sample_rate(sample_rate);
     inst.plugin.params().snap_smoothers();
 
+    // Mark the instance as "fully initialized" so any subsequent
+    // `cb_gui_open` calls open the editor immediately rather than
+    // deferring. This covers the fresh-instance case where the host
+    // calls `effMainsChanged(true)` (→ this reset) but never calls
+    // `effSetChunk` because there's no saved state.
+    inst.state_loaded = true;
+
     // If the host opened the editor before state_load but never called
     // state_load (new instance, no saved state), flush the pending open now.
     if let Some(parent) = inst.pending_editor_parent.take() {

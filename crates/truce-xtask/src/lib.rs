@@ -664,6 +664,16 @@ fn common_program_files() -> PathBuf {
     }
 }
 
+/// Return the Windows `%PROGRAMFILES%` directory (typically `C:\Program Files`).
+#[cfg(target_os = "windows")]
+fn program_files() -> PathBuf {
+    if let Ok(v) = env::var("ProgramFiles") {
+        PathBuf::from(v)
+    } else {
+        PathBuf::from(r"C:\Program Files")
+    }
+}
+
 fn default_au_tag() -> String {
     "Effects".to_string()
 }
@@ -1280,8 +1290,9 @@ fn install_vst2(root: &Path, p: &PluginDef, config: &Config) -> Res {
 
     #[cfg(target_os = "windows")]
     {
-        // VST2 on Windows: %COMMONPROGRAMFILES%\VST\{name}.dll
-        let vst_dir = common_program_files().join("VST");
+        // VST2 on Windows: %PROGRAMFILES%\Steinberg\VstPlugins\{name}.dll
+        // This is the Steinberg default path that Reaper and most hosts scan by default.
+        let vst_dir = program_files().join("Steinberg").join("VstPlugins");
         fs::create_dir_all(&vst_dir)?;
         let dst = vst_dir.join(format!("{}.dll", p.name));
         fs::copy(&dylib, &dst)?;
