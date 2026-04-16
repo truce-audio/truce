@@ -248,15 +248,9 @@ au_subtype = "MyFx"
 - Rust 1.75+ (`rustup update`). Slint integration requires 1.88+.
 - **macOS**: Xcode CLI tools (`xcode-select --install`). Full Xcode for AU v3.
 - **Windows**: MSVC build tools (Visual Studio 2019+ with the "Desktop
-  development with C++" workload). The Rust `x86_64-pc-windows-msvc`
-  toolchain is required. WSL users must install Rust natively on
-  Windows, not inside WSL. `cargo truce install` requires an
-  Administrator command prompt.
-- **Linux**: Format wrappers are not yet implemented. Scaffolding and
-  standalone mode work; full format support is planned.
+  development with C++" workload). Rust `x86_64-pc-windows-msvc`
+  toolchain is required. 
 - AAX: Avid AAX SDK (optional, obtain from [developer.avid.com](https://developer.avid.com)).
-  AAX on Windows is partially supported — the shim compiles but the
-  AAX template cmake build hasn't been ported to MSVC yet.
 
 ## License
 
