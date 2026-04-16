@@ -1,5 +1,28 @@
 ## Build, install, standalone
 
+### Format opt-in
+
+Scaffolded plugins enable **CLAP** and **VST3** by default. **VST2**, **AU**, and **AAX** are opt-in — you enable them per plugin in `Cargo.toml`:
+
+```toml
+[features]
+default = ["clap", "vst3"]
+clap = ["dep:truce-clap", "dep:clap-sys"]
+vst3 = ["dep:truce-vst3"]
+vst2 = ["dep:truce-vst2"]    # opt-in
+au   = ["dep:truce-au"]      # opt-in (macOS only)
+aax  = ["dep:truce-aax"]     # opt-in (needs AAX SDK)
+```
+
+To build with an opt-in format, either add it to `default`, or pass it as a flag to `cargo truce install`:
+
+```sh
+cargo truce install --vst2
+cargo truce install --clap --vst3 --vst2  # mix and match
+```
+
+> ⚠️ **VST2 is a legacy format.** Steinberg deprecated the VST2 SDK in late 2018. Distributing VST2 plugins may require agreement with Steinberg's licensing terms. Enable `vst2` only if you understand the implications. Truce's VST2 support uses a clean-room shim (no Steinberg SDK headers), but the VST trademark and logo usage are still licensed by Steinberg.
+
 ### Configuration
 
 Before building, create a `truce.toml` in your project root:
@@ -62,17 +85,19 @@ but env vars are preferred.
 The recommended way to build and install plugins:
 
 ```sh
-# Build and install all formats (CLAP + VST3 + VST2 + AU v2 + AU v3 + AAX)
+# Build and install the formats in your plugin's default features
+# (scaffolded plugins default to CLAP + VST3)
 cargo truce install
 
-# Install specific formats
+# Install specific formats (these also opt in — VST2, AU, AAX are NOT in the
+# scaffolded defaults and must be enabled either here or in Cargo.toml)
 cargo truce install --clap       # CLAP only (no sudo needed)
 cargo truce install --vst3       # VST3 only
-cargo truce install --vst2       # VST2 only
+cargo truce install --vst2       # VST2 only (legacy, see note below)
 cargo truce install --au2        # AU v2 only (.component, needs Developer ID)
 cargo truce install --au3        # AU v3 only (.appex, requires Xcode)
 cargo truce install --aax        # AAX only (requires AAX SDK)
-cargo truce install -p gain      # Single plugin, all formats
+cargo truce install -p gain      # Single plugin, default formats
 cargo truce install --au3 -p gain # AU v3 only, just Gain
 
 # Install without rebuilding
@@ -116,6 +141,12 @@ cp target/release/libtruce_example_gain.so \
    ~/.clap/Gain.clap
 ```
 
+```cmd
+REM Windows (admin required — writes to Program Files)
+copy target\release\truce_example_gain.dll ^
+     "%COMMONPROGRAMFILES%\CLAP\Gain.clap"
+```
+
 **VST3 (requires proper bundle structure):**
 
 ```sh
@@ -123,6 +154,21 @@ cp target/release/libtruce_example_gain.so \
 mkdir -p ~/Library/Audio/Plug-Ins/VST3/Gain.vst3/Contents/MacOS
 cp target/release/libtruce_example_gain.dylib \
    ~/Library/Audio/Plug-Ins/VST3/Gain.vst3/Contents/MacOS/Gain
+```
+
+```cmd
+REM Windows (admin required)
+mkdir "%COMMONPROGRAMFILES%\VST3\Gain.vst3\Contents\x86_64-win"
+copy target\release\truce_example_gain.dll ^
+     "%COMMONPROGRAMFILES%\VST3\Gain.vst3\Contents\x86_64-win\Gain.vst3"
+```
+
+**VST2 (Windows, admin required):**
+
+```cmd
+REM Steinberg default path — scanned by Reaper and most hosts out of the box
+copy target\release\truce_example_gain.dll ^
+     "%PROGRAMFILES%\Steinberg\VstPlugins\Gain.dll"
 ```
 
 **AU v2 (macOS only):**

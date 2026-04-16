@@ -59,12 +59,15 @@ Usage: cargo xtask <command> [options]
 
 Commands:
   install [--clap] [--vst3] [--vst2] [--au2] [--au3] [--aax] [--dev] [--no-build] [-p <suffix>]
-      Build and install plugins. Default: all formats, all plugins.
+      Build and install plugins. Defaults to whichever formats are in the
+      plugin's Cargo.toml default features (typically clap + vst3). VST2, AU,
+      and AAX are opt-in and must be enabled explicitly via these flags or
+      by adding them to the plugin's default features.
       --clap       CLAP only (no sudo)
       --vst3       VST3 only
-      --vst2       VST2 only (no sudo)
-      --au2        AU v2 only (.component)
-      --au3        AU v3 only (.appex, requires Xcode)
+      --vst2       VST2 only (legacy format — see truce/Cargo.toml note)
+      --au2        AU v2 only (.component, macOS only)
+      --au3        AU v3 only (.appex, requires Xcode, macOS only)
       --aax        AAX only (requires pre-built template)
       --dev        Build hot-reload shells (use with cargo watch for iteration)
       --no-build   Skip build, install existing artifacts
@@ -180,6 +183,11 @@ license.workspace = true
 crate-type = ["cdylib", "rlib"]
 
 [features]
+# CLAP and VST3 are enabled by default. VST2 and AU are opt-in.
+# NOTE: VST2 is a legacy format. The Steinberg VST2 SDK was deprecated
+# in 2018 and distributing VST2 plugins may require agreement with
+# Steinberg's licensing terms. Enable `vst2` only if you understand
+# the implications.
 default = ["clap", "vst3"]
 clap = ["dep:truce-clap", "dep:clap-sys"]
 vst3 = ["dep:truce-vst3"]

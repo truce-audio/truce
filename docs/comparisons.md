@@ -77,7 +77,7 @@
 | | truce | JUCE | nih-plug | iPlug2 |
 |---|---|---|---|---|
 | macOS | Yes | Yes | Yes | Yes |
-| Windows | Planned | Yes | Yes | Yes |
+| Windows | Yes (CLAP/VST3/VST2) | Yes | Yes | Yes |
 | Linux | Planned | Yes | Yes | Partial |
 | iOS/Android | No | Yes | No | Yes (iOS) |
 | Web | No | No | No | Yes |

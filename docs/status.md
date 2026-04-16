@@ -1,6 +1,6 @@
 # truce — Project Status
 
-Updated 2026-03-22.
+Updated 2026-04-15.
 
 ## Summary
 
@@ -9,16 +9,19 @@ Updated 2026-03-22.
 Single `truce::plugin!` macro for all exports. No build.rs needed.
 Three GUI backends: built-in (tiny-skia/wgpu), egui, and iced.
 
-| Format | Status | Custom GUI | Hosts tested |
-|--------|--------|------------|-------------|
-| CLAP | ✅ | ✅ | Reaper |
-| VST3 | ✅ | ✅ | Reaper, Ableton, FL Studio |
-| VST2 | ✅ | ✅ | Reaper, Ableton, FL Studio |
-| AU v2 | ✅ | ✅ | Reaper, Logic, GarageBand*, Ableton |
-| AU v3 | ✅ | ✅ | Logic, Ableton |
-| AAX | ✅ | ✅ | Pro Tools Developer |
+Runs on **macOS** and **Windows**. Linux support is planned.
+
+| Format | macOS | Windows | Custom GUI | Hosts tested |
+|--------|-------|---------|------------|-------------|
+| CLAP | ✅ | ✅ | ✅ | Reaper (macOS, Windows) |
+| VST3 | ✅ | ✅ | ✅ | Reaper, Ableton, FL Studio |
+| VST2 | ✅ | ✅ | ✅ | Reaper, Ableton, FL Studio |
+| AU v2 | ✅ | — | ✅ | Reaper, Logic, GarageBand*, Ableton |
+| AU v3 | ✅ | — | ✅ | Logic, Ableton |
+| AAX | ✅ | partial | ✅ | Pro Tools Developer |
 
 \* GarageBand ignores custom GUI for all third-party plugins.
+AU is macOS-only by design. AAX template builds on Windows aren't implemented yet.
 
 ## Example plugins
 
@@ -152,9 +155,11 @@ cargo-truce     — scaffolding CLI (cargo truce new)
 ## What's remaining
 
 **Near-term:**
-- Windows + Linux platform layers
+- Linux platform layer
 - CLAP GUI→host slider sync in Reaper
-- truce-iced Phase 4: Windows/Linux embedding (macOS resize + HiDPI done)
+- AAX template cmake build on Windows (MSVC)
+- Windows installer generation (Inno Setup / MSI)
+- CI pipeline with Windows + Linux jobs
 
 **Future:**
 - WebView GUI

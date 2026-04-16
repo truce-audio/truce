@@ -70,6 +70,11 @@ edition = "2021"
 crate-type = ["cdylib", "rlib"]
 
 [features]
+# CLAP and VST3 are enabled by default. VST2, AU, and AAX are opt-in.
+# NOTE: VST2 is a legacy format. The Steinberg VST2 SDK was deprecated
+# in 2018 and distributing VST2 plugins may require agreement with
+# Steinberg's licensing terms. Enable `vst2` only if you understand
+# the implications.
 default = ["clap", "vst3"]
 clap = ["dep:truce-clap", "dep:clap-sys"]
 vst3 = ["dep:truce-vst3"]
@@ -105,6 +110,11 @@ edition.workspace = true
 crate-type = ["cdylib", "rlib"]
 
 [features]
+# CLAP and VST3 are enabled by default. VST2, AU, and AAX are opt-in.
+# NOTE: VST2 is a legacy format. The Steinberg VST2 SDK was deprecated
+# in 2018 and distributing VST2 plugins may require agreement with
+# Steinberg's licensing terms. Enable `vst2` only if you understand
+# the implications.
 default = ["clap", "vst3"]
 clap = ["dep:truce-clap", "dep:clap-sys"]
 vst3 = ["dep:truce-vst3"]

@@ -9,6 +9,7 @@ plugin experience needed. Just Rust.
 
 - **Rust 1.75+** (`rustup update`)
 - **macOS**: `xcode-select --install`
+- **Windows**: MSVC build tools (Visual Studio 2019+ with "Desktop development with C++"). Installs require an Administrator command prompt because plugin directories (Common Files, Program Files) are system-wide.
 - A DAW that loads CLAP or VST3 plugins (Reaper is free to evaluate
   and the easiest to test with)
 

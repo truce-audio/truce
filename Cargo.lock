@@ -6047,6 +6047,7 @@ dependencies = [
  "truce-loader",
  "truce-params",
  "truce-params-derive",
+ "truce-vst2",
  "truce-vst3",
 ]
 
