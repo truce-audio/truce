@@ -77,8 +77,9 @@ AAX_SDK_PATH = "/path/to/aax-sdk"
 `cargo truce` reads `.cargo/config.toml` directly, so this works for
 both `cargo truce install` and `cargo truce package`.
 
-All three can be overridden in `truce.toml` under `[macos]` if needed,
-but env vars are preferred.
+All three can be overridden in `truce.toml` — signing identities under
+`[macos.signing]`, AAX SDK path under `[macos]` (or `[windows]`). See
+[truce.toml reference](12-truce-toml.md). Env vars are generally preferred.
 
 ### Building and installing with xtask
 
