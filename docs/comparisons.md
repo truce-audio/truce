@@ -58,6 +58,7 @@
 | Hot reload | Yes (DSP + GUI layout) | No | No | No |
 | Plugin validation | `cargo truce validate` | Manual | Manual | Manual |
 | Bundle/sign/install | `cargo truce install` | IDE export | Manual | IDE export |
+| Signed installer | `cargo truce package` (`.pkg` + Inno Setup `.exe` with Authenticode + PACE) | Manual (pkgbuild, Inno Setup) | Manual | Manual |
 | Test framework | `truce-test` (render, state, GUI) | `juce::UnitTest` | Manual | None |
 
 ## Audio Processing
@@ -76,8 +77,8 @@
 
 | | truce | JUCE | nih-plug | iPlug2 |
 |---|---|---|---|---|
-| macOS | Yes | Yes | Yes | Yes |
-| Windows | Yes (CLAP/VST3/VST2) | Yes | Yes | Yes |
+| macOS | Yes (all formats) | Yes | Yes | Yes |
+| Windows | Yes (CLAP/VST3/VST2/AAX) | Yes | Yes | Yes |
 | Linux | Planned | Yes | Yes | Partial |
 | iOS/Android | No | Yes | No | Yes (iOS) |
 | Web | No | No | No | Yes |
@@ -85,8 +86,10 @@
 ## When to Use What
 
 **truce** — You want Rust, maximum format coverage, hot reload, and a
-batteries-included experience with built-in GUI. Best for new Rust
-projects that need AU and AAX alongside CLAP/VST3.
+batteries-included experience — including built-in GUI and `cargo truce
+package` for signed cross-platform installers (`.pkg` + Inno Setup
+`.exe`). Best for new Rust projects that need AU and AAX alongside
+CLAP/VST3.
 
 **JUCE** — You need a production-proven C++ framework with the largest
 ecosystem, comprehensive GUI toolkit, and commercial support. The
@@ -104,10 +107,10 @@ targeting web alongside desktop.
 
 | Framework | Crate | Rendering | Paradigm | Widgets |
 |-----------|-------|-----------|----------|---------|
-| Built-in | `truce-gui` | wgpu (GPU) | Layout-driven | Knob, slider, toggle, selector, meter, XY pad |
+| Built-in | `truce-gui` | tiny-skia CPU or wgpu GPU | Layout-driven | Knob, slider, toggle, selector, meter, XY pad |
 | egui | `truce-egui` | wgpu via baseview | Immediate mode | Knob, slider, toggle, selector, meter, XY pad |
-| Iced | `truce-iced` | wgpu/Metal | Elm architecture | Knob, slider, toggle, meter, XY pad |
-| Slint | `truce-slint` | Software + wgpu blit | Declarative `.slint` DSL | Knob, slider, toggle, selector, meter |
+| Iced | `truce-iced` | wgpu (native NSView on macOS, baseview on Windows) | Elm architecture | Knob, slider, toggle, meter, XY pad |
+| Slint | `truce-slint` | Software renderer + CG blit on macOS, wgpu blit on Windows | Declarative `.slint` DSL | Knob, slider, toggle, selector, meter |
 | Raw | `truce-core` | Bring your own | Any | BYO |
 
 All GUI backends share consistent knob/meter visuals (pointer line,

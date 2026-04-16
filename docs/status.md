@@ -1,13 +1,13 @@
 # truce — Project Status
 
-Updated 2026-04-15.
+Updated 2026-04-16. Version 0.3.0.
 
 ## Summary
 
-6 format wrappers, 6 example plugins, 6 widget types, tested in
+6 format wrappers, 8 example plugins, 7 widget types, tested in
 6 DAWs. All formats have custom GUI. Hot-reload via `--features dev`.
 Single `truce::plugin!` macro for all exports. No build.rs needed.
-Three GUI backends: built-in (tiny-skia/wgpu), egui, and iced.
+Four GUI backends: built-in (tiny-skia/wgpu), egui, iced, and slint.
 
 Runs on **macOS** and **Windows**. Linux support is planned.
 
@@ -18,17 +18,31 @@ Runs on **macOS** and **Windows**. Linux support is planned.
 | VST2 | ✅ | ✅ | ✅ | Reaper, Ableton, FL Studio |
 | AU v2 | ✅ | — | ✅ | Reaper, Logic, GarageBand*, Ableton |
 | AU v3 | ✅ | — | ✅ | Logic, Ableton |
-| AAX | ✅ | partial | ✅ | Pro Tools Developer |
+| AAX | ✅ | ✅† | ✅ | Pro Tools Developer |
 
 \* GarageBand ignores custom GUI for all third-party plugins.
-AU is macOS-only by design. AAX template builds on Windows aren't implemented yet.
+† AAX on Windows builds, installs, and loads in Pro Tools Developer.
+Retail Pro Tools still requires a PACE/iLok signature (dev iLok + Pro
+Tools Developer unblocks local iteration).
+AU is macOS-only by design.
+
+## Distribution
+
+`cargo truce package` produces signed installers on both platforms:
+
+- **macOS** — `.pkg` with Developer ID signing + optional Apple notarization, via `pkgbuild` + `productbuild` + `notarytool`.
+- **Windows** — Inno Setup `.exe` with Authenticode (Azure Trusted Signing / SHA1 thumbprint / `.pfx`) + PACE/wraptool for AAX.
+
+Output lands in `dist/<Plugin>-<version>-<platform>.{pkg,exe}`. See [docs/reference/13-packaging.md](reference/13-packaging.md) for the pipeline.
 
 ## Example plugins
 
 | Plugin | Type | GUI backend | Widgets |
 |--------|------|-------------|---------|
 | Gain | Effect | Built-in | Knob, slider, toggle, meter, XY pad (grid layout) |
+| Gain-egui | Effect | egui | Knob, slider, toggle, meter (immediate-mode) |
 | Gain-iced | Effect | iced | Knob, slider, toggle, meter, XY pad (custom iced UI) |
+| Gain-slint | Effect | slint | Knob, meter, XY pad (declarative .slint markup) |
 | EQ | Effect | Built-in | Knobs with section breaks (low shelf + peaking + high shelf) |
 | Synth | Instrument | Built-in | Selector, knobs with sections |
 | Transpose | MIDI effect | Built-in | Knobs |
@@ -61,13 +75,14 @@ safe sharing between audio and GUI threads without raw pointers.
 
 ## GUI
 
-Four GUI backends, same 6 widget types:
+Four GUI backends, same 7 widget types:
 
 | Backend | Crate | Mode | Rendering |
 |---------|-------|------|-----------|
 | Built-in | `truce-gui` / `truce-gpu` | Layout-only (zero code) | tiny-skia CPU or wgpu GPU |
 | egui | `truce-egui` | Custom (immediate-mode) | wgpu via egui-wgpu |
-| iced | `truce-iced` | Auto (from GridLayout) or custom (IcedPlugin trait) | wgpu/Metal |
+| iced | `truce-iced` | Auto (from GridLayout) or custom (IcedPlugin trait) | wgpu (macOS + Windows via baseview) |
+| slint | `truce-slint` | Declarative `.slint` markup + custom Rust glue | software renderer |
 
 7 widget types via `GridLayout::build()` with auto-flow placement:
 
@@ -101,8 +116,8 @@ CRC32 content check, macOS codesign, leak-don't-close.
 seamlessly in `--dev` mode. The `HotEditor` wrapper watches for dylib
 changes and swaps the `BuiltinEditor` inside a shared mutex — no
 window flash, no manual close/reopen. DSP changes continue to work as
-before. Custom editors (egui, iced) still require manually closing and
-reopening the plugin window.
+before. Custom editors (egui, iced, slint) still require manually
+closing and reopening the plugin window.
 
 ## Build system
 
@@ -114,9 +129,10 @@ cargo truce install              # all formats, GPU rendering (default)
 cargo truce install --dev        # all formats, hot-reload
 cargo truce install -p gain      # single plugin
 cargo truce install --clap       # CLAP only
-cargo truce install -p gain      # single plugin
+cargo truce package              # signed .pkg / .exe installer in dist/
 cargo truce test                 # run all tests
 cargo truce validate             # auval + pluginval + clap-validator
+cargo truce doctor               # check toolchain, SDKs, signing, ISCC, signtool
 cargo truce clean                # clear all caches
 ```
 
@@ -125,31 +141,39 @@ New projects are scaffolded with `cargo truce new`:
 ```sh
 cargo truce new my-plugin
 cd my-plugin
-cargo truce build                # build CLAP + VST3 bundles
+cargo truce install --clap       # build + install CLAP
+cargo truce package              # build signed installer
 ```
+
+Scaffolding emits a `.cargo/config.toml` stub (gitignored) pre-seeded
+with commented env-var placeholders for signing identities and SDK
+paths, so per-developer config has one obvious home.
 
 ## Crate structure
 
 ```
-truce           — facade (re-exports everything, plugin! macro)
-truce-core      — Plugin, AudioBuffer, events, state
-truce-params    — FloatParam, BoolParam, EnumParam, smoothing
+truce             — facade (re-exports everything, plugin! macro)
+truce-core        — Plugin, AudioBuffer, events, state
+truce-params      — FloatParam, BoolParam, EnumParam, smoothing
 truce-params-derive — #[derive(Params)] proc macro
-truce-derive    — proc macros (plugin_info!, internal)
-truce-loader    — hot-reload (native ABI, PluginLogic trait)
-truce-gui       — built-in GUI (tiny-skia + fontdue, optional wgpu GPU backend, 6 widget types)
-truce-gpu       — GPU rendering backend (wgpu/Metal, lyon tessellation, glyph atlas)
-truce-iced      — iced GUI backend (retained-mode widget toolkit, wgpu, auto or custom UI)
-truce-clap      — CLAP format wrapper
-truce-vst3      — VST3 format wrapper
-truce-vst2      — VST2 format wrapper (clean-room)
-truce-au        — Audio Unit (v2 + v3)
-truce-aax       — AAX format wrapper
-truce-standalone — standalone host (cpal audio)
-truce-xtask     — build/bundle/install library (powers cargo xtask)
-truce-build     — build.rs helper
-truce-test      — test utilities + unified GUI snapshot tests (CPU + iced)
-cargo-truce     — scaffolding CLI (cargo truce new)
+truce-derive      — proc macros (plugin_info!, internal)
+truce-loader      — hot-reload (native ABI, PluginLogic trait)
+truce-gui         — built-in GUI (tiny-skia + fontdue, optional wgpu GPU backend, 7 widget types)
+truce-gpu         — GPU rendering backend (wgpu/Metal, lyon tessellation, glyph atlas)
+truce-egui        — egui GUI backend (immediate-mode, wgpu)
+truce-iced        — iced GUI backend (retained-mode, wgpu; baseview on Windows, native NSView on macOS)
+truce-slint       — slint GUI backend (declarative .slint markup)
+truce-clap        — CLAP format wrapper
+truce-vst3        — VST3 format wrapper
+truce-vst2        — VST2 format wrapper (clean-room)
+truce-au          — Audio Unit (v2 + v3)
+truce-aax         — AAX format wrapper
+truce-shim-types  — ABI-stable types shared with C/C++ shims
+truce-standalone  — standalone host (cpal audio)
+truce-xtask       — build/bundle/install/package library (powers cargo xtask)
+truce-build       — build.rs helper
+truce-test        — test utilities + unified GUI snapshot tests (CPU + iced)
+cargo-truce       — scaffolding + build/install/package CLI (cargo truce new)
 ```
 
 ## What's remaining
@@ -157,11 +181,12 @@ cargo-truce     — scaffolding CLI (cargo truce new)
 **Near-term:**
 - Linux platform layer
 - CLAP GUI→host slider sync in Reaper
-- AAX template cmake build on Windows (MSVC)
-- Windows installer generation (Inno Setup / MSI)
 - CI pipeline with Windows + Linux jobs
+- Authenticode round-trip verification with a real signing cert
+- PACE wraptool round-trip against retail Pro Tools
 
 **Future:**
 - WebView GUI
 - ARA support
 - More example plugins (delay, compressor, reverb)
+- ARM64 Windows (`aarch64-pc-windows-msvc`)
