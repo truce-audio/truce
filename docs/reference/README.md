@@ -20,6 +20,8 @@ Then work through these tutorials in order:
 | 9 | [Hot Reload](09-hot-reload.md) | Edit DSP, rebuild, hear changes without restarting the DAW |
 | 10 | [State](10-state.md) | Saving extra state beyond parameters |
 | 11 | [Building & Installing](11-building.md) | All formats, build commands, CI, validation |
+| 12 | [truce.toml Reference](12-truce-toml.md) | Every field: `[vendor]`, `[[plugin]]`, `[macos]`, `[windows.signing]`, `[packaging]`, env vars |
+| 13 | [Packaging & Distribution](13-packaging.md) | `cargo truce package` — `.pkg` on macOS, Inno Setup `.exe` on Windows, signing, notarization, CI |
 
 Each tutorial builds on the previous one. Start wherever matches
 your experience level.

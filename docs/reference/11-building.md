@@ -289,4 +289,4 @@ jobs:
 
 ---
 
-[← Previous](10-state.md) | [Index](README.md)
+[← Previous](10-state.md) | [Index](README.md) | [Next →](12-truce-toml.md)

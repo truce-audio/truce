@@ -195,6 +195,64 @@ cargo truce install --clap   # no --dev = static, zero overhead
 
 ---
 
+## Step 7: Package for Distribution (Optional)
+
+When you're ready to hand the plugin to someone else, `cargo truce
+install` isn't enough — it only installs on your machine. You want a
+single signed installer file.
+
+```bash
+cargo truce package                    # all default-feature formats
+cargo truce package --formats clap,vst3 # subset
+cargo truce package --no-sign          # skip signing (dev builds)
+```
+
+You'll find the installer in `dist/`:
+
+- **macOS**: `dist/MyGain-0.1.0-macos.pkg` — a `.pkg` installer with
+  format-selection checkboxes, Developer ID signing, and (if configured)
+  notarization + stapling.
+- **Windows**: `dist/My Gain-0.1.0-windows-x64.exe` — an Inno Setup
+  installer with per-format components, Authenticode signing, and a
+  registered uninstaller.
+
+Users double-click it and your plugin is installed. No Rust toolchain
+required on their end.
+
+### Signing
+
+For distribution you need a code-signing identity so SmartScreen
+(Windows) or Gatekeeper (macOS) doesn't flag the installer as "unknown
+publisher." Configure it in `truce.toml`:
+
+```toml
+[macos]
+signing_identity = "Developer ID Application: Your Name (TEAMID)"
+
+[macos.packaging]
+installer_identity = "Developer ID Installer: Your Name (TEAMID)"
+notarize = true
+
+[windows.signing]
+# Easiest: Azure Trusted Signing (~$120/yr, no hardware token)
+azure_account = "YourSigningAccount"
+azure_profile = "YourCertificateProfile"
+# Or: existing cert in Windows cert store, by SHA1 thumbprint
+# sha1 = "abc123..."
+# Or: .pfx file with password from env
+# pfx_path = "path/to/cert.pfx"      # + set TRUCE_PFX_PASSWORD
+```
+
+Without any credentials, `cargo truce package` still runs — it just
+emits unsigned binaries and prints a warning. `--no-sign` silences it
+for dev builds.
+
+Requires [Inno Setup 6](https://jrsoftware.org/isinfo.php) on Windows
+(auto-discovered, doesn't need to be on `%PATH%`). `cargo truce doctor`
+tells you what's missing.
+
+---
+
 ## What Just Happened
 
 With one crate, one file, and one macro, you built a plugin that:
