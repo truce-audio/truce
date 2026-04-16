@@ -4,16 +4,23 @@ fn main() {
 
     let out_dir = std::env::var("OUT_DIR").unwrap();
 
-    cc::Build::new()
-        .file("shim/vst2_shim.c")
-        .flag("-std=c99")
-        .flag("-fvisibility=default")
-        .compile("vst2_shim");
+    let mut build = cc::Build::new();
+    build.file("shim/vst2_shim.c");
 
-    // Force-load all symbols from the static lib
-    println!("cargo:rustc-cdylib-link-arg=-Wl,-force_load,{out_dir}/libvst2_shim.a");
+    if !build.get_compiler().is_like_msvc() {
+        build.flag("-std=c99").flag("-fvisibility=default");
+    }
 
-    // Export VST2 entry points
-    println!("cargo:rustc-cdylib-link-arg=-Wl,-exported_symbol,_VSTPluginMain");
-    println!("cargo:rustc-cdylib-link-arg=-Wl,-exported_symbol,_main_macho");
+    build.compile("vst2_shim");
+
+    if cfg!(target_os = "macos") {
+        // Force-load all symbols from the static lib
+        println!("cargo:rustc-cdylib-link-arg=-Wl,-force_load,{out_dir}/libvst2_shim.a");
+        // Export VST2 entry points
+        println!("cargo:rustc-cdylib-link-arg=-Wl,-exported_symbol,_VSTPluginMain");
+        println!("cargo:rustc-cdylib-link-arg=-Wl,-exported_symbol,_main_macho");
+    } else if cfg!(target_os = "windows") {
+        // On Windows, whole-archive the static lib so VST2 entry points are exported
+        println!("cargo:rustc-cdylib-link-arg=/WHOLEARCHIVE:{out_dir}/vst2_shim.lib");
+    }
 }

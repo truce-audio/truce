@@ -282,6 +282,14 @@ struct RenderState<P: Params, M: IcedPlugin<P>> {
 
 impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
     /// Initialize the wgpu + iced rendering pipeline from the Metal layer.
+    #[cfg(not(target_os = "macos"))]
+    fn init_render(&mut self) -> bool {
+        // TODO: Windows/Linux iced embedding not yet implemented
+        eprintln!("[truce-iced] Platform not yet supported for iced rendering");
+        false
+    }
+
+    #[cfg(target_os = "macos")]
     fn init_render(&mut self) -> bool {
         let metal_layer = match self.metal_layer {
             Some(v) => v.as_ptr(),

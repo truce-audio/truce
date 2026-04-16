@@ -637,6 +637,33 @@ impl PluginDef {
     }
 }
 
+/// Return the platform-specific shared library filename for a given stem.
+/// macOS: `lib{stem}.dylib`, Windows: `{stem}.dll`, Linux: `lib{stem}.so`
+fn shared_lib_name(stem: &str) -> String {
+    if cfg!(target_os = "windows") {
+        format!("{stem}.dll")
+    } else if cfg!(target_os = "linux") {
+        format!("lib{stem}.so")
+    } else {
+        format!("lib{stem}.dylib")
+    }
+}
+
+/// Return `target/release/{shared_lib_name}` for a plugin.
+fn release_lib(root: &Path, stem: &str) -> PathBuf {
+    root.join("target/release").join(shared_lib_name(stem))
+}
+
+/// Return the Windows `%COMMONPROGRAMFILES%` directory (typically `C:\Program Files\Common Files`).
+#[cfg(target_os = "windows")]
+fn common_program_files() -> PathBuf {
+    if let Ok(v) = env::var("CommonProgramFiles") {
+        PathBuf::from(v)
+    } else {
+        PathBuf::from(r"C:\Program Files\Common Files")
+    }
+}
+
 fn default_au_tag() -> String {
     "Effects".to_string()
 }
@@ -842,9 +869,11 @@ fn codesign_bundle(bundle: &str, identity: &str, use_sudo: bool) -> Res {
     Ok(())
 }
 
+#[allow(unused_variables)]
 fn cargo_build(env_vars: &[(&str, &str)], extra_args: &[&str], deployment_target: &str) -> Res {
     let mut cmd = Command::new("cargo");
     cmd.arg("build").arg("--release");
+    #[cfg(target_os = "macos")]
     cmd.env("MACOSX_DEPLOYMENT_TARGET", deployment_target);
     for (k, v) in env_vars {
         cmd.env(k, v);
@@ -906,8 +935,11 @@ fn cmd_install(args: &[String]) -> Res {
         clap = available.contains("clap");
         vst3 = available.contains("vst3");
         vst2 = available.contains("vst2");
-        au2 = available.contains("au");
-        au3 = available.contains("au");
+        #[cfg(target_os = "macos")]
+        {
+            au2 = available.contains("au");
+            au3 = available.contains("au");
+        }
         aax = available.contains("aax");
     }
 
@@ -969,14 +1001,8 @@ fn cmd_install(args: &[String]) -> Res {
             args.extend_from_slice(&["--no-default-features", "--features", &features_combined]);
             cargo_build(&[], &args, dt)?;
             for p in &plugins {
-                let src = root.join(format!(
-                    "target/release/lib{}.dylib",
-                    p.dylib_stem()
-                ));
-                let dst = root.join(format!(
-                    "target/release/lib{}_plugin.dylib",
-                    p.dylib_stem()
-                ));
+                let src = release_lib(&root, &p.dylib_stem());
+                let dst = release_lib(&root, &format!("{}_plugin", p.dylib_stem()));
                 if src.exists() {
                     fs::copy(&src, &dst)?;
                 }
@@ -993,14 +1019,8 @@ fn cmd_install(args: &[String]) -> Res {
             args.extend_from_slice(&["--no-default-features", "--features", "vst2"]);
             cargo_build(&[], &args, dt)?;
             for p in &plugins {
-                let src = root.join(format!(
-                    "target/release/lib{}.dylib",
-                    p.dylib_stem()
-                ));
-                let dst = root.join(format!(
-                    "target/release/lib{}_vst2.dylib",
-                    p.dylib_stem()
-                ));
+                let src = release_lib(&root, &p.dylib_stem());
+                let dst = release_lib(&root, &format!("{}_vst2", p.dylib_stem()));
                 fs::copy(&src, &dst)?;
             }
         }
@@ -1019,14 +1039,8 @@ fn cmd_install(args: &[String]) -> Res {
                     ],
                     dt,
                 )?;
-                let src = root.join(format!(
-                    "target/release/lib{}.dylib",
-                    p.dylib_stem()
-                ));
-                let dst = root.join(format!(
-                    "target/release/lib{}_au.dylib",
-                    p.dylib_stem()
-                ));
+                let src = release_lib(&root, &p.dylib_stem());
+                let dst = release_lib(&root, &format!("{}_au", p.dylib_stem()));
                 fs::copy(&src, &dst)?;
             }
         }
@@ -1041,28 +1055,16 @@ fn cmd_install(args: &[String]) -> Res {
             args.extend_from_slice(&["--no-default-features", "--features", "aax"]);
             cargo_build(&[], &args, dt)?;
             for p in &plugins {
-                let src = root.join(format!(
-                    "target/release/lib{}.dylib",
-                    p.dylib_stem()
-                ));
-                let dst = root.join(format!(
-                    "target/release/lib{}_aax.dylib",
-                    p.dylib_stem()
-                ));
+                let src = release_lib(&root, &p.dylib_stem());
+                let dst = release_lib(&root, &format!("{}_aax", p.dylib_stem()));
                 fs::copy(&src, &dst)?;
             }
         }
 
         if clap || vst3 {
             for p in &plugins {
-                let saved = root.join(format!(
-                    "target/release/lib{}_plugin.dylib",
-                    p.dylib_stem()
-                ));
-                let dst = root.join(format!(
-                    "target/release/lib{}.dylib",
-                    p.dylib_stem()
-                ));
+                let saved = release_lib(&root, &format!("{}_plugin", p.dylib_stem()));
+                let dst = release_lib(&root, &p.dylib_stem());
                 if saved.exists() {
                     fs::copy(&saved, &dst)?;
                 }
@@ -1075,6 +1077,7 @@ fn cmd_install(args: &[String]) -> Res {
             eprintln!("Building debug dylibs (logic for hot-reload)...");
             let mut cmd = Command::new("cargo");
             cmd.arg("build").arg("--workspace");
+            #[cfg(target_os = "macos")]
             cmd.env("MACOSX_DEPLOYMENT_TARGET", dt);
             let status = cmd.status()?;
             if !status.success() {
@@ -1106,6 +1109,7 @@ fn cmd_install(args: &[String]) -> Res {
         build_and_install_au_v3(&root, &config, &plugins, no_build)?;
     }
 
+    #[cfg(target_os = "macos")]
     if au2 {
         let cache = dirs::home_dir()
             .unwrap()
@@ -1119,46 +1123,66 @@ fn cmd_install(args: &[String]) -> Res {
 }
 
 fn install_clap(root: &Path, p: &PluginDef, config: &Config) -> Res {
-    let dylib = root.join(format!(
-        "target/release/lib{}.dylib",
-        p.dylib_stem()
-    ));
+    let dylib = release_lib(root, &p.dylib_stem());
     if !dylib.exists() {
         return Err(format!("Missing: {}", dylib.display()).into());
     }
-    let clap_dir = dirs::home_dir()
-        .unwrap()
-        .join("Library/Audio/Plug-Ins/CLAP");
-    fs::create_dir_all(&clap_dir)?;
-    let dst = clap_dir.join(format!("{}.clap", p.name));
-    fs::copy(&dylib, &dst)?;
-    codesign_bundle(dst.to_str().unwrap(), &config.macos.signing_identity, false)?;
-    eprintln!("CLAP: {}", dst.display());
+
+    #[cfg(target_os = "macos")]
+    {
+        let clap_dir = dirs::home_dir()
+            .unwrap()
+            .join("Library/Audio/Plug-Ins/CLAP");
+        fs::create_dir_all(&clap_dir)?;
+        let dst = clap_dir.join(format!("{}.clap", p.name));
+        fs::copy(&dylib, &dst)?;
+        codesign_bundle(dst.to_str().unwrap(), &config.macos.signing_identity, false)?;
+        eprintln!("CLAP: {}", dst.display());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let clap_dir = common_program_files().join("CLAP");
+        fs::create_dir_all(&clap_dir)?;
+        let dst = clap_dir.join(format!("{}.clap", p.name));
+        fs::copy(&dylib, &dst)?;
+        eprintln!("CLAP: {}", dst.display());
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let clap_dir = dirs::home_dir().unwrap().join(".clap");
+        fs::create_dir_all(&clap_dir)?;
+        let dst = clap_dir.join(format!("{}.clap", p.name));
+        fs::copy(&dylib, &dst)?;
+        eprintln!("CLAP: {}", dst.display());
+    }
+
     Ok(())
 }
 
 fn install_vst3(root: &Path, p: &PluginDef, config: &Config) -> Res {
-    let dylib = root.join(format!(
-        "target/release/lib{}.dylib",
-        p.dylib_stem()
-    ));
+    let dylib = release_lib(root, &p.dylib_stem());
     if !dylib.exists() {
         return Err(format!("Missing: {}", dylib.display()).into());
     }
-    let vst3_bundle = format!("/Library/Audio/Plug-Ins/VST3/{}.vst3", p.name);
-    let contents = format!("{vst3_bundle}/Contents");
 
-    run_sudo("mkdir", &["-p", &format!("{contents}/MacOS")])?;
-    run_sudo(
-        "cp",
-        &[
-            dylib.to_str().unwrap(),
-            &format!("{contents}/MacOS/{}", p.name),
-        ],
-    )?;
+    #[cfg(target_os = "macos")]
+    {
+        let vst3_bundle = format!("/Library/Audio/Plug-Ins/VST3/{}.vst3", p.name);
+        let contents = format!("{vst3_bundle}/Contents");
 
-    let plist = format!(
-        r#"<?xml version="1.0" encoding="UTF-8"?>
+        run_sudo("mkdir", &["-p", &format!("{contents}/MacOS")])?;
+        run_sudo(
+            "cp",
+            &[
+                dylib.to_str().unwrap(),
+                &format!("{contents}/MacOS/{}", p.name),
+            ],
+        )?;
+
+        let plist = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
@@ -1174,36 +1198,61 @@ fn install_vst3(root: &Path, p: &PluginDef, config: &Config) -> Res {
     <string>1</string>
 </dict>
 </plist>"#,
-        name = p.name,
-        suffix = p.suffix,
-        vendor_id = config.vendor.id,
-    );
-    let plist_tmp = tmp_dir().join(format!("{}_vst3.plist", p.suffix)).to_string_lossy().to_string();
-    fs::write(&plist_tmp, &plist)?;
-    run_sudo("cp", &[&plist_tmp, &format!("{contents}/Info.plist")])?;
-    codesign_bundle(&vst3_bundle, &config.macos.signing_identity, true)?;
-    eprintln!("VST3: {vst3_bundle}");
+            name = p.name,
+            suffix = p.suffix,
+            vendor_id = config.vendor.id,
+        );
+        let plist_tmp = tmp_dir().join(format!("{}_vst3.plist", p.suffix)).to_string_lossy().to_string();
+        fs::write(&plist_tmp, &plist)?;
+        run_sudo("cp", &[&plist_tmp, &format!("{contents}/Info.plist")])?;
+        codesign_bundle(&vst3_bundle, &config.macos.signing_identity, true)?;
+        eprintln!("VST3: {vst3_bundle}");
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        // VST3 on Windows: %COMMONPROGRAMFILES%\VST3\{name}.vst3\Contents\x86_64-win\{name}.vst3
+        let vst3_dir = common_program_files().join("VST3");
+        let bundle = vst3_dir.join(format!("{}.vst3", p.name));
+        let arch_dir = bundle.join("Contents").join("x86_64-win");
+        fs::create_dir_all(&arch_dir)?;
+        let dst = arch_dir.join(format!("{}.vst3", p.name));
+        fs::copy(&dylib, &dst)?;
+        eprintln!("VST3: {}", bundle.display());
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let vst3_dir = dirs::home_dir().unwrap().join(".vst3");
+        let bundle = vst3_dir.join(format!("{}.vst3", p.name));
+        let arch_dir = bundle.join("Contents").join("x86_64-linux");
+        fs::create_dir_all(&arch_dir)?;
+        let dst = arch_dir.join(format!("{}.so", p.name));
+        fs::copy(&dylib, &dst)?;
+        eprintln!("VST3: {}", bundle.display());
+    }
+
     Ok(())
 }
 
 fn install_vst2(root: &Path, p: &PluginDef, config: &Config) -> Res {
-    let dylib = root.join(format!(
-        "target/release/lib{}_vst2.dylib",
-        p.dylib_stem()
-    ));
+    let dylib = release_lib(root, &format!("{}_vst2", p.dylib_stem()));
     if !dylib.exists() {
         return Err(format!("Missing: {}", dylib.display()).into());
     }
-    let vst_dir = dirs::home_dir().unwrap().join("Library/Audio/Plug-Ins/VST");
-    let bundle = vst_dir.join(format!("{}.vst", p.name));
 
-    let _ = fs::remove_dir_all(&bundle);
-    let macos_dir = bundle.join("Contents/MacOS");
-    fs::create_dir_all(&macos_dir)?;
-    fs::copy(&dylib, macos_dir.join(&p.name))?;
+    #[cfg(target_os = "macos")]
+    {
+        let vst_dir = dirs::home_dir().unwrap().join("Library/Audio/Plug-Ins/VST");
+        let bundle = vst_dir.join(format!("{}.vst", p.name));
 
-    let plist = format!(
-        r#"<?xml version="1.0" encoding="UTF-8"?>
+        let _ = fs::remove_dir_all(&bundle);
+        let macos_dir = bundle.join("Contents/MacOS");
+        fs::create_dir_all(&macos_dir)?;
+        fs::copy(&dylib, macos_dir.join(&p.name))?;
+
+        let plist = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
@@ -1219,14 +1268,35 @@ fn install_vst2(root: &Path, p: &PluginDef, config: &Config) -> Res {
     <string>1</string>
 </dict>
 </plist>"#,
-        name = p.name,
-        suffix = p.suffix,
-    );
-    fs::write(bundle.join("Contents/Info.plist"), &plist)?;
-    fs::write(bundle.join("Contents/PkgInfo"), "BNDL????")?;
+            name = p.name,
+            suffix = p.suffix,
+        );
+        fs::write(bundle.join("Contents/Info.plist"), &plist)?;
+        fs::write(bundle.join("Contents/PkgInfo"), "BNDL????")?;
 
-    codesign_bundle(bundle.to_str().unwrap(), &config.macos.signing_identity, false)?;
-    eprintln!("VST2: {}", bundle.display());
+        codesign_bundle(bundle.to_str().unwrap(), &config.macos.signing_identity, false)?;
+        eprintln!("VST2: {}", bundle.display());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        // VST2 on Windows: %COMMONPROGRAMFILES%\VST\{name}.dll
+        let vst_dir = common_program_files().join("VST");
+        fs::create_dir_all(&vst_dir)?;
+        let dst = vst_dir.join(format!("{}.dll", p.name));
+        fs::copy(&dylib, &dst)?;
+        eprintln!("VST2: {}", dst.display());
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let vst_dir = dirs::home_dir().unwrap().join(".vst");
+        fs::create_dir_all(&vst_dir)?;
+        let dst = vst_dir.join(format!("{}.so", p.name));
+        fs::copy(&dylib, &dst)?;
+        eprintln!("VST2: {}", dst.display());
+    }
+
     Ok(())
 }
 
@@ -1370,15 +1440,13 @@ fn install_aax(root: &Path, p: &PluginDef, config: &Config) -> Res {
         return Err("AAX template build succeeded but binary not found".into());
     }
 
-    let dylib = root.join(format!(
-        "target/release/lib{}_aax.dylib",
-        p.dylib_stem()
-    ));
+    let dylib = release_lib(root, &format!("{}_aax", p.dylib_stem()));
     if !dylib.exists() {
         eprintln!("AAX: {} not found, skipping {}", dylib.display(), p.name);
         return Ok(());
     }
 
+    // TODO: Windows AAX install path: %COMMONPROGRAMFILES%\Avid\Audio\Plug-Ins
     let aax_dir = "/Library/Application Support/Avid/Audio/Plug-Ins";
     let bundle = format!("{aax_dir}/{}.aaxplugin", p.name);
     let contents = format!("{bundle}/Contents");
@@ -1514,12 +1582,19 @@ fn build_au_v3(
             }
 
             let fw_root = fw_build.join(format!("{}.framework", fw_name));
-            std::os::unix::fs::symlink("A", fw_root.join("Versions/Current"))?;
-            std::os::unix::fs::symlink(
-                format!("Versions/Current/{}", fw_name),
-                fw_root.join(&fw_name),
-            )?;
-            std::os::unix::fs::symlink("Versions/Current/Resources", fw_root.join("Resources"))?;
+            #[cfg(unix)]
+            {
+                std::os::unix::fs::symlink("A", fw_root.join("Versions/Current"))?;
+                std::os::unix::fs::symlink(
+                    format!("Versions/Current/{}", fw_name),
+                    fw_root.join(&fw_name),
+                )?;
+                std::os::unix::fs::symlink("Versions/Current/Resources", fw_root.join("Resources"))?;
+            }
+            #[cfg(not(unix))]
+            {
+                return Err("AU v3 framework builds are only supported on macOS".into());
+            }
 
             fs::write(
                 fw_dir.join("Resources/Info.plist"),

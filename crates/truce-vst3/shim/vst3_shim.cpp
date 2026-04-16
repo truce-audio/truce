@@ -50,6 +50,8 @@ static const TUID IProcessContextRequirements_iid = {I(0x2A),I(0x65),I(0x43),I(0
 static const TUID IUnitInfo_iid = {I(0x3D),I(0x4B),I(0xD6),I(0xB5),I(0x91),I(0x3A),I(0x4F),I(0xD2),I(0xA8),I(0x86),I(0xE7),I(0x68),I(0xA5),I(0x33),I(0x2E),I(0x1F)};
 
 static const char* kPlatformTypeNSView = "NSView";
+static const char* kPlatformTypeHWND   = "HWND";
+static const char* kPlatformTypeX11    = "X11EmbedWindowID";
 
 // Media types & bus directions
 enum { kAudio = 0, kEvent = 1 };
@@ -912,6 +914,10 @@ static uint32 pv_release(void* s) {
 static tresult pv_isPlatformTypeSupported(void*, FIDString type) {
     #ifdef __APPLE__
     if (strcmp(type, kPlatformTypeNSView) == 0) return kResultOk;
+    #elif defined(_WIN32)
+    if (strcmp(type, kPlatformTypeHWND) == 0) return kResultOk;
+    #elif defined(__linux__)
+    if (strcmp(type, kPlatformTypeX11) == 0) return kResultOk;
     #endif
     return kResultFalse;
 }

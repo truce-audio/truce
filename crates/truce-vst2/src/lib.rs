@@ -400,7 +400,13 @@ unsafe fn open_editor_inner<P: PluginExport>(
                 plugin.load_state(&data);
             }),
         };
+        #[cfg(target_os = "macos")]
         let handle = truce_core::editor::RawWindowHandle::AppKit(parent);
+        #[cfg(target_os = "windows")]
+        let handle = truce_core::editor::RawWindowHandle::Win32(parent);
+        #[cfg(target_os = "linux")]
+        let handle = truce_core::editor::RawWindowHandle::X11(parent as u64);
+
         editor.open(handle, context);
     }
 }

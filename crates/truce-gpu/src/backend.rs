@@ -501,6 +501,7 @@ impl WgpuBackend {
     ///
     /// # Safety
     /// `metal_layer` must be a valid `CAMetalLayer*` that outlives the backend.
+    #[cfg(target_os = "macos")]
     pub unsafe fn from_metal_layer(
         metal_layer: *mut c_void,
         width: u32,

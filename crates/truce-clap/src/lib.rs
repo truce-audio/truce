@@ -1076,6 +1076,10 @@ fn make_note_ports_extension<P: PluginExport>() -> clap_plugin_note_ports {
 // ---------------------------------------------------------------------------
 
 use clap_sys::ext::gui::{clap_plugin_gui, clap_window, CLAP_EXT_GUI, CLAP_WINDOW_API_COCOA};
+#[cfg(target_os = "windows")]
+use clap_sys::ext::gui::CLAP_WINDOW_API_WIN32;
+#[cfg(target_os = "linux")]
+use clap_sys::ext::gui::CLAP_WINDOW_API_X11;
 
 unsafe extern "C" fn gui_is_api_supported<P: PluginExport>(
     _plugin: *const clap_plugin,
@@ -1090,6 +1094,14 @@ unsafe extern "C" fn gui_is_api_supported<P: PluginExport>(
     if api == CLAP_WINDOW_API_COCOA {
         return true;
     }
+    #[cfg(target_os = "windows")]
+    if api == CLAP_WINDOW_API_WIN32 {
+        return true;
+    }
+    #[cfg(target_os = "linux")]
+    if api == CLAP_WINDOW_API_X11 {
+        return true;
+    }
     false
 }
 
@@ -1101,6 +1113,18 @@ unsafe extern "C" fn gui_get_preferred_api<P: PluginExport>(
     #[cfg(target_os = "macos")]
     {
         *api = CLAP_WINDOW_API_COCOA.as_ptr();
+        *is_floating = false;
+        return true;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        *api = CLAP_WINDOW_API_WIN32.as_ptr();
+        *is_floating = false;
+        return true;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        *api = CLAP_WINDOW_API_X11.as_ptr();
         *is_floating = false;
         return true;
     }
@@ -1198,7 +1222,13 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
         None => return false,
     };
 
+    #[cfg(target_os = "macos")]
     let parent_ptr = (*window).specific.cocoa;
+    #[cfg(target_os = "windows")]
+    let parent_ptr = (*window).specific.win32;
+    #[cfg(target_os = "linux")]
+    let parent_ptr = (*window).specific.ptr;
+
     if parent_ptr.is_null() {
         return false;
     }
@@ -1273,7 +1303,13 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
         }),
     };
 
+    #[cfg(target_os = "macos")]
     let handle = truce_core::editor::RawWindowHandle::AppKit(parent_ptr);
+    #[cfg(target_os = "windows")]
+    let handle = truce_core::editor::RawWindowHandle::Win32(parent_ptr);
+    #[cfg(target_os = "linux")]
+    let handle = truce_core::editor::RawWindowHandle::X11(parent_ptr as u64);
+
     editor.open(handle, context);
     true
 }

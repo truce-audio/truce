@@ -26,7 +26,7 @@ unsafe impl HasRawWindowHandle for ParentWindow {
             }
             RawWindowHandle::X11(window_id) => {
                 let mut handle = raw_window_handle::XlibWindowHandle::empty();
-                handle.window = window_id;
+                handle.window = window_id as u32;
                 RwhRawWindowHandle::Xlib(handle)
             }
         }
@@ -64,7 +64,16 @@ pub fn query_backing_scale(parent: &RawWindowHandle) -> f64 {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
+pub fn query_backing_scale(parent: &RawWindowHandle) -> f64 {
+    let hwnd = match parent {
+        RawWindowHandle::Win32(ptr) => *ptr,
+        _ => return 1.0,
+    };
+    win32_dpi_scale(hwnd)
+}
+
+#[cfg(target_os = "linux")]
 pub fn query_backing_scale(_parent: &RawWindowHandle) -> f64 {
     1.0
 }
@@ -84,9 +93,36 @@ pub fn main_screen_scale() -> f64 {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
+pub fn main_screen_scale() -> f64 {
+    win32_dpi_scale(std::ptr::null_mut())
+}
+
+#[cfg(target_os = "linux")]
 pub fn main_screen_scale() -> f64 {
     1.0
+}
+
+/// Query the DPI scale factor on Windows.
+/// If `hwnd` is non-null, queries per-window DPI; otherwise queries the system DPI.
+#[cfg(target_os = "windows")]
+fn win32_dpi_scale(hwnd: *mut std::ffi::c_void) -> f64 {
+    // Default DPI is 96; scale = actual_dpi / 96.
+    const DEFAULT_DPI: u32 = 96;
+
+    extern "system" {
+        fn GetDpiForWindow(hwnd: *mut std::ffi::c_void) -> u32;
+        fn GetDpiForSystem() -> u32;
+    }
+
+    let dpi = if !hwnd.is_null() {
+        let d = unsafe { GetDpiForWindow(hwnd) };
+        if d == 0 { unsafe { GetDpiForSystem() } } else { d }
+    } else {
+        unsafe { GetDpiForSystem() }
+    };
+
+    if dpi == 0 { 1.0 } else { dpi as f64 / DEFAULT_DPI as f64 }
 }
 
 /// Bridge a baseview raw-window-handle 0.5 to a wgpu-compatible

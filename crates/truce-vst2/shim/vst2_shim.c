@@ -10,6 +10,12 @@
 #include <string.h>
 #include <stdio.h>
 
+#ifdef _MSC_VER
+#define VST2_EXPORT __declspec(dllexport)
+#else
+#define VST2_EXPORT __attribute__((visibility("default")))
+#endif
+
 /* Globals populated by truce_vst2_register() from Rust. */
 const Vst2PluginDescriptor* g_vst2_descriptor = NULL;
 const Vst2Callbacks* g_vst2_callbacks = NULL;
@@ -337,9 +343,10 @@ static void processReplacing(AEffect* e, float** inputs, float** outputs,
  * Entry point
  * --------------------------------------------------------------------------- */
 
-__attribute__((visibility("default")))
+VST2_EXPORT
 AEffect* VSTPluginMain(audioMasterCallback audioMaster);
 
+VST2_EXPORT
 AEffect* VSTPluginMain(audioMasterCallback audioMaster) {
     /* Check host VST version */
     if (audioMaster) {
@@ -391,7 +398,7 @@ AEffect* VSTPluginMain(audioMasterCallback audioMaster) {
 }
 
 /* Also export as 'main' for some hosts */
-__attribute__((visibility("default")))
+VST2_EXPORT
 AEffect* main_macho(audioMasterCallback audioMaster) {
     return VSTPluginMain(audioMaster);
 }
