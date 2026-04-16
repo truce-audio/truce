@@ -231,9 +231,13 @@ Requirements on the build machine:
 
 Limitations:
 
-- **AAX**: Avid's AAX SDK 2.9 ships x64 libs only. An ARM64 AAX build is attempted with `--universal` but usually fails to link — drop `aax` from `--formats` if you're not interested in ARM64 AAX. Universal VST3/VST2/CLAP works fully.
+- **AAX is host-arch only.** The AAX template is a C++ bundle that links against Avid's AAX SDK libraries, which ship x64-only as of SDK 2.9. Cross-compiling the template would need (a) `vcvars_arm64.bat` wiring in our cmake build, and (b) ARM64 AAX SDK libs from Avid — the second doesn't exist yet. `cargo truce package --universal` therefore stages AAX only for the host arch (x64 on x64 hosts, arm64 on arm64 hosts when we gain arm64 host support) and prints a warning. CLAP, VST2, and VST3 ship universally in the same installer; AAX is side-car single-arch inside it. The warning and skip are visible in the build output:
+  ```
+  NOTE: AAX is host-arch-only (x64); --universal won't produce an ARM64 AAX bundle. …
+    Staging AAX (arm64)... skipped (AAX template is built for host arch only)
+  ```
 - **Installer size**: roughly 1.7–2× a single-arch installer (lzma2 compresses well but it's still two full Rust binaries).
-- **AAX Resources directory**: because the Rust cdylib filename would clash between archs in a shared `Resources/` dir, `--universal` AAX builds tag the filename with the arch (`{stem}_aax_x64.dll`, `{stem}_aax_arm64.dll`). The bridge C++ code discovers them via `FindFirstFileA` so the naming doesn't matter to the host.
+- **AAX Resources directory**: the Rust cdylib filename is arch-tagged (`{stem}_aax_x64.dll`, `{stem}_aax_arm64.dll` when we eventually ship both) to avoid collisions inside the shared `Contents/Resources/` directory. The bridge C++ code discovers DLLs via `FindFirstFileA` so filename tagging doesn't matter to Pro Tools.
 
 Example `.iss` fragment for CLAP with `--universal`:
 
