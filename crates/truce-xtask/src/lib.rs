@@ -1595,6 +1595,16 @@ fn locate_vcvars64() -> Option<PathBuf> {
 }
 
 fn install_aax(root: &Path, p: &PluginDef, config: &Config) -> Res {
+    // AAX is only supported on macOS and Windows. On Linux (including WSL
+    // builds that happen to target Linux), short-circuit before referencing
+    // any platform-specific helpers.
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        let _ = (root, p, config);
+        eprintln!("AAX: not supported on this platform, skipping {}", p.name);
+        return Ok(());
+    }
+
     /// Template binary path inside the cmake build directory.
     #[cfg(target_os = "macos")]
     fn template_binary() -> PathBuf {
@@ -1607,7 +1617,10 @@ fn install_aax(root: &Path, p: &PluginDef, config: &Config) -> Res {
         tmp_dir().join("aax_template/build/TruceAAXTemplate.aaxplugin")
     }
 
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     let template = template_binary();
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    let template: PathBuf = unreachable!();
     if !template.exists() {
         if let Some(sdk_path) = resolve_aax_sdk_path(config) {
             eprintln!("AAX: building template with SDK at {}", sdk_path.display());
