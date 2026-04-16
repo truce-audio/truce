@@ -1,23 +1,18 @@
 # truce plugin project configuration
 #
-# Build environment (signing, SDK paths) is configured via env vars:
-#   TRUCE_SIGNING_IDENTITY    code signing identity (default: ad-hoc, macOS)
-#   AAX_SDK_PATH              path to AAX SDK root
-# Set these in .cargo/config.toml or your shell profile.
+# Per-developer build environment (signing, SDK paths) lives in the local
+# `.cargo/config.toml` (gitignored), not here — this file is tracked.
 #
-# Per-platform SDK paths can alternatively live in [macos] / [windows] here:
-#   [macos]
-#   aax_sdk_path = "/Users/you/aax-sdk"
-#   [windows]
-#   aax_sdk_path = 'C:\Users\you\aax-sdk'
+#   [env]
+#   TRUCE_SIGNING_IDENTITY = "Developer ID Application: Name (TEAMID)"
+#   AAX_SDK_PATH           = "/path/to/aax-sdk-2-9-0"
+#
+# Either env var also works if set in your shell.
 [vendor]
 name = "Truce"
 id = "com.truce"
 url = "https://github.com/truce-audio/truce"
 au_manufacturer = "Trce"
-
-[windows]
-aax_sdk_path = 'C:\Users\mahae\Downloads\aax-sdk-2-9-0\aax-sdk-2-9-0'
 
 # Each [[plugin]] entry defines a plugin to build and install.
 # The crate must exist at examples/<suffix>/ and support --features au.
