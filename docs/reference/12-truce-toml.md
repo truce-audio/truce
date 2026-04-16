@@ -78,20 +78,24 @@ au_tag = "Synthesizer"
 
 macOS-specific build settings.
 
+> **Prefer `.cargo/config.toml` (gitignored).** Everything in this section is per-developer / machine-specific — set the equivalent env vars in `[env]` there instead of committing paths to the repo. See [Environment variables](#environment-variables) at the bottom.
+
 | Field | Type | Required | Default | Notes |
 |---|---|---|---|---|
-| `aax_sdk_path` | string | no | — | Absolute path to the AAX SDK root. Overridden by `AAX_SDK_PATH` env var if that's set. Usually lives in `.cargo/config.toml`. |
+| `aax_sdk_path` | string | no | — | Absolute path to the AAX SDK root. Overridden by `AAX_SDK_PATH` env var if that's set. |
 
 ```toml
 [macos]
-# aax_sdk_path is usually in .cargo/config.toml instead
+# aax_sdk_path = "/path/to/aax-sdk-2-9-0"   # prefer .cargo/config.toml [env].AAX_SDK_PATH
 ```
 
 ---
 
 ## `[macos.signing]` — optional
 
-macOS code-signing identities. Parallels `[windows.signing]`: credentials live here, installer appearance and notarization live in `[macos.packaging]`. Most users leave this empty and set `TRUCE_SIGNING_IDENTITY` / `TRUCE_INSTALLER_SIGNING_IDENTITY` via environment instead.
+macOS code-signing identities. Parallels `[windows.signing]`: credentials live here, installer appearance and notarization live in `[macos.packaging]`.
+
+> **Prefer `.cargo/config.toml` (gitignored).** Signing identities are per-developer — use `TRUCE_SIGNING_IDENTITY` / `TRUCE_INSTALLER_SIGNING_IDENTITY` in `[env]` rather than committing them here. See [Environment variables](#environment-variables).
 
 | Field | Type | Required | Default | Notes |
 |---|---|---|---|---|
@@ -109,6 +113,8 @@ installer_identity   = "Developer ID Installer: Your Name (TEAMID)"
 ## `[macos.packaging]` — optional
 
 Notarization + post-sign steps for `cargo truce package` on macOS.
+
+> **`notarize` is project policy and belongs in tracked `truce.toml`. `apple_id` / `team_id` are per-developer — prefer `APPLE_ID` / `TEAM_ID` in `.cargo/config.toml` `[env]`, or use a keychain profile (`xcrun notarytool store-credentials TRUCE_NOTARY`).**
 
 | Field | Type | Required | Default | Notes |
 |---|---|---|---|---|
@@ -131,13 +137,15 @@ notarize = true
 
 Windows-specific build settings.
 
+> **Prefer `.cargo/config.toml` (gitignored).** Everything here is per-developer / machine-specific — set `AAX_SDK_PATH` in `[env]` rather than committing a Windows path to the repo. See [Environment variables](#environment-variables).
+
 | Field | Type | Required | Default | Notes |
 |---|---|---|---|---|
-| `aax_sdk_path` | string | no | — | Absolute path to the AAX SDK root. Overridden by `AAX_SDK_PATH` env var. Usually lives in `.cargo/config.toml` so it stays out of repos. |
+| `aax_sdk_path` | string | no | — | Absolute path to the AAX SDK root. Overridden by `AAX_SDK_PATH` env var. |
 
 ```toml
 [windows]
-aax_sdk_path = 'C:\Users\you\aax-sdk-2-9-0'
+# aax_sdk_path = 'C:\Users\you\aax-sdk-2-9-0'   # prefer .cargo/config.toml [env].AAX_SDK_PATH
 ```
 
 ---
@@ -145,6 +153,8 @@ aax_sdk_path = 'C:\Users\you\aax-sdk-2-9-0'
 ## `[windows.signing]` — optional
 
 Authenticode signing credentials for `cargo truce package`. First configured source wins, in order: Azure → SHA1 thumbprint → `.pfx` file. Absence is fine — binaries and installer ship unsigned with a warning.
+
+> **Prefer `.cargo/config.toml` (gitignored) or CI secrets.** Signing credentials are per-developer / per-environment and should never be committed. Azure uses `AZURE_TENANT_ID` / `AZURE_CLIENT_ID` / `AZURE_CLIENT_SECRET` from the environment; `.pfx` files use `TRUCE_PFX_PASSWORD`. See [Environment variables](#environment-variables).
 
 | Field | Type | Required | Default | Notes |
 |---|---|---|---|---|
