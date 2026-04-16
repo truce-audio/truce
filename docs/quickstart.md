@@ -202,19 +202,26 @@ install` isn't enough — it only installs on your machine. You want a
 single signed installer file.
 
 ```bash
-cargo truce package                    # all default-feature formats
+cargo truce package                    # all default-feature formats, universal (both archs)
 cargo truce package --formats clap,vst3 # subset
+cargo truce package --host-only        # skip cross-arch build (faster dev iteration)
 cargo truce package --no-sign          # skip signing (dev builds)
 ```
 
 You'll find the installer in `dist/`:
 
 - **macOS**: `dist/MyGain-0.1.0-macos.pkg` — a `.pkg` installer with
-  format-selection checkboxes, Developer ID signing, and (if configured)
-  notarization + stapling.
+  format-selection checkboxes, Developer ID signing, (if configured)
+  notarization + stapling, and **fat Mach-O** binaries that run natively
+  on both Apple Silicon and Intel.
 - **Windows**: `dist/My Gain-0.1.0-windows.exe` — an Inno Setup
-  installer with per-format components, Authenticode signing, and a
-  registered uninstaller.
+  installer with per-format components, Authenticode signing, a
+  registered uninstaller, and **dual-arch** payloads for x64 and ARM64.
+
+Universal by default assumes you've added the cross-compile toolchains: on
+macOS `rustup target add x86_64-apple-darwin aarch64-apple-darwin`; on
+Windows `rustup target add aarch64-pc-windows-msvc` plus the VS ARM64 C++
+build tools. `cargo truce doctor` reports what's present and what's missing.
 
 Users double-click it and your plugin is installed. No Rust toolchain
 required on their end.

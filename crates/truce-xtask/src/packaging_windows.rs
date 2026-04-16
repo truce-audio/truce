@@ -148,7 +148,9 @@ pub(crate) fn cmd_package(args: &[String]) -> Res {
         if !opts.no_sign {
             // PACE-sign every AAX bundle (one per arch). PACE wraps the binary;
             // Authenticode signs the wrapped result — so PACE first.
-            if formats.iter().any(|f| matches!(f, PkgFormat::Aax)) {
+            // `--no-pace-sign` (or `--no-sign`) skips the wraptool round-trip
+            // while keeping Authenticode for smoke tests.
+            if !opts.no_pace_sign && formats.iter().any(|f| matches!(f, PkgFormat::Aax)) {
                 let aax_bundle = staging.join(format!("{}.aaxplugin", p.name));
                 for &arch in &archs {
                     let inner_wrapper = aax_bundle
@@ -208,6 +210,10 @@ struct Opts {
     plugin_filter: Option<String>,
     format_str: Option<String>,
     no_sign: bool,
+    /// Skip just PACE — Authenticode still runs. Useful for dev iteration when
+    /// the slow PACE round-trip isn't needed but we still want a signed
+    /// installer for smoke testing. `--no-sign` implies this.
+    no_pace_sign: bool,
     no_installer: bool,
     /// Build only the host arch. Default is universal (x64 + ARM64) so a
     /// single `cargo truce package` run produces the release artefact users
@@ -243,6 +249,7 @@ fn parse_args(args: &[String]) -> std::result::Result<Opts, crate::BoxErr> {
                 );
             }
             "--no-sign" => opts.no_sign = true,
+            "--no-pace-sign" => opts.no_pace_sign = true,
             "--no-installer" => opts.no_installer = true,
             // Universal is the default; accepted explicitly as a no-op so
             // existing CI scripts (and cross-platform invocations) keep working.

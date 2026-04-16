@@ -9,16 +9,33 @@ On macOS this is a `.pkg`. On Windows it's an Inno Setup `.exe`. Both end up in 
 ## Quick reference
 
 ```sh
-cargo truce package                          # all default-feature formats, sign, notarize
+cargo truce package                          # all default-feature formats, sign, notarize,
+                                             #   universal (both archs) by default
 cargo truce package -p gain                  # single plugin
 cargo truce package --formats clap,vst3,aax  # subset of formats
-cargo truce package --universal              # Windows: dual-arch x64+ARM64 installer
+cargo truce package --host-only              # skip the cross-arch build (faster dev iteration)
 cargo truce package --no-sign                # skip Authenticode/codesign (dev)
 cargo truce package --no-installer           # Windows: stage files, skip ISCC
 cargo truce package --no-notarize            # macOS: skip Apple notarization
 ```
 
 Output: `dist/<PluginName>-<version>-macos.pkg` or `dist/<PluginName>-<version>-windows.exe`. Version comes from `[workspace.package] version` or `[package] version` in `Cargo.toml`.
+
+### Architecture coverage
+
+`cargo truce package` defaults to **universal** output on both platforms:
+
+- **macOS** — fat Mach-O bundles (`x86_64-apple-darwin` + `aarch64-apple-darwin`), stitched together via `lipo -create`. One `.pkg`, both architectures.
+- **Windows** — dual-arch Inno Setup installer (`x86_64-pc-windows-msvc` + `aarch64-pc-windows-msvc`), with single-file formats gated by Inno Setup `Check:` directives and bundle formats carrying both arches in arch-scoped sub-directories.
+
+Pass `--host-only` to build for the host arch only — useful when you're iterating locally and don't have the cross-compile toolchain for the other arch installed. `cargo truce doctor` surfaces what's missing.
+
+Requirements for the universal default:
+
+- **macOS**: `rustup target add x86_64-apple-darwin aarch64-apple-darwin`.
+- **Windows**: `rustup target add aarch64-pc-windows-msvc` plus the Visual Studio "MSVC v143 - VS 2022 C++ ARM64/ARM64EC build tools" and "Windows 11 SDK (ARM64)" components.
+
+`--universal` is accepted explicitly as a no-op so existing CI scripts keep working.
 
 ---
 
@@ -29,14 +46,22 @@ Output: `dist/<PluginName>-<version>-macos.pkg` or `dist/<PluginName>-<version>-
 ```
 cargo truce package                (on macOS)
     ↓
-1. Build each format               cargo build --release with --features per format
-2. Stage into                      target/package/<suffix>/
-3. Codesign bundles                Developer ID Application + hardened runtime + timestamp
-4. pkgbuild per format             components/<name>-<format>.pkg
-5. Generate distribution.xml       (format-selection UI)
-6. productbuild                    dist/<Name>-<version>-macos.pkg, signed with Developer ID Installer
-7. Notarize + staple               xcrun notarytool submit --wait; xcrun stapler staple
+1. Build each format × arch        cargo build --release --target <triple> per arch
+                                   (x86_64-apple-darwin, aarch64-apple-darwin by default)
+2. lipo per format                 fat Mach-O into target/release/lib<stem>_<fmt>.dylib
+3. Stage into                      target/package/<suffix>/  (single fat bundle per format)
+4. Codesign bundles                Developer ID Application + hardened runtime + timestamp
+5. pkgbuild per format             components/<name>-<format>.pkg
+6. Generate distribution.xml       (format-selection UI)
+7. productbuild                    dist/<Name>-<version>-macos.pkg, signed with Developer ID Installer
+8. Notarize + staple               xcrun notarytool submit --wait; xcrun stapler staple
 ```
+
+Fat Mach-O bundles run natively on both Apple Silicon and Intel Macs — every major DAW loads them transparently, so the install layout on disk is the same as a single-arch build (no side-by-side arch sub-directories).
+
+The AAX C++ template bundle (`TruceAAXTemplate.aaxplugin/Contents/MacOS/...`) is built with `CMAKE_OSX_ARCHITECTURES="arm64;x86_64"` so it comes out fat too; Avid's macOS AAX SDK ships both arches, so unlike Windows there's no single-arch carve-out for AAX. AU v3 passes `ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO` to `xcodebuild`.
+
+Pass `--host-only` to build only the host arch (skips the second `cargo build` and the `lipo` step).
 
 ### Install paths
 
@@ -92,14 +117,20 @@ Or set `notarize = false` in `[macos.packaging]`.
 ```
 cargo truce package                (on Windows)
     ↓
-1. Build each format               cargo build --release --features per format
+1. Build each format × arch        cargo build --release --target <triple> per arch
+                                   (x86_64-pc-windows-msvc + aarch64-pc-windows-msvc by default)
 2. Stage into                      target\package\windows\<suffix>\
+                                   (VST3/AAX bundles carry both arches in arch sub-dirs;
+                                    CLAP/VST2 stage both DLLs side-by-side)
 3. Authenticode-sign binaries      signtool.exe (skipped if [windows.signing] empty)
 4. PACE-sign AAX bundles           wraptool.exe (skipped if PACE_ACCOUNT unset)
 5. Render .iss                     target\package\windows\<suffix>\installer.iss
-6. Compile installer               ISCC.exe → dist\<Name>-<version>-windows-x64.exe
+                                   (uses Check: IsArm64 / not IsArm64 for single-file formats)
+6. Compile installer               ISCC.exe → dist\<Name>-<version>-windows.exe
 7. Authenticode-sign installer     signtool.exe
 ```
+
+Pass `--host-only` to skip the cross-arch build. AAX stays host-arch even under the universal default (Avid's Windows SDK ships x64 libs only — see [Universal (x64 + ARM64) installers](#universal-x64--arm64-installers) below).
 
 ### Install paths
 
@@ -204,7 +235,9 @@ Inno Setup generates `unins000.exe` next to the install directory and registers 
 
 ### Universal (x64 + ARM64) installers
 
-`cargo truce package --universal` produces a single Windows installer that runs on both x64 and ARM64 machines. Conceptually it's two complete builds stitched into one `.exe`:
+`cargo truce package` produces a single Windows installer that runs on both x64 and ARM64 machines by default. Pass `--host-only` to skip ARM64 (useful for quick dev iteration when the ARM64 toolchain isn't installed). `--universal` is accepted explicitly as a no-op for CI scripts that set it.
+
+Conceptually the default is two complete builds stitched into one `.exe`:
 
 ```
 Truce Gain-0.3.0-windows.exe            # one installer, both archs

@@ -1001,6 +1001,90 @@ fn codesign_bundle(bundle: &str, identity: &str, use_sudo: bool) -> Res {
     Ok(())
 }
 
+/// PACE / iLok wraptool, the canonical macOS install path. Eden 5 ships under
+/// `Versions/5/`; `Current` is a stable symlink Eden maintains across version
+/// bumps. Users who symlinked `wraptool` onto `$PATH` are picked up first.
+#[cfg(not(target_os = "windows"))]
+pub(crate) fn locate_wraptool_macos() -> Option<PathBuf> {
+    if let Ok(p) = which_unix("wraptool") {
+        return Some(p);
+    }
+    for canonical in [
+        "/Applications/PACEAntiPiracy/Eden/Fusion/Current/bin/wraptool",
+        "/Applications/PACEAntiPiracy/Eden/Fusion/Versions/5/bin/wraptool",
+    ] {
+        let p = PathBuf::from(canonical);
+        if p.exists() {
+            return Some(p);
+        }
+    }
+    None
+}
+
+#[cfg(not(target_os = "windows"))]
+fn which_unix(name: &str) -> std::result::Result<PathBuf, std::io::Error> {
+    let path = std::env::var_os("PATH").ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::NotFound, "PATH not set")
+    })?;
+    for dir in std::env::split_paths(&path) {
+        let candidate = dir.join(name);
+        if candidate.is_file() {
+            return Ok(candidate);
+        }
+    }
+    Err(std::io::Error::new(std::io::ErrorKind::NotFound, name.to_string()))
+}
+
+/// PACE-sign an AAX bundle on macOS. No-ops cleanly when wraptool isn't
+/// installed or `PACE_ACCOUNT` / `PACE_SIGN_ID` aren't set — Pro Tools
+/// Developer loads unsigned AAX, retail rejects with `-14013` → `-7054`.
+///
+/// Must run **after** Apple codesign on the bundle: PACE wraps the binary
+/// and `--dsigharden` re-signs with hardened-runtime + secure timestamp,
+/// which is what notarization wants. Apple-signing afterwards would be
+/// detected as PACE tampering at load time.
+///
+/// Must be the **last** step that touches the bundle. PACE 2.4+ inserts a
+/// symlink for backwards compatibility; `cp -r` (and most copy helpers
+/// without `-H`) convert it to a regular file and break the digital seal.
+#[cfg(not(target_os = "windows"))]
+fn pace_sign_aax_macos(bundle: &Path) -> Res {
+    let Some(wraptool) = locate_wraptool_macos() else {
+        eprintln!(
+            "    wraptool not found — AAX bundle is unsigned for PACE. \
+             Pro Tools Developer will load it; retail Pro Tools won't."
+        );
+        return Ok(());
+    };
+    let Ok(account) = std::env::var("PACE_ACCOUNT") else {
+        eprintln!("    PACE_ACCOUNT not set — skipping PACE signing.");
+        return Ok(());
+    };
+    let Ok(signid) = std::env::var("PACE_SIGN_ID") else {
+        eprintln!("    PACE_SIGN_ID not set — skipping PACE signing.");
+        return Ok(());
+    };
+
+    eprintln!("    wraptool: PACE-signing {}", bundle.display());
+    let bundle_str = bundle.to_str().ok_or("AAX bundle path is not valid UTF-8")?;
+    let status = Command::new(&wraptool)
+        .args([
+            "sign",
+            "--account", &account,
+            "--signid", &signid,
+            "--allowsigningservice",
+            "--dsigharden",
+            "--dsig1-compat", "off",
+            "--in", bundle_str,
+            "--out", bundle_str,
+        ])
+        .status()?;
+    if !status.success() {
+        return Err("wraptool failed".into());
+    }
+    Ok(())
+}
+
 /// Return true if `rustup` reports `triple` among its installed targets.
 /// Used by `doctor` to surface cross-compile readiness.
 pub(crate) fn rustup_has_target(triple: &str) -> bool {
@@ -3696,6 +3780,7 @@ fn stage_aax(
     config: &Config,
     staging: &Path,
     universal_mac: bool,
+    no_pace_sign: bool,
 ) -> Res {
     let template = tmp_dir().join("aax_template/build/TruceAAXTemplate.aaxplugin/Contents/MacOS/TruceAAXTemplate");
     if !template.exists() {
@@ -3752,6 +3837,13 @@ fn stage_aax(
     let inner_exe = contents.join("MacOS").join(&p.name);
     codesign_bundle(inner_exe.to_str().unwrap(), config.macos.application_identity(), false)?;
     codesign_bundle(bundle.to_str().unwrap(), config.macos.application_identity(), false)?;
+
+    // PACE wraps the Apple-signed bundle and re-signs with hardened runtime
+    // via --dsigharden. Must be the last touch on the bundle — pkgbuild reads
+    // the staging tree directly, so we're safe.
+    if !no_pace_sign {
+        pace_sign_aax_macos(&bundle)?;
+    }
     Ok(())
 }
 
@@ -3974,6 +4066,7 @@ fn cmd_package_macos(args: &[String]) -> Res {
     let mut format_str: Option<String> = None;
     let mut no_notarize = false;
     let mut host_only = false;
+    let mut no_pace_sign = false;
 
     let mut i = 0;
     while i < args.len() {
@@ -3987,14 +4080,20 @@ fn cmd_package_macos(args: &[String]) -> Res {
                 format_str = Some(args.get(i).cloned().ok_or("--formats requires a value")?);
             }
             "--no-notarize" => no_notarize = true,
+            "--no-pace-sign" => no_pace_sign = true,
             // Universal is the default on macOS — accept the flag explicitly
             // as a no-op so cross-platform CI scripts (that also hit Windows)
             // keep working.
             "--universal" => {}
             "--host-only" => host_only = true,
-            // --no-sign / --no-installer are Windows-only flags; accept and
-            // ignore so cross-platform CI scripts don't break.
-            "--no-sign" | "--no-installer" => {}
+            // --no-sign implies skipping all signing, including PACE. Apple
+            // codesign on macOS is not actually skippable today (we always
+            // pass through the configured identity, ad-hoc when none), but
+            // PACE is — accept the flag and treat it as `--no-pace-sign`.
+            "--no-sign" => no_pace_sign = true,
+            // --no-installer is a Windows-only flag; accept and ignore so
+            // cross-platform CI scripts don't break.
+            "--no-installer" => {}
             other => return Err(format!("unknown flag: {other}").into()),
         }
         i += 1;
@@ -4093,7 +4192,10 @@ fn cmd_package_macos(args: &[String]) -> Res {
                 if src.exists() { fs::copy(&src, &saved)?; }
             }
         }
-        // Lipo per-plugin into the canonical path.
+        // Lipo the per-arch `_plugin` copies directly into the bare
+        // `lib{stem}.dylib` path — that's where `stage_clap` / `stage_vst3`
+        // read from, and where later `cargo truce install` consumers expect
+        // the canonical dylib to live.
         for p in &plugins {
             let inputs: Vec<PathBuf> = archs
                 .iter()
@@ -4106,7 +4208,7 @@ fn cmd_package_macos(args: &[String]) -> Res {
                 })
                 .collect();
             let output = root.join(format!(
-                "target/release/lib{}_plugin.dylib",
+                "target/release/lib{}.dylib",
                 p.dylib_stem()
             ));
             lipo_into(&inputs, &output)?;
@@ -4246,24 +4348,6 @@ fn cmd_package_macos(args: &[String]) -> Res {
         build_au_v3(&root, &config, &plugins, false, &archs)?;
     }
 
-    // Restore the canonical `target/release/lib{stem}.dylib` from the CLAP/VST3
-    // save so other consumers (e.g. subsequent `cargo truce install` runs on
-    // the same tree) see a sensible host-arch single-slice build. Only fill
-    // this with the host arch's slice — there's no host that would load both
-    // arches from the bare `target/release/` path.
-    if has_clap || has_vst3 {
-        let host = MacArch::host();
-        for p in &plugins {
-            let saved = release_lib_for_target(
-                &root,
-                &format!("{}_plugin", p.dylib_stem()),
-                Some(host.triple()),
-            );
-            let dst = root.join(format!("target/release/lib{}.dylib", p.dylib_stem()));
-            if saved.exists() { fs::copy(&saved, &dst)?; }
-        }
-    }
-
     // ---------------------------------------------------------------
     // Step 2–7: Stage, sign, build .pkg per plugin
     // ---------------------------------------------------------------
@@ -4289,7 +4373,7 @@ fn cmd_package_macos(args: &[String]) -> Res {
                 PkgFormat::Vst2 => stage_vst2(&root, p, &config, &staging),
                 PkgFormat::Au2 => stage_au2(&root, p, &config, &staging),
                 PkgFormat::Au3 => stage_au3(&root, p, &config, &staging),
-                PkgFormat::Aax => stage_aax(&root, p, &config, &staging, universal),
+                PkgFormat::Aax => stage_aax(&root, p, &config, &staging, universal, no_pace_sign),
             };
             match result {
                 Ok(()) => eprintln!("ok"),
@@ -4707,6 +4791,14 @@ fn cmd_doctor() -> Res {
         check_cmd("xcode-select", &["-p"], "Xcode CLI tools");
         check_cmd("xcodebuild", &["-version"], "xcodebuild (AU v3)");
         check_cmd("codesign", &["--help"], "codesign");
+        match locate_wraptool_macos() {
+            Some(p) => eprintln!("    ✅ wraptool (PACE) at {}", p.display()),
+            None => eprintln!(
+                "    ℹ️  wraptool not found — only needed for signed AAX builds. \
+                 Install Eden via the iLok License Manager, then optionally \
+                 `sudo ln -s /Applications/PACEAntiPiracy/Eden/Fusion/Current/bin/wraptool /usr/local/bin/wraptool`"
+            ),
+        }
 
         // Universal packaging (default for `cargo truce package`) needs both
         // Apple Rust targets. Missing targets are a warning, not an error —
@@ -4767,8 +4859,8 @@ fn cmd_doctor() -> Res {
     eprintln!();
     eprintln!("  Validation Tools");
     check_cmd("auval", &["-h"], "auval");
-    check_which("pluginval");
-    check_which("clap-validator");
+    check_which_with_env("pluginval", Some("PLUGINVAL"));
+    check_which_with_env("clap-validator", Some("CLAP_VALIDATOR"));
 
     // Configuration
     eprintln!();
@@ -4848,12 +4940,40 @@ pub(crate) fn check_cmd(cmd: &str, args: &[&str], label: &str) {
 }
 
 fn check_which(name: &str) {
+    check_which_with_env(name, None);
+}
+
+/// Like `check_which`, but consults `env_var` (process env, then
+/// `.cargo/config.toml` `[env]`) before falling back to `$PATH`. Lets users
+/// point doctor at tools installed outside `$PATH` — useful for `.app`-bundled
+/// binaries (pluginval) or sibling source checkouts (clap-validator).
+fn check_which_with_env(name: &str, env_var: Option<&str>) {
+    if let Some(var) = env_var {
+        if let Some(path) = std::env::var(var)
+            .ok()
+            .or_else(|| read_cargo_config_env(var))
+        {
+            let p = PathBuf::from(&path);
+            if p.is_file() {
+                eprintln!("    ✅ {name}: {path} (via ${var})");
+                return;
+            }
+            eprintln!(
+                "    ⚠️  {name}: ${var}={path} but file not found — falling back to $PATH"
+            );
+        }
+    }
     match Command::new("which").arg(name).output() {
         Ok(o) if o.status.success() => {
             let path = String::from_utf8_lossy(&o.stdout).trim().to_string();
             eprintln!("    ✅ {name}: {path}");
         }
-        _ => eprintln!("    ⚠️  {name}: not found"),
+        _ => {
+            let hint = env_var
+                .map(|v| format!(" (or set ${v} in shell or .cargo/config.toml [env])"))
+                .unwrap_or_default();
+            eprintln!("    ⚠️  {name}: not found{hint}");
+        }
     }
 }
 
