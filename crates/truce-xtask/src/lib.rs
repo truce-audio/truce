@@ -1,5 +1,8 @@
 mod templates;
 
+#[cfg(target_os = "windows")]
+mod packaging_windows;
+
 use serde::Deserialize;
 use std::env;
 use std::fs;
@@ -486,21 +489,75 @@ fn to_fourcc(s: &str) -> String {
 // ---------------------------------------------------------------------------
 
 #[derive(Deserialize)]
-struct Config {
+pub(crate) struct Config {
     #[serde(default)]
     macos: MacosConfig,
     #[serde(default)]
-    windows: WindowsConfig,
-    vendor: VendorConfig,
-    plugin: Vec<PluginDef>,
+    pub(crate) windows: WindowsConfig,
+    pub(crate) vendor: VendorConfig,
+    pub(crate) plugin: Vec<PluginDef>,
     #[serde(default)]
-    packaging: PackagingConfig,
+    pub(crate) packaging: PackagingConfig,
 }
 
 #[derive(Deserialize, Default)]
-struct WindowsConfig {
+pub(crate) struct WindowsConfig {
     /// Path to the AAX SDK root directory. Falls back to the AAX_SDK_PATH env var.
     aax_sdk_path: Option<String>,
+    #[serde(default)]
+    pub(crate) signing: WindowsSigningConfig,
+    #[serde(default)]
+    pub(crate) packaging: WindowsPackagingConfig,
+}
+
+/// Authenticode signing credentials for signtool. First non-empty option wins,
+/// in the order Azure → thumbprint → pfx file.
+#[derive(Deserialize, Default)]
+pub(crate) struct WindowsSigningConfig {
+    /// Azure Trusted Signing account name.
+    pub(crate) azure_account: Option<String>,
+    /// Azure Trusted Signing certificate profile.
+    pub(crate) azure_profile: Option<String>,
+    /// Azure Code Signing Dlib.dll path (defaults to standard install location).
+    pub(crate) azure_dlib: Option<String>,
+    /// Cert SHA1 thumbprint for a cert already in the current user's cert store.
+    pub(crate) sha1: Option<String>,
+    /// Cert store name. Defaults to "My".
+    pub(crate) cert_store: Option<String>,
+    /// Path to a .pfx file. Password via TRUCE_PFX_PASSWORD env var.
+    pub(crate) pfx_path: Option<String>,
+    /// RFC 3161 timestamp URL. Defaults to DigiCert.
+    pub(crate) timestamp_url: Option<String>,
+}
+
+impl WindowsSigningConfig {
+    /// True when any credential source is configured.
+    pub(crate) fn is_configured(&self) -> bool {
+        self.azure_account.is_some() || self.sha1.is_some() || self.pfx_path.is_some()
+    }
+
+    pub(crate) fn resolved_timestamp_url(&self) -> &str {
+        self.timestamp_url.as_deref().unwrap_or("http://timestamp.digicert.com")
+    }
+}
+
+#[derive(Deserialize, Default)]
+pub(crate) struct WindowsPackagingConfig {
+    /// Publisher name shown in the installer and Apps & Features.
+    /// Defaults to [vendor].name when absent.
+    pub(crate) publisher: Option<String>,
+    /// Publisher URL shown in the installer.
+    /// Defaults to [vendor].url when absent.
+    pub(crate) publisher_url: Option<String>,
+    /// Installer-window icon (.ico, relative to workspace root).
+    pub(crate) installer_icon: Option<String>,
+    /// Welcome/finish wizard bitmap (.bmp, 164x314, relative to workspace root).
+    pub(crate) welcome_bmp: Option<String>,
+    /// License shown on the wizard's license page (.rtf or .txt).
+    pub(crate) license_rtf: Option<String>,
+    /// Override for the stable `AppId` Inno Setup uses to detect upgrades.
+    /// Defaults to `{vendor_id}.{suffix}` when absent.
+    pub(crate) app_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -534,9 +591,9 @@ struct MacosPackagingConfig {
 }
 
 #[derive(Deserialize, Default)]
-struct PackagingConfig {
+pub(crate) struct PackagingConfig {
     #[serde(default)]
-    formats: Vec<String>,
+    pub(crate) formats: Vec<String>,
     welcome_html: Option<String>,
     license_html: Option<String>,
 }
@@ -601,18 +658,20 @@ fn deployment_target() -> String {
 }
 
 #[derive(Deserialize)]
-struct VendorConfig {
-    name: String,
-    id: String,
-    au_manufacturer: String,
+pub(crate) struct VendorConfig {
+    pub(crate) name: String,
+    pub(crate) id: String,
+    #[serde(default)]
+    pub(crate) url: Option<String>,
+    pub(crate) au_manufacturer: String,
 }
 
 #[derive(Deserialize)]
-struct PluginDef {
-    name: String,
-    suffix: String,
+pub(crate) struct PluginDef {
+    pub(crate) name: String,
+    pub(crate) suffix: String,
     #[serde(rename = "crate")]
-    crate_name: String,
+    pub(crate) crate_name: String,
     #[serde(default)]
     fourcc: Option<String>,
     category: String,
@@ -648,14 +707,14 @@ impl PluginDef {
         format!("Truce{}AU", cap)
     }
     /// Dylib filename stem derived from the crate name (hyphens → underscores).
-    fn dylib_stem(&self) -> String {
+    pub(crate) fn dylib_stem(&self) -> String {
         self.crate_name.replace('-', "_")
     }
 }
 
 /// Return the platform-specific shared library filename for a given stem.
 /// macOS: `lib{stem}.dylib`, Windows: `{stem}.dll`, Linux: `lib{stem}.so`
-fn shared_lib_name(stem: &str) -> String {
+pub(crate) fn shared_lib_name(stem: &str) -> String {
     if cfg!(target_os = "windows") {
         format!("{stem}.dll")
     } else if cfg!(target_os = "linux") {
@@ -666,13 +725,13 @@ fn shared_lib_name(stem: &str) -> String {
 }
 
 /// Return `target/release/{shared_lib_name}` for a plugin.
-fn release_lib(root: &Path, stem: &str) -> PathBuf {
+pub(crate) fn release_lib(root: &Path, stem: &str) -> PathBuf {
     root.join("target/release").join(shared_lib_name(stem))
 }
 
 /// Return the Windows `%COMMONPROGRAMFILES%` directory (typically `C:\Program Files\Common Files`).
 #[cfg(target_os = "windows")]
-fn common_program_files() -> PathBuf {
+pub(crate) fn common_program_files() -> PathBuf {
     if let Ok(v) = env::var("CommonProgramFiles") {
         PathBuf::from(v)
     } else {
@@ -682,7 +741,7 @@ fn common_program_files() -> PathBuf {
 
 /// Return the Windows `%PROGRAMFILES%` directory (typically `C:\Program Files`).
 #[cfg(target_os = "windows")]
-fn program_files() -> PathBuf {
+pub(crate) fn program_files() -> PathBuf {
     if let Ok(v) = env::var("ProgramFiles") {
         PathBuf::from(v)
     } else {
@@ -696,7 +755,7 @@ fn default_au_tag() -> String {
 
 /// Resolve the AAX SDK path: platform-specific section in truce.toml
 /// → `AAX_SDK_PATH` env var → `.cargo/config.toml` → None.
-fn resolve_aax_sdk_path(config: &Config) -> Option<PathBuf> {
+pub(crate) fn resolve_aax_sdk_path(config: &Config) -> Option<PathBuf> {
     let toml_path = if cfg!(target_os = "windows") {
         (&config.windows.aax_sdk_path, "[windows].aax_sdk_path")
     } else {
@@ -726,7 +785,7 @@ fn resolve_aax_sdk_path(config: &Config) -> Option<PathBuf> {
     None
 }
 
-fn load_config() -> std::result::Result<Config, BoxErr> {
+pub(crate) fn load_config() -> std::result::Result<Config, BoxErr> {
     let root = project_root();
     let path = root.join("truce.toml");
     if !path.exists() {
@@ -753,12 +812,12 @@ fn load_config() -> std::result::Result<Config, BoxErr> {
 // Helpers
 // ---------------------------------------------------------------------------
 
-type Res = std::result::Result<(), Box<dyn std::error::Error>>;
-type BoxErr = Box<dyn std::error::Error>;
+pub(crate) type Res = std::result::Result<(), Box<dyn std::error::Error>>;
+pub(crate) type BoxErr = Box<dyn std::error::Error>;
 
 /// Read the version from Cargo.toml.
 /// Checks `[workspace.package] version` first, then `[package] version`.
-fn read_workspace_version(root: &Path) -> Option<String> {
+pub(crate) fn read_workspace_version(root: &Path) -> Option<String> {
     let content = fs::read_to_string(root.join("Cargo.toml")).ok()?;
     let doc: toml::Table = content.parse().ok()?;
     // Workspace layout: [workspace.package] version
@@ -777,7 +836,7 @@ fn read_workspace_version(root: &Path) -> Option<String> {
 }
 
 /// Read the default features from the project's Cargo.toml.
-fn detect_default_features() -> std::collections::HashSet<String> {
+pub(crate) fn detect_default_features() -> std::collections::HashSet<String> {
     let root = project_root();
     if let Ok(content) = fs::read_to_string(root.join("Cargo.toml")) {
         if let Ok(doc) = content.parse::<toml::Table>() {
@@ -794,7 +853,7 @@ fn detect_default_features() -> std::collections::HashSet<String> {
     ["clap", "vst3", "vst2", "au", "aax"].iter().map(|s| s.to_string()).collect()
 }
 
-fn project_root() -> PathBuf {
+pub(crate) fn project_root() -> PathBuf {
     // Walk up from the current directory looking for truce.toml.
     // This works from both `cargo xtask` (workspace) and `cargo truce`
     // (globally installed binary run from any project directory).
@@ -838,7 +897,7 @@ fn is_production_identity(identity: &str) -> bool {
 }
 
 /// Return the project-local temp directory (`target/tmp/`), creating it if needed.
-fn tmp_dir() -> PathBuf {
+pub(crate) fn tmp_dir() -> PathBuf {
     let dir = project_root().join("target/tmp");
     let _ = fs::create_dir_all(&dir);
     dir
@@ -902,7 +961,7 @@ fn codesign_bundle(bundle: &str, identity: &str, use_sudo: bool) -> Res {
 }
 
 #[allow(unused_variables)]
-fn cargo_build(env_vars: &[(&str, &str)], extra_args: &[&str], deployment_target: &str) -> Res {
+pub(crate) fn cargo_build(env_vars: &[(&str, &str)], extra_args: &[&str], deployment_target: &str) -> Res {
     let mut cmd = Command::new("cargo");
     cmd.arg("build").arg("--release");
     #[cfg(target_os = "macos")]
@@ -1417,7 +1476,7 @@ fn install_au(root: &Path, p: &PluginDef, config: &Config) -> Res {
 // AAX install
 // ---------------------------------------------------------------------------
 
-fn build_aax_template(_root: &Path, sdk_path: &Path) -> Res {
+pub(crate) fn build_aax_template(_root: &Path, sdk_path: &Path) -> Res {
     // Write embedded template files to a temp directory
     let template_dir = tmp_dir().join("aax_template");
     let src_dir = template_dir.join("src");
@@ -2117,7 +2176,7 @@ fn extract_team_id(sign_id: &str) -> String {
 }
 
 #[allow(dead_code)]
-fn copy_dir_recursive(src: &Path, dst: &Path) -> Res {
+pub(crate) fn copy_dir_recursive(src: &Path, dst: &Path) -> Res {
     fs::create_dir_all(dst)?;
     for entry in fs::read_dir(src)? {
         let entry = entry?;
@@ -3141,7 +3200,7 @@ mod dirs {
 
 /// Parsed format flags for the package command.
 #[derive(Clone, PartialEq)]
-enum PkgFormat {
+pub(crate) enum PkgFormat {
     Clap,
     Vst3,
     Vst2,
@@ -3151,7 +3210,7 @@ enum PkgFormat {
 }
 
 impl PkgFormat {
-    fn parse_list(s: &str) -> Result<Vec<PkgFormat>, BoxErr> {
+    pub(crate) fn parse_list(s: &str) -> Result<Vec<PkgFormat>, BoxErr> {
         let mut out = Vec::new();
         for token in s.split(',') {
             match token.trim() {
@@ -3167,7 +3226,7 @@ impl PkgFormat {
         Ok(out)
     }
 
-    fn label(&self) -> &'static str {
+    pub(crate) fn label(&self) -> &'static str {
         match self {
             PkgFormat::Clap => "CLAP",
             PkgFormat::Vst3 => "VST3",
@@ -3567,6 +3626,16 @@ fn write_postinstall_script(dir: &Path) -> Res {
 }
 
 fn cmd_package(args: &[String]) -> Res {
+    #[cfg(target_os = "windows")]
+    {
+        return packaging_windows::cmd_package(args);
+    }
+    #[cfg(not(target_os = "windows"))]
+    cmd_package_macos(args)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn cmd_package_macos(args: &[String]) -> Res {
     let config = load_config()?;
     let root = project_root();
     let dt = &deployment_target();
@@ -4166,6 +4235,10 @@ fn cmd_doctor() -> Res {
         eprintln!();
         eprintln!("  Windows");
         check_cmd("cmake", &["--version"], "cmake (AAX template build)");
+
+        eprintln!();
+        eprintln!("  Packaging (Windows)");
+        packaging_windows::doctor();
     }
 
     // Compilers
@@ -4249,7 +4322,7 @@ fn cmd_doctor() -> Res {
     Ok(())
 }
 
-fn check_cmd(cmd: &str, args: &[&str], label: &str) {
+pub(crate) fn check_cmd(cmd: &str, args: &[&str], label: &str) {
     match Command::new(cmd).args(args).output() {
         Ok(o) if o.status.success() => {
             let ver = String::from_utf8_lossy(&o.stdout);
