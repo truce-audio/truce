@@ -25,7 +25,8 @@ unsafe impl HasRawWindowHandle for ParentWindow {
             }
             RawWindowHandle::X11(window_id) => {
                 let mut handle = raw_window_handle::XlibWindowHandle::empty();
-                handle.window = window_id as u32;
+                // rwh 0.5 field type is c_ulong: u64 on Linux/macOS, u32 on Windows.
+                handle.window = window_id as _;
                 RwhRawWindowHandle::Xlib(handle)
             }
         }

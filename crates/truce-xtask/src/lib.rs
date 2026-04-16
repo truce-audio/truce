@@ -489,10 +489,18 @@ fn to_fourcc(s: &str) -> String {
 struct Config {
     #[serde(default)]
     macos: MacosConfig,
+    #[serde(default)]
+    windows: WindowsConfig,
     vendor: VendorConfig,
     plugin: Vec<PluginDef>,
     #[serde(default)]
     packaging: PackagingConfig,
+}
+
+#[derive(Deserialize, Default)]
+struct WindowsConfig {
+    /// Path to the AAX SDK root directory. Falls back to the AAX_SDK_PATH env var.
+    aax_sdk_path: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -686,14 +694,20 @@ fn default_au_tag() -> String {
     "Effects".to_string()
 }
 
-/// Resolve the AAX SDK path: truce.toml `[macos].aax_sdk_path` → `AAX_SDK_PATH` env var → None.
+/// Resolve the AAX SDK path: platform-specific section in truce.toml
+/// → `AAX_SDK_PATH` env var → `.cargo/config.toml` → None.
 fn resolve_aax_sdk_path(config: &Config) -> Option<PathBuf> {
-    if let Some(ref p) = config.macos.aax_sdk_path {
+    let toml_path = if cfg!(target_os = "windows") {
+        (&config.windows.aax_sdk_path, "[windows].aax_sdk_path")
+    } else {
+        (&config.macos.aax_sdk_path, "[macos].aax_sdk_path")
+    };
+    if let Some(ref p) = toml_path.0 {
         let path = PathBuf::from(p);
         if path.exists() {
             return Some(path);
         }
-        eprintln!("warning: [macos].aax_sdk_path = {p:?} in truce.toml but directory not found");
+        eprintln!("warning: {} = {:?} in truce.toml but directory not found", toml_path.1, p);
     }
     if let Ok(p) = std::env::var("AAX_SDK_PATH") {
         let path = PathBuf::from(&p);
@@ -1422,19 +1436,30 @@ fn build_aax_template(_root: &Path, sdk_path: &Path) -> Res {
     fs::write(src_dir.join("truce_aax_bridge.h"), templates::aax::BRIDGE_HEADER)?;
 
     let build_dir = template_dir.join("build");
-    let status = Command::new("cmake")
+    let mut configure = Command::new("cmake");
+    configure
         .arg("-B")
         .arg(&build_dir)
         .arg(format!("-DAAX_SDK_PATH={}", sdk_path.display()))
-        .current_dir(&template_dir)
-        .status()?;
+        .current_dir(&template_dir);
+    // Force x64 on Windows (MSVC generator defaults vary by VS version).
+    #[cfg(target_os = "windows")]
+    {
+        configure.arg("-A").arg("x64");
+    }
+    let status = configure.status()?;
     if !status.success() {
         return Err("cmake configure failed for AAX template".into());
     }
-    let status = Command::new("cmake")
-        .arg("--build")
-        .arg(&build_dir)
-        .status()?;
+
+    let mut build = Command::new("cmake");
+    build.arg("--build").arg(&build_dir);
+    // Visual Studio is a multi-config generator — pick Release explicitly.
+    #[cfg(target_os = "windows")]
+    {
+        build.arg("--config").arg("Release");
+    }
+    let status = build.status()?;
     if !status.success() {
         return Err("cmake build failed for AAX template".into());
     }
@@ -1442,21 +1467,42 @@ fn build_aax_template(_root: &Path, sdk_path: &Path) -> Res {
 }
 
 fn install_aax(root: &Path, p: &PluginDef, config: &Config) -> Res {
-    let template = tmp_dir().join("aax_template/build/TruceAAXTemplate.aaxplugin/Contents/MacOS/TruceAAXTemplate");
+    /// Template binary path inside the cmake build directory.
+    #[cfg(target_os = "macos")]
+    fn template_binary() -> PathBuf {
+        tmp_dir().join("aax_template/build/TruceAAXTemplate.aaxplugin/Contents/MacOS/TruceAAXTemplate")
+    }
+    #[cfg(target_os = "windows")]
+    fn template_binary() -> PathBuf {
+        // cmake-visual-studio puts MODULE targets under build/{Config}/name.ext
+        // Our CMakeLists.txt sets SUFFIX=.aaxplugin, PREFIX=""
+        tmp_dir().join("aax_template/build/Release/TruceAAXTemplate.aaxplugin")
+    }
+
+    let template = template_binary();
     if !template.exists() {
         if let Some(sdk_path) = resolve_aax_sdk_path(config) {
             eprintln!("AAX: building template with SDK at {}", sdk_path.display());
             build_aax_template(root, &sdk_path)?;
         } else {
+            let hint = if cfg!(target_os = "windows") {
+                "[windows].aax_sdk_path"
+            } else {
+                "[macos].aax_sdk_path"
+            };
             eprintln!(
                 "AAX: template not built, skipping.\n  \
-                 Set [macos].aax_sdk_path in truce.toml or AAX_SDK_PATH env var."
+                 Set {hint} in truce.toml or AAX_SDK_PATH env var."
             );
             return Ok(());
         }
     }
     if !template.exists() {
-        return Err("AAX template build succeeded but binary not found".into());
+        return Err(format!(
+            "AAX template build succeeded but binary not found at {}",
+            template.display()
+        )
+        .into());
     }
 
     let dylib = release_lib(root, &format!("{}_aax", p.dylib_stem()));
@@ -1465,36 +1511,34 @@ fn install_aax(root: &Path, p: &PluginDef, config: &Config) -> Res {
         return Ok(());
     }
 
-    // TODO: Windows AAX install path: %COMMONPROGRAMFILES%\Avid\Audio\Plug-Ins
-    let aax_dir = "/Library/Application Support/Avid/Audio/Plug-Ins";
-    let bundle = format!("{aax_dir}/{}.aaxplugin", p.name);
-    let contents = format!("{bundle}/Contents");
+    #[cfg(target_os = "macos")]
+    {
+        let aax_dir = "/Library/Application Support/Avid/Audio/Plug-Ins";
+        let bundle = format!("{aax_dir}/{}.aaxplugin", p.name);
+        let contents = format!("{bundle}/Contents");
 
-    run_sudo("rm", &["-rf", &bundle])?;
-    run_sudo("mkdir", &["-p", &format!("{contents}/MacOS")])?;
-    run_sudo("mkdir", &["-p", &format!("{contents}/Resources")])?;
+        run_sudo("rm", &["-rf", &bundle])?;
+        run_sudo("mkdir", &["-p", &format!("{contents}/MacOS")])?;
+        run_sudo("mkdir", &["-p", &format!("{contents}/Resources")])?;
 
-    // Copy template binary
-    run_sudo(
-        "cp",
-        &[
-            template.to_str().unwrap(),
-            &format!("{contents}/MacOS/{}", p.name),
-        ],
-    )?;
+        run_sudo(
+            "cp",
+            &[
+                template.to_str().unwrap(),
+                &format!("{contents}/MacOS/{}", p.name),
+            ],
+        )?;
 
-    // Copy Rust cdylib
-    run_sudo(
-        "cp",
-        &[
-            dylib.to_str().unwrap(),
-            &format!("{contents}/Resources/"),
-        ],
-    )?;
+        run_sudo(
+            "cp",
+            &[
+                dylib.to_str().unwrap(),
+                &format!("{contents}/Resources/"),
+            ],
+        )?;
 
-    // Info.plist
-    let plist = format!(
-        r#"<?xml version="1.0" encoding="UTF-8"?>
+        let plist = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
@@ -1510,15 +1554,44 @@ fn install_aax(root: &Path, p: &PluginDef, config: &Config) -> Res {
     <string>1</string>
 </dict>
 </plist>"#,
-        name = p.name,
-        suffix = p.suffix,
-    );
-    let plist_tmp = tmp_dir().join(format!("{}_aax.plist", p.suffix)).to_string_lossy().to_string();
-    fs::write(&plist_tmp, &plist)?;
-    run_sudo("cp", &[&plist_tmp, &format!("{contents}/Info.plist")])?;
+            name = p.name,
+            suffix = p.suffix,
+        );
+        let plist_tmp = tmp_dir().join(format!("{}_aax.plist", p.suffix)).to_string_lossy().to_string();
+        fs::write(&plist_tmp, &plist)?;
+        run_sudo("cp", &[&plist_tmp, &format!("{contents}/Info.plist")])?;
 
-    codesign_bundle(&bundle, &config.macos.signing_identity, true)?;
-    eprintln!("AAX:  {bundle}");
+        codesign_bundle(&bundle, &config.macos.signing_identity, true)?;
+        eprintln!("AAX:  {bundle}");
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        // Windows AAX bundle layout:
+        //   Plugin.aaxplugin/
+        //     Contents/
+        //       x64/
+        //         Plugin.aaxplugin       (template binary, the .dll we built)
+        //       Resources/
+        //         {name}_aax.dll         (Rust cdylib)
+        //
+        // Install to %COMMONPROGRAMFILES%\Avid\Audio\Plug-Ins\
+        let aax_dir = common_program_files().join("Avid").join("Audio").join("Plug-Ins");
+        let bundle = aax_dir.join(format!("{}.aaxplugin", p.name));
+        let contents = bundle.join("Contents");
+        let x64_dir = contents.join("x64");
+        let resources_dir = contents.join("Resources");
+
+        let _ = fs::remove_dir_all(&bundle);
+        fs::create_dir_all(&x64_dir)?;
+        fs::create_dir_all(&resources_dir)?;
+
+        fs::copy(&template, x64_dir.join(format!("{}.aaxplugin", p.name)))?;
+        fs::copy(&dylib, resources_dir.join(format!("{}_aax.dll", p.dylib_stem())))?;
+
+        eprintln!("AAX:  {}", bundle.display());
+    }
+
     Ok(())
 }
 
@@ -4010,18 +4083,34 @@ fn cmd_doctor() -> Res {
     check_cmd("rustc", &["--version"], "rustc");
     check_cmd("cargo", &["--version"], "cargo");
 
-    // macOS tools
-    eprintln!();
-    eprintln!("  macOS");
-    check_cmd("xcode-select", &["-p"], "Xcode CLI tools");
-    check_cmd("xcodebuild", &["-version"], "xcodebuild (AU v3)");
-    check_cmd("codesign", &["--help"], "codesign");
+    // Platform tools
+    #[cfg(target_os = "macos")]
+    {
+        eprintln!();
+        eprintln!("  macOS");
+        check_cmd("xcode-select", &["-p"], "Xcode CLI tools");
+        check_cmd("xcodebuild", &["-version"], "xcodebuild (AU v3)");
+        check_cmd("codesign", &["--help"], "codesign");
+    }
+    #[cfg(target_os = "windows")]
+    {
+        eprintln!();
+        eprintln!("  Windows");
+        check_cmd("cmake", &["--version"], "cmake (AAX template build)");
+    }
 
     // Compilers
     eprintln!();
     eprintln!("  Compilers");
-    check_cmd("cc", &["--version"], "C compiler");
-    check_cmd("c++", &["--version"], "C++ compiler (VST3 shim)");
+    #[cfg(not(target_os = "windows"))]
+    {
+        check_cmd("cc", &["--version"], "C compiler");
+        check_cmd("c++", &["--version"], "C++ compiler (VST3 shim)");
+    }
+    #[cfg(target_os = "windows")]
+    {
+        check_cmd("cl", &["/?"], "MSVC compiler (run from Developer Command Prompt)");
+    }
 
     // Validation tools
     eprintln!();
@@ -4056,17 +4145,32 @@ fn cmd_doctor() -> Res {
     let aax_sdk = config.as_ref().and_then(resolve_aax_sdk_path);
     match aax_sdk {
         Some(p) => eprintln!("    ✅ AAX SDK at {}", p.display()),
-        None => eprintln!("    ⚠️  AAX SDK not configured (set [macos].aax_sdk_path in truce.toml or AAX_SDK_PATH env var)"),
+        None => {
+            let hint = if cfg!(target_os = "windows") { "[windows].aax_sdk_path" } else { "[macos].aax_sdk_path" };
+            eprintln!("    ⚠️  AAX SDK not configured (set {hint} in truce.toml or AAX_SDK_PATH env var)");
+        }
     }
 
     // Installed plugins
     eprintln!();
     eprintln!("  Installed Plugins");
-    let home = dirs::home_dir().unwrap_or_default();
-    count_plugins(&home.join("Library/Audio/Plug-Ins/CLAP"), "CLAP");
-    count_plugins(&Path::new("/Library/Audio/Plug-Ins/VST3").to_path_buf(), "VST3");
-    count_plugins(&Path::new("/Library/Audio/Plug-Ins/Components").to_path_buf(), "AU v2");
-    count_plugins(&home.join("Library/Audio/Plug-Ins/VST"), "VST2");
+    #[cfg(target_os = "macos")]
+    {
+        let home = dirs::home_dir().unwrap_or_default();
+        count_plugins(&home.join("Library/Audio/Plug-Ins/CLAP"), "CLAP");
+        count_plugins(&Path::new("/Library/Audio/Plug-Ins/VST3").to_path_buf(), "VST3");
+        count_plugins(&Path::new("/Library/Audio/Plug-Ins/Components").to_path_buf(), "AU v2");
+        count_plugins(&home.join("Library/Audio/Plug-Ins/VST"), "VST2");
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let cpf = common_program_files();
+        let pf = program_files();
+        count_plugins(&cpf.join("CLAP"), "CLAP");
+        count_plugins(&cpf.join("VST3"), "VST3");
+        count_plugins(&pf.join("Steinberg").join("VstPlugins"), "VST2");
+        count_plugins(&cpf.join("Avid").join("Audio").join("Plug-Ins"), "AAX");
+    }
     if root.join("rust-toolchain.toml").exists() {
         eprintln!("    ✅ rust-toolchain.toml present");
     }

@@ -1,5 +1,9 @@
 cmake_minimum_required(VERSION 3.19)
-project(TruceAAXTemplate)
+if(APPLE)
+    project(TruceAAXTemplate LANGUAGES CXX OBJCXX)
+else()
+    project(TruceAAXTemplate LANGUAGES CXX)
+endif()
 
 # AAX SDK path
 if(NOT DEFINED AAX_SDK_PATH)
@@ -10,8 +14,14 @@ if(NOT DEFINED AAX_SDK_PATH)
     endif()
 endif()
 
-# AAX library — use pre-built if available, otherwise build
-set(AAX_LIB_PATH "${AAX_SDK_PATH}/build-lib/Libs/AAXLibrary/libAAXLibrary.a")
+# AAX library — use pre-built if available, otherwise build from source.
+# The SDK doesn't ship pre-built libs on any platform we've tested, so in
+# practice we always fall through to the add_subdirectory() path.
+if(APPLE)
+    set(AAX_LIB_PATH "${AAX_SDK_PATH}/build-lib/Libs/AAXLibrary/libAAXLibrary.a")
+else()
+    set(AAX_LIB_PATH "${AAX_SDK_PATH}/build-lib/Libs/AAXLibrary/AAXLibrary.lib")
+endif()
 if(NOT EXISTS "${AAX_LIB_PATH}")
     message(STATUS "Pre-built AAX library not found, building from source...")
     add_subdirectory(${AAX_SDK_PATH}/Libs/AAXLibrary ${CMAKE_BINARY_DIR}/AAXLibrary)
@@ -50,6 +60,14 @@ if(APPLE)
         BUNDLE TRUE
         BUNDLE_EXTENSION "aaxplugin"
         MACOSX_BUNDLE_INFO_PLIST ${CMAKE_CURRENT_SOURCE_DIR}/src/Info.plist.in
+    )
+elseif(WIN32)
+    # Windows AAX plugins are .aaxplugin DLLs that live inside the
+    # Contents/x64/ subdirectory of the bundle. cmake's MODULE output
+    # defaults to .dll — rename to .aaxplugin.
+    set_target_properties(TruceAAXTemplate PROPERTIES
+        SUFFIX ".aaxplugin"
+        PREFIX ""
     )
 endif()
 

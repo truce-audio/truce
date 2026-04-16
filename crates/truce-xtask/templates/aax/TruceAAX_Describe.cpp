@@ -21,14 +21,23 @@
 #include <dlfcn.h>
 #endif
 
-// Get the .aaxplugin bundle path at runtime (macOS)
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
+// Get the .aaxplugin bundle path at runtime.
+//
+// macOS layout:
+//   Plugin.aaxplugin/Contents/MacOS/Plugin
+//   → walk up 3 levels to reach Plugin.aaxplugin
+//
+// Windows layout:
+//   Plugin.aaxplugin/Contents/x64/Plugin.aaxplugin
+//   → walk up 2 levels to reach Plugin.aaxplugin
 static bool GetBundlePath(char* out, size_t outLen) {
 #ifdef __APPLE__
     Dl_info info;
     if (dladdr((void*)&GetBundlePath, &info)) {
-        // info.dli_fname is the path to our binary inside the bundle
-        // e.g., /path/to/Plugin.aaxplugin/Contents/MacOS/Plugin
-        // Walk up to find the .aaxplugin directory
         char path[2048];
         strncpy(path, info.dli_fname, sizeof(path));
         // Go up: Plugin → MacOS → Contents → Plugin.aaxplugin
@@ -39,8 +48,32 @@ static bool GetBundlePath(char* out, size_t outLen) {
         strncpy(out, path, outLen);
         return true;
     }
-#endif
     return false;
+#elif defined(_WIN32)
+    HMODULE hm = NULL;
+    if (!GetModuleHandleExA(
+            GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS
+                | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+            (LPCSTR)&GetBundlePath, &hm)) {
+        return false;
+    }
+    char path[2048] = {};
+    DWORD n = GetModuleFileNameA(hm, path, sizeof(path));
+    if (n == 0 || n >= sizeof(path)) return false;
+    // path is e.g. C:\...\Plugin.aaxplugin\Contents\x64\Plugin.aaxplugin
+    // Walk up: binary → x64 → Contents → Plugin.aaxplugin
+    for (int i = 0; i < 3; i++) {
+        char* last = strrchr(path, '\\');
+        if (!last) return false;
+        *last = 0;
+    }
+    strncpy(out, path, outLen);
+    if (outLen > 0) out[outLen - 1] = 0;
+    return true;
+#else
+    (void)out; (void)outLen;
+    return false;
+#endif
 }
 
 // AAX entry point — called by Pro Tools on plugin load
