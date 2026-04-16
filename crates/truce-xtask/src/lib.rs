@@ -1001,6 +1001,20 @@ fn codesign_bundle(bundle: &str, identity: &str, use_sudo: bool) -> Res {
     Ok(())
 }
 
+/// Return true if `rustup` reports `triple` among its installed targets.
+/// Used by `doctor` to surface cross-compile readiness.
+pub(crate) fn rustup_has_target(triple: &str) -> bool {
+    let out = Command::new("rustup")
+        .args(["target", "list", "--installed"])
+        .output();
+    match out {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout)
+            .lines()
+            .any(|l| l.trim() == triple),
+        _ => false,
+    }
+}
+
 #[allow(unused_variables)]
 pub(crate) fn cargo_build(env_vars: &[(&str, &str)], extra_args: &[&str], deployment_target: &str) -> Res {
     let mut cmd = Command::new("cargo");
@@ -1517,7 +1531,21 @@ fn install_au(root: &Path, p: &PluginDef, config: &Config) -> Res {
 // AAX install
 // ---------------------------------------------------------------------------
 
-pub(crate) fn build_aax_template(_root: &Path, sdk_path: &Path) -> Res {
+/// Build the AAX C++ template bundle.
+///
+/// `universal_mac` is only meaningful on macOS: when `true`, the cmake
+/// invocation sets `CMAKE_OSX_ARCHITECTURES="arm64;x86_64"` so the resulting
+/// `TruceAAXTemplate` binary is a fat Mach-O that runs on both Apple Silicon
+/// and Intel hosts. On Windows (and for host-only macOS builds) the flag is
+/// ignored — cmake builds for the host arch only, consistent with the Windows
+/// `packaging_windows.rs` side of the story, which keeps AAX host-arch even in
+/// `--universal` mode.
+pub(crate) fn build_aax_template(_root: &Path, sdk_path: &Path, universal_mac: bool) -> Res {
+    // Referenced only by the macOS cmake branch below; touch it on Windows so
+    // the parameter doesn't trip the unused-variable lint.
+    #[cfg(target_os = "windows")]
+    let _ = universal_mac;
+
     // Write embedded template files to a temp directory
     let template_dir = tmp_dir().join("aax_template");
     let src_dir = template_dir.join("src");
@@ -1539,12 +1567,15 @@ pub(crate) fn build_aax_template(_root: &Path, sdk_path: &Path) -> Res {
 
     #[cfg(not(target_os = "windows"))]
     {
-        let status = Command::new("cmake")
+        let mut configure = Command::new("cmake");
+        configure
             .arg("-B")
             .arg(&build_dir)
-            .arg(format!("-DAAX_SDK_PATH={}", sdk_path.display()))
-            .current_dir(&template_dir)
-            .status()?;
+            .arg(format!("-DAAX_SDK_PATH={}", sdk_path.display()));
+        if universal_mac {
+            configure.arg("-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64");
+        }
+        let status = configure.current_dir(&template_dir).status()?;
         if !status.success() {
             return Err("cmake configure failed for AAX template".into());
         }
@@ -1765,7 +1796,9 @@ fn install_aax(root: &Path, p: &PluginDef, config: &Config) -> Res {
     if !template.exists() {
         if let Some(sdk_path) = resolve_aax_sdk_path(config) {
             eprintln!("AAX: building template with SDK at {}", sdk_path.display());
-            build_aax_template(root, &sdk_path)?;
+            // `install` only needs the host arch — universal template builds
+            // are reserved for the packaging path (`cargo truce package`).
+            build_aax_template(root, &sdk_path, false)?;
         } else {
             let hint = if cfg!(target_os = "windows") {
                 "[windows].aax_sdk_path"
@@ -1882,11 +1915,17 @@ fn install_aax(root: &Path, p: &PluginDef, config: &Config) -> Res {
 // ---------------------------------------------------------------------------
 
 /// Build AU v3 appex bundles (Rust framework + xcodebuild). Does not install.
+///
+/// `archs` controls the Mach-O slices produced for the embedded Rust
+/// framework and the xcodebuild `ARCHS` flag. Callers pass `&[host]` for the
+/// default / `install` path and `&[X86_64, Arm64]` for universal `package`
+/// runs.
 fn build_au_v3(
     root: &Path,
     config: &Config,
     plugins: &[&PluginDef],
     no_build: bool,
+    archs: &[MacArch],
 ) -> Res {
     let sign_id = config.macos.application_identity();
     let team_id = extract_team_id(sign_id);
@@ -1898,6 +1937,10 @@ fn build_au_v3(
         eprintln!("  e.g., \"Developer ID Application: Your Name (TEAMID)\"");
         eprintln!("  Ad-hoc signing (\"-\") is not supported for AU v3 appex bundles.");
         return Ok(());
+    }
+
+    if archs.is_empty() {
+        return Err("build_au_v3: empty archs list".into());
     }
 
     for p in plugins {
@@ -1915,28 +1958,49 @@ fn build_au_v3(
         eprintln!("Building AU v3 ({})...", p.name);
 
         if !no_build {
-            // Step 1: Build Rust framework
-            eprintln!("  Building Rust framework...");
-            cargo_build(
-                &[("TRUCE_AU_VERSION", "3"), ("TRUCE_AU_PLUGIN_ID", &p.suffix)],
-                &[
-                    "-p",
-                    &p.crate_name,
-                    "--no-default-features",
-                    "--features",
-                    "au",
-                ],
-                dt,
-            )?;
-            let src = root.join(format!(
-                "target/release/lib{}.dylib",
-                p.dylib_stem()
-            ));
+            // Step 1: Build Rust framework, once per arch, then lipo into the
+            // canonical `lib{stem}_v3.dylib` location.
+            for &arch in archs {
+                eprintln!("  Building Rust framework ({})...", arch.triple());
+                cargo_build_for_arch(
+                    &[("TRUCE_AU_VERSION", "3"), ("TRUCE_AU_PLUGIN_ID", &p.suffix)],
+                    &[
+                        "-p",
+                        &p.crate_name,
+                        "--no-default-features",
+                        "--features",
+                        "au",
+                    ],
+                    arch,
+                    dt,
+                )?;
+                let src = release_lib_for_target(
+                    root,
+                    &p.dylib_stem(),
+                    Some(arch.triple()),
+                );
+                let saved = release_lib_for_target(
+                    root,
+                    &format!("{}_v3", p.dylib_stem()),
+                    Some(arch.triple()),
+                );
+                fs::copy(&src, &saved)?;
+            }
+            let fw_inputs: Vec<PathBuf> = archs
+                .iter()
+                .map(|a| {
+                    release_lib_for_target(
+                        root,
+                        &format!("{}_v3", p.dylib_stem()),
+                        Some(a.triple()),
+                    )
+                })
+                .collect();
             let dst = root.join(format!(
                 "target/release/lib{}_v3.dylib",
                 p.dylib_stem()
             ));
-            fs::copy(&src, &dst)?;
+            lipo_into(&fw_inputs, &dst)?;
 
             // Step 2: Create .framework bundle
             let _ = fs::remove_dir_all(&fw_build);
@@ -2050,6 +2114,21 @@ fn build_au_v3(
 
             // Step 4: xcodebuild
             eprintln!("  Building with xcodebuild...");
+            // ARCHS reflects the requested slices. ONLY_ACTIVE_ARCH=NO forces
+            // xcodebuild to build every listed arch regardless of host — the
+            // default flips to YES in Debug and NO in Release, but we pin it
+            // explicitly so dev paths (Debug) also produce the full set.
+            let archs_flag = format!(
+                "ARCHS={}",
+                archs
+                    .iter()
+                    .map(|a| match a {
+                        MacArch::X86_64 => "x86_64",
+                        MacArch::Arm64 => "arm64",
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            );
             let output = Command::new("xcodebuild")
                 .current_dir(&build_dir)
                 .args([
@@ -2059,8 +2138,9 @@ fn build_au_v3(
                     "TruceAUv3",
                     "-configuration",
                     "Release",
-                    "ARCHS=arm64",
                 ])
+                .arg(&archs_flag)
+                .arg("ONLY_ACTIVE_ARCH=NO")
                 .arg(format!("SYMROOT={}/build", build_dir.display()))
                 .output()?;
             if !output.status.success() {
@@ -2183,7 +2263,9 @@ fn build_and_install_au_v3(
     plugins: &[&PluginDef],
     no_build: bool,
 ) -> Res {
-    build_au_v3(root, config, plugins, no_build)?;
+    // `cargo truce install` only needs the host arch — universal builds are
+    // reserved for the packaging path.
+    build_au_v3(root, config, plugins, no_build, &[MacArch::host()])?;
     install_au_v3(config, plugins)
 }
 
@@ -3604,12 +3686,22 @@ fn stage_au2(root: &Path, p: &PluginDef, config: &Config, staging: &Path) -> Res
 }
 
 /// Stage an AAX bundle into the staging directory.
-fn stage_aax(root: &Path, p: &PluginDef, config: &Config, staging: &Path) -> Res {
+///
+/// `universal_mac` controls whether the AAX C++ template (the wrapper binary
+/// Pro Tools launches) is built fat — the Rust cdylib in Resources/ is
+/// already lipo'd universal when the caller passes `universal_mac = true`.
+fn stage_aax(
+    root: &Path,
+    p: &PluginDef,
+    config: &Config,
+    staging: &Path,
+    universal_mac: bool,
+) -> Res {
     let template = tmp_dir().join("aax_template/build/TruceAAXTemplate.aaxplugin/Contents/MacOS/TruceAAXTemplate");
     if !template.exists() {
         if let Some(sdk_path) = resolve_aax_sdk_path(config) {
             eprintln!("AAX: building template with SDK at {}", sdk_path.display());
-            build_aax_template(root, &sdk_path)?;
+            build_aax_template(root, &sdk_path, universal_mac)?;
         } else {
             return Err("AAX SDK not configured. Set [macos].aax_sdk_path in truce.toml or AAX_SDK_PATH env var.".into());
         }
@@ -3788,6 +3880,90 @@ fn cmd_package(args: &[String]) -> Res {
     cmd_package_macos(args)
 }
 
+/// macOS CPU architecture we can build for. Packaging defaults to
+/// `[X86_64, Arm64]` (a universal Mach-O via `lipo`); `--host-only` opts out
+/// for faster dev iteration.
+///
+/// Defined unconditionally (not cfg-gated) so cross-platform codepaths such
+/// as `build_and_install_au_v3` can reference it without a cfg matrix — the
+/// runtime on Windows never reaches the `lipo`/xcodebuild machinery that
+/// would actually care about which slice is which.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MacArch {
+    X86_64,
+    Arm64,
+}
+
+impl MacArch {
+    fn triple(self) -> &'static str {
+        match self {
+            MacArch::X86_64 => "x86_64-apple-darwin",
+            MacArch::Arm64 => "aarch64-apple-darwin",
+        }
+    }
+
+    fn host() -> Self {
+        if cfg!(target_arch = "aarch64") {
+            MacArch::Arm64
+        } else {
+            MacArch::X86_64
+        }
+    }
+}
+
+/// Combine per-arch dylibs into a single (fat) Mach-O at `output`.
+///
+/// Single-arch inputs are copied through; the output path matches the legacy
+/// non-universal layout (`target/release/...`) so the per-format stage
+/// functions don't need to know whether the build was universal.
+fn lipo_into(inputs: &[PathBuf], output: &Path) -> Res {
+    if inputs.is_empty() {
+        return Err("lipo_into: no inputs".into());
+    }
+    if let Some(parent) = output.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    if inputs.len() == 1 {
+        // No fattening needed — just copy to the canonical location so
+        // downstream stage code reads from the same path in both modes.
+        fs::copy(&inputs[0], output)?;
+        return Ok(());
+    }
+    let mut cmd = Command::new("lipo");
+    cmd.arg("-create");
+    for i in inputs {
+        cmd.arg(i);
+    }
+    cmd.arg("-output").arg(output);
+    let status = cmd.status()?;
+    if !status.success() {
+        return Err(format!(
+            "lipo -create failed combining {} slices into {}",
+            inputs.len(),
+            output.display()
+        )
+        .into());
+    }
+    Ok(())
+}
+
+/// Run a cargo release build for a specific Apple arch. Adds
+/// `--target <triple>` to the caller's args so output lands under
+/// `target/{triple}/release/` without colliding with other arches.
+fn cargo_build_for_arch(
+    env_vars: &[(&str, &str)],
+    base_args: &[&str],
+    arch: MacArch,
+    dt: &str,
+) -> Res {
+    let mut args: Vec<String> = vec!["--target".into(), arch.triple().into()];
+    for a in base_args {
+        args.push((*a).into());
+    }
+    let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    cargo_build(env_vars, &arg_refs, dt)
+}
+
 #[cfg(not(target_os = "windows"))]
 fn cmd_package_macos(args: &[String]) -> Res {
     let config = load_config()?;
@@ -3797,6 +3973,7 @@ fn cmd_package_macos(args: &[String]) -> Res {
     let mut plugin_filter: Option<String> = None;
     let mut format_str: Option<String> = None;
     let mut no_notarize = false;
+    let mut host_only = false;
 
     let mut i = 0;
     while i < args.len() {
@@ -3810,10 +3987,27 @@ fn cmd_package_macos(args: &[String]) -> Res {
                 format_str = Some(args.get(i).cloned().ok_or("--formats requires a value")?);
             }
             "--no-notarize" => no_notarize = true,
+            // Universal is the default on macOS — accept the flag explicitly
+            // as a no-op so cross-platform CI scripts (that also hit Windows)
+            // keep working.
+            "--universal" => {}
+            "--host-only" => host_only = true,
+            // --no-sign / --no-installer are Windows-only flags; accept and
+            // ignore so cross-platform CI scripts don't break.
+            "--no-sign" | "--no-installer" => {}
             other => return Err(format!("unknown flag: {other}").into()),
         }
         i += 1;
     }
+
+    // Universal by default: produce a fat Mach-O covering both Apple arches.
+    // `--host-only` falls back to the host-only build for faster dev iteration.
+    let archs: Vec<MacArch> = if host_only {
+        vec![MacArch::host()]
+    } else {
+        vec![MacArch::X86_64, MacArch::Arm64]
+    };
+    let universal = archs.len() > 1;
 
     // Resolve formats
     let formats: Vec<PkgFormat> = if let Some(ref s) = format_str {
@@ -3861,80 +4055,210 @@ fn cmd_package_macos(args: &[String]) -> Res {
     let has_aax = formats.contains(&PkgFormat::Aax);
 
     // ---------------------------------------------------------------
-    // Step 1: Build all requested formats (release mode)
+    // Step 1: Build all requested formats (release mode).
+    //
+    // Per format, build once per arch (adding `--target <triple>`) then
+    // `lipo -create` the per-arch outputs into the canonical
+    // `target/release/lib{stem}_{fmt}.dylib` location. The stage functions
+    // below read from that path and don't need to know whether the build
+    // was universal.
     // ---------------------------------------------------------------
 
+    eprintln!(
+        "Packaging archs: {}",
+        archs.iter().map(|a| a.triple()).collect::<Vec<_>>().join(", ")
+    );
+
     if has_clap || has_vst3 {
-        eprintln!("Building CLAP + VST3...");
-        let mut build_args: Vec<&str> = Vec::new();
-        for p in &plugins {
-            build_args.push("-p");
-            build_args.push(&p.crate_name);
+        for &arch in &archs {
+            eprintln!("Building CLAP + VST3 ({})...", arch.triple());
+            let mut base: Vec<&str> = Vec::new();
+            for p in &plugins {
+                base.push("-p");
+                base.push(&p.crate_name);
+            }
+            cargo_build_for_arch(&[], &base, arch, dt)?;
+            // Save a copy since subsequent-format builds reuse the same target dir
+            for p in &plugins {
+                let src = release_lib_for_target(
+                    &root,
+                    &p.dylib_stem(),
+                    Some(arch.triple()),
+                );
+                let saved = release_lib_for_target(
+                    &root,
+                    &format!("{}_plugin", p.dylib_stem()),
+                    Some(arch.triple()),
+                );
+                if src.exists() { fs::copy(&src, &saved)?; }
+            }
         }
-        cargo_build(&[], &build_args, dt)?;
-        // Save a copy since subsequent builds overwrite the dylib
+        // Lipo per-plugin into the canonical path.
         for p in &plugins {
-            let src = root.join(format!("target/release/lib{}.dylib", p.dylib_stem()));
-            let saved = root.join(format!("target/release/lib{}_plugin.dylib", p.dylib_stem()));
-            if src.exists() { fs::copy(&src, &saved)?; }
+            let inputs: Vec<PathBuf> = archs
+                .iter()
+                .map(|a| {
+                    release_lib_for_target(
+                        &root,
+                        &format!("{}_plugin", p.dylib_stem()),
+                        Some(a.triple()),
+                    )
+                })
+                .collect();
+            let output = root.join(format!(
+                "target/release/lib{}_plugin.dylib",
+                p.dylib_stem()
+            ));
+            lipo_into(&inputs, &output)?;
         }
     }
 
     if has_vst2 {
-        eprintln!("Building VST2...");
-        let mut build_args: Vec<&str> = Vec::new();
-        for p in &plugins {
-            build_args.push("-p");
-            build_args.push(&p.crate_name);
+        for &arch in &archs {
+            eprintln!("Building VST2 ({})...", arch.triple());
+            let mut base: Vec<&str> = Vec::new();
+            for p in &plugins {
+                base.push("-p");
+                base.push(&p.crate_name);
+            }
+            base.extend_from_slice(&["--no-default-features", "--features", "vst2"]);
+            cargo_build_for_arch(&[], &base, arch, dt)?;
+            for p in &plugins {
+                let src = release_lib_for_target(
+                    &root,
+                    &p.dylib_stem(),
+                    Some(arch.triple()),
+                );
+                let saved = release_lib_for_target(
+                    &root,
+                    &format!("{}_vst2", p.dylib_stem()),
+                    Some(arch.triple()),
+                );
+                if src.exists() { fs::copy(&src, &saved)?; }
+            }
         }
-        build_args.extend_from_slice(&["--no-default-features", "--features", "vst2"]);
-        cargo_build(&[], &build_args, dt)?;
         for p in &plugins {
-            let src = root.join(format!("target/release/lib{}.dylib", p.dylib_stem()));
-            let dst = root.join(format!("target/release/lib{}_vst2.dylib", p.dylib_stem()));
-            fs::copy(&src, &dst)?;
+            let inputs: Vec<PathBuf> = archs
+                .iter()
+                .map(|a| {
+                    release_lib_for_target(
+                        &root,
+                        &format!("{}_vst2", p.dylib_stem()),
+                        Some(a.triple()),
+                    )
+                })
+                .collect();
+            let output = root.join(format!(
+                "target/release/lib{}_vst2.dylib",
+                p.dylib_stem()
+            ));
+            lipo_into(&inputs, &output)?;
         }
     }
 
     if has_au2 {
-        eprintln!("Building AU v2...");
+        // AU v2 is built per-plugin (distinct TRUCE_AU_PLUGIN_ID env var),
+        // so the outer loop is plugins × archs rather than archs × plugins.
         for p in &plugins {
-            cargo_build(
-                &[("TRUCE_AU_VERSION", "2"), ("TRUCE_AU_PLUGIN_ID", &p.suffix)],
-                &["-p", &p.crate_name, "--no-default-features", "--features", "au"],
-                dt,
-            )?;
-            let src = root.join(format!("target/release/lib{}.dylib", p.dylib_stem()));
-            let dst = root.join(format!("target/release/lib{}_au.dylib", p.dylib_stem()));
-            fs::copy(&src, &dst)?;
+            for &arch in &archs {
+                eprintln!("Building AU v2 ({}, {})...", p.name, arch.triple());
+                cargo_build_for_arch(
+                    &[("TRUCE_AU_VERSION", "2"), ("TRUCE_AU_PLUGIN_ID", &p.suffix)],
+                    &["-p", &p.crate_name, "--no-default-features", "--features", "au"],
+                    arch,
+                    dt,
+                )?;
+                let src = release_lib_for_target(
+                    &root,
+                    &p.dylib_stem(),
+                    Some(arch.triple()),
+                );
+                let saved = release_lib_for_target(
+                    &root,
+                    &format!("{}_au", p.dylib_stem()),
+                    Some(arch.triple()),
+                );
+                fs::copy(&src, &saved)?;
+            }
+            let inputs: Vec<PathBuf> = archs
+                .iter()
+                .map(|a| {
+                    release_lib_for_target(
+                        &root,
+                        &format!("{}_au", p.dylib_stem()),
+                        Some(a.triple()),
+                    )
+                })
+                .collect();
+            let output = root.join(format!(
+                "target/release/lib{}_au.dylib",
+                p.dylib_stem()
+            ));
+            lipo_into(&inputs, &output)?;
         }
     }
 
     if has_aax {
-        eprintln!("Building AAX...");
-        let mut build_args: Vec<&str> = Vec::new();
-        for p in &plugins {
-            build_args.push("-p");
-            build_args.push(&p.crate_name);
+        for &arch in &archs {
+            eprintln!("Building AAX ({})...", arch.triple());
+            let mut base: Vec<&str> = Vec::new();
+            for p in &plugins {
+                base.push("-p");
+                base.push(&p.crate_name);
+            }
+            base.extend_from_slice(&["--no-default-features", "--features", "aax"]);
+            cargo_build_for_arch(&[], &base, arch, dt)?;
+            for p in &plugins {
+                let src = release_lib_for_target(
+                    &root,
+                    &p.dylib_stem(),
+                    Some(arch.triple()),
+                );
+                let saved = release_lib_for_target(
+                    &root,
+                    &format!("{}_aax", p.dylib_stem()),
+                    Some(arch.triple()),
+                );
+                if src.exists() { fs::copy(&src, &saved)?; }
+            }
         }
-        build_args.extend_from_slice(&["--no-default-features", "--features", "aax"]);
-        cargo_build(&[], &build_args, dt)?;
         for p in &plugins {
-            let src = root.join(format!("target/release/lib{}.dylib", p.dylib_stem()));
-            let dst = root.join(format!("target/release/lib{}_aax.dylib", p.dylib_stem()));
-            fs::copy(&src, &dst)?;
+            let inputs: Vec<PathBuf> = archs
+                .iter()
+                .map(|a| {
+                    release_lib_for_target(
+                        &root,
+                        &format!("{}_aax", p.dylib_stem()),
+                        Some(a.triple()),
+                    )
+                })
+                .collect();
+            let output = root.join(format!(
+                "target/release/lib{}_aax.dylib",
+                p.dylib_stem()
+            ));
+            lipo_into(&inputs, &output)?;
         }
     }
 
     if has_au3 {
-        // AU v3: build only, staging handles the rest
-        build_au_v3(&root, &config, &plugins, false)?;
+        // AU v3: build per-arch Rust framework, lipo, then xcodebuild.
+        build_au_v3(&root, &config, &plugins, false, &archs)?;
     }
 
-    // Restore CLAP/VST3 dylib if needed
+    // Restore the canonical `target/release/lib{stem}.dylib` from the CLAP/VST3
+    // save so other consumers (e.g. subsequent `cargo truce install` runs on
+    // the same tree) see a sensible host-arch single-slice build. Only fill
+    // this with the host arch's slice — there's no host that would load both
+    // arches from the bare `target/release/` path.
     if has_clap || has_vst3 {
+        let host = MacArch::host();
         for p in &plugins {
-            let saved = root.join(format!("target/release/lib{}_plugin.dylib", p.dylib_stem()));
+            let saved = release_lib_for_target(
+                &root,
+                &format!("{}_plugin", p.dylib_stem()),
+                Some(host.triple()),
+            );
             let dst = root.join(format!("target/release/lib{}.dylib", p.dylib_stem()));
             if saved.exists() { fs::copy(&saved, &dst)?; }
         }
@@ -3965,7 +4289,7 @@ fn cmd_package_macos(args: &[String]) -> Res {
                 PkgFormat::Vst2 => stage_vst2(&root, p, &config, &staging),
                 PkgFormat::Au2 => stage_au2(&root, p, &config, &staging),
                 PkgFormat::Au3 => stage_au3(&root, p, &config, &staging),
-                PkgFormat::Aax => stage_aax(&root, p, &config, &staging),
+                PkgFormat::Aax => stage_aax(&root, p, &config, &staging, universal),
             };
             match result {
                 Ok(()) => eprintln!("ok"),
@@ -4383,6 +4707,26 @@ fn cmd_doctor() -> Res {
         check_cmd("xcode-select", &["-p"], "Xcode CLI tools");
         check_cmd("xcodebuild", &["-version"], "xcodebuild (AU v3)");
         check_cmd("codesign", &["--help"], "codesign");
+
+        // Universal packaging (default for `cargo truce package`) needs both
+        // Apple Rust targets. Missing targets are a warning, not an error —
+        // `--host-only` still works without them.
+        let has_x64 = rustup_has_target("x86_64-apple-darwin");
+        let has_arm = rustup_has_target("aarch64-apple-darwin");
+        match (has_x64, has_arm) {
+            (true, true) => eprintln!(
+                "    ✅ Rust targets: x86_64-apple-darwin + aarch64-apple-darwin — `cargo truce package` will produce universal Mach-O binaries"
+            ),
+            (false, true) => eprintln!(
+                "    ⚠️  Rust target x86_64-apple-darwin missing — run: rustup target add x86_64-apple-darwin (or pass `--host-only` to skip)"
+            ),
+            (true, false) => eprintln!(
+                "    ⚠️  Rust target aarch64-apple-darwin missing — run: rustup target add aarch64-apple-darwin (or pass `--host-only` to skip)"
+            ),
+            (false, false) => eprintln!(
+                "    ⚠️  No Apple Rust targets installed — run: rustup target add x86_64-apple-darwin aarch64-apple-darwin (or pass `--host-only` to skip)"
+            ),
+        }
     }
     #[cfg(target_os = "windows")]
     {

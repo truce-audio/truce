@@ -4,12 +4,14 @@
 //! → Authenticode-sign binaries → PACE-sign AAX if present → render `.iss`
 //! → run `ISCC.exe` → Authenticode-sign the installer → output to `dist\`.
 //!
-//! `--universal` builds for both `x86_64-pc-windows-msvc` and
-//! `aarch64-pc-windows-msvc` and produces a single Inno Setup installer that
-//! runs on both architectures. Bundle formats (VST3, AAX) carry both archs in
-//! architecture-scoped subdirectories inside the bundle and let the host pick
-//! at load time; single-file formats (CLAP, VST2) use Inno Setup `Check:`
-//! directives to install the matching DLL for the installing machine.
+//! Builds are **universal by default** — both `x86_64-pc-windows-msvc` and
+//! `aarch64-pc-windows-msvc` slices are produced and stitched into a single
+//! Inno Setup installer that runs on both architectures. Bundle formats
+//! (VST3, AAX) carry both archs in architecture-scoped subdirectories inside
+//! the bundle and let the host pick at load time; single-file formats (CLAP,
+//! VST2) use Inno Setup `Check:` directives to install the matching DLL for
+//! the installing machine. Pass `--host-only` to skip the cross-arch build
+//! for faster dev iteration (or use `--universal` explicitly as a no-op).
 
 use std::collections::HashSet;
 use std::fs;
@@ -19,8 +21,8 @@ use std::process::Command;
 use crate::{
     build_aax_template, cargo_build, detect_default_features, load_config,
     project_root, read_workspace_version, release_lib_for_target,
-    resolve_aax_sdk_path, tmp_dir, Config, PkgFormat, PluginDef, Res,
-    WindowsSigningConfig,
+    resolve_aax_sdk_path, rustup_has_target, tmp_dir, Config, PkgFormat,
+    PluginDef, Res, WindowsSigningConfig,
 };
 
 // ---------------------------------------------------------------------------
@@ -104,13 +106,14 @@ pub(crate) fn cmd_package(args: &[String]) -> Res {
     let formats = resolve_formats(&config, opts.format_str.as_deref())?;
     let plugins = resolve_plugins(&config, opts.plugin_filter.as_deref())?;
     let archs = opts.archs();
+    let universal = archs.len() > 1;
 
-    if opts.universal && formats.iter().any(|f| matches!(f, PkgFormat::Aax)) {
+    if universal && formats.iter().any(|f| matches!(f, PkgFormat::Aax)) {
         eprintln!(
-            "NOTE: AAX is host-arch-only ({}); --universal won't produce an ARM64 \
-             AAX bundle. Avid's AAX SDK 2.9 ships x64 libs only, and our template \
-             build (vcvars64 + MSVC) is x64-only. CLAP/VST2/VST3 ship universally; \
-             AAX stays single-arch.",
+            "NOTE: AAX is host-arch-only ({}); the universal installer won't \
+             carry an ARM64 AAX bundle. Avid's AAX SDK 2.9 ships x64 libs only, \
+             and our template build (vcvars64 + MSVC) is x64-only. CLAP/VST2/VST3 \
+             ship universally; AAX stays single-arch.",
             TargetArch::host().tag(),
         );
     }
@@ -206,15 +209,18 @@ struct Opts {
     format_str: Option<String>,
     no_sign: bool,
     no_installer: bool,
-    universal: bool,
+    /// Build only the host arch. Default is universal (x64 + ARM64) so a
+    /// single `cargo truce package` run produces the release artefact users
+    /// expect; `--host-only` opts out for dev iteration speed.
+    host_only: bool,
 }
 
 impl Opts {
     fn archs(&self) -> Vec<TargetArch> {
-        if self.universal {
-            vec![TargetArch::X64, TargetArch::Arm64]
+        if self.host_only {
+            vec![TargetArch::host()]
         } else {
-            vec![TargetArch::X64]
+            vec![TargetArch::X64, TargetArch::Arm64]
         }
     }
 }
@@ -238,7 +244,10 @@ fn parse_args(args: &[String]) -> std::result::Result<Opts, crate::BoxErr> {
             }
             "--no-sign" => opts.no_sign = true,
             "--no-installer" => opts.no_installer = true,
-            "--universal" => opts.universal = true,
+            // Universal is the default; accepted explicitly as a no-op so
+            // existing CI scripts (and cross-platform invocations) keep working.
+            "--universal" => {}
+            "--host-only" => opts.host_only = true,
             // --no-notarize is a macOS concept; accept and ignore on Windows so
             // cross-platform CI scripts don't break.
             "--no-notarize" => {}
@@ -603,7 +612,9 @@ fn stage_aax(
     if !template.exists() {
         if let Some(sdk_path) = resolve_aax_sdk_path(config) {
             eprintln!("AAX: building template with SDK at {}", sdk_path.display());
-            build_aax_template(root, &sdk_path)?;
+            // On Windows, AAX stays host-arch regardless (SDK 2.9 ships x64
+            // libs only — see stage_aax comments). `universal_mac` is a no-op.
+            build_aax_template(root, &sdk_path, false)?;
         } else {
             return Err(
                 "AAX SDK not configured. Set [windows].aax_sdk_path in truce.toml or \
@@ -1188,34 +1199,23 @@ pub(crate) fn doctor() {
         ),
     }
 
-    // ARM64 readiness for --universal.
+    // ARM64 readiness. Universal is the default, so missing ARM64 toolchain
+    // downgrades to a warning (packages with `--host-only` still work).
     let has_rust_arm64 = rustup_has_target("aarch64-pc-windows-msvc");
     let has_msvc_arm64 = has_arm64_msvc_toolchain();
     match (has_rust_arm64, has_msvc_arm64) {
         (true, true) => eprintln!(
-            "    ✅ ARM64 cross-compile available — `cargo truce package --universal` will produce dual-arch installers"
+            "    ✅ ARM64 cross-compile available — `cargo truce package` will produce dual-arch installers by default"
         ),
         (true, false) => eprintln!(
-            "    ⚠️  Rust has aarch64-pc-windows-msvc but VS is missing the ARM64 MSVC toolchain — C++ shims won't cross-compile. Install \"MSVC v143 - VS 2022 C++ ARM64/ARM64EC build tools\" via the VS Installer."
+            "    ⚠️  Rust has aarch64-pc-windows-msvc but VS is missing the ARM64 MSVC toolchain — C++ shims won't cross-compile. Install \"MSVC v143 - VS 2022 C++ ARM64/ARM64EC build tools\" via the VS Installer, or pass `--host-only` to skip ARM64."
         ),
         (false, true) => eprintln!(
-            "    ⚠️  VS has ARM64 MSVC but the Rust target isn't installed — run: rustup target add aarch64-pc-windows-msvc"
+            "    ⚠️  VS has ARM64 MSVC but the Rust target isn't installed — run: rustup target add aarch64-pc-windows-msvc (or pass `--host-only` to skip)"
         ),
         (false, false) => eprintln!(
-            "    ℹ️  ARM64 cross-compile not set up (only needed for `--universal`). Add the Rust target and the VS ARM64 toolchain — see `cargo truce package --help`."
+            "    ⚠️  ARM64 cross-compile not set up. `cargo truce package` defaults to universal and will fail without it — add the Rust target and the VS ARM64 toolchain, or pass `--host-only` to skip ARM64."
         ),
-    }
-}
-
-fn rustup_has_target(triple: &str) -> bool {
-    let out = Command::new("rustup")
-        .args(["target", "list", "--installed"])
-        .output();
-    match out {
-        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout)
-            .lines()
-            .any(|l| l.trim() == triple),
-        _ => false,
     }
 }
 
