@@ -6,7 +6,8 @@ Build audio plugins in Rust. One codebase, every format.
 
 Write your plugin once. Build CLAP, VST3, VST2, AU v2, AU v3, AAX,
 and standalone from a single Rust codebase. Hot-reload DSP and GUI
-changes without restarting the DAW.
+changes without restarting the DAW. Runs on **macOS** and **Windows**
+(Linux support planned).
 
 ## Quick Start
 
@@ -27,13 +28,19 @@ cargo truce install --clap
 Other formats:
 
 ```sh
-cargo truce install              # all formats
+cargo truce install              # formats in your plugin's default features
 cargo truce install --vst3       # VST3
-cargo truce install --au3        # AU v3 (requires Xcode)
+cargo truce install --vst2       # VST2 (opt-in, legacy — see note below)
+cargo truce install --au3        # AU v3 (macOS, requires Xcode)
 cargo truce install --aax        # AAX (requires AAX SDK)
 cargo truce test                 # run tests
 cargo truce validate             # auval + pluginval + clap-validator
 ```
+
+Scaffolded plugins default to **CLAP + VST3**. VST2, AU, and AAX are
+opt-in per plugin via `Cargo.toml` features. On Windows, `cargo truce
+install` must be run from an Administrator command prompt (plugin
+directories are system-wide).
 
 ## Minimal Example
 
@@ -122,6 +129,22 @@ See [GUI backends](docs/gui/README.md) for detailed docs.
 
 ## Format Support
 
+By platform:
+
+| Format | macOS | Windows | Linux |
+|--------|-------|---------|-------|
+| CLAP   | Yes   | Yes     | Planned |
+| VST3   | Yes   | Yes     | Planned |
+| VST2   | Yes   | Yes     | Planned |
+| AU v2  | Yes   | —       | —       |
+| AU v3  | Yes   | —       | —       |
+| AAX    | Yes   | Partial | —       |
+
+AU is macOS-only by design. AAX template builds on Windows aren't
+implemented yet. VST2 is opt-in on all platforms — see note below.
+
+By host (macOS + Windows combined):
+
 | Format | Reaper | Logic | GarageBand | Ableton | FL Studio | Pro Tools |
 |--------|--------|-------|------------|---------|-----------|-----------|
 | CLAP   | Yes    |       |            |         |           |           |
@@ -130,6 +153,13 @@ See [GUI backends](docs/gui/README.md) for detailed docs.
 | AU v2  | Yes    | Yes   | Yes        | Yes     |           |           |
 | AU v3  |        | Yes   | Yes        | Yes     |           |           |
 | AAX    |        |       |            |         |           | Yes       |
+
+> ⚠️ **VST2 is a legacy format and is opt-in per plugin.** Steinberg
+> deprecated the VST2 SDK in 2018. Distributing VST2 plugins may require
+> agreement with Steinberg's licensing terms. Truce's VST2 support uses
+> a clean-room shim (no Steinberg SDK headers), but the VST trademark and
+> logo are still Steinberg's. Enable the `vst2` feature only if you
+> understand the implications.
 
 ## Examples
 
@@ -146,7 +176,8 @@ See [GUI backends](docs/gui/README.md) for detailed docs.
 
 ## Features
 
-- **6 plugin formats** from one codebase (CLAP, VST3, VST2, AU v2, AU v3, AAX)
+- **6 plugin formats** from one codebase (CLAP, VST3 default; VST2, AU v2, AU v3, AAX opt-in)
+- **Cross-platform** — macOS and Windows supported; Linux planned
 - **Hot reload** — edit DSP/layout, rebuild, hear changes without restarting the DAW
 - **Built-in GUI** — knobs, sliders, toggles, selectors, meters, XY pads (wgpu GPU rendering)
 - **4 GUI frameworks** — egui, iced, slint, or raw window handle
@@ -215,9 +246,17 @@ au_subtype = "MyFx"
 ## Requirements
 
 - Rust 1.75+ (`rustup update`). Slint integration requires 1.88+.
-- macOS: Xcode CLI tools (`xcode-select --install`). Full Xcode for AU v3.
-- Windows: MSVC build tools (planned, macOS-first currently)
-- AAX: Avid AAX SDK (optional, obtain from [developer.avid.com](https://developer.avid.com))
+- **macOS**: Xcode CLI tools (`xcode-select --install`). Full Xcode for AU v3.
+- **Windows**: MSVC build tools (Visual Studio 2019+ with the "Desktop
+  development with C++" workload). The Rust `x86_64-pc-windows-msvc`
+  toolchain is required. WSL users must install Rust natively on
+  Windows, not inside WSL. `cargo truce install` requires an
+  Administrator command prompt.
+- **Linux**: Format wrappers are not yet implemented. Scaffolding and
+  standalone mode work; full format support is planned.
+- AAX: Avid AAX SDK (optional, obtain from [developer.avid.com](https://developer.avid.com)).
+  AAX on Windows is partially supported — the shim compiles but the
+  AAX template cmake build hasn't been ported to MSVC yet.
 
 ## License
 
