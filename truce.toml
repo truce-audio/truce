@@ -14,6 +14,12 @@ id = "com.truce"
 url = "https://github.com/truce-audio/truce"
 au_manufacturer = "Trce"
 
+# Notarizing can be enabled after creating a TRUCE_NOTARY:
+#   xcrun notarytool store-credentials TRUCE_NOTARY
+#
+# [macos.packaging]
+# notarize = true
+
 # Each [[plugin]] entry defines a plugin to build and install.
 # The crate must exist at examples/<suffix>/ and support --features au.
 

@@ -2271,7 +2271,19 @@ fn install_au_v3(
         }
 
         {
-            // Pre-clean
+            // Pre-clean. `pluginkit -e ignore` only disables the registration —
+            // if `pkd` auto-discovered the build-tree appex during xcodebuild,
+            // its path stays in the database and can win the next dyld load
+            // race over our installed copy (which has Frameworks/ wired up
+            // properly). `pluginkit -r <path>` evicts it so the subsequent
+            // `-a /Applications/...` registers cleanly.
+            let build_tree_appex = build_dir
+                .join("build/Release/TruceAUv3.app/Contents/PlugIns/AUExt.appex");
+            if build_tree_appex.exists() {
+                let _ = Command::new("pluginkit")
+                    .args(["-r", build_tree_appex.to_str().unwrap()])
+                    .output();
+            }
             let _ = Command::new("pluginkit")
                 .args(["-e", "ignore", "-i", &appex_id])
                 .output();
@@ -3265,6 +3277,116 @@ fn cmd_log() -> Res {
 // validate
 // ---------------------------------------------------------------------------
 
+/// Read a single leaf value from a plist via `plutil -extract … raw`.
+/// Returns `None` if the key path doesn't exist or the value isn't a scalar.
+#[cfg(target_os = "macos")]
+fn plist_extract(plist: &Path, key_path: &str) -> Option<String> {
+    let out = Command::new("plutil")
+        .args(["-extract", key_path, "raw", "-o", "-", plist.to_str()?])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if s.is_empty() { None } else { Some(s) }
+}
+
+/// Find every AU bundle on disk that declares the given component code.
+/// Walks the standard AU install directories and reads each candidate's
+/// Info.plist. Used by `cmd_validate` to surface stale-install collisions
+/// (the underlying cause of cryptic auval errors like
+/// `FATAL ERROR: Initialize: result: -10875` when an old `Truce Gain.app`
+/// shadows the current `Truce Gain v3.app`).
+#[cfg(target_os = "macos")]
+fn find_au_collisions(au_type: &str, subtype: &str, manufacturer: &str) -> Vec<PathBuf> {
+    let mut hits = Vec::new();
+    let home = dirs::home_dir().unwrap_or_default();
+
+    // AU v3: Application bundles ship the appex inside Contents/PlugIns.
+    // Walk both /Applications and ~/Applications (per-user install).
+    for apps_dir in [
+        PathBuf::from("/Applications"),
+        home.join("Applications"),
+    ] {
+        let Ok(apps) = fs::read_dir(&apps_dir) else { continue };
+        for app in apps.flatten() {
+            let plugins_dir = app.path().join("Contents/PlugIns");
+            let Ok(appexes) = fs::read_dir(&plugins_dir) else { continue };
+            for appex in appexes.flatten() {
+                let plist = appex.path().join("Contents/Info.plist");
+                if matches_au_v3_descriptor(&plist, au_type, subtype, manufacturer) {
+                    hits.push(appex.path());
+                }
+            }
+        }
+    }
+
+    // AU v2: .component bundles in the standard system & user paths.
+    for dir in [
+        PathBuf::from("/Library/Audio/Plug-Ins/Components"),
+        home.join("Library/Audio/Plug-Ins/Components"),
+    ] {
+        let Ok(comps) = fs::read_dir(&dir) else { continue };
+        for comp in comps.flatten() {
+            let plist = comp.path().join("Contents/Info.plist");
+            if matches_au_v2_descriptor(&plist, au_type, subtype, manufacturer) {
+                hits.push(comp.path());
+            }
+        }
+    }
+
+    hits
+}
+
+#[cfg(target_os = "macos")]
+fn matches_au_v3_descriptor(plist: &Path, au_type: &str, subtype: &str, manufacturer: &str) -> bool {
+    if !plist.is_file() {
+        return false;
+    }
+    let prefix = "NSExtension.NSExtensionAttributes.AudioComponents.0";
+    plist_extract(plist, &format!("{prefix}.subtype")).as_deref() == Some(subtype)
+        && plist_extract(plist, &format!("{prefix}.type")).as_deref() == Some(au_type)
+        && plist_extract(plist, &format!("{prefix}.manufacturer")).as_deref() == Some(manufacturer)
+}
+
+#[cfg(target_os = "macos")]
+fn matches_au_v2_descriptor(plist: &Path, au_type: &str, subtype: &str, manufacturer: &str) -> bool {
+    if !plist.is_file() {
+        return false;
+    }
+    plist_extract(plist, "AudioComponents.0.subtype").as_deref() == Some(subtype)
+        && plist_extract(plist, "AudioComponents.0.type").as_deref() == Some(au_type)
+        && plist_extract(plist, "AudioComponents.0.manufacturer").as_deref() == Some(manufacturer)
+}
+
+/// Print a warning if more than one bundle declares the AU component
+/// `(au_type, subtype, manufacturer)`. macOS picks one at load time; the other
+/// gets shadowed and produces opaque auval failures.
+#[cfg(target_os = "macos")]
+fn warn_on_au_collision(au_type: &str, subtype: &str, manufacturer: &str, expected: &Path) {
+    let hits = find_au_collisions(au_type, subtype, manufacturer);
+    if hits.len() <= 1 {
+        return;
+    }
+    eprintln!(
+        "    ⚠️  collision: {} other bundle(s) also claim {}/{}/{}",
+        hits.len() - 1,
+        au_type,
+        subtype,
+        manufacturer,
+    );
+    for h in &hits {
+        let marker = if h.starts_with(expected) || expected.starts_with(h) {
+            "← expected"
+        } else {
+            "← stale, remove this"
+        };
+        eprintln!("        • {} {}", h.display(), marker);
+    }
+    eprintln!("        macOS will pick one at load time; the rest are shadowed.");
+}
+
 fn cmd_validate(args: &[String]) -> Res {
     let config = load_config()?;
 
@@ -3330,6 +3452,19 @@ fn cmd_validate(args: &[String]) -> Res {
                     eprintln!("PASS");
                 } else {
                     eprintln!("FAIL");
+                    #[cfg(target_os = "macos")]
+                    {
+                        let expected = PathBuf::from(format!(
+                            "/Library/Audio/Plug-Ins/Components/{}.component",
+                            p.name
+                        ));
+                        warn_on_au_collision(
+                            p.resolved_au_type(),
+                            p.resolved_fourcc(),
+                            &config.vendor.au_manufacturer,
+                            &expected,
+                        );
+                    }
                     failures += 1;
                 }
             }
@@ -3356,6 +3491,19 @@ fn cmd_validate(args: &[String]) -> Res {
                     eprintln!("PASS");
                 } else {
                     eprintln!("FAIL");
+                    #[cfg(target_os = "macos")]
+                    {
+                        let expected = PathBuf::from(format!(
+                            "/Applications/{} v3.app/Contents/PlugIns/AUExt.appex",
+                            p.name
+                        ));
+                        warn_on_au_collision(
+                            p.resolved_au_type(),
+                            sub,
+                            &config.vendor.au_manufacturer,
+                            &expected,
+                        );
+                    }
                     failures += 1;
                 }
             }
