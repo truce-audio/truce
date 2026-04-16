@@ -129,9 +129,11 @@ fn cmd_new(args: &[String]) -> Res {
     let struct_name = scaffold::to_pascal_case(&name);
 
     fs::create_dir_all(format!("{name}/src"))?;
+    fs::create_dir_all(format!("{name}/.cargo"))?;
     fs::write(format!("{name}/Cargo.toml"), scaffold::plugin_cargo_toml_standalone(&name))?;
     fs::write(format!("{name}/src/lib.rs"), scaffold::plugin_lib_rs(&struct_name, kind))?;
     fs::write(format!("{name}/.gitignore"), scaffold::gitignore())?;
+    fs::write(format!("{name}/.cargo/config.toml"), scaffold::cargo_config_toml())?;
 
     // truce.toml — single plugin
     let plugin = PluginSpec { name: name.clone(), kind };
@@ -146,12 +148,19 @@ fn cmd_new(args: &[String]) -> Res {
     eprintln!();
     eprintln!("  cd {name}");
     eprintln!("  cargo truce install --clap      # build + install CLAP");
-    eprintln!("  cargo truce install              # all formats");
+    eprintln!("  cargo truce install              # all formats in default features");
+    eprintln!("  cargo truce package              # signed .pkg / .exe installer in dist/");
     eprintln!("  cargo truce doctor               # check environment");
     eprintln!();
     eprintln!("Edit src/lib.rs to add your DSP.");
     eprintln!("Edit truce.toml to configure vendor info and AU metadata.");
-
+    eprintln!("Edit .cargo/config.toml to set signing identities and SDK paths.");
+    eprintln!();
+    if cfg!(target_os = "windows") {
+        eprintln!("Windows: `cargo truce install` writes to system directories and needs");
+        eprintln!("an Administrator command prompt.");
+        eprintln!();
+    }
     Ok(())
 }
 
@@ -261,6 +270,7 @@ fn cmd_new_workspace(args: &[String]) -> Res {
     for p in &plugins {
         fs::create_dir_all(format!("{workspace_name}/plugins/{}/src", p.name))?;
     }
+    fs::create_dir_all(format!("{workspace_name}/.cargo"))?;
 
     // Root Cargo.toml
     fs::write(
@@ -278,6 +288,12 @@ fn cmd_new_workspace(args: &[String]) -> Res {
     fs::write(
         format!("{workspace_name}/.gitignore"),
         scaffold::gitignore(),
+    )?;
+
+    // .cargo/config.toml — per-developer signing + SDK paths (gitignored)
+    fs::write(
+        format!("{workspace_name}/.cargo/config.toml"),
+        scaffold::cargo_config_toml(),
     )?;
 
     // Per-plugin files
@@ -309,11 +325,18 @@ fn cmd_new_workspace(args: &[String]) -> Res {
     eprintln!();
     eprintln!("  cd {workspace_name}");
     eprintln!("  cargo truce install --clap      # build + install all as CLAP");
-    eprintln!("  cargo truce install              # all formats");
+    eprintln!("  cargo truce install              # all formats in default features");
+    eprintln!("  cargo truce package              # signed .pkg / .exe installer in dist/");
     eprintln!("  cargo truce doctor               # check environment");
     eprintln!();
     eprintln!("Edit plugins/*/src/lib.rs to add your DSP.");
     eprintln!("Edit truce.toml to configure vendor info and AU metadata.");
-
+    eprintln!("Edit .cargo/config.toml to set signing identities and SDK paths.");
+    eprintln!();
+    if cfg!(target_os = "windows") {
+        eprintln!("Windows: `cargo truce install` writes to system directories and needs");
+        eprintln!("an Administrator command prompt.");
+        eprintln!();
+    }
     Ok(())
 }
