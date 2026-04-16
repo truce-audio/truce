@@ -689,11 +689,6 @@ impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBase
     fn on_frame(&mut self, _window: &mut baseview::Window) {
         let editor = unsafe { &mut *self.editor };
         if let Some(ref mut runtime) = editor.runtime {
-            let has_render = runtime.render.is_some();
-            static FIRST: std::sync::Once = std::sync::Once::new();
-            FIRST.call_once(|| {
-                eprintln!("[truce-iced] first on_frame, render={has_render}");
-            });
             runtime.tick();
         }
     }
@@ -1068,14 +1063,10 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
                     };
 
                     if let Some(surface) = surface {
-                        eprintln!("[truce-iced] wgpu surface created, initializing render...");
                         let editor = unsafe { &mut *(editor_addr as *mut IcedEditor<P, M>) };
                         if let Some(ref mut runtime) = editor.runtime {
-                            let ok = runtime.init_render_with_surface(instance, surface);
-                            eprintln!("[truce-iced] init_render_with_surface: {ok}");
+                            runtime.init_render_with_surface(instance, surface);
                         }
-                    } else {
-                        eprintln!("[truce-iced] Failed to create wgpu surface");
                     }
 
                     IcedBaseviewHandler::<P, M> {
