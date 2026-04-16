@@ -1436,34 +1436,103 @@ fn build_aax_template(_root: &Path, sdk_path: &Path) -> Res {
     fs::write(src_dir.join("truce_aax_bridge.h"), templates::aax::BRIDGE_HEADER)?;
 
     let build_dir = template_dir.join("build");
-    let mut configure = Command::new("cmake");
-    configure
-        .arg("-B")
-        .arg(&build_dir)
-        .arg(format!("-DAAX_SDK_PATH={}", sdk_path.display()))
-        .current_dir(&template_dir);
-    // Force x64 on Windows (MSVC generator defaults vary by VS version).
-    #[cfg(target_os = "windows")]
+
+    #[cfg(not(target_os = "windows"))]
     {
-        configure.arg("-A").arg("x64");
-    }
-    let status = configure.status()?;
-    if !status.success() {
-        return Err("cmake configure failed for AAX template".into());
+        let status = Command::new("cmake")
+            .arg("-B")
+            .arg(&build_dir)
+            .arg(format!("-DAAX_SDK_PATH={}", sdk_path.display()))
+            .current_dir(&template_dir)
+            .status()?;
+        if !status.success() {
+            return Err("cmake configure failed for AAX template".into());
+        }
+        let status = Command::new("cmake")
+            .arg("--build")
+            .arg(&build_dir)
+            .status()?;
+        if !status.success() {
+            return Err("cmake build failed for AAX template".into());
+        }
     }
 
-    let mut build = Command::new("cmake");
-    build.arg("--build").arg(&build_dir);
-    // Visual Studio is a multi-config generator — pick Release explicitly.
+    // Windows: cmake's "Visual Studio N YYYY" generators are tied to a specific
+    // VS version the cmake binary ships with. If the user's cmake predates the
+    // installed VS (common: VS 2026 with an older cmake), the VS generator
+    // fails to find MSBuild. Work around this by using the Ninja generator and
+    // wrapping the invocation in a vcvars-setup .bat so cl.exe/link.exe are
+    // reachable. Ninja also avoids the multi-config output layout.
     #[cfg(target_os = "windows")]
     {
-        build.arg("--config").arg("Release");
-    }
-    let status = build.status()?;
-    if !status.success() {
-        return Err("cmake build failed for AAX template".into());
+        let vcvars = locate_vcvars64()
+            .ok_or("could not locate vcvars64.bat — install VS 2022+ with the C++ workload")?;
+
+        // CMake 3.20+ rejects `\U` etc. as invalid escape sequences when a
+        // backslash path is interpolated into a generated string literal.
+        // Convert all paths we pass to cmake to forward slashes.
+        let to_fwd = |p: &Path| p.display().to_string().replace('\\', "/");
+
+        let bat_path = tmp_dir().join("truce_aax_build.bat");
+        let bat = format!(
+            "@echo off\r\n\
+             call \"{vcvars}\" >nul || exit /b 1\r\n\
+             cmake -S \"{src}\" -B \"{build}\" -G Ninja -DCMAKE_BUILD_TYPE=Release \"-DAAX_SDK_PATH={sdk}\" || exit /b 1\r\n\
+             cmake --build \"{build}\" || exit /b 1\r\n",
+            vcvars = vcvars.display(),
+            src = to_fwd(&template_dir),
+            build = to_fwd(&build_dir),
+            sdk = to_fwd(sdk_path),
+        );
+        fs::write(&bat_path, bat)?;
+
+        let status = Command::new("cmd")
+            .arg("/c")
+            .arg(&bat_path)
+            .status()?;
+        if !status.success() {
+            return Err("AAX cmake+ninja build failed".into());
+        }
     }
     Ok(())
+}
+
+/// Locate `vcvars64.bat` via `vswhere.exe`. Returns `None` if VS isn't
+/// installed with the C++ tools component.
+#[cfg(target_os = "windows")]
+fn locate_vcvars64() -> Option<PathBuf> {
+    let vswhere = PathBuf::from(
+        r"C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe",
+    );
+    if !vswhere.exists() {
+        return None;
+    }
+    let out = Command::new(&vswhere)
+        .args([
+            "-latest",
+            "-requires",
+            "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+            "-property",
+            "installationPath",
+            "-format",
+            "value",
+        ])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let install = String::from_utf8(out.stdout).ok()?;
+    let install = install.trim();
+    if install.is_empty() {
+        return None;
+    }
+    let vcvars = PathBuf::from(install).join(r"VC\Auxiliary\Build\vcvars64.bat");
+    if vcvars.exists() {
+        Some(vcvars)
+    } else {
+        None
+    }
 }
 
 fn install_aax(root: &Path, p: &PluginDef, config: &Config) -> Res {
@@ -1474,9 +1543,9 @@ fn install_aax(root: &Path, p: &PluginDef, config: &Config) -> Res {
     }
     #[cfg(target_os = "windows")]
     fn template_binary() -> PathBuf {
-        // cmake-visual-studio puts MODULE targets under build/{Config}/name.ext
-        // Our CMakeLists.txt sets SUFFIX=.aaxplugin, PREFIX=""
-        tmp_dir().join("aax_template/build/Release/TruceAAXTemplate.aaxplugin")
+        // Ninja is single-config — target lands directly in the build dir.
+        // CMakeLists.txt sets SUFFIX=.aaxplugin, PREFIX="".
+        tmp_dir().join("aax_template/build/TruceAAXTemplate.aaxplugin")
     }
 
     let template = template_binary();

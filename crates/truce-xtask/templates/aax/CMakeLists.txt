@@ -24,6 +24,19 @@ else()
 endif()
 if(NOT EXISTS "${AAX_LIB_PATH}")
     message(STATUS "Pre-built AAX library not found, building from source...")
+    # The AAX SDK's Libs/AAXLibrary/CMakeLists.txt expects an
+    # AAX_SDK_Interface target (defined in the SDK's root CMakeLists.txt) to
+    # propagate the Interfaces/ include dirs. We bypass the root CMakeLists
+    # (which would pull in example plugins we don't want). Create a stub
+    # AAX_SDK_Interface here so AAXLibrary's PUBLIC link_libraries resolves
+    # and the include dirs propagate.
+    if(NOT TARGET AAX_SDK_Interface)
+        add_library(AAX_SDK_Interface INTERFACE)
+        target_include_directories(AAX_SDK_Interface INTERFACE
+            ${AAX_SDK_PATH}/Interfaces
+            ${AAX_SDK_PATH}/Interfaces/ACF
+        )
+    endif()
     add_subdirectory(${AAX_SDK_PATH}/Libs/AAXLibrary ${CMAKE_BINARY_DIR}/AAXLibrary)
     set(AAX_LIB_TARGET AAXLibrary)
 else()
