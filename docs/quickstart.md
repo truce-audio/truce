@@ -226,11 +226,11 @@ For distribution you need a code-signing identity so SmartScreen
 publisher." Configure it in `truce.toml`:
 
 ```toml
-[macos]
-signing_identity = "Developer ID Application: Your Name (TEAMID)"
+[macos.signing]
+application_identity = "Developer ID Application: Your Name (TEAMID)"
+installer_identity   = "Developer ID Installer: Your Name (TEAMID)"
 
 [macos.packaging]
-installer_identity = "Developer ID Installer: Your Name (TEAMID)"
 notarize = true
 
 [windows.signing]

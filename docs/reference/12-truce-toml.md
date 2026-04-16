@@ -76,28 +76,42 @@ au_tag = "Synthesizer"
 
 ## `[macos]` — optional
 
-macOS-specific build settings. Most users leave this empty and set `TRUCE_SIGNING_IDENTITY` via environment instead.
+macOS-specific build settings.
 
 | Field | Type | Required | Default | Notes |
 |---|---|---|---|---|
-| `signing_identity` | string | no | `"-"` (ad-hoc) | `codesign -s` identity. Either a full "Developer ID Application: Name (TEAMID)" string or `"-"` for ad-hoc. Override via `TRUCE_SIGNING_IDENTITY` env var. |
-| `aax_sdk_path` | string | no | — | Absolute path to the AAX SDK root. Overridden by `AAX_SDK_PATH` env var if that's set. |
+| `aax_sdk_path` | string | no | — | Absolute path to the AAX SDK root. Overridden by `AAX_SDK_PATH` env var if that's set. Usually lives in `.cargo/config.toml`. |
 
 ```toml
 [macos]
-signing_identity = "Developer ID Application: Your Name (TEAMID)"
 # aax_sdk_path is usually in .cargo/config.toml instead
+```
+
+---
+
+## `[macos.signing]` — optional
+
+macOS code-signing identities. Parallels `[windows.signing]`: credentials live here, installer appearance and notarization live in `[macos.packaging]`. Most users leave this empty and set `TRUCE_SIGNING_IDENTITY` / `TRUCE_INSTALLER_SIGNING_IDENTITY` via environment instead.
+
+| Field | Type | Required | Default | Notes |
+|---|---|---|---|---|
+| `application_identity` | string | no | `"-"` (ad-hoc) | `codesign -s` identity for bundles. Full "Developer ID Application: Name (TEAMID)" string or `"-"` for ad-hoc. Override via `TRUCE_SIGNING_IDENTITY` env var. |
+| `installer_identity` | string | no | — | `productbuild --sign` identity. "Developer ID Installer: Name (TEAMID)". Required to produce a trusted `.pkg`. Override via `TRUCE_INSTALLER_SIGNING_IDENTITY` env var. |
+
+```toml
+[macos.signing]
+application_identity = "Developer ID Application: Your Name (TEAMID)"
+installer_identity   = "Developer ID Installer: Your Name (TEAMID)"
 ```
 
 ---
 
 ## `[macos.packaging]` — optional
 
-Settings for `cargo truce package` on macOS.
+Notarization + post-sign steps for `cargo truce package` on macOS.
 
 | Field | Type | Required | Default | Notes |
 |---|---|---|---|---|
-| `installer_identity` | string | no | — | `productbuild --sign` identity ("Developer ID Installer: ..."). Required to produce a trusted `.pkg`. Override via `TRUCE_INSTALLER_SIGNING_IDENTITY` env var. |
 | `notarize` | bool | no | `false` | When `true`, submit the `.pkg` to Apple's notary service and staple the ticket. `--no-notarize` on the CLI skips this. |
 | `apple_id` | string | no | — | Apple ID used for notarization. Can also come from `APPLE_ID` env var. |
 | `team_id` | string | no | — | Team ID used for notarization. Can also come from `TEAM_ID` env var. |
@@ -106,7 +120,6 @@ If `apple_id`/`team_id` are absent and no keychain profile named `TRUCE_NOTARY` 
 
 ```toml
 [macos.packaging]
-installer_identity = "Developer ID Installer: Your Name (TEAMID)"
 notarize = true
 # apple_id = "you@example.com"     # or use APPLE_ID env var
 # team_id  = "ABCDEFG123"          # or use TEAM_ID env var
@@ -212,8 +225,8 @@ These live outside `truce.toml` — in `.cargo/config.toml` (gitignored) or your
 
 | Variable | Overrides | Purpose |
 |---|---|---|
-| `TRUCE_SIGNING_IDENTITY` | `[macos].signing_identity` | macOS codesign identity |
-| `TRUCE_INSTALLER_SIGNING_IDENTITY` | `[macos.packaging].installer_identity` | macOS productbuild identity |
+| `TRUCE_SIGNING_IDENTITY` | `[macos.signing].application_identity` | macOS codesign identity |
+| `TRUCE_INSTALLER_SIGNING_IDENTITY` | `[macos.signing].installer_identity` | macOS productbuild identity |
 | `AAX_SDK_PATH` | `[macos].aax_sdk_path` / `[windows].aax_sdk_path` | AAX SDK root |
 | `APPLE_ID` | `[macos.packaging].apple_id` | Notarization Apple ID |
 | `TEAM_ID` | `[macos.packaging].team_id` | Notarization team ID |
@@ -243,11 +256,11 @@ id = "com.acmeaudio"
 url = "https://acmeaudio.example"
 au_manufacturer = "Acme"
 
-[macos]
-signing_identity = "Developer ID Application: Acme Audio, LLC (TEAM123)"
+[macos.signing]
+application_identity = "Developer ID Application: Acme Audio, LLC (TEAM123)"
+installer_identity   = "Developer ID Installer: Acme Audio, LLC (TEAM123)"
 
 [macos.packaging]
-installer_identity = "Developer ID Installer: Acme Audio, LLC (TEAM123)"
 notarize = true
 
 [windows.signing]

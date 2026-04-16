@@ -560,30 +560,48 @@ pub(crate) struct WindowsPackagingConfig {
     pub(crate) app_id: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 struct MacosConfig {
-    #[serde(default = "default_signing_identity")]
-    signing_identity: String,
     /// Path to the AAX SDK root directory. Falls back to the AAX_SDK_PATH env var.
     aax_sdk_path: Option<String>,
+    #[serde(default)]
+    signing: MacosSigningConfig,
     #[serde(default)]
     packaging: MacosPackagingConfig,
 }
 
-impl Default for MacosConfig {
-    fn default() -> Self {
-        Self {
-            signing_identity: default_signing_identity(),
-            aax_sdk_path: None,
-            packaging: MacosPackagingConfig::default(),
-        }
+/// macOS code-signing identities. Parallels `[windows.signing]`: credentials
+/// live here, installer appearance lives in `[macos.packaging]`.
+#[derive(Deserialize, Default)]
+struct MacosSigningConfig {
+    /// `codesign -s` identity for bundles. Typically
+    /// "Developer ID Application: Name (TEAMID)" or `-` for ad-hoc.
+    /// Falls back to `TRUCE_SIGNING_IDENTITY` env var.
+    application_identity: Option<String>,
+    /// `productbuild --sign` identity for `.pkg` installers. Typically
+    /// "Developer ID Installer: Name (TEAMID)".
+    /// Falls back to `TRUCE_INSTALLER_SIGNING_IDENTITY` env var.
+    installer_identity: Option<String>,
+}
+
+impl MacosConfig {
+    /// Resolved application signing identity. `"-"` means ad-hoc / unsigned.
+    /// Populated by `load_config` from `[macos.signing].application_identity`
+    /// or the `TRUCE_SIGNING_IDENTITY` env var.
+    fn application_identity(&self) -> &str {
+        self.signing.application_identity.as_deref().unwrap_or("-")
+    }
+
+    /// Resolved installer signing identity. `None` means the installer won't
+    /// be signed. Populated from `[macos.signing].installer_identity` or the
+    /// `TRUCE_INSTALLER_SIGNING_IDENTITY` env var.
+    fn installer_identity(&self) -> Option<&str> {
+        self.signing.installer_identity.as_deref()
     }
 }
 
 #[derive(Deserialize, Default)]
 struct MacosPackagingConfig {
-    /// Installer signing identity (e.g. "Developer ID Installer: Name (TEAMID)").
-    installer_identity: Option<String>,
     #[serde(default)]
     notarize: bool,
     apple_id: Option<String>,
@@ -598,15 +616,15 @@ pub(crate) struct PackagingConfig {
     license_html: Option<String>,
 }
 
-fn default_signing_identity() -> String {
-    "-".to_string()
-}
-
-/// Resolve the signing identity: truce.toml → TRUCE_SIGNING_IDENTITY env → ad-hoc.
+/// Resolve the application signing identity:
+/// `[macos.signing].application_identity` → `TRUCE_SIGNING_IDENTITY` env →
+/// `.cargo/config.toml` `[env].TRUCE_SIGNING_IDENTITY` → ad-hoc.
 fn resolve_signing_identity(config: &Config) -> String {
     // 1. truce.toml explicit value
-    if !config.macos.signing_identity.is_empty() && config.macos.signing_identity != "-" {
-        return config.macos.signing_identity.clone();
+    if let Some(id) = &config.macos.signing.application_identity {
+        if !id.is_empty() && id != "-" {
+            return id.clone();
+        }
     }
     // 2. Environment variable
     if let Ok(id) = std::env::var("TRUCE_SIGNING_IDENTITY") {
@@ -636,10 +654,14 @@ fn read_cargo_config_env(key: &str) -> Option<String> {
     }
 }
 
-/// Resolve the installer signing identity: truce.toml → TRUCE_INSTALLER_SIGNING_IDENTITY env → None.
+/// Resolve the installer signing identity:
+/// `[macos.signing].installer_identity` → `TRUCE_INSTALLER_SIGNING_IDENTITY`
+/// env → `.cargo/config.toml` → None.
 fn resolve_installer_identity(config: &Config) -> Option<String> {
-    if let Some(ref id) = config.macos.packaging.installer_identity {
-        return Some(id.clone());
+    if let Some(ref id) = config.macos.signing.installer_identity {
+        if !id.is_empty() {
+            return Some(id.clone());
+        }
     }
     if let Ok(id) = std::env::var("TRUCE_INSTALLER_SIGNING_IDENTITY") {
         if !id.is_empty() {
@@ -800,10 +822,12 @@ pub(crate) fn load_config() -> std::result::Result<Config, BoxErr> {
     if config.plugin.is_empty() {
         return Err("No [[plugin]] entries in truce.toml".into());
     }
-    // Resolve signing identities from env vars if truce.toml uses defaults
-    config.macos.signing_identity = resolve_signing_identity(&config);
-    if config.macos.packaging.installer_identity.is_none() {
-        config.macos.packaging.installer_identity = resolve_installer_identity(&config);
+    // Resolve both signing identities against truce.toml + env vars + .cargo/config.toml.
+    // Accessor methods on MacosConfig read these resolved values.
+    let resolved_app = resolve_signing_identity(&config);
+    config.macos.signing.application_identity = Some(resolved_app);
+    if config.macos.signing.installer_identity.is_none() {
+        config.macos.signing.installer_identity = resolve_installer_identity(&config);
     }
     Ok(config)
 }
@@ -1227,7 +1251,7 @@ fn install_clap(root: &Path, p: &PluginDef, config: &Config) -> Res {
         fs::create_dir_all(&clap_dir)?;
         let dst = clap_dir.join(format!("{}.clap", p.name));
         fs::copy(&dylib, &dst)?;
-        codesign_bundle(dst.to_str().unwrap(), &config.macos.signing_identity, false)?;
+        codesign_bundle(dst.to_str().unwrap(), config.macos.application_identity(), false)?;
         eprintln!("CLAP: {}", dst.display());
     }
 
@@ -1296,7 +1320,7 @@ fn install_vst3(root: &Path, p: &PluginDef, config: &Config) -> Res {
         let plist_tmp = tmp_dir().join(format!("{}_vst3.plist", p.suffix)).to_string_lossy().to_string();
         fs::write(&plist_tmp, &plist)?;
         run_sudo("cp", &[&plist_tmp, &format!("{contents}/Info.plist")])?;
-        codesign_bundle(&vst3_bundle, &config.macos.signing_identity, true)?;
+        codesign_bundle(&vst3_bundle, config.macos.application_identity(), true)?;
         eprintln!("VST3: {vst3_bundle}");
     }
 
@@ -1365,7 +1389,7 @@ fn install_vst2(root: &Path, p: &PluginDef, config: &Config) -> Res {
         fs::write(bundle.join("Contents/Info.plist"), &plist)?;
         fs::write(bundle.join("Contents/PkgInfo"), "BNDL????")?;
 
-        codesign_bundle(bundle.to_str().unwrap(), &config.macos.signing_identity, false)?;
+        codesign_bundle(bundle.to_str().unwrap(), config.macos.application_identity(), false)?;
         eprintln!("VST2: {}", bundle.display());
     }
 
@@ -1467,7 +1491,7 @@ fn install_au(root: &Path, p: &PluginDef, config: &Config) -> Res {
     let plist_tmp = tmp_dir().join(format!("{}_au.plist", p.suffix)).to_string_lossy().to_string();
     fs::write(&plist_tmp, &plist)?;
     run_sudo("cp", &[&plist_tmp, &format!("{contents}/Info.plist")])?;
-    codesign_bundle(&bundle, &config.macos.signing_identity, true)?;
+    codesign_bundle(&bundle, config.macos.application_identity(), true)?;
     eprintln!("AU:   {bundle}");
     Ok(())
 }
@@ -1802,7 +1826,7 @@ fn install_aax(root: &Path, p: &PluginDef, config: &Config) -> Res {
         fs::write(&plist_tmp, &plist)?;
         run_sudo("cp", &[&plist_tmp, &format!("{contents}/Info.plist")])?;
 
-        codesign_bundle(&bundle, &config.macos.signing_identity, true)?;
+        codesign_bundle(&bundle, config.macos.application_identity(), true)?;
         eprintln!("AAX:  {bundle}");
     }
 
@@ -1847,13 +1871,13 @@ fn build_au_v3(
     plugins: &[&PluginDef],
     no_build: bool,
 ) -> Res {
-    let sign_id = &config.macos.signing_identity;
+    let sign_id = config.macos.application_identity();
     let team_id = extract_team_id(sign_id);
     let dt = &deployment_target();
 
     if team_id.is_empty() {
         eprintln!("AU v3: skipping — requires a Developer ID signing identity with a team ID.");
-        eprintln!("  Set signing_identity in truce.toml to your Developer ID certificate,");
+        eprintln!("  Set [macos.signing].application_identity in truce.toml to your Developer ID certificate,");
         eprintln!("  e.g., \"Developer ID Application: Your Name (TEAMID)\"");
         eprintln!("  Ad-hoc signing (\"-\") is not supported for AU v3 appex bundles.");
         return Ok(());
@@ -2048,7 +2072,7 @@ fn install_au_v3(
     config: &Config,
     plugins: &[&PluginDef],
 ) -> Res {
-    let sign_id = &config.macos.signing_identity;
+    let sign_id = config.macos.application_identity();
 
     for p in plugins {
         let fw_name = p.fw_name();
@@ -3454,7 +3478,7 @@ fn stage_vst3(root: &Path, p: &PluginDef, config: &Config, staging: &Path) -> Re
         vendor_id = config.vendor.id,
     );
     fs::write(bundle.join("Contents/Info.plist"), &plist)?;
-    codesign_bundle(bundle.to_str().unwrap(), &config.macos.signing_identity, false)?;
+    codesign_bundle(bundle.to_str().unwrap(), config.macos.application_identity(), false)?;
     Ok(())
 }
 
@@ -3491,7 +3515,7 @@ fn stage_vst2(root: &Path, p: &PluginDef, config: &Config, staging: &Path) -> Re
     );
     fs::write(bundle.join("Contents/Info.plist"), &plist)?;
     fs::write(bundle.join("Contents/PkgInfo"), "BNDL????")?;
-    codesign_bundle(bundle.to_str().unwrap(), &config.macos.signing_identity, false)?;
+    codesign_bundle(bundle.to_str().unwrap(), config.macos.application_identity(), false)?;
     Ok(())
 }
 
@@ -3558,7 +3582,7 @@ fn stage_au2(root: &Path, p: &PluginDef, config: &Config, staging: &Path) -> Res
         au_tag = p.au_tag,
     );
     fs::write(bundle.join("Contents/Info.plist"), &plist)?;
-    codesign_bundle(bundle.to_str().unwrap(), &config.macos.signing_identity, false)?;
+    codesign_bundle(bundle.to_str().unwrap(), config.macos.application_identity(), false)?;
     Ok(())
 }
 
@@ -3615,10 +3639,10 @@ fn stage_aax(root: &Path, p: &PluginDef, config: &Config, staging: &Path) -> Res
     // notarization rejects bundles where nested binaries lack hardened
     // runtime + timestamp.
     let inner_dylib = contents.join("Resources").join(format!("lib{}_aax.dylib", p.dylib_stem()));
-    codesign_bundle(inner_dylib.to_str().unwrap(), &config.macos.signing_identity, false)?;
+    codesign_bundle(inner_dylib.to_str().unwrap(), config.macos.application_identity(), false)?;
     let inner_exe = contents.join("MacOS").join(&p.name);
-    codesign_bundle(inner_exe.to_str().unwrap(), &config.macos.signing_identity, false)?;
-    codesign_bundle(bundle.to_str().unwrap(), &config.macos.signing_identity, false)?;
+    codesign_bundle(inner_exe.to_str().unwrap(), config.macos.application_identity(), false)?;
+    codesign_bundle(bundle.to_str().unwrap(), config.macos.application_identity(), false)?;
     Ok(())
 }
 
@@ -3651,7 +3675,7 @@ fn stage_au3(_root: &Path, p: &PluginDef, config: &Config, staging: &Path) -> Re
         copy_dir_recursive(&fw_src, &fw_dst.join(format!("{fw_name}.framework")))?;
     }
 
-    codesign_bundle(dst.to_str().unwrap(), &config.macos.signing_identity, false)?;
+    codesign_bundle(dst.to_str().unwrap(), config.macos.application_identity(), false)?;
     Ok(())
 }
 
@@ -3919,7 +3943,7 @@ fn cmd_package_macos(args: &[String]) -> Res {
         for fmt in &formats {
             eprint!("  Staging {}... ", fmt.label());
             let result = match fmt {
-                PkgFormat::Clap => stage_clap(&root, p, &staging, &config.macos.signing_identity),
+                PkgFormat::Clap => stage_clap(&root, p, &staging, config.macos.application_identity()),
                 PkgFormat::Vst3 => stage_vst3(&root, p, &config, &staging),
                 PkgFormat::Vst2 => stage_vst2(&root, p, &config, &staging),
                 PkgFormat::Au2 => stage_au2(&root, p, &config, &staging),
@@ -4044,7 +4068,7 @@ fn cmd_package_macos(args: &[String]) -> Res {
             resources_dir.to_str().unwrap(),
         ];
 
-        let installer_id = config.macos.packaging.installer_identity.as_deref();
+        let installer_id = config.macos.installer_identity();
         if let Some(id) = installer_id {
             pb_args.push("--sign");
             pb_args.push(id);
@@ -4244,7 +4268,7 @@ fn cmd_build(args: &[String]) -> Res {
 
             // Codesign
             let bundle = bundles_dir.join(format!("{}.clap", p.name));
-            codesign_bundle(bundle.to_str().unwrap(), &config.macos.signing_identity, false)?;
+            codesign_bundle(bundle.to_str().unwrap(), config.macos.application_identity(), false)?;
 
             eprintln!("  CLAP: {}", bundle.display());
         }
