@@ -1,6 +1,6 @@
 # truce — Project Status
 
-Updated 2026-04-16. Version 0.3.0.
+Updated 2026-04-18. Version 0.3.0.
 
 ## Summary
 
@@ -9,21 +9,24 @@ Updated 2026-04-16. Version 0.3.0.
 Single `truce::plugin!` macro for all exports. No build.rs needed.
 Four GUI backends: built-in (tiny-skia/wgpu), egui, iced, and slint.
 
-Runs on **macOS** and **Windows**. Linux support is planned.
+Runs on **macOS**, **Windows**, and **Linux** (Reaper tested; Bitwig / Ardour pending).
 
-| Format | macOS | Windows | Custom GUI | Hosts tested |
-|--------|-------|---------|------------|-------------|
-| CLAP | ✅ | ✅ | ✅ | Reaper (macOS, Windows) |
-| VST3 | ✅ | ✅ | ✅ | Reaper, Ableton, FL Studio |
-| VST2 | ✅ | ✅ | ✅ | Reaper, Ableton, FL Studio |
-| AU v2 | ✅ | — | ✅ | Reaper, Logic, GarageBand*, Ableton |
-| AU v3 | ✅ | — | ✅ | Logic, Ableton |
-| AAX | ✅ | ✅† | ✅ | Pro Tools Developer |
+| Format | macOS | Windows | Linux | Custom GUI | Hosts tested |
+|--------|-------|---------|-------|------------|-------------|
+| CLAP | ✅ | ✅ | ✅ | ✅ | Reaper (macOS, Windows, Linux) |
+| VST3 | ✅ | ✅ | ✅ | ✅ | Reaper, Ableton, FL Studio (macOS/Win); Reaper (Linux) |
+| VST2 | ✅ | ✅ | ⚠️‡ | ✅ | Reaper, Ableton, FL Studio (macOS/Win) |
+| AU v2 | ✅ | — | — | ✅ | Reaper, Logic, GarageBand*, Ableton |
+| AU v3 | ✅ | — | — | ✅ | Logic, Ableton |
+| AAX | ✅ | ✅† | — | ✅ | Pro Tools Developer |
 
 \* GarageBand ignores custom GUI for all third-party plugins.
 † AAX on Windows builds, installs, and loads in Pro Tools Developer.
 Retail Pro Tools still requires a PACE/iLok signature (dev iLok + Pro
 Tools Developer unblocks local iteration).
+‡ VST2 on Linux installs correctly to `~/.vst/` but does not appear in
+Reaper's plugin browser. Cause not yet diagnosed — see
+`docs/internal/linux.md`. CLAP and VST3 on Linux work.
 AU is macOS-only by design.
 
 ## Distribution
@@ -81,7 +84,7 @@ Four GUI backends, same 7 widget types:
 |---------|-------|------|-----------|
 | Built-in | `truce-gui` / `truce-gpu` | Layout-only (zero code) | tiny-skia CPU or wgpu GPU |
 | egui | `truce-egui` | Custom (immediate-mode) | wgpu via egui-wgpu |
-| iced | `truce-iced` | Auto (from GridLayout) or custom (IcedPlugin trait) | wgpu (macOS + Windows via baseview) |
+| iced | `truce-iced` | Auto (from GridLayout) or custom (IcedPlugin trait) | wgpu (macOS native NSView; Windows/Linux via baseview) |
 | slint | `truce-slint` | Declarative `.slint` markup + custom Rust glue | software renderer |
 
 7 widget types via `GridLayout::build()` with auto-flow placement:
@@ -179,7 +182,7 @@ cargo-truce       — scaffolding + build/install/package CLI (cargo truce new)
 ## What's remaining
 
 **Near-term:**
-- Linux platform layer
+- Linux: VST2 not visible in Reaper (CLAP + VST3 work); HiDPI for pre-window sizing; automation + preset round-trip testing; Bitwig + Ardour validation; `cargo truce package` (.deb/.rpm); CI job on ubuntu-24.04. See `docs/internal/linux.md`.
 - CLAP GUI→host slider sync in Reaper
 - CI pipeline with Windows + Linux jobs
 - Authenticode round-trip verification with a real signing cert

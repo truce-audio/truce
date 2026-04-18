@@ -10,6 +10,9 @@ use raw_window_handle::{
 };
 use truce_core::editor::RawWindowHandle;
 
+#[cfg(target_os = "linux")]
+use std::sync::atomic::{AtomicU64, Ordering};
+
 /// Newtype bridging truce's `RawWindowHandle` to baseview's
 /// `HasRawWindowHandle` (raw-window-handle 0.5).
 pub struct ParentWindow(pub RawWindowHandle);
@@ -79,11 +82,7 @@ pub fn query_backing_scale(parent: &RawWindowHandle) -> f64 {
 
 #[cfg(target_os = "linux")]
 pub fn query_backing_scale(_parent: &RawWindowHandle) -> f64 {
-    // Linux DPI is screen-level and authoritatively delivered by baseview
-    // via WindowEvent::Resized. We cannot safely open a side-channel Xlib
-    // connection here (render thread + Xlib races). Return 1.0 and rely on
-    // info.scale() in the resize handler.
-    1.0
+    main_screen_scale()
 }
 
 /// Query the main screen's backing scale factor (no parent window needed).
@@ -106,10 +105,48 @@ pub fn main_screen_scale() -> f64 {
     win32_dpi_scale(std::ptr::null_mut())
 }
 
+/// Cached display scale factor on Linux, stored as f64 bits. Zero means unset.
+///
+/// Linux has no safe synchronous DPI query from plugin code — the authoritative
+/// value is read by baseview internally (from `Xft.dpi` with a screen-geometry
+/// fallback) and delivered via `WindowEvent::Resized::info.scale()` once the
+/// window is live. We cache the first value an editor sees there so that later
+/// pre-window `main_screen_scale()` calls (e.g. the next editor's `::new`)
+/// return something useful instead of 1.0.
+#[cfg(target_os = "linux")]
+static LINUX_SCALE_BITS: AtomicU64 = AtomicU64::new(0);
+
+/// Record the display scale factor observed from baseview on Linux. Editors
+/// should call this from their `WindowEvent::Resized` handlers so subsequent
+/// pre-window queries match what baseview is delivering. No-op on non-Linux.
+pub fn note_linux_scale_factor(_scale: f64) {
+    #[cfg(target_os = "linux")]
+    {
+        if _scale.is_finite() && _scale > 0.0 {
+            LINUX_SCALE_BITS.store(_scale.to_bits(), Ordering::Relaxed);
+        }
+    }
+}
+
 #[cfg(target_os = "linux")]
 pub fn main_screen_scale() -> f64 {
-    // See query_backing_scale — scale arrives via baseview's Resized event.
-    1.0
+    // Priority: TRUCE_SCALE env var (dev/test override) → cached scale
+    // observed from baseview → 1.0 fallback. No side-channel Xlib calls —
+    // those crashed inside NVIDIA's Vulkan driver when invoked from the
+    // render thread (see docs/internal/linux.md, DPI section).
+    if let Ok(s) = std::env::var("TRUCE_SCALE") {
+        if let Ok(v) = s.parse::<f64>() {
+            if v.is_finite() && v > 0.0 {
+                return v;
+            }
+        }
+    }
+    let bits = LINUX_SCALE_BITS.load(Ordering::Relaxed);
+    if bits == 0 {
+        return 1.0;
+    }
+    let v = f64::from_bits(bits);
+    if v.is_finite() && v > 0.0 { v } else { 1.0 }
 }
 
 /// Query the DPI scale factor on Windows.

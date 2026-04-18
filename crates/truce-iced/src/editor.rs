@@ -772,6 +772,7 @@ impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBase
             }
             baseview::Event::Window(baseview::WindowEvent::Resized(info)) => {
                 self.scale = info.scale() as f32;
+                truce_gui::platform::note_linux_scale_factor(info.scale());
                 if let Some(ref mut render) = runtime.render {
                     let pw = info.physical_size().width;
                     let ph = info.physical_size().height;

@@ -342,6 +342,7 @@ impl WindowHandler for EguiWindowHandler {
                     let pw = info.physical_size().width;
                     let ph = info.physical_size().height;
                     let scale = info.scale() as f32;
+                    truce_gui::platform::note_linux_scale_factor(info.scale());
                     // Store logical size — egui screen_rect uses logical points
                     self.size = (
                         (pw as f32 / scale) as u32,

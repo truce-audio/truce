@@ -219,6 +219,7 @@ impl WindowHandler for SlintWindowHandler {
                     let phys_w = info.physical_size().width;
                     let phys_h = info.physical_size().height;
                     let scale = info.scale();
+                    truce_gui::platform::note_linux_scale_factor(scale);
                     self.width = (phys_w as f64 / scale) as u32;
                     self.height = (phys_h as f64 / scale) as u32;
                     self.scale = scale as f32;

@@ -992,6 +992,7 @@ impl<P: Params + 'static> baseview::WindowHandler for BuiltinWindowHandler<P> {
                 let pw = info.physical_size().width;
                 let ph = info.physical_size().height;
                 self.scale = info.scale() as f32;
+                crate::platform::note_linux_scale_factor(info.scale());
                 match &mut self.backend {
                     #[cfg(target_os = "macos")]
                     BlitBackend::CoreGraphics(cg) => {
