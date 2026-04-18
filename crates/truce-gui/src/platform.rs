@@ -4,7 +4,10 @@
 //! (raw-window-handle 0.5), and provides scale factor querying and
 //! wgpu surface creation.
 
-use raw_window_handle::{HasRawWindowHandle, RawWindowHandle as RwhRawWindowHandle};
+use raw_window_handle::{
+    HasRawDisplayHandle, HasRawWindowHandle, RawDisplayHandle as RwhRawDisplayHandle,
+    RawWindowHandle as RwhRawWindowHandle,
+};
 use truce_core::editor::RawWindowHandle;
 
 /// Newtype bridging truce's `RawWindowHandle` to baseview's
@@ -177,11 +180,16 @@ pub unsafe fn create_wgpu_surface(
         }
         #[cfg(target_os = "linux")]
         RwhRawWindowHandle::Xlib(handle) => {
+            let display_handle = match window.raw_display_handle() {
+                RwhRawDisplayHandle::Xlib(d) => d,
+                _ => return None,
+            };
+            let display_ptr = std::ptr::NonNull::new(display_handle.display);
             let rwh6_window = wgpu::rwh::RawWindowHandle::Xlib(
                 wgpu::rwh::XlibWindowHandle::new(handle.window),
             );
             let rwh6_display = wgpu::rwh::RawDisplayHandle::Xlib(
-                wgpu::rwh::XlibDisplayHandle::new(None, 0),
+                wgpu::rwh::XlibDisplayHandle::new(display_ptr, display_handle.screen),
             );
             wgpu::SurfaceTargetUnsafe::RawHandle {
                 raw_display_handle: rwh6_display,
