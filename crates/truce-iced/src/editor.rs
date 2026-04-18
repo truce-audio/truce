@@ -685,6 +685,25 @@ struct IcedBaseviewHandler<P: Params + 'static, M: IcedPlugin<P>> {
 unsafe impl<P: Params, M: IcedPlugin<P>> Send for IcedBaseviewHandler<P, M> {}
 
 #[cfg(not(target_os = "macos"))]
+impl<P: Params + 'static, M: IcedPlugin<P>> Drop for IcedBaseviewHandler<P, M> {
+    fn drop(&mut self) {
+        // Drop wgpu/iced render state on the baseview render thread, while
+        // its XcbConnection (X11 Display) is still alive. If we let the
+        // host-thread close() path drop `runtime.render` instead, NVIDIA's
+        // Vulkan surface-destruction code tries to use a freed Display and
+        // segfaults inside _XSend.
+        //
+        // Safety: close() always calls window.close() which joins this
+        // thread before returning. While this drop runs, the host thread
+        // is blocked in join(), so `self.editor` is still valid.
+        let editor = unsafe { &mut *self.editor };
+        if let Some(ref mut runtime) = editor.runtime {
+            runtime.render = None;
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
 impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBaseviewHandler<P, M> {
     fn on_frame(&mut self, _window: &mut baseview::Window) {
         let editor = unsafe { &mut *self.editor };
@@ -1111,7 +1130,14 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
     fn close(&mut self) {
         #[cfg(not(target_os = "macos"))]
         {
-            self.baseview_window = None;
+            // baseview's Linux WindowHandle has no Drop impl — we must call
+            // close() explicitly to request shutdown and join the render
+            // thread. Without this, the thread keeps running against a
+            // dangling self pointer after the host drops this editor, which
+            // later panics inside wgpu as surfaces get torn down.
+            if let Some(mut window) = self.baseview_window.take() {
+                window.close();
+            }
         }
         self.runtime = None;
         eprintln!("[truce-iced] Editor closed");

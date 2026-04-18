@@ -79,9 +79,11 @@ pub fn query_backing_scale(parent: &RawWindowHandle) -> f64 {
 
 #[cfg(target_os = "linux")]
 pub fn query_backing_scale(_parent: &RawWindowHandle) -> f64 {
-    // Linux has no per-window DPI concept the way macOS/Windows do; scale
-    // is a screen-level property read from Xft.dpi. Defer to main_screen_scale.
-    main_screen_scale()
+    // Linux DPI is screen-level and authoritatively delivered by baseview
+    // via WindowEvent::Resized. We cannot safely open a side-channel Xlib
+    // connection here (render thread + Xlib races). Return 1.0 and rely on
+    // info.scale() in the resize handler.
+    1.0
 }
 
 /// Query the main screen's backing scale factor (no parent window needed).
@@ -106,64 +108,8 @@ pub fn main_screen_scale() -> f64 {
 
 #[cfg(target_os = "linux")]
 pub fn main_screen_scale() -> f64 {
-    linux_dpi_scale().unwrap_or(1.0)
-}
-
-/// Read the display scale from Xft.dpi (authoritative) with a screen-geometry
-/// fallback. Matches baseview's Linux scaling logic so event coordinates agree
-/// with what we draw. Returns `None` if neither source is usable.
-#[cfg(target_os = "linux")]
-fn linux_dpi_scale() -> Option<f64> {
-    use x11::xlib;
-
-    unsafe {
-        let display = xlib::XOpenDisplay(std::ptr::null());
-        if display.is_null() {
-            return None;
-        }
-
-        let scale = linux_xft_dpi(display)
-            .or_else(|| linux_geometry_dpi(display))
-            .map(|dpi| dpi / 96.0);
-
-        xlib::XCloseDisplay(display);
-
-        // Xft.dpi below 96 is legal but would shrink our design dimensions;
-        // clamp to >= 1.0.
-        scale.map(|s| if s < 1.0 { 1.0 } else { s })
-    }
-}
-
-#[cfg(target_os = "linux")]
-unsafe fn linux_xft_dpi(display: *mut x11::xlib::Display) -> Option<f64> {
-    use std::ffi::CStr;
-    let rm_ptr = x11::xlib::XResourceManagerString(display);
-    if rm_ptr.is_null() {
-        return None;
-    }
-    let rm = CStr::from_ptr(rm_ptr).to_str().ok()?;
-    for line in rm.split('\n') {
-        let line = line.trim();
-        if let Some(rest) = line.strip_prefix("Xft.dpi:") {
-            if let Ok(dpi) = rest.trim().parse::<f64>() {
-                if dpi > 0.0 {
-                    return Some(dpi);
-                }
-            }
-        }
-    }
-    None
-}
-
-#[cfg(target_os = "linux")]
-unsafe fn linux_geometry_dpi(display: *mut x11::xlib::Display) -> Option<f64> {
-    let screen = x11::xlib::XDefaultScreen(display);
-    let height_px = x11::xlib::XDisplayHeight(display, screen) as f64;
-    let height_mm = x11::xlib::XDisplayHeightMM(display, screen) as f64;
-    if height_mm <= 0.0 {
-        return None;
-    }
-    Some(height_px * 25.4 / height_mm)
+    // See query_backing_scale — scale arrives via baseview's Resized event.
+    1.0
 }
 
 /// Query the DPI scale factor on Windows.
