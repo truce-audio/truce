@@ -133,6 +133,7 @@ By host (across all supported platforms):
 | CLAP   | Yes    |       |            |         |           |           |
 | VST3   | Yes    |       |            | Yes     | Yes       |           |
 | VST2   | Yes    |       |            | Yes     | Yes       |           |
+| LV2    | Yes    |       |            |         |           |           |
 | AU v2  | Yes    | Yes   | Yes        | Yes     |           |           |
 | AU v3  |        | Yes   | Yes        | Yes     |           |           |
 | AAX    |        |       |            |         |           | Yes       |
