@@ -149,18 +149,19 @@ By platform:
 
 | Format | macOS | Windows | Linux |
 |--------|-------|---------|-------|
-| CLAP   | Yes   | Yes     | Planned |
-| VST3   | Yes   | Yes     | Planned |
-| VST2   | Yes   | Yes     | Planned |
-| AU v2  | Yes   | —       | —       |
-| AU v3  | Yes   | —       | —       |
-| AAX    | Yes   | Yes     | —       |
+| CLAP   | Yes   | Yes     | Yes   |
+| VST3   | Yes   | Yes     | Yes   |
+| VST2   | Yes   | Yes     | Yes   |
+| AU v2  | Yes   | —       | —     |
+| AU v3  | Yes   | —       | —     |
+| AAX    | Yes   | Yes     | —     |
 
 AU is macOS-only by design. AAX requires the Avid AAX SDK and PACE/iLok
 signing for retail Pro Tools releases. VST2 is opt-in on all platforms —
-see note below.
+see note below. Linux support is newer than macOS/Windows — see
+[Status](docs/status.md) for host coverage.
 
-By host (macOS + Windows combined):
+By host (across all supported platforms):
 
 | Format | Reaper | Logic | GarageBand | Ableton | FL Studio | Pro Tools |
 |--------|--------|-------|------------|---------|-----------|-----------|
@@ -194,7 +195,7 @@ By host (macOS + Windows combined):
 ## Features
 
 - **6 plugin formats** from one codebase (CLAP, VST3 default; VST2, AU v2, AU v3, AAX opt-in)
-- **Cross-platform** — macOS and Windows supported; Linux planned
+- **Cross-platform** — macOS, Windows, and Linux (Reaper tested on Linux; Bitwig and Ardour pending)
 - **Hot reload** — edit DSP/layout, rebuild, hear changes without restarting the DAW
 - **Built-in GUI** — knobs, sliders, toggles, selectors, meters, XY pads (wgpu GPU rendering)
 - **4 GUI frameworks** — egui, iced, slint, or raw window handle
@@ -267,7 +268,21 @@ au_subtype = "MyFx"
 - **macOS**: Xcode CLI tools (`xcode-select --install`). Full Xcode for AU v3.
 - **Windows**: MSVC build tools (Visual Studio 2019+ with the "Desktop
   development with C++" workload). Rust `x86_64-pc-windows-msvc`
-  toolchain is required. 
+  toolchain is required.
+- **Linux**: X11 + Vulkan development headers and JACK (via the PipeWire
+  shim on modern distros). On Ubuntu/Debian:
+  ```
+  sudo apt install build-essential pkg-config \
+    libx11-dev libx11-xcb-dev libxcb1-dev libxcb-dri2-0-dev libxcb-icccm4-dev libxcursor-dev \
+    libxkbcommon-dev libxkbcommon-x11-dev libxrandr-dev \
+    libgl1-mesa-dev libvulkan-dev mesa-vulkan-drivers \
+    libasound2-dev libjack-jackd2-dev \
+    libfontconfig1-dev libfreetype-dev \
+    pipewire-jack libspa-0.2-jack
+  ```
+  Do not run standalone `jackd` alongside PipeWire — the PipeWire
+  JACK shim provides `libjack.so.0` and routes JACK clients through
+  PipeWire.
 - AAX: Avid AAX SDK (optional, obtain from [developer.avid.com](https://developer.avid.com)).
 
 ## License

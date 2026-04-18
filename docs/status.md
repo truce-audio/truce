@@ -15,7 +15,7 @@ Runs on **macOS**, **Windows**, and **Linux** (Reaper tested; Bitwig / Ardour pe
 |--------|-------|---------|-------|------------|-------------|
 | CLAP | ✅ | ✅ | ✅ | ✅ | Reaper (macOS, Windows, Linux) |
 | VST3 | ✅ | ✅ | ✅ | ✅ | Reaper, Ableton, FL Studio (macOS/Win); Reaper (Linux) |
-| VST2 | ✅ | ✅ | ⚠️‡ | ✅ | Reaper, Ableton, FL Studio (macOS/Win) |
+| VST2 | ✅ | ✅ | ✅ | ✅ | Reaper, Ableton, FL Studio (macOS/Win) |
 | AU v2 | ✅ | — | — | ✅ | Reaper, Logic, GarageBand*, Ableton |
 | AU v3 | ✅ | — | — | ✅ | Logic, Ableton |
 | AAX | ✅ | ✅† | — | ✅ | Pro Tools Developer |
@@ -24,9 +24,6 @@ Runs on **macOS**, **Windows**, and **Linux** (Reaper tested; Bitwig / Ardour pe
 † AAX on Windows builds, installs, and loads in Pro Tools Developer.
 Retail Pro Tools still requires a PACE/iLok signature (dev iLok + Pro
 Tools Developer unblocks local iteration).
-‡ VST2 on Linux installs correctly to `~/.vst/` but does not appear in
-Reaper's plugin browser. Cause not yet diagnosed — see
-`docs/internal/linux.md`. CLAP and VST3 on Linux work.
 AU is macOS-only by design.
 
 ## Distribution
@@ -182,7 +179,7 @@ cargo-truce       — scaffolding + build/install/package CLI (cargo truce new)
 ## What's remaining
 
 **Near-term:**
-- Linux: VST2 not visible in Reaper (CLAP + VST3 work); HiDPI for pre-window sizing; automation + preset round-trip testing; Bitwig + Ardour validation; `cargo truce package` (.deb/.rpm); CI job on ubuntu-24.04. See `docs/internal/linux.md`.
+- Linux: automation + preset round-trip testing; Bitwig + Ardour validation; `cargo truce package` (`.deb`/`.rpm`); CI job on ubuntu-24.04.
 - CLAP GUI→host slider sync in Reaper
 - CI pipeline with Windows + Linux jobs
 - Authenticode round-trip verification with a real signing cert

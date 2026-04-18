@@ -79,7 +79,7 @@
 |---|---|---|---|---|
 | macOS | Yes (all formats) | Yes | Yes | Yes |
 | Windows | Yes (CLAP/VST3/VST2/AAX) | Yes | Yes | Yes |
-| Linux | Planned | Yes | Yes | Partial |
+| Linux | Yes (CLAP/VST3) | Yes | Yes | Partial |
 | iOS/Android | No | Yes | No | Yes (iOS) |
 | Web | No | No | No | Yes |
 

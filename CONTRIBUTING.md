@@ -3,12 +3,10 @@
 ## Project Status
 
 truce is a working audio plugin framework with 6 format wrappers (CLAP,
-VST3, VST2, AU v2, AU v3, AAX), 6 example plugins, a built-in GUI
+VST3, VST2, AU v2, AU v3, AAX), 8 example plugins, a built-in GUI
 system, and hot-reload support. All formats are tested in real DAWs on
-macOS.
-
-The project is currently **macOS-first**. Windows and Linux support is
-the highest-priority gap. See [What Needs Help](#what-needs-help) below.
+macOS. CLAP/VST3/VST2 are tested on Windows. CLAP/VST3 are tested on
+Linux (Reaper).
 
 For detailed status, see [docs/status.md](docs/status.md).
 
@@ -121,15 +119,14 @@ Meters accept a slice of meter IDs and render one bar per channel.
 
 ### High Priority
 
-**Windows + Linux platform layers** — The biggest gap. The core
-framework and all format wrappers are platform-agnostic Rust, but the
-GUI platform code (window creation, input handling, pixel blitting) is
-currently macOS-only. This affects:
-- `truce-gui` — platform view creation (`platform.rs`)
-- `truce-gpu` — baseview already supports Windows/Linux, needs testing
-- `truce-egui` — baseview already supports Windows/Linux, needs testing
-- `truce-iced` — uses CAMetalLayer directly, needs DX12/Vulkan paths
-- Format wrappers — C/C++/ObjC shims need Windows equivalents
+**Linux finishing work** — Core and all four GUI backends render in
+Reaper, but gaps remain:
+- Parameter automation round-trip and preset save/restore are untested.
+- Bitwig and Ardour validation pending.
+- `cargo truce package` has no Linux target (`.deb` / `.rpm` / AppImage
+  would be the standard output).
+- CI on ubuntu-24.04.
+- LV2 format wrapper for first-class Ardour support.
 
 **CLAP GUI-to-host sync** — Parameter changes from the GUI don't
 reliably update the host's slider position in some CLAP hosts (notably
@@ -142,8 +139,11 @@ is wrong.
 effects would demonstrate more framework capabilities and serve as
 integration tests.
 
-**Iced backend polish** — Resize support, HiDPI handling across
-displays, and Windows/Linux embedding.
+**HiDPI on Linux** — baseview's scale is captured and cached so
+live rendering is correct, but the built-in `truce-gui` backend
+renders its tiny-skia pixmap at logical resolution and blits up,
+which produces softer output than egui at HiDPI. Render at physical
+resolution instead.
 
 **Documentation** — The reference tutorials cover the basics but could
 use more depth on advanced topics: custom parameter formatting, complex
