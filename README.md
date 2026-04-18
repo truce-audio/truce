@@ -103,45 +103,7 @@ impl PluginLogic for Gain {
 truce::plugin! { logic: Gain, params: GainParams }
 ```
 
-One import. One trait. One macro. That's a complete plugin with
-smoothed params, a GPU-rendered GUI knob, and CLAP + VST3 + AU exports.
-
-## Hot Reload
-
-Edit DSP or layout code, rebuild, hear the change in ~2 seconds.
-No DAW restart. Same crate, same code — just a feature flag:
-
-```bash
-# One-time: build and install hot-reload shell
-cargo truce install --dev
-
-# Iterate: rebuild the logic dylib (debug, fast)
-cargo watch -x "build -p my-plugin"
-```
-
-Zero code changes between dev and release. The `dev` feature makes
-`truce::plugin!` produce a hot-reload shell; without it, everything
-compiles statically with zero overhead.
-
-**GUI hot-reload:** Built-in GUI layouts also hot-reload. Edit
-`layout()`, rebuild, and the plugin window updates automatically — no
-close/reopen needed, no window flash. Custom editors (egui, iced, slint)
-require manual close/reopen.
-
-## GUI Backends
-
-The built-in GUI renders automatically from your `layout()` — no custom
-code needed. For custom UIs, pick a framework:
-
-| Backend | Crate | Best for |
-|---------|-------|----------|
-| Built-in | `truce-gui` | Standard UIs — zero code, knobs/sliders/meters/XY pads |
-| [egui](docs/gui/egui.md) | `truce-egui` | Custom layouts, text input, third-party egui widgets |
-| [Iced](docs/gui/iced.md) | `truce-iced` | Elm architecture, auto-generated or custom retained-mode UIs |
-| [Slint](docs/gui/slint.md) | `truce-slint` | Declarative `.slint` markup, build-time compilation, IDE preview |
-| [Raw](docs/gui/raw-window-handle.md) | `truce-core` | Full control — Metal, OpenGL, Skia, anything |
-
-See [GUI backends](docs/gui/README.md) for detailed docs.
+That's a complete plugin with smoothed params, a GPU-rendered GUI knob, and CLAP + VST3 + AU exports.
 
 ## Format Support
 
@@ -189,8 +151,7 @@ By host (across all supported platforms):
 - **6 plugin formats** from one codebase (CLAP, VST3 default; VST2, AU v2, AU v3, AAX opt-in)
 - **Cross-platform** — macOS, Windows, and Linux
 - **Hot reload** — edit DSP/layout, rebuild, hear changes without restarting the DAW
-- **Built-in GUI** — knobs, sliders, toggles, selectors, meters, XY pads (wgpu GPU rendering)
-- **4 GUI frameworks** — egui, iced, slint, or raw window handle
+- **Flexible GUI frameworks** — Built-in widgets, egui, iced, slint, or raw window handle
 - **Declarative params** — `#[derive(Params)]` + `#[param(...)]` with smoothing, ranges, units
 - **`truce::plugin!`** — one macro generates all format exports + GUI + state serialization
 - **`cargo truce`** — build, bundle, sign, install, validate, clean
@@ -258,19 +219,7 @@ au_subtype = "MyFx"
   development with C++" workload). Rust `x86_64-pc-windows-msvc`
   toolchain is required.
 - **Linux**: X11 + Vulkan development headers and JACK (via the PipeWire
-  shim on modern distros). On Ubuntu/Debian:
-  ```
-  sudo apt install build-essential pkg-config \
-    libx11-dev libx11-xcb-dev libxcb1-dev libxcb-dri2-0-dev libxcb-icccm4-dev libxcursor-dev \
-    libxkbcommon-dev libxkbcommon-x11-dev libxrandr-dev \
-    libgl1-mesa-dev libvulkan-dev mesa-vulkan-drivers \
-    libasound2-dev libjack-jackd2-dev \
-    libfontconfig1-dev libfreetype-dev \
-    pipewire-jack libspa-0.2-jack
-  ```
-  Do not run standalone `jackd` alongside PipeWire — the PipeWire
-  JACK shim provides `libjack.so.0` and routes JACK clients through
-  PipeWire.
+  shim on modern distros). 
 - AAX: Avid AAX SDK (optional, obtain from [developer.avid.com](https://developer.avid.com)).
 
 ## License
