@@ -1033,6 +1033,11 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
                     });
 
                     let rwh5 = window.raw_window_handle();
+                    #[cfg(target_os = "linux")]
+                    let rdh5 = {
+                        use raw_window_handle::HasRawDisplayHandle;
+                        window.raw_display_handle()
+                    };
                     let surface = unsafe {
                         let target = match rwh5 {
                             #[cfg(target_os = "windows")]
@@ -1050,9 +1055,23 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
                             }
                             #[cfg(target_os = "linux")]
                             raw_window_handle::RawWindowHandle::Xlib(h) => {
+                                let xlib_display = match rdh5 {
+                                    raw_window_handle::RawDisplayHandle::Xlib(d) => d,
+                                    _ => {
+                                        eprintln!("[truce-iced] Expected Xlib display handle");
+                                        return IcedBaseviewHandler::<P, M> {
+                                            editor: editor_addr as *mut IcedEditor<P, M>,
+                                            scale: 1.0,
+                                        };
+                                    }
+                                };
+                                let display_ptr = std::ptr::NonNull::new(xlib_display.display);
                                 wgpu::SurfaceTargetUnsafe::RawHandle {
                                     raw_display_handle: wgpu::rwh::RawDisplayHandle::Xlib(
-                                        wgpu::rwh::XlibDisplayHandle::new(None, 0),
+                                        wgpu::rwh::XlibDisplayHandle::new(
+                                            display_ptr,
+                                            xlib_display.screen,
+                                        ),
                                     ),
                                     raw_window_handle: wgpu::rwh::RawWindowHandle::Xlib(
                                         wgpu::rwh::XlibWindowHandle::new(h.window as std::ffi::c_ulong),

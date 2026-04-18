@@ -4,9 +4,8 @@
 //! without a native windowing backend. Rendering goes through Slint's
 //! `SoftwareRenderer` to a pixel buffer that we blit via wgpu.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
-use std::sync::Once;
 
 use raw_window_handle::{
     HasRawDisplayHandle, HasRawWindowHandle, RawDisplayHandle as RwhRawDisplayHandle,
@@ -43,16 +42,21 @@ impl Platform for TrucePlatform {
     }
 }
 
-static PLATFORM_INIT: Once = Once::new();
+thread_local! {
+    static PLATFORM_INIT: Cell<bool> = const { Cell::new(false) };
+}
 
-/// Ensure the custom Slint platform is registered (idempotent).
+/// Ensure the custom Slint platform is registered on the calling thread.
 ///
-/// Must be called before creating any Slint component. Safe to call from
-/// multiple plugin instances — `set_platform` runs exactly once.
+/// Slint's `set_platform` is thread-local, so this must be called on every
+/// thread that creates Slint components — including the baseview render
+/// thread, not just the plugin thread. Idempotent per thread.
 pub fn ensure_platform() {
-    PLATFORM_INIT.call_once(|| {
-        slint::platform::set_platform(Box::new(TrucePlatform))
-            .expect("failed to set Slint platform");
+    PLATFORM_INIT.with(|init| {
+        if !init.get() {
+            let _ = slint::platform::set_platform(Box::new(TrucePlatform));
+            init.set(true);
+        }
     });
 }
 

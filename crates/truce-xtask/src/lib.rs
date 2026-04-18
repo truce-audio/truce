@@ -4833,17 +4833,26 @@ fn cmd_build(args: &[String]) -> Res {
 
     // Create CLAP bundles
     for p in &plugins {
-        let src = root.join(format!("target/release/lib{}.dylib", p.crate_name.replace('-', "_")));
-        if src.exists() {
+        let src = release_lib(&root, &p.dylib_stem());
+        if !src.exists() {
+            continue;
+        }
+
+        #[cfg(target_os = "macos")]
+        {
             let clap_dir = bundles_dir.join(format!("{}.clap/Contents/MacOS", p.name));
             fs::create_dir_all(&clap_dir)?;
             fs::copy(&src, clap_dir.join(&p.name))?;
-
-            // Codesign
             let bundle = bundles_dir.join(format!("{}.clap", p.name));
             codesign_bundle(bundle.to_str().unwrap(), config.macos.application_identity(), false)?;
-
             eprintln!("  CLAP: {}", bundle.display());
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            let dst = bundles_dir.join(format!("{}.clap", p.name));
+            fs::copy(&src, &dst)?;
+            eprintln!("  CLAP: {}", dst.display());
         }
     }
 

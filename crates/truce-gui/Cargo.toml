@@ -19,3 +19,6 @@ pollster = "0.4"
 [target.'cfg(target_os = "macos")'.dependencies]
 cocoa = "0.26"
 objc = "0.2"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+x11 = { version = "2", features = ["xlib"] }

@@ -6292,6 +6292,7 @@ dependencies = [
  "truce-core",
  "truce-params",
  "wgpu 24.0.5",
+ "x11",
 ]
 
 [[package]]

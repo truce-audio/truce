@@ -455,6 +455,10 @@ impl Editor for SlintEditor {
             &parent_wrapper,
             options,
             move |window: &mut Window| {
+                // baseview spawns this closure on a new thread; Slint's
+                // set_platform is per-thread, so re-register here.
+                platform::ensure_platform();
+
                 // Create wgpu surface
                 let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
                     backends: wgpu::Backends::PRIMARY,
