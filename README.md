@@ -158,8 +158,7 @@ By platform:
 
 AU is macOS-only by design. AAX requires the Avid AAX SDK and PACE/iLok
 signing for retail Pro Tools releases. VST2 is opt-in on all platforms —
-see note below. Linux support is newer than macOS/Windows — see
-[Status](docs/status.md) for host coverage.
+see note below. See [Status](docs/status.md) for host coverage.
 
 By host (across all supported platforms):
 
@@ -171,13 +170,6 @@ By host (across all supported platforms):
 | AU v2  | Yes    | Yes   | Yes        | Yes     |           |           |
 | AU v3  |        | Yes   | Yes        | Yes     |           |           |
 | AAX    |        |       |            |         |           | Yes       |
-
-> ⚠️ **VST2 is a legacy format and is opt-in per plugin.** Steinberg
-> deprecated the VST2 SDK in 2018. Distributing VST2 plugins may require
-> agreement with Steinberg's licensing terms. Truce's VST2 support uses
-> a clean-room shim (no Steinberg SDK headers), but the VST trademark and
-> logo are still Steinberg's. Enable the `vst2` feature only if you
-> understand the implications.
 
 ## Examples
 
@@ -195,7 +187,7 @@ By host (across all supported platforms):
 ## Features
 
 - **6 plugin formats** from one codebase (CLAP, VST3 default; VST2, AU v2, AU v3, AAX opt-in)
-- **Cross-platform** — macOS, Windows, and Linux (Reaper tested on Linux; Bitwig and Ardour pending)
+- **Cross-platform** — macOS, Windows, and Linux
 - **Hot reload** — edit DSP/layout, rebuild, hear changes without restarting the DAW
 - **Built-in GUI** — knobs, sliders, toggles, selectors, meters, XY pads (wgpu GPU rendering)
 - **4 GUI frameworks** — egui, iced, slint, or raw window handle
@@ -238,10 +230,6 @@ crates/
 
 - [Quickstart](docs/quickstart.md) — zero to hearing your plugin in 5 minutes
 - [Tutorials](docs/reference/) — parameters, processing, synth, GUI, hot reload
-- [GUI Backends](docs/gui/README.md) — egui, iced, slint, raw window handle
-- [Layout](docs/layout.md) — grid layouts, widget reference
-- [Screenshot Testing](docs/gui/screenshot-testing.md) — headless GUI regression tests
-- [Comparisons](docs/comparisons.md) — truce vs JUCE vs nih-plug
 - [Status](docs/status.md) — what's built, what's next
 
 ## Configuration
