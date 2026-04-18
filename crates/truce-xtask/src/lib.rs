@@ -1128,6 +1128,7 @@ fn cmd_install(args: &[String]) -> Res {
     let mut clap = false;
     let mut vst3 = false;
     let mut vst2 = false;
+    let mut lv2 = false;
     let mut au2 = false;
     let mut au3 = false;
     let mut aax = false;
@@ -1141,6 +1142,7 @@ fn cmd_install(args: &[String]) -> Res {
             "--clap" => clap = true,
             "--vst3" => vst3 = true,
             "--vst2" => vst2 = true,
+            "--lv2" => lv2 = true,
             "--au2" => au2 = true,
             "--au3" => au3 = true,
             "--aax" => aax = true,
@@ -1158,13 +1160,17 @@ fn cmd_install(args: &[String]) -> Res {
         i += 1;
     }
 
-    if !clap && !vst3 && !vst2 && !au2 && !au3 && !aax {
+    if !clap && !vst3 && !vst2 && !lv2 && !au2 && !au3 && !aax {
         // No format flags specified — enable all formats that the project supports.
         // Check which features are defined in the first plugin's Cargo.toml.
         let available = detect_default_features();
         clap = available.contains("clap");
         vst3 = available.contains("vst3");
         vst2 = available.contains("vst2");
+        #[cfg(target_os = "linux")]
+        {
+            lv2 = available.contains("lv2");
+        }
         #[cfg(target_os = "macos")]
         {
             au2 = available.contains("au");
@@ -1255,6 +1261,22 @@ fn cmd_install(args: &[String]) -> Res {
             }
         }
 
+        if lv2 {
+            eprintln!("Building LV2...");
+            let mut args: Vec<&str> = Vec::new();
+            for p in &plugins {
+                args.push("-p");
+                args.push(&p.crate_name);
+            }
+            args.extend_from_slice(&["--no-default-features", "--features", "lv2"]);
+            cargo_build(&[], &args, dt)?;
+            for p in &plugins {
+                let src = release_lib(&root, &p.dylib_stem());
+                let dst = release_lib(&root, &format!("{}_lv2", p.dylib_stem()));
+                fs::copy(&src, &dst)?;
+            }
+        }
+
         if au2 {
             eprintln!("Building AU v2...");
             for p in &plugins {
@@ -1326,6 +1348,9 @@ fn cmd_install(args: &[String]) -> Res {
         }
         if vst2 {
             install_vst2(&root, p, &config)?;
+        }
+        if lv2 {
+            install_lv2(&root, p, &config)?;
         }
         if au2 {
             install_au(&root, p, &config)?;
@@ -1529,6 +1554,76 @@ fn install_vst2(root: &Path, p: &PluginDef, config: &Config) -> Res {
     }
 
     Ok(())
+}
+
+/// Install an LV2 bundle to `~/.lv2/{slug}.lv2/`. Copies the plugin `.so`
+/// into the bundle directory, then dlopen()s the `.so` to call its
+/// `__truce_lv2_emit_bundle` entry point, which writes `manifest.ttl` +
+/// `plugin.ttl` describing the plugin's ports and parameters.
+///
+/// Bundle and binary filenames are slugged to lowercase ASCII with hyphens
+/// so that Turtle IRI references (`lv2:binary <...>`) don't need percent
+/// encoding — some LV2 hosts reject bundles whose TTL has spaces or other
+/// non-URI characters in filenames even when the on-disk files are valid.
+#[cfg(target_os = "linux")]
+fn install_lv2(root: &Path, p: &PluginDef, _config: &Config) -> Res {
+    use std::ffi::{c_char, CString};
+    let built = release_lib(root, &format!("{}_lv2", p.dylib_stem()));
+    if !built.exists() {
+        return Err(format!("Missing: {}", built.display()).into());
+    }
+
+    let slug = lv2_slug(&p.name);
+    let lv2_dir = dirs::home_dir().unwrap().join(".lv2");
+    let bundle = lv2_dir.join(format!("{slug}.lv2"));
+    let _ = fs::remove_dir_all(&bundle);
+    fs::create_dir_all(&bundle)?;
+
+    let so_name = format!("{slug}.so");
+    let so_path = bundle.join(&so_name);
+    fs::copy(&built, &so_path)?;
+
+    // dlopen the installed .so (not the staging copy) so that LV2_PATH
+    // resolution lines up with what the host sees.
+    let bundle_cstr = CString::new(bundle.to_string_lossy().as_bytes())?;
+    let so_cstr = CString::new(so_name.clone())?;
+    unsafe {
+        let lib = libloading::Library::new(&so_path)
+            .map_err(|e| format!("dlopen {} failed: {e}", so_path.display()))?;
+        type EmitFn = unsafe extern "C" fn(*const c_char, *const c_char) -> i32;
+        let emit: libloading::Symbol<EmitFn> = lib
+            .get(b"__truce_lv2_emit_bundle\0")
+            .map_err(|e| format!("{} missing __truce_lv2_emit_bundle: {e}", so_path.display()))?;
+        let rc = emit(bundle_cstr.as_ptr(), so_cstr.as_ptr());
+        if rc != 0 {
+            return Err(format!("LV2 TTL emission failed (rc={rc})").into());
+        }
+    }
+
+    eprintln!("LV2: {}", bundle.display());
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn lv2_slug(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    let mut prev_dash = false;
+    for c in name.chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c.to_ascii_lowercase());
+            prev_dash = false;
+        } else if !prev_dash {
+            out.push('-');
+            prev_dash = true;
+        }
+    }
+    out.trim_matches('-').to_string()
+}
+
+#[cfg(not(target_os = "linux"))]
+#[allow(dead_code)]
+fn install_lv2(_root: &Path, _p: &PluginDef, _config: &Config) -> Res {
+    Err("LV2 install is only supported on Linux".into())
 }
 
 fn install_au(root: &Path, p: &PluginDef, config: &Config) -> Res {

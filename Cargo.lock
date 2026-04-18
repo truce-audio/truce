@@ -1942,6 +1942,7 @@ dependencies = [
  "truce-core",
  "truce-gui",
  "truce-loader",
+ "truce-lv2",
  "truce-params",
  "truce-params-derive",
  "truce-slint",
@@ -6045,6 +6046,7 @@ dependencies = [
  "truce-core",
  "truce-derive",
  "truce-loader",
+ "truce-lv2",
  "truce-params",
  "truce-params-derive",
  "truce-vst2",
@@ -6136,6 +6138,7 @@ dependencies = [
  "truce-core",
  "truce-gui",
  "truce-loader",
+ "truce-lv2",
  "truce-params",
  "truce-params-derive",
  "truce-test",
@@ -6155,6 +6158,7 @@ dependencies = [
  "truce-core",
  "truce-gui",
  "truce-loader",
+ "truce-lv2",
  "truce-params",
  "truce-params-derive",
  "truce-test",
@@ -6174,6 +6178,7 @@ dependencies = [
  "truce-core",
  "truce-gui",
  "truce-loader",
+ "truce-lv2",
  "truce-params",
  "truce-params-derive",
  "truce-test",
@@ -6195,6 +6200,7 @@ dependencies = [
  "truce-egui",
  "truce-gui",
  "truce-loader",
+ "truce-lv2",
  "truce-params",
  "truce-params-derive",
  "truce-test",
@@ -6216,6 +6222,7 @@ dependencies = [
  "truce-gui",
  "truce-iced",
  "truce-loader",
+ "truce-lv2",
  "truce-params",
  "truce-params-derive",
  "truce-test",
@@ -6235,6 +6242,7 @@ dependencies = [
  "truce-core",
  "truce-gui",
  "truce-loader",
+ "truce-lv2",
  "truce-params",
  "truce-params-derive",
  "truce-standalone",
@@ -6255,6 +6263,7 @@ dependencies = [
  "truce-core",
  "truce-gui",
  "truce-loader",
+ "truce-lv2",
  "truce-params",
  "truce-params-derive",
  "truce-test",
@@ -6324,6 +6333,14 @@ dependencies = [
  "truce-gui",
  "truce-params",
  "truce-params-derive",
+]
+
+[[package]]
+name = "truce-lv2"
+version = "0.3.0"
+dependencies = [
+ "truce-core",
+ "truce-params",
 ]
 
 [[package]]
@@ -6410,6 +6427,7 @@ dependencies = [
 name = "truce-xtask"
 version = "0.3.0"
 dependencies = [
+ "libloading 0.8.9",
  "serde",
  "toml 0.8.23",
  "truce-shim-types",

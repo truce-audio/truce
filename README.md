@@ -5,8 +5,8 @@ Build audio plugins in Rust. One codebase, every format.
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
 
 Write your plugin once. Build CLAP, VST3, VST2, AU v2, AU v3, AAX,
-and standalone from a single Rust codebase. Hot-reload DSP and GUI
-changes without restarting the DAW.
+LV2, and standalone from a single Rust codebase. Hot-reload DSP and
+GUI changes without restarting the DAW.
 
 ## Quick Start
 
@@ -30,6 +30,7 @@ Other formats:
 cargo truce install              # formats in your plugin's default features
 cargo truce install --vst3       # VST3
 cargo truce install --vst2       # VST2 (opt-in, legacy — see note below)
+cargo truce install --lv2        # LV2 (Linux)
 cargo truce install --au3        # AU v3 (macOS, requires Xcode)
 cargo truce install --aax        # AAX (requires AAX SDK)
 cargo truce test                 # run tests
@@ -114,13 +115,16 @@ By platform:
 | CLAP   | Yes   | Yes     | Yes   |
 | VST3   | Yes   | Yes     | Yes   |
 | VST2   | Yes   | Yes     | Yes   |
+| LV2    | —     | —       | Yes   |
 | AU v2  | Yes   | —       | —     |
 | AU v3  | Yes   | —       | —     |
 | AAX    | Yes   | Yes     | —     |
 
-AU is macOS-only by design. AAX requires the Avid AAX SDK and PACE/iLok
-signing for retail Pro Tools releases. VST2 is opt-in on all platforms —
-see note below. See [Status](docs/status.md) for host coverage.
+AU is macOS-only by design. LV2 is the native Linux format — supports
+audio, MIDI, state, and X11UI. AAX requires the Avid AAX SDK and
+PACE/iLok signing for retail Pro Tools releases. VST2 is opt-in on all
+platforms — see note below. See [Status](docs/status.md) for host
+coverage.
 
 By host (across all supported platforms):
 
@@ -148,7 +152,7 @@ By host (across all supported platforms):
 
 ## Features
 
-- **6 plugin formats** from one codebase (CLAP, VST3 default; VST2, AU v2, AU v3, AAX opt-in)
+- **7 plugin formats** from one codebase (CLAP, VST3 default; VST2, LV2, AU v2, AU v3, AAX opt-in)
 - **Cross-platform** — macOS, Windows, and Linux
 - **Hot reload** — edit DSP/layout, rebuild, hear changes without restarting the DAW
 - **Flexible GUI frameworks** — Built-in widgets, egui, iced, slint, or raw window handle
@@ -173,6 +177,7 @@ crates/
 ├── truce-clap          # CLAP format wrapper
 ├── truce-vst3          # VST3 format wrapper
 ├── truce-vst2          # VST2 format wrapper (clean-room)
+├── truce-lv2           # LV2 format wrapper (native Linux; audio, MIDI, state, X11UI)
 ├── truce-aax           # AAX format wrapper
 ├── truce-au            # Audio Unit (v2 + v3)
 ├── truce-standalone    # Standalone host (cpal audio)

@@ -4,10 +4,11 @@ Updated 2026-04-18. Version 0.3.0.
 
 ## Summary
 
-6 format wrappers, 8 example plugins, 7 widget types, tested in
-6 DAWs. All formats have custom GUI. Hot-reload via `--features dev`.
-Single `truce::plugin!` macro for all exports. No build.rs needed.
-Four GUI backends: built-in (tiny-skia/wgpu), egui, iced, and slint.
+7 format wrappers (CLAP, VST3, VST2, AU v2, AU v3, AAX, LV2), 8
+example plugins, 7 widget types, tested in 6 DAWs. All formats have
+custom GUI. Hot-reload via `--features dev`. Single `truce::plugin!`
+macro for all exports. No build.rs needed. Four GUI backends: built-in
+(tiny-skia/wgpu), egui, iced, and slint.
 
 Runs on **macOS**, **Windows**, and **Linux** (Reaper tested; Bitwig / Ardour pending).
 
@@ -16,6 +17,7 @@ Runs on **macOS**, **Windows**, and **Linux** (Reaper tested; Bitwig / Ardour pe
 | CLAP | ✅ | ✅ | ✅ | ✅ | Reaper (macOS, Windows, Linux) |
 | VST3 | ✅ | ✅ | ✅ | ✅ | Reaper, Ableton, FL Studio (macOS/Win); Reaper (Linux) |
 | VST2 | ✅ | ✅ | ✅ | ✅ | Reaper, Ableton, FL Studio (macOS/Win) |
+| LV2 | — | — | ✅ | ✅ | Reaper (Linux); Ardour / Carla pending |
 | AU v2 | ✅ | — | — | ✅ | Reaper, Logic, GarageBand*, Ableton |
 | AU v3 | ✅ | — | — | ✅ | Logic, Ableton |
 | AAX | ✅ | ✅† | — | ✅ | Pro Tools Developer |
@@ -166,6 +168,7 @@ truce-slint       — slint GUI backend (declarative .slint markup)
 truce-clap        — CLAP format wrapper
 truce-vst3        — VST3 format wrapper
 truce-vst2        — VST2 format wrapper (clean-room)
+truce-lv2         — LV2 format wrapper (Linux-native, hand-written bindings)
 truce-au          — Audio Unit (v2 + v3)
 truce-aax         — AAX format wrapper
 truce-shim-types  — ABI-stable types shared with C/C++ shims

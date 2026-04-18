@@ -86,6 +86,9 @@ macro_rules! __plugin_impl {
         #[cfg(feature = "vst2")]
         ::truce_vst2::export_vst2!(__HotShellWrapper);
 
+        #[cfg(feature = "lv2")]
+        ::truce_lv2::export_lv2!(__HotShellWrapper);
+
         #[cfg(feature = "aax")]
         ::truce_aax::export_aax!(__HotShellWrapper);
 

@@ -10,3 +10,6 @@ repository = "https://github.com/truce-audio/truce"
 toml = "0.8"
 serde = { version = "1", features = ["derive"] }
 truce-shim-types = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libloading = "0.8"
