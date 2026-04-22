@@ -856,6 +856,34 @@ pub(crate) fn load_config() -> std::result::Result<Config, BoxErr> {
 pub(crate) type Res = std::result::Result<(), Box<dyn std::error::Error>>;
 pub(crate) type BoxErr = Box<dyn std::error::Error>;
 
+/// Path-aware wrappers around `std::fs`. `io::Error` alone doesn't include
+/// the path that triggered it, so a bare `fs::copy(src, dst)?` on a root-owned
+/// leftover surfaces as "Permission denied (os error 13)" with no hint at
+/// which file the user needs to fix. These wrappers bubble the path up.
+pub(crate) mod fs_ctx {
+    use super::BoxErr;
+    use std::fs;
+    use std::path::Path;
+
+    pub(crate) fn copy(from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<u64, BoxErr> {
+        let (from, to) = (from.as_ref(), to.as_ref());
+        fs::copy(from, to)
+            .map_err(|e| format!("copy {} -> {}: {e}", from.display(), to.display()).into())
+    }
+
+    pub(crate) fn create_dir_all(path: impl AsRef<Path>) -> Result<(), BoxErr> {
+        let path = path.as_ref();
+        fs::create_dir_all(path)
+            .map_err(|e| format!("mkdir -p {}: {e}", path.display()).into())
+    }
+
+    pub(crate) fn write(path: impl AsRef<Path>, contents: impl AsRef<[u8]>) -> Result<(), BoxErr> {
+        let path = path.as_ref();
+        fs::write(path, contents)
+            .map_err(|e| format!("write {}: {e}", path.display()).into())
+    }
+}
+
 /// Read the version from Cargo.toml.
 /// Checks `[workspace.package] version` first, then `[package] version`.
 pub(crate) fn read_workspace_version(root: &Path) -> Option<String> {
@@ -1240,7 +1268,7 @@ fn cmd_install(args: &[String]) -> Res {
                 let src = release_lib(&root, &p.dylib_stem());
                 let dst = release_lib(&root, &format!("{}_plugin", p.dylib_stem()));
                 if src.exists() {
-                    fs::copy(&src, &dst)?;
+                    fs_ctx::copy(&src, &dst)?;
                 }
             }
         }
@@ -1257,7 +1285,7 @@ fn cmd_install(args: &[String]) -> Res {
             for p in &plugins {
                 let src = release_lib(&root, &p.dylib_stem());
                 let dst = release_lib(&root, &format!("{}_vst2", p.dylib_stem()));
-                fs::copy(&src, &dst)?;
+                fs_ctx::copy(&src, &dst)?;
             }
         }
 
@@ -1273,7 +1301,7 @@ fn cmd_install(args: &[String]) -> Res {
             for p in &plugins {
                 let src = release_lib(&root, &p.dylib_stem());
                 let dst = release_lib(&root, &format!("{}_lv2", p.dylib_stem()));
-                fs::copy(&src, &dst)?;
+                fs_ctx::copy(&src, &dst)?;
             }
         }
 
@@ -1293,7 +1321,7 @@ fn cmd_install(args: &[String]) -> Res {
                 )?;
                 let src = release_lib(&root, &p.dylib_stem());
                 let dst = release_lib(&root, &format!("{}_au", p.dylib_stem()));
-                fs::copy(&src, &dst)?;
+                fs_ctx::copy(&src, &dst)?;
             }
         }
 
@@ -1309,7 +1337,7 @@ fn cmd_install(args: &[String]) -> Res {
             for p in &plugins {
                 let src = release_lib(&root, &p.dylib_stem());
                 let dst = release_lib(&root, &format!("{}_aax", p.dylib_stem()));
-                fs::copy(&src, &dst)?;
+                fs_ctx::copy(&src, &dst)?;
             }
         }
 
@@ -1318,7 +1346,7 @@ fn cmd_install(args: &[String]) -> Res {
                 let saved = release_lib(&root, &format!("{}_plugin", p.dylib_stem()));
                 let dst = release_lib(&root, &p.dylib_stem());
                 if saved.exists() {
-                    fs::copy(&saved, &dst)?;
+                    fs_ctx::copy(&saved, &dst)?;
                 }
             }
         }
@@ -1388,9 +1416,9 @@ fn install_clap(root: &Path, p: &PluginDef, config: &Config) -> Res {
         let clap_dir = dirs::home_dir()
             .unwrap()
             .join("Library/Audio/Plug-Ins/CLAP");
-        fs::create_dir_all(&clap_dir)?;
+        fs_ctx::create_dir_all(&clap_dir)?;
         let dst = clap_dir.join(format!("{}.clap", p.name));
-        fs::copy(&dylib, &dst)?;
+        fs_ctx::copy(&dylib, &dst)?;
         codesign_bundle(dst.to_str().unwrap(), config.macos.application_identity(), false)?;
         eprintln!("CLAP: {}", dst.display());
     }
@@ -1398,18 +1426,18 @@ fn install_clap(root: &Path, p: &PluginDef, config: &Config) -> Res {
     #[cfg(target_os = "windows")]
     {
         let clap_dir = common_program_files().join("CLAP");
-        fs::create_dir_all(&clap_dir)?;
+        fs_ctx::create_dir_all(&clap_dir)?;
         let dst = clap_dir.join(format!("{}.clap", p.name));
-        fs::copy(&dylib, &dst)?;
+        fs_ctx::copy(&dylib, &dst)?;
         eprintln!("CLAP: {}", dst.display());
     }
 
     #[cfg(target_os = "linux")]
     {
         let clap_dir = dirs::home_dir().unwrap().join(".clap");
-        fs::create_dir_all(&clap_dir)?;
+        fs_ctx::create_dir_all(&clap_dir)?;
         let dst = clap_dir.join(format!("{}.clap", p.name));
-        fs::copy(&dylib, &dst)?;
+        fs_ctx::copy(&dylib, &dst)?;
         eprintln!("CLAP: {}", dst.display());
     }
 
@@ -1458,7 +1486,7 @@ fn install_vst3(root: &Path, p: &PluginDef, config: &Config) -> Res {
             vendor_id = config.vendor.id,
         );
         let plist_tmp = tmp_dir().join(format!("{}_vst3.plist", p.suffix)).to_string_lossy().to_string();
-        fs::write(&plist_tmp, &plist)?;
+        fs_ctx::write(&plist_tmp, &plist)?;
         run_sudo("cp", &[&plist_tmp, &format!("{contents}/Info.plist")])?;
         codesign_bundle(&vst3_bundle, config.macos.application_identity(), true)?;
         eprintln!("VST3: {vst3_bundle}");
@@ -1470,9 +1498,9 @@ fn install_vst3(root: &Path, p: &PluginDef, config: &Config) -> Res {
         let vst3_dir = common_program_files().join("VST3");
         let bundle = vst3_dir.join(format!("{}.vst3", p.name));
         let arch_dir = bundle.join("Contents").join("x86_64-win");
-        fs::create_dir_all(&arch_dir)?;
+        fs_ctx::create_dir_all(&arch_dir)?;
         let dst = arch_dir.join(format!("{}.vst3", p.name));
-        fs::copy(&dylib, &dst)?;
+        fs_ctx::copy(&dylib, &dst)?;
         eprintln!("VST3: {}", bundle.display());
     }
 
@@ -1481,9 +1509,9 @@ fn install_vst3(root: &Path, p: &PluginDef, config: &Config) -> Res {
         let vst3_dir = dirs::home_dir().unwrap().join(".vst3");
         let bundle = vst3_dir.join(format!("{}.vst3", p.name));
         let arch_dir = bundle.join("Contents").join("x86_64-linux");
-        fs::create_dir_all(&arch_dir)?;
+        fs_ctx::create_dir_all(&arch_dir)?;
         let dst = arch_dir.join(format!("{}.so", p.name));
-        fs::copy(&dylib, &dst)?;
+        fs_ctx::copy(&dylib, &dst)?;
         eprintln!("VST3: {}", bundle.display());
     }
 
@@ -1503,8 +1531,8 @@ fn install_vst2(root: &Path, p: &PluginDef, config: &Config) -> Res {
 
         let _ = fs::remove_dir_all(&bundle);
         let macos_dir = bundle.join("Contents/MacOS");
-        fs::create_dir_all(&macos_dir)?;
-        fs::copy(&dylib, macos_dir.join(&p.name))?;
+        fs_ctx::create_dir_all(&macos_dir)?;
+        fs_ctx::copy(&dylib, macos_dir.join(&p.name))?;
 
         let plist = format!(
             r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -1526,8 +1554,8 @@ fn install_vst2(root: &Path, p: &PluginDef, config: &Config) -> Res {
             name = p.name,
             suffix = p.suffix,
         );
-        fs::write(bundle.join("Contents/Info.plist"), &plist)?;
-        fs::write(bundle.join("Contents/PkgInfo"), "BNDL????")?;
+        fs_ctx::write(bundle.join("Contents/Info.plist"), &plist)?;
+        fs_ctx::write(bundle.join("Contents/PkgInfo"), "BNDL????")?;
 
         codesign_bundle(bundle.to_str().unwrap(), config.macos.application_identity(), false)?;
         eprintln!("VST2: {}", bundle.display());
@@ -1538,18 +1566,18 @@ fn install_vst2(root: &Path, p: &PluginDef, config: &Config) -> Res {
         // VST2 on Windows: %PROGRAMFILES%\Steinberg\VstPlugins\{name}.dll
         // This is the Steinberg default path that Reaper and most hosts scan by default.
         let vst_dir = program_files().join("Steinberg").join("VstPlugins");
-        fs::create_dir_all(&vst_dir)?;
+        fs_ctx::create_dir_all(&vst_dir)?;
         let dst = vst_dir.join(format!("{}.dll", p.name));
-        fs::copy(&dylib, &dst)?;
+        fs_ctx::copy(&dylib, &dst)?;
         eprintln!("VST2: {}", dst.display());
     }
 
     #[cfg(target_os = "linux")]
     {
         let vst_dir = dirs::home_dir().unwrap().join(".vst");
-        fs::create_dir_all(&vst_dir)?;
+        fs_ctx::create_dir_all(&vst_dir)?;
         let dst = vst_dir.join(format!("{}.so", p.name));
-        fs::copy(&dylib, &dst)?;
+        fs_ctx::copy(&dylib, &dst)?;
         eprintln!("VST2: {}", dst.display());
     }
 
@@ -1577,11 +1605,11 @@ fn install_lv2(root: &Path, p: &PluginDef, _config: &Config) -> Res {
     let lv2_dir = dirs::home_dir().unwrap().join(".lv2");
     let bundle = lv2_dir.join(format!("{slug}.lv2"));
     let _ = fs::remove_dir_all(&bundle);
-    fs::create_dir_all(&bundle)?;
+    fs_ctx::create_dir_all(&bundle)?;
 
     let so_name = format!("{slug}.so");
     let so_path = bundle.join(&so_name);
-    fs::copy(&built, &so_path)?;
+    fs_ctx::copy(&built, &so_path)?;
 
     // dlopen the installed .so (not the staging copy) so that LV2_PATH
     // resolution lines up with what the host sees.
@@ -1699,7 +1727,7 @@ fn install_au(root: &Path, p: &PluginDef, config: &Config) -> Res {
         au_tag = p.au_tag,
     );
     let plist_tmp = tmp_dir().join(format!("{}_au.plist", p.suffix)).to_string_lossy().to_string();
-    fs::write(&plist_tmp, &plist)?;
+    fs_ctx::write(&plist_tmp, &plist)?;
     run_sudo("cp", &[&plist_tmp, &format!("{contents}/Info.plist")])?;
     codesign_bundle(&bundle, config.macos.application_identity(), true)?;
     eprintln!("AU:   {bundle}");
@@ -1729,18 +1757,18 @@ pub(crate) fn build_aax_template(_root: &Path, sdk_path: &Path, universal_mac: b
     let template_dir = tmp_dir().join("aax_template");
     let src_dir = template_dir.join("src");
     let _ = fs::remove_dir_all(&template_dir);
-    fs::create_dir_all(&src_dir)?;
+    fs_ctx::create_dir_all(&src_dir)?;
 
-    fs::write(template_dir.join("CMakeLists.txt"), templates::aax::CMAKE_LISTS)?;
-    fs::write(src_dir.join("TruceAAX_Bridge.cpp"), templates::aax::BRIDGE_CPP)?;
-    fs::write(src_dir.join("TruceAAX_Bridge.h"), templates::aax::BRIDGE_H)?;
-    fs::write(src_dir.join("TruceAAX_Describe.cpp"), templates::aax::DESCRIBE_CPP)?;
-    fs::write(src_dir.join("TruceAAX_GUI.cpp"), templates::aax::GUI_CPP)?;
-    fs::write(src_dir.join("TruceAAX_GUI.h"), templates::aax::GUI_H)?;
-    fs::write(src_dir.join("TruceAAX_Parameters.cpp"), templates::aax::PARAMETERS_CPP)?;
-    fs::write(src_dir.join("TruceAAX_Parameters.h"), templates::aax::PARAMETERS_H)?;
-    fs::write(src_dir.join("Info.plist.in"), templates::aax::INFO_PLIST_IN)?;
-    fs::write(src_dir.join("truce_aax_bridge.h"), templates::aax::BRIDGE_HEADER)?;
+    fs_ctx::write(template_dir.join("CMakeLists.txt"), templates::aax::CMAKE_LISTS)?;
+    fs_ctx::write(src_dir.join("TruceAAX_Bridge.cpp"), templates::aax::BRIDGE_CPP)?;
+    fs_ctx::write(src_dir.join("TruceAAX_Bridge.h"), templates::aax::BRIDGE_H)?;
+    fs_ctx::write(src_dir.join("TruceAAX_Describe.cpp"), templates::aax::DESCRIBE_CPP)?;
+    fs_ctx::write(src_dir.join("TruceAAX_GUI.cpp"), templates::aax::GUI_CPP)?;
+    fs_ctx::write(src_dir.join("TruceAAX_GUI.h"), templates::aax::GUI_H)?;
+    fs_ctx::write(src_dir.join("TruceAAX_Parameters.cpp"), templates::aax::PARAMETERS_CPP)?;
+    fs_ctx::write(src_dir.join("TruceAAX_Parameters.h"), templates::aax::PARAMETERS_H)?;
+    fs_ctx::write(src_dir.join("Info.plist.in"), templates::aax::INFO_PLIST_IN)?;
+    fs_ctx::write(src_dir.join("truce_aax_bridge.h"), templates::aax::BRIDGE_HEADER)?;
 
     let build_dir = template_dir.join("build");
 
@@ -1808,7 +1836,7 @@ pub(crate) fn build_aax_template(_root: &Path, sdk_path: &Path, universal_mac: b
             build = to_fwd(&build_dir),
             sdk = to_fwd(sdk_path),
         );
-        fs::write(&bat_path, bat)?;
+        fs_ctx::write(&bat_path, bat)?;
 
         let status = Command::new("cmd")
             .arg("/c")
@@ -2052,7 +2080,7 @@ fn install_aax(root: &Path, p: &PluginDef, config: &Config) -> Res {
             suffix = p.suffix,
         );
         let plist_tmp = tmp_dir().join(format!("{}_aax.plist", p.suffix)).to_string_lossy().to_string();
-        fs::write(&plist_tmp, &plist)?;
+        fs_ctx::write(&plist_tmp, &plist)?;
         run_sudo("cp", &[&plist_tmp, &format!("{contents}/Info.plist")])?;
 
         codesign_bundle(&bundle, config.macos.application_identity(), true)?;
@@ -2077,11 +2105,11 @@ fn install_aax(root: &Path, p: &PluginDef, config: &Config) -> Res {
         let resources_dir = contents.join("Resources");
 
         let _ = fs::remove_dir_all(&bundle);
-        fs::create_dir_all(&x64_dir)?;
-        fs::create_dir_all(&resources_dir)?;
+        fs_ctx::create_dir_all(&x64_dir)?;
+        fs_ctx::create_dir_all(&resources_dir)?;
 
-        fs::copy(&template, x64_dir.join(format!("{}.aaxplugin", p.name)))?;
-        fs::copy(&dylib, resources_dir.join(format!("{}_aax.dll", p.dylib_stem())))?;
+        fs_ctx::copy(&template, x64_dir.join(format!("{}.aaxplugin", p.name)))?;
+        fs_ctx::copy(&dylib, resources_dir.join(format!("{}_aax.dll", p.dylib_stem())))?;
 
         eprintln!("AAX:  {}", bundle.display());
     }
@@ -2163,7 +2191,7 @@ fn build_au_v3(
                     &format!("{}_v3", p.dylib_stem()),
                     Some(arch.triple()),
                 );
-                fs::copy(&src, &saved)?;
+                fs_ctx::copy(&src, &saved)?;
             }
             let fw_inputs: Vec<PathBuf> = archs
                 .iter()
@@ -2184,8 +2212,8 @@ fn build_au_v3(
             // Step 2: Create .framework bundle
             let _ = fs::remove_dir_all(&fw_build);
             let fw_dir = fw_build.join(format!("{}.framework/Versions/A", fw_name));
-            fs::create_dir_all(fw_dir.join("Resources"))?;
-            fs::copy(&dst, fw_dir.join(&fw_name))?;
+            fs_ctx::create_dir_all(fw_dir.join("Resources"))?;
+            fs_ctx::copy(&dst, fw_dir.join(&fw_name))?;
 
             let status = Command::new("install_name_tool")
                 .args([
@@ -2213,7 +2241,7 @@ fn build_au_v3(
                 return Err("AU v3 framework builds are only supported on macOS".into());
             }
 
-            fs::write(
+            fs_ctx::write(
                 fw_dir.join("Resources/Info.plist"),
                 format!(
                     r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -2244,16 +2272,16 @@ fn build_au_v3(
 
             // Step 3: Prepare Xcode project from embedded templates
             let _ = fs::remove_dir_all(&build_dir);
-            fs::create_dir_all(build_dir.join("AUExt"))?;
-            fs::create_dir_all(build_dir.join("App"))?;
-            fs::create_dir_all(build_dir.join("XcodeAUv3.xcodeproj"))?;
+            fs_ctx::create_dir_all(build_dir.join("AUExt"))?;
+            fs_ctx::create_dir_all(build_dir.join("App"))?;
+            fs_ctx::create_dir_all(build_dir.join("XcodeAUv3.xcodeproj"))?;
 
-            fs::write(build_dir.join("AUExt/AudioUnitFactory.swift"), templates::au3::SWIFT_SOURCE)?;
-            fs::write(build_dir.join("AUExt/BridgingHeader.h"), templates::au3::BRIDGING_HEADER)?;
-            fs::write(build_dir.join("AUExt/au_shim_types.h"), templates::au3::SHIM_TYPES_H)?;
-            fs::write(build_dir.join("AUExt/AUExt.entitlements"), templates::au3::APPEX_ENTITLEMENTS)?;
-            fs::write(build_dir.join("App/main.m"), templates::au3::APP_MAIN_M)?;
-            fs::write(build_dir.join("App/App.entitlements"), templates::au3::APP_ENTITLEMENTS)?;
+            fs_ctx::write(build_dir.join("AUExt/AudioUnitFactory.swift"), templates::au3::SWIFT_SOURCE)?;
+            fs_ctx::write(build_dir.join("AUExt/BridgingHeader.h"), templates::au3::BRIDGING_HEADER)?;
+            fs_ctx::write(build_dir.join("AUExt/au_shim_types.h"), templates::au3::SHIM_TYPES_H)?;
+            fs_ctx::write(build_dir.join("AUExt/AUExt.entitlements"), templates::au3::APPEX_ENTITLEMENTS)?;
+            fs_ctx::write(build_dir.join("App/main.m"), templates::au3::APP_MAIN_M)?;
+            fs_ctx::write(build_dir.join("App/App.entitlements"), templates::au3::APP_ENTITLEMENTS)?;
 
             // Patch AUExt/Info.plist with plugin-specific values
             let plist_path = build_dir.join("AUExt/Info.plist");
@@ -2272,11 +2300,11 @@ fn build_au_v3(
                     &format!("{}: {} (v3)", config.vendor.name, p.name),
                 )
                 .replace("AUTAG", &p.au_tag);
-            fs::write(&plist_path, plist)?;
+            fs_ctx::write(&plist_path, plist)?;
 
             // Generate pbxproj (the template dir has an empty xcodeproj)
             let pbx_path = build_dir.join("XcodeAUv3.xcodeproj/project.pbxproj");
-            fs::write(
+            fs_ctx::write(
                 &pbx_path,
                 generate_pbxproj(
                     &team_id,
@@ -2289,7 +2317,7 @@ fn build_au_v3(
             )?;
 
             // Write App Info.plist from embedded template
-            fs::write(build_dir.join("App/Info.plist"), templates::au3::APP_INFO_PLIST)?;
+            fs_ctx::write(build_dir.join("App/Info.plist"), templates::au3::APP_INFO_PLIST)?;
 
             // Step 4: xcodebuild
             eprintln!("  Building with xcodebuild...");
