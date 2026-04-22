@@ -6108,6 +6108,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "truce-dsp"
+version = "0.3.0"
+
+[[package]]
 name = "truce-egui"
 version = "0.3.0"
 dependencies = [
