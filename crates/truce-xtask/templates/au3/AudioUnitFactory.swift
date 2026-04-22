@@ -123,7 +123,10 @@ class TruceAUAudioUnit: AUAudioUnit {
         events: UnsafePointer<AURenderEvent>?, pull: AURenderPullInputBlock?,
         inPtrs: UnsafeMutablePointer<UnsafePointer<Float>?>,
         outPtrs: UnsafeMutablePointer<UnsafeMutablePointer<Float>?>,
-        midiBuf: UnsafeMutablePointer<AuMidiEvent>
+        midiBuf: UnsafeMutablePointer<AuMidiEvent>,
+        transportBuf: UnsafeMutablePointer<AuTransportSnapshot>,
+        musicalContext: AUHostMusicalContextBlock?,
+        transportState: AUHostTransportStateBlock?
     ) -> AUAudioUnitStatus {
         if numIn > 0, let pull = pull {
             var f = AudioUnitRenderActionFlags()
@@ -161,7 +164,60 @@ class TruceAUAudioUnit: AUAudioUnit {
         for c in 0..<min(Int(numOut), bufCount) {
             outPtrs[c] = abl[c].mData?.assumingMemoryBound(to: Float.self)
         }
-        cb.pointee.process(ctx, inPtrs, outPtrs, numIn, numOut, frameCount, midiBuf, numMidi)
+
+        // Fill the transport snapshot from the host-provided blocks.
+        // Both are optional: hosts that don't place the plugin in a
+        // musical context leave them nil.
+        transportBuf.pointee = AuTransportSnapshot(
+            valid: 0, playing: 0, recording: 0, loop_active: 0,
+            time_sig_num: 0, time_sig_den: 0,
+            tempo: 0, position_samples: 0, position_beats: 0,
+            bar_start_beats: 0, loop_start_beats: 0, loop_end_beats: 0)
+        if let musical = musicalContext {
+            var tempo: Double = 0
+            var tsigNum: Double = 0
+            var tsigDen: Int = 0
+            var beat: Double = 0
+            var nextBeat: Int = 0
+            var downbeat: Double = 0
+            if musical(&tempo, &tsigNum, &tsigDen, &beat, &nextBeat, &downbeat) {
+                transportBuf.pointee.tempo = tempo
+                transportBuf.pointee.time_sig_num = Int32(tsigNum)
+                transportBuf.pointee.time_sig_den = Int32(tsigDen)
+                transportBuf.pointee.position_beats = beat
+                transportBuf.pointee.bar_start_beats = downbeat
+                transportBuf.pointee.valid = 1
+            }
+        }
+        if let state = transportState {
+            var flags = AUHostTransportStateFlags(rawValue: 0)
+            var samplePos: Double = 0
+            var cycleStart: Double = 0
+            var cycleEnd: Double = 0
+            if state(&flags, &samplePos, &cycleStart, &cycleEnd) {
+                transportBuf.pointee.playing =
+                    flags.contains(.moving) ? 1 : 0
+                transportBuf.pointee.recording =
+                    flags.contains(.recording) ? 1 : 0
+                transportBuf.pointee.loop_active =
+                    flags.contains(.cycling) ? 1 : 0
+                transportBuf.pointee.position_samples = samplePos
+                transportBuf.pointee.loop_start_beats = cycleStart
+                transportBuf.pointee.loop_end_beats = cycleEnd
+                transportBuf.pointee.valid = 1
+            }
+        }
+        if transportBuf.pointee.valid == 0 {
+            let ts = timestamp.pointee
+            if (ts.mFlags.rawValue &
+                AudioTimeStampFlags.sampleTimeValid.rawValue) != 0 {
+                transportBuf.pointee.position_samples = ts.mSampleTime
+                transportBuf.pointee.valid = 1
+            }
+        }
+
+        cb.pointee.process(ctx, inPtrs, outPtrs, numIn, numOut,
+                           frameCount, midiBuf, numMidi, transportBuf)
         return noErr
     }
 
@@ -173,13 +229,24 @@ class TruceAUAudioUnit: AUAudioUnit {
         let inPtrs = UnsafeMutablePointer<UnsafePointer<Float>?>.allocate(capacity: 32)
         let outPtrs = UnsafeMutablePointer<UnsafeMutablePointer<Float>?>.allocate(capacity: 32)
         let midiBuf = UnsafeMutablePointer<AuMidiEvent>.allocate(capacity: 256)
+        let transportBuf = UnsafeMutablePointer<AuTransportSnapshot>.allocate(capacity: 1)
+
+        // Snapshot the host blocks at render-graph compile time. AU v3
+        // guarantees these are realtime-safe to call from the render
+        // block; hosts may set them post-initialization, so this copy
+        // will be nil for plugins instantiated outside a musical context.
+        let musicalContext = self.musicalContextBlock
+        let transportState = self.transportStateBlock
 
         return { _, timestamp, frameCount, _, outputData, events, pull in
             return TruceAUAudioUnit.render(
                 ctx: ctx, cb: cb, numIn: numIn, numOut: numOut,
                 timestamp: timestamp, frameCount: frameCount,
                 outputData: outputData, events: events, pull: pull,
-                inPtrs: inPtrs, outPtrs: outPtrs, midiBuf: midiBuf)
+                inPtrs: inPtrs, outPtrs: outPtrs, midiBuf: midiBuf,
+                transportBuf: transportBuf,
+                musicalContext: musicalContext,
+                transportState: transportState)
         }
     }
 

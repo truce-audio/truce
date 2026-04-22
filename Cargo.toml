@@ -21,6 +21,7 @@ members = [
     "examples/transpose",
     "examples/arpeggio",
     "examples/gain-egui",
+    "examples/tempo-sync",
     "xtask",
     "crates/truce-loader",
     "crates/truce-derive",

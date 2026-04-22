@@ -102,3 +102,13 @@ au3_subtype = "TGs3"
 au_tag = "Effects"
 aax_category = "Dynamics"
 
+[[plugin]]
+name = "Truce Tempo Sync"
+suffix = "tempo-sync"
+crate = "truce-example-tempo-sync"
+category = "effect"
+fourcc = "TTmS"
+au3_subtype = "TTS3"
+au_tag = "Effects"
+aax_category = "Modulation"
+
