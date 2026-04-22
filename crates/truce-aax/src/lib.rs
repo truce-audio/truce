@@ -89,6 +89,26 @@ pub struct TruceAaxMidiEvent {
     pub _pad: u8,
 }
 
+/// Transport snapshot filled by the AAX template's RenderAudio from
+/// `AAX_ITransport` and passed to the Rust process callback.
+///
+/// Layout must match `TruceAaxTransportSnapshot` in `truce_aax_bridge.h`.
+#[repr(C)]
+pub struct TruceAaxTransportSnapshot {
+    pub valid: i32,
+    pub playing: i32,
+    pub recording: i32,
+    pub loop_active: i32,
+    pub time_sig_num: i32,
+    pub time_sig_den: i32,
+    pub tempo: f64,
+    pub position_samples: f64,
+    pub position_beats: f64,
+    pub bar_start_beats: f64,
+    pub loop_start_beats: f64,
+    pub loop_end_beats: f64,
+}
+
 // ---------------------------------------------------------------------------
 // Instance wrapper
 // ---------------------------------------------------------------------------
@@ -295,9 +315,10 @@ macro_rules! export_aax {
                 num_frames: u32,
                 events: *const ::truce_aax::TruceAaxMidiEvent,
                 num_events: u32,
+                transport: *const ::truce_aax::TruceAaxTransportSnapshot,
             ) {
                 ::truce_aax::_process::<$plugin_type>(
-                    ctx, inputs, outputs, num_in, num_out, num_frames, events, num_events,
+                    ctx, inputs, outputs, num_in, num_out, num_frames, events, num_events, transport,
                 );
             }
             #[no_mangle]
@@ -455,6 +476,7 @@ pub unsafe fn _process<P: PluginExport>(
     num_frames: u32,
     events: *const TruceAaxMidiEvent,
     num_events: u32,
+    transport_ptr: *const TruceAaxTransportSnapshot,
 ) {
     let inst = unsafe { &mut *(ctx as *mut AaxInstance<P>) };
     let num_frames = num_frames as usize;
@@ -512,7 +534,25 @@ pub unsafe fn _process<P: PluginExport>(
         let mut buffer = scratch.build(
             inputs, outputs, num_in, num_out, num_frames as u32,
         );
-        let transport = TransportInfo::default();
+        let transport = if !transport_ptr.is_null() && (*transport_ptr).valid != 0 {
+            let t = &*transport_ptr;
+            TransportInfo {
+                playing: t.playing != 0,
+                recording: t.recording != 0,
+                tempo: t.tempo,
+                time_sig_num: t.time_sig_num.clamp(0, u8::MAX as i32) as u8,
+                time_sig_den: t.time_sig_den.clamp(0, u8::MAX as i32) as u8,
+                position_samples: t.position_samples as i64,
+                position_seconds: 0.0,
+                position_beats: t.position_beats,
+                bar_start_beats: t.bar_start_beats,
+                loop_active: t.loop_active != 0,
+                loop_start_beats: t.loop_start_beats,
+                loop_end_beats: t.loop_end_beats,
+            }
+        } else {
+            TransportInfo::default()
+        };
         inst.output_events.clear();
         inst.transport_slot.write(&transport);
         let mut context = ProcessContext::new(&transport, inst.sample_rate, num_frames, &mut inst.output_events);

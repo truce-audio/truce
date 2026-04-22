@@ -92,6 +92,7 @@ fn write_plugin_ttl(
     writeln!(f, "@prefix units: <http://lv2plug.in/ns/extensions/units#> .")?;
     writeln!(f, "@prefix atom:  <http://lv2plug.in/ns/ext/atom#> .")?;
     writeln!(f, "@prefix midi:  <http://lv2plug.in/ns/ext/midi#> .")?;
+    writeln!(f, "@prefix time:  <http://lv2plug.in/ns/ext/time#> .")?;
     writeln!(f, "@prefix state: <http://lv2plug.in/ns/ext/state#> .")?;
     writeln!(f, "@prefix ui:    <http://lv2plug.in/ns/extensions/ui#> .")?;
     writeln!(f)?;
@@ -160,7 +161,9 @@ fn emit_port(
     } else if Some(index) == layout.midi_in_port() {
         writeln!(f, "        a lv2:InputPort, atom:AtomPort ;")?;
         writeln!(f, "        atom:bufferType atom:Sequence ;")?;
-        writeln!(f, "        atom:supports midi:MidiEvent ;")?;
+        // Declare support for both MIDI and time:Position so hosts send
+        // transport events through this port alongside MIDI.
+        writeln!(f, "        atom:supports midi:MidiEvent, time:Position ;")?;
         writeln!(f, "        lv2:index {index} ;")?;
         writeln!(f, "        lv2:symbol \"midi_in\" ;")?;
         writeln!(f, "        lv2:name \"MIDI In\" ;")?;

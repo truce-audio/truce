@@ -11,7 +11,7 @@
 
 use std::ffi::c_void;
 
-use truce_core::events::{Event, EventBody, EventList};
+use truce_core::events::{Event, EventBody, EventList, TransportInfo};
 
 use crate::urid::{Urid, UridMap};
 
@@ -71,35 +71,155 @@ impl<'a> AtomSequenceReader<'a> {
             return;
         }
         unsafe {
-            let seq = &*self.seq;
-            let body_size = seq.atom.size as usize;
-            if body_size < core::mem::size_of::<AtomSequenceBody>() {
-                return;
-            }
-            // Body starts immediately after the Atom header, and the
-            // `atom.size` field covers AtomSequenceBody + events.
-            let data_size = body_size - core::mem::size_of::<AtomSequenceBody>();
-            let data_start = (self.seq as *const u8)
-                .add(core::mem::size_of::<AtomSequence>());
-            let mut offset = 0usize;
-            while offset + core::mem::size_of::<AtomEventHeader>() <= data_size {
-                let ev_ptr = data_start.add(offset) as *const AtomEventHeader;
-                let ev = *ev_ptr;
-                let body_bytes = ev.body.size as usize;
-                let total = core::mem::size_of::<AtomEventHeader>() + body_bytes;
-                // Each event is padded to 8-byte alignment.
-                let padded = (total + 7) & !7;
-                if offset + padded > data_size {
-                    break;
-                }
-                if ev.body.type_ == self.urid.midi_event {
-                    let body_ptr = data_start.add(offset + core::mem::size_of::<AtomEventHeader>());
+            self.walk(|frame, ev_type, body_ptr, body_bytes| {
+                if ev_type == self.urid.midi_event {
                     let slice = core::slice::from_raw_parts(body_ptr, body_bytes);
-                    let frame = ev.time_frames.max(0) as u32;
-                    f(frame, slice);
+                    f(frame.max(0) as u32, slice);
                 }
-                offset += padded;
+            });
+        }
+    }
+
+    /// Walk the sequence and update `info` from the last `time:Position`
+    /// object encountered. Returns `true` if at least one such event was
+    /// found.
+    ///
+    /// LV2 hosts typically emit one `time:Position` per run() block when
+    /// the transport changes (play / seek / tempo edit); a host like
+    /// Ardour sends one at the start of each block while playing.
+    ///
+    /// # Safety
+    /// `self.seq` must point to a valid atom sequence for the duration of
+    /// the call.
+    pub fn apply_time_position(&self, info: &mut TransportInfo) -> bool {
+        if self.seq.is_null() || self.urid.time_position == 0 {
+            return false;
+        }
+        let mut found = false;
+        unsafe {
+            self.walk(|_, ev_type, body_ptr, body_bytes| {
+                if ev_type != self.urid.atom_blank && ev_type != self.urid.atom_object {
+                    return;
+                }
+                if !self.read_time_position(body_ptr, body_bytes, info) {
+                    return;
+                }
+                found = true;
+            });
+        }
+        found
+    }
+
+    /// Low-level sequence walk. Calls `f(frame, body_type, body_ptr, body_size)`
+    /// for each event.
+    ///
+    /// # Safety
+    /// `self.seq` must be valid for the duration of the call.
+    unsafe fn walk<F: FnMut(i64, Urid, *const u8, usize)>(&self, mut f: F) {
+        let seq = &*self.seq;
+        let body_size = seq.atom.size as usize;
+        if body_size < core::mem::size_of::<AtomSequenceBody>() {
+            return;
+        }
+        let data_size = body_size - core::mem::size_of::<AtomSequenceBody>();
+        let data_start = (self.seq as *const u8).add(core::mem::size_of::<AtomSequence>());
+        let mut offset = 0usize;
+        while offset + core::mem::size_of::<AtomEventHeader>() <= data_size {
+            let ev_ptr = data_start.add(offset) as *const AtomEventHeader;
+            let ev = *ev_ptr;
+            let body_bytes = ev.body.size as usize;
+            let total = core::mem::size_of::<AtomEventHeader>() + body_bytes;
+            let padded = (total + 7) & !7;
+            if offset + padded > data_size {
+                break;
             }
+            let body_ptr = data_start.add(offset + core::mem::size_of::<AtomEventHeader>());
+            f(ev.time_frames, ev.body.type_, body_ptr, body_bytes);
+            offset += padded;
+        }
+    }
+
+    /// Decode an `LV2_Atom_Object` body as a `time:Position` and merge
+    /// its fields into `info`. Returns true on success.
+    ///
+    /// # Safety
+    /// `body_ptr` must point to `body_bytes` bytes of valid atom-object
+    /// body data.
+    unsafe fn read_time_position(
+        &self,
+        body_ptr: *const u8,
+        body_bytes: usize,
+        info: &mut TransportInfo,
+    ) -> bool {
+        // LV2_Atom_Object_Body = { otype: Urid, id: Urid, props: Property[] }
+        let header_size = core::mem::size_of::<Urid>() * 2;
+        if body_bytes < header_size {
+            return false;
+        }
+        let otype = *(body_ptr as *const Urid);
+        if otype != self.urid.time_position {
+            return false;
+        }
+        let mut offset = header_size;
+        while offset + core::mem::size_of::<Urid>() * 2 + core::mem::size_of::<Atom>() <= body_bytes {
+            // Property = { key: Urid, context: Urid, value: Atom + data }
+            let key = *(body_ptr.add(offset) as *const Urid);
+            // `context` is unused by time:Position writers in practice.
+            let value_header = body_ptr.add(offset + core::mem::size_of::<Urid>() * 2);
+            let value_atom = *(value_header as *const Atom);
+            let value_data = value_header.add(core::mem::size_of::<Atom>());
+            let value_size = value_atom.size as usize;
+            let entry_total = core::mem::size_of::<Urid>() * 2
+                + core::mem::size_of::<Atom>()
+                + value_size;
+            let padded = (entry_total + 7) & !7;
+
+            if let Some(v) = self.read_atom_number(value_atom.type_, value_data, value_size) {
+                if key == self.urid.time_beats_per_minute {
+                    info.tempo = v;
+                } else if key == self.urid.time_beat || key == self.urid.time_bar_beat {
+                    info.position_beats = v;
+                } else if key == self.urid.time_bar {
+                    info.bar_start_beats = v;
+                } else if key == self.urid.time_frame {
+                    info.position_samples = v as i64;
+                } else if key == self.urid.time_speed {
+                    info.playing = v.abs() > 1e-9;
+                } else if key == self.urid.time_beats_per_bar {
+                    info.time_sig_num = v.round().clamp(0.0, u8::MAX as f64) as u8;
+                } else if key == self.urid.time_beat_unit {
+                    info.time_sig_den = v.round().clamp(0.0, u8::MAX as f64) as u8;
+                }
+            }
+
+            offset += padded;
+            if padded == 0 {
+                break;
+            }
+        }
+        true
+    }
+
+    /// Read a numeric atom value as f64, handling the common number types
+    /// LV2 hosts use for time:Position fields.
+    unsafe fn read_atom_number(
+        &self,
+        atom_type: Urid,
+        data: *const u8,
+        size: usize,
+    ) -> Option<f64> {
+        if atom_type == self.urid.atom_float && size >= core::mem::size_of::<f32>() {
+            Some(*(data as *const f32) as f64)
+        } else if atom_type == self.urid.atom_double && size >= core::mem::size_of::<f64>() {
+            Some(*(data as *const f64))
+        } else if atom_type == self.urid.atom_int && size >= core::mem::size_of::<i32>() {
+            Some(*(data as *const i32) as f64)
+        } else if atom_type == self.urid.atom_long && size >= core::mem::size_of::<i64>() {
+            Some(*(data as *const i64) as f64)
+        } else if atom_type == self.urid.atom_bool && size >= core::mem::size_of::<i32>() {
+            Some(if *(data as *const i32) != 0 { 1.0 } else { 0.0 })
+        } else {
+            None
         }
     }
 }

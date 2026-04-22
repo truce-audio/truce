@@ -45,6 +45,11 @@ typedef struct {
     AuMidiEvent midiBuffer[256];
     uint32_t midiCount;
 
+    // Host callbacks (set via kAudioUnitProperty_HostCallbacks). Used to
+    // query tempo / play state / bar position from the host each render.
+    HostCallbackInfo hostCallbacks;
+    Boolean hasHostCallbacks;
+
     // Property listeners
     struct {
         AudioUnitPropertyID prop;
@@ -240,6 +245,9 @@ static OSStatus au_v2_get_property_info(void *self_, AudioUnitPropertyID prop,
             break;
         case kAudioUnitProperty_ShouldAllocateBuffer:
             size = sizeof(UInt32); writable = true; break;
+        case kAudioUnitProperty_HostCallbacks:
+            if (scope != kAudioUnitScope_Global) return kAudioUnitErr_InvalidScope;
+            size = sizeof(HostCallbackInfo); writable = true; break;
         case kAudioUnitProperty_ClassInfo:
             size = sizeof(CFPropertyListRef); writable = true; break;
         case kAudioUnitProperty_Latency:
@@ -590,6 +598,21 @@ static OSStatus au_v2_set_property(void *self_, AudioUnitPropertyID prop,
         case kAudioUnitProperty_ShouldAllocateBuffer:
             return noErr; // accept but ignore
 
+        case kAudioUnitProperty_HostCallbacks: {
+            if (scope != kAudioUnitScope_Global) return kAudioUnitErr_InvalidScope;
+            // Host may pass a shorter struct than sizeof(HostCallbackInfo);
+            // copy only what was supplied. The unused function pointers
+            // stay NULL, which is what the SDK sentinel value means.
+            memset(&inst->hostCallbacks, 0, sizeof(inst->hostCallbacks));
+            UInt32 copy = inSize < sizeof(inst->hostCallbacks) ? inSize : sizeof(inst->hostCallbacks);
+            memcpy(&inst->hostCallbacks, inData, copy);
+            inst->hasHostCallbacks = (inst->hostCallbacks.beatAndTempoProc ||
+                                      inst->hostCallbacks.musicalTimeLocationProc ||
+                                      inst->hostCallbacks.transportStateProc ||
+                                      inst->hostCallbacks.transportStateProc2);
+            return noErr;
+        }
+
         case kAudioUnitProperty_BypassEffect:
         case 28: // kAudioUnitProperty_CurrentPreset (legacy)
         case 36: // kAudioUnitProperty_PresentPreset
@@ -664,6 +687,75 @@ static OSStatus au_v2_schedule_parameters(void *self_,
 // ---------------------------------------------------------------------------
 // Render
 // ---------------------------------------------------------------------------
+
+/* Fill `out` from HostCallbackInfo. Each proc is optional — missing
+ * callbacks leave their corresponding fields at zero. `valid` is set
+ * to 1 as long as at least one proc returned successfully. */
+static void fill_transport_snapshot(TruceAUv2 *inst,
+                                     const AudioTimeStamp *ts,
+                                     AuTransportSnapshot *out) {
+    memset(out, 0, sizeof(*out));
+    if (!inst->hasHostCallbacks) return;
+    void *ud = inst->hostCallbacks.hostUserData;
+    int ok = 0;
+
+    if (inst->hostCallbacks.beatAndTempoProc) {
+        Float64 beat = 0.0, tempo = 0.0;
+        if (inst->hostCallbacks.beatAndTempoProc(ud, &beat, &tempo) == noErr) {
+            out->position_beats = beat;
+            out->tempo = tempo;
+            ok = 1;
+        }
+    }
+    if (inst->hostCallbacks.musicalTimeLocationProc) {
+        UInt32 delta = 0;
+        Float32 tsig_num = 0.0f;
+        UInt32 tsig_den = 0;
+        Float64 downbeat = 0.0;
+        if (inst->hostCallbacks.musicalTimeLocationProc(ud, &delta, &tsig_num,
+                                                         &tsig_den, &downbeat) == noErr) {
+            out->time_sig_num = (int32_t)tsig_num;
+            out->time_sig_den = (int32_t)tsig_den;
+            out->bar_start_beats = downbeat;
+            ok = 1;
+        }
+    }
+    if (inst->hostCallbacks.transportStateProc2) {
+        Boolean playing = false, recording = false, cycling = false, changed = false;
+        Float64 samplePos = 0.0, cycleStart = 0.0, cycleEnd = 0.0;
+        if (inst->hostCallbacks.transportStateProc2(ud, &playing, &recording,
+                                                     &changed, &samplePos,
+                                                     &cycling, &cycleStart, &cycleEnd) == noErr) {
+            out->playing = playing ? 1 : 0;
+            out->recording = recording ? 1 : 0;
+            out->loop_active = cycling ? 1 : 0;
+            out->position_samples = samplePos;
+            out->loop_start_beats = cycleStart;
+            out->loop_end_beats = cycleEnd;
+            ok = 1;
+        }
+    } else if (inst->hostCallbacks.transportStateProc) {
+        Boolean playing = false, changed = false, cycling = false;
+        Float64 samplePos = 0.0, cycleStart = 0.0, cycleEnd = 0.0;
+        if (inst->hostCallbacks.transportStateProc(ud, &playing, &changed,
+                                                    &samplePos, &cycling,
+                                                    &cycleStart, &cycleEnd) == noErr) {
+            out->playing = playing ? 1 : 0;
+            out->loop_active = cycling ? 1 : 0;
+            out->position_samples = samplePos;
+            out->loop_start_beats = cycleStart;
+            out->loop_end_beats = cycleEnd;
+            ok = 1;
+        }
+    }
+    if (ok == 0 && ts && (ts->mFlags & kAudioTimeStampSampleTimeValid)) {
+        // Fall back to the render timestamp if the host has no transport
+        // procs — at least gives the plugin a sample position.
+        out->position_samples = ts->mSampleTime;
+        ok = 1;
+    }
+    out->valid = ok;
+}
 
 static OSStatus au_v2_render(void *self_,
                               AudioUnitRenderActionFlags *ioFlags,
@@ -744,9 +836,13 @@ static OSStatus au_v2_render(void *self_,
         outPtrs[c] = inst->outputBuffers[c];
 
 
+    AuTransportSnapshot transport;
+    fill_transport_snapshot(inst, inTimeStamp, &transport);
+
     g_callbacks->process(inst->rustCtx, inPtrs, outPtrs,
                          numIn, numOut, inFrameCount,
-                         inst->midiBuffer, inst->midiCount);
+                         inst->midiBuffer, inst->midiCount,
+                         &transport);
     inst->midiCount = 0;
 
 

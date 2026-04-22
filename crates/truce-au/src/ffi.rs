@@ -59,6 +59,8 @@ pub struct AuCallbacks {
     /// - `num_frames`: number of samples to process
     /// - `events`: pointer to packed MIDI event buffer (see AuMidiEvent)
     /// - `num_events`: number of MIDI events
+    /// - `transport`: may be null when the host did not provide transport
+    ///   info for this block (or is not capable of doing so).
     pub process: unsafe extern "C" fn(
         ctx: *mut c_void,
         inputs: *const *const f32,
@@ -68,6 +70,7 @@ pub struct AuCallbacks {
         num_frames: u32,
         events: *const AuMidiEvent,
         num_events: u32,
+        transport: *const AuTransportSnapshot,
     ),
 
     /// Get parameter count.
@@ -123,6 +126,27 @@ pub struct AuMidiEvent {
     /// MIDI data byte 2 (velocity for note on/off)
     pub data2: u8,
     pub _pad: u8,
+}
+
+/// Transport snapshot filled by the shim from HostCallbackInfo (AU v2)
+/// or `AUAudioUnit.musicalContextBlock` / `transportStateBlock` (AU v3).
+///
+/// Layout must match `AuTransportSnapshot` in `au_shim_types.h`.
+#[repr(C)]
+#[derive(Default)]
+pub struct AuTransportSnapshot {
+    pub valid: i32,
+    pub playing: i32,
+    pub recording: i32,
+    pub loop_active: i32,
+    pub time_sig_num: i32,
+    pub time_sig_den: i32,
+    pub tempo: f64,
+    pub position_samples: f64,
+    pub position_beats: f64,
+    pub bar_start_beats: f64,
+    pub loop_start_beats: f64,
+    pub loop_end_beats: f64,
 }
 
 // Functions implemented in the ObjC shim, called from Rust.

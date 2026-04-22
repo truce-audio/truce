@@ -123,6 +123,12 @@ pub struct Lv2Instance<P: PluginExport> {
     /// Scratch vectors so we don't allocate on the audio thread.
     input_slices: Vec<&'static [f32]>,
     output_slices: Vec<&'static mut [f32]>,
+
+    /// Shared transport slot — audio thread writes each block. LV2 UIs
+    /// are out-of-process so the UI side still reads `None`; this slot
+    /// exists so an in-process consumer (tests / DSP-side code) can
+    /// observe host transport.
+    transport_slot: std::sync::Arc<truce_core::TransportSlot>,
 }
 
 // Raw pointers only — we never share an instance between threads. LV2 hosts
@@ -200,6 +206,8 @@ pub unsafe fn instantiate<P: PluginExport>(
 
         input_slices: Vec::with_capacity(audio_in_count),
         output_slices: Vec::with_capacity(audio_out_count),
+
+        transport_slot: truce_core::TransportSlot::new(),
     });
     Box::into_raw(instance)
 }
@@ -285,7 +293,8 @@ pub unsafe fn run<P: PluginExport>(handle: *mut Lv2Instance<P>, n_samples: u32) 
         }
     }
 
-    // Decode MIDI input from the atom sequence port, if connected.
+    // Decode MIDI + time:Position from the atom sequence port, if connected.
+    let mut transport = TransportInfo::default();
     if !inst.midi_in_port.is_null() {
         let reader = AtomSequenceReader::new(inst.midi_in_port, &inst.urid_map);
         reader.for_each_midi(|sample_offset, bytes| {
@@ -293,6 +302,7 @@ pub unsafe fn run<P: PluginExport>(handle: *mut Lv2Instance<P>, n_samples: u32) 
                 inst.event_list.push(event);
             }
         });
+        reader.apply_time_position(&mut transport);
     }
 
     // Build AudioBuffer from port pointers.
@@ -320,7 +330,7 @@ pub unsafe fn run<P: PluginExport>(handle: *mut Lv2Instance<P>, n_samples: u32) 
     }
 
     let mut audio = AudioBuffer::from_slices(&inst.input_slices, &mut inst.output_slices, n);
-    let transport = TransportInfo::default();
+    inst.transport_slot.write(&transport);
     let mut ctx = ProcessContext::new(&transport, inst.sample_rate, n, &mut inst.output_events);
     let _ = inst.plugin.process(&mut audio, &inst.event_list, &mut ctx);
 

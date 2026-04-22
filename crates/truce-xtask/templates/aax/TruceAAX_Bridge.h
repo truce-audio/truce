@@ -13,7 +13,8 @@ typedef void* (*fn_create)(void);
 typedef void  (*fn_destroy)(void*);
 typedef void  (*fn_reset)(void*, double, uint32_t);
 typedef void  (*fn_process)(void*, const float**, float**, uint32_t, uint32_t, uint32_t,
-                            const TruceAaxMidiEvent*, uint32_t);
+                            const TruceAaxMidiEvent*, uint32_t,
+                            const TruceAaxTransportSnapshot*);
 typedef double (*fn_get_param)(void*, uint32_t);
 typedef void   (*fn_set_param)(void*, uint32_t, double);
 typedef void   (*fn_format_param)(void*, uint32_t, double, char*, uint32_t);

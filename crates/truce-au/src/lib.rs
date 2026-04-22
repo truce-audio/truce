@@ -16,7 +16,7 @@ use truce_core::process::ProcessContext;
 use truce_core::state;
 use truce_params::Params;
 
-use ffi::{AuCallbacks, AuMidiEvent, AuParamDescriptor, AuPluginDescriptor};
+use ffi::{AuCallbacks, AuMidiEvent, AuParamDescriptor, AuPluginDescriptor, AuTransportSnapshot};
 
 // ---------------------------------------------------------------------------
 // Instance wrapper — one per plugin instance, stored as the opaque ctx
@@ -92,6 +92,7 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
     num_frames: u32,
     events: *const AuMidiEvent,
     num_events: u32,
+    transport_ptr: *const AuTransportSnapshot,
 ) {
     let inst = &mut *(ctx as *mut AuInstance<P>);
     let num_frames = num_frames as usize;
@@ -149,7 +150,25 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
         inputs, outputs, num_input_channels, num_output_channels, num_frames as u32,
     );
 
-    let transport = TransportInfo::default();
+    let transport = if !transport_ptr.is_null() && (*transport_ptr).valid != 0 {
+        let t = &*transport_ptr;
+        TransportInfo {
+            playing: t.playing != 0,
+            recording: t.recording != 0,
+            tempo: t.tempo,
+            time_sig_num: t.time_sig_num.clamp(0, u8::MAX as i32) as u8,
+            time_sig_den: t.time_sig_den.clamp(0, u8::MAX as i32) as u8,
+            position_samples: t.position_samples as i64,
+            position_seconds: 0.0,
+            position_beats: t.position_beats,
+            bar_start_beats: t.bar_start_beats,
+            loop_active: t.loop_active != 0,
+            loop_start_beats: t.loop_start_beats,
+            loop_end_beats: t.loop_end_beats,
+        }
+    } else {
+        TransportInfo::default()
+    };
     inst.output_events.clear();
     inst.transport_slot.write(&transport);
     let mut context = ProcessContext::new(&transport, inst.sample_rate, num_frames, &mut inst.output_events);

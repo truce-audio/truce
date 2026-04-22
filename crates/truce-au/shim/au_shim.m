@@ -199,6 +199,12 @@
     uint32_t numIn = g_descriptor ? g_descriptor->num_inputs : 0;
     uint32_t numOut = g_descriptor ? g_descriptor->num_outputs : 2;
 
+    // Snapshot the host-provided musical context / transport blocks at
+    // render-graph compile time. The host may replace them later, but AU v3
+    // guarantees these blocks are realtime-safe to call.
+    AUHostMusicalContextBlock __block musicalContext = self.musicalContextBlock;
+    AUHostTransportStateBlock __block transportState = self.transportStateBlock;
+
     return ^AUAudioUnitStatus(
         AudioUnitRenderActionFlags *flags,
         const AudioTimeStamp *timestamp,
@@ -247,8 +253,47 @@
         for (uint32_t c = 0; c < numOut && c < outputData->mNumberBuffers; c++)
             outPtrs[c] = (float *)outputData->mBuffers[c].mData;
 
+        AuTransportSnapshot transport;
+        memset(&transport, 0, sizeof(transport));
+        if (musicalContext) {
+            double tempo = 0.0;
+            double tsig_num = 0.0;
+            NSInteger tsig_den = 0;
+            double beat = 0.0;
+            NSInteger sampleOffsetToNextBeat = 0;
+            double downbeat = 0.0;
+            if (musicalContext(&tempo, &tsig_num, &tsig_den, &beat,
+                               &sampleOffsetToNextBeat, &downbeat)) {
+                transport.tempo = tempo;
+                transport.time_sig_num = (int32_t)tsig_num;
+                transport.time_sig_den = (int32_t)tsig_den;
+                transport.position_beats = beat;
+                transport.bar_start_beats = downbeat;
+                transport.valid = 1;
+            }
+        }
+        if (transportState) {
+            AUHostTransportStateFlags tflags = 0;
+            double samplePos = 0.0, cycleStart = 0.0, cycleEnd = 0.0;
+            if (transportState(&tflags, &samplePos, &cycleStart, &cycleEnd)) {
+                transport.playing = (tflags & AUHostTransportStateMoving) ? 1 : 0;
+                transport.recording = (tflags & AUHostTransportStateRecording) ? 1 : 0;
+                transport.loop_active = (tflags & AUHostTransportStateCycling) ? 1 : 0;
+                transport.position_samples = samplePos;
+                transport.loop_start_beats = cycleStart;
+                transport.loop_end_beats = cycleEnd;
+                transport.valid = 1;
+            }
+        }
+        if (!transport.valid && timestamp &&
+            (timestamp->mFlags & kAudioTimeStampSampleTimeValid)) {
+            transport.position_samples = timestamp->mSampleTime;
+            transport.valid = 1;
+        }
+
         callbacks->process(ctx, inPtrs, outPtrs, numIn, numOut,
-                          (uint32_t)frameCount, midiEvents, numMidi);
+                          (uint32_t)frameCount, midiEvents, numMidi,
+                          &transport);
         return noErr;
     };
 }

@@ -50,6 +50,24 @@ typedef struct {
     uint8_t _pad;
 } TruceAaxMidiEvent;
 
+/* Transport snapshot filled by the AAX template each render from
+ * AAX_ITransport. Fields default to 0 / false when Pro Tools does not
+ * report them. */
+typedef struct {
+    int32_t valid;              /* 1 if AAX_ITransport returned anything */
+    int32_t playing;
+    int32_t recording;
+    int32_t loop_active;
+    int32_t time_sig_num;       /* 0 = not reported */
+    int32_t time_sig_den;
+    double  tempo;              /* 0 = not reported */
+    double  position_samples;
+    double  position_beats;
+    double  bar_start_beats;
+    double  loop_start_beats;
+    double  loop_end_beats;
+} TruceAaxTransportSnapshot;
+
 /* GUI editor info returned by editor_create. */
 typedef struct {
     int has_editor;
@@ -79,12 +97,14 @@ void* truce_aax_create(void);
 void  truce_aax_destroy(void* ctx);
 void  truce_aax_reset(void* ctx, double sample_rate, uint32_t max_frames);
 
-/* Audio processing. */
+/* Audio processing. `transport` may be NULL when the template did not
+ * manage to query AAX_ITransport for this block. */
 void truce_aax_process(void* ctx,
     const float** inputs, float** outputs,
     uint32_t num_input_channels, uint32_t num_output_channels,
     uint32_t num_frames,
-    const TruceAaxMidiEvent* midi_events, uint32_t num_midi_events);
+    const TruceAaxMidiEvent* midi_events, uint32_t num_midi_events,
+    const TruceAaxTransportSnapshot* transport);
 
 /* Parameters (plain values, not normalized). */
 double truce_aax_get_param(void* ctx, uint32_t id);

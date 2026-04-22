@@ -52,8 +52,22 @@
 /* audioMaster opcodes (host callbacks) */
 #define audioMasterAutomate 0
 #define audioMasterVersion  1
+#define audioMasterGetTime  7
 #define audioMasterBeginEdit 43
 #define audioMasterEndEdit   44
+
+/* audioMasterGetTime request flags (which fields the plugin wants filled) */
+#define kVstNanosValid       (1 << 8)
+#define kVstPpqPosValid      (1 << 9)
+#define kVstTempoValid       (1 << 10)
+#define kVstBarsValid        (1 << 11)
+#define kVstCyclePosValid    (1 << 12)
+#define kVstTimeSigValid     (1 << 13)
+/* Transport state flags returned in VstTimeInfo::flags */
+#define kVstTransportChanged     (1 << 0)
+#define kVstTransportPlaying     (1 << 1)
+#define kVstTransportCycleActive (1 << 2)
+#define kVstTransportRecording   (1 << 3)
 
 /* VstEvent types */
 #define kVstMidiType 1
@@ -110,6 +124,43 @@ struct AEffect {
 
     char future[56];            /* Reserved */
 };
+
+/* VstTimeInfo — host time + transport state.
+ * Memory layout matches the VST 2.4 SDK so we can cast the audioMasterGetTime
+ * return directly. Clean-room definition, no Steinberg headers. */
+typedef struct {
+    double sample_pos;
+    double sample_rate;
+    double nano_seconds;
+    double ppq_pos;             /* position in beats */
+    double tempo;               /* BPM */
+    double bar_start_pos;       /* beats at start of current bar */
+    double cycle_start_pos;     /* loop start, in beats */
+    double cycle_end_pos;       /* loop end, in beats */
+    int32_t time_sig_num;
+    int32_t time_sig_den;
+    int32_t smpte_offset;
+    int32_t smpte_frame_rate;
+    int32_t samples_to_next_clock;
+    int32_t flags;              /* kVstTransport... and kVst...Valid bits */
+} VstTimeInfo;
+
+/* Compact transport snapshot passed across the FFI boundary so Rust
+ * does not need to know VstTimeInfo's layout. */
+typedef struct {
+    int32_t valid;              /* 1 = host returned time info, 0 otherwise */
+    int32_t playing;
+    int32_t recording;
+    int32_t loop_active;
+    int32_t time_sig_num;       /* 0 if host did not report */
+    int32_t time_sig_den;
+    double tempo;               /* 0 if host did not report */
+    double position_samples;
+    double position_beats;      /* 0 if host did not report */
+    double bar_start_beats;
+    double loop_start_beats;
+    double loop_end_beats;
+} Vst2TransportSnapshot;
 
 /* MIDI event */
 typedef struct {

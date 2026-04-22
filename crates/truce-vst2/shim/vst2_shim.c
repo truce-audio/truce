@@ -268,6 +268,41 @@ void truce_vst2_host_automate(AEffect* e, uint32_t param_id, float normalized) {
     }
 }
 
+/* Fill `out` with the host's current transport state.
+ *
+ * Wraps `audioMasterGetTime`. Returns with `out->valid = 0` if the host
+ * refuses (rare in practice — most hosts always return time info). Safe
+ * to call from the audio thread: the host callback is blocking but
+ * expected to complete in tens of nanoseconds. */
+void truce_vst2_host_get_time(AEffect* e, Vst2TransportSnapshot* out) {
+    memset(out, 0, sizeof(*out));
+    TruceVst2* inst = (TruceVst2*)e;
+    if (!inst->master) return;
+
+    int32_t mask = kVstNanosValid | kVstPpqPosValid | kVstTempoValid |
+                   kVstBarsValid | kVstCyclePosValid | kVstTimeSigValid;
+    VstIntPtr ret = inst->master(e, audioMasterGetTime, 0, (VstIntPtr)mask, NULL, 0.0f);
+    if (!ret) return;
+
+    const VstTimeInfo* ti = (const VstTimeInfo*)(uintptr_t)ret;
+    out->valid = 1;
+    out->playing = (ti->flags & kVstTransportPlaying) ? 1 : 0;
+    out->recording = (ti->flags & kVstTransportRecording) ? 1 : 0;
+    out->loop_active = (ti->flags & kVstTransportCycleActive) ? 1 : 0;
+    out->position_samples = ti->sample_pos;
+    if (ti->flags & kVstTempoValid) out->tempo = ti->tempo;
+    if (ti->flags & kVstPpqPosValid) out->position_beats = ti->ppq_pos;
+    if (ti->flags & kVstBarsValid) out->bar_start_beats = ti->bar_start_pos;
+    if (ti->flags & kVstTimeSigValid) {
+        out->time_sig_num = ti->time_sig_num;
+        out->time_sig_den = ti->time_sig_den;
+    }
+    if (ti->flags & kVstCyclePosValid) {
+        out->loop_start_beats = ti->cycle_start_pos;
+        out->loop_end_beats = ti->cycle_end_pos;
+    }
+}
+
 /* Notify the host that the user finished editing a parameter (mouse-up). */
 void truce_vst2_host_end_edit(AEffect* e, uint32_t param_id) {
     TruceVst2* inst = (TruceVst2*)e;

@@ -36,15 +36,37 @@ typedef struct {
     uint8_t _pad;
 } AuMidiEvent;
 
+/* Transport snapshot filled by the AU v2 / v3 shim from
+ * HostCallbackInfo (v2) or AUAudioUnit.musicalContextBlock +
+ * transportStateBlock (v3). Fields default to 0 / false when the host
+ * does not report them. */
+typedef struct {
+    int32_t valid;          /* 1 if any host callback responded */
+    int32_t playing;
+    int32_t recording;
+    int32_t loop_active;
+    int32_t time_sig_num;   /* 0 = host did not report */
+    int32_t time_sig_den;   /* 0 = host did not report */
+    double tempo;           /* 0 = host did not report */
+    double position_samples;
+    double position_beats;  /* 0 = host did not report */
+    double bar_start_beats;
+    double loop_start_beats;
+    double loop_end_beats;
+} AuTransportSnapshot;
+
 typedef struct {
     void *(*create)(void);
     void (*destroy)(void *ctx);
     void (*reset)(void *ctx, double sample_rate, uint32_t max_frames);
+    /* `transport` may be NULL when the host did not provide any transport
+     * info for this block. */
     void (*process)(void *ctx,
                     const float **inputs, float **outputs,
                     uint32_t num_input_channels, uint32_t num_output_channels,
                     uint32_t num_frames,
-                    const AuMidiEvent *events, uint32_t num_events);
+                    const AuMidiEvent *events, uint32_t num_events,
+                    const AuTransportSnapshot *transport);
     uint32_t (*param_count)(void *ctx);
     void (*param_get_descriptor)(void *ctx, uint32_t index, AuParamDescriptor *out);
     double (*param_get_value)(void *ctx, uint32_t id);

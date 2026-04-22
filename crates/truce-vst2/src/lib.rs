@@ -43,6 +43,45 @@ extern "C" {
     fn truce_vst2_host_begin_edit(effect: *mut std::ffi::c_void, param_id: u32);
     fn truce_vst2_host_automate(effect: *mut std::ffi::c_void, param_id: u32, normalized: f32);
     fn truce_vst2_host_end_edit(effect: *mut std::ffi::c_void, param_id: u32);
+    fn truce_vst2_host_get_time(effect: *mut std::ffi::c_void, out: *mut Vst2TransportSnapshot);
+}
+
+/// FFI-compatible snapshot filled by `truce_vst2_host_get_time`. Layout
+/// must match `Vst2TransportSnapshot` in `vst2_types.h`.
+#[repr(C)]
+#[derive(Default)]
+struct Vst2TransportSnapshot {
+    valid: i32,
+    playing: i32,
+    recording: i32,
+    loop_active: i32,
+    time_sig_num: i32,
+    time_sig_den: i32,
+    tempo: f64,
+    position_samples: f64,
+    position_beats: f64,
+    bar_start_beats: f64,
+    loop_start_beats: f64,
+    loop_end_beats: f64,
+}
+
+impl Vst2TransportSnapshot {
+    fn to_transport_info(&self) -> TransportInfo {
+        TransportInfo {
+            playing: self.playing != 0,
+            recording: self.recording != 0,
+            tempo: self.tempo,
+            time_sig_num: self.time_sig_num.clamp(0, u8::MAX as i32) as u8,
+            time_sig_den: self.time_sig_den.clamp(0, u8::MAX as i32) as u8,
+            position_samples: self.position_samples as i64,
+            position_seconds: 0.0,
+            position_beats: self.position_beats,
+            bar_start_beats: self.bar_start_beats,
+            loop_active: self.loop_active != 0,
+            loop_start_beats: self.loop_start_beats,
+            loop_end_beats: self.loop_end_beats,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -174,7 +213,17 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
         inputs, outputs, num_input_channels, num_output_channels, num_frames as u32,
     );
 
-    let transport = TransportInfo::default();
+    let transport = if !inst.aeffect_ptr.is_null() {
+        let mut snap = Vst2TransportSnapshot::default();
+        truce_vst2_host_get_time(inst.aeffect_ptr, &mut snap);
+        if snap.valid != 0 {
+            snap.to_transport_info()
+        } else {
+            TransportInfo::default()
+        }
+    } else {
+        TransportInfo::default()
+    };
     inst.output_events.clear();
     inst.transport_slot.write(&transport);
     let mut context = ProcessContext::new(&transport, inst.sample_rate, num_frames, &mut inst.output_events);

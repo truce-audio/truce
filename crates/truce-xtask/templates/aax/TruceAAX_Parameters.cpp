@@ -7,6 +7,7 @@
 #include "AAX_CBinaryDisplayDelegate.h"
 #include "AAX_IMIDINode.h"
 #include "AAX_IController.h"
+#include "AAX_ITransport.h"
 
 #include <cstring>
 #include <cstdio>
@@ -148,12 +149,62 @@ void TruceAAX_Parameters::RenderAudio(
         }
     }
 
+    // Query Pro Tools transport. Each getter is independent so the
+    // snapshot remains useful even if the host only answers some of
+    // them. All coordinates come back in beats / ticks / samples and
+    // are forwarded verbatim to Rust.
+    TruceAaxTransportSnapshot transport = {};
+    AAX_ITransport* trans = Transport();
+    if (trans) {
+        bool playing = false;
+        if (trans->IsTransportPlaying(&playing) == AAX_SUCCESS) {
+            transport.playing = playing ? 1 : 0;
+            transport.valid = 1;
+        }
+        double tempo = 0.0;
+        if (trans->GetCurrentTempo(&tempo) == AAX_SUCCESS && tempo > 0.0) {
+            transport.tempo = tempo;
+            transport.valid = 1;
+        }
+        int32_t num = 0, den = 0;
+        if (trans->GetCurrentMeter(&num, &den) == AAX_SUCCESS) {
+            transport.time_sig_num = num;
+            transport.time_sig_den = den;
+            transport.valid = 1;
+        }
+        int64_t sampleLoc = 0;
+        if (trans->GetCurrentNativeSampleLocation(&sampleLoc) == AAX_SUCCESS) {
+            transport.position_samples = (double)sampleLoc;
+            transport.valid = 1;
+        }
+        int64_t tickPos = 0;
+        if (trans->GetCurrentTickPosition(&tickPos) == AAX_SUCCESS) {
+            // AAX ticks are 1/960000 of a quarter note; convert to beats.
+            transport.position_beats = (double)tickPos / 960000.0;
+            transport.valid = 1;
+        }
+        int64_t barTicks = 0, beatTicks = 0;
+        if (trans->GetCurrentBarBeatPosition(&barTicks, &beatTicks) == AAX_SUCCESS) {
+            transport.bar_start_beats = (double)barTicks / 960000.0;
+            transport.valid = 1;
+        }
+        bool loop = false;
+        int64_t loopStart = 0, loopEnd = 0;
+        if (trans->GetCurrentLoopPosition(&loop, &loopStart, &loopEnd) == AAX_SUCCESS) {
+            transport.loop_active = loop ? 1 : 0;
+            transport.loop_start_beats = (double)loopStart / 960000.0;
+            transport.loop_end_beats = (double)loopEnd / 960000.0;
+            transport.valid = 1;
+        }
+    }
+
     // Call the Rust processing function
     g_bridge.process(mRustCtx,
         inputs, outputs,
         g_descriptor.num_inputs, g_descriptor.num_outputs,
         (uint32_t)bufferSize,
-        midiEvents, midiCount);
+        midiEvents, midiCount,
+        transport.valid ? &transport : nullptr);
 }
 
 // ---------------------------------------------------------------------------
