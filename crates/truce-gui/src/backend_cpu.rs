@@ -2,9 +2,9 @@
 //!
 //! Renders to an in-memory RGBA pixel buffer (premultiplied alpha, row-major).
 
-use tiny_skia::{Paint, PathBuilder, Pixmap, Stroke, Transform};
+use tiny_skia::{Paint, PathBuilder, Pixmap, PixmapPaint, Stroke, Transform};
 
-use crate::render::RenderBackend;
+use crate::render::{ImageId, RenderBackend};
 use crate::theme::Color;
 
 /// CPU-based rendering backend.
@@ -13,12 +13,17 @@ use crate::theme::Color;
 /// software rasterization. Zero GPU dependencies.
 pub struct CpuBackend {
     pixmap: Pixmap,
+    /// Registered images. Index = ImageId.0. None = unregistered slot.
+    images: Vec<Option<Pixmap>>,
 }
 
 impl CpuBackend {
     /// Create a new CPU backend with the given pixel dimensions.
     pub fn new(width: u32, height: u32) -> Option<Self> {
-        Pixmap::new(width, height).map(|pixmap| Self { pixmap })
+        Pixmap::new(width, height).map(|pixmap| Self {
+            pixmap,
+            images: Vec::new(),
+        })
     }
 
     /// Raw pixel data (RGBA premultiplied, row-major).
@@ -166,5 +171,45 @@ impl RenderBackend for CpuBackend {
 
     fn text_width(&self, text: &str, size: f32) -> f32 {
         crate::font::text_width_fontdue(text, size)
+    }
+
+    fn register_image(&mut self, rgba: &[u8], width: u32, height: u32) -> ImageId {
+        let mut pm = match Pixmap::new(width, height) {
+            Some(p) => p,
+            None => return ImageId::INVALID,
+        };
+        let expected = (width as usize) * (height as usize) * 4;
+        if rgba.len() < expected {
+            return ImageId::INVALID;
+        }
+        pm.data_mut()[..expected].copy_from_slice(&rgba[..expected]);
+
+        if let Some(slot) = self.images.iter_mut().enumerate()
+            .find(|(_, s)| s.is_none())
+        {
+            *slot.1 = Some(pm);
+            return ImageId(slot.0 as u32);
+        }
+        let id = self.images.len() as u32;
+        self.images.push(Some(pm));
+        ImageId(id)
+    }
+
+    fn unregister_image(&mut self, id: ImageId) {
+        if let Some(slot) = self.images.get_mut(id.0 as usize) {
+            *slot = None;
+        }
+    }
+
+    fn draw_image(&mut self, id: ImageId, x: f32, y: f32, w: f32, h: f32) {
+        let pm = match self.images.get(id.0 as usize).and_then(|s| s.as_ref()) {
+            Some(p) => p,
+            None => return,
+        };
+        let sx = w / pm.width() as f32;
+        let sy = h / pm.height() as f32;
+        let transform = Transform::from_scale(sx, sy).post_translate(x, y);
+        let paint = PixmapPaint::default();
+        self.pixmap.draw_pixmap(0, 0, pm.as_ref(), &paint, transform, None);
     }
 }

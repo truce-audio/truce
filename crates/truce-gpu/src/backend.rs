@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 use std::ffi::c_void;
+use std::sync::Arc;
 
 use bytemuck::{Pod, Zeroable};
 use lyon_tessellation::geom::point;
@@ -16,7 +17,7 @@ use lyon_tessellation::{
 };
 use wgpu::util::DeviceExt;
 
-use truce_gui::render::RenderBackend;
+use truce_gui::render::{ImageId, RenderBackend};
 use truce_gui::theme::Color;
 
 // ---------------------------------------------------------------------------
@@ -29,7 +30,9 @@ struct Vertex {
     position: [f32; 2],
     color: [f32; 4],
     uv: [f32; 2],
-    tex_mix: f32, // 0.0 = solid color, 1.0 = texture * color
+    /// 0.0 = solid color; 1.0 = glyph atlas (R8, .r is alpha);
+    /// 2.0 = RGBA image (tex * color, both premultiplied).
+    tex_mode: f32,
     _pad: f32,
 }
 
@@ -39,17 +42,27 @@ impl Vertex {
             position: [x, y],
             color,
             uv: [0.0, 0.0],
-            tex_mix: 0.0,
+            tex_mode: 0.0,
             _pad: 0.0,
         }
     }
 
-    fn textured(x: f32, y: f32, color: [f32; 4], u: f32, v: f32) -> Self {
+    fn glyph(x: f32, y: f32, color: [f32; 4], u: f32, v: f32) -> Self {
         Self {
             position: [x, y],
             color,
             uv: [u, v],
-            tex_mix: 1.0,
+            tex_mode: 1.0,
+            _pad: 0.0,
+        }
+    }
+
+    fn image(x: f32, y: f32, color: [f32; 4], u: f32, v: f32) -> Self {
+        Self {
+            position: [x, y],
+            color,
+            uv: [u, v],
+            tex_mode: 2.0,
             _pad: 0.0,
         }
     }
@@ -159,21 +172,24 @@ struct Viewport {
 };
 @group(0) @binding(0) var<uniform> viewport: Viewport;
 
-@group(1) @binding(0) var glyph_tex: texture_2d<f32>;
-@group(1) @binding(1) var glyph_samp: sampler;
+// At group 1 slot 0 we bind either the R8 glyph atlas (tex_mode == 1.0)
+// or an RGBA image (tex_mode == 2.0). For solid draws (tex_mode == 0.0)
+// the texture is not sampled; any compatible binding works.
+@group(1) @binding(0) var main_tex: texture_2d<f32>;
+@group(1) @binding(1) var main_samp: sampler;
 
 struct VsIn {
     @location(0) position: vec2<f32>,
     @location(1) color: vec4<f32>,
     @location(2) uv: vec2<f32>,
-    @location(3) tex_mix: f32,
+    @location(3) tex_mode: f32,
 };
 
 struct VsOut {
     @builtin(position) clip_pos: vec4<f32>,
     @location(0) color: vec4<f32>,
     @location(1) uv: vec2<f32>,
-    @location(2) tex_mix: f32,
+    @location(2) tex_mode: f32,
 };
 
 @vertex
@@ -182,14 +198,21 @@ fn vs_main(in: VsIn) -> VsOut {
     out.clip_pos = viewport.transform * vec4<f32>(in.position, 0.0, 1.0);
     out.color = in.color;
     out.uv = in.uv;
-    out.tex_mix = in.tex_mix;
+    out.tex_mode = in.tex_mode;
     return out;
 }
 
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
-    let tex_a = textureSample(glyph_tex, glyph_samp, in.uv).r;
-    let alpha = mix(1.0, tex_a, in.tex_mix);
+    let tex = textureSample(main_tex, main_samp, in.uv);
+    if (in.tex_mode > 1.5) {
+        // Image: RGBA texture tinted by vertex color. Both sides are
+        // treated as premultiplied; output is premultiplied.
+        return tex * in.color;
+    }
+    // Glyph (tex_mode == 1) uses .r as coverage; solid (tex_mode == 0)
+    // bypasses the sample. mix(1.0, tex.r, tex_mode) handles both.
+    let alpha = mix(1.0, tex.r, in.tex_mode);
     return vec4<f32>(in.color.rgb * in.color.a * alpha, in.color.a * alpha);
 }
 "#;
@@ -198,26 +221,72 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 // WgpuBackend
 // ---------------------------------------------------------------------------
 
+/// One image registered via `register_image`. Owns its wgpu texture
+/// (kept alive so the bind group's view stays valid) and the bind group.
+struct ImageEntry {
+    #[allow(dead_code)]
+    texture: wgpu::Texture,
+    bind_group: wgpu::BindGroup,
+    #[allow(dead_code)]
+    width: u32,
+    #[allow(dead_code)]
+    height: u32,
+}
+
+/// A contiguous run of indices that share a single bind group.
+///
+/// `image` is `None` for primitives and glyphs (which use the atlas bind
+/// group) and `Some(id)` for RGBA image draws. Batches are closed and a
+/// new one started whenever the target bind group changes.
+#[derive(Clone, Copy)]
+struct DrawBatch {
+    index_start: u32,
+    image: Option<ImageId>,
+}
+
 /// GPU-based rendering backend.
 ///
 /// Creates a wgpu device and surface from a platform-provided Metal layer
 /// (macOS) or window handle. Implements `RenderBackend` by accumulating
 /// geometry per frame, then flushing it in `present()`.
 pub struct WgpuBackend {
-    device: wgpu::Device,
-    queue: wgpu::Queue,
-    /// None for headless mode (snapshot testing). When present, `present()`
-    /// renders to the surface frame. When None, use `read_pixels()` instead.
+    device: Arc<wgpu::Device>,
+    queue: Arc<wgpu::Queue>,
+    /// None for headless mode (snapshot testing) or when using the
+    /// standalone `new()` constructor (caller owns the surface). When
+    /// present, `present()` renders to the surface frame.
     surface: Option<wgpu::Surface<'static>>,
     surface_config: Option<wgpu::SurfaceConfiguration>,
     pipeline: wgpu::RenderPipeline,
+    /// Format of the eventual color target. Used to (re)build the MSAA
+    /// texture on resize / begin_frame size changes.
+    target_format: wgpu::TextureFormat,
     msaa_texture: wgpu::TextureView,
+    /// Current physical dimensions of the MSAA texture. `begin_frame`
+    /// rebuilds the texture if these no longer match the target view.
+    msaa_width: u32,
+    msaa_height: u32,
+    /// True if `clear()` was called on this frame. `finish()` uses this to
+    /// decide between `LoadOp::Clear` and `LoadOp::Load`. Reset after each
+    /// render pass.
+    clear_pending: bool,
     vertices: Vec<Vertex>,
     indices: Vec<u32>,
+    /// Ordered list of bind-group switches within the current frame. Always
+    /// starts with one batch referencing the atlas; additional entries are
+    /// appended when `draw_image` needs to switch to an image bind group.
+    batches: Vec<DrawBatch>,
     glyph_atlas: GlyphAtlas,
     font: fontdue::Font,
     atlas_texture: wgpu::Texture,
     atlas_bind_group: wgpu::BindGroup,
+    /// Layout shared between the atlas bind group and every per-image
+    /// bind group (same texture2d<f32> + sampler layout).
+    tex_bind_group_layout: wgpu::BindGroupLayout,
+    /// Shared linear sampler used for both the glyph atlas and images.
+    sampler: wgpu::Sampler,
+    /// Registered images indexed by `ImageId.0`. `None` = free slot.
+    images: Vec<Option<ImageEntry>>,
     viewport_buffer: wgpu::Buffer,
     viewport_bind_group: wgpu::BindGroup,
     clear_color: wgpu::Color,
@@ -268,6 +337,8 @@ impl WgpuBackend {
             None,
         ))
         .ok()?;
+        let device = Arc::new(device);
+        let queue = Arc::new(queue);
 
         let surface_caps = surface.get_capabilities(&adapter);
         let surface_format = surface_caps
@@ -348,15 +419,15 @@ impl WgpuBackend {
         });
 
         let atlas_view = atlas_texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let atlas_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
 
-        let atlas_bind_group_layout =
+        let tex_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("atlas-layout"),
+                label: Some("tex-layout"),
                 entries: &[
                     wgpu::BindGroupLayoutEntry {
                         binding: 0,
@@ -379,7 +450,7 @@ impl WgpuBackend {
 
         let atlas_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("atlas-bg"),
-            layout: &atlas_bind_group_layout,
+            layout: &tex_bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -387,7 +458,7 @@ impl WgpuBackend {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&atlas_sampler),
+                    resource: wgpu::BindingResource::Sampler(&sampler),
                 },
             ],
         });
@@ -395,7 +466,7 @@ impl WgpuBackend {
         // Pipeline
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("truce-gpu-pipeline-layout"),
-            bind_group_layouts: &[&viewport_bind_group_layout, &atlas_bind_group_layout],
+            bind_group_layouts: &[&viewport_bind_group_layout, &tex_bind_group_layout],
             push_constant_ranges: &[],
         });
 
@@ -421,7 +492,7 @@ impl WgpuBackend {
                     shader_location: 2,
                     format: wgpu::VertexFormat::Float32x2,
                 },
-                // tex_mix
+                // tex_mode
                 wgpu::VertexAttribute {
                     offset: 32,
                     shader_location: 3,
@@ -481,13 +552,21 @@ impl WgpuBackend {
             surface: Some(surface),
             surface_config: Some(surface_config),
             pipeline,
+            target_format: surface_format,
             msaa_texture,
+            msaa_width: width,
+            msaa_height: height,
+            clear_pending: false,
             vertices: Vec::with_capacity(4096),
             indices: Vec::with_capacity(8192),
+            batches: Vec::new(),
             glyph_atlas: GlyphAtlas::new(),
             font,
             atlas_texture,
             atlas_bind_group,
+            tex_bind_group_layout,
+            sampler,
+            images: Vec::new(),
             viewport_buffer,
             viewport_bind_group,
             clear_color: wgpu::Color::BLACK,
@@ -539,6 +618,401 @@ impl WgpuBackend {
 
         let surface = crate::platform::create_wgpu_surface(&instance, window)?;
         Self::from_surface(&instance, surface, logical_w, logical_h, scale)
+    }
+
+    /// Build a standalone `WgpuBackend` that records into encoders
+    /// supplied per-frame by the caller.
+    ///
+    /// Unlike [`from_surface`] / [`from_metal_layer`] / [`from_window`],
+    /// this constructor does **not** own a `wgpu::Surface` or manage
+    /// frame acquisition. The caller is expected to have its own render
+    /// loop, allocate command encoders, and present — this backend only
+    /// supplies the 2D widget pipeline, glyph atlas, and lyon-tessellated
+    /// primitive recording.
+    ///
+    /// Usage:
+    ///
+    /// ```ignore
+    /// let mut backend = WgpuBackend::new(
+    ///     device.clone(), queue.clone(),
+    ///     target_format, max_w, max_h,
+    /// ).expect("backend init");
+    ///
+    /// // per-frame, after the caller has drawn its own content into `view`:
+    /// backend.begin_frame(w, h);
+    /// truce_gui::widgets::draw(&mut backend, &layout, &theme, &snap, &mut state);
+    /// backend.finish(&mut encoder, &view);
+    /// // caller submits encoder + presents.
+    /// ```
+    ///
+    /// `max_width` / `max_height` seed the initial MSAA texture. If a
+    /// subsequent `begin_frame(w, h)` exceeds these, the MSAA texture is
+    /// reallocated transparently.
+    pub fn new(
+        device: Arc<wgpu::Device>,
+        queue: Arc<wgpu::Queue>,
+        target_format: wgpu::TextureFormat,
+        max_width: u32,
+        max_height: u32,
+    ) -> Option<Self> {
+        let width = max_width.max(1);
+        let height = max_height.max(1);
+
+        // Shader
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("truce-gpu-shader"),
+            source: wgpu::ShaderSource::Wgsl(SHADER_SRC.into()),
+        });
+
+        // Viewport uniform
+        let matrix = ortho_matrix(width as f32, height as f32);
+        let viewport_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("viewport"),
+                contents: bytemuck::cast_slice(&matrix),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            });
+
+        let viewport_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("viewport-layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
+
+        let viewport_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("viewport-bg"),
+            layout: &viewport_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: viewport_buffer.as_entire_binding(),
+            }],
+        });
+
+        // Glyph atlas
+        let atlas_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("glyph-atlas"),
+            size: wgpu::Extent3d {
+                width: ATLAS_SIZE,
+                height: ATLAS_SIZE,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::R8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let atlas_view = atlas_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+        let tex_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("tex-layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+            });
+        let atlas_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("atlas-bg"),
+            layout: &tex_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&atlas_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+            ],
+        });
+
+        // Pipeline
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("truce-gpu-pipeline-layout"),
+            bind_group_layouts: &[&viewport_bind_group_layout, &tex_bind_group_layout],
+            push_constant_ranges: &[],
+        });
+
+        let vertex_layout = wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &[
+                wgpu::VertexAttribute { offset: 0, shader_location: 0, format: wgpu::VertexFormat::Float32x2 },
+                wgpu::VertexAttribute { offset: 8, shader_location: 1, format: wgpu::VertexFormat::Float32x4 },
+                wgpu::VertexAttribute { offset: 24, shader_location: 2, format: wgpu::VertexFormat::Float32x2 },
+                wgpu::VertexAttribute { offset: 32, shader_location: 3, format: wgpu::VertexFormat::Float32 },
+            ],
+        };
+
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("truce-gpu-pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &[vertex_layout],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: target_format,
+                    blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState {
+                count: 4,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            multiview: None,
+            cache: None,
+        });
+
+        // MSAA
+        let msaa_texture = Self::create_msaa_view(&device, target_format, width, height);
+
+        let font = fontdue::Font::from_bytes(
+            truce_gui::font::JETBRAINS_MONO,
+            fontdue::FontSettings::default(),
+        )
+        .expect("failed to parse embedded font");
+
+        Some(Self {
+            device,
+            queue,
+            surface: None,
+            surface_config: None,
+            pipeline,
+            target_format,
+            msaa_texture,
+            msaa_width: width,
+            msaa_height: height,
+            clear_pending: false,
+            vertices: Vec::with_capacity(4096),
+            indices: Vec::with_capacity(8192),
+            batches: Vec::new(),
+            glyph_atlas: GlyphAtlas::new(),
+            font,
+            atlas_texture,
+            atlas_bind_group,
+            tex_bind_group_layout,
+            sampler,
+            images: Vec::new(),
+            viewport_buffer,
+            viewport_bind_group,
+            clear_color: wgpu::Color::TRANSPARENT,
+            width,
+            height,
+            scale: 1.0,
+        })
+    }
+
+    /// Prepare for recording a frame of `width × height` physical pixels.
+    ///
+    /// Resets accumulated geometry and the clear flag. Rebuilds the MSAA
+    /// texture if the target size differs from the previous frame.
+    /// Coordinates passed to subsequent `RenderBackend` calls are in the
+    /// same pixel space as `width` / `height` (i.e. physical pixels when
+    /// driving a Retina surface; logical pixels at scale = 1).
+    ///
+    /// Only meaningful when the backend was built via [`new`]; the
+    /// surface-owning constructors drive their own frame lifecycle.
+    pub fn begin_frame(&mut self, width: u32, height: u32) {
+        let w = width.max(1);
+        let h = height.max(1);
+        self.vertices.clear();
+        self.indices.clear();
+        self.batches.clear();
+        self.clear_pending = false;
+
+        if w != self.width || h != self.height {
+            self.width = w;
+            self.height = h;
+            let matrix = ortho_matrix(w as f32, h as f32);
+            self.queue.write_buffer(
+                &self.viewport_buffer,
+                0,
+                bytemuck::cast_slice(&matrix),
+            );
+        }
+
+        if w != self.msaa_width || h != self.msaa_height {
+            self.msaa_texture = Self::create_msaa_view(&self.device, self.target_format, w, h);
+            self.msaa_width = w;
+            self.msaa_height = h;
+        }
+    }
+
+    /// Flush accumulated geometry into a single render pass on `view`,
+    /// recorded into `encoder`. The caller retains ownership of both —
+    /// this method neither submits the encoder nor calls `present()`.
+    ///
+    /// If `clear()` was called since the last `begin_frame`, the pass
+    /// uses `LoadOp::Clear(clear_color)`; otherwise `LoadOp::Load` so
+    /// any prior content in `view` is preserved (the common case when
+    /// widgets overlay a custom render).
+    pub fn finish(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+    ) {
+        self.flush_atlas();
+
+        if self.indices.is_empty() {
+            self.clear_pending = false;
+            return;
+        }
+
+        let vertex_buffer =
+            self.device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("vertices"),
+                    contents: bytemuck::cast_slice(&self.vertices),
+                    usage: wgpu::BufferUsages::VERTEX,
+                });
+
+        let index_buffer =
+            self.device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("indices"),
+                    contents: bytemuck::cast_slice(&self.indices),
+                    usage: wgpu::BufferUsages::INDEX,
+                });
+
+        let load = if self.clear_pending {
+            wgpu::LoadOp::Clear(self.clear_color)
+        } else {
+            wgpu::LoadOp::Load
+        };
+
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("truce-gpu-frame"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &self.msaa_texture,
+                    resolve_target: Some(view),
+                    ops: wgpu::Operations {
+                        load,
+                        store: wgpu::StoreOp::Discard,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+
+            pass.set_pipeline(&self.pipeline);
+            pass.set_bind_group(0, &self.viewport_bind_group, &[]);
+            pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+            pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+
+            let total_indices = self.indices.len() as u32;
+            if self.batches.is_empty() {
+                pass.set_bind_group(1, &self.atlas_bind_group, &[]);
+                pass.draw_indexed(0..total_indices, 0, 0..1);
+            } else {
+                for i in 0..self.batches.len() {
+                    let b = self.batches[i];
+                    let end = self
+                        .batches
+                        .get(i + 1)
+                        .map(|n| n.index_start)
+                        .unwrap_or(total_indices);
+                    if end <= b.index_start {
+                        continue;
+                    }
+                    let bg = match b.image {
+                        None => &self.atlas_bind_group,
+                        Some(img_id) => match self
+                            .images
+                            .get(img_id.0 as usize)
+                            .and_then(|s| s.as_ref())
+                        {
+                            Some(entry) => &entry.bind_group,
+                            None => continue,
+                        },
+                    };
+                    pass.set_bind_group(1, bg, &[]);
+                    pass.draw_indexed(b.index_start..end, 0, 0..1);
+                }
+            }
+        }
+
+        self.clear_pending = false;
+    }
+
+    /// Access the shared `wgpu::Device` used by this backend.
+    ///
+    /// Useful for callers that built the backend via [`new`] and want
+    /// to allocate additional resources against the same device.
+    pub fn device(&self) -> &Arc<wgpu::Device> {
+        &self.device
+    }
+
+    /// Access the shared `wgpu::Queue` used by this backend.
+    pub fn queue(&self) -> &Arc<wgpu::Queue> {
+        &self.queue
+    }
+
+    fn create_msaa_view(
+        device: &wgpu::Device,
+        format: wgpu::TextureFormat,
+        width: u32,
+        height: u32,
+    ) -> wgpu::TextureView {
+        let tex = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("msaa"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 4,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        tex.create_view(&wgpu::TextureViewDescriptor::default())
     }
 
     fn create_msaa_texture(
@@ -602,7 +1076,23 @@ impl WgpuBackend {
         [c.r, c.g, c.b, c.a]
     }
 
+    /// Ensure the current (last) batch targets `image`. If not, close the
+    /// current batch and open a new one. Call before pushing indices.
+    fn ensure_batch(&mut self, image: Option<ImageId>) {
+        let needs_new = match self.batches.last() {
+            None => true,
+            Some(last) => last.image != image,
+        };
+        if needs_new {
+            self.batches.push(DrawBatch {
+                index_start: self.indices.len() as u32,
+                image,
+            });
+        }
+    }
+
     fn push_quad(&mut self, v0: Vertex, v1: Vertex, v2: Vertex, v3: Vertex) {
+        self.ensure_batch(None);
         let base = self.vertices.len() as u32;
         self.vertices.extend_from_slice(&[v0, v1, v2, v3]);
         self.indices
@@ -611,6 +1101,7 @@ impl WgpuBackend {
 
     /// Tessellate a lyon path as a filled shape and append to vertex/index buffers.
     fn fill_path(&mut self, path: &Path, color: [f32; 4]) {
+        self.ensure_batch(None);
         let mut buffers: VertexBuffers<Vertex, u32> = VertexBuffers::new();
         let mut tessellator = FillTessellator::new();
         let _ = tessellator.tessellate_path(
@@ -629,6 +1120,7 @@ impl WgpuBackend {
 
     /// Tessellate a lyon path as a stroked shape and append to vertex/index buffers.
     fn stroke_path(&mut self, path: &Path, color: [f32; 4], opts: &StrokeOptions) {
+        self.ensure_batch(None);
         let mut buffers: VertexBuffers<Vertex, u32> = VertexBuffers::new();
         let mut tessellator = StrokeTessellator::new();
         let _ = tessellator.tessellate_path(
@@ -691,6 +1183,8 @@ impl RenderBackend for WgpuBackend {
         };
         self.vertices.clear();
         self.indices.clear();
+        self.batches.clear();
+        self.clear_pending = true;
     }
 
     fn fill_rect(&mut self, x: f32, y: f32, w: f32, h: f32, color: Color) {
@@ -800,10 +1294,10 @@ impl RenderBackend for WgpuBackend {
             let gy = y * s + ascent - y_off - gh;
 
             self.push_quad(
-                Vertex::textured(gx, gy, c, u0, v0),
-                Vertex::textured(gx + gw, gy, c, u1, v0),
-                Vertex::textured(gx + gw, gy + gh, c, u1, v1),
-                Vertex::textured(gx, gy + gh, c, u0, v1),
+                Vertex::glyph(gx, gy, c, u0, v0),
+                Vertex::glyph(gx + gw, gy, c, u1, v0),
+                Vertex::glyph(gx + gw, gy + gh, c, u1, v1),
+                Vertex::glyph(gx, gy + gh, c, u0, v1),
             );
 
             cursor_x += advance;
@@ -813,6 +1307,106 @@ impl RenderBackend for WgpuBackend {
     fn text_width(&self, text: &str, size: f32) -> f32 {
         let phys_size = size * self.scale;
         truce_gui::font::text_width_fontdue(text, phys_size) / self.scale
+    }
+
+    fn register_image(&mut self, rgba: &[u8], width: u32, height: u32) -> ImageId {
+        let expected = (width as usize) * (height as usize) * 4;
+        if width == 0 || height == 0 || rgba.len() < expected {
+            return ImageId::INVALID;
+        }
+
+        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("image"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+
+        self.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &rgba[..expected],
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(width * 4),
+                rows_per_image: Some(height),
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("image-bg"),
+            layout: &self.tex_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
+            ],
+        });
+
+        let entry = ImageEntry { texture, bind_group, width, height };
+
+        if let Some((idx, slot)) = self.images.iter_mut().enumerate()
+            .find(|(_, s)| s.is_none())
+        {
+            *slot = Some(entry);
+            return ImageId(idx as u32);
+        }
+        let id = self.images.len() as u32;
+        self.images.push(Some(entry));
+        ImageId(id)
+    }
+
+    fn unregister_image(&mut self, id: ImageId) {
+        if let Some(slot) = self.images.get_mut(id.0 as usize) {
+            *slot = None;
+        }
+    }
+
+    fn draw_image(&mut self, id: ImageId, x: f32, y: f32, w: f32, h: f32) {
+        if self
+            .images
+            .get(id.0 as usize)
+            .and_then(|s| s.as_ref())
+            .is_none()
+        {
+            return;
+        }
+        self.ensure_batch(Some(id));
+
+        let s = self.scale;
+        let c = [1.0, 1.0, 1.0, 1.0];
+        let base = self.vertices.len() as u32;
+        self.vertices.extend_from_slice(&[
+            Vertex::image(x * s, y * s, c, 0.0, 0.0),
+            Vertex::image((x + w) * s, y * s, c, 1.0, 0.0),
+            Vertex::image((x + w) * s, (y + h) * s, c, 1.0, 1.0),
+            Vertex::image(x * s, (y + h) * s, c, 0.0, 1.0),
+        ]);
+        self.indices
+            .extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
     }
 
     fn present(&mut self) {
@@ -886,10 +1480,43 @@ impl WgpuBackend {
 
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.viewport_bind_group, &[]);
-            pass.set_bind_group(1, &self.atlas_bind_group, &[]);
             pass.set_vertex_buffer(0, vertex_buffer.slice(..));
             pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-            pass.draw_indexed(0..self.indices.len() as u32, 0, 0..1);
+
+            let total_indices = self.indices.len() as u32;
+            if self.batches.is_empty() {
+                // Backwards-compatible path: no batching recorded (e.g. a
+                // caller that bypassed clear()). Draw everything with the
+                // atlas bind group.
+                pass.set_bind_group(1, &self.atlas_bind_group, &[]);
+                pass.draw_indexed(0..total_indices, 0, 0..1);
+            } else {
+                for i in 0..self.batches.len() {
+                    let b = self.batches[i];
+                    let end = self
+                        .batches
+                        .get(i + 1)
+                        .map(|n| n.index_start)
+                        .unwrap_or(total_indices);
+                    if end <= b.index_start {
+                        continue;
+                    }
+                    let bg = match b.image {
+                        None => &self.atlas_bind_group,
+                        Some(img_id) => match self
+                            .images
+                            .get(img_id.0 as usize)
+                            .and_then(|s| s.as_ref())
+                        {
+                            Some(entry) => &entry.bind_group,
+                            // Image was unregistered mid-frame; skip draw.
+                            None => continue,
+                        },
+                    };
+                    pass.set_bind_group(1, bg, &[]);
+                    pass.draw_indexed(b.index_start..end, 0, 0..1);
+                }
+            }
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
@@ -922,6 +1549,8 @@ impl WgpuBackend {
             None,
         ))
         .ok()?;
+        let device = Arc::new(device);
+        let queue = Arc::new(queue);
 
         // Use non-sRGB to match the windowed path (which picks !is_srgb())
         let texture_format = wgpu::TextureFormat::Rgba8Unorm;
@@ -998,14 +1627,14 @@ impl WgpuBackend {
             view_formats: &[],
         });
         let atlas_view = atlas_texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let atlas_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
-        let atlas_bind_group_layout =
+        let tex_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("atlas-layout"),
+                label: Some("tex-layout"),
                 entries: &[
                     wgpu::BindGroupLayoutEntry {
                         binding: 0,
@@ -1027,7 +1656,7 @@ impl WgpuBackend {
             });
         let atlas_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("atlas-bg"),
-            layout: &atlas_bind_group_layout,
+            layout: &tex_bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -1035,7 +1664,7 @@ impl WgpuBackend {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&atlas_sampler),
+                    resource: wgpu::BindingResource::Sampler(&sampler),
                 },
             ],
         });
@@ -1043,7 +1672,7 @@ impl WgpuBackend {
         // Pipeline
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("truce-gpu-pipeline-layout"),
-            bind_group_layouts: &[&viewport_bind_group_layout, &atlas_bind_group_layout],
+            bind_group_layouts: &[&viewport_bind_group_layout, &tex_bind_group_layout],
             push_constant_ranges: &[],
         });
 
@@ -1103,13 +1732,21 @@ impl WgpuBackend {
             surface: None,
             surface_config: None,
             pipeline,
+            target_format: texture_format,
             msaa_texture: msaa_view,
+            msaa_width: phys_w,
+            msaa_height: phys_h,
+            clear_pending: false,
             vertices: Vec::with_capacity(4096),
             indices: Vec::with_capacity(8192),
+            batches: Vec::new(),
             glyph_atlas: GlyphAtlas::new(),
             font,
             atlas_texture,
             atlas_bind_group,
+            tex_bind_group_layout,
+            sampler,
+            images: Vec::new(),
             viewport_buffer,
             viewport_bind_group,
             clear_color: wgpu::Color::BLACK,
@@ -1278,5 +1915,118 @@ mod tests {
         .unwrap();
         assert!(buffers.vertices.len() >= 3);
         assert!(buffers.indices.len() >= 3);
+    }
+
+    /// End-to-end smoke test for the standalone `new` / `begin_frame` /
+    /// `finish` path: build a backend against a caller-owned device,
+    /// record some primitives + text, render into an offscreen texture,
+    /// and verify we wrote non-background pixels.
+    #[test]
+    fn standalone_pipeline_renders() {
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::PRIMARY,
+            ..Default::default()
+        });
+        let adapter = match pollster::block_on(instance.request_adapter(
+            &wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::LowPower,
+                compatible_surface: None,
+                force_fallback_adapter: false,
+            },
+        )) {
+            Some(a) => a,
+            None => return, // no GPU in this environment
+        };
+        let (device, queue) = pollster::block_on(adapter.request_device(
+            &wgpu::DeviceDescriptor {
+                label: Some("standalone-test"),
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits::downlevel_defaults(),
+                memory_hints: wgpu::MemoryHints::Performance,
+            },
+            None,
+        ))
+        .expect("request_device");
+        let device = Arc::new(device);
+        let queue = Arc::new(queue);
+
+        let w = 64u32;
+        let h = 48u32;
+        let format = wgpu::TextureFormat::Rgba8Unorm;
+        let mut backend = WgpuBackend::new(
+            Arc::clone(&device),
+            Arc::clone(&queue),
+            format,
+            w,
+            h,
+        )
+        .expect("backend new");
+
+        // Pre-fill the offscreen target with red so we can tell apart
+        // "finish drew something" from "finish cleared to background".
+        let target = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("standalone-target"),
+            size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = target.create_view(&wgpu::TextureViewDescriptor::default());
+
+        backend.begin_frame(w, h);
+        backend.clear(Color::rgb(0.0, 0.0, 0.0));
+        backend.fill_rect(8.0, 8.0, 16.0, 16.0, Color::rgb(0.0, 1.0, 0.0));
+        backend.draw_text("x", 20.0, 20.0, 14.0, Color::rgb(1.0, 1.0, 1.0));
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("standalone-enc"),
+        });
+        backend.finish(&mut encoder, &view);
+
+        // Copy target to a readback buffer and inspect.
+        let bytes_per_row = (w * 4 + 255) & !255;
+        let readback = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("readback"),
+            size: (bytes_per_row * h) as u64,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: &target,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &readback,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(bytes_per_row),
+                    rows_per_image: None,
+                },
+            },
+            wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+        );
+        queue.submit(std::iter::once(encoder.finish()));
+
+        let slice = readback.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |r| { tx.send(r).unwrap(); });
+        device.poll(wgpu::Maintain::Wait);
+        rx.recv().unwrap().unwrap();
+        let mapped = slice.get_mapped_range();
+
+        // Probe the green rect center (16, 16) — should be ~green.
+        let row_off = 16usize * bytes_per_row as usize;
+        let px_off = row_off + 16 * 4;
+        let r = mapped[px_off];
+        let g = mapped[px_off + 1];
+        let b = mapped[px_off + 2];
+        assert!(g > 200, "green rect not rendered: got rgb=({r},{g},{b})");
+        assert!(r < 50 && b < 50, "green rect leaked other channels: rgb=({r},{g},{b})");
     }
 }

@@ -15,11 +15,13 @@ pub mod macros;
 pub mod native_view;
 pub mod platform;
 pub mod render;
+pub mod snapshot;
 pub mod theme;
 pub mod widgets;
 
 pub use editor::BuiltinEditor;
-pub use render::RenderBackend;
+pub use render::{ImageId, RenderBackend};
+pub use snapshot::ParamSnapshot;
 pub use theme::Theme;
 
 /// Get the platform's display scale factor (Retina = 2.0, normal = 1.0).

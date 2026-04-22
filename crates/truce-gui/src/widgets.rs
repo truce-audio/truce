@@ -2,7 +2,13 @@
 
 use std::f32::consts::PI;
 
+use crate::interaction::InteractionState;
+use crate::layout::{
+    compute_section_offsets, GridLayout, Layout, PluginLayout, WidgetKind,
+    GRID_GAP, GRID_HEADER_H, GRID_PADDING, GRID_SECTION_H,
+};
 use crate::render::RenderBackend;
+use crate::snapshot::ParamSnapshot;
 use crate::theme::{Color, Theme};
 
 /// Widget type for interaction state tracking.
@@ -487,4 +493,270 @@ pub fn draw_section_label(
     let size = 9.0;
     let label_w = ctx.text_width(label, size);
     ctx.draw_text(label, x + (w - label_w) / 2.0, y, size, theme.text_dim);
+}
+
+// ---------------------------------------------------------------------------
+// Public compositor — draws an entire layout in one call.
+// ---------------------------------------------------------------------------
+
+/// Render every widget in `layout` onto `backend` using `theme`,
+/// reading live values from `snapshot` and interaction flags from
+/// `state`.
+///
+/// Does not call `backend.clear()` or `backend.present()` — the caller
+/// owns the surrounding frame. This lets plugins with custom renderers
+/// draw their own content first (or last) and still get the same widget
+/// chrome as `BuiltinEditor`.
+///
+/// `state.knob_regions` is expected to be up to date for `layout`;
+/// callers typically call `state.build_regions_any(layout)` after any
+/// layout change. `draw` updates `dropdown_anchor_y` on each region it
+/// draws so that subsequent dropdown opens via `interaction::dispatch`
+/// position the popup under the current button.
+pub fn draw(
+    backend: &mut dyn RenderBackend,
+    layout: &Layout,
+    theme: &Theme,
+    snapshot: &ParamSnapshot<'_>,
+    state: &mut InteractionState,
+) {
+    match layout {
+        Layout::Rows(pl) => draw_rows(backend, pl, theme, snapshot, state),
+        Layout::Grid(gl) => draw_grid(backend, gl, theme, snapshot, state),
+    }
+    draw_dropdown_overlay(backend, theme, state);
+}
+
+fn resolve_wkind_to_type(
+    kind: Option<WidgetKind>,
+    param_id: u32,
+    snapshot: &ParamSnapshot<'_>,
+) -> WidgetType {
+    match kind {
+        Some(WidgetKind::Knob) => WidgetType::Knob,
+        Some(WidgetKind::Slider) => WidgetType::Slider,
+        Some(WidgetKind::Toggle) => WidgetType::Toggle,
+        Some(WidgetKind::Selector) => WidgetType::Selector,
+        Some(WidgetKind::Dropdown) => WidgetType::Dropdown,
+        Some(WidgetKind::Meter) => WidgetType::Meter,
+        Some(WidgetKind::XYPad) => WidgetType::XYPad,
+        None => (snapshot.widget_type)(param_id),
+    }
+}
+
+fn draw_rows(
+    backend: &mut dyn RenderBackend,
+    pl: &PluginLayout,
+    theme: &Theme,
+    snapshot: &ParamSnapshot<'_>,
+    state: &mut InteractionState,
+) {
+    let w = pl.width;
+    let knob_size = pl.knob_size;
+    draw_header(backend, 0.0, 0.0, w as f32, 20.0, pl.title, pl.version, theme);
+
+    let mut y = 24.0;
+    let mut region_idx = 0usize;
+
+    for row in &pl.rows {
+        if let Some(label) = row.label {
+            draw_section_label(backend, 0.0, y, w as f32, label, theme);
+            y += 14.0;
+        }
+
+        let total_cols: u32 = row.knobs.iter().map(|k| k.span.max(1)).sum();
+        let total_w = total_cols as f32 * (knob_size + 7.0) - 7.0;
+        let start_x = (w as f32 - total_w) / 2.0;
+
+        let mut col = 0u32;
+        for kd in row.knobs.iter() {
+            let span = kd.span.max(1);
+            let x = start_x + col as f32 * (knob_size + 7.0);
+            let widget_w = span as f32 * (knob_size + 7.0) - 7.0;
+            let widget_h = knob_size;
+
+            draw_widget_entry(
+                backend,
+                theme,
+                snapshot,
+                state,
+                region_idx,
+                x,
+                y,
+                widget_w,
+                widget_h,
+                kd.param_id,
+                kd.param_id_y,
+                kd.meter_ids.as_deref(),
+                kd.label,
+                kd.widget,
+                false, // rows: never center the knob in its cell
+            );
+
+            region_idx += 1;
+            col += span;
+        }
+
+        y += knob_size + 19.0;
+    }
+}
+
+fn draw_grid(
+    backend: &mut dyn RenderBackend,
+    grid: &GridLayout,
+    theme: &Theme,
+    snapshot: &ParamSnapshot<'_>,
+    state: &mut InteractionState,
+) {
+    let w = grid.width;
+    draw_header(backend, 0.0, 0.0, w as f32, 20.0, grid.title, grid.version, theme);
+
+    let section_offsets = compute_section_offsets(grid);
+
+    for &(row_idx, label) in &grid.sections {
+        let y = GRID_HEADER_H + GRID_PADDING
+            + row_idx as f32 * (grid.cell_size + GRID_GAP)
+            + section_offsets[row_idx as usize]
+            - GRID_SECTION_H;
+        draw_section_label(backend, 0.0, y, w as f32, label, theme);
+    }
+
+    for (idx, gw) in grid.widgets.iter().enumerate() {
+        let x = GRID_PADDING + gw.col as f32 * (grid.cell_size + GRID_GAP);
+        let y = GRID_HEADER_H + GRID_PADDING
+            + gw.row as f32 * (grid.cell_size + GRID_GAP)
+            + section_offsets[gw.row as usize];
+        let widget_w = gw.col_span as f32 * (grid.cell_size + GRID_GAP) - GRID_GAP;
+        let widget_h = gw.row_span as f32 * (grid.cell_size + GRID_GAP) - GRID_GAP;
+
+        draw_widget_entry(
+            backend,
+            theme,
+            snapshot,
+            state,
+            idx,
+            x,
+            y,
+            widget_w,
+            widget_h,
+            gw.param_id,
+            gw.param_id_y,
+            gw.meter_ids.as_deref(),
+            gw.label,
+            gw.widget,
+            true, // grid: center knobs within their cell
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_widget_entry(
+    backend: &mut dyn RenderBackend,
+    theme: &Theme,
+    snapshot: &ParamSnapshot<'_>,
+    state: &mut InteractionState,
+    region_idx: usize,
+    x: f32,
+    y: f32,
+    widget_w: f32,
+    widget_h: f32,
+    param_id: u32,
+    param_id_y: Option<u32>,
+    meter_ids: Option<&[u32]>,
+    label: &'static str,
+    explicit_kind: Option<WidgetKind>,
+    center_knob_in_cell: bool,
+) {
+    let normalized = (snapshot.get_param)(param_id);
+    let value_text = (snapshot.format_param)(param_id);
+    let is_hovered = state.hover_idx == Some(region_idx);
+    let wtype = resolve_wkind_to_type(explicit_kind, param_id, snapshot);
+
+    match wtype {
+        WidgetType::Toggle => draw_toggle(
+            backend, x, y, widget_w, widget_h,
+            normalized, label, &value_text,
+            theme, is_hovered,
+        ),
+        WidgetType::Slider => draw_slider(
+            backend, x, y, widget_w, widget_h,
+            normalized, label, &value_text,
+            theme, is_hovered,
+        ),
+        WidgetType::Selector => draw_selector(
+            backend, x, y, widget_w, widget_h,
+            normalized, label, &value_text,
+            theme, is_hovered,
+        ),
+        WidgetType::Dropdown => {
+            let is_open = state.dropdown.as_ref()
+                .map_or(false, |dd| dd.region_idx == region_idx);
+            draw_dropdown(
+                backend, x, y, widget_w, widget_h,
+                normalized, label, &value_text,
+                theme, is_hovered, is_open,
+            );
+            let anchor_cy = y + widget_h / 2.0 - 8.0;
+            if let Some(region) = state.knob_regions.get_mut(region_idx) {
+                region.dropdown_anchor_y = anchor_cy + 10.0;
+            }
+        }
+        WidgetType::Meter => {
+            let fallback = [param_id];
+            let ids = meter_ids.unwrap_or(&fallback);
+            let levels: Vec<f32> = ids.iter().map(|&id| (snapshot.get_meter)(id)).collect();
+            draw_meter(backend, x, y, widget_w, widget_h, &levels, label, theme);
+        }
+        WidgetType::XYPad => {
+            let val_y_id = param_id_y.unwrap_or(param_id);
+            let vx = (snapshot.get_param)(param_id);
+            let vy = (snapshot.get_param)(val_y_id);
+            let x_name_str = (snapshot.param_name)(param_id);
+            let y_name_str = (snapshot.param_name)(val_y_id);
+            let x_name: &str = if x_name_str.is_empty() { label } else { &x_name_str };
+            let y_name: &str = &y_name_str;
+            draw_xy_pad(
+                backend, x, y, widget_w, widget_h,
+                vx, vy, x_name, y_name, theme, is_hovered,
+            );
+        }
+        WidgetType::Knob => {
+            if center_knob_in_cell {
+                let knob_size = widget_w.min(widget_h);
+                let kx = x + (widget_w - knob_size) / 2.0;
+                let ky = y + (widget_h - knob_size) / 2.0;
+                draw_knob(
+                    backend, kx, ky, knob_size, normalized,
+                    label, &value_text, theme, is_hovered,
+                );
+            } else {
+                draw_knob(
+                    backend, x, y, widget_h, normalized,
+                    label, &value_text, theme, is_hovered,
+                );
+            }
+        }
+    }
+}
+
+fn draw_dropdown_overlay(
+    backend: &mut dyn RenderBackend,
+    theme: &Theme,
+    state: &InteractionState,
+) {
+    if let Some(ref dd) = state.dropdown {
+        let (px, py, pw, _) = dd.popup_rect;
+        draw_dropdown_popup(
+            backend,
+            px,
+            py,
+            pw,
+            &dd.options,
+            dd.selected,
+            dd.hover_option,
+            dd.scroll_offset,
+            dd.visible_count,
+            theme,
+        );
+    }
 }

@@ -49,12 +49,43 @@ pub fn should_use_cg_blit() -> bool {
 }
 
 use crate::backend_cpu::CpuBackend;
-use crate::interaction::{DropdownState, InteractionState};
-use crate::layout::{GridLayout, Layout, PluginLayout, compute_section_offsets,
-                     GRID_GAP, GRID_PADDING, GRID_HEADER_H, GRID_SECTION_H};
+use crate::interaction::{self, InputEvent, InteractionState, MouseButton, ParamEdit};
+use crate::layout::{GridLayout, Layout, PluginLayout};
 use crate::render::RenderBackend;
+use crate::snapshot::ParamSnapshot;
 use crate::theme::Theme;
-use crate::widgets;
+use crate::widgets::{self, WidgetType};
+
+/// Owned `'static` closures that back a `ParamSnapshot` for the current
+/// frame. Each closure captures an `Arc` of the params / context, so the
+/// struct can live across a separate `&mut self.interaction` borrow.
+struct EditorSnapshotClosures {
+    get_param: Box<dyn Fn(u32) -> f32>,
+    get_param_plain: Box<dyn Fn(u32) -> f32>,
+    format_param: Box<dyn Fn(u32) -> String>,
+    get_meter: Box<dyn Fn(u32) -> f32>,
+    get_options: Box<dyn Fn(u32) -> Vec<String>>,
+    default_normalized: Box<dyn Fn(u32) -> f32>,
+    next_discrete_normalized: Box<dyn Fn(u32) -> f32>,
+    param_name: Box<dyn Fn(u32) -> String>,
+    widget_type: Box<dyn Fn(u32) -> WidgetType>,
+}
+
+impl EditorSnapshotClosures {
+    fn as_snapshot(&self) -> ParamSnapshot<'_> {
+        ParamSnapshot {
+            get_param: &*self.get_param,
+            get_param_plain: &*self.get_param_plain,
+            format_param: &*self.format_param,
+            get_meter: &*self.get_meter,
+            get_options: &*self.get_options,
+            default_normalized: &*self.default_normalized,
+            next_discrete_normalized: &*self.next_discrete_normalized,
+            param_name: &*self.param_name,
+            widget_type: &*self.widget_type,
+        }
+    }
+}
 
 /// Built-in editor that renders parameter widgets to a pixel buffer.
 ///
@@ -134,325 +165,168 @@ impl<P: Params + 'static> BuiltinEditor<P> {
     }
 
     /// Render all widgets to any `RenderBackend`.
+    ///
+    /// Thin wrapper over [`widgets::draw`] that builds a [`ParamSnapshot`]
+    /// from the editor's context or fallback params.
     fn render_widgets(&mut self, backend: &mut dyn RenderBackend) {
-        if matches!(self.layout, Layout::Grid(_)) {
-            self.render_grid_inner(backend);
-        } else {
-            self.render_rows_inner(backend);
-        }
+        // `widgets::draw` does not clear; do it here so the built-in
+        // editor's background matches the theme.
+        backend.clear(self.theme.background);
+        let owned = self.build_snapshot_closures();
+        let snapshot = owned.as_snapshot();
+        widgets::draw(backend, &self.layout, &self.theme, &snapshot, &mut self.interaction);
     }
 
-    fn render_rows_inner(&mut self, backend: &mut dyn RenderBackend) {
-        let pl = match &self.layout {
-            Layout::Rows(pl) => pl,
-            _ => return,
-        };
-        let w = pl.width;
-        let knob_size = pl.knob_size;
-        let title = pl.title;
-        let version = pl.version;
+    /// Build owned boxed closures from `self.context` / `self.params` that
+    /// back a `ParamSnapshot`. Each closure clones the `Arc<P>` or the
+    /// `EditorContext`, so `EditorSnapshotClosures` is `'static` and safe
+    /// to hold across a borrow of `&mut self.interaction`.
+    fn build_snapshot_closures(&self) -> EditorSnapshotClosures {
+        let ctx = self.context.clone();
+        let p = Arc::clone(&self.params);
+        let p_get = Arc::clone(&p);
+        let p_get_plain = Arc::clone(&p);
+        let p_fmt = Arc::clone(&p);
+        let p_opts = Arc::clone(&p);
+        let p_default = Arc::clone(&p);
+        let p_next = Arc::clone(&p);
+        let p_name = Arc::clone(&p);
+        let p_wtype = Arc::clone(&p);
 
-        backend.clear(self.theme.background);
-        let theme = &self.theme;
-
-        widgets::draw_header(backend, 0.0, 0.0, w as f32, 20.0, title, version, theme);
-
-        let pl = match &self.layout {
-            Layout::Rows(pl) => pl,
-            _ => return,
-        };
-        let mut y = 24.0;
-        let mut render_widget_idx = 0usize;
-
-        for row in &pl.rows {
-            if let Some(label) = row.label {
-                widgets::draw_section_label(backend, 0.0, y, w as f32, label, theme);
-                y += 14.0;
+        let get_param: Box<dyn Fn(u32) -> f32> = match &ctx {
+            Some(c) => {
+                let c = c.clone();
+                Box::new(move |id| (c.get_param)(id) as f32)
             }
-
-            let total_cols: u32 = row.knobs.iter().map(|k| k.span.max(1)).sum();
-            let total_w = total_cols as f32 * (knob_size + 7.0) - 7.0;
-            let start_x = (w as f32 - total_w) / 2.0;
-
-            let mut col = 0u32;
-            for knob_def in row.knobs.iter() {
-                let span = knob_def.span.max(1);
-                let x = start_x + col as f32 * (knob_size + 7.0);
-                let widget_w = span as f32 * (knob_size + 7.0) - 7.0;
-
-                let (normalized, value_text) = if let Some(ref ctx) = self.context {
-                    let n = (ctx.get_param)(knob_def.param_id) as f32;
-                    let t = (ctx.format_param)(knob_def.param_id);
-                    (n, t)
-                } else {
-                    let n = self.params.get_normalized(knob_def.param_id).unwrap_or(0.0) as f32;
-                    let p = self.params.get_plain(knob_def.param_id).unwrap_or(0.0);
-                    let t = self
-                        .params
-                        .format_value(knob_def.param_id, p)
-                        .unwrap_or_else(|| format!("{:.1}", p));
-                    (n, t)
-                };
-
-                let region_idx = render_widget_idx;
-                render_widget_idx += 1;
-                let is_hovered = self.interaction.hover_idx == Some(region_idx);
-
-                let wtype = resolve_widget_type(knob_def.widget, knob_def.param_id, &*self.params);
-
-                match wtype {
-                    widgets::WidgetType::Toggle => widgets::draw_toggle(
-                        backend, x, y, widget_w, knob_size,
-                        normalized, knob_def.label, &value_text,
-                        theme, is_hovered,
-                    ),
-                    widgets::WidgetType::Slider => widgets::draw_slider(
-                        backend, x, y, widget_w, knob_size,
-                        normalized, knob_def.label, &value_text,
-                        theme, is_hovered,
-                    ),
-                    widgets::WidgetType::Selector => widgets::draw_selector(
-                        backend, x, y, widget_w, knob_size,
-                        normalized, knob_def.label, &value_text,
-                        theme, is_hovered,
-                    ),
-                    widgets::WidgetType::Dropdown => {
-                        let is_open = self.interaction.dropdown.as_ref()
-                            .map_or(false, |dd| dd.region_idx == region_idx);
-                        widgets::draw_dropdown(
-                            backend, x, y, widget_w, knob_size,
-                            normalized, knob_def.label, &value_text,
-                            theme, is_hovered, is_open,
-                        );
-                        // Store the button box bottom for popup positioning
-                        let anchor_cy = y + knob_size / 2.0 - 8.0;
-                        if let Some(region) = self.interaction.knob_regions.get_mut(region_idx) {
-                            region.dropdown_anchor_y = anchor_cy + 10.0; // cy + box_h/2
-                        }
-                    },
-                    widgets::WidgetType::Meter => {
-                        let default_ids = vec![knob_def.param_id];
-                        let ids = knob_def.meter_ids.as_deref()
-                            .unwrap_or(&default_ids);
-                        let levels: Vec<f32> = if let Some(ref ctx) = self.context {
-                            ids.iter().map(|&id| (ctx.get_meter)(id)).collect()
-                        } else {
-                            vec![0.0; ids.len()]
-                        };
-                        widgets::draw_meter(
-                            backend, x, y, widget_w, knob_size,
-                            &levels, knob_def.label, theme,
-                        );
-                    },
-                    widgets::WidgetType::XYPad => {
-                        let val_y_id = knob_def.param_id_y.unwrap_or(knob_def.param_id);
-                        let (vx, vy) = if let Some(ref ctx) = self.context {
-                            ((ctx.get_param)(knob_def.param_id) as f32,
-                             (ctx.get_param)(val_y_id) as f32)
-                        } else {
-                            (self.params.get_normalized(knob_def.param_id).unwrap_or(0.0) as f32,
-                             self.params.get_normalized(val_y_id).unwrap_or(0.0) as f32)
-                        };
-                        let infos = self.params.param_infos();
-                        let x_name = infos.iter().find(|i| i.id == knob_def.param_id)
-                            .map(|i| i.name).unwrap_or(knob_def.label);
-                        let y_name = infos.iter().find(|i| i.id == val_y_id)
-                            .map(|i| i.name).unwrap_or("");
-                        widgets::draw_xy_pad(
-                            backend, x, y, widget_w, knob_size,
-                            vx, vy, x_name, y_name, theme, is_hovered,
-                        );
-                    },
-                    widgets::WidgetType::Knob => widgets::draw_knob(
-                        backend, x, y, knob_size, normalized,
-                        knob_def.label, &value_text, theme, is_hovered,
-                    ),
-                }
-                col += span;
+            None => Box::new(move |id| p_get.get_normalized(id).unwrap_or(0.0) as f32),
+        };
+        let get_param_plain: Box<dyn Fn(u32) -> f32> = match &ctx {
+            Some(c) => {
+                let c = c.clone();
+                Box::new(move |id| (c.get_param_plain)(id) as f32)
             }
-
-            y += knob_size + 19.0;
-        }
-
-        // Dropdown popup overlay (rendered last, on top of everything)
-        self.render_dropdown_popup(backend);
-    }
-
-    fn render_grid_inner(&mut self, backend: &mut dyn RenderBackend) {
-        let grid = match &self.layout {
-            Layout::Grid(g) => g,
-            _ => return,
+            None => Box::new(move |id| p_get_plain.get_plain(id).unwrap_or(0.0) as f32),
         };
-        let w = grid.width;
-        let title = grid.title;
-        let version = grid.version;
-
-        backend.clear(self.theme.background);
-        let theme = &self.theme;
-
-        widgets::draw_header(backend, 0.0, 0.0, w as f32, 20.0, title, version, theme);
-
-        let grid = match &self.layout {
-            Layout::Grid(g) => g,
-            _ => return,
+        let format_param: Box<dyn Fn(u32) -> String> = match &ctx {
+            Some(c) => {
+                let c = c.clone();
+                Box::new(move |id| (c.format_param)(id))
+            }
+            None => Box::new(move |id| {
+                let v = p_fmt.get_plain(id).unwrap_or(0.0);
+                p_fmt.format_value(id, v).unwrap_or_else(|| format!("{:.1}", v))
+            }),
         };
-
-        let section_offsets = compute_section_offsets(grid);
-
-        // Section labels
-        for &(row_idx, label) in &grid.sections {
-            let y = GRID_HEADER_H + GRID_PADDING
-                + row_idx as f32 * (grid.cell_size + GRID_GAP)
-                + section_offsets[row_idx as usize]
-                - GRID_SECTION_H;
-            widgets::draw_section_label(backend, 0.0, y, w as f32, label, theme);
-        }
-
-        // Widgets
-        for (idx, gw) in grid.widgets.iter().enumerate() {
-            let x = GRID_PADDING + gw.col as f32 * (grid.cell_size + GRID_GAP);
-            let y = GRID_HEADER_H + GRID_PADDING
-                + gw.row as f32 * (grid.cell_size + GRID_GAP)
-                + section_offsets[gw.row as usize];
-            let widget_w = gw.col_span as f32 * (grid.cell_size + GRID_GAP) - GRID_GAP;
-            let widget_h = gw.row_span as f32 * (grid.cell_size + GRID_GAP) - GRID_GAP;
-
-            let (normalized, value_text) = if let Some(ref ctx) = self.context {
-                let n = (ctx.get_param)(gw.param_id) as f32;
-                let t = (ctx.format_param)(gw.param_id);
-                (n, t)
-            } else {
-                let n = self.params.get_normalized(gw.param_id).unwrap_or(0.0) as f32;
-                let p = self.params.get_plain(gw.param_id).unwrap_or(0.0);
-                let t = self
-                    .params
-                    .format_value(gw.param_id, p)
-                    .unwrap_or_else(|| format!("{:.1}", p));
-                (n, t)
+        let get_meter: Box<dyn Fn(u32) -> f32> = match &ctx {
+            Some(c) => {
+                let c = c.clone();
+                Box::new(move |id| (c.get_meter)(id))
+            }
+            None => Box::new(move |_| 0.0),
+        };
+        let get_options: Box<dyn Fn(u32) -> Vec<String>> = Box::new(move |id| {
+            let info = match p_opts.param_infos().into_iter().find(|i| i.id == id) {
+                Some(i) => i,
+                None => return Vec::new(),
             };
-
-            let is_hovered = self.interaction.hover_idx == Some(idx);
-            let wtype = resolve_widget_type(gw.widget, gw.param_id, &*self.params);
-
-            match wtype {
-                widgets::WidgetType::Toggle => widgets::draw_toggle(
-                    backend, x, y, widget_w, widget_h,
-                    normalized, gw.label, &value_text, theme, is_hovered,
-                ),
-                widgets::WidgetType::Slider => widgets::draw_slider(
-                    backend, x, y, widget_w, widget_h,
-                    normalized, gw.label, &value_text, theme, is_hovered,
-                ),
-                widgets::WidgetType::Selector => widgets::draw_selector(
-                    backend, x, y, widget_w, widget_h,
-                    normalized, gw.label, &value_text, theme, is_hovered,
-                ),
-                widgets::WidgetType::Dropdown => {
-                    let is_open = self.interaction.dropdown.as_ref()
-                        .map_or(false, |dd| dd.region_idx == idx);
-                    widgets::draw_dropdown(
-                        backend, x, y, widget_w, widget_h,
-                        normalized, gw.label, &value_text,
-                        theme, is_hovered, is_open,
-                    );
-                    // Store the button box bottom for popup positioning
-                    let anchor_cy = y + widget_h / 2.0 - 8.0;
-                    if let Some(region) = self.interaction.knob_regions.get_mut(idx) {
-                        region.dropdown_anchor_y = anchor_cy + 10.0; // cy + box_h/2
-                    }
-                },
-                widgets::WidgetType::Meter => {
-                    let default_ids = vec![gw.param_id];
-                    let ids = gw.meter_ids.as_deref().unwrap_or(&default_ids);
-                    let levels: Vec<f32> = if let Some(ref ctx) = self.context {
-                        ids.iter().map(|&id| (ctx.get_meter)(id)).collect()
-                    } else {
-                        vec![0.0; ids.len()]
-                    };
-                    widgets::draw_meter(
-                        backend, x, y, widget_w, widget_h,
-                        &levels, gw.label, theme,
-                    );
-                },
-                widgets::WidgetType::XYPad => {
-                    let val_y_id = gw.param_id_y.unwrap_or(gw.param_id);
-                    let (vx, vy) = if let Some(ref ctx) = self.context {
-                        ((ctx.get_param)(gw.param_id) as f32,
-                         (ctx.get_param)(val_y_id) as f32)
-                    } else {
-                        (self.params.get_normalized(gw.param_id).unwrap_or(0.0) as f32,
-                         self.params.get_normalized(val_y_id).unwrap_or(0.0) as f32)
-                    };
-                    let infos = self.params.param_infos();
-                    let x_name = infos.iter().find(|i| i.id == gw.param_id)
-                        .map(|i| i.name).unwrap_or(gw.label);
-                    let y_name = infos.iter().find(|i| i.id == val_y_id)
-                        .map(|i| i.name).unwrap_or("");
-                    widgets::draw_xy_pad(
-                        backend, x, y, widget_w, widget_h,
-                        vx, vy, x_name, y_name, theme, is_hovered,
-                    );
-                },
-                widgets::WidgetType::Knob => {
-                    let knob_size = widget_w.min(widget_h);
-                    let kx = x + (widget_w - knob_size) / 2.0;
-                    let ky = y + (widget_h - knob_size) / 2.0;
-                    widgets::draw_knob(
-                        backend, kx, ky, knob_size, normalized,
-                        gw.label, &value_text, theme, is_hovered,
-                    );
-                },
+            let count = (info.range.step_count().max(1) as usize) + 1;
+            (0..count)
+                .map(|i| {
+                    let norm = if count <= 1 { 0.0 } else { i as f64 / (count - 1) as f64 };
+                    let plain = info.range.denormalize(norm);
+                    p_opts.format_value(id, plain).unwrap_or_else(|| format!("{:.0}", plain))
+                })
+                .collect()
+        });
+        let default_normalized: Box<dyn Fn(u32) -> f32> = Box::new(move |id| {
+            match p_default.param_infos().iter().find(|i| i.id == id) {
+                Some(info) => info.range.normalize(info.default_plain) as f32,
+                None => 0.0,
             }
-        }
+        });
+        let next_discrete_normalized: Box<dyn Fn(u32) -> f32> = Box::new(move |id| {
+            let info = match p_next.param_infos().into_iter().find(|i| i.id == id) {
+                Some(i) => i,
+                None => return 0.0,
+            };
+            let plain = p_next.get_plain(id).unwrap_or(0.0);
+            let max = info.range.max();
+            let next = if plain >= max { 0.0 } else { plain + 1.0 };
+            info.range.normalize(next) as f32
+        });
+        let param_name: Box<dyn Fn(u32) -> String> = Box::new(move |id| {
+            p_name
+                .param_infos()
+                .into_iter()
+                .find(|i| i.id == id)
+                .map(|i| i.name.to_string())
+                .unwrap_or_default()
+        });
+        let widget_type: Box<dyn Fn(u32) -> WidgetType> = Box::new(move |id| {
+            let info = p_wtype.param_infos().into_iter().find(|i| i.id == id);
+            match info.as_ref().map(|i| &i.range) {
+                Some(truce_params::ParamRange::Discrete { min: 0, max: 1 }) => WidgetType::Toggle,
+                Some(truce_params::ParamRange::Enum { .. }) => WidgetType::Selector,
+                _ => WidgetType::Knob,
+            }
+        });
 
-        // Dropdown popup overlay (rendered last, on top of everything)
-        self.render_dropdown_popup(backend);
+        EditorSnapshotClosures {
+            get_param,
+            get_param_plain,
+            format_param,
+            get_meter,
+            get_options,
+            default_normalized,
+            next_discrete_normalized,
+            param_name,
+            widget_type,
+        }
     }
 
-    /// Draw the dropdown popup overlay if one is open.
-    fn render_dropdown_popup(&self, backend: &mut dyn RenderBackend) {
-        if let Some(ref dd) = self.interaction.dropdown {
-            let (px, py, pw, _) = dd.popup_rect;
-            widgets::draw_dropdown_popup(
-                backend,
-                px,
-                py,
-                pw,
-                &dd.options,
-                dd.selected,
-                dd.hover_option,
-                dd.scroll_offset,
-                dd.visible_count,
-                &self.theme,
-            );
+    /// Apply a single `ParamEdit` returned by `interaction::dispatch`.
+    fn apply_edit(&self, edit: ParamEdit) {
+        match edit {
+            ParamEdit::Begin { id } => {
+                if let Some(ref ctx) = self.context {
+                    (ctx.begin_edit)(id);
+                }
+            }
+            ParamEdit::Set { id, normalized } => {
+                self.params.set_normalized(id, normalized as f64);
+                if let Some(ref ctx) = self.context {
+                    (ctx.set_param)(id, normalized as f64);
+                }
+            }
+            ParamEdit::End { id } => {
+                if let Some(ref ctx) = self.context {
+                    (ctx.end_edit)(id);
+                }
+            }
+        }
+    }
+
+    /// Feed a batch of input events through `interaction::dispatch` and
+    /// apply the resulting param edits.
+    fn dispatch_events(&mut self, events: &[InputEvent]) {
+        let owned = self.build_snapshot_closures();
+        let snapshot = owned.as_snapshot();
+        let edits = interaction::dispatch(
+            events,
+            &self.layout,
+            &snapshot,
+            &mut self.interaction,
+        );
+        drop(snapshot);
+        drop(owned);
+        for e in edits {
+            self.apply_edit(e);
         }
     }
 
     /// Get the raw pixel data after rendering (RGBA premultiplied).
     pub fn pixel_data(&self) -> Option<&[u8]> {
         self.backend.as_ref().map(|b| b.data())
-    }
-
-    /// Get the KnobDef at a flattened index (Rows layout only).
-    fn knob_def_at(&self, idx: usize) -> Option<&crate::layout::KnobDef> {
-        if let Layout::Rows(pl) = &self.layout {
-            let mut i = 0;
-            for row in &pl.rows {
-                for kd in &row.knobs {
-                    if i == idx { return Some(kd); }
-                    i += 1;
-                }
-            }
-        }
-        None
-    }
-
-    /// Get the Y-axis param ID for an XY pad at the given region index.
-    fn param_id_y_at(&self, idx: usize) -> Option<u32> {
-        match &self.layout {
-            Layout::Rows(_) => self.knob_def_at(idx).and_then(|kd| kd.param_id_y),
-            Layout::Grid(g) => g.widgets.get(idx).and_then(|w| w.param_id_y),
-        }
     }
 
     // --- Public API for external backends (truce-gpu) ---
@@ -487,269 +361,41 @@ impl<P: Params + 'static> BuiltinEditor<P> {
     }
 
     // --- Mouse event handlers (public for external backends) ---
+    //
+    // These thinly wrap `interaction::dispatch` — each converts the call
+    // into a 1-element event batch, runs dispatch, and applies the
+    // returned `ParamEdit`s via `apply_edit`.
 
     pub fn on_mouse_down(&mut self, x: f32, y: f32) {
-        // If a dropdown popup is open, check if the click is inside it
-        if self.interaction.dropdown_is_open() {
-            if let Some(option_idx) = self.interaction.dropdown_popup_hit(x, y) {
-                // Select the clicked option
-                let dd = self.interaction.dropdown.as_ref().unwrap();
-                let param_id = dd.param_id;
-                let count = dd.options.len();
-                let new_norm = if count <= 1 {
-                    0.0
-                } else {
-                    option_idx as f64 / (count - 1) as f64
-                };
-                self.params.set_normalized(param_id, new_norm);
-                if let Some(ref ctx) = self.context {
-                    (ctx.begin_edit)(param_id);
-                    (ctx.set_param)(param_id, new_norm);
-                    (ctx.end_edit)(param_id);
-                }
-                self.interaction.dropdown_close();
-                return;
-            }
-            // Click outside popup — close it. If the click landed on the
-            // same dropdown button, just close (don't reopen).
-            let open_region = self.interaction.dropdown.as_ref().unwrap().region_idx;
-            self.interaction.dropdown_close();
-            if let Some(idx) = self.interaction.hit_test(x, y) {
-                if idx == open_region
-                    && self.interaction.widget_type_at(idx) == Some(crate::widgets::WidgetType::Dropdown)
-                {
-                    return;
-                }
-            }
-            // Fall through to check if they clicked another widget
-        }
-
-        if let Some(idx) = self.interaction.hit_test(x, y) {
-            let param_id = self.interaction.knob_regions[idx].param_id;
-            let wtype = self.interaction.widget_type_at(idx);
-            if wtype == Some(crate::widgets::WidgetType::Toggle) {
-                let norm = self.params.get_normalized(param_id).unwrap_or(0.0);
-                let new_norm = if norm > 0.5 { 0.0 } else { 1.0 };
-                self.params.set_normalized(param_id, new_norm);
-                if let Some(ref ctx) = self.context {
-                    (ctx.begin_edit)(param_id);
-                    (ctx.set_param)(param_id, new_norm);
-                    (ctx.end_edit)(param_id);
-                }
-            } else if wtype == Some(crate::widgets::WidgetType::Selector) {
-                if let Some(info) = self.params.param_infos().into_iter().find(|i| i.id == param_id) {
-                    let plain = self.params.get_plain(param_id).unwrap_or(0.0);
-                    let max = info.range.max();
-                    let next = if plain >= max { 0.0 } else { plain + 1.0 };
-                    let new_norm = info.range.normalize(next);
-                    self.params.set_normalized(param_id, new_norm);
-                    if let Some(ref ctx) = self.context {
-                        (ctx.begin_edit)(param_id);
-                        (ctx.set_param)(param_id, new_norm);
-                        (ctx.end_edit)(param_id);
-                    }
-                }
-            } else if wtype == Some(crate::widgets::WidgetType::Dropdown) {
-                // Open the dropdown popup
-                if let Some(info) = self.params.param_infos().into_iter().find(|i| i.id == param_id) {
-                    let count = info.range.step_count().max(1) as usize + 1;
-                    let options: Vec<String> = (0..count)
-                        .map(|i| {
-                            let norm = if count <= 1 { 0.0 } else { i as f64 / (count - 1) as f64 };
-                            let plain = info.range.denormalize(norm);
-                            self.params.format_value(param_id, plain)
-                                .unwrap_or_else(|| format!("{:.0}", plain))
-                        })
-                        .collect();
-                    let current_norm = self.params.get_normalized(param_id).unwrap_or(0.0);
-                    let selected = (current_norm * (count - 1).max(1) as f64).round() as usize;
-                    let region = &self.interaction.knob_regions[idx];
-
-                    let item_h = 18.0f32;
-                    let padding = 4.0f32;
-                    let window_w = self.layout.width() as f32;
-                    let window_h = self.layout.height() as f32;
-
-                    let anchor_below = region.dropdown_anchor_y; // bottom of button box
-                    let anchor_above = anchor_below - 20.0;      // top of button box (box_h=20)
-                    let popup_w = region.w.max(80.0);
-                    let full_popup_h = options.len() as f32 * item_h + padding * 2.0;
-
-                    // Vertical: prefer below, flip above if needed, pin if neither fits
-                    let (popup_y, avail_h) = if anchor_below + full_popup_h <= window_h {
-                        // Fits below
-                        (anchor_below, full_popup_h)
-                    } else if anchor_above - full_popup_h >= 0.0 {
-                        // Fits above
-                        (anchor_above - full_popup_h, full_popup_h)
-                    } else {
-                        // Neither fits — use whichever side has more space, clamp height
-                        let space_below = window_h - anchor_below;
-                        let space_above = anchor_above;
-                        if space_below >= space_above {
-                            (anchor_below, space_below.max(item_h + padding * 2.0))
-                        } else {
-                            let h = space_above.max(item_h + padding * 2.0);
-                            (anchor_above - h, h)
-                        }
-                    };
-
-                    // Clamp visible count based on available height
-                    let visible_count = ((avail_h - padding * 2.0) / item_h)
-                        .floor()
-                        .max(1.0) as usize;
-                    let visible_count = visible_count.min(options.len());
-                    let popup_h = visible_count as f32 * item_h + padding * 2.0;
-
-                    // Horizontal: clamp to window bounds
-                    let popup_x = region.x.clamp(0.0, (window_w - popup_w).max(0.0));
-
-                    // Scroll so the selected item is visible
-                    let scroll_offset = if selected >= visible_count {
-                        selected - visible_count + 1
-                    } else {
-                        0
-                    };
-
-                    self.interaction.dropdown = Some(DropdownState {
-                        region_idx: idx,
-                        param_id,
-                        popup_rect: (popup_x, popup_y, popup_w, popup_h),
-                        options,
-                        selected,
-                        hover_option: None,
-                        scroll_offset,
-                        visible_count,
-                    });
-                }
-            } else {
-                let norm = self.params.get_normalized(param_id).unwrap_or(0.0);
-                self.interaction.begin_drag(idx, norm, y);
-                if let Some(ref ctx) = self.context {
-                    (ctx.begin_edit)(param_id);
-                    if wtype == Some(crate::widgets::WidgetType::XYPad) {
-                        if let Some(y_id) = self.param_id_y_at(idx) {
-                            (ctx.begin_edit)(y_id);
-                        }
-                    }
-                }
-            }
-        }
+        self.dispatch_events(&[InputEvent::MouseDown {
+            x,
+            y,
+            button: MouseButton::Left,
+        }]);
     }
 
     pub fn on_mouse_dragged(&mut self, x: f32, y: f32) {
-        if let Some(drag) = &self.interaction.dragging {
-            if drag.widget_type == crate::widgets::WidgetType::XYPad {
-                let pad_margin = 4.0;
-                let label_h = 18.0;
-                let pad_x = drag.region_x + pad_margin;
-                let pad_w = drag.region_w - pad_margin * 2.0;
-                let pad_y_start = drag.region_y + pad_margin;
-                let pad_h = drag.region_h - pad_margin * 2.0 - label_h;
-
-                let norm_x = ((x - pad_x) / pad_w).clamp(0.0, 1.0) as f64;
-                let norm_y = (1.0 - (y - pad_y_start) / pad_h).clamp(0.0, 1.0) as f64;
-
-                let param_id = drag.param_id;
-                let region_idx = drag.region_idx;
-                self.params.set_normalized(param_id, norm_x);
-                if let Some(ref ctx) = self.context {
-                    (ctx.set_param)(param_id, norm_x);
-                }
-
-                if let Some(y_id) = self.param_id_y_at(region_idx) {
-                    self.params.set_normalized(y_id, norm_y);
-                    if let Some(ref ctx) = self.context {
-                        (ctx.set_param)(y_id, norm_y);
-                    }
-                }
-            } else if drag.widget_type == crate::widgets::WidgetType::Slider {
-                if let Some((param_id, new_norm)) = self.interaction.update_slider_drag(x) {
-                    self.params.set_normalized(param_id, new_norm);
-                    if let Some(ref ctx) = self.context {
-                        (ctx.set_param)(param_id, new_norm);
-                    }
-                }
-            } else {
-                if let Some((param_id, new_norm)) = self.interaction.update_drag(y) {
-                    self.params.set_normalized(param_id, new_norm);
-                    if let Some(ref ctx) = self.context {
-                        (ctx.set_param)(param_id, new_norm);
-                    }
-                }
-            }
-        }
+        self.dispatch_events(&[InputEvent::MouseMove { x, y }]);
     }
 
-    pub fn on_mouse_up(&mut self, _x: f32, _y: f32) {
-        if let Some(drag) = &self.interaction.dragging {
-            let param_id = drag.param_id;
-            let was_xy = drag.widget_type == crate::widgets::WidgetType::XYPad;
-            let region_idx = drag.region_idx;
-            self.interaction.end_drag();
-            if let Some(ref ctx) = self.context {
-                (ctx.end_edit)(param_id);
-                if was_xy {
-                    if let Some(y_id) = self.param_id_y_at(region_idx) {
-                        (ctx.end_edit)(y_id);
-                    }
-                }
-            }
-        }
+    pub fn on_mouse_up(&mut self, x: f32, y: f32) {
+        self.dispatch_events(&[InputEvent::MouseUp {
+            x,
+            y,
+            button: MouseButton::Left,
+        }]);
     }
 
     pub fn on_double_click(&mut self, x: f32, y: f32) {
-        if let Some(idx) = self.interaction.hit_test(x, y) {
-            let param_id = self.interaction.knob_regions[idx].param_id;
-            // Reset to default value
-            let infos = self.params.param_infos();
-            if let Some(info) = infos.iter().find(|i| i.id == param_id) {
-                let default_norm = info.range.normalize(info.default_plain);
-                self.params.set_normalized(param_id, default_norm);
-                if let Some(ref ctx) = self.context {
-                    (ctx.begin_edit)(param_id);
-                    (ctx.set_param)(param_id, default_norm);
-                    (ctx.end_edit)(param_id);
-                }
-            }
-        }
+        self.dispatch_events(&[InputEvent::MouseDoubleClick { x, y }]);
     }
 
     pub fn on_scroll(&mut self, x: f32, y: f32, delta_y: f32) {
-        // If a dropdown popup is open and the cursor is over it, scroll the popup
-        if self.interaction.dropdown_is_open() {
-            if self.interaction.dropdown_popup_hit(x, y).is_some()
-                || self.interaction.dropdown.as_ref().map_or(false, |dd| {
-                    let (px, py, pw, ph) = dd.popup_rect;
-                    x >= px && x <= px + pw && y >= py && y <= py + ph
-                })
-            {
-                let delta = if delta_y > 0.0 { -1 } else { 1 };
-                self.interaction.dropdown_scroll(delta);
-                return;
-            }
-        }
-
-        if let Some(idx) = self.interaction.hit_test(x, y) {
-            let param_id = self.interaction.knob_regions[idx].param_id;
-            let norm = self.params.get_normalized(param_id).unwrap_or(0.0);
-            let step = delta_y as f64 / 200.0; // 200 pixels of scroll = full range
-            let new_norm = (norm + step).clamp(0.0, 1.0);
-            self.params.set_normalized(param_id, new_norm);
-            if let Some(ref ctx) = self.context {
-                (ctx.begin_edit)(param_id);
-                (ctx.set_param)(param_id, new_norm);
-                (ctx.end_edit)(param_id);
-            }
-        }
+        self.dispatch_events(&[InputEvent::Scroll { x, y, dy: delta_y }]);
     }
 
     pub fn on_mouse_moved(&mut self, x: f32, y: f32) -> bool {
-        // Update dropdown popup hover if open
-        if self.interaction.dropdown_is_open() {
-            self.interaction.dropdown_update_hover(x, y);
-        }
-        self.interaction.hover_idx = self.interaction.hit_test(x, y);
+        self.dispatch_events(&[InputEvent::MouseMove { x, y }]);
         self.interaction.hover_idx.is_some() || self.interaction.dropdown_is_open()
     }
 }
