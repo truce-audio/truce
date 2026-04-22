@@ -13,12 +13,12 @@ use truce_egui::theme::{HEADER_BG, HEADER_TEXT};
 use truce_egui::widgets::{param_knob, param_selector};
 use truce_egui::{EguiEditor, ParamState};
 
-const WINDOW_W: u32 = 320;
-const WINDOW_H: u32 = 220;
+const WINDOW_W: u32 = 270;
+const WINDOW_H: u32 = 162;
 
 // --- Parameters ---
 
-use TempoSyncParamsParamId as P;
+use TremoloParamsParamId as P;
 
 /// LFO-cycle length as a note value. Maps directly to beats per cycle
 /// (`Quarter == 1.0`, `Eighth == 0.5`, ...).
@@ -78,7 +78,7 @@ impl Shape {
 }
 
 #[derive(Params)]
-pub struct TempoSyncParams {
+pub struct TremoloParams {
     #[param(name = "Depth", range = "linear(0, 1)", smooth = "exp(5)")]
     pub depth: FloatParam,
 
@@ -91,8 +91,8 @@ pub struct TempoSyncParams {
 
 // --- Plugin ---
 
-pub struct TempoSync {
-    params: std::sync::Arc<TempoSyncParams>,
+pub struct Tremolo {
+    params: std::sync::Arc<TremoloParams>,
     /// Free-running phase used when the host provides no tempo (e.g.
     /// standalone running, or a host that does not report transport).
     /// Advances at 2 Hz so the effect stays visibly active offline.
@@ -100,8 +100,8 @@ pub struct TempoSync {
     sample_rate: f64,
 }
 
-impl TempoSync {
-    pub fn new(params: std::sync::Arc<TempoSyncParams>) -> Self {
+impl Tremolo {
+    pub fn new(params: std::sync::Arc<TremoloParams>) -> Self {
         Self {
             params,
             free_phase: 0.0,
@@ -113,7 +113,7 @@ impl TempoSync {
 /// Rate at which `free_phase` advances when no host tempo is available.
 const FREE_LFO_HZ: f32 = 2.0;
 
-impl PluginLogic for TempoSync {
+impl PluginLogic for Tremolo {
     fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {
         self.sample_rate = sample_rate;
         self.params.set_sample_rate(sample_rate);
@@ -177,14 +177,14 @@ impl PluginLogic for TempoSync {
 
     fn custom_editor(&self) -> Option<Box<dyn truce_core::editor::Editor>> {
         Some(Box::new(
-            EguiEditor::new((WINDOW_W, WINDOW_H), tempo_sync_ui)
+            EguiEditor::new((WINDOW_W, WINDOW_H), tremolo_ui)
                 .with_visuals(truce_egui::theme::dark())
                 .with_font(truce_gui::font::JETBRAINS_MONO),
         ))
     }
 }
 
-fn tempo_sync_ui(ctx: &egui::Context, state: &ParamState) {
+fn tremolo_ui(ctx: &egui::Context, state: &ParamState) {
     egui::TopBottomPanel::top("header")
         .exact_height(30.0)
         .frame(egui::Frame::NONE.fill(HEADER_BG))
@@ -192,7 +192,7 @@ fn tempo_sync_ui(ctx: &egui::Context, state: &ParamState) {
             ui.horizontal_centered(|ui| {
                 ui.add_space(10.0);
                 ui.label(
-                    egui::RichText::new("TEMPO SYNC")
+                    egui::RichText::new("TREMOLO")
                         .size(14.0)
                         .color(HEADER_TEXT)
                         .strong(),
@@ -261,8 +261,8 @@ fn format_transport(
 }
 
 truce::plugin! {
-    logic: TempoSync,
-    params: TempoSyncParams,
+    logic: Tremolo,
+    params: TremoloParams,
 }
 
 #[cfg(test)]
@@ -337,4 +337,5 @@ mod tests {
             }
         }
     }
+
 }

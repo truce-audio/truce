@@ -1,8 +1,8 @@
-# Tempo Sync
+# Tremolo
 
-Beat-synced amplitude LFO (tremolo / chopper). Demonstrates the
-host-transport feature end-to-end: the DSP reads `ProcessContext::transport`
-to lock the LFO phase to the host's beat grid, and the editor reads
+Beat-synced amplitude LFO. Demonstrates the host-transport feature
+end-to-end: the DSP reads `ProcessContext::transport` to lock the LFO
+phase to the host's beat grid, and the editor reads
 `EditorContext::transport` to show the current tempo / play state /
 beat position live in the UI.
 
@@ -28,7 +28,7 @@ stays audible, and the readout shows `—` placeholders.
 ## Build and test
 
 ```bash
-cargo build -p truce-example-tempo-sync
-cargo test -p truce-example-tempo-sync
-cargo xtask install -p tempo-sync
+cargo build -p truce-example-tremolo
+cargo test -p truce-example-tremolo
+cargo xtask install -p tremolo
 ```

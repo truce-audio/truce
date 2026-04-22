@@ -6256,17 +6256,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "truce-example-tempo-sync"
+name = "truce-example-transpose"
 version = "0.4.0"
 dependencies = [
  "clap-sys",
- "egui",
  "truce",
  "truce-aax",
  "truce-au",
  "truce-clap",
  "truce-core",
- "truce-egui",
  "truce-gui",
  "truce-loader",
  "truce-lv2",
@@ -6278,15 +6276,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "truce-example-transpose"
+name = "truce-example-tremolo"
 version = "0.4.0"
 dependencies = [
  "clap-sys",
+ "egui",
  "truce",
  "truce-aax",
  "truce-au",
  "truce-clap",
  "truce-core",
+ "truce-egui",
  "truce-gui",
  "truce-loader",
  "truce-lv2",

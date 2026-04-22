@@ -1,5 +1,5 @@
 [package]
-name = "truce-example-tempo-sync"
+name = "truce-example-tremolo"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

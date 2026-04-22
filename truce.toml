@@ -103,12 +103,12 @@ au_tag = "Effects"
 aax_category = "Dynamics"
 
 [[plugin]]
-name = "Truce Tempo Sync"
-suffix = "tempo-sync"
-crate = "truce-example-tempo-sync"
+name = "Truce Tremolo"
+suffix = "tremolo"
+crate = "truce-example-tremolo"
 category = "effect"
-fourcc = "TTmS"
-au3_subtype = "TTS3"
+fourcc = "TTrM"
+au3_subtype = "TTM3"
 au_tag = "Effects"
 aax_category = "Modulation"
 
