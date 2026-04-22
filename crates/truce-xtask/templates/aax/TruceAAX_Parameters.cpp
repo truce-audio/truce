@@ -183,9 +183,18 @@ void TruceAAX_Parameters::RenderAudio(
             transport.position_beats = (double)tickPos / 960000.0;
             transport.valid = 1;
         }
-        int64_t barTicks = 0, beatTicks = 0;
-        if (trans->GetCurrentBarBeatPosition(&barTicks, &beatTicks) == AAX_SUCCESS) {
-            transport.bar_start_beats = (double)barTicks / 960000.0;
+        // Bar/beat at the current sample location. GetBarBeatPosition
+        // returns zero-based bar + beat indices; convert to a beat
+        // count by multiplying bars by the reported meter numerator.
+        int32_t bars = 0, beats = 0;
+        int64_t barDisplayTicks = 0;
+        int64_t samplePos = (int64_t)transport.position_samples;
+        if (trans->GetBarBeatPosition(&bars, &beats, &barDisplayTicks, samplePos)
+                == AAX_SUCCESS
+            && transport.time_sig_num > 0)
+        {
+            transport.bar_start_beats =
+                (double)bars * (double)transport.time_sig_num;
             transport.valid = 1;
         }
         bool loop = false;

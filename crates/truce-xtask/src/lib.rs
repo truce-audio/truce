@@ -1753,13 +1753,21 @@ pub(crate) fn build_aax_template(_root: &Path, sdk_path: &Path, universal_mac: b
     #[cfg(target_os = "windows")]
     let _ = universal_mac;
 
-    // Write embedded template files to a temp directory
+    // Write embedded template files to a temp directory.
+    //
+    // Only the source tree is wiped — the sibling `build/` directory is
+    // preserved so CMake's incremental build cache survives. The source
+    // writes bump each file's mtime, so CMake re-compiles exactly the
+    // files whose embedded bytes changed in the cargo-truce binary (and
+    // no-ops when nothing has).
     let template_dir = tmp_dir().join("aax_template");
     let src_dir = template_dir.join("src");
-    let _ = fs::remove_dir_all(&template_dir);
+    let cmake_lists = template_dir.join("CMakeLists.txt");
+    let _ = fs::remove_dir_all(&src_dir);
+    let _ = fs::remove_file(&cmake_lists);
     fs_ctx::create_dir_all(&src_dir)?;
 
-    fs_ctx::write(template_dir.join("CMakeLists.txt"), templates::aax::CMAKE_LISTS)?;
+    fs_ctx::write(&cmake_lists, templates::aax::CMAKE_LISTS)?;
     fs_ctx::write(src_dir.join("TruceAAX_Bridge.cpp"), templates::aax::BRIDGE_CPP)?;
     fs_ctx::write(src_dir.join("TruceAAX_Bridge.h"), templates::aax::BRIDGE_H)?;
     fs_ctx::write(src_dir.join("TruceAAX_Describe.cpp"), templates::aax::DESCRIBE_CPP)?;
@@ -2000,24 +2008,30 @@ fn install_aax(root: &Path, p: &PluginDef, config: &Config) -> Res {
     let template = template_binary();
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     let template: PathBuf = unreachable!();
-    if !template.exists() {
-        if let Some(sdk_path) = resolve_aax_sdk_path(config) {
+    // Always invoke `build_aax_template`: it rewrites embedded template
+    // sources (so a freshly-built `cargo-truce` with updated templates
+    // propagates into the C++ build) and cmake does an incremental
+    // rebuild — near-no-op when nothing changed. Previously this was
+    // gated on `!template.exists()`, which silently shipped stale C++
+    // whenever the Rust↔C++ ABI had shifted since the last install.
+    if let Some(sdk_path) = resolve_aax_sdk_path(config) {
+        if !template.exists() {
             eprintln!("AAX: building template with SDK at {}", sdk_path.display());
-            // `install` only needs the host arch — universal template builds
-            // are reserved for the packaging path (`cargo truce package`).
-            build_aax_template(root, &sdk_path, false)?;
-        } else {
-            let hint = if cfg!(target_os = "windows") {
-                "[windows].aax_sdk_path"
-            } else {
-                "[macos].aax_sdk_path"
-            };
-            eprintln!(
-                "AAX: template not built, skipping.\n  \
-                 Set {hint} in truce.toml or AAX_SDK_PATH env var."
-            );
-            return Ok(());
         }
+        // `install` only needs the host arch — universal template builds
+        // are reserved for the packaging path (`cargo truce package`).
+        build_aax_template(root, &sdk_path, false)?;
+    } else if !template.exists() {
+        let hint = if cfg!(target_os = "windows") {
+            "[windows].aax_sdk_path"
+        } else {
+            "[macos].aax_sdk_path"
+        };
+        eprintln!(
+            "AAX: template not built, skipping.\n  \
+             Set {hint} in truce.toml or AAX_SDK_PATH env var."
+        );
+        return Ok(());
     }
     if !template.exists() {
         return Err(format!(
@@ -4054,13 +4068,16 @@ fn stage_aax(
     no_pace_sign: bool,
 ) -> Res {
     let template = tmp_dir().join("aax_template/build/TruceAAXTemplate.aaxplugin/Contents/MacOS/TruceAAXTemplate");
-    if !template.exists() {
-        if let Some(sdk_path) = resolve_aax_sdk_path(config) {
+    // Always rebuild the template: it rewrites embedded sources (so
+    // template edits in cargo-truce propagate) and cmake incrementally
+    // rebuilds only the files whose bytes actually changed.
+    if let Some(sdk_path) = resolve_aax_sdk_path(config) {
+        if !template.exists() {
             eprintln!("AAX: building template with SDK at {}", sdk_path.display());
-            build_aax_template(root, &sdk_path, universal_mac)?;
-        } else {
-            return Err("AAX SDK not configured. Set [macos].aax_sdk_path in truce.toml or AAX_SDK_PATH env var.".into());
         }
+        build_aax_template(root, &sdk_path, universal_mac)?;
+    } else if !template.exists() {
+        return Err("AAX SDK not configured. Set [macos].aax_sdk_path in truce.toml or AAX_SDK_PATH env var.".into());
     }
     if !template.exists() {
         return Err("AAX template build succeeded but binary not found".into());
