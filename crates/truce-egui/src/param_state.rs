@@ -110,6 +110,7 @@ impl ParamState {
                 get_meter: std::sync::Arc::new(|_| 0.0),
                 get_state: std::sync::Arc::new(|| Vec::new()),
                 set_state: std::sync::Arc::new(|_| {}),
+                transport: std::sync::Arc::new(|| None),
             },
         }
     }

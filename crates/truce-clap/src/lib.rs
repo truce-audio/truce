@@ -138,6 +138,8 @@ struct ClapPluginData<P: PluginExport> {
     gui_drain_buf: Vec<GuiParamChange>,
     /// Flag: GUI changed params, need rescan on main thread.
     needs_rescan: Arc<std::sync::atomic::AtomicBool>,
+    /// Shared transport slot: audio thread writes each block, editor reads.
+    transport_slot: Arc<truce_core::TransportSlot>,
 }
 
 // ---------------------------------------------------------------------------
@@ -661,6 +663,9 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
     let mut audio_buffer = AudioBuffer::from_slices(&input_slices, &mut output_slices, num_frames);
 
     data.output_events.clear();
+
+    // Publish transport to the editor slot before the plugin runs.
+    data.transport_slot.write(&transport);
 
     let mut context = ProcessContext::new(&transport, data.sample_rate, num_frames, &mut data.output_events);
 
@@ -1256,6 +1261,7 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
     let params_for_get = params.clone();
     let params_for_plain = params.clone();
     let params_for_fmt = params.clone();
+    let transport_slot = data.transport_slot.clone();
     let context = truce_core::editor::EditorContext {
         begin_edit: Arc::new(move |id| {
             gui_changes.push(GuiParamChange::GestureBegin(id));
@@ -1301,6 +1307,7 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
             let plugin = unsafe { &mut *(plugin_ptr.as_ptr() as *mut P) };
             plugin.load_state(&data);
         }),
+        transport: Arc::new(move || transport_slot.read()),
     };
 
     #[cfg(target_os = "macos")]
@@ -1493,6 +1500,7 @@ pub unsafe fn create_plugin_instance<P: PluginExport>(
         gui_changes: Arc::new(GuiChangeQueue::new()),
         gui_drain_buf: Vec::new(),
         needs_rescan: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        transport_slot: truce_core::TransportSlot::new(),
     });
 
     let clap = Box::new(clap_plugin {

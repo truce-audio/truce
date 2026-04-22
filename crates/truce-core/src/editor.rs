@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+use crate::events::TransportInfo;
+
 /// A raw pointer wrapper that is `Send + Sync`.
 ///
 /// Used to capture `*const Params` in EditorContext closures without
@@ -127,4 +129,11 @@ pub struct EditorContext {
     pub get_state: Arc<dyn Fn() -> Vec<u8> + Send + Sync>,
     /// Write custom state back to the plugin (calls `load_state()`).
     pub set_state: Arc<dyn Fn(Vec<u8>) + Send + Sync>,
+    /// Most-recently-reported host transport state, or `None` if the
+    /// host does not expose transport to plugin editors or the plugin
+    /// has not yet received a process block.
+    ///
+    /// Format wrappers populate a shared [`TransportSlot`](crate::TransportSlot)
+    /// from their process callback; this closure reads from it.
+    pub transport: Arc<dyn Fn() -> Option<TransportInfo> + Send + Sync>,
 }

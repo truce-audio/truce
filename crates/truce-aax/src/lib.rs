@@ -100,6 +100,8 @@ struct AaxInstance<P: PluginExport> {
     plugin_id_hash: u64,
     sample_rate: f64,
     editor: Option<Box<dyn truce_core::editor::Editor>>,
+    /// Shared transport slot: audio thread writes each block, editor reads.
+    transport_slot: std::sync::Arc<truce_core::TransportSlot>,
 }
 
 // ---------------------------------------------------------------------------
@@ -421,6 +423,7 @@ pub unsafe fn _create<P: PluginExport>() -> *mut std::ffi::c_void {
         plugin_id_hash: state::hash_plugin_id(info.clap_id),
         sample_rate: 44100.0,
         editor: None,
+        transport_slot: truce_core::TransportSlot::new(),
     });
     Box::into_raw(instance) as *mut std::ffi::c_void
 }
@@ -511,6 +514,7 @@ pub unsafe fn _process<P: PluginExport>(
         );
         let transport = TransportInfo::default();
         inst.output_events.clear();
+        inst.transport_slot.write(&transport);
         let mut context = ProcessContext::new(&transport, inst.sample_rate, num_frames, &mut inst.output_events);
 
         inst.plugin.process(&mut buffer, &inst.event_list, &mut context);
@@ -625,6 +629,7 @@ pub unsafe fn _editor_open<P: PluginExport>(
     let params_for_get = params.clone();
     let params_for_plain = params.clone();
     let params_for_fmt = params.clone();
+    let transport_slot = inst.transport_slot.clone();
 
     let context = EditorContext {
         begin_edit: Arc::new(move |id| unsafe {
@@ -663,6 +668,7 @@ pub unsafe fn _editor_open<P: PluginExport>(
             let plugin = &mut *(plugin_ptr.as_ptr() as *mut P);
             plugin.load_state(&data);
         }),
+        transport: Arc::new(move || transport_slot.read()),
     };
 
     let handle = match platform {

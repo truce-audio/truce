@@ -30,6 +30,8 @@ struct Vst3Instance<P: PluginExport> {
     plugin_id_hash: u64,
     sample_rate: f64,
     editor: Option<Box<dyn truce_core::editor::Editor>>,
+    /// Shared transport slot: audio thread writes each block, editor reads.
+    transport_slot: std::sync::Arc<truce_core::TransportSlot>,
 }
 
 // ---------------------------------------------------------------------------
@@ -58,6 +60,7 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
         plugin_id_hash: state::hash_plugin_id(info.vst3_id),
         sample_rate: 44100.0,
         editor: None,
+        transport_slot: truce_core::TransportSlot::new(),
     });
     Box::into_raw(instance) as *mut std::ffi::c_void
 }
@@ -197,6 +200,7 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
     };
 
     inst.output_events.clear();
+    inst.transport_slot.write(&transport);
     let mut context = ProcessContext::new(&transport, inst.sample_rate, num_frames, &mut inst.output_events);
 
     inst.plugin
@@ -474,6 +478,7 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
         let params_for_get = params.clone();
         let params_for_plain = params.clone();
         let params_for_fmt = params.clone();
+        let transport_slot = inst.transport_slot.clone();
         let context = truce_core::editor::EditorContext {
             begin_edit: std::sync::Arc::new(move |id| {
                 ffi::truce_vst3_begin_edit(ctx_raw.as_ptr() as *mut std::ffi::c_void, id);
@@ -509,6 +514,7 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                 let plugin = &mut *(plugin_ptr.as_ptr() as *mut P);
                 plugin.load_state(&data);
             }),
+            transport: std::sync::Arc::new(move || transport_slot.read()),
         };
         #[cfg(target_os = "macos")]
         let handle = truce_core::editor::RawWindowHandle::AppKit(parent);

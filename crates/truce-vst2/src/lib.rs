@@ -35,6 +35,8 @@ struct Vst2Instance<P: PluginExport> {
     state_loaded: bool,
     /// Buffered parent window handle when editor open arrives before state load.
     pending_editor_parent: Option<*mut std::ffi::c_void>,
+    /// Shared transport slot: audio thread writes each block, editor reads.
+    transport_slot: std::sync::Arc<truce_core::TransportSlot>,
 }
 
 extern "C" {
@@ -70,6 +72,7 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
         aeffect_ptr: std::ptr::null_mut(),
         state_loaded: false,
         pending_editor_parent: None,
+        transport_slot: truce_core::TransportSlot::new(),
     });
     Box::into_raw(instance) as *mut std::ffi::c_void
 }
@@ -173,6 +176,7 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
 
     let transport = TransportInfo::default();
     inst.output_events.clear();
+    inst.transport_slot.write(&transport);
     let mut context = ProcessContext::new(&transport, inst.sample_rate, num_frames, &mut inst.output_events);
 
     inst.plugin
@@ -365,6 +369,7 @@ unsafe fn open_editor_inner<P: PluginExport>(
         let params_for_get = params.clone();
         let params_for_plain = params.clone();
         let params_for_fmt = params.clone();
+        let transport_slot = inst.transport_slot.clone();
         let context = truce_core::editor::EditorContext {
             begin_edit: std::sync::Arc::new(move |id| {
                 if !effect_ptr.as_ptr().is_null() {
@@ -406,6 +411,7 @@ unsafe fn open_editor_inner<P: PluginExport>(
                 let plugin = &mut *(plugin_ptr.as_ptr() as *mut P);
                 plugin.load_state(&data);
             }),
+            transport: std::sync::Arc::new(move || transport_slot.read()),
         };
         #[cfg(target_os = "macos")]
         let handle = truce_core::editor::RawWindowHandle::AppKit(parent);

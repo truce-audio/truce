@@ -308,6 +308,11 @@ fn build_editor_context<P: PluginExport>(
         get_meter: Arc::new(|_id: u32| 0.0),
         get_state: Arc::new(Vec::new),
         set_state: Arc::new(|_bytes: Vec<u8>| {}),
+        // LV2 UIs run out-of-process from the DSP, so there is no shared
+        // memory slot to read transport from. Forwarding transport would
+        // require a dedicated LV2 Atom message channel — left as future
+        // work; for now the editor sees `None`.
+        transport: Arc::new(|| None),
     }
 }
 
