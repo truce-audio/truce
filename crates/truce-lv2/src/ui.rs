@@ -26,9 +26,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use truce_core::editor::{Editor, EditorContext, RawWindowHandle};
 use truce_core::export::PluginExport;
+use truce_core::TransportSlot;
 use truce_params::Params;
 
+use crate::atom::AtomSequenceReader;
 use crate::types::LV2Feature;
+use crate::urid::UridMap;
 
 pub type Lv2UiHandle = *mut c_void;
 pub type Lv2UiController = *mut c_void;
@@ -97,6 +100,18 @@ pub struct Lv2UiInstance<P: PluginExport> {
     editor: Option<Box<dyn Editor>>,
     /// Set once open() has run so cleanup can be idempotent.
     opened: AtomicBool,
+    /// Host-interned URIDs. Needed to recognize the notify-out atom
+    /// event format and decode its `time:Position` object.
+    urid_map: UridMap,
+    /// Port index the host uses when delivering atom events to
+    /// `port_event`. Pre-computed so the event callback does no lookups.
+    notify_port_index: u32,
+    /// URID for `atom:eventTransfer`. `port_event`'s `format` argument
+    /// equals this value when the buffer is an LV2 atom.
+    atom_event_transfer_urid: crate::urid::Urid,
+    /// Shared transport state. Written from `port_event` (main thread in
+    /// practice), read by the editor's `transport` closure.
+    transport_slot: Arc<TransportSlot>,
     _phantom: PhantomData<P>,
 }
 
@@ -147,12 +162,19 @@ pub unsafe fn instantiate_ui<P: PluginExport>(
         return std::ptr::null_mut();
     };
 
+    // Resolve host URIDs for atom-event decoding on the UI side.
+    let urid_map = UridMap::from_features(features);
+    let atom_event_transfer_urid =
+        urid_map.intern("http://lv2plug.in/ns/ext/atom#eventTransfer");
+    let transport_slot = TransportSlot::new();
+
     // Build EditorContext closures driven by write_function / shadow params.
     let ctx = build_editor_context::<P>(
         params_arc.clone(),
         &param_slots,
         write_function,
         controller,
+        transport_slot.clone(),
     );
 
     editor.open(RawWindowHandle::X11(parent_window), ctx);
@@ -172,6 +194,10 @@ pub unsafe fn instantiate_ui<P: PluginExport>(
         controller,
         editor: Some(editor),
         opened: AtomicBool::new(true),
+        urid_map,
+        notify_port_index: layout.notify_out_port(),
+        atom_event_transfer_urid,
+        transport_slot,
         _phantom: PhantomData,
     });
     Box::into_raw(ui) as Lv2UiHandle
@@ -193,8 +219,15 @@ pub unsafe fn cleanup_ui<P: PluginExport>(handle: Lv2UiHandle) {
     drop(ui);
 }
 
-/// Port value update from host. For control ports the buffer is a single
-/// `f32`; we update the shadow params so the UI reads the new value.
+/// Port value update from host.
+///
+/// Handles two formats:
+/// - `LV2_UI_FLOAT_PROTOCOL` (format = 0): buffer is an `f32` for a
+///   control port. We update the shadow params so the UI reads the new
+///   value.
+/// - `atom:eventTransfer` (format = URID): buffer is an `LV2_Atom`. When
+///   the port is the notify-out and the atom is `time:Position`, we
+///   update the shared transport slot.
 ///
 /// # Safety
 /// All pointers must be valid for the caller-declared `buffer_size`.
@@ -205,21 +238,100 @@ pub unsafe fn port_event<P: PluginExport>(
     format: u32,
     buffer: *const c_void,
 ) {
-    if handle.is_null() || buffer.is_null() || format != 0 /* LV2_UI_FLOAT_PROTOCOL */ {
-        return;
-    }
-    if buffer_size < core::mem::size_of::<f32>() as u32 {
+    if handle.is_null() || buffer.is_null() {
         return;
     }
     let ui = &*(handle as *const Lv2UiInstance<P>);
-    let Some(slot) = ui.param_slots.iter().find(|s| s.port_index == port_index) else {
-        return;
-    };
-    let value = *(buffer as *const f32);
-    if !value.is_finite() {
+
+    // Control-port float update.
+    if format == 0 {
+        if buffer_size < core::mem::size_of::<f32>() as u32 {
+            return;
+        }
+        let Some(slot) = ui.param_slots.iter().find(|s| s.port_index == port_index) else {
+            return;
+        };
+        let value = *(buffer as *const f32);
+        if !value.is_finite() {
+            return;
+        }
+        ui.params.set_plain(slot.id, value as f64);
         return;
     }
-    ui.params.set_plain(slot.id, value as f64);
+
+    // Atom event on the notify-out port — look for time:Position.
+    if port_index == ui.notify_port_index
+        && ui.atom_event_transfer_urid != 0
+        && format == ui.atom_event_transfer_urid
+    {
+        decode_notify_atom::<P>(ui, buffer, buffer_size);
+    }
+}
+
+/// Decode an atom delivered via `atom:eventTransfer` to the notify-out
+/// port. We reuse `AtomSequenceReader::read_time_position` by wrapping
+/// the single atom in a tiny synthetic sequence on the stack.
+///
+/// # Safety
+/// `buffer` must point to at least `buffer_size` bytes of a valid
+/// `LV2_Atom` (header + body).
+unsafe fn decode_notify_atom<P: PluginExport>(
+    ui: &Lv2UiInstance<P>,
+    buffer: *const c_void,
+    buffer_size: u32,
+) {
+    use crate::atom::{Atom, AtomSequence, AtomSequenceBody};
+
+    let header_size = core::mem::size_of::<Atom>();
+    if (buffer_size as usize) < header_size {
+        return;
+    }
+    let atom_hdr = *(buffer as *const Atom);
+    if atom_hdr.type_ != ui.urid_map.atom_object
+        && atom_hdr.type_ != ui.urid_map.atom_blank
+    {
+        return;
+    }
+    let body_ptr = (buffer as *const u8).add(header_size);
+    let body_size = atom_hdr.size as usize;
+    if header_size + body_size > buffer_size as usize {
+        return;
+    }
+
+    // Stack-allocate a one-event sequence pointing at the delivered atom.
+    // The reader walks events, so wrap: AtomSequence { seq header, event
+    // header, body... }. Cheaper than reconstructing atom parsing here.
+    #[repr(C)]
+    struct OneEvent {
+        seq_header: AtomSequence,
+        event_time: i64,
+        event_body: Atom,
+    }
+    let mut scratch = vec![0u8; core::mem::size_of::<OneEvent>() + body_size + 8];
+    let one = scratch.as_mut_ptr() as *mut OneEvent;
+    (*one).seq_header.atom.type_ = ui.urid_map.atom_sequence;
+    (*one).seq_header.atom.size =
+        (core::mem::size_of::<AtomSequenceBody>()
+            + core::mem::size_of::<i64>()
+            + core::mem::size_of::<Atom>()
+            + body_size) as u32;
+    (*one).seq_header.body.unit = 0;
+    (*one).seq_header.body.pad = 0;
+    (*one).event_time = 0;
+    (*one).event_body = atom_hdr;
+    let ev_body_dest = scratch
+        .as_mut_ptr()
+        .add(core::mem::size_of::<OneEvent>());
+    core::ptr::copy_nonoverlapping(body_ptr, ev_body_dest, body_size);
+
+    let mut info = truce_core::events::TransportInfo::default();
+    let reader = AtomSequenceReader::new(
+        scratch.as_ptr() as *const AtomSequence,
+        &ui.urid_map,
+    );
+    if reader.apply_time_position(&mut info) {
+        ui.transport_slot.write(&info);
+    }
 }
 
 /// # Safety
@@ -258,6 +370,7 @@ fn build_editor_context<P: PluginExport>(
     slots: &[ParamSlot],
     write_function: Lv2UiWriteFn,
     controller: Lv2UiController,
+    transport_slot: Arc<TransportSlot>,
 ) -> EditorContext {
     // Clone slot metadata into each closure — small vec, cheap.
     let slots_for_set: Vec<(u32, u32, truce_params::ParamRange)> = slots
@@ -308,11 +421,10 @@ fn build_editor_context<P: PluginExport>(
         get_meter: Arc::new(|_id: u32| 0.0),
         get_state: Arc::new(Vec::new),
         set_state: Arc::new(|_bytes: Vec<u8>| {}),
-        // LV2 UIs run out-of-process from the DSP, so there is no shared
-        // memory slot to read transport from. Forwarding transport would
-        // require a dedicated LV2 Atom message channel — left as future
-        // work; for now the editor sees `None`.
-        transport: Arc::new(|| None),
+        // The DSP broadcasts host transport as `time:Position` atoms on
+        // the notify-out port. `port_event` decodes them and writes the
+        // slot — this closure just reads the latest value.
+        transport: Arc::new(move || transport_slot.read()),
     }
 }
 

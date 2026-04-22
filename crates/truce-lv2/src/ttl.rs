@@ -61,6 +61,7 @@ fn write_manifest(
     writeln!(f, "@prefix lv2:  <http://lv2plug.in/ns/lv2core#> .")?;
     writeln!(f, "@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .")?;
     writeln!(f, "@prefix ui:   <http://lv2plug.in/ns/extensions/ui#> .")?;
+    writeln!(f, "@prefix atom: <http://lv2plug.in/ns/ext/atom#> .")?;
     writeln!(f)?;
     writeln!(f, "<{uri}>")?;
     writeln!(f, "    a lv2:Plugin ;")?;
@@ -69,7 +70,14 @@ fn write_manifest(
     writeln!(f)?;
     writeln!(f, "<{ui_uri}>")?;
     writeln!(f, "    a ui:X11UI ;")?;
-    writeln!(f, "    ui:binary <{so_name}> .")?;
+    writeln!(f, "    ui:binary <{so_name}> ;")?;
+    // Subscribe the UI to the DSP's notify-out port so the host forwards
+    // atom events (currently time:Position) to our port_event callback.
+    writeln!(f, "    ui:portNotification [")?;
+    writeln!(f, "        ui:plugin <{uri}> ;")?;
+    writeln!(f, "        lv2:symbol \"notify_out\" ;")?;
+    writeln!(f, "        ui:notifyType atom:Object")?;
+    writeln!(f, "    ] .")?;
     Ok(())
 }
 
@@ -93,6 +101,7 @@ fn write_plugin_ttl(
     writeln!(f, "@prefix atom:  <http://lv2plug.in/ns/ext/atom#> .")?;
     writeln!(f, "@prefix midi:  <http://lv2plug.in/ns/ext/midi#> .")?;
     writeln!(f, "@prefix time:  <http://lv2plug.in/ns/ext/time#> .")?;
+    writeln!(f, "@prefix rsz:   <http://lv2plug.in/ns/ext/resize-port#> .")?;
     writeln!(f, "@prefix state: <http://lv2plug.in/ns/ext/state#> .")?;
     writeln!(f, "@prefix ui:    <http://lv2plug.in/ns/extensions/ui#> .")?;
     writeln!(f)?;
@@ -174,6 +183,19 @@ fn emit_port(
         writeln!(f, "        lv2:index {index} ;")?;
         writeln!(f, "        lv2:symbol \"midi_out\" ;")?;
         writeln!(f, "        lv2:name \"MIDI Out\" ;")?;
+    } else if index == layout.notify_out_port() {
+        // DSP→UI notification port. Carries time:Position objects so the
+        // LV2 UI can surface host transport to plugin editors. Kept as
+        // the last port so adding it is a backwards-compatible change
+        // for existing TTL bundles.
+        writeln!(f, "        a lv2:OutputPort, atom:AtomPort ;")?;
+        writeln!(f, "        atom:bufferType atom:Sequence ;")?;
+        writeln!(f, "        atom:supports time:Position ;")?;
+        writeln!(f, "        lv2:designation lv2:control ;")?;
+        writeln!(f, "        lv2:index {index} ;")?;
+        writeln!(f, "        lv2:symbol \"notify_out\" ;")?;
+        writeln!(f, "        lv2:name \"Notify Out\" ;")?;
+        writeln!(f, "        rsz:minimumSize 4096 ;")?;
     }
     Ok(())
 }

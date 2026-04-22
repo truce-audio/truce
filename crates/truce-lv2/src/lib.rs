@@ -83,11 +83,17 @@ impl PortLayout {
             None
         }
     }
-    pub fn total(&self) -> u32 {
+    /// Index of the DSP→UI notification atom port. Always present: the
+    /// DSP writes host transport (and any future plugin-defined notify
+    /// messages) here, and the UI listens via `ui:portNotification`.
+    pub fn notify_out_port(&self) -> u32 {
         self.control_start()
             + self.num_params
             + if self.has_midi_in { 1 } else { 0 }
             + if self.has_midi_out { 1 } else { 0 }
+    }
+    pub fn total(&self) -> u32 {
+        self.notify_out_port() + 1
     }
 }
 
@@ -110,6 +116,7 @@ pub struct Lv2Instance<P: PluginExport> {
     control_ports: Vec<*const f32>,
     midi_in_port: *const AtomSequence,
     midi_out_port: *mut AtomSequence,
+    notify_out_port: *mut AtomSequence,
 
     /// Last observed value on each control port; used to emit ParamChange
     /// events only when the host actually moved a knob.
@@ -196,6 +203,7 @@ pub unsafe fn instantiate<P: PluginExport>(
         control_ports: vec![ptr::null(); control_port_count],
         midi_in_port: ptr::null(),
         midi_out_port: ptr::null_mut(),
+        notify_out_port: ptr::null_mut(),
 
         last_control: vec![f32::NAN; control_port_count],
 
@@ -233,6 +241,8 @@ pub unsafe fn connect_port<P: PluginExport>(
         inst.midi_in_port = data as *const AtomSequence;
     } else if Some(port) == layout.midi_out_port() {
         inst.midi_out_port = data as *mut AtomSequence;
+    } else if port == layout.notify_out_port() {
+        inst.notify_out_port = data as *mut AtomSequence;
     }
 }
 
@@ -339,6 +349,17 @@ pub unsafe fn run<P: PluginExport>(handle: *mut Lv2Instance<P>, n_samples: u32) 
         atom::write_midi_out_sequence(
             inst.midi_out_port,
             &inst.output_events,
+            &inst.urid_map,
+        );
+    }
+
+    // Forward transport to the UI as a time:Position atom on the
+    // notify-out port. Hosts deliver this to the UI's port_event each
+    // block; the UI decodes it and updates its shared `TransportSlot`.
+    if !inst.notify_out_port.is_null() {
+        atom::write_time_position_sequence(
+            inst.notify_out_port,
+            &transport,
             &inst.urid_map,
         );
     }

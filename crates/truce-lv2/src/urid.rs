@@ -20,7 +20,7 @@ struct Lv2UridMapFeature {
 /// Cached URIDs we need during run() and state save/restore. Pre-fetched
 /// at instantiation so the audio thread doesn't call back into the host.
 #[derive(Default)]
-pub(crate) struct UridMap {
+pub struct UridMap {
     pub midi_event: Urid,
     pub atom_sequence: Urid,
     pub atom_chunk: Urid,
