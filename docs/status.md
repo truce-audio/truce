@@ -17,7 +17,7 @@ Runs on **macOS**, **Windows**, and **Linux** (Reaper tested; Bitwig / Ardour pe
 | CLAP | ✅ | ✅ | ✅ | ✅ | Reaper (macOS, Windows, Linux) |
 | VST3 | ✅ | ✅ | ✅ | ✅ | Reaper, Ableton, FL Studio (macOS/Win); Reaper (Linux) |
 | VST2 | ✅ | ✅ | ✅ | ✅ | Reaper, Ableton, FL Studio (macOS/Win) |
-| LV2 | 🆕 builds + installs | 🆕 builds + installs | ✅ | ✅ | Reaper (Linux); lilv bundle scan on macOS / Windows (in-host validation pending) |
+| LV2 | ✅ | ✅ | ✅ | ✅ | Reaper (Linux, Windows); lilv bundle scan on macOS (in-host validation pending) |
 | AU v2 | ✅ | — | — | ✅ | Reaper, Logic, GarageBand*, Ableton |
 | AU v3 | ✅ | — | — | ✅ | Logic, Ableton |
 | AAX | ✅ | ✅† | — | ✅ | Pro Tools Developer |
