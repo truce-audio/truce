@@ -70,7 +70,7 @@ edition = "2021"
 crate-type = ["cdylib", "rlib"]
 
 [features]
-# CLAP and VST3 are enabled by default. VST2, AU, and AAX are opt-in.
+# CLAP and VST3 are enabled by default. VST2, LV2, AU, and AAX are opt-in.
 # NOTE: VST2 is a legacy format. The Steinberg VST2 SDK was deprecated
 # in 2018 and distributing VST2 plugins may require agreement with
 # Steinberg's licensing terms. Enable `vst2` only if you understand
@@ -79,6 +79,7 @@ default = ["clap", "vst3"]
 clap = ["dep:truce-clap", "dep:clap-sys"]
 vst3 = ["dep:truce-vst3"]
 vst2 = ["dep:truce-vst2"]
+lv2 = ["dep:truce-lv2"]
 au = ["dep:truce-au"]
 aax = ["dep:truce-aax"]
 dev = ["truce/dev"]
@@ -89,6 +90,7 @@ truce-gui = {{ git = "https://github.com/truce-audio/truce" }}
 truce-clap = {{ git = "https://github.com/truce-audio/truce", optional = true }}
 truce-vst3 = {{ git = "https://github.com/truce-audio/truce", optional = true }}
 truce-vst2 = {{ git = "https://github.com/truce-audio/truce", optional = true }}
+truce-lv2 = {{ git = "https://github.com/truce-audio/truce", optional = true }}
 truce-au = {{ git = "https://github.com/truce-audio/truce", optional = true }}
 truce-aax = {{ git = "https://github.com/truce-audio/truce", optional = true }}
 clap-sys = {{ version = "0.5", optional = true }}
@@ -110,7 +112,7 @@ edition.workspace = true
 crate-type = ["cdylib", "rlib"]
 
 [features]
-# CLAP and VST3 are enabled by default. VST2, AU, and AAX are opt-in.
+# CLAP and VST3 are enabled by default. VST2, LV2, AU, and AAX are opt-in.
 # NOTE: VST2 is a legacy format. The Steinberg VST2 SDK was deprecated
 # in 2018 and distributing VST2 plugins may require agreement with
 # Steinberg's licensing terms. Enable `vst2` only if you understand
@@ -119,6 +121,7 @@ default = ["clap", "vst3"]
 clap = ["dep:truce-clap", "dep:clap-sys"]
 vst3 = ["dep:truce-vst3"]
 vst2 = ["dep:truce-vst2"]
+lv2 = ["dep:truce-lv2"]
 au = ["dep:truce-au"]
 aax = ["dep:truce-aax"]
 dev = ["truce/dev"]
@@ -129,6 +132,7 @@ truce-gui = {{ workspace = true }}
 truce-clap = {{ workspace = true, optional = true }}
 truce-vst3 = {{ workspace = true, optional = true }}
 truce-vst2 = {{ workspace = true, optional = true }}
+truce-lv2 = {{ workspace = true, optional = true }}
 truce-au = {{ workspace = true, optional = true }}
 truce-aax = {{ workspace = true, optional = true }}
 clap-sys = {{ version = "0.5", optional = true }}

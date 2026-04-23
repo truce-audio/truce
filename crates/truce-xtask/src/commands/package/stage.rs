@@ -3,7 +3,7 @@
 
 use super::PkgFormat;
 use crate::{
-    codesign_bundle, copy_dir_recursive, resolve_aax_sdk_path, tmp_dir,
+    codesign_bundle, copy_dir_recursive, release_lib, resolve_aax_sdk_path, tmp_dir,
     Config, PackagingConfig, PluginDef, Res,
 };
 #[cfg(not(target_os = "windows"))]
@@ -11,6 +11,63 @@ use crate::pace_sign_aax_macos;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
+
+/// Slug a plugin's display name into a lowercase, hyphenated, ASCII-safe
+/// identifier suitable for LV2 bundle / file / IRI use.
+pub(crate) fn lv2_slug(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    let mut prev_dash = false;
+    for c in name.chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c.to_ascii_lowercase());
+            prev_dash = false;
+        } else if !prev_dash {
+            out.push('-');
+            prev_dash = true;
+        }
+    }
+    out.trim_matches('-').to_string()
+}
+
+/// Stage an LV2 bundle into `staging/{slug}.lv2/`. Copies the built
+/// `lib{stem}_lv2.{ext}` shared library into the bundle, then `dlopen`s
+/// it and calls `__truce_lv2_emit_bundle` to emit `manifest.ttl` +
+/// `plugin.ttl`.
+pub(crate) fn stage_lv2(root: &Path, p: &PluginDef, staging: &Path) -> Res {
+    use std::ffi::{c_char, CString};
+    let built = release_lib(root, &format!("{}_lv2", p.dylib_stem()));
+    if !built.exists() {
+        return Err(format!("Missing: {}", built.display()).into());
+    }
+
+    let slug = lv2_slug(&p.name);
+    let bundle = staging.join(format!("{slug}.lv2"));
+    let _ = fs::remove_dir_all(&bundle);
+    fs::create_dir_all(&bundle)?;
+
+    let bin_ext = if cfg!(target_os = "windows") { "dll" } else { "so" };
+    let bin_name = format!("{slug}.{bin_ext}");
+    let bin_path = bundle.join(&bin_name);
+    fs::copy(&built, &bin_path)?;
+
+    // Load the staged binary so LV2_PATH resolution lines up with what
+    // the host sees.
+    let bundle_cstr = CString::new(bundle.to_string_lossy().as_bytes())?;
+    let bin_cstr = CString::new(bin_name.clone())?;
+    unsafe {
+        let lib = libloading::Library::new(&bin_path)
+            .map_err(|e| format!("load {} failed: {e}", bin_path.display()))?;
+        type EmitFn = unsafe extern "C" fn(*const c_char, *const c_char) -> i32;
+        let emit: libloading::Symbol<EmitFn> = lib
+            .get(b"__truce_lv2_emit_bundle\0")
+            .map_err(|e| format!("{} missing __truce_lv2_emit_bundle: {e}", bin_path.display()))?;
+        let rc = emit(bundle_cstr.as_ptr(), bin_cstr.as_ptr());
+        if rc != 0 {
+            return Err(format!("LV2 TTL emission failed (rc={rc})").into());
+        }
+    }
+    Ok(())
+}
 
 /// Stage a CLAP bundle into the staging directory.
 pub(crate) fn stage_clap(root: &Path, p: &PluginDef, staging: &Path, identity: &str) -> Res {

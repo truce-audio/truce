@@ -49,7 +49,7 @@ license.workspace = true
 crate-type = ["cdylib", "rlib"]
 
 [features]
-# CLAP and VST3 are enabled by default. VST2 and AU are opt-in.
+# CLAP and VST3 are enabled by default. VST2, LV2, AU, and AAX are opt-in.
 # NOTE: VST2 is a legacy format. The Steinberg VST2 SDK was deprecated
 # in 2018 and distributing VST2 plugins may require agreement with
 # Steinberg's licensing terms. Enable `vst2` only if you understand
@@ -58,7 +58,9 @@ default = ["clap", "vst3"]
 clap = ["dep:truce-clap", "dep:clap-sys"]
 vst3 = ["dep:truce-vst3"]
 vst2 = ["dep:truce-vst2"]
+lv2 = ["dep:truce-lv2"]
 au = ["dep:truce-au"]
+aax = ["dep:truce-aax"]
 dev = ["truce/dev"]
 
 [dependencies]
@@ -71,7 +73,9 @@ truce-gui = {{ workspace = true }}
 truce-clap = {{ workspace = true, optional = true }}
 truce-vst3 = {{ workspace = true, optional = true }}
 truce-vst2 = {{ workspace = true, optional = true }}
+truce-lv2 = {{ workspace = true, optional = true }}
 truce-au = {{ workspace = true, optional = true }}
+truce-aax = {{ workspace = true, optional = true }}
 clap-sys = {{ version = "0.5", optional = true }}
 
 [dev-dependencies]
@@ -229,7 +233,9 @@ default = ["clap", "hot-reload"]
 clap = ["dep:truce-clap", "dep:clap-sys"]
 vst3 = ["dep:truce-vst3"]
 vst2 = ["dep:truce-vst2"]
+lv2 = ["dep:truce-lv2"]
 au = ["dep:truce-au"]
+aax = ["dep:truce-aax"]
 hot-reload = []
 static-logic = ["dep:{logic_crate}"]
 
@@ -244,7 +250,9 @@ truce-gui = {{ workspace = true }}
 truce-clap = {{ workspace = true, optional = true }}
 truce-vst3 = {{ workspace = true, optional = true }}
 truce-vst2 = {{ workspace = true, optional = true }}
+truce-lv2 = {{ workspace = true, optional = true }}
 truce-au = {{ workspace = true, optional = true }}
+truce-aax = {{ workspace = true, optional = true }}
 clap-sys = {{ version = "0.5", optional = true }}
 
 [build-dependencies]
@@ -283,8 +291,12 @@ truce_clap::export_clap!(__HotShellWrapper);
 truce_vst3::export_vst3!(__HotShellWrapper);
 #[cfg(feature = "vst2")]
 truce_vst2::export_vst2!(__HotShellWrapper);
+#[cfg(feature = "lv2")]
+truce_lv2::export_lv2!(__HotShellWrapper);
 #[cfg(feature = "au")]
 truce_au::export_au!(__HotShellWrapper);
+#[cfg(feature = "aax")]
+truce_aax::export_aax!(__HotShellWrapper);
 "#))?;
 
     eprintln!("Created examples/{name}/shell/ and examples/{name}/logic/");

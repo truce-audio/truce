@@ -131,8 +131,20 @@ Commands:
       Build, sign, and package plugins into macOS .pkg installers.
       Output goes to dist/ directory.
 
-  build [-p <suffix>] [--dev]
-      Build plugin bundles to target/bundles/ without installing.
+  build [--clap] [--vst3] [--vst2] [--lv2] [--au2] [-p <suffix>] [--dev]
+      Build per-format bundles into target/bundles/ without installing.
+      Defaults match `install`: when no format flags are passed, every
+      format in the project's default Cargo features is built.
+      AU v3 and AAX are install-only (xcodebuild / cmake template +
+      system locations); use `cargo truce install --au3` / `--aax`.
+      --clap       CLAP only
+      --vst3       VST3 only
+      --vst2       VST2 only
+      --lv2        LV2 only
+      --au2        AU v2 only (.component, macOS only)
+      -p <suffix>  Build only the plugin with this suffix
+      --dev        Add the `dev` feature and also build debug dylibs
+                   (the logic libs the hot-reload shells watch)
 
   run [-p <suffix>] [-- <args>]
       Build and run a plugin standalone.

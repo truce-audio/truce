@@ -522,41 +522,11 @@ fn install_vst2(root: &Path, p: &PluginDef, config: &Config) -> Res {
 /// encoding — some LV2 hosts reject bundles whose TTL has spaces or other
 /// non-URI characters in filenames even when the on-disk files are valid.
 fn install_lv2(root: &Path, p: &PluginDef, _config: &Config) -> Res {
-    use std::ffi::{c_char, CString};
-    let built = release_lib(root, &format!("{}_lv2", p.dylib_stem()));
-    if !built.exists() {
-        return Err(format!("Missing: {}", built.display()).into());
-    }
-
-    let slug = lv2_slug(&p.name);
     let lv2_dir = lv2_bundle_root()?;
-    let bundle = lv2_dir.join(format!("{slug}.lv2"));
-    let _ = fs::remove_dir_all(&bundle);
-    fs_ctx::create_dir_all(&bundle)?;
-
-    let bin_ext = if cfg!(target_os = "windows") { "dll" } else { "so" };
-    let bin_name = format!("{slug}.{bin_ext}");
-    let bin_path = bundle.join(&bin_name);
-    fs_ctx::copy(&built, &bin_path)?;
-
-    // Load the installed binary (not the staging copy) so that LV2_PATH
-    // resolution lines up with what the host sees.
-    let bundle_cstr = CString::new(bundle.to_string_lossy().as_bytes())?;
-    let bin_cstr = CString::new(bin_name.clone())?;
-    unsafe {
-        let lib = libloading::Library::new(&bin_path)
-            .map_err(|e| format!("load {} failed: {e}", bin_path.display()))?;
-        type EmitFn = unsafe extern "C" fn(*const c_char, *const c_char) -> i32;
-        let emit: libloading::Symbol<EmitFn> = lib
-            .get(b"__truce_lv2_emit_bundle\0")
-            .map_err(|e| format!("{} missing __truce_lv2_emit_bundle: {e}", bin_path.display()))?;
-        let rc = emit(bundle_cstr.as_ptr(), bin_cstr.as_ptr());
-        if rc != 0 {
-            return Err(format!("LV2 TTL emission failed (rc={rc})").into());
-        }
-    }
-
-    eprintln!("LV2: {}", bundle.display());
+    fs_ctx::create_dir_all(&lv2_dir)?;
+    crate::commands::package::stage::stage_lv2(root, p, &lv2_dir)?;
+    let slug = crate::commands::package::stage::lv2_slug(&p.name);
+    eprintln!("LV2: {}", lv2_dir.join(format!("{slug}.lv2")).display());
     Ok(())
 }
 
@@ -588,21 +558,6 @@ fn lv2_bundle_root() -> Result<PathBuf, Box<dyn std::error::Error>> {
     {
         Err("LV2 install is only supported on Linux, macOS, and Windows".into())
     }
-}
-
-fn lv2_slug(name: &str) -> String {
-    let mut out = String::with_capacity(name.len());
-    let mut prev_dash = false;
-    for c in name.chars() {
-        if c.is_ascii_alphanumeric() {
-            out.push(c.to_ascii_lowercase());
-            prev_dash = false;
-        } else if !prev_dash {
-            out.push('-');
-            prev_dash = true;
-        }
-    }
-    out.trim_matches('-').to_string()
 }
 
 fn install_au(root: &Path, p: &PluginDef, config: &Config) -> Res {
