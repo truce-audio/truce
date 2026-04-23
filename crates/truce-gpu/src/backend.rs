@@ -579,13 +579,19 @@ impl WgpuBackend {
 
     /// Create a GPU backend from a raw `CAMetalLayer` pointer (macOS).
     ///
+    /// `logical_w` / `logical_h` are in logical points; `scale` is the
+    /// layer's `contentsScale` (2.0 on Retina). The surface is
+    /// configured at `logical × scale` physical pixels, matching the
+    /// contract of [`from_surface`] / [`from_window`].
+    ///
     /// # Safety
     /// `metal_layer` must be a valid `CAMetalLayer*` that outlives the backend.
     #[cfg(target_os = "macos")]
     pub unsafe fn from_metal_layer(
         metal_layer: *mut c_void,
-        width: u32,
-        height: u32,
+        logical_w: u32,
+        logical_h: u32,
+        scale: f32,
     ) -> Option<Self> {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::METAL,
@@ -599,7 +605,7 @@ impl WgpuBackend {
         }
         .ok()?;
 
-        Self::from_surface(&instance, surface, width, height, 1.0)
+        Self::from_surface(&instance, surface, logical_w, logical_h, scale)
     }
 
     /// Create a GPU backend from a baseview window handle.
@@ -646,18 +652,27 @@ impl WgpuBackend {
     /// // caller submits encoder + presents.
     /// ```
     ///
-    /// `max_width` / `max_height` seed the initial MSAA texture. If a
-    /// subsequent `begin_frame(w, h)` exceeds these, the MSAA texture is
-    /// reallocated transparently.
+    /// `max_logical_w` / `max_logical_h` are in logical points; `scale`
+    /// is the display scale factor (2.0 on Retina, 1.0 otherwise). The
+    /// MSAA texture is seeded at `logical × scale` physical pixels; if
+    /// a subsequent `begin_frame(logical_w, logical_h)` exceeds the
+    /// seed, the MSAA texture is reallocated transparently.
+    ///
+    /// Matches the coordinate contract of [`from_surface`] /
+    /// [`from_window`]: draw calls and event coordinates are logical
+    /// points; the backend multiplies by `scale` internally when
+    /// rasterizing.
     pub fn new(
         device: Arc<wgpu::Device>,
         queue: Arc<wgpu::Queue>,
         target_format: wgpu::TextureFormat,
-        max_width: u32,
-        max_height: u32,
+        max_logical_w: u32,
+        max_logical_h: u32,
+        scale: f32,
     ) -> Option<Self> {
-        let width = max_width.max(1);
-        let height = max_height.max(1);
+        let scale = scale.max(0.0);
+        let width = ((max_logical_w.max(1) as f32) * scale).round().max(1.0) as u32;
+        let height = ((max_logical_h.max(1) as f32) * scale).round().max(1.0) as u32;
 
         // Shader
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -842,32 +857,32 @@ impl WgpuBackend {
             clear_color: wgpu::Color::TRANSPARENT,
             width,
             height,
-            scale: 1.0,
+            scale,
         })
     }
 
-    /// Prepare for recording a frame of `width × height` physical pixels.
+    /// Prepare for recording a frame of `logical_w × logical_h` logical
+    /// points. The MSAA target and ortho matrix are sized at
+    /// `logical × self.scale()` physical pixels; widget draw calls use
+    /// logical coordinates.
     ///
     /// Resets accumulated geometry and the clear flag. Rebuilds the MSAA
-    /// texture if the target size differs from the previous frame.
-    /// Coordinates passed to subsequent `RenderBackend` calls are in the
-    /// same pixel space as `width` / `height` (i.e. physical pixels when
-    /// driving a Retina surface; logical pixels at scale = 1).
+    /// texture if the physical size differs from the previous frame.
     ///
     /// Only meaningful when the backend was built via [`new`]; the
     /// surface-owning constructors drive their own frame lifecycle.
-    pub fn begin_frame(&mut self, width: u32, height: u32) {
-        let w = width.max(1);
-        let h = height.max(1);
+    pub fn begin_frame(&mut self, logical_w: u32, logical_h: u32) {
+        let phys_w = ((logical_w.max(1) as f32) * self.scale).round().max(1.0) as u32;
+        let phys_h = ((logical_h.max(1) as f32) * self.scale).round().max(1.0) as u32;
         self.vertices.clear();
         self.indices.clear();
         self.batches.clear();
         self.clear_pending = false;
 
-        if w != self.width || h != self.height {
-            self.width = w;
-            self.height = h;
-            let matrix = ortho_matrix(w as f32, h as f32);
+        if phys_w != self.width || phys_h != self.height {
+            self.width = phys_w;
+            self.height = phys_h;
+            let matrix = ortho_matrix(phys_w as f32, phys_h as f32);
             self.queue.write_buffer(
                 &self.viewport_buffer,
                 0,
@@ -875,11 +890,20 @@ impl WgpuBackend {
             );
         }
 
-        if w != self.msaa_width || h != self.msaa_height {
-            self.msaa_texture = Self::create_msaa_view(&self.device, self.target_format, w, h);
-            self.msaa_width = w;
-            self.msaa_height = h;
+        if phys_w != self.msaa_width || phys_h != self.msaa_height {
+            self.msaa_texture =
+                Self::create_msaa_view(&self.device, self.target_format, phys_w, phys_h);
+            self.msaa_width = phys_w;
+            self.msaa_height = phys_h;
         }
+    }
+
+    /// Display scale factor baked at construction: `logical × scale =
+    /// physical`. Callers sizing sibling GPU resources (e.g. an
+    /// intermediate texture that the backend will resolve into) should
+    /// use this to stay consistent with the backend's raster dimensions.
+    pub fn scale(&self) -> f32 {
+        self.scale
     }
 
     /// Flush accumulated geometry into a single render pass on `view`,
@@ -1960,6 +1984,7 @@ mod tests {
             format,
             w,
             h,
+            1.0,
         )
         .expect("backend new");
 
