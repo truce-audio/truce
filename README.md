@@ -179,7 +179,7 @@ crates/
 ├── truce-clap          # CLAP format wrapper
 ├── truce-vst3          # VST3 format wrapper
 ├── truce-vst2          # VST2 format wrapper (clean-room)
-├── truce-lv2           # LV2 format wrapper (Linux, macOS, Windows; audio, MIDI, state, X11UI / CocoaUI / WindowsUI)
+├── truce-lv2           # LV2 format wrapper
 ├── truce-aax           # AAX format wrapper
 ├── truce-au            # Audio Unit (v2 + v3)
 ├── truce-standalone    # Standalone host (cpal audio)
