@@ -1,11 +1,12 @@
-//! LV2 UI — supports `X11UI` on Linux and `CocoaUI` on macOS.
+//! LV2 UI — supports `X11UI` on Linux, `CocoaUI` on macOS, and
+//! `WindowsUI` on Windows.
 //!
-//! The two UI types share an identical LV2 C ABI: `instantiate`,
+//! All three UI types share an identical LV2 C ABI: `instantiate`,
 //! `port_event`, `cleanup`, plus the `ui:parent` feature. Only the
 //! semantics of the parent handle differ — an `xcb_window_t` on X11,
-//! an `NSView*` on Cocoa. `parse_parent_feature` returns the raw
-//! pointer and the `instantiate_ui` caller reinterprets it per
-//! platform before handing it to the editor via `RawWindowHandle`.
+//! an `NSView*` on Cocoa, an `HWND` on Win32. `parse_parent_feature`
+//! returns the raw pointer and the `instantiate_ui` caller reinterprets
+//! it per platform before handing it to the editor via `RawWindowHandle`.
 //!
 //! LV2 UIs do not share memory with the plugin. All communication goes
 //! through two function pointers the host provides:
@@ -86,6 +87,8 @@ unsafe impl Sync for Lv2UiDescriptor {}
 pub const LV2_UI__X11UI: &str = "http://lv2plug.in/ns/extensions/ui#X11UI";
 #[allow(non_upper_case_globals)]
 pub const LV2_UI__CocoaUI: &str = "http://lv2plug.in/ns/extensions/ui#CocoaUI";
+#[allow(non_upper_case_globals)]
+pub const LV2_UI__WindowsUI: &str = "http://lv2plug.in/ns/extensions/ui#WindowsUI";
 pub const LV2_UI__PARENT: &str = "http://lv2plug.in/ns/extensions/ui#parent";
 pub const LV2_UI__RESIZE: &str = "http://lv2plug.in/ns/extensions/ui#resize";
 
@@ -241,7 +244,9 @@ pub unsafe fn instantiate_ui<P: PluginExport>(
 
     #[cfg(target_os = "macos")]
     let handle = RawWindowHandle::AppKit(parent_ptr);
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    let handle = RawWindowHandle::Win32(parent_ptr);
+    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
     let handle = RawWindowHandle::X11(parent_ptr as u64);
     editor.open(handle, ctx);
 

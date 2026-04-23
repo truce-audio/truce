@@ -35,10 +35,6 @@ truce-loader = { workspace = true }
 truce-slint = { workspace = true }
 slint = { version = "=1.15.1", default-features = false, features = ["compat-1-2", "renderer-software", "std"] }
 
-# LV2 builds on Linux and macOS. On Windows the `lv2` feature is a
-# no-op: the dep drops out and `truce::plugin!` cfg-gates the
-# `export_lv2!` expansion to those same two targets.
-[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
 truce-lv2 = { workspace = true, optional = true }
 
 [build-dependencies]

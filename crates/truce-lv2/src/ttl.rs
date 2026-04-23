@@ -73,13 +73,15 @@ fn write_manifest(
     writeln!(f)?;
     writeln!(f, "<{ui_uri}>")?;
     // UI type is tied to the running platform: on macOS the host hands us
-    // an `NSView*` via `ui:parent`, on X11 an `xcb_window_t`. We bake the
-    // right `rdf:type` at install time so the same plugin binary can be
-    // cross-platform (the plugin's shared library is otherwise identical
-    // on both platforms).
+    // an `NSView*` via `ui:parent`, on Windows an `HWND`, on X11 an
+    // `xcb_window_t`. We bake the right `rdf:type` at install time so the
+    // same plugin source tree can target all three (the plugin's shared
+    // library is otherwise identical per-platform).
     #[cfg(target_os = "macos")]
     writeln!(f, "    a ui:CocoaUI ;")?;
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    writeln!(f, "    a ui:WindowsUI ;")?;
+    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
     writeln!(f, "    a ui:X11UI ;")?;
     writeln!(f, "    ui:binary <{so_name}> ;")?;
     // Subscribe the UI to the DSP's notify-out port so the host forwards

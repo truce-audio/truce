@@ -1195,10 +1195,7 @@ fn cmd_install(args: &[String]) -> Res {
         clap = available.contains("clap");
         vst3 = available.contains("vst3");
         vst2 = available.contains("vst2");
-        #[cfg(any(target_os = "linux", target_os = "macos"))]
-        {
-            lv2 = available.contains("lv2");
-        }
+        lv2 = available.contains("lv2");
         #[cfg(target_os = "macos")]
         {
             au2 = available.contains("au");
@@ -1589,20 +1586,20 @@ fn install_vst2(root: &Path, p: &PluginDef, config: &Config) -> Res {
 /// Destination:
 /// - **Linux**: `~/.lv2/{slug}.lv2/`
 /// - **macOS**: `~/Library/Audio/Plug-Ins/LV2/{slug}.lv2/`
+/// - **Windows**: `%APPDATA%\LV2\{slug}.lv2\`
 ///
-/// Copies the built shared library into the bundle as `{slug}.so` (LV2
-/// hosts on both platforms accept `.so`; keeping a single extension
-/// across platforms means the generated Turtle doesn't need a
-/// per-platform `lv2:binary` line), then dlopen()s it to call the
-/// plugin's `__truce_lv2_emit_bundle` entry point, which writes
-/// `manifest.ttl` + `plugin.ttl` describing ports, parameters, and the
-/// UI type appropriate for the host platform.
+/// Copies the built shared library into the bundle as `{slug}.so` on
+/// Linux/macOS and `{slug}.dll` on Windows (the LV2 spec places no
+/// constraint on the extension, but the Windows loader only accepts
+/// `.dll`), then `LoadLibrary`/`dlopen`s it to call the plugin's
+/// `__truce_lv2_emit_bundle` entry point, which writes `manifest.ttl`
+/// + `plugin.ttl` describing ports, parameters, and the UI type
+/// appropriate for the host platform.
 ///
 /// Bundle and binary filenames are slugged to lowercase ASCII with hyphens
 /// so that Turtle IRI references (`lv2:binary <...>`) don't need percent
 /// encoding — some LV2 hosts reject bundles whose TTL has spaces or other
 /// non-URI characters in filenames even when the on-disk files are valid.
-#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn install_lv2(root: &Path, p: &PluginDef, _config: &Config) -> Res {
     use std::ffi::{c_char, CString};
     let built = release_lib(root, &format!("{}_lv2", p.dylib_stem()));
@@ -1616,22 +1613,23 @@ fn install_lv2(root: &Path, p: &PluginDef, _config: &Config) -> Res {
     let _ = fs::remove_dir_all(&bundle);
     fs_ctx::create_dir_all(&bundle)?;
 
-    let so_name = format!("{slug}.so");
-    let so_path = bundle.join(&so_name);
-    fs_ctx::copy(&built, &so_path)?;
+    let bin_ext = if cfg!(target_os = "windows") { "dll" } else { "so" };
+    let bin_name = format!("{slug}.{bin_ext}");
+    let bin_path = bundle.join(&bin_name);
+    fs_ctx::copy(&built, &bin_path)?;
 
-    // dlopen the installed .so (not the staging copy) so that LV2_PATH
+    // Load the installed binary (not the staging copy) so that LV2_PATH
     // resolution lines up with what the host sees.
     let bundle_cstr = CString::new(bundle.to_string_lossy().as_bytes())?;
-    let so_cstr = CString::new(so_name.clone())?;
+    let bin_cstr = CString::new(bin_name.clone())?;
     unsafe {
-        let lib = libloading::Library::new(&so_path)
-            .map_err(|e| format!("dlopen {} failed: {e}", so_path.display()))?;
+        let lib = libloading::Library::new(&bin_path)
+            .map_err(|e| format!("load {} failed: {e}", bin_path.display()))?;
         type EmitFn = unsafe extern "C" fn(*const c_char, *const c_char) -> i32;
         let emit: libloading::Symbol<EmitFn> = lib
             .get(b"__truce_lv2_emit_bundle\0")
-            .map_err(|e| format!("{} missing __truce_lv2_emit_bundle: {e}", so_path.display()))?;
-        let rc = emit(bundle_cstr.as_ptr(), so_cstr.as_ptr());
+            .map_err(|e| format!("{} missing __truce_lv2_emit_bundle: {e}", bin_path.display()))?;
+        let rc = emit(bundle_cstr.as_ptr(), bin_cstr.as_ptr());
         if rc != 0 {
             return Err(format!("LV2 TTL emission failed (rc={rc})").into());
         }
@@ -1642,11 +1640,10 @@ fn install_lv2(root: &Path, p: &PluginDef, _config: &Config) -> Res {
 }
 
 /// User-level LV2 bundle root per platform convention.
-#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn lv2_bundle_root() -> Result<PathBuf, Box<dyn std::error::Error>> {
-    let home = dirs::home_dir().ok_or("cannot locate home directory")?;
     #[cfg(target_os = "linux")]
     {
+        let home = dirs::home_dir().ok_or("cannot locate home directory")?;
         Ok(home.join(".lv2"))
     }
     #[cfg(target_os = "macos")]
@@ -1654,11 +1651,24 @@ fn lv2_bundle_root() -> Result<PathBuf, Box<dyn std::error::Error>> {
         // LV2 SDK convention on macOS. Ardour, Carla and jalv all scan
         // this path by default; system-wide `/Library/Audio/Plug-Ins/LV2`
         // is also searched when present.
+        let home = dirs::home_dir().ok_or("cannot locate home directory")?;
         Ok(home.join("Library/Audio/Plug-Ins/LV2"))
+    }
+    #[cfg(target_os = "windows")]
+    {
+        // Per the LV2 spec, the Windows per-user LV2 path is
+        // `%APPDATA%\LV2`. `%COMMONPROGRAMFILES%\LV2` is the system-wide
+        // search path; we target the user location so no admin rights
+        // are needed.
+        let appdata = env::var_os("APPDATA").ok_or("APPDATA env var not set")?;
+        Ok(PathBuf::from(appdata).join("LV2"))
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    {
+        Err("LV2 install is only supported on Linux, macOS, and Windows".into())
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn lv2_slug(name: &str) -> String {
     let mut out = String::with_capacity(name.len());
     let mut prev_dash = false;
@@ -1672,12 +1682,6 @@ fn lv2_slug(name: &str) -> String {
         }
     }
     out.trim_matches('-').to_string()
-}
-
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
-#[allow(dead_code)]
-fn install_lv2(_root: &Path, _p: &PluginDef, _config: &Config) -> Res {
-    Err("LV2 install is only supported on Linux and macOS".into())
 }
 
 fn install_au(root: &Path, p: &PluginDef, config: &Config) -> Res {

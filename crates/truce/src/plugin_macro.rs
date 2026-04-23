@@ -86,13 +86,7 @@ macro_rules! __plugin_impl {
         #[cfg(feature = "vst2")]
         ::truce_vst2::export_vst2!(__HotShellWrapper);
 
-        // LV2 builds on Linux and macOS; Windows needs a Win32UI backend
-        // first, so we target-gate the expansion here (and the dep itself
-        // is target-gated in the plugin's Cargo.toml).
-        #[cfg(all(
-            feature = "lv2",
-            any(target_os = "linux", target_os = "macos")
-        ))]
+        #[cfg(feature = "lv2")]
         ::truce_lv2::export_lv2!(__HotShellWrapper);
 
         #[cfg(feature = "aax")]

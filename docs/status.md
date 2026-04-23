@@ -17,7 +17,7 @@ Runs on **macOS**, **Windows**, and **Linux** (Reaper tested; Bitwig / Ardour pe
 | CLAP | ✅ | ✅ | ✅ | ✅ | Reaper (macOS, Windows, Linux) |
 | VST3 | ✅ | ✅ | ✅ | ✅ | Reaper, Ableton, FL Studio (macOS/Win); Reaper (Linux) |
 | VST2 | ✅ | ✅ | ✅ | ✅ | Reaper, Ableton, FL Studio (macOS/Win) |
-| LV2 | 🆕 builds + installs | — | ✅ | ✅ | Reaper (Linux); lilv bundle scan only on macOS (in-host validation pending) |
+| LV2 | 🆕 builds + installs | 🆕 builds + installs | ✅ | ✅ | Reaper (Linux); lilv bundle scan on macOS / Windows (in-host validation pending) |
 | AU v2 | ✅ | — | — | ✅ | Reaper, Logic, GarageBand*, Ableton |
 | AU v3 | ✅ | — | — | ✅ | Logic, Ableton |
 | AAX | ✅ | ✅† | — | ✅ | Pro Tools Developer |
@@ -168,7 +168,7 @@ truce-slint       — slint GUI backend (declarative .slint markup)
 truce-clap        — CLAP format wrapper
 truce-vst3        — VST3 format wrapper
 truce-vst2        — VST2 format wrapper (clean-room)
-truce-lv2         — LV2 format wrapper (Linux + macOS; hand-written bindings; X11UI / CocoaUI)
+truce-lv2         — LV2 format wrapper (Linux, macOS, Windows; hand-written bindings; X11UI / CocoaUI / WindowsUI)
 truce-au          — Audio Unit (v2 + v3)
 truce-aax         — AAX format wrapper
 truce-shim-types  — ABI-stable types shared with C/C++ shims
