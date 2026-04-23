@@ -493,11 +493,19 @@ pub unsafe fn write_time_position_sequence(
         true
     };
 
+    // LV2 `time:bar` is an integer bar index (0-based); `time:barBeat`
+    // is the float position within that bar in [0, beatsPerBar). Our
+    // TransportInfo stores `bar_start_beats` as the absolute beat
+    // position at which the current bar started, so the bar index is
+    // `bar_start_beats / beatsPerBar`. Writers never emit a raw global
+    // beat count — the reader reconstructs it on the other side.
+    let bpb = if info.time_sig_num > 0 { info.time_sig_num as f64 } else { 4.0 };
+    let bar_index = (info.bar_start_beats / bpb).round();
+    let bar_beat = info.position_beats - info.bar_start_beats;
     write_double(urid.time_speed, if info.playing { 1.0 } else { 0.0 });
     write_double(urid.time_beats_per_minute, info.tempo);
-    write_double(urid.time_beat, info.position_beats);
-    write_double(urid.time_bar_beat, info.position_beats);
-    write_double(urid.time_bar, info.bar_start_beats);
+    write_double(urid.time_bar_beat, bar_beat);
+    write_double(urid.time_bar, bar_index);
     write_double(urid.time_frame, info.position_samples as f64);
     write_double(urid.time_beats_per_bar, info.time_sig_num as f64);
     write_double(urid.time_beat_unit, info.time_sig_den as f64);
@@ -557,6 +565,10 @@ mod tests {
                 (buf.len() - core::mem::size_of::<Atom>()) as u32;
         }
 
+        // `bar_start_beats` must align to a whole-bar boundary for the
+        // LV2 `time:bar` + `time:barBeat` round-trip to recover the
+        // original `position_beats` exactly. Here: 7/8 time, bar 2
+        // starts at beat 14, and we're 2.25 beats into it.
         let source = TransportInfo {
             playing: true,
             recording: false,
@@ -566,7 +578,7 @@ mod tests {
             position_samples: 48000,
             position_seconds: 0.0,
             position_beats: 16.25,
-            bar_start_beats: 16.0,
+            bar_start_beats: 14.0,
             loop_active: false,
             loop_start_beats: 0.0,
             loop_end_beats: 0.0,

@@ -119,6 +119,11 @@ pub struct Vst3Callbacks {
     pub gui_get_size: unsafe extern "C" fn(ctx: *mut c_void, w: *mut u32, h: *mut u32),
     pub gui_open: unsafe extern "C" fn(ctx: *mut c_void, parent: *mut c_void),
     pub gui_close: unsafe extern "C" fn(ctx: *mut c_void),
+    /// Host-driven DPI notification via `IPlugViewContentScaleSupport::
+    /// setContentScaleFactor`. Passed to the Rust side so the instance
+    /// can remember the host scale (used for physical-pixel size
+    /// reporting on Windows/Linux) and forward it to the editor.
+    pub gui_set_content_scale: unsafe extern "C" fn(ctx: *mut c_void, scale: f64),
 }
 
 extern "C" {

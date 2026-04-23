@@ -68,6 +68,8 @@ static const TUID IPlugView_iid       = MAKE_IID(0x5BC32507, 0xD06049EA, 0xA6151
 static const TUID IEditControllerHostEditing_iid = MAKE_IID(0x0F194781, 0x8D984ADA, 0xBBA0C1EF, 0xC011D8D0);
 static const TUID IProcessContextRequirements_iid = MAKE_IID(0x2A654303, 0xEF764E3C, 0xA8E8C6F3, 0xDBAE0F77);
 static const TUID IUnitInfo_iid       = MAKE_IID(0x3D4BD6B5, 0x913A4FD2, 0xA886E768, 0xA5332E1F);
+static const TUID IPlugViewContentScaleSupport_iid =
+    MAKE_IID(0x65ED9690, 0x8AC44525, 0x8AADEF7A, 0x72EA703F);
 
 static const char* kPlatformTypeNSView = "NSView";
 static const char* kPlatformTypeHWND   = "HWND";
@@ -181,6 +183,7 @@ struct Vst3Callbacks {
     void (*gui_get_size)(void*, uint32_t*, uint32_t*);
     void (*gui_open)(void*, void*);
     void (*gui_close)(void*);
+    void (*gui_set_content_scale)(void*, double);
 };
 
 // ---------------------------------------------------------------------------
@@ -904,18 +907,41 @@ struct IPlugViewVtbl {
 
 struct ViewRect { int32 left; int32 top; int32 right; int32 bottom; };
 
+// IPlugViewContentScaleSupport — one method past FUnknown.
+struct IPlugViewContentScaleSupportVtbl {
+    tresult (*queryInterface)(void*, const TUID, void**);
+    uint32  (*addRef)(void*);
+    uint32  (*release)(void*);
+    tresult (*setContentScaleFactor)(void*, float);
+};
+
+// Two-vtable layout so IPlugView and IPlugViewContentScaleSupport share
+// a single COM object. queryInterface returns a pointer to the relevant
+// vtable slot; the functions behind each vtable derive the base with
+// pointer arithmetic, matching the TruceComponent pattern.
 struct TrucePlugView {
     IPlugViewVtbl* vtbl;
+    IPlugViewContentScaleSupportVtbl* vtbl_scale;
     int32_t refCount;
     void* ctx;              // Rust plugin context
     TruceComponent* comp;   // owning component (for state-loaded check)
 };
 
+static TrucePlugView* pv_from_scale(void* s) {
+    return reinterpret_cast<TrucePlugView*>(
+        reinterpret_cast<char*>(s) - sizeof(void*));
+}
+
 static tresult pv_queryInterface(void* s, const TUID iid, void** obj) {
+    auto* pv = (TrucePlugView*)s;
     if (iid_equal(iid, FUnknown_iid) || iid_equal(iid, IPlugView_iid)) {
-        auto* pv = (TrucePlugView*)s;
         pv->refCount++;
-        *obj = s;
+        *obj = &pv->vtbl;
+        return kResultOk;
+    }
+    if (iid_equal(iid, IPlugViewContentScaleSupport_iid)) {
+        pv->refCount++;
+        *obj = &pv->vtbl_scale;
         return kResultOk;
     }
     *obj = nullptr;
@@ -930,6 +956,26 @@ static uint32 pv_release(void* s) {
         return 0;
     }
     return pv->refCount;
+}
+
+// --- IPlugViewContentScaleSupport methods (second vtable) ---
+static tresult pvcs_queryInterface(void* s, const TUID iid, void** obj) {
+    return pv_queryInterface(pv_from_scale(s), iid, obj);
+}
+static uint32 pvcs_addRef(void* s) { return pv_addRef(pv_from_scale(s)); }
+static uint32 pvcs_release(void* s) { return pv_release(pv_from_scale(s)); }
+static tresult pvcs_setContentScaleFactor(void* s, float factor);  // forward
+
+static IPlugViewContentScaleSupportVtbl g_plugview_scale_vtbl = {
+    pvcs_queryInterface, pvcs_addRef, pvcs_release,
+    pvcs_setContentScaleFactor,
+};
+
+static tresult pvcs_setContentScaleFactor(void* s, float factor) {
+    auto* pv = pv_from_scale(s);
+    if (!g_cb || !pv->ctx || !g_cb->gui_set_content_scale) return kResultFalse;
+    g_cb->gui_set_content_scale(pv->ctx, (double)factor);
+    return kResultOk;
 }
 static tresult pv_isPlatformTypeSupported(void*, FIDString type) {
     #ifdef __APPLE__
@@ -1108,6 +1154,7 @@ void* TruceComponent::createView(FIDString /*name*/) {
     if (!g_cb->gui_has_editor(ctx)) return nullptr;
     auto* pv = (TrucePlugView*)calloc(1, sizeof(TrucePlugView));
     pv->vtbl = &g_plugview_vtbl;
+    pv->vtbl_scale = &g_plugview_scale_vtbl;
     pv->refCount = 1;
     pv->ctx = ctx;
     pv->comp = this;

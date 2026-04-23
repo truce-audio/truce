@@ -372,13 +372,6 @@ impl<P: Params + 'static> Editor for HotEditor<P> {
         }
     }
 
-    fn scale_factor(&self) -> f64 {
-        match &self.kind {
-            HotEditorInner::Builtin { gpu, .. } => gpu.scale_factor(),
-            HotEditorInner::Custom { editor } => editor.scale_factor(),
-        }
-    }
-
     fn can_resize(&self) -> bool {
         match &self.kind {
             HotEditorInner::Builtin { gpu, .. } => gpu.can_resize(),

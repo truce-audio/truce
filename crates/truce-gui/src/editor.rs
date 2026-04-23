@@ -694,10 +694,6 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
         (self.layout.width(), self.layout.height())
     }
 
-    fn scale_factor(&self) -> f64 {
-        1.0
-    }
-
     fn open(&mut self, parent: RawWindowHandle, context: EditorContext) {
         let (w, h) = self.size();
         self.backend = CpuBackend::new(w, h);

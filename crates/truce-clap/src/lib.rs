@@ -140,6 +140,12 @@ struct ClapPluginData<P: PluginExport> {
     needs_rescan: Arc<std::sync::atomic::AtomicBool>,
     /// Shared transport slot: audio thread writes each block, editor reads.
     transport_slot: Arc<truce_core::TransportSlot>,
+    /// Host-reported GUI scale (via `clap_plugin_gui::set_scale`).
+    /// Defaults to 1.0 on macOS where AppKit handles DPI automatically
+    /// and hosts generally don't set a scale. Used to convert the
+    /// editor's logical size to physical pixels when CLAP hosts ask
+    /// for the window size on Windows/Linux.
+    host_scale: f64,
 }
 
 // ---------------------------------------------------------------------------
@@ -1165,7 +1171,11 @@ unsafe extern "C" fn gui_set_scale<P: PluginExport>(
     plugin: *const clap_plugin,
     scale: f64,
 ) -> bool {
+    if !scale.is_finite() || scale <= 0.0 {
+        return false;
+    }
     let data = data_from_plugin::<P>(plugin);
+    data.host_scale = scale;
     if let Some(ref mut editor) = data.editor {
         editor.set_scale_factor(scale);
     }
@@ -1180,9 +1190,21 @@ unsafe extern "C" fn gui_get_size<P: PluginExport>(
     let data = data_from_plugin::<P>(plugin);
     if let Some(ref editor) = data.editor {
         let (w, h) = editor.size();
-        let scale = editor.scale_factor();
-        *width = (w as f64 * scale) as u32;
-        *height = (h as f64 * scale) as u32;
+        // Like VST3, the CLAP spec describes gui size as pixels, but
+        // macOS AppKit handles Retina backing automatically. On macOS
+        // we report logical points and let the host / OS scale; on
+        // Windows/Linux we multiply by the host-reported scale (default
+        // 1.0 if the host never called `gui.set_scale`).
+        #[cfg(target_os = "macos")]
+        {
+            *width = w;
+            *height = h;
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            *width = (w as f64 * data.host_scale) as u32;
+            *height = (h as f64 * data.host_scale) as u32;
+        }
         return true;
     }
     false
@@ -1501,6 +1523,7 @@ pub unsafe fn create_plugin_instance<P: PluginExport>(
         gui_drain_buf: Vec::new(),
         needs_rescan: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         transport_slot: truce_core::TransportSlot::new(),
+        host_scale: 1.0,
     });
 
     let clap = Box::new(clap_plugin {

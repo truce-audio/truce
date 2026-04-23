@@ -390,10 +390,14 @@ unsafe extern "C" fn cb_gui_get_size<P: PluginExport>(
 ) {
     let inst = &*(ctx as *mut Vst2Instance<P>);
     if let Some(ref editor) = inst.editor {
+        // VST2 has no standardised DPI channel — hosts read back
+        // whatever `effEditGetRect` returns and embed the NSView /
+        // HWND at that pixel size. Report the editor's logical size
+        // unchanged; hosts on Retina macOS will scale through AppKit
+        // and Windows VST2 plugins have never been HiDPI-aware.
         let (ew, eh) = editor.size();
-        let scale = editor.scale_factor();
-        *w = (ew as f64 * scale) as u32;
-        *h = (eh as f64 * scale) as u32;
+        *w = ew;
+        *h = eh;
     }
 }
 

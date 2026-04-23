@@ -85,15 +85,17 @@ pub trait Editor: Send {
         false
     }
 
-    /// Current DPI scale factor (Retina = 2.0, normal = 1.0).
+    /// Host notifies the editor of a new content scale factor.
     ///
-    /// Format wrappers multiply `size()` by this when reporting to hosts
-    /// that expect physical pixels.
-    fn scale_factor(&self) -> f64 {
-        1.0
-    }
-
-    /// DPI scale factor changed.
+    /// DPI/scale is a host→plugin concept: on VST3 Windows the host
+    /// delivers it via `IPlugViewContentScaleSupport`; on CLAP via
+    /// `clap_plugin_gui::set_scale`; on macOS/Cocoa AppKit handles
+    /// Retina backing automatically and hosts typically never call
+    /// this at all. Editors that need to size off-screen buffers in
+    /// physical pixels should react here, not by exposing a pull-style
+    /// `scale_factor()` method that format wrappers were tempted to
+    /// multiply `size()` by (which caused double-scaling on macOS
+    /// VST3 — see `docs/internal/vst3-macos-scale-factor.md`).
     fn set_scale_factor(&mut self, _factor: f64) {}
 
     /// Plugin state was restored (preset recall, undo, session load).

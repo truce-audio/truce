@@ -32,6 +32,13 @@ struct Vst3Instance<P: PluginExport> {
     editor: Option<Box<dyn truce_core::editor::Editor>>,
     /// Shared transport slot: audio thread writes each block, editor reads.
     transport_slot: std::sync::Arc<truce_core::TransportSlot>,
+    /// Content scale reported by the host via
+    /// `IPlugViewContentScaleSupport::setContentScaleFactor`. Defaults
+    /// to 1.0 when the host never calls it (macOS Cocoa hosts, VST3
+    /// runners that don't implement the interface). Used to convert
+    /// the editor's logical size to physical pixels when reporting
+    /// `getSize` on Windows/Linux.
+    host_scale: f64,
 }
 
 // ---------------------------------------------------------------------------
@@ -61,6 +68,7 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
         sample_rate: 44100.0,
         editor: None,
         transport_slot: truce_core::TransportSlot::new(),
+        host_scale: 1.0,
     });
     Box::into_raw(instance) as *mut std::ffi::c_void
 }
@@ -459,9 +467,36 @@ unsafe extern "C" fn cb_gui_get_size<P: PluginExport>(
     let inst = &*(ctx as *mut Vst3Instance<P>);
     if let Some(ref editor) = inst.editor {
         let (ew, eh) = editor.size();
-        let scale = editor.scale_factor();
-        *w = (ew as f64 * scale) as u32;
-        *h = (eh as f64 * scale) as u32;
+        // VST3 `ViewRect` is documented as "in pixels". That's literally
+        // true on Windows/Linux, where hosts expect physical pixels and
+        // may drive the scale via `IPlugViewContentScaleSupport`. On
+        // macOS, AppKit handles the Retina backing automatically and
+        // hosts expect logical points — scaling here would double the
+        // window on Retina displays.
+        #[cfg(target_os = "macos")]
+        {
+            *w = ew;
+            *h = eh;
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            *w = (ew as f64 * inst.host_scale) as u32;
+            *h = (eh as f64 * inst.host_scale) as u32;
+        }
+    }
+}
+
+unsafe extern "C" fn cb_gui_set_content_scale<P: PluginExport>(
+    ctx: *mut std::ffi::c_void,
+    scale: f64,
+) {
+    if ctx.is_null() || !scale.is_finite() || scale <= 0.0 {
+        return;
+    }
+    let inst = &mut *(ctx as *mut Vst3Instance<P>);
+    inst.host_scale = scale;
+    if let Some(ref mut editor) = inst.editor {
+        editor.set_scale_factor(scale);
     }
 }
 
@@ -641,6 +676,7 @@ pub fn register_vst3<P: PluginExport>() {
         gui_get_size: cb_gui_get_size::<P>,
         gui_open: cb_gui_open::<P>,
         gui_close: cb_gui_close::<P>,
+        gui_set_content_scale: cb_gui_set_content_scale::<P>,
     }));
 
     let param_descs = param_descs.leak();

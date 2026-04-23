@@ -244,17 +244,11 @@ pub unsafe fn instantiate_ui<P: PluginExport>(
     // On Windows and X11 the host works in physical pixels, so we scale
     // logical-point `editor.size()` by the editor's DPI. On macOS the
     // native view coordinate system is logical points — no scaling.
-    let (pref_w_logical, pref_h_logical) = editor.size();
-    #[cfg(any(target_os = "windows", target_os = "linux"))]
-    let (pref_w, pref_h) = {
-        let scale = editor.scale_factor();
-        (
-            (pref_w_logical as f64 * scale) as u32,
-            (pref_h_logical as f64 * scale) as u32,
-        )
-    };
-    #[cfg(target_os = "macos")]
-    let (pref_w, pref_h) = (pref_w_logical, pref_h_logical);
+    let (pref_w, pref_h) = editor.size();
+    // LV2 hosts on X11 conventionally expect pixel sizes, but we have
+    // no host-provided scale channel today; report logical points and
+    // let the host resize accordingly. macOS CocoaUI handles Retina
+    // backing automatically.
 
     #[cfg(target_os = "macos")]
     let handle = RawWindowHandle::AppKit(parent_ptr);
