@@ -12,14 +12,49 @@ pub enum ArpPattern {
     Random,
 }
 
+/// Step length as a note value. Maps directly to beats per step.
+/// `Quarter` is one beat at 4/4; everything else is a power-of-two
+/// subdivision, down to 1/64 for fast arps.
+#[derive(ParamEnum)]
+pub enum ArpRate {
+    #[name = "1/1"]
+    Whole,
+    #[name = "1/2"]
+    Half,
+    #[name = "1/4"]
+    Quarter,
+    #[name = "1/8"]
+    Eighth,
+    #[name = "1/16"]
+    Sixteenth,
+    #[name = "1/32"]
+    ThirtySecond,
+    #[name = "1/64"]
+    SixtyFourth,
+}
+
+impl ArpRate {
+    fn beats_per_step(self) -> f64 {
+        match self {
+            ArpRate::Whole => 4.0,
+            ArpRate::Half => 2.0,
+            ArpRate::Quarter => 1.0,
+            ArpRate::Eighth => 0.5,
+            ArpRate::Sixteenth => 0.25,
+            ArpRate::ThirtySecond => 0.125,
+            ArpRate::SixtyFourth => 0.0625,
+        }
+    }
+}
+
 // --- Parameters ---
 
 use ArpParamsParamId as P;
 
 #[derive(Params)]
 pub struct ArpParams {
-    #[param(name = "Rate", range = "discrete(1, 8)", default = 4)]
-    pub rate: FloatParam,
+    #[param(name = "Rate", default = 2)]
+    pub rate: EnumParam<ArpRate>,
 
     #[param(name = "Octaves", short_name = "Oct",
             range = "discrete(1, 4)", default = 1)]
@@ -159,8 +194,7 @@ impl PluginLogic for Arpeggio {
             return ProcessStatus::Normal;
         }
 
-        let rate_div = self.params.rate.value() as f64; // 1=whole, 2=half, 4=quarter, 8=eighth
-        let beats_per_step = 4.0 / rate_div; // e.g., rate=4 → 1 beat per step
+        let beats_per_step = self.params.rate.value().beats_per_step();
         let gate_frac = self.params.gate.value() as f64;
 
         // Phase-lock to the host beat grid whenever the host reports
@@ -234,7 +268,7 @@ impl PluginLogic for Arpeggio {
 
     fn layout(&self) -> truce_gui::layout::GridLayout {
         GridLayout::build("ARPEGGIO", "V0.1", 2, 50.0, vec![widgets(vec![
-            knob(P::Rate, "Rate"),
+            dropdown(P::Rate, "Rate"),
             knob(P::Gate, "Gate"),
             knob(P::Octaves, "Octaves"),
             dropdown(P::Pattern, "Pattern"),
