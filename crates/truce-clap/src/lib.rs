@@ -1099,7 +1099,9 @@ fn make_note_ports_extension<P: PluginExport>() -> clap_plugin_note_ports {
 // GUI extension
 // ---------------------------------------------------------------------------
 
-use clap_sys::ext::gui::{clap_plugin_gui, clap_window, CLAP_EXT_GUI, CLAP_WINDOW_API_COCOA};
+use clap_sys::ext::gui::{clap_plugin_gui, clap_window, CLAP_EXT_GUI};
+#[cfg(target_os = "macos")]
+use clap_sys::ext::gui::CLAP_WINDOW_API_COCOA;
 #[cfg(target_os = "windows")]
 use clap_sys::ext::gui::CLAP_WINDOW_API_WIN32;
 #[cfg(target_os = "linux")]

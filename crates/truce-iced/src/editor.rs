@@ -23,7 +23,9 @@ use crate::auto_layout;
 use crate::editor_handle::EditorHandle;
 use crate::param_message::{Message, ParamMessage};
 use crate::param_state::ParamState;
-use crate::platform::{IcedPlatformView, IcedViewCallbacks};
+use crate::platform::IcedPlatformView;
+#[cfg(target_os = "macos")]
+use crate::platform::IcedViewCallbacks;
 
 // ---------------------------------------------------------------------------
 // IcedPlugin trait — what plugin authors implement
@@ -791,6 +793,7 @@ impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBase
 // C callbacks from the platform view
 // ---------------------------------------------------------------------------
 
+#[cfg(target_os = "macos")]
 unsafe extern "C" fn cb_setup<P: Params + 'static, M: IcedPlugin<P>>(
     ctx: *mut c_void,
     metal_layer: *mut c_void,
@@ -804,6 +807,7 @@ unsafe extern "C" fn cb_setup<P: Params + 'static, M: IcedPlugin<P>>(
     }
 }
 
+#[cfg(target_os = "macos")]
 unsafe extern "C" fn cb_render<P: Params + 'static, M: IcedPlugin<P>>(ctx: *mut c_void) {
     let editor = &mut *(ctx as *mut IcedEditor<P, M>);
     if let Some(ref mut runtime) = editor.runtime {
@@ -811,6 +815,7 @@ unsafe extern "C" fn cb_render<P: Params + 'static, M: IcedPlugin<P>>(ctx: *mut 
     }
 }
 
+#[cfg(target_os = "macos")]
 unsafe extern "C" fn cb_mouse_down<P: Params + 'static, M: IcedPlugin<P>>(
     ctx: *mut c_void,
     x: f32,
@@ -828,6 +833,7 @@ unsafe extern "C" fn cb_mouse_down<P: Params + 'static, M: IcedPlugin<P>>(
     }
 }
 
+#[cfg(target_os = "macos")]
 unsafe extern "C" fn cb_mouse_dragged<P: Params + 'static, M: IcedPlugin<P>>(
     ctx: *mut c_void,
     x: f32,
@@ -839,6 +845,7 @@ unsafe extern "C" fn cb_mouse_dragged<P: Params + 'static, M: IcedPlugin<P>>(
     }
 }
 
+#[cfg(target_os = "macos")]
 unsafe extern "C" fn cb_mouse_up<P: Params + 'static, M: IcedPlugin<P>>(
     ctx: *mut c_void,
     x: f32,
@@ -856,6 +863,7 @@ unsafe extern "C" fn cb_mouse_up<P: Params + 'static, M: IcedPlugin<P>>(
     }
 }
 
+#[cfg(target_os = "macos")]
 unsafe extern "C" fn cb_scroll<P: Params + 'static, M: IcedPlugin<P>>(
     ctx: *mut c_void,
     x: f32,
@@ -876,6 +884,7 @@ unsafe extern "C" fn cb_scroll<P: Params + 'static, M: IcedPlugin<P>>(
     }
 }
 
+#[cfg(target_os = "macos")]
 unsafe extern "C" fn cb_double_click<P: Params + 'static, M: IcedPlugin<P>>(
     ctx: *mut c_void,
     x: f32,
@@ -899,6 +908,7 @@ unsafe extern "C" fn cb_double_click<P: Params + 'static, M: IcedPlugin<P>>(
     }
 }
 
+#[cfg(target_os = "macos")]
 unsafe extern "C" fn cb_mouse_moved<P: Params + 'static, M: IcedPlugin<P>>(
     ctx: *mut c_void,
     x: f32,

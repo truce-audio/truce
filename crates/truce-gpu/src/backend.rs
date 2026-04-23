@@ -5,6 +5,7 @@
 //! from `RenderBackend` draw calls, then flushes in `present()`.
 
 use std::collections::HashMap;
+#[cfg(target_os = "macos")]
 use std::ffi::c_void;
 use std::sync::Arc;
 
