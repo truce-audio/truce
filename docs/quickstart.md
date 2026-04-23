@@ -154,9 +154,9 @@ truce::plugin! {
 }
 ```
 
-One macro. Generates CLAP + VST3 entry points, state serialization,
-parameter hosting, and GUI. Defaults to stereo bus layout. For
-instruments or custom layouts, add `bus_layouts: [...]`.
+Generates plugin entry points, state serialization, parameter hosting, and 
+GUI. Defaults to stereo bus layout. For instruments or custom layouts, 
+add `bus_layouts: [...]`.
 
 ---
 
