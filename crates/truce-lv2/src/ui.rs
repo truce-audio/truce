@@ -240,7 +240,21 @@ pub unsafe fn instantiate_ui<P: PluginExport>(
     // pre-size their container based on the widget's initial bounds
     // (Reaper's LV2 runner, for one) need us to hand back a correctly-
     // sized parent before the first repaint.
-    let (pref_w, pref_h) = editor.size();
+    //
+    // On Windows and X11 the host works in physical pixels, so we scale
+    // logical-point `editor.size()` by the editor's DPI. On macOS the
+    // native view coordinate system is logical points — no scaling.
+    let (pref_w_logical, pref_h_logical) = editor.size();
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    let (pref_w, pref_h) = {
+        let scale = editor.scale_factor();
+        (
+            (pref_w_logical as f64 * scale) as u32,
+            (pref_h_logical as f64 * scale) as u32,
+        )
+    };
+    #[cfg(target_os = "macos")]
+    let (pref_w, pref_h) = (pref_w_logical, pref_h_logical);
 
     #[cfg(target_os = "macos")]
     let handle = RawWindowHandle::AppKit(parent_ptr);
@@ -275,9 +289,20 @@ pub unsafe fn instantiate_ui<P: PluginExport>(
     #[cfg(target_os = "macos")]
     install_child_cursor_update(parent_ptr);
 
+    // Windows belt-and-braces: resize the host-supplied parent HWND to
+    // match baseview's child client area. Reaper on Windows doesn't
+    // honor `ui:resize` reliably at instantiate time; without this, the
+    // parent stays at Reaper's default size and the child renders
+    // inside a too-large frame that overflows the FX-slot chrome. We
+    // deliberately do NOT resize baseview's child — it already rendered
+    // itself at the correct physical extent, and a second `SetWindowPos`
+    // makes wgpu stretch the previously-rendered surface.
+    #[cfg(target_os = "windows")]
+    fit_win32_parent_to_child(parent_ptr);
+
     // Set widget out-param. Strict X11UI / CocoaUI hosts want the child
-    // window / view we created; pragmatic ones (Ardour, Jalv) accept the
-    // parent. See the module comment for follow-up.
+    // window / view we created; pragmatic ones (Ardour, Jalv, Reaper)
+    // accept the parent. See the module comment for follow-up.
     if !widget.is_null() {
         *widget = parent_ptr;
     }
@@ -489,6 +514,78 @@ unsafe fn find_feature(
         }
         i += 1;
     }
+}
+
+/// Resize the host-supplied parent HWND so its client area exactly
+/// matches baseview's child HWND. Win32 analogue of `resize_ns_view`.
+///
+/// Reaper on Windows doesn't resize its LV2 UI container from
+/// `ui:resize` at instantiate time, so Reaper's parent HWND stays at
+/// its default extent and the child — which baseview already sized to
+/// the editor's preferred dimensions — renders inside a too-large
+/// frame that overflows the FX-slot chrome.
+///
+/// We intentionally *only* resize the parent, never the child: baseview
+/// has already configured its wgpu/GL surface at the child's current
+/// extent, and a `SetWindowPos` on the child after the fact makes the
+/// rendered content stretch rather than re-layout.
+#[cfg(target_os = "windows")]
+unsafe fn fit_win32_parent_to_child(parent: *mut c_void) {
+    if parent.is_null() {
+        return;
+    }
+
+    const SWP_NOMOVE: u32 = 0x0002;
+    const SWP_NOZORDER: u32 = 0x0004;
+    const SWP_NOACTIVATE: u32 = 0x0010;
+    const GW_CHILD: u32 = 5;
+
+    #[repr(C)]
+    struct RECT {
+        left: i32,
+        top: i32,
+        right: i32,
+        bottom: i32,
+    }
+
+    extern "system" {
+        fn SetWindowPos(
+            hwnd: *mut c_void,
+            hwnd_insert_after: *mut c_void,
+            x: i32,
+            y: i32,
+            cx: i32,
+            cy: i32,
+            flags: u32,
+        ) -> i32;
+        fn GetWindow(hwnd: *mut c_void, cmd: u32) -> *mut c_void;
+        fn GetClientRect(hwnd: *mut c_void, rect: *mut RECT) -> i32;
+    }
+
+    let child = GetWindow(parent, GW_CHILD);
+    if child.is_null() {
+        return;
+    }
+
+    let mut rect = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+    if GetClientRect(child, &mut rect) == 0 {
+        return;
+    }
+    let w = rect.right - rect.left;
+    let h = rect.bottom - rect.top;
+    if w <= 0 || h <= 0 {
+        return;
+    }
+
+    let _ = SetWindowPos(
+        parent,
+        std::ptr::null_mut(),
+        0,
+        0,
+        w,
+        h,
+        SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
+    );
 }
 
 /// Set the frame of a Cocoa view to (width, height) preserving its
