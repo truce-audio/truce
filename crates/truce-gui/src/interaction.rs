@@ -2,10 +2,28 @@
 //!
 //! Tracks widget hit regions and maps mouse drags to parameter value changes.
 
-use crate::layout::{GridLayout, Layout, PluginLayout, compute_section_offsets,
+use crate::layout::{GridLayout, Layout, PluginLayout, WidgetKind, compute_section_offsets,
                      GRID_GAP, GRID_PADDING, GRID_HEADER_H};
 use crate::snapshot::ParamSnapshot;
 use crate::widgets::WidgetType;
+
+/// Lower an explicit `WidgetKind` from a layout helper into the
+/// runtime `WidgetType` the interaction code dispatches on. `None`
+/// (meaning "infer from param range") stays as Knob — callers that
+/// need inference overwrite widget_type after calling
+/// `build_regions_*`.
+fn widget_kind_to_type(kind: Option<WidgetKind>) -> WidgetType {
+    match kind {
+        Some(WidgetKind::Knob) => WidgetType::Knob,
+        Some(WidgetKind::Slider) => WidgetType::Slider,
+        Some(WidgetKind::Toggle) => WidgetType::Toggle,
+        Some(WidgetKind::Selector) => WidgetType::Selector,
+        Some(WidgetKind::Dropdown) => WidgetType::Dropdown,
+        Some(WidgetKind::Meter) => WidgetType::Meter,
+        Some(WidgetKind::XYPad) => WidgetType::XYPad,
+        None => WidgetType::Knob,
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Platform-agnostic input events + edit outputs
@@ -280,7 +298,7 @@ impl InteractionState {
 
                 self.knob_regions.push(WidgetRegion {
                     param_id: knob_def.param_id,
-                    widget_type: WidgetType::Knob,
+                    widget_type: widget_kind_to_type(knob_def.widget),
                     x,
                     y,
                     w: widget_w,
@@ -289,7 +307,7 @@ impl InteractionState {
                     cy,
                     radius,
                     normalized_value: 0.0,
-                dropdown_anchor_y: 0.0,
+                    dropdown_anchor_y: 0.0,
                 });
                 col += span;
             }
@@ -460,9 +478,18 @@ impl InteractionState {
             let cy = y + h / 2.0 - 5.0;
             let radius = w.min(h) / 2.0 - 4.0;
 
+            // Pre-populate widget_type from the explicit `widget` kind
+            // when the layout declares one. Callers that need
+            // range-based inference for `None` (BuiltinEditor) still
+            // overwrite this field after the call; for custom editors
+            // that always set `widget` via the `layout::dropdown` /
+            // `layout::knob` / … helpers, this means dispatch routes
+            // correctly out of the box.
+            let widget_type = widget_kind_to_type(gw.widget);
+
             self.knob_regions.push(WidgetRegion {
                 param_id: gw.param_id,
-                widget_type: WidgetType::Knob, // set later by editor
+                widget_type,
                 x, y, w, h,
                 cx, cy, radius,
                 normalized_value: 0.0,
