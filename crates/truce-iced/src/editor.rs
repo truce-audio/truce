@@ -1009,7 +1009,7 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
                 mouse_moved: Some(cb_mouse_moved::<P, M>),
             };
 
-            let view = unsafe { IcedPlatformView::new(parent_ptr, w, h, self_ptr, &callbacks, false) };
+            let view = unsafe { IcedPlatformView::new(parent_ptr, w, h, self_ptr, &callbacks) };
 
             if let Some(view) = view {
                 if let Some(ref mut runtime) = self.runtime {

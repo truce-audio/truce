@@ -182,8 +182,7 @@ void *truce_iced_view_create(
     uint32_t width,
     uint32_t height,
     void *ctx,
-    const TruceIcedViewCallbacks *callbacks,
-    int no_timer
+    const TruceIcedViewCallbacks *callbacks
 ) {
     NSView *parentView = (__bridge NSView *)parent;
     if (!parentView) return NULL;
@@ -205,18 +204,9 @@ void *truce_iced_view_create(
         view->callbacks.setup(view->rustCtx, (__bridge void *)view->metalLayer);
     }
 
-    // In AAX, the host's idle() drives rendering — no timer needed.
-    if (!no_timer) {
-        [view startRunloop];
-    }
+    [view startRunloop];
 
     return (__bridge_retained void *)view;
-}
-
-void truce_iced_view_tick(void *view_handle) {
-    if (!view_handle) return;
-    TRUCE_ICED_VIEW_CLASS_NAME *view = (__bridge TRUCE_ICED_VIEW_CLASS_NAME *)view_handle;
-    [view repaintTick:nil];
 }
 
 void truce_iced_view_destroy(void *view_handle) {
