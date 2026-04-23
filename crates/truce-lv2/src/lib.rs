@@ -53,7 +53,11 @@ pub struct PortLayout {
     pub num_audio_out: u32,
     pub num_params: u32,
     pub num_meters: u32,
-    pub has_midi_in: bool,
+    /// Whether the input atom port should additionally advertise
+    /// `midi:MidiEvent` support. The port itself always exists — hosts
+    /// deliver `time:Position` through it regardless of whether the
+    /// plugin consumes MIDI.
+    pub accepts_midi_in: bool,
     pub has_midi_out: bool,
 }
 
@@ -70,19 +74,15 @@ impl PortLayout {
     pub fn meter_start(&self) -> u32 {
         self.control_start() + self.num_params
     }
-    pub fn midi_in_port(&self) -> Option<u32> {
-        if self.has_midi_in {
-            Some(self.meter_start() + self.num_meters)
-        } else {
-            None
-        }
+    /// Index of the DSP input atom port. Always present: carries
+    /// `time:Position` (transport) for every plugin type and
+    /// additionally `midi:MidiEvent` for instruments / note effects.
+    pub fn atom_in_port(&self) -> u32 {
+        self.meter_start() + self.num_meters
     }
     pub fn midi_out_port(&self) -> Option<u32> {
-        let after_midi_in = self.meter_start()
-            + self.num_meters
-            + if self.has_midi_in { 1 } else { 0 };
         if self.has_midi_out {
-            Some(after_midi_in)
+            Some(self.atom_in_port() + 1)
         } else {
             None
         }
@@ -91,10 +91,7 @@ impl PortLayout {
     /// DSP writes host transport (and any future plugin-defined notify
     /// messages) here, and the UI listens via `ui:portNotification`.
     pub fn notify_out_port(&self) -> u32 {
-        self.meter_start()
-            + self.num_meters
-            + if self.has_midi_in { 1 } else { 0 }
-            + if self.has_midi_out { 1 } else { 0 }
+        self.atom_in_port() + 1 + if self.has_midi_out { 1 } else { 0 }
     }
     pub fn total(&self) -> u32 {
         self.notify_out_port() + 1
@@ -124,7 +121,7 @@ pub struct Lv2Instance<P: PluginExport> {
     meter_ports: Vec<*mut f32>,
     /// Parameter/meter IDs for the meter slots, in port order.
     meter_ids: Vec<u32>,
-    midi_in_port: *const AtomSequence,
+    atom_in_port: *const AtomSequence,
     midi_out_port: *mut AtomSequence,
     notify_out_port: *mut AtomSequence,
 
@@ -168,7 +165,7 @@ pub fn derive_port_layout<P: PluginExport>() -> PortLayout {
     let param_count = params.param_infos().len() as u32;
     let meter_count = params.meter_ids().len() as u32;
     let category = P::info().category;
-    let has_midi_in = matches!(
+    let accepts_midi_in = matches!(
         category,
         PluginCategory::Instrument | PluginCategory::NoteEffect
     );
@@ -178,7 +175,7 @@ pub fn derive_port_layout<P: PluginExport>() -> PortLayout {
         num_audio_out: default_layout.total_output_channels(),
         num_params: param_count,
         num_meters: meter_count,
-        has_midi_in,
+        accepts_midi_in,
         has_midi_out,
     }
 }
@@ -217,7 +214,7 @@ pub unsafe fn instantiate<P: PluginExport>(
         control_ports: vec![ptr::null(); control_port_count],
         meter_ports: vec![ptr::null_mut(); meter_count],
         meter_ids,
-        midi_in_port: ptr::null(),
+        atom_in_port: ptr::null(),
         midi_out_port: ptr::null_mut(),
         notify_out_port: ptr::null_mut(),
 
@@ -255,8 +252,8 @@ pub unsafe fn connect_port<P: PluginExport>(
         inst.control_ports[(port - layout.control_start()) as usize] = data as *const f32;
     } else if port < layout.meter_start() + layout.num_meters {
         inst.meter_ports[(port - layout.meter_start()) as usize] = data as *mut f32;
-    } else if Some(port) == layout.midi_in_port() {
-        inst.midi_in_port = data as *const AtomSequence;
+    } else if port == layout.atom_in_port() {
+        inst.atom_in_port = data as *const AtomSequence;
     } else if Some(port) == layout.midi_out_port() {
         inst.midi_out_port = data as *mut AtomSequence;
     } else if port == layout.notify_out_port() {
@@ -323,15 +320,20 @@ pub unsafe fn run<P: PluginExport>(handle: *mut Lv2Instance<P>, n_samples: u32) 
         }
     }
 
-    // Decode MIDI + time:Position from the atom sequence port, if connected.
+    // Decode MIDI + time:Position from the input atom sequence port. The
+    // port is always declared so every plugin type (effects included)
+    // can receive host transport; MIDI events are only parsed when the
+    // plugin's category opts in.
     let mut transport = TransportInfo::default();
-    if !inst.midi_in_port.is_null() {
-        let reader = AtomSequenceReader::new(inst.midi_in_port, &inst.urid_map);
-        reader.for_each_midi(|sample_offset, bytes| {
-            if let Some(event) = atom::midi_bytes_to_event(sample_offset, bytes) {
-                inst.event_list.push(event);
-            }
-        });
+    if !inst.atom_in_port.is_null() {
+        let reader = AtomSequenceReader::new(inst.atom_in_port, &inst.urid_map);
+        if inst.layout.accepts_midi_in {
+            reader.for_each_midi(|sample_offset, bytes| {
+                if let Some(event) = atom::midi_bytes_to_event(sample_offset, bytes) {
+                    inst.event_list.push(event);
+                }
+            });
+        }
         reader.apply_time_position(&mut transport);
     }
 
