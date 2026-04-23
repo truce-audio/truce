@@ -64,6 +64,16 @@ pub fn emit_plugin_env() {
     let toml_path = find_truce_toml();
     println!("cargo:rerun-if-changed={}", toml_path.display());
 
+    // Register every feature name the `truce::plugin!` macro expands into,
+    // so plugin crates don't get `unexpected_cfgs` warnings for formats
+    // they haven't opted in to. Cargo's auto-allow-list only covers
+    // features the crate *declares* — but the macro emits one
+    // `#[cfg(feature = "…")]` arm per supported format whether the
+    // consumer declared it or not.
+    println!(
+        "cargo:rustc-check-cfg=cfg(feature, values(\"clap\", \"vst3\", \"vst2\", \"lv2\", \"aax\", \"au\", \"dev\"))"
+    );
+
     let content = std::fs::read_to_string(&toml_path).unwrap_or_else(|e| {
         panic!("Failed to read {}: {e}", toml_path.display());
     });
