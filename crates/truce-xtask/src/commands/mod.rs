@@ -1,0 +1,15 @@
+//! Top-level command implementations. Each `cmd_*` function corresponds
+//! to one entry in the dispatch match in `crate::run`.
+
+pub(crate) mod build;
+pub(crate) mod clean;
+pub(crate) mod install;
+pub(crate) mod log;
+pub(crate) mod new;
+pub(crate) mod nuke;
+pub(crate) mod package;
+pub(crate) mod remove;
+pub(crate) mod run;
+pub(crate) mod status;
+pub(crate) mod test;
+pub(crate) mod validate;
