@@ -143,4 +143,12 @@ mod tests {
             "transpose_default", params, layout, 0,
         );
     }
+
+    /// Regression guard: see `arpeggio/src/lib.rs::tests::category_is_note_effect`.
+    #[test]
+    fn category_is_note_effect() {
+        use truce_core::info::PluginCategory;
+        use truce_core::plugin::Plugin as PluginTrait;
+        assert_eq!(<Plugin as PluginTrait>::info().category, PluginCategory::NoteEffect);
+    }
 }

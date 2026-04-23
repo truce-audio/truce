@@ -106,13 +106,23 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
     let pkg_version = std::env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "0.1.0".into());
     let version = plugin.version.as_deref().unwrap_or(&pkg_version).to_string();
 
+    // Keep these mappings in sync with `truce-build::emit_plugin_env` and
+    // `truce_core::info::category_from_str`. Historically this match only
+    // knew about "instrument" and fell everything else through to
+    // `Effect` — which silently broke LV2 MIDI for every note-effect
+    // plugin because `truce-lv2::derive_port_layout` reads the category
+    // to decide whether to open the MIDI input decode path.
     let category = match plugin.category.as_str() {
         "instrument" => quote! { ::truce::core::PluginCategory::Instrument },
+        "midi" | "note_effect" => quote! { ::truce::core::PluginCategory::NoteEffect },
+        "analyzer" => quote! { ::truce::core::PluginCategory::Analyzer },
+        "tool" => quote! { ::truce::core::PluginCategory::Tool },
         _ => quote! { ::truce::core::PluginCategory::Effect },
     };
     let au_type = plugin.au_type.as_deref().unwrap_or(
         match plugin.category.as_str() {
             "instrument" => "aumu",
+            "midi" | "note_effect" => "aumi",
             _ => "aufx",
         }
     );

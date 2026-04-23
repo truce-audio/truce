@@ -600,4 +600,82 @@ mod tests {
         assert_eq!(decoded.time_sig_num, source.time_sig_num);
         assert_eq!(decoded.time_sig_den, source.time_sig_den);
     }
+
+    /// Encode a small MIDI stream through `write_midi_out_sequence`,
+    /// read it back via `AtomSequenceReader::for_each_midi` +
+    /// `midi_bytes_to_event`, and check the round-trip is lossless.
+    ///
+    /// Added as the independent codec-level regression guard called
+    /// for in `docs/internal/lv2-midi-broken.md` — the port-layout
+    /// fix in `truce-derive` is the reason MIDI works at all for
+    /// note-effect plugins, but this test pins the codec separately
+    /// so future refactors don't regress either layer silently.
+    #[test]
+    fn midi_roundtrip() {
+        use truce_core::events::{Event, EventBody, EventList};
+
+        let urid = test_urid_map();
+        let mut buf = vec![0u8; 4096];
+        let seq = buf.as_mut_ptr() as *mut AtomSequence;
+        unsafe {
+            (*seq).atom.size =
+                (buf.len() - core::mem::size_of::<Atom>()) as u32;
+        }
+
+        let mut source = EventList::new();
+        source.push(Event {
+            sample_offset: 0,
+            body: EventBody::NoteOn { channel: 0, note: 60, velocity: 0.75 },
+        });
+        source.push(Event {
+            sample_offset: 128,
+            body: EventBody::NoteOff { channel: 0, note: 60, velocity: 0.0 },
+        });
+        source.push(Event {
+            sample_offset: 256,
+            body: EventBody::ControlChange { channel: 3, cc: 7, value: 0.5 },
+        });
+
+        unsafe {
+            write_midi_out_sequence(seq, &source, &urid);
+        }
+
+        let reader = AtomSequenceReader::new(seq as *const AtomSequence, &urid);
+        let mut decoded = Vec::new();
+        reader.for_each_midi(|sample_offset, bytes| {
+            if let Some(event) = midi_bytes_to_event(sample_offset, bytes) {
+                decoded.push(event);
+            }
+        });
+
+        assert_eq!(decoded.len(), source.len(), "all events round-tripped");
+        assert_eq!(decoded[0].sample_offset, 0);
+        assert_eq!(decoded[1].sample_offset, 128);
+        assert_eq!(decoded[2].sample_offset, 256);
+
+        match decoded[0].body {
+            EventBody::NoteOn { channel, note, velocity } => {
+                assert_eq!(channel, 0);
+                assert_eq!(note, 60);
+                // MIDI 1.0 velocity quantizes to 7 bits (1/127 steps).
+                assert!((velocity - 0.75).abs() < 1.0 / 127.0);
+            }
+            _ => panic!("expected NoteOn at index 0, got {:?}", decoded[0].body),
+        }
+        match decoded[1].body {
+            EventBody::NoteOff { channel, note, .. } => {
+                assert_eq!(channel, 0);
+                assert_eq!(note, 60);
+            }
+            _ => panic!("expected NoteOff at index 1, got {:?}", decoded[1].body),
+        }
+        match decoded[2].body {
+            EventBody::ControlChange { channel, cc, value } => {
+                assert_eq!(channel, 3);
+                assert_eq!(cc, 7);
+                assert!((value - 0.5).abs() < 1.0 / 127.0);
+            }
+            _ => panic!("expected ControlChange at index 2, got {:?}", decoded[2].body),
+        }
+    }
 }
