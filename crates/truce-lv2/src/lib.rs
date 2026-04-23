@@ -52,6 +52,7 @@ pub struct PortLayout {
     pub num_audio_in: u32,
     pub num_audio_out: u32,
     pub num_params: u32,
+    pub num_meters: u32,
     pub has_midi_in: bool,
     pub has_midi_out: bool,
 }
@@ -66,16 +67,19 @@ impl PortLayout {
     pub fn control_start(&self) -> u32 {
         self.num_audio_in + self.num_audio_out
     }
+    pub fn meter_start(&self) -> u32 {
+        self.control_start() + self.num_params
+    }
     pub fn midi_in_port(&self) -> Option<u32> {
         if self.has_midi_in {
-            Some(self.control_start() + self.num_params)
+            Some(self.meter_start() + self.num_meters)
         } else {
             None
         }
     }
     pub fn midi_out_port(&self) -> Option<u32> {
-        let after_midi_in = self.control_start()
-            + self.num_params
+        let after_midi_in = self.meter_start()
+            + self.num_meters
             + if self.has_midi_in { 1 } else { 0 };
         if self.has_midi_out {
             Some(after_midi_in)
@@ -87,8 +91,8 @@ impl PortLayout {
     /// DSP writes host transport (and any future plugin-defined notify
     /// messages) here, and the UI listens via `ui:portNotification`.
     pub fn notify_out_port(&self) -> u32 {
-        self.control_start()
-            + self.num_params
+        self.meter_start()
+            + self.num_meters
             + if self.has_midi_in { 1 } else { 0 }
             + if self.has_midi_out { 1 } else { 0 }
     }
@@ -114,6 +118,12 @@ pub struct Lv2Instance<P: PluginExport> {
     audio_inputs: Vec<*const f32>,
     audio_outputs: Vec<*mut f32>,
     control_ports: Vec<*const f32>,
+    /// Output control ports — one per `#[meter]` slot. We write the
+    /// latest meter reading here at the end of each `run()` so the host
+    /// forwards it to the UI via `port_event`.
+    meter_ports: Vec<*mut f32>,
+    /// Parameter/meter IDs for the meter slots, in port order.
+    meter_ids: Vec<u32>,
     midi_in_port: *const AtomSequence,
     midi_out_port: *mut AtomSequence,
     notify_out_port: *mut AtomSequence,
@@ -156,6 +166,7 @@ pub fn derive_port_layout<P: PluginExport>() -> PortLayout {
     let plugin = P::create();
     let params = plugin.params();
     let param_count = params.param_infos().len() as u32;
+    let meter_count = params.meter_ids().len() as u32;
     let category = P::info().category;
     let has_midi_in = matches!(
         category,
@@ -166,6 +177,7 @@ pub fn derive_port_layout<P: PluginExport>() -> PortLayout {
         num_audio_in: default_layout.total_input_channels(),
         num_audio_out: default_layout.total_output_channels(),
         num_params: param_count,
+        num_meters: meter_count,
         has_midi_in,
         has_midi_out,
     }
@@ -187,6 +199,8 @@ pub unsafe fn instantiate<P: PluginExport>(
     let control_port_count = layout.num_params as usize;
     let audio_in_count = layout.num_audio_in as usize;
     let audio_out_count = layout.num_audio_out as usize;
+    let meter_ids = plugin.params().meter_ids();
+    let meter_count = meter_ids.len();
 
     let urid_map = UridMap::from_features(features);
 
@@ -201,6 +215,8 @@ pub unsafe fn instantiate<P: PluginExport>(
         audio_inputs: vec![ptr::null(); audio_in_count],
         audio_outputs: vec![ptr::null_mut(); audio_out_count],
         control_ports: vec![ptr::null(); control_port_count],
+        meter_ports: vec![ptr::null_mut(); meter_count],
+        meter_ids,
         midi_in_port: ptr::null(),
         midi_out_port: ptr::null_mut(),
         notify_out_port: ptr::null_mut(),
@@ -235,8 +251,10 @@ pub unsafe fn connect_port<P: PluginExport>(
         inst.audio_inputs[(port - layout.audio_in_start()) as usize] = data as *const f32;
     } else if port < layout.control_start() {
         inst.audio_outputs[(port - layout.audio_out_start()) as usize] = data as *mut f32;
-    } else if port < layout.control_start() + layout.num_params {
+    } else if port < layout.meter_start() {
         inst.control_ports[(port - layout.control_start()) as usize] = data as *const f32;
+    } else if port < layout.meter_start() + layout.num_meters {
+        inst.meter_ports[(port - layout.meter_start()) as usize] = data as *mut f32;
     } else if Some(port) == layout.midi_in_port() {
         inst.midi_in_port = data as *const AtomSequence;
     } else if Some(port) == layout.midi_out_port() {
@@ -277,7 +295,13 @@ pub unsafe fn run<P: PluginExport>(handle: *mut Lv2Instance<P>, n_samples: u32) 
     inst.event_list.clear();
     inst.output_events.clear();
 
-    // Emit ParamChange events for any control port that moved since last run.
+    // Emit ParamChange events for any control port that moved since last
+    // run. The event carries the PLAIN value — format wrappers agree on
+    // plain (see `HotShell::process`'s comment). Writing plain directly
+    // also lets the plugin see the value immediately via its params Arc;
+    // the event is only there so `PluginLogic`s that observe param
+    // changes via events (rather than reading atomics) pick the change up
+    // at the right sample offset.
     for (i, &port_ptr) in inst.control_ports.iter().enumerate() {
         if port_ptr.is_null() {
             continue;
@@ -292,13 +316,9 @@ pub unsafe fn run<P: PluginExport>(handle: *mut Lv2Instance<P>, n_samples: u32) 
             let pid = inst.param_infos[i].id;
             let plain = v as f64;
             inst.plugin.params().set_plain(pid, plain);
-            let normalized = inst.plugin.params().get_normalized(pid).unwrap_or(0.0);
             inst.event_list.push(Event {
                 sample_offset: 0,
-                body: EventBody::ParamChange {
-                    id: pid,
-                    value: normalized,
-                },
+                body: EventBody::ParamChange { id: pid, value: plain },
             });
         }
     }
@@ -343,6 +363,19 @@ pub unsafe fn run<P: PluginExport>(handle: *mut Lv2Instance<P>, n_samples: u32) 
     inst.transport_slot.write(&transport);
     let mut ctx = ProcessContext::new(&transport, inst.sample_rate, n, &mut inst.output_events);
     let _ = inst.plugin.process(&mut audio, &inst.event_list, &mut ctx);
+
+    // Copy meter readings out to the host. The plugin's process() has
+    // already written the latest peaks into the HotShell via
+    // `ctx.set_meter`; reading them back via `plugin.get_meter` picks
+    // up those atomics. Hosts forward the updated port value to the UI
+    // through `port_event` so the editor's meter widget animates.
+    for (slot, &id) in inst.meter_ports.iter().zip(inst.meter_ids.iter()) {
+        if slot.is_null() {
+            continue;
+        }
+        let v = inst.plugin.get_meter(id);
+        **slot = v;
+    }
 
     // Write MIDI output to the atom sequence port, if connected.
     if !inst.midi_out_port.is_null() {

@@ -9,7 +9,7 @@ rust-version.workspace = true
 crate-type = ["cdylib", "rlib"]
 
 [features]
-default = ["clap", "vst3"]
+default = ["clap", "vst3", "lv2"]
 clap = ["dep:truce-clap", "dep:clap-sys"]
 vst3 = ["dep:truce-vst3"]
 vst2 = ["dep:truce-vst2"]
@@ -26,7 +26,6 @@ truce-params-derive = { workspace = true }
 truce-clap = { workspace = true, optional = true }
 truce-vst3 = { workspace = true, optional = true }
 truce-vst2 = { workspace = true, optional = true }
-truce-lv2 = { workspace = true, optional = true }
 truce-aax = { workspace = true, optional = true }
 truce-au = { workspace = true, optional = true }
 clap-sys = { version = "0.5", optional = true }
@@ -34,6 +33,12 @@ truce-gui = { workspace = true }
 truce-loader = { workspace = true }
 truce-iced = { workspace = true }
 iced = { version = "0.13", default-features = false, features = ["wgpu", "canvas"] }
+
+# LV2 builds on Linux and macOS. On Windows the `lv2` feature is a
+# no-op: the dep drops out and `truce::plugin!` cfg-gates the
+# `export_lv2!` expansion to those same two targets.
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
+truce-lv2 = { workspace = true, optional = true }
 
 [dev-dependencies]
 truce-test = { workspace = true }

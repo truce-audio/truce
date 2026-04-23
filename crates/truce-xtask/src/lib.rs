@@ -1195,7 +1195,7 @@ fn cmd_install(args: &[String]) -> Res {
         clap = available.contains("clap");
         vst3 = available.contains("vst3");
         vst2 = available.contains("vst2");
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         {
             lv2 = available.contains("lv2");
         }
@@ -1584,16 +1584,25 @@ fn install_vst2(root: &Path, p: &PluginDef, config: &Config) -> Res {
     Ok(())
 }
 
-/// Install an LV2 bundle to `~/.lv2/{slug}.lv2/`. Copies the plugin `.so`
-/// into the bundle directory, then dlopen()s the `.so` to call its
-/// `__truce_lv2_emit_bundle` entry point, which writes `manifest.ttl` +
-/// `plugin.ttl` describing the plugin's ports and parameters.
+/// Install an LV2 bundle.
+///
+/// Destination:
+/// - **Linux**: `~/.lv2/{slug}.lv2/`
+/// - **macOS**: `~/Library/Audio/Plug-Ins/LV2/{slug}.lv2/`
+///
+/// Copies the built shared library into the bundle as `{slug}.so` (LV2
+/// hosts on both platforms accept `.so`; keeping a single extension
+/// across platforms means the generated Turtle doesn't need a
+/// per-platform `lv2:binary` line), then dlopen()s it to call the
+/// plugin's `__truce_lv2_emit_bundle` entry point, which writes
+/// `manifest.ttl` + `plugin.ttl` describing ports, parameters, and the
+/// UI type appropriate for the host platform.
 ///
 /// Bundle and binary filenames are slugged to lowercase ASCII with hyphens
 /// so that Turtle IRI references (`lv2:binary <...>`) don't need percent
 /// encoding — some LV2 hosts reject bundles whose TTL has spaces or other
 /// non-URI characters in filenames even when the on-disk files are valid.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn install_lv2(root: &Path, p: &PluginDef, _config: &Config) -> Res {
     use std::ffi::{c_char, CString};
     let built = release_lib(root, &format!("{}_lv2", p.dylib_stem()));
@@ -1602,7 +1611,7 @@ fn install_lv2(root: &Path, p: &PluginDef, _config: &Config) -> Res {
     }
 
     let slug = lv2_slug(&p.name);
-    let lv2_dir = dirs::home_dir().unwrap().join(".lv2");
+    let lv2_dir = lv2_bundle_root()?;
     let bundle = lv2_dir.join(format!("{slug}.lv2"));
     let _ = fs::remove_dir_all(&bundle);
     fs_ctx::create_dir_all(&bundle)?;
@@ -1632,7 +1641,24 @@ fn install_lv2(root: &Path, p: &PluginDef, _config: &Config) -> Res {
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
+/// User-level LV2 bundle root per platform convention.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn lv2_bundle_root() -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let home = dirs::home_dir().ok_or("cannot locate home directory")?;
+    #[cfg(target_os = "linux")]
+    {
+        Ok(home.join(".lv2"))
+    }
+    #[cfg(target_os = "macos")]
+    {
+        // LV2 SDK convention on macOS. Ardour, Carla and jalv all scan
+        // this path by default; system-wide `/Library/Audio/Plug-Ins/LV2`
+        // is also searched when present.
+        Ok(home.join("Library/Audio/Plug-Ins/LV2"))
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn lv2_slug(name: &str) -> String {
     let mut out = String::with_capacity(name.len());
     let mut prev_dash = false;
@@ -1648,10 +1674,10 @@ fn lv2_slug(name: &str) -> String {
     out.trim_matches('-').to_string()
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 #[allow(dead_code)]
 fn install_lv2(_root: &Path, _p: &PluginDef, _config: &Config) -> Res {
-    Err("LV2 install is only supported on Linux".into())
+    Err("LV2 install is only supported on Linux and macOS".into())
 }
 
 fn install_au(root: &Path, p: &PluginDef, config: &Config) -> Res {
@@ -2480,14 +2506,48 @@ fn install_au_v3(
             let home = dirs::home_dir().unwrap();
             let _ = fs::remove_dir_all(home.join("Library/Caches/AudioUnitCache"));
             std::thread::sleep(std::time::Duration::from_secs(2));
-            let _ = Command::new("pluginkit")
-                .args(["-a", &format!("{app_dir}/Contents/PlugIns/AUExt.appex")])
-                .output();
+
+            // `pluginkit -a` silently no-ops if `pkd` is still respawning
+            // after the killall above, which is what happened when one
+            // plugin out of a batch wouldn't show up in hosts. Retry a
+            // few times, verifying via `-m -i` that the appex actually
+            // appears in the registry before moving on.
+            let appex_path = format!("{app_dir}/Contents/PlugIns/AUExt.appex");
+            if !register_appex(&appex_path, &appex_id) {
+                eprintln!(
+                    "  WARNING: pluginkit did not register {appex_id}. \
+                     Run `pluginkit -a \"{appex_path}\"` manually after \
+                     `pkd` has settled."
+                );
+            }
 
             eprintln!("  Installed: {app_dir}");
         }
     }
     Ok(())
+}
+
+/// Register an AU v3 appex and verify pluginkit actually picked it up.
+/// `pluginkit -a` returns 0 even when `pkd` is down, so we poll
+/// `pluginkit -m -i <bundle_id>` until the id shows up in the registry.
+/// Returns true on confirmed registration.
+fn register_appex(appex_path: &str, appex_id: &str) -> bool {
+    for _ in 0..8 {
+        let _ = Command::new("pluginkit").args(["-a", appex_path]).output();
+        // `-vv` so the output is stable across pluginkit versions; we
+        // only care whether the id string appears.
+        if let Ok(out) = Command::new("pluginkit")
+            .args(["-m", "-v", "-i", appex_id])
+            .output()
+        {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            if stdout.contains(appex_id) {
+                return true;
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+    false
 }
 
 fn build_and_install_au_v3(

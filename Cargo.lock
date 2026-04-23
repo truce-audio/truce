@@ -6365,6 +6365,7 @@ dependencies = [
 name = "truce-lv2"
 version = "0.4.0"
 dependencies = [
+ "objc",
  "truce-core",
  "truce-params",
 ]

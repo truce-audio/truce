@@ -1,4 +1,11 @@
-//! LV2 UI (X11UI) — Phase 6.
+//! LV2 UI — supports `X11UI` on Linux and `CocoaUI` on macOS.
+//!
+//! The two UI types share an identical LV2 C ABI: `instantiate`,
+//! `port_event`, `cleanup`, plus the `ui:parent` feature. Only the
+//! semantics of the parent handle differ — an `xcb_window_t` on X11,
+//! an `NSView*` on Cocoa. `parse_parent_feature` returns the raw
+//! pointer and the `instantiate_ui` caller reinterprets it per
+//! platform before handing it to the editor via `RawWindowHandle`.
 //!
 //! LV2 UIs do not share memory with the plugin. All communication goes
 //! through two function pointers the host provides:
@@ -15,14 +22,14 @@
 //!
 //! Milestone 1 supports knob/slider manipulation end-to-end. Meters,
 //! `get_state`/`set_state`, and `begin_edit`/`end_edit` gestures are no-ops.
-//! Widget out-parameter currently returns the host-provided PARENT window
-//! (pragmatic for Ardour/Jalv which accept it; stricter X11UI hosts may
-//! want the actual child window ID — follow-up).
+//! Widget out-parameter currently returns the host-provided PARENT
+//! (pragmatic for Ardour/Jalv which accept it; stricter X11UI / CocoaUI
+//! hosts may want the actual child window / view — follow-up).
 
 use std::ffi::{c_char, c_void, CStr, CString};
 use std::marker::PhantomData;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use truce_core::editor::{Editor, EditorContext, RawWindowHandle};
 use truce_core::export::PluginExport;
@@ -77,7 +84,22 @@ unsafe impl Send for Lv2UiDescriptor {}
 unsafe impl Sync for Lv2UiDescriptor {}
 
 pub const LV2_UI__X11UI: &str = "http://lv2plug.in/ns/extensions/ui#X11UI";
+#[allow(non_upper_case_globals)]
+pub const LV2_UI__CocoaUI: &str = "http://lv2plug.in/ns/extensions/ui#CocoaUI";
 pub const LV2_UI__PARENT: &str = "http://lv2plug.in/ns/extensions/ui#parent";
+pub const LV2_UI__RESIZE: &str = "http://lv2plug.in/ns/extensions/ui#resize";
+
+/// Layout of the host-provided `ui:resize` feature. Data pointer in the
+/// `LV2_Feature` is an `&LV2UI_Resize`. The UI calls `ui_resize` with
+/// its desired width × height and the host resizes its container
+/// accordingly.
+#[repr(C)]
+pub struct Lv2UiResize {
+    pub handle: *mut c_void,
+    pub ui_resize: Option<
+        unsafe extern "C" fn(handle: *mut c_void, width: i32, height: i32) -> i32,
+    >,
+}
 
 // ---------------------------------------------------------------------------
 // UI state
@@ -93,6 +115,10 @@ pub struct Lv2UiInstance<P: PluginExport> {
     params: Arc<P::Params>,
     /// Param metadata (id → port index, range for denormalization).
     param_slots: Vec<ParamSlot>,
+    /// Meter metadata (id, port index, shared latest value). Cloned into
+    /// the `get_meter` closure so editor widgets can read the current
+    /// reading without a trip to the plugin.
+    meter_slots: Arc<Vec<MeterSlot>>,
     /// Host callback to write values back to the plugin.
     write_function: Lv2UiWriteFn,
     controller: Lv2UiController,
@@ -121,6 +147,15 @@ struct ParamSlot {
     range: truce_params::ParamRange,
 }
 
+/// UI-side mirror of a DSP meter output. `value` holds the latest reading
+/// the host forwarded via `port_event` (stored as `f32::to_bits` so the
+/// value is lock-free readable from the editor's paint thread).
+struct MeterSlot {
+    id: u32,
+    port_index: u32,
+    value: AtomicU32,
+}
+
 /// # Safety
 /// Called by the LV2 UI host at UI instantiation. See LV2 spec for contract.
 pub unsafe fn instantiate_ui<P: PluginExport>(
@@ -132,9 +167,12 @@ pub unsafe fn instantiate_ui<P: PluginExport>(
     widget: *mut *mut c_void,
     features: *const *const LV2Feature,
 ) -> Lv2UiHandle {
-    // Locate PARENT feature — the X11 Window the host wants us to embed in.
-    let parent_window = parse_parent_feature(features);
-    let Some(parent_window) = parent_window else {
+    // Locate PARENT feature — on X11 the host passes the window id the UI
+    // should embed in; on macOS it passes an `NSView*` from Cocoa. Both
+    // arrive as `feature.data: *mut c_void` and we reinterpret per
+    // platform.
+    let parent_ptr = parse_parent_feature(features);
+    let Some(parent_ptr) = parent_ptr else {
         return std::ptr::null_mut();
     };
 
@@ -158,6 +196,23 @@ pub unsafe fn instantiate_ui<P: PluginExport>(
         })
         .collect();
 
+    // Mirror the DSP-side `#[meter]` declaration order onto the
+    // corresponding output control-port range so `port_event` can map an
+    // incoming port update back to the meter's declared ID.
+    let meter_ids = plugin.params().meter_ids();
+    let meter_start = layout.meter_start();
+    let meter_slots: Arc<Vec<MeterSlot>> = Arc::new(
+        meter_ids
+            .iter()
+            .enumerate()
+            .map(|(i, &id)| MeterSlot {
+                id,
+                port_index: meter_start + i as u32,
+                value: AtomicU32::new(0),
+            })
+            .collect(),
+    );
+
     let Some(mut editor) = plugin.editor() else {
         return std::ptr::null_mut();
     };
@@ -172,24 +227,61 @@ pub unsafe fn instantiate_ui<P: PluginExport>(
     let ctx = build_editor_context::<P>(
         params_arc.clone(),
         &param_slots,
+        meter_slots.clone(),
         write_function,
         controller,
         transport_slot.clone(),
     );
 
-    editor.open(RawWindowHandle::X11(parent_window), ctx);
+    // Record the editor's preferred size BEFORE `open()` — hosts that
+    // pre-size their container based on the widget's initial bounds
+    // (Reaper's LV2 runner, for one) need us to hand back a correctly-
+    // sized parent before the first repaint.
+    let (pref_w, pref_h) = editor.size();
 
-    // Set widget out-param. Strict X11UI hosts want the plugin's child
-    // window ID; pragmatic ones (Ardour, Jalv) accept the parent. See the
-    // module comment for follow-up.
+    #[cfg(target_os = "macos")]
+    let handle = RawWindowHandle::AppKit(parent_ptr);
+    #[cfg(not(target_os = "macos"))]
+    let handle = RawWindowHandle::X11(parent_ptr as u64);
+    editor.open(handle, ctx);
+
+    // Ask the host to match our preferred size via the `ui:resize`
+    // extension (optional — not every host provides it, but Reaper
+    // honors it, and without it the UI floats inside a default-sized
+    // window with large empty margins).
+    if let Some(resize) = parse_resize_feature(features) {
+        if let Some(func) = resize.ui_resize {
+            func(resize.handle, pref_w as i32, pref_h as i32);
+        }
+    }
+
+    // On macOS we also resize the host-supplied parent NSView directly,
+    // as a belt-and-braces backup for hosts that don't honor
+    // `ui:resize`. Reaper on macOS reads the parent's frame after
+    // `instantiate` returns.
+    #[cfg(target_os = "macos")]
+    resize_ns_view(parent_ptr, pref_w, pref_h);
+
+    // `editor.open()` just added baseview's child NSView under the
+    // host's parent. Install a `cursorUpdate:` handler on that child so
+    // macOS shows an arrow cursor over our editor instead of inheriting
+    // whatever the host set last (Reaper leaves a crosshair behind when
+    // dragging from the FX chain).
+    #[cfg(target_os = "macos")]
+    install_child_cursor_update(parent_ptr);
+
+    // Set widget out-param. Strict X11UI / CocoaUI hosts want the child
+    // window / view we created; pragmatic ones (Ardour, Jalv) accept the
+    // parent. See the module comment for follow-up.
     if !widget.is_null() {
-        *widget = parent_window as *mut c_void;
+        *widget = parent_ptr;
     }
 
     let ui = Box::new(Lv2UiInstance::<P> {
         _plugin: plugin,
         params: params_arc,
         param_slots,
+        meter_slots,
         write_function,
         controller,
         editor: Some(editor),
@@ -248,14 +340,21 @@ pub unsafe fn port_event<P: PluginExport>(
         if buffer_size < core::mem::size_of::<f32>() as u32 {
             return;
         }
-        let Some(slot) = ui.param_slots.iter().find(|s| s.port_index == port_index) else {
-            return;
-        };
         let value = *(buffer as *const f32);
         if !value.is_finite() {
             return;
         }
-        ui.params.set_plain(slot.id, value as f64);
+        if let Some(slot) = ui.param_slots.iter().find(|s| s.port_index == port_index) {
+            ui.params.set_plain(slot.id, value as f64);
+            return;
+        }
+        // Meter output: shadow the latest reading so the editor's
+        // `get_meter` closure can hand it back without touching the DSP.
+        if let Some(meter) =
+            ui.meter_slots.iter().find(|m| m.port_index == port_index)
+        {
+            meter.value.store(value.to_bits(), Ordering::Relaxed);
+        }
         return;
     }
 
@@ -345,11 +444,34 @@ pub unsafe fn ui_extension_data(_uri: *const c_char) -> *const c_void {
 // Internals
 // ---------------------------------------------------------------------------
 
-unsafe fn parse_parent_feature(features: *const *const LV2Feature) -> Option<u64> {
+/// Locate the host-supplied `ui:parent` feature. The returned pointer is
+/// semantically an `NSView*` under CocoaUI and an `xcb_window_t` under
+/// X11UI; callers reinterpret it per platform.
+unsafe fn parse_parent_feature(features: *const *const LV2Feature) -> Option<*mut c_void> {
+    find_feature(features, LV2_UI__PARENT).map(|f| f.data)
+}
+
+/// Locate the host-supplied `ui:resize` feature. When present, the UI
+/// may call `ui_resize(handle, w, h)` to ask the host to resize the
+/// embedding container.
+unsafe fn parse_resize_feature(
+    features: *const *const LV2Feature,
+) -> Option<&'static Lv2UiResize> {
+    let feat = find_feature(features, LV2_UI__RESIZE)?;
+    if feat.data.is_null() {
+        return None;
+    }
+    Some(&*(feat.data as *const Lv2UiResize))
+}
+
+unsafe fn find_feature(
+    features: *const *const LV2Feature,
+    uri: &str,
+) -> Option<&'static LV2Feature> {
     if features.is_null() {
         return None;
     }
-    let parent_uri = CString::new(LV2_UI__PARENT).ok()?;
+    let target = CString::new(uri).ok()?;
     let mut i = 0usize;
     loop {
         let feat_ptr = *features.add(i);
@@ -357,17 +479,106 @@ unsafe fn parse_parent_feature(features: *const *const LV2Feature) -> Option<u64
             return None;
         }
         let feat = &*feat_ptr;
-        if !feat.uri.is_null() && CStr::from_ptr(feat.uri) == parent_uri.as_c_str() {
-            // data is `void*` but semantically a Window ID on X11UI.
-            return Some(feat.data as u64);
+        if !feat.uri.is_null() && CStr::from_ptr(feat.uri) == target.as_c_str() {
+            return Some(feat);
         }
         i += 1;
+    }
+}
+
+/// Set the frame of a Cocoa view to (width, height) preserving its
+/// origin. Used as a fallback when the host doesn't honor `ui:resize`.
+#[cfg(target_os = "macos")]
+unsafe fn resize_ns_view(view: *mut c_void, width: u32, height: u32) {
+    use objc::{class, msg_send, sel, sel_impl};
+    if view.is_null() {
+        return;
+    }
+    // Objective-C `setFrameSize:` takes an NSSize (two doubles on
+    // 64-bit platforms). We avoid linking AppKit directly by using
+    // `msg_send!` on a known responder.
+    #[repr(C)]
+    struct NSSize {
+        width: f64,
+        height: f64,
+    }
+    let size = NSSize {
+        width: width as f64,
+        height: height as f64,
+    };
+    let _: () = msg_send![view as *mut objc::runtime::Object, setFrameSize: size];
+    // Tell AppKit the view's intrinsic content size has changed so any
+    // surrounding layout is invalidated.
+    let _: () = msg_send![
+        view as *mut objc::runtime::Object,
+        invalidateIntrinsicContentSize
+    ];
+    let _ = class!(NSView); // touch the class symbol so the linker keeps it
+}
+
+/// Patch baseview's child NSView so macOS resets the cursor to arrow
+/// whenever the mouse enters our editor area.
+///
+/// baseview creates an NSView with a tracking area that has the
+/// `NSTrackingCursorUpdate` option set, but it does not implement
+/// `-[NSView cursorUpdate:]`. Without that handler the system falls
+/// back to whatever cursor the containing window last set — in Reaper
+/// that's often a crosshair from the track-list drag. We add a tiny
+/// `cursorUpdate:` method to the child view's class at runtime that
+/// pushes the arrow cursor.
+///
+/// Each baseview window gets a fresh `BaseviewNSView_<uuid>` class, so
+/// re-registering the method on every UI instantiation is a no-op for
+/// fresh classes and a silent fail on the unlikely duplicate.
+#[cfg(target_os = "macos")]
+unsafe fn install_child_cursor_update(parent: *mut c_void) {
+    use objc::runtime::{class_addMethod, Class, Object, Sel};
+    use objc::{class, msg_send, sel, sel_impl};
+
+    if parent.is_null() {
+        return;
+    }
+
+    extern "C" fn cursor_update(_this: &Object, _sel: Sel, _event: *mut Object) {
+        unsafe {
+            let cursor: *mut Object = msg_send![class!(NSCursor), arrowCursor];
+            let _: () = msg_send![cursor, set];
+        }
+    }
+
+    let subviews: *mut Object = msg_send![parent as *mut Object, subviews];
+    if subviews.is_null() {
+        return;
+    }
+    let count: usize = msg_send![subviews, count];
+    // The editor's child view is the most recent subview — iterate all
+    // baseview-owned subviews to be safe against hosts that wrap the
+    // parent with their own helper views.
+    for i in 0..count {
+        let child: *mut Object = msg_send![subviews, objectAtIndex: i];
+        if child.is_null() {
+            continue;
+        }
+        let class_ptr: *mut Class = msg_send![child, class];
+        let selector = sel!(cursorUpdate:);
+        // `v@:@` → void (id self, SEL _cmd, id event).
+        let type_encoding = b"v@:@\0".as_ptr() as *const std::os::raw::c_char;
+        // objc's `class_addMethod` takes an untyped function pointer.
+        // Transmute through an intermediate `extern "C" fn()` to keep
+        // the ABI intact while satisfying the cast.
+        type ImpFn = unsafe extern "C" fn();
+        let imp: ImpFn = core::mem::transmute::<
+            extern "C" fn(&Object, Sel, *mut Object),
+            ImpFn,
+        >(cursor_update);
+        class_addMethod(class_ptr, selector, imp, type_encoding);
     }
 }
 
 fn build_editor_context<P: PluginExport>(
     params: Arc<P::Params>,
     slots: &[ParamSlot],
+    meter_slots: Arc<Vec<MeterSlot>>,
     write_function: Lv2UiWriteFn,
     controller: Lv2UiController,
     transport_slot: Arc<TransportSlot>,
@@ -383,6 +594,7 @@ fn build_editor_context<P: PluginExport>(
     let params_get_plain = params.clone();
     let params_format = params.clone();
     let params_set = params.clone();
+    let meter_slots_for_get = meter_slots.clone();
 
     // The write_function is a plain extern "C" fn — bitcast-safe to move
     // across closure boundaries. We keep controller as usize to sidestep
@@ -418,7 +630,13 @@ fn build_editor_context<P: PluginExport>(
             let v = params_format.get_plain(id).unwrap_or(0.0);
             params_format.format_value(id, v).unwrap_or_default()
         }),
-        get_meter: Arc::new(|_id: u32| 0.0),
+        get_meter: Arc::new(move |id: u32| {
+            meter_slots_for_get
+                .iter()
+                .find(|m| m.id == id)
+                .map(|m| f32::from_bits(m.value.load(Ordering::Relaxed)))
+                .unwrap_or(0.0)
+        }),
         get_state: Arc::new(Vec::new),
         set_state: Arc::new(|_bytes: Vec<u8>| {}),
         // The DSP broadcasts host transport as `time:Position` atoms on

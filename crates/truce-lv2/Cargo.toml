@@ -9,3 +9,6 @@ description = "LV2 format wrapper for truce"
 [dependencies]
 truce-core = { workspace = true }
 truce-params = { workspace = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc = "0.2"

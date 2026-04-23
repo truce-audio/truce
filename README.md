@@ -30,7 +30,7 @@ Other formats:
 cargo truce install              # formats in your plugin's default features
 cargo truce install --vst3       # VST3
 cargo truce install --vst2       # VST2 (opt-in, legacy — see note below)
-cargo truce install --lv2        # LV2 (Linux)
+cargo truce install --lv2        # LV2 (Linux + macOS)
 cargo truce install --au3        # AU v3 (macOS, requires Xcode)
 cargo truce install --aax        # AAX (requires AAX SDK)
 cargo truce test                 # run tests
@@ -115,16 +115,16 @@ By platform:
 | CLAP   | Yes   | Yes     | Yes   |
 | VST3   | Yes   | Yes     | Yes   |
 | VST2   | Yes   | Yes     | Yes   |
-| LV2    | —     | —       | Yes   |
+| LV2    | Yes   | —       | Yes   |
 | AU v2  | Yes   | —       | —     |
 | AU v3  | Yes   | —       | —     |
 | AAX    | Yes   | Yes     | —     |
 
-AU is macOS-only by design. LV2 is the native Linux format — supports
-audio, MIDI, state, and X11UI. AAX requires the Avid AAX SDK and
-PACE/iLok signing for retail Pro Tools releases. VST2 is opt-in on all
-platforms — see note below. See [Status](docs/status.md) for host
-coverage.
+AU is macOS-only by design. LV2 is the native Linux format and also
+builds on macOS — supports audio, MIDI, state, and UI (X11UI on Linux,
+CocoaUI on macOS). AAX requires the Avid AAX SDK and PACE/iLok signing
+for retail Pro Tools releases. VST2 is opt-in on all platforms — see
+note below. See [Status](docs/status.md) for host coverage.
 
 By host (across all supported platforms):
 
@@ -178,7 +178,7 @@ crates/
 ├── truce-clap          # CLAP format wrapper
 ├── truce-vst3          # VST3 format wrapper
 ├── truce-vst2          # VST2 format wrapper (clean-room)
-├── truce-lv2           # LV2 format wrapper (native Linux; audio, MIDI, state, X11UI)
+├── truce-lv2           # LV2 format wrapper (Linux + macOS; audio, MIDI, state, X11UI / CocoaUI)
 ├── truce-aax           # AAX format wrapper
 ├── truce-au            # Audio Unit (v2 + v3)
 ├── truce-standalone    # Standalone host (cpal audio)

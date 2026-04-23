@@ -56,6 +56,18 @@ pub trait Params: Send + Sync + 'static {
     /// Number of parameters.
     fn count(&self) -> usize;
 
+    /// IDs of every `#[meter]` slot declared on the params struct
+    /// (including nested subtrees), in declaration order. Default impl
+    /// returns empty — only structs that declare meters need to
+    /// override. The derive macro implements it automatically.
+    ///
+    /// Format wrappers that expose DSP-side meters back to the UI
+    /// (LV2's output control ports, for instance) use this to know
+    /// which IDs to poll each `process()`.
+    fn meter_ids(&self) -> Vec<u32> {
+        Vec::new()
+    }
+
     /// Get normalized value (0.0–1.0) by ID.
     fn get_normalized(&self, id: u32) -> Option<f64>;
 

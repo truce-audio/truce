@@ -31,12 +31,13 @@ pub fn emit_bundle<P: PluginExport>(
     let layout = derive_port_layout::<P>();
     let plugin = P::create();
     let params = plugin.params().param_infos();
+    let meter_ids = plugin.params().meter_ids();
 
     let uri = plugin_uri(&info);
     let ui_uri = ui_uri(&info);
     let ttl_basename = "plugin.ttl";
 
-    write_manifest(bundle_dir, &uri, &ui_uri, ttl_basename, so_name)?;
+    write_manifest(bundle_dir, &uri, &ui_uri, &layout, ttl_basename, so_name)?;
     write_plugin_ttl(
         bundle_dir,
         ttl_basename,
@@ -45,6 +46,7 @@ pub fn emit_bundle<P: PluginExport>(
         &info,
         &layout,
         &params,
+        &meter_ids,
         so_name,
     )?;
     Ok(())
@@ -54,6 +56,7 @@ fn write_manifest(
     bundle_dir: &Path,
     uri: &str,
     ui_uri: &str,
+    layout: &PortLayout,
     ttl_basename: &str,
     so_name: &str,
 ) -> std::io::Result<()> {
@@ -69,6 +72,14 @@ fn write_manifest(
     writeln!(f, "    rdfs:seeAlso <{ttl_basename}> .")?;
     writeln!(f)?;
     writeln!(f, "<{ui_uri}>")?;
+    // UI type is tied to the running platform: on macOS the host hands us
+    // an `NSView*` via `ui:parent`, on X11 an `xcb_window_t`. We bake the
+    // right `rdf:type` at install time so the same plugin binary can be
+    // cross-platform (the plugin's shared library is otherwise identical
+    // on both platforms).
+    #[cfg(target_os = "macos")]
+    writeln!(f, "    a ui:CocoaUI ;")?;
+    #[cfg(not(target_os = "macos"))]
     writeln!(f, "    a ui:X11UI ;")?;
     writeln!(f, "    ui:binary <{so_name}> ;")?;
     // Subscribe the UI to the DSP's notify-out port so the host forwards
@@ -77,7 +88,18 @@ fn write_manifest(
     writeln!(f, "        ui:plugin <{uri}> ;")?;
     writeln!(f, "        lv2:symbol \"notify_out\" ;")?;
     writeln!(f, "        ui:notifyType atom:Object")?;
-    writeln!(f, "    ] .")?;
+    writeln!(f, "    ] ;")?;
+    // Subscribe the UI to each meter output so the host forwards float
+    // control updates each block (LV2_UI__floatProtocol is the default
+    // for ControlPorts, so no explicit notifyType is needed).
+    for slot in 0..layout.num_meters {
+        writeln!(f, "    ui:portNotification [")?;
+        writeln!(f, "        ui:plugin <{uri}> ;")?;
+        writeln!(f, "        lv2:symbol \"meter_{slot}\" ;")?;
+        writeln!(f, "        ui:protocol ui:floatProtocol")?;
+        writeln!(f, "    ] ;")?;
+    }
+    writeln!(f, "    .")?;
     Ok(())
 }
 
@@ -89,6 +111,7 @@ fn write_plugin_ttl(
     info: &PluginInfo,
     layout: &PortLayout,
     params: &[ParamInfo],
+    meter_ids: &[u32],
     so_name: &str,
 ) -> std::io::Result<()> {
     let mut f = fs::File::create(bundle_dir.join(ttl_basename))?;
@@ -104,6 +127,7 @@ fn write_plugin_ttl(
     writeln!(f, "@prefix rsz:   <http://lv2plug.in/ns/ext/resize-port#> .")?;
     writeln!(f, "@prefix state: <http://lv2plug.in/ns/ext/state#> .")?;
     writeln!(f, "@prefix ui:    <http://lv2plug.in/ns/extensions/ui#> .")?;
+    writeln!(f, "@prefix pprop: <http://lv2plug.in/ns/ext/port-props#> .")?;
     writeln!(f)?;
 
     let category = category_as_lv2(info.category);
@@ -134,7 +158,7 @@ fn write_plugin_ttl(
         for i in 0..total_ports {
             let sep = if i == 0 { " " } else { ",\n        " };
             write!(f, "{sep}[")?;
-            emit_port(&mut f, i, layout, params)?;
+            emit_port(&mut f, i, layout, params, meter_ids)?;
             write!(f, "    ]")?;
         }
         writeln!(f, " .")?;
@@ -150,6 +174,7 @@ fn emit_port(
     index: u32,
     layout: &PortLayout,
     params: &[ParamInfo],
+    meter_ids: &[u32],
 ) -> std::io::Result<()> {
     writeln!(f)?;
     if index < layout.audio_out_start() {
@@ -164,9 +189,13 @@ fn emit_port(
         writeln!(f, "        lv2:index {index} ;")?;
         writeln!(f, "        lv2:symbol \"out_{ch}\" ;")?;
         writeln!(f, "        lv2:name \"Audio Out {}\" ;", ch + 1)?;
-    } else if index < layout.control_start() + layout.num_params {
+    } else if index < layout.meter_start() {
         let p = &params[(index - layout.control_start()) as usize];
         emit_control_port(f, index, p)?;
+    } else if index < layout.meter_start() + layout.num_meters {
+        let slot = (index - layout.meter_start()) as usize;
+        let id = meter_ids[slot];
+        emit_meter_port(f, index, slot, id)?;
     } else if Some(index) == layout.midi_in_port() {
         writeln!(f, "        a lv2:InputPort, atom:AtomPort ;")?;
         writeln!(f, "        atom:bufferType atom:Sequence ;")?;
@@ -197,6 +226,31 @@ fn emit_port(
         writeln!(f, "        lv2:name \"Notify Out\" ;")?;
         writeln!(f, "        rsz:minimumSize 4096 ;")?;
     }
+    Ok(())
+}
+
+/// Output control port for a `#[meter]` slot. Hosts read these each
+/// process block and forward updates to the UI (wired via
+/// `ui:portNotification` in the manifest).
+fn emit_meter_port(
+    f: &mut fs::File,
+    index: u32,
+    slot: usize,
+    id: u32,
+) -> std::io::Result<()> {
+    writeln!(f, "        a lv2:OutputPort, lv2:ControlPort ;")?;
+    writeln!(f, "        lv2:index {index} ;")?;
+    writeln!(f, "        lv2:symbol \"meter_{slot}\" ;")?;
+    writeln!(f, "        lv2:name \"Meter {}\" ;", slot + 1)?;
+    writeln!(f, "        lv2:minimum 0.0 ;")?;
+    writeln!(f, "        lv2:maximum 1.0 ;")?;
+    writeln!(f, "        lv2:default 0.0 ;")?;
+    // Hint to hosts that this is a read-only display port rather than
+    // something they should automate or draw on the panel strip.
+    writeln!(f, "        lv2:portProperty pprop:notOnGUI ;")?;
+    // Round-trip the truce meter ID so a future UI extension could map
+    // it back to `P::ParamId`.
+    writeln!(f, "        rdfs:comment \"truce meter id {id}\" ;")?;
     Ok(())
 }
 

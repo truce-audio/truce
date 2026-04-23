@@ -479,6 +479,24 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
         }
     };
 
+    // --- meter_ids ---
+    let own_meter_ids: Vec<_> = meter_fields
+        .iter()
+        .map(|m| {
+            let ident = &m.ident;
+            quote! { self.#ident.id() }
+        })
+        .collect();
+    let meter_ids_expr = if nested_fields.is_empty() {
+        quote! { vec![#(#own_meter_ids),*] }
+    } else {
+        quote! {
+            let mut ids = vec![#(#own_meter_ids),*];
+            #(ids.extend(self.#nested_idents.meter_ids());)*
+            ids
+        }
+    };
+
     // --- get_plain ---
     let get_plain_arms: Vec<_> = param_fields.iter().map(|f| {
         let ident = &f.ident;
@@ -732,6 +750,10 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
 
             fn count(&self) -> usize {
                 #count_expr
+            }
+
+            fn meter_ids(&self) -> Vec<u32> {
+                #meter_ids_expr
             }
 
             fn get_normalized(&self, id: u32) -> Option<f64> {
