@@ -519,9 +519,30 @@ pub fn dispatch(
     snapshot: &ParamSnapshot<'_>,
     state: &mut InteractionState,
 ) -> Vec<ParamEdit> {
+    let (w, h) = (layout.width(), layout.height());
+    dispatch_in(events, layout, (w, h), snapshot, state)
+}
+
+/// Like [`dispatch`] but takes explicit `window_size` in the same
+/// coordinate space as the layout — i.e. the size of the surface the
+/// layout is being composited onto.
+///
+/// Use this when the layout is a chrome panel overlaid on a larger
+/// custom-rendered surface (visualizers, graphs, canvases). It lets
+/// dropdown popups and other bounds-aware overlays use the full
+/// window rather than being clipped to the layout's bounding box —
+/// otherwise a popup that wouldn't fit below the button flips above
+/// it even when there's room below in the outer window.
+pub fn dispatch_in(
+    events: &[InputEvent],
+    layout: &Layout,
+    window_size: (u32, u32),
+    snapshot: &ParamSnapshot<'_>,
+    state: &mut InteractionState,
+) -> Vec<ParamEdit> {
     let mut edits = Vec::new();
-    let window_w = layout.width() as f32;
-    let window_h = layout.height() as f32;
+    let window_w = window_size.0 as f32;
+    let window_h = window_size.1 as f32;
 
     for ev in events {
         match *ev {
@@ -572,25 +593,40 @@ pub fn dispatch(
             }
             InputEvent::Scroll { x, y, dy } => {
                 if state.dropdown_is_open() {
-                    if state.dropdown_popup_hit(x, y).is_some()
+                    // An open dropdown captures ALL scroll input: wheel
+                    // inside the popup scrolls the list, wheel outside
+                    // is absorbed (no-op) so it can't fall through to
+                    // the generic knob-scroll path below and silently
+                    // advance the param driving this very dropdown.
+                    let inside_popup = state.dropdown_popup_hit(x, y).is_some()
                         || state.dropdown.as_ref().map_or(false, |dd| {
                             let (px, py, pw, ph) = dd.popup_rect;
                             x >= px && x <= px + pw && y >= py && y <= py + ph
-                        })
-                    {
+                        });
+                    if inside_popup {
                         let delta = if dy > 0.0 { -1 } else { 1 };
                         state.dropdown_scroll(delta);
-                        continue;
                     }
+                    continue;
                 }
                 if let Some(idx) = state.hit_test(x, y) {
-                    let param_id = state.knob_regions[idx].param_id;
-                    let norm = (snapshot.get_param)(param_id);
-                    let step = dy / 200.0;
-                    let new_norm = (norm + step).clamp(0.0, 1.0);
-                    edits.push(ParamEdit::Begin { id: param_id });
-                    edits.push(ParamEdit::Set { id: param_id, normalized: new_norm });
-                    edits.push(ParamEdit::End { id: param_id });
+                    // Only scroll-adjust continuous-value widgets.
+                    // Dropdowns / Selectors / Toggles are discrete UI
+                    // affordances — the user expects click to cycle,
+                    // not wheel to drag them across their whole range.
+                    let wtype = state.knob_regions[idx].widget_type;
+                    if matches!(
+                        wtype,
+                        WidgetType::Knob | WidgetType::Slider | WidgetType::XYPad,
+                    ) {
+                        let param_id = state.knob_regions[idx].param_id;
+                        let norm = (snapshot.get_param)(param_id);
+                        let step = dy / 200.0;
+                        let new_norm = (norm + step).clamp(0.0, 1.0);
+                        edits.push(ParamEdit::Begin { id: param_id });
+                        edits.push(ParamEdit::Set { id: param_id, normalized: new_norm });
+                        edits.push(ParamEdit::End { id: param_id });
+                    }
                 }
             }
             InputEvent::MouseLeave => {
