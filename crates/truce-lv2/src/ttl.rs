@@ -86,9 +86,14 @@ fn write_manifest(
     writeln!(f, "    ui:binary <{so_name}> ;")?;
     // Subscribe the UI to the DSP's notify-out port so the host forwards
     // atom events (currently time:Position) to our port_event callback.
+    // `ui:protocol atom:eventTransfer` is load-bearing — without it the
+    // host falls back to `ui:floatProtocol` (the default for control
+    // ports) and never wraps the atom payload, so port_event never
+    // fires for this port.
     writeln!(f, "    ui:portNotification [")?;
     writeln!(f, "        ui:plugin <{uri}> ;")?;
     writeln!(f, "        lv2:symbol \"notify_out\" ;")?;
+    writeln!(f, "        ui:protocol atom:eventTransfer ;")?;
     writeln!(f, "        ui:notifyType atom:Object")?;
     writeln!(f, "    ] ;")?;
     // Subscribe the UI to each meter output so the host forwards float
@@ -200,27 +205,25 @@ fn emit_port(
         emit_meter_port(f, index, slot, id)?;
     } else if index == layout.atom_in_port() {
         // Input atom port. Always declared so hosts deliver
-        // `time:Position` to every plugin type; instruments and note
-        // effects additionally advertise `midi:MidiEvent`. Using
-        // `lv2:designation lv2:control` lets hosts like Reaper pick
-        // this as the transport sink without guessing.
+        // `time:Position` to every plugin type. We always advertise
+        // `midi:MidiEvent` support too, even for pure effects — Reaper
+        // (and several other hosts) only route transport to ports that
+        // also accept MIDI. Effects simply ignore any MIDI bytes that
+        // arrive because `accepts_midi_in` controls the DSP-side
+        // decode.
         writeln!(f, "        a lv2:InputPort, atom:AtomPort ;")?;
         writeln!(f, "        atom:bufferType atom:Sequence ;")?;
-        if layout.accepts_midi_in {
-            writeln!(
-                f,
-                "        atom:supports midi:MidiEvent, time:Position ;"
-            )?;
-            writeln!(f, "        lv2:index {index} ;")?;
-            writeln!(f, "        lv2:symbol \"midi_in\" ;")?;
-            writeln!(f, "        lv2:name \"MIDI In\" ;")?;
-        } else {
-            writeln!(f, "        atom:supports time:Position ;")?;
+        writeln!(
+            f,
+            "        atom:supports midi:MidiEvent, time:Position ;"
+        )?;
+        if !layout.accepts_midi_in {
             writeln!(f, "        lv2:designation lv2:control ;")?;
-            writeln!(f, "        lv2:index {index} ;")?;
-            writeln!(f, "        lv2:symbol \"control_in\" ;")?;
-            writeln!(f, "        lv2:name \"Control In\" ;")?;
         }
+        writeln!(f, "        lv2:index {index} ;")?;
+        writeln!(f, "        lv2:symbol \"midi_in\" ;")?;
+        writeln!(f, "        lv2:name \"MIDI In\" ;")?;
+        writeln!(f, "        rsz:minimumSize 4096 ;")?;
     } else if Some(index) == layout.midi_out_port() {
         writeln!(f, "        a lv2:OutputPort, atom:AtomPort ;")?;
         writeln!(f, "        atom:bufferType atom:Sequence ;")?;

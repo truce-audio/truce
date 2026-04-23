@@ -151,15 +151,29 @@ impl<'a> AtomSequenceReader<'a> {
         body_bytes: usize,
         info: &mut TransportInfo,
     ) -> bool {
-        // LV2_Atom_Object_Body = { otype: Urid, id: Urid, props: Property[] }
+        // LV2_Atom_Object_Body per lv2/atom/atom.h:
+        //   { uint32_t id; uint32_t otype; }
+        // id is a per-object instance identifier (0 for blank); otype is
+        // the class URID we key on.
         let header_size = core::mem::size_of::<Urid>() * 2;
         if body_bytes < header_size {
             return false;
         }
-        let otype = *(body_ptr as *const Urid);
+        let otype = *(body_ptr.add(core::mem::size_of::<Urid>()) as *const Urid);
         if otype != self.urid.time_position {
             return false;
         }
+        // Collect raw LV2 time:* fields first, then reconcile them to the
+        // truce `TransportInfo` schema. The LV2 time extension reports
+        // position as `bar` (0-based bar index) + `barBeat` (float beat
+        // position within the bar) + `beatsPerBar`, while truce exposes
+        // a monotonically-increasing `position_beats` since transport
+        // start plus `bar_start_beats` as the anchor. We compute both
+        // from the raw fields once we've read them all.
+        let mut bar: Option<f64> = None;
+        let mut bar_beat: Option<f64> = None;
+        let mut beats_per_bar: Option<f64> = None;
+
         let mut offset = header_size;
         while offset + core::mem::size_of::<Urid>() * 2 + core::mem::size_of::<Atom>() <= body_bytes {
             // Property = { key: Urid, context: Urid, value: Atom + data }
@@ -177,16 +191,21 @@ impl<'a> AtomSequenceReader<'a> {
             if let Some(v) = self.read_atom_number(value_atom.type_, value_data, value_size) {
                 if key == self.urid.time_beats_per_minute {
                     info.tempo = v;
-                } else if key == self.urid.time_beat || key == self.urid.time_bar_beat {
-                    info.position_beats = v;
                 } else if key == self.urid.time_bar {
-                    info.bar_start_beats = v;
+                    bar = Some(v);
+                } else if key == self.urid.time_bar_beat {
+                    bar_beat = Some(v);
+                } else if key == self.urid.time_beats_per_bar {
+                    beats_per_bar = Some(v);
+                    info.time_sig_num = v.round().clamp(0.0, u8::MAX as f64) as u8;
+                } else if key == self.urid.time_beat {
+                    // Non-standard but some hosts still emit it — treat
+                    // it as the absolute beat position directly.
+                    info.position_beats = v;
                 } else if key == self.urid.time_frame {
                     info.position_samples = v as i64;
                 } else if key == self.urid.time_speed {
                     info.playing = v.abs() > 1e-9;
-                } else if key == self.urid.time_beats_per_bar {
-                    info.time_sig_num = v.round().clamp(0.0, u8::MAX as f64) as u8;
                 } else if key == self.urid.time_beat_unit {
                     info.time_sig_den = v.round().clamp(0.0, u8::MAX as f64) as u8;
                 }
@@ -197,6 +216,32 @@ impl<'a> AtomSequenceReader<'a> {
                 break;
             }
         }
+
+        // Derive truce-shaped fields from the raw bar/barBeat/beatsPerBar
+        // triple. `beatsPerBar` can be missing when the plugin asks for
+        // transport before the host has finished reporting all fields;
+        // fall back to the current time_sig_num if so, and finally to 4.
+        let bpb = beats_per_bar
+            .or_else(|| {
+                if info.time_sig_num > 0 {
+                    Some(info.time_sig_num as f64)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(4.0);
+        if let Some(b) = bar {
+            info.bar_start_beats = b * bpb;
+            if let Some(bb) = bar_beat {
+                info.position_beats = info.bar_start_beats + bb;
+            }
+        } else if let Some(bb) = bar_beat {
+            // No bar field — best we can do is surface the intra-bar
+            // offset as the position, matching our previous behavior
+            // for hosts that only emit `time:barBeat`.
+            info.position_beats = bb;
+        }
+
         true
     }
 
@@ -401,14 +446,14 @@ pub unsafe fn write_time_position_sequence(
     // Build the Object body's properties. Layout per LV2 atom-object spec:
     //
     //   AtomEventHeader { time_frames, body: Atom { size, type: Object } }
-    //   LV2_Atom_Object_Body { otype: Urid, id: Urid }
+    //   LV2_Atom_Object_Body { id: Urid, otype: Urid }
     //   LV2_Atom_Property_Body { key: Urid, context: Urid, value: Atom, data[] }
     //   ...
     //
     // We emit a small fixed set of properties and carry Double values for
     // all of them so the UI-side decoder can use one reader.
     let ev_header_size = core::mem::size_of::<AtomEventHeader>();
-    let obj_header_size = core::mem::size_of::<Urid>() * 2; // otype + id
+    let obj_header_size = core::mem::size_of::<Urid>() * 2; // id + otype
 
     // Reserve the whole event in-place so property writers can align.
     let ev_ptr = body_start as *mut AtomEventHeader;
@@ -419,9 +464,9 @@ pub unsafe fn write_time_position_sequence(
     (*ev_ptr).time_frames = 0;
     (*ev_ptr).body.type_ = urid.atom_object;
     let obj_body_start = body_start.add(ev_header_size);
-    // otype = time:Position, id = 0
-    *(obj_body_start as *mut Urid) = urid.time_position;
-    *(obj_body_start.add(core::mem::size_of::<Urid>()) as *mut Urid) = 0;
+    // Per lv2/atom/atom.h: `id` first, then `otype`.
+    *(obj_body_start as *mut Urid) = 0; // id = blank
+    *(obj_body_start.add(core::mem::size_of::<Urid>()) as *mut Urid) = urid.time_position;
 
     let mut prop_offset = obj_header_size;
     let prop_header_size = core::mem::size_of::<Urid>() * 2 + core::mem::size_of::<Atom>();
