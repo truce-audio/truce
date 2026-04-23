@@ -101,6 +101,12 @@ pub struct BuiltinEditor<P: Params> {
     window: Option<baseview::WindowHandle>,
     #[cfg(target_os = "macos")]
     native: Option<crate::native_view::NativeView>,
+    /// Weak-ish handle to the blit backend the window-handler
+    /// materializes. The editor keeps the canonical `Arc` and the
+    /// handler gets a clone. On close we take the `Option` out of
+    /// the inner mutex — dropping the wgpu Surface synchronously —
+    /// before asking baseview to tear the NSView down.
+    blit_backend: Option<SharedBackend>,
     /// Set whenever something visible changes (param edited via the
     /// UI, host-driven state reload, explicit `request_repaint` by
     /// plugin code). `on_frame` clears it and only does the
@@ -175,6 +181,7 @@ impl<P: Params + 'static> BuiltinEditor<P> {
             window: None,
             #[cfg(target_os = "macos")]
             native: None,
+            blit_backend: None,
             needs_repaint: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             last_painted_values: Vec::new(),
         }
@@ -191,6 +198,7 @@ impl<P: Params + 'static> BuiltinEditor<P> {
             window: None,
             #[cfg(target_os = "macos")]
             native: None,
+            blit_backend: None,
             needs_repaint: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             last_painted_values: Vec::new(),
         }
@@ -207,6 +215,7 @@ impl<P: Params + 'static> BuiltinEditor<P> {
             window: None,
             #[cfg(target_os = "macos")]
             native: None,
+            blit_backend: None,
             needs_repaint: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             last_painted_values: Vec::new(),
         }
@@ -600,11 +609,19 @@ enum BlitBackend {
     },
 }
 
+/// Shared ownership of the blit backend between `BuiltinEditor` and the
+/// `BuiltinWindowHandler` baseview hands us. Sharing lets the editor
+/// drop the wgpu surface *before* it asks baseview to close the NSView
+/// — important on AAX where interleaving Metal teardown with baseview's
+/// close sequence inside Pro Tools' outer autorelease pool has been
+/// seen to leave stale refs in DFW container views.
+type SharedBackend = std::sync::Arc<std::sync::Mutex<Option<BlitBackend>>>;
+
 struct BuiltinWindowHandler<P: Params> {
     /// Raw pointer to the BuiltinEditor owned by the host. Valid between
     /// open() and close(). Only accessed from the GUI thread.
     editor: *mut BuiltinEditor<P>,
-    backend: BlitBackend,
+    backend: SharedBackend,
     scale: f32,
     last_cursor: (f32, f32),
     last_click_time: Option<std::time::Instant>,
@@ -632,7 +649,17 @@ impl<P: Params + 'static> baseview::WindowHandler for BuiltinWindowHandler<P> {
         editor.stash_painted_values();
 
         if let Some(pixels) = editor.pixel_data() {
-            match &mut self.backend {
+            let mut guard = match self.backend.lock() {
+                Ok(g) => g,
+                Err(_) => return,
+            };
+            let Some(ref mut backend) = *guard else {
+                // Editor already dropped the backend in its close
+                // path. Nothing to do — baseview will tear us down
+                // next.
+                return;
+            };
+            match backend {
                 #[cfg(target_os = "macos")]
                 BlitBackend::CoreGraphics(cg) => {
                     cg.blit(pixels);
@@ -665,8 +692,16 @@ impl<P: Params + 'static> baseview::WindowHandler for BuiltinWindowHandler<P> {
                 let editor = unsafe { &mut *self.editor };
                 match mouse {
                     baseview::MouseEvent::CursorMoved { position, .. } => {
-                        let x = position.x as f32 * self.scale;
-                        let y = position.y as f32 * self.scale;
+                        // baseview on macOS reports positions in logical
+                        // points via `convertPoint:fromView:nil`. Layout
+                        // regions are built in the same logical
+                        // coordinate space. Do not multiply by scale —
+                        // doing so breaks hit-testing on Retina (cursor
+                        // at logical 170 compared against a 277-wide
+                        // layout was ending up at physical 340, which
+                        // sat outside every knob region).
+                        let x = position.x as f32;
+                        let y = position.y as f32;
                         self.last_cursor = (x, y);
                         editor.on_mouse_moved(x, y);
                     }
@@ -726,17 +761,26 @@ impl<P: Params + 'static> baseview::WindowHandler for BuiltinWindowHandler<P> {
                 let ph = info.physical_size().height;
                 self.scale = info.scale() as f32;
                 crate::platform::note_linux_scale_factor(info.scale());
-                match &mut self.backend {
-                    #[cfg(target_os = "macos")]
-                    BlitBackend::CoreGraphics(cg) => {
-                        cg.resize(pw, ph);
-                    }
-                    BlitBackend::Wgpu { device, surface, surface_config, .. } => {
-                        surface_config.width = pw;
-                        surface_config.height = ph;
-                        surface.configure(device, surface_config);
-                        // Blit texture stays at pixmap (logical) size — the
-                        // shader stretches it to fill the surface.
+                if let Ok(mut guard) = self.backend.lock() {
+                    if let Some(ref mut backend) = *guard {
+                        match backend {
+                            #[cfg(target_os = "macos")]
+                            BlitBackend::CoreGraphics(cg) => {
+                                cg.resize(pw, ph);
+                            }
+                            BlitBackend::Wgpu {
+                                device,
+                                surface,
+                                surface_config,
+                                ..
+                            } => {
+                                surface_config.width = pw;
+                                surface_config.height = ph;
+                                surface.configure(device, surface_config);
+                                // Blit texture stays at pixmap (logical) size — the
+                                // shader stretches it to fill the surface.
+                            }
+                        }
                     }
                 }
                 baseview::EventStatus::Captured
@@ -806,9 +850,22 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
         let phys_w = (lw * scale) as u32;
         let phys_h = (lh * scale) as u32;
 
-        // --- AAX path: native NSView + CgBlit (no baseview) ---
+        // --- Legacy AAX path: native NSView + CgBlit (no baseview) ---
+        //
+        // Kept as a fallback: the forked baseview at `../baseview`
+        // wraps every NSView lifecycle op in an `autoreleasepool!`
+        // which should resolve the per-callout ARP crash that
+        // originally forced us off baseview on AAX. When that proves
+        // stable in Pro Tools this whole branch and the cg_blit /
+        // native_view modules can be deleted. Until then, flip
+        // `USE_LEGACY_AAX_PATH` below to `true` to revert.
+        // Probe: try the forked-baseview path again to see whether
+        // dropping wgpu's Surface before baseview's window.close()
+        // changes the Pro Tools unload crash.
         #[cfg(target_os = "macos")]
-        if should_use_cg_blit() {
+        const USE_LEGACY_AAX_PATH: bool = false;
+        #[cfg(target_os = "macos")]
+        if USE_LEGACY_AAX_PATH && should_use_cg_blit() {
             let parent_ptr = match parent {
                 RawWindowHandle::AppKit(ptr) => ptr,
                 _ => std::ptr::null_mut(),
@@ -866,7 +923,7 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
             }
         }
 
-        // --- Normal path: baseview + wgpu ---
+
         let options = baseview::WindowOpenOptions {
             title: String::from("truce"),
             size: baseview::Size::new(lw, lh),
@@ -876,6 +933,15 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
         let parent_wrapper = crate::platform::ParentWindow(parent);
         let editor_addr = self as *mut BuiltinEditor<P> as usize;
         let scale_f32 = scale as f32;
+
+        // Shared backend cell: the editor keeps one Arc and baseview's
+        // window handler gets the other. At close time the editor
+        // takes the inner Option and drops it *before* asking baseview
+        // to tear down the NSView.
+        let shared_backend: SharedBackend =
+            std::sync::Arc::new(std::sync::Mutex::new(None));
+        self.blit_backend = Some(shared_backend.clone());
+        let shared_for_handler = shared_backend;
 
         let window = baseview::Window::open_parented(
             &parent_wrapper,
@@ -906,9 +972,19 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
                     }
                 }
 
+                // Publish the backend into the shared cell. If the
+                // editor has already been asked to close (very
+                // unlikely race — only if close fires before baseview
+                // calls our build closure), the None-check on the
+                // mutex side will simply replace Some(None) → Some
+                // and everything drops at the usual time.
+                if let Ok(mut guard) = shared_for_handler.lock() {
+                    *guard = Some(backend);
+                }
+
                 BuiltinWindowHandler {
                     editor: editor_addr as *mut BuiltinEditor<P>,
-                    backend,
+                    backend: shared_for_handler.clone(),
                     scale: scale_f32,
                     last_cursor: (0.0, 0.0),
                     last_click_time: None,
@@ -940,6 +1016,22 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
             }
             unsafe {
                 let pool = objc_autoreleasePoolPush();
+
+                // Probe (1): drop the wgpu Surface (and therefore the
+                // CAMetalLayer it owns, the MTLDevice, command queue,
+                // etc.) BEFORE asking baseview to release the NSView.
+                // If this changes the Pro Tools unload-crash behavior,
+                // the Metal teardown sequence is what's leaving stale
+                // autoreleased refs in DFW_NSContainer.
+                if let Some(shared) = self.blit_backend.take() {
+                    if let Ok(mut guard) = shared.lock() {
+                        // Drop the backend while the mutex guard holds
+                        // exclusive access; the guard itself goes out
+                        // of scope right after.
+                        drop(guard.take());
+                    }
+                }
+
                 if let Some(mut window) = self.window.take() {
                     window.close();
                 }
