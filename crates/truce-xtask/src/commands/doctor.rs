@@ -5,9 +5,10 @@
 
 use crate::config::read_cargo_config_env;
 use crate::{
-    check_cmd, dirs, load_config, project_root, resolve_aax_sdk_path,
-    rustup_has_target, Res,
+    check_cmd, dirs, load_config, project_root, resolve_aax_sdk_path, Res,
 };
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+use crate::rustup_has_target;
 #[cfg(target_os = "macos")]
 use crate::locate_wraptool_macos;
 #[cfg(target_os = "windows")]
@@ -205,6 +206,7 @@ fn check_which_with_env(name: &str, env_var: Option<&str>) {
     }
 }
 
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 fn count_plugins(dir: &PathBuf, label: &str) {
     if dir.exists() {
         let count = fs::read_dir(dir)

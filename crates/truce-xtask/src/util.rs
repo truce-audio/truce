@@ -323,6 +323,7 @@ pub(crate) fn pace_sign_aax_macos(bundle: &Path) -> crate::Res {
 
 /// Return true if `rustup` reports `triple` among its installed targets.
 /// Used by `doctor` to surface cross-compile readiness.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(crate) fn rustup_has_target(triple: &str) -> bool {
     let out = Command::new("rustup")
         .args(["target", "list", "--installed"])

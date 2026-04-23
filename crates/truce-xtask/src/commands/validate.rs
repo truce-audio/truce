@@ -4,7 +4,9 @@
 
 use crate::{dirs, load_config, PluginDef, Res};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(target_os = "macos")]
+use std::path::PathBuf;
 use std::process::Command;
 
 /// Read a single leaf value from a plist via `plutil -extract … raw`.

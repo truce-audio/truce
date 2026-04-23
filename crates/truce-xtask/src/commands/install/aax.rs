@@ -125,17 +125,17 @@ pub(crate) fn build_aax_template(_root: &Path, sdk_path: &Path, universal_mac: b
 }
 
 
-pub(crate) fn install_aax(root: &Path, p: &PluginDef, config: &Config) -> Res {
-    // AAX is only supported on macOS and Windows. On Linux (including WSL
-    // builds that happen to target Linux), short-circuit before referencing
-    // any platform-specific helpers.
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    {
-        let _ = (root, p, config);
-        eprintln!("AAX: not supported on this platform, skipping {}", p.name);
-        return Ok(());
-    }
+// AAX is only supported on macOS and Windows. On Linux (including WSL builds
+// that happen to target Linux), short-circuit before referencing any
+// platform-specific helpers.
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+pub(crate) fn install_aax(_root: &Path, p: &PluginDef, _config: &Config) -> Res {
+    eprintln!("AAX: not supported on this platform, skipping {}", p.name);
+    Ok(())
+}
 
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+pub(crate) fn install_aax(root: &Path, p: &PluginDef, config: &Config) -> Res {
     /// Template binary path inside the cmake build directory.
     #[cfg(target_os = "macos")]
     fn template_binary() -> PathBuf {
@@ -148,10 +148,7 @@ pub(crate) fn install_aax(root: &Path, p: &PluginDef, config: &Config) -> Res {
         tmp_dir().join("aax_template/build/TruceAAXTemplate.aaxplugin")
     }
 
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
     let template = template_binary();
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    let template: PathBuf = unreachable!();
     // Always invoke `build_aax_template`: it rewrites embedded template
     // sources (so a freshly-built `cargo-truce` with updated templates
     // propagates into the C++ build) and cmake does an incremental
