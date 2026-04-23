@@ -919,7 +919,7 @@ pub(crate) fn detect_default_features() -> std::collections::HashSet<String> {
         }
     }
     // Fallback: assume all formats (workspace with multiple crates)
-    ["clap", "vst3", "vst2", "au", "aax"].iter().map(|s| s.to_string()).collect()
+    ["clap", "vst3", "vst2", "lv2", "au", "aax"].iter().map(|s| s.to_string()).collect()
 }
 
 pub(crate) fn project_root() -> PathBuf {
