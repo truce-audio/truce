@@ -61,11 +61,10 @@ impl<P: Params + 'static> GpuEditor<P> {
 struct GpuWindowHandler<P: Params> {
     inner: Arc<Mutex<BuiltinEditor<P>>>,
     gpu: Option<WgpuBackend>,
-    /// Last cursor position in logical points.
-    last_pos: (f32, f32),
-    left_pressed: bool,
-    last_click_time: std::time::Instant,
-    last_click_pos: (f32, f32),
+    /// Canonical baseview → `InputEvent` translator. Handles cursor
+    /// tracking, double-click synthesis, and line→pixel scroll
+    /// conversion once for everyone.
+    translator: truce_gui::interaction::BaseviewTranslator,
     /// Current logical size — used to detect hot-reload size changes.
     current_size: (u32, u32),
     /// Host callback to request a window resize.
@@ -105,64 +104,14 @@ impl<P: Params + 'static> WindowHandler for GpuWindowHandler<P> {
 
     fn on_event(&mut self, _window: &mut Window, event: Event) -> EventStatus {
         match event {
-            Event::Mouse(mouse) => {
-                use baseview::MouseEvent::*;
-                let mut inner = match self.inner.lock() {
-                    Ok(inner) => inner,
-                    Err(_) => return EventStatus::Ignored,
+            Event::Mouse(_) => {
+                let Some(input) = self.translator.translate(&event) else {
+                    return EventStatus::Ignored;
                 };
-
-                match mouse {
-                    CursorMoved { position, .. } => {
-                        let pos = (position.x as f32, position.y as f32);
-                        self.last_pos = pos;
-                        if self.left_pressed {
-                            inner.on_mouse_dragged(pos.0, pos.1);
-                        } else {
-                            inner.on_mouse_moved(pos.0, pos.1);
-                        }
-                        EventStatus::Captured
-                    }
-                    ButtonPressed { button: baseview::MouseButton::Left, .. } => {
-                        let (px, py) = self.last_pos;
-                        let now = std::time::Instant::now();
-
-                        // Double-click detection
-                        let dt = now.duration_since(self.last_click_time).as_millis();
-                        let dx = (px - self.last_click_pos.0).abs();
-                        let dy = (py - self.last_click_pos.1).abs();
-                        if dt < 400 && dx < 5.0 && dy < 5.0 {
-                            inner.on_double_click(px, py);
-                        } else {
-                            inner.on_mouse_down(px, py);
-                        }
-
-                        self.last_click_time = now;
-                        self.last_click_pos = (px, py);
-                        self.left_pressed = true;
-                        EventStatus::Captured
-                    }
-                    ButtonReleased { button: baseview::MouseButton::Left, .. } => {
-                        let (px, py) = self.last_pos;
-                        self.left_pressed = false;
-                        inner.on_mouse_up(px, py);
-                        EventStatus::Captured
-                    }
-                    WheelScrolled { delta, .. } => {
-                        let (px, py) = self.last_pos;
-                        let dy = match delta {
-                            baseview::ScrollDelta::Lines { y, .. } => y * 20.0,
-                            baseview::ScrollDelta::Pixels { y, .. } => y,
-                        };
-                        inner.on_scroll(px, py, dy);
-                        EventStatus::Captured
-                    }
-                    CursorLeft => {
-                        inner.on_mouse_moved(-1.0, -1.0);
-                        EventStatus::Captured
-                    }
-                    _ => EventStatus::Ignored,
+                if let Ok(mut inner) = self.inner.lock() {
+                    inner.dispatch_events(&[input]);
                 }
+                EventStatus::Captured
             }
             Event::Window(win) => {
                 if let baseview::WindowEvent::Resized(_info) = win {
@@ -232,11 +181,7 @@ impl<P: Params + 'static> Editor for GpuEditor<P> {
                 GpuWindowHandler {
                     inner,
                     gpu,
-                    last_pos: (0.0, 0.0),
-                    left_pressed: false,
-                    last_click_time: std::time::Instant::now()
-                        - std::time::Duration::from_secs(10),
-                    last_click_pos: (-100.0, -100.0),
+                    translator: truce_gui::interaction::BaseviewTranslator::new(),
                     current_size: size,
                     request_resize,
                 }

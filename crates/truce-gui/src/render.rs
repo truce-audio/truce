@@ -19,10 +19,14 @@ impl ImageId {
     pub const INVALID: Self = Self(u32::MAX);
 }
 
-/// Abstraction over rendering backends (CPU via tiny-skia, future GPU via wgpu).
+/// Abstraction over rendering backends (CPU via tiny-skia, GPU via wgpu).
 ///
-/// All coordinates are in pixels. The CPU backend renders to an in-memory
-/// RGBA buffer; a GPU backend would render via Metal/DX12/Vulkan.
+/// **Coordinate contract.** All coordinates and font sizes are in
+/// **logical points**. Backends own the display scale factor
+/// internally and multiply inputs by it at raster time, so a widget
+/// drawn at `(100, 100)` with `size = 14.0` has the same apparent
+/// size on 1× and 2× displays. Callers must not pre-multiply by
+/// scale.
 pub trait RenderBackend {
     /// Clear the entire surface with a solid color.
     fn clear(&mut self, color: Color);
@@ -54,7 +58,8 @@ pub trait RenderBackend {
     /// Draw text using the embedded TrueType font (fontdue).
     fn draw_text(&mut self, text: &str, x: f32, y: f32, size: f32, color: Color);
 
-    /// Measure the width of a text string in pixels.
+    /// Measure the width of a text string in logical points, at the
+    /// given logical-point font size.
     fn text_width(&self, text: &str, size: f32) -> f32;
 
     /// Flush rendering to the display surface.

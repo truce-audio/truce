@@ -177,7 +177,9 @@ impl PluginLayout {
 /// Sentinel value for auto-placed grid widgets.
 pub const AUTO: u32 = u32::MAX;
 
-// Grid spacing constants.
+// Grid spacing constants. All dimensions in this module are in logical
+// points — the rendering backend (`CpuBackend` / `WgpuBackend`)
+// multiplies by the display scale factor at raster time.
 pub const GRID_GAP: f32 = 19.0;
 pub const GRID_PADDING: f32 = 10.0;
 pub const GRID_HEADER_H: f32 = 21.0;
@@ -359,11 +361,11 @@ pub struct GridLayout {
     pub sections: Vec<(u32, &'static str)>,
     /// All widgets placed in the grid.
     pub widgets: Vec<GridWidget>,
-    /// Cell size in pixels (width and height of one grid cell).
+    /// Cell size in logical points (width and height of one grid cell).
     pub cell_size: f32,
-    /// Computed pixel width.
+    /// Computed width in logical points.
     pub width: u32,
-    /// Computed pixel height.
+    /// Computed height in logical points.
     pub height: u32,
 }
 

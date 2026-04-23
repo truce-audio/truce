@@ -11,7 +11,7 @@ use truce_core::editor::{Editor, EditorContext, RawWindowHandle};
 use truce_params::Params;
 
 use crate::backend_cpu::CpuBackend;
-use crate::interaction::{self, InputEvent, InteractionState, MouseButton, ParamEdit};
+use crate::interaction::{self, InputEvent, InteractionState, ParamEdit};
 use crate::layout::{GridLayout, Layout, PluginLayout};
 use crate::render::RenderBackend;
 use crate::snapshot::ParamSnapshot;
@@ -81,6 +81,11 @@ pub struct BuiltinEditor<P: Params> {
     /// live value drifts from the last-painted one, we force a
     /// repaint even if the UI never received a direct edit.
     last_painted_values: Vec<f32>,
+    /// Display scale factor (`logical × scale = physical`). Queried
+    /// from the parent window in `open()` and updated by the `Resized`
+    /// event. Threaded into `CpuBackend::new` / `resize` so the
+    /// pixmap rasterizes at physical density.
+    scale: f32,
 }
 
 unsafe impl<P: Params> Send for BuiltinEditor<P> {}
@@ -142,6 +147,7 @@ impl<P: Params + 'static> BuiltinEditor<P> {
             blit_backend: None,
             needs_repaint: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             last_painted_values: Vec::new(),
+            scale: 1.0,
         }
     }
 
@@ -157,6 +163,7 @@ impl<P: Params + 'static> BuiltinEditor<P> {
             blit_backend: None,
             needs_repaint: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             last_painted_values: Vec::new(),
+            scale: 1.0,
         }
     }
 
@@ -172,6 +179,7 @@ impl<P: Params + 'static> BuiltinEditor<P> {
             blit_backend: None,
             needs_repaint: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             last_painted_values: Vec::new(),
+            scale: 1.0,
         }
     }
 
@@ -183,9 +191,10 @@ impl<P: Params + 'static> BuiltinEditor<P> {
     /// Render the full UI to the internal CPU pixel buffer.
     pub fn render(&mut self) {
         let (w, h) = (self.layout.width(), self.layout.height());
+        let scale = self.scale;
         let backend = self
             .backend
-            .get_or_insert_with(|| CpuBackend::new(w, h).expect("Failed to create backend"));
+            .get_or_insert_with(|| CpuBackend::new(w, h, scale).expect("Failed to create backend"));
         // SAFETY: we split the borrow — backend is a separate field from layout/params/etc.
         let backend_ptr = backend as *mut CpuBackend;
         self.render_widgets(unsafe { &mut *backend_ptr });
@@ -335,8 +344,13 @@ impl<P: Params + 'static> BuiltinEditor<P> {
     }
 
     /// Feed a batch of input events through `interaction::dispatch` and
-    /// apply the resulting param edits.
-    fn dispatch_events(&mut self, events: &[InputEvent]) {
+    /// apply the resulting param edits. Flags a repaint when hover,
+    /// dropdown-open state, or any param moved.
+    ///
+    /// Typically callers build the events by running each baseview
+    /// event through [`interaction::BaseviewTranslator`] and batching
+    /// the non-`None` results.
+    pub fn dispatch_events(&mut self, events: &[InputEvent]) {
         let hover_before = self.interaction.hover_idx;
         let dd_before = self.interaction.dropdown_is_open();
         let owned = self.build_snapshot_closures();
@@ -400,44 +414,27 @@ impl<P: Params + 'static> BuiltinEditor<P> {
         unsafe { update_interaction(self) };
         self.render_widgets(backend);
     }
+}
 
-    // --- Mouse event handlers (public for external backends) ---
-    //
-    // These thinly wrap `interaction::dispatch` — each converts the call
-    // into a 1-element event batch, runs dispatch, and applies the
-    // returned `ParamEdit`s via `apply_edit`.
-
-    pub fn on_mouse_down(&mut self, x: f32, y: f32) {
+/// Test-only ergonomic wrappers. Production callers go through
+/// `dispatch_events` (usually with events synthesized by
+/// [`crate::interaction::BaseviewTranslator`]).
+#[cfg(test)]
+impl<P: Params + 'static> BuiltinEditor<P> {
+    fn on_mouse_down(&mut self, x: f32, y: f32) {
         self.dispatch_events(&[InputEvent::MouseDown {
-            x,
-            y,
-            button: MouseButton::Left,
+            x, y, button: crate::interaction::MouseButton::Left,
         }]);
     }
 
-    pub fn on_mouse_dragged(&mut self, x: f32, y: f32) {
-        self.dispatch_events(&[InputEvent::MouseMove { x, y }]);
-    }
-
-    pub fn on_mouse_up(&mut self, x: f32, y: f32) {
+    fn on_mouse_up(&mut self, x: f32, y: f32) {
         self.dispatch_events(&[InputEvent::MouseUp {
-            x,
-            y,
-            button: MouseButton::Left,
+            x, y, button: crate::interaction::MouseButton::Left,
         }]);
     }
 
-    pub fn on_double_click(&mut self, x: f32, y: f32) {
-        self.dispatch_events(&[InputEvent::MouseDoubleClick { x, y }]);
-    }
-
-    pub fn on_scroll(&mut self, x: f32, y: f32, delta_y: f32) {
-        self.dispatch_events(&[InputEvent::Scroll { x, y, dy: delta_y }]);
-    }
-
-    pub fn on_mouse_moved(&mut self, x: f32, y: f32) -> bool {
+    fn on_mouse_moved(&mut self, x: f32, y: f32) {
         self.dispatch_events(&[InputEvent::MouseMove { x, y }]);
-        self.interaction.hover_idx.is_some() || self.interaction.dropdown_is_open()
     }
 }
 
@@ -498,8 +495,6 @@ fn create_wgpu_backend(
     window: &mut baseview::Window,
     phys_w: u32,
     phys_h: u32,
-    logical_w: u32,
-    logical_h: u32,
 ) -> BlitBackend {
     let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
         backends: wgpu::Backends::PRIMARY,
@@ -542,11 +537,11 @@ fn create_wgpu_backend(
     };
     surface.configure(&device, &surface_config);
 
-    // Blit texture is sized to the CPU pixmap (logical dimensions), not the
-    // surface. The shader samples with UV in [0,1] so it stretches to fill
-    // whatever the surface size is. This avoids a width/height mismatch
-    // between the uploaded bytes and the texture layout.
-    let blit = crate::blit::BlitPipeline::new(&device, format, logical_w, logical_h);
+    // Blit texture matches the CPU pixmap, which is now sized at
+    // physical pixels (see CpuBackend's scale handling). With texture
+    // and surface at the same physical size, the full-screen-triangle
+    // blit samples 1:1 — no stretch, no Retina blur.
+    let blit = crate::blit::BlitPipeline::new(&device, format, phys_w, phys_h);
 
     BlitBackend { device, queue, surface, surface_config, blit }
 }
@@ -573,9 +568,10 @@ struct BuiltinWindowHandler<P: Params> {
     editor: *mut BuiltinEditor<P>,
     backend: SharedBackend,
     scale: f32,
-    last_cursor: (f32, f32),
-    last_click_time: Option<std::time::Instant>,
-    last_click_pos: (f32, f32),
+    /// Canonical baseview → `InputEvent` translator. Handles cursor
+    /// tracking, double-click synthesis, and line→pixel scroll
+    /// conversion once for everyone.
+    translator: crate::interaction::BaseviewTranslator,
 }
 
 // SAFETY: The raw pointer is only accessed from the GUI thread.
@@ -629,93 +625,65 @@ impl<P: Params + 'static> baseview::WindowHandler for BuiltinWindowHandler<P> {
         _window: &mut baseview::Window,
         event: baseview::Event,
     ) -> baseview::EventStatus {
-        match event {
-            baseview::Event::Mouse(mouse) => {
-                let editor = unsafe { &mut *self.editor };
-                match mouse {
-                    baseview::MouseEvent::CursorMoved { position, .. } => {
-                        // baseview on macOS reports positions in logical
-                        // points via `convertPoint:fromView:nil`. Layout
-                        // regions are built in the same logical
-                        // coordinate space. Do not multiply by scale —
-                        // doing so breaks hit-testing on Retina (cursor
-                        // at logical 170 compared against a 277-wide
-                        // layout was ending up at physical 340, which
-                        // sat outside every knob region).
-                        let x = position.x as f32;
-                        let y = position.y as f32;
-                        self.last_cursor = (x, y);
-                        editor.on_mouse_moved(x, y);
+        match &event {
+            baseview::Event::Mouse(baseview::MouseEvent::ButtonPressed {
+                button: baseview::MouseButton::Left, ..
+            }) => {
+                // WS_CHILD plugin windows don't receive WM_KEYDOWN
+                // until focused; baseview doesn't SetFocus on click,
+                // so we do it here. See truce-egui editor.rs.
+                #[cfg(target_os = "windows")]
+                {
+                    if !_window.has_focus() {
+                        _window.focus();
                     }
-                    baseview::MouseEvent::ButtonPressed {
-                        button: baseview::MouseButton::Left, ..
-                    } => {
-                        // WS_CHILD plugin windows don't receive WM_KEYDOWN
-                        // until focused; baseview doesn't SetFocus on click,
-                        // so we do it here. See truce-egui editor.rs.
-                        #[cfg(target_os = "windows")]
-                        {
-                            if !_window.has_focus() {
-                                _window.focus();
-                            }
-                        }
-                        let (x, y) = self.last_cursor;
-                        // Double-click detection (300ms, 4px threshold)
-                        let now = std::time::Instant::now();
-                        let is_double = self.last_click_time.map_or(false, |t| {
-                            now.duration_since(t).as_millis() < 300
-                                && (x - self.last_click_pos.0).abs() < 4.0
-                                && (y - self.last_click_pos.1).abs() < 4.0
-                        });
-                        self.last_click_time = Some(now);
-                        self.last_click_pos = (x, y);
-
-                        if is_double {
-                            editor.on_double_click(x, y);
-                            self.last_click_time = None; // reset so triple-click doesn't fire
-                        } else {
-                            editor.on_mouse_down(x, y);
-                        }
-                    }
-                    baseview::MouseEvent::ButtonReleased {
-                        button: baseview::MouseButton::Left, ..
-                    } => {
-                        let (x, y) = self.last_cursor;
-                        editor.on_mouse_up(x, y);
-                    }
-                    baseview::MouseEvent::WheelScrolled { delta, .. } => {
-                        let dy = match delta {
-                            baseview::ScrollDelta::Lines { y, .. } => y * 10.0,
-                            baseview::ScrollDelta::Pixels { y, .. } => y,
-                        };
-                        let (x, y) = self.last_cursor;
-                        editor.on_scroll(x, y, dy);
-                    }
-                    baseview::MouseEvent::CursorLeft => {
-                        editor.on_mouse_moved(-1.0, -1.0);
-                    }
-                    _ => return baseview::EventStatus::Ignored,
                 }
+            }
+            _ => {}
+        }
+
+        match event {
+            baseview::Event::Mouse(_) => {
+                let Some(input) = self.translator.translate(&event) else {
+                    return baseview::EventStatus::Ignored;
+                };
+                let editor = unsafe { &mut *self.editor };
+                editor.dispatch_events(&[input]);
                 baseview::EventStatus::Captured
             }
             baseview::Event::Window(baseview::WindowEvent::Resized(info)) => {
                 let pw = info.physical_size().width;
                 let ph = info.physical_size().height;
-                self.scale = info.scale() as f32;
+                let new_scale = info.scale() as f32;
+                self.scale = new_scale;
                 crate::platform::note_linux_scale_factor(info.scale());
+
+                // Re-size the CPU pixmap and blit texture to match the
+                // new physical surface. Without this, dragging the
+                // window between displays of different DPI would leave
+                // the pixmap at the old physical size and the blit
+                // pass would either stretch or crop.
+                let editor = unsafe { &mut *self.editor };
+                let (lw, lh) = editor.size();
+                editor.scale = new_scale;
+                if let Some(cpu) = editor.backend.as_mut() {
+                    cpu.resize(lw, lh, new_scale);
+                }
+                editor.request_repaint();
+
                 if let Ok(mut guard) = self.backend.lock() {
                     if let Some(BlitBackend {
                         device,
                         surface,
                         surface_config,
+                        blit,
                         ..
                     }) = guard.as_mut()
                     {
                         surface_config.width = pw;
                         surface_config.height = ph;
                         surface.configure(device, surface_config);
-                        // Blit texture stays at pixmap (logical) size — the
-                        // shader stretches it to fill the surface.
+                        blit.resize(device, pw, ph);
                     }
                 }
                 baseview::EventStatus::Captured
@@ -768,7 +736,9 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
 
     fn open(&mut self, parent: RawWindowHandle, context: EditorContext) {
         let (w, h) = self.size();
-        self.backend = CpuBackend::new(w, h);
+        let scale = crate::platform::query_backing_scale(&parent);
+        self.scale = scale as f32;
+        self.backend = CpuBackend::new(w, h, self.scale);
         self.context = Some(context);
 
         // Build interaction regions
@@ -780,7 +750,6 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
         // Render initial frame
         self.render();
 
-        let scale = crate::platform::query_backing_scale(&parent);
         let (lw, lh) = (w as f64, h as f64);
         let phys_w = (lw * scale) as u32;
         let phys_h = (lh * scale) as u32;
@@ -808,7 +777,7 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
             &parent_wrapper,
             options,
             move |window: &mut baseview::Window| {
-                let mut backend = create_wgpu_backend(window, phys_w, phys_h, w, h);
+                let mut backend = create_wgpu_backend(window, phys_w, phys_h);
 
                 // Render + present an initial frame synchronously, before
                 // baseview shows the window. Without this, the window briefly
@@ -846,9 +815,7 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
                     editor: editor_addr as *mut BuiltinEditor<P>,
                     backend: shared_for_handler.clone(),
                     scale: scale_f32,
-                    last_cursor: (0.0, 0.0),
-                    last_click_time: None,
-                    last_click_pos: (0.0, 0.0),
+                    translator: crate::interaction::BaseviewTranslator::new(),
                 }
             },
         );
