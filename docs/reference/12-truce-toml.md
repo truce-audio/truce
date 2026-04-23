@@ -42,6 +42,13 @@ Each `[[plugin]]` describes one plugin to build and install. At least one is req
 | `au_subtype` | string | no | = `fourcc` | Synonym for `fourcc`. If both are set, `fourcc` wins. |
 | `au3_subtype` | string | no | = `fourcc` | 4-char subtype for AU v3 specifically. Override if you want v2 and v3 to differ (useful during migration). |
 | `au_tag` | string | no | `"Effects"` | AU category tag. Common values: `"Effects"`, `"Synthesizer"`, `"Dynamics"`, `"EQ"`, `"Filter"`, `"MIDI"`. |
+| `clap_name` | string | no | = `name` | Override the plugin name shown to CLAP hosts. See [Per-format display names](#per-format-display-names). |
+| `vst3_name` | string | no | = `name` | Override the plugin name shown to VST3 hosts. |
+| `vst2_name` | string | no | = `name` | Override the plugin name shown to VST2 hosts. |
+| `au_name`   | string | no | = `name` | Override the plugin name shown to AU v2 hosts. |
+| `au3_name`  | string | no | = `"{name} v3"` | Override the AU v3 display name **and** the `/Applications/{au3_name}.app` install path. |
+| `aax_name`  | string | no | = `name` | Override the plugin name shown to AAX (Pro Tools). |
+| `lv2_name`  | string | no | = `name` | Override the LV2 `doap:name` written into `plugin.ttl`. |
 
 † One of `fourcc` or `au_subtype` must be present.
 
@@ -71,6 +78,45 @@ au_tag = "Synthesizer"
 | `"effect"` | `audio-effect` | `Fx` | `aufx` |
 | `"instrument"` | `instrument` | `Instrument\|Synth` | `aumu` |
 | `"midi"` | `note-effect` | `Fx\|Event` | `aumi` |
+
+### Per-format display names
+
+By default every format shows the plugin under `name`. The optional
+`{format}_name` fields let you override that display name per host
+format — useful when you need to disambiguate side-by-side installs
+(AU v2 vs AU v3, beta vs stable) or work around a host that already
+ships a plugin with the same name.
+
+```toml
+[[plugin]]
+name = "Acme Gain"
+suffix = "gain"
+crate = "acme-gain"
+category = "effect"
+fourcc = "AGn1"
+
+# AU v2 keeps the bare name; AU v3 ships side-by-side under a different
+# label so both show up in Logic without one shadowing the other.
+au3_name = "Acme Gain (AUv3)"
+
+# Beta build for VST3-only testers — production binaries omit this.
+vst3_name = "Acme Gain BETA"
+```
+
+Behavior per format:
+
+- **CLAP / VST3 / VST2 / AU v2 / AAX / LV2** — overrides only the
+  *display name* surfaced to hosts. Bundle filenames, IDs, and on-disk
+  install paths still derive from `name` (so the host re-discovers an
+  upgraded build cleanly).
+- **AU v3** — `au3_name` overrides both the display name **and** the
+  containing app bundle path: `/Applications/{au3_name}.app` instead of
+  the legacy `/Applications/{name} v3.app`.
+
+The override is applied at install time via a per-format
+`TRUCE_{FORMAT}_NAME_OVERRIDE` environment variable that
+`cargo truce install` and `cargo truce package` pass through to the
+build, so bundles built for distribution carry the override too.
 
 ---
 
