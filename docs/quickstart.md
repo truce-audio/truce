@@ -10,8 +10,39 @@ plugin experience needed. Just Rust.
 - **Rust 1.75+** (`rustup update`)
 - **macOS**: `xcode-select --install`
 - **Windows**: MSVC build tools (Visual Studio 2019+ with "Desktop development with C++"). Installs require an Administrator command prompt because plugin directories (Common Files, Program Files) are system-wide.
-- A DAW that loads CLAP or VST3 plugins (Reaper is free to evaluate
-  and the easiest to test with)
+- **Linux**: a C/C++ toolchain plus the X11/audio/font dev headers baseview and the bundled GUI need.
+
+  Ubuntu / Debian:
+  ```bash
+  sudo apt install \
+    build-essential pkg-config \
+    libx11-dev libx11-xcb-dev libxcb1-dev libxcursor-dev \
+    libxkbcommon-dev libxkbcommon-x11-dev libxrandr-dev \
+    libgl1-mesa-dev libvulkan-dev mesa-vulkan-drivers \
+    libasound2-dev libjack-jackd2-dev \
+    libfontconfig1-dev libfreetype-dev
+  ```
+
+  Fedora:
+  ```bash
+  sudo dnf install \
+    @development-tools pkgconf-pkg-config \
+    libX11-devel libxcb-devel libXcursor-devel \
+    libxkbcommon-devel libxkbcommon-x11-devel libXrandr-devel \
+    mesa-libGL-devel vulkan-loader-devel mesa-vulkan-drivers \
+    alsa-lib-devel jack-audio-connection-kit-devel \
+    fontconfig-devel freetype-devel
+  ```
+
+  If your system uses PipeWire (Fedora 40+, Ubuntu 24.04+), install its
+  JACK shim (`pipewire-jack` / `pipewire-jack-audio-connection-kit`) so the
+  standalone binary reaches the audio graph. Don't also run `jackd2` —
+  the two compete for the same socket.
+
+- A DAW that loads CLAP or VST3 plugins. Reaper is free to evaluate on
+  all three platforms and the easiest to test with. On Linux, Bitwig
+  Studio is the other good CLAP host; Ardour is the canonical LV2 test
+  bed.
 
 ---
 
@@ -34,6 +65,44 @@ my-gain/
 ├── truce.toml          # vendor info, plugin IDs, AU metadata
 └── src/lib.rs          ← your plugin code lives here
 ```
+
+### Scaffolding a suite of plugins
+
+If you know up front that you're shipping multiple plugins under one
+brand (a gain + a reverb + a synth, say), use `new-workspace` instead.
+It sets up one Cargo workspace sharing a single `truce.toml` and
+auto-resolves each plugin's FourCC code:
+
+```bash
+# Effects by default
+cargo truce new-workspace studio gain reverb delay
+
+# Mix types per plugin; vendor fields explicit
+cargo truce new-workspace studio gain reverb synth arp \
+    --vendor "Studio Audio" --vendor-id com.studio \
+    --type:synth=instrument --type:arp=midi
+```
+
+You get:
+
+```
+studio/
+├── Cargo.toml          # [workspace] with one member per plugin
+├── truce.toml          # vendor info + one [[plugin]] block per member
+└── plugins/
+    ├── gain/
+    ├── reverb/
+    ├── synth/          # category = "instrument"
+    └── arp/            # category = "midi"
+```
+
+`cargo truce install` / `package` / `validate` all understand the
+workspace: pass `-p <name>` to target a single plugin, or omit it to
+operate on every plugin in the workspace.
+
+Use `new` for a single-plugin project; use `new-workspace` as soon as
+you're shipping a family, so the plugins share one source tree,
+vendor metadata, and signing config.
 
 ---
 
@@ -97,8 +166,16 @@ instruments or custom layouts, add `bus_layouts: [...]`.
 cargo truce install --clap
 ```
 
-This builds your plugin as a CLAP bundle and installs it to
-`~/Library/Audio/Plug-Ins/CLAP/`. No sudo needed for CLAP.
+This builds your plugin as a CLAP bundle and installs it to the
+user-scope plugin directory for your OS:
+
+- **macOS**: `~/Library/Audio/Plug-Ins/CLAP/`
+- **Windows**: `%COMMONPROGRAMFILES%\CLAP\` (per-user CLAP dirs aren't
+  conventional on Windows; install still doesn't need an admin prompt
+  for CLAP)
+- **Linux**: `~/.clap/`
+
+No sudo needed on any platform for CLAP.
 
 You should see:
 
@@ -107,6 +184,9 @@ Building CLAP + VST3...
 Installing CLAP: My Gain → ~/Library/Audio/Plug-Ins/CLAP/My Gain.clap
 Done.
 ```
+
+On Linux the canonical format is LV2; swap `--clap` for `--lv2` (or
+build both) and the bundle lands in `~/.lv2/my-gain.lv2/`.
 
 ---
 
@@ -217,6 +297,10 @@ You'll find the installer in `dist/`:
 - **Windows**: `dist/My Gain-0.1.0-windows.exe` — an Inno Setup
   installer with per-format components, Authenticode signing, a
   registered uninstaller, and **dual-arch** payloads for x64 and ARM64.
+- **Linux**: no installer yet. `.deb` / `.rpm` packaging is planned
+  but not shipped — for now distribute the build output from `cargo
+  truce build --lv2 --clap --vst3` as a tarball, or have users run
+  `cargo truce install` themselves after `git clone`.
 
 Universal by default assumes you've added the cross-compile toolchains: on
 macOS `rustup target add x86_64-apple-darwin aarch64-apple-darwin`; on
@@ -270,15 +354,19 @@ With one crate, one file, and one macro, you built a plugin that:
 - Saves and restores state when the DAW session is saved
 - Passes clap-validator (if installed)
 
-To also build VST3, AU, and AAX:
+To also build VST3, AU, LV2, and AAX:
 
 ```bash
-cargo truce install                # all formats
-cargo truce install --vst3         # VST3 (for Ableton, FL Studio)
-cargo truce install --au2          # AU v2 (for Logic Pro)
-cargo truce install --au3          # AU v3 (for Logic Pro, Ableton)
-cargo truce install --aax          # AAX (for Pro Tools, needs SDK)
+cargo truce install                # all formats in your crate's default features
+cargo truce install --vst3         # VST3 (for Ableton, FL Studio, cross-platform)
+cargo truce install --lv2          # LV2 (for Ardour, Reaper-Linux, etc.)
+cargo truce install --au2          # AU v2 (macOS only — Logic Pro, GarageBand)
+cargo truce install --au3          # AU v3 (macOS only — Logic Pro, Ableton)
+cargo truce install --aax          # AAX (Pro Tools; needs SDK, macOS + Windows)
 ```
+
+AU and AAX are macOS / Windows only. LV2 builds on all three OSes but
+is most useful on Linux.
 
 ---
 
