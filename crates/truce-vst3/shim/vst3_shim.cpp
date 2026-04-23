@@ -71,9 +71,11 @@ static const TUID IUnitInfo_iid       = MAKE_IID(0x3D4BD6B5, 0x913A4FD2, 0xA886E
 static const TUID IPlugViewContentScaleSupport_iid =
     MAKE_IID(0x65ED9690, 0x8AC44525, 0x8AADEF7A, 0x72EA703F);
 
-static const char* kPlatformTypeNSView = "NSView";
-static const char* kPlatformTypeHWND   = "HWND";
-static const char* kPlatformTypeX11    = "X11EmbedWindowID";
+// Only one of these matches the current build target; the others
+// stay defined so `pv_isPlatformTypeSupported` reads uniformly.
+[[maybe_unused]] static const char* kPlatformTypeNSView = "NSView";
+[[maybe_unused]] static const char* kPlatformTypeHWND   = "HWND";
+[[maybe_unused]] static const char* kPlatformTypeX11    = "X11EmbedWindowID";
 
 // Media types & bus directions
 enum { kAudio = 0, kEvent = 1 };
@@ -1340,20 +1342,31 @@ static tresult ui_getUnitInfo(void*, int32 idx, UnitInfo* out) {
     return kResultOk;
 }
 static int32 ui_getProgramListCount(void*) { return 0; }
-static tresult ui_stub_not_impl() { return kNotImplemented; }
+// Typed `kNotImplemented` stubs for each of the IUnitInfo vtable
+// slots we don't care about. One stub per unique signature keeps
+// modern clang's `-Wcast-function-type-mismatch` happy — casting a
+// nullary function pointer to specific signatures is UB in strict
+// readings and warns on arm64 macOS clang.
+static tresult ui_ni_iv(void*, int32, void*)                         { return kNotImplemented; }
+static tresult ui_ni_iiw(void*, int32, int32, char16*)               { return kNotImplemented; }
+static tresult ui_ni_iisw(void*, int32, int32, const char*, char16*) { return kNotImplemented; }
+static tresult ui_ni_ii(void*, int32, int32)                         { return kNotImplemented; }
+static tresult ui_ni_iihw(void*, int32, int32, int16_t, char16*)     { return kNotImplemented; }
+static tresult ui_ni_iiiii_ip(void*, int32, int32, int32, int32, int32*) { return kNotImplemented; }
+static tresult ui_ni_iiiv(void*, int32, int32, void*)                { return kNotImplemented; }
 
 static IUnitInfoVtbl g_unitinfo_vtbl = {
     ui_qi, ui_addRef, ui_release,
     ui_getUnitCount, ui_getUnitInfo, ui_getProgramListCount,
-    (tresult(*)(void*,int32,void*))ui_stub_not_impl,
-    (tresult(*)(void*,int32,int32,char16*))ui_stub_not_impl,
-    (tresult(*)(void*,int32,int32,const char*,char16*))ui_stub_not_impl,
-    (tresult(*)(void*,int32,int32))ui_stub_not_impl,
-    (tresult(*)(void*,int32,int32,int16_t,char16*))ui_stub_not_impl,
+    ui_ni_iv,
+    ui_ni_iiw,
+    ui_ni_iisw,
+    ui_ni_ii,
+    ui_ni_iihw,
     [](void*) -> int32 { return 0; },
     [](void*, int32) -> tresult { return kResultOk; },
-    (tresult(*)(void*,int32,int32,int32,int32,int32*))ui_stub_not_impl,
-    (tresult(*)(void*,int32,int32,void*))ui_stub_not_impl,
+    ui_ni_iiiii_ip,
+    ui_ni_iiiv,
 };
 
 static TruceComponentCOM* create_component() {

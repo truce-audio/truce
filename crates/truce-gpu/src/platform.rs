@@ -3,6 +3,10 @@
 //! Bridges truce's `RawWindowHandle` to baseview's `HasRawWindowHandle`
 //! (raw-window-handle 0.5), and provides scale factor querying.
 
+// `HasRawDisplayHandle` / `RwhRawDisplayHandle` are only touched on
+// the Linux (X11) arm of `HasRawWindowHandle for ParentWindow`;
+// silence the macOS/Windows dead-import warning.
+#[allow(unused_imports)]
 use raw_window_handle::{
     HasRawDisplayHandle, HasRawWindowHandle, RawDisplayHandle as RwhRawDisplayHandle,
     RawWindowHandle as RwhRawWindowHandle,

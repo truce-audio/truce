@@ -13,6 +13,19 @@ use std::fs;
 use std::io::Write;
 use std::path::Path;
 
+/// Install-time override for `doap:name` in the generated LV2 TTL.
+/// Populated by `cargo truce install` from the `lv2_name` field in
+/// `truce.toml`.
+const LV2_NAME_OVERRIDE: Option<&'static str> =
+    option_env!("TRUCE_LV2_NAME_OVERRIDE");
+
+fn resolved_plugin_name(info: &PluginInfo) -> &'static str {
+    match LV2_NAME_OVERRIDE {
+        Some(s) if !s.is_empty() => s,
+        _ => info.name,
+    }
+}
+
 use truce_core::info::{PluginCategory, PluginInfo};
 use truce_params::{ParamInfo, ParamRange, ParamUnit};
 
@@ -144,7 +157,11 @@ fn write_plugin_ttl(
     } else {
         writeln!(f, "    a lv2:Plugin, {category} ;")?;
     }
-    writeln!(f, "    doap:name \"{}\" ;", escape_turtle(info.name))?;
+    writeln!(
+        f,
+        "    doap:name \"{}\" ;",
+        escape_turtle(resolved_plugin_name(info)),
+    )?;
     writeln!(f, "    doap:maintainer [")?;
     writeln!(
         f,

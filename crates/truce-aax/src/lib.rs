@@ -160,6 +160,19 @@ static INFO: OnceLock<StaticInfo> = OnceLock::new();
 // Registration
 // ---------------------------------------------------------------------------
 
+/// Install-time override for the host-facing plugin name shown in
+/// Pro Tools' plug-in menus. Populated by `cargo truce install` via
+/// the `aax_name` field in `truce.toml`.
+const AAX_NAME_OVERRIDE: Option<&'static str> =
+    option_env!("TRUCE_AAX_NAME_OVERRIDE");
+
+fn resolved_plugin_name(info: &truce_core::info::PluginInfo) -> &'static str {
+    match AAX_NAME_OVERRIDE {
+        Some(s) if !s.is_empty() => s,
+        _ => info.name,
+    }
+}
+
 pub fn register_aax<P: PluginExport>() {
     INFO.get_or_init(|| {
         let info = P::info();
@@ -168,7 +181,7 @@ pub fn register_aax<P: PluginExport>() {
             .first()
             .expect("Plugin must have at least one bus layout");
 
-        let name = CString::new(info.name).unwrap();
+        let name = CString::new(resolved_plugin_name(&info)).unwrap();
         let vendor = CString::new(info.vendor).unwrap();
 
         let is_instrument = info.au_type == *b"aumu";
@@ -242,8 +255,9 @@ pub fn register_aax<P: PluginExport>() {
         desc.num_params = params.len() as u32;
         desc.has_editor = has_editor as i32;
         // Fix name/vendor pointers — need to leak the CStrings
-        let name_leaked = CString::new(P::info().name).unwrap();
-        let vendor_leaked = CString::new(P::info().vendor).unwrap();
+        let info = P::info();
+        let name_leaked = CString::new(resolved_plugin_name(&info)).unwrap();
+        let vendor_leaked = CString::new(info.vendor).unwrap();
         desc.name = name_leaked.into_raw();
         desc.vendor = vendor_leaked.into_raw();
 

@@ -30,7 +30,7 @@ pub fn run(args: &[String]) -> ExitCode {
         "new" => cmd_new(&args[1..]),
         "test" => cmd_test(),
         "status" => cmd_status(),
-        "clean" => cmd_clean(),
+        "clean" => cmd_clean(&args[1..]),
         "nuke" => cmd_nuke(&args[1..]),
         "validate" => cmd_validate(&args[1..]),
         "doctor" => cmd_doctor(),
@@ -82,8 +82,10 @@ Commands:
   status
       Show installed plugins and AU registration state.
 
-  clean
-      Clear all AU/DAW caches and restart audio daemons.
+  clean [--yes]
+      Clear all AU/DAW caches and restart audio daemons. Asks for
+      confirmation by default.
+      --yes        Skip confirmation prompt
 
   remove [--clap] [--vst3] [--vst2] [--au2] [--au3] [--aax] [-p <suffix>] [-n <name>] [--stale] [--dry-run] [--yes]
       Remove installed plugin bundles for this project.
@@ -705,6 +707,24 @@ pub(crate) struct PluginDef {
     au3_subtype: Option<String>,
     #[serde(default = "default_au_tag")]
     au_tag: String,
+    // Per-format display-name overrides. When set, replace
+    // `PluginInfo::name` in the host-facing spot of that format
+    // (visible in plugin browsers, param-editor title, etc.).
+    // Install-time only; the default (`None`) keeps `name`.
+    #[serde(default)]
+    clap_name: Option<String>,
+    #[serde(default)]
+    vst3_name: Option<String>,
+    #[serde(default)]
+    vst2_name: Option<String>,
+    #[serde(default)]
+    au_name: Option<String>,
+    #[serde(default)]
+    au3_name: Option<String>,
+    #[serde(default)]
+    aax_name: Option<String>,
+    #[serde(default)]
+    lv2_name: Option<String>,
 }
 
 impl PluginDef {
@@ -723,6 +743,18 @@ impl PluginDef {
     }
     fn au3_sub(&self) -> &str {
         self.au3_subtype.as_deref().unwrap_or(self.resolved_fourcc())
+    }
+
+    /// Name used for the AU v3 containing `.app` bundle directory.
+    /// When `au3_name` is set in truce.toml it wins (both display
+    /// name in host browsers and bundle path stay in sync). Otherwise
+    /// we fall back to the historical `"{name} v3"` disambiguator so
+    /// projects that haven't opted in are unaffected.
+    fn au3_app_name(&self) -> String {
+        match self.au3_name.as_deref() {
+            Some(n) if !n.is_empty() => n.to_string(),
+            _ => format!("{} v3", self.name),
+        }
     }
     fn fw_name(&self) -> String {
         let cap = format!("{}{}", self.suffix[..1].to_uppercase(), &self.suffix[1..]);
@@ -1237,6 +1269,11 @@ fn cmd_install(args: &[String]) -> Res {
     let features_str = extra_features.join(",");
 
     // --- Build ---
+    //
+    // One cargo invocation per (plugin, format) pair so that the
+    // name-override env vars can be applied per-plugin. The shared
+    // target cache means incremental rebuilds stay fast even though
+    // we invoke cargo more times than strictly necessary.
     if !no_build {
         if clap || vst3 {
             // Build with explicit features to avoid pulling in AU ObjC
@@ -1254,14 +1291,29 @@ fn cmd_install(args: &[String]) -> Res {
             } else {
                 eprintln!("Building CLAP + VST3...");
             }
-            let mut args: Vec<&str> = Vec::new();
             for p in &plugins {
-                args.push("-p");
-                args.push(&p.crate_name);
-            }
-            args.extend_from_slice(&["--no-default-features", "--features", &features_combined]);
-            cargo_build(&[], &args, dt)?;
-            for p in &plugins {
+                let mut env_pairs: Vec<(&str, &str)> = Vec::new();
+                if clap {
+                    if let Some(n) = p.clap_name.as_deref() {
+                        env_pairs.push(("TRUCE_CLAP_NAME_OVERRIDE", n));
+                    }
+                }
+                if vst3 {
+                    if let Some(n) = p.vst3_name.as_deref() {
+                        env_pairs.push(("TRUCE_VST3_NAME_OVERRIDE", n));
+                    }
+                }
+                cargo_build(
+                    &env_pairs,
+                    &[
+                        "-p",
+                        &p.crate_name,
+                        "--no-default-features",
+                        "--features",
+                        &features_combined,
+                    ],
+                    dt,
+                )?;
                 let src = release_lib(&root, &p.dylib_stem());
                 let dst = release_lib(&root, &format!("{}_plugin", p.dylib_stem()));
                 if src.exists() {
@@ -1272,14 +1324,22 @@ fn cmd_install(args: &[String]) -> Res {
 
         if vst2 {
             eprintln!("Building VST2...");
-            let mut args: Vec<&str> = Vec::new();
             for p in &plugins {
-                args.push("-p");
-                args.push(&p.crate_name);
-            }
-            args.extend_from_slice(&["--no-default-features", "--features", "vst2"]);
-            cargo_build(&[], &args, dt)?;
-            for p in &plugins {
+                let mut env_pairs: Vec<(&str, &str)> = Vec::new();
+                if let Some(n) = p.vst2_name.as_deref() {
+                    env_pairs.push(("TRUCE_VST2_NAME_OVERRIDE", n));
+                }
+                cargo_build(
+                    &env_pairs,
+                    &[
+                        "-p",
+                        &p.crate_name,
+                        "--no-default-features",
+                        "--features",
+                        "vst2",
+                    ],
+                    dt,
+                )?;
                 let src = release_lib(&root, &p.dylib_stem());
                 let dst = release_lib(&root, &format!("{}_vst2", p.dylib_stem()));
                 fs_ctx::copy(&src, &dst)?;
@@ -1288,14 +1348,22 @@ fn cmd_install(args: &[String]) -> Res {
 
         if lv2 {
             eprintln!("Building LV2...");
-            let mut args: Vec<&str> = Vec::new();
             for p in &plugins {
-                args.push("-p");
-                args.push(&p.crate_name);
-            }
-            args.extend_from_slice(&["--no-default-features", "--features", "lv2"]);
-            cargo_build(&[], &args, dt)?;
-            for p in &plugins {
+                let mut env_pairs: Vec<(&str, &str)> = Vec::new();
+                if let Some(n) = p.lv2_name.as_deref() {
+                    env_pairs.push(("TRUCE_LV2_NAME_OVERRIDE", n));
+                }
+                cargo_build(
+                    &env_pairs,
+                    &[
+                        "-p",
+                        &p.crate_name,
+                        "--no-default-features",
+                        "--features",
+                        "lv2",
+                    ],
+                    dt,
+                )?;
                 let src = release_lib(&root, &p.dylib_stem());
                 let dst = release_lib(&root, &format!("{}_lv2", p.dylib_stem()));
                 fs_ctx::copy(&src, &dst)?;
@@ -1305,8 +1373,15 @@ fn cmd_install(args: &[String]) -> Res {
         if au2 {
             eprintln!("Building AU v2...");
             for p in &plugins {
+                let mut env_pairs: Vec<(&str, &str)> = vec![
+                    ("TRUCE_AU_VERSION", "2"),
+                    ("TRUCE_AU_PLUGIN_ID", &p.suffix),
+                ];
+                if let Some(n) = p.au_name.as_deref() {
+                    env_pairs.push(("TRUCE_AU_NAME_OVERRIDE", n));
+                }
                 cargo_build(
-                    &[("TRUCE_AU_VERSION", "2"), ("TRUCE_AU_PLUGIN_ID", &p.suffix)],
+                    &env_pairs,
                     &[
                         "-p",
                         &p.crate_name,
@@ -1324,14 +1399,22 @@ fn cmd_install(args: &[String]) -> Res {
 
         if aax {
             eprintln!("Building AAX...");
-            let mut args: Vec<&str> = Vec::new();
             for p in &plugins {
-                args.push("-p");
-                args.push(&p.crate_name);
-            }
-            args.extend_from_slice(&["--no-default-features", "--features", "aax"]);
-            cargo_build(&[], &args, dt)?;
-            for p in &plugins {
+                let mut env_pairs: Vec<(&str, &str)> = Vec::new();
+                if let Some(n) = p.aax_name.as_deref() {
+                    env_pairs.push(("TRUCE_AAX_NAME_OVERRIDE", n));
+                }
+                cargo_build(
+                    &env_pairs,
+                    &[
+                        "-p",
+                        &p.crate_name,
+                        "--no-default-features",
+                        "--features",
+                        "aax",
+                    ],
+                    dt,
+                )?;
                 let src = release_lib(&root, &p.dylib_stem());
                 let dst = release_lib(&root, &format!("{}_aax", p.dylib_stem()));
                 fs_ctx::copy(&src, &dst)?;
@@ -2197,7 +2280,7 @@ fn build_au_v3(
     for p in plugins {
         let fw_name = p.fw_name();
         let au_v3_sub = p.au3_sub();
-        let app_dir = format!("/Applications/{} v3.app", p.name);
+        let app_dir = format!("/Applications/{}.app", p.au3_app_name());
         let appex_id = format!(
             "com.{}.{}.v3.ext",
             config.vendor.id.trim_start_matches("com."),
@@ -2213,8 +2296,15 @@ fn build_au_v3(
             // canonical `lib{stem}_v3.dylib` location.
             for &arch in archs {
                 eprintln!("  Building Rust framework ({})...", arch.triple());
+                let mut env_pairs: Vec<(&str, &str)> = vec![
+                    ("TRUCE_AU_VERSION", "3"),
+                    ("TRUCE_AU_PLUGIN_ID", &p.suffix),
+                ];
+                if let Some(n) = p.au3_name.as_deref() {
+                    env_pairs.push(("TRUCE_AU_NAME_OVERRIDE", n));
+                }
                 cargo_build_for_arch(
-                    &[("TRUCE_AU_VERSION", "3"), ("TRUCE_AU_PLUGIN_ID", &p.suffix)],
+                    &env_pairs,
                     &[
                         "-p",
                         &p.crate_name,
@@ -2341,7 +2431,11 @@ fn build_au_v3(
                 .replace("AUMFR", &config.vendor.au_manufacturer)
                 .replace(
                     "AUNAME",
-                    &format!("{}: {} (v3)", config.vendor.name, p.name),
+                    &format!(
+                        "{}: {}",
+                        config.vendor.name,
+                        p.au3_name.as_deref().unwrap_or(p.name.as_str()),
+                    ),
                 )
                 .replace("AUTAG", &p.au_tag);
             fs_ctx::write(&plist_path, plist)?;
@@ -2424,7 +2518,7 @@ fn install_au_v3(
 
     for p in plugins {
         let fw_name = p.fw_name();
-        let app_dir = format!("/Applications/{} v3.app", p.name);
+        let app_dir = format!("/Applications/{}.app", p.au3_app_name());
         let appex_id = format!(
             "com.{}.{}.v3.ext",
             config.vendor.id.trim_start_matches("com."),
@@ -2888,7 +2982,23 @@ fn cmd_status() -> Res {
 // clean
 // ---------------------------------------------------------------------------
 
-fn cmd_clean() -> Res {
+fn cmd_clean(args: &[String]) -> Res {
+    let mut yes = false;
+    for arg in args {
+        match arg.as_str() {
+            "--yes" | "-y" => yes = true,
+            other => return Err(format!("Unknown flag: {other}").into()),
+        }
+    }
+
+    if !yes && !confirm_prompt(
+        "Clear AU/DAW caches and restart audio daemons? This deletes cached plugin metadata, \
+         resets pluginkit registrations, and wipes the AAX cache.",
+    ) {
+        eprintln!("Cancelled.");
+        return Ok(());
+    }
+
     eprintln!("Clearing AU/DAW caches...");
     let home = dirs::home_dir().unwrap();
 
@@ -2914,6 +3024,7 @@ fn cmd_clean() -> Res {
     for pref in &prefs {
         if pref.exists() {
             let _ = fs::remove_file(pref);
+            eprintln!("  Removed: {}", pref.display());
         }
     }
 
@@ -2947,16 +3058,18 @@ fn cmd_clean() -> Res {
                 let _ = Command::new("pluginkit")
                     .args(["-e", "use", "-i", &pattern])
                     .output();
+                eprintln!("  Reset pluginkit: {pattern}");
             }
         }
 
         // Force LaunchServices to re-scan v3 app bundles
         for p in &config.plugin {
-            let app_path = format!("/Applications/{} v3.app", p.name);
+            let app_path = format!("/Applications/{}.app", p.au3_app_name());
             if Path::new(&app_path).exists() {
                 let _ = Command::new("/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister")
                     .args(["-f", "-R", &app_path])
                     .output();
+                eprintln!("  Re-registered: {app_path}");
             }
         }
     }
@@ -3031,7 +3144,7 @@ fn cmd_nuke(args: &[String]) -> Res {
     // 1. Unregister from LaunchServices + pluginkit
     eprintln!("Unregistering AU v3 plugins...");
     for p in &plugins {
-        let app_dir = format!("/Applications/{} v3.app", p.name);
+        let app_dir = format!("/Applications/{}.app", p.au3_app_name());
         // Unregister from LaunchServices
         let _ = Command::new("/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister")
             .args(["-u", &app_dir])
@@ -3249,14 +3362,27 @@ fn cmd_remove(args: &[String]) -> Res {
             scan(&home.join("Library/Audio/Plug-Ins/Components"), "component", "AU v2", false, &mut targets);
         }
         if au3 {
-            // Scan /Applications for vendor-matching v3 apps not in project
+            // Scan /Applications for vendor-matching v3 apps not in project.
+            // Recognize truce AU v3 containers by bundle-name convention:
+            // legacy "<name> v3.app" or the new default "<name> (AUv3).app".
+            // A custom `au3_name` override may produce neither pattern — those
+            // orphans can only be detected when the current config still
+            // produces a recognizable name, so we compare against the current
+            // bundle names as well.
+            let known_au3_bundles: Vec<String> = config
+                .plugin
+                .iter()
+                .map(|p| format!("{}.app", p.au3_app_name()))
+                .collect();
             if let Ok(entries) = fs::read_dir("/Applications") {
                 for entry in entries.flatten() {
                     let name = entry.file_name();
                     let name_str = name.to_string_lossy();
-                    if !name_str.contains(vendor) || !name_str.ends_with("v3.app") { continue; }
-                    let display = name_str.trim_end_matches(" v3.app");
-                    if known_names.iter().any(|k| *k == display) { continue; }
+                    if !name_str.contains(vendor) || !name_str.ends_with(".app") { continue; }
+                    let looks_like_au3 = name_str.ends_with(" v3.app")
+                        || name_str.ends_with("(AUv3).app");
+                    if !looks_like_au3 { continue; }
+                    if known_au3_bundles.iter().any(|k| k.as_str() == name_str.as_ref()) { continue; }
                     targets.push(RemoveTarget { format: "AU v3", path: entry.path(), needs_sudo: true });
                 }
             }
@@ -3279,8 +3405,10 @@ fn cmd_remove(args: &[String]) -> Res {
                 let fname = t.path.file_stem()
                     .map(|f| f.to_string_lossy().to_lowercase())
                     .unwrap_or_default();
-                // Strip " v3" suffix for AU v3 app names
-                let display = fname.trim_end_matches(" v3");
+                // Strip AU v3 suffixes: legacy " v3" and the new " (auv3)".
+                let display = fname
+                    .trim_end_matches(" v3")
+                    .trim_end_matches(" (auv3)");
                 display == filter_lower
             });
         }
@@ -3357,7 +3485,7 @@ fn cmd_remove(args: &[String]) -> Res {
                 }
             }
             if au3 {
-                let path = PathBuf::from(format!("/Applications/{} v3.app", p.name));
+                let path = PathBuf::from(format!("/Applications/{}.app", p.au3_app_name()));
                 if path.exists() {
                     targets.push(RemoveTarget { format: "AU v3", path, needs_sudo: true });
                 }
@@ -3404,7 +3532,7 @@ fn cmd_remove(args: &[String]) -> Res {
         if t.format == "AU v3" {
             // Try to find a matching plugin def for precise unregistration
             let matched_plugin = config.plugin.iter().find(|p| {
-                t.path == Path::new(&format!("/Applications/{} v3.app", p.name))
+                t.path == Path::new(&format!("/Applications/{}.app", p.au3_app_name()))
             });
             if let Some(p) = matched_plugin {
                 unregister_au3(&config, p, &t.path);
@@ -3695,8 +3823,8 @@ fn cmd_validate(args: &[String]) -> Res {
                     #[cfg(target_os = "macos")]
                     {
                         let expected = PathBuf::from(format!(
-                            "/Applications/{} v3.app/Contents/PlugIns/AUExt.appex",
-                            p.name
+                            "/Applications/{}.app/Contents/PlugIns/AUExt.appex",
+                            p.au3_app_name()
                         ));
                         warn_on_au_collision(
                             p.resolved_au_type(),
@@ -3946,10 +4074,10 @@ impl PkgFormat {
     }
 
     /// Bundle directory name for a given plugin.
-    fn bundle_name(&self, plugin_name: &str) -> String {
+    fn bundle_name(&self, plugin: &PluginDef) -> String {
         match self {
-            PkgFormat::Au3 => format!("{} v3.app", plugin_name),
-            _ => format!("{}.{}", plugin_name, self.extension()),
+            PkgFormat::Au3 => format!("{}.app", plugin.au3_app_name()),
+            _ => format!("{}.{}", plugin.name, self.extension()),
         }
     }
 
@@ -4203,7 +4331,7 @@ fn stage_aax(
 /// Stage an AU v3 .app bundle into the staging directory.
 /// Copies from the xcodebuild output in target/tmp/.
 fn stage_au3(_root: &Path, p: &PluginDef, config: &Config, staging: &Path) -> Res {
-    let app_name = format!("{} v3.app", p.name);
+    let app_name = format!("{}.app", p.au3_app_name());
     let build_dir = tmp_dir().join(format!("au_v3_build_{}", p.suffix));
     let built_app = build_dir.join("build/Release/TruceAUv3.app");
     if !built_app.exists() {
@@ -4748,7 +4876,7 @@ fn cmd_package_macos(args: &[String]) -> Res {
         }
 
         for fmt in &formats {
-            let bundle_name = fmt.bundle_name(&p.name);
+            let bundle_name = fmt.bundle_name(p);
             let component_path = staging.join(&bundle_name);
             let pkg_id = format!("{}.{}.{}", config.vendor.id, p.suffix, fmt.pkg_id_suffix());
             let component_pkg = components_dir.join(format!("{}-{}.pkg", p.name, fmt.label()));

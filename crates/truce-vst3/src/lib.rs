@@ -574,6 +574,19 @@ unsafe extern "C" fn cb_gui_close<P: PluginExport>(ctx: *mut std::ffi::c_void) {
 // ---------------------------------------------------------------------------
 
 /// Compute a 16-byte CID from the VST3 ID string (FNV-1a hash).
+/// Install-time override for the host-facing plugin name
+/// (`PClassInfo::name`). Populated by `cargo truce install` via the
+/// `vst3_name` field in `truce.toml`.
+const VST3_NAME_OVERRIDE: Option<&'static str> =
+    option_env!("TRUCE_VST3_NAME_OVERRIDE");
+
+fn resolved_plugin_name(info: &truce_core::info::PluginInfo) -> &'static str {
+    match VST3_NAME_OVERRIDE {
+        Some(s) if !s.is_empty() => s,
+        _ => info.name,
+    }
+}
+
 fn vst3_cid(id: &str) -> [u8; 16] {
     let mut hash: u128 = 0xcbf29ce484222325_u128 | ((0x100000001b3_u128) << 64);
     for byte in id.bytes() {
@@ -620,7 +633,7 @@ pub fn register_vst3<P: PluginExport>() {
         });
     }
 
-    let name = CString::new(info.name).unwrap_or_default();
+    let name = CString::new(resolved_plugin_name(&info)).unwrap_or_default();
     let vendor = CString::new(info.vendor).unwrap_or_default();
     let url = CString::new(info.url).unwrap_or_default();
     let version = CString::new(info.version).unwrap_or_default();

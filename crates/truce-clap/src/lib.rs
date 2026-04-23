@@ -169,10 +169,23 @@ pub struct DescriptorHolder {
 unsafe impl Send for DescriptorHolder {}
 unsafe impl Sync for DescriptorHolder {}
 
+/// Install-time override for the plugin's display name in host
+/// browsers, set by `cargo truce install` via the `clap_name` field
+/// in `truce.toml`. Empty / unset falls back to `PluginInfo::name`.
+const CLAP_NAME_OVERRIDE: Option<&'static str> =
+    option_env!("TRUCE_CLAP_NAME_OVERRIDE");
+
+fn resolved_name(info: &PluginInfo) -> &'static str {
+    match CLAP_NAME_OVERRIDE {
+        Some(s) if !s.is_empty() => s,
+        _ => info.name,
+    }
+}
+
 impl DescriptorHolder {
     pub fn new(info: &PluginInfo) -> Self {
         let id = CString::new(info.clap_id).unwrap();
-        let name = CString::new(info.name).unwrap();
+        let name = CString::new(resolved_name(info)).unwrap();
         let vendor = CString::new(info.vendor).unwrap();
         let url = CString::new(info.url).unwrap();
         let version = CString::new(info.version).unwrap();

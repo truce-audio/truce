@@ -22,6 +22,20 @@ au_manufacturer = "Trce"
 
 # Each [[plugin]] entry defines a plugin to build and install.
 # The crate must exist at examples/<suffix>/ and support --features au.
+#
+# Per-format display-name overrides (all optional) let a plugin show
+# under a different name in specific host browsers. Useful mostly
+# when AU v2 and v3 are installed side-by-side, or during beta/alpha
+# parallel ships. When a field is absent the format falls back to
+# `name` above.
+#
+#   clap_name = "..."
+#   vst3_name = "..."
+#   vst2_name = "..."
+#   au_name   = "..."
+#   au3_name  = "..."
+#   aax_name  = "..."
+#   lv2_name  = "..."
 
 [[plugin]]
 name = "Truce Gain"
@@ -32,6 +46,7 @@ fourcc = "TGan"
 au3_subtype = "TGn3"
 au_tag = "Effects"
 aax_category = "Dynamics"
+au3_name = "Truce Gain (AUv3)"
 
 [[plugin]]
 name = "Truce Synth"
@@ -41,6 +56,7 @@ category = "instrument"
 fourcc = "TSyn"
 au3_subtype = "TSn3"
 au_tag = "Synthesizer"
+au3_name = "Truce Synth (AUv3)"
 
 [[plugin]]
 name = "Truce EQ"
@@ -51,6 +67,7 @@ fourcc = "TEq3"
 au3_subtype = "TEq4"
 au_tag = "EQ"
 aax_category = "EQ"
+au3_name = "Truce EQ (AUv3)"
 
 [[plugin]]
 name = "Truce Transpose"
@@ -61,6 +78,7 @@ fourcc = "TTrn"
 au3_subtype = "TTr3"
 au_tag = "MIDI"
 aax_category = "EQ"
+au3_name = "Truce Transpose (AUv3)"
 
 [[plugin]]
 name = "Truce Gain Egui"
@@ -71,6 +89,7 @@ fourcc = "TGeg"
 au3_subtype = "TGe3"
 au_tag = "Effects"
 aax_category = "Dynamics"
+au3_name = "Truce Gain Egui (AUv3)"
 
 [[plugin]]
 name = "Truce Arpeggio"
@@ -81,6 +100,7 @@ fourcc = "TArp"
 au3_subtype = "TAr3"
 au_tag = "MIDI"
 aax_category = "EQ"
+au3_name = "Truce Arpeggio (AUv3)"
 
 [[plugin]]
 name = "Truce Gain Iced"
@@ -91,6 +111,7 @@ fourcc = "TGic"
 au3_subtype = "TGi3"
 au_tag = "Effects"
 aax_category = "Dynamics"
+au3_name = "Truce Gain Iced (AUv3)"
 
 [[plugin]]
 name = "Truce Gain Slint"
@@ -101,6 +122,7 @@ fourcc = "TGsl"
 au3_subtype = "TGs3"
 au_tag = "Effects"
 aax_category = "Dynamics"
+au3_name = "Truce Gain Slint (AUv3)"
 
 [[plugin]]
 name = "Truce Tremolo"
@@ -111,4 +133,5 @@ fourcc = "TTrM"
 au3_subtype = "TTM3"
 au_tag = "Effects"
 aax_category = "Modulation"
+au3_name = "Truce Tremolo (AUv3)"
 

@@ -503,6 +503,19 @@ unsafe extern "C" fn cb_gui_close<P: PluginExport>(ctx: *mut std::ffi::c_void) {
 // Registration
 // ---------------------------------------------------------------------------
 
+/// Install-time override for the host-facing plugin name
+/// (returned from `effGetEffectName`). Populated by `cargo truce
+/// install` via the `vst2_name` field in `truce.toml`.
+const VST2_NAME_OVERRIDE: Option<&'static str> =
+    option_env!("TRUCE_VST2_NAME_OVERRIDE");
+
+fn resolved_plugin_name(info: &truce_core::info::PluginInfo) -> &'static str {
+    match VST2_NAME_OVERRIDE {
+        Some(s) if !s.is_empty() => s,
+        _ => info.name,
+    }
+}
+
 pub fn register_vst2<P: PluginExport>() {
     let info = P::info();
     let layouts = P::bus_layouts();
@@ -510,7 +523,7 @@ pub fn register_vst2<P: PluginExport>() {
         .first()
         .expect("Plugin must have at least one bus layout");
 
-    let name = CString::new(info.name).unwrap();
+    let name = CString::new(resolved_plugin_name(&info)).unwrap();
     let vendor = CString::new(info.vendor).unwrap();
 
     let descriptor = Box::leak(Box::new(Vst2PluginDescriptor {
