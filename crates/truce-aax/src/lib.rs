@@ -199,6 +199,7 @@ pub fn register_aax<P: PluginExport>() {
                 Some("NoiseReduction") => AAX_CAT_NOISE_REDUCTION,
                 Some("Dither") => AAX_CAT_DITHER,
                 Some("SoundField") => AAX_CAT_SOUND_FIELD,
+                Some("Effect") => AAX_CAT_EFFECT,
                 _ => AAX_CAT_EQ, // default — EQ is always visible
             }
         };
