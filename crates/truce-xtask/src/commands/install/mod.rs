@@ -321,6 +321,7 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
     Ok(())
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
 pub(crate) fn install_clap(root: &Path, p: &PluginDef, config: &Config) -> Res {
     let dylib = release_lib(root, &p.dylib_stem());
     if !dylib.exists() {
@@ -360,6 +361,7 @@ pub(crate) fn install_clap(root: &Path, p: &PluginDef, config: &Config) -> Res {
     Ok(())
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
 fn install_vst3(root: &Path, p: &PluginDef, config: &Config) -> Res {
     let dylib = release_lib(root, &p.dylib_stem());
     if !dylib.exists() {
@@ -434,6 +436,7 @@ fn install_vst3(root: &Path, p: &PluginDef, config: &Config) -> Res {
     Ok(())
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
 fn install_vst2(root: &Path, p: &PluginDef, config: &Config) -> Res {
     let dylib = release_lib(root, &format!("{}_vst2", p.dylib_stem()));
     if !dylib.exists() {
@@ -549,7 +552,7 @@ fn lv2_bundle_root() -> Result<PathBuf, Box<dyn std::error::Error>> {
         // `%APPDATA%\LV2`. `%COMMONPROGRAMFILES%\LV2` is the system-wide
         // search path; we target the user location so no admin rights
         // are needed.
-        let appdata = env::var_os("APPDATA").ok_or("APPDATA env var not set")?;
+        let appdata = std::env::var_os("APPDATA").ok_or("APPDATA env var not set")?;
         Ok(PathBuf::from(appdata).join("LV2"))
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
