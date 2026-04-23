@@ -4059,6 +4059,7 @@ fn stage_au2(root: &Path, p: &PluginDef, config: &Config, staging: &Path) -> Res
 /// `universal_mac` controls whether the AAX C++ template (the wrapper binary
 /// Pro Tools launches) is built fat — the Rust cdylib in Resources/ is
 /// already lipo'd universal when the caller passes `universal_mac = true`.
+#[cfg(not(target_os = "windows"))]
 fn stage_aax(
     root: &Path,
     p: &PluginDef,
