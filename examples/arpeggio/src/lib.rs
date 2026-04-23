@@ -39,14 +39,17 @@ pub struct Arpeggio {
     pub params: std::sync::Arc<ArpParams>,
     held_notes: Vec<u8>,
     sample_rate: f64,
-    /// Samples since the last arp trigger
-    sample_counter: u64,
-    /// Current step index in the arp sequence
-    step_index: usize,
-    /// Whether the current arp note is still sounding
-    current_note: Option<u8>,
-    /// Direction for up/down pattern
-    going_up: bool,
+    /// Global step index of the currently-sounding arp note.
+    /// `None` after a gate-off or when no note is active.
+    last_step: Option<i64>,
+    /// MIDI note currently emitted to the host. We hold on to it so we
+    /// can issue a matching note-off at gate time, on step boundary,
+    /// or when the user releases all held notes.
+    active_note: Option<u8>,
+    /// Free-running beat counter used when the host does not report
+    /// transport (e.g. a tester that runs the plugin without a play
+    /// state). Advances at the last known tempo.
+    free_beat: f64,
     /// Simple RNG state for random pattern
     rng: u32,
 }
@@ -57,10 +60,9 @@ impl Arpeggio {
             params,
             held_notes: Vec::new(),
             sample_rate: 44100.0,
-            sample_counter: 0,
-            step_index: 0,
-            current_note: None,
-            going_up: true,
+            last_step: None,
+            active_note: None,
+            free_beat: 0.0,
             rng: 12345,
         }
     }
@@ -114,10 +116,9 @@ impl PluginLogic for Arpeggio {
         self.params.set_sample_rate(sample_rate);
         self.params.snap_smoothers();
         self.held_notes.clear();
-        self.sample_counter = 0;
-        self.step_index = 0;
-        self.current_note = None;
-        self.going_up = true;
+        self.last_step = None;
+        self.active_note = None;
+        self.free_beat = 0.0;
     }
 
     fn process(&mut self, buffer: &mut AudioBuffer, events: &EventList, context: &mut ProcessContext) -> ProcessStatus {
@@ -133,7 +134,7 @@ impl PluginLogic for Arpeggio {
                     self.held_notes.retain(|n| n != note);
                     if self.held_notes.is_empty() {
                         // Release current arp note
-                        if let Some(cn) = self.current_note.take() {
+                        if let Some(cn) = self.active_note.take() {
                             context.output_events.push(Event {
                                 sample_offset: event.sample_offset,
                                 body: EventBody::NoteOff { channel: 0, note: cn, velocity: 0.0 },
@@ -146,65 +147,87 @@ impl PluginLogic for Arpeggio {
         }
 
         if self.held_notes.is_empty() {
-            self.sample_counter = 0;
-            self.step_index = 0;
+            // Clear phase state so the next held chord re-triggers on
+            // the next step boundary rather than carrying over the old
+            // step index.
+            self.last_step = None;
             return ProcessStatus::Normal;
         }
 
-        // Calculate step duration from tempo and rate
-        let tempo = if context.transport.tempo > 0.0 { context.transport.tempo } else { 120.0 };
-        let rate_div = self.params.rate.value() as f64; // 1=whole, 2=half, 4=quarter, 8=eighth
-        let beats_per_step = 4.0 / rate_div; // e.g., rate=4 -> 1 beat per step
-        let samples_per_step = (beats_per_step * 60.0 / tempo * self.sample_rate) as u64;
-        let gate_frac = self.params.gate.value() as f64;
-        let gate_samples = (samples_per_step as f64 * gate_frac) as u64;
-
-        let block_size = buffer.num_samples();
         let seq = self.build_sequence();
         if seq.is_empty() {
             return ProcessStatus::Normal;
         }
 
+        let rate_div = self.params.rate.value() as f64; // 1=whole, 2=half, 4=quarter, 8=eighth
+        let beats_per_step = 4.0 / rate_div; // e.g., rate=4 → 1 beat per step
+        let gate_frac = self.params.gate.value() as f64;
+
+        // Phase-lock to the host beat grid whenever the host reports
+        // transport with a real tempo. Otherwise fall back to a
+        // free-running counter so standalone tests keep emitting notes
+        // when no DAW is driving us.
+        let transport = &context.transport;
+        let host_locked = transport.playing && transport.tempo > 0.0;
+        let tempo = if transport.tempo > 0.0 { transport.tempo } else { 120.0 };
+        let beats_per_sample = tempo / 60.0 / self.sample_rate;
+        let block_start_beat = if host_locked {
+            transport.position_beats
+        } else {
+            self.free_beat
+        };
+
+        let block_size = buffer.num_samples();
+        let pattern = self.params.pattern.value();
+        let seq_len = seq.len() as i64;
+
         for i in 0..block_size {
-            // Check if it's time for a new step
-            if self.sample_counter % samples_per_step == 0 {
-                // Note off for previous arp note
-                if let Some(cn) = self.current_note.take() {
+            let beat = block_start_beat + (i as f64) * beats_per_sample;
+            let step_num = (beat / beats_per_step).floor() as i64;
+
+            if Some(step_num) != self.last_step {
+                // Step boundary: release the previous note (if still
+                // sounding past gate-off, this is a no-op) and trigger
+                // the next step.
+                if let Some(cn) = self.active_note.take() {
                     context.output_events.push(Event {
                         sample_offset: i as u32,
                         body: EventBody::NoteOff { channel: 0, note: cn, velocity: 0.0 },
                     });
                 }
-
-                // Pick next note
-                let note = if self.params.pattern.value() == ArpPattern::Random {
+                let note = if pattern == ArpPattern::Random {
                     let idx = self.next_random() as usize % seq.len();
                     seq[idx]
                 } else {
-                    let idx = self.step_index % seq.len();
-                    self.step_index += 1;
-                    seq[idx]
+                    // `rem_euclid` gives a non-negative index even if
+                    // `step_num` is negative (host seeking before 0).
+                    seq[step_num.rem_euclid(seq_len) as usize]
                 };
-
                 context.output_events.push(Event {
                     sample_offset: i as u32,
                     body: EventBody::NoteOn { channel: 0, note, velocity: 0.8 },
                 });
-                self.current_note = Some(note);
-            }
-
-            // Gate off -- release note before next step
-            if self.sample_counter % samples_per_step == gate_samples {
-                if let Some(cn) = self.current_note.take() {
-                    context.output_events.push(Event {
-                        sample_offset: i as u32,
-                        body: EventBody::NoteOff { channel: 0, note: cn, velocity: 0.0 },
-                    });
+                self.active_note = Some(note);
+                self.last_step = Some(step_num);
+            } else if let Some(step) = self.last_step {
+                // Same step — check whether we've crossed the gate-off
+                // boundary within it.
+                let gate_off_beat = (step as f64 + gate_frac) * beats_per_step;
+                if beat >= gate_off_beat {
+                    if let Some(cn) = self.active_note.take() {
+                        context.output_events.push(Event {
+                            sample_offset: i as u32,
+                            body: EventBody::NoteOff { channel: 0, note: cn, velocity: 0.0 },
+                        });
+                    }
                 }
             }
-
-            self.sample_counter += 1;
         }
+
+        // Keep the free-running counter aligned so dropping out of host
+        // mode mid-session doesn't cause a phase jump.
+        let end_beat = block_start_beat + (block_size as f64) * beats_per_sample;
+        self.free_beat = end_beat;
 
         ProcessStatus::Normal
     }
