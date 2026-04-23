@@ -222,21 +222,34 @@ void TruceAAX_Parameters::RenderAudio(
 
 AAX_Result TruceAAX_Parameters::GetChunkSize(AAX_CTypeID chunkID, uint32_t* oSize) const {
     if (!mRustCtx || !g_bridge_loaded) return AAX_ERROR_NULL_OBJECT;
+    // Serialize once into the pending cache; GetChunk drains it.
     uint8_t* data = nullptr;
-    *oSize = g_bridge.save_state(mRustCtx, &data);
-    if (data) g_bridge.free_state(data, *oSize);
+    uint32_t len = g_bridge.save_state(mRustCtx, &data);
+    mPendingChunk.assign(data, data + len);
+    if (data) g_bridge.free_state(data, len);
+    *oSize = len;
     return AAX_SUCCESS;
 }
 
 AAX_Result TruceAAX_Parameters::GetChunk(AAX_CTypeID chunkID, AAX_SPlugInChunk* oChunk) const {
     if (!mRustCtx || !g_bridge_loaded) return AAX_ERROR_NULL_OBJECT;
-    uint8_t* data = nullptr;
-    uint32_t len = g_bridge.save_state(mRustCtx, &data);
-    if (data && len > 0 && len <= oChunk->fSize) {
-        memcpy(oChunk->fData, data, len);
-        oChunk->fSize = len;
-        g_bridge.free_state(data, len);
+    // Prefer the blob cached by the immediately-preceding GetChunkSize
+    // call. Fall back to a fresh serialize only if Pro Tools violates
+    // the usual size-then-copy contract (defensive — shouldn't happen).
+    if (mPendingChunk.empty()) {
+        uint8_t* data = nullptr;
+        uint32_t len = g_bridge.save_state(mRustCtx, &data);
+        if (data) {
+            mPendingChunk.assign(data, data + len);
+            g_bridge.free_state(data, len);
+        }
     }
+    if (!mPendingChunk.empty() && mPendingChunk.size() <= oChunk->fSize) {
+        memcpy(oChunk->fData, mPendingChunk.data(), mPendingChunk.size());
+        oChunk->fSize = (uint32_t)mPendingChunk.size();
+    }
+    mPendingChunk.clear();
+    mPendingChunk.shrink_to_fit();
     return AAX_SUCCESS;
 }
 

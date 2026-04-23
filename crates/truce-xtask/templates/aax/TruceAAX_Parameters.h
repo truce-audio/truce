@@ -27,4 +27,9 @@ public:
 private:
     void* mRustCtx;
     std::vector<uint32_t> mParamIDs; // maps AAX index → truce param ID
+    // Cache for a single GetChunkSize → GetChunk pair. Pro Tools calls
+    // GetChunkSize before GetChunk to size the buffer; without this
+    // cache we'd serialize the full state blob twice per save.
+    // `mutable` because both methods are const per the AAX SDK.
+    mutable std::vector<uint8_t> mPendingChunk;
 };

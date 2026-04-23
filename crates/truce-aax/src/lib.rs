@@ -122,6 +122,16 @@ struct AaxInstance<P: PluginExport> {
     editor: Option<Box<dyn truce_core::editor::Editor>>,
     /// Shared transport slot: audio thread writes each block, editor reads.
     transport_slot: std::sync::Arc<truce_core::TransportSlot>,
+    /// Cached serialized state. Pro Tools calls `GetChunkSize` +
+    /// `GetChunk` as a pair, and for undo-checkpointing may call the
+    /// pair repeatedly without any intervening state change. Caching
+    /// avoids re-running `collect_values` + `serialize_state` on every
+    /// call. Invalidated by `_set_param` and `_load_state`.
+    state_cache: std::sync::Mutex<Option<Vec<u8>>>,
+    /// Set when a param write or explicit load invalidates the cache.
+    /// `_save_state` checks this; when true it re-serializes and
+    /// clears the flag, when false it clones from the cache.
+    state_dirty: std::sync::atomic::AtomicBool,
 }
 
 // ---------------------------------------------------------------------------
@@ -445,6 +455,8 @@ pub unsafe fn _create<P: PluginExport>() -> *mut std::ffi::c_void {
         sample_rate: 44100.0,
         editor: None,
         transport_slot: truce_core::TransportSlot::new(),
+        state_cache: std::sync::Mutex::new(None),
+        state_dirty: std::sync::atomic::AtomicBool::new(true),
     });
     Box::into_raw(instance) as *mut std::ffi::c_void
 }
@@ -569,6 +581,9 @@ pub unsafe fn _get_param<P: PluginExport>(ctx: *mut std::ffi::c_void, id: u32) -
 pub unsafe fn _set_param<P: PluginExport>(ctx: *mut std::ffi::c_void, id: u32, value: f64) {
     let inst = unsafe { &*(ctx as *mut AaxInstance<P>) };
     inst.plugin.params().set_plain(id, value);
+    // A param moved — the cached state blob is now stale.
+    inst.state_dirty
+        .store(true, std::sync::atomic::Ordering::Release);
 }
 
 pub unsafe fn _format_param<P: PluginExport>(
@@ -594,9 +609,47 @@ pub unsafe fn _save_state<P: PluginExport>(
     out_data: *mut *mut u8,
 ) -> u32 {
     let inst = unsafe { &*(ctx as *mut AaxInstance<P>) };
-    let (ids, values) = inst.plugin.params().collect_values();
-    let extra = inst.plugin.save_state();
-    let blob = state::serialize_state(inst.plugin_id_hash, &ids, &values, extra.as_deref());
+    // Hot-path optimization for Pro Tools undo/snapshot flows, which
+    // call the `GetChunkSize` + `GetChunk` pair repeatedly. On a
+    // clean cache we hand back a clone of the last serialized blob;
+    // otherwise we re-serialize and cache for the next call.
+    let dirty = inst
+        .state_dirty
+        .swap(false, std::sync::atomic::Ordering::AcqRel);
+    let blob = {
+        let mut guard = match inst.state_cache.lock() {
+            Ok(g) => g,
+            // Poisoned (shouldn't happen; save_state is single-threaded
+            // in practice). Bypass the cache rather than panicking
+            // inside the AAX callback.
+            Err(_) => {
+                let (ids, values) = inst.plugin.params().collect_values();
+                let extra = inst.plugin.save_state();
+                let fresh = state::serialize_state(
+                    inst.plugin_id_hash, &ids, &values, extra.as_deref(),
+                );
+                return finalize_blob(fresh, out_data);
+            }
+        };
+        if dirty || guard.is_none() {
+            let (ids, values) = inst.plugin.params().collect_values();
+            let extra = inst.plugin.save_state();
+            let fresh = state::serialize_state(
+                inst.plugin_id_hash, &ids, &values, extra.as_deref(),
+            );
+            *guard = Some(fresh.clone());
+            fresh
+        } else {
+            // SAFETY: we just checked is_some().
+            guard.as_ref().unwrap().clone()
+        }
+    };
+    finalize_blob(blob, out_data)
+}
+
+/// Hand a serialized state blob to the C caller as a raw pointer +
+/// length. Caller later calls `_free_state` to drop the Box.
+unsafe fn finalize_blob(blob: Vec<u8>, out_data: *mut *mut u8) -> u32 {
     let len = blob.len() as u32;
     let mut boxed = blob.into_boxed_slice();
     let ptr = boxed.as_mut_ptr();
@@ -613,6 +666,10 @@ pub unsafe fn _load_state<P: PluginExport>(ctx: *mut std::ffi::c_void, data: *co
         if let Some(extra) = &deserialized.extra {
             inst.plugin.load_state(extra);
         }
+        // State changed wholesale — invalidate the serialization cache
+        // so the next `_save_state` re-captures the restored values.
+        inst.state_dirty
+            .store(true, std::sync::atomic::Ordering::Release);
         if let Some(ref mut editor) = inst.editor {
             editor.state_changed();
         }

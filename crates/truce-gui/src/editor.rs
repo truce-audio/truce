@@ -101,11 +101,69 @@ pub struct BuiltinEditor<P: Params> {
     window: Option<baseview::WindowHandle>,
     #[cfg(target_os = "macos")]
     native: Option<crate::native_view::NativeView>,
+    /// Set whenever something visible changes (param edited via the
+    /// UI, host-driven state reload, explicit `request_repaint` by
+    /// plugin code). `on_frame` clears it and only does the
+    /// rasterize + blit pass when it was true.
+    ///
+    /// Shared so `EditorContext::set_param` and `state_changed`
+    /// closures can flip it without touching editor internals.
+    needs_repaint: Arc<std::sync::atomic::AtomicBool>,
+    /// Normalized values captured at the last render pass, in the
+    /// same order as `interaction.knob_regions`. Used to detect
+    /// host-driven param changes (automation, preset recall) — if any
+    /// live value drifts from the last-painted one, we force a
+    /// repaint even if the UI never received a direct edit.
+    last_painted_values: Vec<f32>,
 }
 
 unsafe impl<P: Params> Send for BuiltinEditor<P> {}
 
 impl<P: Params + 'static> BuiltinEditor<P> {
+    /// Request a repaint on the next idle tick. Call this if plugin
+    /// code mutates display state outside the normal param or
+    /// `state_changed` pathways (uncommon). User interaction and
+    /// host automation already flag themselves dirty automatically.
+    pub fn request_repaint(&self) {
+        self.needs_repaint
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    fn take_needs_repaint(&self) -> bool {
+        self.needs_repaint
+            .swap(false, std::sync::atomic::Ordering::AcqRel)
+    }
+
+    /// Compare the values just read by `update_interaction` (live from
+    /// the host / params Arc) against those captured at the last
+    /// render. A mismatch means an automation lane wrote a new value,
+    /// a preset was recalled, or some other off-UI state change
+    /// happened — force a repaint so the widget tracks it.
+    fn detect_host_param_changes(&mut self) {
+        let regions = &self.interaction.knob_regions;
+        if regions.len() != self.last_painted_values.len() {
+            // Region set changed (e.g. after a layout rebuild). Force
+            // a repaint and re-sync on the next paint.
+            self.request_repaint();
+            return;
+        }
+        for (i, region) in regions.iter().enumerate() {
+            if (region.normalized_value - self.last_painted_values[i]).abs() > f32::EPSILON {
+                self.request_repaint();
+                return;
+            }
+        }
+    }
+
+    /// Snapshot the regions' normalized values for the next frame's
+    /// automation detection. Called after each render.
+    fn stash_painted_values(&mut self) {
+        let regions = &self.interaction.knob_regions;
+        self.last_painted_values.clear();
+        self.last_painted_values
+            .extend(regions.iter().map(|r| r.normalized_value));
+    }
+
     pub fn new(params: Arc<P>, layout: PluginLayout) -> Self {
         Self {
             params,
@@ -117,6 +175,8 @@ impl<P: Params + 'static> BuiltinEditor<P> {
             window: None,
             #[cfg(target_os = "macos")]
             native: None,
+            needs_repaint: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            last_painted_values: Vec::new(),
         }
     }
 
@@ -131,6 +191,8 @@ impl<P: Params + 'static> BuiltinEditor<P> {
             window: None,
             #[cfg(target_os = "macos")]
             native: None,
+            needs_repaint: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            last_painted_values: Vec::new(),
         }
     }
 
@@ -145,6 +207,8 @@ impl<P: Params + 'static> BuiltinEditor<P> {
             window: None,
             #[cfg(target_os = "macos")]
             native: None,
+            needs_repaint: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            last_painted_values: Vec::new(),
         }
     }
 
@@ -297,6 +361,7 @@ impl<P: Params + 'static> BuiltinEditor<P> {
                 if let Some(ref ctx) = self.context {
                     (ctx.set_param)(id, normalized as f64);
                 }
+                self.request_repaint();
             }
             ParamEdit::End { id } => {
                 if let Some(ref ctx) = self.context {
@@ -309,6 +374,8 @@ impl<P: Params + 'static> BuiltinEditor<P> {
     /// Feed a batch of input events through `interaction::dispatch` and
     /// apply the resulting param edits.
     fn dispatch_events(&mut self, events: &[InputEvent]) {
+        let hover_before = self.interaction.hover_idx;
+        let dd_before = self.interaction.dropdown_is_open();
         let owned = self.build_snapshot_closures();
         let snapshot = owned.as_snapshot();
         let edits = interaction::dispatch(
@@ -319,8 +386,19 @@ impl<P: Params + 'static> BuiltinEditor<P> {
         );
         drop(snapshot);
         drop(owned);
+        let had_edits = !edits.is_empty();
         for e in edits {
             self.apply_edit(e);
+        }
+        // Anything that changes a pixel on screen flips the dirty
+        // bit: param edits (already covered by `apply_edit`), hover
+        // highlights moving between widgets, and dropdown open/close
+        // transitions.
+        if had_edits
+            || self.interaction.hover_idx != hover_before
+            || self.interaction.dropdown_is_open() != dd_before
+        {
+            self.request_repaint();
         }
     }
 
@@ -542,7 +620,16 @@ impl<P: Params + 'static> baseview::WindowHandler for BuiltinWindowHandler<P> {
         let editor = unsafe { &mut *self.editor };
 
         unsafe { update_interaction(editor) };
+        // Pick up host automation / preset recall that changed params
+        // without going through the UI: flips the dirty bit so the
+        // normal gate below still has the chance to short-circuit when
+        // truly nothing moved.
+        editor.detect_host_param_changes();
+        if !editor.take_needs_repaint() {
+            return;
+        }
         editor.render();
+        editor.stash_painted_values();
 
         if let Some(pixels) = editor.pixel_data() {
             match &mut self.backend {
@@ -692,6 +779,12 @@ fn resolve_widget_type<P: Params>(
 impl<P: Params + 'static> Editor for BuiltinEditor<P> {
     fn size(&self) -> (u32, u32) {
         (self.layout.width(), self.layout.height())
+    }
+
+    fn state_changed(&mut self) {
+        // Preset recall / undo / session load: params moved without
+        // going through the UI, so force the next idle tick to repaint.
+        self.request_repaint();
     }
 
     fn open(&mut self, parent: RawWindowHandle, context: EditorContext) {
@@ -888,9 +981,17 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
                     let ctx = &mut *(ctx_ptr as *mut NativeEditorCtx<P>);
                     let editor = &mut *ctx.editor;
                     update_interaction(editor);
-                    editor.render();
-                    if let Some(pixels) = editor.pixel_data() {
-                        ctx.cg_blit.blit(pixels);
+                    editor.detect_host_param_changes();
+                    // Pro Tools' AAX idle fires at ~30–60 Hz; skipping
+                    // the rasterize + blit when nothing changed is the
+                    // biggest win for main-thread CPU when multiple
+                    // editor windows are open.
+                    if editor.take_needs_repaint() {
+                        editor.render();
+                        editor.stash_painted_values();
+                        if let Some(pixels) = editor.pixel_data() {
+                            ctx.cg_blit.blit(pixels);
+                        }
                     }
 
                     objc_autoreleasePoolPop(pool);
