@@ -3,6 +3,10 @@
 //! Bridges truce's `RawWindowHandle` to baseview's `HasRawWindowHandle`
 //! (raw-window-handle 0.5), and provides scale factor querying.
 
+// `HasRawDisplayHandle` / `RwhRawDisplayHandle` are only touched on
+// the Linux (X11) arm of `HasRawWindowHandle for ParentWindow`;
+// silence the macOS/Windows dead-import warning.
+#[allow(unused_imports)]
 use raw_window_handle::{
     HasRawDisplayHandle, HasRawWindowHandle, RawDisplayHandle as RwhRawDisplayHandle,
     RawWindowHandle as RwhRawWindowHandle,
@@ -51,12 +55,12 @@ pub fn query_backing_scale(parent: &RawWindowHandle) -> f64 {
     }
 
     unsafe {
-        let ns_view = ns_view_ptr as cocoa::base::id;
-        let window: cocoa::base::id = msg_send![ns_view, window];
+        let ns_view = ns_view_ptr as *mut objc::runtime::Object;
+        let window: *mut objc::runtime::Object = msg_send![ns_view, window];
         let scale: f64 = if !window.is_null() {
             msg_send![window, backingScaleFactor]
         } else {
-            let screen: cocoa::base::id = msg_send![objc::class!(NSScreen), mainScreen];
+            let screen: *mut objc::runtime::Object = msg_send![objc::class!(NSScreen), mainScreen];
             if !screen.is_null() {
                 msg_send![screen, backingScaleFactor]
             } else {

@@ -22,7 +22,12 @@ pub(crate) struct Config {
     pub(crate) packaging: PackagingConfig,
 }
 
+// Windows-only config fields. Consumed by `packaging_windows.rs`, which
+// is `#[cfg(target_os = "windows")] mod packaging_windows`, so on macOS
+// and Linux the dead_code lint sees these as unused. The allow keeps
+// the structs single-source-of-truth across platforms.
 #[derive(Deserialize, Default)]
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 pub(crate) struct WindowsConfig {
     /// Path to the AAX SDK root directory. Falls back to the AAX_SDK_PATH env var.
     pub(crate) aax_sdk_path: Option<String>,
@@ -35,6 +40,7 @@ pub(crate) struct WindowsConfig {
 /// Authenticode signing credentials for signtool. First non-empty option wins,
 /// in the order Azure → thumbprint → pfx file.
 #[derive(Deserialize, Default)]
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 pub(crate) struct WindowsSigningConfig {
     /// Azure Trusted Signing account name.
     pub(crate) azure_account: Option<String>,
@@ -52,6 +58,7 @@ pub(crate) struct WindowsSigningConfig {
     pub(crate) timestamp_url: Option<String>,
 }
 
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 impl WindowsSigningConfig {
     /// True when any credential source is configured.
     pub(crate) fn is_configured(&self) -> bool {
@@ -64,6 +71,7 @@ impl WindowsSigningConfig {
 }
 
 #[derive(Deserialize, Default)]
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 pub(crate) struct WindowsPackagingConfig {
     /// Publisher name shown in the installer and Apps & Features.
     /// Defaults to [vendor].name when absent.
@@ -142,7 +150,10 @@ pub(crate) struct PackagingConfig {
 pub(crate) struct VendorConfig {
     pub(crate) name: String,
     pub(crate) id: String,
+    /// Vendor website URL. Used by the Windows Inno Setup installer's
+    /// "Publisher URL" field; unused on macOS.
     #[serde(default)]
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
     pub(crate) url: Option<String>,
     pub(crate) au_manufacturer: String,
 }

@@ -37,12 +37,6 @@ pub(crate) fn build_au_v3(
     for p in plugins {
         let fw_name = p.fw_name();
         let au_v3_sub = p.au3_sub();
-        let app_dir = format!("/Applications/{}.app", p.au3_app_name());
-        let appex_id = format!(
-            "com.{}.{}.v3.ext",
-            config.vendor.id.trim_start_matches("com."),
-            p.suffix
-        );
         let build_dir = tmp_dir().join(format!("au_v3_build_{}", p.suffix));
         let fw_build = tmp_dir().join(format!("au_v3_fw_{}", p.suffix));
 

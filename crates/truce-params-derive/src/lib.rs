@@ -831,11 +831,6 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
     expanded.into()
 }
 
-/// Check if a ParamField came from a field with `#[param(...)]` attribute.
-fn has_param_attr_by_field(f: &ParamField) -> bool {
-    f.attrs.id.is_some()
-}
-
 /// Convert a snake_case field name to a PascalCase enum variant ident.
 fn snake_to_pascal(ident: &syn::Ident) -> syn::Ident {
     let s = ident.to_string();

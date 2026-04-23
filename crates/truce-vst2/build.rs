@@ -13,6 +13,15 @@ fn main() {
 
     build.compile("vst2_shim");
 
+    // `cargo:rustc-cdylib-link-arg` from a non-cdylib build dep emits a
+    // cargo deprecation warning ("package does not contain a cdylib
+    // target"), but cargo 1.50+ still propagates these args to the
+    // downstream cdylib that consumes us — see cargo issue 9562. We
+    // rely on that propagation to force-load the C shim so
+    // VSTPluginMain / main_macho survive dead-stripping in the
+    // consumer's plugin dylib. Adding our own cdylib target to silence
+    // the warning fails because the exported symbols are defined by
+    // the `export_vst2!` macro in the consuming crate, not here.
     if cfg!(target_os = "macos") {
         // Force-load all symbols from the static lib
         println!("cargo:rustc-cdylib-link-arg=-Wl,-force_load,{out_dir}/libvst2_shim.a");

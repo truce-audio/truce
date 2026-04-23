@@ -6,9 +6,9 @@
 use super::stage::{generate_distribution_xml, stage_aax, stage_au2, stage_au3, stage_clap, stage_vst2, stage_vst3, write_postinstall_script};
 use super::PkgFormat;
 use crate::{
-    cargo_build, cargo_build_for_arch, copy_dir_recursive, deployment_target,
-    detect_default_features, dirs, extract_team_id, lipo_into, load_config, project_root,
-    read_workspace_version, release_lib_for_target, run_quiet, Config, MacArch, PluginDef, Res,
+    cargo_build_for_arch, copy_dir_recursive, deployment_target, detect_default_features,
+    lipo_into, load_config, project_root, read_workspace_version, release_lib_for_target,
+    Config, MacArch, PluginDef, Res,
 };
 use std::fs;
 use std::path::{Path, PathBuf};

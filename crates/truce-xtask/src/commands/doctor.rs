@@ -171,10 +171,6 @@ pub(crate) fn cmd_doctor() -> Res {
 }
 
 
-fn check_which(name: &str) {
-    check_which_with_env(name, None);
-}
-
 /// Like `check_which`, but consults `env_var` (process env, then
 /// `.cargo/config.toml` `[env]`) before falling back to `$PATH`. Lets users
 /// point doctor at tools installed outside `$PATH` — useful for `.app`-bundled

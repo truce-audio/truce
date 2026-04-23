@@ -101,10 +101,8 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
     let root = project_root();
     let dt = &deployment_target();
 
-    // Compute extra features string
     let mut extra_features = Vec::new();
     if dev_mode { extra_features.push("dev"); }
-    let features_str = extra_features.join(",");
 
     // --- Build ---
     //

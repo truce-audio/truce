@@ -49,6 +49,14 @@ categories = ["multimedia::audio", "development-tools::cargo-plugins"]
 keywords = ["audio", "plugin", "vst", "clap", "daw", "aax", "sfx", "effects", "cubase", "protools", "ableton"]
 readme = "README.md"
 
+# Workspace-wide lint config. Crates opt in with `lints.workspace = true`.
+# `objc` 0.2's `msg_send!` / `class!` / `sel!` macros emit
+# `#[cfg(feature = "cargo-clippy")]` checks against the destination crate;
+# whitelist that cfg value so the unexpected_cfgs lint stops complaining
+# about an upstream macro-hygiene issue.
+[workspace.lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("cargo-clippy"))'] }
+
 [workspace.dependencies]
 truce = { version = "0.5.0", path = "crates/truce" }
 truce-core = { version = "0.5.0", path = "crates/truce-core" }

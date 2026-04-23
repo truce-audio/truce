@@ -7,15 +7,17 @@ mod util;
 #[cfg(target_os = "windows")]
 mod packaging_windows;
 
+// Re-exports needed by `packaging_windows`. Cfg-gated so the imports
+// don't show as dead on macOS / Linux builds.
+#[cfg(target_os = "windows")]
 pub(crate) use commands::install::aax::build_aax_template;
+#[cfg(target_os = "windows")]
 pub(crate) use commands::package::PkgFormat;
 pub(crate) use config::*;
 pub(crate) use util::*;
 
 use std::env;
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::{Command, ExitCode};
+use std::process::ExitCode;
 
 pub(crate) type Res = std::result::Result<(), Box<dyn std::error::Error>>;
 pub(crate) type BoxErr = Box<dyn std::error::Error>;

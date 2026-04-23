@@ -75,7 +75,15 @@ fn main() {
 
     build.compile("au_shim");
 
-    // Force the linker to include ALL symbols from the static lib.
+    // `cargo:rustc-cdylib-link-arg` from a non-cdylib build dep emits a
+    // cargo deprecation warning ("package does not contain a cdylib
+    // target"), but cargo 1.50+ still propagates these args to the
+    // downstream cdylib that consumes us — see cargo issue 9562. We
+    // rely on that propagation to force-load the C shim and export AU
+    // entry symbols (g_descriptor / TruceAUFactory / etc.) into the
+    // consumer's plugin dylib. Adding our own cdylib target to silence
+    // the warning fails because the exported symbols are defined by
+    // the `export_au!` macro in the consuming crate, not here.
     println!("cargo:rustc-cdylib-link-arg=-Wl,-force_load,{out_dir}/libau_shim.a");
 
     // Export shim globals so the appex binary can access them from the framework.

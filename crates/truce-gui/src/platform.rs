@@ -59,12 +59,12 @@ pub fn query_backing_scale(parent: &RawWindowHandle) -> f64 {
     }
 
     unsafe {
-        let ns_view = ns_view_ptr as cocoa::base::id;
-        let window: cocoa::base::id = msg_send![ns_view, window];
+        let ns_view = ns_view_ptr as *mut objc::runtime::Object;
+        let window: *mut objc::runtime::Object = msg_send![ns_view, window];
         let scale: f64 = if !window.is_null() {
             msg_send![window, backingScaleFactor]
         } else {
-            let screen: cocoa::base::id = msg_send![objc::class!(NSScreen), mainScreen];
+            let screen: *mut objc::runtime::Object = msg_send![objc::class!(NSScreen), mainScreen];
             if !screen.is_null() {
                 msg_send![screen, backingScaleFactor]
             } else {
@@ -94,7 +94,7 @@ pub fn query_backing_scale(_parent: &RawWindowHandle) -> f64 {
 pub fn main_screen_scale() -> f64 {
     use objc::{msg_send, sel, sel_impl};
     unsafe {
-        let screen: cocoa::base::id = msg_send![objc::class!(NSScreen), mainScreen];
+        let screen: *mut objc::runtime::Object = msg_send![objc::class!(NSScreen), mainScreen];
         if !screen.is_null() {
             let scale: f64 = msg_send![screen, backingScaleFactor];
             if scale < 1.0 { 1.0 } else { scale }

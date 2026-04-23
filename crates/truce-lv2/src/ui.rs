@@ -84,11 +84,6 @@ pub struct Lv2UiDescriptor {
 unsafe impl Send for Lv2UiDescriptor {}
 unsafe impl Sync for Lv2UiDescriptor {}
 
-pub const LV2_UI__X11UI: &str = "http://lv2plug.in/ns/extensions/ui#X11UI";
-#[allow(non_upper_case_globals)]
-pub const LV2_UI__CocoaUI: &str = "http://lv2plug.in/ns/extensions/ui#CocoaUI";
-#[allow(non_upper_case_globals)]
-pub const LV2_UI__WindowsUI: &str = "http://lv2plug.in/ns/extensions/ui#WindowsUI";
 pub const LV2_UI__PARENT: &str = "http://lv2plug.in/ns/extensions/ui#parent";
 pub const LV2_UI__RESIZE: &str = "http://lv2plug.in/ns/extensions/ui#resize";
 
@@ -122,10 +117,9 @@ pub struct Lv2UiInstance<P: PluginExport> {
     /// the `get_meter` closure so editor widgets can read the current
     /// reading without a trip to the plugin.
     meter_slots: Arc<Vec<MeterSlot>>,
-    /// Host callback to write values back to the plugin.
-    write_function: Lv2UiWriteFn,
-    controller: Lv2UiController,
-    /// The plugin's editor — drives rendering.
+    /// The plugin's editor — drives rendering. The host's
+    /// `write_function` + controller are captured by `EditorContext`'s
+    /// closures and don't need to live on the struct itself.
     editor: Option<Box<dyn Editor>>,
     /// Set once open() has run so cleanup can be idempotent.
     opened: AtomicBool,
@@ -306,8 +300,6 @@ pub unsafe fn instantiate_ui<P: PluginExport>(
         params: params_arc,
         param_slots,
         meter_slots,
-        write_function,
-        controller,
         editor: Some(editor),
         opened: AtomicBool::new(true),
         urid_map,

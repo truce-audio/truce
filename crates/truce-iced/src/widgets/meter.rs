@@ -57,11 +57,13 @@ impl<'a, M: Clone + Debug + 'static> MeterWidget<'a, M> {
 
     pub fn into_element(self) -> Element<'a, Message<M>> {
         let total_h = self.height;
+        // `label` and `font` are accepted on the builder for API symmetry
+        // with knob/dropdown but the meter currently renders bars only —
+        // text labels are drawn by the surrounding layout, not the canvas.
+        let _ = (self.label, self.font);
         let program = MeterProgram {
             values: self.values,
-            label: self.label.unwrap_or("").to_string(),
             meter_height: self.height,
-            font: self.font,
         };
 
         Canvas::new(program)
@@ -83,9 +85,7 @@ impl<'a, M: Clone + Debug + 'static> From<MeterWidget<'a, M>> for Element<'a, Me
 
 struct MeterProgram {
     values: Vec<f32>,
-    label: String,
     meter_height: f32,
-    font: iced::Font,
 }
 
 impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for MeterProgram {
