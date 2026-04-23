@@ -35,6 +35,6 @@ All defined in `ui/main.slint`.
 ## Build and test
 
 ```bash
-cargo build -p gain-slint
-cargo test -p gain-slint
+cargo build -p truce-example-gain-slint
+cargo test -p truce-example-gain-slint
 ```

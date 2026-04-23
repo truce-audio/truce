@@ -391,7 +391,7 @@ checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 [[package]]
 name = "baseview"
 version = "0.1.0"
-source = "git+https://github.com/truce-audio/baseview.git#9a0281bb907385111dab4fe31bcb403ebe2714ce"
+source = "git+https://github.com/truce-audio/baseview.git#7dd83140b8eea3361559d55245564e591ce662fe"
 dependencies = [
  "cocoa",
  "core-foundation",
@@ -1172,7 +1172,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3e3d747f100290a1ca24b752186f61f6637e1deffe3bf6320de6fcb29510a307"
 dependencies = [
  "bitflags 2.11.0",
- "libloading 0.8.9",
+ "libloading 0.7.4",
  "winapi",
 ]
 
@@ -1255,7 +1255,7 @@ version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ab8ecd87370524b461f8557c119c405552c396ed91fc0a8eec68679eab26f94a"
 dependencies = [
- "libloading 0.8.9",
+ "libloading 0.7.4",
 ]
 
 [[package]]
@@ -1460,7 +1460,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -1866,29 +1866,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "gain-slint"
-version = "0.5.0"
-dependencies = [
- "clap-sys",
- "slint",
- "slint-build",
- "truce",
- "truce-aax",
- "truce-au",
- "truce-clap",
- "truce-core",
- "truce-gui",
- "truce-loader",
- "truce-lv2",
- "truce-params",
- "truce-params-derive",
- "truce-slint",
- "truce-test",
- "truce-vst2",
- "truce-vst3",
-]
-
-[[package]]
 name = "gethostname"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2220,7 +2197,7 @@ dependencies = [
  "bitflags 2.11.0",
  "com",
  "libc",
- "libloading 0.8.9",
+ "libloading 0.7.4",
  "thiserror 1.0.69",
  "widestring",
  "winapi",
@@ -4954,7 +4931,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5666,7 +5643,7 @@ dependencies = [
  "getrandom 0.4.2",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -6171,6 +6148,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "truce-example-gain-slint"
+version = "0.5.0"
+dependencies = [
+ "clap-sys",
+ "slint",
+ "slint-build",
+ "truce",
+ "truce-aax",
+ "truce-au",
+ "truce-clap",
+ "truce-core",
+ "truce-gui",
+ "truce-loader",
+ "truce-lv2",
+ "truce-params",
+ "truce-params-derive",
+ "truce-slint",
+ "truce-test",
+ "truce-vst2",
+ "truce-vst3",
+]
+
+[[package]]
 name = "truce-example-synth"
 version = "0.5.0"
 dependencies = [
@@ -6454,7 +6454,7 @@ checksum = "f2f6fb2847f6742cd76af783a2a2c49e9375d0a111c7bef6f71cd9e738c72d6e"
 dependencies = [
  "memoffset 0.9.1",
  "tempfile",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -7174,7 +7174,7 @@ dependencies = [
  "js-sys",
  "khronos-egl",
  "libc",
- "libloading 0.8.9",
+ "libloading 0.7.4",
  "log",
  "metal 0.27.0",
  "naga 0.19.2",
@@ -7292,7 +7292,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]

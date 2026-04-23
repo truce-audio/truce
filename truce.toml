@@ -116,7 +116,7 @@ au3_name = "Truce Gain Iced (AUv3)"
 [[plugin]]
 name = "Truce Gain Slint"
 suffix = "gain-slint"
-crate = "gain-slint"
+crate = "truce-example-gain-slint"
 category = "effect"
 fourcc = "TGsl"
 au3_subtype = "TGs3"
