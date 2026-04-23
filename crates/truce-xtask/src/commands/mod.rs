@@ -3,6 +3,7 @@
 
 pub(crate) mod build;
 pub(crate) mod clean;
+pub(crate) mod doctor;
 pub(crate) mod install;
 pub(crate) mod log;
 pub(crate) mod new;
