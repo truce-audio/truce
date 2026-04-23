@@ -11,7 +11,7 @@ truce-core = { workspace = true }
 truce-params = { workspace = true }
 tiny-skia = "0.12"
 fontdue = "0.9"
-baseview = { git = "https://github.com/RustAudio/baseview.git" }
+baseview = { workspace = true }
 raw-window-handle = "0.5"
 wgpu = "24"
 pollster = "0.4"

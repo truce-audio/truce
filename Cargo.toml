@@ -81,10 +81,8 @@ truce-slint = { version = "0.5.0", path = "crates/truce-slint" }
 truce-shim-types = { version = "0.5.0", path = "crates/truce-shim-types" }
 truce-dsp = { version = "0.5.0", path = "crates/truce-dsp" }
 
-# Use the truce-audio baseview fork for the AAX / Pro Tools close-path
-# fix (responder / tracking-area / layer-contents cleanup — see the
-# fork's docs/pro-tools-aax-fix.md). The regular workspace deps below
-# still reference `RustAudio/baseview`; Cargo's [patch] redirects them
-# to the fork.
-[patch."https://github.com/RustAudio/baseview.git"]
+# The truce-audio fork carries the AAX / Pro Tools close-path fix
+# (responder / tracking-area / layer-contents cleanup — see the fork's
+# docs/pro-tools-aax-fix.md). GUI crates consume this via
+# `baseview = { workspace = true }` so the fork origin is declared once.
 baseview = { git = "https://github.com/truce-audio/baseview.git" }

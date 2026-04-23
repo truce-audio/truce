@@ -11,7 +11,7 @@ truce-core = { workspace = true }
 truce-gui = { workspace = true }
 truce-params = { workspace = true }
 slint = { version = "=1.15.1", default-features = false, features = ["compat-1-2", "renderer-software", "std"] }
-baseview = { git = "https://github.com/RustAudio/baseview.git" }
+baseview = { workspace = true }
 raw-window-handle = "0.5"
 wgpu = "24"
 pollster = "0.4"

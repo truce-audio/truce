@@ -15,7 +15,7 @@ egui-wgpu = "0.31"
 wgpu = "24"
 pollster = "0.4"
 png = "0.18"
-baseview = { git = "https://github.com/RustAudio/baseview.git" }
+baseview = { workspace = true }
 raw-window-handle = "0.5"
 keyboard-types = "0.6"
 
