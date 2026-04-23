@@ -776,13 +776,7 @@ pub unsafe fn _editor_open<P: PluginExport>(
         _ => return,
     };
 
-    // Use native NSView + CgBlit for the built-in GUI in AAX.
-    // Avoids baseview's NSTimer which causes per-callout autorelease pool
-    // crashes in Pro Tools when switching between plugin editor windows.
-    truce_gui::editor::request_cg_blit(true);
     editor.open(handle, context);
-    truce_gui::editor::request_cg_blit(false);
-
 }
 
 pub unsafe fn _editor_close<P: PluginExport>(ctx: *mut c_void) {

@@ -10,8 +10,9 @@ that works on every platform without requiring a GPU. The `BuiltinEditor`
 can auto-generate a full UI from your parameter layout, or you can compose
 widgets manually for a custom look.
 
-A `CgBlit` rendering path is included for AAX on macOS, where standard
-compositor-based rendering is not safe.
+Windowing is handled through baseview; the tiny-skia pixmap is uploaded to a
+wgpu surface each frame for compositing. All supported formats (CLAP, VST3,
+VST2, AU, LV2, AAX, standalone) use the same path.
 
 ## Key types
 

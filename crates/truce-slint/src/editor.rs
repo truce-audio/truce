@@ -52,10 +52,6 @@ pub struct SlintEditor {
     /// the editor window multiple times.
     setup: Arc<dyn Fn(ParamState) -> Box<dyn Fn(&ParamState)> + Send + Sync>,
     window: Option<baseview::WindowHandle>,
-    /// True when the native NSView + CgBlit path was used in open().
-    uses_cg_blit: bool,
-    #[cfg(target_os = "macos")]
-    native: Option<SlintNativeState>,
 }
 
 unsafe impl Send for SlintEditor {}
@@ -74,9 +70,6 @@ impl SlintEditor {
             size,
             setup: Arc::new(setup),
             window: None,
-            uses_cg_blit: false,
-            #[cfg(target_os = "macos")]
-            native: None,
         }
     }
 }
@@ -250,105 +243,6 @@ impl WindowHandler for SlintWindowHandler {
 }
 
 // ---------------------------------------------------------------------------
-// AAX native view path (macOS only)
-// ---------------------------------------------------------------------------
-
-/// State for the native NSView + CgBlit AAX path.
-#[cfg(target_os = "macos")]
-struct SlintNativeState {
-    native_view: truce_gui::native_view::NativeView,
-    slint_window: Rc<MinimalSoftwareWindow>,
-    sync_fn: Box<dyn Fn(&ParamState)>,
-    state: ParamState,
-    cg_blit: truce_gui::cg_blit::CgBlit,
-    px_buf: Vec<PremultipliedRgbaColor>,
-    rgba_buf: Vec<u8>,
-    width: u32,
-    height: u32,
-}
-
-// SAFETY: Only accessed from the GUI thread (host idle + mouse callbacks).
-#[cfg(target_os = "macos")]
-unsafe impl Send for SlintNativeState {}
-
-/// Context passed to native view mouse callbacks via raw pointer.
-#[cfg(target_os = "macos")]
-struct SlintNativeCallbackCtx {
-    slint_window: Rc<MinimalSoftwareWindow>,
-    last_pos: LogicalPosition,
-}
-
-#[cfg(target_os = "macos")]
-unsafe extern "C" fn slint_native_mouse_moved(ctx: *mut std::ffi::c_void, x: f32, y: f32) {
-    let ctx = &mut *(ctx as *mut SlintNativeCallbackCtx);
-    ctx.last_pos = LogicalPosition::new(x, y);
-    ctx.slint_window
-        .window()
-        .dispatch_event(WindowEvent::PointerMoved { position: ctx.last_pos });
-}
-
-#[cfg(target_os = "macos")]
-unsafe extern "C" fn slint_native_mouse_dragged(ctx: *mut std::ffi::c_void, x: f32, y: f32) {
-    let ctx = &mut *(ctx as *mut SlintNativeCallbackCtx);
-    ctx.last_pos = LogicalPosition::new(x, y);
-    ctx.slint_window
-        .window()
-        .dispatch_event(WindowEvent::PointerMoved { position: ctx.last_pos });
-}
-
-#[cfg(target_os = "macos")]
-unsafe extern "C" fn slint_native_mouse_down(ctx: *mut std::ffi::c_void, x: f32, y: f32) {
-    let ctx = &mut *(ctx as *mut SlintNativeCallbackCtx);
-    ctx.last_pos = LogicalPosition::new(x, y);
-    ctx.slint_window.window().dispatch_event(
-        WindowEvent::PointerPressed {
-            position: ctx.last_pos,
-            button: PointerEventButton::Left,
-        },
-    );
-}
-
-#[cfg(target_os = "macos")]
-unsafe extern "C" fn slint_native_mouse_up(ctx: *mut std::ffi::c_void, x: f32, y: f32) {
-    let ctx = &mut *(ctx as *mut SlintNativeCallbackCtx);
-    ctx.last_pos = LogicalPosition::new(x, y);
-    ctx.slint_window.window().dispatch_event(
-        WindowEvent::PointerReleased {
-            position: ctx.last_pos,
-            button: PointerEventButton::Left,
-        },
-    );
-}
-
-#[cfg(target_os = "macos")]
-unsafe extern "C" fn slint_native_scroll(
-    ctx: *mut std::ffi::c_void, x: f32, y: f32, dy: f32,
-) {
-    let ctx = &mut *(ctx as *mut SlintNativeCallbackCtx);
-    ctx.last_pos = LogicalPosition::new(x, y);
-    ctx.slint_window.window().dispatch_event(
-        WindowEvent::PointerScrolled {
-            position: ctx.last_pos,
-            delta_x: 0.0,
-            delta_y: dy,
-        },
-    );
-}
-
-#[cfg(target_os = "macos")]
-unsafe extern "C" fn slint_native_mouse_exited(ctx: *mut std::ffi::c_void) {
-    let ctx = &mut *(ctx as *mut SlintNativeCallbackCtx);
-    ctx.slint_window
-        .window()
-        .dispatch_event(WindowEvent::PointerExited);
-}
-
-#[cfg(target_os = "macos")]
-unsafe extern "C" fn slint_native_drop_ctx(ctx: *mut std::ffi::c_void) {
-    let _ = Box::from_raw(ctx as *mut SlintNativeCallbackCtx);
-}
-
-// ---------------------------------------------------------------------------
 // Editor trait
 // ---------------------------------------------------------------------------
 
@@ -365,85 +259,7 @@ impl Editor for SlintEditor {
         let state = ParamState::new(context);
         let setup = Arc::clone(&self.setup);
 
-        // --- AAX path: native NSView + CgBlit (no baseview, no wgpu) ---
-        #[cfg(target_os = "macos")]
-        if truce_gui::editor::should_use_cg_blit() {
-            self.uses_cg_blit = true;
-
-            let parent_ptr = match parent {
-                RawWindowHandle::AppKit(ptr) => ptr,
-                _ => std::ptr::null_mut(),
-            };
-            if parent_ptr.is_null() {
-                return;
-            }
-
-            // Create the Slint software window at logical size.
-            // CgBlit scales to fill the view — no need for physical resolution.
-            let slint_window = platform::create_slint_window();
-            slint_window.set_size(slint::WindowSize::Physical(PhysicalSize::new(
-                lw, lh,
-            )));
-
-            // Developer creates the Slint component here
-            let sync_fn = setup(state.clone());
-
-            // Set up native view callback context
-            let cb_ctx = Box::new(SlintNativeCallbackCtx {
-                slint_window: slint_window.clone(),
-                last_pos: LogicalPosition::default(),
-            });
-            let cb_ctx_ptr = Box::into_raw(cb_ctx) as *mut std::ffi::c_void;
-
-            let callbacks = truce_gui::native_view::NativeViewCallbacks {
-                ctx: cb_ctx_ptr,
-                on_mouse_moved: slint_native_mouse_moved,
-                on_mouse_dragged: slint_native_mouse_dragged,
-                on_mouse_down: slint_native_mouse_down,
-                on_mouse_up: slint_native_mouse_up,
-                on_scroll: slint_native_scroll,
-                on_mouse_exited: slint_native_mouse_exited,
-                drop_ctx: slint_native_drop_ctx,
-            };
-
-            let native_view = unsafe {
-                truce_gui::native_view::open(
-                    parent_ptr,
-                    lw as f64,
-                    lh as f64,
-                    callbacks,
-                )
-            };
-
-            // Set up layer-backed view for CgBlit (setContents: path)
-            unsafe {
-                use cocoa::base::YES;
-                use objc::{msg_send, sel, sel_impl};
-                let ns_view = native_view.ns_view_ptr() as cocoa::base::id;
-                let _: () = msg_send![ns_view, setWantsLayer: YES];
-                let _: () = msg_send![ns_view, setLayerContentsRedrawPolicy: 0isize];
-            }
-
-            let cg_blit = truce_gui::cg_blit::CgBlit::new(
-                native_view.ns_view_ptr(),
-                lw, lh,
-            );
-
-            self.native = Some(SlintNativeState {
-                native_view,
-                slint_window,
-                sync_fn,
-                state,
-                cg_blit,
-                px_buf: Vec::new(),
-                rgba_buf: Vec::new(),
-                width: lw,
-                height: lh,
-            });
-            return;
-        }
-
-        // --- Normal path: baseview + wgpu ---
+        // --- baseview + wgpu ---
         let options = WindowOpenOptions {
             title: String::from("truce-slint"),
             size: baseview::Size::new(lw as f64, lh as f64),
@@ -552,48 +368,12 @@ impl Editor for SlintEditor {
     }
 
     fn close(&mut self) {
-        #[cfg(target_os = "macos")]
-        if self.uses_cg_blit {
-            self.native = None; // NativeView::drop calls close()
-            self.uses_cg_blit = false;
-            return;
-        }
         if let Some(mut window) = self.window.take() {
             window.close();
         }
     }
 
     fn idle(&mut self) {
-        #[cfg(target_os = "macos")]
-        if self.uses_cg_blit {
-            if let Some(ref mut native) = self.native {
-                unsafe {
-                    extern "C" {
-                        fn objc_autoreleasePoolPush() -> *mut std::ffi::c_void;
-                        fn objc_autoreleasePoolPop(pool: *mut std::ffi::c_void);
-                    }
-                    let pool = objc_autoreleasePoolPush();
-
-                    slint::platform::update_timers_and_animations();
-                    (native.sync_fn)(&native.state);
-                    native.slint_window.request_redraw();
-
-                    // Render at logical size — layer scales to fill the view
-                    platform::render_to_rgba(
-                        &native.slint_window,
-                        native.width,
-                        native.height,
-                        &mut native.px_buf,
-                        &mut native.rgba_buf,
-                    );
-
-                    native.cg_blit.blit(&native.rgba_buf);
-
-                    objc_autoreleasePoolPop(pool);
-                }
-            }
-            return;
-        }
-        // Baseview drives its own frame loop.
+        // baseview drives its own frame loop.
     }
 }

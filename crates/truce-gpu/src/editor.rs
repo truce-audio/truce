@@ -31,10 +31,6 @@ pub struct GpuEditor<P: Params> {
     inner: Arc<Mutex<BuiltinEditor<P>>>,
     size: (u32, u32),
     window: Option<baseview::WindowHandle>,
-    /// True when the CgBlit native view path was used in open().
-    /// Latched at open() time so idle()/close() delegate correctly
-    /// even after the global `request_cg_blit` flag is reset.
-    uses_cg_blit: bool,
 }
 
 unsafe impl<P: Params> Send for GpuEditor<P> {}
@@ -46,7 +42,6 @@ impl<P: Params + 'static> GpuEditor<P> {
             inner: Arc::new(Mutex::new(inner)),
             size,
             window: None,
-            uses_cg_blit: false,
         }
     }
 
@@ -55,7 +50,7 @@ impl<P: Params + 'static> GpuEditor<P> {
     /// swap the layout on hot-reload while GPU rendering continues.
     pub fn new_shared(inner: Arc<Mutex<BuiltinEditor<P>>>) -> Self {
         let size = inner.lock().unwrap().size();
-        Self { inner, size, window: None, uses_cg_blit: false }
+        Self { inner, size, window: None }
     }
 }
 
@@ -192,17 +187,6 @@ impl<P: Params + 'static> Editor for GpuEditor<P> {
     }
 
     fn open(&mut self, parent: RawWindowHandle, context: EditorContext) {
-        // AAX on macOS: delegate to BuiltinEditor's native NSView + CgBlit
-        // path. This avoids baseview's NSTimer which causes per-callout
-        // autorelease pool crashes in Pro Tools.
-        if truce_gui::editor::should_use_cg_blit() {
-            self.uses_cg_blit = true;
-            if let Ok(mut inner) = self.inner.lock() {
-                inner.open(parent, context);
-            }
-            return;
-        }
-
         let system_scale = truce_gui::backing_scale();
         let (lw, lh) = self.size; // logical points
 
@@ -263,26 +247,13 @@ impl<P: Params + 'static> Editor for GpuEditor<P> {
     }
 
     fn close(&mut self) {
-        if self.uses_cg_blit {
-            if let Ok(mut inner) = self.inner.lock() {
-                inner.close();
-            }
-            self.uses_cg_blit = false;
-            return;
-        }
         if let Some(mut window) = self.window.take() {
             window.close();
         }
     }
 
     fn idle(&mut self) {
-        if self.uses_cg_blit {
-            if let Ok(mut inner) = self.inner.lock() {
-                inner.idle();
-            }
-            return;
-        }
-        // Baseview drives its own frame loop via on_frame().
+        // baseview drives its own frame loop via on_frame().
     }
 
     fn state_changed(&mut self) {

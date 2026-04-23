@@ -1,52 +1,14 @@
 //! Built-in editor using the CPU render backend.
 //!
 //! Renders parameter widgets via `RenderBackend`. Uses tiny-skia for
-//! software rasterization and baseview for window management.
-//! On macOS, pixel blitting uses CoreGraphics (CGImage → CALayer) when
-//! requested via [`request_cg_blit`], avoiding Metal/wgpu entirely.
-//! Otherwise uses wgpu for blitting. For GPU rendering, see the
-//! `truce-gpu` crate which provides `GpuEditor` wrapping this editor.
+//! software rasterization and baseview + wgpu for window management
+//! and blitting. For GPU-accelerated rendering see the `truce-gpu`
+//! crate which provides `GpuEditor` wrapping this editor.
 
 use std::sync::Arc;
 
 use truce_core::editor::{Editor, EditorContext, RawWindowHandle};
 use truce_params::Params;
-
-// ---------------------------------------------------------------------------
-// CoreGraphics blit opt-in (used by AAX to avoid Metal autorelease crashes)
-// ---------------------------------------------------------------------------
-
-#[cfg(target_os = "macos")]
-use std::sync::atomic::{AtomicBool, Ordering};
-
-#[cfg(target_os = "macos")]
-static USE_CG_BLIT: AtomicBool = AtomicBool::new(false);
-
-/// Request that the built-in GUI use CoreGraphics blitting instead of wgpu
-/// on macOS. Call this before `editor.open()`. This avoids Metal/wgpu
-/// resources that cause autorelease pool crashes when multiple editors
-/// coexist in the same process (e.g. AAX in Pro Tools).
-#[cfg(target_os = "macos")]
-pub fn request_cg_blit(enable: bool) {
-    USE_CG_BLIT.store(enable, Ordering::Relaxed);
-}
-
-/// Returns true if the CgBlit path was requested (AAX on macOS).
-#[cfg(target_os = "macos")]
-pub fn should_use_cg_blit() -> bool {
-    USE_CG_BLIT.load(Ordering::Relaxed)
-}
-
-
-/// No-op on non-macOS platforms.
-#[cfg(not(target_os = "macos"))]
-pub fn request_cg_blit(_enable: bool) {}
-
-/// Always false on non-macOS.
-#[cfg(not(target_os = "macos"))]
-pub fn should_use_cg_blit() -> bool {
-    false
-}
 
 use crate::backend_cpu::CpuBackend;
 use crate::interaction::{self, InputEvent, InteractionState, MouseButton, ParamEdit};
@@ -99,8 +61,6 @@ pub struct BuiltinEditor<P: Params> {
     interaction: InteractionState,
     context: Option<EditorContext>,
     window: Option<baseview::WindowHandle>,
-    #[cfg(target_os = "macos")]
-    native: Option<crate::native_view::NativeView>,
     /// Weak-ish handle to the blit backend the window-handler
     /// materializes. The editor keeps the canonical `Arc` and the
     /// handler gets a clone. On close we take the `Option` out of
@@ -179,8 +139,6 @@ impl<P: Params + 'static> BuiltinEditor<P> {
             interaction: InteractionState::new(),
             context: None,
             window: None,
-            #[cfg(target_os = "macos")]
-            native: None,
             blit_backend: None,
             needs_repaint: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             last_painted_values: Vec::new(),
@@ -196,8 +154,6 @@ impl<P: Params + 'static> BuiltinEditor<P> {
             interaction: InteractionState::new(),
             context: None,
             window: None,
-            #[cfg(target_os = "macos")]
-            native: None,
             blit_backend: None,
             needs_repaint: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             last_painted_values: Vec::new(),
@@ -213,8 +169,6 @@ impl<P: Params + 'static> BuiltinEditor<P> {
             interaction: InteractionState::new(),
             context: None,
             window: None,
-            #[cfg(target_os = "macos")]
-            native: None,
             blit_backend: None,
             needs_repaint: Arc::new(std::sync::atomic::AtomicBool::new(true)),
             last_painted_values: Vec::new(),
@@ -594,19 +548,15 @@ fn create_wgpu_backend(
     // between the uploaded bytes and the texture layout.
     let blit = crate::blit::BlitPipeline::new(&device, format, logical_w, logical_h);
 
-    BlitBackend::Wgpu { device, queue, surface, surface_config, blit }
+    BlitBackend { device, queue, surface, surface_config, blit }
 }
 
-enum BlitBackend {
-    #[cfg(target_os = "macos")]
-    CoreGraphics(crate::cg_blit::CgBlit),
-    Wgpu {
-        device: wgpu::Device,
-        queue: wgpu::Queue,
-        surface: wgpu::Surface<'static>,
-        surface_config: wgpu::SurfaceConfiguration,
-        blit: crate::blit::BlitPipeline,
-    },
+struct BlitBackend {
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    surface: wgpu::Surface<'static>,
+    surface_config: wgpu::SurfaceConfiguration,
+    blit: crate::blit::BlitPipeline,
 }
 
 /// Shared ownership of the blit backend between `BuiltinEditor` and the
@@ -659,26 +609,18 @@ impl<P: Params + 'static> baseview::WindowHandler for BuiltinWindowHandler<P> {
                 // next.
                 return;
             };
-            match backend {
-                #[cfg(target_os = "macos")]
-                BlitBackend::CoreGraphics(cg) => {
-                    cg.blit(pixels);
-                }
-                BlitBackend::Wgpu { device, queue, surface, blit, .. } => {
-                    blit.update(queue, pixels);
-                    let frame = match surface.get_current_texture() {
-                        Ok(f) => f,
-                        Err(_) => return,
-                    };
-                    let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
-                    let mut encoder = device.create_command_encoder(
-                        &wgpu::CommandEncoderDescriptor { label: None },
-                    );
-                    blit.render(&mut encoder, &view);
-                    queue.submit(std::iter::once(encoder.finish()));
-                    frame.present();
-                }
-            }
+            let BlitBackend { device, queue, surface, blit, .. } = backend;
+            blit.update(queue, pixels);
+            let frame = match surface.get_current_texture() {
+                Ok(f) => f,
+                Err(_) => return,
+            };
+            let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+            let mut encoder =
+                device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+            blit.render(&mut encoder, &view);
+            queue.submit(std::iter::once(encoder.finish()));
+            frame.present();
         }
     }
 
@@ -762,25 +704,18 @@ impl<P: Params + 'static> baseview::WindowHandler for BuiltinWindowHandler<P> {
                 self.scale = info.scale() as f32;
                 crate::platform::note_linux_scale_factor(info.scale());
                 if let Ok(mut guard) = self.backend.lock() {
-                    if let Some(ref mut backend) = *guard {
-                        match backend {
-                            #[cfg(target_os = "macos")]
-                            BlitBackend::CoreGraphics(cg) => {
-                                cg.resize(pw, ph);
-                            }
-                            BlitBackend::Wgpu {
-                                device,
-                                surface,
-                                surface_config,
-                                ..
-                            } => {
-                                surface_config.width = pw;
-                                surface_config.height = ph;
-                                surface.configure(device, surface_config);
-                                // Blit texture stays at pixmap (logical) size — the
-                                // shader stretches it to fill the surface.
-                            }
-                        }
+                    if let Some(BlitBackend {
+                        device,
+                        surface,
+                        surface_config,
+                        ..
+                    }) = guard.as_mut()
+                    {
+                        surface_config.width = pw;
+                        surface_config.height = ph;
+                        surface.configure(device, surface_config);
+                        // Blit texture stays at pixmap (logical) size — the
+                        // shader stretches it to fill the surface.
                     }
                 }
                 baseview::EventStatus::Captured
@@ -850,80 +785,6 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
         let phys_w = (lw * scale) as u32;
         let phys_h = (lh * scale) as u32;
 
-        // --- Legacy AAX path: native NSView + CgBlit (no baseview) ---
-        //
-        // Kept as a fallback: the forked baseview at `../baseview`
-        // wraps every NSView lifecycle op in an `autoreleasepool!`
-        // which should resolve the per-callout ARP crash that
-        // originally forced us off baseview on AAX. When that proves
-        // stable in Pro Tools this whole branch and the cg_blit /
-        // native_view modules can be deleted. Until then, flip
-        // `USE_LEGACY_AAX_PATH` below to `true` to revert.
-        // Probe: try the forked-baseview path again to see whether
-        // dropping wgpu's Surface before baseview's window.close()
-        // changes the Pro Tools unload crash.
-        #[cfg(target_os = "macos")]
-        const USE_LEGACY_AAX_PATH: bool = false;
-        #[cfg(target_os = "macos")]
-        if USE_LEGACY_AAX_PATH && should_use_cg_blit() {
-            let parent_ptr = match parent {
-                RawWindowHandle::AppKit(ptr) => ptr,
-                _ => std::ptr::null_mut(),
-            };
-            if !parent_ptr.is_null() {
-                let editor_ptr = self as *mut BuiltinEditor<P>;
-                let cg_blit = crate::cg_blit::CgBlit::new(
-                    std::ptr::null_mut(), // view not available yet; set after open
-                    w, h,
-                );
-                let scale_f32 = scale as f32;
-                // Box up context for native view callbacks
-                let ctx = Box::new(NativeEditorCtx::<P> {
-                    editor: editor_ptr,
-                    cg_blit,
-                    scale: scale_f32,
-                    last_click_time: None,
-                    last_click_pos: (0.0, 0.0),
-                });
-                let ctx_ptr = Box::into_raw(ctx) as *mut std::ffi::c_void;
-
-                let callbacks = crate::native_view::NativeViewCallbacks {
-                    ctx: ctx_ptr,
-                    on_mouse_moved: native_on_mouse_moved::<P>,
-                    on_mouse_dragged: native_on_mouse_dragged::<P>,
-                    on_mouse_down: native_on_mouse_down::<P>,
-                    on_mouse_up: native_on_mouse_up::<P>,
-                    on_scroll: native_on_scroll::<P>,
-                    on_mouse_exited: native_on_mouse_exited::<P>,
-                    drop_ctx: native_drop_ctx::<P>,
-                };
-
-                let native = unsafe {
-                    crate::native_view::open(parent_ptr, lw, lh, callbacks)
-                };
-
-                // Set up layer-backed view for CgBlit (setContents: path)
-                unsafe {
-                    use objc::{msg_send, sel, sel_impl};
-                    let ns_view = native.ns_view_ptr() as cocoa::base::id;
-                    let _: () = msg_send![ns_view, setWantsLayer: cocoa::base::YES];
-                    let _: () = msg_send![ns_view, setLayerContentsRedrawPolicy: 0isize];
-                }
-
-                // Now update cg_blit with the actual NSView pointer.
-                // Use logical size (w, h) — the CPU backend renders at
-                // logical resolution. The layer scales to fill the view.
-                let ctx = unsafe { &mut *(ctx_ptr as *mut NativeEditorCtx<P>) };
-                ctx.cg_blit = crate::cg_blit::CgBlit::new(
-                    native.ns_view_ptr(), w, h,
-                );
-
-                self.native = Some(native);
-                return;
-            }
-        }
-
-
         let options = baseview::WindowOpenOptions {
             title: String::from("truce"),
             size: baseview::Size::new(lw, lh),
@@ -958,17 +819,16 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
                 let editor = unsafe { &mut *(editor_addr as *mut BuiltinEditor<P>) };
                 editor.render();
                 if let Some(pixels) = editor.pixel_data() {
-                    if let BlitBackend::Wgpu { device, queue, surface, blit, .. } = &mut backend {
-                        blit.update(queue, pixels);
-                        if let Ok(frame) = surface.get_current_texture() {
-                            let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
-                            let mut encoder = device.create_command_encoder(
-                                &wgpu::CommandEncoderDescriptor { label: None },
-                            );
-                            blit.render(&mut encoder, &view);
-                            queue.submit(std::iter::once(encoder.finish()));
-                            frame.present();
-                        }
+                    let BlitBackend { device, queue, surface, blit, .. } = &mut backend;
+                    blit.update(queue, pixels);
+                    if let Ok(frame) = surface.get_current_texture() {
+                        let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+                        let mut encoder = device.create_command_encoder(
+                            &wgpu::CommandEncoderDescriptor { label: None },
+                        );
+                        blit.render(&mut encoder, &view);
+                        queue.submit(std::iter::once(encoder.finish()));
+                        frame.present();
                     }
                 }
 
@@ -997,192 +857,51 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
     }
 
     fn close(&mut self) {
+        // On macOS, wrap the teardown in an autoreleasepool so
+        // anything baseview / wgpu / AppKit autoreleases during the
+        // view's cleanup drains here rather than escaping into the
+        // host's outer pool. See `../baseview/docs/pro-tools-aax-fix.md`
+        // for why this matters on AAX.
         #[cfg(target_os = "macos")]
-        if let Some(mut native) = self.native.take() {
-            native.close();
-            self.context = None;
-            self.backend = None;
-            return;
-        }
-
-        // Wrap in autorelease pool so baseview's internal ObjC teardown
-        // (removeFromSuperview, etc.) drains autoreleased objects here
-        // rather than leaking into the host's pool.
-        #[cfg(target_os = "macos")]
-        {
+        let pool = unsafe {
             extern "C" {
                 fn objc_autoreleasePoolPush() -> *mut std::ffi::c_void;
-                fn objc_autoreleasePoolPop(pool: *mut std::ffi::c_void);
             }
-            unsafe {
-                let pool = objc_autoreleasePoolPush();
+            objc_autoreleasePoolPush()
+        };
 
-                // Probe (1): drop the wgpu Surface (and therefore the
-                // CAMetalLayer it owns, the MTLDevice, command queue,
-                // etc.) BEFORE asking baseview to release the NSView.
-                // If this changes the Pro Tools unload-crash behavior,
-                // the Metal teardown sequence is what's leaving stale
-                // autoreleased refs in DFW_NSContainer.
-                if let Some(shared) = self.blit_backend.take() {
-                    if let Ok(mut guard) = shared.lock() {
-                        // Drop the backend while the mutex guard holds
-                        // exclusive access; the guard itself goes out
-                        // of scope right after.
-                        drop(guard.take());
-                    }
-                }
-
-                if let Some(mut window) = self.window.take() {
-                    window.close();
-                }
-                self.context = None;
-                self.backend = None;
-                objc_autoreleasePoolPop(pool);
+        // Drop the wgpu surface (CAMetalLayer, MTLDevice, command
+        // queue, etc.) before asking baseview to release the NSView.
+        // Keeps the Metal teardown order deterministic.
+        if let Some(shared) = self.blit_backend.take() {
+            if let Ok(mut guard) = shared.lock() {
+                drop(guard.take());
             }
-            return;
         }
 
-        #[cfg(not(target_os = "macos"))]
-        {
-            if let Some(mut window) = self.window.take() {
-                window.close();
+        if let Some(mut window) = self.window.take() {
+            window.close();
+        }
+        self.context = None;
+        self.backend = None;
+
+        #[cfg(target_os = "macos")]
+        unsafe {
+            extern "C" {
+                fn objc_autoreleasePoolPop(pool: *mut std::ffi::c_void);
             }
-            self.context = None;
-            self.backend = None;
+            objc_autoreleasePoolPop(pool);
         }
     }
 
     fn idle(&mut self) {
-        // Native view: host-driven rendering (no timer).
-        #[cfg(target_os = "macos")]
-        if let Some(ref native) = self.native {
-            // Get the NativeEditorCtx from the view's state ivar
-            let ctx_ptr = native.state_ctx();
-            if !ctx_ptr.is_null() {
-                unsafe {
-                    // Wrap in @autoreleasepool so autoreleased objects from
-                    // setNeedsDisplay:/drawRect: drain HERE — not in Pro
-                    // Tools' per-callout ARP. This is what JUCE does
-                    // (JUCE_AUTORELEASEPOOL around every ObjC interaction).
-                    extern "C" {
-                        fn objc_autoreleasePoolPush() -> *mut std::ffi::c_void;
-                        fn objc_autoreleasePoolPop(pool: *mut std::ffi::c_void);
-                    }
-                    let pool = objc_autoreleasePoolPush();
-
-                    let ctx = &mut *(ctx_ptr as *mut NativeEditorCtx<P>);
-                    let editor = &mut *ctx.editor;
-                    update_interaction(editor);
-                    editor.detect_host_param_changes();
-                    // Pro Tools' AAX idle fires at ~30–60 Hz; skipping
-                    // the rasterize + blit when nothing changed is the
-                    // biggest win for main-thread CPU when multiple
-                    // editor windows are open.
-                    if editor.take_needs_repaint() {
-                        editor.render();
-                        editor.stash_painted_values();
-                        if let Some(pixels) = editor.pixel_data() {
-                            ctx.cg_blit.blit(pixels);
-                        }
-                    }
-
-                    objc_autoreleasePoolPop(pool);
-                }
-            }
-            return;
-        }
-        // If no window (standalone/headless), render for external consumption.
+        // baseview drives `on_frame` via its internal timer; idle is
+        // only meaningful for the headless/standalone case where the
+        // caller wants a render cycle to pull pixel data out.
         if self.window.is_none() {
             self.render();
         }
     }
-}
-
-// ---------------------------------------------------------------------------
-// Native view callbacks for AAX (macOS only, no baseview)
-// ---------------------------------------------------------------------------
-
-#[cfg(target_os = "macos")]
-struct NativeEditorCtx<P: Params> {
-    editor: *mut BuiltinEditor<P>,
-    cg_blit: crate::cg_blit::CgBlit,
-    scale: f32,
-    last_click_time: Option<std::time::Instant>,
-    last_click_pos: (f32, f32),
-}
-
-#[cfg(target_os = "macos")]
-unsafe extern "C" fn native_on_mouse_moved<P: Params + 'static>(
-    ctx: *mut std::ffi::c_void, x: f32, y: f32,
-) {
-    let ctx = &mut *(ctx as *mut NativeEditorCtx<P>);
-    let editor = &mut *ctx.editor;
-    // NSView delivers logical points; layout regions are in logical space.
-    editor.on_mouse_moved(x, y);
-}
-
-#[cfg(target_os = "macos")]
-unsafe extern "C" fn native_on_mouse_dragged<P: Params + 'static>(
-    ctx: *mut std::ffi::c_void, x: f32, y: f32,
-) {
-    let ctx = &mut *(ctx as *mut NativeEditorCtx<P>);
-    let editor = &mut *ctx.editor;
-    editor.on_mouse_dragged(x, y);
-}
-
-#[cfg(target_os = "macos")]
-unsafe extern "C" fn native_on_mouse_down<P: Params + 'static>(
-    ctx: *mut std::ffi::c_void, x: f32, y: f32,
-) {
-    let ctx = &mut *(ctx as *mut NativeEditorCtx<P>);
-    let editor = &mut *ctx.editor;
-    // Double-click detection (300ms, 4px threshold)
-    let now = std::time::Instant::now();
-    let is_double = ctx.last_click_time.map_or(false, |t| {
-        now.duration_since(t).as_millis() < 300
-            && (x - ctx.last_click_pos.0).abs() < 4.0
-            && (y - ctx.last_click_pos.1).abs() < 4.0
-    });
-    ctx.last_click_time = Some(now);
-    ctx.last_click_pos = (x, y);
-    if is_double {
-        editor.on_double_click(x, y);
-        ctx.last_click_time = None;
-    } else {
-        editor.on_mouse_down(x, y);
-    }
-}
-
-#[cfg(target_os = "macos")]
-unsafe extern "C" fn native_on_mouse_up<P: Params + 'static>(
-    ctx: *mut std::ffi::c_void, x: f32, y: f32,
-) {
-    let ctx = &mut *(ctx as *mut NativeEditorCtx<P>);
-    let editor = &mut *ctx.editor;
-    editor.on_mouse_up(x, y);
-}
-
-#[cfg(target_os = "macos")]
-unsafe extern "C" fn native_on_scroll<P: Params + 'static>(
-    ctx: *mut std::ffi::c_void, x: f32, y: f32, dy: f32,
-) {
-    let ctx = &mut *(ctx as *mut NativeEditorCtx<P>);
-    let editor = &mut *ctx.editor;
-    editor.on_scroll(x, y, dy);
-}
-
-#[cfg(target_os = "macos")]
-unsafe extern "C" fn native_on_mouse_exited<P: Params + 'static>(
-    ctx: *mut std::ffi::c_void,
-) {
-    let ctx = &mut *(ctx as *mut NativeEditorCtx<P>);
-    let editor = &mut *ctx.editor;
-    editor.on_mouse_moved(-1.0, -1.0);
-}
-
-#[cfg(target_os = "macos")]
-unsafe extern "C" fn native_drop_ctx<P: Params>(ctx: *mut std::ffi::c_void) {
-    let _ = Box::from_raw(ctx as *mut NativeEditorCtx<P>);
 }
 
 #[cfg(test)]

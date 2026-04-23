@@ -5,14 +5,12 @@
 
 pub mod backend_cpu;
 pub mod blit;
-pub mod cg_blit;
 pub mod editor;
 pub mod font;
 pub mod interaction;
 pub mod layout;
 #[macro_use]
 pub mod macros;
-pub mod native_view;
 pub mod platform;
 pub mod render;
 pub mod snapshot;
