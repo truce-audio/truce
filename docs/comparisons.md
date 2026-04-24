@@ -91,8 +91,7 @@ Last updated 2026-04-24.
 
 **truce** — You want Rust, maximum commercial-format coverage (AU,
 AAX, and LV2 in one codebase is currently unique to truce), hot
-reload, and a batteries-included experience — built-in GUI with a
-logical-point contract that stays sharp on Retina, `cargo truce
+reload, and a batteries-included experience — built-in GUI, `cargo truce
 install` / `package` / `validate`, and signed cross-platform
 installers (`.pkg` + Inno Setup `.exe`). Best for new Rust projects
 that need AU *and* AAX *and* LV2 alongside CLAP/VST3.
@@ -131,8 +130,6 @@ Windows too.
 All truce backends share the same logical-point coordinate contract:
 widget coordinates and event positions are in logical points; the
 backend multiplies by the display scale factor internally for
-physical-pixel rasterization. Knob/meter visuals are consistent
-across backends (pointer line, hover ring, dB-scaled meters, blue
-fill with red clip indicator).
+physical-pixel rasterization. 
 
 See [GUI backends](gui/README.md) for detailed integration docs.
