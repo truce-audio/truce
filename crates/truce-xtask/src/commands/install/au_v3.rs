@@ -25,7 +25,8 @@ use crate::templates;
 use crate::util::fs_ctx;
 use crate::{
     cargo_build_for_arch, deployment_target, dirs, extract_team_id, is_production_identity,
-    lipo_into, release_lib_for_target, run_sudo, tmp_dir, Config, MacArch, PluginDef, Res,
+    lipo_into, release_lib_for_target, run_sudo, run_sudo_silent, tmp_dir, Config, MacArch,
+    PluginDef, Res,
 };
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -125,7 +126,9 @@ pub(crate) fn emit_au_v3_bundle(
         lipo_into(&fw_inputs, &lipo_dst)?;
 
         // --- Step 2: .framework bundle in tmp -------------------------------
-        let _ = fs::remove_dir_all(&fw_build);
+        // Preserve `fw_build` across runs so xcodebuild's link-time
+        // framework metadata cache survives; we overwrite the pieces
+        // that change (dylib, plist, symlinks) idempotently below.
         let fw_dir = fw_build.join(format!("{}.framework/Versions/A", fw_name));
         fs_ctx::create_dir_all(fw_dir.join("Resources"))?;
         fs_ctx::copy(&lipo_dst, fw_dir.join(&fw_name))?;
@@ -144,19 +147,27 @@ pub(crate) fn emit_au_v3_bundle(
         let fw_root = fw_build.join(format!("{}.framework", fw_name));
         #[cfg(unix)]
         {
-            std::os::unix::fs::symlink("A", fw_root.join("Versions/Current"))?;
-            std::os::unix::fs::symlink(
-                format!("Versions/Current/{}", fw_name),
-                fw_root.join(&fw_name),
+            // Idempotent symlink re-creation: remove any stale link
+            // first, then create fresh. Needed because we no longer
+            // wipe `fw_build` between runs.
+            let ensure_symlink = |target: &str, link: &Path| -> Res {
+                let _ = fs::remove_file(link);
+                std::os::unix::fs::symlink(target, link)?;
+                Ok(())
+            };
+            ensure_symlink("A", &fw_root.join("Versions/Current"))?;
+            ensure_symlink(
+                &format!("Versions/Current/{}", fw_name),
+                &fw_root.join(&fw_name),
             )?;
-            std::os::unix::fs::symlink("Versions/Current/Resources", fw_root.join("Resources"))?;
+            ensure_symlink("Versions/Current/Resources", &fw_root.join("Resources"))?;
         }
         #[cfg(not(unix))]
         {
             return Err("AU v3 framework builds are only supported on macOS".into());
         }
 
-        fs_ctx::write(
+        fs_ctx::write_if_changed(
             fw_dir.join("Resources/Info.plist"),
             format!(
                 r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -190,29 +201,33 @@ pub(crate) fn emit_au_v3_bundle(
         }
 
         // --- Step 3: Xcode project scratch ---------------------------------
-        let _ = fs::remove_dir_all(&build_dir);
+        // Preserve `build_dir` across runs so xcodebuild's DerivedData /
+        // SYMROOT build cache survives. `write_if_changed` for every
+        // source file means mtimes only bump when the embedded template
+        // bytes actually shifted — xcodebuild then incrementally rebuilds
+        // only the TUs that changed.
         fs_ctx::create_dir_all(build_dir.join("AUExt"))?;
         fs_ctx::create_dir_all(build_dir.join("App"))?;
         fs_ctx::create_dir_all(build_dir.join("XcodeAUv3.xcodeproj"))?;
 
-        fs_ctx::write(
+        fs_ctx::write_if_changed(
             build_dir.join("AUExt/AudioUnitFactory.swift"),
             templates::au3::SWIFT_SOURCE,
         )?;
-        fs_ctx::write(
+        fs_ctx::write_if_changed(
             build_dir.join("AUExt/BridgingHeader.h"),
             templates::au3::BRIDGING_HEADER,
         )?;
-        fs_ctx::write(
+        fs_ctx::write_if_changed(
             build_dir.join("AUExt/au_shim_types.h"),
             templates::au3::SHIM_TYPES_H,
         )?;
-        fs_ctx::write(
+        fs_ctx::write_if_changed(
             build_dir.join("AUExt/AUExt.entitlements"),
             templates::au3::APPEX_ENTITLEMENTS,
         )?;
-        fs_ctx::write(build_dir.join("App/main.m"), templates::au3::APP_MAIN_M)?;
-        fs_ctx::write(
+        fs_ctx::write_if_changed(build_dir.join("App/main.m"), templates::au3::APP_MAIN_M)?;
+        fs_ctx::write_if_changed(
             build_dir.join("App/App.entitlements"),
             templates::au3::APP_ENTITLEMENTS,
         )?;
@@ -237,10 +252,14 @@ pub(crate) fn emit_au_v3_bundle(
                 ),
             )
             .replace("AUTAG", &p.au_tag);
-        fs_ctx::write(&plist_path, plist)?;
+        // AUVER regenerates every call (CFBundleVersion cache-bust for
+        // hosts), so this plist's bytes shift run-to-run regardless.
+        // xcodebuild still bundles the new plist but skips Swift / ObjC
+        // recompilation because those sources stayed stable.
+        fs_ctx::write_if_changed(&plist_path, plist)?;
 
         let pbx_path = build_dir.join("XcodeAUv3.xcodeproj/project.pbxproj");
-        fs_ctx::write(
+        fs_ctx::write_if_changed(
             &pbx_path,
             generate_pbxproj(
                 &team_id,
@@ -252,7 +271,7 @@ pub(crate) fn emit_au_v3_bundle(
             ),
         )?;
 
-        fs_ctx::write(
+        fs_ctx::write_if_changed(
             build_dir.join("App/Info.plist"),
             templates::au3::APP_INFO_PLIST,
         )?;
@@ -398,18 +417,30 @@ pub(crate) fn emit_au_v3_bundle(
     Ok(())
 }
 
-/// Install a pre-built AU v3 bundle from `target/bundles/` to
+/// Install pre-built AU v3 bundles from `target/bundles/` to
 /// `/Applications/` and register with pluginkit.
 ///
-/// Expects [`emit_au_v3_bundle`] to have been called first. Performs:
-/// - Pre-clean any stale `pluginkit` registrations for this appex
-///   (the build-tree copy at `target/bundles/` may have been
-///   auto-discovered by `pkd` and would otherwise win the dyld
-///   load-order race against the installed copy).
-/// - `sudo ditto target/bundles/{Plugin}.app /Applications/{Plugin}.app`.
-/// - Kill `pkd` + `AudioComponentRegistrar`, drop the AU cache.
-/// - `pluginkit -a <appex>` with polling to confirm registration.
+/// Expects [`emit_au_v3_bundle`] to have been called first. Batched
+/// into three phases so the daemon-restart + cache-bust sequence
+/// happens once per install instead of once per plugin:
+///
+/// 1. **Per plugin** — pre-clean stale `pluginkit` state, `sudo ditto`
+///    the bundle into `/Applications/`, and `lsregister -f -R`.
+/// 2. **Once for the batch** — `killall pkd` +
+///    `killall AudioComponentRegistrar`, clear the AU cache, wait 2s
+///    for `pkd` to respawn. Previously this ran per-plugin, wasting
+///    `(N-1) × 2s` plus the daemon-respawn cost.
+/// 3. **Per plugin** — `pluginkit -a` + poll-until-registered, then
+///    print `Installed:`.
 fn install_au_v3(root: &Path, config: &Config, plugins: &[&PluginDef]) -> Res {
+    // ---- Phase 1: copy bundles + lsregister per plugin ----
+    #[derive(Clone)]
+    struct Staged {
+        app_dir: String,
+        appex_id: String,
+    }
+    let mut staged: Vec<Staged> = Vec::with_capacity(plugins.len());
+
     for p in plugins {
         let app_name = p.au3_app_name();
         let final_app = root.join("target/bundles").join(format!("{app_name}.app"));
@@ -446,34 +477,43 @@ fn install_au_v3(root: &Path, config: &Config, plugins: &[&PluginDef]) -> Res {
         let _ = run_sudo("rm", &["-rf", &app_dir]);
 
         // Install to /Applications/. `ditto` preserves the existing
-        // signature since we signed the bundle at build time; `cp -R`
-        // would also work but `ditto` is the macOS idiom for signed
-        // bundle moves.
+        // signature since we signed the bundle at build time.
         run_sudo("ditto", &[final_app.to_str().unwrap(), &app_dir])?;
 
-        // Cache bust: hosts read AudioComponent metadata from
-        // `~/Library/Caches/AudioUnitCache/` which is populated by
-        // `AudioComponentRegistrar`. Killing both daemons + clearing
-        // the cache forces a clean re-scan on the next host launch.
+        // lsregister updates the LaunchServices DB; it doesn't need
+        // `pkd` alive, so it can run in the per-plugin phase.
         let _ = Command::new("/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister")
             .args(["-f", "-R", &app_dir]).output();
-        let _ = run_sudo("killall", &["-9", "pkd"]);
-        let _ = run_sudo("killall", &["-9", "AudioComponentRegistrar"]);
-        let home = dirs::home_dir().unwrap();
-        let _ = fs::remove_dir_all(home.join("Library/Caches/AudioUnitCache"));
-        std::thread::sleep(std::time::Duration::from_secs(2));
 
-        let appex_path = format!("{app_dir}/Contents/PlugIns/AUExt.appex");
-        if !register_appex(&appex_path, &appex_id) {
+        staged.push(Staged { app_dir, appex_id });
+    }
+
+    // ---- Phase 2: daemon restart + cache bust, once ----
+    // Hosts read AudioComponent metadata from
+    // `~/Library/Caches/AudioUnitCache/` which is populated by
+    // `AudioComponentRegistrar`. Killing both daemons + clearing the
+    // cache forces a clean re-scan on the next host launch. The 2s
+    // sleep gives `pkd` time to respawn before we call `pluginkit -a`
+    // (which silently no-ops if `pkd` is mid-respawn).
+    run_sudo_silent("killall", &["-9", "pkd"]);
+    run_sudo_silent("killall", &["-9", "AudioComponentRegistrar"]);
+    let home = dirs::home_dir().unwrap();
+    let _ = fs::remove_dir_all(home.join("Library/Caches/AudioUnitCache"));
+    std::thread::sleep(std::time::Duration::from_secs(2));
+
+    // ---- Phase 3: register + verify per plugin ----
+    for s in &staged {
+        let appex_path = format!("{}/Contents/PlugIns/AUExt.appex", s.app_dir);
+        if !register_appex(&appex_path, &s.appex_id) {
             eprintln!(
-                "  WARNING: pluginkit did not register {appex_id}. \
-                 Run `pluginkit -a \"{appex_path}\"` manually after \
-                 `pkd` has settled."
+                "  WARNING: pluginkit did not register {}. \
+                 Run `pluginkit -a \"{}\"` manually after `pkd` has settled.",
+                s.appex_id, appex_path
             );
         }
-
-        eprintln!("  Installed: {app_dir}");
+        eprintln!("  Installed: {}", s.app_dir);
     }
+
     Ok(())
 }
 

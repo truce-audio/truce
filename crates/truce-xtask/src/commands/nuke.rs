@@ -1,6 +1,6 @@
 //! `cargo truce nuke` — nuclear reset for stale AU v3 appex cache.
 
-use crate::{dirs, load_config, run_sudo, tmp_dir, PluginDef, Res};
+use crate::{dirs, load_config, run_sudo, run_sudo_silent, tmp_dir, PluginDef, Res};
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -61,8 +61,8 @@ pub(crate) fn cmd_nuke(args: &[String]) -> Res {
 
     // 2. Kill daemons
     eprintln!("Killing audio daemons...");
-    let _ = run_sudo("killall", &["-9", "pkd"]);
-    let _ = run_sudo("killall", &["-9", "AudioComponentRegistrar"]);
+    run_sudo_silent("killall", &["-9", "pkd"]);
+    run_sudo_silent("killall", &["-9", "AudioComponentRegistrar"]);
 
     // 4. Clear all caches
     eprintln!("Clearing all caches...");

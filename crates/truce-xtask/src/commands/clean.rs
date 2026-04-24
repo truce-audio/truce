@@ -1,6 +1,6 @@
 //! `cargo truce clean` — clear AU/DAW caches and restart audio daemons.
 
-use crate::{confirm_prompt, dirs, load_config, run_sudo, tmp_dir, Res};
+use crate::{confirm_prompt, dirs, load_config, run_sudo_silent, tmp_dir, Res};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -132,8 +132,8 @@ pub(crate) fn cmd_clean(args: &[String]) -> Res {
 
     // Kill daemons to drop in-memory caches
     eprintln!("Restarting audio daemons...");
-    let _ = run_sudo("killall", &["-9", "AudioComponentRegistrar"]);
-    let _ = run_sudo("killall", &["-9", "pkd"]);
+    run_sudo_silent("killall", &["-9", "AudioComponentRegistrar"]);
+    run_sudo_silent("killall", &["-9", "pkd"]);
 
     eprintln!("Done. Restart your DAW to rescan.");
     Ok(())

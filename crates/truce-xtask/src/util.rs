@@ -181,6 +181,20 @@ pub(crate) fn run_sudo(cmd: &str, args: &[&str]) -> crate::Res {
     Ok(())
 }
 
+/// Sudo variant that swallows stdout + stderr. Intended for
+/// fire-and-forget cleanup like `killall -9 pkd` where non-zero
+/// exit ("No matching processes were found") is expected noise
+/// on clean systems and shouldn't clutter the install log.
+pub(crate) fn run_sudo_silent(cmd: &str, args: &[&str]) {
+    use std::process::Stdio;
+    let _ = Command::new("sudo")
+        .arg(cmd)
+        .args(args)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+}
+
 pub(crate) fn run_quiet(cmd: &str, args: &[&str]) -> std::result::Result<String, BoxErr> {
     let output = Command::new(cmd).args(args).output()?;
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
