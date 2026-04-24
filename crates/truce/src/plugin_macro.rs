@@ -107,7 +107,7 @@ macro_rules! __plugin_impl {
 #[macro_export]
 macro_rules! __plugin_dev {
     ($params:ty, [$($layout:expr),*]) => {
-        struct __HotShellWrapper {
+        pub struct __HotShellWrapper {
             inner: $crate::__reexport::HotShell<$params>,
         }
 

@@ -196,7 +196,7 @@ macro_rules! export_static {
         bus_layouts: [$($layout:expr),* $(,)?],
         logic: $logic:ty,
     ) => {
-        struct __HotShellWrapper {
+        pub struct __HotShellWrapper {
             inner: $crate::static_shell::StaticShell<$params, $logic>,
         }
 

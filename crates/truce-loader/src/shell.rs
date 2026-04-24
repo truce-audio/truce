@@ -403,7 +403,7 @@ macro_rules! export_hot {
         bus_layouts: [$($layout:expr),* $(,)?],
         logic_dylib: $dylib_name:expr,
     ) => {
-        struct __HotShellWrapper {
+        pub struct __HotShellWrapper {
             inner: $crate::shell::HotShell<$params>,
         }
 

@@ -1,361 +1,297 @@
-//! Windowed standalone host using minifb + tiny-skia GUI.
+//! Windowed standalone host.
+//!
+//! Opens an outer parentless baseview window and hosts the plugin's
+//! own editor (obtained via `plugin.editor()`) as a child of it —
+//! same contract CLAP / VST3 / AU follow. The plugin library is
+//! unchanged; standalone is a "host" like any other.
+//!
+//! The outer window captures keyboard input so QWERTY keystrokes
+//! can be translated into MIDI note events and `SPACE` / `S` /
+//! `Z` / `X` hotkeys drive transport / state / octave-shift.
 
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use minifb::{Key, MouseButton, MouseMode, Window, WindowOptions};
+use baseview::{
+    Event, EventStatus, Window, WindowHandler, WindowOpenOptions, WindowScalePolicy,
+};
+use keyboard_types::{Code, KeyState, Modifiers};
+use raw_window_handle::{HasRawWindowHandle, RawWindowHandle as RwhHandle};
 
-use truce_core::buffer::AudioBuffer;
-use truce_core::events::{Event, EventBody, EventList, TransportInfo};
+use truce_core::editor::{Editor, EditorContext, RawWindowHandle};
+use truce_core::events::EventBody;
 use truce_core::export::PluginExport;
 use truce_core::info::PluginCategory;
-use truce_core::process::ProcessContext;
-use truce_gui::interaction::InteractionState;
-use truce_gui::layout::PluginLayout;
-use truce_gui::BuiltinEditor;
 use truce_params::Params;
 
+use crate::audio::{self, MidiEvent};
+use crate::cli::Options;
 use crate::keyboard;
+use crate::midi::MidiInputThread;
+use crate::transport::Transport;
 
-struct MidiEvent {
-    body: EventBody,
-}
-
-/// Run the plugin standalone with a GUI window.
-pub fn run_windowed<P: PluginExport>(layout: PluginLayout)
+/// Run the plugin with a window. Blocks until the window closes.
+pub fn run<P: PluginExport>(opts: &Options)
 where
     P::Params: 'static,
 {
-    let audio_host = cpal::default_host();
-    let output_device = audio_host
-        .default_output_device()
-        .expect("No audio output device found");
-    let config = output_device.default_output_config().unwrap();
-    let sample_rate = config.sample_rate().0 as f64;
-    let channels = config.channels() as usize;
-
-    let is_effect = P::info().category == PluginCategory::Effect;
-
-    println!("=== truce Standalone (windowed) ===");
+    println!("=== truce standalone ===");
+    println!("Plugin: {}", P::info().name);
     println!(
-        "Plugin: {} ({})",
-        P::info().name,
-        if is_effect { "effect" } else { "instrument" }
+        "Category: {}",
+        match P::info().category {
+            PluginCategory::Effect => "effect",
+            PluginCategory::Instrument => "instrument",
+            PluginCategory::NoteEffect => "midi effect",
+            PluginCategory::Analyzer => "analyzer",
+            PluginCategory::Tool => "tool",
+        }
     );
-    println!(
-        "Audio:  {} @ {} Hz, {} ch",
-        output_device.name().unwrap_or_default(),
-        sample_rate,
-        channels
-    );
-    if is_effect {
-        println!("Input:  system default (for effect processing)");
-    }
-    println!();
 
-    let pending_events: Arc<Mutex<Vec<MidiEvent>>> = Arc::new(Mutex::new(Vec::new()));
-    let plugin = Arc::new(Mutex::new({
-        let mut p = P::create();
-        p.init();
-        p.reset(sample_rate, 512);
-        p.params().set_sample_rate(sample_rate);
-        p.params().snap_smoothers();
-        p
-    }));
+    let audio_handles = audio::start_audio::<P>(opts);
 
-    let params_for_gui: Arc<P::Params> = {
-        let p = plugin.lock().unwrap();
-        p.params_arc()
-    };
-
-    // Input capture for effects: ring buffer shared between input and output callbacks
-    let input_ring: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(Vec::new()));
-
-    // Start input stream for effects
-    let _input_stream = if is_effect {
-        let input_device = audio_host.default_input_device();
-        if let Some(input_device) = input_device {
-            println!("Input device: {}", input_device.name().unwrap_or_default());
-            let input_config = cpal::StreamConfig {
-                channels: channels as u16,
-                sample_rate: cpal::SampleRate(sample_rate as u32),
-                buffer_size: cpal::BufferSize::Default,
-            };
-            let ring = Arc::clone(&input_ring);
-            let stream = input_device
-                .build_input_stream(
-                    &input_config,
-                    move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                        if let Ok(mut buf) = ring.lock() {
-                            // Keep a bounded buffer (~100ms)
-                            let max_size = (sample_rate as usize) * channels / 10;
-                            buf.extend_from_slice(data);
-                            if buf.len() > max_size {
-                                let drain = buf.len() - max_size;
-                                buf.drain(..drain);
-                            }
-                        }
-                    },
-                    |err| eprintln!("Input error: {err}"),
-                    None,
-                )
-                .ok();
-            if let Some(ref s) = stream {
-                s.play().ok();
-            }
-            stream
-        } else {
-            println!("Warning: No input device found. Effect will process silence.");
-            None
-        }
-    } else {
-        None
-    };
-
-    // GUI setup
-    let w = layout.width as usize;
-    let h = layout.height as usize;
-
-    let mut window = Window::new(
-        &format!("{} — Standalone", P::info().name),
-        w,
-        h,
-        WindowOptions {
-            resize: false,
-            ..WindowOptions::default()
-        },
-    )
-    .expect("Failed to create window");
-
-    window.set_target_fps(60);
-
-    let mut editor = BuiltinEditor::new(params_for_gui.clone(), layout.clone());
-    let mut interaction = InteractionState::new();
-    interaction.build_regions(&layout);
-    let mut pixel_buf = vec![0u32; w * h];
-    let mut octave_offset: i8 = 0;
-    let mut prev_keys: Vec<Key> = Vec::new();
-
-    let plugin_audio = Arc::clone(&plugin);
-    let events_audio = Arc::clone(&pending_events);
-    let ring_audio = Arc::clone(&input_ring);
-    let stream = match config.sample_format() {
-        cpal::SampleFormat::F32 => {
-            let config: cpal::StreamConfig = config.into();
-            output_device
-                .build_output_stream(
-                    &config,
-                    move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                        audio_callback::<P>(
-                            data,
-                            channels,
-                            sample_rate,
-                            is_effect,
-                            &plugin_audio,
-                            &events_audio,
-                            &ring_audio,
-                        );
-                    },
-                    |err| eprintln!("Audio error: {err}"),
-                    None,
-                )
-                .expect("Failed to build audio stream")
-        }
-        format => panic!("Unsupported sample format: {format:?}"),
-    };
-    stream.play().expect("Failed to start audio stream");
-
-    println!("Window open. Close window or press Esc to quit.");
-
-    while window.is_open() && !window.is_key_down(Key::Escape) {
-        // --- Keyboard → MIDI ---
-        let current_keys: Vec<Key> = window.get_keys();
-
-        if window.is_key_pressed(Key::Z, minifb::KeyRepeat::No) {
-            octave_offset = (octave_offset - 1).clamp(-3, 3);
-        }
-        if window.is_key_pressed(Key::X, minifb::KeyRepeat::No) {
-            octave_offset = (octave_offset + 1).clamp(-3, 3);
-        }
-
-        for key in &current_keys {
-            if !prev_keys.contains(key) {
-                if let Some(note) = minifb_key_to_midi(*key, octave_offset) {
-                    if let Ok(mut events) = pending_events.lock() {
-                        events.push(MidiEvent {
-                            body: EventBody::NoteOn {
-                                channel: 0,
-                                note,
-                                velocity: 0.8,
-                            },
-                        });
-                    }
+    // --state <path>: restore plugin state before opening the editor
+    // so the editor reflects the loaded values on first paint.
+    if let Some(path) = opts.state_path.as_ref() {
+        match std::fs::read(path) {
+            Ok(bytes) => {
+                if let Ok(mut p) = audio_handles.plugin.lock() {
+                    p.load_state(&bytes);
+                    eprintln!("[truce-standalone] loaded state from {}", path.display());
                 }
             }
+            Err(e) => eprintln!(
+                "[truce-standalone] failed to read state {}: {e}",
+                path.display()
+            ),
         }
-
-        for key in &prev_keys {
-            if !current_keys.contains(key) {
-                if let Some(note) = minifb_key_to_midi(*key, octave_offset) {
-                    if let Ok(mut events) = pending_events.lock() {
-                        events.push(MidiEvent {
-                            body: EventBody::NoteOff {
-                                channel: 0,
-                                note,
-                                velocity: 0.0,
-                            },
-                        });
-                    }
-                }
-            }
-        }
-        prev_keys = current_keys;
-
-        // --- Mouse → Knob interaction ---
-        if let Some((mx, my)) = window.get_mouse_pos(MouseMode::Clamp) {
-            if window.get_mouse_down(MouseButton::Left) {
-                if interaction.dragging.is_none() {
-                    if let Some(param_id) = interaction.hit_test(mx, my) {
-                        if let Ok(plugin) = plugin.lock() {
-                            let norm = plugin.params().get_normalized(param_id).unwrap_or(0.0);
-                            interaction.begin_drag(param_id, norm, my);
-                        }
-                    }
-                }
-                if let Some((param_id, new_norm)) = interaction.update_drag(my) {
-                    if let Ok(plugin) = plugin.lock() {
-                        plugin.params().set_normalized(param_id, new_norm);
-                    }
-                }
-            } else {
-                interaction.end_drag();
-            }
-        }
-
-        // Params are shared via Arc — GUI reads the same atomics as DSP.
-        // No manual sync needed.
-
-        // --- Render GUI ---
-        let pixmap = editor.render();
-        let data = pixmap.data();
-        for i in 0..w * h {
-            let r = data[i * 4] as u32;
-            let g = data[i * 4 + 1] as u32;
-            let b = data[i * 4 + 2] as u32;
-            let a = data[i * 4 + 3] as u32;
-            pixel_buf[i] = (a << 24) | (r << 16) | (g << 8) | b;
-        }
-
-        window
-            .update_with_buffer(&pixel_buf, w, h)
-            .expect("Failed to update window");
     }
 
+    let midi_thread = MidiInputThread::start(opts, Arc::clone(&audio_handles.pending));
+
+    let editor: Option<Box<dyn Editor>> = {
+        let mut plugin = audio_handles.plugin.lock().unwrap();
+        plugin.editor()
+    };
+    let mut editor = match editor {
+        Some(e) => e,
+        None => {
+            eprintln!("Plugin returned no editor — falling back to headless mode.");
+            drop(audio_handles);
+            crate::headless::run::<P>(opts);
+            return;
+        }
+    };
+    let (lw, lh) = editor.size();
+
+    let window_opts = WindowOpenOptions {
+        title: format!("{} — standalone", P::info().name),
+        size: baseview::Size::new(lw as f64, lh as f64),
+        scale: WindowScalePolicy::SystemScaleFactor,
+    };
+
+    let plugin = Arc::clone(&audio_handles.plugin);
+    let pending = Arc::clone(&audio_handles.pending);
+    let transport = audio_handles.transport.clone();
+
+    Window::open_blocking(window_opts, move |window| {
+        let truce_parent = match window.raw_window_handle() {
+            RwhHandle::AppKit(h) => RawWindowHandle::AppKit(h.ns_view),
+            RwhHandle::Win32(h) => RawWindowHandle::Win32(h.hwnd),
+            RwhHandle::Xlib(h) => RawWindowHandle::X11(h.window),
+            _ => panic!("unsupported raw-window-handle variant"),
+        };
+
+        let ctx = synthesize_editor_context::<P>(&plugin, &transport);
+        editor.open(truce_parent, ctx);
+
+        StandaloneHandler {
+            _editor: editor,
+            plugin,
+            pending,
+            transport,
+            octave_offset: 0,
+            _midi_thread: midi_thread,
+        }
+    });
+
+    drop(audio_handles);
     println!("Goodbye!");
 }
 
-fn minifb_key_to_midi(key: Key, octave_offset: i8) -> Option<u8> {
-    use crossterm::event::KeyCode;
-    let code = match key {
-        Key::A => KeyCode::Char('a'),
-        Key::S => KeyCode::Char('s'),
-        Key::D => KeyCode::Char('d'),
-        Key::F => KeyCode::Char('f'),
-        Key::G => KeyCode::Char('g'),
-        Key::H => KeyCode::Char('h'),
-        Key::J => KeyCode::Char('j'),
-        Key::K => KeyCode::Char('k'),
-        Key::L => KeyCode::Char('l'),
-        Key::Semicolon => KeyCode::Char(';'),
-        Key::W => KeyCode::Char('w'),
-        Key::E => KeyCode::Char('e'),
-        Key::T => KeyCode::Char('t'),
-        Key::Y => KeyCode::Char('y'),
-        Key::U => KeyCode::Char('u'),
-        Key::O => KeyCode::Char('o'),
-        Key::P => KeyCode::Char('p'),
-        _ => return None,
-    };
-    keyboard::key_to_midi_note(code, octave_offset)
+struct StandaloneHandler<P: PluginExport + 'static>
+where
+    P::Params: 'static,
+{
+    _editor: Box<dyn Editor>,
+    plugin: Arc<Mutex<P>>,
+    pending: Arc<Mutex<Vec<MidiEvent>>>,
+    transport: Transport,
+    octave_offset: i8,
+    /// Keeps the MIDI hot-plug thread alive for the lifetime of the
+    /// window; dropped when the window closes.
+    _midi_thread: Option<MidiInputThread>,
 }
 
-fn audio_callback<P: PluginExport>(
-    data: &mut [f32],
-    channels: usize,
-    sample_rate: f64,
-    is_effect: bool,
+impl<P: PluginExport + 'static> WindowHandler for StandaloneHandler<P>
+where
+    P::Params: 'static,
+{
+    fn on_frame(&mut self, _window: &mut Window) {
+        // Editor drives its own frame loop inside its child window.
+    }
+
+    fn on_event(&mut self, _window: &mut Window, event: Event) -> EventStatus {
+        match event {
+            Event::Keyboard(kb) => self.handle_keyboard(kb),
+            _ => EventStatus::Ignored,
+        }
+    }
+}
+
+impl<P: PluginExport + 'static> StandaloneHandler<P>
+where
+    P::Params: 'static,
+{
+    fn handle_keyboard(&mut self, kb: keyboard_types::KeyboardEvent) -> EventStatus {
+        // Ctrl-S / Cmd-S → save state
+        if kb.state == KeyState::Down && kb.code == Code::KeyS && is_mod_pressed(&kb.modifiers) {
+            self.save_state_to_default_path();
+            return EventStatus::Captured;
+        }
+
+        // SPACE → transport play/stop (on keydown only; ignore repeats).
+        if kb.state == KeyState::Down && kb.code == Code::Space {
+            self.transport.toggle_playing();
+            eprintln!(
+                "[truce-standalone] transport: {}",
+                if self.transport.is_playing() { "playing" } else { "stopped" }
+            );
+            return EventStatus::Captured;
+        }
+
+        if kb.state == KeyState::Down {
+            if let Some(shift) = keyboard::code_to_octave_shift(kb.code) {
+                self.octave_offset = (self.octave_offset + shift).clamp(-3, 3);
+                return EventStatus::Captured;
+            }
+        }
+
+        if let Some(note) = keyboard::code_to_midi_note(kb.code, self.octave_offset) {
+            let body = match kb.state {
+                KeyState::Down => EventBody::NoteOn {
+                    channel: 0,
+                    note,
+                    velocity: 0.8,
+                },
+                KeyState::Up => EventBody::NoteOff {
+                    channel: 0,
+                    note,
+                    velocity: 0.0,
+                },
+            };
+            if let Ok(mut events) = self.pending.lock() {
+                events.push(MidiEvent { body });
+            }
+            return EventStatus::Captured;
+        }
+        EventStatus::Ignored
+    }
+
+    fn save_state_to_default_path(&self) {
+        let Ok(plugin) = self.plugin.lock() else { return };
+        let Some(bytes) = plugin.save_state() else {
+            eprintln!("[truce-standalone] plugin has no state to save");
+            return;
+        };
+        let Some(dir) = dirs::data_local_dir() else {
+            eprintln!("[truce-standalone] could not resolve local data dir");
+            return;
+        };
+        let plugin_slug = P::info()
+            .name
+            .to_lowercase()
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+            .collect::<String>();
+        let dir = dir.join("truce").join(&plugin_slug);
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            eprintln!("[truce-standalone] mkdir {}: {e}", dir.display());
+            return;
+        }
+        let ts = Instant::now().elapsed().as_secs();
+        let path = dir.join(format!("quicksave-{ts}.state"));
+        match std::fs::write(&path, &bytes) {
+            Ok(()) => eprintln!("[truce-standalone] state saved: {}", path.display()),
+            Err(e) => eprintln!("[truce-standalone] write {}: {e}", path.display()),
+        }
+    }
+}
+
+/// macOS uses Cmd (`meta`); Linux/Windows use Ctrl.
+fn is_mod_pressed(mods: &Modifiers) -> bool {
+    #[cfg(target_os = "macos")]
+    return mods.contains(Modifiers::META);
+    #[cfg(not(target_os = "macos"))]
+    return mods.contains(Modifiers::CONTROL);
+}
+
+/// Build a minimal `EditorContext` that routes parameter reads /
+/// writes / meter reads through the live plugin instance. Transport
+/// closure reads from the shared `Transport` the audio thread writes.
+fn synthesize_editor_context<P: PluginExport>(
     plugin: &Arc<Mutex<P>>,
-    pending: &Arc<Mutex<Vec<MidiEvent>>>,
-    input_ring: &Arc<Mutex<Vec<f32>>>,
-) {
-    let num_frames = data.len() / channels;
+    transport: &Transport,
+) -> EditorContext
+where
+    P::Params: 'static,
+{
+    let params: Arc<P::Params> = plugin.lock().unwrap().params_arc();
+    let transport_read = transport.clone();
 
-    let mut event_list = EventList::new();
-    if let Ok(mut events) = pending.try_lock() {
-        for ev in events.drain(..) {
-            event_list.push(Event {
-                sample_offset: 0,
-                body: ev.body,
-            });
-        }
-    }
+    let params_read = Arc::clone(&params);
+    let params_write = Arc::clone(&params);
+    let params_plain = Arc::clone(&params);
+    let params_format = Arc::clone(&params);
+    let plugin_meter = Arc::clone(plugin);
+    let plugin_save = Arc::clone(plugin);
+    let plugin_load = Arc::clone(plugin);
 
-    let Ok(mut plugin) = plugin.try_lock() else {
-        data.fill(0.0);
-        return;
-    };
-
-    // Build deinterleaved channel buffers
-    let mut channel_bufs: Vec<Vec<f32>> = (0..channels).map(|_| vec![0.0f32; num_frames]).collect();
-
-    // For effects: fill output buffers with captured input (pass-through)
-    if is_effect {
-        if let Ok(mut ring) = input_ring.try_lock() {
-            let needed = num_frames * channels;
-            let available = ring.len().min(needed);
-            // Deinterleave captured input into channel buffers
-            for i in 0..available / channels {
-                for ch in 0..channels {
-                    if i < num_frames {
-                        channel_bufs[ch][i] = ring[i * channels + ch];
-                    }
-                }
+    EditorContext {
+        begin_edit: Arc::new(|_id| {}),
+        set_param: Arc::new(move |id, norm| {
+            params_write.set_normalized(id, norm);
+        }),
+        end_edit: Arc::new(|_id| {}),
+        request_resize: Arc::new(|_w, _h| false),
+        get_param: Arc::new(move |id| {
+            params_read.get_normalized(id).unwrap_or(0.0) as f64
+        }),
+        get_param_plain: Arc::new(move |id| {
+            params_plain.get_plain(id).unwrap_or(0.0) as f64
+        }),
+        format_param: Arc::new(move |id| {
+            let value = params_format.get_plain(id).unwrap_or(0.0);
+            params_format.format_value(id, value).unwrap_or_default()
+        }),
+        get_meter: Arc::new(move |id| {
+            plugin_meter
+                .try_lock()
+                .map(|p| p.get_meter(id))
+                .unwrap_or(0.0)
+        }),
+        get_state: Arc::new(move || {
+            plugin_save
+                .try_lock()
+                .ok()
+                .and_then(|p| p.save_state())
+                .unwrap_or_default()
+        }),
+        set_state: Arc::new(move |bytes| {
+            if let Ok(mut p) = plugin_load.try_lock() {
+                p.load_state(&bytes);
             }
-            // Consume used samples
-            if available > 0 {
-                ring.drain(..available);
-            }
-        }
-    }
-
-    // For effects: use separate input buffers (already filled from ring).
-    // For instruments: no input buffers.
-    let input_bufs: Vec<Vec<f32>> = if is_effect {
-        channel_bufs.clone()
-    } else {
-        Vec::new()
-    };
-
-    let input_slices: Vec<&[f32]> = input_bufs.iter().map(|buf| buf.as_slice()).collect();
-    let mut output_slices: Vec<&mut [f32]> = channel_bufs
-        .iter_mut()
-        .map(|buf| buf.as_mut_slice())
-        .collect();
-
-    let mut audio_buffer =
-        unsafe { AudioBuffer::from_slices(&input_slices, &mut output_slices, num_frames) };
-
-    let transport = TransportInfo::default();
-    let mut output_events = EventList::new();
-    let mut context = ProcessContext::new(&transport, sample_rate, num_frames, &mut output_events);
-
-    plugin.process(&mut audio_buffer, &event_list, &mut context);
-
-    // Interleave output back to cpal buffer
-    for frame in 0..num_frames {
-        for ch in 0..channels {
-            let ch_idx = ch.min(channel_bufs.len() - 1);
-            data[frame * channels + ch] = channel_bufs[ch_idx][frame];
-        }
+        }),
+        transport: Arc::new(move || Some(transport_read.snapshot())),
     }
 }
