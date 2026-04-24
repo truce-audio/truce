@@ -703,9 +703,10 @@ pub unsafe fn _editor_create<P: PluginExport>(
     inst.editor = inst.plugin.editor();
     let info = match &inst.editor {
         Some(editor) => {
-            // AAX handles DPI through its own CgBlit path (see
-            // docs/internal/aax-editor-approaches.md); the framework
-            // should not pre-scale logical sizes here.
+            // Report logical size; the patched baseview CGLayer path
+            // applies the host scale factor internally when it
+            // configures the wgpu surface (same contract as CLAP /
+            // VST3 / AU on macOS).
             let (w, h) = editor.size();
             TruceAaxEditorInfo {
                 has_editor: 1,
@@ -816,8 +817,8 @@ pub unsafe fn _editor_get_size<P: PluginExport>(
     let inst = &*(ctx as *mut AaxInstance<P>);
     match &inst.editor {
         Some(editor) => {
-            // Logical size; AAX handles HiDPI via its own rendering
-            // path (CgBlit), not via pre-multiplied dimensions.
+            // Logical size. The patched baseview CGLayer path handles
+            // HiDPI internally — same contract as CLAP / VST3 / AU.
             let (ew, eh) = editor.size();
             *w = ew;
             *h = eh;
