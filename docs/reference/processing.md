@@ -135,9 +135,10 @@ if t.playing {
 }
 ```
 
-Not every host fills every field every block. The `examples/tremolo`
-example shows the robust pattern: fall back to a free-running
-internal clock at 120 BPM when the host doesn't provide transport.
+Not every host fills every field every block. The
+`examples/truce-example-tremolo` example shows the robust pattern:
+fall back to a free-running internal clock at 120 BPM when the
+host doesn't provide transport.
 
 ## Meters (DSP → UI)
 
@@ -181,8 +182,8 @@ A polyphonic synth is a combination of the patterns above:
 - **`ProcessStatus::Tail(0)`** when all voices are done so the host
   can idle.
 
-The full `examples/synth/` plugin (in the repo) is roughly this
-shape:
+The full `examples/truce-example-synth/` plugin (in the repo) is
+roughly this shape:
 
 ```rust
 impl PluginLogic for Synth {
@@ -256,5 +257,5 @@ truce::plugin! {
   the UI.
 - **[Chapter 7 → hot-reload.md](hot-reload.md)** — keep your DAW
   open while you iterate on this code.
-- **`examples/tremolo`** in the repo — host transport + egui UI in
-  a small, real plugin.
+- **`examples/truce-example-tremolo`** in the repo — host transport
+  + egui UI in a small, real plugin.

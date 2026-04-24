@@ -294,6 +294,8 @@ Full story in [chapter 7 → hot-reload.md](hot-reload.md).
   egui/iced/Slint → [chapter 6 → gui.md](gui.md).
 - **Shipping to users** — signed `.pkg` / `.exe` installers →
   [chapter 8 → shipping.md](shipping.md).
-- **Real examples** — `examples/gain`, `examples/eq`,
-  `examples/synth`, `examples/transpose`, `examples/arpeggio`,
-  `examples/tremolo` in the repo.
+- **Real examples** — `examples/truce-example-gain`,
+  `examples/truce-example-eq`, `examples/truce-example-synth`,
+  `examples/truce-example-transpose`,
+  `examples/truce-example-arpeggio`,
+  `examples/truce-example-tremolo` in the repo.

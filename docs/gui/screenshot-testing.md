@@ -23,8 +23,8 @@ correct on GitHub and in image viewers.
 ```rust
 #[test]
 fn gui_snapshot() {
-    let params = std::sync::Arc::new(MyParams::new());
-    let plugin = MyPlugin::new(std::sync::Arc::clone(&params));
+    let params = Arc::new(MyParams::new());
+    let plugin = MyPlugin::new(Arc::clone(&params));
     let layout = plugin.layout();
     truce_test::assert_gui_snapshot_grid::<MyParams>(
         "my_plugin_default", params, layout, 0,

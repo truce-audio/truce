@@ -234,5 +234,5 @@ See [screenshot testing](screenshot-testing.md) for more.
 
 ## Example
 
-`examples/gain-egui/` — complete plugin with knobs, XY pad, meter,
+`examples/truce-example-gain-egui/` — complete plugin with knobs, XY pad, meter,
 header, custom font, and screenshot test.
