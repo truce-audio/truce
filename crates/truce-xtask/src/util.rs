@@ -333,15 +333,64 @@ pub(crate) fn pace_sign_aax_macos(bundle: &Path) -> crate::Res {
 /// Used by `doctor` to surface cross-compile readiness.
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(crate) fn rustup_has_target(triple: &str) -> bool {
-    let out = Command::new("rustup")
-        .args(["target", "list", "--installed"])
-        .output();
-    match out {
-        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout)
-            .lines()
-            .any(|l| l.trim() == triple),
-        _ => false,
+    installed_rustup_targets().map_or(false, |set| set.contains(triple))
+}
+
+/// Query `rustup target list --installed` once per process and cache
+/// the result. Returns `None` when rustup itself isn't on PATH —
+/// callers decide how to handle that (usually: surface a clear error
+/// before invoking cargo with `--target`).
+fn installed_rustup_targets() -> Option<&'static std::collections::HashSet<String>> {
+    use std::sync::OnceLock;
+    static CACHE: OnceLock<Option<std::collections::HashSet<String>>> = OnceLock::new();
+    CACHE
+        .get_or_init(|| {
+            let out = Command::new("rustup")
+                .args(["target", "list", "--installed"])
+                .output()
+                .ok()?;
+            if !out.status.success() {
+                return None;
+            }
+            Some(
+                String::from_utf8_lossy(&out.stdout)
+                    .lines()
+                    .map(|l| l.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect(),
+            )
+        })
+        .as_ref()
+}
+
+/// Ensure `rustup` has `triple` installed, adding it if missing. Errors
+/// with a clear message when rustup itself isn't on PATH (the common
+/// case is a Homebrew `cargo` shadowing rustup's shim; see the
+/// `build-install-split.md` doc for the recovery steps).
+pub(crate) fn ensure_rustup_target(triple: &str) -> crate::Res {
+    let installed = match installed_rustup_targets() {
+        Some(s) => s,
+        None => {
+            return Err(format!(
+                "rustup not available — can't verify target `{triple}` is installed. \
+                 Either `rustup` isn't on PATH, or `cargo` is resolving to a non-rustup \
+                 toolchain (e.g. Homebrew's). Install rustup from https://rustup.rs and \
+                 make sure `which cargo` points at `~/.cargo/bin/cargo`."
+            )
+            .into());
+        }
+    };
+    if installed.contains(triple) {
+        return Ok(());
     }
+    eprintln!("rustup: installing target {triple}...");
+    let status = Command::new("rustup")
+        .args(["target", "add", triple])
+        .status()?;
+    if !status.success() {
+        return Err(format!("`rustup target add {triple}` failed").into());
+    }
+    Ok(())
 }
 
 #[allow(unused_variables)]
@@ -350,6 +399,23 @@ pub(crate) fn cargo_build(
     extra_args: &[&str],
     deployment_target: &str,
 ) -> crate::Res {
+    // If the caller passed `--target <triple>`, make sure rustup has
+    // it installed before firing cargo. Catches the common "cross-arch
+    // build fails with E0463 can't find crate for core" failure mode.
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    {
+        let mut it = extra_args.iter();
+        while let Some(a) = it.next() {
+            if *a == "--target" {
+                if let Some(triple) = it.next() {
+                    ensure_rustup_target(triple)?;
+                }
+            } else if let Some(triple) = a.strip_prefix("--target=") {
+                ensure_rustup_target(triple)?;
+            }
+        }
+    }
+
     let mut cmd = Command::new("cargo");
     cmd.arg("build").arg("--release");
     #[cfg(target_os = "macos")]

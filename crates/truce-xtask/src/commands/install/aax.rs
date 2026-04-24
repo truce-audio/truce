@@ -35,6 +35,24 @@ pub(crate) fn build_aax_template(_root: &Path, sdk_path: &Path, universal_mac: b
     #[cfg(target_os = "windows")]
     let _ = universal_mac;
 
+    // Ensure the AAX SDK's static library is built with the right
+    // architecture coverage. Avid's SDK ships as source — the `.a` /
+    // `.lib` only exists after the developer has built it themselves,
+    // and on Apple Silicon the default build is arm64-only. Our
+    // template cmake falls through to building from source whenever
+    // the pre-built library is missing or single-arch, but running
+    // the SDK's own cmake up-front into a dedicated `build-truce/`
+    // tree gives us:
+    //   - A fat library in `{sdk}/build-truce/Libs/AAXLibrary/` that
+    //     `-DAAX_LIB_PATH` points our template at on subsequent runs.
+    //   - A stable cache that survives `target/tmp/` wipes.
+    //   - No `add_subdirectory()` pull of AAXLibrary into our
+    //     template's build tree on every reconfigure.
+    #[cfg(not(target_os = "windows"))]
+    let aax_lib_path = ensure_aax_sdk_library(sdk_path, universal_mac)?;
+    #[cfg(target_os = "windows")]
+    let aax_lib_path = ensure_aax_sdk_library(sdk_path)?;
+
     // Write embedded template files to a temp directory.
     //
     // Only the source tree is wiped — the sibling `build/` directory is
@@ -83,7 +101,8 @@ pub(crate) fn build_aax_template(_root: &Path, sdk_path: &Path, universal_mac: b
         configure
             .arg("-B")
             .arg(&build_dir)
-            .arg(format!("-DAAX_SDK_PATH={}", sdk_path.display()));
+            .arg(format!("-DAAX_SDK_PATH={}", sdk_path.display()))
+            .arg(format!("-DAAX_LIB_PATH={}", aax_lib_path.display()));
         if universal_mac {
             configure.arg("-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64");
         }
@@ -133,7 +152,7 @@ pub(crate) fn build_aax_template(_root: &Path, sdk_path: &Path, universal_mac: b
             "@echo off\r\n\
              call \"{vcvars}\" >nul || exit /b 1\r\n\
              set \"PATH={cmake_dir};{ninja_dir};%PATH%\"\r\n\
-             cmake -S \"{src}\" -B \"{build}\" -G Ninja -DCMAKE_BUILD_TYPE=Release \"-DAAX_SDK_PATH={sdk}\" || exit /b 1\r\n\
+             cmake -S \"{src}\" -B \"{build}\" -G Ninja -DCMAKE_BUILD_TYPE=Release \"-DAAX_SDK_PATH={sdk}\" \"-DAAX_LIB_PATH={lib}\" || exit /b 1\r\n\
              cmake --build \"{build}\" || exit /b 1\r\n",
             vcvars = vcvars.display(),
             cmake_dir = cmake_dir,
@@ -141,6 +160,7 @@ pub(crate) fn build_aax_template(_root: &Path, sdk_path: &Path, universal_mac: b
             src = to_fwd(&template_dir),
             build = to_fwd(&build_dir),
             sdk = to_fwd(sdk_path),
+            lib = to_fwd(&aax_lib_path),
         );
         fs_ctx::write(&bat_path, bat)?;
 
@@ -150,6 +170,149 @@ pub(crate) fn build_aax_template(_root: &Path, sdk_path: &Path, universal_mac: b
         }
     }
     Ok(())
+}
+
+/// Build / reuse `libAAXLibrary` under `{sdk}/build-truce/` and return
+/// the absolute path to the resulting static library.
+///
+/// The SDK ships as source and, on Apple Silicon, the developer's
+/// default cmake build produces an arm64-only `.a`. Universal
+/// packaging needs both arches. We maintain our own `build-truce/`
+/// tree next to whatever the developer built in `build-lib/` so we
+/// don't clobber their artifacts but can still guarantee the arch
+/// coverage we need. Incremental cmake makes subsequent runs a
+/// no-op once the library is warm.
+#[cfg(target_os = "macos")]
+fn ensure_aax_sdk_library(sdk_path: &Path, universal_mac: bool) -> Result<PathBuf, crate::BoxErr> {
+    let build_dir = sdk_path.join("build-truce");
+    let lib_path = build_dir.join("Libs/AAXLibrary/libAAXLibrary.a");
+
+    let required_archs: &[&str] = if universal_mac {
+        &["arm64", "x86_64"]
+    } else if cfg!(target_arch = "aarch64") {
+        &["arm64"]
+    } else {
+        &["x86_64"]
+    };
+
+    if lib_path.exists() && lipo_has_archs(&lib_path, required_archs) {
+        return Ok(lib_path);
+    }
+
+    // Stale single-arch cache from a previous non-universal run.
+    // cmake caches CMAKE_OSX_ARCHITECTURES in CMakeCache.txt and
+    // silently honors the old value unless we clean.
+    let _ = fs::remove_dir_all(&build_dir);
+
+    eprintln!(
+        "AAX: building SDK library ({}) at {}",
+        required_archs.join("+"),
+        lib_path.display()
+    );
+
+    let osx_arches = required_archs.join(";");
+    let status = Command::new("cmake")
+        .arg("-S")
+        .arg(sdk_path)
+        .arg("-B")
+        .arg(&build_dir)
+        .arg("-DCMAKE_BUILD_TYPE=Release")
+        .arg(format!("-DCMAKE_OSX_ARCHITECTURES={osx_arches}"))
+        .arg("-DAAX_BUILD_EXAMPLES=OFF")
+        .arg("-DAAX_BUILD_PTSL_EXAMPLES=OFF")
+        .arg("-DAAX_BUILD_JUCE_GUI_EXTENSION=OFF")
+        .status()?;
+    if !status.success() {
+        return Err("cmake configure failed for AAX SDK library".into());
+    }
+
+    let status = Command::new("cmake")
+        .arg("--build")
+        .arg(&build_dir)
+        .arg("--target")
+        .arg("AAXLibrary")
+        .status()?;
+    if !status.success() {
+        return Err("cmake build failed for AAX SDK library".into());
+    }
+
+    if !lib_path.exists() {
+        return Err(format!(
+            "cmake succeeded but libAAXLibrary.a is missing at {}",
+            lib_path.display()
+        )
+        .into());
+    }
+    if !lipo_has_archs(&lib_path, required_archs) {
+        return Err(format!(
+            "built libAAXLibrary.a at {} does not cover required archs {required_archs:?}",
+            lib_path.display()
+        )
+        .into());
+    }
+    Ok(lib_path)
+}
+
+/// Windows variant: single-arch, no lipo check.
+#[cfg(target_os = "windows")]
+fn ensure_aax_sdk_library(sdk_path: &Path) -> Result<PathBuf, crate::BoxErr> {
+    let build_dir = sdk_path.join("build-truce");
+    let lib_path = build_dir.join("Libs/AAXLibrary/AAXLibrary.lib");
+    if lib_path.exists() {
+        return Ok(lib_path);
+    }
+
+    eprintln!(
+        "AAX: building SDK library at {}",
+        lib_path.display()
+    );
+
+    let vcvars = locate_vcvars64()
+        .ok_or("could not locate vcvars64.bat — install VS 2022+ with the C++ workload")?;
+    let cmake = locate_cmake()
+        .ok_or("could not locate cmake.exe — install cmake or the VS \"C++ CMake tools\" component")?;
+    let ninja = locate_ninja()
+        .ok_or("could not locate ninja.exe — install ninja or the VS \"C++ CMake tools\" component")?;
+    let cmake_dir = cmake.parent().unwrap().display().to_string();
+    let ninja_dir = ninja.parent().unwrap().display().to_string();
+    let to_fwd = |p: &Path| p.display().to_string().replace('\\', "/");
+
+    let bat_path = tmp_dir().join("truce_aax_sdk_build.bat");
+    let bat = format!(
+        "@echo off\r\n\
+         call \"{vcvars}\" >nul || exit /b 1\r\n\
+         set \"PATH={cmake_dir};{ninja_dir};%PATH%\"\r\n\
+         cmake -S \"{src}\" -B \"{build}\" -G Ninja -DCMAKE_BUILD_TYPE=Release -DAAX_BUILD_EXAMPLES=OFF -DAAX_BUILD_PTSL_EXAMPLES=OFF -DAAX_BUILD_JUCE_GUI_EXTENSION=OFF || exit /b 1\r\n\
+         cmake --build \"{build}\" --target AAXLibrary || exit /b 1\r\n",
+        vcvars = vcvars.display(),
+        cmake_dir = cmake_dir,
+        ninja_dir = ninja_dir,
+        src = to_fwd(sdk_path),
+        build = to_fwd(&build_dir),
+    );
+    fs_ctx::write(&bat_path, bat)?;
+    let status = Command::new("cmd").arg("/c").arg(&bat_path).status()?;
+    if !status.success() {
+        return Err("AAX SDK cmake+ninja build failed".into());
+    }
+    if !lib_path.exists() {
+        return Err(format!(
+            "cmake succeeded but AAXLibrary.lib is missing at {}",
+            lib_path.display()
+        )
+        .into());
+    }
+    Ok(lib_path)
+}
+
+#[cfg(target_os = "macos")]
+fn lipo_has_archs(lib: &Path, required: &[&str]) -> bool {
+    let out = match Command::new("lipo").arg("-info").arg(lib).output() {
+        Ok(o) if o.status.success() => o.stdout,
+        _ => return false,
+    };
+    let text = String::from_utf8_lossy(&out);
+    required.iter().all(|a| text.contains(a))
 }
 
 /// Template binary path inside the cmake build directory.

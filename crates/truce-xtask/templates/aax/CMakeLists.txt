@@ -15,15 +15,46 @@ if(NOT DEFINED AAX_SDK_PATH)
 endif()
 
 # AAX library — use pre-built if available, otherwise build from source.
-# The SDK doesn't ship pre-built libs on any platform we've tested, so in
-# practice we always fall through to the add_subdirectory() path.
-if(APPLE)
-    set(AAX_LIB_PATH "${AAX_SDK_PATH}/build-lib/Libs/AAXLibrary/libAAXLibrary.a")
-else()
-    set(AAX_LIB_PATH "${AAX_SDK_PATH}/build-lib/Libs/AAXLibrary/AAXLibrary.lib")
+# `AAX_LIB_PATH` may be passed in via `-D` by truce-xtask (pointing at a
+# truce-managed build under `{sdk}/build-truce/`). If not provided, fall
+# back to the SDK's conventional `build-lib/` tree.
+if(NOT DEFINED AAX_LIB_PATH)
+    if(APPLE)
+        set(AAX_LIB_PATH "${AAX_SDK_PATH}/build-lib/Libs/AAXLibrary/libAAXLibrary.a")
+    else()
+        set(AAX_LIB_PATH "${AAX_SDK_PATH}/build-lib/Libs/AAXLibrary/AAXLibrary.lib")
+    endif()
 endif()
-if(NOT EXISTS "${AAX_LIB_PATH}")
-    message(STATUS "Pre-built AAX library not found, building from source...")
+
+# On macOS: if the pre-built library exists but doesn't carry every
+# architecture we were asked to build for (the SDK's default cmake on
+# Apple Silicon produces an arm64-only `.a`), ignore it and fall through
+# to the source build. Universal plug-ins then get a fat library picked
+# up automatically from CMAKE_OSX_ARCHITECTURES.
+set(AAX_LIB_USABLE FALSE)
+if(EXISTS "${AAX_LIB_PATH}")
+    set(AAX_LIB_USABLE TRUE)
+    if(APPLE AND CMAKE_OSX_ARCHITECTURES)
+        execute_process(
+            COMMAND lipo -info "${AAX_LIB_PATH}"
+            OUTPUT_VARIABLE _aax_lipo_out
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+        )
+        foreach(arch IN LISTS CMAKE_OSX_ARCHITECTURES)
+            if(NOT "${_aax_lipo_out}" MATCHES "${arch}")
+                message(STATUS
+                    "Pre-built AAX library is missing arch '${arch}'; "
+                    "building from source with CMAKE_OSX_ARCHITECTURES="
+                    "${CMAKE_OSX_ARCHITECTURES}.")
+                set(AAX_LIB_USABLE FALSE)
+                break()
+            endif()
+        endforeach()
+    endif()
+endif()
+
+if(NOT AAX_LIB_USABLE)
+    message(STATUS "Building AAX library from source...")
     # The AAX SDK's Libs/AAXLibrary/CMakeLists.txt expects an
     # AAX_SDK_Interface target (defined in the SDK's root CMakeLists.txt) to
     # propagate the Interfaces/ include dirs. We bypass the root CMakeLists
