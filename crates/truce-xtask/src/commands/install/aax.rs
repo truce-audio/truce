@@ -1,4 +1,20 @@
-//! AAX install: build the C++ template bundle and stage the Rust dylib.
+//! AAX build + install.
+//!
+//! Split into two phases:
+//!
+//! - [`build_aax_template`] compiles the embedded C++ template (shared
+//!   across plugins) via cmake. Output stays in `tmp_dir()` and is
+//!   cached across runs.
+//! - [`emit_aax_bundle`] assembles a complete, signed `.aaxplugin`
+//!   bundle in `target/bundles/{Plugin}.aaxplugin/` for one plugin.
+//!   Requires the Rust `_aax.dylib` to already be built (the outer
+//!   `cmd_build` / `cmd_install` loop handles that via the same
+//!   `--features aax` cargo invocation as every other per-format
+//!   build).
+//! - [`install_aax`] copies an existing `target/bundles/*.aaxplugin`
+//!   to the system AAX plug-ins directory.
+//!
+//! See `truce-docs/docs/internal/build-install-split.md`.
 
 #![allow(unused_imports)]
 
@@ -136,44 +152,37 @@ pub(crate) fn build_aax_template(_root: &Path, sdk_path: &Path, universal_mac: b
     Ok(())
 }
 
-// AAX is only supported on macOS and Windows. On Linux (including WSL builds
-// that happen to target Linux), short-circuit before referencing any
-// platform-specific helpers.
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
-pub(crate) fn install_aax(_root: &Path, p: &PluginDef, _config: &Config) -> Res {
-    eprintln!("AAX: not supported on this platform, skipping {}", p.name);
-    Ok(())
+/// Template binary path inside the cmake build directory.
+#[cfg(target_os = "macos")]
+fn template_binary() -> PathBuf {
+    tmp_dir().join("aax_template/build/TruceAAXTemplate.aaxplugin/Contents/MacOS/TruceAAXTemplate")
+}
+#[cfg(target_os = "windows")]
+fn template_binary() -> PathBuf {
+    // Ninja is single-config — target lands directly in the build dir.
+    // CMakeLists.txt sets SUFFIX=.aaxplugin, PREFIX="".
+    tmp_dir().join("aax_template/build/TruceAAXTemplate.aaxplugin")
 }
 
+/// Ensure the shared AAX cmake template has been built and return its
+/// path, or `Ok(None)` if the SDK isn't configured and no prior build
+/// exists (the caller treats this as "skip AAX").
+///
+/// `universal_mac` toggles `-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64`
+/// when building for macOS packaging; `false` for host-only dev /
+/// install, `true` for `cargo truce package --universal`.
 #[cfg(any(target_os = "macos", target_os = "windows"))]
-pub(crate) fn install_aax(root: &Path, p: &PluginDef, config: &Config) -> Res {
-    /// Template binary path inside the cmake build directory.
-    #[cfg(target_os = "macos")]
-    fn template_binary() -> PathBuf {
-        tmp_dir()
-            .join("aax_template/build/TruceAAXTemplate.aaxplugin/Contents/MacOS/TruceAAXTemplate")
-    }
-    #[cfg(target_os = "windows")]
-    fn template_binary() -> PathBuf {
-        // Ninja is single-config — target lands directly in the build dir.
-        // CMakeLists.txt sets SUFFIX=.aaxplugin, PREFIX="".
-        tmp_dir().join("aax_template/build/TruceAAXTemplate.aaxplugin")
-    }
-
+fn ensure_template(
+    root: &Path,
+    config: &Config,
+    universal_mac: bool,
+) -> Result<Option<PathBuf>, crate::BoxErr> {
     let template = template_binary();
-    // Always invoke `build_aax_template`: it rewrites embedded template
-    // sources (so a freshly-built `cargo-truce` with updated templates
-    // propagates into the C++ build) and cmake does an incremental
-    // rebuild — near-no-op when nothing changed. Previously this was
-    // gated on `!template.exists()`, which silently shipped stale C++
-    // whenever the Rust↔C++ ABI had shifted since the last install.
     if let Some(sdk_path) = resolve_aax_sdk_path(config) {
         if !template.exists() {
             eprintln!("AAX: building template with SDK at {}", sdk_path.display());
         }
-        // `install` only needs the host arch — universal template builds
-        // are reserved for the packaging path (`cargo truce package`).
-        build_aax_template(root, &sdk_path, false)?;
+        build_aax_template(root, &sdk_path, universal_mac)?;
     } else if !template.exists() {
         let hint = if cfg!(target_os = "windows") {
             "[windows].aax_sdk_path"
@@ -184,7 +193,7 @@ pub(crate) fn install_aax(root: &Path, p: &PluginDef, config: &Config) -> Res {
             "AAX: template not built, skipping.\n  \
              Set {hint} in truce.toml or AAX_SDK_PATH env var."
         );
-        return Ok(());
+        return Ok(None);
     }
     if !template.exists() {
         return Err(format!(
@@ -193,6 +202,46 @@ pub(crate) fn install_aax(root: &Path, p: &PluginDef, config: &Config) -> Res {
         )
         .into());
     }
+    Ok(Some(template))
+}
+
+/// Assemble a signed `.aaxplugin` bundle in `target/bundles/`.
+///
+/// Requires the Rust `_aax.dylib` to already be built by the outer
+/// `cmd_build` / `cmd_install` loop (same pattern as the other
+/// format-specific dylibs).
+///
+/// Steps:
+/// 1. Build / reuse the shared cmake C++ template.
+/// 2. Assemble `target/bundles/{Plugin Name}.aaxplugin/` with the
+///    template binary, Rust dylib, and Info.plist in place.
+/// 3. Codesign the bundle (Apple identity) on macOS.
+///
+/// PACE wraptool signing is separate — `cargo truce package` drives
+/// it against the same `target/bundles/` path during the packaging
+/// pass.
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+pub(crate) fn emit_aax_bundle(
+    _root: &Path,
+    p: &PluginDef,
+    _config: &Config,
+    _universal_mac: bool,
+) -> Res {
+    eprintln!("AAX: not supported on this platform, skipping {}", p.name);
+    Ok(())
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+pub(crate) fn emit_aax_bundle(
+    root: &Path,
+    p: &PluginDef,
+    config: &Config,
+    universal_mac: bool,
+) -> Res {
+    let template = match ensure_template(root, config, universal_mac)? {
+        Some(t) => t,
+        None => return Ok(()),
+    };
 
     let dylib = release_lib(root, &format!("{}_aax", p.dylib_stem()));
     if !dylib.exists() {
@@ -200,27 +249,23 @@ pub(crate) fn install_aax(root: &Path, p: &PluginDef, config: &Config) -> Res {
         return Ok(());
     }
 
+    let bundles_dir = root.join("target/bundles");
+    fs_ctx::create_dir_all(&bundles_dir)?;
+    let bundle = bundles_dir.join(format!("{}.aaxplugin", p.name));
+    let _ = fs::remove_dir_all(&bundle);
+
     #[cfg(target_os = "macos")]
     {
-        let aax_dir = "/Library/Application Support/Avid/Audio/Plug-Ins";
-        let bundle = format!("{aax_dir}/{}.aaxplugin", p.name);
-        let contents = format!("{bundle}/Contents");
+        let contents = bundle.join("Contents");
+        fs_ctx::create_dir_all(contents.join("MacOS"))?;
+        fs_ctx::create_dir_all(contents.join("Resources"))?;
 
-        run_sudo("rm", &["-rf", &bundle])?;
-        run_sudo("mkdir", &["-p", &format!("{contents}/MacOS")])?;
-        run_sudo("mkdir", &["-p", &format!("{contents}/Resources")])?;
-
-        run_sudo(
-            "cp",
-            &[
-                template.to_str().unwrap(),
-                &format!("{contents}/MacOS/{}", p.name),
-            ],
-        )?;
-
-        run_sudo(
-            "cp",
-            &[dylib.to_str().unwrap(), &format!("{contents}/Resources/")],
+        fs_ctx::copy(&template, contents.join("MacOS").join(&p.name))?;
+        fs_ctx::copy(
+            &dylib,
+            contents
+                .join("Resources")
+                .join(format!("lib{}_aax.dylib", p.dylib_stem())),
         )?;
 
         let plist = format!(
@@ -243,38 +288,30 @@ pub(crate) fn install_aax(root: &Path, p: &PluginDef, config: &Config) -> Res {
             name = p.name,
             suffix = p.suffix,
         );
-        let plist_tmp = tmp_dir()
-            .join(format!("{}_aax.plist", p.suffix))
-            .to_string_lossy()
-            .to_string();
-        fs_ctx::write(&plist_tmp, &plist)?;
-        run_sudo("cp", &[&plist_tmp, &format!("{contents}/Info.plist")])?;
+        fs_ctx::write(contents.join("Info.plist"), plist)?;
 
-        codesign_bundle(&bundle, config.macos.application_identity(), true)?;
-        eprintln!("AAX:  {bundle}");
+        // Apple codesign; `true` = recursive (walks the bundle).
+        // PACE wraps this signature in a separate packaging step.
+        codesign_bundle(
+            bundle.to_str().unwrap(),
+            config.macos.application_identity(),
+            true,
+        )?;
+        eprintln!("  AAX:  {}", bundle.display());
     }
 
     #[cfg(target_os = "windows")]
     {
         // Windows AAX bundle layout:
-        //   Plugin.aaxplugin/
+        //   {Plugin}.aaxplugin/
         //     Contents/
         //       x64/
-        //         Plugin.aaxplugin       (template binary, the .dll we built)
+        //         {Plugin}.aaxplugin     (template wrapper .dll)
         //       Resources/
-        //         {name}_aax.dll         (Rust cdylib)
-        //
-        // Install to %COMMONPROGRAMFILES%\Avid\Audio\Plug-Ins\
-        let aax_dir = common_program_files()
-            .join("Avid")
-            .join("Audio")
-            .join("Plug-Ins");
-        let bundle = aax_dir.join(format!("{}.aaxplugin", p.name));
+        //         {stem}_aax.dll         (Rust cdylib)
         let contents = bundle.join("Contents");
         let x64_dir = contents.join("x64");
         let resources_dir = contents.join("Resources");
-
-        let _ = fs::remove_dir_all(&bundle);
         fs_ctx::create_dir_all(&x64_dir)?;
         fs_ctx::create_dir_all(&resources_dir)?;
 
@@ -284,7 +321,58 @@ pub(crate) fn install_aax(root: &Path, p: &PluginDef, config: &Config) -> Res {
             resources_dir.join(format!("{}_aax.dll", p.dylib_stem())),
         )?;
 
-        eprintln!("AAX:  {}", bundle.display());
+        // Authenticode signing is driven by `cargo truce package`'s
+        // outer signing loop — the bundle sits unsigned here for
+        // `install` to copy verbatim.
+        eprintln!("  AAX:  {}", bundle.display());
+    }
+
+    Ok(())
+}
+
+// AAX is only supported on macOS and Windows.
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+pub(crate) fn install_aax(_root: &Path, p: &PluginDef, _config: &Config) -> Res {
+    eprintln!("AAX: not supported on this platform, skipping {}", p.name);
+    Ok(())
+}
+
+/// Install a pre-built AAX bundle from `target/bundles/` to the
+/// system plug-ins directory. Expects [`emit_aax_bundle`] to have
+/// been called first.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+pub(crate) fn install_aax(root: &Path, p: &PluginDef, _config: &Config) -> Res {
+    let bundle_name = format!("{}.aaxplugin", p.name);
+    let built = root.join("target/bundles").join(&bundle_name);
+    if !built.exists() {
+        return Err(format!(
+            "AAX bundle missing at {}. Run `cargo truce build --aax -p {}` first.",
+            built.display(),
+            p.suffix,
+        )
+        .into());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let aax_dir = "/Library/Application Support/Avid/Audio/Plug-Ins";
+        let dst = format!("{aax_dir}/{bundle_name}");
+        run_sudo("rm", &["-rf", &dst])?;
+        run_sudo("ditto", &[built.to_str().unwrap(), &dst])?;
+        eprintln!("AAX:  {dst}");
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let aax_dir = common_program_files()
+            .join("Avid")
+            .join("Audio")
+            .join("Plug-Ins");
+        fs_ctx::create_dir_all(&aax_dir)?;
+        let dst = aax_dir.join(&bundle_name);
+        let _ = fs::remove_dir_all(&dst);
+        crate::util::copy_dir_recursive(&built, &dst)?;
+        eprintln!("AAX:  {}", dst.display());
     }
 
     Ok(())

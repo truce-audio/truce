@@ -342,11 +342,19 @@ pub(crate) fn cmd_package_macos(args: &[String]) -> Res {
             let output = root.join(format!("target/release/lib{}_aax.dylib", p.dylib_stem()));
             lipo_into(&inputs, &output)?;
         }
+        // Apple-sign + assemble the .aaxplugin bundle once we have the
+        // universal Rust dylib. PACE wrap happens later in stage_aax
+        // against the staging copy.
+        for p in &plugins {
+            crate::commands::install::aax::emit_aax_bundle(&root, p, &config, universal)?;
+        }
     }
 
     if has_au3 {
-        // AU v3: build per-arch Rust framework, lipo, then xcodebuild.
-        crate::commands::install::au_v3::build_au_v3(&root, &config, &plugins, false, &archs)?;
+        // Build per-arch Rust framework, lipo, xcodebuild, sign
+        // inside-out → `target/bundles/{Plugin Name}.app/`. `stage_au3`
+        // copies from there into the packaging staging tree.
+        crate::commands::install::au_v3::emit_au_v3_bundle(&root, &config, &plugins, &archs)?;
     }
 
     // ---------------------------------------------------------------

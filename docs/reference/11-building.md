@@ -104,6 +104,12 @@ cargo truce install --au3 -p gain # AU v3 only, just Gain
 # Install without rebuilding
 cargo truce install --no-build
 
+# Build without installing — signed bundles land in target/bundles/
+# (same flag set as install). Useful for CI, dry-runs, inspecting
+# the bundle contents, or producing artifacts for downstream jobs
+# that don't need the bundle in a system plugin directory.
+cargo truce build --au3 -p gain
+
 # Check what's installed
 cargo truce status
 

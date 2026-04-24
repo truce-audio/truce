@@ -1,12 +1,11 @@
 //! `cargo truce build` — produce per-format bundles in `target/bundles/`
 //! without installing.
 //!
-//! Mirrors `install`'s build phase + `package`'s staging helpers, so the
-//! same flag set (`--clap` / `--vst3` / `--vst2` / `--lv2` / `--au2`)
-//! works the same way. AU v3 (`.app`) and AAX are install-time-only —
-//! they require xcodebuild / a cmake C++ template / system install
-//! locations and don't make sense for a "build into a folder" flow; use
-//! `cargo truce install --au3` / `--aax` instead.
+//! Every format flag (`--clap` / `--vst3` / `--vst2` / `--lv2` / `--au2`
+//! / `--au3` / `--aax`) produces a self-contained, signed bundle in
+//! `target/bundles/`; `cargo truce install` then copies those bundles
+//! to system paths. See
+//! `truce-docs/docs/internal/build-install-split.md`.
 
 use crate::commands::package::stage::{
     lv2_slug, stage_au2, stage_clap, stage_lv2, stage_vst2, stage_vst3,
@@ -26,6 +25,8 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
     let mut vst2 = false;
     let mut lv2 = false;
     let mut au2 = false;
+    let mut au3 = false;
+    let mut aax = false;
     let mut dev_mode = false;
     let mut plugin_filter: Option<String> = None;
 
@@ -37,20 +38,8 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
             "--vst2" => vst2 = true,
             "--lv2" => lv2 = true,
             "--au2" => au2 = true,
-            // Reject install-only formats explicitly so the failure mode
-            // is "use install for these" rather than a silent no-op.
-            "--au3" => {
-                return Err(
-                    "--au3 is install-only (xcodebuild + /Applications layout). \
-                 Use `cargo truce install --au3` instead."
-                        .into(),
-                )
-            }
-            "--aax" => {
-                return Err("--aax is install-only (cmake AAX template + system path). \
-                 Use `cargo truce install --aax` instead."
-                    .into())
-            }
+            "--au3" => au3 = true,
+            "--aax" => aax = true,
             "--dev" => dev_mode = true,
             "-p" => {
                 i += 1;
@@ -63,7 +52,7 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
 
     // No format flags → enable every format in the project's default
     // features, mirroring `install`'s discovery rule.
-    if !clap && !vst3 && !vst2 && !lv2 && !au2 {
+    if !clap && !vst3 && !vst2 && !lv2 && !au2 && !au3 && !aax {
         let available = detect_default_features();
         clap = available.contains("clap");
         vst3 = available.contains("vst3");
@@ -72,7 +61,9 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
         #[cfg(target_os = "macos")]
         {
             au2 = available.contains("au");
+            au3 = available.contains("au");
         }
+        aax = available.contains("aax");
     }
 
     let plugins: Vec<&PluginDef> = if let Some(ref f) = plugin_filter {
@@ -244,6 +235,36 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
         }
     }
 
+    if aax {
+        eprintln!("Building AAX...");
+        for p in &plugins {
+            let mut env_pairs: Vec<(&str, &str)> = Vec::new();
+            if let Some(n) = p.aax_name.as_deref() {
+                env_pairs.push(("TRUCE_AAX_NAME_OVERRIDE", n));
+            }
+            cargo_build(
+                &env_pairs,
+                &[
+                    "-p",
+                    &p.crate_name,
+                    "--no-default-features",
+                    "--features",
+                    "aax",
+                ],
+                dt,
+            )?;
+            let src = release_lib(&root, &p.dylib_stem());
+            let dst = release_lib(&root, &format!("{}_aax", p.dylib_stem()));
+            fs_ctx::copy(&src, &dst)?;
+            // Assemble the full .aaxplugin bundle (cmake template +
+            // Rust dylib + Info.plist + codesign) into target/bundles/.
+            // macOS/Windows-only; no-op on Linux. `cargo truce build`
+            // is host-arch-only — `package --universal` is the only
+            // caller that passes `true`.
+            crate::commands::install::aax::emit_aax_bundle(&root, p, &config, false)?;
+        }
+    }
+
     // In dev mode, also build the debug dylibs (the logic that the
     // hot-reload shells watch and load).
     if dev_mode {
@@ -296,6 +317,27 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
                 "  AU:   {}",
                 bundles_dir.join(format!("{}.component", p.name)).display()
             );
+        }
+    }
+
+    // AU v3 has its own driver that builds Rust-framework + xcodebuild
+    // + codesign inside-out and writes directly to target/bundles/.
+    // Host arch only; universal builds are reserved for `package`.
+    // macOS-only; the function returns a clear error on other platforms.
+    if au3 {
+        #[cfg(target_os = "macos")]
+        {
+            use crate::MacArch;
+            crate::commands::install::au_v3::emit_au_v3_bundle(
+                &root,
+                &config,
+                &plugins,
+                &[MacArch::host()],
+            )?;
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            return Err("--au3 is macOS-only".into());
         }
     }
 

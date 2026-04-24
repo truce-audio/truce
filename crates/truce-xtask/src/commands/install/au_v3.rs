@@ -1,5 +1,25 @@
-//! AU v3 appex install: build the Rust framework, generate an Xcode project,
-//! drive xcodebuild, sign, and register the appex with pluginkit.
+//! AU v3 build + install.
+//!
+//! Split into two phases:
+//!
+//! - [`emit_au_v3_bundle`] produces a complete, signed `{Plugin Name}.app`
+//!   in `target/bundles/`. No side effects outside the repo — no sudo,
+//!   no `/Applications/` writes, no DAW cache bust, no pluginkit
+//!   registration. Safe for CI artifacts and dry-run inspection.
+//!
+//! - [`install_au_v3`] copies an existing `target/bundles/{Plugin Name}.app`
+//!   to `/Applications/`, clears the AU cache, and registers the appex
+//!   with pluginkit. Assumes the bundle was produced by
+//!   `emit_au_v3_bundle`.
+//!
+//! See `truce-docs/docs/internal/build-install-split.md` for the
+//! design rationale.
+//!
+//! The xcode project + framework scratch stay in `tmp_dir()` — only
+//! the final signed bundle lives under `target/`. Signatures are
+//! produced against the `target/bundles/` path and remain valid
+//! after the install-time `sudo cp -R` because macOS bundle
+//! signatures hash file contents, not paths.
 
 use crate::templates;
 use crate::util::fs_ctx;
@@ -11,11 +31,28 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-pub(crate) fn build_au_v3(
+/// Build a signed AU v3 `.app` bundle in `target/bundles/`.
+///
+/// Steps:
+/// 1. Build the Rust framework dylib once per arch, then `lipo -create`
+///    into the canonical `lib{stem}_v3.dylib` path.
+/// 2. Assemble the `.framework` bundle in `tmp_dir()` (install-name
+///    fixup + Versions/Current symlinks + Info.plist + initial sign).
+/// 3. Materialize the Xcode project from embedded templates into
+///    `tmp_dir()`.
+/// 4. Run `xcodebuild` — produces `TruceAUv3.app` in the build dir.
+/// 5. Move the built `.app` to `target/bundles/{au3_app_name}.app/`
+///    and embed the Rust framework at `Contents/Frameworks/`.
+/// 6. Sign inside-out (framework → appex → app) against the
+///    `target/bundles/` paths. No sudo.
+///
+/// After return, the bundle at `target/bundles/{au3_app_name}.app/`
+/// is a complete, properly-signed AU v3 container ready to be copied
+/// into `/Applications/` by [`install_au_v3`].
+pub(crate) fn emit_au_v3_bundle(
     root: &Path,
     config: &Config,
     plugins: &[&PluginDef],
-    no_build: bool,
     archs: &[MacArch],
 ) -> Res {
     let sign_id = config.macos.application_identity();
@@ -31,99 +68,98 @@ pub(crate) fn build_au_v3(
     }
 
     if archs.is_empty() {
-        return Err("build_au_v3: empty archs list".into());
+        return Err("emit_au_v3_bundle: empty archs list".into());
     }
+
+    let bundles_dir = root.join("target/bundles");
+    fs_ctx::create_dir_all(&bundles_dir)?;
 
     for p in plugins {
         let fw_name = p.fw_name();
         let au_v3_sub = p.au3_sub();
         let build_dir = tmp_dir().join(format!("au_v3_build_{}", p.suffix));
         let fw_build = tmp_dir().join(format!("au_v3_fw_{}", p.suffix));
+        let final_app = bundles_dir.join(format!("{}.app", p.au3_app_name()));
 
         eprintln!("Building AU v3 ({})...", p.name);
 
-        if !no_build {
-            // Step 1: Build Rust framework, once per arch, then lipo into the
-            // canonical `lib{stem}_v3.dylib` location.
-            for &arch in archs {
-                eprintln!("  Building Rust framework ({})...", arch.triple());
-                let mut env_pairs: Vec<(&str, &str)> =
-                    vec![("TRUCE_AU_VERSION", "3"), ("TRUCE_AU_PLUGIN_ID", &p.suffix)];
-                if let Some(n) = p.au3_name.as_deref() {
-                    env_pairs.push(("TRUCE_AU_NAME_OVERRIDE", n));
-                }
-                cargo_build_for_arch(
-                    &env_pairs,
-                    &[
-                        "-p",
-                        &p.crate_name,
-                        "--no-default-features",
-                        "--features",
-                        "au",
-                    ],
-                    arch,
-                    dt,
-                )?;
-                let src = release_lib_for_target(root, &p.dylib_stem(), Some(arch.triple()));
-                let saved = release_lib_for_target(
+        // --- Step 1: Rust framework dylib (per-arch + lipo) -----------------
+        for &arch in archs {
+            eprintln!("  Building Rust framework ({})...", arch.triple());
+            let mut env_pairs: Vec<(&str, &str)> =
+                vec![("TRUCE_AU_VERSION", "3"), ("TRUCE_AU_PLUGIN_ID", &p.suffix)];
+            if let Some(n) = p.au3_name.as_deref() {
+                env_pairs.push(("TRUCE_AU_NAME_OVERRIDE", n));
+            }
+            cargo_build_for_arch(
+                &env_pairs,
+                &[
+                    "-p",
+                    &p.crate_name,
+                    "--no-default-features",
+                    "--features",
+                    "au",
+                ],
+                arch,
+                dt,
+            )?;
+            let src = release_lib_for_target(root, &p.dylib_stem(), Some(arch.triple()));
+            let saved = release_lib_for_target(
+                root,
+                &format!("{}_v3", p.dylib_stem()),
+                Some(arch.triple()),
+            );
+            fs_ctx::copy(&src, &saved)?;
+        }
+        let fw_inputs: Vec<PathBuf> = archs
+            .iter()
+            .map(|a| {
+                release_lib_for_target(
                     root,
                     &format!("{}_v3", p.dylib_stem()),
-                    Some(arch.triple()),
-                );
-                fs_ctx::copy(&src, &saved)?;
-            }
-            let fw_inputs: Vec<PathBuf> = archs
-                .iter()
-                .map(|a| {
-                    release_lib_for_target(
-                        root,
-                        &format!("{}_v3", p.dylib_stem()),
-                        Some(a.triple()),
-                    )
-                })
-                .collect();
-            let dst = root.join(format!("target/release/lib{}_v3.dylib", p.dylib_stem()));
-            lipo_into(&fw_inputs, &dst)?;
+                    Some(a.triple()),
+                )
+            })
+            .collect();
+        let lipo_dst = root.join(format!("target/release/lib{}_v3.dylib", p.dylib_stem()));
+        lipo_into(&fw_inputs, &lipo_dst)?;
 
-            // Step 2: Create .framework bundle
-            let _ = fs::remove_dir_all(&fw_build);
-            let fw_dir = fw_build.join(format!("{}.framework/Versions/A", fw_name));
-            fs_ctx::create_dir_all(fw_dir.join("Resources"))?;
-            fs_ctx::copy(&dst, fw_dir.join(&fw_name))?;
+        // --- Step 2: .framework bundle in tmp -------------------------------
+        let _ = fs::remove_dir_all(&fw_build);
+        let fw_dir = fw_build.join(format!("{}.framework/Versions/A", fw_name));
+        fs_ctx::create_dir_all(fw_dir.join("Resources"))?;
+        fs_ctx::copy(&lipo_dst, fw_dir.join(&fw_name))?;
 
-            let status = Command::new("install_name_tool")
-                .args([
-                    "-id",
-                    &format!("@rpath/{}.framework/Versions/A/{}", fw_name, fw_name),
-                ])
-                .arg(fw_dir.join(&fw_name))
-                .status()?;
-            if !status.success() {
-                return Err("install_name_tool failed".into());
-            }
+        let status = Command::new("install_name_tool")
+            .args([
+                "-id",
+                &format!("@rpath/{}.framework/Versions/A/{}", fw_name, fw_name),
+            ])
+            .arg(fw_dir.join(&fw_name))
+            .status()?;
+        if !status.success() {
+            return Err("install_name_tool failed".into());
+        }
 
-            let fw_root = fw_build.join(format!("{}.framework", fw_name));
-            #[cfg(unix)]
-            {
-                std::os::unix::fs::symlink("A", fw_root.join("Versions/Current"))?;
-                std::os::unix::fs::symlink(
-                    format!("Versions/Current/{}", fw_name),
-                    fw_root.join(&fw_name),
-                )?;
-                std::os::unix::fs::symlink(
-                    "Versions/Current/Resources",
-                    fw_root.join("Resources"),
-                )?;
-            }
-            #[cfg(not(unix))]
-            {
-                return Err("AU v3 framework builds are only supported on macOS".into());
-            }
+        let fw_root = fw_build.join(format!("{}.framework", fw_name));
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink("A", fw_root.join("Versions/Current"))?;
+            std::os::unix::fs::symlink(
+                format!("Versions/Current/{}", fw_name),
+                fw_root.join(&fw_name),
+            )?;
+            std::os::unix::fs::symlink("Versions/Current/Resources", fw_root.join("Resources"))?;
+        }
+        #[cfg(not(unix))]
+        {
+            return Err("AU v3 framework builds are only supported on macOS".into());
+        }
 
-            fs_ctx::write(
-                fw_dir.join("Resources/Info.plist"),
-                format!(
-                    r#"<?xml version="1.0" encoding="UTF-8"?>
+        fs_ctx::write(
+            fw_dir.join("Resources/Info.plist"),
+            format!(
+                r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
 <key>CFBundleExecutable</key><string>{fw}</string>
@@ -131,270 +167,312 @@ pub(crate) fn build_au_v3(
 <key>CFBundlePackageType</key><string>FMWK</string>
 <key>CFBundleVersion</key><string>1</string>
 </dict></plist>"#,
-                    fw = fw_name,
-                    vid = config.vendor.id.trim_start_matches("com."),
-                    suf = p.suffix,
-                ),
-            )?;
+                fw = fw_name,
+                vid = config.vendor.id.trim_start_matches("com."),
+                suf = p.suffix,
+            ),
+        )?;
 
-            {
-                let mut cs_args = vec!["--force", "--sign", sign_id];
-                if is_production_identity(sign_id) {
-                    cs_args.extend_from_slice(&["--options", "runtime", "--timestamp"]);
-                }
-                cs_args.push(fw_root.to_str().unwrap());
-                let status = Command::new("codesign").args(&cs_args).status()?;
-                if !status.success() {
-                    return Err("codesign failed for AU v3 framework".into());
-                }
+        // Initial framework sign. Not strictly required (we re-sign
+        // inside-out after embedding into the .app), but xcodebuild
+        // reads the framework to resolve symbols and rejects unsigned
+        // frameworks under `CODE_SIGN_STYLE = Manual`.
+        {
+            let mut cs_args = vec!["--force", "--sign", sign_id];
+            if is_production_identity(sign_id) {
+                cs_args.extend_from_slice(&["--options", "runtime", "--timestamp"]);
             }
-
-            // Step 3: Prepare Xcode project from embedded templates
-            let _ = fs::remove_dir_all(&build_dir);
-            fs_ctx::create_dir_all(build_dir.join("AUExt"))?;
-            fs_ctx::create_dir_all(build_dir.join("App"))?;
-            fs_ctx::create_dir_all(build_dir.join("XcodeAUv3.xcodeproj"))?;
-
-            fs_ctx::write(
-                build_dir.join("AUExt/AudioUnitFactory.swift"),
-                templates::au3::SWIFT_SOURCE,
-            )?;
-            fs_ctx::write(
-                build_dir.join("AUExt/BridgingHeader.h"),
-                templates::au3::BRIDGING_HEADER,
-            )?;
-            fs_ctx::write(
-                build_dir.join("AUExt/au_shim_types.h"),
-                templates::au3::SHIM_TYPES_H,
-            )?;
-            fs_ctx::write(
-                build_dir.join("AUExt/AUExt.entitlements"),
-                templates::au3::APPEX_ENTITLEMENTS,
-            )?;
-            fs_ctx::write(build_dir.join("App/main.m"), templates::au3::APP_MAIN_M)?;
-            fs_ctx::write(
-                build_dir.join("App/App.entitlements"),
-                templates::au3::APP_ENTITLEMENTS,
-            )?;
-
-            // Patch AUExt/Info.plist with plugin-specific values
-            let plist_path = build_dir.join("AUExt/Info.plist");
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap();
-            let ver = format!("{}.{}", now.as_secs(), now.subsec_millis());
-
-            let plist = templates::au3::APPEX_INFO_PLIST
-                .replace("AUVER", &ver)
-                .replace("AUTYPE", &p.resolved_au_type())
-                .replace("AUSUB", au_v3_sub)
-                .replace("AUMFR", &config.vendor.au_manufacturer)
-                .replace(
-                    "AUNAME",
-                    &format!(
-                        "{}: {}",
-                        config.vendor.name,
-                        p.au3_name.as_deref().unwrap_or(p.name.as_str()),
-                    ),
-                )
-                .replace("AUTAG", &p.au_tag);
-            fs_ctx::write(&plist_path, plist)?;
-
-            // Generate pbxproj (the template dir has an empty xcodeproj)
-            let pbx_path = build_dir.join("XcodeAUv3.xcodeproj/project.pbxproj");
-            fs_ctx::write(
-                &pbx_path,
-                generate_pbxproj(
-                    &team_id,
-                    &format!("{}.v3", p.suffix),
-                    &format!("{}.v3.ext", p.suffix),
-                    build_dir.join("AUExt").to_str().unwrap(),
-                    fw_build.to_str().unwrap(),
-                    &fw_name,
-                ),
-            )?;
-
-            // Write App Info.plist from embedded template
-            fs_ctx::write(
-                build_dir.join("App/Info.plist"),
-                templates::au3::APP_INFO_PLIST,
-            )?;
-
-            // Step 4: xcodebuild
-            eprintln!("  Building with xcodebuild...");
-            // ARCHS reflects the requested slices. ONLY_ACTIVE_ARCH=NO forces
-            // xcodebuild to build every listed arch regardless of host — the
-            // default flips to YES in Debug and NO in Release, but we pin it
-            // explicitly so dev paths (Debug) also produce the full set.
-            let archs_flag = format!(
-                "ARCHS={}",
-                archs
-                    .iter()
-                    .map(|a| match a {
-                        MacArch::X86_64 => "x86_64",
-                        MacArch::Arm64 => "arm64",
-                    })
-                    .collect::<Vec<_>>()
-                    .join(" ")
-            );
-            let output = Command::new("xcodebuild")
-                .current_dir(&build_dir)
-                .args([
-                    "-project",
-                    "XcodeAUv3.xcodeproj",
-                    "-target",
-                    "TruceAUv3",
-                    "-configuration",
-                    "Release",
-                ])
-                .arg(&archs_flag)
-                .arg("ONLY_ACTIVE_ARCH=NO")
-                .arg(format!("SYMROOT={}/build", build_dir.display()))
-                .output()?;
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                // Find error lines
-                for line in stdout.lines().chain(stderr.lines()) {
-                    if line.contains("error:") || line.contains("BUILD FAILED") {
-                        eprintln!("  {line}");
-                    }
-                }
-                return Err(format!("xcodebuild failed for {}", p.name).into());
+            cs_args.push(fw_root.to_str().unwrap());
+            let status = Command::new("codesign").args(&cs_args).status()?;
+            if !status.success() {
+                return Err("codesign failed for AU v3 framework".into());
             }
         }
 
-        let built_app = build_dir.join("build/Release/TruceAUv3.app");
-        if !built_app.exists() {
-            return Err(format!("Built app not found: {}", built_app.display()).into());
+        // --- Step 3: Xcode project scratch ---------------------------------
+        let _ = fs::remove_dir_all(&build_dir);
+        fs_ctx::create_dir_all(build_dir.join("AUExt"))?;
+        fs_ctx::create_dir_all(build_dir.join("App"))?;
+        fs_ctx::create_dir_all(build_dir.join("XcodeAUv3.xcodeproj"))?;
+
+        fs_ctx::write(
+            build_dir.join("AUExt/AudioUnitFactory.swift"),
+            templates::au3::SWIFT_SOURCE,
+        )?;
+        fs_ctx::write(
+            build_dir.join("AUExt/BridgingHeader.h"),
+            templates::au3::BRIDGING_HEADER,
+        )?;
+        fs_ctx::write(
+            build_dir.join("AUExt/au_shim_types.h"),
+            templates::au3::SHIM_TYPES_H,
+        )?;
+        fs_ctx::write(
+            build_dir.join("AUExt/AUExt.entitlements"),
+            templates::au3::APPEX_ENTITLEMENTS,
+        )?;
+        fs_ctx::write(build_dir.join("App/main.m"), templates::au3::APP_MAIN_M)?;
+        fs_ctx::write(
+            build_dir.join("App/App.entitlements"),
+            templates::au3::APP_ENTITLEMENTS,
+        )?;
+
+        let plist_path = build_dir.join("AUExt/Info.plist");
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap();
+        let ver = format!("{}.{}", now.as_secs(), now.subsec_millis());
+
+        let plist = templates::au3::APPEX_INFO_PLIST
+            .replace("AUVER", &ver)
+            .replace("AUTYPE", &p.resolved_au_type())
+            .replace("AUSUB", au_v3_sub)
+            .replace("AUMFR", &config.vendor.au_manufacturer)
+            .replace(
+                "AUNAME",
+                &format!(
+                    "{}: {}",
+                    config.vendor.name,
+                    p.au3_name.as_deref().unwrap_or(p.name.as_str()),
+                ),
+            )
+            .replace("AUTAG", &p.au_tag);
+        fs_ctx::write(&plist_path, plist)?;
+
+        let pbx_path = build_dir.join("XcodeAUv3.xcodeproj/project.pbxproj");
+        fs_ctx::write(
+            &pbx_path,
+            generate_pbxproj(
+                &team_id,
+                &format!("{}.v3", p.suffix),
+                &format!("{}.v3.ext", p.suffix),
+                build_dir.join("AUExt").to_str().unwrap(),
+                fw_build.to_str().unwrap(),
+                &fw_name,
+            ),
+        )?;
+
+        fs_ctx::write(
+            build_dir.join("App/Info.plist"),
+            templates::au3::APP_INFO_PLIST,
+        )?;
+
+        // --- Step 4: xcodebuild --------------------------------------------
+        eprintln!("  Building with xcodebuild...");
+        let archs_flag = format!(
+            "ARCHS={}",
+            archs
+                .iter()
+                .map(|a| match a {
+                    MacArch::X86_64 => "x86_64",
+                    MacArch::Arm64 => "arm64",
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
+        let output = Command::new("xcodebuild")
+            .current_dir(&build_dir)
+            .args([
+                "-project",
+                "XcodeAUv3.xcodeproj",
+                "-target",
+                "TruceAUv3",
+                "-configuration",
+                "Release",
+            ])
+            .arg(&archs_flag)
+            .arg("ONLY_ACTIVE_ARCH=NO")
+            .arg(format!("SYMROOT={}/build", build_dir.display()))
+            .output()?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for line in stdout.lines().chain(stderr.lines()) {
+                if line.contains("error:") || line.contains("BUILD FAILED") {
+                    eprintln!("  {line}");
+                }
+            }
+            return Err(format!("xcodebuild failed for {}", p.name).into());
         }
+
+        let xcodebuild_app = build_dir.join("build/Release/TruceAUv3.app");
+        if !xcodebuild_app.exists() {
+            return Err(format!(
+                "xcodebuild reported success but app not found at {}",
+                xcodebuild_app.display()
+            )
+            .into());
+        }
+
+        // --- Step 5: Assemble final bundle in target/bundles ---------------
+        // `ditto` preserves xattrs/ACLs/resource forks better than `cp -R`;
+        // macOS code signatures survive the copy cleanly.
+        let _ = fs::remove_dir_all(&final_app);
+        let ditto_status = Command::new("ditto")
+            .arg(&xcodebuild_app)
+            .arg(&final_app)
+            .status()?;
+        if !ditto_status.success() {
+            return Err(format!(
+                "ditto failed copying {} → {}",
+                xcodebuild_app.display(),
+                final_app.display()
+            )
+            .into());
+        }
+
+        let frameworks_dir = final_app.join("Contents/Frameworks");
+        fs_ctx::create_dir_all(&frameworks_dir)?;
+        let embedded_fw = frameworks_dir.join(format!("{fw_name}.framework"));
+        let _ = fs::remove_dir_all(&embedded_fw);
+        let fw_src = fw_build.join(format!("{fw_name}.framework"));
+        let ditto_status = Command::new("ditto").arg(&fw_src).arg(&embedded_fw).status()?;
+        if !ditto_status.success() {
+            return Err("ditto failed copying framework into .app".into());
+        }
+
+        // --- Step 6: Sign inside-out against target/bundles ----------------
+        // Order matters: framework first (parent bundle references its
+        // signature), then appex (embeds its entitlements), then app (wraps
+        // everything). Re-signing an inner bundle invalidates the outer,
+        // so signing in the wrong order leaves the whole thing broken.
+        let production = is_production_identity(sign_id);
+        let runtime_flags: &[&str] = if production {
+            &["--options", "runtime", "--timestamp"]
+        } else {
+            &[]
+        };
+
+        {
+            let fw_path = embedded_fw.to_str().unwrap();
+            let mut args = vec!["--force", "--sign", sign_id];
+            args.extend_from_slice(runtime_flags);
+            args.push(fw_path);
+            let status = Command::new("codesign").args(&args).status()?;
+            if !status.success() {
+                return Err("codesign failed: embedded framework".into());
+            }
+        }
+        let entitlements_appex = build_dir.join("AUExt/AUExt.entitlements");
+        let entitlements_app = build_dir.join("App/App.entitlements");
+        {
+            let appex_path = final_app.join("Contents/PlugIns/AUExt.appex");
+            let appex_str = appex_path.to_str().unwrap();
+            let ent = entitlements_appex.to_str().unwrap();
+            let mut args = vec![
+                "--force",
+                "--sign",
+                sign_id,
+                "--entitlements",
+                ent,
+                "--generate-entitlement-der",
+            ];
+            args.extend_from_slice(runtime_flags);
+            args.push(appex_str);
+            let status = Command::new("codesign").args(&args).status()?;
+            if !status.success() {
+                return Err("codesign failed: appex".into());
+            }
+        }
+        {
+            let ent = entitlements_app.to_str().unwrap();
+            let app_str = final_app.to_str().unwrap();
+            let mut args = vec![
+                "--force",
+                "--sign",
+                sign_id,
+                "--entitlements",
+                ent,
+                "--generate-entitlement-der",
+            ];
+            args.extend_from_slice(runtime_flags);
+            args.push(app_str);
+            let status = Command::new("codesign").args(&args).status()?;
+            if !status.success() {
+                return Err("codesign failed: app".into());
+            }
+        }
+
+        eprintln!("  AU v3: {}", final_app.display());
     }
     Ok(())
 }
 
-/// Install pre-built AU v3 appex bundles to /Applications/ and register.
-fn install_au_v3(config: &Config, plugins: &[&PluginDef]) -> Res {
-    let sign_id = config.macos.application_identity();
-
+/// Install a pre-built AU v3 bundle from `target/bundles/` to
+/// `/Applications/` and register with pluginkit.
+///
+/// Expects [`emit_au_v3_bundle`] to have been called first. Performs:
+/// - Pre-clean any stale `pluginkit` registrations for this appex
+///   (the build-tree copy at `target/bundles/` may have been
+///   auto-discovered by `pkd` and would otherwise win the dyld
+///   load-order race against the installed copy).
+/// - `sudo ditto target/bundles/{Plugin}.app /Applications/{Plugin}.app`.
+/// - Kill `pkd` + `AudioComponentRegistrar`, drop the AU cache.
+/// - `pluginkit -a <appex>` with polling to confirm registration.
+fn install_au_v3(root: &Path, config: &Config, plugins: &[&PluginDef]) -> Res {
     for p in plugins {
-        let fw_name = p.fw_name();
-        let app_dir = format!("/Applications/{}.app", p.au3_app_name());
+        let app_name = p.au3_app_name();
+        let final_app = root.join("target/bundles").join(format!("{app_name}.app"));
+        if !final_app.exists() {
+            return Err(format!(
+                "AU v3 bundle missing at {}. Run `cargo truce build --au3 -p {}` first.",
+                final_app.display(),
+                p.suffix,
+            )
+            .into());
+        }
+
+        let app_dir = format!("/Applications/{app_name}.app");
         let appex_id = format!(
             "com.{}.{}.v3.ext",
             config.vendor.id.trim_start_matches("com."),
             p.suffix
         );
-        let build_dir = tmp_dir().join(format!("au_v3_build_{}", p.suffix));
-        let fw_build = tmp_dir().join(format!("au_v3_fw_{}", p.suffix));
-        let built_app = build_dir.join("build/Release/TruceAUv3.app");
-        if !built_app.exists() {
-            return Err(format!("AU v3 not built for {}. Run build first.", p.name).into());
-        }
 
-        {
-            // Pre-clean. `pluginkit -e ignore` only disables the registration —
-            // if `pkd` auto-discovered the build-tree appex during xcodebuild,
-            // its path stays in the database and can win the next dyld load
-            // race over our installed copy (which has Frameworks/ wired up
-            // properly). `pluginkit -r <path>` evicts it so the subsequent
-            // `-a /Applications/...` registers cleanly.
-            let build_tree_appex =
-                build_dir.join("build/Release/TruceAUv3.app/Contents/PlugIns/AUExt.appex");
-            if build_tree_appex.exists() {
-                let _ = Command::new("pluginkit")
-                    .args(["-r", build_tree_appex.to_str().unwrap()])
-                    .output();
-            }
+        // Pre-clean. `pluginkit -e ignore` only disables the registration —
+        // if `pkd` auto-discovered the staging-tree appex during the build
+        // phase, its path stays in the database and can win the next dyld
+        // load race over our installed copy. `pluginkit -r <path>` evicts
+        // it so the subsequent `-a /Applications/...` registers cleanly.
+        let staging_appex = final_app.join("Contents/PlugIns/AUExt.appex");
+        if staging_appex.exists() {
             let _ = Command::new("pluginkit")
-                .args(["-e", "ignore", "-i", &appex_id])
+                .args(["-r", staging_appex.to_str().unwrap()])
                 .output();
-            let _ = run_sudo("rm", &["-rf", &app_dir]);
-
-            // Install to /Applications/
-            run_sudo("cp", &["-R", built_app.to_str().unwrap(), &app_dir])?;
-            run_sudo("mkdir", &["-p", &format!("{app_dir}/Contents/Frameworks")])?;
-            let fw_src = fw_build.join(format!("{fw_name}.framework"));
-            run_sudo(
-                "cp",
-                &[
-                    "-R",
-                    fw_src.to_str().unwrap(),
-                    &format!("{app_dir}/Contents/Frameworks/{fw_name}.framework"),
-                ],
-            )?;
-
-            // Step 6: Sign inside-out
-            let production = is_production_identity(sign_id);
-            let runtime_flags: &[&str] = if production {
-                &["--options", "runtime", "--timestamp"]
-            } else {
-                &[]
-            };
-
-            {
-                let fw_path = format!("{app_dir}/Contents/Frameworks/{fw_name}.framework");
-                let mut args = vec!["--force", "--sign", sign_id];
-                args.extend_from_slice(runtime_flags);
-                args.push(&fw_path);
-                run_sudo("codesign", &args)?;
-            }
-            let entitlements_appex = build_dir.join("AUExt/AUExt.entitlements");
-            let entitlements_app = build_dir.join("App/App.entitlements");
-            {
-                let appex_path = format!("{app_dir}/Contents/PlugIns/AUExt.appex");
-                let ent = entitlements_appex.to_str().unwrap();
-                let mut args = vec![
-                    "--force",
-                    "--sign",
-                    sign_id,
-                    "--entitlements",
-                    ent,
-                    "--generate-entitlement-der",
-                ];
-                args.extend_from_slice(runtime_flags);
-                args.push(&appex_path);
-                run_sudo("codesign", &args)?;
-            }
-            {
-                let ent = entitlements_app.to_str().unwrap();
-                let mut args = vec![
-                    "--force",
-                    "--sign",
-                    sign_id,
-                    "--entitlements",
-                    ent,
-                    "--generate-entitlement-der",
-                ];
-                args.extend_from_slice(runtime_flags);
-                args.push(&app_dir);
-                run_sudo("codesign", &args)?;
-            }
-
-            // Step 7: Cache bust + register
-            let _ = Command::new("/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister")
-                .args(["-f", "-R", &app_dir]).output();
-            let _ = run_sudo("killall", &["-9", "pkd"]);
-            let _ = run_sudo("killall", &["-9", "AudioComponentRegistrar"]);
-            let home = dirs::home_dir().unwrap();
-            let _ = fs::remove_dir_all(home.join("Library/Caches/AudioUnitCache"));
-            std::thread::sleep(std::time::Duration::from_secs(2));
-
-            // `pluginkit -a` silently no-ops if `pkd` is still respawning
-            // after the killall above, which is what happened when one
-            // plugin out of a batch wouldn't show up in hosts. Retry a
-            // few times, verifying via `-m -i` that the appex actually
-            // appears in the registry before moving on.
-            let appex_path = format!("{app_dir}/Contents/PlugIns/AUExt.appex");
-            if !register_appex(&appex_path, &appex_id) {
-                eprintln!(
-                    "  WARNING: pluginkit did not register {appex_id}. \
-                     Run `pluginkit -a \"{appex_path}\"` manually after \
-                     `pkd` has settled."
-                );
-            }
-
-            eprintln!("  Installed: {app_dir}");
         }
+        let _ = Command::new("pluginkit")
+            .args(["-e", "ignore", "-i", &appex_id])
+            .output();
+        let _ = run_sudo("rm", &["-rf", &app_dir]);
+
+        // Install to /Applications/. `ditto` preserves the existing
+        // signature since we signed the bundle at build time; `cp -R`
+        // would also work but `ditto` is the macOS idiom for signed
+        // bundle moves.
+        run_sudo("ditto", &[final_app.to_str().unwrap(), &app_dir])?;
+
+        // Cache bust: hosts read AudioComponent metadata from
+        // `~/Library/Caches/AudioUnitCache/` which is populated by
+        // `AudioComponentRegistrar`. Killing both daemons + clearing
+        // the cache forces a clean re-scan on the next host launch.
+        let _ = Command::new("/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister")
+            .args(["-f", "-R", &app_dir]).output();
+        let _ = run_sudo("killall", &["-9", "pkd"]);
+        let _ = run_sudo("killall", &["-9", "AudioComponentRegistrar"]);
+        let home = dirs::home_dir().unwrap();
+        let _ = fs::remove_dir_all(home.join("Library/Caches/AudioUnitCache"));
+        std::thread::sleep(std::time::Duration::from_secs(2));
+
+        let appex_path = format!("{app_dir}/Contents/PlugIns/AUExt.appex");
+        if !register_appex(&appex_path, &appex_id) {
+            eprintln!(
+                "  WARNING: pluginkit did not register {appex_id}. \
+                 Run `pluginkit -a \"{appex_path}\"` manually after \
+                 `pkd` has settled."
+            );
+        }
+
+        eprintln!("  Installed: {app_dir}");
     }
     Ok(())
 }
@@ -406,8 +484,6 @@ fn install_au_v3(config: &Config, plugins: &[&PluginDef]) -> Res {
 fn register_appex(appex_path: &str, appex_id: &str) -> bool {
     for _ in 0..8 {
         let _ = Command::new("pluginkit").args(["-a", appex_path]).output();
-        // `-vv` so the output is stable across pluginkit versions; we
-        // only care whether the id string appears.
         if let Ok(out) = Command::new("pluginkit")
             .args(["-m", "-v", "-i", appex_id])
             .output()
@@ -422,16 +498,23 @@ fn register_appex(appex_path: &str, appex_id: &str) -> bool {
     false
 }
 
+/// Build-then-install convenience for `cargo truce install --au3`.
+///
+/// `no_build` skips the build phase and consumes whatever's already
+/// in `target/bundles/` — mirrors the behavior of the other formats'
+/// `--no-build` paths.
 pub(crate) fn build_and_install_au_v3(
     root: &Path,
     config: &Config,
     plugins: &[&PluginDef],
     no_build: bool,
 ) -> Res {
-    // `cargo truce install` only needs the host arch — universal builds are
-    // reserved for the packaging path.
-    build_au_v3(root, config, plugins, no_build, &[MacArch::host()])?;
-    install_au_v3(config, plugins)
+    if !no_build {
+        // `cargo truce install` only needs the host arch — universal
+        // builds are reserved for the packaging path.
+        emit_au_v3_bundle(root, config, plugins, &[MacArch::host()])?;
+    }
+    install_au_v3(root, config, plugins)
 }
 
 fn generate_pbxproj(

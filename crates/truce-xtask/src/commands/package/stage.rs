@@ -5,7 +5,7 @@ use super::PkgFormat;
 #[cfg(not(target_os = "windows"))]
 use crate::pace_sign_aax_macos;
 use crate::{
-    codesign_bundle, copy_dir_recursive, release_lib, resolve_aax_sdk_path, tmp_dir, Config,
+    codesign_bundle, copy_dir_recursive, release_lib, Config,
     PackagingConfig, PluginDef, Res,
 };
 use std::fs;
@@ -247,143 +247,69 @@ pub(crate) fn stage_au2(root: &Path, p: &PluginDef, config: &Config, staging: &P
 /// `universal_mac` controls whether the AAX C++ template (the wrapper binary
 /// Pro Tools launches) is built fat — the Rust cdylib in Resources/ is
 /// already lipo'd universal when the caller passes `universal_mac = true`.
+/// Stage an AAX bundle into the packaging staging tree.
+///
+/// Reads from `target/bundles/{Plugin}.aaxplugin/` — the fully-
+/// assembled + Apple-signed output of
+/// [`emit_aax_bundle`](crate::commands::install::aax::emit_aax_bundle).
+/// PACE-signs the staged copy in place (PACE wraps the Apple
+/// signature, and pkgbuild reads the staging tree directly so the
+/// order is safe).
 #[cfg(not(target_os = "windows"))]
 pub(crate) fn stage_aax(
     root: &Path,
     p: &PluginDef,
-    config: &Config,
+    _config: &Config,
     staging: &Path,
-    universal_mac: bool,
+    _universal_mac: bool,
     no_pace_sign: bool,
 ) -> Res {
-    let template = tmp_dir()
-        .join("aax_template/build/TruceAAXTemplate.aaxplugin/Contents/MacOS/TruceAAXTemplate");
-    // Always rebuild the template: it rewrites embedded sources (so
-    // template edits in cargo-truce propagate) and cmake incrementally
-    // rebuilds only the files whose bytes actually changed.
-    if let Some(sdk_path) = resolve_aax_sdk_path(config) {
-        if !template.exists() {
-            eprintln!("AAX: building template with SDK at {}", sdk_path.display());
-        }
-        crate::commands::install::aax::build_aax_template(root, &sdk_path, universal_mac)?;
-    } else if !template.exists() {
-        return Err("AAX SDK not configured. Set [macos].aax_sdk_path in truce.toml or AAX_SDK_PATH env var.".into());
-    }
-    if !template.exists() {
-        return Err("AAX template build succeeded but binary not found".into());
+    let bundle_name = format!("{}.aaxplugin", p.name);
+    let built = root.join("target/bundles").join(&bundle_name);
+    if !built.exists() {
+        return Err(format!(
+            "AAX bundle missing at {}. Call `emit_aax_bundle` from the package driver before staging.",
+            built.display()
+        )
+        .into());
     }
 
-    let dylib = root.join(format!("target/release/lib{}_aax.dylib", p.dylib_stem()));
-    if !dylib.exists() {
-        return Err(format!("Missing: {}", dylib.display()).into());
-    }
+    let dst = staging.join(&bundle_name);
+    let _ = fs::remove_dir_all(&dst);
+    crate::util::copy_dir_recursive(&built, &dst)?;
 
-    let bundle = staging.join(format!("{}.aaxplugin", p.name));
-    let contents = bundle.join("Contents");
-    fs::create_dir_all(contents.join("MacOS"))?;
-    fs::create_dir_all(contents.join("Resources"))?;
-    fs::copy(&template, contents.join("MacOS").join(&p.name))?;
-    fs::copy(
-        &dylib,
-        contents
-            .join("Resources")
-            .join(format!("lib{}_aax.dylib", p.dylib_stem())),
-    )?;
-
-    let plist = format!(
-        r#"<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>CFBundleExecutable</key>
-    <string>{name}</string>
-    <key>CFBundleIdentifier</key>
-    <string>com.truce.{suffix}.aax</string>
-    <key>CFBundleName</key>
-    <string>{name}</string>
-    <key>CFBundlePackageType</key>
-    <string>TDMw</string>
-    <key>CFBundleVersion</key>
-    <string>1</string>
-</dict>
-</plist>"#,
-        name = p.name,
-        suffix = p.suffix,
-    );
-    fs::write(contents.join("Info.plist"), &plist)?;
-
-    // Sign inside-out: inner dylib first, then the outer bundle.
-    // notarization rejects bundles where nested binaries lack hardened
-    // runtime + timestamp.
-    let inner_dylib = contents
-        .join("Resources")
-        .join(format!("lib{}_aax.dylib", p.dylib_stem()));
-    codesign_bundle(
-        inner_dylib.to_str().unwrap(),
-        config.macos.application_identity(),
-        false,
-    )?;
-    let inner_exe = contents.join("MacOS").join(&p.name);
-    codesign_bundle(
-        inner_exe.to_str().unwrap(),
-        config.macos.application_identity(),
-        false,
-    )?;
-    codesign_bundle(
-        bundle.to_str().unwrap(),
-        config.macos.application_identity(),
-        false,
-    )?;
-
-    // PACE wraps the Apple-signed bundle and re-signs with hardened runtime
-    // via --dsigharden. Must be the last touch on the bundle — pkgbuild reads
-    // the staging tree directly, so we're safe.
     if !no_pace_sign {
-        pace_sign_aax_macos(&bundle)?;
+        pace_sign_aax_macos(&dst)?;
     }
     Ok(())
 }
 
-/// Stage an AU v3 .app bundle into the staging directory.
-/// Copies from the xcodebuild output in target/tmp/.
-pub(crate) fn stage_au3(_root: &Path, p: &PluginDef, config: &Config, staging: &Path) -> Res {
+/// Stage an AU v3 `.app` bundle into the staging directory for pkgbuild.
+///
+/// Reads from `target/bundles/{Plugin}.app/` — the fully-signed output
+/// of [`emit_au_v3_bundle`] — and copies it into the staging tree.
+/// The bundle is already signed + has its embedded framework, so this
+/// is a pure copy.
+pub(crate) fn stage_au3(root: &Path, p: &PluginDef, _config: &Config, staging: &Path) -> Res {
     let app_name = format!("{}.app", p.au3_app_name());
-    let build_dir = tmp_dir().join(format!("au_v3_build_{}", p.suffix));
-    let built_app = build_dir.join("build/Release/TruceAUv3.app");
+    let built_app = root.join("target/bundles").join(&app_name);
     if !built_app.exists() {
         return Err(format!(
-            "AU v3 app not built: {}. Run the build step first.",
-            built_app.display()
+            "AU v3 bundle missing at {}. Run `cargo truce build --au3 -p {}` first.",
+            built_app.display(),
+            p.suffix,
         )
         .into());
     }
 
     let dst = staging.join(&app_name);
-    // May be root-owned from a previous install-based run
-    if dst.exists() {
-        if fs::remove_dir_all(&dst).is_err() {
-            let _ = Command::new("rm")
-                .args(["-rf", dst.to_str().unwrap()])
-                .status();
-        }
+    // May be root-owned from a previous install-based run.
+    if dst.exists() && fs::remove_dir_all(&dst).is_err() {
+        let _ = Command::new("rm")
+            .args(["-rf", dst.to_str().unwrap()])
+            .status();
     }
     copy_dir_recursive(&built_app, &dst)?;
-
-    // Copy framework into app
-    let fw_name = p.fw_name();
-    let fw_build = tmp_dir().join(format!("au_v3_fw_{}", p.suffix));
-    let fw_src = fw_build.join(format!("{fw_name}.framework"));
-    if fw_src.exists() {
-        let fw_dst = dst.join("Contents/Frameworks");
-        fs::create_dir_all(&fw_dst)?;
-        copy_dir_recursive(&fw_src, &fw_dst.join(format!("{fw_name}.framework")))?;
-    }
-
-    codesign_bundle(
-        dst.to_str().unwrap(),
-        config.macos.application_identity(),
-        false,
-    )?;
     Ok(())
 }
 

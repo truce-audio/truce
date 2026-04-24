@@ -45,9 +45,9 @@ cargo truce validate             # auval + pluginval + clap-validator
 `cargo truce build` is useful for CI, packaging pipelines, and
 iterating without touching the system plugin directories — it
 produces the same bundle layout as `install` under
-`target/bundles/` but never writes outside the workspace. (AU v3
-and AAX are install-only because they need `xcodebuild` and a full
-signed bundle layout to run.)
+`target/bundles/` but never writes outside the workspace. Every
+format flag (`--clap` / `--vst3` / `--vst2` / `--lv2` / `--au2` /
+`--au3` / `--aax`) is supported.
 
 Ship it — produce a signed distributable installer:
 

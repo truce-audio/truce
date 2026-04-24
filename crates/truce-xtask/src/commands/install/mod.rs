@@ -17,7 +17,7 @@ use std::process::Command;
 pub(crate) mod aax;
 pub(crate) mod au_v3;
 
-use aax::install_aax;
+use aax::{emit_aax_bundle, install_aax};
 use au_v3::build_and_install_au_v3;
 
 pub(crate) fn cmd_install(args: &[String]) -> Res {
@@ -279,6 +279,7 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
                 let src = release_lib(&root, &p.dylib_stem());
                 let dst = release_lib(&root, &format!("{}_aax", p.dylib_stem()));
                 fs_ctx::copy(&src, &dst)?;
+                emit_aax_bundle(&root, p, &config, false)?;
             }
         }
 

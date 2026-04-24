@@ -2,7 +2,7 @@
 //! clap-validator (CLAP) against the project's installed bundles, with
 //! shadow-install collision detection.
 
-use crate::{dirs, load_config, PluginDef, Res};
+use crate::{dirs, load_config, tmp_dir, PluginDef, Res};
 use std::fs;
 use std::path::Path;
 #[cfg(target_os = "macos")]
@@ -317,8 +317,11 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
             let clap_dir = dirs::home_dir()
                 .map(|h| h.join("Library/Audio/Plug-Ins/CLAP"))
                 .unwrap_or_default();
-            let tmp_dir = std::env::temp_dir().join("truce-clap-validate");
-            let _ = fs::create_dir_all(&tmp_dir);
+            // Project-local scratch. `cargo clean` sweeps it, and it
+            // stays off the system `/tmp` so nothing outside the repo
+            // gets touched.
+            let scratch = tmp_dir().join("clap-validate");
+            let _ = fs::create_dir_all(&scratch);
 
             for p in &plugins {
                 let clap_name = format!("{}.clap", p.name);
@@ -334,7 +337,7 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
                 let validate_path = if installed.join("Contents/MacOS").is_dir() {
                     installed.clone()
                 } else {
-                    let bundle = tmp_dir.join(&clap_name);
+                    let bundle = scratch.join(&clap_name);
                     let macos = bundle.join("Contents/MacOS");
                     let _ = fs::create_dir_all(&macos);
                     let bin_name = clap_name.trim_end_matches(".clap");
@@ -367,7 +370,7 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
                 }
             }
 
-            let _ = fs::remove_dir_all(&tmp_dir);
+            let _ = fs::remove_dir_all(&scratch);
         } else {
             eprintln!("  clap-validator not found.");
             eprintln!(
