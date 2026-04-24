@@ -33,9 +33,21 @@ cargo truce install --vst2       # VST2 (opt-in, legacy — see note below)
 cargo truce install --lv2        # LV2
 cargo truce install --au3        # AU v3 (macOS, requires Xcode)
 cargo truce install --aax        # AAX (requires AAX SDK)
+
+cargo truce build                # bundle all formats into target/bundles/ without installing
+cargo truce build --clap --vst3  # subset of formats
+cargo truce build --dev          # hot-reload shell build (see Hot reload below)
+
 cargo truce test                 # run tests
 cargo truce validate             # auval + pluginval + clap-validator
 ```
+
+`cargo truce build` is useful for CI, packaging pipelines, and
+iterating without touching the system plugin directories — it
+produces the same bundle layout as `install` under
+`target/bundles/` but never writes outside the workspace. (AU v3
+and AAX are install-only because they need `xcodebuild` and a full
+signed bundle layout to run.)
 
 Ship it — produce a signed distributable installer:
 
