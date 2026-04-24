@@ -21,7 +21,10 @@ au_manufacturer = "Trce"
 # notarize = true
 
 # Each [[plugin]] entry defines a plugin to build and install.
-# The crate must exist at examples/<suffix>/ and support --features au.
+# The crate must support --features au (or whichever formats you declare).
+# `cargo truce new <name>` scaffolds a new plugin under plugins/<name>/;
+# the first-party examples in this repo live under examples/ for
+# historical reasons.
 #
 # Per-format display-name overrides (all optional) let a plugin show
 # under a different name in specific host browsers. Useful mostly

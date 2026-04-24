@@ -152,7 +152,7 @@ Commands:
       Build and run a plugin standalone.
 
   new <name> [--hot] [--instrument] [--midi]
-      Scaffold a new plugin.
+      Scaffold a new plugin under ./plugins/<name>/.
       --hot          Shell/logic split for hot-reload
       --instrument   Instrument template (no audio input)
       --midi         MIDI effect template

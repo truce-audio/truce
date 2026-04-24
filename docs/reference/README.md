@@ -1,8 +1,7 @@
 # Reference
 
 Everything a first-time truce user needs, in order. Each chapter
-is self-contained; most people will read 1–3 straight through and
-then dip into the rest by topic.
+is self-contained.
 
 ## The tutorial track
 

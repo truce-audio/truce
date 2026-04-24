@@ -1,4 +1,4 @@
-//! `cargo truce new` — scaffold a new plugin project under `examples/`.
+//! `cargo truce new` — scaffold a new plugin project under `plugins/`.
 
 use crate::{project_root, Res};
 use std::fs;
@@ -27,12 +27,12 @@ pub(crate) fn cmd_new(args: &[String]) -> Res {
 }
 
 fn scaffold_static_plugin(root: &Path, name: &str) -> Res {
-    let dir = root.join("examples").join(name);
+    let dir = root.join("plugins").join(name);
     if dir.exists() {
-        return Err(format!("examples/{name} already exists").into());
+        return Err(format!("plugins/{name} already exists").into());
     }
 
-    let crate_name = format!("truce-example-{name}");
+    let crate_name = name.to_string();
     let struct_name = to_pascal_case(name);
     let _au_sub = to_fourcc(name);
 
@@ -73,25 +73,31 @@ aax = ["dep:truce-aax"]
 standalone = ["dep:truce-standalone"]
 dev = ["truce/dev"]
 
+# Direct git refs keep the plugin self-contained — works in any
+# workspace regardless of which `truce-*` crates its root
+# `[workspace.dependencies]` happens to declare. If your workspace
+# already pins a specific revision, flip these to
+# `{{ workspace = true }}`.
 [dependencies]
-truce = {{ workspace = true }}
-truce-gui = {{ workspace = true }}
-truce-loader = {{ workspace = true }}
-truce-clap = {{ workspace = true, optional = true }}
-truce-vst3 = {{ workspace = true, optional = true }}
-truce-vst2 = {{ workspace = true, optional = true }}
-truce-lv2 = {{ workspace = true, optional = true }}
-truce-au = {{ workspace = true, optional = true }}
-truce-aax = {{ workspace = true, optional = true }}
+truce = {{ git = "{repo}" }}
+truce-gui = {{ git = "{repo}" }}
+truce-loader = {{ git = "{repo}" }}
+truce-clap = {{ git = "{repo}", optional = true }}
+truce-vst3 = {{ git = "{repo}", optional = true }}
+truce-vst2 = {{ git = "{repo}", optional = true }}
+truce-lv2 = {{ git = "{repo}", optional = true }}
+truce-au = {{ git = "{repo}", optional = true }}
+truce-aax = {{ git = "{repo}", optional = true }}
+truce-standalone = {{ git = "{repo}", features = ["gui"], optional = true }}
 clap-sys = {{ version = "0.5", optional = true }}
-truce-standalone = {{ workspace = true, features = ["gui"], optional = true }}
 
 [dev-dependencies]
-truce-test = {{ workspace = true, features = ["in-process"] }}
+truce-test = {{ git = "{repo}", features = ["in-process"] }}
 
 [build-dependencies]
-truce-build = {{ workspace = true }}
-"#
+truce-build = {{ git = "{repo}" }}
+"#,
+            repo = "https://github.com/truce-audio/truce",
         ),
     )?;
 
@@ -230,19 +236,19 @@ fn main() {{
     // `truce-docs/docs/internal/presets.md` for the authoring schema.
     fs::create_dir_all(dir.join("presets"))?;
 
-    eprintln!("Created examples/{name}/");
+    eprintln!("Created plugins/{name}/");
     eprintln!();
     eprintln!("Next steps:");
-    eprintln!("  1. Add \"{crate_name}\" to [workspace.members] in Cargo.toml");
+    eprintln!("  1. Add \"plugins/{name}\" to [workspace.members] in Cargo.toml");
     eprintln!("  2. Add a [[plugin]] entry to truce.toml with suffix = \"{name}\"");
     eprintln!("  3. cargo truce install -p {name}");
     Ok(())
 }
 
 fn scaffold_hot_plugin(root: &Path, name: &str) -> Res {
-    let dir = root.join("examples").join(name);
+    let dir = root.join("plugins").join(name);
     if dir.exists() {
-        return Err(format!("examples/{name} already exists").into());
+        return Err(format!("plugins/{name} already exists").into());
     }
 
     let struct_name = to_pascal_case(name);
@@ -268,9 +274,10 @@ license.workspace = true
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-truce = {{ workspace = true }}
-truce-loader = {{ workspace = true }}
-"#
+truce = {{ git = "{repo}" }}
+truce-loader = {{ git = "{repo}" }}
+"#,
+            repo = "https://github.com/truce-audio/truce",
         ),
     )?;
 
@@ -351,21 +358,22 @@ static-logic = ["dep:{logic_crate}"]
 dev = ["truce/dev"]
 
 [dependencies]
-truce = {{ workspace = true }}
-truce-gui = {{ workspace = true }}
-truce-loader = {{ workspace = true, features = ["shell"] }}
+truce = {{ git = "{repo}" }}
+truce-gui = {{ git = "{repo}" }}
+truce-loader = {{ git = "{repo}", features = ["shell"] }}
 {logic_crate} = {{ path = "../logic", optional = true }}
-truce-clap = {{ workspace = true, optional = true }}
-truce-vst3 = {{ workspace = true, optional = true }}
-truce-vst2 = {{ workspace = true, optional = true }}
-truce-lv2 = {{ workspace = true, optional = true }}
-truce-au = {{ workspace = true, optional = true }}
-truce-aax = {{ workspace = true, optional = true }}
+truce-clap = {{ git = "{repo}", optional = true }}
+truce-vst3 = {{ git = "{repo}", optional = true }}
+truce-vst2 = {{ git = "{repo}", optional = true }}
+truce-lv2 = {{ git = "{repo}", optional = true }}
+truce-au = {{ git = "{repo}", optional = true }}
+truce-aax = {{ git = "{repo}", optional = true }}
 clap-sys = {{ version = "0.5", optional = true }}
 
 [build-dependencies]
-truce-build = {{ workspace = true }}
-"#
+truce-build = {{ git = "{repo}" }}
+"#,
+            repo = "https://github.com/truce-audio/truce",
         ),
     )?;
 
@@ -424,11 +432,11 @@ truce_aax::export_aax!(__HotShellWrapper);
         ),
     )?;
 
-    eprintln!("Created examples/{name}/shell/ and examples/{name}/logic/");
+    eprintln!("Created plugins/{name}/shell/ and plugins/{name}/logic/");
     eprintln!();
     eprintln!("Next steps:");
     eprintln!(
-        "  1. Add \"{logic_crate}\" and \"{shell_crate}\" to [workspace.members] in Cargo.toml"
+        "  1. Add \"plugins/{name}/logic\" and \"plugins/{name}/shell\" to [workspace.members] in Cargo.toml"
     );
     eprintln!("  2. Add a [[plugin]] entry to truce.toml with suffix = \"{name}/shell\"");
     eprintln!("  3. cargo build -p {logic_crate}              # build the logic dylib");

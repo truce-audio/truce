@@ -257,5 +257,5 @@ terms.
 
 ## Example
 
-`examples/gain-slint/` has a complete plugin with knobs, XY pad, meter,
+`examples/truce-example-gain-slint/` has a complete plugin with knobs, XY pad, meter,
 formatted values, and screenshot test.

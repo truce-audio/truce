@@ -251,5 +251,5 @@ See [screenshot testing](screenshot-testing.md) for more.
 
 ## Example
 
-`examples/gain-iced/` has a complete plugin with custom header, knobs,
+`examples/truce-example-gain-iced/` has a complete plugin with custom header, knobs,
 XY pad, meter, `.el()` usage, and screenshot test.
