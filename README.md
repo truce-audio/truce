@@ -4,8 +4,8 @@ Build audio plugins in Rust. One codebase, every format.
 
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
 
-Write your plugin once. Build CLAP, VST3, VST2, AU v2, AU v3, AAX,
-LV2, and standalone from a single Rust codebase. Hot-reload DSP and
+Write your plugin once. Build CLAP, VST3, VST2, LV2, AU v2, AU v3,
+AAX, and standalone from a single Rust codebase. Hot-reload DSP and
 GUI changes without restarting the DAW.
 
 ## Quick Start
@@ -75,6 +75,7 @@ directories are system-wide).
 
 ```rust
 use truce::prelude::*;
+use truce_gui::layout::{knob, widgets, GridLayout};
 
 #[derive(Params)]
 pub struct GainParams {
@@ -82,6 +83,8 @@ pub struct GainParams {
             unit = "dB", smooth = "exp(5)")]
     pub gain: FloatParam,
 }
+
+use GainParamsParamId as P;
 
 pub struct Gain { params: Arc<GainParams> }
 
@@ -108,7 +111,7 @@ impl PluginLogic for Gain {
 
     fn layout(&self) -> GridLayout {
         GridLayout::build("GAIN", "V0.1", 2, 50.0, vec![widgets(vec![
-            knob(0, "Gain"),
+            knob(P::Gain, "Gain"),
         ])])
     }
 }
@@ -116,7 +119,9 @@ impl PluginLogic for Gain {
 truce::plugin! { logic: Gain, params: GainParams }
 ```
 
-That's a complete plugin with smoothed params, a GPU-rendered GUI knob, and CLAP + VST3 + AU exports.
+A complete plugin with smoothed params, a GPU-rendered GUI knob, and
+the CLAP + VST3 defaults. Add `vst2`, `lv2`, `au`, or `aax` to your
+`[features].default` to ship more formats from the same code.
 
 ## Format Support
 
@@ -172,7 +177,7 @@ By host (across all supported platforms):
 - **Flexible GUI frameworks** — Built-in widgets, egui, iced, slint, or raw window handle
 - **Declarative params** — `#[derive(Params)]` + `#[param(...)]` with smoothing, ranges, units
 - **`truce::plugin!`** — one macro generates all format exports + GUI + state serialization
-- **`cargo truce`** — build, bundle, sign, install, validate, clean
+- **`cargo truce`** — scaffold, build, install, validate, package; `doctor` reports environment health
 - **`cargo truce package`** — signed distributable installers on both platforms (`.pkg` with notarization on macOS; Inno Setup `.exe` with Authenticode on Windows)
 - **Zero-copy audio** — format wrappers pass host buffers directly
 - **Thread-safe params** — atomic storage, lock-free access from any thread
@@ -187,23 +192,26 @@ crates/
 ├── truce-core          # Plugin, AudioBuffer, events, state
 ├── truce-params        # FloatParam, BoolParam, EnumParam, smoothing
 ├── truce-params-derive # #[derive(Params)] proc macro
+├── truce-derive        # plugin_info!() + helper derives
 ├── truce-build         # build.rs helper (reads truce.toml)
 ├── truce-clap          # CLAP format wrapper
 ├── truce-vst3          # VST3 format wrapper
 ├── truce-vst2          # VST2 format wrapper (clean-room)
-├── truce-lv2           # LV2 format wrapper
+├── truce-lv2           # LV2 format wrapper (hand-rolled C bindings)
 ├── truce-aax           # AAX format wrapper
 ├── truce-au            # Audio Unit (v2 + v3)
+├── truce-shim-types    # Shared FFI types for VST3/AAX C++ shims
 ├── truce-standalone    # Standalone host (cpal audio)
-├── truce-gui           # Built-in GUI (wgpu GPU rendering, 6 widgets)
-├── truce-gpu           # wgpu backend for built-in GUI
+├── truce-gui           # Built-in GUI (7 widgets, layout DSL)
+├── truce-gpu           # wgpu rendering backend for truce-gui
+├── truce-dsp           # Realtime-safe DSP utilities (AudioTap SPSC ring)
 ├── truce-egui          # egui GUI integration
 ├── truce-iced          # Iced GUI integration
 ├── truce-slint         # Slint GUI integration
 ├── truce-loader        # Hot-reload (native ABI, PluginLogic trait)
-├── truce-xtask         # Build/bundle/install library
+├── truce-xtask         # Build/bundle/install/package library
 ├── truce-test          # Test utilities + GUI snapshot tests
-├── cargo-truce         # Scaffolding CLI (cargo truce new)
+├── cargo-truce         # `cargo truce` CLI (new, install, build, package, …)
 ```
 
 ## Documentation
@@ -227,7 +235,7 @@ name = "My Effect"
 suffix = "effect"
 crate = "my-effect"
 category = "effect"
-au_subtype = "MyFx"
+fourcc = "MyFx"
 ```
 
 ## Requirements
