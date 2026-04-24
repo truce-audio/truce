@@ -50,7 +50,11 @@ impl<P: Params + 'static> GpuEditor<P> {
     /// swap the layout on hot-reload while GPU rendering continues.
     pub fn new_shared(inner: Arc<Mutex<BuiltinEditor<P>>>) -> Self {
         let size = inner.lock().unwrap().size();
-        Self { inner, size, window: None }
+        Self {
+            inner,
+            size,
+            window: None,
+        }
     }
 }
 
@@ -77,7 +81,8 @@ impl<P: Params + 'static> WindowHandler for GpuWindowHandler<P> {
             if let Ok(mut inner) = self.inner.lock() {
                 #[cfg(feature = "hot-debug")]
                 if !inner.has_context() {
-                    static WARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+                    static WARNED: std::sync::atomic::AtomicBool =
+                        std::sync::atomic::AtomicBool::new(false);
                     if !WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
                         eprintln!("[truce-gpu] WARNING: on_frame called but inner has no context");
                     }
@@ -88,8 +93,10 @@ impl<P: Params + 'static> WindowHandler for GpuWindowHandler<P> {
                 if new_size != self.current_size {
                     hot_debug!(
                         "[truce-gpu] size changed: {}x{} -> {}x{}",
-                        self.current_size.0, self.current_size.1,
-                        new_size.0, new_size.1,
+                        self.current_size.0,
+                        self.current_size.1,
+                        new_size.0,
+                        new_size.1,
                     );
                     gpu.resize(new_size.0, new_size.1);
                     (self.request_resize)(new_size.0, new_size.1);
@@ -167,15 +174,15 @@ impl<P: Params + 'static> Editor for GpuEditor<P> {
             options,
             move |window: &mut Window| {
                 let scale = system_scale as f32;
-                let gpu = unsafe {
-                    WgpuBackend::from_window(window, size.0, size.1, scale)
-                };
+                let gpu = unsafe { WgpuBackend::from_window(window, size.0, size.1, scale) };
 
                 if gpu.is_some() {
                     eprintln!("[truce-gpu] GPU backend active (wgpu/baseview, scale={scale})");
                 } else {
-                    eprintln!("[truce-gpu] GPU init failed — plugin window will be blank. \
-                              Build with --no-default-features to use CPU rendering.");
+                    eprintln!(
+                        "[truce-gpu] GPU init failed — plugin window will be blank. \
+                              Build with --no-default-features to use CPU rendering."
+                    );
                 }
 
                 GpuWindowHandler {

@@ -107,7 +107,8 @@ impl ParamState {
                 get_param_plain: std::sync::Arc::new(move |id| p2.get_plain(id).unwrap_or(0.0)),
                 format_param: std::sync::Arc::new(move |id| {
                     let plain = p3.get_plain(id).unwrap_or(0.0);
-                    p3.format_value(id, plain).unwrap_or_else(|| format!("{plain:.2}"))
+                    p3.format_value(id, plain)
+                        .unwrap_or_else(|| format!("{plain:.2}"))
                 }),
                 get_meter: std::sync::Arc::new(|_| 0.0),
                 get_state: std::sync::Arc::new(|| Vec::new()),

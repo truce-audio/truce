@@ -1,5 +1,5 @@
 use truce::prelude::*;
-use truce_gui::layout::{GridLayout, dropdown, knob, widgets};
+use truce_gui::layout::{dropdown, knob, widgets, GridLayout};
 
 // --- Arp pattern enum ---
 
@@ -56,15 +56,18 @@ pub struct ArpParams {
     #[param(name = "Rate", default = 2)]
     pub rate: EnumParam<ArpRate>,
 
-    #[param(name = "Octaves", short_name = "Oct",
-            range = "discrete(1, 4)", default = 1)]
+    #[param(
+        name = "Octaves",
+        short_name = "Oct",
+        range = "discrete(1, 4)",
+        default = 1
+    )]
     pub octaves: FloatParam,
 
     #[param(name = "Pattern", short_name = "Pat")]
     pub pattern: EnumParam<ArpPattern>,
 
-    #[param(name = "Gate", range = "linear(0.1, 1.0)",
-            default = 0.8, unit = "%")]
+    #[param(name = "Gate", range = "linear(0.1, 1.0)", default = 0.8, unit = "%")]
     pub gate: FloatParam,
 }
 
@@ -123,7 +126,9 @@ impl Arpeggio {
 
         let pattern = self.params.pattern.value();
         match pattern {
-            ArpPattern::Down => { seq.reverse(); }
+            ArpPattern::Down => {
+                seq.reverse();
+            }
             ArpPattern::UpDown => {
                 if seq.len() > 2 {
                     let mut down = seq[1..seq.len() - 1].to_vec();
@@ -156,7 +161,12 @@ impl PluginLogic for Arpeggio {
         self.free_beat = 0.0;
     }
 
-    fn process(&mut self, buffer: &mut AudioBuffer, events: &EventList, context: &mut ProcessContext) -> ProcessStatus {
+    fn process(
+        &mut self,
+        buffer: &mut AudioBuffer,
+        events: &EventList,
+        context: &mut ProcessContext,
+    ) -> ProcessStatus {
         // Process input MIDI -- track held notes
         for event in events.iter() {
             match &event.body {
@@ -172,7 +182,11 @@ impl PluginLogic for Arpeggio {
                         if let Some(cn) = self.active_note.take() {
                             context.output_events.push(Event {
                                 sample_offset: event.sample_offset,
-                                body: EventBody::NoteOff { channel: 0, note: cn, velocity: 0.0 },
+                                body: EventBody::NoteOff {
+                                    channel: 0,
+                                    note: cn,
+                                    velocity: 0.0,
+                                },
                             });
                         }
                     }
@@ -203,7 +217,11 @@ impl PluginLogic for Arpeggio {
         // when no DAW is driving us.
         let transport = &context.transport;
         let host_locked = transport.playing && transport.tempo > 0.0;
-        let tempo = if transport.tempo > 0.0 { transport.tempo } else { 120.0 };
+        let tempo = if transport.tempo > 0.0 {
+            transport.tempo
+        } else {
+            120.0
+        };
         let beats_per_sample = tempo / 60.0 / self.sample_rate;
         let block_start_beat = if host_locked {
             transport.position_beats
@@ -226,7 +244,11 @@ impl PluginLogic for Arpeggio {
                 if let Some(cn) = self.active_note.take() {
                     context.output_events.push(Event {
                         sample_offset: i as u32,
-                        body: EventBody::NoteOff { channel: 0, note: cn, velocity: 0.0 },
+                        body: EventBody::NoteOff {
+                            channel: 0,
+                            note: cn,
+                            velocity: 0.0,
+                        },
                     });
                 }
                 let note = if pattern == ArpPattern::Random {
@@ -239,7 +261,11 @@ impl PluginLogic for Arpeggio {
                 };
                 context.output_events.push(Event {
                     sample_offset: i as u32,
-                    body: EventBody::NoteOn { channel: 0, note, velocity: 0.8 },
+                    body: EventBody::NoteOn {
+                        channel: 0,
+                        note,
+                        velocity: 0.8,
+                    },
                 });
                 self.active_note = Some(note);
                 self.last_step = Some(step_num);
@@ -251,7 +277,11 @@ impl PluginLogic for Arpeggio {
                     if let Some(cn) = self.active_note.take() {
                         context.output_events.push(Event {
                             sample_offset: i as u32,
-                            body: EventBody::NoteOff { channel: 0, note: cn, velocity: 0.0 },
+                            body: EventBody::NoteOff {
+                                channel: 0,
+                                note: cn,
+                                velocity: 0.0,
+                            },
                         });
                     }
                 }
@@ -267,12 +297,18 @@ impl PluginLogic for Arpeggio {
     }
 
     fn layout(&self) -> truce_gui::layout::GridLayout {
-        GridLayout::build("ARPEGGIO", "V0.1", 2, 50.0, vec![widgets(vec![
-            dropdown(P::Rate, "Rate"),
-            knob(P::Gate, "Gate"),
-            knob(P::Octaves, "Octaves"),
-            dropdown(P::Pattern, "Pattern"),
-        ])])
+        GridLayout::build(
+            "ARPEGGIO",
+            "V0.1",
+            2,
+            50.0,
+            vec![widgets(vec![
+                dropdown(P::Rate, "Rate"),
+                knob(P::Gate, "Gate"),
+                knob(P::Octaves, "Octaves"),
+                dropdown(P::Pattern, "Pattern"),
+            ])],
+        )
     }
 }
 
@@ -295,9 +331,7 @@ mod tests {
         let params = std::sync::Arc::new(ArpParams::new());
         let arp = Arpeggio::new(std::sync::Arc::clone(&params));
         let layout = arp.layout();
-        truce_test::assert_gui_snapshot_grid::<ArpParams>(
-            "arpeggio_default", params, layout, 0,
-        );
+        truce_test::assert_gui_snapshot_grid::<ArpParams>("arpeggio_default", params, layout, 0);
     }
 
     /// Regression guard for the 2026-04-23 LV2 MIDI bug: the
@@ -309,6 +343,9 @@ mod tests {
     fn category_is_note_effect() {
         use truce_core::info::PluginCategory;
         use truce_core::plugin::Plugin as PluginTrait;
-        assert_eq!(<Plugin as PluginTrait>::info().category, PluginCategory::NoteEffect);
+        assert_eq!(
+            <Plugin as PluginTrait>::info().category,
+            PluginCategory::NoteEffect
+        );
     }
 }

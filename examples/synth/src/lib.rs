@@ -1,5 +1,5 @@
 use truce::prelude::*;
-use truce_gui::layout::{GridLayout, dropdown, knob, section, widgets};
+use truce_gui::layout::{dropdown, knob, section, widgets, GridLayout};
 
 mod voice;
 use voice::Voice;
@@ -23,32 +23,63 @@ pub struct SynthParams {
     #[param(name = "Waveform", short_name = "Wave", default = 1)]
     pub waveform: EnumParam<Waveform>,
 
-    #[param(name = "Filter Cutoff", short_name = "Cutoff",
-            group = "Filter", range = "log(20, 20000)",
-            default = 8000.0, unit = "Hz", smooth = "exp(5)")]
+    #[param(
+        name = "Filter Cutoff",
+        short_name = "Cutoff",
+        group = "Filter",
+        range = "log(20, 20000)",
+        default = 8000.0,
+        unit = "Hz",
+        smooth = "exp(5)"
+    )]
     pub cutoff: FloatParam,
 
-    #[param(name = "Filter Resonance", short_name = "Reso",
-            group = "Filter", range = "linear(0, 1)", smooth = "exp(5)")]
+    #[param(
+        name = "Filter Resonance",
+        short_name = "Reso",
+        group = "Filter",
+        range = "linear(0, 1)",
+        smooth = "exp(5)"
+    )]
     pub resonance: FloatParam,
 
-    #[param(name = "Attack", short_name = "Atk",
-            group = "Envelope", range = "log(0.001, 5)",
-            default = 0.01, unit = "s")]
+    #[param(
+        name = "Attack",
+        short_name = "Atk",
+        group = "Envelope",
+        range = "log(0.001, 5)",
+        default = 0.01,
+        unit = "s"
+    )]
     pub attack: FloatParam,
 
-    #[param(name = "Decay", short_name = "Dec",
-            group = "Envelope", range = "log(0.001, 5)",
-            default = 0.1, unit = "s")]
+    #[param(
+        name = "Decay",
+        short_name = "Dec",
+        group = "Envelope",
+        range = "log(0.001, 5)",
+        default = 0.1,
+        unit = "s"
+    )]
     pub decay: FloatParam,
 
-    #[param(name = "Sustain", short_name = "Sus",
-            group = "Envelope", range = "linear(0, 1)", default = 0.7)]
+    #[param(
+        name = "Sustain",
+        short_name = "Sus",
+        group = "Envelope",
+        range = "linear(0, 1)",
+        default = 0.7
+    )]
     pub sustain: FloatParam,
 
-    #[param(name = "Release", short_name = "Rel",
-            group = "Envelope", range = "log(0.01, 10)",
-            default = 0.3, unit = "s")]
+    #[param(
+        name = "Release",
+        short_name = "Rel",
+        group = "Envelope",
+        range = "log(0.01, 10)",
+        default = 0.3,
+        unit = "s"
+    )]
     pub release: FloatParam,
 
     #[param(name = "Volume", short_name = "Vol",
@@ -115,7 +146,12 @@ impl PluginLogic for Synth {
         self.params.snap_smoothers();
     }
 
-    fn process(&mut self, buffer: &mut AudioBuffer, events: &EventList, _context: &mut ProcessContext) -> ProcessStatus {
+    fn process(
+        &mut self,
+        buffer: &mut AudioBuffer,
+        events: &EventList,
+        _context: &mut ProcessContext,
+    ) -> ProcessStatus {
         let mut next_event = 0;
 
         for i in 0..buffer.num_samples() {
@@ -156,22 +192,31 @@ impl PluginLogic for Synth {
     }
 
     fn layout(&self) -> truce_gui::layout::GridLayout {
-        GridLayout::build("TRUCE SYNTH", "V0.1", 4, 50.0, vec![
-            widgets(vec![
-                dropdown(P::Waveform, "Wave").cols(2),
-                knob(P::Volume, "Volume"),
-            ]),
-            section("FILTER", vec![
-                knob(P::Cutoff, "Cutoff"),
-                knob(P::Resonance, "Reso"),
-            ]),
-            section("ENVELOPE", vec![
-                knob(P::Attack, "Attack"),
-                knob(P::Decay, "Decay"),
-                knob(P::Sustain, "Sustain"),
-                knob(P::Release, "Release"),
-            ]),
-        ])
+        GridLayout::build(
+            "TRUCE SYNTH",
+            "V0.1",
+            4,
+            50.0,
+            vec![
+                widgets(vec![
+                    dropdown(P::Waveform, "Wave").cols(2),
+                    knob(P::Volume, "Volume"),
+                ]),
+                section(
+                    "FILTER",
+                    vec![knob(P::Cutoff, "Cutoff"), knob(P::Resonance, "Reso")],
+                ),
+                section(
+                    "ENVELOPE",
+                    vec![
+                        knob(P::Attack, "Attack"),
+                        knob(P::Decay, "Decay"),
+                        knob(P::Sustain, "Sustain"),
+                        knob(P::Release, "Release"),
+                    ],
+                ),
+            ],
+        )
     }
 }
 
@@ -298,8 +343,6 @@ mod tests {
         let params = std::sync::Arc::new(SynthParams::new());
         let synth = Synth::new(std::sync::Arc::clone(&params));
         let layout = synth.layout();
-        truce_test::assert_gui_snapshot_grid::<SynthParams>(
-            "synth_default", params, layout, 0,
-        );
+        truce_test::assert_gui_snapshot_grid::<SynthParams>("synth_default", params, layout, 0);
     }
 }

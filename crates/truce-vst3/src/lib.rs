@@ -146,12 +146,41 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
                     let value = ev.data2 as u32 * (0xFFFFFFFF / 127);
                     let note = ev._pad;
                     match type_id {
-                        0 => Some(EventBody::PerNoteCC { channel: 0, note, cc: 7, value }),     // volume
-                        1 => Some(EventBody::PerNoteCC { channel: 0, note, cc: 10, value }),    // pan
-                        2 => Some(EventBody::PerNotePitchBend { channel: 0, note, value }),     // tuning
-                        3 => Some(EventBody::PerNoteCC { channel: 0, note, cc: 1, value }),     // vibrato
-                        4 => Some(EventBody::PerNoteCC { channel: 0, note, cc: 11, value }),    // expression
-                        5 => Some(EventBody::PerNoteCC { channel: 0, note, cc: 74, value }),    // brightness
+                        0 => Some(EventBody::PerNoteCC {
+                            channel: 0,
+                            note,
+                            cc: 7,
+                            value,
+                        }), // volume
+                        1 => Some(EventBody::PerNoteCC {
+                            channel: 0,
+                            note,
+                            cc: 10,
+                            value,
+                        }), // pan
+                        2 => Some(EventBody::PerNotePitchBend {
+                            channel: 0,
+                            note,
+                            value,
+                        }), // tuning
+                        3 => Some(EventBody::PerNoteCC {
+                            channel: 0,
+                            note,
+                            cc: 1,
+                            value,
+                        }), // vibrato
+                        4 => Some(EventBody::PerNoteCC {
+                            channel: 0,
+                            note,
+                            cc: 11,
+                            value,
+                        }), // expression
+                        5 => Some(EventBody::PerNoteCC {
+                            channel: 0,
+                            note,
+                            cc: 74,
+                            value,
+                        }), // brightness
                         _ => None,
                     }
                 }
@@ -170,7 +199,11 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
     // Build AudioBuffer from raw pointers
     let mut scratch = truce_core::buffer::RawBufferScratch::default();
     let mut audio_buffer = scratch.build(
-        inputs, outputs, num_input_channels, num_output_channels, num_frames as u32,
+        inputs,
+        outputs,
+        num_input_channels,
+        num_output_channels,
+        num_frames as u32,
     );
 
     // Apply sample-accurate parameter changes.
@@ -181,7 +214,10 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
             inst.plugin.params().set_plain(pc.id, pc.value);
             inst.event_list.push(Event {
                 sample_offset: pc.sample_offset as u32,
-                body: EventBody::ParamChange { id: pc.id, value: pc.value },
+                body: EventBody::ParamChange {
+                    id: pc.id,
+                    value: pc.value,
+                },
             });
         }
         inst.event_list.sort();
@@ -209,7 +245,12 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
 
     inst.output_events.clear();
     inst.transport_slot.write(&transport);
-    let mut context = ProcessContext::new(&transport, inst.sample_rate, num_frames, &mut inst.output_events);
+    let mut context = ProcessContext::new(
+        &transport,
+        inst.sample_rate,
+        num_frames,
+        &mut inst.output_events,
+    );
 
     inst.plugin
         .process(&mut audio_buffer, &inst.event_list, &mut context);
@@ -415,12 +456,20 @@ unsafe extern "C" fn cb_get_output_event<P: PluginExport>(
         let midi = &mut *out;
         midi.sample_offset = event.sample_offset;
         match &event.body {
-            EventBody::NoteOn { channel, note, velocity } => {
+            EventBody::NoteOn {
+                channel,
+                note,
+                velocity,
+            } => {
                 midi.status = 0x90 | (channel & 0x0F);
                 midi.data1 = *note;
                 midi.data2 = (*velocity * 127.0) as u8;
             }
-            EventBody::NoteOff { channel, note, velocity } => {
+            EventBody::NoteOff {
+                channel,
+                note,
+                velocity,
+            } => {
                 midi.status = 0x80 | (channel & 0x0F);
                 midi.data1 = *note;
                 midi.data2 = (*velocity * 127.0) as u8;
@@ -535,7 +584,9 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
             }),
             format_param: std::sync::Arc::new(move |id| {
                 let plain = params_for_fmt.get_plain(id).unwrap_or(0.0);
-                params_for_fmt.format_value(id, plain).unwrap_or_else(|| format!("{:.1}", plain))
+                params_for_fmt
+                    .format_value(id, plain)
+                    .unwrap_or_else(|| format!("{:.1}", plain))
             }),
             get_meter: std::sync::Arc::new(move |id| {
                 let plugin = plugin_ptr.get();
@@ -577,8 +628,7 @@ unsafe extern "C" fn cb_gui_close<P: PluginExport>(ctx: *mut std::ffi::c_void) {
 /// Install-time override for the host-facing plugin name
 /// (`PClassInfo::name`). Populated by `cargo truce install` via the
 /// `vst3_name` field in `truce.toml`.
-const VST3_NAME_OVERRIDE: Option<&'static str> =
-    option_env!("TRUCE_VST3_NAME_OVERRIDE");
+const VST3_NAME_OVERRIDE: Option<&'static str> = option_env!("TRUCE_VST3_NAME_OVERRIDE");
 
 fn resolved_plugin_name(info: &truce_core::info::PluginInfo) -> &'static str {
     match VST3_NAME_OVERRIDE {

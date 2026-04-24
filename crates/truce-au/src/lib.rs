@@ -147,7 +147,11 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
     // Build AudioBuffer from raw pointers (copies input→output for effects)
     let mut scratch = truce_core::buffer::RawBufferScratch::default();
     let mut audio_buffer = scratch.build(
-        inputs, outputs, num_input_channels, num_output_channels, num_frames as u32,
+        inputs,
+        outputs,
+        num_input_channels,
+        num_output_channels,
+        num_frames as u32,
     );
 
     let transport = if !transport_ptr.is_null() && (*transport_ptr).valid != 0 {
@@ -171,7 +175,12 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
     };
     inst.output_events.clear();
     inst.transport_slot.write(&transport);
-    let mut context = ProcessContext::new(&transport, inst.sample_rate, num_frames, &mut inst.output_events);
+    let mut context = ProcessContext::new(
+        &transport,
+        inst.sample_rate,
+        num_frames,
+        &mut inst.output_events,
+    );
 
     inst.plugin
         .process(&mut audio_buffer, &inst.event_list, &mut context);
@@ -355,7 +364,9 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
             }),
             format_param: std::sync::Arc::new(move |id| {
                 let plain = params_for_fmt.get_plain(id).unwrap_or(0.0);
-                params_for_fmt.format_value(id, plain).unwrap_or_else(|| format!("{:.1}", plain))
+                params_for_fmt
+                    .format_value(id, plain)
+                    .unwrap_or_else(|| format!("{:.1}", plain))
             }),
             get_meter: std::sync::Arc::new(move |id| {
                 let plugin = plugin_ptr.get();
@@ -412,8 +423,7 @@ unsafe fn libc_free(ptr: *mut std::ffi::c_void) {
 /// Populated by `cargo truce install` from the `au_name` (AU v2) or
 /// `au3_name` (AU v3) field in `truce.toml`; each build is targeted
 /// to one AU version so one env var covers both.
-const AU_NAME_OVERRIDE: Option<&'static str> =
-    option_env!("TRUCE_AU_NAME_OVERRIDE");
+const AU_NAME_OVERRIDE: Option<&'static str> = option_env!("TRUCE_AU_NAME_OVERRIDE");
 
 fn resolved_plugin_name(info: &truce_core::info::PluginInfo) -> &'static str {
     match AU_NAME_OVERRIDE {

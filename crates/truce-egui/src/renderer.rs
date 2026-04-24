@@ -20,11 +20,7 @@ impl EguiRenderer {
     ///
     /// # Safety
     /// The window must remain valid for the lifetime of the renderer.
-    pub unsafe fn from_window(
-        window: &baseview::Window,
-        width: u32,
-        height: u32,
-    ) -> Option<Self> {
+    pub unsafe fn from_window(window: &baseview::Window, width: u32, height: u32) -> Option<Self> {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::PRIMARY,
             ..Default::default()
@@ -99,9 +95,7 @@ impl EguiRenderer {
         });
 
         let surface = instance
-            .create_surface_unsafe(wgpu::SurfaceTargetUnsafe::CoreAnimationLayer(
-                metal_layer,
-            ))
+            .create_surface_unsafe(wgpu::SurfaceTargetUnsafe::CoreAnimationLayer(metal_layer))
             .ok()?;
 
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {

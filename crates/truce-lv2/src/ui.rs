@@ -29,8 +29,8 @@
 
 use std::ffi::{c_char, c_void, CStr, CString};
 use std::marker::PhantomData;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::Arc;
 
 use truce_core::editor::{Editor, EditorContext, RawWindowHandle};
 use truce_core::export::PluginExport;
@@ -94,9 +94,8 @@ pub const LV2_UI__RESIZE: &str = "http://lv2plug.in/ns/extensions/ui#resize";
 #[repr(C)]
 pub struct Lv2UiResize {
     pub handle: *mut c_void,
-    pub ui_resize: Option<
-        unsafe extern "C" fn(handle: *mut c_void, width: i32, height: i32) -> i32,
-    >,
+    pub ui_resize:
+        Option<unsafe extern "C" fn(handle: *mut c_void, width: i32, height: i32) -> i32>,
 }
 
 // ---------------------------------------------------------------------------
@@ -216,8 +215,7 @@ pub unsafe fn instantiate_ui<P: PluginExport>(
 
     // Resolve host URIDs for atom-event decoding on the UI side.
     let urid_map = UridMap::from_features(features);
-    let atom_event_transfer_urid =
-        urid_map.intern("http://lv2plug.in/ns/ext/atom#eventTransfer");
+    let atom_event_transfer_urid = urid_map.intern("http://lv2plug.in/ns/ext/atom#eventTransfer");
     let transport_slot = TransportSlot::new();
 
     // Build EditorContext closures driven by write_function / shadow params.
@@ -366,9 +364,7 @@ pub unsafe fn port_event<P: PluginExport>(
         }
         // Meter output: shadow the latest reading so the editor's
         // `get_meter` closure can hand it back without touching the DSP.
-        if let Some(meter) =
-            ui.meter_slots.iter().find(|m| m.port_index == port_index)
-        {
+        if let Some(meter) = ui.meter_slots.iter().find(|m| m.port_index == port_index) {
             meter.value.store(value.to_bits(), Ordering::Relaxed);
         }
         return;
@@ -402,9 +398,7 @@ unsafe fn decode_notify_atom<P: PluginExport>(
         return;
     }
     let atom_hdr = *(buffer as *const Atom);
-    if atom_hdr.type_ != ui.urid_map.atom_object
-        && atom_hdr.type_ != ui.urid_map.atom_blank
-    {
+    if atom_hdr.type_ != ui.urid_map.atom_object && atom_hdr.type_ != ui.urid_map.atom_blank {
         return;
     }
     let body_ptr = (buffer as *const u8).add(header_size);
@@ -425,25 +419,19 @@ unsafe fn decode_notify_atom<P: PluginExport>(
     let mut scratch = vec![0u8; core::mem::size_of::<OneEvent>() + body_size + 8];
     let one = scratch.as_mut_ptr() as *mut OneEvent;
     (*one).seq_header.atom.type_ = ui.urid_map.atom_sequence;
-    (*one).seq_header.atom.size =
-        (core::mem::size_of::<AtomSequenceBody>()
-            + core::mem::size_of::<i64>()
-            + core::mem::size_of::<Atom>()
-            + body_size) as u32;
+    (*one).seq_header.atom.size = (core::mem::size_of::<AtomSequenceBody>()
+        + core::mem::size_of::<i64>()
+        + core::mem::size_of::<Atom>()
+        + body_size) as u32;
     (*one).seq_header.body.unit = 0;
     (*one).seq_header.body.pad = 0;
     (*one).event_time = 0;
     (*one).event_body = atom_hdr;
-    let ev_body_dest = scratch
-        .as_mut_ptr()
-        .add(core::mem::size_of::<OneEvent>());
+    let ev_body_dest = scratch.as_mut_ptr().add(core::mem::size_of::<OneEvent>());
     core::ptr::copy_nonoverlapping(body_ptr, ev_body_dest, body_size);
 
     let mut info = truce_core::events::TransportInfo::default();
-    let reader = AtomSequenceReader::new(
-        scratch.as_ptr() as *const AtomSequence,
-        &ui.urid_map,
-    );
+    let reader = AtomSequenceReader::new(scratch.as_ptr() as *const AtomSequence, &ui.urid_map);
     if reader.apply_time_position(&mut info) {
         ui.transport_slot.write(&info);
     }
@@ -470,9 +458,7 @@ unsafe fn parse_parent_feature(features: *const *const LV2Feature) -> Option<*mu
 /// Locate the host-supplied `ui:resize` feature. When present, the UI
 /// may call `ui_resize(handle, w, h)` to ask the host to resize the
 /// embedding container.
-unsafe fn parse_resize_feature(
-    features: *const *const LV2Feature,
-) -> Option<&'static Lv2UiResize> {
+unsafe fn parse_resize_feature(features: *const *const LV2Feature) -> Option<&'static Lv2UiResize> {
     let feat = find_feature(features, LV2_UI__RESIZE)?;
     if feat.data.is_null() {
         return None;
@@ -553,7 +539,12 @@ unsafe fn fit_win32_parent_to_child(parent: *mut c_void) {
         return;
     }
 
-    let mut rect = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+    let mut rect = RECT {
+        left: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+    };
     if GetClientRect(child, &mut rect) == 0 {
         return;
     }
@@ -655,10 +646,8 @@ unsafe fn install_child_cursor_update(parent: *mut c_void) {
         // Transmute through an intermediate `extern "C" fn()` to keep
         // the ABI intact while satisfying the cast.
         type ImpFn = unsafe extern "C" fn();
-        let imp: ImpFn = core::mem::transmute::<
-            extern "C" fn(&Object, Sel, *mut Object),
-            ImpFn,
-        >(cursor_update);
+        let imp: ImpFn =
+            core::mem::transmute::<extern "C" fn(&Object, Sel, *mut Object), ImpFn>(cursor_update);
         class_addMethod(class_ptr, selector, imp, type_encoding);
     }
 }
@@ -694,8 +683,7 @@ fn build_editor_context<P: PluginExport>(
         end_edit: Arc::new(|_id: u32| {}),
         request_resize: Arc::new(|_w: u32, _h: u32| false),
         set_param: Arc::new(move |id: u32, normalized: f64| {
-            let Some((_, port_index, range)) =
-                slots_for_set.iter().find(|(pid, _, _)| *pid == id)
+            let Some((_, port_index, range)) = slots_for_set.iter().find(|(pid, _, _)| *pid == id)
             else {
                 return;
             };

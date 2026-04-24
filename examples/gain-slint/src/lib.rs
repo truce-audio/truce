@@ -1,7 +1,7 @@
 use std::f32::consts::FRAC_PI_4;
 
 use truce::prelude::*;
-use truce_slint::{SlintEditor, ParamState};
+use truce_slint::{ParamState, SlintEditor};
 
 slint::include_modules!();
 
@@ -11,12 +11,15 @@ use GainParamsParamId as P;
 
 #[derive(Params)]
 pub struct GainParams {
-    #[param(name = "Gain", range = "linear(-60, 6)",
-            unit = "dB", smooth = "exp(5)")]
+    #[param(
+        name = "Gain",
+        range = "linear(-60, 6)",
+        unit = "dB",
+        smooth = "exp(5)"
+    )]
     pub gain: FloatParam,
 
-    #[param(name = "Pan", range = "linear(-1, 1)",
-            unit = "pan", smooth = "exp(5)")]
+    #[param(name = "Pan", range = "linear(-1, 1)", unit = "pan", smooth = "exp(5)")]
     pub pan: FloatParam,
 
     #[meter]
@@ -77,25 +80,28 @@ impl PluginLogic for GainSlint {
     }
 
     fn custom_editor(&self) -> Option<Box<dyn truce_core::editor::Editor>> {
-        Some(Box::new(SlintEditor::new((176, 290), |state: ParamState| {
-            let ui = GainUi::new().unwrap();
+        Some(Box::new(SlintEditor::new(
+            (176, 290),
+            |state: ParamState| {
+                let ui = GainUi::new().unwrap();
 
-            // UI → host
-            let s = state.clone();
-            ui.on_gain_changed(move |v| s.set_immediate(P::Gain, v as f64));
-            let s = state.clone();
-            ui.on_pan_changed(move |v| s.set_immediate(P::Pan, v as f64));
+                // UI → host
+                let s = state.clone();
+                ui.on_gain_changed(move |v| s.set_immediate(P::Gain, v as f64));
+                let s = state.clone();
+                ui.on_pan_changed(move |v| s.set_immediate(P::Pan, v as f64));
 
-            // host → UI (params + meters)
-            Box::new(move |state: &ParamState| {
-                ui.set_gain(state.get(P::Gain) as f32);
-                ui.set_pan(state.get(P::Pan) as f32);
-                ui.set_gain_text(slint::SharedString::from(state.format(P::Gain)));
-                ui.set_pan_text(slint::SharedString::from(state.format(P::Pan)));
-                ui.set_meter_left(meter_display(state.meter(P::MeterLeft)));
-                ui.set_meter_right(meter_display(state.meter(P::MeterRight)));
-            })
-        })))
+                // host → UI (params + meters)
+                Box::new(move |state: &ParamState| {
+                    ui.set_gain(state.get(P::Gain) as f32);
+                    ui.set_pan(state.get(P::Pan) as f32);
+                    ui.set_gain_text(slint::SharedString::from(state.format(P::Gain)));
+                    ui.set_pan_text(slint::SharedString::from(state.format(P::Pan)));
+                    ui.set_meter_left(meter_display(state.meter(P::MeterLeft)));
+                    ui.set_meter_right(meter_display(state.meter(P::MeterRight)));
+                })
+            },
+        )))
     }
 }
 
@@ -133,8 +139,12 @@ mod tests {
     #[test]
     fn gui_snapshot() {
         truce_slint::snapshot::assert_snapshot::<GainParams>(
-            "screenshots", "gain_slint_default",
-            176, 290, 2.0, 0,
+            "screenshots",
+            "gain_slint_default",
+            176,
+            290,
+            2.0,
+            0,
             |state| {
                 let ui = GainUi::new().unwrap();
                 Box::new(move |state: &truce_slint::ParamState| {

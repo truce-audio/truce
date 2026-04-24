@@ -148,16 +148,19 @@ impl GlyphAtlas {
 
             self.pending.push((x, y, gw, gh, bitmap));
 
-            self.glyphs.insert(key, GlyphUV {
-                u0,
-                v0,
-                u1,
-                v1,
-                advance: metrics.advance_width,
-                width: gw as f32,
-                height: gh as f32,
-                y_offset: metrics.ymin as f32,
-            });
+            self.glyphs.insert(
+                key,
+                GlyphUV {
+                    u0,
+                    v0,
+                    u1,
+                    v1,
+                    advance: metrics.advance_width,
+                    width: gw as f32,
+                    height: gh as f32,
+                    y_offset: metrics.ymin as f32,
+                },
+            );
         }
         self.glyphs.get(&key).unwrap()
     }
@@ -372,12 +375,11 @@ impl WgpuBackend {
 
         // Viewport uniform
         let matrix = ortho_matrix(width as f32, height as f32);
-        let viewport_buffer =
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("viewport"),
-                contents: bytemuck::cast_slice(&matrix),
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            });
+        let viewport_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("viewport"),
+            contents: bytemuck::cast_slice(&matrix),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
 
         let viewport_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -599,9 +601,8 @@ impl WgpuBackend {
         });
 
         let surface = unsafe {
-            instance.create_surface_unsafe(
-                wgpu::SurfaceTargetUnsafe::CoreAnimationLayer(metal_layer),
-            )
+            instance
+                .create_surface_unsafe(wgpu::SurfaceTargetUnsafe::CoreAnimationLayer(metal_layer))
         }
         .ok()?;
 
@@ -682,12 +683,11 @@ impl WgpuBackend {
 
         // Viewport uniform
         let matrix = ortho_matrix(width as f32, height as f32);
-        let viewport_buffer =
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("viewport"),
-                contents: bytemuck::cast_slice(&matrix),
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            });
+        let viewport_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("viewport"),
+            contents: bytemuck::cast_slice(&matrix),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
 
         let viewport_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -782,10 +782,26 @@ impl WgpuBackend {
             array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Vertex,
             attributes: &[
-                wgpu::VertexAttribute { offset: 0, shader_location: 0, format: wgpu::VertexFormat::Float32x2 },
-                wgpu::VertexAttribute { offset: 8, shader_location: 1, format: wgpu::VertexFormat::Float32x4 },
-                wgpu::VertexAttribute { offset: 24, shader_location: 2, format: wgpu::VertexFormat::Float32x2 },
-                wgpu::VertexAttribute { offset: 32, shader_location: 3, format: wgpu::VertexFormat::Float32 },
+                wgpu::VertexAttribute {
+                    offset: 0,
+                    shader_location: 0,
+                    format: wgpu::VertexFormat::Float32x2,
+                },
+                wgpu::VertexAttribute {
+                    offset: 8,
+                    shader_location: 1,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                wgpu::VertexAttribute {
+                    offset: 24,
+                    shader_location: 2,
+                    format: wgpu::VertexFormat::Float32x2,
+                },
+                wgpu::VertexAttribute {
+                    offset: 32,
+                    shader_location: 3,
+                    format: wgpu::VertexFormat::Float32,
+                },
             ],
         };
 
@@ -883,11 +899,8 @@ impl WgpuBackend {
             self.width = phys_w;
             self.height = phys_h;
             let matrix = ortho_matrix(phys_w as f32, phys_h as f32);
-            self.queue.write_buffer(
-                &self.viewport_buffer,
-                0,
-                bytemuck::cast_slice(&matrix),
-            );
+            self.queue
+                .write_buffer(&self.viewport_buffer, 0, bytemuck::cast_slice(&matrix));
         }
 
         if phys_w != self.msaa_width || phys_h != self.msaa_height {
@@ -914,11 +927,7 @@ impl WgpuBackend {
     /// uses `LoadOp::Clear(clear_color)`; otherwise `LoadOp::Load` so
     /// any prior content in `view` is preserved (the common case when
     /// widgets overlay a custom render).
-    pub fn finish(
-        &mut self,
-        encoder: &mut wgpu::CommandEncoder,
-        view: &wgpu::TextureView,
-    ) {
+    pub fn finish(&mut self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
         self.flush_atlas();
 
         if self.indices.is_empty() {
@@ -926,21 +935,21 @@ impl WgpuBackend {
             return;
         }
 
-        let vertex_buffer =
-            self.device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("vertices"),
-                    contents: bytemuck::cast_slice(&self.vertices),
-                    usage: wgpu::BufferUsages::VERTEX,
-                });
+        let vertex_buffer = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("vertices"),
+                contents: bytemuck::cast_slice(&self.vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
 
-        let index_buffer =
-            self.device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("indices"),
-                    contents: bytemuck::cast_slice(&self.indices),
-                    usage: wgpu::BufferUsages::INDEX,
-                });
+        let index_buffer = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("indices"),
+                contents: bytemuck::cast_slice(&self.indices),
+                usage: wgpu::BufferUsages::INDEX,
+            });
 
         let load = if self.clear_pending {
             wgpu::LoadOp::Clear(self.clear_color)
@@ -986,14 +995,12 @@ impl WgpuBackend {
                     }
                     let bg = match b.image {
                         None => &self.atlas_bind_group,
-                        Some(img_id) => match self
-                            .images
-                            .get(img_id.0 as usize)
-                            .and_then(|s| s.as_ref())
-                        {
-                            Some(entry) => &entry.bind_group,
-                            None => continue,
-                        },
+                        Some(img_id) => {
+                            match self.images.get(img_id.0 as usize).and_then(|s| s.as_ref()) {
+                                Some(entry) => &entry.bind_group,
+                                None => continue,
+                            }
+                        }
                     };
                     pass.set_bind_group(1, bg, &[]);
                     pass.draw_indexed(b.index_start..end, 0, 0..1);
@@ -1086,11 +1093,8 @@ impl WgpuBackend {
 
         // Update the orthographic projection matrix.
         let matrix = ortho_matrix(new_w as f32, new_h as f32);
-        self.queue.write_buffer(
-            &self.viewport_buffer,
-            0,
-            bytemuck::cast_slice(&matrix),
-        );
+        self.queue
+            .write_buffer(&self.viewport_buffer, 0, bytemuck::cast_slice(&matrix));
 
         true
     }
@@ -1227,7 +1231,11 @@ impl RenderBackend for WgpuBackend {
         let s = self.scale;
         let c = Self::color_arr(color);
         let mut builder = Path::builder();
-        builder.add_circle(point(cx * s, cy * s), radius * s, lyon_tessellation::path::Winding::Positive);
+        builder.add_circle(
+            point(cx * s, cy * s),
+            radius * s,
+            lyon_tessellation::path::Winding::Positive,
+        );
         let path = builder.build();
         self.fill_path(&path, c);
     }
@@ -1236,7 +1244,11 @@ impl RenderBackend for WgpuBackend {
         let s = self.scale;
         let c = Self::color_arr(color);
         let mut builder = Path::builder();
-        builder.add_circle(point(cx * s, cy * s), radius * s, lyon_tessellation::path::Winding::Positive);
+        builder.add_circle(
+            point(cx * s, cy * s),
+            radius * s,
+            lyon_tessellation::path::Winding::Positive,
+        );
         let path = builder.build();
         let opts = StrokeOptions::tolerance(0.5).with_line_width(width * s);
         self.stroke_path(&path, c, &opts);
@@ -1265,7 +1277,10 @@ impl RenderBackend for WgpuBackend {
         ));
         for i in 1..=segments {
             let angle = start_angle + step * i as f32;
-            builder.line_to(point(cx * s + radius * s * angle.cos(), cy * s + radius * s * angle.sin()));
+            builder.line_to(point(
+                cx * s + radius * s * angle.cos(),
+                cy * s + radius * s * angle.sin(),
+            ));
         }
         builder.end(false);
         let path = builder.build();
@@ -1310,7 +1325,9 @@ impl RenderBackend for WgpuBackend {
             .map(|&ch| {
                 let key = (ch, (phys_size * 10.0) as u32);
                 let g = &self.glyph_atlas.glyphs[&key];
-                (g.u0, g.v0, g.u1, g.v1, g.width, g.height, g.y_offset, g.advance)
+                (
+                    g.u0, g.v0, g.u1, g.v1, g.width, g.height, g.y_offset, g.advance,
+                )
             })
             .collect();
 
@@ -1391,9 +1408,17 @@ impl RenderBackend for WgpuBackend {
             ],
         });
 
-        let entry = ImageEntry { texture, bind_group, width, height };
+        let entry = ImageEntry {
+            texture,
+            bind_group,
+            width,
+            height,
+        };
 
-        if let Some((idx, slot)) = self.images.iter_mut().enumerate()
+        if let Some((idx, slot)) = self
+            .images
+            .iter_mut()
+            .enumerate()
             .find(|(_, s)| s.is_none())
         {
             *slot = Some(entry);
@@ -1465,21 +1490,21 @@ impl RenderBackend for WgpuBackend {
 impl WgpuBackend {
     /// Render accumulated geometry to a texture view (shared by present + headless).
     fn render_pass(&mut self, resolve_target: &wgpu::TextureView) {
-        let vertex_buffer =
-            self.device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("vertices"),
-                    contents: bytemuck::cast_slice(&self.vertices),
-                    usage: wgpu::BufferUsages::VERTEX,
-                });
+        let vertex_buffer = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("vertices"),
+                contents: bytemuck::cast_slice(&self.vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
 
-        let index_buffer =
-            self.device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("indices"),
-                    contents: bytemuck::cast_slice(&self.indices),
-                    usage: wgpu::BufferUsages::INDEX,
-                });
+        let index_buffer = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("indices"),
+                contents: bytemuck::cast_slice(&self.indices),
+                usage: wgpu::BufferUsages::INDEX,
+            });
 
         let mut encoder = self
             .device
@@ -1528,15 +1553,13 @@ impl WgpuBackend {
                     }
                     let bg = match b.image {
                         None => &self.atlas_bind_group,
-                        Some(img_id) => match self
-                            .images
-                            .get(img_id.0 as usize)
-                            .and_then(|s| s.as_ref())
-                        {
-                            Some(entry) => &entry.bind_group,
-                            // Image was unregistered mid-frame; skip draw.
-                            None => continue,
-                        },
+                        Some(img_id) => {
+                            match self.images.get(img_id.0 as usize).and_then(|s| s.as_ref()) {
+                                Some(entry) => &entry.bind_group,
+                                // Image was unregistered mid-frame; skip draw.
+                                None => continue,
+                            }
+                        }
                     };
                     pass.set_bind_group(1, bg, &[]);
                     pass.draw_indexed(b.index_start..end, 0, 0..1);
@@ -1605,12 +1628,11 @@ impl WgpuBackend {
 
         // Viewport
         let matrix = ortho_matrix(phys_w as f32, phys_h as f32);
-        let viewport_buffer =
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("viewport"),
-                contents: bytemuck::cast_slice(&matrix),
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            });
+        let viewport_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("viewport"),
+            contents: bytemuck::cast_slice(&matrix),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
 
         let viewport_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -1705,10 +1727,26 @@ impl WgpuBackend {
             array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Vertex,
             attributes: &[
-                wgpu::VertexAttribute { offset: 0, shader_location: 0, format: wgpu::VertexFormat::Float32x2 },
-                wgpu::VertexAttribute { offset: 8, shader_location: 1, format: wgpu::VertexFormat::Float32x4 },
-                wgpu::VertexAttribute { offset: 24, shader_location: 2, format: wgpu::VertexFormat::Float32x2 },
-                wgpu::VertexAttribute { offset: 32, shader_location: 3, format: wgpu::VertexFormat::Float32 },
+                wgpu::VertexAttribute {
+                    offset: 0,
+                    shader_location: 0,
+                    format: wgpu::VertexFormat::Float32x2,
+                },
+                wgpu::VertexAttribute {
+                    offset: 8,
+                    shader_location: 1,
+                    format: wgpu::VertexFormat::Float32x4,
+                },
+                wgpu::VertexAttribute {
+                    offset: 24,
+                    shader_location: 2,
+                    format: wgpu::VertexFormat::Float32x2,
+                },
+                wgpu::VertexAttribute {
+                    offset: 32,
+                    shader_location: 3,
+                    format: wgpu::VertexFormat::Float32,
+                },
             ],
         };
 
@@ -1793,7 +1831,11 @@ impl WgpuBackend {
         // Offscreen resolve target
         let target_texture = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("offscreen"),
-            size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -1817,9 +1859,11 @@ impl WgpuBackend {
             mapped_at_creation: false,
         });
 
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("readback"),
-        });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("readback"),
+            });
         encoder.copy_texture_to_buffer(
             wgpu::TexelCopyTextureInfo {
                 texture: &target_texture,
@@ -1835,7 +1879,11 @@ impl WgpuBackend {
                     rows_per_image: None,
                 },
             },
-            wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+            wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
         );
         self.queue.submit(std::iter::once(encoder.finish()));
 
@@ -1952,16 +2000,15 @@ mod tests {
             backends: wgpu::Backends::PRIMARY,
             ..Default::default()
         });
-        let adapter = match pollster::block_on(instance.request_adapter(
-            &wgpu::RequestAdapterOptions {
+        let adapter =
+            match pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::LowPower,
                 compatible_surface: None,
                 force_fallback_adapter: false,
-            },
-        )) {
-            Some(a) => a,
-            None => return, // no GPU in this environment
-        };
+            })) {
+                Some(a) => a,
+                None => return, // no GPU in this environment
+            };
         let (device, queue) = pollster::block_on(adapter.request_device(
             &wgpu::DeviceDescriptor {
                 label: Some("standalone-test"),
@@ -1978,21 +2025,19 @@ mod tests {
         let w = 64u32;
         let h = 48u32;
         let format = wgpu::TextureFormat::Rgba8Unorm;
-        let mut backend = WgpuBackend::new(
-            Arc::clone(&device),
-            Arc::clone(&queue),
-            format,
-            w,
-            h,
-            1.0,
-        )
-        .expect("backend new");
+        let mut backend =
+            WgpuBackend::new(Arc::clone(&device), Arc::clone(&queue), format, w, h, 1.0)
+                .expect("backend new");
 
         // Pre-fill the offscreen target with red so we can tell apart
         // "finish drew something" from "finish cleared to background".
         let target = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("standalone-target"),
-            size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -2035,13 +2080,19 @@ mod tests {
                     rows_per_image: None,
                 },
             },
-            wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+            wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
         );
         queue.submit(std::iter::once(encoder.finish()));
 
         let slice = readback.slice(..);
         let (tx, rx) = std::sync::mpsc::channel();
-        slice.map_async(wgpu::MapMode::Read, move |r| { tx.send(r).unwrap(); });
+        slice.map_async(wgpu::MapMode::Read, move |r| {
+            tx.send(r).unwrap();
+        });
         device.poll(wgpu::Maintain::Wait);
         rx.recv().unwrap().unwrap();
         let mapped = slice.get_mapped_range();
@@ -2053,6 +2104,9 @@ mod tests {
         let g = mapped[px_off + 1];
         let b = mapped[px_off + 2];
         assert!(g > 200, "green rect not rendered: got rgb=({r},{g},{b})");
-        assert!(r < 50 && b < 50, "green rect leaked other channels: rgb=({r},{g},{b})");
+        assert!(
+            r < 50 && b < 50,
+            "green rect leaked other channels: rgb=({r},{g},{b})"
+        );
     }
 }

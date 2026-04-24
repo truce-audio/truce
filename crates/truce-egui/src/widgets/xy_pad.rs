@@ -24,10 +24,7 @@ pub fn param_xy_pad(
     let desired = egui::vec2(width, height + LABEL_H);
     let (rect, response) = ui.allocate_exact_size(desired, egui::Sense::drag());
 
-    let pad_rect = egui::Rect::from_min_size(
-        rect.min,
-        egui::vec2(width, height),
-    );
+    let pad_rect = egui::Rect::from_min_size(rect.min, egui::vec2(width, height));
 
     let mut vx = state.get(id_x) as f32;
     let mut vy = state.get(id_y) as f32;
@@ -70,16 +67,26 @@ pub fn param_xy_pad(
         // Crosshair lines (30% opacity accent)
         let crosshair_color = crate::theme::KNOB_FILL.linear_multiply(0.3);
         painter.line_segment(
-            [egui::pos2(dot_x, pad_rect.top()), egui::pos2(dot_x, pad_rect.bottom())],
+            [
+                egui::pos2(dot_x, pad_rect.top()),
+                egui::pos2(dot_x, pad_rect.bottom()),
+            ],
             egui::Stroke::new(1.0, crosshair_color),
         );
         painter.line_segment(
-            [egui::pos2(pad_rect.left(), dot_y), egui::pos2(pad_rect.right(), dot_y)],
+            [
+                egui::pos2(pad_rect.left(), dot_y),
+                egui::pos2(pad_rect.right(), dot_y),
+            ],
             egui::Stroke::new(1.0, crosshair_color),
         );
 
         // Dot
-        painter.circle_filled(egui::pos2(dot_x, dot_y), DOT_RADIUS, crate::theme::KNOB_FILL);
+        painter.circle_filled(
+            egui::pos2(dot_x, dot_y),
+            DOT_RADIUS,
+            crate::theme::KNOB_FILL,
+        );
 
         // Label
         let dim_color = ui.visuals().widgets.noninteractive.fg_stroke.color;

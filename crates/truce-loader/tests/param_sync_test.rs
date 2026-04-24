@@ -4,9 +4,9 @@
 
 use truce_core::buffer::AudioBuffer;
 use truce_core::events::{Event, EventBody, EventList, TransportInfo};
-use truce_core::process::{ProcessContext, ProcessStatus};
-use truce_core::plugin::Plugin;
 use truce_core::export::PluginExport;
+use truce_core::plugin::Plugin;
+use truce_core::process::{ProcessContext, ProcessStatus};
 use truce_params::Params;
 #[allow(unused_imports)]
 use truce_params_derive::Params;
@@ -76,7 +76,10 @@ fn plain_param_not_double_denormalized() {
     let mut events = EventList::new();
     events.push(Event {
         sample_offset: 0,
-        body: EventBody::ParamChange { id: 0, value: -27.0 },
+        body: EventBody::ParamChange {
+            id: 0,
+            value: -27.0,
+        },
     });
 
     let transport = TransportInfo::default();

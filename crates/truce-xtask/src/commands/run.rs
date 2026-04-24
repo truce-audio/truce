@@ -30,7 +30,10 @@ pub(crate) fn cmd_run(args: &[String]) -> Res {
     }
 
     let plugin = if let Some(ref f) = plugin_filter {
-        config.plugin.iter().find(|p| p.suffix == *f)
+        config
+            .plugin
+            .iter()
+            .find(|p| p.suffix == *f)
             .ok_or_else(|| format!("no plugin with suffix '{f}'"))?
     } else {
         config.plugin.first().ok_or("no plugins in truce.toml")?
@@ -52,13 +55,12 @@ pub(crate) fn cmd_run(args: &[String]) -> Res {
             "standalone binary not found at {}. \
              Does your plugin have a [[bin]] target named '{bin_name}'?",
             bin_path.display()
-        ).into());
+        )
+        .into());
     }
 
     eprintln!("Running {}...", bin_path.display());
-    let status = Command::new(&bin_path)
-        .args(&extra_args)
-        .status()?;
+    let status = Command::new(&bin_path).args(&extra_args).status()?;
 
     if !status.success() {
         return Err(format!("{} exited with {status}", bin_path.display()).into());

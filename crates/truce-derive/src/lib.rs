@@ -44,8 +44,7 @@ struct PluginDef {
 
 fn find_truce_toml() -> PathBuf {
     // CARGO_MANIFEST_DIR is available to proc macros at expansion time.
-    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
-        .expect("CARGO_MANIFEST_DIR not set");
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
     let mut dir = PathBuf::from(&manifest_dir);
     loop {
         let candidate = dir.join("truce.toml");
@@ -65,22 +64,25 @@ fn load_config() -> Config {
     let path = find_truce_toml();
     let content = std::fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("Failed to read {}: {e}", path.display()));
-    toml::from_str(&content)
-        .unwrap_or_else(|e| panic!("Failed to parse {}: {e}", path.display()))
+    toml::from_str(&content).unwrap_or_else(|e| panic!("Failed to parse {}: {e}", path.display()))
 }
 
 fn find_plugin(config: &Config) -> &PluginDef {
-    let pkg_name = std::env::var("CARGO_PKG_NAME")
-        .expect("CARGO_PKG_NAME not set");
-    config.plugin.iter()
+    let pkg_name = std::env::var("CARGO_PKG_NAME").expect("CARGO_PKG_NAME not set");
+    config
+        .plugin
+        .iter()
         .find(|p| p.crate_name == pkg_name)
         .unwrap_or_else(|| {
-            let available: Vec<_> = config.plugin.iter()
+            let available: Vec<_> = config
+                .plugin
+                .iter()
                 .map(|p| p.crate_name.as_str())
                 .collect();
             panic!(
                 "No [[plugin]] entry with crate = \"{pkg_name}\" in truce.toml. \
-                 Available: {}", available.join(", ")
+                 Available: {}",
+                available.join(", ")
             );
         })
 }
@@ -104,7 +106,11 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
     let vendor = &config.vendor.name;
     let url = &config.vendor.url;
     let pkg_version = std::env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "0.1.0".into());
-    let version = plugin.version.as_deref().unwrap_or(&pkg_version).to_string();
+    let version = plugin
+        .version
+        .as_deref()
+        .unwrap_or(&pkg_version)
+        .to_string();
 
     // Keep these mappings in sync with `truce-build::emit_plugin_env` and
     // `truce_core::info::category_from_str`. Historically this match only
@@ -127,13 +133,14 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
     // `truce-xtask/src/config.rs::resolved_au_type` and
     // `truce-build::emit_plugin_env` — a mismatch causes auval
     // "Class Data fields … do not match component description".
-    let au_type = plugin.au_type.as_deref().unwrap_or(
-        match plugin.category.as_str() {
+    let au_type = plugin
+        .au_type
+        .as_deref()
+        .unwrap_or(match plugin.category.as_str() {
             "instrument" => "aumu",
             "midi" | "note_effect" => "aumi",
             _ => "aufx",
-        }
-    );
+        });
 
     let plugin_id = format!(
         "{}.{}",
@@ -141,7 +148,9 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
         plugin.name.to_lowercase().replace(' ', "")
     );
 
-    let resolved_fourcc = plugin.fourcc.as_ref()
+    let resolved_fourcc = plugin
+        .fourcc
+        .as_ref()
         .or(plugin.au_subtype.as_ref())
         .expect("truce.toml: each [[plugin]] requires `fourcc` or `au_subtype`");
     let au_manufacturer = &config.vendor.au_manufacturer;

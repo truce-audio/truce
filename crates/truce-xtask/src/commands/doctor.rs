@@ -4,13 +4,11 @@
 #![allow(unused_imports)]
 
 use crate::config::read_cargo_config_env;
-use crate::{
-    check_cmd, dirs, load_config, project_root, resolve_aax_sdk_path, Res,
-};
-#[cfg(any(target_os = "macos", target_os = "windows"))]
-use crate::rustup_has_target;
 #[cfg(target_os = "macos")]
 use crate::locate_wraptool_macos;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+use crate::rustup_has_target;
+use crate::{check_cmd, dirs, load_config, project_root, resolve_aax_sdk_path, Res};
 #[cfg(target_os = "windows")]
 use crate::{common_program_files, locate_cmake, locate_ninja, packaging_windows, program_files};
 use std::fs;
@@ -74,15 +72,15 @@ pub(crate) fn cmd_doctor() -> Res {
         eprintln!("  Windows");
         match locate_cmake() {
             Some(p) => eprintln!("    ✅ cmake (AAX template build): {}", p.display()),
-            None => eprintln!(
-                "    ❌ cmake.exe not found — install cmake or VS \"C++ CMake tools\""
-            ),
+            None => {
+                eprintln!("    ❌ cmake.exe not found — install cmake or VS \"C++ CMake tools\"")
+            }
         }
         match locate_ninja() {
             Some(p) => eprintln!("    ✅ ninja (AAX template build): {}", p.display()),
-            None => eprintln!(
-                "    ❌ ninja.exe not found — install ninja or VS \"C++ CMake tools\""
-            ),
+            None => {
+                eprintln!("    ❌ ninja.exe not found — install ninja or VS \"C++ CMake tools\"")
+            }
         }
 
         eprintln!();
@@ -100,7 +98,11 @@ pub(crate) fn cmd_doctor() -> Res {
     }
     #[cfg(target_os = "windows")]
     {
-        check_cmd("cl", &["/?"], "MSVC compiler (run from Developer Command Prompt)");
+        check_cmd(
+            "cl",
+            &["/?"],
+            "MSVC compiler (run from Developer Command Prompt)",
+        );
     }
 
     // Validation tools
@@ -137,8 +139,14 @@ pub(crate) fn cmd_doctor() -> Res {
     match aax_sdk {
         Some(p) => eprintln!("    ✅ AAX SDK at {}", p.display()),
         None => {
-            let hint = if cfg!(target_os = "windows") { "[windows].aax_sdk_path" } else { "[macos].aax_sdk_path" };
-            eprintln!("    ⚠️  AAX SDK not configured (set {hint} in truce.toml or AAX_SDK_PATH env var)");
+            let hint = if cfg!(target_os = "windows") {
+                "[windows].aax_sdk_path"
+            } else {
+                "[macos].aax_sdk_path"
+            };
+            eprintln!(
+                "    ⚠️  AAX SDK not configured (set {hint} in truce.toml or AAX_SDK_PATH env var)"
+            );
         }
     }
 
@@ -149,8 +157,14 @@ pub(crate) fn cmd_doctor() -> Res {
     {
         let home = dirs::home_dir().unwrap_or_default();
         count_plugins(&home.join("Library/Audio/Plug-Ins/CLAP"), "CLAP");
-        count_plugins(&Path::new("/Library/Audio/Plug-Ins/VST3").to_path_buf(), "VST3");
-        count_plugins(&Path::new("/Library/Audio/Plug-Ins/Components").to_path_buf(), "AU v2");
+        count_plugins(
+            &Path::new("/Library/Audio/Plug-Ins/VST3").to_path_buf(),
+            "VST3",
+        );
+        count_plugins(
+            &Path::new("/Library/Audio/Plug-Ins/Components").to_path_buf(),
+            "AU v2",
+        );
         count_plugins(&home.join("Library/Audio/Plug-Ins/VST"), "VST2");
     }
     #[cfg(target_os = "windows")]
@@ -171,7 +185,6 @@ pub(crate) fn cmd_doctor() -> Res {
     Ok(())
 }
 
-
 /// Like `check_which`, but consults `env_var` (process env, then
 /// `.cargo/config.toml` `[env]`) before falling back to `$PATH`. Lets users
 /// point doctor at tools installed outside `$PATH` — useful for `.app`-bundled
@@ -187,9 +200,7 @@ fn check_which_with_env(name: &str, env_var: Option<&str>) {
                 eprintln!("    ✅ {name}: {path} (via ${var})");
                 return;
             }
-            eprintln!(
-                "    ⚠️  {name}: ${var}={path} but file not found — falling back to $PATH"
-            );
+            eprintln!("    ⚠️  {name}: ${var}={path} but file not found — falling back to $PATH");
         }
     }
     match Command::new("which").arg(name).output() {

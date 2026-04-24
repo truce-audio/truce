@@ -175,7 +175,8 @@ impl<'a> AtomSequenceReader<'a> {
         let mut beats_per_bar: Option<f64> = None;
 
         let mut offset = header_size;
-        while offset + core::mem::size_of::<Urid>() * 2 + core::mem::size_of::<Atom>() <= body_bytes {
+        while offset + core::mem::size_of::<Urid>() * 2 + core::mem::size_of::<Atom>() <= body_bytes
+        {
             // Property = { key: Urid, context: Urid, value: Atom + data }
             let key = *(body_ptr.add(offset) as *const Urid);
             // `context` is unused by time:Position writers in practice.
@@ -183,9 +184,8 @@ impl<'a> AtomSequenceReader<'a> {
             let value_atom = *(value_header as *const Atom);
             let value_data = value_header.add(core::mem::size_of::<Atom>());
             let value_size = value_atom.size as usize;
-            let entry_total = core::mem::size_of::<Urid>() * 2
-                + core::mem::size_of::<Atom>()
-                + value_size;
+            let entry_total =
+                core::mem::size_of::<Urid>() * 2 + core::mem::size_of::<Atom>() + value_size;
             let padded = (entry_total + 7) & !7;
 
             if let Some(v) = self.read_atom_number(value_atom.type_, value_data, value_size) {
@@ -345,11 +345,7 @@ pub fn midi_bytes_to_event(sample_offset: u32, bytes: &[u8]) -> Option<Event> {
 /// # Safety
 /// `out` must point to a writable atom sequence buffer with capacity the
 /// host allocated (typically a few KB).
-pub unsafe fn write_midi_out_sequence(
-    out: *mut AtomSequence,
-    events: &EventList,
-    urid: &UridMap,
-) {
+pub unsafe fn write_midi_out_sequence(out: *mut AtomSequence, events: &EventList, urid: &UridMap) {
     if out.is_null() || urid.midi_event == 0 {
         return;
     }
@@ -499,7 +495,11 @@ pub unsafe fn write_time_position_sequence(
     // position at which the current bar started, so the bar index is
     // `bar_start_beats / beatsPerBar`. Writers never emit a raw global
     // beat count — the reader reconstructs it on the other side.
-    let bpb = if info.time_sig_num > 0 { info.time_sig_num as f64 } else { 4.0 };
+    let bpb = if info.time_sig_num > 0 {
+        info.time_sig_num as f64
+    } else {
+        4.0
+    };
     let bar_index = (info.bar_start_beats / bpb).round();
     let bar_beat = info.position_beats - info.bar_start_beats;
     write_double(urid.time_speed, if info.playing { 1.0 } else { 0.0 });
@@ -561,8 +561,7 @@ mod tests {
         let seq = buf.as_mut_ptr() as *mut AtomSequence;
         // Caller contract: atom.size = capacity on entry.
         unsafe {
-            (*seq).atom.size =
-                (buf.len() - core::mem::size_of::<Atom>()) as u32;
+            (*seq).atom.size = (buf.len() - core::mem::size_of::<Atom>()) as u32;
         }
 
         // `bar_start_beats` must align to a whole-bar boundary for the
@@ -618,22 +617,33 @@ mod tests {
         let mut buf = vec![0u8; 4096];
         let seq = buf.as_mut_ptr() as *mut AtomSequence;
         unsafe {
-            (*seq).atom.size =
-                (buf.len() - core::mem::size_of::<Atom>()) as u32;
+            (*seq).atom.size = (buf.len() - core::mem::size_of::<Atom>()) as u32;
         }
 
         let mut source = EventList::new();
         source.push(Event {
             sample_offset: 0,
-            body: EventBody::NoteOn { channel: 0, note: 60, velocity: 0.75 },
+            body: EventBody::NoteOn {
+                channel: 0,
+                note: 60,
+                velocity: 0.75,
+            },
         });
         source.push(Event {
             sample_offset: 128,
-            body: EventBody::NoteOff { channel: 0, note: 60, velocity: 0.0 },
+            body: EventBody::NoteOff {
+                channel: 0,
+                note: 60,
+                velocity: 0.0,
+            },
         });
         source.push(Event {
             sample_offset: 256,
-            body: EventBody::ControlChange { channel: 3, cc: 7, value: 0.5 },
+            body: EventBody::ControlChange {
+                channel: 3,
+                cc: 7,
+                value: 0.5,
+            },
         });
 
         unsafe {
@@ -654,7 +664,11 @@ mod tests {
         assert_eq!(decoded[2].sample_offset, 256);
 
         match decoded[0].body {
-            EventBody::NoteOn { channel, note, velocity } => {
+            EventBody::NoteOn {
+                channel,
+                note,
+                velocity,
+            } => {
                 assert_eq!(channel, 0);
                 assert_eq!(note, 60);
                 // MIDI 1.0 velocity quantizes to 7 bits (1/127 steps).
@@ -675,7 +689,10 @@ mod tests {
                 assert_eq!(cc, 7);
                 assert!((value - 0.5).abs() < 1.0 / 127.0);
             }
-            _ => panic!("expected ControlChange at index 2, got {:?}", decoded[2].body),
+            _ => panic!(
+                "expected ControlChange at index 2, got {:?}",
+                decoded[2].body
+            ),
         }
     }
 }

@@ -39,7 +39,10 @@ fn scaffold_static_plugin(root: &Path, name: &str) -> Res {
     fs::create_dir_all(dir.join("src"))?;
 
     // Cargo.toml
-    fs::write(dir.join("Cargo.toml"), format!(r#"[package]
+    fs::write(
+        dir.join("Cargo.toml"),
+        format!(
+            r#"[package]
 name = "{crate_name}"
 version.workspace = true
 edition.workspace = true
@@ -83,13 +86,21 @@ truce-test = {{ workspace = true }}
 
 [build-dependencies]
 truce-build = {{ workspace = true }}
-"#))?;
+"#
+        ),
+    )?;
 
     // build.rs
-    fs::write(dir.join("build.rs"), "fn main() { truce_build::emit_plugin_env(); }\n")?;
+    fs::write(
+        dir.join("build.rs"),
+        "fn main() { truce_build::emit_plugin_env(); }\n",
+    )?;
 
     // src/lib.rs
-    fs::write(dir.join("src/lib.rs"), format!(r#"use truce::prelude::*;
+    fs::write(
+        dir.join("src/lib.rs"),
+        format!(
+            r#"use truce::prelude::*;
 
 #[derive(Params)]
 pub struct {struct_name}Params {{
@@ -137,7 +148,9 @@ truce::plugin! {{
     logic: {struct_name},
     params: {struct_name}Params,
 }}
-"#))?;
+"#
+        ),
+    )?;
 
     eprintln!("Created examples/{name}/");
     eprintln!();
@@ -164,7 +177,10 @@ fn scaffold_hot_plugin(root: &Path, name: &str) -> Res {
 
     // --- Logic crate ---
 
-    fs::write(dir.join("logic/Cargo.toml"), format!(r#"[package]
+    fs::write(
+        dir.join("logic/Cargo.toml"),
+        format!(
+            r#"[package]
 name = "{logic_crate}"
 version.workspace = true
 edition.workspace = true
@@ -176,9 +192,14 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 truce = {{ workspace = true }}
 truce-loader = {{ workspace = true }}
-"#))?;
+"#
+        ),
+    )?;
 
-    fs::write(dir.join("logic/src/lib.rs"), format!(r#"use truce::prelude::*;
+    fs::write(
+        dir.join("logic/src/lib.rs"),
+        format!(
+            r#"use truce::prelude::*;
 
 pub struct {struct_name} {{
     gain: f64,
@@ -215,11 +236,16 @@ impl PluginLogic for {struct_name} {{
 }}
 
 truce::export_plugin!({struct_name});
-"#))?;
+"#
+        ),
+    )?;
 
     // --- Shell crate ---
 
-    fs::write(dir.join("shell/Cargo.toml"), format!(r#"[package]
+    fs::write(
+        dir.join("shell/Cargo.toml"),
+        format!(
+            r#"[package]
 name = "{shell_crate}"
 version.workspace = true
 edition.workspace = true
@@ -257,11 +283,19 @@ clap-sys = {{ version = "0.5", optional = true }}
 
 [build-dependencies]
 truce-build = {{ workspace = true }}
-"#))?;
+"#
+        ),
+    )?;
 
-    fs::write(dir.join("shell/build.rs"), "fn main() { truce_build::emit_plugin_env(); }\n")?;
+    fs::write(
+        dir.join("shell/build.rs"),
+        "fn main() { truce_build::emit_plugin_env(); }\n",
+    )?;
 
-    fs::write(dir.join("shell/src/lib.rs"), format!(r#"use truce::prelude::*;
+    fs::write(
+        dir.join("shell/src/lib.rs"),
+        format!(
+            r#"use truce::prelude::*;
 
 #[derive(Params)]
 pub struct {struct_name}Params {{
@@ -297,12 +331,16 @@ truce_lv2::export_lv2!(__HotShellWrapper);
 truce_au::export_au!(__HotShellWrapper);
 #[cfg(feature = "aax")]
 truce_aax::export_aax!(__HotShellWrapper);
-"#))?;
+"#
+        ),
+    )?;
 
     eprintln!("Created examples/{name}/shell/ and examples/{name}/logic/");
     eprintln!();
     eprintln!("Next steps:");
-    eprintln!("  1. Add \"{logic_crate}\" and \"{shell_crate}\" to [workspace.members] in Cargo.toml");
+    eprintln!(
+        "  1. Add \"{logic_crate}\" and \"{shell_crate}\" to [workspace.members] in Cargo.toml"
+    );
     eprintln!("  2. Add a [[plugin]] entry to truce.toml with suffix = \"{name}/shell\"");
     eprintln!("  3. cargo build -p {logic_crate}             # build the logic dylib");
     eprintln!("  4. cargo xtask install --clap -p {name}/shell  # install the shell once");
@@ -327,14 +365,7 @@ fn to_fourcc(s: &str) -> String {
 
     let mut code: Vec<char> = segments
         .iter()
-        .map(|seg| {
-            seg.chars()
-                .next()
-                .unwrap()
-                .to_uppercase()
-                .next()
-                .unwrap()
-        })
+        .map(|seg| seg.chars().next().unwrap().to_uppercase().next().unwrap())
         .collect();
 
     if code.len() >= 4 {

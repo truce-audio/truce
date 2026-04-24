@@ -58,7 +58,6 @@ pub(crate) fn cmd_status() -> Res {
         }
     }
 
-
     eprintln!("\n=== auval ===");
     if let Ok(output) = run_quiet("auval", &["-a"]) {
         let vendor_lower = vendor.to_lowercase();

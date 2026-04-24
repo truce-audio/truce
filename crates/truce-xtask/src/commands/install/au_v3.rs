@@ -47,10 +47,8 @@ pub(crate) fn build_au_v3(
             // canonical `lib{stem}_v3.dylib` location.
             for &arch in archs {
                 eprintln!("  Building Rust framework ({})...", arch.triple());
-                let mut env_pairs: Vec<(&str, &str)> = vec![
-                    ("TRUCE_AU_VERSION", "3"),
-                    ("TRUCE_AU_PLUGIN_ID", &p.suffix),
-                ];
+                let mut env_pairs: Vec<(&str, &str)> =
+                    vec![("TRUCE_AU_VERSION", "3"), ("TRUCE_AU_PLUGIN_ID", &p.suffix)];
                 if let Some(n) = p.au3_name.as_deref() {
                     env_pairs.push(("TRUCE_AU_NAME_OVERRIDE", n));
                 }
@@ -66,11 +64,7 @@ pub(crate) fn build_au_v3(
                     arch,
                     dt,
                 )?;
-                let src = release_lib_for_target(
-                    root,
-                    &p.dylib_stem(),
-                    Some(arch.triple()),
-                );
+                let src = release_lib_for_target(root, &p.dylib_stem(), Some(arch.triple()));
                 let saved = release_lib_for_target(
                     root,
                     &format!("{}_v3", p.dylib_stem()),
@@ -88,10 +82,7 @@ pub(crate) fn build_au_v3(
                     )
                 })
                 .collect();
-            let dst = root.join(format!(
-                "target/release/lib{}_v3.dylib",
-                p.dylib_stem()
-            ));
+            let dst = root.join(format!("target/release/lib{}_v3.dylib", p.dylib_stem()));
             lipo_into(&fw_inputs, &dst)?;
 
             // Step 2: Create .framework bundle
@@ -119,7 +110,10 @@ pub(crate) fn build_au_v3(
                     format!("Versions/Current/{}", fw_name),
                     fw_root.join(&fw_name),
                 )?;
-                std::os::unix::fs::symlink("Versions/Current/Resources", fw_root.join("Resources"))?;
+                std::os::unix::fs::symlink(
+                    "Versions/Current/Resources",
+                    fw_root.join("Resources"),
+                )?;
             }
             #[cfg(not(unix))]
             {
@@ -161,12 +155,27 @@ pub(crate) fn build_au_v3(
             fs_ctx::create_dir_all(build_dir.join("App"))?;
             fs_ctx::create_dir_all(build_dir.join("XcodeAUv3.xcodeproj"))?;
 
-            fs_ctx::write(build_dir.join("AUExt/AudioUnitFactory.swift"), templates::au3::SWIFT_SOURCE)?;
-            fs_ctx::write(build_dir.join("AUExt/BridgingHeader.h"), templates::au3::BRIDGING_HEADER)?;
-            fs_ctx::write(build_dir.join("AUExt/au_shim_types.h"), templates::au3::SHIM_TYPES_H)?;
-            fs_ctx::write(build_dir.join("AUExt/AUExt.entitlements"), templates::au3::APPEX_ENTITLEMENTS)?;
+            fs_ctx::write(
+                build_dir.join("AUExt/AudioUnitFactory.swift"),
+                templates::au3::SWIFT_SOURCE,
+            )?;
+            fs_ctx::write(
+                build_dir.join("AUExt/BridgingHeader.h"),
+                templates::au3::BRIDGING_HEADER,
+            )?;
+            fs_ctx::write(
+                build_dir.join("AUExt/au_shim_types.h"),
+                templates::au3::SHIM_TYPES_H,
+            )?;
+            fs_ctx::write(
+                build_dir.join("AUExt/AUExt.entitlements"),
+                templates::au3::APPEX_ENTITLEMENTS,
+            )?;
             fs_ctx::write(build_dir.join("App/main.m"), templates::au3::APP_MAIN_M)?;
-            fs_ctx::write(build_dir.join("App/App.entitlements"), templates::au3::APP_ENTITLEMENTS)?;
+            fs_ctx::write(
+                build_dir.join("App/App.entitlements"),
+                templates::au3::APP_ENTITLEMENTS,
+            )?;
 
             // Patch AUExt/Info.plist with plugin-specific values
             let plist_path = build_dir.join("AUExt/Info.plist");
@@ -206,7 +215,10 @@ pub(crate) fn build_au_v3(
             )?;
 
             // Write App Info.plist from embedded template
-            fs_ctx::write(build_dir.join("App/Info.plist"), templates::au3::APP_INFO_PLIST)?;
+            fs_ctx::write(
+                build_dir.join("App/Info.plist"),
+                templates::au3::APP_INFO_PLIST,
+            )?;
 
             // Step 4: xcodebuild
             eprintln!("  Building with xcodebuild...");
@@ -261,10 +273,7 @@ pub(crate) fn build_au_v3(
 }
 
 /// Install pre-built AU v3 appex bundles to /Applications/ and register.
-fn install_au_v3(
-    config: &Config,
-    plugins: &[&PluginDef],
-) -> Res {
+fn install_au_v3(config: &Config, plugins: &[&PluginDef]) -> Res {
     let sign_id = config.macos.application_identity();
 
     for p in plugins {
@@ -289,8 +298,8 @@ fn install_au_v3(
             // race over our installed copy (which has Frameworks/ wired up
             // properly). `pluginkit -r <path>` evicts it so the subsequent
             // `-a /Applications/...` registers cleanly.
-            let build_tree_appex = build_dir
-                .join("build/Release/TruceAUv3.app/Contents/PlugIns/AUExt.appex");
+            let build_tree_appex =
+                build_dir.join("build/Release/TruceAUv3.app/Contents/PlugIns/AUExt.appex");
             if build_tree_appex.exists() {
                 let _ = Command::new("pluginkit")
                     .args(["-r", build_tree_appex.to_str().unwrap()])
@@ -334,14 +343,28 @@ fn install_au_v3(
             {
                 let appex_path = format!("{app_dir}/Contents/PlugIns/AUExt.appex");
                 let ent = entitlements_appex.to_str().unwrap();
-                let mut args = vec!["--force", "--sign", sign_id, "--entitlements", ent, "--generate-entitlement-der"];
+                let mut args = vec![
+                    "--force",
+                    "--sign",
+                    sign_id,
+                    "--entitlements",
+                    ent,
+                    "--generate-entitlement-der",
+                ];
                 args.extend_from_slice(runtime_flags);
                 args.push(&appex_path);
                 run_sudo("codesign", &args)?;
             }
             {
                 let ent = entitlements_app.to_str().unwrap();
-                let mut args = vec!["--force", "--sign", sign_id, "--entitlements", ent, "--generate-entitlement-der"];
+                let mut args = vec![
+                    "--force",
+                    "--sign",
+                    sign_id,
+                    "--entitlements",
+                    ent,
+                    "--generate-entitlement-der",
+                ];
                 args.extend_from_slice(runtime_flags);
                 args.push(&app_dir);
                 run_sudo("codesign", &args)?;

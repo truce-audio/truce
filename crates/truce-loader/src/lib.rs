@@ -30,9 +30,9 @@ pub mod __macro_deps {
     pub use truce_core;
 }
 
+mod canary;
 mod safe_types;
 mod traits;
-mod canary;
 
 #[cfg(feature = "shell")]
 mod loader;
@@ -40,9 +40,9 @@ mod loader;
 pub mod shell;
 pub mod static_shell;
 
+pub use canary::{verify_probe, AbiCanary, ProbePlugin};
 pub use safe_types::*;
 pub use traits::*;
-pub use canary::{AbiCanary, ProbePlugin, verify_probe};
 
 #[cfg(feature = "shell")]
 pub use loader::NativeLoader;
@@ -77,12 +77,12 @@ macro_rules! export_plugin {
 
 /// Convenience prelude for logic dylib authors.
 pub mod prelude {
+    pub use crate::canary::{AbiCanary, ProbePlugin};
     pub use crate::safe_types::*;
     pub use crate::traits::*;
-    pub use crate::canary::{AbiCanary, ProbePlugin};
 
     // Re-export param types so the developer can own params in their struct.
-    pub use truce_params::{Params, FloatParam, BoolParam, IntParam, EnumParam, ParamEnum};
+    pub use truce_params::{BoolParam, EnumParam, FloatParam, IntParam, ParamEnum, Params};
     pub use truce_params::{Smoother, SmoothingStyle};
 
     // Re-export utility functions.

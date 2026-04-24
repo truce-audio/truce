@@ -10,8 +10,8 @@ use truce_core::buffer::AudioBuffer;
 use truce_core::bus::BusLayout;
 use truce_core::events::{EventBody, EventList};
 use truce_core::info::PluginInfo;
-use truce_core::process::{ProcessContext, ProcessStatus};
 use truce_core::plugin::Plugin;
+use truce_core::process::{ProcessContext, ProcessStatus};
 use truce_params::Params;
 
 use crate::traits::PluginLogic;
@@ -67,16 +67,25 @@ impl<P: Params + Default + 'static, L: PluginLogic + 'static> StaticShell<P, L> 
         if layout.width == 0 || layout.height == 0 {
             return None;
         }
-        Some(truce_gui::editor::BuiltinEditor::new_grid(Arc::clone(&self.params), layout))
+        Some(truce_gui::editor::BuiltinEditor::new_grid(
+            Arc::clone(&self.params),
+            layout,
+        ))
     }
 }
 
 impl<P: Params + Default + 'static, L: PluginLogic + 'static> Plugin for StaticShell<P, L> {
-    fn info() -> PluginInfo where Self: Sized {
+    fn info() -> PluginInfo
+    where
+        Self: Sized,
+    {
         unreachable!("StaticShell::info() should not be called statically")
     }
 
-    fn bus_layouts() -> Vec<BusLayout> where Self: Sized {
+    fn bus_layouts() -> Vec<BusLayout>
+    where
+        Self: Sized,
+    {
         unreachable!("StaticShell::bus_layouts() should not be called statically")
     }
 
@@ -138,7 +147,11 @@ impl<P: Params + Default + 'static, L: PluginLogic + 'static> Plugin for StaticS
 
     fn save_state(&self) -> Option<Vec<u8>> {
         let data = self.logic.save_state();
-        if data.is_empty() { None } else { Some(data) }
+        if data.is_empty() {
+            None
+        } else {
+            Some(data)
+        }
     }
 
     fn load_state(&mut self, data: &[u8]) {
@@ -153,8 +166,12 @@ impl<P: Params + Default + 'static, L: PluginLogic + 'static> Plugin for StaticS
             .map(|e| Box::new(truce_gpu::GpuEditor::new(e)) as Box<dyn truce_core::editor::Editor>)
     }
 
-    fn latency(&self) -> u32 { self.logic.latency() }
-    fn tail(&self) -> u32 { self.logic.tail() }
+    fn latency(&self) -> u32 {
+        self.logic.latency()
+    }
+    fn tail(&self) -> u32 {
+        self.logic.tail()
+    }
 
     fn get_meter(&self, meter_id: u32) -> f32 {
         // Meter IDs start at 256 in the ParamId enum; storage is offset.

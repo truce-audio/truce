@@ -11,10 +11,7 @@ const WINDOW_W: u32 = 176;
 const WINDOW_H: u32 = 290;
 
 use truce::prelude::*;
-use truce_iced::{
-    knob, meter, xy_pad, IcedEditor, IcedPlugin,
-    IntoElement, Message, ParamState,
-};
+use truce_iced::{knob, meter, xy_pad, IcedEditor, IcedPlugin, IntoElement, Message, ParamState};
 
 // --- Parameters ---
 
@@ -22,12 +19,15 @@ use GainParamsParamId as P;
 
 #[derive(Params)]
 pub struct GainParams {
-    #[param(name = "Gain", range = "linear(-60, 6)",
-            unit = "dB", smooth = "exp(5)")]
+    #[param(
+        name = "Gain",
+        range = "linear(-60, 6)",
+        unit = "dB",
+        smooth = "exp(5)"
+    )]
     pub gain: FloatParam,
 
-    #[param(name = "Pan", range = "linear(-1, 1)",
-            unit = "pan", smooth = "exp(5)")]
+    #[param(name = "Pan", range = "linear(-1, 1)", unit = "pan", smooth = "exp(5)")]
     pub pan: FloatParam,
 
     #[meter]
@@ -47,12 +47,11 @@ pub enum GainMsg {}
 impl IcedPlugin<GainParams> for GainUi {
     type Message = GainMsg;
 
-    fn new(_params: Arc<GainParams>) -> Self { Self }
+    fn new(_params: Arc<GainParams>) -> Self {
+        Self
+    }
 
-    fn view<'a>(
-        &'a self,
-        params: &'a ParamState<GainParams>,
-    ) -> Element<'a, Message<GainMsg>> {
+    fn view<'a>(&'a self, params: &'a ParamState<GainParams>) -> Element<'a, Message<GainMsg>> {
         let pad = 10.0;
         let gap = 10.0;
 
@@ -79,23 +78,29 @@ impl IcedPlugin<GainParams> for GainUi {
                     .spacing(gap)
                     .align_y(alignment::Vertical::Center),
             )
-            .push(xy_pad(P::Pan, P::Gain, params).label("Pan / Gain").size(130.0).el())
+            .push(
+                xy_pad(P::Pan, P::Gain, params)
+                    .label("Pan / Gain")
+                    .size(130.0)
+                    .el(),
+            )
             .spacing(gap)
             .into();
 
         // Body: left column + meter spanning full height
         let body: Element<'a, Message<GainMsg>> = Row::new()
             .push(left)
-            .push(meter(&[P::MeterLeft, P::MeterRight], params).size(16.0, 222.0).el())
+            .push(
+                meter(&[P::MeterLeft, P::MeterRight], params)
+                    .size(16.0, 222.0)
+                    .el(),
+            )
             .spacing(gap)
             .padding(pad)
             .align_y(alignment::Vertical::Top)
             .into();
 
-        Column::new()
-            .push(header)
-            .push(body)
-            .into()
+        Column::new().push(header).push(body).into()
     }
 }
 
@@ -195,13 +200,12 @@ mod tests {
     #[test]
     fn gui_snapshot_iced() {
         let params = Arc::new(GainParams::new());
-        let (pixels, w, h) =
-            truce_iced::snapshot::render_iced_screenshot::<GainParams, GainUi>(
-                params,
-                (WINDOW_W, WINDOW_H),
-                2.0,
-                Some(("JetBrains Mono", truce_gui::font::JETBRAINS_MONO)),
-            );
+        let (pixels, w, h) = truce_iced::snapshot::render_iced_screenshot::<GainParams, GainUi>(
+            params,
+            (WINDOW_W, WINDOW_H),
+            2.0,
+            Some(("JetBrains Mono", truce_gui::font::JETBRAINS_MONO)),
+        );
         truce_test::assert_gui_snapshot_raw("gain_iced_default", &pixels, w, h, 0);
     }
 }

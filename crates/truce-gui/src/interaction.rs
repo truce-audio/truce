@@ -2,8 +2,10 @@
 //!
 //! Tracks widget hit regions and maps mouse drags to parameter value changes.
 
-use crate::layout::{GridLayout, Layout, PluginLayout, WidgetKind, compute_section_offsets,
-                     GRID_GAP, GRID_PADDING, GRID_HEADER_H};
+use crate::layout::{
+    compute_section_offsets, GridLayout, Layout, PluginLayout, WidgetKind, GRID_GAP, GRID_HEADER_H,
+    GRID_PADDING,
+};
 use crate::snapshot::ParamSnapshot;
 use crate::widgets::WidgetType;
 
@@ -51,16 +53,34 @@ pub struct Modifiers {
 /// Cursor coordinates are in logical pixels, matching what widgets draw at.
 #[derive(Clone, Copy, Debug)]
 pub enum InputEvent {
-    MouseMove { x: f32, y: f32 },
-    MouseDown { x: f32, y: f32, button: MouseButton },
-    MouseUp { x: f32, y: f32, button: MouseButton },
+    MouseMove {
+        x: f32,
+        y: f32,
+    },
+    MouseDown {
+        x: f32,
+        y: f32,
+        button: MouseButton,
+    },
+    MouseUp {
+        x: f32,
+        y: f32,
+        button: MouseButton,
+    },
     /// Synthesized when the host detects a second click within the
     /// platform-specific threshold. `dispatch` uses this to reset params
     /// to their defaults.
-    MouseDoubleClick { x: f32, y: f32 },
+    MouseDoubleClick {
+        x: f32,
+        y: f32,
+    },
     /// Vertical wheel scroll. `dy > 0` = scroll up (away from user),
     /// `dy < 0` = scroll down. Magnitude is in pixels.
-    Scroll { x: f32, y: f32, dy: f32 },
+    Scroll {
+        x: f32,
+        y: f32,
+        dy: f32,
+    },
     /// The cursor left the editor surface. Dispatch clears hover state.
     MouseLeave,
 }
@@ -328,10 +348,15 @@ impl InteractionState {
                     }
                 }
                 WidgetType::Meter => continue,
-                WidgetType::Slider | WidgetType::Toggle | WidgetType::Selector
-                | WidgetType::Dropdown | WidgetType::XYPad => {
-                    if mx >= region.x && mx <= region.x + region.w
-                        && my >= region.y && my <= region.y + region.h
+                WidgetType::Slider
+                | WidgetType::Toggle
+                | WidgetType::Selector
+                | WidgetType::Dropdown
+                | WidgetType::XYPad => {
+                    if mx >= region.x
+                        && mx <= region.x + region.w
+                        && my >= region.y
+                        && my <= region.y + region.h
                     {
                         return Some(idx);
                     }
@@ -469,7 +494,8 @@ impl InteractionState {
 
         for gw in &layout.widgets {
             let x = GRID_PADDING + gw.col as f32 * (layout.cell_size + GRID_GAP);
-            let y = GRID_HEADER_H + GRID_PADDING
+            let y = GRID_HEADER_H
+                + GRID_PADDING
                 + gw.row as f32 * (layout.cell_size + GRID_GAP)
                 + section_offsets[gw.row as usize];
             let w = gw.col_span as f32 * (layout.cell_size + GRID_GAP) - GRID_GAP;
@@ -490,8 +516,13 @@ impl InteractionState {
             self.knob_regions.push(WidgetRegion {
                 param_id: gw.param_id,
                 widget_type,
-                x, y, w, h,
-                cx, cy, radius,
+                x,
+                y,
+                w,
+                h,
+                cx,
+                cy,
+                radius,
                 normalized_value: 0.0,
                 dropdown_anchor_y: 0.0,
             });
@@ -565,10 +596,19 @@ pub fn dispatch_in(
                     state.hover_idx = state.hit_test(x, y);
                 }
             }
-            InputEvent::MouseDown { x, y, button: MouseButton::Left } => {
-                handle_mouse_down(x, y, layout, snapshot, state, window_w, window_h, &mut edits);
+            InputEvent::MouseDown {
+                x,
+                y,
+                button: MouseButton::Left,
+            } => {
+                handle_mouse_down(
+                    x, y, layout, snapshot, state, window_w, window_h, &mut edits,
+                );
             }
-            InputEvent::MouseUp { button: MouseButton::Left, .. } => {
+            InputEvent::MouseUp {
+                button: MouseButton::Left,
+                ..
+            } => {
                 if let Some(drag) = state.dragging.as_ref() {
                     let param_id = drag.param_id;
                     let was_xy = drag.widget_type == WidgetType::XYPad;
@@ -587,7 +627,10 @@ pub fn dispatch_in(
                     let param_id = state.knob_regions[idx].param_id;
                     let default_norm = (snapshot.default_normalized)(param_id);
                     edits.push(ParamEdit::Begin { id: param_id });
-                    edits.push(ParamEdit::Set { id: param_id, normalized: default_norm });
+                    edits.push(ParamEdit::Set {
+                        id: param_id,
+                        normalized: default_norm,
+                    });
                     edits.push(ParamEdit::End { id: param_id });
                 }
             }
@@ -624,7 +667,10 @@ pub fn dispatch_in(
                         let step = dy / 200.0;
                         let new_norm = (norm + step).clamp(0.0, 1.0);
                         edits.push(ParamEdit::Begin { id: param_id });
-                        edits.push(ParamEdit::Set { id: param_id, normalized: new_norm });
+                        edits.push(ParamEdit::Set {
+                            id: param_id,
+                            normalized: new_norm,
+                        });
                         edits.push(ParamEdit::End { id: param_id });
                     }
                 }
@@ -663,7 +709,10 @@ fn handle_mouse_down(
                 option_idx as f32 / (count - 1) as f32
             };
             edits.push(ParamEdit::Begin { id: param_id });
-            edits.push(ParamEdit::Set { id: param_id, normalized: new_norm });
+            edits.push(ParamEdit::Set {
+                id: param_id,
+                normalized: new_norm,
+            });
             edits.push(ParamEdit::End { id: param_id });
             state.dropdown_close();
             return;
@@ -692,13 +741,19 @@ fn handle_mouse_down(
             let norm = (snapshot.get_param)(param_id);
             let new_norm = if norm > 0.5 { 0.0 } else { 1.0 };
             edits.push(ParamEdit::Begin { id: param_id });
-            edits.push(ParamEdit::Set { id: param_id, normalized: new_norm });
+            edits.push(ParamEdit::Set {
+                id: param_id,
+                normalized: new_norm,
+            });
             edits.push(ParamEdit::End { id: param_id });
         }
         Some(WidgetType::Selector) => {
             let new_norm = (snapshot.next_discrete_normalized)(param_id);
             edits.push(ParamEdit::Begin { id: param_id });
-            edits.push(ParamEdit::Set { id: param_id, normalized: new_norm });
+            edits.push(ParamEdit::Set {
+                id: param_id,
+                normalized: new_norm,
+            });
             edits.push(ParamEdit::End { id: param_id });
         }
         Some(WidgetType::Dropdown) => {
@@ -739,7 +794,7 @@ fn open_dropdown(
     let padding = 4.0f32;
 
     let anchor_below = region.dropdown_anchor_y; // bottom of button box
-    let anchor_above = anchor_below - 20.0;      // top of button box (box_h=20)
+    let anchor_above = anchor_below - 20.0; // top of button box (box_h=20)
     let popup_w = region.w.max(80.0);
     let full_popup_h = options.len() as f32 * item_h + padding * 2.0;
 
@@ -804,19 +859,31 @@ fn apply_drag(
             let norm_x = ((x - pad_x) / pad_w).clamp(0.0, 1.0);
             let norm_y = (1.0 - (y - pad_y_start) / pad_h).clamp(0.0, 1.0);
 
-            edits.push(ParamEdit::Set { id: drag.param_id, normalized: norm_x });
+            edits.push(ParamEdit::Set {
+                id: drag.param_id,
+                normalized: norm_x,
+            });
             if let Some(y_id) = y_id_for_xy {
-                edits.push(ParamEdit::Set { id: y_id, normalized: norm_y });
+                edits.push(ParamEdit::Set {
+                    id: y_id,
+                    normalized: norm_y,
+                });
             }
         }
         WidgetType::Slider => {
             if let Some((pid, new_norm)) = state.update_slider_drag(x) {
-                edits.push(ParamEdit::Set { id: pid, normalized: new_norm as f32 });
+                edits.push(ParamEdit::Set {
+                    id: pid,
+                    normalized: new_norm as f32,
+                });
             }
         }
         _ => {
             if let Some((pid, new_norm)) = state.update_drag(y) {
-                edits.push(ParamEdit::Set { id: pid, normalized: new_norm as f32 });
+                edits.push(ParamEdit::Set {
+                    id: pid,
+                    normalized: new_norm as f32,
+                });
             }
         }
     }

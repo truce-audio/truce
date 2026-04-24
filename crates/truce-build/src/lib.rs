@@ -100,13 +100,14 @@ pub fn emit_plugin_env() {
     };
     // Keep in sync with `truce-derive::plugin_info` +
     // `truce-xtask/src/config.rs::resolved_au_type`.
-    let au_type = plugin.au_type.as_deref().unwrap_or(
-        match plugin.category.as_str() {
+    let au_type = plugin
+        .au_type
+        .as_deref()
+        .unwrap_or(match plugin.category.as_str() {
             "instrument" => "aumu",
             "midi" | "note_effect" => "aumi",
             _ => "aufx",
-        }
-    );
+        });
     let plugin_id = format!(
         "{}.{}",
         config.vendor.id,
@@ -122,7 +123,9 @@ pub fn emit_plugin_env() {
     println!("cargo:rustc-env=TRUCE_PLUGIN_ID={plugin_id}");
     println!("cargo:rustc-env=TRUCE_VENDOR_NAME={}", config.vendor.name);
     println!("cargo:rustc-env=TRUCE_VENDOR_URL={}", config.vendor.url);
-    let resolved_fourcc = plugin.fourcc.as_ref()
+    let resolved_fourcc = plugin
+        .fourcc
+        .as_ref()
         .or(plugin.au_subtype.as_ref())
         .expect("truce.toml: each [[plugin]] requires `fourcc` or `au_subtype`");
     println!("cargo:rustc-env=TRUCE_FOURCC={resolved_fourcc}");

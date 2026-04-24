@@ -77,19 +77,11 @@ pub(crate) fn cmd_remove(args: &[String]) -> Res {
             "--stale" => stale = true,
             "-p" => {
                 i += 1;
-                suffix_filter = Some(
-                    args.get(i)
-                        .cloned()
-                        .ok_or("-p requires a plugin suffix")?,
-                );
+                suffix_filter = Some(args.get(i).cloned().ok_or("-p requires a plugin suffix")?);
             }
             "-n" => {
                 i += 1;
-                name_filter = Some(
-                    args.get(i)
-                        .cloned()
-                        .ok_or("-n requires a plugin name")?,
-                );
+                name_filter = Some(args.get(i).cloned().ok_or("-n requires a plugin name")?);
             }
             other => return Err(format!("Unknown flag: {other}").into()),
         }
@@ -114,35 +106,95 @@ pub(crate) fn cmd_remove(args: &[String]) -> Res {
 
     if stale {
         // --stale: find vendor-matching bundles NOT in the current project
-        let scan = |dir: &Path, ext: &str, format: &'static str, needs_sudo: bool, targets: &mut Vec<RemoveTarget>| {
+        let scan = |dir: &Path,
+                    ext: &str,
+                    format: &'static str,
+                    needs_sudo: bool,
+                    targets: &mut Vec<RemoveTarget>| {
             if let Ok(entries) = fs::read_dir(dir) {
                 for entry in entries.flatten() {
                     let name = entry.file_name();
                     let name = name.to_string_lossy();
-                    if !name.contains(vendor) { continue; }
+                    if !name.contains(vendor) {
+                        continue;
+                    }
                     // Strip extension to get the display name
                     let display = name.trim_end_matches(&format!(".{ext}"));
-                    if known_names.iter().any(|k| *k == display) { continue; }
-                    targets.push(RemoveTarget { format, path: entry.path(), needs_sudo });
+                    if known_names.iter().any(|k| *k == display) {
+                        continue;
+                    }
+                    targets.push(RemoveTarget {
+                        format,
+                        path: entry.path(),
+                        needs_sudo,
+                    });
                 }
             }
         };
 
         if clap {
-            scan(&home.join("Library/Audio/Plug-Ins/CLAP"), "clap", "CLAP", false, &mut targets);
-            scan(Path::new("/Library/Audio/Plug-Ins/CLAP"), "clap", "CLAP", true, &mut targets);
+            scan(
+                &home.join("Library/Audio/Plug-Ins/CLAP"),
+                "clap",
+                "CLAP",
+                false,
+                &mut targets,
+            );
+            scan(
+                Path::new("/Library/Audio/Plug-Ins/CLAP"),
+                "clap",
+                "CLAP",
+                true,
+                &mut targets,
+            );
         }
         if vst3 {
-            scan(Path::new("/Library/Audio/Plug-Ins/VST3"), "vst3", "VST3", true, &mut targets);
-            scan(&home.join("Library/Audio/Plug-Ins/VST3"), "vst3", "VST3", false, &mut targets);
+            scan(
+                Path::new("/Library/Audio/Plug-Ins/VST3"),
+                "vst3",
+                "VST3",
+                true,
+                &mut targets,
+            );
+            scan(
+                &home.join("Library/Audio/Plug-Ins/VST3"),
+                "vst3",
+                "VST3",
+                false,
+                &mut targets,
+            );
         }
         if vst2 {
-            scan(&home.join("Library/Audio/Plug-Ins/VST"), "vst", "VST2", false, &mut targets);
-            scan(Path::new("/Library/Audio/Plug-Ins/VST"), "vst", "VST2", true, &mut targets);
+            scan(
+                &home.join("Library/Audio/Plug-Ins/VST"),
+                "vst",
+                "VST2",
+                false,
+                &mut targets,
+            );
+            scan(
+                Path::new("/Library/Audio/Plug-Ins/VST"),
+                "vst",
+                "VST2",
+                true,
+                &mut targets,
+            );
         }
         if au2 {
-            scan(Path::new("/Library/Audio/Plug-Ins/Components"), "component", "AU v2", true, &mut targets);
-            scan(&home.join("Library/Audio/Plug-Ins/Components"), "component", "AU v2", false, &mut targets);
+            scan(
+                Path::new("/Library/Audio/Plug-Ins/Components"),
+                "component",
+                "AU v2",
+                true,
+                &mut targets,
+            );
+            scan(
+                &home.join("Library/Audio/Plug-Ins/Components"),
+                "component",
+                "AU v2",
+                false,
+                &mut targets,
+            );
         }
         if au3 {
             // Scan /Applications for vendor-matching v3 apps not in project.
@@ -161,37 +213,57 @@ pub(crate) fn cmd_remove(args: &[String]) -> Res {
                 for entry in entries.flatten() {
                     let name = entry.file_name();
                     let name_str = name.to_string_lossy();
-                    if !name_str.contains(vendor) || !name_str.ends_with(".app") { continue; }
-                    let looks_like_au3 = name_str.ends_with(" v3.app")
-                        || name_str.ends_with("(AUv3).app");
-                    if !looks_like_au3 { continue; }
-                    if known_au3_bundles.iter().any(|k| k.as_str() == name_str.as_ref()) { continue; }
-                    targets.push(RemoveTarget { format: "AU v3", path: entry.path(), needs_sudo: true });
+                    if !name_str.contains(vendor) || !name_str.ends_with(".app") {
+                        continue;
+                    }
+                    let looks_like_au3 =
+                        name_str.ends_with(" v3.app") || name_str.ends_with("(AUv3).app");
+                    if !looks_like_au3 {
+                        continue;
+                    }
+                    if known_au3_bundles
+                        .iter()
+                        .any(|k| k.as_str() == name_str.as_ref())
+                    {
+                        continue;
+                    }
+                    targets.push(RemoveTarget {
+                        format: "AU v3",
+                        path: entry.path(),
+                        needs_sudo: true,
+                    });
                 }
             }
         }
         if aax {
-            scan(Path::new("/Library/Application Support/Avid/Audio/Plug-Ins"), "aaxplugin", "AAX", true, &mut targets);
+            scan(
+                Path::new("/Library/Application Support/Avid/Audio/Plug-Ins"),
+                "aaxplugin",
+                "AAX",
+                true,
+                &mut targets,
+            );
         }
 
         // Apply -p (substring match on filename) or -n (exact display name match)
         if let Some(ref filter) = suffix_filter {
             let filter_lower = filter.to_lowercase();
             targets.retain(|t| {
-                t.path.file_name()
+                t.path
+                    .file_name()
                     .map(|f| f.to_string_lossy().to_lowercase().contains(&filter_lower))
                     .unwrap_or(false)
             });
         } else if let Some(ref filter) = name_filter {
             let filter_lower = filter.to_lowercase();
             targets.retain(|t| {
-                let fname = t.path.file_stem()
+                let fname = t
+                    .path
+                    .file_stem()
                     .map(|f| f.to_string_lossy().to_lowercase())
                     .unwrap_or_default();
                 // Strip AU v3 suffixes: legacy " v3" and the new " (auv3)".
-                let display = fname
-                    .trim_end_matches(" v3")
-                    .trim_end_matches(" (auv3)");
+                let display = fname.trim_end_matches(" v3").trim_end_matches(" (auv3)");
                 display == filter_lower
             });
         }
@@ -246,39 +318,67 @@ pub(crate) fn cmd_remove(args: &[String]) -> Res {
             if clap {
                 let path = home.join(format!("Library/Audio/Plug-Ins/CLAP/{}.clap", p.name));
                 if path.exists() {
-                    targets.push(RemoveTarget { format: "CLAP", path, needs_sudo: false });
+                    targets.push(RemoveTarget {
+                        format: "CLAP",
+                        path,
+                        needs_sudo: false,
+                    });
                 }
             }
             if vst3 {
                 let path = PathBuf::from(format!("/Library/Audio/Plug-Ins/VST3/{}.vst3", p.name));
                 if path.exists() {
-                    targets.push(RemoveTarget { format: "VST3", path, needs_sudo: true });
+                    targets.push(RemoveTarget {
+                        format: "VST3",
+                        path,
+                        needs_sudo: true,
+                    });
                 }
             }
             if vst2 {
                 let path = home.join(format!("Library/Audio/Plug-Ins/VST/{}.vst", p.name));
                 if path.exists() {
-                    targets.push(RemoveTarget { format: "VST2", path, needs_sudo: false });
+                    targets.push(RemoveTarget {
+                        format: "VST2",
+                        path,
+                        needs_sudo: false,
+                    });
                 }
             }
             if au2 {
-                let path = PathBuf::from(format!("/Library/Audio/Plug-Ins/Components/{}.component", p.name));
+                let path = PathBuf::from(format!(
+                    "/Library/Audio/Plug-Ins/Components/{}.component",
+                    p.name
+                ));
                 if path.exists() {
-                    targets.push(RemoveTarget { format: "AU v2", path, needs_sudo: true });
+                    targets.push(RemoveTarget {
+                        format: "AU v2",
+                        path,
+                        needs_sudo: true,
+                    });
                 }
             }
             if au3 {
                 let path = PathBuf::from(format!("/Applications/{}.app", p.au3_app_name()));
                 if path.exists() {
-                    targets.push(RemoveTarget { format: "AU v3", path, needs_sudo: true });
+                    targets.push(RemoveTarget {
+                        format: "AU v3",
+                        path,
+                        needs_sudo: true,
+                    });
                 }
             }
             if aax {
                 let path = PathBuf::from(format!(
-                    "/Library/Application Support/Avid/Audio/Plug-Ins/{}.aaxplugin", p.name
+                    "/Library/Application Support/Avid/Audio/Plug-Ins/{}.aaxplugin",
+                    p.name
                 ));
                 if path.exists() {
-                    targets.push(RemoveTarget { format: "AAX", path, needs_sudo: true });
+                    targets.push(RemoveTarget {
+                        format: "AAX",
+                        path,
+                        needs_sudo: true,
+                    });
                 }
             }
         }
@@ -314,9 +414,10 @@ pub(crate) fn cmd_remove(args: &[String]) -> Res {
         // AU v3 special handling: unregister before deleting
         if t.format == "AU v3" {
             // Try to find a matching plugin def for precise unregistration
-            let matched_plugin = config.plugin.iter().find(|p| {
-                t.path == Path::new(&format!("/Applications/{}.app", p.au3_app_name()))
-            });
+            let matched_plugin = config
+                .plugin
+                .iter()
+                .find(|p| t.path == Path::new(&format!("/Applications/{}.app", p.au3_app_name())));
             if let Some(p) = matched_plugin {
                 unregister_au3(&config, p, &t.path);
             } else {
@@ -324,7 +425,9 @@ pub(crate) fn cmd_remove(args: &[String]) -> Res {
                 let _ = Command::new(
                     "/System/Library/Frameworks/CoreServices.framework/\
                      Frameworks/LaunchServices.framework/Support/lsregister",
-                ).args(["-u", t.path.to_str().unwrap_or("")]).output();
+                )
+                .args(["-u", t.path.to_str().unwrap_or("")])
+                .output();
             }
             removed_au = true;
         }

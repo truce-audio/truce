@@ -12,9 +12,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use baseview::{
-    Event, EventStatus, Window, WindowHandler, WindowOpenOptions, WindowScalePolicy,
-};
+use baseview::{Event, EventStatus, Window, WindowHandler, WindowOpenOptions, WindowScalePolicy};
 use keyboard_types::{Code, KeyState, Modifiers};
 use raw_window_handle::{HasRawWindowHandle, RawWindowHandle as RwhHandle};
 
@@ -165,7 +163,11 @@ where
             self.transport.toggle_playing();
             eprintln!(
                 "[truce-standalone] transport: {}",
-                if self.transport.is_playing() { "playing" } else { "stopped" }
+                if self.transport.is_playing() {
+                    "playing"
+                } else {
+                    "stopped"
+                }
             );
             return EventStatus::Captured;
         }
@@ -199,7 +201,9 @@ where
     }
 
     fn save_state_to_default_path(&self) {
-        let Ok(plugin) = self.plugin.lock() else { return };
+        let Ok(plugin) = self.plugin.lock() else {
+            return;
+        };
         let Some(bytes) = plugin.save_state() else {
             eprintln!("[truce-standalone] plugin has no state to save");
             return;
@@ -264,12 +268,8 @@ where
         }),
         end_edit: Arc::new(|_id| {}),
         request_resize: Arc::new(|_w, _h| false),
-        get_param: Arc::new(move |id| {
-            params_read.get_normalized(id).unwrap_or(0.0) as f64
-        }),
-        get_param_plain: Arc::new(move |id| {
-            params_plain.get_plain(id).unwrap_or(0.0) as f64
-        }),
+        get_param: Arc::new(move |id| params_read.get_normalized(id).unwrap_or(0.0) as f64),
+        get_param_plain: Arc::new(move |id| params_plain.get_plain(id).unwrap_or(0.0) as f64),
         format_param: Arc::new(move |id| {
             let value = params_format.get_plain(id).unwrap_or(0.0);
             params_format.format_value(id, value).unwrap_or_default()

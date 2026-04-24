@@ -3,10 +3,10 @@
 #[cfg(feature = "shell")]
 mod test {
     use std::path::PathBuf;
-    use truce_loader::*;
     use truce_core::buffer::AudioBuffer;
     use truce_core::events::{EventList, TransportInfo};
     use truce_core::process::ProcessContext;
+    use truce_loader::*;
 
     fn dylib_path() -> PathBuf {
         let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -98,7 +98,10 @@ mod test {
         let layout = plugin.layout();
         assert!(layout.width > 0);
         assert!(layout.height > 0);
-        assert!(!layout.widgets.is_empty(), "layout should have at least one widget");
+        assert!(
+            !layout.widgets.is_empty(),
+            "layout should have at least one widget"
+        );
     }
 
     #[test]

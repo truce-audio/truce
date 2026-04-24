@@ -5,9 +5,7 @@ use std::marker::PhantomData;
 
 use iced::widget::canvas::{self, Event, Frame, Geometry, Path, Stroke, Text};
 use iced::widget::Canvas;
-use iced::{
-    alignment, mouse, Color, Element, Length, Point, Rectangle, Renderer, Theme,
-};
+use iced::{alignment, mouse, Color, Element, Length, Point, Rectangle, Renderer, Theme};
 
 use crate::param_message::{Message, ParamMessage};
 use crate::param_state::ParamState;
@@ -134,10 +132,8 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for SliderProgram {
         // Filled portion
         let fill_x = track_left + self.value * track_width;
         if self.value > 0.001 {
-            let track_fill = Path::line(
-                Point::new(track_left, track_y),
-                Point::new(fill_x, track_y),
-            );
+            let track_fill =
+                Path::line(Point::new(track_left, track_y), Point::new(fill_x, track_y));
             frame.stroke(
                 &track_fill,
                 Stroke::default()
@@ -176,7 +172,7 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for SliderProgram {
                 horizontal_alignment: alignment::Horizontal::Center,
                 vertical_alignment: alignment::Vertical::Top,
                 font: self.font,
-            ..Text::default()
+                ..Text::default()
             });
         }
 

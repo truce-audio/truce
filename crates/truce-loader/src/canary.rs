@@ -92,7 +92,9 @@ impl AbiCanary {
                 if self.$field != other.$field {
                     diffs.push(format!(
                         "  {}: shell={}, dylib={}",
-                        stringify!($field), self.$field, other.$field
+                        stringify!($field),
+                        self.$field,
+                        other.$field
                     ));
                 }
             };
@@ -168,16 +170,25 @@ impl PluginLogic for ProbePlugin {
         Some(42)
     }
 
-    fn save_state(&self) -> Vec<u8> { vec![0xCA, 0xFE] }
+    fn save_state(&self) -> Vec<u8> {
+        vec![0xCA, 0xFE]
+    }
     fn load_state(&mut self, _data: &[u8]) {}
-    fn latency(&self) -> u32 { 0xAAAA }
-    fn tail(&self) -> u32 { 0xBBBB }
+    fn latency(&self) -> u32 {
+        0xAAAA
+    }
+    fn tail(&self) -> u32 {
+        0xBBBB
+    }
 }
 
 /// Verify a probe plugin returns the expected values.
 pub fn verify_probe(probe: &dyn PluginLogic) -> Result<(), String> {
     if probe.latency() != 0xAAAA {
-        return Err(format!("latency: expected 0xAAAA, got 0x{:X}", probe.latency()));
+        return Err(format!(
+            "latency: expected 0xAAAA, got 0x{:X}",
+            probe.latency()
+        ));
     }
     if probe.tail() != 0xBBBB {
         return Err(format!("tail: expected 0xBBBB, got 0x{:X}", probe.tail()));

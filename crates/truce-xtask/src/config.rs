@@ -66,7 +66,9 @@ impl WindowsSigningConfig {
     }
 
     pub(crate) fn resolved_timestamp_url(&self) -> &str {
-        self.timestamp_url.as_deref().unwrap_or("http://timestamp.digicert.com")
+        self.timestamp_url
+            .as_deref()
+            .unwrap_or("http://timestamp.digicert.com")
     }
 }
 
@@ -197,7 +199,8 @@ pub(crate) struct PluginDef {
 
 impl PluginDef {
     pub(crate) fn resolved_fourcc(&self) -> &str {
-        self.fourcc.as_deref()
+        self.fourcc
+            .as_deref()
             .or(self.au_subtype.as_deref())
             .expect("truce.toml: each [[plugin]] requires `fourcc` or `au_subtype`")
     }
@@ -207,16 +210,18 @@ impl PluginDef {
         // (Apple's MIDI Processor). `aumi` plugins declare no
         // audio buses per Apple spec — wrappers that can't express
         // that (AAX) synthesize dummy audio I/O internally.
-        self.au_type.as_deref().unwrap_or(
-            match self.category.as_str() {
+        self.au_type
+            .as_deref()
+            .unwrap_or(match self.category.as_str() {
                 "instrument" => "aumu",
                 "midi" | "note_effect" => "aumi",
                 _ => "aufx",
-            }
-        )
+            })
     }
     pub(crate) fn au3_sub(&self) -> &str {
-        self.au3_subtype.as_deref().unwrap_or(self.resolved_fourcc())
+        self.au3_subtype
+            .as_deref()
+            .unwrap_or(self.resolved_fourcc())
     }
 
     /// Name used for the AU v3 containing `.app` bundle directory.
@@ -320,7 +325,10 @@ pub(crate) fn resolve_aax_sdk_path(config: &Config) -> Option<PathBuf> {
         if path.exists() {
             return Some(path);
         }
-        eprintln!("warning: {} = {:?} in truce.toml but directory not found", toml_path.1, p);
+        eprintln!(
+            "warning: {} = {:?} in truce.toml but directory not found",
+            toml_path.1, p
+        );
     }
     if let Ok(p) = std::env::var("AAX_SDK_PATH") {
         let path = PathBuf::from(&p);

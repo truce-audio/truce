@@ -2,12 +2,12 @@
 //! write the per-format Info.plist, and codesign.
 
 use super::PkgFormat;
-use crate::{
-    codesign_bundle, copy_dir_recursive, release_lib, resolve_aax_sdk_path, tmp_dir,
-    Config, PackagingConfig, PluginDef, Res,
-};
 #[cfg(not(target_os = "windows"))]
 use crate::pace_sign_aax_macos;
+use crate::{
+    codesign_bundle, copy_dir_recursive, release_lib, resolve_aax_sdk_path, tmp_dir, Config,
+    PackagingConfig, PluginDef, Res,
+};
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -45,7 +45,11 @@ pub(crate) fn stage_lv2(root: &Path, p: &PluginDef, staging: &Path) -> Res {
     let _ = fs::remove_dir_all(&bundle);
     fs::create_dir_all(&bundle)?;
 
-    let bin_ext = if cfg!(target_os = "windows") { "dll" } else { "so" };
+    let bin_ext = if cfg!(target_os = "windows") {
+        "dll"
+    } else {
+        "so"
+    };
     let bin_name = format!("{slug}.{bin_ext}");
     let bin_path = bundle.join(&bin_name);
     fs::copy(&built, &bin_path)?;
@@ -58,9 +62,13 @@ pub(crate) fn stage_lv2(root: &Path, p: &PluginDef, staging: &Path) -> Res {
         let lib = libloading::Library::new(&bin_path)
             .map_err(|e| format!("load {} failed: {e}", bin_path.display()))?;
         type EmitFn = unsafe extern "C" fn(*const c_char, *const c_char) -> i32;
-        let emit: libloading::Symbol<EmitFn> = lib
-            .get(b"__truce_lv2_emit_bundle\0")
-            .map_err(|e| format!("{} missing __truce_lv2_emit_bundle: {e}", bin_path.display()))?;
+        let emit: libloading::Symbol<EmitFn> =
+            lib.get(b"__truce_lv2_emit_bundle\0").map_err(|e| {
+                format!(
+                    "{} missing __truce_lv2_emit_bundle: {e}",
+                    bin_path.display()
+                )
+            })?;
         let rc = emit(bundle_cstr.as_ptr(), bin_cstr.as_ptr());
         if rc != 0 {
             return Err(format!("LV2 TTL emission failed (rc={rc})").into());
@@ -114,7 +122,11 @@ pub(crate) fn stage_vst3(root: &Path, p: &PluginDef, config: &Config, staging: &
         vendor_id = config.vendor.id,
     );
     fs::write(bundle.join("Contents/Info.plist"), &plist)?;
-    codesign_bundle(bundle.to_str().unwrap(), config.macos.application_identity(), false)?;
+    codesign_bundle(
+        bundle.to_str().unwrap(),
+        config.macos.application_identity(),
+        false,
+    )?;
     Ok(())
 }
 
@@ -151,7 +163,11 @@ pub(crate) fn stage_vst2(root: &Path, p: &PluginDef, config: &Config, staging: &
     );
     fs::write(bundle.join("Contents/Info.plist"), &plist)?;
     fs::write(bundle.join("Contents/PkgInfo"), "BNDL????")?;
-    codesign_bundle(bundle.to_str().unwrap(), config.macos.application_identity(), false)?;
+    codesign_bundle(
+        bundle.to_str().unwrap(),
+        config.macos.application_identity(),
+        false,
+    )?;
     Ok(())
 }
 
@@ -218,7 +234,11 @@ pub(crate) fn stage_au2(root: &Path, p: &PluginDef, config: &Config, staging: &P
         au_tag = p.au_tag,
     );
     fs::write(bundle.join("Contents/Info.plist"), &plist)?;
-    codesign_bundle(bundle.to_str().unwrap(), config.macos.application_identity(), false)?;
+    codesign_bundle(
+        bundle.to_str().unwrap(),
+        config.macos.application_identity(),
+        false,
+    )?;
     Ok(())
 }
 
@@ -236,7 +256,8 @@ pub(crate) fn stage_aax(
     universal_mac: bool,
     no_pace_sign: bool,
 ) -> Res {
-    let template = tmp_dir().join("aax_template/build/TruceAAXTemplate.aaxplugin/Contents/MacOS/TruceAAXTemplate");
+    let template = tmp_dir()
+        .join("aax_template/build/TruceAAXTemplate.aaxplugin/Contents/MacOS/TruceAAXTemplate");
     // Always rebuild the template: it rewrites embedded sources (so
     // template edits in cargo-truce propagate) and cmake incrementally
     // rebuilds only the files whose bytes actually changed.
@@ -262,7 +283,12 @@ pub(crate) fn stage_aax(
     fs::create_dir_all(contents.join("MacOS"))?;
     fs::create_dir_all(contents.join("Resources"))?;
     fs::copy(&template, contents.join("MacOS").join(&p.name))?;
-    fs::copy(&dylib, contents.join("Resources").join(format!("lib{}_aax.dylib", p.dylib_stem())))?;
+    fs::copy(
+        &dylib,
+        contents
+            .join("Resources")
+            .join(format!("lib{}_aax.dylib", p.dylib_stem())),
+    )?;
 
     let plist = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -289,11 +315,25 @@ pub(crate) fn stage_aax(
     // Sign inside-out: inner dylib first, then the outer bundle.
     // notarization rejects bundles where nested binaries lack hardened
     // runtime + timestamp.
-    let inner_dylib = contents.join("Resources").join(format!("lib{}_aax.dylib", p.dylib_stem()));
-    codesign_bundle(inner_dylib.to_str().unwrap(), config.macos.application_identity(), false)?;
+    let inner_dylib = contents
+        .join("Resources")
+        .join(format!("lib{}_aax.dylib", p.dylib_stem()));
+    codesign_bundle(
+        inner_dylib.to_str().unwrap(),
+        config.macos.application_identity(),
+        false,
+    )?;
     let inner_exe = contents.join("MacOS").join(&p.name);
-    codesign_bundle(inner_exe.to_str().unwrap(), config.macos.application_identity(), false)?;
-    codesign_bundle(bundle.to_str().unwrap(), config.macos.application_identity(), false)?;
+    codesign_bundle(
+        inner_exe.to_str().unwrap(),
+        config.macos.application_identity(),
+        false,
+    )?;
+    codesign_bundle(
+        bundle.to_str().unwrap(),
+        config.macos.application_identity(),
+        false,
+    )?;
 
     // PACE wraps the Apple-signed bundle and re-signs with hardened runtime
     // via --dsigharden. Must be the last touch on the bundle — pkgbuild reads
@@ -311,14 +351,20 @@ pub(crate) fn stage_au3(_root: &Path, p: &PluginDef, config: &Config, staging: &
     let build_dir = tmp_dir().join(format!("au_v3_build_{}", p.suffix));
     let built_app = build_dir.join("build/Release/TruceAUv3.app");
     if !built_app.exists() {
-        return Err(format!("AU v3 app not built: {}. Run the build step first.", built_app.display()).into());
+        return Err(format!(
+            "AU v3 app not built: {}. Run the build step first.",
+            built_app.display()
+        )
+        .into());
     }
 
     let dst = staging.join(&app_name);
     // May be root-owned from a previous install-based run
     if dst.exists() {
         if fs::remove_dir_all(&dst).is_err() {
-            let _ = Command::new("rm").args(["-rf", dst.to_str().unwrap()]).status();
+            let _ = Command::new("rm")
+                .args(["-rf", dst.to_str().unwrap()])
+                .status();
         }
     }
     copy_dir_recursive(&built_app, &dst)?;
@@ -333,7 +379,11 @@ pub(crate) fn stage_au3(_root: &Path, p: &PluginDef, config: &Config, staging: &
         copy_dir_recursive(&fw_src, &fw_dst.join(format!("{fw_name}.framework")))?;
     }
 
-    codesign_bundle(dst.to_str().unwrap(), config.macos.application_identity(), false)?;
+    codesign_bundle(
+        dst.to_str().unwrap(),
+        config.macos.application_identity(),
+        false,
+    )?;
     Ok(())
 }
 
@@ -416,6 +466,8 @@ pub(crate) fn write_postinstall_script(dir: &Path) -> Res {
          exit 0\n",
     )?;
     // Make executable
-    Command::new("chmod").args(["+x", script.to_str().unwrap()]).status()?;
+    Command::new("chmod")
+        .args(["+x", script.to_str().unwrap()])
+        .status()?;
     Ok(())
 }

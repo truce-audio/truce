@@ -62,27 +62,62 @@ pub enum WidgetKind {
 impl KnobDef {
     /// Knob (default for continuous params, auto-detected anyway).
     pub fn knob(param_id: impl Into<u32>, label: &'static str) -> Self {
-        Self { param_id: param_id.into(), label, widget: Some(WidgetKind::Knob), span: 1, param_id_y: None, meter_ids: None }
+        Self {
+            param_id: param_id.into(),
+            label,
+            widget: Some(WidgetKind::Knob),
+            span: 1,
+            param_id_y: None,
+            meter_ids: None,
+        }
     }
 
     /// Horizontal slider.
     pub fn slider(param_id: impl Into<u32>, label: &'static str) -> Self {
-        Self { param_id: param_id.into(), label, widget: Some(WidgetKind::Slider), span: 1, param_id_y: None, meter_ids: None }
+        Self {
+            param_id: param_id.into(),
+            label,
+            widget: Some(WidgetKind::Slider),
+            span: 1,
+            param_id_y: None,
+            meter_ids: None,
+        }
     }
 
     /// Toggle button.
     pub fn toggle(param_id: impl Into<u32>, label: &'static str) -> Self {
-        Self { param_id: param_id.into(), label, widget: Some(WidgetKind::Toggle), span: 1, param_id_y: None, meter_ids: None }
+        Self {
+            param_id: param_id.into(),
+            label,
+            widget: Some(WidgetKind::Toggle),
+            span: 1,
+            param_id_y: None,
+            meter_ids: None,
+        }
     }
 
     /// Selector (click-to-cycle for enum params).
     pub fn selector(param_id: impl Into<u32>, label: &'static str) -> Self {
-        Self { param_id: param_id.into(), label, widget: Some(WidgetKind::Selector), span: 1, param_id_y: None, meter_ids: None }
+        Self {
+            param_id: param_id.into(),
+            label,
+            widget: Some(WidgetKind::Selector),
+            span: 1,
+            param_id_y: None,
+            meter_ids: None,
+        }
     }
 
     /// Dropdown list (click to open a popup showing all options).
     pub fn dropdown(param_id: impl Into<u32>, label: &'static str) -> Self {
-        Self { param_id: param_id.into(), label, widget: Some(WidgetKind::Dropdown), span: 1, param_id_y: None, meter_ids: None }
+        Self {
+            param_id: param_id.into(),
+            label,
+            widget: Some(WidgetKind::Dropdown),
+            span: 1,
+            param_id_y: None,
+            meter_ids: None,
+        }
     }
 
     /// Level meter with one or more channels (display-only, reads from Plugin::get_meter()).
@@ -99,7 +134,14 @@ impl KnobDef {
 
     /// XY pad controlling two parameters.
     pub fn xy_pad(param_x: impl Into<u32>, param_y: impl Into<u32>, label: &'static str) -> Self {
-        Self { param_id: param_x.into(), label, widget: Some(WidgetKind::XYPad), span: 2, param_id_y: Some(param_y.into()), meter_ids: None }
+        Self {
+            param_id: param_x.into(),
+            label,
+            widget: Some(WidgetKind::XYPad),
+            span: 2,
+            param_id_y: Some(param_y.into()),
+            meter_ids: None,
+        }
     }
 
     /// Set the column span for this widget (default 1).
@@ -135,9 +177,16 @@ impl PluginLayout {
         let section_label_h = 14.0;
         let padding = 7.0;
 
-        let max_knobs = rows.iter()
-            .map(|r| r.knobs.iter().map(|k| k.span.max(1) as usize).sum::<usize>())
-            .max().unwrap_or(1);
+        let max_knobs = rows
+            .iter()
+            .map(|r| {
+                r.knobs
+                    .iter()
+                    .map(|k| k.span.max(1) as usize)
+                    .sum::<usize>()
+            })
+            .max()
+            .unwrap_or(1);
         let w = max_knobs as f32 * (knob_size + 7.0) + 13.0;
 
         let mut h = header_h + padding;
@@ -211,58 +260,99 @@ pub struct GridWidget {
 impl GridWidget {
     pub fn knob(param_id: impl Into<u32>, label: &'static str) -> Self {
         Self {
-            col: AUTO, row: AUTO, col_span: 1, row_span: 1,
-            param_id: param_id.into(), label, widget: Some(WidgetKind::Knob),
-            param_id_y: None, meter_ids: None,
+            col: AUTO,
+            row: AUTO,
+            col_span: 1,
+            row_span: 1,
+            param_id: param_id.into(),
+            label,
+            widget: Some(WidgetKind::Knob),
+            param_id_y: None,
+            meter_ids: None,
         }
     }
 
     pub fn slider(param_id: impl Into<u32>, label: &'static str) -> Self {
         Self {
-            col: AUTO, row: AUTO, col_span: 1, row_span: 1,
-            param_id: param_id.into(), label, widget: Some(WidgetKind::Slider),
-            param_id_y: None, meter_ids: None,
+            col: AUTO,
+            row: AUTO,
+            col_span: 1,
+            row_span: 1,
+            param_id: param_id.into(),
+            label,
+            widget: Some(WidgetKind::Slider),
+            param_id_y: None,
+            meter_ids: None,
         }
     }
 
     pub fn toggle(param_id: impl Into<u32>, label: &'static str) -> Self {
         Self {
-            col: AUTO, row: AUTO, col_span: 1, row_span: 1,
-            param_id: param_id.into(), label, widget: Some(WidgetKind::Toggle),
-            param_id_y: None, meter_ids: None,
+            col: AUTO,
+            row: AUTO,
+            col_span: 1,
+            row_span: 1,
+            param_id: param_id.into(),
+            label,
+            widget: Some(WidgetKind::Toggle),
+            param_id_y: None,
+            meter_ids: None,
         }
     }
 
     pub fn selector(param_id: impl Into<u32>, label: &'static str) -> Self {
         Self {
-            col: AUTO, row: AUTO, col_span: 1, row_span: 1,
-            param_id: param_id.into(), label, widget: Some(WidgetKind::Selector),
-            param_id_y: None, meter_ids: None,
+            col: AUTO,
+            row: AUTO,
+            col_span: 1,
+            row_span: 1,
+            param_id: param_id.into(),
+            label,
+            widget: Some(WidgetKind::Selector),
+            param_id_y: None,
+            meter_ids: None,
         }
     }
 
     pub fn dropdown(param_id: impl Into<u32>, label: &'static str) -> Self {
         Self {
-            col: AUTO, row: AUTO, col_span: 1, row_span: 1,
-            param_id: param_id.into(), label, widget: Some(WidgetKind::Dropdown),
-            param_id_y: None, meter_ids: None,
+            col: AUTO,
+            row: AUTO,
+            col_span: 1,
+            row_span: 1,
+            param_id: param_id.into(),
+            label,
+            widget: Some(WidgetKind::Dropdown),
+            param_id_y: None,
+            meter_ids: None,
         }
     }
 
     pub fn meter(ids: &[u32], label: &'static str) -> Self {
         Self {
-            col: AUTO, row: AUTO, col_span: 1, row_span: 1,
-            param_id: ids.first().copied().unwrap_or(0), label,
+            col: AUTO,
+            row: AUTO,
+            col_span: 1,
+            row_span: 1,
+            param_id: ids.first().copied().unwrap_or(0),
+            label,
             widget: Some(WidgetKind::Meter),
-            param_id_y: None, meter_ids: Some(ids.to_vec()),
+            param_id_y: None,
+            meter_ids: Some(ids.to_vec()),
         }
     }
 
     pub fn xy_pad(param_x: impl Into<u32>, param_y: impl Into<u32>, label: &'static str) -> Self {
         Self {
-            col: AUTO, row: AUTO, col_span: 2, row_span: 2,
-            param_id: param_x.into(), label, widget: Some(WidgetKind::XYPad),
-            param_id_y: Some(param_y.into()), meter_ids: None,
+            col: AUTO,
+            row: AUTO,
+            col_span: 2,
+            row_span: 2,
+            param_id: param_x.into(),
+            label,
+            widget: Some(WidgetKind::XYPad),
+            param_id_y: Some(param_y.into()),
+            meter_ids: None,
         }
     }
 
@@ -298,12 +388,18 @@ pub struct Section {
 
 /// Create a labeled section of widgets for `GridLayout::build()`.
 pub fn section(label: &'static str, widgets: Vec<GridWidget>) -> Section {
-    Section { label: Some(label), widgets }
+    Section {
+        label: Some(label),
+        widgets,
+    }
 }
 
 /// Wrap bare widgets into an unlabeled section (no section header).
 pub fn widgets(widgets: Vec<GridWidget>) -> Section {
-    Section { label: None, widgets }
+    Section {
+        label: None,
+        widgets,
+    }
 }
 
 // -- Short constructors for GridWidget (free functions) --
@@ -346,7 +442,10 @@ pub fn xy_pad(param_x: impl Into<u32>, param_y: impl Into<u32>, label: &'static 
 
 impl From<GridWidget> for Section {
     fn from(w: GridWidget) -> Self {
-        Section { label: None, widgets: vec![w] }
+        Section {
+            label: None,
+            widgets: vec![w],
+        }
     }
 }
 
@@ -400,10 +499,14 @@ impl GridLayout {
             widgets.extend(s.widgets);
         }
         let mut layout = Self {
-            title, version, cols,
+            title,
+            version,
+            cols,
             sections: Vec::new(),
-            widgets, cell_size,
-            width: 0, height: 0,
+            widgets,
+            cell_size,
+            width: 0,
+            height: 0,
         };
         layout.auto_flow_with_breaks(&breaks);
         let (w, h) = layout.compute_size();
@@ -414,20 +517,27 @@ impl GridLayout {
 
     /// Compute the window size from the grid.
     pub fn compute_size(&self) -> (u32, u32) {
-        let max_col = self.widgets.iter()
+        let max_col = self
+            .widgets
+            .iter()
             .map(|w| w.col + w.col_span)
-            .max().unwrap_or(1);
-        let max_row = self.widgets.iter()
+            .max()
+            .unwrap_or(1);
+        let max_row = self
+            .widgets
+            .iter()
             .map(|w| w.row + w.row_span)
-            .max().unwrap_or(1);
+            .max()
+            .unwrap_or(1);
         let section_count = self.sections.len() as f32;
 
         let w = GRID_PADDING * 2.0 + max_col as f32 * (self.cell_size + GRID_GAP) - GRID_GAP;
         let bottom_label_h = 22.0; // label + value text below the last row of widgets
-        let h = GRID_HEADER_H + GRID_PADDING
-            + max_row as f32 * (self.cell_size + GRID_GAP) - GRID_GAP
+        let h = GRID_HEADER_H + GRID_PADDING + max_row as f32 * (self.cell_size + GRID_GAP)
+            - GRID_GAP
             + section_count * GRID_SECTION_H
-            + bottom_label_h + GRID_PADDING;
+            + bottom_label_h
+            + GRID_PADDING;
 
         (w as u32, h as u32)
     }
@@ -484,12 +594,13 @@ impl GridLayout {
                     cursor_col = 0;
                     cursor_row += 1;
                 }
-                let fits = (0..w.col_span).all(|dc|
-                    (0..w.row_span).all(|dr|
-                        !occupied.contains(&(cursor_col + dc, cursor_row + dr))
-                    )
-                );
-                if fits { break; }
+                let fits = (0..w.col_span).all(|dc| {
+                    (0..w.row_span)
+                        .all(|dr| !occupied.contains(&(cursor_col + dc, cursor_row + dr)))
+                });
+                if fits {
+                    break;
+                }
                 cursor_col += 1;
             }
 
@@ -512,9 +623,12 @@ impl GridLayout {
 ///
 /// `offsets[r]` is the total vertical shift (from section labels) for row `r`.
 pub fn compute_section_offsets(layout: &GridLayout) -> Vec<f32> {
-    let max_row = layout.widgets.iter()
+    let max_row = layout
+        .widgets
+        .iter()
         .map(|w| w.row + w.row_span)
-        .max().unwrap_or(1);
+        .max()
+        .unwrap_or(1);
     let mut offsets = vec![0.0f32; max_row as usize + 1];
     let mut cumulative = 0.0;
 
@@ -531,9 +645,12 @@ pub fn compute_section_offsets(layout: &GridLayout) -> Vec<f32> {
 
 impl From<PluginLayout> for GridLayout {
     fn from(pl: PluginLayout) -> Self {
-        let cols = pl.rows.iter()
+        let cols = pl
+            .rows
+            .iter()
             .map(|r| r.knobs.iter().map(|k| k.span.max(1)).sum::<u32>())
-            .max().unwrap_or(1);
+            .max()
+            .unwrap_or(1);
 
         let mut widgets = Vec::new();
         let mut sections = Vec::new();
@@ -546,8 +663,10 @@ impl From<PluginLayout> for GridLayout {
             let mut col = 0u32;
             for knob in &row.knobs {
                 widgets.push(GridWidget {
-                    col, row: grid_row,
-                    col_span: knob.span.max(1), row_span: 1,
+                    col,
+                    row: grid_row,
+                    col_span: knob.span.max(1),
+                    row_span: 1,
                     param_id: knob.param_id,
                     label: knob.label,
                     widget: knob.widget,
@@ -560,9 +679,14 @@ impl From<PluginLayout> for GridLayout {
         }
 
         let mut gl = GridLayout {
-            title: pl.title, version: pl.version,
-            cols, sections, widgets, cell_size: pl.knob_size,
-            width: 0, height: 0,
+            title: pl.title,
+            version: pl.version,
+            cols,
+            sections,
+            widgets,
+            cell_size: pl.knob_size,
+            width: 0,
+            height: 0,
         };
         let (w, h) = gl.compute_size();
         gl.width = w;
@@ -580,15 +704,27 @@ pub enum Layout {
 
 impl Layout {
     pub fn width(&self) -> u32 {
-        match self { Layout::Rows(l) => l.width, Layout::Grid(g) => g.width }
+        match self {
+            Layout::Rows(l) => l.width,
+            Layout::Grid(g) => g.width,
+        }
     }
     pub fn height(&self) -> u32 {
-        match self { Layout::Rows(l) => l.height, Layout::Grid(g) => g.height }
+        match self {
+            Layout::Rows(l) => l.height,
+            Layout::Grid(g) => g.height,
+        }
     }
     pub fn title(&self) -> &str {
-        match self { Layout::Rows(l) => l.title, Layout::Grid(g) => g.title }
+        match self {
+            Layout::Rows(l) => l.title,
+            Layout::Grid(g) => g.title,
+        }
     }
     pub fn version(&self) -> &str {
-        match self { Layout::Rows(l) => l.version, Layout::Grid(g) => g.version }
+        match self {
+            Layout::Rows(l) => l.version,
+            Layout::Grid(g) => g.version,
+        }
     }
 }

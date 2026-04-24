@@ -14,10 +14,12 @@ pub(crate) fn cmd_clean(args: &[String]) -> Res {
         }
     }
 
-    if !yes && !confirm_prompt(
-        "Clear AU/DAW caches and restart audio daemons? This deletes cached plugin metadata, \
+    if !yes
+        && !confirm_prompt(
+            "Clear AU/DAW caches and restart audio daemons? This deletes cached plugin metadata, \
          resets pluginkit registrations, and wipes the AAX cache.",
-    ) {
+        )
+    {
         eprintln!("Cancelled.");
         return Ok(());
     }

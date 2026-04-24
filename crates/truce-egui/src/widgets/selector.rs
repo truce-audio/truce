@@ -37,7 +37,11 @@ pub fn param_selector(
         } else {
             // Cycle in 0.1 increments
             let next = ((value * 10.0).round() + 1.0) / 10.0;
-            if next > 1.0 { 0.0 } else { next }
+            if next > 1.0 {
+                0.0
+            } else {
+                next
+            }
         };
         state.set_immediate(id, new_value);
     }

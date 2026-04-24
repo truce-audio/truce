@@ -27,14 +27,12 @@ pub(crate) mod fs_ctx {
 
     pub(crate) fn create_dir_all(path: impl AsRef<Path>) -> Result<(), BoxErr> {
         let path = path.as_ref();
-        fs::create_dir_all(path)
-            .map_err(|e| format!("mkdir -p {}: {e}", path.display()).into())
+        fs::create_dir_all(path).map_err(|e| format!("mkdir -p {}: {e}", path.display()).into())
     }
 
     pub(crate) fn write(path: impl AsRef<Path>, contents: impl AsRef<[u8]>) -> Result<(), BoxErr> {
         let path = path.as_ref();
-        fs::write(path, contents)
-            .map_err(|e| format!("write {}: {e}", path.display()).into())
+        fs::write(path, contents).map_err(|e| format!("write {}: {e}", path.display()).into())
     }
 }
 
@@ -57,11 +55,7 @@ pub(crate) fn release_lib(root: &Path, stem: &str) -> PathBuf {
 
 /// Return the release-mode library path for a specific cargo target triple,
 /// or the default `target/release/` when `target` is `None`.
-pub(crate) fn release_lib_for_target(
-    root: &Path,
-    stem: &str,
-    target: Option<&str>,
-) -> PathBuf {
+pub(crate) fn release_lib_for_target(root: &Path, stem: &str, target: Option<&str>) -> PathBuf {
     match target {
         Some(t) => root
             .join("target")
@@ -98,7 +92,8 @@ pub(crate) fn read_workspace_version(root: &Path) -> Option<String> {
     let content = fs::read_to_string(root.join("Cargo.toml")).ok()?;
     let doc: toml::Table = content.parse().ok()?;
     // Workspace layout: [workspace.package] version
-    if let Some(v) = doc.get("workspace")
+    if let Some(v) = doc
+        .get("workspace")
         .and_then(|w| w.get("package"))
         .and_then(|p| p.get("version"))
         .and_then(|v| v.as_str())
@@ -119,7 +114,8 @@ pub(crate) fn detect_default_features() -> std::collections::HashSet<String> {
         if let Ok(doc) = content.parse::<toml::Table>() {
             if let Some(toml::Value::Table(feat)) = doc.get("features") {
                 if let Some(toml::Value::Array(defaults)) = feat.get("default") {
-                    return defaults.iter()
+                    return defaults
+                        .iter()
                         .filter_map(|v| v.as_str().map(|s| s.to_string()))
                         .collect();
                 }
@@ -127,7 +123,10 @@ pub(crate) fn detect_default_features() -> std::collections::HashSet<String> {
         }
     }
     // Fallback: assume all formats (workspace with multiple crates)
-    ["clap", "vst3", "vst2", "lv2", "au", "aax"].iter().map(|s| s.to_string()).collect()
+    ["clap", "vst3", "vst2", "lv2", "au", "aax"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
 }
 
 pub(crate) fn project_root() -> PathBuf {
@@ -259,16 +258,18 @@ pub(crate) fn locate_wraptool_macos() -> Option<PathBuf> {
 
 #[cfg(not(target_os = "windows"))]
 pub(crate) fn which_unix(name: &str) -> std::result::Result<PathBuf, std::io::Error> {
-    let path = std::env::var_os("PATH").ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::NotFound, "PATH not set")
-    })?;
+    let path = std::env::var_os("PATH")
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "PATH not set"))?;
     for dir in std::env::split_paths(&path) {
         let candidate = dir.join(name);
         if candidate.is_file() {
             return Ok(candidate);
         }
     }
-    Err(std::io::Error::new(std::io::ErrorKind::NotFound, name.to_string()))
+    Err(std::io::Error::new(
+        std::io::ErrorKind::NotFound,
+        name.to_string(),
+    ))
 }
 
 /// PACE-sign an AAX bundle on macOS. No-ops cleanly when wraptool isn't
@@ -302,17 +303,24 @@ pub(crate) fn pace_sign_aax_macos(bundle: &Path) -> crate::Res {
     };
 
     eprintln!("    wraptool: PACE-signing {}", bundle.display());
-    let bundle_str = bundle.to_str().ok_or("AAX bundle path is not valid UTF-8")?;
+    let bundle_str = bundle
+        .to_str()
+        .ok_or("AAX bundle path is not valid UTF-8")?;
     let status = Command::new(&wraptool)
         .args([
             "sign",
-            "--account", &account,
-            "--signid", &signid,
+            "--account",
+            &account,
+            "--signid",
+            &signid,
             "--allowsigningservice",
             "--dsigharden",
-            "--dsig1-compat", "off",
-            "--in", bundle_str,
-            "--out", bundle_str,
+            "--dsig1-compat",
+            "off",
+            "--in",
+            bundle_str,
+            "--out",
+            bundle_str,
         ])
         .status()?;
     if !status.success() {
@@ -337,7 +345,11 @@ pub(crate) fn rustup_has_target(triple: &str) -> bool {
 }
 
 #[allow(unused_variables)]
-pub(crate) fn cargo_build(env_vars: &[(&str, &str)], extra_args: &[&str], deployment_target: &str) -> crate::Res {
+pub(crate) fn cargo_build(
+    env_vars: &[(&str, &str)],
+    extra_args: &[&str],
+    deployment_target: &str,
+) -> crate::Res {
     let mut cmd = Command::new("cargo");
     cmd.arg("build").arg("--release");
     #[cfg(target_os = "macos")]
@@ -496,8 +508,8 @@ pub(crate) fn locate_cmake() -> Option<PathBuf> {
         return Some(p);
     }
     for vs_install in vs_install_paths() {
-        let bundled = vs_install
-            .join(r"Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe");
+        let bundled =
+            vs_install.join(r"Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe");
         if bundled.is_file() {
             return Some(bundled);
         }
@@ -523,8 +535,8 @@ pub(crate) fn locate_ninja() -> Option<PathBuf> {
         return Some(p);
     }
     for vs_install in vs_install_paths() {
-        let bundled = vs_install
-            .join(r"Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja\ninja.exe");
+        let bundled =
+            vs_install.join(r"Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja\ninja.exe");
         if bundled.is_file() {
             return Some(bundled);
         }
@@ -539,9 +551,8 @@ pub(crate) fn locate_ninja() -> Option<PathBuf> {
 /// is broken.
 #[cfg(target_os = "windows")]
 pub(crate) fn vs_install_paths() -> Vec<PathBuf> {
-    let vswhere = PathBuf::from(
-        r"C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe",
-    );
+    let vswhere =
+        PathBuf::from(r"C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe");
     if !vswhere.exists() {
         return Vec::new();
     }
@@ -563,9 +574,8 @@ pub(crate) fn vs_install_paths() -> Vec<PathBuf> {
 /// installed with the C++ tools component.
 #[cfg(target_os = "windows")]
 pub(crate) fn locate_vcvars64() -> Option<PathBuf> {
-    let vswhere = PathBuf::from(
-        r"C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe",
-    );
+    let vswhere =
+        PathBuf::from(r"C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe");
     if !vswhere.exists() {
         return None;
     }

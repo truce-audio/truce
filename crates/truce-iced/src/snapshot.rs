@@ -12,9 +12,9 @@ use iced_wgpu::wgpu;
 use truce_params::Params;
 
 use crate::editor::{IcedPlugin, IcedProgram};
+use crate::editor_handle::EditorHandle;
 use crate::param_message::Message;
 use crate::param_state::ParamState;
-use crate::editor_handle::EditorHandle;
 use truce_core::editor::EditorContext;
 
 /// Render an iced plugin UI offscreen and return RGBA pixel data.
@@ -63,7 +63,10 @@ where
 
     // Create iced engine + renderer (MSAA 4x for smooth edges)
     let engine = iced_wgpu::Engine::new(
-        &adapter, &device, &queue, format,
+        &adapter,
+        &device,
+        &queue,
+        format,
         Some(iced_graphics::Antialiasing::MSAAx4),
     );
 
@@ -72,12 +75,7 @@ where
     } else {
         iced::Font::DEFAULT
     };
-    let mut renderer = iced_wgpu::Renderer::new(
-        &device,
-        &engine,
-        default_font,
-        iced::Pixels(14.0),
-    );
+    let mut renderer = iced_wgpu::Renderer::new(&device, &engine, default_font, iced::Pixels(14.0));
 
     // Build the iced program
     let mut param_state = ParamState::new(params.clone());

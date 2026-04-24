@@ -92,7 +92,11 @@ fn parse_param_attrs(field: &syn::Field) -> ParamAttrs {
             continue;
         }
         let _ = attr.parse_nested_meta(|meta| {
-            let key = meta.path.get_ident().map(|i| i.to_string()).unwrap_or_default();
+            let key = meta
+                .path
+                .get_ident()
+                .map(|i| i.to_string())
+                .unwrap_or_default();
             match key.as_str() {
                 "id" => {
                     let value: Lit = meta.value()?.parse()?;
@@ -225,7 +229,12 @@ fn collect_fields(fields: &Fields) -> (Vec<ParamField>, Vec<NestedField>, Vec<Me
             } else {
                 None
             };
-            params.push(ParamField { ident, kind, attrs, enum_type });
+            params.push(ParamField {
+                ident,
+                kind,
+                attrs,
+                enum_type,
+            });
         }
     }
 
@@ -234,7 +243,10 @@ fn collect_fields(fields: &Fields) -> (Vec<ParamField>, Vec<NestedField>, Vec<Me
 
 /// Parse a range string like "linear(-60, 24)" into tokens.
 fn parse_range_tokens(range: &str) -> proc_macro2::TokenStream {
-    if let Some(inner) = range.strip_prefix("linear(").and_then(|s| s.strip_suffix(')')) {
+    if let Some(inner) = range
+        .strip_prefix("linear(")
+        .and_then(|s| s.strip_suffix(')'))
+    {
         let parts: Vec<&str> = inner.split(',').map(|s| s.trim()).collect();
         if parts.len() == 2 {
             let min: f64 = parts[0].parse().unwrap_or(0.0);
@@ -250,7 +262,10 @@ fn parse_range_tokens(range: &str) -> proc_macro2::TokenStream {
             return quote! { ::truce::params::ParamRange::Logarithmic { min: #min, max: #max } };
         }
     }
-    if let Some(inner) = range.strip_prefix("discrete(").and_then(|s| s.strip_suffix(')')) {
+    if let Some(inner) = range
+        .strip_prefix("discrete(")
+        .and_then(|s| s.strip_suffix(')'))
+    {
         let parts: Vec<&str> = inner.split(',').map(|s| s.trim()).collect();
         if parts.len() == 2 {
             let min: i64 = parts[0].parse().unwrap_or(0);
@@ -258,7 +273,10 @@ fn parse_range_tokens(range: &str) -> proc_macro2::TokenStream {
             return quote! { ::truce::params::ParamRange::Discrete { min: #min, max: #max } };
         }
     }
-    if let Some(inner) = range.strip_prefix("enum(").and_then(|s| s.strip_suffix(')')) {
+    if let Some(inner) = range
+        .strip_prefix("enum(")
+        .and_then(|s| s.strip_suffix(')'))
+    {
         let count: usize = inner.trim().parse().unwrap_or(2);
         return quote! { ::truce::params::ParamRange::Enum { count: #count } };
     }
@@ -304,11 +322,17 @@ fn parse_smooth_tokens(smooth: &str) -> proc_macro2::TokenStream {
     if smooth == "none" {
         return quote! { ::truce::params::SmoothingStyle::None };
     }
-    if let Some(inner) = smooth.strip_prefix("linear(").and_then(|s| s.strip_suffix(')')) {
+    if let Some(inner) = smooth
+        .strip_prefix("linear(")
+        .and_then(|s| s.strip_suffix(')'))
+    {
         let ms: f64 = inner.trim().parse().unwrap_or(20.0);
         return quote! { ::truce::params::SmoothingStyle::Linear(#ms) };
     }
-    if let Some(inner) = smooth.strip_prefix("exp(").and_then(|s| s.strip_suffix(')')) {
+    if let Some(inner) = smooth
+        .strip_prefix("exp(")
+        .and_then(|s| s.strip_suffix(')'))
+    {
         let ms: f64 = inner.trim().parse().unwrap_or(5.0);
         return quote! { ::truce::params::SmoothingStyle::Exponential(#ms) };
     }
@@ -410,9 +434,7 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
     // --- Auto-assign parameter IDs ---
     // Explicit IDs take priority. Auto-assigned IDs fill gaps starting at 0.
     {
-        let explicit_ids: HashSet<u32> = param_fields.iter()
-            .filter_map(|f| f.attrs.id)
-            .collect();
+        let explicit_ids: HashSet<u32> = param_fields.iter().filter_map(|f| f.attrs.id).collect();
         let mut next_auto = 0u32;
         for f in &mut param_fields {
             if f.attrs.id.is_none() {
@@ -443,9 +465,7 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
             if let Some(id) = f.attrs.id {
                 if !seen_ids.insert(id) {
                     let msg = format!("Duplicate parameter ID: {}", id);
-                    return syn::Error::new_spanned(&ast, msg)
-                        .to_compile_error()
-                        .into();
+                    return syn::Error::new_spanned(&ast, msg).to_compile_error().into();
                 }
             }
         }
@@ -464,10 +484,13 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
     };
 
     // --- param_infos ---
-    let own_infos: Vec<_> = param_fields.iter().map(|f| {
-        let ident = &f.ident;
-        quote! { self.#ident.info.clone() }
-    }).collect();
+    let own_infos: Vec<_> = param_fields
+        .iter()
+        .map(|f| {
+            let ident = &f.ident;
+            quote! { self.#ident.info.clone() }
+        })
+        .collect();
 
     let infos_expr = if nested_fields.is_empty() {
         quote! { vec![#(#own_infos),*] }
@@ -541,31 +564,34 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
     };
 
     // --- format_value ---
-    let format_value_arms: Vec<_> = param_fields.iter().map(|f| {
-        let ident = &f.ident;
-        if let Some(ref fmt_fn) = f.attrs.format_fn {
-            let fmt_ident = syn::Ident::new(fmt_fn, ident.span());
-            quote! { x if x == self.#ident.id() => Some(self.#fmt_ident(value)), }
-        } else {
-            match f.kind {
-                ParamKind::Bool => quote! {
-                    x if x == self.#ident.id() => {
-                        Some(if value > 0.5 { "On".to_string() } else { "Off".to_string() })
-                    }
-                },
-                ParamKind::Enum => quote! {
-                    x if x == self.#ident.id() => {
-                        Some(self.#ident.format_by_index(value))
-                    }
-                },
-                _ => quote! {
-                    x if x == self.#ident.id() => {
-                        Some(::truce::params::format_param_value(&self.#ident.info, value))
-                    }
-                },
+    let format_value_arms: Vec<_> = param_fields
+        .iter()
+        .map(|f| {
+            let ident = &f.ident;
+            if let Some(ref fmt_fn) = f.attrs.format_fn {
+                let fmt_ident = syn::Ident::new(fmt_fn, ident.span());
+                quote! { x if x == self.#ident.id() => Some(self.#fmt_ident(value)), }
+            } else {
+                match f.kind {
+                    ParamKind::Bool => quote! {
+                        x if x == self.#ident.id() => {
+                            Some(if value > 0.5 { "On".to_string() } else { "Off".to_string() })
+                        }
+                    },
+                    ParamKind::Enum => quote! {
+                        x if x == self.#ident.id() => {
+                            Some(self.#ident.format_by_index(value))
+                        }
+                    },
+                    _ => quote! {
+                        x if x == self.#ident.id() => {
+                            Some(::truce::params::format_param_value(&self.#ident.info, value))
+                        }
+                    },
+                }
             }
-        }
-    }).collect();
+        })
+        .collect();
 
     let format_fallthrough = if nested_fields.is_empty() {
         quote! { _ => None, }
@@ -579,12 +605,15 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
     };
 
     // --- parse_value ---
-    let parse_value_arms: Vec<_> = param_fields.iter().filter_map(|f| {
-        let parse_fn = f.attrs.parse_fn.as_ref()?;
-        let ident = &f.ident;
-        let parse_ident = syn::Ident::new(parse_fn, ident.span());
-        Some(quote! { x if x == self.#ident.id() => self.#parse_ident(text), })
-    }).collect();
+    let parse_value_arms: Vec<_> = param_fields
+        .iter()
+        .filter_map(|f| {
+            let parse_fn = f.attrs.parse_fn.as_ref()?;
+            let ident = &f.ident;
+            let parse_ident = syn::Ident::new(parse_fn, ident.span());
+            Some(quote! { x if x == self.#ident.id() => self.#parse_ident(text), })
+        })
+        .collect();
 
     let parse_value_impl = if parse_value_arms.is_empty() && nested_fields.is_empty() {
         quote! { None }
@@ -608,40 +637,53 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
     };
 
     // --- snap_smoothers ---
-    let snap_stmts: Vec<_> = param_fields.iter()
+    let snap_stmts: Vec<_> = param_fields
+        .iter()
         .filter(|f| f.kind == ParamKind::Float)
         .map(|f| {
             let ident = &f.ident;
             quote! { self.#ident.smoother.snap(self.#ident.value() as f64); }
-        }).collect();
+        })
+        .collect();
 
     // --- set_sample_rate ---
-    let sr_stmts: Vec<_> = param_fields.iter()
+    let sr_stmts: Vec<_> = param_fields
+        .iter()
         .filter(|f| f.kind == ParamKind::Float)
         .map(|f| {
             let ident = &f.ident;
             quote! { self.#ident.smoother.set_sample_rate(sample_rate); }
-        }).collect();
+        })
+        .collect();
 
     // --- collect_values ---
-    let collect_ids: Vec<_> = param_fields.iter().map(|f| {
-        let ident = &f.ident;
-        quote! { self.#ident.id() }
-    }).collect();
+    let collect_ids: Vec<_> = param_fields
+        .iter()
+        .map(|f| {
+            let ident = &f.ident;
+            quote! { self.#ident.id() }
+        })
+        .collect();
 
     // --- Generate new() ---
     let new_impl = if generate_new {
-        let param_inits: Vec<_> = param_fields.iter().map(|f| {
-            let ident = &f.ident;
-            let constructor = gen_field_constructor(f);
-            quote! { #ident: #constructor }
-        }).collect();
+        let param_inits: Vec<_> = param_fields
+            .iter()
+            .map(|f| {
+                let ident = &f.ident;
+                let constructor = gen_field_constructor(f);
+                quote! { #ident: #constructor }
+            })
+            .collect();
 
-        let meter_inits: Vec<_> = meter_fields.iter().map(|m| {
-            let ident = &m.ident;
-            let id = m.id.unwrap();
-            quote! { #ident: ::truce::params::MeterSlot::new(#id) }
-        }).collect();
+        let meter_inits: Vec<_> = meter_fields
+            .iter()
+            .map(|m| {
+                let ident = &m.ident;
+                let id = m.id.unwrap();
+                quote! { #ident: ::truce::params::MeterSlot::new(#id) }
+            })
+            .collect();
 
         quote! {
             impl #struct_name {
@@ -665,10 +707,7 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
 
     // --- Generate ParamId enum (includes both params and meters) ---
     let param_id_enum = if !param_fields.is_empty() || !meter_fields.is_empty() {
-        let enum_name = syn::Ident::new(
-            &format!("{}ParamId", struct_name),
-            struct_name.span(),
-        );
+        let enum_name = syn::Ident::new(&format!("{}ParamId", struct_name), struct_name.span());
 
         let param_variants: Vec<_> = param_fields
             .iter()
@@ -690,7 +729,11 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
             })
             .collect();
 
-        let variants: Vec<_> = param_variants.iter().chain(meter_variants.iter()).cloned().collect();
+        let variants: Vec<_> = param_variants
+            .iter()
+            .chain(meter_variants.iter())
+            .cloned()
+            .collect();
 
         let from_u32_arms: Vec<_> = param_fields
             .iter()
@@ -1026,9 +1069,12 @@ pub fn derive_state(input: TokenStream) -> TokenStream {
         Data::Struct(data) => match &data.fields {
             Fields::Named(named) => &named.named,
             _ => {
-                return syn::Error::new_spanned(&ast, "State can only be derived on structs with named fields")
-                    .to_compile_error()
-                    .into();
+                return syn::Error::new_spanned(
+                    &ast,
+                    "State can only be derived on structs with named fields",
+                )
+                .to_compile_error()
+                .into();
             }
         },
         _ => {
@@ -1041,17 +1087,20 @@ pub fn derive_state(input: TokenStream) -> TokenStream {
     let field_count = fields.len() as u32;
     let field_idents: Vec<_> = fields.iter().map(|f| f.ident.as_ref().unwrap()).collect();
 
-    let write_fields: Vec<_> = field_idents.iter().map(|ident| {
-        quote! {
-            {
-                let field_start = buf.len();
-                buf.extend_from_slice(&0u32.to_le_bytes());
-                ::truce::core::custom_state::StateField::write_field(&self.#ident, &mut buf);
-                let field_len = (buf.len() - field_start - 4) as u32;
-                buf[field_start..field_start + 4].copy_from_slice(&field_len.to_le_bytes());
+    let write_fields: Vec<_> = field_idents
+        .iter()
+        .map(|ident| {
+            quote! {
+                {
+                    let field_start = buf.len();
+                    buf.extend_from_slice(&0u32.to_le_bytes());
+                    ::truce::core::custom_state::StateField::write_field(&self.#ident, &mut buf);
+                    let field_len = (buf.len() - field_start - 4) as u32;
+                    buf[field_start..field_start + 4].copy_from_slice(&field_len.to_le_bytes());
+                }
             }
-        }
-    }).collect();
+        })
+        .collect();
 
     let read_fields: Vec<_> = field_idents.iter().map(|ident| {
         quote! {

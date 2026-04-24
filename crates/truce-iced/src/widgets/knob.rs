@@ -5,9 +5,7 @@ use std::marker::PhantomData;
 
 use iced::widget::canvas::{self, path::Arc, Event, Frame, Geometry, LineCap, Path, Stroke, Text};
 use iced::widget::Canvas;
-use iced::{
-    alignment, mouse, Color, Element, Length, Point, Rectangle, Renderer, Theme,
-};
+use iced::{alignment, mouse, Color, Element, Length, Point, Rectangle, Renderer, Theme};
 
 use crate::param_message::{Message, ParamMessage};
 use crate::param_state::ParamState;
@@ -119,11 +117,12 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for KnobProgram {
         let radius = (bounds.width / 2.0 - 5.0).max(8.0);
 
         // Hover highlight ring
-        let hovered = state.dragging || cursor.position_in(bounds).is_some_and(|pos| {
-            let dx = pos.x - cx;
-            let dy = pos.y - cy;
-            (dx * dx + dy * dy).sqrt() <= radius + 5.0
-        });
+        let hovered = state.dragging
+            || cursor.position_in(bounds).is_some_and(|pos| {
+                let dx = pos.x - cx;
+                let dy = pos.y - cy;
+                (dx * dx + dy * dy).sqrt() <= radius + 5.0
+            });
         if hovered {
             let hover_ring = Path::new(|b| {
                 b.arc(Arc {
@@ -215,7 +214,7 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for KnobProgram {
                 horizontal_alignment: alignment::Horizontal::Center,
                 vertical_alignment: alignment::Vertical::Top,
                 font: self.font,
-            ..Text::default()
+                ..Text::default()
             });
         }
 

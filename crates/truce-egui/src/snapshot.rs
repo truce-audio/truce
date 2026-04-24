@@ -114,7 +114,13 @@ pub fn render_to_pixels<P: truce_params::Params + 'static>(
         label: Some("snapshot-frame"),
     });
 
-    egui_renderer.update_buffers(&device, &queue, &mut encoder, &clipped_primitives, &screen_desc);
+    egui_renderer.update_buffers(
+        &device,
+        &queue,
+        &mut encoder,
+        &clipped_primitives,
+        &screen_desc,
+    );
 
     {
         let mut pass = encoder

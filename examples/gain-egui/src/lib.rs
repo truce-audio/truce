@@ -1,7 +1,7 @@
 use truce::prelude::*;
-use truce_egui::{EguiEditor, ParamState};
 use truce_egui::theme::{HEADER_BG, HEADER_TEXT};
-use truce_egui::widgets::{param_knob, param_xy_pad, level_meter};
+use truce_egui::widgets::{level_meter, param_knob, param_xy_pad};
+use truce_egui::{EguiEditor, ParamState};
 
 const WINDOW_W: u32 = 176;
 const WINDOW_H: u32 = 290;
@@ -12,12 +12,15 @@ use GainParamsParamId as P;
 
 #[derive(Params)]
 pub struct GainParams {
-    #[param(name = "Gain", range = "linear(-60, 6)",
-            unit = "dB", smooth = "exp(5)")]
+    #[param(
+        name = "Gain",
+        range = "linear(-60, 6)",
+        unit = "dB",
+        smooth = "exp(5)"
+    )]
     pub gain: FloatParam,
 
-    #[param(name = "Pan", range = "linear(-1, 1)",
-            unit = "pan", smooth = "exp(5)")]
+    #[param(name = "Pan", range = "linear(-1, 1)", unit = "pan", smooth = "exp(5)")]
     pub pan: FloatParam,
 
     #[meter]
@@ -104,21 +107,21 @@ fn gain_ui(ctx: &egui::Context, state: &ParamState) {
     egui::CentralPanel::default()
         .frame(egui::Frame::central_panel(&ctx.style()).inner_margin(10.0))
         .show(ctx, |ui| {
-        ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
-        ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
-            ui.spacing_mut().item_spacing = egui::vec2(10.0, 0.0);
-            ui.vertical(|ui| {
-                ui.spacing_mut().item_spacing = egui::vec2(10.0, 10.0);
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing = egui::vec2(10.0, 0.0);
-                    param_knob(ui, state, P::Gain, "Gain");
-                    param_knob(ui, state, P::Pan, "Pan");
+            ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
+                ui.spacing_mut().item_spacing = egui::vec2(10.0, 0.0);
+                ui.vertical(|ui| {
+                    ui.spacing_mut().item_spacing = egui::vec2(10.0, 10.0);
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing = egui::vec2(10.0, 0.0);
+                        param_knob(ui, state, P::Gain, "Gain");
+                        param_knob(ui, state, P::Pan, "Pan");
+                    });
+                    param_xy_pad(ui, state, P::Pan, P::Gain, "Pan / Gain", 130.0, 130.0);
                 });
-                param_xy_pad(ui, state, P::Pan, P::Gain, "Pan / Gain", 130.0, 130.0);
+                level_meter(ui, state, &[P::MeterLeft, P::MeterRight], 222.0);
             });
-            level_meter(ui, state, &[P::MeterLeft, P::MeterRight], 222.0);
         });
-    });
 }
 
 truce::plugin! {
@@ -155,8 +158,12 @@ mod tests {
     #[test]
     fn gui_snapshot() {
         truce_egui::snapshot::assert_snapshot::<GainParams>(
-            "screenshots", "gain_egui_default",
-            WINDOW_W, WINDOW_H, 2.0, 0,
+            "screenshots",
+            "gain_egui_default",
+            WINDOW_W,
+            WINDOW_H,
+            2.0,
+            0,
             Some(truce_gui::font::JETBRAINS_MONO),
             |ctx, state| gain_ui(ctx, state),
         );

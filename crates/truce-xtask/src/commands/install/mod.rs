@@ -5,8 +5,8 @@
 
 use crate::util::fs_ctx;
 use crate::{
-    cargo_build, codesign_bundle, deployment_target, detect_default_features,
-    dirs, load_config, project_root, release_lib, run_sudo, tmp_dir, Config, PluginDef, Res,
+    cargo_build, codesign_bundle, deployment_target, detect_default_features, dirs, load_config,
+    project_root, release_lib, run_sudo, tmp_dir, Config, PluginDef, Res,
 };
 #[cfg(target_os = "windows")]
 use crate::{common_program_files, program_files};
@@ -102,7 +102,9 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
     let dt = &deployment_target();
 
     let mut extra_features = Vec::new();
-    if dev_mode { extra_features.push("dev"); }
+    if dev_mode {
+        extra_features.push("dev");
+    }
 
     // --- Build ---
     //
@@ -113,7 +115,9 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
     if !no_build {
         if clap {
             let mut format_features: Vec<&str> = vec!["clap"];
-            for f in &extra_features { format_features.push(f); }
+            for f in &extra_features {
+                format_features.push(f);
+            }
             let features_combined = format_features.join(",");
             if !extra_features.is_empty() {
                 let label = extra_features.join(" + ");
@@ -147,7 +151,9 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
 
         if vst3 {
             let mut format_features: Vec<&str> = vec!["vst3"];
-            for f in &extra_features { format_features.push(f); }
+            for f in &extra_features {
+                format_features.push(f);
+            }
             let features_combined = format_features.join(",");
             if !extra_features.is_empty() {
                 let label = extra_features.join(" + ");
@@ -230,10 +236,8 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
         if au2 {
             eprintln!("Building AU v2...");
             for p in &plugins {
-                let mut env_pairs: Vec<(&str, &str)> = vec![
-                    ("TRUCE_AU_VERSION", "2"),
-                    ("TRUCE_AU_PLUGIN_ID", &p.suffix),
-                ];
+                let mut env_pairs: Vec<(&str, &str)> =
+                    vec![("TRUCE_AU_VERSION", "2"), ("TRUCE_AU_PLUGIN_ID", &p.suffix)];
                 if let Some(n) = p.au_name.as_deref() {
                     env_pairs.push(("TRUCE_AU_NAME_OVERRIDE", n));
                 }
@@ -347,7 +351,11 @@ pub(crate) fn install_clap(root: &Path, p: &PluginDef, config: &Config) -> Res {
         fs_ctx::create_dir_all(&clap_dir)?;
         let dst = clap_dir.join(format!("{}.clap", p.name));
         fs_ctx::copy(&dylib, &dst)?;
-        codesign_bundle(dst.to_str().unwrap(), config.macos.application_identity(), false)?;
+        codesign_bundle(
+            dst.to_str().unwrap(),
+            config.macos.application_identity(),
+            false,
+        )?;
         eprintln!("CLAP: {}", dst.display());
     }
 
@@ -414,7 +422,10 @@ fn install_vst3(root: &Path, p: &PluginDef, config: &Config) -> Res {
             suffix = p.suffix,
             vendor_id = config.vendor.id,
         );
-        let plist_tmp = tmp_dir().join(format!("{}_vst3.plist", p.suffix)).to_string_lossy().to_string();
+        let plist_tmp = tmp_dir()
+            .join(format!("{}_vst3.plist", p.suffix))
+            .to_string_lossy()
+            .to_string();
         fs_ctx::write(&plist_tmp, &plist)?;
         run_sudo("cp", &[&plist_tmp, &format!("{contents}/Info.plist")])?;
         codesign_bundle(&vst3_bundle, config.macos.application_identity(), true)?;
@@ -487,7 +498,11 @@ fn install_vst2(root: &Path, p: &PluginDef, config: &Config) -> Res {
         fs_ctx::write(bundle.join("Contents/Info.plist"), &plist)?;
         fs_ctx::write(bundle.join("Contents/PkgInfo"), "BNDL????")?;
 
-        codesign_bundle(bundle.to_str().unwrap(), config.macos.application_identity(), false)?;
+        codesign_bundle(
+            bundle.to_str().unwrap(),
+            config.macos.application_identity(),
+            false,
+        )?;
         eprintln!("VST2: {}", bundle.display());
     }
 
@@ -573,10 +588,7 @@ fn lv2_bundle_root() -> Result<PathBuf, Box<dyn std::error::Error>> {
 }
 
 fn install_au(root: &Path, p: &PluginDef, config: &Config) -> Res {
-    let dylib = root.join(format!(
-        "target/release/lib{}_au.dylib",
-        p.dylib_stem()
-    ));
+    let dylib = root.join(format!("target/release/lib{}_au.dylib", p.dylib_stem()));
     if !dylib.exists() {
         return Err(format!("Missing: {}", dylib.display()).into());
     }
@@ -644,7 +656,10 @@ fn install_au(root: &Path, p: &PluginDef, config: &Config) -> Res {
         au_mfr = config.vendor.au_manufacturer,
         au_tag = p.au_tag,
     );
-    let plist_tmp = tmp_dir().join(format!("{}_au.plist", p.suffix)).to_string_lossy().to_string();
+    let plist_tmp = tmp_dir()
+        .join(format!("{}_au.plist", p.suffix))
+        .to_string_lossy()
+        .to_string();
     fs_ctx::write(&plist_tmp, &plist)?;
     run_sudo("cp", &[&plist_tmp, &format!("{contents}/Info.plist")])?;
     codesign_bundle(&bundle, config.macos.application_identity(), true)?;

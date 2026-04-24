@@ -4,8 +4,8 @@
 
 #[cfg(feature = "shell")]
 mod test {
-    use truce_loader::NativeLoader;
     use std::path::PathBuf;
+    use truce_loader::NativeLoader;
 
     #[test]
     fn missing_dylib_no_crash() {
@@ -14,7 +14,10 @@ mod test {
         let loader = NativeLoader::new(path, std::ptr::null());
 
         // Plugin should be None (not loaded), not a crash.
-        assert!(loader.plugin().is_none(), "should not load a nonexistent dylib");
+        assert!(
+            loader.plugin().is_none(),
+            "should not load a nonexistent dylib"
+        );
     }
 
     #[test]

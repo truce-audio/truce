@@ -18,7 +18,6 @@ use truce_params::Params;
 // Use iced_wgpu::Renderer directly (matches iced::Renderer when tiny-skia is disabled)
 type IcedRenderer = iced_wgpu::Renderer;
 
-
 use crate::auto_layout;
 use crate::editor_handle::EditorHandle;
 use crate::param_message::{Message, ParamMessage};
@@ -54,10 +53,7 @@ pub trait IcedPlugin<P: Params>: Sized + 'static {
     }
 
     /// Build the view.
-    fn view<'a>(
-        &'a self,
-        params: &'a ParamState<P>,
-    ) -> iced::Element<'a, Message<Self::Message>>;
+    fn view<'a>(&'a self, params: &'a ParamState<P>) -> iced::Element<'a, Message<Self::Message>>;
 
     /// Custom theme (default: truce dark).
     fn theme(&self) -> iced::Theme {
@@ -313,20 +309,19 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
         let w = (lw as f64 * render_scale) as u32;
         let h = (lh as f64 * render_scale) as u32;
 
-        let adapter = match pollster::block_on(instance.request_adapter(
-            &wgpu::RequestAdapterOptions {
+        let adapter =
+            match pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::LowPower,
                 compatible_surface: Some(&surface),
                 force_fallback_adapter: false,
-            },
-        )) {
-            Some(a) => a,
-            None => {
-                eprintln!("[truce-iced] No suitable GPU adapter found");
-                self.program = Some(program);
-                return false;
-            }
-        };
+            })) {
+                Some(a) => a,
+                None => {
+                    eprintln!("[truce-iced] No suitable GPU adapter found");
+                    self.program = Some(program);
+                    return false;
+                }
+            };
 
         let (device, queue) = match pollster::block_on(adapter.request_device(
             &wgpu::DeviceDescriptor {
@@ -386,15 +381,10 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
         } else {
             iced::Font::DEFAULT
         };
-        let mut renderer = iced_wgpu::Renderer::new(
-            &device,
-            &engine,
-            default_font,
-            iced::Pixels(14.0),
-        );
+        let mut renderer =
+            iced_wgpu::Renderer::new(&device, &engine, default_font, iced::Pixels(14.0));
 
-        let viewport =
-            iced_graphics::Viewport::with_physical_size(Size::new(w, h), render_scale);
+        let viewport = iced_graphics::Viewport::with_physical_size(Size::new(w, h), render_scale);
         let mut debug = iced_runtime::Debug::new();
         let theme = program.plugin.theme();
 
@@ -405,9 +395,7 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
             &mut debug,
         );
 
-        let bg = crate::theme::truce_dark_theme()
-            .palette()
-            .background;
+        let bg = crate::theme::truce_dark_theme().palette().background;
 
         self.render = Some(RenderState {
             device,
@@ -455,9 +443,8 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
         });
 
         let surface = match unsafe {
-            instance.create_surface_unsafe(wgpu::SurfaceTargetUnsafe::CoreAnimationLayer(
-                metal_layer,
-            ))
+            instance
+                .create_surface_unsafe(wgpu::SurfaceTargetUnsafe::CoreAnimationLayer(metal_layer))
         } {
             Ok(s) => s,
             Err(e) => {
@@ -467,20 +454,19 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
             }
         };
 
-        let adapter = match pollster::block_on(instance.request_adapter(
-            &wgpu::RequestAdapterOptions {
+        let adapter =
+            match pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::LowPower,
                 compatible_surface: Some(&surface),
                 force_fallback_adapter: false,
-            },
-        )) {
-            Some(a) => a,
-            None => {
-                eprintln!("[truce-iced] No suitable GPU adapter found");
-                self.program = Some(program);
-                return false;
-            }
-        };
+            })) {
+                Some(a) => a,
+                None => {
+                    eprintln!("[truce-iced] No suitable GPU adapter found");
+                    self.program = Some(program);
+                    return false;
+                }
+            };
 
         let (device, queue) = match pollster::block_on(adapter.request_device(
             &wgpu::DeviceDescriptor {
@@ -540,15 +526,10 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
         } else {
             iced::Font::DEFAULT
         };
-        let mut renderer = iced_wgpu::Renderer::new(
-            &device,
-            &engine,
-            default_font,
-            iced::Pixels(14.0),
-        );
+        let mut renderer =
+            iced_wgpu::Renderer::new(&device, &engine, default_font, iced::Pixels(14.0));
 
-        let viewport =
-            iced_graphics::Viewport::with_physical_size(Size::new(w, h), render_scale);
+        let viewport = iced_graphics::Viewport::with_physical_size(Size::new(w, h), render_scale);
         let mut debug = iced_runtime::Debug::new();
         let theme = program.plugin.theme();
 
@@ -559,9 +540,7 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
             &mut debug,
         );
 
-        let bg = crate::theme::truce_dark_theme()
-            .palette()
-            .background;
+        let bg = crate::theme::truce_dark_theme().palette().background;
 
         self.render = Some(RenderState {
             device,
@@ -730,7 +709,8 @@ impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBase
                         runtime.queue_cursor_move(x, y);
                     }
                     baseview::MouseEvent::ButtonPressed {
-                        button: baseview::MouseButton::Left, ..
+                        button: baseview::MouseButton::Left,
+                        ..
                     } => {
                         // Child plugin window needs focus to receive WM_KEYDOWN
                         // on Windows. See truce-egui editor.rs for rationale.
@@ -746,7 +726,8 @@ impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBase
                         ));
                     }
                     baseview::MouseEvent::ButtonReleased {
-                        button: baseview::MouseButton::Left, ..
+                        button: baseview::MouseButton::Left,
+                        ..
                     } => {
                         runtime.mouse_left_pressed = false;
                         runtime.pending_events.push(Event::Mouse(
@@ -776,7 +757,9 @@ impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBase
                     let ph = info.physical_size().height;
                     render.surface_config.width = pw.max(1);
                     render.surface_config.height = ph.max(1);
-                    render.surface.configure(&render.device, &render.surface_config);
+                    render
+                        .surface
+                        .configure(&render.device, &render.surface_config);
                     render.viewport = iced_graphics::Viewport::with_physical_size(
                         Size::new(pw, ph),
                         info.scale(),
@@ -876,10 +859,7 @@ unsafe extern "C" fn cb_scroll<P: Params + 'static, M: IcedPlugin<P>>(
         runtime
             .pending_events
             .push(Event::Mouse(iced::mouse::Event::WheelScrolled {
-                delta: iced::mouse::ScrollDelta::Lines {
-                    x: 0.0,
-                    y: delta_y,
-                },
+                delta: iced::mouse::ScrollDelta::Lines { x: 0.0, y: delta_y },
             }));
     }
 }
@@ -1098,7 +1078,9 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
                                         ),
                                     ),
                                     raw_window_handle: wgpu::rwh::RawWindowHandle::Xlib(
-                                        wgpu::rwh::XlibWindowHandle::new(h.window as std::ffi::c_ulong),
+                                        wgpu::rwh::XlibWindowHandle::new(
+                                            h.window as std::ffi::c_ulong,
+                                        ),
                                     ),
                                 }
                             }
@@ -1164,12 +1146,13 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
                 let scale = self.scale_factor;
                 let pw = (width as f64 * scale) as u32;
                 let ph = (height as f64 * scale) as u32;
-                render.viewport = iced_graphics::Viewport::with_physical_size(
-                    Size::new(pw, ph), scale,
-                );
+                render.viewport =
+                    iced_graphics::Viewport::with_physical_size(Size::new(pw, ph), scale);
                 render.surface_config.width = pw;
                 render.surface_config.height = ph;
-                render.surface.configure(&render.device, &render.surface_config);
+                render
+                    .surface
+                    .configure(&render.device, &render.surface_config);
             }
         }
         true
@@ -1188,7 +1171,9 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
                     iced_graphics::Viewport::with_physical_size(Size::new(pw, ph), factor);
                 render.surface_config.width = pw;
                 render.surface_config.height = ph;
-                render.surface.configure(&render.device, &render.surface_config);
+                render
+                    .surface
+                    .configure(&render.device, &render.surface_config);
             }
         }
     }

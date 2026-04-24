@@ -4,7 +4,7 @@
 //! multi-parameter DSP, filter state management, and parameter groups.
 
 use truce::prelude::*;
-use truce_gui::layout::{GridLayout, knob, section, widgets};
+use truce_gui::layout::{knob, section, widgets, GridLayout};
 
 mod biquad;
 use biquad::Biquad;
@@ -15,53 +15,106 @@ use EqParamsParamId as P;
 
 #[derive(Params)]
 pub struct EqParams {
-    #[param(name = "Low Freq", short_name = "LFreq",
-            group = "Low", range = "log(20, 1000)",
-            default = 200.0, unit = "Hz", smooth = "exp(10)")]
+    #[param(
+        name = "Low Freq",
+        short_name = "LFreq",
+        group = "Low",
+        range = "log(20, 1000)",
+        default = 200.0,
+        unit = "Hz",
+        smooth = "exp(10)"
+    )]
     pub low_freq: FloatParam,
 
-    #[param(name = "Low Gain", short_name = "LGain",
-            group = "Low", range = "linear(-18, 18)",
-            unit = "dB", smooth = "exp(10)")]
+    #[param(
+        name = "Low Gain",
+        short_name = "LGain",
+        group = "Low",
+        range = "linear(-18, 18)",
+        unit = "dB",
+        smooth = "exp(10)"
+    )]
     pub low_gain: FloatParam,
 
-    #[param(name = "Low Q", short_name = "LQ",
-            group = "Low", range = "log(0.1, 10)",
-            default = 0.707, smooth = "exp(10)")]
+    #[param(
+        name = "Low Q",
+        short_name = "LQ",
+        group = "Low",
+        range = "log(0.1, 10)",
+        default = 0.707,
+        smooth = "exp(10)"
+    )]
     pub low_q: FloatParam,
 
-    #[param(name = "Mid Freq", short_name = "MFreq",
-            group = "Mid", range = "log(200, 8000)",
-            default = 1000.0, unit = "Hz", smooth = "exp(10)")]
+    #[param(
+        name = "Mid Freq",
+        short_name = "MFreq",
+        group = "Mid",
+        range = "log(200, 8000)",
+        default = 1000.0,
+        unit = "Hz",
+        smooth = "exp(10)"
+    )]
     pub mid_freq: FloatParam,
 
-    #[param(name = "Mid Gain", short_name = "MGain",
-            group = "Mid", range = "linear(-18, 18)",
-            unit = "dB", smooth = "exp(10)")]
+    #[param(
+        name = "Mid Gain",
+        short_name = "MGain",
+        group = "Mid",
+        range = "linear(-18, 18)",
+        unit = "dB",
+        smooth = "exp(10)"
+    )]
     pub mid_gain: FloatParam,
 
-    #[param(name = "Mid Q", short_name = "MQ",
-            group = "Mid", range = "log(0.1, 10)",
-            default = 0.707, smooth = "exp(10)")]
+    #[param(
+        name = "Mid Q",
+        short_name = "MQ",
+        group = "Mid",
+        range = "log(0.1, 10)",
+        default = 0.707,
+        smooth = "exp(10)"
+    )]
     pub mid_q: FloatParam,
 
-    #[param(name = "High Freq", short_name = "HFreq",
-            group = "High", range = "log(1000, 20000)",
-            default = 5000.0, unit = "Hz", smooth = "exp(10)")]
+    #[param(
+        name = "High Freq",
+        short_name = "HFreq",
+        group = "High",
+        range = "log(1000, 20000)",
+        default = 5000.0,
+        unit = "Hz",
+        smooth = "exp(10)"
+    )]
     pub high_freq: FloatParam,
 
-    #[param(name = "High Gain", short_name = "HGain",
-            group = "High", range = "linear(-18, 18)",
-            unit = "dB", smooth = "exp(10)")]
+    #[param(
+        name = "High Gain",
+        short_name = "HGain",
+        group = "High",
+        range = "linear(-18, 18)",
+        unit = "dB",
+        smooth = "exp(10)"
+    )]
     pub high_gain: FloatParam,
 
-    #[param(name = "High Q", short_name = "HQ",
-            group = "High", range = "log(0.1, 10)",
-            default = 0.707, smooth = "exp(10)")]
+    #[param(
+        name = "High Q",
+        short_name = "HQ",
+        group = "High",
+        range = "log(0.1, 10)",
+        default = 0.707,
+        smooth = "exp(10)"
+    )]
     pub high_q: FloatParam,
 
-    #[param(name = "Output", short_name = "Out",
-            range = "linear(-18, 18)", unit = "dB", smooth = "exp(5)")]
+    #[param(
+        name = "Output",
+        short_name = "Out",
+        range = "linear(-18, 18)",
+        unit = "dB",
+        smooth = "exp(5)"
+    )]
     pub output: FloatParam,
 }
 
@@ -98,7 +151,12 @@ impl PluginLogic for Eq {
         }
     }
 
-    fn process(&mut self, buffer: &mut AudioBuffer, _events: &EventList, _context: &mut ProcessContext) -> ProcessStatus {
+    fn process(
+        &mut self,
+        buffer: &mut AudioBuffer,
+        _events: &EventList,
+        _context: &mut ProcessContext,
+    ) -> ProcessStatus {
         let sr = self.sample_rate;
         let num_ch = buffer.channels().min(MAX_CHANNELS);
 
@@ -134,24 +192,39 @@ impl PluginLogic for Eq {
     }
 
     fn layout(&self) -> truce_gui::layout::GridLayout {
-        GridLayout::build("EQ", "V0.1", 3, 50.0, vec![
-            section("LOW", vec![
-                knob(P::LowFreq, "Freq"),
-                knob(P::LowGain, "Gain"),
-                knob(P::LowQ, "Q"),
-            ]),
-            section("MID", vec![
-                knob(P::MidFreq, "Freq"),
-                knob(P::MidGain, "Gain"),
-                knob(P::MidQ, "Q"),
-            ]),
-            section("HIGH", vec![
-                knob(P::HighFreq, "Freq"),
-                knob(P::HighGain, "Gain"),
-                knob(P::HighQ, "Q"),
-            ]),
-            widgets(vec![knob(P::Output, "Output")]),
-        ])
+        GridLayout::build(
+            "EQ",
+            "V0.1",
+            3,
+            50.0,
+            vec![
+                section(
+                    "LOW",
+                    vec![
+                        knob(P::LowFreq, "Freq"),
+                        knob(P::LowGain, "Gain"),
+                        knob(P::LowQ, "Q"),
+                    ],
+                ),
+                section(
+                    "MID",
+                    vec![
+                        knob(P::MidFreq, "Freq"),
+                        knob(P::MidGain, "Gain"),
+                        knob(P::MidQ, "Q"),
+                    ],
+                ),
+                section(
+                    "HIGH",
+                    vec![
+                        knob(P::HighFreq, "Freq"),
+                        knob(P::HighGain, "Gain"),
+                        knob(P::HighQ, "Q"),
+                    ],
+                ),
+                widgets(vec![knob(P::Output, "Output")]),
+            ],
+        )
     }
 }
 
@@ -270,8 +343,6 @@ mod tests {
         let params = std::sync::Arc::new(EqParams::new());
         let eq = Eq::new(std::sync::Arc::clone(&params));
         let layout = eq.layout();
-        truce_test::assert_gui_snapshot_grid::<EqParams>(
-            "eq_default", params, layout, 0,
-        );
+        truce_test::assert_gui_snapshot_grid::<EqParams>("eq_default", params, layout, 0);
     }
 }

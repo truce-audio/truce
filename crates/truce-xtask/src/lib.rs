@@ -167,6 +167,3 @@ Configuration is read from truce.toml in the project root.
 Run 'cargo truce new <name>' to scaffold a new project."
     );
 }
-
-
-

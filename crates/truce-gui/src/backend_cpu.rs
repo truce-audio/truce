@@ -217,9 +217,16 @@ impl RenderBackend for CpuBackend {
         let h = self.pixmap.height();
         crate::font::draw_text_fontdue(
             self.pixmap.data_mut(),
-            w, h,
-            text, x * s, y * s, size * s,
-            color.r, color.g, color.b, color.a,
+            w,
+            h,
+            text,
+            x * s,
+            y * s,
+            size * s,
+            color.r,
+            color.g,
+            color.b,
+            color.a,
         );
     }
 
@@ -239,7 +246,10 @@ impl RenderBackend for CpuBackend {
         }
         pm.data_mut()[..expected].copy_from_slice(&rgba[..expected]);
 
-        if let Some(slot) = self.images.iter_mut().enumerate()
+        if let Some(slot) = self
+            .images
+            .iter_mut()
+            .enumerate()
             .find(|(_, s)| s.is_none())
         {
             *slot.1 = Some(pm);
@@ -266,6 +276,7 @@ impl RenderBackend for CpuBackend {
         let sy = (h * s) / pm.height() as f32;
         let transform = Transform::from_scale(sx, sy).post_translate(x * s, y * s);
         let paint = PixmapPaint::default();
-        self.pixmap.draw_pixmap(0, 0, pm.as_ref(), &paint, transform, None);
+        self.pixmap
+            .draw_pixmap(0, 0, pm.as_ref(), &paint, transform, None);
     }
 }

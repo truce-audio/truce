@@ -1,5 +1,6 @@
 pub mod buffer;
 pub mod bus;
+pub mod custom_state;
 pub mod editor;
 pub mod events;
 pub mod export;
@@ -8,7 +9,6 @@ pub mod midi;
 pub mod plugin;
 pub mod process;
 pub mod state;
-pub mod custom_state;
 pub mod transport;
 pub mod util;
 

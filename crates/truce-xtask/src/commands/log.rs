@@ -10,8 +10,10 @@ pub(crate) fn cmd_log() -> Res {
             "stream",
             "--predicate",
             "subsystem == \"com.truce.au3\"",
-            "--style", "compact",
-            "--level", "debug",
+            "--style",
+            "compact",
+            "--level",
+            "debug",
         ])
         .status()?;
     if !status.success() {

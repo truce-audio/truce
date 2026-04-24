@@ -71,7 +71,11 @@ pub fn query_backing_scale(parent: &RawWindowHandle) -> f64 {
                 2.0
             }
         };
-        if scale < 1.0 { 1.0 } else { scale }
+        if scale < 1.0 {
+            1.0
+        } else {
+            scale
+        }
     }
 }
 
@@ -97,7 +101,11 @@ pub fn main_screen_scale() -> f64 {
         let screen: *mut objc::runtime::Object = msg_send![objc::class!(NSScreen), mainScreen];
         if !screen.is_null() {
             let scale: f64 = msg_send![screen, backingScaleFactor];
-            if scale < 1.0 { 1.0 } else { scale }
+            if scale < 1.0 {
+                1.0
+            } else {
+                scale
+            }
         } else {
             1.0
         }
@@ -150,7 +158,11 @@ pub fn main_screen_scale() -> f64 {
         return 1.0;
     }
     let v = f64::from_bits(bits);
-    if v.is_finite() && v > 0.0 { v } else { 1.0 }
+    if v.is_finite() && v > 0.0 {
+        v
+    } else {
+        1.0
+    }
 }
 
 /// Query the DPI scale factor on Windows.
@@ -167,12 +179,20 @@ fn win32_dpi_scale(hwnd: *mut std::ffi::c_void) -> f64 {
 
     let dpi = if !hwnd.is_null() {
         let d = unsafe { GetDpiForWindow(hwnd) };
-        if d == 0 { unsafe { GetDpiForSystem() } } else { d }
+        if d == 0 {
+            unsafe { GetDpiForSystem() }
+        } else {
+            d
+        }
     } else {
         unsafe { GetDpiForSystem() }
     };
 
-    if dpi == 0 { 1.0 } else { dpi as f64 / DEFAULT_DPI as f64 }
+    if dpi == 0 {
+        1.0
+    } else {
+        dpi as f64 / DEFAULT_DPI as f64
+    }
 }
 
 /// Bridge a baseview raw-window-handle 0.5 to a wgpu-compatible
@@ -193,13 +213,10 @@ pub unsafe fn create_wgpu_surface(
                 return None;
             }
             let rwh6_window = wgpu::rwh::RawWindowHandle::AppKit(
-                wgpu::rwh::AppKitWindowHandle::new(
-                    std::ptr::NonNull::new(ns_view)?,
-                ),
+                wgpu::rwh::AppKitWindowHandle::new(std::ptr::NonNull::new(ns_view)?),
             );
-            let rwh6_display = wgpu::rwh::RawDisplayHandle::AppKit(
-                wgpu::rwh::AppKitDisplayHandle::new(),
-            );
+            let rwh6_display =
+                wgpu::rwh::RawDisplayHandle::AppKit(wgpu::rwh::AppKitDisplayHandle::new());
             wgpu::SurfaceTargetUnsafe::RawHandle {
                 raw_display_handle: rwh6_display,
                 raw_window_handle: rwh6_window,
@@ -211,14 +228,11 @@ pub unsafe fn create_wgpu_surface(
             if hwnd.is_null() {
                 return None;
             }
-            let rwh6_window = wgpu::rwh::RawWindowHandle::Win32(
-                wgpu::rwh::Win32WindowHandle::new(
-                    std::num::NonZero::new(hwnd as isize)?,
-                ),
-            );
-            let rwh6_display = wgpu::rwh::RawDisplayHandle::Windows(
-                wgpu::rwh::WindowsDisplayHandle::new(),
-            );
+            let rwh6_window = wgpu::rwh::RawWindowHandle::Win32(wgpu::rwh::Win32WindowHandle::new(
+                std::num::NonZero::new(hwnd as isize)?,
+            ));
+            let rwh6_display =
+                wgpu::rwh::RawDisplayHandle::Windows(wgpu::rwh::WindowsDisplayHandle::new());
             wgpu::SurfaceTargetUnsafe::RawHandle {
                 raw_display_handle: rwh6_display,
                 raw_window_handle: rwh6_window,
@@ -231,9 +245,8 @@ pub unsafe fn create_wgpu_surface(
                 _ => return None,
             };
             let display_ptr = std::ptr::NonNull::new(display_handle.display);
-            let rwh6_window = wgpu::rwh::RawWindowHandle::Xlib(
-                wgpu::rwh::XlibWindowHandle::new(handle.window),
-            );
+            let rwh6_window =
+                wgpu::rwh::RawWindowHandle::Xlib(wgpu::rwh::XlibWindowHandle::new(handle.window));
             let rwh6_display = wgpu::rwh::RawDisplayHandle::Xlib(
                 wgpu::rwh::XlibDisplayHandle::new(display_ptr, display_handle.screen),
             );

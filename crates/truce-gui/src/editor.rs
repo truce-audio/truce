@@ -210,7 +210,13 @@ impl<P: Params + 'static> BuiltinEditor<P> {
         backend.clear(self.theme.background);
         let owned = self.build_snapshot_closures();
         let snapshot = owned.as_snapshot();
-        widgets::draw(backend, &self.layout, &self.theme, &snapshot, &mut self.interaction);
+        widgets::draw(
+            backend,
+            &self.layout,
+            &self.theme,
+            &snapshot,
+            &mut self.interaction,
+        );
     }
 
     /// Build owned boxed closures from `self.context` / `self.params` that
@@ -250,7 +256,9 @@ impl<P: Params + 'static> BuiltinEditor<P> {
             }
             None => Box::new(move |id| {
                 let v = p_fmt.get_plain(id).unwrap_or(0.0);
-                p_fmt.format_value(id, v).unwrap_or_else(|| format!("{:.1}", v))
+                p_fmt
+                    .format_value(id, v)
+                    .unwrap_or_else(|| format!("{:.1}", v))
             }),
         };
         let get_meter: Box<dyn Fn(u32) -> f32> = match &ctx {
@@ -268,18 +276,25 @@ impl<P: Params + 'static> BuiltinEditor<P> {
             let count = (info.range.step_count().max(1) as usize) + 1;
             (0..count)
                 .map(|i| {
-                    let norm = if count <= 1 { 0.0 } else { i as f64 / (count - 1) as f64 };
+                    let norm = if count <= 1 {
+                        0.0
+                    } else {
+                        i as f64 / (count - 1) as f64
+                    };
                     let plain = info.range.denormalize(norm);
-                    p_opts.format_value(id, plain).unwrap_or_else(|| format!("{:.0}", plain))
+                    p_opts
+                        .format_value(id, plain)
+                        .unwrap_or_else(|| format!("{:.0}", plain))
                 })
                 .collect()
         });
-        let default_normalized: Box<dyn Fn(u32) -> f32> = Box::new(move |id| {
-            match p_default.param_infos().iter().find(|i| i.id == id) {
-                Some(info) => info.range.normalize(info.default_plain) as f32,
-                None => 0.0,
-            }
-        });
+        let default_normalized: Box<dyn Fn(u32) -> f32> =
+            Box::new(
+                move |id| match p_default.param_infos().iter().find(|i| i.id == id) {
+                    Some(info) => info.range.normalize(info.default_plain) as f32,
+                    None => 0.0,
+                },
+            );
         let next_discrete_normalized: Box<dyn Fn(u32) -> f32> = Box::new(move |id| {
             let info = match p_next.param_infos().into_iter().find(|i| i.id == id) {
                 Some(i) => i,
@@ -355,12 +370,7 @@ impl<P: Params + 'static> BuiltinEditor<P> {
         let dd_before = self.interaction.dropdown_is_open();
         let owned = self.build_snapshot_closures();
         let snapshot = owned.as_snapshot();
-        let edits = interaction::dispatch(
-            events,
-            &self.layout,
-            &snapshot,
-            &mut self.interaction,
-        );
+        let edits = interaction::dispatch(events, &self.layout, &snapshot, &mut self.interaction);
         drop(snapshot);
         drop(owned);
         let had_edits = !edits.is_empty();
@@ -423,13 +433,17 @@ impl<P: Params + 'static> BuiltinEditor<P> {
 impl<P: Params + 'static> BuiltinEditor<P> {
     fn on_mouse_down(&mut self, x: f32, y: f32) {
         self.dispatch_events(&[InputEvent::MouseDown {
-            x, y, button: crate::interaction::MouseButton::Left,
+            x,
+            y,
+            button: crate::interaction::MouseButton::Left,
         }]);
     }
 
     fn on_mouse_up(&mut self, x: f32, y: f32) {
         self.dispatch_events(&[InputEvent::MouseUp {
-            x, y, button: crate::interaction::MouseButton::Left,
+            x,
+            y,
+            button: crate::interaction::MouseButton::Left,
         }]);
     }
 
@@ -455,7 +469,9 @@ pub unsafe fn update_interaction<P: Params + 'static>(editor: &mut BuiltinEditor
                 for knob_def in &row.knobs {
                     if let Some(region) = editor.interaction.knob_regions.get_mut(flat_idx) {
                         region.widget_type = resolve_widget_type(
-                            knob_def.widget, knob_def.param_id, &*editor.params,
+                            knob_def.widget,
+                            knob_def.param_id,
+                            &*editor.params,
                         );
                     }
                     flat_idx += 1;
@@ -466,9 +482,8 @@ pub unsafe fn update_interaction<P: Params + 'static>(editor: &mut BuiltinEditor
             editor.interaction.build_regions_grid(gl);
             for (idx, gw) in gl.widgets.iter().enumerate() {
                 if let Some(region) = editor.interaction.knob_regions.get_mut(idx) {
-                    region.widget_type = resolve_widget_type(
-                        gw.widget, gw.param_id, &*editor.params,
-                    );
+                    region.widget_type =
+                        resolve_widget_type(gw.widget, gw.param_id, &*editor.params);
                 }
             }
         }
@@ -491,11 +506,7 @@ pub unsafe fn update_interaction<P: Params + 'static>(editor: &mut BuiltinEditor
 // autorelease crashes with multiple editor windows.
 // Otherwise: blits via wgpu fullscreen triangle.
 
-fn create_wgpu_backend(
-    window: &mut baseview::Window,
-    phys_w: u32,
-    phys_h: u32,
-) -> BlitBackend {
+fn create_wgpu_backend(window: &mut baseview::Window, phys_w: u32, phys_h: u32) -> BlitBackend {
     let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
         backends: wgpu::Backends::PRIMARY,
         ..Default::default()
@@ -523,7 +534,12 @@ fn create_wgpu_backend(
     .expect("failed to create wgpu device");
 
     let caps = surface.get_capabilities(&adapter);
-    let format = caps.formats.iter().find(|f| f.is_srgb()).copied().unwrap_or(caps.formats[0]);
+    let format = caps
+        .formats
+        .iter()
+        .find(|f| f.is_srgb())
+        .copied()
+        .unwrap_or(caps.formats[0]);
 
     let surface_config = wgpu::SurfaceConfiguration {
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -543,7 +559,13 @@ fn create_wgpu_backend(
     // blit samples 1:1 — no stretch, no Retina blur.
     let blit = crate::blit::BlitPipeline::new(&device, format, phys_w, phys_h);
 
-    BlitBackend { device, queue, surface, surface_config, blit }
+    BlitBackend {
+        device,
+        queue,
+        surface,
+        surface_config,
+        blit,
+    }
 }
 
 struct BlitBackend {
@@ -605,13 +627,21 @@ impl<P: Params + 'static> baseview::WindowHandler for BuiltinWindowHandler<P> {
                 // next.
                 return;
             };
-            let BlitBackend { device, queue, surface, blit, .. } = backend;
+            let BlitBackend {
+                device,
+                queue,
+                surface,
+                blit,
+                ..
+            } = backend;
             blit.update(queue, pixels);
             let frame = match surface.get_current_texture() {
                 Ok(f) => f,
                 Err(_) => return,
             };
-            let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+            let view = frame
+                .texture
+                .create_view(&wgpu::TextureViewDescriptor::default());
             let mut encoder =
                 device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
             blit.render(&mut encoder, &view);
@@ -627,7 +657,8 @@ impl<P: Params + 'static> baseview::WindowHandler for BuiltinWindowHandler<P> {
     ) -> baseview::EventStatus {
         match &event {
             baseview::Event::Mouse(baseview::MouseEvent::ButtonPressed {
-                button: baseview::MouseButton::Left, ..
+                button: baseview::MouseButton::Left,
+                ..
             }) => {
                 // WS_CHILD plugin windows don't receive WM_KEYDOWN
                 // until focused; baseview doesn't SetFocus on click,
@@ -712,10 +743,11 @@ fn resolve_widget_type<P: Params>(
         Some(crate::layout::WidgetKind::Meter) => widgets::WidgetType::Meter,
         Some(crate::layout::WidgetKind::XYPad) => widgets::WidgetType::XYPad,
         None => {
-            let param_info = params.param_infos().into_iter()
-                .find(|i| i.id == param_id);
+            let param_info = params.param_infos().into_iter().find(|i| i.id == param_id);
             match param_info.as_ref().map(|i| &i.range) {
-                Some(truce_params::ParamRange::Discrete { min: 0, max: 1 }) => widgets::WidgetType::Toggle,
+                Some(truce_params::ParamRange::Discrete { min: 0, max: 1 }) => {
+                    widgets::WidgetType::Toggle
+                }
                 Some(truce_params::ParamRange::Enum { .. }) => widgets::WidgetType::Selector,
                 _ => widgets::WidgetType::Knob,
             }
@@ -768,8 +800,7 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
         // window handler gets the other. At close time the editor
         // takes the inner Option and drops it *before* asking baseview
         // to tear down the NSView.
-        let shared_backend: SharedBackend =
-            std::sync::Arc::new(std::sync::Mutex::new(None));
+        let shared_backend: SharedBackend = std::sync::Arc::new(std::sync::Mutex::new(None));
         self.blit_backend = Some(shared_backend.clone());
         let shared_for_handler = shared_backend;
 
@@ -788,13 +819,22 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
                 let editor = unsafe { &mut *(editor_addr as *mut BuiltinEditor<P>) };
                 editor.render();
                 if let Some(pixels) = editor.pixel_data() {
-                    let BlitBackend { device, queue, surface, blit, .. } = &mut backend;
+                    let BlitBackend {
+                        device,
+                        queue,
+                        surface,
+                        blit,
+                        ..
+                    } = &mut backend;
                     blit.update(queue, pixels);
                     if let Ok(frame) = surface.get_current_texture() {
-                        let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
-                        let mut encoder = device.create_command_encoder(
-                            &wgpu::CommandEncoderDescriptor { label: None },
-                        );
+                        let view = frame
+                            .texture
+                            .create_view(&wgpu::TextureViewDescriptor::default());
+                        let mut encoder =
+                            device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                                label: None,
+                            });
                         blit.render(&mut encoder, &view);
                         queue.submit(std::iter::once(encoder.finish()));
                         frame.present();
@@ -874,11 +914,11 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::layout::{GridLayout, GridWidget, Layout, section, widgets};
+    use crate::layout::{section, widgets, GridLayout, GridWidget, Layout};
     use crate::widgets::WidgetType;
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Arc;
-    use truce_params::{ParamInfo, ParamRange, ParamFlags, ParamUnit, Params};
+    use truce_params::{ParamFlags, ParamInfo, ParamRange, ParamUnit, Params};
 
     // -- Mock Params with one enum param (4 options) and one float --
 
@@ -923,10 +963,13 @@ mod tests {
             ]
         }
 
-        fn count(&self) -> usize { 2 }
+        fn count(&self) -> usize {
+            2
+        }
 
         fn get_normalized(&self, id: u32) -> Option<f64> {
-            self.values.get(id as usize)
+            self.values
+                .get(id as usize)
                 .map(|v| f64::from_bits(v.load(Ordering::Relaxed)))
         }
 
@@ -952,15 +995,18 @@ mod tests {
             Some(format!("{:.0}", value))
         }
 
-        fn parse_value(&self, _id: u32, _text: &str) -> Option<f64> { None }
+        fn parse_value(&self, _id: u32, _text: &str) -> Option<f64> {
+            None
+        }
         fn snap_smoothers(&self) {}
         fn set_sample_rate(&self, _: f64) {}
 
         fn collect_values(&self) -> (Vec<u32>, Vec<f64>) {
             let ids = vec![0, 1];
-            let vals: Vec<f64> = ids.iter().map(|&id| {
-                self.get_plain(id).unwrap_or(0.0)
-            }).collect();
+            let vals: Vec<f64> = ids
+                .iter()
+                .map(|&id| self.get_plain(id).unwrap_or(0.0))
+                .collect();
             (ids, vals)
         }
 
@@ -970,7 +1016,9 @@ mod tests {
             }
         }
 
-        fn default_for_gui() -> Self { Self::new() }
+        fn default_for_gui() -> Self {
+            Self::new()
+        }
     }
 
     // -- Helpers --
@@ -978,19 +1026,24 @@ mod tests {
     /// Build a BuiltinEditor with a dropdown at position 0 and a knob at position 1.
     fn make_editor() -> BuiltinEditor<TestParams> {
         let params = Arc::new(TestParams::new());
-        let layout = GridLayout::build("TEST", "V0.1", 2, 50.0, vec![widgets(vec![
-            GridWidget::dropdown(0u32, "Mode"),
-            GridWidget::knob(1u32, "Gain"),
-        ])]);
+        let layout = GridLayout::build(
+            "TEST",
+            "V0.1",
+            2,
+            50.0,
+            vec![widgets(vec![
+                GridWidget::dropdown(0u32, "Mode"),
+                GridWidget::knob(1u32, "Gain"),
+            ])],
+        );
         let mut editor = BuiltinEditor::new_grid(params, layout);
         // Build interaction regions (normally done in open/render)
         if let Layout::Grid(ref gl) = editor.layout {
             editor.interaction.build_regions_grid(gl);
             for (idx, gw) in gl.widgets.iter().enumerate() {
                 if let Some(region) = editor.interaction.knob_regions.get_mut(idx) {
-                    region.widget_type = resolve_widget_type(
-                        gw.widget, gw.param_id, &*editor.params,
-                    );
+                    region.widget_type =
+                        resolve_widget_type(gw.widget, gw.param_id, &*editor.params);
                 }
             }
         }
@@ -1002,24 +1055,35 @@ mod tests {
     /// Build an editor with section breaks to test anchor stability.
     fn make_editor_with_sections() -> BuiltinEditor<TestParams> {
         let params = Arc::new(TestParams::new());
-        let layout = GridLayout::build("TEST", "V0.1", 2, 50.0, vec![
-            section("SECTION A", vec![
-                GridWidget::knob(1u32, "Gain"),
-                GridWidget::knob(1u32, "Gain 2"),
-            ]),
-            section("SECTION B", vec![
-                GridWidget::dropdown(0u32, "Mode"),
-                GridWidget::knob(1u32, "Gain 3"),
-            ]),
-        ]);
+        let layout = GridLayout::build(
+            "TEST",
+            "V0.1",
+            2,
+            50.0,
+            vec![
+                section(
+                    "SECTION A",
+                    vec![
+                        GridWidget::knob(1u32, "Gain"),
+                        GridWidget::knob(1u32, "Gain 2"),
+                    ],
+                ),
+                section(
+                    "SECTION B",
+                    vec![
+                        GridWidget::dropdown(0u32, "Mode"),
+                        GridWidget::knob(1u32, "Gain 3"),
+                    ],
+                ),
+            ],
+        );
         let mut editor = BuiltinEditor::new_grid(params, layout);
         if let Layout::Grid(ref gl) = editor.layout {
             editor.interaction.build_regions_grid(gl);
             for (idx, gw) in gl.widgets.iter().enumerate() {
                 if let Some(region) = editor.interaction.knob_regions.get_mut(idx) {
-                    region.widget_type = resolve_widget_type(
-                        gw.widget, gw.param_id, &*editor.params,
-                    );
+                    region.widget_type =
+                        resolve_widget_type(gw.widget, gw.param_id, &*editor.params);
                 }
             }
         }
@@ -1029,7 +1093,10 @@ mod tests {
 
     /// Find the center of the first dropdown widget's region.
     fn dropdown_center(editor: &BuiltinEditor<TestParams>) -> (f32, f32) {
-        let region = editor.interaction.knob_regions.iter()
+        let region = editor
+            .interaction
+            .knob_regions
+            .iter()
             .find(|r| r.widget_type == WidgetType::Dropdown)
             .expect("no dropdown in layout");
         (region.x + region.w / 2.0, region.y + region.h / 2.0)
@@ -1097,7 +1164,10 @@ mod tests {
         // Enum{count:4} → step_count=3 → 4 options. Index 1 → norm = 1/3
         let norm = editor.params.get_normalized(0).unwrap();
         let expected = 1.0 / 3.0;
-        assert!((norm - expected).abs() < 0.01, "expected {expected:.4}, got {norm}");
+        assert!(
+            (norm - expected).abs() < 0.01,
+            "expected {expected:.4}, got {norm}"
+        );
     }
 
     // -- Tests: dropdown anchor positioning --
@@ -1105,16 +1175,26 @@ mod tests {
     #[test]
     fn dropdown_anchor_set_after_render() {
         let editor = make_editor();
-        let region = editor.interaction.knob_regions.iter()
+        let region = editor
+            .interaction
+            .knob_regions
+            .iter()
             .find(|r| r.widget_type == WidgetType::Dropdown)
             .unwrap();
 
         // Anchor should be within the widget region (below y, above y+h)
-        assert!(region.dropdown_anchor_y > region.y,
-            "anchor {} should be below region.y {}", region.dropdown_anchor_y, region.y);
-        assert!(region.dropdown_anchor_y < region.y + region.h,
+        assert!(
+            region.dropdown_anchor_y > region.y,
+            "anchor {} should be below region.y {}",
+            region.dropdown_anchor_y,
+            region.y
+        );
+        assert!(
+            region.dropdown_anchor_y < region.y + region.h,
             "anchor {} should be above region bottom {}",
-            region.dropdown_anchor_y, region.y + region.h);
+            region.dropdown_anchor_y,
+            region.y + region.h
+        );
     }
 
     #[test]
@@ -1137,10 +1217,16 @@ mod tests {
         let editor_plain = make_editor();
         let editor_sections = make_editor_with_sections();
 
-        let r_plain = editor_plain.interaction.knob_regions.iter()
+        let r_plain = editor_plain
+            .interaction
+            .knob_regions
+            .iter()
             .find(|r| r.widget_type == WidgetType::Dropdown)
             .unwrap();
-        let r_sections = editor_sections.interaction.knob_regions.iter()
+        let r_sections = editor_sections
+            .interaction
+            .knob_regions
+            .iter()
             .find(|r| r.widget_type == WidgetType::Dropdown)
             .unwrap();
 
@@ -1197,10 +1283,13 @@ mod tests {
             ]
         }
 
-        fn count(&self) -> usize { 2 }
+        fn count(&self) -> usize {
+            2
+        }
 
         fn get_normalized(&self, id: u32) -> Option<f64> {
-            self.values.get(id as usize)
+            self.values
+                .get(id as usize)
                 .map(|v| f64::from_bits(v.load(Ordering::Relaxed)))
         }
 
@@ -1226,21 +1315,30 @@ mod tests {
             Some(format!("{:.0}", value))
         }
 
-        fn parse_value(&self, _id: u32, _text: &str) -> Option<f64> { None }
+        fn parse_value(&self, _id: u32, _text: &str) -> Option<f64> {
+            None
+        }
         fn snap_smoothers(&self) {}
         fn set_sample_rate(&self, _: f64) {}
 
         fn collect_values(&self) -> (Vec<u32>, Vec<f64>) {
             let ids = vec![0, 1];
-            let vals: Vec<f64> = ids.iter().map(|&id| self.get_plain(id).unwrap_or(0.0)).collect();
+            let vals: Vec<f64> = ids
+                .iter()
+                .map(|&id| self.get_plain(id).unwrap_or(0.0))
+                .collect();
             (ids, vals)
         }
 
         fn restore_values(&self, values: &[(u32, f64)]) {
-            for &(id, val) in values { self.set_plain(id, val); }
+            for &(id, val) in values {
+                self.set_plain(id, val);
+            }
         }
 
-        fn default_for_gui() -> Self { Self::new() }
+        fn default_for_gui() -> Self {
+            Self::new()
+        }
     }
 
     // -- Additional helpers --
@@ -1249,20 +1347,27 @@ mod tests {
     fn make_editor_bottom_dropdown() -> BuiltinEditor<TestParams> {
         let params = Arc::new(TestParams::new());
         // 3 rows of 2, dropdown in the last row (row 2)
-        let layout = GridLayout::build("TEST", "V0.1", 2, 50.0, vec![widgets(vec![
-            GridWidget::knob(1u32, "K1"),
-            GridWidget::knob(1u32, "K2"),
-            GridWidget::knob(1u32, "K3"),
-            GridWidget::knob(1u32, "K4"),
-            GridWidget::dropdown(0u32, "Mode"),
-            GridWidget::knob(1u32, "K5"),
-        ])]);
+        let layout = GridLayout::build(
+            "TEST",
+            "V0.1",
+            2,
+            50.0,
+            vec![widgets(vec![
+                GridWidget::knob(1u32, "K1"),
+                GridWidget::knob(1u32, "K2"),
+                GridWidget::knob(1u32, "K3"),
+                GridWidget::knob(1u32, "K4"),
+                GridWidget::dropdown(0u32, "Mode"),
+                GridWidget::knob(1u32, "K5"),
+            ])],
+        );
         let mut editor = BuiltinEditor::new_grid(params, layout);
         if let Layout::Grid(ref gl) = editor.layout {
             editor.interaction.build_regions_grid(gl);
             for (idx, gw) in gl.widgets.iter().enumerate() {
                 if let Some(region) = editor.interaction.knob_regions.get_mut(idx) {
-                    region.widget_type = resolve_widget_type(gw.widget, gw.param_id, &*editor.params);
+                    region.widget_type =
+                        resolve_widget_type(gw.widget, gw.param_id, &*editor.params);
                 }
             }
         }
@@ -1273,16 +1378,23 @@ mod tests {
     /// Build an editor with two dropdowns side by side.
     fn make_editor_two_dropdowns() -> BuiltinEditor<TestParams> {
         let params = Arc::new(TestParams::new());
-        let layout = GridLayout::build("TEST", "V0.1", 2, 50.0, vec![widgets(vec![
-            GridWidget::dropdown(0u32, "Mode A"),
-            GridWidget::dropdown(0u32, "Mode B"),
-        ])]);
+        let layout = GridLayout::build(
+            "TEST",
+            "V0.1",
+            2,
+            50.0,
+            vec![widgets(vec![
+                GridWidget::dropdown(0u32, "Mode A"),
+                GridWidget::dropdown(0u32, "Mode B"),
+            ])],
+        );
         let mut editor = BuiltinEditor::new_grid(params, layout);
         if let Layout::Grid(ref gl) = editor.layout {
             editor.interaction.build_regions_grid(gl);
             for (idx, gw) in gl.widgets.iter().enumerate() {
                 if let Some(region) = editor.interaction.knob_regions.get_mut(idx) {
-                    region.widget_type = resolve_widget_type(gw.widget, gw.param_id, &*editor.params);
+                    region.widget_type =
+                        resolve_widget_type(gw.widget, gw.param_id, &*editor.params);
                 }
             }
         }
@@ -1293,16 +1405,23 @@ mod tests {
     /// Build an editor with a 20-option dropdown for scroll testing.
     fn make_editor_many_options() -> BuiltinEditor<ManyOptionParams> {
         let params = Arc::new(ManyOptionParams::new());
-        let layout = GridLayout::build("TEST", "V0.1", 2, 50.0, vec![widgets(vec![
-            GridWidget::dropdown(0u32, "Note"),
-            GridWidget::knob(1u32, "Gain"),
-        ])]);
+        let layout = GridLayout::build(
+            "TEST",
+            "V0.1",
+            2,
+            50.0,
+            vec![widgets(vec![
+                GridWidget::dropdown(0u32, "Note"),
+                GridWidget::knob(1u32, "Gain"),
+            ])],
+        );
         let mut editor = BuiltinEditor::new_grid(params, layout);
         if let Layout::Grid(ref gl) = editor.layout {
             editor.interaction.build_regions_grid(gl);
             for (idx, gw) in gl.widgets.iter().enumerate() {
                 if let Some(region) = editor.interaction.knob_regions.get_mut(idx) {
-                    region.widget_type = resolve_widget_type(gw.widget, gw.param_id, &*editor.params);
+                    region.widget_type =
+                        resolve_widget_type(gw.widget, gw.param_id, &*editor.params);
                 }
             }
         }
@@ -1311,7 +1430,10 @@ mod tests {
     }
 
     fn dropdown_center_many(editor: &BuiltinEditor<ManyOptionParams>) -> (f32, f32) {
-        let region = editor.interaction.knob_regions.iter()
+        let region = editor
+            .interaction
+            .knob_regions
+            .iter()
             .find(|r| r.widget_type == WidgetType::Dropdown)
             .expect("no dropdown in layout");
         (region.x + region.w / 2.0, region.y + region.h / 2.0)
@@ -1323,7 +1445,10 @@ mod tests {
     fn dropdown_flips_upward_when_near_bottom() {
         let mut editor = make_editor_bottom_dropdown();
         let (dx, dy) = {
-            let region = editor.interaction.knob_regions.iter()
+            let region = editor
+                .interaction
+                .knob_regions
+                .iter()
                 .find(|r| r.widget_type == WidgetType::Dropdown)
                 .unwrap();
             (region.x + region.w / 2.0, region.y + region.h / 2.0)
@@ -1396,8 +1521,12 @@ mod tests {
 
         let dd = editor.interaction.dropdown.as_ref().unwrap();
         // 20-option enum → step_count = 19 → 19 options
-        assert!(dd.options.len() > dd.visible_count,
-            "expected scroll: {} options, {} visible", dd.options.len(), dd.visible_count);
+        assert!(
+            dd.options.len() > dd.visible_count,
+            "expected scroll: {} options, {} visible",
+            dd.options.len(),
+            dd.visible_count
+        );
         assert_eq!(dd.scroll_offset, 0);
     }
 
@@ -1411,7 +1540,10 @@ mod tests {
 
         // Scroll up past the top — should stay at 0
         editor.interaction.dropdown_scroll(-10);
-        assert_eq!(editor.interaction.dropdown.as_ref().unwrap().scroll_offset, 0);
+        assert_eq!(
+            editor.interaction.dropdown.as_ref().unwrap().scroll_offset,
+            0
+        );
 
         // Scroll down past the bottom — should clamp
         editor.interaction.dropdown_scroll(1000);
@@ -1436,7 +1568,8 @@ mod tests {
         assert!(
             selected >= dd.scroll_offset && selected < dd.scroll_offset + dd.visible_count,
             "selected={selected} not in visible range {}..{}",
-            dd.scroll_offset, dd.scroll_offset + dd.visible_count
+            dd.scroll_offset,
+            dd.scroll_offset + dd.visible_count
         );
     }
 
@@ -1450,7 +1583,10 @@ mod tests {
 
         // Scroll down by 3
         editor.interaction.dropdown_scroll(3);
-        assert_eq!(editor.interaction.dropdown.as_ref().unwrap().scroll_offset, 3);
+        assert_eq!(
+            editor.interaction.dropdown.as_ref().unwrap().scroll_offset,
+            3
+        );
 
         // Click the second visible item (local index 1 → absolute index 4)
         let dd = editor.interaction.dropdown.as_ref().unwrap();
@@ -1512,7 +1648,11 @@ mod tests {
         editor.on_mouse_moved(px + pw / 2.0, hover_y);
 
         let dd = editor.interaction.dropdown.as_ref().unwrap();
-        assert_eq!(dd.hover_option, Some(last_visible), "expected hover on last visible option");
+        assert_eq!(
+            dd.hover_option,
+            Some(last_visible),
+            "expected hover on last visible option"
+        );
 
         // Move outside the popup
         editor.on_mouse_moved(0.0, 0.0);
@@ -1536,7 +1676,15 @@ mod tests {
 
         assert!(px >= 0.0, "popup left edge {px} < 0");
         assert!(py >= 0.0, "popup top edge {py} < 0");
-        assert!(px + pw <= window_w + 1.0, "popup right {} > window {window_w}", px + pw);
-        assert!(py + ph <= window_h + 1.0, "popup bottom {} > window {window_h}", py + ph);
+        assert!(
+            px + pw <= window_w + 1.0,
+            "popup right {} > window {window_w}",
+            px + pw
+        );
+        assert!(
+            py + ph <= window_h + 1.0,
+            "popup bottom {} > window {window_h}",
+            py + ph
+        );
     }
 }

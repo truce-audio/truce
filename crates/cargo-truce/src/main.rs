@@ -20,10 +20,7 @@ use std::process::ExitCode;
 use scaffold::{PluginKind, PluginSpec};
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args()
-        .skip(1)
-        .filter(|a| a != "truce")
-        .collect();
+    let args: Vec<String> = std::env::args().skip(1).filter(|a| a != "truce").collect();
 
     let cmd = args.first().map(|s| s.as_str()).unwrap_or("help");
 
@@ -31,18 +28,22 @@ fn main() -> ExitCode {
         // Scaffold commands — handled here
         "new" => match cmd_new(&args[1..]) {
             Ok(()) => ExitCode::SUCCESS,
-            Err(e) => { eprintln!("Error: {e}"); ExitCode::FAILURE }
+            Err(e) => {
+                eprintln!("Error: {e}");
+                ExitCode::FAILURE
+            }
         },
         "new-workspace" => match cmd_new_workspace(&args[1..]) {
             Ok(()) => ExitCode::SUCCESS,
-            Err(e) => { eprintln!("Error: {e}"); ExitCode::FAILURE }
+            Err(e) => {
+                eprintln!("Error: {e}");
+                ExitCode::FAILURE
+            }
         },
 
         // Build/install commands — forwarded to truce-xtask
-        "install" | "build" | "package" | "remove" | "run" | "test" | "status"
-        | "clean" | "nuke" | "validate" | "doctor" | "log" => {
-            truce_xtask::run(&args)
-        },
+        "install" | "build" | "package" | "remove" | "run" | "test" | "status" | "clean"
+        | "nuke" | "validate" | "doctor" | "log" => truce_xtask::run(&args),
 
         "help" | "--help" | "-h" => {
             print_help();
@@ -132,18 +133,37 @@ fn cmd_new(args: &[String]) -> Res {
 
     fs::create_dir_all(format!("{name}/src"))?;
     fs::create_dir_all(format!("{name}/.cargo"))?;
-    fs::write(format!("{name}/Cargo.toml"), scaffold::plugin_cargo_toml_standalone(&name))?;
-    fs::write(format!("{name}/src/lib.rs"), scaffold::plugin_lib_rs(&struct_name, kind))?;
+    fs::write(
+        format!("{name}/Cargo.toml"),
+        scaffold::plugin_cargo_toml_standalone(&name),
+    )?;
+    fs::write(
+        format!("{name}/src/lib.rs"),
+        scaffold::plugin_lib_rs(&struct_name, kind),
+    )?;
     fs::write(format!("{name}/.gitignore"), scaffold::gitignore())?;
-    fs::write(format!("{name}/.cargo/config.toml"), scaffold::cargo_config_toml())?;
+    fs::write(
+        format!("{name}/.cargo/config.toml"),
+        scaffold::cargo_config_toml(),
+    )?;
 
     // truce.toml — single plugin
-    let plugin = PluginSpec { name: name.clone(), kind };
+    let plugin = PluginSpec {
+        name: name.clone(),
+        kind,
+    };
     let plugins = [plugin];
     let fourcc_map = scaffold::resolve_fourccs(&plugins);
     fs::write(
         format!("{name}/truce.toml"),
-        scaffold::truce_toml("My Company", "com.mycompany", &plugins, &name, &fourcc_map, false),
+        scaffold::truce_toml(
+            "My Company",
+            "com.mycompany",
+            &plugins,
+            &name,
+            &fourcc_map,
+            false,
+        ),
     )?;
 
     eprintln!("Created {name}/");
@@ -184,25 +204,17 @@ fn cmd_new_workspace(args: &[String]) -> Res {
             "--instrument" => default_kind = PluginKind::Instrument,
             "--midi" => default_kind = PluginKind::Midi,
             "--vendor" => {
-                vendor_name = Some(
-                    iter.next()
-                        .ok_or("--vendor requires a value")?
-                        .clone(),
-                );
+                vendor_name = Some(iter.next().ok_or("--vendor requires a value")?.clone());
             }
             "--vendor-id" => {
-                vendor_id = Some(
-                    iter.next()
-                        .ok_or("--vendor-id requires a value")?
-                        .clone(),
-                );
+                vendor_id = Some(iter.next().ok_or("--vendor-id requires a value")?.clone());
             }
             s if s.starts_with("--type:") => {
                 // --type:gain=instrument
                 let rest = &s["--type:".len()..];
-                let (pname, kind_str) = rest
-                    .split_once('=')
-                    .ok_or_else(|| format!("Invalid --type flag: {s} (expected --type:<plugin>=<kind>)"))?;
+                let (pname, kind_str) = rest.split_once('=').ok_or_else(|| {
+                    format!("Invalid --type flag: {s} (expected --type:<plugin>=<kind>)")
+                })?;
                 let kind = PluginKind::from_str(kind_str)?;
                 type_overrides.push((pname.to_string(), kind));
             }
@@ -223,7 +235,8 @@ fn cmd_new_workspace(args: &[String]) -> Res {
 
     if plugin_names.is_empty() {
         return Err("At least one plugin name is required.\n\
-            Usage: cargo truce new-workspace <name> <plugin1> [plugin2 ...]".into());
+            Usage: cargo truce new-workspace <name> <plugin1> [plugin2 ...]"
+            .into());
     }
 
     if Path::new(&workspace_name).exists() {
@@ -247,7 +260,10 @@ fn cmd_new_workspace(args: &[String]) -> Res {
                 .find(|(n, _)| n == pn)
                 .map(|(_, k)| *k)
                 .unwrap_or(default_kind);
-            PluginSpec { name: pn.clone(), kind }
+            PluginSpec {
+                name: pn.clone(),
+                kind,
+            }
         })
         .collect();
 
@@ -261,7 +277,8 @@ fn cmd_new_workspace(args: &[String]) -> Res {
                 "--type:{override_name}=... does not match any plugin name. \
                  Available plugins: {}",
                 plugin_names.join(", "),
-            ).into());
+            )
+            .into());
         }
     }
 

@@ -25,7 +25,11 @@ pub struct XYPadWidget<'a, M> {
 }
 
 impl<'a, M: Clone + Debug + 'static> XYPadWidget<'a, M> {
-    pub fn new(x_id: impl Into<u32>, y_id: impl Into<u32>, params: &'a ParamState<impl Params>) -> Self {
+    pub fn new(
+        x_id: impl Into<u32>,
+        y_id: impl Into<u32>,
+        params: &'a ParamState<impl Params>,
+    ) -> Self {
         let x_id = x_id.into();
         let y_id = y_id.into();
         Self {
@@ -120,9 +124,7 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for XYPadProgram {
         // Border
         frame.stroke(
             &bg,
-            Stroke::default()
-                .with_color(theme::ACCENT)
-                .with_width(1.0),
+            Stroke::default().with_color(theme::ACCENT).with_width(1.0),
         );
 
         // Crosshair position (Y inverted: 0 = bottom, 1 = top)

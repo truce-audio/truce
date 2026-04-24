@@ -271,7 +271,10 @@ mod tests {
         "hello world".to_string().write_field(&mut buf);
 
         let mut cursor = StateCursor::new(&buf);
-        assert_eq!(String::read_field(&mut cursor), Some("hello world".to_string()));
+        assert_eq!(
+            String::read_field(&mut cursor),
+            Some("hello world".to_string())
+        );
     }
 
     #[test]

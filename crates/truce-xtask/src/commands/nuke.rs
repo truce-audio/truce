@@ -14,7 +14,9 @@ pub(crate) fn cmd_nuke(args: &[String]) -> Res {
         match args[i].as_str() {
             "-p" => {
                 i += 1;
-                if i >= args.len() { return Err("-p requires a plugin suffix".into()); }
+                if i >= args.len() {
+                    return Err("-p requires a plugin suffix".into());
+                }
                 plugin_filter = Some(args[i].clone());
             }
             other => return Err(format!("Unknown flag: {other}").into()),
@@ -23,7 +25,11 @@ pub(crate) fn cmd_nuke(args: &[String]) -> Res {
     }
 
     let plugins: Vec<&PluginDef> = if let Some(ref filter) = plugin_filter {
-        config.plugin.iter().filter(|p| p.suffix == *filter).collect()
+        config
+            .plugin
+            .iter()
+            .filter(|p| p.suffix == *filter)
+            .collect()
     } else {
         config.plugin.iter().collect()
     };
@@ -87,9 +93,7 @@ pub(crate) fn cmd_nuke(args: &[String]) -> Res {
 
     // 6. Cargo clean
     eprintln!("Running cargo clean...");
-    let status = Command::new("cargo")
-        .arg("clean")
-        .status()?;
+    let status = Command::new("cargo").arg("clean").status()?;
     if !status.success() {
         eprintln!("  cargo clean failed");
     }

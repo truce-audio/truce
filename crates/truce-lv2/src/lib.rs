@@ -315,7 +315,10 @@ pub unsafe fn run<P: PluginExport>(handle: *mut Lv2Instance<P>, n_samples: u32) 
             inst.plugin.params().set_plain(pid, plain);
             inst.event_list.push(Event {
                 sample_offset: 0,
-                body: EventBody::ParamChange { id: pid, value: plain },
+                body: EventBody::ParamChange {
+                    id: pid,
+                    value: plain,
+                },
             });
         }
     }
@@ -381,22 +384,14 @@ pub unsafe fn run<P: PluginExport>(handle: *mut Lv2Instance<P>, n_samples: u32) 
 
     // Write MIDI output to the atom sequence port, if connected.
     if !inst.midi_out_port.is_null() {
-        atom::write_midi_out_sequence(
-            inst.midi_out_port,
-            &inst.output_events,
-            &inst.urid_map,
-        );
+        atom::write_midi_out_sequence(inst.midi_out_port, &inst.output_events, &inst.urid_map);
     }
 
     // Forward transport to the UI as a time:Position atom on the
     // notify-out port. Hosts deliver this to the UI's port_event each
     // block; the UI decodes it and updates its shared `TransportSlot`.
     if !inst.notify_out_port.is_null() {
-        atom::write_time_position_sequence(
-            inst.notify_out_port,
-            &transport,
-            &inst.urid_map,
-        );
+        atom::write_time_position_sequence(inst.notify_out_port, &transport, &inst.urid_map);
     }
 }
 
@@ -509,9 +504,7 @@ macro_rules! export_lv2 {
             use std::sync::OnceLock;
 
             use ::truce_lv2::__macro_deps::truce_core::plugin::Plugin;
-            use ::truce_lv2::{
-                DescriptorHolder, LV2Descriptor, LV2Feature, Lv2Instance,
-            };
+            use ::truce_lv2::{DescriptorHolder, LV2Descriptor, LV2Feature, Lv2Instance};
 
             static DESCRIPTOR: OnceLock<DescriptorHolder> = OnceLock::new();
 
@@ -562,9 +555,7 @@ macro_rules! export_lv2 {
             }
 
             unsafe extern "C" fn deactivate(handle: *mut c_void) {
-                ::truce_lv2::deactivate::<$plugin_type>(
-                    handle as *mut Lv2Instance<$plugin_type>,
-                );
+                ::truce_lv2::deactivate::<$plugin_type>(handle as *mut Lv2Instance<$plugin_type>);
             }
 
             unsafe extern "C" fn cleanup(handle: *mut c_void) {

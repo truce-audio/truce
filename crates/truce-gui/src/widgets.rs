@@ -4,8 +4,8 @@ use std::f32::consts::PI;
 
 use crate::interaction::InteractionState;
 use crate::layout::{
-    compute_section_offsets, GridLayout, Layout, PluginLayout, WidgetKind,
-    GRID_GAP, GRID_HEADER_H, GRID_PADDING, GRID_SECTION_H,
+    compute_section_offsets, GridLayout, Layout, PluginLayout, WidgetKind, GRID_GAP, GRID_HEADER_H,
+    GRID_PADDING, GRID_SECTION_H,
 };
 use crate::render::RenderBackend;
 use crate::snapshot::ParamSnapshot;
@@ -74,14 +74,25 @@ pub fn draw_knob(
     // Value text (below knob)
     let val_size = 10.0;
     let val_w = ctx.text_width(value_text, val_size);
-    ctx.draw_text(value_text, cx - val_w / 2.0, y + size - 9.0, val_size, theme.text);
+    ctx.draw_text(
+        value_text,
+        cx - val_w / 2.0,
+        y + size - 9.0,
+        val_size,
+        theme.text,
+    );
 
     // Label text (below value)
     let label_size = 9.0;
     let label_w = ctx.text_width(label, label_size);
-    ctx.draw_text(label, cx - label_w / 2.0, y + size + 2.0, label_size, theme.text_dim);
+    ctx.draw_text(
+        label,
+        cx - label_w / 2.0,
+        y + size + 2.0,
+        label_size,
+        theme.text_dim,
+    );
 }
-
 
 /// Draw a header bar.
 pub fn draw_header(
@@ -148,22 +159,49 @@ pub fn draw_slider(
     // Thumb
     let thumb_x = x + margin + fill_w;
     let thumb_r = 4.0;
-    ctx.fill_circle(thumb_x, track_y + track_h / 2.0, thumb_r, theme.knob_pointer);
+    ctx.fill_circle(
+        thumb_x,
+        track_y + track_h / 2.0,
+        thumb_r,
+        theme.knob_pointer,
+    );
     if highlighted {
-        ctx.fill_circle(thumb_x, track_y + track_h / 2.0, thumb_r + 1.5, theme.accent);
-        ctx.fill_circle(thumb_x, track_y + track_h / 2.0, thumb_r, theme.knob_pointer);
+        ctx.fill_circle(
+            thumb_x,
+            track_y + track_h / 2.0,
+            thumb_r + 1.5,
+            theme.accent,
+        );
+        ctx.fill_circle(
+            thumb_x,
+            track_y + track_h / 2.0,
+            thumb_r,
+            theme.knob_pointer,
+        );
     }
 
     // Value text
     let val_size = 10.0;
     let cx = x + width / 2.0;
     let val_w = ctx.text_width(value_text, val_size);
-    ctx.draw_text(value_text, cx - val_w / 2.0, y + height - 9.0, val_size, theme.text);
+    ctx.draw_text(
+        value_text,
+        cx - val_w / 2.0,
+        y + height - 9.0,
+        val_size,
+        theme.text,
+    );
 
     // Label
     let label_size = 9.0;
     let label_w = ctx.text_width(label, label_size);
-    ctx.draw_text(label, cx - label_w / 2.0, y + height + 2.0, label_size, theme.text_dim);
+    ctx.draw_text(
+        label,
+        cx - label_w / 2.0,
+        y + height + 2.0,
+        label_size,
+        theme.text_dim,
+    );
 }
 
 /// Draw a toggle button (on/off).
@@ -190,7 +228,11 @@ pub fn draw_toggle(
     let track_h = 10.0;
     let track_x = cx - track_w / 2.0;
     let track_y = cy - track_h / 2.0;
-    let bg = if is_on { theme.knob_fill } else { theme.knob_track };
+    let bg = if is_on {
+        theme.knob_fill
+    } else {
+        theme.knob_track
+    };
     ctx.fill_rect(track_x, track_y, track_w, track_h, bg);
 
     // Thumb circle
@@ -202,7 +244,13 @@ pub fn draw_toggle(
     ctx.fill_circle(thumb_x, cy, track_h / 2.0 - 1.0, theme.knob_pointer);
 
     if highlighted {
-        ctx.fill_rect(track_x - 1.0, track_y - 1.0, track_w + 2.0, track_h + 2.0, theme.accent);
+        ctx.fill_rect(
+            track_x - 1.0,
+            track_y - 1.0,
+            track_w + 2.0,
+            track_h + 2.0,
+            theme.accent,
+        );
         ctx.fill_rect(track_x, track_y, track_w, track_h, bg);
         ctx.fill_circle(thumb_x, cy, track_h / 2.0 - 1.0, theme.knob_pointer);
     }
@@ -210,12 +258,24 @@ pub fn draw_toggle(
     // Value text
     let val_size = 10.0;
     let val_w = ctx.text_width(value_text, val_size);
-    ctx.draw_text(value_text, cx - val_w / 2.0, y + height - 9.0, val_size, theme.text);
+    ctx.draw_text(
+        value_text,
+        cx - val_w / 2.0,
+        y + height - 9.0,
+        val_size,
+        theme.text,
+    );
 
     // Label
     let label_size = 9.0;
     let label_w = ctx.text_width(label, label_size);
-    ctx.draw_text(label, cx - label_w / 2.0, y + height + 2.0, label_size, theme.text_dim);
+    ctx.draw_text(
+        label,
+        cx - label_w / 2.0,
+        y + height + 2.0,
+        label_size,
+        theme.text_dim,
+    );
 }
 
 /// Draw a selector (enum parameter — click to cycle through values).
@@ -245,7 +305,11 @@ pub fn draw_selector(
     let box_h = 13.0;
     let box_x = cx - box_w / 2.0;
     let box_y = cy - box_h / 2.0;
-    let bg = if highlighted { theme.accent } else { theme.knob_track };
+    let bg = if highlighted {
+        theme.accent
+    } else {
+        theme.knob_track
+    };
     ctx.fill_rect(box_x, box_y, box_w, box_h, bg);
 
     // Value text (centered)
@@ -258,14 +322,32 @@ pub fn draw_selector(
     );
 
     // Left/right arrows
-    ctx.draw_text("<", box_x + 3.0, cy - arrow_size / 2.0, arrow_size, theme.text_dim);
+    ctx.draw_text(
+        "<",
+        box_x + 3.0,
+        cy - arrow_size / 2.0,
+        arrow_size,
+        theme.text_dim,
+    );
     let gt_w = ctx.text_width(">", arrow_size);
-    ctx.draw_text(">", box_x + box_w - gt_w - 3.0, cy - arrow_size / 2.0, arrow_size, theme.text_dim);
+    ctx.draw_text(
+        ">",
+        box_x + box_w - gt_w - 3.0,
+        cy - arrow_size / 2.0,
+        arrow_size,
+        theme.text_dim,
+    );
 
     // Label (below)
     let label_size = 9.0;
     let label_w = ctx.text_width(label, label_size);
-    ctx.draw_text(label, cx - label_w / 2.0, y + height + 2.0, label_size, theme.text_dim);
+    ctx.draw_text(
+        label,
+        cx - label_w / 2.0,
+        y + height + 2.0,
+        label_size,
+        theme.text_dim,
+    );
 }
 
 /// Draw a dropdown (closed state) — shows current value with a down arrow.
@@ -294,7 +376,11 @@ pub fn draw_dropdown(
     let box_h = 20.0;
     let box_x = cx - box_w / 2.0;
     let box_y = cy - box_h / 2.0;
-    let bg = if is_open || highlighted { theme.accent } else { theme.knob_track };
+    let bg = if is_open || highlighted {
+        theme.accent
+    } else {
+        theme.knob_track
+    };
     ctx.fill_rect(box_x, box_y, box_w, box_h, bg);
 
     // Value text (left-aligned with padding)
@@ -310,12 +396,24 @@ pub fn draw_dropdown(
     let arrow_size = 8.0;
     let arrow = if is_open { "\u{25B2}" } else { "\u{25BC}" }; // ▲ / ▼
     let aw = ctx.text_width(arrow, arrow_size);
-    ctx.draw_text(arrow, box_x + box_w - aw - 4.0, cy - arrow_size / 2.0, arrow_size, theme.text_dim);
+    ctx.draw_text(
+        arrow,
+        box_x + box_w - aw - 4.0,
+        cy - arrow_size / 2.0,
+        arrow_size,
+        theme.text_dim,
+    );
 
     // Label (below)
     let label_size = 9.0;
     let label_w = ctx.text_width(label, label_size);
-    ctx.draw_text(label, cx - label_w / 2.0, y + height + 2.0, label_size, theme.text_dim);
+    ctx.draw_text(
+        label,
+        cx - label_w / 2.0,
+        y + height + 2.0,
+        label_size,
+        theme.text_dim,
+    );
 }
 
 /// Draw the dropdown popup overlay showing visible options.
@@ -344,10 +442,38 @@ pub fn draw_dropdown_popup(
     // Background
     ctx.fill_rect(popup_x, popup_y, popup_w, popup_h, theme.surface);
     // Border
-    ctx.draw_line(popup_x, popup_y, popup_x + popup_w, popup_y, theme.text_dim, 1.0);
-    ctx.draw_line(popup_x + popup_w, popup_y, popup_x + popup_w, popup_y + popup_h, theme.text_dim, 1.0);
-    ctx.draw_line(popup_x + popup_w, popup_y + popup_h, popup_x, popup_y + popup_h, theme.text_dim, 1.0);
-    ctx.draw_line(popup_x, popup_y + popup_h, popup_x, popup_y, theme.text_dim, 1.0);
+    ctx.draw_line(
+        popup_x,
+        popup_y,
+        popup_x + popup_w,
+        popup_y,
+        theme.text_dim,
+        1.0,
+    );
+    ctx.draw_line(
+        popup_x + popup_w,
+        popup_y,
+        popup_x + popup_w,
+        popup_y + popup_h,
+        theme.text_dim,
+        1.0,
+    );
+    ctx.draw_line(
+        popup_x + popup_w,
+        popup_y + popup_h,
+        popup_x,
+        popup_y + popup_h,
+        theme.text_dim,
+        1.0,
+    );
+    ctx.draw_line(
+        popup_x,
+        popup_y + popup_h,
+        popup_x,
+        popup_y,
+        theme.text_dim,
+        1.0,
+    );
 
     let text_size = 10.0;
     let visible_end = (scroll_offset + visible_count).min(options.len());
@@ -361,7 +487,13 @@ pub fn draw_dropdown_popup(
             ctx.fill_rect(popup_x + 1.0, iy, popup_w - 2.0, item_h, theme.knob_track);
         }
 
-        ctx.draw_text(&options[abs_i], popup_x + 6.0, iy + (item_h - text_size) / 2.0, text_size, theme.text);
+        ctx.draw_text(
+            &options[abs_i],
+            popup_x + 6.0,
+            iy + (item_h - text_size) / 2.0,
+            text_size,
+            theme.text,
+        );
     }
 
     // Scroll indicators
@@ -369,11 +501,23 @@ pub fn draw_dropdown_popup(
     let cx = popup_x + popup_w / 2.0;
     if scroll_offset > 0 {
         let aw = ctx.text_width("\u{25B2}", arrow_size);
-        ctx.draw_text("\u{25B2}", cx - aw / 2.0, popup_y + 1.0, arrow_size, theme.text_dim);
+        ctx.draw_text(
+            "\u{25B2}",
+            cx - aw / 2.0,
+            popup_y + 1.0,
+            arrow_size,
+            theme.text_dim,
+        );
     }
     if visible_end < options.len() {
         let aw = ctx.text_width("\u{25BC}", arrow_size);
-        ctx.draw_text("\u{25BC}", cx - aw / 2.0, popup_y + popup_h - arrow_size - 1.0, arrow_size, theme.text_dim);
+        ctx.draw_text(
+            "\u{25BC}",
+            cx - aw / 2.0,
+            popup_y + popup_h - arrow_size - 1.0,
+            arrow_size,
+            theme.text_dim,
+        );
     }
 }
 
@@ -422,7 +566,13 @@ pub fn draw_meter(
     // Label (below the widget, same position as knob labels)
     let label_size = 8.0;
     let label_w = ctx.text_width(label, label_size);
-    ctx.draw_text(label, cx - label_w / 2.0, y + height + 4.0, label_size, theme.text_dim);
+    ctx.draw_text(
+        label,
+        cx - label_w / 2.0,
+        y + height + 4.0,
+        label_size,
+        theme.text_dim,
+    );
 }
 
 /// Draw an XY pad (2D control for two parameters).
@@ -458,15 +608,33 @@ pub fn draw_xy_pad(
     ctx.draw_line(pad_x, dot_y, pad_x + pad_w, dot_y, line_color, 1.0);
 
     // Dot at intersection
-    let dot_color = if highlighted { theme.accent } else { theme.knob_fill };
+    let dot_color = if highlighted {
+        theme.accent
+    } else {
+        theme.knob_fill
+    };
     ctx.fill_circle(dot_x, dot_y, 3.0, dot_color);
     ctx.fill_circle(dot_x, dot_y, 2.0, theme.knob_pointer);
 
     // Border
     if highlighted {
         ctx.draw_line(pad_x, pad_y, pad_x + pad_w, pad_y, theme.accent, 1.0);
-        ctx.draw_line(pad_x + pad_w, pad_y, pad_x + pad_w, pad_y + pad_h, theme.accent, 1.0);
-        ctx.draw_line(pad_x + pad_w, pad_y + pad_h, pad_x, pad_y + pad_h, theme.accent, 1.0);
+        ctx.draw_line(
+            pad_x + pad_w,
+            pad_y,
+            pad_x + pad_w,
+            pad_y + pad_h,
+            theme.accent,
+            1.0,
+        );
+        ctx.draw_line(
+            pad_x + pad_w,
+            pad_y + pad_h,
+            pad_x,
+            pad_y + pad_h,
+            theme.accent,
+            1.0,
+        );
         ctx.draw_line(pad_x, pad_y + pad_h, pad_x, pad_y, theme.accent, 1.0);
     }
 
@@ -474,10 +642,22 @@ pub fn draw_xy_pad(
     let label_size = 8.0;
     let x_label_w = ctx.text_width(label_x, label_size);
     let cx = x + width / 2.0;
-    ctx.draw_text(label_x, cx - x_label_w / 2.0, y + height + 3.0, label_size, theme.text_dim);
+    ctx.draw_text(
+        label_x,
+        cx - x_label_w / 2.0,
+        y + height + 3.0,
+        label_size,
+        theme.text_dim,
+    );
 
     if !label_y.is_empty() {
-        ctx.draw_text(label_y, pad_x + 2.0, pad_y + 1.0, label_size, theme.text_dim);
+        ctx.draw_text(
+            label_y,
+            pad_x + 2.0,
+            pad_y + 1.0,
+            label_size,
+            theme.text_dim,
+        );
     }
 }
 
@@ -553,7 +733,9 @@ fn draw_rows(
 ) {
     let w = pl.width;
     let knob_size = pl.knob_size;
-    draw_header(backend, 0.0, 0.0, w as f32, 20.0, pl.title, pl.version, theme);
+    draw_header(
+        backend, 0.0, 0.0, w as f32, 20.0, pl.title, pl.version, theme,
+    );
 
     let mut y = 24.0;
     let mut region_idx = 0usize;
@@ -609,12 +791,22 @@ fn draw_grid(
     state: &mut InteractionState,
 ) {
     let w = grid.width;
-    draw_header(backend, 0.0, 0.0, w as f32, 20.0, grid.title, grid.version, theme);
+    draw_header(
+        backend,
+        0.0,
+        0.0,
+        w as f32,
+        20.0,
+        grid.title,
+        grid.version,
+        theme,
+    );
 
     let section_offsets = compute_section_offsets(grid);
 
     for &(row_idx, label) in &grid.sections {
-        let y = GRID_HEADER_H + GRID_PADDING
+        let y = GRID_HEADER_H
+            + GRID_PADDING
             + row_idx as f32 * (grid.cell_size + GRID_GAP)
             + section_offsets[row_idx as usize]
             - GRID_SECTION_H;
@@ -623,7 +815,8 @@ fn draw_grid(
 
     for (idx, gw) in grid.widgets.iter().enumerate() {
         let x = GRID_PADDING + gw.col as f32 * (grid.cell_size + GRID_GAP);
-        let y = GRID_HEADER_H + GRID_PADDING
+        let y = GRID_HEADER_H
+            + GRID_PADDING
             + gw.row as f32 * (grid.cell_size + GRID_GAP)
             + section_offsets[gw.row as usize];
         let widget_w = gw.col_span as f32 * (grid.cell_size + GRID_GAP) - GRID_GAP;
@@ -674,27 +867,58 @@ fn draw_widget_entry(
 
     match wtype {
         WidgetType::Toggle => draw_toggle(
-            backend, x, y, widget_w, widget_h,
-            normalized, label, &value_text,
-            theme, is_hovered,
+            backend,
+            x,
+            y,
+            widget_w,
+            widget_h,
+            normalized,
+            label,
+            &value_text,
+            theme,
+            is_hovered,
         ),
         WidgetType::Slider => draw_slider(
-            backend, x, y, widget_w, widget_h,
-            normalized, label, &value_text,
-            theme, is_hovered,
+            backend,
+            x,
+            y,
+            widget_w,
+            widget_h,
+            normalized,
+            label,
+            &value_text,
+            theme,
+            is_hovered,
         ),
         WidgetType::Selector => draw_selector(
-            backend, x, y, widget_w, widget_h,
-            normalized, label, &value_text,
-            theme, is_hovered,
+            backend,
+            x,
+            y,
+            widget_w,
+            widget_h,
+            normalized,
+            label,
+            &value_text,
+            theme,
+            is_hovered,
         ),
         WidgetType::Dropdown => {
-            let is_open = state.dropdown.as_ref()
+            let is_open = state
+                .dropdown
+                .as_ref()
                 .map_or(false, |dd| dd.region_idx == region_idx);
             draw_dropdown(
-                backend, x, y, widget_w, widget_h,
-                normalized, label, &value_text,
-                theme, is_hovered, is_open,
+                backend,
+                x,
+                y,
+                widget_w,
+                widget_h,
+                normalized,
+                label,
+                &value_text,
+                theme,
+                is_hovered,
+                is_open,
             );
             let anchor_cy = y + widget_h / 2.0 - 8.0;
             if let Some(region) = state.knob_regions.get_mut(region_idx) {
@@ -713,11 +937,14 @@ fn draw_widget_entry(
             let vy = (snapshot.get_param)(val_y_id);
             let x_name_str = (snapshot.param_name)(param_id);
             let y_name_str = (snapshot.param_name)(val_y_id);
-            let x_name: &str = if x_name_str.is_empty() { label } else { &x_name_str };
+            let x_name: &str = if x_name_str.is_empty() {
+                label
+            } else {
+                &x_name_str
+            };
             let y_name: &str = &y_name_str;
             draw_xy_pad(
-                backend, x, y, widget_w, widget_h,
-                vx, vy, x_name, y_name, theme, is_hovered,
+                backend, x, y, widget_w, widget_h, vx, vy, x_name, y_name, theme, is_hovered,
             );
         }
         WidgetType::Knob => {
@@ -726,24 +953,34 @@ fn draw_widget_entry(
                 let kx = x + (widget_w - knob_size) / 2.0;
                 let ky = y + (widget_h - knob_size) / 2.0;
                 draw_knob(
-                    backend, kx, ky, knob_size, normalized,
-                    label, &value_text, theme, is_hovered,
+                    backend,
+                    kx,
+                    ky,
+                    knob_size,
+                    normalized,
+                    label,
+                    &value_text,
+                    theme,
+                    is_hovered,
                 );
             } else {
                 draw_knob(
-                    backend, x, y, widget_h, normalized,
-                    label, &value_text, theme, is_hovered,
+                    backend,
+                    x,
+                    y,
+                    widget_h,
+                    normalized,
+                    label,
+                    &value_text,
+                    theme,
+                    is_hovered,
                 );
             }
         }
     }
 }
 
-fn draw_dropdown_overlay(
-    backend: &mut dyn RenderBackend,
-    theme: &Theme,
-    state: &InteractionState,
-) {
+fn draw_dropdown_overlay(backend: &mut dyn RenderBackend, theme: &Theme, state: &InteractionState) {
     if let Some(ref dd) = state.dropdown {
         let (px, py, pw, _) = dd.popup_rect;
         draw_dropdown_popup(

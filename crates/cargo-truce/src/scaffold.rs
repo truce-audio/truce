@@ -15,7 +15,9 @@ impl PluginKind {
             "effect" => Ok(Self::Effect),
             "instrument" => Ok(Self::Instrument),
             "midi" => Ok(Self::Midi),
-            other => Err(format!("Unknown plugin type: {other} (expected effect, instrument, or midi)")),
+            other => Err(format!(
+                "Unknown plugin type: {other} (expected effect, instrument, or midi)"
+            )),
         }
     }
 
@@ -168,7 +170,8 @@ pub struct {struct_name}Params {{
     };
 
     let process_body = match kind {
-        PluginKind::Instrument => r#"    fn process(&mut self, buffer: &mut AudioBuffer, events: &EventList,
+        PluginKind::Instrument => {
+            r#"    fn process(&mut self, buffer: &mut AudioBuffer, events: &EventList,
                _context: &mut ProcessContext) -> ProcessStatus {
         for event in events.iter() {
             match &event.body {
@@ -190,8 +193,10 @@ pub struct {struct_name}Params {{
             }
         }
         ProcessStatus::Normal
-    }"#,
-        PluginKind::Midi => r#"    fn process(&mut self, _buffer: &mut AudioBuffer, events: &EventList,
+    }"#
+        }
+        PluginKind::Midi => {
+            r#"    fn process(&mut self, _buffer: &mut AudioBuffer, events: &EventList,
                context: &mut ProcessContext) -> ProcessStatus {
         for event in events.iter() {
             match &event.body {
@@ -219,8 +224,10 @@ pub struct {struct_name}Params {{
             }
         }
         ProcessStatus::Normal
-    }"#,
-        PluginKind::Effect => r#"    fn process(&mut self, buffer: &mut AudioBuffer, _events: &EventList,
+    }"#
+        }
+        PluginKind::Effect => {
+            r#"    fn process(&mut self, buffer: &mut AudioBuffer, _events: &EventList,
                _context: &mut ProcessContext) -> ProcessStatus {
         for i in 0..buffer.num_samples() {
             let gain = db_to_linear(self.params.gain.smoothed_next() as f64) as f32;
@@ -230,7 +237,8 @@ pub struct {struct_name}Params {{
             }
         }
         ProcessStatus::Normal
-    }"#,
+    }"#
+        }
     };
 
     let bus_layouts = kind.bus_layouts();
@@ -238,7 +246,8 @@ pub struct {struct_name}Params {{
 
     let effect_only_tests = match kind {
         PluginKind::Instrument => "",
-        _ => r#"
+        _ => {
+            r#"
     #[test]
     fn renders_nonzero_output() {
         let result = TEST_BODY;
@@ -248,7 +257,8 @@ pub struct {struct_name}Params {{
     #[test]
     fn bus_config_effect() {
         truce_test::assert_bus_config_effect::<Plugin>();
-    }"#,
+    }"#
+        }
     };
     let effect_only_tests = effect_only_tests.replace("TEST_BODY", test_body);
 
@@ -542,14 +552,7 @@ pub fn to_fourcc(s: &str) -> String {
 
     let mut code: Vec<char> = segments
         .iter()
-        .map(|seg| {
-            seg.chars()
-                .next()
-                .unwrap()
-                .to_uppercase()
-                .next()
-                .unwrap()
-        })
+        .map(|seg| seg.chars().next().unwrap().to_uppercase().next().unwrap())
         .collect();
 
     if code.len() >= 4 {
@@ -633,8 +636,14 @@ mod fourcc_tests {
     #[test]
     fn no_collision() {
         let plugins = vec![
-            PluginSpec { name: "gain".into(), kind: PluginKind::Effect },
-            PluginSpec { name: "synth".into(), kind: PluginKind::Instrument },
+            PluginSpec {
+                name: "gain".into(),
+                kind: PluginKind::Effect,
+            },
+            PluginSpec {
+                name: "synth".into(),
+                kind: PluginKind::Instrument,
+            },
         ];
         let map = resolve_fourccs(&plugins);
         assert_eq!(map["gain"], to_fourcc("gain"));
@@ -645,8 +654,14 @@ mod fourcc_tests {
     fn collision_produces_unique_codes() {
         // Two names that produce the same initials + backfill
         let plugins = vec![
-            PluginSpec { name: "aa".into(), kind: PluginKind::Effect },
-            PluginSpec { name: "ab".into(), kind: PluginKind::Effect },
+            PluginSpec {
+                name: "aa".into(),
+                kind: PluginKind::Effect,
+            },
+            PluginSpec {
+                name: "ab".into(),
+                kind: PluginKind::Effect,
+            },
         ];
         let map = resolve_fourccs(&plugins);
         assert_ne!(map["aa"], map["ab"]);
@@ -657,9 +672,18 @@ mod fourcc_tests {
     #[test]
     fn three_way_collision_all_unique() {
         let plugins = vec![
-            PluginSpec { name: "soft-clip".into(), kind: PluginKind::Effect },
-            PluginSpec { name: "soft-comp".into(), kind: PluginKind::Effect },
-            PluginSpec { name: "soft-crush".into(), kind: PluginKind::Effect },
+            PluginSpec {
+                name: "soft-clip".into(),
+                kind: PluginKind::Effect,
+            },
+            PluginSpec {
+                name: "soft-comp".into(),
+                kind: PluginKind::Effect,
+            },
+            PluginSpec {
+                name: "soft-crush".into(),
+                kind: PluginKind::Effect,
+            },
         ];
         let map = resolve_fourccs(&plugins);
         let mut codes: Vec<&String> = map.values().collect();
@@ -671,8 +695,14 @@ mod fourcc_tests {
     #[test]
     fn first_plugin_keeps_natural_code() {
         let plugins = vec![
-            PluginSpec { name: "soft-clip".into(), kind: PluginKind::Effect },
-            PluginSpec { name: "soft-comp".into(), kind: PluginKind::Effect },
+            PluginSpec {
+                name: "soft-clip".into(),
+                kind: PluginKind::Effect,
+            },
+            PluginSpec {
+                name: "soft-comp".into(),
+                kind: PluginKind::Effect,
+            },
         ];
         let map = resolve_fourccs(&plugins);
         // First plugin should keep its natural code

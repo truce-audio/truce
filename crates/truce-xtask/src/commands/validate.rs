@@ -21,7 +21,11 @@ fn plist_extract(plist: &Path, key_path: &str) -> Option<String> {
         return None;
     }
     let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if s.is_empty() { None } else { Some(s) }
+    if s.is_empty() {
+        None
+    } else {
+        Some(s)
+    }
 }
 
 /// Find every AU bundle on disk that declares the given component code.
@@ -37,14 +41,15 @@ fn find_au_collisions(au_type: &str, subtype: &str, manufacturer: &str) -> Vec<P
 
     // AU v3: Application bundles ship the appex inside Contents/PlugIns.
     // Walk both /Applications and ~/Applications (per-user install).
-    for apps_dir in [
-        PathBuf::from("/Applications"),
-        home.join("Applications"),
-    ] {
-        let Ok(apps) = fs::read_dir(&apps_dir) else { continue };
+    for apps_dir in [PathBuf::from("/Applications"), home.join("Applications")] {
+        let Ok(apps) = fs::read_dir(&apps_dir) else {
+            continue;
+        };
         for app in apps.flatten() {
             let plugins_dir = app.path().join("Contents/PlugIns");
-            let Ok(appexes) = fs::read_dir(&plugins_dir) else { continue };
+            let Ok(appexes) = fs::read_dir(&plugins_dir) else {
+                continue;
+            };
             for appex in appexes.flatten() {
                 let plist = appex.path().join("Contents/Info.plist");
                 if matches_au_v3_descriptor(&plist, au_type, subtype, manufacturer) {
@@ -59,7 +64,9 @@ fn find_au_collisions(au_type: &str, subtype: &str, manufacturer: &str) -> Vec<P
         PathBuf::from("/Library/Audio/Plug-Ins/Components"),
         home.join("Library/Audio/Plug-Ins/Components"),
     ] {
-        let Ok(comps) = fs::read_dir(&dir) else { continue };
+        let Ok(comps) = fs::read_dir(&dir) else {
+            continue;
+        };
         for comp in comps.flatten() {
             let plist = comp.path().join("Contents/Info.plist");
             if matches_au_v2_descriptor(&plist, au_type, subtype, manufacturer) {
@@ -72,7 +79,12 @@ fn find_au_collisions(au_type: &str, subtype: &str, manufacturer: &str) -> Vec<P
 }
 
 #[cfg(target_os = "macos")]
-fn matches_au_v3_descriptor(plist: &Path, au_type: &str, subtype: &str, manufacturer: &str) -> bool {
+fn matches_au_v3_descriptor(
+    plist: &Path,
+    au_type: &str,
+    subtype: &str,
+    manufacturer: &str,
+) -> bool {
     if !plist.is_file() {
         return false;
     }
@@ -83,7 +95,12 @@ fn matches_au_v3_descriptor(plist: &Path, au_type: &str, subtype: &str, manufact
 }
 
 #[cfg(target_os = "macos")]
-fn matches_au_v2_descriptor(plist: &Path, au_type: &str, subtype: &str, manufacturer: &str) -> bool {
+fn matches_au_v2_descriptor(
+    plist: &Path,
+    au_type: &str,
+    subtype: &str,
+    manufacturer: &str,
+) -> bool {
     if !plist.is_file() {
         return false;
     }
@@ -160,7 +177,11 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
     }
 
     let plugins: Vec<&PluginDef> = if let Some(ref filter) = plugin_filter {
-        config.plugin.iter().filter(|p| p.suffix == *filter).collect()
+        config
+            .plugin
+            .iter()
+            .filter(|p| p.suffix == *filter)
+            .collect()
     } else {
         config.plugin.iter().collect()
     };
@@ -174,10 +195,18 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
             for p in &plugins {
                 eprint!(
                     "  {} ({} {} {}) ... ",
-                    p.name, p.resolved_au_type(), p.resolved_fourcc(), config.vendor.au_manufacturer
+                    p.name,
+                    p.resolved_au_type(),
+                    p.resolved_fourcc(),
+                    config.vendor.au_manufacturer
                 );
                 let output = Command::new("auval")
-                    .args(["-v", &p.resolved_au_type(), p.resolved_fourcc(), &config.vendor.au_manufacturer])
+                    .args([
+                        "-v",
+                        &p.resolved_au_type(),
+                        p.resolved_fourcc(),
+                        &config.vendor.au_manufacturer,
+                    ])
                     .output()?;
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 if stdout.contains("VALIDATION SUCCEEDED") {
@@ -213,10 +242,18 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
                 let sub = p.au3_sub();
                 eprint!(
                     "  {} ({} {} {}) ... ",
-                    p.name, p.resolved_au_type(), sub, config.vendor.au_manufacturer
+                    p.name,
+                    p.resolved_au_type(),
+                    sub,
+                    config.vendor.au_manufacturer
                 );
                 let output = Command::new("auval")
-                    .args(["-v", &p.resolved_au_type(), sub, &config.vendor.au_manufacturer])
+                    .args([
+                        "-v",
+                        &p.resolved_au_type(),
+                        sub,
+                        &config.vendor.au_manufacturer,
+                    ])
                     .output()?;
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 if stdout.contains("VALIDATION SUCCEEDED") {
@@ -320,8 +357,12 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
                     eprintln!("PASS ({} tests)", passed);
                 } else {
                     eprintln!("FAIL");
-                    if !stdout.is_empty() { eprintln!("{}", stdout); }
-                    if !stderr.is_empty() { eprintln!("{}", stderr); }
+                    if !stdout.is_empty() {
+                        eprintln!("{}", stdout);
+                    }
+                    if !stderr.is_empty() {
+                        eprintln!("{}", stderr);
+                    }
                     failures += 1;
                 }
             }
@@ -329,7 +370,9 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
             let _ = fs::remove_dir_all(&tmp_dir);
         } else {
             eprintln!("  clap-validator not found.");
-            eprintln!("  Install: cargo install --git https://github.com/free-audio/clap-validator");
+            eprintln!(
+                "  Install: cargo install --git https://github.com/free-audio/clap-validator"
+            );
             eprintln!("  Or set CLAP_VALIDATOR=/path/to/clap-validator");
         }
     }
@@ -369,7 +412,11 @@ fn find_clap_validator() -> Option<String> {
         }
     }
     // Check PATH
-    if Command::new("clap-validator").arg("--version").output().is_ok() {
+    if Command::new("clap-validator")
+        .arg("--version")
+        .output()
+        .is_ok()
+    {
         return Some("clap-validator".to_string());
     }
     // Check cargo install location

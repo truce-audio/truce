@@ -113,7 +113,8 @@ pub struct Vst3Callbacks {
     pub get_tail: unsafe extern "C" fn(ctx: *mut c_void) -> u32,
     // Output events
     pub get_output_event_count: unsafe extern "C" fn(ctx: *mut c_void) -> u32,
-    pub get_output_event: unsafe extern "C" fn(ctx: *mut c_void, index: u32, out: *mut Vst3MidiEvent),
+    pub get_output_event:
+        unsafe extern "C" fn(ctx: *mut c_void, index: u32, out: *mut Vst3MidiEvent),
     // GUI
     pub gui_has_editor: unsafe extern "C" fn(ctx: *mut c_void) -> i32,
     pub gui_get_size: unsafe extern "C" fn(ctx: *mut c_void, w: *mut u32, h: *mut u32),

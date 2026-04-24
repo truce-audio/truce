@@ -44,8 +44,15 @@ pub(crate) fn cmd_test() -> Res {
             for p in &config.plugin {
                 eprint!("  VST2 {} ... ", p.name);
                 let build = Command::new("cargo")
-                    .args(["build", "--release", "-p", &p.crate_name,
-                           "--no-default-features", "--features", "vst2"])
+                    .args([
+                        "build",
+                        "--release",
+                        "-p",
+                        &p.crate_name,
+                        "--no-default-features",
+                        "--features",
+                        "vst2",
+                    ])
                     .env("MACOSX_DEPLOYMENT_TARGET", &deployment_target())
                     .output()?;
                 if !build.status.success() {
@@ -57,7 +64,9 @@ pub(crate) fn cmd_test() -> Res {
                 let is_synth = p.resolved_au_type() == "aumu";
                 let mut cmd = Command::new(test_bin.to_str().unwrap());
                 cmd.arg(dylib.to_str().unwrap());
-                if is_synth { cmd.arg("--synth"); }
+                if is_synth {
+                    cmd.arg("--synth");
+                }
                 let output = cmd.output()?;
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 if output.status.success() {

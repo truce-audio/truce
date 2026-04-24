@@ -14,8 +14,8 @@ use truce_core::bus::BusLayout;
 use truce_core::editor::{Editor, EditorContext, RawWindowHandle};
 use truce_core::events::{EventBody, EventList};
 use truce_core::info::PluginInfo;
-use truce_core::process::{ProcessContext, ProcessStatus};
 use truce_core::plugin::Plugin;
+use truce_core::process::{ProcessContext, ProcessStatus};
 use truce_params::Params;
 
 use crate::loader::NativeLoader;
@@ -55,7 +55,12 @@ pub struct HotShell<P: Params> {
 unsafe impl<P: Params> Send for HotShell<P> {}
 
 impl<P: Params + 'static> HotShell<P> {
-    pub fn new(params: P, dylib_path: PathBuf, info: PluginInfo, bus_layouts: Vec<BusLayout>) -> Self {
+    pub fn new(
+        params: P,
+        dylib_path: PathBuf,
+        info: PluginInfo,
+        bus_layouts: Vec<BusLayout>,
+    ) -> Self {
         let params = Arc::new(params);
         let params_ptr = Arc::as_ptr(&params) as *const ();
         let loader = NativeLoader::new(dylib_path.clone(), params_ptr);
@@ -88,16 +93,25 @@ impl<P: Params + 'static> HotShell<P> {
             return None;
         }
         drop(loader);
-        Some(truce_gui::editor::BuiltinEditor::new_grid(Arc::clone(&self.params), layout))
+        Some(truce_gui::editor::BuiltinEditor::new_grid(
+            Arc::clone(&self.params),
+            layout,
+        ))
     }
 }
 
 impl<P: Params + 'static> Plugin for HotShell<P> {
-    fn info() -> PluginInfo where Self: Sized {
+    fn info() -> PluginInfo
+    where
+        Self: Sized,
+    {
         unreachable!("HotShell::info() should not be called statically")
     }
 
-    fn bus_layouts() -> Vec<BusLayout> where Self: Sized {
+    fn bus_layouts() -> Vec<BusLayout>
+    where
+        Self: Sized,
+    {
         unreachable!("HotShell::bus_layouts() should not be called statically")
     }
 
@@ -149,9 +163,7 @@ impl<P: Params + 'static> Plugin for HotShell<P> {
         // Build a ProcessContext with param/meter callbacks for the logic.
         let params = &self.params;
         let meters = &self.meters;
-        let param_fn = |id: u32| -> f64 {
-            params.get_plain(id).unwrap_or(0.0)
-        };
+        let param_fn = |id: u32| -> f64 { params.get_plain(id).unwrap_or(0.0) };
         let meter_fn = |id: u32, v: f32| {
             let idx = id.wrapping_sub(256) as usize;
             if let Some(slot) = meters.get(idx) {
@@ -179,7 +191,10 @@ impl<P: Params + 'static> Plugin for HotShell<P> {
 
     fn save_state(&self) -> Option<Vec<u8>> {
         let loader = self.loader.lock();
-        loader.plugin().map(|p| p.save_state()).filter(|s| !s.is_empty())
+        loader
+            .plugin()
+            .map(|p| p.save_state())
+            .filter(|s| !s.is_empty())
     }
 
     fn load_state(&mut self, data: &[u8]) {
@@ -206,7 +221,10 @@ impl<P: Params + 'static> Plugin for HotShell<P> {
         let inner = Arc::new(std::sync::Mutex::new(builtin));
         let gpu = truce_gpu::GpuEditor::new_shared(Arc::clone(&inner));
         Some(Box::new(HotEditor::new_builtin(
-            gpu, inner, gui_loader, Arc::clone(&self.params),
+            gpu,
+            inner,
+            gui_loader,
+            Arc::clone(&self.params),
         )))
     }
 
@@ -222,11 +240,11 @@ impl<P: Params + 'static> Plugin for HotShell<P> {
 
     fn get_meter(&self, meter_id: u32) -> f32 {
         let idx = meter_id.wrapping_sub(256) as usize;
-        self.meters.get(idx)
+        self.meters
+            .get(idx)
             .map(|v| f32::from_bits(v.load(Ordering::Relaxed)))
             .unwrap_or(0.0)
     }
-
 }
 
 // ---------------------------------------------------------------------------
@@ -241,9 +259,7 @@ enum HotEditorInner<P: Params> {
         inner: Arc<std::sync::Mutex<truce_gui::editor::BuiltinEditor<P>>>,
     },
     /// Custom GUI (egui, iced): close/reopen on reload.
-    Custom {
-        editor: Box<dyn Editor>,
-    },
+    Custom { editor: Box<dyn Editor> },
 }
 
 struct HotEditor<P: Params> {

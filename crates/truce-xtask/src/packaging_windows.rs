@@ -19,10 +19,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::{
-    build_aax_template, cargo_build, detect_default_features, load_config,
-    project_root, read_workspace_version, release_lib_for_target,
-    resolve_aax_sdk_path, rustup_has_target, tmp_dir, Config, PkgFormat,
-    PluginDef, Res, WindowsSigningConfig,
+    build_aax_template, cargo_build, detect_default_features, load_config, project_root,
+    read_workspace_version, release_lib_for_target, resolve_aax_sdk_path, rustup_has_target,
+    tmp_dir, Config, PkgFormat, PluginDef, Res, WindowsSigningConfig,
 };
 
 // ---------------------------------------------------------------------------
@@ -238,15 +237,12 @@ fn parse_args(args: &[String]) -> std::result::Result<Opts, crate::BoxErr> {
         match args[i].as_str() {
             "-p" => {
                 i += 1;
-                opts.plugin_filter = Some(
-                    args.get(i).cloned().ok_or("-p requires a plugin suffix")?,
-                );
+                opts.plugin_filter =
+                    Some(args.get(i).cloned().ok_or("-p requires a plugin suffix")?);
             }
             "--formats" => {
                 i += 1;
-                opts.format_str = Some(
-                    args.get(i).cloned().ok_or("--formats requires a value")?,
-                );
+                opts.format_str = Some(args.get(i).cloned().ok_or("--formats requires a value")?);
             }
             "--no-sign" => opts.no_sign = true,
             "--no-pace-sign" => opts.no_pace_sign = true,
@@ -300,9 +296,7 @@ fn resolve_formats(
         .collect();
 
     if filtered.is_empty() {
-        return Err(
-            "no Windows-eligible formats selected (AU is macOS-only)".into(),
-        );
+        return Err("no Windows-eligible formats selected (AU is macOS-only)".into());
     }
     Ok(filtered)
 }
@@ -355,7 +349,7 @@ fn build_all_formats(
     archs: &[TargetArch],
     root: &Path,
 ) -> Res {
-    let dt = "";  // MACOSX_DEPLOYMENT_TARGET is ignored on Windows
+    let dt = ""; // MACOSX_DEPLOYMENT_TARGET is ignored on Windows
 
     let has_clap = formats.iter().any(|f| matches!(f, PkgFormat::Clap));
     let has_vst3 = formats.iter().any(|f| matches!(f, PkgFormat::Vst3));
@@ -368,8 +362,7 @@ fn build_all_formats(
 
         if has_clap {
             eprintln!("Building CLAP ({})...", arch.tag());
-            let mut build_args: Vec<String> =
-                vec!["--target".into(), triple.into()];
+            let mut build_args: Vec<String> = vec!["--target".into(), triple.into()];
             for p in plugins {
                 build_args.push("-p".into());
                 build_args.push(p.crate_name.clone());
@@ -383,11 +376,8 @@ fn build_all_formats(
             cargo_build(&[], &arg_refs, dt)?;
             for p in plugins {
                 let src = release_lib_for_target(root, &p.dylib_stem(), Some(triple));
-                let saved = release_lib_for_target(
-                    root,
-                    &format!("{}_clap", p.dylib_stem()),
-                    Some(triple),
-                );
+                let saved =
+                    release_lib_for_target(root, &format!("{}_clap", p.dylib_stem()), Some(triple));
                 if src.exists() {
                     fs::copy(&src, &saved)?;
                 }
@@ -396,8 +386,7 @@ fn build_all_formats(
 
         if has_vst3 {
             eprintln!("Building VST3 ({})...", arch.tag());
-            let mut build_args: Vec<String> =
-                vec!["--target".into(), triple.into()];
+            let mut build_args: Vec<String> = vec!["--target".into(), triple.into()];
             for p in plugins {
                 build_args.push("-p".into());
                 build_args.push(p.crate_name.clone());
@@ -411,11 +400,8 @@ fn build_all_formats(
             cargo_build(&[], &arg_refs, dt)?;
             for p in plugins {
                 let src = release_lib_for_target(root, &p.dylib_stem(), Some(triple));
-                let saved = release_lib_for_target(
-                    root,
-                    &format!("{}_vst3", p.dylib_stem()),
-                    Some(triple),
-                );
+                let saved =
+                    release_lib_for_target(root, &format!("{}_vst3", p.dylib_stem()), Some(triple));
                 if src.exists() {
                     fs::copy(&src, &saved)?;
                 }
@@ -424,8 +410,7 @@ fn build_all_formats(
 
         if has_vst2 {
             eprintln!("Building VST2 ({})...", arch.tag());
-            let mut build_args: Vec<String> =
-                vec!["--target".into(), triple.into()];
+            let mut build_args: Vec<String> = vec!["--target".into(), triple.into()];
             for p in plugins {
                 build_args.push("-p".into());
                 build_args.push(p.crate_name.clone());
@@ -439,11 +424,8 @@ fn build_all_formats(
             cargo_build(&[], &arg_refs, dt)?;
             for p in plugins {
                 let src = release_lib_for_target(root, &p.dylib_stem(), Some(triple));
-                let dst = release_lib_for_target(
-                    root,
-                    &format!("{}_vst2", p.dylib_stem()),
-                    Some(triple),
-                );
+                let dst =
+                    release_lib_for_target(root, &format!("{}_vst2", p.dylib_stem()), Some(triple));
                 fs::copy(&src, &dst)?;
             }
         }
@@ -454,8 +436,7 @@ fn build_all_formats(
         // have nothing to pair with in the installer.
         if has_aax && arch == TargetArch::host() {
             eprintln!("Building AAX ({})...", arch.tag());
-            let mut build_args: Vec<String> =
-                vec!["--target".into(), triple.into()];
+            let mut build_args: Vec<String> = vec!["--target".into(), triple.into()];
             for p in plugins {
                 build_args.push("-p".into());
                 build_args.push(p.crate_name.clone());
@@ -469,15 +450,11 @@ fn build_all_formats(
             cargo_build(&[], &arg_refs, dt)?;
             for p in plugins {
                 let src = release_lib_for_target(root, &p.dylib_stem(), Some(triple));
-                let dst = release_lib_for_target(
-                    root,
-                    &format!("{}_aax", p.dylib_stem()),
-                    Some(triple),
-                );
+                let dst =
+                    release_lib_for_target(root, &format!("{}_aax", p.dylib_stem()), Some(triple));
                 fs::copy(&src, &dst)?;
             }
         }
-
     }
 
     Ok(())
@@ -516,18 +493,16 @@ fn stage_plugin(
             PkgFormat::Vst2 => {
                 signable.push(stage_vst2(root, p, staging, arch)?);
             }
-            PkgFormat::Aax => {
-                match stage_aax(root, p, config, staging, arch)? {
-                    Some((wrapper, dylib)) => {
-                        signable.push(dylib);
-                        signable.push(wrapper);
-                    }
-                    None => {
-                        eprintln!("skipped (AAX template is built for host arch only)");
-                        continue;
-                    }
+            PkgFormat::Aax => match stage_aax(root, p, config, staging, arch)? {
+                Some((wrapper, dylib)) => {
+                    signable.push(dylib);
+                    signable.push(wrapper);
                 }
-            }
+                None => {
+                    eprintln!("skipped (AAX template is built for host arch only)");
+                    continue;
+                }
+            },
             PkgFormat::Au2 | PkgFormat::Au3 => {
                 return Err("AU is macOS-only; should have been filtered".into());
             }
@@ -687,11 +662,7 @@ fn stage_aax(
     // the first one whose arch matches the current process — arch tagging
     // in the filename is purely for storage; the binary's own arch header
     // determines what LoadLibrary accepts.
-    let resource_dll = resources_dir.join(format!(
-        "{}_aax_{}.dll",
-        p.dylib_stem(),
-        arch.tag()
-    ));
+    let resource_dll = resources_dir.join(format!("{}_aax_{}.dll", p.dylib_stem(), arch.tag()));
     fs::copy(&template, &wrapper)?;
     fs::copy(&dylib, &resource_dll)?;
 
@@ -711,9 +682,8 @@ fn sign_files(files: &[PathBuf], config: &WindowsSigningConfig) -> Res {
         // of cmd_package already covered the "why."
         return Ok(());
     }
-    let signtool = locate_signtool().ok_or(
-        "signtool.exe not found on PATH. Install the Windows 10 SDK or Windows 11 SDK.",
-    )?;
+    let signtool = locate_signtool()
+        .ok_or("signtool.exe not found on PATH. Install the Windows 10 SDK or Windows 11 SDK.")?;
 
     let mut args: Vec<String> = vec![
         "sign".into(),
@@ -727,10 +697,7 @@ fn sign_files(files: &[PathBuf], config: &WindowsSigningConfig) -> Res {
 
     // Credential source — Azure wins, then thumbprint, then pfx.
     if let (Some(account), Some(profile)) = (&config.azure_account, &config.azure_profile) {
-        let dlib = config
-            .azure_dlib
-            .clone()
-            .unwrap_or_else(default_azure_dlib);
+        let dlib = config.azure_dlib.clone().unwrap_or_else(default_azure_dlib);
         let metadata_path = tmp_dir().join("truce_azure_signing_metadata.json");
         let metadata = format!(
             r#"{{
@@ -781,9 +748,7 @@ fn locate_signtool() -> Option<PathBuf> {
     if let Ok(p) = which("signtool.exe") {
         return Some(p);
     }
-    let candidates = [
-        r"C:\Program Files (x86)\Windows Kits\10\bin\x64\signtool.exe",
-    ];
+    let candidates = [r"C:\Program Files (x86)\Windows Kits\10\bin\x64\signtool.exe"];
     for c in &candidates {
         let p = PathBuf::from(c);
         if p.exists() {
@@ -837,16 +802,18 @@ pub(crate) fn locate_wraptool() -> Option<PathBuf> {
 }
 
 fn which(name: &str) -> Result<PathBuf, std::io::Error> {
-    let path = std::env::var_os("PATH").ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::NotFound, "PATH not set")
-    })?;
+    let path = std::env::var_os("PATH")
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "PATH not set"))?;
     for dir in std::env::split_paths(&path) {
         let candidate = dir.join(name);
         if candidate.is_file() {
             return Ok(candidate);
         }
     }
-    Err(std::io::Error::new(std::io::ErrorKind::NotFound, name.to_string()))
+    Err(std::io::Error::new(
+        std::io::ErrorKind::NotFound,
+        name.to_string(),
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -874,9 +841,7 @@ fn pace_sign_aax(bundle: &Path) -> Res {
     let pace_signid = match std::env::var("PACE_SIGN_ID") {
         Ok(v) => v,
         Err(_) => {
-            eprintln!(
-                "  PACE_SIGN_ID env var not set — skipping PACE signing."
-            );
+            eprintln!("  PACE_SIGN_ID env var not set — skipping PACE signing.");
             return Ok(());
         }
     };
@@ -969,7 +934,10 @@ fn render_iss(
     setup.push_str(&format!("AppVersion={}\r\n", iss_escape(version)));
     setup.push_str(&format!("AppPublisher={}\r\n", iss_escape(publisher)));
     if !publisher_url.is_empty() {
-        setup.push_str(&format!("AppPublisherURL={}\r\n", iss_escape(&publisher_url)));
+        setup.push_str(&format!(
+            "AppPublisherURL={}\r\n",
+            iss_escape(&publisher_url)
+        ));
     }
     setup.push_str(&format!(
         "DefaultDirName={{commonpf}}\\{}\\{}\r\n",
@@ -1016,7 +984,9 @@ fn render_iss(
     // [Types] — full vs custom
     setup.push_str("[Types]\r\n");
     setup.push_str("Name: \"full\"; Description: \"Full installation\"\r\n");
-    setup.push_str("Name: \"custom\"; Description: \"Custom installation\"; Flags: iscustom\r\n\r\n");
+    setup.push_str(
+        "Name: \"custom\"; Description: \"Custom installation\"; Flags: iscustom\r\n\r\n",
+    );
 
     // [Components] — one per format.
     setup.push_str("[Components]\r\n");
@@ -1214,21 +1184,19 @@ fn iss_escape_path(p: &Path) -> String {
 pub(crate) fn doctor() {
     match locate_iscc() {
         Some(p) => eprintln!("    ✅ Inno Setup 6 (ISCC.exe) at {}", p.display()),
-        None => eprintln!(
-            "    ⚠️  ISCC.exe not found — install Inno Setup 6 to produce installers"
-        ),
+        None => {
+            eprintln!("    ⚠️  ISCC.exe not found — install Inno Setup 6 to produce installers")
+        }
     }
     match locate_signtool() {
         Some(p) => eprintln!("    ✅ signtool.exe at {}", p.display()),
-        None => eprintln!(
-            "    ⚠️  signtool.exe not found — install Windows 10/11 SDK for Authenticode"
-        ),
+        None => {
+            eprintln!("    ⚠️  signtool.exe not found — install Windows 10/11 SDK for Authenticode")
+        }
     }
     match locate_wraptool() {
         Some(p) => eprintln!("    ✅ wraptool.exe (PACE) at {}", p.display()),
-        None => eprintln!(
-            "    ℹ️  wraptool.exe not found — only needed for signed AAX builds"
-        ),
+        None => eprintln!("    ℹ️  wraptool.exe not found — only needed for signed AAX builds"),
     }
 
     // ARM64 readiness. Universal is the default, so missing ARM64 toolchain

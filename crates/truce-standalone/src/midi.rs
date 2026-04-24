@@ -56,10 +56,7 @@ impl MidiInputThread {
     /// `None` if no MIDI device was requested, or if the requested
     /// device isn't present on startup (in which case the thread
     /// still starts so it can auto-connect on hot-plug).
-    pub fn start(
-        opts: &Options,
-        pending: Arc<Mutex<Vec<MidiEvent>>>,
-    ) -> Option<Self> {
+    pub fn start(opts: &Options, pending: Arc<Mutex<Vec<MidiEvent>>>) -> Option<Self> {
         let requested = opts.midi_input.clone()?;
         let stop = Arc::new(AtomicBool::new(false));
         let stop_thread = Arc::clone(&stop);
@@ -79,11 +76,7 @@ impl Drop for MidiInputThread {
     }
 }
 
-fn midi_thread(
-    requested: String,
-    pending: Arc<Mutex<Vec<MidiEvent>>>,
-    stop: Arc<AtomicBool>,
-) {
+fn midi_thread(requested: String, pending: Arc<Mutex<Vec<MidiEvent>>>, stop: Arc<AtomicBool>) {
     let mut connection: Option<MidiInputConnection<()>> = None;
     let mut current_name = String::new();
 

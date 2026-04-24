@@ -3,12 +3,15 @@
 
 #![cfg(not(target_os = "windows"))]
 
-use super::stage::{generate_distribution_xml, stage_aax, stage_au2, stage_au3, stage_clap, stage_vst2, stage_vst3, write_postinstall_script};
+use super::stage::{
+    generate_distribution_xml, stage_aax, stage_au2, stage_au3, stage_clap, stage_vst2, stage_vst3,
+    write_postinstall_script,
+};
 use super::PkgFormat;
 use crate::{
     cargo_build_for_arch, copy_dir_recursive, deployment_target, detect_default_features,
-    lipo_into, load_config, project_root, read_workspace_version, release_lib_for_target,
-    Config, MacArch, PluginDef, Res,
+    lipo_into, load_config, project_root, read_workspace_version, release_lib_for_target, Config,
+    MacArch, PluginDef, Res,
 };
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -75,14 +78,22 @@ pub(crate) fn cmd_package_macos(args: &[String]) -> Res {
         // Default: auto-detect from project features
         let available = detect_default_features();
         let mut fmts = Vec::new();
-        if available.contains("clap") { fmts.push(PkgFormat::Clap); }
-        if available.contains("vst3") { fmts.push(PkgFormat::Vst3); }
-        if available.contains("vst2") { fmts.push(PkgFormat::Vst2); }
+        if available.contains("clap") {
+            fmts.push(PkgFormat::Clap);
+        }
+        if available.contains("vst3") {
+            fmts.push(PkgFormat::Vst3);
+        }
+        if available.contains("vst2") {
+            fmts.push(PkgFormat::Vst2);
+        }
         if available.contains("au") {
             fmts.push(PkgFormat::Au2);
             fmts.push(PkgFormat::Au3);
         }
-        if available.contains("aax") { fmts.push(PkgFormat::Aax); }
+        if available.contains("aax") {
+            fmts.push(PkgFormat::Aax);
+        }
         fmts
     };
 
@@ -92,12 +103,22 @@ pub(crate) fn cmd_package_macos(args: &[String]) -> Res {
 
     // Resolve plugins
     let plugins: Vec<&PluginDef> = if let Some(ref filter) = plugin_filter {
-        let matched: Vec<_> = config.plugin.iter().filter(|p| p.suffix == *filter).collect();
+        let matched: Vec<_> = config
+            .plugin
+            .iter()
+            .filter(|p| p.suffix == *filter)
+            .collect();
         if matched.is_empty() {
             return Err(format!(
                 "No plugin with suffix '{filter}'. Available: {}",
-                config.plugin.iter().map(|p| p.suffix.as_str()).collect::<Vec<_>>().join(", ")
-            ).into());
+                config
+                    .plugin
+                    .iter()
+                    .map(|p| p.suffix.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+            .into());
         }
         matched
     } else {
@@ -123,7 +144,11 @@ pub(crate) fn cmd_package_macos(args: &[String]) -> Res {
 
     eprintln!(
         "Packaging archs: {}",
-        archs.iter().map(|a| a.triple()).collect::<Vec<_>>().join(", ")
+        archs
+            .iter()
+            .map(|a| a.triple())
+            .collect::<Vec<_>>()
+            .join(", ")
     );
 
     if has_clap {
@@ -137,17 +162,15 @@ pub(crate) fn cmd_package_macos(args: &[String]) -> Res {
             base.extend_from_slice(&["--no-default-features", "--features", "clap"]);
             cargo_build_for_arch(&[], &base, arch, dt)?;
             for p in &plugins {
-                let src = release_lib_for_target(
-                    &root,
-                    &p.dylib_stem(),
-                    Some(arch.triple()),
-                );
+                let src = release_lib_for_target(&root, &p.dylib_stem(), Some(arch.triple()));
                 let saved = release_lib_for_target(
                     &root,
                     &format!("{}_clap", p.dylib_stem()),
                     Some(arch.triple()),
                 );
-                if src.exists() { fs::copy(&src, &saved)?; }
+                if src.exists() {
+                    fs::copy(&src, &saved)?;
+                }
             }
         }
         for p in &plugins {
@@ -161,10 +184,7 @@ pub(crate) fn cmd_package_macos(args: &[String]) -> Res {
                     )
                 })
                 .collect();
-            let output = root.join(format!(
-                "target/release/lib{}_clap.dylib",
-                p.dylib_stem()
-            ));
+            let output = root.join(format!("target/release/lib{}_clap.dylib", p.dylib_stem()));
             lipo_into(&inputs, &output)?;
         }
     }
@@ -180,17 +200,15 @@ pub(crate) fn cmd_package_macos(args: &[String]) -> Res {
             base.extend_from_slice(&["--no-default-features", "--features", "vst3"]);
             cargo_build_for_arch(&[], &base, arch, dt)?;
             for p in &plugins {
-                let src = release_lib_for_target(
-                    &root,
-                    &p.dylib_stem(),
-                    Some(arch.triple()),
-                );
+                let src = release_lib_for_target(&root, &p.dylib_stem(), Some(arch.triple()));
                 let saved = release_lib_for_target(
                     &root,
                     &format!("{}_vst3", p.dylib_stem()),
                     Some(arch.triple()),
                 );
-                if src.exists() { fs::copy(&src, &saved)?; }
+                if src.exists() {
+                    fs::copy(&src, &saved)?;
+                }
             }
         }
         for p in &plugins {
@@ -204,10 +222,7 @@ pub(crate) fn cmd_package_macos(args: &[String]) -> Res {
                     )
                 })
                 .collect();
-            let output = root.join(format!(
-                "target/release/lib{}_vst3.dylib",
-                p.dylib_stem()
-            ));
+            let output = root.join(format!("target/release/lib{}_vst3.dylib", p.dylib_stem()));
             lipo_into(&inputs, &output)?;
         }
     }
@@ -223,17 +238,15 @@ pub(crate) fn cmd_package_macos(args: &[String]) -> Res {
             base.extend_from_slice(&["--no-default-features", "--features", "vst2"]);
             cargo_build_for_arch(&[], &base, arch, dt)?;
             for p in &plugins {
-                let src = release_lib_for_target(
-                    &root,
-                    &p.dylib_stem(),
-                    Some(arch.triple()),
-                );
+                let src = release_lib_for_target(&root, &p.dylib_stem(), Some(arch.triple()));
                 let saved = release_lib_for_target(
                     &root,
                     &format!("{}_vst2", p.dylib_stem()),
                     Some(arch.triple()),
                 );
-                if src.exists() { fs::copy(&src, &saved)?; }
+                if src.exists() {
+                    fs::copy(&src, &saved)?;
+                }
             }
         }
         for p in &plugins {
@@ -247,10 +260,7 @@ pub(crate) fn cmd_package_macos(args: &[String]) -> Res {
                     )
                 })
                 .collect();
-            let output = root.join(format!(
-                "target/release/lib{}_vst2.dylib",
-                p.dylib_stem()
-            ));
+            let output = root.join(format!("target/release/lib{}_vst2.dylib", p.dylib_stem()));
             lipo_into(&inputs, &output)?;
         }
     }
@@ -263,15 +273,17 @@ pub(crate) fn cmd_package_macos(args: &[String]) -> Res {
                 eprintln!("Building AU v2 ({}, {})...", p.name, arch.triple());
                 cargo_build_for_arch(
                     &[("TRUCE_AU_VERSION", "2"), ("TRUCE_AU_PLUGIN_ID", &p.suffix)],
-                    &["-p", &p.crate_name, "--no-default-features", "--features", "au"],
+                    &[
+                        "-p",
+                        &p.crate_name,
+                        "--no-default-features",
+                        "--features",
+                        "au",
+                    ],
                     arch,
                     dt,
                 )?;
-                let src = release_lib_for_target(
-                    &root,
-                    &p.dylib_stem(),
-                    Some(arch.triple()),
-                );
+                let src = release_lib_for_target(&root, &p.dylib_stem(), Some(arch.triple()));
                 let saved = release_lib_for_target(
                     &root,
                     &format!("{}_au", p.dylib_stem()),
@@ -289,10 +301,7 @@ pub(crate) fn cmd_package_macos(args: &[String]) -> Res {
                     )
                 })
                 .collect();
-            let output = root.join(format!(
-                "target/release/lib{}_au.dylib",
-                p.dylib_stem()
-            ));
+            let output = root.join(format!("target/release/lib{}_au.dylib", p.dylib_stem()));
             lipo_into(&inputs, &output)?;
         }
     }
@@ -308,17 +317,15 @@ pub(crate) fn cmd_package_macos(args: &[String]) -> Res {
             base.extend_from_slice(&["--no-default-features", "--features", "aax"]);
             cargo_build_for_arch(&[], &base, arch, dt)?;
             for p in &plugins {
-                let src = release_lib_for_target(
-                    &root,
-                    &p.dylib_stem(),
-                    Some(arch.triple()),
-                );
+                let src = release_lib_for_target(&root, &p.dylib_stem(), Some(arch.triple()));
                 let saved = release_lib_for_target(
                     &root,
                     &format!("{}_aax", p.dylib_stem()),
                     Some(arch.triple()),
                 );
-                if src.exists() { fs::copy(&src, &saved)?; }
+                if src.exists() {
+                    fs::copy(&src, &saved)?;
+                }
             }
         }
         for p in &plugins {
@@ -332,10 +339,7 @@ pub(crate) fn cmd_package_macos(args: &[String]) -> Res {
                     )
                 })
                 .collect();
-            let output = root.join(format!(
-                "target/release/lib{}_aax.dylib",
-                p.dylib_stem()
-            ));
+            let output = root.join(format!("target/release/lib{}_aax.dylib", p.dylib_stem()));
             lipo_into(&inputs, &output)?;
         }
     }
@@ -365,7 +369,9 @@ pub(crate) fn cmd_package_macos(args: &[String]) -> Res {
         for fmt in &formats {
             eprint!("  Staging {}... ", fmt.label());
             let result = match fmt {
-                PkgFormat::Clap => stage_clap(&root, p, &staging, config.macos.application_identity()),
+                PkgFormat::Clap => {
+                    stage_clap(&root, p, &staging, config.macos.application_identity())
+                }
                 PkgFormat::Vst3 => stage_vst3(&root, p, &config, &staging),
                 PkgFormat::Vst2 => stage_vst2(&root, p, &config, &staging),
                 PkgFormat::Au2 => stage_au2(&root, p, &config, &staging),
@@ -527,28 +533,51 @@ fn notarize_and_staple(pkg_path: &Path, config: &Config) -> Res {
     // Determine credential source: env vars or truce.toml
     let apple_id_env = std::env::var("APPLE_ID").unwrap_or_default();
     let team_id_env = std::env::var("TEAM_ID").unwrap_or_default();
-    let apple_id = config.macos.packaging.apple_id.as_deref().unwrap_or(&apple_id_env);
-    let team_id = config.macos.packaging.team_id.as_deref().unwrap_or(&team_id_env);
+    let apple_id = config
+        .macos
+        .packaging
+        .apple_id
+        .as_deref()
+        .unwrap_or(&apple_id_env);
+    let team_id = config
+        .macos
+        .packaging
+        .team_id
+        .as_deref()
+        .unwrap_or(&team_id_env);
 
     // First try keychain profile, then fall back to explicit credentials
-    let keychain_profile = std::env::var("TRUCE_NOTARY_PROFILE").unwrap_or_else(|_| "TRUCE_NOTARY".to_string());
+    let keychain_profile =
+        std::env::var("TRUCE_NOTARY_PROFILE").unwrap_or_else(|_| "TRUCE_NOTARY".to_string());
 
-    eprintln!("  Notarizing {}...", pkg_path.file_name().unwrap().to_str().unwrap());
+    eprintln!(
+        "  Notarizing {}...",
+        pkg_path.file_name().unwrap().to_str().unwrap()
+    );
 
     // Submit and capture output to check status + extract submission ID
     let output = Command::new("xcrun")
         .args([
-            "notarytool", "submit", pkg,
-            "--keychain-profile", &keychain_profile,
+            "notarytool",
+            "submit",
+            pkg,
+            "--keychain-profile",
+            &keychain_profile,
             "--wait",
         ])
         .output();
 
     let (succeeded, output_text) = match output {
         Ok(o) => {
-            let text = format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
+            let text = format!(
+                "{}{}",
+                String::from_utf8_lossy(&o.stdout),
+                String::from_utf8_lossy(&o.stderr)
+            );
             // notarytool returns 0 even on Invalid — check the status string
-            let ok = o.status.success() && !text.contains("status: Invalid") && !text.contains("status: Rejected");
+            let ok = o.status.success()
+                && !text.contains("status: Invalid")
+                && !text.contains("status: Rejected");
             (ok, text)
         }
         Err(_) => (false, String::new()),
@@ -558,35 +587,50 @@ fn notarize_and_staple(pkg_path: &Path, config: &Config) -> Res {
         // Try explicit credentials as fallback
         if !apple_id.is_empty() && !team_id.is_empty() {
             eprintln!("  Keychain profile failed, trying explicit credentials...");
-            let password = std::env::var("APP_SPECIFIC_PASSWORD")
-                .map_err(|_| "notarization requires APP_SPECIFIC_PASSWORD env var or a keychain profile")?;
+            let password = std::env::var("APP_SPECIFIC_PASSWORD").map_err(|_| {
+                "notarization requires APP_SPECIFIC_PASSWORD env var or a keychain profile"
+            })?;
             let output = Command::new("xcrun")
                 .args([
-                    "notarytool", "submit", pkg,
-                    "--apple-id", apple_id,
-                    "--team-id", team_id,
-                    "--password", &password,
+                    "notarytool",
+                    "submit",
+                    pkg,
+                    "--apple-id",
+                    apple_id,
+                    "--team-id",
+                    team_id,
+                    "--password",
+                    &password,
                     "--wait",
                 ])
                 .output()?;
-            let text = format!("{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
-            if !output.status.success() || text.contains("status: Invalid") || text.contains("status: Rejected") {
+            let text = format!(
+                "{}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            if !output.status.success()
+                || text.contains("status: Invalid")
+                || text.contains("status: Rejected")
+            {
                 // Extract submission ID and fetch the log
                 fetch_notarization_log(&text, &keychain_profile);
-                return Err("notarization failed (status: Invalid). See log above for details.".into());
+                return Err(
+                    "notarization failed (status: Invalid). See log above for details.".into(),
+                );
             }
         } else {
             // Extract submission ID and fetch the log
             fetch_notarization_log(&output_text, &keychain_profile);
             if output_text.contains("status: Invalid") || output_text.contains("status: Rejected") {
-                return Err("notarization failed (status: Invalid). See log above for details.".into());
+                return Err(
+                    "notarization failed (status: Invalid). See log above for details.".into(),
+                );
             }
-            return Err(
-                "notarization failed. Set up credentials via:\n  \
+            return Err("notarization failed. Set up credentials via:\n  \
                  xcrun notarytool store-credentials TRUCE_NOTARY\n  \
                  or set apple_id/team_id in [macos.packaging] + APP_SPECIFIC_PASSWORD env var"
-                    .into(),
-            );
+                .into());
         }
     }
 
@@ -606,7 +650,8 @@ fn notarize_and_staple(pkg_path: &Path, config: &Config) -> Res {
 /// Extract submission ID from notarytool output and fetch the detailed log.
 fn fetch_notarization_log(output: &str, keychain_profile: &str) {
     // Look for "id: <uuid>" in the output
-    let id = output.lines()
+    let id = output
+        .lines()
         .find(|l| l.trim().starts_with("id:"))
         .and_then(|l| l.trim().strip_prefix("id:"))
         .map(|s| s.trim().to_string());
@@ -614,7 +659,13 @@ fn fetch_notarization_log(output: &str, keychain_profile: &str) {
     if let Some(id) = id {
         eprintln!("  Fetching notarization log for {}...", id);
         let log_output = Command::new("xcrun")
-            .args(["notarytool", "log", &id, "--keychain-profile", keychain_profile])
+            .args([
+                "notarytool",
+                "log",
+                &id,
+                "--keychain-profile",
+                keychain_profile,
+            ])
             .output();
         if let Ok(o) = log_output {
             let log = String::from_utf8_lossy(&o.stdout);

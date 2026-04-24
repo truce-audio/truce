@@ -75,8 +75,7 @@ impl Transport {
         let bpm = self.tempo();
         let playing = self.is_playing();
 
-        let start = self.inner.position_micro_beats.load(Ordering::Relaxed) as f64
-            / 1_000_000.0;
+        let start = self.inner.position_micro_beats.load(Ordering::Relaxed) as f64 / 1_000_000.0;
 
         if playing && sr > 0.0 {
             let seconds = num_frames as f64 / sr;
@@ -96,8 +95,7 @@ impl Transport {
         let sr = self.inner.sample_rate.load(Ordering::Relaxed) as f64;
         let bpm = self.tempo();
         let playing = self.is_playing();
-        let position = self.inner.position_micro_beats.load(Ordering::Relaxed) as f64
-            / 1_000_000.0;
+        let position = self.inner.position_micro_beats.load(Ordering::Relaxed) as f64 / 1_000_000.0;
         self.info(position, bpm, sr, playing)
     }
 
@@ -113,7 +111,11 @@ impl Transport {
             } else {
                 0
             },
-            position_seconds: if bpm > 0.0 { position_beats * 60.0 / bpm } else { 0.0 },
+            position_seconds: if bpm > 0.0 {
+                position_beats * 60.0 / bpm
+            } else {
+                0.0
+            },
             position_beats,
             bar_start_beats: 0.0,
             loop_active: false,

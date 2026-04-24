@@ -661,9 +661,11 @@ fn save_png(path: &std::path::Path, pixels: &[u8], w: u32, h: u32) {
         yppu: 5669,
         unit: png::Unit::Meter,
     }));
-    let mut writer = encoder.write_header()
+    let mut writer = encoder
+        .write_header()
         .unwrap_or_else(|e| panic!("Failed to write PNG header: {e}"));
-    writer.write_image_data(pixels)
+    writer
+        .write_image_data(pixels)
         .unwrap_or_else(|e| panic!("Failed to write PNG data: {e}"));
 }
 
@@ -671,10 +673,12 @@ fn load_png(path: &std::path::Path) -> (Vec<u8>, u32, u32) {
     let file = std::fs::File::open(path)
         .unwrap_or_else(|e| panic!("Failed to open {}: {e}", path.display()));
     let decoder = png::Decoder::new(std::io::BufReader::new(file));
-    let mut reader = decoder.read_info()
+    let mut reader = decoder
+        .read_info()
         .unwrap_or_else(|e| panic!("Failed to read PNG info: {e}"));
     let mut buf = vec![0u8; reader.output_buffer_size().unwrap()];
-    let info = reader.next_frame(&mut buf)
+    let info = reader
+        .next_frame(&mut buf)
         .unwrap_or_else(|e| panic!("Failed to decode PNG frame: {e}"));
     buf.truncate(info.buffer_size());
     (buf, info.width, info.height)

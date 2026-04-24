@@ -235,9 +235,7 @@ fn draw_transport_readout(ui: &mut egui::Ui, state: &ParamState) {
     });
 }
 
-fn format_transport(
-    info: Option<&truce_core::events::TransportInfo>,
-) -> String {
+fn format_transport(info: Option<&truce_core::events::TransportInfo>) -> String {
     let Some(t) = info else {
         return "(no host transport)".into();
     };
@@ -332,10 +330,14 @@ mod tests {
             for i in 0..100 {
                 let p = i as f32 / 100.0;
                 let v = s.at(p);
-                assert!((0.0..=1.0).contains(&v),
-                    "{:?} at {:.2} = {} out of range", s as u8, p, v);
+                assert!(
+                    (0.0..=1.0).contains(&v),
+                    "{:?} at {:.2} = {} out of range",
+                    s as u8,
+                    p,
+                    v
+                );
             }
         }
     }
-
 }

@@ -13,11 +13,9 @@ use std::iter;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use baseview::{
-    Event, EventStatus, Window, WindowHandler, WindowOpenOptions, WindowScalePolicy,
-};
+use baseview::{Event, EventStatus, Window, WindowHandler, WindowOpenOptions, WindowScalePolicy};
 use slint::platform::software_renderer::{MinimalSoftwareWindow, PremultipliedRgbaColor};
-use slint::platform::{WindowAdapter, WindowEvent, PointerEventButton};
+use slint::platform::{PointerEventButton, WindowAdapter, WindowEvent};
 use slint::{LogicalPosition, PhysicalSize};
 
 use truce_core::editor::{Editor, EditorContext, RawWindowHandle};
@@ -149,7 +147,9 @@ impl WindowHandler for SlintWindowHandler {
                         self.last_pos = LogicalPosition::new(position.x as f32, position.y as f32);
                         self.slint_window
                             .window()
-                            .dispatch_event(WindowEvent::PointerMoved { position: self.last_pos });
+                            .dispatch_event(WindowEvent::PointerMoved {
+                                position: self.last_pos,
+                            });
                         EventStatus::Captured
                     }
                     ButtonPressed {
@@ -164,24 +164,24 @@ impl WindowHandler for SlintWindowHandler {
                                 _window.focus();
                             }
                         }
-                        self.slint_window.window().dispatch_event(
-                            WindowEvent::PointerPressed {
+                        self.slint_window
+                            .window()
+                            .dispatch_event(WindowEvent::PointerPressed {
                                 position: self.last_pos,
                                 button: PointerEventButton::Left,
-                            },
-                        );
+                            });
                         EventStatus::Captured
                     }
                     ButtonReleased {
                         button: baseview::MouseButton::Left,
                         ..
                     } => {
-                        self.slint_window.window().dispatch_event(
-                            WindowEvent::PointerReleased {
+                        self.slint_window
+                            .window()
+                            .dispatch_event(WindowEvent::PointerReleased {
                                 position: self.last_pos,
                                 button: PointerEventButton::Left,
-                            },
-                        );
+                            });
                         EventStatus::Captured
                     }
                     WheelScrolled { delta, .. } => {
@@ -189,13 +189,13 @@ impl WindowHandler for SlintWindowHandler {
                             baseview::ScrollDelta::Lines { x, y } => (x * 20.0, y * 20.0),
                             baseview::ScrollDelta::Pixels { x, y } => (x, y),
                         };
-                        self.slint_window.window().dispatch_event(
-                            WindowEvent::PointerScrolled {
+                        self.slint_window
+                            .window()
+                            .dispatch_event(WindowEvent::PointerScrolled {
                                 position: self.last_pos,
                                 delta_x: dx,
                                 delta_y: dy,
-                            },
-                        );
+                            });
                         EventStatus::Captured
                     }
                     CursorLeft => {
@@ -217,11 +217,11 @@ impl WindowHandler for SlintWindowHandler {
                     self.height = (phys_h as f64 / scale) as u32;
                     self.scale = scale as f32;
 
-                    self.slint_window.window().dispatch_event(
-                        WindowEvent::ScaleFactorChanged {
+                    self.slint_window
+                        .window()
+                        .dispatch_event(WindowEvent::ScaleFactorChanged {
                             scale_factor: scale as f32,
-                        },
-                    );
+                        });
                     self.slint_window
                         .set_size(slint::WindowSize::Physical(PhysicalSize::new(
                             phys_w, phys_h,
@@ -285,14 +285,13 @@ impl Editor for SlintEditor {
                 let surface = unsafe { platform::create_wgpu_surface(&instance, window) }
                     .expect("failed to create wgpu surface");
 
-                let adapter = pollster::block_on(instance.request_adapter(
-                    &wgpu::RequestAdapterOptions {
+                let adapter =
+                    pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
                         power_preference: wgpu::PowerPreference::LowPower,
                         compatible_surface: Some(&surface),
                         force_fallback_adapter: false,
-                    },
-                ))
-                .expect("no suitable GPU adapter");
+                    }))
+                    .expect("no suitable GPU adapter");
 
                 let (device, queue) = pollster::block_on(adapter.request_device(
                     &wgpu::DeviceDescriptor {
@@ -335,11 +334,11 @@ impl Editor for SlintEditor {
                 slint_window.set_size(slint::WindowSize::Physical(PhysicalSize::new(
                     phys_w, phys_h,
                 )));
-                slint_window.window().dispatch_event(
-                    WindowEvent::ScaleFactorChanged {
+                slint_window
+                    .window()
+                    .dispatch_event(WindowEvent::ScaleFactorChanged {
                         scale_factor: scale as f32,
-                    },
-                );
+                    });
 
                 // Developer creates the Slint component here — it attaches
                 // to slint_window via create_window_adapter().

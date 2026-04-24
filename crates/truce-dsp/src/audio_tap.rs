@@ -81,12 +81,12 @@ pub struct AudioTapConsumer {
 /// `channels` must be non-zero.
 ///
 /// Panics if `channels == 0` or if `capacity_frames == 0`.
-pub fn audio_tap(
-    capacity_frames: usize,
-    channels: u16,
-) -> (AudioTapProducer, AudioTapConsumer) {
+pub fn audio_tap(capacity_frames: usize, channels: u16) -> (AudioTapProducer, AudioTapConsumer) {
     assert!(channels > 0, "audio_tap: channels must be > 0");
-    assert!(capacity_frames > 0, "audio_tap: capacity_frames must be > 0");
+    assert!(
+        capacity_frames > 0,
+        "audio_tap: capacity_frames must be > 0"
+    );
 
     let cap = capacity_frames * channels as usize;
     let mut data = Vec::with_capacity(cap);
@@ -101,7 +101,9 @@ pub fn audio_tap(
         read: AtomicUsize::new(0),
     });
     (
-        AudioTapProducer { shared: Arc::clone(&shared) },
+        AudioTapProducer {
+            shared: Arc::clone(&shared),
+        },
         AudioTapConsumer { shared },
     )
 }
@@ -142,7 +144,9 @@ impl AudioTapProducer {
 
         // Release so the consumer's Acquire load of `write` sees the
         // sample stores above.
-        self.shared.write.store(w + samples.len(), Ordering::Release);
+        self.shared
+            .write
+            .store(w + samples.len(), Ordering::Release);
 
         dropped
     }

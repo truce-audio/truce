@@ -1,5 +1,5 @@
 use truce::prelude::*;
-use truce_gui::layout::{GridLayout, knob, widgets};
+use truce_gui::layout::{knob, widgets, GridLayout};
 
 // --- Parameters ---
 
@@ -7,12 +7,15 @@ use TransposeParamsParamId as P;
 
 #[derive(Params)]
 pub struct TransposeParams {
-    #[param(name = "Semitones", short_name = "Semi",
-            range = "discrete(-12, 12)", unit = "st")]
+    #[param(
+        name = "Semitones",
+        short_name = "Semi",
+        range = "discrete(-12, 12)",
+        unit = "st"
+    )]
     pub semitones: FloatParam,
 
-    #[param(name = "Octave", short_name = "Oct",
-            range = "discrete(-3, 3)")]
+    #[param(name = "Octave", short_name = "Oct", range = "discrete(-3, 3)")]
     pub octave: FloatParam,
 }
 
@@ -42,14 +45,23 @@ impl PluginLogic for Transpose {
         self.params.snap_smoothers();
     }
 
-    fn process(&mut self, _buffer: &mut AudioBuffer, events: &EventList, context: &mut ProcessContext) -> ProcessStatus {
+    fn process(
+        &mut self,
+        _buffer: &mut AudioBuffer,
+        events: &EventList,
+        context: &mut ProcessContext,
+    ) -> ProcessStatus {
         let semitones = self.params.semitones.value() as i16;
         let octave = self.params.octave.value() as i16;
         let shift = semitones + octave * 12;
 
         for event in events.iter() {
             match &event.body {
-                EventBody::NoteOn { channel, note, velocity } => {
+                EventBody::NoteOn {
+                    channel,
+                    note,
+                    velocity,
+                } => {
                     let transposed = (*note as i16 + shift).clamp(0, 127) as u8;
                     self.active_notes[*note as usize] = Some(transposed);
                     context.output_events.push(Event {
@@ -61,7 +73,11 @@ impl PluginLogic for Transpose {
                         },
                     });
                 }
-                EventBody::NoteOff { channel, note, velocity } => {
+                EventBody::NoteOff {
+                    channel,
+                    note,
+                    velocity,
+                } => {
                     // Use the pitch that was actually sent, not current shift
                     let output_note = self.active_notes[*note as usize]
                         .take()
@@ -83,10 +99,16 @@ impl PluginLogic for Transpose {
     }
 
     fn layout(&self) -> truce_gui::layout::GridLayout {
-        GridLayout::build("TRANSPOSE", "V0.1", 2, 50.0, vec![widgets(vec![
-            knob(P::Semitones, "Semitones"),
-            knob(P::Octave, "Octave"),
-        ])])
+        GridLayout::build(
+            "TRANSPOSE",
+            "V0.1",
+            2,
+            50.0,
+            vec![widgets(vec![
+                knob(P::Semitones, "Semitones"),
+                knob(P::Octave, "Octave"),
+            ])],
+        )
     }
 }
 
@@ -116,14 +138,19 @@ mod tests {
         let input = vec![vec![0.0f32; 512]; 2];
         let input_refs: Vec<&[f32]> = input.iter().map(|v| v.as_slice()).collect();
         let mut output = vec![vec![0.0f32; 512]; 2];
-        let mut output_refs: Vec<&mut [f32]> = output.iter_mut().map(|v| v.as_mut_slice()).collect();
+        let mut output_refs: Vec<&mut [f32]> =
+            output.iter_mut().map(|v| v.as_mut_slice()).collect();
 
         let mut buffer = unsafe { AudioBuffer::from_slices(&input_refs, &mut output_refs, 512) };
 
         let mut events = EventList::new();
         events.push(Event {
             sample_offset: 0,
-            body: EventBody::NoteOn { channel: 0, note: 60, velocity: 0.8 },
+            body: EventBody::NoteOn {
+                channel: 0,
+                note: 60,
+                velocity: 0.8,
+            },
         });
 
         let transport = TransportInfo::default();
@@ -145,7 +172,10 @@ mod tests {
         let transpose = Transpose::new(std::sync::Arc::clone(&params));
         let layout = transpose.layout();
         truce_test::assert_gui_snapshot_grid::<TransposeParams>(
-            "transpose_default", params, layout, 0,
+            "transpose_default",
+            params,
+            layout,
+            0,
         );
     }
 
@@ -154,6 +184,9 @@ mod tests {
     fn category_is_note_effect() {
         use truce_core::info::PluginCategory;
         use truce_core::plugin::Plugin as PluginTrait;
-        assert_eq!(<Plugin as PluginTrait>::info().category, PluginCategory::NoteEffect);
+        assert_eq!(
+            <Plugin as PluginTrait>::info().category,
+            PluginCategory::NoteEffect
+        );
     }
 }

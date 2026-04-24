@@ -13,31 +13,29 @@ use std::marker::PhantomData;
 use std::ptr;
 use std::sync::Arc;
 
-
 use clap_sys::events::{
     clap_event_header, clap_event_note, clap_event_param_gesture, clap_event_param_value,
     clap_event_transport, clap_input_events, clap_output_events, CLAP_CORE_EVENT_SPACE_ID,
     CLAP_EVENT_IS_LIVE, CLAP_EVENT_NOTE_OFF, CLAP_EVENT_NOTE_ON, CLAP_EVENT_PARAM_GESTURE_BEGIN,
     CLAP_EVENT_PARAM_GESTURE_END, CLAP_EVENT_PARAM_MOD, CLAP_EVENT_PARAM_VALUE,
-    CLAP_EVENT_TRANSPORT,
-    CLAP_TRANSPORT_HAS_BEATS_TIMELINE, CLAP_TRANSPORT_HAS_SECONDS_TIMELINE,
+    CLAP_EVENT_TRANSPORT, CLAP_TRANSPORT_HAS_BEATS_TIMELINE, CLAP_TRANSPORT_HAS_SECONDS_TIMELINE,
     CLAP_TRANSPORT_HAS_TEMPO, CLAP_TRANSPORT_HAS_TIME_SIGNATURE, CLAP_TRANSPORT_IS_LOOP_ACTIVE,
     CLAP_TRANSPORT_IS_PLAYING, CLAP_TRANSPORT_IS_RECORDING,
 };
-use clap_sys::ext::params::{clap_host_params, CLAP_PARAM_RESCAN_VALUES};
 use clap_sys::ext::audio_ports::{
     clap_audio_port_info, clap_plugin_audio_ports, CLAP_AUDIO_PORT_IS_MAIN, CLAP_EXT_AUDIO_PORTS,
     CLAP_PORT_MONO, CLAP_PORT_STEREO,
 };
+use clap_sys::ext::latency::{clap_plugin_latency, CLAP_EXT_LATENCY};
 use clap_sys::ext::note_ports::{
     clap_note_port_info, clap_plugin_note_ports, CLAP_EXT_NOTE_PORTS, CLAP_NOTE_DIALECT_CLAP,
 };
+use clap_sys::ext::params::{clap_host_params, CLAP_PARAM_RESCAN_VALUES};
 use clap_sys::ext::params::{
     clap_param_info, clap_plugin_params, CLAP_EXT_PARAMS, CLAP_PARAM_IS_AUTOMATABLE,
     CLAP_PARAM_IS_BYPASS, CLAP_PARAM_IS_ENUM, CLAP_PARAM_IS_HIDDEN, CLAP_PARAM_IS_READONLY,
     CLAP_PARAM_IS_STEPPED,
 };
-use clap_sys::ext::latency::{clap_plugin_latency, CLAP_EXT_LATENCY};
 use clap_sys::ext::state::{clap_plugin_state, CLAP_EXT_STATE};
 use clap_sys::ext::tail::{clap_plugin_tail, CLAP_EXT_TAIL};
 use clap_sys::fixedpoint::{CLAP_BEATTIME_FACTOR, CLAP_SECTIME_FACTOR};
@@ -94,7 +92,10 @@ impl GuiChangeQueue {
     }
 
     fn push(&self, change: GuiParamChange) {
-        self.pending.lock().unwrap_or_else(|e| e.into_inner()).push(change);
+        self.pending
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(change);
     }
 
     fn drain_to(&self, out: &mut Vec<GuiParamChange>) {
@@ -172,8 +173,7 @@ unsafe impl Sync for DescriptorHolder {}
 /// Install-time override for the plugin's display name in host
 /// browsers, set by `cargo truce install` via the `clap_name` field
 /// in `truce.toml`. Empty / unset falls back to `PluginInfo::name`.
-const CLAP_NAME_OVERRIDE: Option<&'static str> =
-    option_env!("TRUCE_CLAP_NAME_OVERRIDE");
+const CLAP_NAME_OVERRIDE: Option<&'static str> = option_env!("TRUCE_CLAP_NAME_OVERRIDE");
 
 fn resolved_name(info: &PluginInfo) -> &'static str {
     match CLAP_NAME_OVERRIDE {
@@ -337,7 +337,10 @@ unsafe extern "C" fn clap_plugin_reset<P: PluginExport>(plugin: *const clap_plug
 
 unsafe extern "C" fn clap_plugin_on_main_thread<P: PluginExport>(plugin: *const clap_plugin) {
     let data = data_from_plugin::<P>(plugin);
-    if data.needs_rescan.swap(false, std::sync::atomic::Ordering::Relaxed) {
+    if data
+        .needs_rescan
+        .swap(false, std::sync::atomic::Ordering::Relaxed)
+    {
         if !data.host_params.is_null() && !data.host.is_null() {
             if let Some(rescan) = (*data.host_params).rescan {
                 rescan(data.host, CLAP_PARAM_RESCAN_VALUES);
@@ -686,7 +689,12 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
     // Publish transport to the editor slot before the plugin runs.
     data.transport_slot.write(&transport);
 
-    let mut context = ProcessContext::new(&transport, data.sample_rate, num_frames, &mut data.output_events);
+    let mut context = ProcessContext::new(
+        &transport,
+        data.sample_rate,
+        num_frames,
+        &mut data.output_events,
+    );
 
     let status = data
         .plugin
@@ -699,11 +707,17 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
     if !proc.out_events.is_null() && !data.output_events.is_empty() {
         let try_push = match (*proc.out_events).try_push {
             Some(f) => f,
-            None => { return CLAP_PROCESS_CONTINUE; }
+            None => {
+                return CLAP_PROCESS_CONTINUE;
+            }
         };
         for event in data.output_events.iter() {
             match &event.body {
-                EventBody::NoteOn { channel, note, velocity } => {
+                EventBody::NoteOn {
+                    channel,
+                    note,
+                    velocity,
+                } => {
                     let ev = clap_event_note {
                         header: clap_event_header {
                             size: std::mem::size_of::<clap_event_note>() as u32,
@@ -720,7 +734,11 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                     };
                     try_push(proc.out_events, &ev.header);
                 }
-                EventBody::NoteOff { channel, note, velocity } => {
+                EventBody::NoteOff {
+                    channel,
+                    note,
+                    velocity,
+                } => {
                     let ev = clap_event_note {
                         header: clap_event_header {
                             size: std::mem::size_of::<clap_event_note>() as u32,
@@ -1065,7 +1083,11 @@ unsafe extern "C" fn note_ports_count<P: PluginExport>(
 ) -> u32 {
     // All plugins declare 1 input + 1 output note port.
     // Effects that don't use MIDI simply ignore the events.
-    if is_input { 1 } else { 1 }
+    if is_input {
+        1
+    } else {
+        1
+    }
 }
 
 unsafe extern "C" fn note_ports_get<P: PluginExport>(
@@ -1083,7 +1105,14 @@ unsafe extern "C" fn note_ports_get<P: PluginExport>(
     out.supported_dialects = CLAP_NOTE_DIALECT_CLAP;
     out.preferred_dialect = CLAP_NOTE_DIALECT_CLAP;
     out.name = [0; CLAP_NAME_SIZE];
-    copy_str_to_buf(&mut out.name, if is_input { "Note Input" } else { "Note Output" });
+    copy_str_to_buf(
+        &mut out.name,
+        if is_input {
+            "Note Input"
+        } else {
+            "Note Output"
+        },
+    );
 
     true
 }
@@ -1099,13 +1128,13 @@ fn make_note_ports_extension<P: PluginExport>() -> clap_plugin_note_ports {
 // GUI extension
 // ---------------------------------------------------------------------------
 
-use clap_sys::ext::gui::{clap_plugin_gui, clap_window, CLAP_EXT_GUI};
 #[cfg(target_os = "macos")]
 use clap_sys::ext::gui::CLAP_WINDOW_API_COCOA;
 #[cfg(target_os = "windows")]
 use clap_sys::ext::gui::CLAP_WINDOW_API_WIN32;
 #[cfg(target_os = "linux")]
 use clap_sys::ext::gui::CLAP_WINDOW_API_X11;
+use clap_sys::ext::gui::{clap_plugin_gui, clap_window, CLAP_EXT_GUI};
 
 unsafe extern "C" fn gui_is_api_supported<P: PluginExport>(
     _plugin: *const clap_plugin,
@@ -1276,18 +1305,15 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
     }
 
     let params = data.plugin.params_arc();
-    let plugin_ptr = truce_core::editor::SendPtr::new(
-        &data.plugin as *const P);
+    let plugin_ptr = truce_core::editor::SendPtr::new(&data.plugin as *const P);
     let gui_changes = data.gui_changes.clone();
     let gui_changes2 = data.gui_changes.clone();
     let gui_changes3 = data.gui_changes.clone();
     let host = truce_core::editor::SendPtr::new(data.host);
     let host_params = truce_core::editor::SendPtr::new(data.host_params);
-    let request_flush = move || {
-        unsafe {
-            if let Some(f) = (*host_params.as_ptr()).request_flush {
-                f(host.as_ptr());
-            }
+    let request_flush = move || unsafe {
+        if let Some(f) = (*host_params.as_ptr()).request_flush {
+            f(host.as_ptr());
         }
     };
     let request_flush2 = request_flush.clone();
@@ -1322,15 +1348,13 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
             request_flush3();
         }),
         request_resize: Arc::new(|_w, _h| false),
-        get_param: Arc::new(move |id| {
-            params_for_get.get_normalized(id).unwrap_or(0.0)
-        }),
-        get_param_plain: Arc::new(move |id| {
-            params_for_plain.get_plain(id).unwrap_or(0.0)
-        }),
+        get_param: Arc::new(move |id| params_for_get.get_normalized(id).unwrap_or(0.0)),
+        get_param_plain: Arc::new(move |id| params_for_plain.get_plain(id).unwrap_or(0.0)),
         format_param: Arc::new(move |id| {
             let plain = params_for_fmt.get_plain(id).unwrap_or(0.0);
-            params_for_fmt.format_value(id, plain).unwrap_or_else(|| format!("{:.1}", plain))
+            params_for_fmt
+                .format_value(id, plain)
+                .unwrap_or_else(|| format!("{:.1}", plain))
         }),
         get_meter: Arc::new(move |id| {
             let plugin = unsafe { plugin_ptr.get() };
@@ -1421,8 +1445,12 @@ impl<P: PluginExport> Extensions<P> {
             audio_ports: make_audio_ports_extension::<P>(),
             note_ports: make_note_ports_extension::<P>(),
             gui: make_gui_extension::<P>(),
-            latency: clap_plugin_latency { get: Some(latency_get::<P>) },
-            tail: clap_plugin_tail { get: Some(tail_get::<P>) },
+            latency: clap_plugin_latency {
+                get: Some(latency_get::<P>),
+            },
+            tail: clap_plugin_tail {
+                get: Some(tail_get::<P>),
+            },
             _phantom: PhantomData,
         }
     }

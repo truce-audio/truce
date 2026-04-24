@@ -5,8 +5,7 @@
 use crate::templates;
 use crate::util::fs_ctx;
 use crate::{
-    codesign_bundle, release_lib, resolve_aax_sdk_path, run_sudo, tmp_dir,
-    Config, PluginDef, Res,
+    codesign_bundle, release_lib, resolve_aax_sdk_path, run_sudo, tmp_dir, Config, PluginDef, Res,
 };
 #[cfg(target_os = "windows")]
 use crate::{common_program_files, locate_cmake, locate_ninja, locate_vcvars64};
@@ -35,15 +34,30 @@ pub(crate) fn build_aax_template(_root: &Path, sdk_path: &Path, universal_mac: b
     fs_ctx::create_dir_all(&src_dir)?;
 
     fs_ctx::write(&cmake_lists, templates::aax::CMAKE_LISTS)?;
-    fs_ctx::write(src_dir.join("TruceAAX_Bridge.cpp"), templates::aax::BRIDGE_CPP)?;
+    fs_ctx::write(
+        src_dir.join("TruceAAX_Bridge.cpp"),
+        templates::aax::BRIDGE_CPP,
+    )?;
     fs_ctx::write(src_dir.join("TruceAAX_Bridge.h"), templates::aax::BRIDGE_H)?;
-    fs_ctx::write(src_dir.join("TruceAAX_Describe.cpp"), templates::aax::DESCRIBE_CPP)?;
+    fs_ctx::write(
+        src_dir.join("TruceAAX_Describe.cpp"),
+        templates::aax::DESCRIBE_CPP,
+    )?;
     fs_ctx::write(src_dir.join("TruceAAX_GUI.cpp"), templates::aax::GUI_CPP)?;
     fs_ctx::write(src_dir.join("TruceAAX_GUI.h"), templates::aax::GUI_H)?;
-    fs_ctx::write(src_dir.join("TruceAAX_Parameters.cpp"), templates::aax::PARAMETERS_CPP)?;
-    fs_ctx::write(src_dir.join("TruceAAX_Parameters.h"), templates::aax::PARAMETERS_H)?;
+    fs_ctx::write(
+        src_dir.join("TruceAAX_Parameters.cpp"),
+        templates::aax::PARAMETERS_CPP,
+    )?;
+    fs_ctx::write(
+        src_dir.join("TruceAAX_Parameters.h"),
+        templates::aax::PARAMETERS_H,
+    )?;
     fs_ctx::write(src_dir.join("Info.plist.in"), templates::aax::INFO_PLIST_IN)?;
-    fs_ctx::write(src_dir.join("truce_aax_bridge.h"), templates::aax::BRIDGE_HEADER)?;
+    fs_ctx::write(
+        src_dir.join("truce_aax_bridge.h"),
+        templates::aax::BRIDGE_HEADER,
+    )?;
 
     let build_dir = template_dir.join("build");
 
@@ -85,8 +99,9 @@ pub(crate) fn build_aax_template(_root: &Path, sdk_path: &Path, universal_mac: b
         // truce repo (truce's .cargo/config.toml historically set it). vcvars
         // doesn't add them either. Resolve both explicitly and prepend their
         // directories to the .bat's PATH so the build works from any project.
-        let cmake = locate_cmake()
-            .ok_or("could not locate cmake.exe — install cmake or the VS \"C++ CMake tools\" component")?;
+        let cmake = locate_cmake().ok_or(
+            "could not locate cmake.exe — install cmake or the VS \"C++ CMake tools\" component",
+        )?;
         let ninja = locate_ninja()
             .ok_or("could not locate ninja.exe — install ninja or the VS \"C++ CMake tools\" component (which bundles it)")?;
         let cmake_dir = cmake.parent().unwrap().display().to_string();
@@ -113,17 +128,13 @@ pub(crate) fn build_aax_template(_root: &Path, sdk_path: &Path, universal_mac: b
         );
         fs_ctx::write(&bat_path, bat)?;
 
-        let status = Command::new("cmd")
-            .arg("/c")
-            .arg(&bat_path)
-            .status()?;
+        let status = Command::new("cmd").arg("/c").arg(&bat_path).status()?;
         if !status.success() {
             return Err("AAX cmake+ninja build failed".into());
         }
     }
     Ok(())
 }
-
 
 // AAX is only supported on macOS and Windows. On Linux (including WSL builds
 // that happen to target Linux), short-circuit before referencing any
@@ -139,7 +150,8 @@ pub(crate) fn install_aax(root: &Path, p: &PluginDef, config: &Config) -> Res {
     /// Template binary path inside the cmake build directory.
     #[cfg(target_os = "macos")]
     fn template_binary() -> PathBuf {
-        tmp_dir().join("aax_template/build/TruceAAXTemplate.aaxplugin/Contents/MacOS/TruceAAXTemplate")
+        tmp_dir()
+            .join("aax_template/build/TruceAAXTemplate.aaxplugin/Contents/MacOS/TruceAAXTemplate")
     }
     #[cfg(target_os = "windows")]
     fn template_binary() -> PathBuf {
@@ -208,10 +220,7 @@ pub(crate) fn install_aax(root: &Path, p: &PluginDef, config: &Config) -> Res {
 
         run_sudo(
             "cp",
-            &[
-                dylib.to_str().unwrap(),
-                &format!("{contents}/Resources/"),
-            ],
+            &[dylib.to_str().unwrap(), &format!("{contents}/Resources/")],
         )?;
 
         let plist = format!(
@@ -234,7 +243,10 @@ pub(crate) fn install_aax(root: &Path, p: &PluginDef, config: &Config) -> Res {
             name = p.name,
             suffix = p.suffix,
         );
-        let plist_tmp = tmp_dir().join(format!("{}_aax.plist", p.suffix)).to_string_lossy().to_string();
+        let plist_tmp = tmp_dir()
+            .join(format!("{}_aax.plist", p.suffix))
+            .to_string_lossy()
+            .to_string();
         fs_ctx::write(&plist_tmp, &plist)?;
         run_sudo("cp", &[&plist_tmp, &format!("{contents}/Info.plist")])?;
 
@@ -253,7 +265,10 @@ pub(crate) fn install_aax(root: &Path, p: &PluginDef, config: &Config) -> Res {
         //         {name}_aax.dll         (Rust cdylib)
         //
         // Install to %COMMONPROGRAMFILES%\Avid\Audio\Plug-Ins\
-        let aax_dir = common_program_files().join("Avid").join("Audio").join("Plug-Ins");
+        let aax_dir = common_program_files()
+            .join("Avid")
+            .join("Audio")
+            .join("Plug-Ins");
         let bundle = aax_dir.join(format!("{}.aaxplugin", p.name));
         let contents = bundle.join("Contents");
         let x64_dir = contents.join("x64");
@@ -264,7 +279,10 @@ pub(crate) fn install_aax(root: &Path, p: &PluginDef, config: &Config) -> Res {
         fs_ctx::create_dir_all(&resources_dir)?;
 
         fs_ctx::copy(&template, x64_dir.join(format!("{}.aaxplugin", p.name)))?;
-        fs_ctx::copy(&dylib, resources_dir.join(format!("{}_aax.dll", p.dylib_stem())))?;
+        fs_ctx::copy(
+            &dylib,
+            resources_dir.join(format!("{}_aax.dll", p.dylib_stem())),
+        )?;
 
         eprintln!("AAX:  {}", bundle.display());
     }

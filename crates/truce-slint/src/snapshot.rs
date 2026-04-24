@@ -33,7 +33,9 @@ pub fn render_to_pixels<P: truce_params::Params + 'static>(
     let phys_h = (height as f32 * scale) as u32;
 
     let window = platform::create_slint_window();
-    window.set_size(slint::WindowSize::Physical(PhysicalSize::new(phys_w, phys_h)));
+    window.set_size(slint::WindowSize::Physical(PhysicalSize::new(
+        phys_w, phys_h,
+    )));
     window.dispatch_event(slint::platform::WindowEvent::ScaleFactorChanged {
         scale_factor: scale,
     });
@@ -147,8 +149,8 @@ fn save_png(path: &Path, pixels: &[u8], w: u32, h: u32) {
 }
 
 fn load_png(path: &Path) -> (Vec<u8>, u32, u32) {
-    let file = fs::File::open(path)
-        .unwrap_or_else(|e| panic!("Failed to open {}: {e}", path.display()));
+    let file =
+        fs::File::open(path).unwrap_or_else(|e| panic!("Failed to open {}: {e}", path.display()));
     let decoder = png::Decoder::new(BufReader::new(file));
     let mut reader = decoder.read_info().unwrap();
     let mut buf = vec![0u8; reader.output_buffer_size().unwrap()];

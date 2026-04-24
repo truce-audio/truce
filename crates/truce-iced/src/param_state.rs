@@ -58,7 +58,10 @@ impl<P: Params> ParamState<P> {
 
     /// Read a param's formatted display string.
     pub fn label(&self, id: impl Into<u32>) -> &str {
-        self.labels.get(&id.into()).map(|s| s.as_str()).unwrap_or("")
+        self.labels
+            .get(&id.into())
+            .map(|s| s.as_str())
+            .unwrap_or("")
     }
 
     /// Read a meter value (0.0–1.0).

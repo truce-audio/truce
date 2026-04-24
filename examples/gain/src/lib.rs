@@ -1,5 +1,5 @@
 use truce::prelude::*;
-use truce_gui::layout::{GridLayout, knob, meter, xy_pad, widgets};
+use truce_gui::layout::{knob, meter, widgets, xy_pad, GridLayout};
 
 // --- Parameters ---
 
@@ -7,12 +7,15 @@ use GainParamsParamId as P;
 
 #[derive(Params)]
 pub struct GainParams {
-    #[param(name = "Gain", range = "linear(-60, 6)",
-            unit = "dB", smooth = "exp(5)")]
+    #[param(
+        name = "Gain",
+        range = "linear(-60, 6)",
+        unit = "dB",
+        smooth = "exp(5)"
+    )]
     pub gain: FloatParam,
 
-    #[param(name = "Pan", range = "linear(-1, 1)",
-            unit = "pan", smooth = "exp(5)")]
+    #[param(name = "Pan", range = "linear(-1, 1)", unit = "pan", smooth = "exp(5)")]
     pub pan: FloatParam,
 
     #[meter]
@@ -40,7 +43,12 @@ impl PluginLogic for Gain {
         self.params.snap_smoothers();
     }
 
-    fn process(&mut self, buffer: &mut AudioBuffer, _events: &EventList, context: &mut ProcessContext) -> ProcessStatus {
+    fn process(
+        &mut self,
+        buffer: &mut AudioBuffer,
+        _events: &EventList,
+        context: &mut ProcessContext,
+    ) -> ProcessStatus {
         for i in 0..buffer.num_samples() {
             let gain_db = self.params.gain.smoothed_next();
             let pan = self.params.pan.smoothed_next();
@@ -68,12 +76,20 @@ impl PluginLogic for Gain {
     }
 
     fn layout(&self) -> truce_gui::layout::GridLayout {
-        GridLayout::build("GAIN", "V0.1", 3, 50.0, vec![widgets(vec![
-            knob(P::Gain, "Gain"),
-            knob(P::Pan, "Pan"),
-            meter(&[P::MeterLeft, P::MeterRight], "Level").at(2, 0).rows(3),
-            xy_pad(P::Pan, P::Gain, "XY"),
-        ])])
+        GridLayout::build(
+            "GAIN",
+            "V0.1",
+            3,
+            50.0,
+            vec![widgets(vec![
+                knob(P::Gain, "Gain"),
+                knob(P::Pan, "Pan"),
+                meter(&[P::MeterLeft, P::MeterRight], "Level")
+                    .at(2, 0)
+                    .rows(3),
+                xy_pad(P::Pan, P::Gain, "XY"),
+            ])],
+        )
     }
 }
 
@@ -174,9 +190,7 @@ mod tests {
         let params = std::sync::Arc::new(GainParams::new());
         let gain = Gain::new(std::sync::Arc::clone(&params));
         let layout = gain.layout();
-        truce_test::assert_gui_snapshot_grid::<GainParams>(
-            "gain_default", params, layout, 0,
-        );
+        truce_test::assert_gui_snapshot_grid::<GainParams>("gain_default", params, layout, 0);
     }
 
     /// End-to-end check of `truce_test::in_process` on an effect:

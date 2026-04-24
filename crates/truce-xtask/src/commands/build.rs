@@ -13,8 +13,8 @@ use crate::commands::package::stage::{
 };
 use crate::util::fs_ctx;
 use crate::{
-    cargo_build, deployment_target, detect_default_features, load_config,
-    project_root, release_lib, PluginDef, Res,
+    cargo_build, deployment_target, detect_default_features, load_config, project_root,
+    release_lib, PluginDef, Res,
 };
 use std::process::Command;
 
@@ -39,14 +39,18 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
             "--au2" => au2 = true,
             // Reject install-only formats explicitly so the failure mode
             // is "use install for these" rather than a silent no-op.
-            "--au3" => return Err(
-                "--au3 is install-only (xcodebuild + /Applications layout). \
-                 Use `cargo truce install --au3` instead.".into()
-            ),
-            "--aax" => return Err(
-                "--aax is install-only (cmake AAX template + system path). \
-                 Use `cargo truce install --aax` instead.".into()
-            ),
+            "--au3" => {
+                return Err(
+                    "--au3 is install-only (xcodebuild + /Applications layout). \
+                 Use `cargo truce install --au3` instead."
+                        .into(),
+                )
+            }
+            "--aax" => {
+                return Err("--aax is install-only (cmake AAX template + system path). \
+                 Use `cargo truce install --aax` instead."
+                    .into())
+            }
             "--dev" => dev_mode = true,
             "-p" => {
                 i += 1;
@@ -97,7 +101,9 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
     // self-contained with no implicit ordering.
     if clap {
         let mut feats: Vec<&str> = vec!["clap"];
-        for f in &extra_features { feats.push(f); }
+        for f in &extra_features {
+            feats.push(f);
+        }
         let combined = feats.join(",");
         let label = if extra_features.is_empty() {
             "Building CLAP...".to_string()
@@ -112,7 +118,13 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
             }
             cargo_build(
                 &env_pairs,
-                &["-p", &p.crate_name, "--no-default-features", "--features", &combined],
+                &[
+                    "-p",
+                    &p.crate_name,
+                    "--no-default-features",
+                    "--features",
+                    &combined,
+                ],
                 dt,
             )?;
             let src = release_lib(&root, &p.dylib_stem());
@@ -125,7 +137,9 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
 
     if vst3 {
         let mut feats: Vec<&str> = vec!["vst3"];
-        for f in &extra_features { feats.push(f); }
+        for f in &extra_features {
+            feats.push(f);
+        }
         let combined = feats.join(",");
         let label = if extra_features.is_empty() {
             "Building VST3...".to_string()
@@ -140,7 +154,13 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
             }
             cargo_build(
                 &env_pairs,
-                &["-p", &p.crate_name, "--no-default-features", "--features", &combined],
+                &[
+                    "-p",
+                    &p.crate_name,
+                    "--no-default-features",
+                    "--features",
+                    &combined,
+                ],
                 dt,
             )?;
             let src = release_lib(&root, &p.dylib_stem());
@@ -160,7 +180,13 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
             }
             cargo_build(
                 &env_pairs,
-                &["-p", &p.crate_name, "--no-default-features", "--features", "vst2"],
+                &[
+                    "-p",
+                    &p.crate_name,
+                    "--no-default-features",
+                    "--features",
+                    "vst2",
+                ],
                 dt,
             )?;
             let src = release_lib(&root, &p.dylib_stem());
@@ -178,7 +204,13 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
             }
             cargo_build(
                 &env_pairs,
-                &["-p", &p.crate_name, "--no-default-features", "--features", "lv2"],
+                &[
+                    "-p",
+                    &p.crate_name,
+                    "--no-default-features",
+                    "--features",
+                    "lv2",
+                ],
                 dt,
             )?;
             let src = release_lib(&root, &p.dylib_stem());
@@ -190,16 +222,20 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
     if au2 {
         eprintln!("Building AU v2...");
         for p in &plugins {
-            let mut env_pairs: Vec<(&str, &str)> = vec![
-                ("TRUCE_AU_VERSION", "2"),
-                ("TRUCE_AU_PLUGIN_ID", &p.suffix),
-            ];
+            let mut env_pairs: Vec<(&str, &str)> =
+                vec![("TRUCE_AU_VERSION", "2"), ("TRUCE_AU_PLUGIN_ID", &p.suffix)];
             if let Some(n) = p.au_name.as_deref() {
                 env_pairs.push(("TRUCE_AU_NAME_OVERRIDE", n));
             }
             cargo_build(
                 &env_pairs,
-                &["-p", &p.crate_name, "--no-default-features", "--features", "au"],
+                &[
+                    "-p",
+                    &p.crate_name,
+                    "--no-default-features",
+                    "--features",
+                    "au",
+                ],
                 dt,
             )?;
             let src = release_lib(&root, &p.dylib_stem());
@@ -227,24 +263,39 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
     for p in &plugins {
         if clap {
             stage_clap(&root, p, &bundles_dir, identity)?;
-            eprintln!("  CLAP: {}", bundles_dir.join(format!("{}.clap", p.name)).display());
+            eprintln!(
+                "  CLAP: {}",
+                bundles_dir.join(format!("{}.clap", p.name)).display()
+            );
         }
         if vst3 {
             stage_vst3(&root, p, &config, &bundles_dir)?;
-            eprintln!("  VST3: {}", bundles_dir.join(format!("{}.vst3", p.name)).display());
+            eprintln!(
+                "  VST3: {}",
+                bundles_dir.join(format!("{}.vst3", p.name)).display()
+            );
         }
         if vst2 {
             stage_vst2(&root, p, &config, &bundles_dir)?;
-            eprintln!("  VST2: {}", bundles_dir.join(format!("{}.vst", p.name)).display());
+            eprintln!(
+                "  VST2: {}",
+                bundles_dir.join(format!("{}.vst", p.name)).display()
+            );
         }
         if lv2 {
             stage_lv2(&root, p, &bundles_dir)?;
             let slug = lv2_slug(&p.name);
-            eprintln!("  LV2:  {}", bundles_dir.join(format!("{slug}.lv2")).display());
+            eprintln!(
+                "  LV2:  {}",
+                bundles_dir.join(format!("{slug}.lv2")).display()
+            );
         }
         if au2 {
             stage_au2(&root, p, &config, &bundles_dir)?;
-            eprintln!("  AU:   {}", bundles_dir.join(format!("{}.component", p.name)).display());
+            eprintln!(
+                "  AU:   {}",
+                bundles_dir.join(format!("{}.component", p.name)).display()
+            );
         }
     }
 

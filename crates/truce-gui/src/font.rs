@@ -11,16 +11,15 @@ use std::sync::Mutex;
 /// Shared across all GUI backends for consistent text rendering. The
 /// canonical TTF lives at the workspace root under `fonts/`; see
 /// docs/internal/dedup-fonts.md.
-pub static JETBRAINS_MONO: &[u8] =
-    include_bytes!("../../../fonts/JetBrainsMono-Regular.ttf");
+pub static JETBRAINS_MONO: &[u8] = include_bytes!("../../../fonts/JetBrainsMono-Regular.ttf");
 
 /// Cached rasterized glyph.
 struct CachedGlyph {
-    bitmap: Vec<u8>,   // alpha values, row-major
+    bitmap: Vec<u8>, // alpha values, row-major
     width: u32,
     height: u32,
-    advance: f32,      // horizontal advance in pixels
-    y_offset: f32,     // offset from baseline (negative = above baseline)
+    advance: f32,  // horizontal advance in pixels
+    y_offset: f32, // offset from baseline (negative = above baseline)
 }
 
 /// Global glyph cache. Keyed by (character, size_tenths).
@@ -35,10 +34,8 @@ struct GlyphCache {
 fn get_or_init_cache() -> std::sync::MutexGuard<'static, Option<GlyphCache>> {
     let mut guard = CACHE.lock().unwrap();
     if guard.is_none() {
-        let font = fontdue::Font::from_bytes(
-            JETBRAINS_MONO,
-            fontdue::FontSettings::default(),
-        ).expect("failed to parse embedded font");
+        let font = fontdue::Font::from_bytes(JETBRAINS_MONO, fontdue::FontSettings::default())
+            .expect("failed to parse embedded font");
         *guard = Some(GlyphCache {
             font,
             glyphs: HashMap::new(),
@@ -56,13 +53,16 @@ fn get_glyph(cache: &mut GlyphCache, ch: char, size: f32) -> &CachedGlyph {
     let key = (ch, size_key(size));
     if !cache.glyphs.contains_key(&key) {
         let (metrics, bitmap) = cache.font.rasterize(ch, size);
-        cache.glyphs.insert(key, CachedGlyph {
-            bitmap,
-            width: metrics.width as u32,
-            height: metrics.height as u32,
-            advance: metrics.advance_width,
-            y_offset: metrics.ymin as f32,
-        });
+        cache.glyphs.insert(
+            key,
+            CachedGlyph {
+                bitmap,
+                width: metrics.width as u32,
+                height: metrics.height as u32,
+                advance: metrics.advance_width,
+                y_offset: metrics.ymin as f32,
+            },
+        );
     }
     cache.glyphs.get(&key).unwrap()
 }
@@ -80,7 +80,10 @@ pub fn draw_text_fontdue(
     x: f32,
     y: f32,
     size: f32,
-    r: f32, g: f32, b: f32, a: f32,
+    r: f32,
+    g: f32,
+    b: f32,
+    a: f32,
 ) {
     let mut guard = get_or_init_cache();
     let cache = guard.as_mut().unwrap();
@@ -115,11 +118,15 @@ pub fn draw_text_fontdue(
                 }
 
                 let alpha = glyph.bitmap[(row * gw + col) as usize];
-                if alpha == 0 { continue; }
+                if alpha == 0 {
+                    continue;
+                }
 
                 let ga = (alpha as f32 / 255.0) * a;
                 let idx = ((py as u32 * pixmap_width + px as u32) * 4) as usize;
-                if idx + 3 >= pixmap_data.len() { continue; }
+                if idx + 3 >= pixmap_data.len() {
+                    continue;
+                }
 
                 // Alpha blending (premultiplied)
                 let src_r = (cr as f32 * ga) as u8;
@@ -129,7 +136,7 @@ pub fn draw_text_fontdue(
 
                 let inv_sa = 1.0 - ga;
 
-                pixmap_data[idx]     = (src_r as f32 + pixmap_data[idx] as f32 * inv_sa) as u8;
+                pixmap_data[idx] = (src_r as f32 + pixmap_data[idx] as f32 * inv_sa) as u8;
                 pixmap_data[idx + 1] = (src_g as f32 + pixmap_data[idx + 1] as f32 * inv_sa) as u8;
                 pixmap_data[idx + 2] = (src_b as f32 + pixmap_data[idx + 2] as f32 * inv_sa) as u8;
                 pixmap_data[idx + 3] = (src_a as f32 + pixmap_data[idx + 3] as f32 * inv_sa) as u8;

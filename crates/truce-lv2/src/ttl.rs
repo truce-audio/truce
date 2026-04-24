@@ -16,8 +16,7 @@ use std::path::Path;
 /// Install-time override for `doap:name` in the generated LV2 TTL.
 /// Populated by `cargo truce install` from the `lv2_name` field in
 /// `truce.toml`.
-const LV2_NAME_OVERRIDE: Option<&'static str> =
-    option_env!("TRUCE_LV2_NAME_OVERRIDE");
+const LV2_NAME_OVERRIDE: Option<&'static str> = option_env!("TRUCE_LV2_NAME_OVERRIDE");
 
 fn resolved_plugin_name(info: &PluginInfo) -> &'static str {
     match LV2_NAME_OVERRIDE {
@@ -137,14 +136,23 @@ fn write_plugin_ttl(
     let mut f = fs::File::create(bundle_dir.join(ttl_basename))?;
 
     writeln!(f, "@prefix lv2:   <http://lv2plug.in/ns/lv2core#> .")?;
-    writeln!(f, "@prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .")?;
+    writeln!(
+        f,
+        "@prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> ."
+    )?;
     writeln!(f, "@prefix doap:  <http://usefulinc.com/ns/doap#> .")?;
     writeln!(f, "@prefix foaf:  <http://xmlns.com/foaf/0.1/> .")?;
-    writeln!(f, "@prefix units: <http://lv2plug.in/ns/extensions/units#> .")?;
+    writeln!(
+        f,
+        "@prefix units: <http://lv2plug.in/ns/extensions/units#> ."
+    )?;
     writeln!(f, "@prefix atom:  <http://lv2plug.in/ns/ext/atom#> .")?;
     writeln!(f, "@prefix midi:  <http://lv2plug.in/ns/ext/midi#> .")?;
     writeln!(f, "@prefix time:  <http://lv2plug.in/ns/ext/time#> .")?;
-    writeln!(f, "@prefix rsz:   <http://lv2plug.in/ns/ext/resize-port#> .")?;
+    writeln!(
+        f,
+        "@prefix rsz:   <http://lv2plug.in/ns/ext/resize-port#> ."
+    )?;
     writeln!(f, "@prefix state: <http://lv2plug.in/ns/ext/state#> .")?;
     writeln!(f, "@prefix ui:    <http://lv2plug.in/ns/extensions/ui#> .")?;
     writeln!(f, "@prefix pprop: <http://lv2plug.in/ns/ext/port-props#> .")?;
@@ -230,10 +238,7 @@ fn emit_port(
         // decode.
         writeln!(f, "        a lv2:InputPort, atom:AtomPort ;")?;
         writeln!(f, "        atom:bufferType atom:Sequence ;")?;
-        writeln!(
-            f,
-            "        atom:supports midi:MidiEvent, time:Position ;"
-        )?;
+        writeln!(f, "        atom:supports midi:MidiEvent, time:Position ;")?;
         if !layout.accepts_midi_in {
             writeln!(f, "        lv2:designation lv2:control ;")?;
         }
@@ -268,12 +273,7 @@ fn emit_port(
 /// Output control port for a `#[meter]` slot. Hosts read these each
 /// process block and forward updates to the UI (wired via
 /// `ui:portNotification` in the manifest).
-fn emit_meter_port(
-    f: &mut fs::File,
-    index: u32,
-    slot: usize,
-    id: u32,
-) -> std::io::Result<()> {
+fn emit_meter_port(f: &mut fs::File, index: u32, slot: usize, id: u32) -> std::io::Result<()> {
     writeln!(f, "        a lv2:OutputPort, lv2:ControlPort ;")?;
     writeln!(f, "        lv2:index {index} ;")?;
     writeln!(f, "        lv2:symbol \"meter_{slot}\" ;")?;
@@ -293,11 +293,7 @@ fn emit_meter_port(
 fn emit_control_port(f: &mut fs::File, index: u32, p: &ParamInfo) -> std::io::Result<()> {
     writeln!(f, "        a lv2:InputPort, lv2:ControlPort ;")?;
     writeln!(f, "        lv2:index {index} ;")?;
-    writeln!(
-        f,
-        "        lv2:symbol \"{}\" ;",
-        param_symbol(p.id, p.name)
-    )?;
+    writeln!(f, "        lv2:symbol \"{}\" ;", param_symbol(p.id, p.name))?;
     writeln!(f, "        lv2:name \"{}\" ;", escape_turtle(p.name))?;
     writeln!(f, "        lv2:minimum {} ;", p.range.min())?;
     writeln!(f, "        lv2:maximum {} ;", p.range.max())?;
@@ -331,7 +327,12 @@ fn param_symbol(id: u32, name: &str) -> String {
             s.insert(0, 'p');
         }
     }
-    if s.is_empty() || !s.chars().next().map_or(false, |c| c.is_ascii_alphabetic() || c == '_') {
+    if s.is_empty()
+        || !s
+            .chars()
+            .next()
+            .map_or(false, |c| c.is_ascii_alphabetic() || c == '_')
+    {
         return format!("p_{id}");
     }
     s

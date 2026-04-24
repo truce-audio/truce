@@ -4,8 +4,8 @@
 
 use truce_core::buffer::AudioBuffer;
 use truce_core::events::{Event, EventBody, EventList, TransportInfo};
-use truce_core::process::{ProcessContext, ProcessStatus};
 use truce_core::plugin::Plugin;
+use truce_core::process::{ProcessContext, ProcessStatus};
 use truce_params::Params;
 #[allow(unused_imports)]
 use truce_params_derive::Params;
@@ -59,9 +59,10 @@ impl truce_loader::PluginLogic for SmootherPlugin {
 fn smoother_ramps_gradually() {
     let params = std::sync::Arc::new(SmootherParams::new());
     let logic = SmootherPlugin::new(std::sync::Arc::clone(&params));
-    let mut shell = truce_loader::static_shell::StaticShell::<SmootherParams, SmootherPlugin>::from_parts(
-        params, logic,
-    );
+    let mut shell =
+        truce_loader::static_shell::StaticShell::<SmootherParams, SmootherPlugin>::from_parts(
+            params, logic,
+        );
     shell.reset(44100.0, 64);
 
     // Set gain to 0.0 initially.

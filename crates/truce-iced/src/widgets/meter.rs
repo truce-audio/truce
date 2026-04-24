@@ -111,10 +111,7 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for MeterProgram {
             let fill_h = (display * self.meter_height).clamp(0.0, self.meter_height);
 
             // Background
-            let bg = Path::rectangle(
-                Point::new(x, 0.0),
-                Size::new(bar_w, self.meter_height),
-            );
+            let bg = Path::rectangle(Point::new(x, 0.0), Size::new(bar_w, self.meter_height));
             frame.fill(&bg, iced::Color::from_rgb(0.165, 0.165, 0.188));
 
             // Fill (blue, red when clipping)

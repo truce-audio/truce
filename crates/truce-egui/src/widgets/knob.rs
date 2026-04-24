@@ -84,10 +84,7 @@ pub fn param_knob(
         let value_angle = START_ANGLE + SWEEP * value;
         let pointer_len = KNOB_RADIUS * 0.6;
         let pointer_end = center + egui::vec2(value_angle.cos(), value_angle.sin()) * pointer_len;
-        painter.line_segment(
-            [center, pointer_end],
-            egui::Stroke::new(2.0, pointer_color),
-        );
+        painter.line_segment([center, pointer_end], egui::Stroke::new(2.0, pointer_color));
 
         // Value text (below knob arc)
         let value_text = state.format(id);

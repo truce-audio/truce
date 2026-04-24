@@ -44,9 +44,7 @@ impl<'a, M: Clone + Debug + 'static> ToggleWidget<'a, M> {
             })
             .size(18.0);
 
-        let mut col = column![t]
-            .spacing(4)
-            .align_x(iced::Alignment::Center);
+        let mut col = column![t].spacing(4).align_x(iced::Alignment::Center);
 
         if let Some(label) = self.label {
             col = col.push(text(label).size(10).color(theme::TEXT_DIM));

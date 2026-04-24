@@ -67,12 +67,30 @@ impl Default for InProcessOpts {
 }
 
 impl InProcessOpts {
-    pub fn sample_rate(mut self, sr: f64) -> Self { self.sample_rate = sr; self }
-    pub fn channels(mut self, ch: usize) -> Self { self.channels = ch; self }
-    pub fn block_size(mut self, n: usize) -> Self { self.block_size = n; self }
-    pub fn duration(mut self, d: Duration) -> Self { self.duration = d; self }
-    pub fn bpm(mut self, bpm: f64) -> Self { self.bpm = bpm; self }
-    pub fn playing(mut self, p: bool) -> Self { self.playing = p; self }
+    pub fn sample_rate(mut self, sr: f64) -> Self {
+        self.sample_rate = sr;
+        self
+    }
+    pub fn channels(mut self, ch: usize) -> Self {
+        self.channels = ch;
+        self
+    }
+    pub fn block_size(mut self, n: usize) -> Self {
+        self.block_size = n;
+        self
+    }
+    pub fn duration(mut self, d: Duration) -> Self {
+        self.duration = d;
+        self
+    }
+    pub fn bpm(mut self, bpm: f64) -> Self {
+        self.bpm = bpm;
+        self
+    }
+    pub fn playing(mut self, p: bool) -> Self {
+        self.playing = p;
+        self
+    }
 
     /// Build a MIDI script using a closure. Script offsets are in
     /// the order events are declared; each `wait_ms` advances the
@@ -104,23 +122,39 @@ impl MidiScript {
     pub fn note_on(&mut self, note: u8, velocity: f32) {
         self.events.push((
             self.cursor_samples,
-            EventBody::NoteOn { channel: 0, note, velocity },
+            EventBody::NoteOn {
+                channel: 0,
+                note,
+                velocity,
+            },
         ));
     }
     pub fn note_off(&mut self, note: u8) {
         self.events.push((
             self.cursor_samples,
-            EventBody::NoteOff { channel: 0, note, velocity: 0.0 },
+            EventBody::NoteOff {
+                channel: 0,
+                note,
+                velocity: 0.0,
+            },
         ));
     }
     pub fn cc(&mut self, cc: u8, value: f32) {
         self.events.push((
             self.cursor_samples,
-            EventBody::ControlChange { channel: 0, cc, value },
+            EventBody::ControlChange {
+                channel: 0,
+                cc,
+                value,
+            },
         ));
     }
     pub fn wait_ms(&mut self, ms: u64) {
-        let sr = if self.sample_rate > 0.0 { self.sample_rate } else { 44_100.0 };
+        let sr = if self.sample_rate > 0.0 {
+            self.sample_rate
+        } else {
+            44_100.0
+        };
         self.cursor_samples += ((sr * ms as f64) / 1000.0) as usize;
     }
 }
@@ -150,8 +184,7 @@ pub fn run<P: PluginExport>(mut opts: InProcessOpts) -> RunResult {
     plugin.params().snap_smoothers();
 
     let is_effect = P::info().category == PluginCategory::Effect;
-    let total_frames =
-        (opts.duration.as_secs_f64() * opts.sample_rate) as usize;
+    let total_frames = (opts.duration.as_secs_f64() * opts.sample_rate) as usize;
 
     let mut output: Vec<Vec<f32>> = (0..opts.channels)
         .map(|_| Vec::with_capacity(total_frames))
@@ -198,8 +231,9 @@ pub fn run<P: PluginExport>(mut opts: InProcessOpts) -> RunResult {
         }
 
         // Allocate per-block channel buffers.
-        let mut out_bufs: Vec<Vec<f32>> =
-            (0..opts.channels).map(|_| vec![0.0f32; block_len]).collect();
+        let mut out_bufs: Vec<Vec<f32>> = (0..opts.channels)
+            .map(|_| vec![0.0f32; block_len])
+            .collect();
 
         let in_bufs_slice: Vec<Vec<f32>> = if is_effect {
             input_channels
@@ -212,8 +246,7 @@ pub fn run<P: PluginExport>(mut opts: InProcessOpts) -> RunResult {
         let in_slices: Vec<&[f32]> = in_bufs_slice.iter().map(|b| b.as_slice()).collect();
         let mut out_slices: Vec<&mut [f32]> =
             out_bufs.iter_mut().map(|b| b.as_mut_slice()).collect();
-        let mut audio =
-            unsafe { AudioBuffer::from_slices(&in_slices, &mut out_slices, block_len) };
+        let mut audio = unsafe { AudioBuffer::from_slices(&in_slices, &mut out_slices, block_len) };
 
         let transport_info = transport.tick_audio(block_len);
         let mut output_events = EventList::new();
@@ -233,11 +266,7 @@ pub fn run<P: PluginExport>(mut opts: InProcessOpts) -> RunResult {
     }
 
     // Capture final meter readings.
-    let meter_ids: Vec<u32> = plugin
-        .params()
-        .meter_ids()
-        .into_iter()
-        .collect();
+    let meter_ids: Vec<u32> = plugin.params().meter_ids().into_iter().collect();
     let meters: Vec<(u32, f32)> = meter_ids
         .iter()
         .map(|id| (*id, plugin.get_meter(*id)))

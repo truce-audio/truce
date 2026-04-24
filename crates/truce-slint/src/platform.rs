@@ -40,9 +40,7 @@ impl Platform for TrucePlatform {
     ) -> Result<Rc<dyn slint::platform::WindowAdapter>, PlatformError> {
         // Return the pre-created window if one was set, otherwise create a new one.
         let window = NEXT_WINDOW.with(|slot| slot.borrow_mut().take());
-        Ok(window.unwrap_or_else(|| {
-            MinimalSoftwareWindow::new(RepaintBufferType::ReusedBuffer)
-        }))
+        Ok(window.unwrap_or_else(|| MinimalSoftwareWindow::new(RepaintBufferType::ReusedBuffer)))
     }
 }
 
@@ -165,7 +163,11 @@ pub fn query_backing_scale(parent: &RawWindowHandle) -> f64 {
                 2.0
             }
         };
-        if scale < 1.0 { 1.0 } else { scale }
+        if scale < 1.0 {
+            1.0
+        } else {
+            scale
+        }
     }
 }
 
@@ -193,9 +195,8 @@ pub unsafe fn create_wgpu_surface(
             let rwh6_window = wgpu::rwh::RawWindowHandle::AppKit(
                 wgpu::rwh::AppKitWindowHandle::new(std::ptr::NonNull::new(ns_view)?),
             );
-            let rwh6_display = wgpu::rwh::RawDisplayHandle::AppKit(
-                wgpu::rwh::AppKitDisplayHandle::new(),
-            );
+            let rwh6_display =
+                wgpu::rwh::RawDisplayHandle::AppKit(wgpu::rwh::AppKitDisplayHandle::new());
             wgpu::SurfaceTargetUnsafe::RawHandle {
                 raw_display_handle: rwh6_display,
                 raw_window_handle: rwh6_window,
@@ -207,12 +208,11 @@ pub unsafe fn create_wgpu_surface(
             if hwnd.is_null() {
                 return None;
             }
-            let rwh6_window = wgpu::rwh::RawWindowHandle::Win32(
-                wgpu::rwh::Win32WindowHandle::new(std::num::NonZero::new(hwnd as isize)?),
-            );
-            let rwh6_display = wgpu::rwh::RawDisplayHandle::Windows(
-                wgpu::rwh::WindowsDisplayHandle::new(),
-            );
+            let rwh6_window = wgpu::rwh::RawWindowHandle::Win32(wgpu::rwh::Win32WindowHandle::new(
+                std::num::NonZero::new(hwnd as isize)?,
+            ));
+            let rwh6_display =
+                wgpu::rwh::RawDisplayHandle::Windows(wgpu::rwh::WindowsDisplayHandle::new());
             wgpu::SurfaceTargetUnsafe::RawHandle {
                 raw_display_handle: rwh6_display,
                 raw_window_handle: rwh6_window,
@@ -225,9 +225,8 @@ pub unsafe fn create_wgpu_surface(
                 _ => return None,
             };
             let display_ptr = std::ptr::NonNull::new(display_handle.display);
-            let rwh6_window = wgpu::rwh::RawWindowHandle::Xlib(
-                wgpu::rwh::XlibWindowHandle::new(handle.window),
-            );
+            let rwh6_window =
+                wgpu::rwh::RawWindowHandle::Xlib(wgpu::rwh::XlibWindowHandle::new(handle.window));
             let rwh6_display = wgpu::rwh::RawDisplayHandle::Xlib(
                 wgpu::rwh::XlibDisplayHandle::new(display_ptr, display_handle.screen),
             );

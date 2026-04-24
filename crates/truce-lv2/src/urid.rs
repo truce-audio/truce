@@ -80,23 +80,23 @@ impl UridMap {
         out.atom_sequence = out.intern(LV2_ATOM__SEQUENCE);
         out.atom_chunk = out.intern("http://lv2plug.in/ns/ext/atom#Chunk");
         // Atom value types.
-        out.atom_blank  = out.intern("http://lv2plug.in/ns/ext/atom#Blank");
+        out.atom_blank = out.intern("http://lv2plug.in/ns/ext/atom#Blank");
         out.atom_object = out.intern("http://lv2plug.in/ns/ext/atom#Object");
-        out.atom_bool   = out.intern("http://lv2plug.in/ns/ext/atom#Bool");
-        out.atom_int    = out.intern("http://lv2plug.in/ns/ext/atom#Int");
-        out.atom_long   = out.intern("http://lv2plug.in/ns/ext/atom#Long");
-        out.atom_float  = out.intern("http://lv2plug.in/ns/ext/atom#Float");
+        out.atom_bool = out.intern("http://lv2plug.in/ns/ext/atom#Bool");
+        out.atom_int = out.intern("http://lv2plug.in/ns/ext/atom#Int");
+        out.atom_long = out.intern("http://lv2plug.in/ns/ext/atom#Long");
+        out.atom_float = out.intern("http://lv2plug.in/ns/ext/atom#Float");
         out.atom_double = out.intern("http://lv2plug.in/ns/ext/atom#Double");
         // LV2 time:* vocabulary.
-        out.time_position         = out.intern("http://lv2plug.in/ns/ext/time#Position");
-        out.time_bar              = out.intern("http://lv2plug.in/ns/ext/time#bar");
-        out.time_bar_beat         = out.intern("http://lv2plug.in/ns/ext/time#barBeat");
-        out.time_beat             = out.intern("http://lv2plug.in/ns/ext/time#beat");
-        out.time_beat_unit        = out.intern("http://lv2plug.in/ns/ext/time#beatUnit");
-        out.time_beats_per_bar    = out.intern("http://lv2plug.in/ns/ext/time#beatsPerBar");
+        out.time_position = out.intern("http://lv2plug.in/ns/ext/time#Position");
+        out.time_bar = out.intern("http://lv2plug.in/ns/ext/time#bar");
+        out.time_bar_beat = out.intern("http://lv2plug.in/ns/ext/time#barBeat");
+        out.time_beat = out.intern("http://lv2plug.in/ns/ext/time#beat");
+        out.time_beat_unit = out.intern("http://lv2plug.in/ns/ext/time#beatUnit");
+        out.time_beats_per_bar = out.intern("http://lv2plug.in/ns/ext/time#beatsPerBar");
         out.time_beats_per_minute = out.intern("http://lv2plug.in/ns/ext/time#beatsPerMinute");
-        out.time_frame            = out.intern("http://lv2plug.in/ns/ext/time#frame");
-        out.time_speed            = out.intern("http://lv2plug.in/ns/ext/time#speed");
+        out.time_frame = out.intern("http://lv2plug.in/ns/ext/time#frame");
+        out.time_speed = out.intern("http://lv2plug.in/ns/ext/time#speed");
         out
     }
 

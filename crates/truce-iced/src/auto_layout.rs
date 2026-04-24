@@ -64,20 +64,15 @@ pub fn auto_view<'a, M: Clone + Debug + 'static, P: Params>(
         }
 
         // Collect widgets in this row, sorted by column
-        let mut row_widgets: Vec<_> = layout
-            .widgets
-            .iter()
-            .filter(|w| w.row == r)
-            .collect();
+        let mut row_widgets: Vec<_> = layout.widgets.iter().filter(|w| w.row == r).collect();
         row_widgets.sort_by_key(|w| w.col);
 
         if row_widgets.is_empty() {
             continue;
         }
 
-        let mut row_elem: Row<'a, Message<M>> = Row::new()
-            .spacing(10)
-            .align_y(alignment::Vertical::Top);
+        let mut row_elem: Row<'a, Message<M>> =
+            Row::new().spacing(10).align_y(alignment::Vertical::Top);
 
         for widget in &row_widgets {
             let kind = widget.widget.unwrap_or(WidgetKind::Knob);

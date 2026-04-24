@@ -210,7 +210,11 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
     // Build AudioBuffer from raw pointers (copies input→output for effects)
     let mut scratch = truce_core::buffer::RawBufferScratch::default();
     let mut audio_buffer = scratch.build(
-        inputs, outputs, num_input_channels, num_output_channels, num_frames as u32,
+        inputs,
+        outputs,
+        num_input_channels,
+        num_output_channels,
+        num_frames as u32,
     );
 
     let transport = if !inst.aeffect_ptr.is_null() {
@@ -226,7 +230,12 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
     };
     inst.output_events.clear();
     inst.transport_slot.write(&transport);
-    let mut context = ProcessContext::new(&transport, inst.sample_rate, num_frames, &mut inst.output_events);
+    let mut context = ProcessContext::new(
+        &transport,
+        inst.sample_rate,
+        num_frames,
+        &mut inst.output_events,
+    );
 
     inst.plugin
         .process(&mut audio_buffer, &inst.event_list, &mut context);
@@ -433,7 +442,11 @@ unsafe fn open_editor_inner<P: PluginExport>(
                 params_for_set.set_normalized(id, value);
                 if !effect_ptr.as_ptr().is_null() {
                     let norm = params_for_set.get_normalized(id).unwrap_or(0.0) as f32;
-                    truce_vst2_host_automate(effect_ptr.as_ptr() as *mut std::ffi::c_void, id, norm);
+                    truce_vst2_host_automate(
+                        effect_ptr.as_ptr() as *mut std::ffi::c_void,
+                        id,
+                        norm,
+                    );
                 }
             }),
             end_edit: std::sync::Arc::new(move |id| {
@@ -450,7 +463,9 @@ unsafe fn open_editor_inner<P: PluginExport>(
             }),
             format_param: std::sync::Arc::new(move |id| {
                 let plain = params_for_fmt.get_plain(id).unwrap_or(0.0);
-                params_for_fmt.format_value(id, plain).unwrap_or_else(|| format!("{:.1}", plain))
+                params_for_fmt
+                    .format_value(id, plain)
+                    .unwrap_or_else(|| format!("{:.1}", plain))
             }),
             get_meter: std::sync::Arc::new(move |id| {
                 let plugin = plugin_ptr.get();
@@ -506,8 +521,7 @@ unsafe extern "C" fn cb_gui_close<P: PluginExport>(ctx: *mut std::ffi::c_void) {
 /// Install-time override for the host-facing plugin name
 /// (returned from `effGetEffectName`). Populated by `cargo truce
 /// install` via the `vst2_name` field in `truce.toml`.
-const VST2_NAME_OVERRIDE: Option<&'static str> =
-    option_env!("TRUCE_VST2_NAME_OVERRIDE");
+const VST2_NAME_OVERRIDE: Option<&'static str> = option_env!("TRUCE_VST2_NAME_OVERRIDE");
 
 fn resolved_plugin_name(info: &truce_core::info::PluginInfo) -> &'static str {
     match VST2_NAME_OVERRIDE {

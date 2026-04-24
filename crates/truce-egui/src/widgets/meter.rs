@@ -43,10 +43,8 @@ pub fn level_meter(
             let x = start_x + i as f32 * (bar_w + BAR_GAP);
 
             // Track background
-            let bar_rect = egui::Rect::from_min_size(
-                egui::pos2(x, bar_top),
-                egui::vec2(bar_w, bar_h),
-            );
+            let bar_rect =
+                egui::Rect::from_min_size(egui::pos2(x, bar_top), egui::vec2(bar_w, bar_h));
             painter.rect_filled(bar_rect, 2.0, TRACK_BG);
 
             // Level fill
@@ -64,9 +62,7 @@ pub fn level_meter(
                 painter.rect_filled(level_rect, 2.0, color);
             }
         }
-
     }
 
     response
 }
-

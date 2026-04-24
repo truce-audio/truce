@@ -20,7 +20,6 @@ use truce_gui::widgets::WidgetType;
 /// All methods use safe Rust types. No `unsafe`, no `#[repr(C)]`,
 /// no raw pointers.
 pub trait PluginLogic: Send + 'static {
-
     /// Reset for a new sample rate / block size.
     fn reset(&mut self, sample_rate: f64, max_block_size: usize);
 
@@ -42,7 +41,9 @@ pub trait PluginLogic: Send + 'static {
     /// Whether this plugin uses a custom render() implementation.
     /// If false (default), the shell uses BuiltinEditor with
     /// standard widget drawing from layout().
-    fn uses_custom_render(&self) -> bool { false }
+    fn uses_custom_render(&self) -> bool {
+        false
+    }
 
     /// Return the widget layout.
     ///
@@ -58,16 +59,22 @@ pub trait PluginLogic: Send + 'static {
     }
 
     /// Serialize plugin-specific state (DSP state, not params).
-    fn save_state(&self) -> Vec<u8> { Vec::new() }
+    fn save_state(&self) -> Vec<u8> {
+        Vec::new()
+    }
 
     /// Restore plugin-specific state.
     fn load_state(&mut self, _data: &[u8]) {}
 
     /// Report latency in samples.
-    fn latency(&self) -> u32 { 0 }
+    fn latency(&self) -> u32 {
+        0
+    }
 
     /// Report tail time in samples.
-    fn tail(&self) -> u32 { 0 }
+    fn tail(&self) -> u32 {
+        0
+    }
 
     /// Provide a custom editor instead of the built-in widget layout.
     ///
@@ -75,14 +82,18 @@ pub trait PluginLogic: Send + 'static {
     /// (e.g., `truce_egui::EguiEditor`). The shell calls this first;
     /// if it returns `None`, the shell falls back to creating a
     /// `BuiltinEditor` from `layout()`.
-    fn custom_editor(&self) -> Option<Box<dyn truce_core::editor::Editor>> { None }
+    fn custom_editor(&self) -> Option<Box<dyn truce_core::editor::Editor>> {
+        None
+    }
 }
 
 /// Default hit test: circular for knobs, rectangular for others,
 /// skip meters.
 pub fn default_hit_test(widgets: &[WidgetRegion], x: f32, y: f32) -> Option<usize> {
     for (i, w) in widgets.iter().enumerate() {
-        if w.widget_type == WidgetType::Meter { continue; }
+        if w.widget_type == WidgetType::Meter {
+            continue;
+        }
         if w.widget_type == WidgetType::Knob {
             let dx = x - w.cx;
             let dy = y - w.cy;

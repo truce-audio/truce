@@ -53,7 +53,11 @@ pub fn list_devices() {
             .unwrap_or_default();
         for d in devices {
             let name = d.name().unwrap_or_default();
-            let marker = if name == default_name { " (default)" } else { "" };
+            let marker = if name == default_name {
+                " (default)"
+            } else {
+                ""
+            };
             println!("  {name}{marker}");
         }
     }
@@ -65,7 +69,11 @@ pub fn list_devices() {
             .unwrap_or_default();
         for d in devices {
             let name = d.name().unwrap_or_default();
-            let marker = if name == default_name { " (default)" } else { "" };
+            let marker = if name == default_name {
+                " (default)"
+            } else {
+                ""
+            };
             println!("  {name}{marker}");
         }
     }
@@ -234,7 +242,8 @@ fn resolve_config(
         // back silently if not.
         if let Ok(mut ranges) = device.supported_output_configs() {
             let desired = cpal::SampleRate(sr);
-            let supported = ranges.any(|r| r.min_sample_rate() <= desired && r.max_sample_rate() >= desired);
+            let supported =
+                ranges.any(|r| r.min_sample_rate() <= desired && r.max_sample_rate() >= desired);
             if supported {
                 sample_rate = desired;
             } else {
@@ -296,9 +305,7 @@ fn audio_callback<P: PluginExport>(
         return;
     };
 
-    let mut channel_bufs: Vec<Vec<f32>> = (0..channels)
-        .map(|_| vec![0.0f32; num_frames])
-        .collect();
+    let mut channel_bufs: Vec<Vec<f32>> = (0..channels).map(|_| vec![0.0f32; num_frames]).collect();
 
     if is_effect {
         if let Ok(mut ring) = input_ring.try_lock() {

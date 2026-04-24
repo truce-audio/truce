@@ -13,7 +13,7 @@ static LOADER_ID: AtomicU64 = AtomicU64::new(0);
 
 use libloading::{Library, Symbol};
 
-use crate::canary::{AbiCanary, verify_probe};
+use crate::canary::{verify_probe, AbiCanary};
 use crate::traits::PluginLogic;
 
 /// Manages a hot-reloadable plugin dylib.
@@ -119,8 +119,10 @@ impl NativeLoader {
         let dylib_canary = canary_fn();
         let shell_canary = AbiCanary::current();
         if !shell_canary.matches(&dylib_canary) {
-            log::error!("ABI mismatch — rebuild both shell and logic:\n{}",
-                shell_canary.diff_report(&dylib_canary));
+            log::error!(
+                "ABI mismatch — rebuild both shell and logic:\n{}",
+                shell_canary.diff_report(&dylib_canary)
+            );
             return false;
         }
 
@@ -190,8 +192,11 @@ impl NativeLoader {
             }
         }
 
-        log::info!("hot-reload complete (load #{}, {} leaked handles)",
-            self.load_counter, self.leaked_handles.len());
+        log::info!(
+            "hot-reload complete (load #{}, {} leaked handles)",
+            self.load_counter,
+            self.leaked_handles.len()
+        );
         true
     }
 
@@ -209,14 +214,20 @@ impl NativeLoader {
 
     fn copy_versioned(&mut self) -> Result<PathBuf, std::io::Error> {
         self.load_counter += 1;
-        let ext = self.dylib_path.extension()
+        let ext = self
+            .dylib_path
+            .extension()
             .and_then(|e| e.to_str())
             .unwrap_or("dylib");
-        let stem = self.dylib_path.file_stem()
+        let stem = self
+            .dylib_path
+            .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("plugin");
-        let temp = std::env::temp_dir()
-            .join(format!("truce-hot-{stem}-{}-{}.{ext}", self.instance_id, self.load_counter));
+        let temp = std::env::temp_dir().join(format!(
+            "truce-hot-{stem}-{}-{}.{ext}",
+            self.instance_id, self.load_counter
+        ));
         std::fs::copy(&self.dylib_path, &temp)?;
         Ok(temp)
     }
@@ -257,7 +268,9 @@ fn file_mtime(path: &std::path::Path) -> SystemTime {
 
 /// Simple CRC32 of a file's contents (no external dependency).
 fn crc32_file(path: &std::path::Path) -> u32 {
-    let Ok(data) = std::fs::read(path) else { return 0 };
+    let Ok(data) = std::fs::read(path) else {
+        return 0;
+    };
     crc32(&data)
 }
 

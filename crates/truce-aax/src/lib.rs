@@ -9,7 +9,6 @@ use std::os::raw::c_char;
 use std::slice;
 use std::sync::{Arc, OnceLock};
 
-
 use truce_core::editor::{EditorContext, RawWindowHandle};
 use truce_core::events::{Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
@@ -163,8 +162,7 @@ static INFO: OnceLock<StaticInfo> = OnceLock::new();
 /// Install-time override for the host-facing plugin name shown in
 /// Pro Tools' plug-in menus. Populated by `cargo truce install` via
 /// the `aax_name` field in `truce.toml`.
-const AAX_NAME_OVERRIDE: Option<&'static str> =
-    option_env!("TRUCE_AAX_NAME_OVERRIDE");
+const AAX_NAME_OVERRIDE: Option<&'static str> = option_env!("TRUCE_AAX_NAME_OVERRIDE");
 
 fn resolved_plugin_name(info: &truce_core::info::PluginInfo) -> &'static str {
     match AAX_NAME_OVERRIDE {
@@ -216,7 +214,7 @@ pub fn register_aax<P: PluginExport>() {
             layout.total_input_channels(),
             layout.total_output_channels(),
         ) {
-            (0, 0) => (2, 2), // pure MIDI effect → stereo passthrough
+            (0, 0) => (2, 2),              // pure MIDI effect → stereo passthrough
             (0, out) => (out.max(2), out), // output-only instrument → match output
             (in_, out) => (in_, out),
         };
@@ -285,7 +283,6 @@ fn fourcc(bytes: &[u8; 4]) -> i32 {
         | (bytes[3] as i32)
 }
 
-
 // ---------------------------------------------------------------------------
 // Export macro
 // ---------------------------------------------------------------------------
@@ -352,7 +349,8 @@ macro_rules! export_aax {
                 transport: *const ::truce_aax::TruceAaxTransportSnapshot,
             ) {
                 ::truce_aax::_process::<$plugin_type>(
-                    ctx, inputs, outputs, num_in, num_out, num_frames, events, num_events, transport,
+                    ctx, inputs, outputs, num_in, num_out, num_frames, events, num_events,
+                    transport,
                 );
             }
             #[no_mangle]
@@ -567,9 +565,7 @@ pub unsafe fn _process<P: PluginExport>(
     // Build AudioBuffer from raw pointers (copies input→output for effects)
     unsafe {
         let mut scratch = truce_core::buffer::RawBufferScratch::default();
-        let mut buffer = scratch.build(
-            inputs, outputs, num_in, num_out, num_frames as u32,
-        );
+        let mut buffer = scratch.build(inputs, outputs, num_in, num_out, num_frames as u32);
         let transport = if !transport_ptr.is_null() && (*transport_ptr).valid != 0 {
             let t = &*transport_ptr;
             TransportInfo {
@@ -591,9 +587,15 @@ pub unsafe fn _process<P: PluginExport>(
         };
         inst.output_events.clear();
         inst.transport_slot.write(&transport);
-        let mut context = ProcessContext::new(&transport, inst.sample_rate, num_frames, &mut inst.output_events);
+        let mut context = ProcessContext::new(
+            &transport,
+            inst.sample_rate,
+            num_frames,
+            &mut inst.output_events,
+        );
 
-        inst.plugin.process(&mut buffer, &inst.event_list, &mut context);
+        inst.plugin
+            .process(&mut buffer, &inst.event_list, &mut context);
     }
 }
 
@@ -649,18 +651,16 @@ pub unsafe fn _save_state<P: PluginExport>(
             Err(_) => {
                 let (ids, values) = inst.plugin.params().collect_values();
                 let extra = inst.plugin.save_state();
-                let fresh = state::serialize_state(
-                    inst.plugin_id_hash, &ids, &values, extra.as_deref(),
-                );
+                let fresh =
+                    state::serialize_state(inst.plugin_id_hash, &ids, &values, extra.as_deref());
                 return finalize_blob(fresh, out_data);
             }
         };
         if dirty || guard.is_none() {
             let (ids, values) = inst.plugin.params().collect_values();
             let extra = inst.plugin.save_state();
-            let fresh = state::serialize_state(
-                inst.plugin_id_hash, &ids, &values, extra.as_deref(),
-            );
+            let fresh =
+                state::serialize_state(inst.plugin_id_hash, &ids, &values, extra.as_deref());
             *guard = Some(fresh.clone());
             fresh
         } else {
@@ -704,10 +704,7 @@ pub unsafe fn _load_state<P: PluginExport>(ctx: *mut std::ffi::c_void, data: *co
 // GUI bridge functions
 // ---------------------------------------------------------------------------
 
-pub unsafe fn _editor_create<P: PluginExport>(
-    ctx: *mut c_void,
-    out: *mut TruceAaxEditorInfo,
-) {
+pub unsafe fn _editor_create<P: PluginExport>(ctx: *mut c_void, out: *mut TruceAaxEditorInfo) {
     let inst = &mut *(ctx as *mut AaxInstance<P>);
     inst.editor = inst.plugin.editor();
     let info = match &inst.editor {
@@ -723,7 +720,11 @@ pub unsafe fn _editor_create<P: PluginExport>(
                 height: h,
             }
         }
-        None => TruceAaxEditorInfo { has_editor: 0, width: 0, height: 0 },
+        None => TruceAaxEditorInfo {
+            has_editor: 0,
+            width: 0,
+            height: 0,
+        },
     };
     *out = info;
 }
@@ -770,15 +771,13 @@ pub unsafe fn _editor_open<P: PluginExport>(
         request_resize: Arc::new(move |w, h| unsafe {
             resize_fn(aax_ctx.as_ptr() as *mut c_void, w, h) != 0
         }),
-        get_param: Arc::new(move |id| {
-            params_for_get.get_normalized(id).unwrap_or(0.0)
-        }),
-        get_param_plain: Arc::new(move |id| {
-            params_for_plain.get_plain(id).unwrap_or(0.0)
-        }),
+        get_param: Arc::new(move |id| params_for_get.get_normalized(id).unwrap_or(0.0)),
+        get_param_plain: Arc::new(move |id| params_for_plain.get_plain(id).unwrap_or(0.0)),
         format_param: Arc::new(move |id| {
             let val = params_for_fmt.get_plain(id).unwrap_or(0.0);
-            params_for_fmt.format_value(id, val).unwrap_or_else(|| format!("{:.1}", val))
+            params_for_fmt
+                .format_value(id, val)
+                .unwrap_or_else(|| format!("{:.1}", val))
         }),
         get_meter: Arc::new(move |id| unsafe {
             let plugin = plugin_ptr.get();
@@ -818,11 +817,7 @@ pub unsafe fn _editor_idle<P: PluginExport>(ctx: *mut c_void) {
     }
 }
 
-pub unsafe fn _editor_get_size<P: PluginExport>(
-    ctx: *mut c_void,
-    w: *mut u32,
-    h: *mut u32,
-) -> i32 {
+pub unsafe fn _editor_get_size<P: PluginExport>(ctx: *mut c_void, w: *mut u32, h: *mut u32) -> i32 {
     let inst = &*(ctx as *mut AaxInstance<P>);
     match &inst.editor {
         Some(editor) => {

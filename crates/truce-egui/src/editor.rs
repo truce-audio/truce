@@ -10,7 +10,7 @@ use baseview::{Event, EventStatus, Window, WindowHandler, WindowOpenOptions, Win
 use truce_core::editor::{Editor, EditorContext, RawWindowHandle};
 
 use crate::param_state::ParamState;
-use crate::platform::{ParentWindow, query_backing_scale};
+use crate::platform::{query_backing_scale, ParentWindow};
 use crate::renderer::EguiRenderer;
 
 /// Trait for stateful egui UI implementations.
@@ -122,10 +122,7 @@ impl EguiEditor {
     /// EguiEditor::new((400, 300), |ctx, state| { /* ui */ })
     ///     .on_state_changed(|state| { /* re-read cached state */ })
     /// ```
-    pub fn on_state_changed(
-        mut self,
-        f: impl FnMut(&ParamState) + Send + 'static,
-    ) -> Self {
+    pub fn on_state_changed(mut self, f: impl FnMut(&ParamState) + Send + 'static) -> Self {
         let old = std::mem::replace(
             &mut self.ui,
             Arc::new(Mutex::new(Box::new(NopUi) as Box<dyn EditorUi>)),
@@ -234,12 +231,14 @@ impl WindowHandler for EguiWindowHandler {
             Event::Mouse(mouse) => {
                 use baseview::MouseEvent::*;
                 match mouse {
-                    CursorMoved { position, modifiers } => {
+                    CursorMoved {
+                        position,
+                        modifiers,
+                    } => {
                         self.modifiers = convert_kb_modifiers(&modifiers);
                         let pos = egui::pos2(position.x as f32, position.y as f32);
                         self.last_cursor_pos = pos;
-                        self.pending_events
-                            .push(egui::Event::PointerMoved(pos));
+                        self.pending_events.push(egui::Event::PointerMoved(pos));
                         EventStatus::Captured
                     }
                     ButtonPressed { button, modifiers } => {
@@ -307,8 +306,7 @@ impl WindowHandler for EguiWindowHandler {
                     if let keyboard_types::Key::Character(ref ch) = kb.key {
                         for c in ch.chars() {
                             if !c.is_control() {
-                                self.pending_events
-                                    .push(egui::Event::Text(c.to_string()));
+                                self.pending_events.push(egui::Event::Text(c.to_string()));
                             }
                         }
                     }
@@ -334,10 +332,7 @@ impl WindowHandler for EguiWindowHandler {
                     let scale = info.scale() as f32;
                     truce_gui::platform::note_linux_scale_factor(info.scale());
                     // Store logical size — egui screen_rect uses logical points
-                    self.size = (
-                        (pw as f32 / scale) as u32,
-                        (ph as f32 / scale) as u32,
-                    );
+                    self.size = ((pw as f32 / scale) as u32, (ph as f32 / scale) as u32);
                     self.scale_factor = scale;
                     if let Some(renderer) = self.renderer.as_mut() {
                         renderer.resize(pw, ph);
@@ -473,8 +468,7 @@ impl Editor for EguiEditor {
                 let scale = system_scale as f32;
                 let phys_w = (size.0 as f32 * scale) as u32;
                 let phys_h = (size.1 as f32 * scale) as u32;
-                let renderer =
-                    unsafe { EguiRenderer::from_window(window, phys_w, phys_h) };
+                let renderer = unsafe { EguiRenderer::from_window(window, phys_w, phys_h) };
 
                 if let Some(font_data) = font {
                     crate::font::apply_font(&egui_ctx, font_data);
