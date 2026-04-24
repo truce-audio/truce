@@ -99,9 +99,9 @@ pub struct MyParams {
 }
 ```
 
-Meter IDs start at 256 (parameters are 0..255). Both kinds share
-the generated `ParamId` enum — `P::Gain`, `P::MeterL`, `P::MeterR`
-all work.
+Parameters and meters share the generated `ParamId` enum —
+`P::Gain`, `P::MeterL`, `P::MeterR` all work. Use those typed
+identifiers; the derive keeps the underlying IDs collision-free.
 
 Write from `process()`, draw in `layout()`:
 

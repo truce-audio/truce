@@ -239,7 +239,7 @@ impl<P: Params + 'static> Plugin for HotShell<P> {
     }
 
     fn get_meter(&self, meter_id: u32) -> f32 {
-        let idx = meter_id.wrapping_sub(256) as usize;
+        let idx = meter_id.wrapping_sub(truce_params::METER_ID_BASE) as usize;
         self.meters
             .get(idx)
             .map(|v| f32::from_bits(v.load(Ordering::Relaxed)))

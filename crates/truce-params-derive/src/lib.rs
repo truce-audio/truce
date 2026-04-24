@@ -447,24 +447,52 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
         }
     }
 
-    // --- Auto-assign meter IDs (starting at 256) ---
-    // Meter enum discriminants start at 256 to avoid colliding with param IDs.
-    // Storage is offset: meter_array[id - 256].
+    // --- Auto-assign meter IDs ---
+    // Meters live in a dedicated high-range starting at 2^24 so they
+    // can never collide with auto-assigned param IDs (which fill from
+    // 0 upward). Storage indexes as `meter_array[id - METER_ID_BASE]`.
+    //
+    // Keep this in sync with `truce_params::METER_ID_BASE`. The
+    // proc-macro can't read the constant from truce-params at
+    // expansion time, so the literal is duplicated here.
+    const METER_ID_BASE: u32 = 1 << 24;
     {
-        let mut next_meter = 256u32;
+        let mut next_meter = METER_ID_BASE;
         for m in &mut meter_fields {
             m.id = Some(next_meter);
             next_meter += 1;
         }
     }
 
-    // --- Compile-time validation: duplicate IDs ---
+    // --- Compile-time validation: duplicate IDs + range overlap ---
+    //
+    // Checks:
+    //  1. No two params share an ID.
+    //  2. No explicit param ID lands in the meter range (≥ METER_ID_BASE).
+    //     Auto-assigned params can't hit this — you'd need 16M fields.
+    //  3. No param ID collides with any meter ID (follows from #2 when
+    //     both checks pass, but surfaced separately for a clearer error).
     {
         let mut seen_ids = HashSet::new();
         for f in &param_fields {
             if let Some(id) = f.attrs.id {
+                if id >= METER_ID_BASE {
+                    let msg = format!(
+                        "Parameter ID {id} is in the meter range (≥ {METER_ID_BASE}). \
+                         Param IDs must be < {METER_ID_BASE}."
+                    );
+                    return syn::Error::new_spanned(&ast, msg).to_compile_error().into();
+                }
                 if !seen_ids.insert(id) {
-                    let msg = format!("Duplicate parameter ID: {}", id);
+                    let msg = format!("Duplicate parameter ID: {id}");
+                    return syn::Error::new_spanned(&ast, msg).to_compile_error().into();
+                }
+            }
+        }
+        for m in &meter_fields {
+            if let Some(id) = m.id {
+                if !seen_ids.insert(id) {
+                    let msg = format!("Meter ID {id} collides with a parameter ID.");
                     return syn::Error::new_spanned(&ast, msg).to_compile_error().into();
                 }
             }

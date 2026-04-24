@@ -10,6 +10,12 @@ pub use range::ParamRange;
 pub use smooth::{Smoother, SmoothingStyle};
 pub use types::{BoolParam, EnumParam, FloatParam, IntParam, MeterSlot, ParamEnum};
 
+/// Implementation detail — not part of the stable public API.
+/// Used by `truce-loader` to index into meter storage. See
+/// `truce-docs/docs/internal/meter-ids.md`.
+#[doc(hidden)]
+pub const METER_ID_BASE: u32 = 1 << 24;
+
 /// Format a plain parameter value as a display string based on the parameter's unit.
 ///
 /// Used by the `#[derive(Params)]` macro for default `format_value` implementations

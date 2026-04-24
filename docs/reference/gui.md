@@ -7,8 +7,7 @@ parameter `Arc`. Zero pixel math.
 
 If that's not enough, truce has adapters for egui, iced, and Slint,
 plus a raw-window-handle escape hatch for anything else. Start with
-the built-in and only reach for a framework when you hit its
-limits — which, for most audio plugins, is never.
+the built-in and reach for a framework when you hit its limits.
 
 ## The built-in GUI
 

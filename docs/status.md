@@ -69,11 +69,12 @@ truce::plugin! { logic: Gain, params: GainParams }
 
 One import, one trait, one macro. `#[derive(Params)]` generates a
 `{StructName}ParamId` enum with `#[repr(u32)]` and `From<T> for u32`.
-All widget/layout constructors accept `impl Into<u32>`. Meter IDs are
-auto-assigned starting at 256 via `#[meter]` fields on `MeterSlot`,
-and meter variants (e.g., `P::MeterLeft`) are included in the same
-`ParamId` enum. Format wrappers store `Arc<P>` for params, enabling
-safe sharing between audio and GUI threads without raw pointers.
+All widget/layout constructors accept `impl Into<u32>`. Meters use
+`#[meter]` fields on `MeterSlot` and their variants (e.g.,
+`P::MeterLeft`) land in the same `ParamId` enum — so widgets bind
+to params and meters uniformly. Format wrappers store `Arc<P>` for
+params, enabling safe sharing between audio and GUI threads without
+raw pointers.
 
 ## GUI
 

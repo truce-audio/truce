@@ -174,8 +174,11 @@ impl<P: Params + Default + 'static, L: PluginLogic + 'static> Plugin for StaticS
     }
 
     fn get_meter(&self, meter_id: u32) -> f32 {
-        // Meter IDs start at 256 in the ParamId enum; storage is offset.
-        let idx = meter_id.wrapping_sub(256) as usize;
+        // Meter IDs live in a dedicated high range starting at
+        // `truce_params::METER_ID_BASE`; storage is offset into
+        // `self.meters`. `wrapping_sub` keeps out-of-range ids from
+        // panicking — they fall through to the `get` -> None path.
+        let idx = meter_id.wrapping_sub(truce_params::METER_ID_BASE) as usize;
         if let Some(slot) = self.meters.get(idx) {
             f32::from_bits(slot.load(Ordering::Relaxed))
         } else {
