@@ -47,9 +47,15 @@ name = "{crate_name}"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+rust-version.workspace = true
 
 [lib]
 crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "{name}-standalone"
+path = "src/main.rs"
+required-features = ["standalone"]
 
 [features]
 # CLAP and VST3 are enabled by default. VST2, LV2, AU, and AAX are opt-in.
@@ -64,15 +70,13 @@ vst2 = ["dep:truce-vst2"]
 lv2 = ["dep:truce-lv2"]
 au = ["dep:truce-au"]
 aax = ["dep:truce-aax"]
+standalone = ["dep:truce-standalone"]
 dev = ["truce/dev"]
 
 [dependencies]
 truce = {{ workspace = true }}
-truce-core = {{ workspace = true }}
-truce-params = {{ workspace = true }}
-truce-params-derive = {{ workspace = true }}
-truce-loader = {{ workspace = true }}
 truce-gui = {{ workspace = true }}
+truce-loader = {{ workspace = true }}
 truce-clap = {{ workspace = true, optional = true }}
 truce-vst3 = {{ workspace = true, optional = true }}
 truce-vst2 = {{ workspace = true, optional = true }}
@@ -80,9 +84,10 @@ truce-lv2 = {{ workspace = true, optional = true }}
 truce-au = {{ workspace = true, optional = true }}
 truce-aax = {{ workspace = true, optional = true }}
 clap-sys = {{ version = "0.5", optional = true }}
+truce-standalone = {{ workspace = true, features = ["gui"], optional = true }}
 
 [dev-dependencies]
-truce-test = {{ workspace = true }}
+truce-test = {{ workspace = true, features = ["in-process"] }}
 
 [build-dependencies]
 truce-build = {{ workspace = true }}
@@ -90,7 +95,9 @@ truce-build = {{ workspace = true }}
         ),
     )?;
 
-    // build.rs
+    // build.rs — emits TRUCE_PLUGIN_* env vars + check-cfg for format features
+    // so plugin code doesn't trip `unexpected_cfgs` warnings for features
+    // it hasn't opted in to.
     fs::write(
         dir.join("build.rs"),
         "fn main() { truce_build::emit_plugin_env(); }\n",
@@ -101,46 +108,53 @@ truce-build = {{ workspace = true }}
         dir.join("src/lib.rs"),
         format!(
             r#"use truce::prelude::*;
+use truce_gui::layout::{{knob, widgets, GridLayout}};
 
 #[derive(Params)]
 pub struct {struct_name}Params {{
-    #[param(id = 0, name = "Gain", range = "linear(-60, 6)", unit = "dB", smooth = "exp(5)")]
+    #[param(name = "Gain", range = "linear(-60, 6)",
+            unit = "dB", smooth = "exp(5)")]
     pub gain: FloatParam,
 }}
 
+use {struct_name}ParamsParamId as P;
+
 pub struct {struct_name} {{
-    params: {struct_name}Params,
+    params: Arc<{struct_name}Params>,
+}}
+
+impl {struct_name} {{
+    pub fn new(params: Arc<{struct_name}Params>) -> Self {{
+        Self {{ params }}
+    }}
 }}
 
 impl PluginLogic for {struct_name} {{
-    fn new() -> Self {{
-        Self {{ params: {struct_name}Params::new() }}
-    }}
-
-    fn params_mut(&mut self) -> Option<&mut dyn Params> {{
-        Some(&mut self.params)
-    }}
-
     fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {{
         self.params.set_sample_rate(sample_rate);
+        self.params.snap_smoothers();
     }}
 
-    fn process(&mut self, buffer: &mut AudioBuffer, _events: &EventList, _context: &mut ProcessContext) -> ProcessStatus {{
-        let gain = db_to_linear(self.params.gain.smoothed_next() as f64) as f32;
-        for ch in 0..buffer.channels() {{
-            let (inp, out) = buffer.io(ch);
-            for i in 0..buffer.num_samples() {{
+    fn process(
+        &mut self,
+        buffer: &mut AudioBuffer,
+        _events: &EventList,
+        _context: &mut ProcessContext,
+    ) -> ProcessStatus {{
+        for i in 0..buffer.num_samples() {{
+            let gain = db_to_linear(self.params.gain.smoothed_next() as f64) as f32;
+            for ch in 0..buffer.channels() {{
+                let (inp, out) = buffer.io(ch);
                 out[i] = inp[i] * gain;
             }}
         }}
         ProcessStatus::Normal
     }}
 
-    fn layout(&self) -> truce_gui::layout::GridLayout {{
-        use truce_gui::layout::{{GridLayout, GridWidget}};
-        GridLayout::build("{struct_name}", "V0.1", 2, 80.0, vec![
-            GridWidget::knob(0, "Gain").into(),
-        ])
+    fn layout(&self) -> GridLayout {{
+        GridLayout::build("{upper_name}", "V0.1", 2, 50.0, vec![widgets(vec![
+            knob(P::Gain, "Gain"),
+        ])])
     }}
 }}
 
@@ -148,16 +162,80 @@ truce::plugin! {{
     logic: {struct_name},
     params: {struct_name}Params,
 }}
-"#
+
+#[cfg(test)]
+mod tests {{
+    use super::*;
+
+    #[test]
+    fn info_is_valid() {{
+        truce_test::assert_valid_info::<Plugin>();
+    }}
+
+    #[test]
+    fn renders_nonzero_output() {{
+        let result = truce_test::render_effect::<Plugin>(512, 44100.0);
+        truce_test::assert_nonzero(&result.output);
+        truce_test::assert_no_nans(&result.output);
+    }}
+
+    #[test]
+    fn state_round_trips() {{
+        truce_test::assert_state_round_trip::<Plugin>();
+    }}
+
+    #[test]
+    fn bus_config_effect() {{
+        truce_test::assert_bus_config_effect::<Plugin>();
+    }}
+
+    #[test]
+    fn param_defaults_match() {{
+        truce_test::assert_param_defaults_match::<Plugin>();
+    }}
+
+    #[test]
+    fn gui_snapshot() {{
+        let params = Arc::new({struct_name}Params::new());
+        let p = {struct_name}::new(Arc::clone(&params));
+        let layout = p.layout();
+        truce_test::assert_gui_snapshot_grid::<{struct_name}Params>(
+            "{name}_default", params, layout, 0,
+        );
+    }}
+}}
+"#,
+            upper_name = struct_name.to_uppercase(),
         ),
     )?;
+
+    // src/main.rs — standalone binary, gated behind the `standalone` feature
+    // so release bundles don't drag in the standalone host.
+    fs::write(
+        dir.join("src/main.rs"),
+        format!(
+            r#"use {crate_lib}::Plugin;
+
+fn main() {{
+    truce_standalone::run::<Plugin>();
+}}
+"#,
+            crate_lib = crate_name.replace('-', "_"),
+        ),
+    )?;
+
+    // presets/ — empty directory for factory preset `.preset` TOML
+    // files. When populated, the install pipeline emits per-format
+    // native preset files alongside the plugin bundle. See
+    // `truce-docs/docs/internal/presets.md` for the authoring schema.
+    fs::create_dir_all(dir.join("presets"))?;
 
     eprintln!("Created examples/{name}/");
     eprintln!();
     eprintln!("Next steps:");
     eprintln!("  1. Add \"{crate_name}\" to [workspace.members] in Cargo.toml");
     eprintln!("  2. Add a [[plugin]] entry to truce.toml with suffix = \"{name}\"");
-    eprintln!("  3. cargo build -p {crate_name}");
+    eprintln!("  3. cargo truce install -p {name}");
     Ok(())
 }
 
@@ -250,12 +328,18 @@ name = "{shell_crate}"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+rust-version.workspace = true
 
 [lib]
 crate-type = ["cdylib", "rlib"]
 
 [features]
-default = ["clap", "hot-reload"]
+# Release-shape default: logic is statically linked into the shell,
+# single dylib per plugin. Swap to `hot-reload` locally (via
+# `--features hot-reload --no-default-features` or by editing this
+# list) to watch the logic dylib and reload DSP changes without the
+# host re-loading the shell.
+default = ["clap", "vst3", "static-logic"]
 clap = ["dep:truce-clap", "dep:clap-sys"]
 vst3 = ["dep:truce-vst3"]
 vst2 = ["dep:truce-vst2"]
@@ -264,14 +348,12 @@ au = ["dep:truce-au"]
 aax = ["dep:truce-aax"]
 hot-reload = []
 static-logic = ["dep:{logic_crate}"]
+dev = ["truce/dev"]
 
 [dependencies]
 truce = {{ workspace = true }}
-truce-core = {{ workspace = true }}
-truce-params = {{ workspace = true }}
-truce-params-derive = {{ workspace = true }}
-truce-loader = {{ workspace = true, features = ["shell"] }}
 truce-gui = {{ workspace = true }}
+truce-loader = {{ workspace = true, features = ["shell"] }}
 {logic_crate} = {{ path = "../logic", optional = true }}
 truce-clap = {{ workspace = true, optional = true }}
 truce-vst3 = {{ workspace = true, optional = true }}
@@ -303,14 +385,7 @@ pub struct {struct_name}Params {{
     pub gain: FloatParam,
 }}
 
-#[cfg(feature = "hot-reload")]
-truce_loader::export_hot! {{
-    params: {struct_name}Params,
-    info: plugin_info!(),
-    bus_layouts: [BusLayout::stereo()],
-    logic_dylib: "{logic_lib}",
-}}
-
+// Release path (default): logic compiled into the shell as one dylib.
 #[cfg(feature = "static-logic")]
 truce_loader::export_static! {{
     params: {struct_name}Params,
@@ -319,6 +394,20 @@ truce_loader::export_static! {{
     logic: {logic_lib}::{struct_name},
 }}
 
+// Hot-reload path: watches `{logic_lib}` dylib for changes and swaps
+// in new DSP without the host reloading the shell. Activate locally
+// with `cargo truce install --no-default-features --features clap,hot-reload`
+// (or edit `default` above).
+#[cfg(feature = "hot-reload")]
+truce_loader::export_hot! {{
+    params: {struct_name}Params,
+    info: plugin_info!(),
+    bus_layouts: [BusLayout::stereo()],
+    logic_dylib: "{logic_lib}",
+}}
+
+// Per-format exports. `__HotShellWrapper` is emitted by one of the
+// two `truce_loader::export_*` macros above.
 #[cfg(feature = "clap")]
 truce_clap::export_clap!(__HotShellWrapper);
 #[cfg(feature = "vst3")]
@@ -342,9 +431,9 @@ truce_aax::export_aax!(__HotShellWrapper);
         "  1. Add \"{logic_crate}\" and \"{shell_crate}\" to [workspace.members] in Cargo.toml"
     );
     eprintln!("  2. Add a [[plugin]] entry to truce.toml with suffix = \"{name}/shell\"");
-    eprintln!("  3. cargo build -p {logic_crate}             # build the logic dylib");
-    eprintln!("  4. cargo xtask install --clap -p {name}/shell  # install the shell once");
-    eprintln!("  5. cargo watch -x \"build -p {logic_crate}\"   # iterate with hot-reload");
+    eprintln!("  3. cargo build -p {logic_crate}              # build the logic dylib");
+    eprintln!("  4. cargo truce install --clap -p {name}/shell  # install the shell once");
+    eprintln!("  5. cargo watch -x \"build -p {logic_crate}\"    # iterate with hot-reload");
     Ok(())
 }
 

@@ -4,33 +4,32 @@ Edit DSP or layout code, rebuild, hear the change in ~2 seconds.
 No DAW restart. No plugin window close. Same source file, same
 `truce::plugin!` macro — just a Cargo feature.
 
-## Setup
+## Single-crate mode (recommended)
 
-Your Cargo.toml already has this if you scaffolded with
-`cargo truce new`:
+The default `cargo truce new` scaffold produces a single-crate
+plugin with the `dev` feature pre-wired:
 
 ```toml
 [features]
-default = ["clap", "vst3"]
-clap    = ["truce/clap"]
-vst3    = ["truce/vst3"]
-dev     = ["truce/dev"]     # ← the hot-reload feature
+default  = ["clap", "vst3"]
+clap     = ["dep:truce-clap", "dep:clap-sys"]
+vst3     = ["dep:truce-vst3"]
+# ... other format features ...
+dev      = ["truce/dev"]     # ← the hot-reload feature
 ```
 
-## Workflow
-
 ```sh
-# One-time: build and install the hot-reload shell (release, slow to build, fast to run).
+# One-time: build and install the hot-reload shell.
 cargo truce install --dev
 
-# Iterate: rebuild the logic dylib on every save (debug, fast to build).
+# Iterate: rebuild the logic dylib on every save (debug, fast).
 cargo watch -x "build -p my-plugin"
 ```
 
-`--dev` makes `truce::plugin!` expand into a shell that loads your
-`PluginLogic` out of a separate dylib. The shell watches the dylib
-for content changes and swaps in the new one while the plugin is
-live.
+`--dev` flips the `dev` feature on, which makes `truce::plugin!`
+expand into a shell that loads your `PluginLogic` out of a
+separate dylib. The shell watches the dylib for content changes
+and swaps in the new one while the plugin is live.
 
 When you're done iterating, ship the release build:
 
@@ -39,6 +38,48 @@ cargo truce install          # no --dev = static, zero overhead
 ```
 
 Zero code changes between dev and release.
+
+## Two-crate mode (`cargo truce new --hot`)
+
+Larger projects can scaffold with an explicit `logic/` + `shell/`
+split:
+
+```sh
+cargo truce new my-plugin --hot
+```
+
+That produces:
+
+```
+examples/my-plugin/
+├── logic/               # DSP + layout — reloadable
+│   ├── Cargo.toml
+│   └── src/lib.rs       # impl PluginLogic + truce::export_plugin!
+└── shell/               # format wrappers + param declarations
+    ├── Cargo.toml
+    └── src/lib.rs       # truce_loader::export_static! / export_hot!
+```
+
+The shell defaults to `["clap", "vst3", "static-logic"]` — release
+shape out of the box, single dylib. Flip to the hot-reload path
+explicitly during iteration:
+
+```sh
+# Install the shell once with hot-reload active.
+cargo truce install --no-default-features --features clap,hot-reload -p my-plugin/shell
+
+# Iterate on the logic dylib.
+cargo watch -x "build -p my-plugin-logic"
+```
+
+Two-crate mode is useful when you want:
+- Separate compile units so DSP rebuilds don't re-link format
+  wrappers (faster iterate-edit-rebuild loop on complex shells).
+- A physical boundary between "code that can hot-swap" and "code
+  that pins host-visible state" (param IDs, bus layout).
+
+If you don't need either, stick with single-crate mode — it's
+simpler, and the hot-reload behavior is identical.
 
 ## What reloads
 

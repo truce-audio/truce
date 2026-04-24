@@ -36,7 +36,7 @@ cargo truce install --aax        # AAX (requires AAX SDK)
 
 cargo truce build                # bundle all formats into target/bundles/ without installing
 cargo truce build --clap --vst3  # subset of formats
-cargo truce build --dev          # hot-reload shell build (see Hot reload below)
+cargo truce build --dev          # hot-reload shell build (see docs/reference/hot-reload.md)
 
 cargo truce test                 # run tests
 cargo truce validate             # auval + pluginval + clap-validator
