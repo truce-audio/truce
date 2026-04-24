@@ -79,11 +79,7 @@ cargo truce build --dev              # hot-reload shell build
 ```
 
 Every format flag produces a complete, signed bundle in
-`target/bundles/`. `install` then becomes a thin copy + register
-step (`pluginkit -a` for AU v3, `ditto` + rescan for the rest).
-Useful for CI artifact uploads, dry-runs, inspecting bundle
-contents, or pre-staging for `cargo truce install --no-build` on a
-different machine.
+`target/bundles/`. 
 
 ## `validate`
 
