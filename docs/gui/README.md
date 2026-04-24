@@ -1,7 +1,7 @@
 # GUI Backends
 
 truce supports several GUI backends. They all produce the same plugin
-formats (CLAP, VST3, VST2, AU, AAX) and share the same parameter
+formats (CLAP, VST3, VST2, LV2, AU, AAX) and share the same parameter
 system, so switching between them is straightforward.
 
 ## Starting out

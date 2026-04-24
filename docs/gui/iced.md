@@ -24,7 +24,7 @@ use truce_iced::IcedEditor;
 impl PluginLogic for MyPlugin {
     fn custom_editor(&self) -> Option<Box<dyn truce_core::editor::Editor>> {
         Some(Box::new(IcedEditor::from_layout(
-            Arc::new(self.params.clone()),
+            self.params.clone(),
             self.layout(),
         )))
     }
@@ -82,7 +82,7 @@ Wire it up:
 ```rust
 fn custom_editor(&self) -> Option<Box<dyn truce_core::editor::Editor>> {
     Some(Box::new(IcedEditor::<MyParams, MyEditor>::new(
-        Arc::new(self.params.clone()),
+        self.params.clone(),
         (400, 300),
     )))
 }

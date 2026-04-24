@@ -118,8 +118,8 @@ impl PluginLogic for MyPlugin {
 }
 ```
 
-Works with all formats (CLAP, VST3, VST2, AU, AAX) without any
-format-specific code.
+Works with all formats (CLAP, VST3, VST2, LV2, AU, AAX) without
+any format-specific code.
 
 ## Useful helpers
 
