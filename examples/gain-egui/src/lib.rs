@@ -59,9 +59,13 @@ impl PluginLogic for GainEgui {
             let pan = self.params.pan.smoothed_next();
             let gain_linear = db_to_linear(gain_db as f64) as f32;
 
-            let pan_angle = (pan + 1.0) * std::f32::consts::FRAC_PI_4;
-            let gain_l = gain_linear * pan_angle.cos();
-            let gain_r = gain_linear * pan_angle.sin();
+            // Balance-style pan: attenuate the away-side channel only,
+            // center (pan=0) is unity passthrough. Matches Reaper /
+            // Logic / Pro Tools stereo-track panners. Equal-power is
+            // the wrong idiom for stereo→stereo — it drops -3 dB per
+            // channel at center.
+            let gain_l = gain_linear * (1.0 - pan.max(0.0));
+            let gain_r = gain_linear * (1.0 + pan.min(0.0));
 
             for ch in 0..buffer.channels() {
                 let (inp, out) = buffer.io(ch);
