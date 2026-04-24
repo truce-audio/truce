@@ -71,19 +71,17 @@ edition = "2021"
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+# Scaffolded default: CLAP + VST3 only. To add more formats, append a
+# new feature (e.g. `vst2 = ["dep:truce-vst2"]`) and its optional dep
+# (`truce-vst2 = {{ git = "...", optional = true }}`). VST2, LV2, AU,
+# and AAX each ship as a truce-* crate — mirror the CLAP/VST3 pattern.
+# VST2 in particular is legacy and its Steinberg SDK was deprecated
+# in 2018; distributing VST2 plugins may require agreement with
+# Steinberg's licensing terms.
 [features]
-# CLAP and VST3 are enabled by default. VST2, LV2, AU, and AAX are opt-in.
-# NOTE: VST2 is a legacy format. The Steinberg VST2 SDK was deprecated
-# in 2018 and distributing VST2 plugins may require agreement with
-# Steinberg's licensing terms. Enable `vst2` only if you understand
-# the implications.
 default = ["clap", "vst3"]
 clap = ["dep:truce-clap", "dep:clap-sys"]
 vst3 = ["dep:truce-vst3"]
-vst2 = ["dep:truce-vst2"]
-lv2 = ["dep:truce-lv2"]
-au = ["dep:truce-au"]
-aax = ["dep:truce-aax"]
 dev = ["truce/dev"]
 
 [dependencies]
@@ -91,10 +89,6 @@ truce = {{ git = "https://github.com/truce-audio/truce" }}
 truce-gui = {{ git = "https://github.com/truce-audio/truce" }}
 truce-clap = {{ git = "https://github.com/truce-audio/truce", optional = true }}
 truce-vst3 = {{ git = "https://github.com/truce-audio/truce", optional = true }}
-truce-vst2 = {{ git = "https://github.com/truce-audio/truce", optional = true }}
-truce-lv2 = {{ git = "https://github.com/truce-audio/truce", optional = true }}
-truce-au = {{ git = "https://github.com/truce-audio/truce", optional = true }}
-truce-aax = {{ git = "https://github.com/truce-audio/truce", optional = true }}
 clap-sys = {{ version = "0.5", optional = true }}
 
 [dev-dependencies]
@@ -113,19 +107,15 @@ edition.workspace = true
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+# Scaffolded default: CLAP + VST3 only. To add more formats, append
+# a new feature (e.g. `vst2 = ["dep:truce-vst2"]`) and its optional
+# dep (`truce-vst2 = {{ workspace = true, optional = true }}`). The
+# workspace root already pins every `truce-*` crate so inheriting
+# via `workspace = true` just works.
 [features]
-# CLAP and VST3 are enabled by default. VST2, LV2, AU, and AAX are opt-in.
-# NOTE: VST2 is a legacy format. The Steinberg VST2 SDK was deprecated
-# in 2018 and distributing VST2 plugins may require agreement with
-# Steinberg's licensing terms. Enable `vst2` only if you understand
-# the implications.
 default = ["clap", "vst3"]
 clap = ["dep:truce-clap", "dep:clap-sys"]
 vst3 = ["dep:truce-vst3"]
-vst2 = ["dep:truce-vst2"]
-lv2 = ["dep:truce-lv2"]
-au = ["dep:truce-au"]
-aax = ["dep:truce-aax"]
 dev = ["truce/dev"]
 
 [dependencies]
@@ -133,10 +123,6 @@ truce = {{ workspace = true }}
 truce-gui = {{ workspace = true }}
 truce-clap = {{ workspace = true, optional = true }}
 truce-vst3 = {{ workspace = true, optional = true }}
-truce-vst2 = {{ workspace = true, optional = true }}
-truce-lv2 = {{ workspace = true, optional = true }}
-truce-au = {{ workspace = true, optional = true }}
-truce-aax = {{ workspace = true, optional = true }}
 clap-sys = {{ version = "0.5", optional = true }}
 
 [dev-dependencies]
