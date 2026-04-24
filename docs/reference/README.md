@@ -1,10 +1,5 @@
 # Reference
 
-Everything a first-time truce user needs, in order. Each chapter
-is self-contained.
-
-## The tutorial track
-
 | # | Chapter | What you get |
 |---|---------|--------------|
 | 1 | [install.md](install.md) | Rust + system deps + `cargo install cargo-truce` + `cargo truce doctor` |
