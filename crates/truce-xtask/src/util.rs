@@ -126,9 +126,58 @@ pub(crate) fn read_workspace_version(root: &Path) -> Option<String> {
         .map(|s| s.to_string())
 }
 
-/// Read the default features from the project's Cargo.toml.
+/// Resolve a plugin crate's `Cargo.toml` path via `cargo metadata`.
+/// Used by `detect_default_features` to find the manifest in
+/// workspace layouts where plugins live in arbitrary subdirectories.
+fn locate_plugin_manifest(project_root: &Path, crate_name: &str) -> Option<PathBuf> {
+    let out = Command::new("cargo")
+        .args([
+            "metadata",
+            "--no-deps",
+            "--format-version=1",
+            "--manifest-path",
+        ])
+        .arg(project_root.join("Cargo.toml"))
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    // Cheap substring parse — avoids depending on serde_json here. We
+    // only need `"name":"crate_name"` and the adjacent `"manifest_path"`.
+    let text = String::from_utf8_lossy(&out.stdout);
+    let name_needle = format!("\"name\":\"{crate_name}\"");
+    let idx = text.find(&name_needle)?;
+    // Find the enclosing package object by scanning for the nearest
+    // `"manifest_path":"..."` within a bounded window.
+    let window_end = (idx + 2048).min(text.len());
+    let window_start = idx.saturating_sub(2048);
+    let window = &text[window_start..window_end];
+    let mp_marker = "\"manifest_path\":\"";
+    let mp_idx = window.find(mp_marker)?;
+    let rest = &window[mp_idx + mp_marker.len()..];
+    let end = rest.find('"')?;
+    let path = &rest[..end];
+    Some(PathBuf::from(path))
+}
+
+/// Detect which format features to build when the user didn't pass
+/// any `--clap` / `--vst3` / etc. flags.
+///
+/// Lookup order:
+///
+/// 1. **Root `Cargo.toml`'s `[features].default`** — the single-crate
+///    layout (`cargo truce new` produces this). Most reliable signal.
+/// 2. **Plugin crates listed in `truce.toml`** — the workspace layout
+///    (`cargo truce new-workspace`). Reads each plugin's own
+///    `[features].default` and returns the **union**, so `install`
+///    tries the formats declared by at least one plugin and skips the
+///    rest (vs. the old fall-through that tried *every* format and
+///    errored for any plugin that didn't declare it).
 pub(crate) fn detect_default_features() -> std::collections::HashSet<String> {
     let root = project_root();
+
+    // Single-crate layout: root Cargo.toml has a `[features]` table.
     if let Ok(content) = fs::read_to_string(root.join("Cargo.toml")) {
         if let Ok(doc) = content.parse::<toml::Table>() {
             if let Some(toml::Value::Table(feat)) = doc.get("features") {
@@ -141,7 +190,35 @@ pub(crate) fn detect_default_features() -> std::collections::HashSet<String> {
             }
         }
     }
-    // Fallback: assume all formats (workspace with multiple crates)
+
+    // Workspace layout: iterate plugins from `truce.toml` and union
+    // their declared default features.
+    let mut union = std::collections::HashSet::new();
+    if let Ok(config) = crate::load_config() {
+        for p in &config.plugin {
+            if let Some(manifest) = locate_plugin_manifest(&root, &p.crate_name) {
+                if let Ok(content) = fs::read_to_string(&manifest) {
+                    if let Ok(doc) = content.parse::<toml::Table>() {
+                        if let Some(toml::Value::Table(feat)) = doc.get("features") {
+                            if let Some(toml::Value::Array(defaults)) = feat.get("default") {
+                                for v in defaults {
+                                    if let Some(s) = v.as_str() {
+                                        union.insert(s.to_string());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if !union.is_empty() {
+        return union;
+    }
+
+    // Last-ditch fallback: assume every format (legacy behavior, kept
+    // so projects without truce.toml don't break).
     ["clap", "vst3", "vst2", "lv2", "au", "aax"]
         .iter()
         .map(|s| s.to_string())

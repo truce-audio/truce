@@ -138,6 +138,10 @@ fn cmd_new(args: &[String]) -> Res {
         scaffold::plugin_cargo_toml_standalone(&name),
     )?;
     fs::write(
+        format!("{name}/build.rs"),
+        "fn main() { truce_build::emit_plugin_env(); }\n",
+    )?;
+    fs::write(
         format!("{name}/src/lib.rs"),
         scaffold::plugin_lib_rs(&struct_name, kind),
     )?;
@@ -323,6 +327,11 @@ fn cmd_new_workspace(args: &[String]) -> Res {
         fs::write(
             format!("{workspace_name}/plugins/{}/Cargo.toml", p.name),
             scaffold::plugin_cargo_toml_workspace(&crate_name),
+        )?;
+
+        fs::write(
+            format!("{workspace_name}/plugins/{}/build.rs", p.name),
+            "fn main() { truce_build::emit_plugin_env(); }\n",
         )?;
 
         fs::write(

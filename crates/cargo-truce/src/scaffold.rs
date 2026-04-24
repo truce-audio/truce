@@ -93,6 +93,14 @@ clap-sys = {{ version = "0.5", optional = true }}
 
 [dev-dependencies]
 truce-test = {{ git = "https://github.com/truce-audio/truce" }}
+
+# `truce-build` emits `TRUCE_PLUGIN_*` env vars (consumed by
+# `plugin_info!()`) + a `rustc-check-cfg` declaration covering every
+# format feature the `truce::plugin!` macro references. Without it,
+# rustc fires `unexpected_cfgs` warnings for every format this
+# crate doesn't declare.
+[build-dependencies]
+truce-build = {{ git = "https://github.com/truce-audio/truce" }}
 "#,
     )
 }
@@ -127,6 +135,14 @@ clap-sys = {{ version = "0.5", optional = true }}
 
 [dev-dependencies]
 truce-test = {{ workspace = true }}
+
+# `truce-build` emits `TRUCE_PLUGIN_*` env vars (consumed by
+# `plugin_info!()`) + a `rustc-check-cfg` declaration covering every
+# format feature the `truce::plugin!` macro references. Without it,
+# rustc fires `unexpected_cfgs` warnings for every format this
+# crate doesn't declare.
+[build-dependencies]
+truce-build = {{ workspace = true }}
 "#,
     )
 }
@@ -402,6 +418,7 @@ pub fn workspace_cargo_toml(workspace_name: &str, plugins: &[PluginSpec]) -> Str
         .collect();
     let members_str = members.join(",\n");
 
+    let _ = workspace_name; // reserved for future per-workspace config
     format!(
         r#"[workspace]
 resolver = "2"
@@ -410,7 +427,6 @@ members = [
 ]
 
 [workspace.package]
-name = "{workspace_name}"
 version = "0.1.0"
 edition = "2021"
 
@@ -428,6 +444,7 @@ truce-lv2 = {{ git = "https://github.com/truce-audio/truce" }}
 truce-au = {{ git = "https://github.com/truce-audio/truce" }}
 truce-aax = {{ git = "https://github.com/truce-audio/truce" }}
 truce-test = {{ git = "https://github.com/truce-audio/truce" }}
+truce-build = {{ git = "https://github.com/truce-audio/truce" }}
 clap-sys = "0.5"
 "#,
     )
