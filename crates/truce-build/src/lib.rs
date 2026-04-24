@@ -98,6 +98,8 @@ pub fn emit_plugin_env() {
         "midi" | "note_effect" => "NoteEffect",
         _ => "Effect",
     };
+    // Keep in sync with `truce-derive::plugin_info` +
+    // `truce-xtask/src/config.rs::resolved_au_type`.
     let au_type = plugin.au_type.as_deref().unwrap_or(
         match plugin.category.as_str() {
             "instrument" => "aumu",

@@ -12,3 +12,13 @@ truce-params = { workspace = true }
 truce-gui = { workspace = true }
 truce-gpu = { workspace = true }
 png = "0.18"
+truce-standalone = { workspace = true, optional = true }
+
+[features]
+default = []
+# Pulls in `truce-standalone::in_process` + assertion helpers built
+# on top of it (tail silence, sustained audio, meter readings, etc.).
+# Gated because it pulls cpal / midir / other audio-host deps that
+# tests which only touch render / state / params / GUI snapshots don't
+# need.
+in-process = ["dep:truce-standalone"]

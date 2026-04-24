@@ -149,7 +149,8 @@ static OSStatus au_v2_open(void *self_, AudioComponentInstance instance) {
     inst->sampleRate = 44100.0;
     inst->maxFramesPerSlice = 1024;
 
-    build_asbd(&inst->outputFormat, inst->sampleRate, g_descriptor->num_outputs);
+    if (g_descriptor->num_outputs > 0)
+        build_asbd(&inst->outputFormat, inst->sampleRate, g_descriptor->num_outputs);
     if (g_descriptor->num_inputs > 0)
         build_asbd(&inst->inputFormat, inst->sampleRate, g_descriptor->num_inputs);
 
@@ -297,6 +298,8 @@ static OSStatus au_v2_get_property(void *self_, AudioUnitPropertyID prop,
                 return kAudioUnitErr_InvalidPropertyValue;
             AudioStreamBasicDescription *asbd = (AudioStreamBasicDescription *)outData;
             if (scope == kAudioUnitScope_Output) {
+                if (g_descriptor->num_outputs == 0)
+                    return kAudioUnitErr_InvalidElement;
                 *asbd = inst->outputFormat;
             } else if (scope == kAudioUnitScope_Input) {
                 if (g_descriptor->num_inputs == 0)
@@ -314,7 +317,7 @@ static OSStatus au_v2_get_property(void *self_, AudioUnitPropertyID prop,
             if (scope == kAudioUnitScope_Input)
                 *count = (g_descriptor->num_inputs > 0) ? 1 : 0;
             else if (scope == kAudioUnitScope_Output)
-                *count = 1;
+                *count = (g_descriptor->num_outputs > 0) ? 1 : 0;
             else if (scope == kAudioUnitScope_Global)
                 *count = 1;
             else return kAudioUnitErr_InvalidScope;
@@ -546,6 +549,8 @@ static OSStatus au_v2_set_property(void *self_, AudioUnitPropertyID prop,
 
             // Validate channel count matches our bus configuration
             if (scope == kAudioUnitScope_Output) {
+                if (g_descriptor->num_outputs == 0)
+                    return kAudioUnitErr_InvalidElement;
                 if (asbd->mChannelsPerFrame != g_descriptor->num_outputs)
                     return kAudioUnitErr_FormatNotSupported;
                 inst->outputFormat = *asbd;

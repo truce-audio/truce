@@ -178,4 +178,32 @@ mod tests {
             "gain_default", params, layout, 0,
         );
     }
+
+    /// End-to-end check of `truce_test::in_process` on an effect:
+    /// feed a block of non-zero input, assert the output is
+    /// non-silent and not clipping or NaNing. Acts as the canonical
+    /// "does the in-process pipeline work?" smoke test.
+    #[test]
+    fn in_process_passthrough() {
+        use std::time::Duration;
+        use truce_test::in_process;
+
+        // 1 second of unity-amplitude input on two channels.
+        let sr = 44_100.0;
+        let frames = sr as usize;
+        let input = vec![vec![0.5f32; frames]; 2];
+
+        let result = in_process::run::<Plugin>(
+            in_process::InProcessOpts::default()
+                .sample_rate(sr)
+                .channels(2)
+                .block_size(256)
+                .duration(Duration::from_secs(1))
+                .input(input),
+        );
+
+        in_process::assert_no_nans(&result);
+        in_process::assert_nonzero(&result);
+        in_process::assert_peak_below(&result, 1.0);
+    }
 }

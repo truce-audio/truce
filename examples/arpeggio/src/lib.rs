@@ -279,6 +279,11 @@ impl PluginLogic for Arpeggio {
 truce::plugin! {
     logic: Arpeggio,
     params: ArpParams,
+    // MIDI effect: no audio I/O. CLAP/VST3/AU(aumi)/LV2 honor this;
+    // AAX (which has no audio-less plugin category) auto-adds a
+    // stereo passthrough inside `truce-aax` so the DAW's track
+    // audio flows through unchanged.
+    bus_layouts: [BusLayout::new()],
 }
 
 #[cfg(test)]

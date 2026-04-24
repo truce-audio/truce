@@ -29,6 +29,14 @@ use truce_core::process::ProcessContext;
 use truce_core::state;
 use truce_params::Params;
 
+/// In-process plugin runner + time-windowed / meter / clipping
+/// assertion helpers, built on [`truce_standalone::in_process`].
+/// Behind the `in-process` feature so this crate's default use —
+/// render / state / params / GUI assertions — doesn't pull cpal /
+/// midir transitively.
+#[cfg(feature = "in-process")]
+pub mod in_process;
+
 /// Result of a render operation.
 pub struct RenderResult {
     /// Output audio channels. Each Vec<f32> is one channel.

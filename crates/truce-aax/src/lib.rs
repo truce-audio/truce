@@ -204,20 +204,29 @@ pub fn register_aax<P: PluginExport>() {
             }
         };
 
+        // AAX requires every plugin to have audio I/O, even pure
+        // MIDI effects (NoteEffect) and output-only instruments.
+        // Other wrappers (AU v2/v3, CLAP, VST3, LV2) accept
+        // audio-less plugins natively — AAX is the outlier.
+        // Synthesize dummy channels here so plugin authors can
+        // declare truthful `bus_layouts: [BusLayout::new()]` for
+        // MIDI effects without AAX-specific workarounds polluting
+        // the plugin code.
+        let (aax_inputs, aax_outputs) = match (
+            layout.total_input_channels(),
+            layout.total_output_channels(),
+        ) {
+            (0, 0) => (2, 2), // pure MIDI effect → stereo passthrough
+            (0, out) => (out.max(2), out), // output-only instrument → match output
+            (in_, out) => (in_, out),
+        };
+
         let descriptor = TruceAaxDescriptor {
             name: name.as_ptr(),
             vendor: vendor.as_ptr(),
             version: 1,
-            // AAX requires all plugins to have audio inputs, even instruments.
-            // If the plugin has no inputs (output-only instrument), advertise
-            // a stereo input matching the output channel count. The audio
-            // buffer will contain silence which the instrument ignores.
-            num_inputs: if layout.total_input_channels() == 0 {
-                layout.total_output_channels().max(2)
-            } else {
-                layout.total_input_channels()
-            },
-            num_outputs: layout.total_output_channels(),
+            num_inputs: aax_inputs,
+            num_outputs: aax_outputs,
             num_params: 0, // filled below
             manufacturer_id: fourcc(&info.au_manufacturer),
             product_id: fourcc(&info.fourcc),

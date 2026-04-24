@@ -6329,6 +6329,7 @@ dependencies = [
  "truce-gpu",
  "truce-gui",
  "truce-params",
+ "truce-standalone",
 ]
 
 [[package]]

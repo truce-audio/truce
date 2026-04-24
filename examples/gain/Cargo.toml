@@ -42,4 +42,4 @@ truce-loader = { workspace = true }
 truce-lv2 = { workspace = true, optional = true }
 
 [dev-dependencies]
-truce-test = { workspace = true }
+truce-test = { workspace = true, features = ["in-process"] }

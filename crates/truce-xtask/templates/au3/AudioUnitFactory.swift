@@ -39,7 +39,19 @@ class TruceAUAudioUnit: AUAudioUnit {
             _inputBusArray = AUAudioUnitBusArray(audioUnit: self, busType: .input, busses: [])
         }
 
-        let outputFmt = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: numOut)!
+        // Even `aumi` (MIDI Processor, num_outputs=0) needs an
+        // output bus: Apple's AUv3 framework uses it to negotiate
+        // the sample rate for MIDI timing, and rejects plugins
+        // with an empty output bus array via -10868
+        // (kAudioUnitErr_FormatNotSupported) at instantiation.
+        // Same workaround JUCE uses — see commit a66fd53:
+        //   "A MIDI effect requires an output bus in order to
+        //    determine the sample rate. No audio will be written
+        //    to the output bus."
+        // The render block ignores this dummy bus for aumi plugins
+        // (numOut=0 in `render()` skips the output pointer setup).
+        let outChans = numOut > 0 ? numOut : 2
+        let outputFmt = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: outChans)!
         let outBus = try AUAudioUnitBus(format: outputFmt)
         _outputBusArray = AUAudioUnitBusArray(audioUnit: self, busType: .output, busses: [outBus])
 
@@ -58,6 +70,20 @@ class TruceAUAudioUnit: AUAudioUnit {
     override var parameterTree: AUParameterTree? {
         get { _parameterTree }
         set { _parameterTree = newValue }
+    }
+
+    /// MIDI output ports exposed to the host. `aumi` (MIDI Processor)
+    /// plugins — identified here by "no audio outputs declared" —
+    /// must advertise at least one MIDI output for Apple's AU
+    /// infrastructure to accept instantiation. Plugins with audio
+    /// outputs (`aufx`, `aumu`, `aumf`) return an empty array so
+    /// hosts don't surface phantom MIDI ports. Same pattern JUCE's
+    /// `getMIDIOutputNames()` uses.
+    override var midiOutputNames: [String] {
+        if let d = g_descriptor?.pointee, d.num_outputs == 0 {
+            return ["MIDI Out"]
+        }
+        return []
     }
 
     private func buildParameterTree() {
@@ -284,6 +310,13 @@ class TruceAUAudioUnit: AUAudioUnit {
 
     override var channelCapabilities: [NSNumber]? {
         guard let d = g_descriptor?.pointee else { return nil }
+        // aumi (MIDI Processor, zero audio I/O): advertise 0 inputs
+        // and "any" (-1) outputs — the output bus is a dummy kept
+        // alive only so AUv3 can negotiate a sample rate. Same
+        // AUChannelInfo JUCE emits for IsMidiEffect (commit a66fd53).
+        if d.num_inputs == 0 && d.num_outputs == 0 {
+            return [0, -1]
+        }
         if d.num_inputs == 0 {
             return [0, NSNumber(value: d.num_outputs)]
         }
