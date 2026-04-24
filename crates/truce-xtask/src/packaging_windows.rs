@@ -346,9 +346,9 @@ fn resolve_plugins<'a>(
 ///
 /// Within a single arch the dylib at `target/{triple}/release/{stem}.dll` is
 /// overwritten by successive format builds, so we save per-format copies
-/// (`{stem}_plugin`, `{stem}_vst2`, `{stem}_aax`) after each build. Archs
-/// have separate `target/{triple}/` directories so they don't clash with
-/// each other.
+/// (`{stem}_clap`, `{stem}_vst3`, `{stem}_vst2`, `{stem}_aax`) after each
+/// build. Archs have separate `target/{triple}/` directories so they don't
+/// clash with each other.
 fn build_all_formats(
     plugins: &[&PluginDef],
     formats: &[PkgFormat],
@@ -366,26 +366,54 @@ fn build_all_formats(
         eprintln!("--- Building for {} ---", arch.tag());
         let triple = arch.triple();
 
-        // CLAP+VST3 share the default feature set; one cargo build covers both.
-        if has_clap || has_vst3 {
-            let mut fmt_names: Vec<&str> = Vec::new();
-            if has_clap { fmt_names.push("CLAP"); }
-            if has_vst3 { fmt_names.push("VST3"); }
-            let fmt_label = fmt_names.join(" + ");
-            eprintln!("Building {fmt_label} ({})...", arch.tag());
+        if has_clap {
+            eprintln!("Building CLAP ({})...", arch.tag());
             let mut build_args: Vec<String> =
                 vec!["--target".into(), triple.into()];
             for p in plugins {
                 build_args.push("-p".into());
                 build_args.push(p.crate_name.clone());
             }
+            build_args.extend_from_slice(&[
+                "--no-default-features".into(),
+                "--features".into(),
+                "clap".into(),
+            ]);
             let arg_refs: Vec<&str> = build_args.iter().map(|s| s.as_str()).collect();
             cargo_build(&[], &arg_refs, dt)?;
             for p in plugins {
                 let src = release_lib_for_target(root, &p.dylib_stem(), Some(triple));
                 let saved = release_lib_for_target(
                     root,
-                    &format!("{}_plugin", p.dylib_stem()),
+                    &format!("{}_clap", p.dylib_stem()),
+                    Some(triple),
+                );
+                if src.exists() {
+                    fs::copy(&src, &saved)?;
+                }
+            }
+        }
+
+        if has_vst3 {
+            eprintln!("Building VST3 ({})...", arch.tag());
+            let mut build_args: Vec<String> =
+                vec!["--target".into(), triple.into()];
+            for p in plugins {
+                build_args.push("-p".into());
+                build_args.push(p.crate_name.clone());
+            }
+            build_args.extend_from_slice(&[
+                "--no-default-features".into(),
+                "--features".into(),
+                "vst3".into(),
+            ]);
+            let arg_refs: Vec<&str> = build_args.iter().map(|s| s.as_str()).collect();
+            cargo_build(&[], &arg_refs, dt)?;
+            for p in plugins {
+                let src = release_lib_for_target(root, &p.dylib_stem(), Some(triple));
+                let saved = release_lib_for_target(
+                    root,
+                    &format!("{}_vst3", p.dylib_stem()),
                     Some(triple),
                 );
                 if src.exists() {
@@ -450,21 +478,6 @@ fn build_all_formats(
             }
         }
 
-        // Restore the CLAP/VST3 dylib at its canonical location since later
-        // format builds overwrote it.
-        if has_clap || has_vst3 {
-            for p in plugins {
-                let saved = release_lib_for_target(
-                    root,
-                    &format!("{}_plugin", p.dylib_stem()),
-                    Some(triple),
-                );
-                let dst = release_lib_for_target(root, &p.dylib_stem(), Some(triple));
-                if saved.exists() {
-                    fs::copy(&saved, &dst)?;
-                }
-            }
-        }
     }
 
     Ok(())
@@ -530,7 +543,11 @@ fn stage_clap(
     staging: &Path,
     arch: TargetArch,
 ) -> std::result::Result<PathBuf, crate::BoxErr> {
-    let dll = release_lib_for_target(root, &p.dylib_stem(), Some(arch.triple()));
+    let dll = release_lib_for_target(
+        root,
+        &format!("{}_clap", p.dylib_stem()),
+        Some(arch.triple()),
+    );
     if !dll.exists() {
         return Err(format!("Missing: {}", dll.display()).into());
     }
@@ -549,7 +566,11 @@ fn stage_vst3(
 ) -> std::result::Result<PathBuf, crate::BoxErr> {
     // VST3 on Windows is a bundle directory. Multi-arch bundles carry both
     // arch subdirs side-by-side — the host picks at load time.
-    let dll = release_lib_for_target(root, &p.dylib_stem(), Some(arch.triple()));
+    let dll = release_lib_for_target(
+        root,
+        &format!("{}_vst3", p.dylib_stem()),
+        Some(arch.triple()),
+    );
     if !dll.exists() {
         return Err(format!("Missing: {}", dll.display()).into());
     }

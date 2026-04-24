@@ -126,20 +126,16 @@ pub(crate) fn cmd_package_macos(args: &[String]) -> Res {
         archs.iter().map(|a| a.triple()).collect::<Vec<_>>().join(", ")
     );
 
-    if has_clap || has_vst3 {
-        let mut fmt_names: Vec<&str> = Vec::new();
-        if has_clap { fmt_names.push("CLAP"); }
-        if has_vst3 { fmt_names.push("VST3"); }
-        let fmt_label = fmt_names.join(" + ");
+    if has_clap {
         for &arch in &archs {
-            eprintln!("Building {fmt_label} ({})...", arch.triple());
+            eprintln!("Building CLAP ({})...", arch.triple());
             let mut base: Vec<&str> = Vec::new();
             for p in &plugins {
                 base.push("-p");
                 base.push(&p.crate_name);
             }
+            base.extend_from_slice(&["--no-default-features", "--features", "clap"]);
             cargo_build_for_arch(&[], &base, arch, dt)?;
-            // Save a copy since subsequent-format builds reuse the same target dir
             for p in &plugins {
                 let src = release_lib_for_target(
                     &root,
@@ -148,29 +144,68 @@ pub(crate) fn cmd_package_macos(args: &[String]) -> Res {
                 );
                 let saved = release_lib_for_target(
                     &root,
-                    &format!("{}_plugin", p.dylib_stem()),
+                    &format!("{}_clap", p.dylib_stem()),
                     Some(arch.triple()),
                 );
                 if src.exists() { fs::copy(&src, &saved)?; }
             }
         }
-        // Lipo the per-arch `_plugin` copies directly into the bare
-        // `lib{stem}.dylib` path — that's where `stage_clap` / `stage_vst3`
-        // read from, and where later `cargo truce install` consumers expect
-        // the canonical dylib to live.
         for p in &plugins {
             let inputs: Vec<PathBuf> = archs
                 .iter()
                 .map(|a| {
                     release_lib_for_target(
                         &root,
-                        &format!("{}_plugin", p.dylib_stem()),
+                        &format!("{}_clap", p.dylib_stem()),
                         Some(a.triple()),
                     )
                 })
                 .collect();
             let output = root.join(format!(
-                "target/release/lib{}.dylib",
+                "target/release/lib{}_clap.dylib",
+                p.dylib_stem()
+            ));
+            lipo_into(&inputs, &output)?;
+        }
+    }
+
+    if has_vst3 {
+        for &arch in &archs {
+            eprintln!("Building VST3 ({})...", arch.triple());
+            let mut base: Vec<&str> = Vec::new();
+            for p in &plugins {
+                base.push("-p");
+                base.push(&p.crate_name);
+            }
+            base.extend_from_slice(&["--no-default-features", "--features", "vst3"]);
+            cargo_build_for_arch(&[], &base, arch, dt)?;
+            for p in &plugins {
+                let src = release_lib_for_target(
+                    &root,
+                    &p.dylib_stem(),
+                    Some(arch.triple()),
+                );
+                let saved = release_lib_for_target(
+                    &root,
+                    &format!("{}_vst3", p.dylib_stem()),
+                    Some(arch.triple()),
+                );
+                if src.exists() { fs::copy(&src, &saved)?; }
+            }
+        }
+        for p in &plugins {
+            let inputs: Vec<PathBuf> = archs
+                .iter()
+                .map(|a| {
+                    release_lib_for_target(
+                        &root,
+                        &format!("{}_vst3", p.dylib_stem()),
+                        Some(a.triple()),
+                    )
+                })
+                .collect();
+            let output = root.join(format!(
+                "target/release/lib{}_vst3.dylib",
                 p.dylib_stem()
             ));
             lipo_into(&inputs, &output)?;

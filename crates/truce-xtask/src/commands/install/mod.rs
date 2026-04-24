@@ -111,37 +111,20 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
     // target cache means incremental rebuilds stay fast even though
     // we invoke cargo more times than strictly necessary.
     if !no_build {
-        if clap || vst3 {
-            // Build with explicit features to avoid pulling in AU ObjC
-            // classes (which would collide if both AU and CLAP/VST3 bundles
-            // are loaded in the same host process).
-            let mut format_features: Vec<&str> = Vec::new();
-            if clap { format_features.push("clap"); }
-            if vst3 { format_features.push("vst3"); }
+        if clap {
+            let mut format_features: Vec<&str> = vec!["clap"];
             for f in &extra_features { format_features.push(f); }
             let features_combined = format_features.join(",");
-
-            let mut fmt_names: Vec<&str> = Vec::new();
-            if clap { fmt_names.push("CLAP"); }
-            if vst3 { fmt_names.push("VST3"); }
-            let fmt_label = fmt_names.join(" + ");
             if !extra_features.is_empty() {
                 let label = extra_features.join(" + ");
-                eprintln!("Building {fmt_label} ({label})...");
+                eprintln!("Building CLAP ({label})...");
             } else {
-                eprintln!("Building {fmt_label}...");
+                eprintln!("Building CLAP...");
             }
             for p in &plugins {
                 let mut env_pairs: Vec<(&str, &str)> = Vec::new();
-                if clap {
-                    if let Some(n) = p.clap_name.as_deref() {
-                        env_pairs.push(("TRUCE_CLAP_NAME_OVERRIDE", n));
-                    }
-                }
-                if vst3 {
-                    if let Some(n) = p.vst3_name.as_deref() {
-                        env_pairs.push(("TRUCE_VST3_NAME_OVERRIDE", n));
-                    }
+                if let Some(n) = p.clap_name.as_deref() {
+                    env_pairs.push(("TRUCE_CLAP_NAME_OVERRIDE", n));
                 }
                 cargo_build(
                     &env_pairs,
@@ -155,7 +138,41 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
                     dt,
                 )?;
                 let src = release_lib(&root, &p.dylib_stem());
-                let dst = release_lib(&root, &format!("{}_plugin", p.dylib_stem()));
+                let dst = release_lib(&root, &format!("{}_clap", p.dylib_stem()));
+                if src.exists() {
+                    fs_ctx::copy(&src, &dst)?;
+                }
+            }
+        }
+
+        if vst3 {
+            let mut format_features: Vec<&str> = vec!["vst3"];
+            for f in &extra_features { format_features.push(f); }
+            let features_combined = format_features.join(",");
+            if !extra_features.is_empty() {
+                let label = extra_features.join(" + ");
+                eprintln!("Building VST3 ({label})...");
+            } else {
+                eprintln!("Building VST3...");
+            }
+            for p in &plugins {
+                let mut env_pairs: Vec<(&str, &str)> = Vec::new();
+                if let Some(n) = p.vst3_name.as_deref() {
+                    env_pairs.push(("TRUCE_VST3_NAME_OVERRIDE", n));
+                }
+                cargo_build(
+                    &env_pairs,
+                    &[
+                        "-p",
+                        &p.crate_name,
+                        "--no-default-features",
+                        "--features",
+                        &features_combined,
+                    ],
+                    dt,
+                )?;
+                let src = release_lib(&root, &p.dylib_stem());
+                let dst = release_lib(&root, &format!("{}_vst3", p.dylib_stem()));
                 if src.exists() {
                     fs_ctx::copy(&src, &dst)?;
                 }
@@ -261,16 +278,6 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
             }
         }
 
-        if clap || vst3 {
-            for p in &plugins {
-                let saved = release_lib(&root, &format!("{}_plugin", p.dylib_stem()));
-                let dst = release_lib(&root, &p.dylib_stem());
-                if saved.exists() {
-                    fs_ctx::copy(&saved, &dst)?;
-                }
-            }
-        }
-
         // In dev mode, also build the debug dylibs (the logic that
         // the hot-reload shells watch and load).
         if dev_mode {
@@ -327,7 +334,7 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
 
 #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
 pub(crate) fn install_clap(root: &Path, p: &PluginDef, config: &Config) -> Res {
-    let dylib = release_lib(root, &p.dylib_stem());
+    let dylib = release_lib(root, &format!("{}_clap", p.dylib_stem()));
     if !dylib.exists() {
         return Err(format!("Missing: {}", dylib.display()).into());
     }
@@ -367,7 +374,7 @@ pub(crate) fn install_clap(root: &Path, p: &PluginDef, config: &Config) -> Res {
 
 #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
 fn install_vst3(root: &Path, p: &PluginDef, config: &Config) -> Res {
-    let dylib = release_lib(root, &p.dylib_stem());
+    let dylib = release_lib(root, &format!("{}_vst3", p.dylib_stem()));
     if !dylib.exists() {
         return Err(format!("Missing: {}", dylib.display()).into());
     }

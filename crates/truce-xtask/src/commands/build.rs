@@ -89,38 +89,26 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
 
     // --- Build dylibs per format ---
     //
-    // CLAP and VST3 share a dylib (built once with `--features clap,vst3`).
-    // The other formats each get their own with `--features {format}`.
-    // Each per-format build overwrites `target/release/lib{stem}.dylib`,
-    // so we shuffle the CLAP/VST3 build into a `_plugin` backup and
-    // restore it at the end before staging.
-    if clap || vst3 {
-        let mut feats: Vec<&str> = Vec::new();
-        if clap { feats.push("clap"); }
-        if vst3 { feats.push("vst3"); }
+    // Each format gets its own cargo build with `--features {format}`.
+    // Because every build overwrites `target/release/lib{stem}.dylib`,
+    // we immediately copy the output to a format-suffixed path
+    // (`_clap`, `_vst3`, `_vst2`, ...) that the stage/install steps
+    // read from. Same pattern across all formats — keeps each path
+    // self-contained with no implicit ordering.
+    if clap {
+        let mut feats: Vec<&str> = vec!["clap"];
         for f in &extra_features { feats.push(f); }
         let combined = feats.join(",");
-        let mut fmt_names: Vec<&str> = Vec::new();
-        if clap { fmt_names.push("CLAP"); }
-        if vst3 { fmt_names.push("VST3"); }
-        let fmt_label = fmt_names.join(" + ");
         let label = if extra_features.is_empty() {
-            format!("Building {fmt_label}...")
+            "Building CLAP...".to_string()
         } else {
-            format!("Building {fmt_label} ({})...", extra_features.join(" + "))
+            format!("Building CLAP ({})...", extra_features.join(" + "))
         };
         eprintln!("{label}");
         for p in &plugins {
             let mut env_pairs: Vec<(&str, &str)> = Vec::new();
-            if clap {
-                if let Some(n) = p.clap_name.as_deref() {
-                    env_pairs.push(("TRUCE_CLAP_NAME_OVERRIDE", n));
-                }
-            }
-            if vst3 {
-                if let Some(n) = p.vst3_name.as_deref() {
-                    env_pairs.push(("TRUCE_VST3_NAME_OVERRIDE", n));
-                }
+            if let Some(n) = p.clap_name.as_deref() {
+                env_pairs.push(("TRUCE_CLAP_NAME_OVERRIDE", n));
             }
             cargo_build(
                 &env_pairs,
@@ -128,7 +116,35 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
                 dt,
             )?;
             let src = release_lib(&root, &p.dylib_stem());
-            let dst = release_lib(&root, &format!("{}_plugin", p.dylib_stem()));
+            let dst = release_lib(&root, &format!("{}_clap", p.dylib_stem()));
+            if src.exists() {
+                fs_ctx::copy(&src, &dst)?;
+            }
+        }
+    }
+
+    if vst3 {
+        let mut feats: Vec<&str> = vec!["vst3"];
+        for f in &extra_features { feats.push(f); }
+        let combined = feats.join(",");
+        let label = if extra_features.is_empty() {
+            "Building VST3...".to_string()
+        } else {
+            format!("Building VST3 ({})...", extra_features.join(" + "))
+        };
+        eprintln!("{label}");
+        for p in &plugins {
+            let mut env_pairs: Vec<(&str, &str)> = Vec::new();
+            if let Some(n) = p.vst3_name.as_deref() {
+                env_pairs.push(("TRUCE_VST3_NAME_OVERRIDE", n));
+            }
+            cargo_build(
+                &env_pairs,
+                &["-p", &p.crate_name, "--no-default-features", "--features", &combined],
+                dt,
+            )?;
+            let src = release_lib(&root, &p.dylib_stem());
+            let dst = release_lib(&root, &format!("{}_vst3", p.dylib_stem()));
             if src.exists() {
                 fs_ctx::copy(&src, &dst)?;
             }
@@ -189,19 +205,6 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
             let src = release_lib(&root, &p.dylib_stem());
             let dst = release_lib(&root, &format!("{}_au", p.dylib_stem()));
             fs_ctx::copy(&src, &dst)?;
-        }
-    }
-
-    // Restore the CLAP/VST3 dylib at the canonical location now that the
-    // per-format builds have all run (each clobbered it with its own
-    // feature set).
-    if clap || vst3 {
-        for p in &plugins {
-            let saved = release_lib(&root, &format!("{}_plugin", p.dylib_stem()));
-            let dst = release_lib(&root, &p.dylib_stem());
-            if saved.exists() {
-                fs_ctx::copy(&saved, &dst)?;
-            }
         }
     }
 

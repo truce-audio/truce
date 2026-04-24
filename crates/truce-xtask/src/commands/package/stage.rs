@@ -71,7 +71,7 @@ pub(crate) fn stage_lv2(root: &Path, p: &PluginDef, staging: &Path) -> Res {
 
 /// Stage a CLAP bundle into the staging directory.
 pub(crate) fn stage_clap(root: &Path, p: &PluginDef, staging: &Path, identity: &str) -> Res {
-    let dylib = root.join(format!("target/release/lib{}.dylib", p.dylib_stem()));
+    let dylib = release_lib(root, &format!("{}_clap", p.dylib_stem()));
     if !dylib.exists() {
         return Err(format!("Missing: {}", dylib.display()).into());
     }
@@ -83,7 +83,7 @@ pub(crate) fn stage_clap(root: &Path, p: &PluginDef, staging: &Path, identity: &
 
 /// Stage a VST3 bundle into the staging directory.
 pub(crate) fn stage_vst3(root: &Path, p: &PluginDef, config: &Config, staging: &Path) -> Res {
-    let dylib = root.join(format!("target/release/lib{}.dylib", p.dylib_stem()));
+    let dylib = release_lib(root, &format!("{}_vst3", p.dylib_stem()));
     if !dylib.exists() {
         return Err(format!("Missing: {}", dylib.display()).into());
     }
