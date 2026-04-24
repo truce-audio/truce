@@ -100,10 +100,14 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
         if vst3 { feats.push("vst3"); }
         for f in &extra_features { feats.push(f); }
         let combined = feats.join(",");
+        let mut fmt_names: Vec<&str> = Vec::new();
+        if clap { fmt_names.push("CLAP"); }
+        if vst3 { fmt_names.push("VST3"); }
+        let fmt_label = fmt_names.join(" + ");
         let label = if extra_features.is_empty() {
-            "Building CLAP + VST3...".to_string()
+            format!("Building {fmt_label}...")
         } else {
-            format!("Building CLAP + VST3 ({})...", extra_features.join(" + "))
+            format!("Building {fmt_label} ({})...", extra_features.join(" + "))
         };
         eprintln!("{label}");
         for p in &plugins {

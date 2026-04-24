@@ -368,7 +368,11 @@ fn build_all_formats(
 
         // CLAP+VST3 share the default feature set; one cargo build covers both.
         if has_clap || has_vst3 {
-            eprintln!("Building CLAP + VST3 ({})...", arch.tag());
+            let mut fmt_names: Vec<&str> = Vec::new();
+            if has_clap { fmt_names.push("CLAP"); }
+            if has_vst3 { fmt_names.push("VST3"); }
+            let fmt_label = fmt_names.join(" + ");
+            eprintln!("Building {fmt_label} ({})...", arch.tag());
             let mut build_args: Vec<String> =
                 vec!["--target".into(), triple.into()];
             for p in plugins {

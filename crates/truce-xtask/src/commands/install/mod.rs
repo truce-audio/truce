@@ -121,11 +121,15 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
             for f in &extra_features { format_features.push(f); }
             let features_combined = format_features.join(",");
 
+            let mut fmt_names: Vec<&str> = Vec::new();
+            if clap { fmt_names.push("CLAP"); }
+            if vst3 { fmt_names.push("VST3"); }
+            let fmt_label = fmt_names.join(" + ");
             if !extra_features.is_empty() {
                 let label = extra_features.join(" + ");
-                eprintln!("Building CLAP + VST3 ({label})...");
+                eprintln!("Building {fmt_label} ({label})...");
             } else {
-                eprintln!("Building CLAP + VST3...");
+                eprintln!("Building {fmt_label}...");
             }
             for p in &plugins {
                 let mut env_pairs: Vec<(&str, &str)> = Vec::new();

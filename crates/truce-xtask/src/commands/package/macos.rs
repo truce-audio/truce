@@ -127,8 +127,12 @@ pub(crate) fn cmd_package_macos(args: &[String]) -> Res {
     );
 
     if has_clap || has_vst3 {
+        let mut fmt_names: Vec<&str> = Vec::new();
+        if has_clap { fmt_names.push("CLAP"); }
+        if has_vst3 { fmt_names.push("VST3"); }
+        let fmt_label = fmt_names.join(" + ");
         for &arch in &archs {
-            eprintln!("Building CLAP + VST3 ({})...", arch.triple());
+            eprintln!("Building {fmt_label} ({})...", arch.triple());
             let mut base: Vec<&str> = Vec::new();
             for p in &plugins {
                 base.push("-p");
