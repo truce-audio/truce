@@ -73,14 +73,17 @@ plugin directories:
 ```sh
 cargo truce build                    # every default format
 cargo truce build --clap --vst3      # subset
+cargo truce build --au3              # AU v3 .app, fully signed
+cargo truce build --aax              # AAX .aaxplugin, fully signed
 cargo truce build --dev              # hot-reload shell build
 ```
 
-Useful for CI, dry-runs, packaging pipelines, and inspecting the
-bundle structure. AU v3 and AAX are **install-only** — they need
-`xcodebuild` / the AAX C++ template compiled at install time
-against real on-disk paths, and don't make sense under
-`target/bundles/`.
+Every format flag produces a complete, signed bundle in
+`target/bundles/`. `install` then becomes a thin copy + register
+step (`pluginkit -a` for AU v3, `ditto` + rescan for the rest).
+Useful for CI artifact uploads, dry-runs, inspecting bundle
+contents, or pre-staging for `cargo truce install --no-build` on a
+different machine.
 
 ## `validate`
 
@@ -221,9 +224,13 @@ Plugin.aaxplugin/Contents/x64/Plugin.aaxplugin
 
 Requirements on the build host:
 
-- `rustup target add aarch64-pc-windows-msvc`
 - VS Installer: "MSVC v143 - VS 2022 C++ ARM64/ARM64EC build
   tools" and "Windows 11 SDK (ARM64)".
+- `rustup` installed. The missing `aarch64-pc-windows-msvc` target
+  is auto-added on first use by `cargo truce package` (same
+  preflight covers `x86_64-apple-darwin` / `aarch64-apple-darwin`
+  on macOS). Homebrew's `rust` package shadows rustup and breaks
+  this — `which cargo` must point at `~/.cargo/bin/cargo`.
 
 AAX stays host-arch-only under `--universal`: Avid's Windows AAX
 SDK ships x64 libs only. The package step stages AAX for the host
@@ -388,7 +395,7 @@ or env vars — not here.
 | `crate` | string | yes | Cargo package name. Hyphens become underscores in built `.dll`/`.dylib`. |
 | `category` | string | yes | `"effect"` / `"instrument"` / `"midi"`. Drives AU/VST3/CLAP category metadata. |
 | `fourcc` | string | yes† | Exactly 4 ASCII chars. AU subtype + cross-format unique ID. |
-| `au_type` | string | no | Override AU type. Defaults: `"aumu"` for instruments, `"aufx"` for effects/midi. |
+| `au_type` | string | no | Override AU type. Defaults: `"aumu"` for instruments, `"aumi"` for midi / note-effects, `"aufx"` for effects. |
 | `au_subtype` | string | no | Synonym for `fourcc`. `fourcc` wins if both are set. |
 | `au3_subtype` | string | no | 4-char subtype for AU v3 only. Set if v2/v3 must differ. |
 | `au_tag` | string | no | AU category tag. Defaults to `"Effects"`. Common: `"Synthesizer"`, `"Dynamics"`, `"EQ"`, `"MIDI"`. |
