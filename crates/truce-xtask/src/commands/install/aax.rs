@@ -35,6 +35,28 @@ pub(crate) fn build_aax_template(_root: &Path, sdk_path: &Path, universal_mac: b
     #[cfg(target_os = "windows")]
     let _ = universal_mac;
 
+    // Per-process memo: the template is identical across plugins in
+    // a single cargo-truce invocation, so we only need to run cmake
+    // once per (sdk_path, universal_mac) combination. Subsequent
+    // calls (e.g. the per-plugin loop in `cmd_install`) are no-ops.
+    #[cfg(not(target_os = "windows"))]
+    let memo_key = format!("{}|{}", sdk_path.display(), universal_mac);
+    #[cfg(target_os = "windows")]
+    let memo_key = sdk_path.display().to_string();
+    {
+        use std::sync::{Mutex, OnceLock};
+        static MEMO: OnceLock<Mutex<std::collections::HashSet<String>>> = OnceLock::new();
+        let set = MEMO.get_or_init(|| Mutex::new(Default::default()));
+        if set.lock().map(|s| s.contains(&memo_key)).unwrap_or(false) {
+            return Ok(());
+        }
+        // Record *before* we finish so a subsequent call on failure
+        // doesn't silently skip — but also *before* cmake, because
+        // if the build succeeds there's no reason to re-run it in
+        // the same process.
+        let _ = set.lock().map(|mut s| s.insert(memo_key.clone()));
+    }
+
     // Ensure the AAX SDK's static library is built with the right
     // architecture coverage. Avid's SDK ships as source — the `.a` /
     // `.lib` only exists after the developer has built it themselves,
@@ -55,40 +77,38 @@ pub(crate) fn build_aax_template(_root: &Path, sdk_path: &Path, universal_mac: b
 
     // Write embedded template files to a temp directory.
     //
-    // Only the source tree is wiped — the sibling `build/` directory is
-    // preserved so CMake's incremental build cache survives. The source
-    // writes bump each file's mtime, so CMake re-compiles exactly the
-    // files whose embedded bytes changed in the cargo-truce binary (and
-    // no-ops when nothing has).
+    // Use `write_if_changed` so unchanged files keep their old
+    // mtime — cmake then correctly skips recompilation when the
+    // embedded template bytes haven't shifted since last run.
+    // Previously we wiped `src/` on every invocation, which forced
+    // cmake to rebuild every TU on every plugin.
     let template_dir = tmp_dir().join("aax_template");
     let src_dir = template_dir.join("src");
     let cmake_lists = template_dir.join("CMakeLists.txt");
-    let _ = fs::remove_dir_all(&src_dir);
-    let _ = fs::remove_file(&cmake_lists);
     fs_ctx::create_dir_all(&src_dir)?;
 
-    fs_ctx::write(&cmake_lists, templates::aax::CMAKE_LISTS)?;
-    fs_ctx::write(
+    fs_ctx::write_if_changed(&cmake_lists, templates::aax::CMAKE_LISTS)?;
+    fs_ctx::write_if_changed(
         src_dir.join("TruceAAX_Bridge.cpp"),
         templates::aax::BRIDGE_CPP,
     )?;
-    fs_ctx::write(src_dir.join("TruceAAX_Bridge.h"), templates::aax::BRIDGE_H)?;
-    fs_ctx::write(
+    fs_ctx::write_if_changed(src_dir.join("TruceAAX_Bridge.h"), templates::aax::BRIDGE_H)?;
+    fs_ctx::write_if_changed(
         src_dir.join("TruceAAX_Describe.cpp"),
         templates::aax::DESCRIBE_CPP,
     )?;
-    fs_ctx::write(src_dir.join("TruceAAX_GUI.cpp"), templates::aax::GUI_CPP)?;
-    fs_ctx::write(src_dir.join("TruceAAX_GUI.h"), templates::aax::GUI_H)?;
-    fs_ctx::write(
+    fs_ctx::write_if_changed(src_dir.join("TruceAAX_GUI.cpp"), templates::aax::GUI_CPP)?;
+    fs_ctx::write_if_changed(src_dir.join("TruceAAX_GUI.h"), templates::aax::GUI_H)?;
+    fs_ctx::write_if_changed(
         src_dir.join("TruceAAX_Parameters.cpp"),
         templates::aax::PARAMETERS_CPP,
     )?;
-    fs_ctx::write(
+    fs_ctx::write_if_changed(
         src_dir.join("TruceAAX_Parameters.h"),
         templates::aax::PARAMETERS_H,
     )?;
-    fs_ctx::write(src_dir.join("Info.plist.in"), templates::aax::INFO_PLIST_IN)?;
-    fs_ctx::write(
+    fs_ctx::write_if_changed(src_dir.join("Info.plist.in"), templates::aax::INFO_PLIST_IN)?;
+    fs_ctx::write_if_changed(
         src_dir.join("truce_aax_bridge.h"),
         templates::aax::BRIDGE_HEADER,
     )?;
@@ -453,12 +473,13 @@ pub(crate) fn emit_aax_bundle(
         );
         fs_ctx::write(contents.join("Info.plist"), plist)?;
 
-        // Apple codesign; `true` = recursive (walks the bundle).
-        // PACE wraps this signature in a separate packaging step.
+        // Apple codesign against `target/bundles/` — user-owned, no
+        // sudo needed. PACE wraps this signature in a separate
+        // packaging step.
         codesign_bundle(
             bundle.to_str().unwrap(),
             config.macos.application_identity(),
-            true,
+            false,
         )?;
         eprintln!("  AAX:  {}", bundle.display());
     }

@@ -34,6 +34,25 @@ pub(crate) mod fs_ctx {
         let path = path.as_ref();
         fs::write(path, contents).map_err(|e| format!("write {}: {e}", path.display()).into())
     }
+
+    /// Write only if the target file is missing or its bytes differ. On a
+    /// no-op, the file's mtime stays put — important for tools like cmake
+    /// that rebuild based on mtime comparisons.
+    pub(crate) fn write_if_changed(
+        path: impl AsRef<Path>,
+        contents: impl AsRef<[u8]>,
+    ) -> Result<bool, BoxErr> {
+        let path = path.as_ref();
+        let new = contents.as_ref();
+        if let Ok(existing) = fs::read(path) {
+            if existing == new {
+                return Ok(false);
+            }
+        }
+        fs::write(path, new)
+            .map_err(|e| -> BoxErr { format!("write {}: {e}", path.display()).into() })?;
+        Ok(true)
+    }
 }
 
 /// Return the platform-specific shared library filename for a given stem.
