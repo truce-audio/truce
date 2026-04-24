@@ -33,8 +33,15 @@ conventions are `~/sdk/aax-sdk-2-9-0/` on macOS / Linux or
 
 [developer.avid.com]: https://developer.avid.com/
 
-Tell `cargo truce` where it lives via the `AAX_SDK_PATH` env var
-(preferred — gitignored):
+**You don't need to pre-build the SDK's `libAAXLibrary.a` yourself.**
+`cargo truce` invokes the SDK's own cmake on first use into a
+sibling `{sdk}/build-truce/` directory, with the right
+`CMAKE_OSX_ARCHITECTURES` for whatever you're building (host-only
+for `install`, universal for `package --universal`). The build is
+cached — subsequent runs are a no-op.
+
+Tell `cargo truce` where the SDK lives via the `AAX_SDK_PATH` env
+var (preferred — gitignored):
 
 ```toml
 # .cargo/config.toml  (gitignored)

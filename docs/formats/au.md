@@ -104,21 +104,22 @@ about this.
 
 ```sh
 cargo truce install --au2                # installs .component only
-cargo truce install --au3                # installs .appex inside /Applications
+cargo truce install --au3                # installs .app into /Applications
 cargo truce install                      # all enabled formats (AU v2 + v3 if both in default)
 
-cargo truce build --au2                  # bundle into target/bundles/ without
-                                          # installing (AU v3 is install-only —
-                                          # requires xcodebuild at install time)
+cargo truce build --au2                  # bundle into target/bundles/ without installing
+cargo truce build --au3                  # AU v3 .app into target/bundles/ (signed, ready to copy)
 
 cargo truce package --formats clap,vst3,au2,au3     # installer with AU included
 ```
 
-**AU v3 is install-only** (`cargo truce build` skips it). The appex
-requires `xcodebuild` to produce the Swift-compiled
-`AudioUnitFactory` + the container app + signed code, and that
-pipeline only makes sense when laid down at the real install
-location. For CI / dry-runs, stick to AU v2 in `build`.
+Both `--au2` and `--au3` produce complete, signed bundles in
+`target/bundles/`. `install` is a pure copy + `pluginkit` register
+step — the xcodebuild / framework-assembly / inside-out codesign
+work all happens at build time, no sudo or `/Applications/` write
+needed to produce a bundle. See
+[build-install-split.md](../../../truce-docs/docs/internal/build-install-split.md)
+(in the docs repo) for the rationale.
 
 ## Validate
 
