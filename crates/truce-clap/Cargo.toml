@@ -9,4 +9,5 @@ description = "CLAP format wrapper for truce"
 [dependencies]
 truce-core = { workspace = true }
 truce-params = { workspace = true }
+truce-presets = { workspace = true }
 clap-sys = "0.5"

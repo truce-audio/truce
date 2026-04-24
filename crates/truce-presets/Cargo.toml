@@ -1,0 +1,19 @@
+[package]
+name = "truce-presets"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Preset authoring format + per-format fan-out for truce plugins"
+
+[dependencies]
+truce-core = { workspace = true }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+base64 = "0.22"
+
+[dev-dependencies]
+libloading = "0.8"
+
+[lints]
+workspace = true

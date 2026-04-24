@@ -1,6 +1,7 @@
 mod commands;
 mod config;
 pub(crate) mod dirs;
+pub(crate) mod presets;
 mod templates;
 mod util;
 

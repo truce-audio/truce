@@ -36,8 +36,12 @@ use clap_sys::ext::params::{
     CLAP_PARAM_IS_BYPASS, CLAP_PARAM_IS_ENUM, CLAP_PARAM_IS_HIDDEN, CLAP_PARAM_IS_READONLY,
     CLAP_PARAM_IS_STEPPED,
 };
+use clap_sys::ext::preset_load::{
+    clap_plugin_preset_load, CLAP_EXT_PRESET_LOAD, CLAP_EXT_PRESET_LOAD_COMPAT,
+};
 use clap_sys::ext::state::{clap_plugin_state, CLAP_EXT_STATE};
 use clap_sys::ext::tail::{clap_plugin_tail, CLAP_EXT_TAIL};
+use clap_sys::factory::preset_discovery::CLAP_PRESET_DISCOVERY_LOCATION_FILE;
 use clap_sys::fixedpoint::{CLAP_BEATTIME_FACTOR, CLAP_SECTIME_FACTOR};
 use clap_sys::host::clap_host;
 use clap_sys::id::{clap_id, CLAP_INVALID_ID};
@@ -1004,6 +1008,88 @@ fn make_state_extension<P: PluginExport>() -> clap_plugin_state {
 }
 
 // ---------------------------------------------------------------------------
+// Extension: preset-load
+// ---------------------------------------------------------------------------
+
+/// Apply a `.clap-preset` file to the running plugin.
+///
+/// Reads the file at `location`, parses the TOML envelope, decodes
+/// the base64 state blob, and routes it through the same
+/// `restore_values` / `load_state` path session recall uses. Invalid
+/// files (wrong plugin id, missing state, decode failure) return
+/// `false` so the host can surface a load error.
+unsafe extern "C" fn preset_load_from_location<P: PluginExport>(
+    plugin: *const clap_plugin,
+    location_kind: u32,
+    location: *const c_char,
+    _load_key: *const c_char,
+) -> bool {
+    if plugin.is_null() || location.is_null() {
+        return false;
+    }
+    if location_kind != CLAP_PRESET_DISCOVERY_LOCATION_FILE {
+        return false;
+    }
+    let path = match CStr::from_ptr(location).to_str() {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+    let src = match std::fs::read_to_string(path) {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+    let file = match truce_presets::clap_preset::ClapPresetFile::from_toml(&src) {
+        Ok(f) => f,
+        Err(_) => return false,
+    };
+
+    let data = data_from_plugin::<P>(plugin);
+    // Reject files meant for a different plugin before we even decode.
+    if truce_core::state::hash_plugin_id(&file.plugin_id) != data.plugin_id_hash {
+        return false;
+    }
+
+    let blob = match file.state_blob() {
+        Ok(b) => b,
+        Err(_) => return false,
+    };
+    let deserialized = match state::deserialize_state(&blob, data.plugin_id_hash) {
+        Some(s) => s,
+        None => return false,
+    };
+
+    data.plugin.params().restore_values(&deserialized.params);
+    if let Some(extra) = &deserialized.extra {
+        data.plugin.load_state(extra);
+    }
+    if let Some(ref mut editor) = data.editor {
+        editor.state_changed();
+    }
+
+    // Notify the host that param values changed so automation /
+    // generic UI stays in sync. Same pattern `state_load` would use.
+    if let Some(get_ext) = (*data.host).get_extension {
+        let ext = get_ext(data.host, CLAP_EXT_PARAMS.as_ptr());
+        if !ext.is_null() {
+            let host_params = ext as *const clap_host_params;
+            if let Some(rescan) = (*host_params).rescan {
+                rescan(data.host, CLAP_PARAM_RESCAN_VALUES);
+            }
+        }
+    }
+
+    true
+}
+
+fn make_preset_load_extension<P: PluginExport>() -> clap_plugin_preset_load {
+    clap_plugin_preset_load {
+        from_location: Some(preset_load_from_location::<P>),
+    }
+}
+
+pub mod preset_discovery;
+
+// ---------------------------------------------------------------------------
 // Extension: audio_ports
 // ---------------------------------------------------------------------------
 
@@ -1424,6 +1510,7 @@ struct Extensions<P: PluginExport> {
     gui: clap_plugin_gui,
     latency: clap_plugin_latency,
     tail: clap_plugin_tail,
+    preset_load: clap_plugin_preset_load,
     _phantom: PhantomData<P>,
 }
 
@@ -1451,6 +1538,7 @@ impl<P: PluginExport> Extensions<P> {
             tail: clap_plugin_tail {
                 get: Some(tail_get::<P>),
             },
+            preset_load: make_preset_load_extension::<P>(),
             _phantom: PhantomData,
         }
     }
@@ -1526,6 +1614,12 @@ unsafe extern "C" fn clap_plugin_get_extension<P: PluginExport>(
     }
     if ext_id == CLAP_EXT_TAIL {
         return &extensions.tail as *const clap_plugin_tail as *const c_void;
+    }
+    // preset-load/2 is stable; the `.draft/2` alias is still in the wild
+    // in older hosts (spec authors kept the id alive during the window
+    // between draft-promote-to-stable) — accept both.
+    if ext_id == CLAP_EXT_PRESET_LOAD || ext_id == CLAP_EXT_PRESET_LOAD_COMPAT {
+        return &extensions.preset_load as *const clap_plugin_preset_load as *const c_void;
     }
 
     ptr::null()
@@ -1612,6 +1706,10 @@ macro_rules! export_clap {
             use ::clap_sys::factory::plugin_factory::{
                 clap_plugin_factory, CLAP_PLUGIN_FACTORY_ID,
             };
+            use ::clap_sys::factory::preset_discovery::{
+                clap_preset_discovery_factory, CLAP_PRESET_DISCOVERY_FACTORY_ID,
+                CLAP_PRESET_DISCOVERY_FACTORY_ID_COMPAT,
+            };
             use ::clap_sys::host::clap_host;
             use ::clap_sys::plugin::{clap_plugin, clap_plugin_descriptor};
             use ::clap_sys::version::CLAP_VERSION;
@@ -1672,9 +1770,24 @@ macro_rules! export_clap {
                 ::truce_clap::create_plugin_instance::<$plugin_type>(descriptor, host)
             }
 
-            unsafe extern "C" fn entry_init(_plugin_path: *const c_char) -> bool {
+            unsafe extern "C" fn entry_init(plugin_path: *const c_char) -> bool {
                 // Force descriptor initialization.
                 let _ = get_descriptor();
+                // Stash the host-supplied dylib path so the preset-
+                // discovery factory can derive the sibling `.presets/`
+                // directory when the host scans for factory presets.
+                let path_str = if plugin_path.is_null() {
+                    ""
+                } else {
+                    CStr::from_ptr(plugin_path).to_str().unwrap_or("")
+                };
+                let info = <$plugin_type as Plugin>::info();
+                ::truce_clap::preset_discovery::init_runtime_info(
+                    info.clap_id,
+                    info.name,
+                    info.vendor,
+                    path_str,
+                );
                 true
             }
 
@@ -1686,10 +1799,16 @@ macro_rules! export_clap {
                 }
                 let id = CStr::from_ptr(factory_id);
                 if id == CLAP_PLUGIN_FACTORY_ID {
-                    &FACTORY as *const clap_plugin_factory as *const c_void
-                } else {
-                    ptr::null()
+                    return &FACTORY as *const clap_plugin_factory as *const c_void;
                 }
+                if id == CLAP_PRESET_DISCOVERY_FACTORY_ID
+                    || id == CLAP_PRESET_DISCOVERY_FACTORY_ID_COMPAT
+                {
+                    return &::truce_clap::preset_discovery::FACTORY
+                        as *const clap_preset_discovery_factory
+                        as *const c_void;
+                }
+                ptr::null()
             }
 
             #[no_mangle]

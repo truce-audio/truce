@@ -343,6 +343,9 @@ pub(crate) fn install_clap(root: &Path, p: &PluginDef, config: &Config) -> Res {
         return Err(format!("Missing: {}", dylib.display()).into());
     }
 
+    let presets = crate::presets::load_presets(root, p)?;
+    let plugin_id = p.plugin_id(&config.vendor.id);
+
     #[cfg(target_os = "macos")]
     {
         let clap_dir = dirs::home_dir()
@@ -357,6 +360,7 @@ pub(crate) fn install_clap(root: &Path, p: &PluginDef, config: &Config) -> Res {
             false,
         )?;
         eprintln!("CLAP: {}", dst.display());
+        crate::presets::emit_clap_presets(&dst, &plugin_id, &presets)?;
     }
 
     #[cfg(target_os = "windows")]
@@ -366,6 +370,7 @@ pub(crate) fn install_clap(root: &Path, p: &PluginDef, config: &Config) -> Res {
         let dst = clap_dir.join(format!("{}.clap", p.name));
         fs_ctx::copy(&dylib, &dst)?;
         eprintln!("CLAP: {}", dst.display());
+        crate::presets::emit_clap_presets(&dst, &plugin_id, &presets)?;
     }
 
     #[cfg(target_os = "linux")]
@@ -375,6 +380,7 @@ pub(crate) fn install_clap(root: &Path, p: &PluginDef, config: &Config) -> Res {
         let dst = clap_dir.join(format!("{}.clap", p.name));
         fs_ctx::copy(&dylib, &dst)?;
         eprintln!("CLAP: {}", dst.display());
+        crate::presets::emit_clap_presets(&dst, &plugin_id, &presets)?;
     }
 
     Ok(())

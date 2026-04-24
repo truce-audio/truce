@@ -195,6 +195,13 @@ pub(crate) struct PluginDef {
     pub(crate) aax_name: Option<String>,
     #[serde(default)]
     pub(crate) lv2_name: Option<String>,
+    /// Directory (relative to the plugin crate) holding `.preset`
+    /// TOML files. Defaults to `presets/`; silently skipped when
+    /// missing so plugins without factory presets need no config
+    /// change. See `truce-presets` + `presets.md` for the on-disk
+    /// schema.
+    #[serde(default)]
+    pub(crate) presets_dir: Option<String>,
 }
 
 impl PluginDef {
@@ -242,6 +249,16 @@ impl PluginDef {
     /// Dylib filename stem derived from the crate name (hyphens → underscores).
     pub(crate) fn dylib_stem(&self) -> String {
         self.crate_name.replace('-', "_")
+    }
+
+    /// Canonical plugin id — `{vendor.id}.{name.lowercase.no-spaces}`.
+    /// Keep in sync with `truce-build::emit_plugin_env`, which writes
+    /// the same value into `TRUCE_PLUGIN_ID` at compile time for the
+    /// runtime side. Preset files carry this id to let the CLAP
+    /// preset-load handler reject files intended for a different
+    /// plugin before hashing.
+    pub(crate) fn plugin_id(&self, vendor_id: &str) -> String {
+        format!("{}.{}", vendor_id, self.name.to_lowercase().replace(' ', ""))
     }
 }
 

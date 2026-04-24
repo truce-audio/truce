@@ -5951,6 +5951,7 @@ dependencies = [
  "clap-sys",
  "truce-core",
  "truce-params",
+ "truce-presets",
 ]
 
 [[package]]
@@ -6280,6 +6281,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "truce-presets"
+version = "0.5.0"
+dependencies = [
+ "base64",
+ "libloading 0.8.9",
+ "serde",
+ "toml 0.8.23",
+ "truce-core",
+]
+
+[[package]]
 name = "truce-shim-types"
 version = "0.5.0"
 
@@ -6356,7 +6368,9 @@ version = "0.5.0"
 dependencies = [
  "libloading 0.8.9",
  "serde",
+ "serde_json",
  "toml 0.8.23",
+ "truce-presets",
  "truce-shim-types",
 ]
 
