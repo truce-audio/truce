@@ -430,10 +430,6 @@ members = [
 version = "0.1.0"
 edition = "2021"
 
-# Every `truce-*` crate referenced by a plugin `Cargo.toml` must be
-# listed here — `{{ workspace = true }}` inheritance errors out the
-# build if any entry is missing. Keep this set in sync with
-# `plugin_cargo_toml_workspace()` in cargo-truce's scaffold.
 [workspace.dependencies]
 truce = {{ git = "https://github.com/truce-audio/truce" }}
 truce-gui = {{ git = "https://github.com/truce-audio/truce" }}
