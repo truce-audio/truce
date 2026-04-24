@@ -1,55 +1,64 @@
 # Built-in GUI
 
-The built-in GUI renders widgets from a layout you define in code. No
-custom editor, no framework dependency — just describe what you want
-and truce draws it.
+The built-in GUI renders widgets from a layout you define in code.
+No custom editor, no framework dependency — declare what you want
+and truce draws it. This is the default; override `layout()` on
+`PluginLogic` and you're done.
 
-## A simple layout
+For a first walkthrough see
+[reference/gui.md](../reference/gui.md). This page is the
+reference for every option.
+
+## `GridLayout::build`
 
 ```rust
-use truce_gui::layout::{GridLayout, knob, widgets};
+use truce_gui::layout::{GridLayout, knob, slider, toggle, widgets};
 use MyParamsParamId as P;
 
 fn layout(&self) -> GridLayout {
-    GridLayout::build("MY PLUGIN", "V1.0", 2, 50.0, vec![widgets(vec![
+    GridLayout::build("MY PLUGIN", "V1.0", 3, 50.0, vec![widgets(vec![
         knob(P::Gain, "Gain"),
-        knob(P::Pan, "Pan"),
+        slider(P::Pan, "Pan"),
+        toggle(P::Bypass, "Bypass"),
     ])])
 }
 ```
 
-This creates a window with a header bar and two rotary knobs. The `2`
-means two columns, `50.0` is the cell size in pixels. Widgets flow
-left-to-right and wrap to the next row automatically.
-
-## Adding more widgets
+Signature:
 
 ```rust
-use truce_gui::layout::{GridLayout, knob, slider, toggle, meter, dropdown, xy_pad, widgets};
-
-GridLayout::build("MY PLUGIN", "V1.0", 3, 50.0, vec![widgets(vec![
-    knob(P::Gain, "Gain"),
-    slider(P::Pan, "Pan"),
-    toggle(P::Bypass, "Bypass"),
-    dropdown(P::Mode, "Mode"),
-    meter(&[P::MeterLeft, P::MeterRight], "Level"),
-    xy_pad(P::Pan, P::Gain, "XY"),
-])])
+GridLayout::build(
+    title: &str,          // header bar text
+    version: &str,        // header bar version label
+    cols: u32,            // number of grid columns
+    cell_size: f32,       // cell size in pixels (square cells)
+    sections: Vec<Section>, // widgets() or section() entries
+) -> GridLayout
 ```
 
-Each constructor takes a parameter ID and a label. `meter()` takes a
-slice of meter IDs (one bar per channel). `xy_pad()` takes two parameter
-IDs (X and Y axes).
+Widget constructors accept `impl Into<u32>`, so both typed enum IDs
+(recommended — `P::Gain`) and raw `u32` values work.
 
-You don't have to specify widget types for every parameter. If you leave
-it to auto-detection:
-- `BoolParam` becomes a toggle
-- `EnumParam` becomes a selector
-- Everything else becomes a knob
+## Widgets
 
-## Grouping with sections
+| Constructor | Widget | Default span | Typical param type |
+|-------------|--------|--------------|--------------------|
+| `knob(P::X, "Label")` | rotary knob | 1×1 | `FloatParam`, `IntParam` |
+| `slider(P::X, "Label")` | horizontal slider | 1×1 | `FloatParam` |
+| `toggle(P::X, "Label")` | pill on/off | 1×1 | `BoolParam` |
+| `selector(P::X, "Label")` | click-to-cycle | 1×1 | `EnumParam<T>`, `IntParam` |
+| `dropdown(P::X, "Label")` | click-to-open list | 1×1 | `EnumParam<T>`, `IntParam` |
+| `meter(&[P::L, P::R], "Label")` | level meter (one bar per ID) | 1×1 | `MeterSlot` |
+| `xy_pad(P::X, P::Y, "Label")` | 2D control pad | 2×2 | two `FloatParam`s |
 
-For larger plugins, organize widgets under labeled headers:
+If you don't specify a widget type, the default is inferred from
+the parameter type: `BoolParam` → toggle, `EnumParam` →
+selector, everything else → knob.
+
+## Sections
+
+Group widgets under labelled headers with `section()`. Use
+`widgets()` for the ungrouped rows.
 
 ```rust
 use truce_gui::layout::{GridLayout, knob, section, widgets};
@@ -69,21 +78,23 @@ GridLayout::build("EQ", "V0.1", 3, 50.0, vec![
 ])
 ```
 
-`section("LABEL", vec![...])` starts a new row with a header. Use
-`widgets(vec![...])` for the ungrouped leftovers.
+Each `section` starts a new row with a header strip. Widgets inside
+a section flow left-to-right within that section's row.
 
-## Making widgets bigger
+## Spanning and positioning
 
-Widgets default to 1x1 grid cells. Override with `.cols()`, `.rows()`,
-or `.at()`:
+Widgets default to 1×1 cells. Override with `.cols()`, `.rows()`,
+and `.at()`:
 
 ```rust
-// tall meter spanning 3 rows, pinned to column 2
-meter(&[P::MeterLeft, P::MeterRight], "Level").at(2, 0).rows(3)
-
-// wide dropdown spanning 2 columns
-dropdown(P::Wave, "Wave").cols(2)
+dropdown(P::Wave, "Wave").cols(2),                     // 2 cells wide
+meter(&[P::L, P::R], "Level").rows(3),                 // 3 cells tall
+xy_pad(P::X, P::Y, "Pad").cols(2).rows(2),             // already 2×2 by default
+meter(&[P::L, P::R], "Level").at(2, 0).rows(3),        // pinned to column 2, row 0
 ```
+
+`.at(col, row)` is useful when you want a widget anchored (e.g. a
+tall meter in the corner) while the rest flow freely.
 
 ## Meters
 
@@ -95,52 +106,96 @@ pub struct MyParams {
     #[param(name = "Gain", range = "linear(-60, 6)", unit = "dB")]
     pub gain: FloatParam,
 
-    #[meter]
-    pub meter_left: MeterSlot,
-
-    #[meter]
-    pub meter_right: MeterSlot,
+    #[meter] pub meter_left:  MeterSlot,
+    #[meter] pub meter_right: MeterSlot,
 }
 ```
 
-Report values in `process()`:
+Meter IDs auto-assign starting at 256 and appear in the generated
+`MyParamsParamId` enum alongside parameters.
+
+Push from `process()` (realtime-safe atomic write):
 
 ```rust
-context.set_meter(P::MeterLeft, buffer.output_peak(0));
+context.set_meter(P::MeterLeft,  buffer.output_peak(0));
 context.set_meter(P::MeterRight, buffer.output_peak(1));
 ```
 
-Display them in the layout:
+Draw in the layout:
 
 ```rust
-meter(&[P::MeterLeft, P::MeterRight], "Level")
+meter(&[P::MeterLeft, P::MeterRight], "Level").rows(3)
 ```
 
 ## Theming
 
-Pass a custom `Theme` to change colors:
+Colours come from a named theme. Dark is the default. Switch
+themes or override individual colours:
 
 ```rust
 use truce_gui::theme::{Theme, Color};
 
-BuiltinEditor::new_grid(params, layout)
-    .with_theme(Theme {
+GridLayout::build("MY PLUGIN", "V0.1", 3, 50.0, sections)
+    .theme(Theme::light())
+```
+
+```rust
+GridLayout::build("MY PLUGIN", "V0.1", 3, 50.0, sections)
+    .theme(Theme {
         primary: Color::rgb(0x00, 0xd2, 0xff),
         ..Theme::dark()
     })
 ```
 
+Fonts: fontdue rasterisation with JetBrains Mono Regular embedded
+at compile time. No font file on disk, no runtime load.
+
+Rendering: `truce-gpu` through wgpu (Metal on macOS, DX12 on
+Windows, Vulkan on Linux). Tiny-skia CPU rasterisation is the
+fallback.
+
 ## Interaction
 
-- **Knobs** and **sliders**: drag to adjust. Double-click to reset.
-- **Toggles**: click to flip.
-- **Selectors**: click to cycle.
-- **Dropdowns**: click to open a list, click an option to select.
-- **XY pads**: drag anywhere to set both values.
-- **Mouse wheel**: adjusts the control under the cursor.
+The framework handles all of the following automatically — you
+don't wire any of it by hand:
+
+- **Knob / slider**: drag to adjust. Scroll-wheel to fine-tune.
+  Double-click to reset to default.
+- **Toggle**: click to flip.
+- **Selector**: click to cycle forward.
+- **Dropdown**: click to open the popup list, click an option to
+  select.
+- **XY pad**: drag anywhere on the pad to set both parameters.
+- **Right-click**: opens the host's context menu (automation,
+  reset, enter value).
+
+## A full example
+
+```rust
+use GainParamsParamId as P;
+use truce_gui::layout::{GridLayout, knob, meter, widgets, xy_pad};
+
+fn layout(&self) -> GridLayout {
+    GridLayout::build("GAIN", "V0.1", 3, 50.0, vec![widgets(vec![
+        knob(P::Gain, "Gain"),
+        knob(P::Pan,  "Pan"),
+        xy_pad(P::Pan, P::Gain, "XY"),
+        meter(&[P::MeterLeft, P::MeterRight], "Level").rows(2),
+    ])])
+}
+```
 
 ## Moving beyond the built-in GUI
 
-The built-in GUI handles standard plugin UIs. When you need custom
-layouts, text input, or more complex interaction, look at
-[egui](egui.md), [Iced](iced.md), or [Slint](slint.md).
+The built-in widget set covers the common audio-plugin shape —
+knobs / sliders / meters / dropdowns. When you need text input
+fields, lists, tables, analyzer curves, or a specific visual style
+the theme system can't reach, switch to a framework backend:
+
+- [egui](egui.md) — immediate-mode, fast to prototype.
+- [iced](iced.md) — retained-mode, Elm architecture, good for
+  complex custom UIs.
+- [slint](slint.md) — declarative `.slint` markup with data
+  binding.
+- [raw-window-handle](raw-window-handle.md) — full control: Metal,
+  OpenGL, Skia, anything.

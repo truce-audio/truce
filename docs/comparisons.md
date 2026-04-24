@@ -8,7 +8,7 @@ Last updated 2026-04-24.
 |---|---|---|---|---|---|
 | Language | Rust | C++ | Rust | C++ | C++ |
 | License | MIT / Apache-2.0 | AGPLv3 / commercial | ISC | iPlug2 (BSD-like) | ISC |
-| First release | 2025 | 2004 | 2022 | 2018 (rewrite of iPlug) | 2014 |
+| First release | 2026 | 2004 | 2022 | 2018 (rewrite of iPlug) | 2014 |
 | Maturity | Early | Production-proven | Active | Active | Active |
 
 ## Plugin Format Support

@@ -208,8 +208,7 @@ crates/
 
 ## Documentation
 
-- [Quickstart](docs/quickstart.md) — zero to hearing your plugin in 5 minutes
-- [Tutorials](docs/reference/) — parameters, processing, synth, GUI, hot reload
+- [Reference](docs/reference/) — install, first plugin, params, processing, GUI, hot reload, shipping
 - [Formats](docs/formats/) — per-format reference (CLAP, VST3, VST2, LV2, AU, AAX) with env vars, signing, install paths, gotchas
 - [Status](docs/status.md) — what's built, what's next
 

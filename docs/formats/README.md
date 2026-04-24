@@ -64,7 +64,6 @@ aid if plugins aren't being picked up by your DAW.
 
 ## See also
 
-- [Quickstart](../quickstart.md) — end-to-end first plugin
-- [Reference 11: Building](../reference/11-building.md) — all the knobs
-- [Reference 13: Packaging](../reference/13-packaging.md) — signed installers
+- [First plugin](../reference/first-plugin.md) — end-to-end walkthrough
+- [Reference → shipping](../reference/shipping.md) — `install` / `build` / `validate` / `package`, signing, installers, and the full `truce.toml` schema
 - [Status](../status.md) — host coverage table
