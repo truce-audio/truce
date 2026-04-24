@@ -50,3 +50,16 @@ void *truce_au_v2_factory_bridge(const void *desc) {
     (void)desc;
     return NULL; // v2 shim not compiled — overridden when au_v2_shim.c is linked
 }
+
+// Weak stubs for symbols the `export_au!` macro emits in the *consumer*
+// cdylib. They let `truce-au` build its own (unused) cdylib target —
+// which is the only way cargo stops warning about
+// `rustc-link-arg-cdylib` from this rlib. Consumer-supplied strong
+// definitions override these at link time in the real plugin dylib.
+__attribute__((weak))
+void truce_au_init(void) {}
+__attribute__((weak))
+void *TruceAUFactory(const void *desc) {
+    (void)desc;
+    return NULL;
+}

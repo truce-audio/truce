@@ -6,6 +6,16 @@ license.workspace = true
 rust-version.workspace = true
 description = "Audio Unit v3 format wrapper for truce"
 
+# Declaring a cdylib crate-type here (in addition to the default rlib)
+# makes cargo accept this crate's `rustc-link-arg-cdylib=` directives
+# without warning. The real cdylib is produced by the consumer (the
+# plugin's example crate); the empty cdylib cargo builds for this
+# crate is unused. Links cleanly thanks to weak C stubs for
+# `truce_au_init` / `TruceAUFactory` in `shim/au_shim_common.c`, which
+# the consumer's `export_au!`-generated strong definitions override.
+[lib]
+crate-type = ["rlib", "cdylib"]
+
 [dependencies]
 truce-core = { workspace = true }
 truce-params = { workspace = true }

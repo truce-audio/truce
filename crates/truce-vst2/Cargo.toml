@@ -6,6 +6,15 @@ license.workspace = true
 rust-version.workspace = true
 description = "VST2 format wrapper for truce (clean-room C shim)"
 
+# Declaring a cdylib crate-type here (in addition to the default rlib)
+# makes cargo accept this crate's `rustc-link-arg-cdylib=` directives
+# without warning. The actual cdylib is produced by the consumer (the
+# plugin's example crate); the empty cdylib cargo builds for this
+# crate is unused — it silences the "package does not contain a cdylib
+# target" warning and nothing else.
+[lib]
+crate-type = ["rlib", "cdylib"]
+
 [dependencies]
 truce-core = { workspace = true }
 truce-params = { workspace = true }

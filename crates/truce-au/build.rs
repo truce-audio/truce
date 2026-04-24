@@ -75,23 +75,20 @@ fn main() {
 
     build.compile("au_shim");
 
-    // `cargo:rustc-cdylib-link-arg` from a non-cdylib build dep emits a
-    // cargo deprecation warning ("package does not contain a cdylib
-    // target"), but cargo 1.50+ still propagates these args to the
-    // downstream cdylib that consumes us — see cargo issue 9562. We
-    // rely on that propagation to force-load the C shim and export AU
-    // entry symbols (g_descriptor / TruceAUFactory / etc.) into the
-    // consumer's plugin dylib. Adding our own cdylib target to silence
-    // the warning fails because the exported symbols are defined by
-    // the `export_au!` macro in the consuming crate, not here.
-    println!("cargo:rustc-cdylib-link-arg=-Wl,-force_load,{out_dir}/libau_shim.a");
+    // `rustc-link-arg-cdylib` propagates to the downstream cdylib that
+    // consumes us (per cargo issue 9562) so the C shim gets force-loaded
+    // and AU entry symbols (g_descriptor / TruceAUFactory / etc.)
+    // survive dead-stripping in the consumer's plugin dylib. We can't
+    // host our own cdylib target here because the exported symbols are
+    // defined by the `export_au!` macro in the consuming crate.
+    println!("cargo:rustc-link-arg-cdylib=-Wl,-force_load,{out_dir}/libau_shim.a");
 
     // Export shim globals so the appex binary can access them from the framework.
     // The appex compiles the ObjC classes separately and needs these at runtime.
-    println!("cargo:rustc-cdylib-link-arg=-Wl,-exported_symbol,_g_descriptor");
-    println!("cargo:rustc-cdylib-link-arg=-Wl,-exported_symbol,_g_callbacks");
-    println!("cargo:rustc-cdylib-link-arg=-Wl,-exported_symbol,_g_param_descriptors");
-    println!("cargo:rustc-cdylib-link-arg=-Wl,-exported_symbol,_g_num_params");
+    println!("cargo:rustc-link-arg-cdylib=-Wl,-exported_symbol,_g_descriptor");
+    println!("cargo:rustc-link-arg-cdylib=-Wl,-exported_symbol,_g_callbacks");
+    println!("cargo:rustc-link-arg-cdylib=-Wl,-exported_symbol,_g_param_descriptors");
+    println!("cargo:rustc-link-arg-cdylib=-Wl,-exported_symbol,_g_num_params");
 
     // Keep ObjC classes alive in v3 builds.
     // -all_load forces all archive members to be loaded (redundant with force_load,
@@ -99,8 +96,8 @@ fn main() {
     if au_version != "2" && au_version != "3" {
         // Reference ObjC class symbols to prevent dead stripping.
         // Not needed for v3 — ObjC classes are in the appex binary, not the framework.
-        println!("cargo:rustc-cdylib-link-arg=-Wl,-u,_OBJC_CLASS_$_{class_name}");
-        println!("cargo:rustc-cdylib-link-arg=-Wl,-u,_OBJC_CLASS_$_{factory_class_name}");
+        println!("cargo:rustc-link-arg-cdylib=-Wl,-u,_OBJC_CLASS_$_{class_name}");
+        println!("cargo:rustc-link-arg-cdylib=-Wl,-u,_OBJC_CLASS_$_{factory_class_name}");
     }
 
     // Tell Rust code which AU version we're building
@@ -109,7 +106,7 @@ fn main() {
     }
 
     // Always export the v2 factory symbol — hosts use v2 API to instantiate.
-    println!("cargo:rustc-cdylib-link-arg=-Wl,-exported_symbol,_TruceAUFactory");
+    println!("cargo:rustc-link-arg-cdylib=-Wl,-exported_symbol,_TruceAUFactory");
 
     println!("cargo:rustc-link-lib=framework=AudioToolbox");
     println!("cargo:rustc-link-lib=framework=AVFAudio");
