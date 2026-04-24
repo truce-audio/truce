@@ -236,8 +236,8 @@ Use it in `process()`:
 for i in 0..buffer.num_samples() {
     let gain = db_to_linear(self.params.gain.smoothed_next() as f64) as f32;
     let pan  = self.params.pan.smoothed_next();
-    let angle = (pan + 1.0) * std::f32::consts::FRAC_PI_4;
-    let (l, r) = (gain * angle.cos(), gain * angle.sin());
+    let l = gain * (1.0 - pan.max(0.0));
+    let r = gain * (1.0 + pan.min(0.0));
     buffer.output(0)[i] *= l;
     if buffer.num_output_channels() >= 2 {
         buffer.output(1)[i] *= r;
