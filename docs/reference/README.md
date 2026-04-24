@@ -25,3 +25,8 @@ Then work through these tutorials in order:
 
 Each tutorial builds on the previous one. Start wherever matches
 your experience level.
+
+Looking for the specifics of one plugin format (CLAP, VST3, VST2,
+LV2, AU, AAX)? See the [per-format reference](../formats/) — one
+page each, covering requirements, env vars, install paths,
+signing, and gotchas.
