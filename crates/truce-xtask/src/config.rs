@@ -199,10 +199,16 @@ pub(crate) struct PluginDef {
     #[serde(default)]
     pub(crate) vst2_name: Option<String>,
     #[serde(default)]
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub(crate) au_name: Option<String>,
     #[serde(default)]
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub(crate) au3_name: Option<String>,
     #[serde(default)]
+    #[cfg_attr(
+        not(any(target_os = "macos", target_os = "windows")),
+        allow(dead_code)
+    )]
     pub(crate) aax_name: Option<String>,
     #[serde(default)]
     pub(crate) lv2_name: Option<String>,
@@ -239,13 +245,16 @@ impl PluginDef {
     /// When `au3_name` is set in truce.toml it wins (both display
     /// name in host browsers and bundle path stay in sync). Otherwise
     /// we fall back to the historical `"{name} v3"` disambiguator so
-    /// projects that haven't opted in are unaffected.
+    /// projects that haven't opted in are unaffected. macOS-only —
+    /// AU v3 only installs to `/Applications/` on macOS.
+    #[cfg(target_os = "macos")]
     pub(crate) fn au3_app_name(&self) -> String {
         match self.au3_name.as_deref() {
             Some(n) if !n.is_empty() => n.to_string(),
             _ => format!("{} v3", self.name),
         }
     }
+    #[cfg(target_os = "macos")]
     pub(crate) fn fw_name(&self) -> String {
         let cap = format!(
             "{}{}",

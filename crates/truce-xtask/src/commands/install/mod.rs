@@ -14,10 +14,15 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+// AAX is macOS / Windows; AU is macOS only.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(crate) mod aax;
+#[cfg(target_os = "macos")]
 pub(crate) mod au_v3;
 
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 use aax::{emit_aax_bundle, install_aax};
+#[cfg(target_os = "macos")]
 use au_v3::build_and_install_au_v3;
 
 pub(crate) fn cmd_install(args: &[String]) -> Res {
@@ -68,11 +73,11 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
         vst3 = available.contains("vst3");
         vst2 = available.contains("vst2");
         lv2 = available.contains("lv2");
-        #[cfg(target_os = "macos")]
-        {
-            au2 = available.contains("au");
-            au3 = available.contains("au");
-        }
+        // AU is macOS-only at runtime, but flip the flags on every platform
+        // so the build/install paths can emit per-plugin skip lines for
+        // Linux / Windows users with `"au"` in their `[features].default`.
+        au2 = available.contains("au");
+        au3 = available.contains("au");
         aax = available.contains("aax");
     }
 
@@ -236,55 +241,86 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
         }
 
         if au2 {
-            crate::vprintln!("Building AU v2...");
-            for p in &plugins {
-                let mut env_pairs: Vec<(&str, &str)> = vec![
-                    ("TRUCE_AU_VERSION", "2"),
-                    ("TRUCE_AU_PLUGIN_ID", &p.bundle_id),
-                ];
-                if let Some(n) = p.au_name.as_deref() {
-                    env_pairs.push(("TRUCE_AU_NAME_OVERRIDE", n));
+            #[cfg(target_os = "macos")]
+            {
+                crate::vprintln!("Building AU v2...");
+                for p in &plugins {
+                    let mut env_pairs: Vec<(&str, &str)> = vec![
+                        ("TRUCE_AU_VERSION", "2"),
+                        ("TRUCE_AU_PLUGIN_ID", &p.bundle_id),
+                    ];
+                    if let Some(n) = p.au_name.as_deref() {
+                        env_pairs.push(("TRUCE_AU_NAME_OVERRIDE", n));
+                    }
+                    cargo_build(
+                        &env_pairs,
+                        &[
+                            "-p",
+                            &p.crate_name,
+                            "--no-default-features",
+                            "--features",
+                            "au",
+                        ],
+                        dt,
+                    )?;
+                    let src = release_lib(&root, &p.dylib_stem());
+                    let dst = release_lib(&root, &format!("{}_au", p.dylib_stem()));
+                    fs_ctx::copy(&src, &dst)?;
                 }
-                cargo_build(
-                    &env_pairs,
-                    &[
-                        "-p",
-                        &p.crate_name,
-                        "--no-default-features",
-                        "--features",
-                        "au",
-                    ],
-                    dt,
-                )?;
-                let src = release_lib(&root, &p.dylib_stem());
-                let dst = release_lib(&root, &format!("{}_au", p.dylib_stem()));
-                fs_ctx::copy(&src, &dst)?;
             }
+            #[cfg(not(target_os = "macos"))]
+            crate::log_skip(
+                "AU v2: not supported on this platform. Audio Unit is macOS-only."
+                    .to_string(),
+            );
         }
 
         if aax {
-            crate::vprintln!("Building AAX...");
-            for p in &plugins {
-                let mut env_pairs: Vec<(&str, &str)> = Vec::new();
-                if let Some(n) = p.aax_name.as_deref() {
-                    env_pairs.push(("TRUCE_AAX_NAME_OVERRIDE", n));
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
+            {
+                // SDK-not-configured is project-wide, not per-plugin —
+                // emit one skip line and bypass the build loop so we
+                // don't redundantly cargo-build the `aax` feature only
+                // to have `emit_aax_bundle` no-op each plugin.
+                if crate::resolve_aax_sdk_path(&config).is_none() {
+                    let hint = if cfg!(target_os = "windows") {
+                        "[windows].aax_sdk_path"
+                    } else {
+                        "[macos].aax_sdk_path"
+                    };
+                    crate::log_skip(format!(
+                        "AAX: SDK not configured. Set {hint} in truce.toml or the AAX_SDK_PATH env var."
+                    ));
+                } else {
+                    crate::vprintln!("Building AAX...");
+                    for p in &plugins {
+                        let mut env_pairs: Vec<(&str, &str)> = Vec::new();
+                        if let Some(n) = p.aax_name.as_deref() {
+                            env_pairs.push(("TRUCE_AAX_NAME_OVERRIDE", n));
+                        }
+                        cargo_build(
+                            &env_pairs,
+                            &[
+                                "-p",
+                                &p.crate_name,
+                                "--no-default-features",
+                                "--features",
+                                "aax",
+                            ],
+                            dt,
+                        )?;
+                        let src = release_lib(&root, &p.dylib_stem());
+                        let dst = release_lib(&root, &format!("{}_aax", p.dylib_stem()));
+                        fs_ctx::copy(&src, &dst)?;
+                        emit_aax_bundle(&root, p, &config, false)?;
+                    }
                 }
-                cargo_build(
-                    &env_pairs,
-                    &[
-                        "-p",
-                        &p.crate_name,
-                        "--no-default-features",
-                        "--features",
-                        "aax",
-                    ],
-                    dt,
-                )?;
-                let src = release_lib(&root, &p.dylib_stem());
-                let dst = release_lib(&root, &format!("{}_aax", p.dylib_stem()));
-                fs_ctx::copy(&src, &dst)?;
-                emit_aax_bundle(&root, p, &config, false)?;
             }
+            #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+            crate::log_skip(
+                "AAX: not supported on this platform. Use macOS or Windows to build AAX."
+                    .to_string(),
+            );
         }
 
         // In dev mode, also build the debug dylibs (the logic that
@@ -317,15 +353,25 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
             install_lv2(&root, p, &config)?;
         }
         if au2 {
+            #[cfg(target_os = "macos")]
             install_au(&root, p, &config)?;
+            // Non-macOS skip line was already pushed in the build phase.
         }
         if aax {
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
             install_aax(&root, p, &config)?;
+            // Non-macOS/Windows: build phase already pushed the single
+            // platform-not-supported skip; nothing per-plugin to do.
         }
     }
 
     if au3 {
+        #[cfg(target_os = "macos")]
         build_and_install_au_v3(&root, &config, &plugins, no_build)?;
+        #[cfg(not(target_os = "macos"))]
+        crate::log_skip(
+            "AU v3: not supported on this platform. Audio Unit is macOS-only.".to_string(),
+        );
     }
 
     #[cfg(target_os = "macos")]
@@ -609,6 +655,7 @@ fn lv2_bundle_root() -> Result<PathBuf, Box<dyn std::error::Error>> {
     }
 }
 
+#[cfg(target_os = "macos")]
 fn install_au(root: &Path, p: &PluginDef, config: &Config) -> Res {
     let dylib = root.join(format!("target/release/lib{}_au.dylib", p.dylib_stem()));
     if !dylib.exists() {

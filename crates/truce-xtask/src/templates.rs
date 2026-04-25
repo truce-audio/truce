@@ -7,6 +7,9 @@
 // AU v3 template files
 // ---------------------------------------------------------------------------
 
+// AU is macOS-only. Gating the module silences dead-code warnings on
+// other platforms for the embedded `include_str!` constants.
+#[cfg(target_os = "macos")]
 pub mod au3 {
     pub use truce_shim_types::AU_SHIM_TYPES_H as SHIM_TYPES_H;
     pub const SWIFT_SOURCE: &str = include_str!("../templates/au3/AudioUnitFactory.swift");

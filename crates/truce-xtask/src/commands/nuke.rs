@@ -1,7 +1,10 @@
 //! `cargo truce nuke` — nuclear reset for stale AU v3 appex cache.
 
-use crate::{dirs, load_config, run_sudo, run_sudo_silent, tmp_dir, PluginDef, Res};
+use crate::{dirs, load_config, run_sudo_silent, tmp_dir, PluginDef, Res};
+#[cfg(target_os = "macos")]
+use crate::run_sudo;
 use std::fs;
+#[cfg(target_os = "macos")]
 use std::path::Path;
 use std::process::Command;
 
@@ -24,6 +27,7 @@ pub(crate) fn cmd_nuke(args: &[String]) -> Res {
         i += 1;
     }
 
+    #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
     let plugins: Vec<&PluginDef> = if let Some(ref filter) = plugin_filter {
         let matched: Vec<_> = config
             .plugin
@@ -47,28 +51,32 @@ pub(crate) fn cmd_nuke(args: &[String]) -> Res {
         config.plugin.iter().collect()
     };
 
-    // 1. Unregister from LaunchServices + pluginkit
-    eprintln!("Unregistering AU v3 plugins...");
-    for p in &plugins {
-        let app_dir = format!("/Applications/{}.app", p.au3_app_name());
-        // Unregister from LaunchServices
-        let _ = Command::new("/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister")
-            .args(["-u", &app_dir])
-            .output();
-        // Full remove from pluginkit (not just disable)
-        let vid = config.vendor.id.trim_start_matches("com.");
-        for pattern in [
-            format!("com.{}.{}.v3.ext", vid, p.bundle_id),
-            format!("com.{}.{}.au", vid, p.bundle_id),
-        ] {
-            let _ = Command::new("pluginkit")
-                .args(["-r", "-i", &pattern])
+    // 1. Unregister from LaunchServices + pluginkit (macOS-only — AU v3
+    // and pluginkit don't exist on Linux / Windows).
+    #[cfg(target_os = "macos")]
+    {
+        eprintln!("Unregistering AU v3 plugins...");
+        for p in &plugins {
+            let app_dir = format!("/Applications/{}.app", p.au3_app_name());
+            // Unregister from LaunchServices
+            let _ = Command::new("/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister")
+                .args(["-u", &app_dir])
                 .output();
-        }
-        // Remove the app bundle
-        if Path::new(&app_dir).exists() {
-            let _ = run_sudo("rm", &["-rf", &app_dir]);
-            eprintln!("  Removed: {app_dir}");
+            // Full remove from pluginkit (not just disable)
+            let vid = config.vendor.id.trim_start_matches("com.");
+            for pattern in [
+                format!("com.{}.{}.v3.ext", vid, p.bundle_id),
+                format!("com.{}.{}.au", vid, p.bundle_id),
+            ] {
+                let _ = Command::new("pluginkit")
+                    .args(["-r", "-i", &pattern])
+                    .output();
+            }
+            // Remove the app bundle
+            if Path::new(&app_dir).exists() {
+                let _ = run_sudo("rm", &["-rf", &app_dir]);
+                eprintln!("  Removed: {app_dir}");
+            }
         }
     }
 

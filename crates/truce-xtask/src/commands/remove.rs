@@ -1,7 +1,9 @@
 //! `cargo truce remove` — uninstall plugin bundles for the current project,
 //! or with `--stale` evict vendor-matching bundles no longer in `truce.toml`.
 
-use crate::{confirm_prompt, dirs, load_config, run_sudo, Config, PluginDef, Res};
+use crate::{confirm_prompt, dirs, load_config, run_sudo, PluginDef, Res};
+#[cfg(target_os = "macos")]
+use crate::Config;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -12,6 +14,7 @@ struct RemoveTarget {
     needs_sudo: bool,
 }
 
+#[cfg(target_os = "macos")]
 fn unregister_au3(config: &Config, plugin: &PluginDef, app_path: &Path) {
     let vid = config.vendor.id.trim_start_matches("com.");
     for pattern in [
@@ -92,7 +95,12 @@ pub(crate) fn cmd_remove(args: &[String]) -> Res {
         i += 1;
     }
 
-    // Default: all formats if none specified
+    // Default: all formats if none specified.
+    // `au3 = true` lands in a flag that's read only inside macOS-gated
+    // blocks; the assignment-never-read warning on Linux/Windows is
+    // intentional — keeping the flag uniform across platforms is more
+    // readable than a per-platform `if`.
+    #[allow(unused_assignments)]
     if !clap && !vst3 && !vst2 && !au2 && !au3 && !aax {
         clap = true;
         vst3 = true;
@@ -200,6 +208,11 @@ pub(crate) fn cmd_remove(args: &[String]) -> Res {
                 &mut targets,
             );
         }
+        // AU v3 lives in `/Applications/...` only on macOS, so the
+        // `--au3` removal scan is macOS-only. The flag is still parsed
+        // on every platform so cross-platform CI scripts don't break;
+        // it just no-ops on Linux / Windows.
+        #[cfg(target_os = "macos")]
         if au3 {
             // Scan /Applications for vendor-matching v3 apps not in project.
             // Recognize truce AU v3 containers by bundle-name convention:
@@ -362,6 +375,7 @@ pub(crate) fn cmd_remove(args: &[String]) -> Res {
                     });
                 }
             }
+            #[cfg(target_os = "macos")]
             if au3 {
                 let path = PathBuf::from(format!("/Applications/{}.app", p.au3_app_name()));
                 if path.exists() {
@@ -415,7 +429,8 @@ pub(crate) fn cmd_remove(args: &[String]) -> Res {
     let mut errors = 0u32;
 
     for t in &targets {
-        // AU v3 special handling: unregister before deleting
+        // AU v3 special handling: unregister before deleting (macOS-only).
+        #[cfg(target_os = "macos")]
         if t.format == "AU v3" {
             // Try to find a matching plugin def for precise unregistration
             let matched_plugin = config

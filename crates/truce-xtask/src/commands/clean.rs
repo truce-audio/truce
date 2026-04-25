@@ -2,7 +2,9 @@
 
 use crate::{confirm_prompt, dirs, load_config, run_sudo_silent, tmp_dir, Res};
 use std::fs;
-use std::path::{Path, PathBuf};
+#[cfg(target_os = "macos")]
+use std::path::Path;
+use std::path::PathBuf;
 use std::process::Command;
 
 pub(crate) fn cmd_clean(args: &[String]) -> Res {
@@ -87,7 +89,8 @@ pub(crate) fn cmd_clean(args: &[String]) -> Res {
             }
         }
 
-        // Force LaunchServices to re-scan v3 app bundles
+        // Force LaunchServices to re-scan v3 app bundles (macOS-only).
+        #[cfg(target_os = "macos")]
         for p in &config.plugin {
             let app_path = format!("/Applications/{}.app", p.au3_app_name());
             if Path::new(&app_path).exists() {

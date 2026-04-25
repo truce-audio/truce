@@ -30,6 +30,8 @@ pub(crate) mod fs_ctx {
         fs::create_dir_all(path).map_err(|e| format!("mkdir -p {}: {e}", path.display()).into())
     }
 
+    // Both used only by AAX template + AU v3 staging on macOS / Windows.
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     pub(crate) fn write(path: impl AsRef<Path>, contents: impl AsRef<[u8]>) -> Result<(), BoxErr> {
         let path = path.as_ref();
         fs::write(path, contents).map_err(|e| format!("write {}: {e}", path.display()).into())
@@ -38,6 +40,7 @@ pub(crate) mod fs_ctx {
     /// Write only if the target file is missing or its bytes differ. On a
     /// no-op, the file's mtime stays put — important for tools like cmake
     /// that rebuild based on mtime comparisons.
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     pub(crate) fn write_if_changed(
         path: impl AsRef<Path>,
         contents: impl AsRef<[u8]>,
@@ -73,7 +76,10 @@ pub(crate) fn release_lib(root: &Path, stem: &str) -> PathBuf {
 }
 
 /// Return the release-mode library path for a specific cargo target triple,
-/// or the default `target/release/` when `target` is `None`.
+/// or the default `target/release/` when `target` is `None`. Used by
+/// cross-arch builds (macOS universal, Windows x64+arm64); not reached
+/// on Linux today.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(crate) fn release_lib_for_target(root: &Path, stem: &str, target: Option<&str>) -> PathBuf {
     match target {
         Some(t) => root
@@ -362,20 +368,13 @@ pub(crate) fn take_skipped() -> Vec<String> {
 /// `/dev/tty` for the password prompt, not stderr, so the prompt
 /// stays visible to the user.
 ///
-/// Non-macOS no-ops cleanly: `codesign` is an Apple-only tool. CLAP /
-/// VST3 / LV2 on Linux are unsigned `.so` files; Windows signs via
-/// `signtool` in `packaging_windows`, not through here. The shared
-/// `stage_*` helpers in `commands/package/stage.rs` call this
-/// unconditionally so the build path stays cross-platform.
-pub(crate) fn run_codesign(_args: &[&str], _use_sudo: bool) -> crate::Res {
-    #[cfg(not(target_os = "macos"))]
-    return Ok(());
-    #[cfg(target_os = "macos")]
-    run_codesign_macos(_args, _use_sudo)
-}
-
+/// macOS-only: `codesign` is an Apple tool. CLAP / VST3 / LV2 on
+/// Linux are unsigned `.so` files; Windows signs via `signtool` in
+/// `packaging_windows`, not through here. The cross-platform
+/// `codesign_bundle` wrapper short-circuits on non-macOS, so callers
+/// never reach this function on other platforms.
 #[cfg(target_os = "macos")]
-fn run_codesign_macos(args: &[&str], use_sudo: bool) -> crate::Res {
+pub(crate) fn run_codesign(args: &[&str], use_sudo: bool) -> crate::Res {
     use std::process::Stdio;
     let target = args.last().copied().unwrap_or("?");
     let target_label = std::path::Path::new(target)
@@ -441,6 +440,7 @@ pub(crate) fn run_quiet(cmd: &str, args: &[&str]) -> std::result::Result<String,
 }
 
 /// Whether the signing identity is a real Developer ID (not ad-hoc).
+#[cfg(target_os = "macos")]
 pub(crate) fn is_production_identity(identity: &str) -> bool {
     identity != "-"
 }
@@ -453,6 +453,8 @@ pub(crate) fn tmp_dir() -> PathBuf {
 }
 
 /// Write entitlements.plist to a temp file and return its path.
+/// Only consumed by `codesign_bundle` on macOS.
+#[cfg(target_os = "macos")]
 pub(crate) fn write_entitlements_plist() -> PathBuf {
     let path = tmp_dir().join("entitlements.plist");
     let content = r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -472,21 +474,27 @@ pub(crate) fn write_entitlements_plist() -> PathBuf {
 /// runtime, timestamp, and entitlements (required for notarization).
 /// When ad-hoc (`"-"`), performs a simple ad-hoc sign.
 /// If `use_sudo` is true the codesign command runs via sudo.
-pub(crate) fn codesign_bundle(bundle: &str, identity: &str, use_sudo: bool) -> crate::Res {
-    let production = is_production_identity(identity);
-    let entitlements = write_entitlements_plist();
-    let ent_path = entitlements.to_str().unwrap();
+pub(crate) fn codesign_bundle(_bundle: &str, _identity: &str, _use_sudo: bool) -> crate::Res {
+    // macOS-only: `codesign` is an Apple tool, and the entitlements plist
+    // we write is consumed only by it. On Linux / Windows this is a no-op
+    // so the cross-platform `stage_*` helpers can call us unconditionally.
+    #[cfg(target_os = "macos")]
+    {
+        let production = is_production_identity(_identity);
+        let entitlements = write_entitlements_plist();
+        let ent_path = entitlements.to_str().unwrap();
 
-    let mut args: Vec<&str> = vec!["--force", "--deep", "--sign", identity];
-    if production {
-        args.extend_from_slice(&["--options", "runtime", "--timestamp"]);
-        args.extend_from_slice(&["--entitlements", ent_path]);
-    }
-    args.push(bundle);
-    run_codesign(&args, use_sudo)?;
+        let mut args: Vec<&str> = vec!["--force", "--deep", "--sign", _identity];
+        if production {
+            args.extend_from_slice(&["--options", "runtime", "--timestamp"]);
+            args.extend_from_slice(&["--entitlements", ent_path]);
+        }
+        args.push(_bundle);
+        run_codesign(&args, _use_sudo)?;
 
-    if production {
-        run_codesign(&["--verify", "--strict", bundle], use_sudo)?;
+        if production {
+            run_codesign(&["--verify", "--strict", _bundle], _use_sudo)?;
+        }
     }
     Ok(())
 }
@@ -699,12 +707,14 @@ pub(crate) fn cargo_build(
 /// to drive per-arch cargo builds and lipo into universal binaries. Defined
 /// unconditionally so cross-platform codepaths can reference it without a
 /// cfg matrix — only the macOS arms actually touch lipo/xcodebuild.
+#[cfg(target_os = "macos")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum MacArch {
     X86_64,
     Arm64,
 }
 
+#[cfg(target_os = "macos")]
 impl MacArch {
     pub(crate) fn triple(self) -> &'static str {
         match self {
@@ -727,6 +737,7 @@ impl MacArch {
 /// Single-arch inputs are copied through; the output path matches the legacy
 /// non-universal layout (`target/release/...`) so the per-format stage
 /// functions don't need to know whether the build was universal.
+#[cfg(target_os = "macos")]
 pub(crate) fn lipo_into(inputs: &[PathBuf], output: &Path) -> crate::Res {
     if inputs.is_empty() {
         return Err("lipo_into: no inputs".into());
@@ -761,6 +772,7 @@ pub(crate) fn lipo_into(inputs: &[PathBuf], output: &Path) -> crate::Res {
 /// Run a cargo release build for a specific Apple arch. Adds
 /// `--target <triple>` to the caller's args so output lands under
 /// `target/{triple}/release/` without colliding with other arches.
+#[cfg(target_os = "macos")]
 pub(crate) fn cargo_build_for_arch(
     env_vars: &[(&str, &str)],
     base_args: &[&str],
@@ -804,6 +816,7 @@ pub(crate) fn copy_dir_recursive(src: &Path, dst: &Path) -> crate::Res {
 
 /// Extract the team ID from a signing identity string like
 /// `"Developer ID Application: Name (TEAMID)"`.
+#[cfg(target_os = "macos")]
 pub(crate) fn extract_team_id(sign_id: &str) -> String {
     if let Some(start) = sign_id.rfind('(') {
         if let Some(end) = sign_id.rfind(')') {

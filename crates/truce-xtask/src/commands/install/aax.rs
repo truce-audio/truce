@@ -405,14 +405,13 @@ fn ensure_template(
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub(crate) fn emit_aax_bundle(
     _root: &Path,
-    p: &PluginDef,
+    _p: &PluginDef,
     _config: &Config,
     _universal_mac: bool,
 ) -> Res {
-    crate::log_skip(format!(
-        "AAX: skipped {} — not supported on this platform. Use macOS or Windows to build AAX.",
-        p.name
-    ));
+    crate::log_skip(
+        "AAX: not supported on this platform. Use macOS or Windows to build AAX.".to_string(),
+    );
     Ok(())
 }
 
@@ -540,11 +539,10 @@ pub(crate) fn emit_aax_bundle(
 
 // AAX is only supported on macOS and Windows.
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-pub(crate) fn install_aax(_root: &Path, p: &PluginDef, _config: &Config) -> Res {
-    crate::log_skip(format!(
-        "AAX: skipped {} — not supported on this platform. Use macOS or Windows to install AAX.",
-        p.name
-    ));
+pub(crate) fn install_aax(_root: &Path, _p: &PluginDef, _config: &Config) -> Res {
+    crate::log_skip(
+        "AAX: not supported on this platform. Use macOS or Windows to install AAX.".to_string(),
+    );
     Ok(())
 }
 
