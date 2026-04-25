@@ -164,7 +164,15 @@ impl Scaffold {
     /// `{ path = "<truce-root>/crates/<name>", ... }`. Keeps `cargo
     /// check` off the network.
     fn rewrite_git_to_path(&self) -> Result<(), String> {
-        let crates_dir = truce_root().join("crates").to_string_lossy().into_owned();
+        // Inject path deps with forward slashes even on Windows — TOML
+        // basic strings (`path = "..."`) treat backslash as an escape
+        // introducer, so a native `D:\a\truce\...` path would break
+        // toml parsing with `missing escaped value`. Cargo accepts
+        // forward slashes for path deps on Windows.
+        let crates_dir = truce_root()
+            .join("crates")
+            .to_string_lossy()
+            .replace('\\', "/");
 
         let mut files = Vec::new();
         walk_cargo_toml(&self.generated, &mut files);
