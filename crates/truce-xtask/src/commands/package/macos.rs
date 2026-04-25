@@ -1,7 +1,7 @@
 //! macOS packaging pipeline: per-arch builds, lipo, stage, pkgbuild,
 //! productbuild, optional notarization.
 
-#![cfg(not(target_os = "windows"))]
+#![cfg(target_os = "macos")]
 
 use super::stage::{
     generate_distribution_xml, stage_aax, stage_au2, stage_au3, stage_clap, stage_vst2, stage_vst3,
@@ -17,7 +17,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-#[cfg(not(target_os = "windows"))]
 pub(crate) fn cmd_package_macos(args: &[String]) -> Res {
     let config = load_config()?;
     let root = project_root();

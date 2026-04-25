@@ -8,7 +8,7 @@ use crate::{BoxErr, PluginDef, Res};
 
 pub(crate) mod stage;
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "macos")]
 pub(crate) mod macos;
 
 /// Parsed format flags for the package command.
@@ -109,11 +109,19 @@ impl PkgFormat {
     }
 }
 
-pub(crate) fn cmd_package(args: &[String]) -> Res {
+pub(crate) fn cmd_package(_args: &[String]) -> Res {
     #[cfg(target_os = "windows")]
     {
-        return crate::packaging_windows::cmd_package(args);
+        return crate::packaging_windows::cmd_package(_args);
     }
-    #[cfg(not(target_os = "windows"))]
-    macos::cmd_package_macos(args)
+    #[cfg(target_os = "macos")]
+    {
+        return macos::cmd_package_macos(_args);
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    Err("`cargo truce package` is not supported on this platform. \
+         macOS produces signed `.pkg` installers; Windows produces Inno Setup `.exe` installers. \
+         For Linux distribution, use `cargo truce build` and ship the bundles from \
+         `target/bundles/` via your distro's native packaging (.deb / .rpm / AppImage / Flatpak)."
+        .into())
 }

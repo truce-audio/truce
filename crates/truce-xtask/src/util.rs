@@ -478,7 +478,7 @@ pub(crate) fn codesign_bundle(bundle: &str, identity: &str, use_sudo: bool) -> c
 /// PACE / iLok wraptool, the canonical macOS install path. Eden 5 ships under
 /// `Versions/5/`; `Current` is a stable symlink Eden maintains across version
 /// bumps. Users who symlinked `wraptool` onto `$PATH` are picked up first.
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "macos")]
 pub(crate) fn locate_wraptool_macos() -> Option<PathBuf> {
     if let Ok(p) = which_unix("wraptool") {
         return Some(p);
@@ -523,7 +523,7 @@ pub(crate) fn which_unix(name: &str) -> std::result::Result<PathBuf, std::io::Er
 /// Must be the **last** step that touches the bundle. PACE 2.4+ inserts a
 /// symlink for backwards compatibility; `cp -r` (and most copy helpers
 /// without `-H`) convert it to a regular file and break the digital seal.
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "macos")]
 pub(crate) fn pace_sign_aax_macos(bundle: &Path) -> crate::Res {
     let Some(wraptool) = locate_wraptool_macos() else {
         eprintln!(

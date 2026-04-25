@@ -2,7 +2,7 @@
 //! write the per-format Info.plist, and codesign.
 
 use super::PkgFormat;
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "macos")]
 use crate::pace_sign_aax_macos;
 use crate::{
     codesign_bundle, copy_dir_recursive, release_lib, Config, PackagingConfig, PluginDef, Res,
@@ -254,7 +254,7 @@ pub(crate) fn stage_au2(root: &Path, p: &PluginDef, config: &Config, staging: &P
 /// PACE-signs the staged copy in place (PACE wraps the Apple
 /// signature, and pkgbuild reads the staging tree directly so the
 /// order is safe).
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "macos")]
 pub(crate) fn stage_aax(
     root: &Path,
     p: &PluginDef,
