@@ -1,4 +1,12 @@
-//! `cargo truce clean` — clear AU/DAW caches and restart audio daemons.
+//! `cargo truce reset-au-aax` — flush macOS Audio Unit + Pro Tools AAX
+//! caches and restart `pkd` / `AudioComponentRegistrar`.
+//!
+//! Narrowly Apple-platform: clears `~/Library/Caches/AudioUnitCache`,
+//! the GarageBand / Logic container caches, the Reaper AU plist, the
+//! Pro Tools AAX cache at `/Users/Shared/Pro Tools/AAXPlugInCache`,
+//! pluginkit registrations, and the AU v3 build scratch under
+//! `target/tmp/au_v3_*`. CLAP / VST3 / VST2 / LV2 are unaffected — those
+//! formats let DAWs manage their own caches; macOS just doesn't.
 
 use crate::{confirm_prompt, dirs, load_config, run_sudo_silent, tmp_dir, Res};
 use std::fs;
@@ -7,7 +15,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 
-pub(crate) fn cmd_clean(args: &[String]) -> Res {
+pub(crate) fn cmd_reset_au_aax(args: &[String]) -> Res {
     let mut yes = false;
     for arg in args {
         match arg.as_str() {
@@ -18,8 +26,9 @@ pub(crate) fn cmd_clean(args: &[String]) -> Res {
 
     if !yes
         && !confirm_prompt(
-            "Clear AU/DAW caches and restart audio daemons? This deletes cached plugin metadata, \
-         resets pluginkit registrations, and wipes the AAX cache.",
+            "Reset macOS Audio Unit + Pro Tools AAX caches and restart `pkd` / \
+             `AudioComponentRegistrar`? This deletes cached plugin metadata, \
+             resets pluginkit registrations, and wipes the AAX cache.",
         )
     {
         eprintln!("Cancelled.");

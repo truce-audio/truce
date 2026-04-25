@@ -58,8 +58,7 @@ pub fn run(args: &[String]) -> ExitCode {
         "new" => commands::new::cmd_new(&args[1..]),
         "test" => commands::test::cmd_test(),
         "status" => commands::status::cmd_status(),
-        "clean" => commands::clean::cmd_clean(&args[1..]),
-        "nuke" => commands::nuke::cmd_nuke(&args[1..]),
+        "reset-au-aax" => commands::reset_au_aax::cmd_reset_au_aax(&args[1..]),
         "validate" => commands::validate::cmd_validate(&args[1..]),
         "doctor" => commands::doctor::cmd_doctor(),
         "log" => commands::log::cmd_log(),
@@ -111,9 +110,10 @@ Commands:
   status
       Show installed plugins and AU registration state.
 
-  clean [--yes]
-      Clear all AU/DAW caches and restart audio daemons. Asks for
-      confirmation by default.
+  reset-au-aax [--yes]
+      macOS-only. Flush Audio Unit + Pro Tools AAX caches and restart
+      `pkd` / `AudioComponentRegistrar`. CLAP / VST3 / VST2 / LV2 are
+      unaffected. Asks for confirmation by default.
       --yes        Skip confirmation prompt
 
   remove [--clap] [--vst3] [--vst2] [--au2] [--au3] [--aax] [-p <crate>] [-n <name>] [--stale] [--dry-run] [--yes]
@@ -125,12 +125,6 @@ Commands:
                    (renamed/deleted plugins still on the system)
       --dry-run    Show what would be removed without deleting
       --yes        Skip confirmation prompt
-
-  nuke [-p <crate>]
-      Nuclear reset: remove AU v3 apps, disable pluginkit registrations,
-      kill daemons, clear all caches, cargo clean.
-      Use when AU v3 appex is stuck serving stale binaries.
-      -p <crate>   Nuke only the plugin with this cargo crate name
 
   validate [--auval] [--auval3] [--pluginval] [--clap] [--all] [-p <crate>]
       Run validation tools on installed plugins.

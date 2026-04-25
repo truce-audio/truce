@@ -42,8 +42,8 @@ fn main() -> ExitCode {
         },
 
         // Build/install commands — forwarded to truce-xtask
-        "install" | "build" | "package" | "remove" | "run" | "test" | "status" | "clean"
-        | "nuke" | "validate" | "doctor" | "log" => truce_xtask::run(&args),
+        "install" | "build" | "package" | "remove" | "run" | "test" | "status"
+        | "reset-au-aax" | "validate" | "doctor" | "log" => truce_xtask::run(&args),
 
         "help" | "--help" | "-h" => {
             print_help();
@@ -93,8 +93,12 @@ USAGE:
   cargo truce test
       Run in-process regression tests.
 
-  cargo truce clean
-      Clear AU and DAW plugin caches.
+  cargo truce reset-au-aax
+      macOS-only. Flush Audio Unit caches (AudioUnitCache, GarageBand /
+      Logic / Reaper plists), reset pluginkit registrations, wipe the
+      Pro Tools AAX cache, and restart `pkd` + `AudioComponentRegistrar`.
+      Use when AU bundles are stuck serving stale binaries; CLAP / VST3 /
+      VST2 / LV2 don't need this — DAWs manage their own caches there.
 
   cargo truce status
       Show installed plugins.

@@ -26,7 +26,7 @@ cargo truce validate               # run auval (AU) + pluginval (CLAP/VST3)
 cargo truce doctor                 # check toolchain, SDKs, signing certs
 cargo truce run                    # build and launch standalone
 cargo truce status                 # show installed plugin versions
-cargo truce nuke                   # remove installed plugins
+cargo truce remove                 # uninstall plugins from system paths
 ```
 
 ## Supported formats
