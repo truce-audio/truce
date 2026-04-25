@@ -423,7 +423,9 @@ pub(crate) fn run_codesign(args: &[&str], use_sudo: bool) -> crate::Res {
 /// Sudo variant that swallows stdout + stderr. Intended for
 /// fire-and-forget cleanup like `killall -9 pkd` where non-zero
 /// exit ("No matching processes were found") is expected noise
-/// on clean systems and shouldn't clutter the install log.
+/// on clean systems and shouldn't clutter the install log. Only
+/// used by macOS-side AU v3 install + `reset-au-aax`.
+#[cfg(target_os = "macos")]
 pub(crate) fn run_sudo_silent(cmd: &str, args: &[&str]) {
     use std::process::Stdio;
     let _ = Command::new("sudo")

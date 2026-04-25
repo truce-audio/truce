@@ -8,14 +8,27 @@
 //! `target/tmp/au_v3_*`. CLAP / VST3 / VST2 / LV2 are unaffected — those
 //! formats let DAWs manage their own caches; macOS just doesn't.
 
-use crate::{confirm_prompt, dirs, load_config, run_sudo_silent, tmp_dir, Res};
-use std::fs;
-#[cfg(target_os = "macos")]
-use std::path::Path;
-use std::path::PathBuf;
-use std::process::Command;
+use crate::Res;
 
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn cmd_reset_au_aax(_args: &[String]) -> Res {
+    Err(
+        "`cargo truce reset-au-aax` is macOS-only — it flushes Apple's \
+         AU caches and restarts `pkd` / `AudioComponentRegistrar`, neither \
+         of which exist on Linux or Windows. CLAP / VST3 / VST2 / LV2 \
+         let their host DAWs manage caches; restart your DAW if a plugin \
+         is stuck."
+            .into(),
+    )
+}
+
+#[cfg(target_os = "macos")]
 pub(crate) fn cmd_reset_au_aax(args: &[String]) -> Res {
+    use crate::{confirm_prompt, dirs, load_config, run_sudo_silent, tmp_dir};
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
+
     let mut yes = false;
     for arg in args {
         match arg.as_str() {
@@ -24,24 +37,6 @@ pub(crate) fn cmd_reset_au_aax(args: &[String]) -> Res {
         }
     }
 
-    // Hard-fail off macOS — every step touches Apple-only daemons / paths
-    // (`pkd`, `AudioComponentRegistrar`, `~/Library/Caches/AudioUnitCache`,
-    // `/Users/Shared/Pro Tools/...`). Without this guard we'd silently
-    // print the macOS-style banner on Linux/Windows and then no-op.
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = yes;
-        return Err(
-            "`cargo truce reset-au-aax` is macOS-only — it flushes Apple's \
-             AU caches and restarts `pkd` / `AudioComponentRegistrar`, neither \
-             of which exist on Linux or Windows. CLAP / VST3 / VST2 / LV2 \
-             let their host DAWs manage caches; restart your DAW if a plugin \
-             is stuck."
-                .into(),
-        );
-    }
-
-    #[cfg(target_os = "macos")]
     if !yes
         && !confirm_prompt(
             "Reset macOS Audio Unit + Pro Tools AAX caches and restart `pkd` / \
@@ -116,8 +111,7 @@ pub(crate) fn cmd_reset_au_aax(args: &[String]) -> Res {
             }
         }
 
-        // Force LaunchServices to re-scan v3 app bundles (macOS-only).
-        #[cfg(target_os = "macos")]
+        // Force LaunchServices to re-scan v3 app bundles
         for p in &config.plugin {
             let app_path = format!("/Applications/{}.app", p.au3_app_name());
             if Path::new(&app_path).exists() {
