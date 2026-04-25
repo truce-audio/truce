@@ -4,9 +4,11 @@
 //! `.pkg` pipeline (`macos.rs`) and the Windows Inno Setup pipeline
 //! (`packaging_windows`).
 
-use crate::Res;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
-use crate::{BoxErr, PluginDef};
+use crate::BoxErr;
+#[cfg(target_os = "macos")]
+use crate::PluginDef;
+use crate::Res;
 
 pub(crate) mod stage;
 
@@ -54,7 +56,6 @@ impl PkgFormat {
             PkgFormat::Aax => "AAX",
         }
     }
-
 }
 
 // macOS-only `pkgbuild` / `productbuild` plumbing — extensions,
