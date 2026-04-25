@@ -1,8 +1,9 @@
 # Plugin Formats
 
-Truce compiles a single plugin crate into up to seven plugin formats.
-This directory has a dedicated page per format — what it does, what
-it needs, how to turn it on, and what can go wrong.
+Truce compiles a single plugin crate into up to seven plugin formats,
+plus an app-mode [standalone](standalone.md) binary. This directory
+has a dedicated page per format — what it does, what it needs, how
+to turn it on, and what can go wrong.
 
 ## Format matrix
 
@@ -15,6 +16,7 @@ it needs, how to turn it on, and what can go wrong.
 | [AU v2](au.md)     | `au`   | ✅ | — | — | opt-in | Xcode CLI tools |
 | [AU v3](au.md)     | `au`   | ✅ | — | — | opt-in | full Xcode, Developer ID signing |
 | [AAX](aax.md)      | `aax`  | ✅ | ✅ | — | opt-in | AAX SDK (+ PACE wraptool for retail) |
+| [Standalone](standalone.md) | `standalone` | ✅ | ✅ | ✅ | opt-in | — (app mode, not a host-loaded format) |
 
 Scaffolded plugins get `clap` and `vst3` enabled in `[features].default`
 in `Cargo.toml`. To opt into another format, add it to `default` or
@@ -57,6 +59,7 @@ aax  = ["dep:truce-aax"]
 | AU v2  | `/Library/Audio/Plug-Ins/Components/{Name}.component/` (sudo) | — | — |
 | AU v3  | `/Applications/{Name}.app/Contents/PlugIns/AUExt.appex/` (sudo) | — | — |
 | AAX    | `/Library/Application Support/Avid/Audio/Plug-Ins/{Name}.aaxplugin/` (sudo) | `%COMMONPROGRAMFILES%\Avid\Audio\Plug-Ins\{Name}.aaxplugin\` | — |
+| Standalone | `target/bundles/{Name}.standalone/` (staged by `cargo truce run`; not installed) | same | same |
 
 Commands documented in each format's page use `cargo truce install` so
 you never touch these paths directly. They're listed here as a debug

@@ -24,10 +24,15 @@ pub(crate) fn cmd_doctor() -> Res {
     eprintln!("─────────────────────────────────────────");
     eprintln!();
 
+    let root = project_root();
+
     // Toolchain
     eprintln!("  Toolchain");
     check_cmd("rustc", &["--version"], "rustc");
     check_cmd("cargo", &["--version"], "cargo");
+    if root.join("rust-toolchain.toml").exists() {
+        eprintln!("    ✅ rust-toolchain.toml present");
+    }
 
     // Platform tools
     #[cfg(target_os = "macos")]
@@ -115,7 +120,6 @@ pub(crate) fn cmd_doctor() -> Res {
     // Configuration
     eprintln!();
     eprintln!("  Configuration");
-    let root = project_root();
     let config = if root.join("truce.toml").exists() {
         match load_config() {
             Ok(c) => {
@@ -175,9 +179,6 @@ pub(crate) fn cmd_doctor() -> Res {
         count_plugins(&cpf.join("VST3"), "VST3");
         count_plugins(&pf.join("Steinberg").join("VstPlugins"), "VST2");
         count_plugins(&cpf.join("Avid").join("Audio").join("Plug-Ins"), "AAX");
-    }
-    if root.join("rust-toolchain.toml").exists() {
-        eprintln!("    ✅ rust-toolchain.toml present");
     }
 
     eprintln!();
