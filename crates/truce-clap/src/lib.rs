@@ -1613,8 +1613,8 @@ macro_rules! export_clap {
             use ::clap_sys::plugin::{clap_plugin, clap_plugin_descriptor};
             use ::clap_sys::version::CLAP_VERSION;
 
-            use ::truce_clap::DescriptorHolder;
             use ::truce_clap::__macro_deps::truce_core::plugin::Plugin;
+            use ::truce_clap::DescriptorHolder;
 
             static DESCRIPTOR: OnceLock<DescriptorHolder> = OnceLock::new();
 

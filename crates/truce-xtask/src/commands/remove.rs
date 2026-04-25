@@ -77,8 +77,11 @@ pub(crate) fn cmd_remove(args: &[String]) -> Res {
             "--stale" => stale = true,
             "-p" => {
                 i += 1;
-                crate_filter =
-                    Some(args.get(i).cloned().ok_or("-p requires a plugin crate name")?);
+                crate_filter = Some(
+                    args.get(i)
+                        .cloned()
+                        .ok_or("-p requires a plugin crate name")?,
+                );
             }
             "-n" => {
                 i += 1;

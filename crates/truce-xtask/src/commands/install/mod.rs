@@ -49,7 +49,9 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
             "-p" => {
                 i += 1;
                 if i >= args.len() {
-                    return Err("-p requires a plugin crate name (e.g. -p truce-example-gain)".into());
+                    return Err(
+                        "-p requires a plugin crate name (e.g. -p truce-example-gain)".into(),
+                    );
                 }
                 plugin_filter = Some(args[i].clone());
             }
@@ -236,8 +238,10 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
         if au2 {
             eprintln!("Building AU v2...");
             for p in &plugins {
-                let mut env_pairs: Vec<(&str, &str)> =
-                    vec![("TRUCE_AU_VERSION", "2"), ("TRUCE_AU_PLUGIN_ID", &p.bundle_id)];
+                let mut env_pairs: Vec<(&str, &str)> = vec![
+                    ("TRUCE_AU_VERSION", "2"),
+                    ("TRUCE_AU_PLUGIN_ID", &p.bundle_id),
+                ];
                 if let Some(n) = p.au_name.as_deref() {
                     env_pairs.push(("TRUCE_AU_NAME_OVERRIDE", n));
                 }

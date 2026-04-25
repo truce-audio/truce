@@ -87,8 +87,10 @@ pub(crate) fn emit_au_v3_bundle(
         // --- Step 1: Rust framework dylib (per-arch + lipo) -----------------
         for &arch in archs {
             eprintln!("  Building Rust framework ({})...", arch.triple());
-            let mut env_pairs: Vec<(&str, &str)> =
-                vec![("TRUCE_AU_VERSION", "3"), ("TRUCE_AU_PLUGIN_ID", &p.bundle_id)];
+            let mut env_pairs: Vec<(&str, &str)> = vec![
+                ("TRUCE_AU_VERSION", "3"),
+                ("TRUCE_AU_PLUGIN_ID", &p.bundle_id),
+            ];
             if let Some(n) = p.au3_name.as_deref() {
                 env_pairs.push(("TRUCE_AU_NAME_OVERRIDE", n));
             }
@@ -115,11 +117,7 @@ pub(crate) fn emit_au_v3_bundle(
         let fw_inputs: Vec<PathBuf> = archs
             .iter()
             .map(|a| {
-                release_lib_for_target(
-                    root,
-                    &format!("{}_v3", p.dylib_stem()),
-                    Some(a.triple()),
-                )
+                release_lib_for_target(root, &format!("{}_v3", p.dylib_stem()), Some(a.triple()))
             })
             .collect();
         let lipo_dst = root.join(format!("target/release/lib{}_v3.dylib", p.dylib_stem()));
@@ -345,7 +343,10 @@ pub(crate) fn emit_au_v3_bundle(
         let embedded_fw = frameworks_dir.join(format!("{fw_name}.framework"));
         let _ = fs::remove_dir_all(&embedded_fw);
         let fw_src = fw_build.join(format!("{fw_name}.framework"));
-        let ditto_status = Command::new("ditto").arg(&fw_src).arg(&embedded_fw).status()?;
+        let ditto_status = Command::new("ditto")
+            .arg(&fw_src)
+            .arg(&embedded_fw)
+            .status()?;
         if !ditto_status.success() {
             return Err("ditto failed copying framework into .app".into());
         }

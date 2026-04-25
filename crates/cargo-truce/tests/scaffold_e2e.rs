@@ -164,10 +164,7 @@ impl Scaffold {
     /// `{ path = "<truce-root>/crates/<name>", ... }`. Keeps `cargo
     /// check` off the network.
     fn rewrite_git_to_path(&self) -> Result<(), String> {
-        let crates_dir = truce_root()
-            .join("crates")
-            .to_string_lossy()
-            .into_owned();
+        let crates_dir = truce_root().join("crates").to_string_lossy().into_owned();
 
         let mut files = Vec::new();
         walk_cargo_toml(&self.generated, &mut files);
@@ -176,8 +173,7 @@ impl Scaffold {
                 std::fs::read_to_string(&f).map_err(|e| format!("read {}: {e}", f.display()))?;
             let rewritten = rewrite_git_refs(&content, &crates_dir);
             if rewritten != content {
-                std::fs::write(&f, rewritten)
-                    .map_err(|e| format!("write {}: {e}", f.display()))?;
+                std::fs::write(&f, rewritten).map_err(|e| format!("write {}: {e}", f.display()))?;
             }
         }
         Ok(())

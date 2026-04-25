@@ -27,8 +27,11 @@ pub(crate) fn cmd_run(args: &[String]) -> Res {
             match args[i].as_str() {
                 "-p" => {
                     i += 1;
-                    plugin_filter =
-                        Some(args.get(i).cloned().ok_or("-p requires a plugin crate name")?);
+                    plugin_filter = Some(
+                        args.get(i)
+                            .cloned()
+                            .ok_or("-p requires a plugin crate name")?,
+                    );
                 }
                 "--no-build" => no_build = true,
                 "--" => past_separator = true,

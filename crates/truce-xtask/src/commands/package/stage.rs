@@ -5,8 +5,7 @@ use super::PkgFormat;
 #[cfg(not(target_os = "windows"))]
 use crate::pace_sign_aax_macos;
 use crate::{
-    codesign_bundle, copy_dir_recursive, release_lib, Config,
-    PackagingConfig, PluginDef, Res,
+    codesign_bundle, copy_dir_recursive, release_lib, Config, PackagingConfig, PluginDef, Res,
 };
 use std::fs;
 use std::path::Path;

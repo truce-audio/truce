@@ -237,8 +237,11 @@ fn parse_args(args: &[String]) -> std::result::Result<Opts, crate::BoxErr> {
         match args[i].as_str() {
             "-p" => {
                 i += 1;
-                opts.plugin_filter =
-                    Some(args.get(i).cloned().ok_or("-p requires a plugin crate name")?);
+                opts.plugin_filter = Some(
+                    args.get(i)
+                        .cloned()
+                        .ok_or("-p requires a plugin crate name")?,
+                );
             }
             "--formats" => {
                 i += 1;

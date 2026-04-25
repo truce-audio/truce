@@ -282,17 +282,16 @@ fn ensure_aax_sdk_library(sdk_path: &Path) -> Result<PathBuf, crate::BoxErr> {
         return Ok(lib_path);
     }
 
-    eprintln!(
-        "AAX: building SDK library at {}",
-        lib_path.display()
-    );
+    eprintln!("AAX: building SDK library at {}", lib_path.display());
 
     let vcvars = locate_vcvars64()
         .ok_or("could not locate vcvars64.bat — install VS 2022+ with the C++ workload")?;
-    let cmake = locate_cmake()
-        .ok_or("could not locate cmake.exe — install cmake or the VS \"C++ CMake tools\" component")?;
-    let ninja = locate_ninja()
-        .ok_or("could not locate ninja.exe — install ninja or the VS \"C++ CMake tools\" component")?;
+    let cmake = locate_cmake().ok_or(
+        "could not locate cmake.exe — install cmake or the VS \"C++ CMake tools\" component",
+    )?;
+    let ninja = locate_ninja().ok_or(
+        "could not locate ninja.exe — install ninja or the VS \"C++ CMake tools\" component",
+    )?;
     let cmake_dir = cmake.parent().unwrap().display().to_string();
     let ninja_dir = ninja.parent().unwrap().display().to_string();
     let to_fwd = |p: &Path| p.display().to_string().replace('\\', "/");

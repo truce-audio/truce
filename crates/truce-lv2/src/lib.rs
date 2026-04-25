@@ -585,7 +585,8 @@ macro_rules! export_lv2 {
                 UI_DESCRIPTOR.get_or_init(|| {
                     let info = <$plugin_type as Plugin>::info();
                     let uri_str = ::truce_lv2::ui_uri(&info);
-                    let uri = UI_URI.get_or_init(|| std::ffi::CString::new(uri_str).unwrap_or_default());
+                    let uri =
+                        UI_URI.get_or_init(|| std::ffi::CString::new(uri_str).unwrap_or_default());
                     ::truce_lv2::ui_descriptor::<$plugin_type>(uri)
                 })
             }
