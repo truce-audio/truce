@@ -18,7 +18,11 @@ pub(crate) struct Config {
     pub(crate) windows: WindowsConfig,
     pub(crate) vendor: VendorConfig,
     pub(crate) plugin: Vec<PluginDef>,
+    /// Packaging metadata (welcome HTML, license HTML, etc.). Consumed
+    /// by `cmd_package_macos` only — Windows packaging uses
+    /// `WindowsConfig::packaging`, Linux has no packaging path.
     #[serde(default)]
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub(crate) packaging: PackagingConfig,
 }
 
@@ -98,7 +102,10 @@ pub(crate) struct MacosConfig {
     pub(crate) aax_sdk_path: Option<String>,
     #[serde(default)]
     pub(crate) signing: MacosSigningConfig,
+    /// Notarization config — only the `cmd_package_macos` path reads
+    /// these fields, so on Windows / Linux they're parsed-and-ignored.
     #[serde(default)]
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub(crate) packaging: MacosPackagingConfig,
 }
 
@@ -126,13 +133,16 @@ impl MacosConfig {
 
     /// Resolved installer signing identity. `None` means the installer won't
     /// be signed. Populated from `[macos.signing].installer_identity` or the
-    /// `TRUCE_INSTALLER_SIGNING_IDENTITY` env var.
+    /// `TRUCE_INSTALLER_SIGNING_IDENTITY` env var. macOS-only — only the
+    /// `productbuild` step in `cmd_package_macos` consumes this.
+    #[cfg(target_os = "macos")]
     pub(crate) fn installer_identity(&self) -> Option<&str> {
         self.signing.installer_identity.as_deref()
     }
 }
 
 #[derive(Deserialize, Default)]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) struct MacosPackagingConfig {
     #[serde(default)]
     pub(crate) notarize: bool,
@@ -141,6 +151,7 @@ pub(crate) struct MacosPackagingConfig {
 }
 
 #[derive(Deserialize, Default)]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) struct PackagingConfig {
     #[serde(default)]
     pub(crate) formats: Vec<String>,

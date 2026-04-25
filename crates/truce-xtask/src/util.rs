@@ -107,6 +107,8 @@ pub(crate) fn program_files() -> PathBuf {
 
 /// Read the version from Cargo.toml.
 /// Checks `[workspace.package] version` first, then `[package] version`.
+/// Only consumed by the package pipelines (macOS .pkg, Windows .exe).
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(crate) fn read_workspace_version(root: &Path) -> Option<String> {
     let content = fs::read_to_string(root.join("Cargo.toml")).ok()?;
     let doc: toml::Table = content.parse().ok()?;
@@ -495,7 +497,9 @@ pub(crate) fn locate_wraptool_macos() -> Option<PathBuf> {
     None
 }
 
-#[cfg(not(target_os = "windows"))]
+// Only `locate_wraptool_macos` calls this; gating to macOS keeps Linux
+// from warning on the otherwise-cross-platform Unix `PATH` walker.
+#[cfg(target_os = "macos")]
 pub(crate) fn which_unix(name: &str) -> std::result::Result<PathBuf, std::io::Error> {
     let path = std::env::var_os("PATH")
         .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "PATH not set"))?;

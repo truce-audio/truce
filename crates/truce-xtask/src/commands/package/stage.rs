@@ -1,14 +1,16 @@
 //! Format-specific staging: copy the built dylib into a bundle layout,
 //! write the per-format Info.plist, and codesign.
 
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 use super::PkgFormat;
 #[cfg(target_os = "macos")]
 use crate::pace_sign_aax_macos;
-use crate::{
-    codesign_bundle, copy_dir_recursive, release_lib, Config, PackagingConfig, PluginDef, Res,
-};
+use crate::{codesign_bundle, release_lib, Config, PluginDef, Res};
+#[cfg(target_os = "macos")]
+use crate::{copy_dir_recursive, PackagingConfig};
 use std::fs;
 use std::path::Path;
+#[cfg(target_os = "macos")]
 use std::process::Command;
 
 /// Slug a plugin's display name into a lowercase, hyphenated, ASCII-safe
@@ -289,6 +291,7 @@ pub(crate) fn stage_aax(
 /// of [`emit_au_v3_bundle`] — and copies it into the staging tree.
 /// The bundle is already signed + has its embedded framework, so this
 /// is a pure copy.
+#[cfg(target_os = "macos")]
 pub(crate) fn stage_au3(root: &Path, p: &PluginDef, _config: &Config, staging: &Path) -> Res {
     let app_name = format!("{}.app", p.au3_app_name());
     let built_app = root.join("target/bundles").join(&app_name);
@@ -327,6 +330,7 @@ pub(crate) fn stage_au3(root: &Path, p: &PluginDef, _config: &Config, staging: &
 }
 
 /// Generate the distribution.xml for the macOS .pkg installer.
+#[cfg(target_os = "macos")]
 pub(crate) fn generate_distribution_xml(
     plugin_name: &str,
     vendor_id: &str,
@@ -392,6 +396,7 @@ pub(crate) fn generate_distribution_xml(
 }
 
 /// Write AU cache clearing post-install script for AU component packages.
+#[cfg(target_os = "macos")]
 pub(crate) fn write_postinstall_script(dir: &Path) -> Res {
     let scripts_dir = dir.join("scripts");
     fs::create_dir_all(&scripts_dir)?;

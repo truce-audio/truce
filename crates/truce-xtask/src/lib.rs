@@ -13,6 +13,7 @@ mod packaging_windows;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(crate) use commands::install::aax::build_aax_template;
 #[cfg(target_os = "windows")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(crate) use commands::package::PkgFormat;
 pub(crate) use config::*;
 pub(crate) use util::*;

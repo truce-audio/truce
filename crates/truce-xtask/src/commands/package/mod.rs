@@ -4,7 +4,9 @@
 //! `.pkg` pipeline (`macos.rs`) and the Windows Inno Setup pipeline
 //! (`packaging_windows`).
 
-use crate::{BoxErr, PluginDef, Res};
+use crate::Res;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+use crate::{BoxErr, PluginDef};
 
 pub(crate) mod stage;
 
@@ -12,6 +14,8 @@ pub(crate) mod stage;
 pub(crate) mod macos;
 
 /// Parsed format flags for the package command.
+/// Used by both `cmd_package_macos` and `packaging_windows::cmd_package`.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 #[derive(Clone, PartialEq)]
 pub(crate) enum PkgFormat {
     Clap,
@@ -22,6 +26,7 @@ pub(crate) enum PkgFormat {
     Aax,
 }
 
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 impl PkgFormat {
     pub(crate) fn parse_list(s: &str) -> Result<Vec<PkgFormat>, BoxErr> {
         let mut out = Vec::new();
