@@ -32,5 +32,5 @@ Compare them to see how each framework handles the same layout.
 ```bash
 cargo build -p truce-example-gain
 cargo test -p truce-example-gain
-cargo xtask install -p gain
+cargo xtask install -p truce-example-gain
 ```

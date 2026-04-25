@@ -30,5 +30,5 @@ stays audible, and the readout shows `—` placeholders.
 ```bash
 cargo build -p truce-example-tremolo
 cargo test -p truce-example-tremolo
-cargo xtask install -p tremolo
+cargo xtask install -p truce-example-tremolo
 ```

@@ -39,7 +39,8 @@ cargo truce new-workspace studio gain synth arp \
 You get `studio/plugins/{gain,synth,arp}/`, each with its own
 `lib.rs`, plus one `truce.toml` with three `[[plugin]]` entries.
 Every `cargo truce` command below works workspace-wide; add
-`-p <name>` to target one plugin.
+`-p <crate>` (the cargo crate name, e.g. `-p gain`) to target one
+plugin.
 
 ## Tour the generated code
 

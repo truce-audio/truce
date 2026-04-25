@@ -130,7 +130,7 @@ provides the user-facing CLI.
 ```sh
 cargo truce install              # all formats, GPU rendering (default)
 cargo truce install --dev        # all formats, hot-reload
-cargo truce install -p gain      # single plugin
+cargo truce install -p my-gain   # single plugin (cargo crate name)
 cargo truce install --clap       # CLAP only
 cargo truce package              # signed .pkg / .exe installer in dist/
 cargo truce test                 # run all tests

@@ -25,8 +25,8 @@ each framework handles the same layout.
 ```bash
 cargo build --workspace                  # build all
 cargo test --workspace                   # run all tests
-cargo xtask install -p gain              # install to system plugin folders
-cargo run -p synth --features standalone # run synth standalone
+cargo xtask install -p truce-example-gain              # install to system plugin folders
+cargo run -p truce-example-synth --features standalone # run synth standalone
 ```
 
 ## Project structure

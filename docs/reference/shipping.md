@@ -48,7 +48,7 @@ retail AAX, `AAX_SDK_PATH`, etc.) is in the per-format pages:
 cargo truce install                    # every format in your default features
 cargo truce install --clap             # just CLAP
 cargo truce install --no-build         # install the existing bundles, skip rebuild
-cargo truce install -p gain            # single plugin in a workspace
+cargo truce install -p my-gain         # single plugin in a workspace (cargo crate name)
 ```
 
 Builds, bundles, codesigns on macOS, and writes into the standard
@@ -109,7 +109,7 @@ what's found and what isn't.
 
 ```sh
 cargo truce package                          # every default format, universal arch, signed
-cargo truce package -p gain                  # single plugin
+cargo truce package -p my-gain               # single plugin (cargo crate name)
 cargo truce package --formats clap,vst3,aax  # subset
 cargo truce package --host-only              # skip the cross-arch build (dev iteration)
 cargo truce package --no-sign                # skip signing (dev)
@@ -387,8 +387,8 @@ or env vars — not here.
 | Field | Type | Required | Notes |
 |-------|------|----------|-------|
 | `name` | string | yes | Human name. Used for bundle filenames and DAW display names. |
-| `suffix` | string | yes | Short kebab-case identifier. CLI (`-p <suffix>`), dylib stems, install paths. |
-| `crate` | string | yes | Cargo package name. Hyphens become underscores in built `.dll`/`.dylib`. |
+| `suffix` | string | yes | Short lowercase, no-dash identifier. Used internally for bundle / extension reverse-DNS IDs (`com.{vendor}.{suffix}.au`), install plist filenames, and scratch paths. Not used at the CLI. |
+| `crate` | string | yes | Cargo package name. CLI uses this for `-p <crate>`. Hyphens become underscores in built `.dll`/`.dylib`. |
 | `category` | string | yes | `"effect"` / `"instrument"` / `"midi"`. Drives AU/VST3/CLAP category metadata. |
 | `fourcc` | string | yes† | Exactly 4 ASCII chars. AU subtype + cross-format unique ID. |
 | `au_type` | string | no | Override AU type. Defaults: `"aumu"` for instruments, `"aumi"` for midi / note-effects, `"aufx"` for effects. |
