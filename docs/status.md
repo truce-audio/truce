@@ -19,7 +19,7 @@ Runs on **macOS**, **Windows**, and **Linux**.
 | VST2 | ✅ | ✅ | ✅ | ✅ | Reaper, Ableton, FL Studio (macOS/Win) |
 | LV2 | ✅ | ✅ | ✅ | ✅ | Reaper on all three OSes (macOS, Windows, Linux); Ardour / Carla pending |
 | AU v2 | ✅ | — | — | ✅ | Reaper, Logic, GarageBand*, Ableton |
-| AU v3 | ✅ | — | — | ✅ | Logic, Ableton |
+| AU v3 | ✅ | — | — | ✅ | Reaper, Logic, Ableton |
 | AAX | ✅ | ✅† | — | ✅ | Pro Tools Developer |
 
 \* GarageBand ignores custom GUI for all third-party plugins.
