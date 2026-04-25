@@ -235,15 +235,15 @@ parameter values sync automatically through `ParamState`.
 
 ```rust
 #[test]
-fn gui_snapshot_iced() {
+fn gui_screenshot_iced() {
     let params = Arc::new(MyParams::new());
-    let (pixels, w, h) = truce_iced::snapshot::render_iced_screenshot::<MyParams, MyEditor>(
+    let (pixels, w, h) = truce_iced::screenshot::render_iced_screenshot::<MyParams, MyEditor>(
         params,
         (WINDOW_W, WINDOW_H),
         2.0,
         Some(("JetBrains Mono", truce_gui::font::JETBRAINS_MONO)),
     );
-    truce_test::assert_gui_snapshot_raw("my_plugin_iced_default", &pixels, w, h, 0);
+    truce_test::assert_gui_screenshot_raw("my_plugin_iced_default", &pixels, w, h, 0);
 }
 ```
 

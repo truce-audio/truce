@@ -122,7 +122,7 @@ impl TransportInfo {
     /// `truce-test`) so that transport-aware widgets render a
     /// populated readout in marketing screenshots instead of a
     /// `(no host transport)` placeholder.
-    pub fn for_snapshot() -> Self {
+    pub fn for_screenshot() -> Self {
         Self {
             playing: true,
             tempo: 120.0,

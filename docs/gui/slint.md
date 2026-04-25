@@ -235,9 +235,9 @@ Slint snapshots use the software renderer — no GPU needed:
 
 ```rust
 #[test]
-fn gui_snapshot() {
-    truce_slint::snapshot::assert_snapshot(
-        "screenshots", "my_plugin_slint_default",
+fn gui_screenshot() {
+    truce_slint::screenshot::assert_snapshot(
+        "snapshots", "my_plugin_slint_default",
         WINDOW_W, WINDOW_H, 2.0, 0,
         |state| {
             let ui = MyPluginUi::new().unwrap();

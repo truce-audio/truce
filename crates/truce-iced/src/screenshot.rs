@@ -1,7 +1,7 @@
-//! Offscreen iced rendering for snapshot tests.
+//! Offscreen iced rendering for screenshot tests.
 //!
 //! Creates a headless wgpu device, renders the iced UI to an offscreen
-//! texture, and reads back RGBA pixel data. Used by snapshot tests to
+//! texture, and reads back RGBA pixel data. Used by screenshot tests to
 //! generate and compare reference PNGs.
 
 use std::sync::Arc;
@@ -49,11 +49,11 @@ where
         compatible_surface: None, // headless
         force_fallback_adapter: false,
     }))
-    .expect("No GPU adapter available for snapshot rendering");
+    .expect("No GPU adapter available for screenshot rendering");
 
     let (device, queue) = pollster::block_on(adapter.request_device(
         &wgpu::DeviceDescriptor {
-            label: Some("truce-iced-snapshot"),
+            label: Some("truce-iced-screenshot"),
             required_features: wgpu::Features::empty(),
             required_limits: wgpu::Limits::downlevel_defaults(),
         },
@@ -80,12 +80,12 @@ where
     };
     let mut renderer = iced_wgpu::Renderer::new(&device, &engine, default_font, iced::Pixels(14.0));
 
-    // Build the iced program. Seeded with [`TransportInfo::for_snapshot`]
+    // Build the iced program. Seeded with [`TransportInfo::for_screenshot`]
     // so transport-aware widgets render a populated readout instead of
     // a `(no host transport)` placeholder.
     let mut param_state = ParamState::new(params.clone());
     param_state.set_font(default_font);
-    let snapshot_transport = truce_core::events::TransportInfo::for_snapshot();
+    let screenshot_transport = truce_core::events::TransportInfo::for_screenshot();
     let noop_ctx = EditorContext {
         begin_edit: Arc::new(|_| {}),
         set_param: Arc::new(|_, _| {}),
@@ -109,7 +109,7 @@ where
         get_meter: Arc::new(|_| 0.0),
         get_state: Arc::new(Vec::new),
         set_state: Arc::new(|_| {}),
-        transport: Arc::new(move || Some(snapshot_transport.clone())),
+        transport: Arc::new(move || Some(screenshot_transport.clone())),
     };
     let editor_handle = EditorHandle::new(noop_ctx);
 
@@ -150,7 +150,7 @@ where
 
     // Create offscreen texture
     let texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("truce-iced-snapshot-tex"),
+        label: Some("truce-iced-screenshot-tex"),
         size: wgpu::Extent3d {
             width: w,
             height: h,
@@ -168,7 +168,7 @@ where
     let bg = crate::theme::truce_dark_theme().palette().background;
 
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-        label: Some("truce-iced-snapshot-enc"),
+        label: Some("truce-iced-screenshot-enc"),
     });
 
     let mut engine = engine;
@@ -190,7 +190,7 @@ where
     let padded_bytes_per_row = (bytes_per_row + 255) & !255;
 
     let readback_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("truce-iced-snapshot-buf"),
+        label: Some("truce-iced-screenshot-buf"),
         size: (padded_bytes_per_row * h) as u64,
         usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,

@@ -537,22 +537,31 @@ pub fn assert_empty_state_no_crash<P: PluginExport>() {
 }
 
 // ---------------------------------------------------------------------------
-// GUI snapshot tests
+// GUI screenshot tests
 // ---------------------------------------------------------------------------
 
-/// Resolve the workspace `screenshots/` directory.
+/// Default screenshot directory: `target/screenshots/` under the
+/// workspace root. Gitignored (covered by `/target`), so plugins
+/// scaffolded with `cargo truce new` won't accidentally commit
+/// reference PNGs they didn't intend to.
+pub const DEFAULT_SCREENSHOT_DIR: &str = "target/screenshots";
+
+/// Resolve `<workspace_root>/<rel>/`, creating the directory if
+/// needed. Walks up from `CARGO_MANIFEST_DIR` looking for a
+/// `Cargo.toml` with `[workspace]`. Works regardless of how deeply
+/// nested the calling crate is.
 ///
-/// Walks up from `CARGO_MANIFEST_DIR` looking for a `Cargo.toml`
-/// containing `[workspace]`. Works regardless of how deeply nested
-/// the calling crate is.
-pub fn workspace_screenshots_dir() -> std::path::PathBuf {
+/// Pass [`DEFAULT_SCREENSHOT_DIR`] for the default location, or any
+/// other path (e.g. `"examples/screenshots"` for truce's own
+/// in-tree references).
+pub fn workspace_screenshot_dir(rel: &str) -> std::path::PathBuf {
     let mut dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     loop {
         let toml = dir.join("Cargo.toml");
         if toml.exists() {
             if let Ok(s) = std::fs::read_to_string(&toml) {
                 if s.contains("[workspace]") {
-                    let snap = dir.join("screenshots");
+                    let snap = dir.join(rel);
                     std::fs::create_dir_all(&snap).ok();
                     return snap;
                 }
@@ -566,42 +575,59 @@ pub fn workspace_screenshots_dir() -> std::path::PathBuf {
 
 /// Compare raw RGBA pixels against a reference PNG.
 ///
-/// On first run (no reference file exists), generates the reference.
-/// On subsequent runs, compares pixel-by-pixel and fails if the
-/// difference exceeds `max_diff_pixels`.
+/// Always writes the current render to
+/// `<workspace_root>/target/screenshots/<name>.png` (gitignored).
+/// Loads the committed reference from
+/// `<workspace_root>/<reference_dir>/<name>.png`.
+///
+/// - **No reference yet:** logs a one-line "promote" hint with the
+///   exact `cp` command and passes. Lets new tests land before their
+///   reference is committed.
+/// - **Reference present, diff <= tolerance:** passes silently.
+/// - **Reference present, diff > tolerance, on the reference
+///   platform:** panics, naming both PNG paths.
+/// - **Reference present, diff > tolerance, on a non-reference
+///   platform:** logs the diff count and passes (per-backend wgpu
+///   rasterization differences are expected; see
+///   `TRUCE_SCREENSHOT_REFERENCE_OS`).
 ///
 /// Works with any rendering backend — the caller provides the pixels.
 ///
 /// # Example
 /// ```ignore
 /// let pixels = my_renderer.screenshot();
-/// truce_test::assert_gui_snapshot_raw("my_plugin", &pixels, 400, 300, 0);
+/// truce_test::assert_gui_screenshot_raw(
+///     "my_plugin", &pixels, 400, 300, 0, "snapshots",
+/// );
 /// ```
-pub fn assert_gui_snapshot_raw(
+pub fn assert_gui_screenshot_raw(
     name: &str,
     pixels: &[u8],
     width: u32,
     height: u32,
     max_diff_pixels: usize,
+    reference_dir: &str,
 ) {
-    let dir = workspace_screenshots_dir();
-    let ref_path = dir.join(format!("{name}.png"));
-    let is_ref = is_reference_platform();
+    // Render always lands in target/screenshots/, regardless of where
+    // the reference lives. Keeps in-tree reference dirs clean of
+    // generated artifacts.
+    let render_dir = workspace_screenshot_dir(DEFAULT_SCREENSHOT_DIR);
+    let render_path = render_dir.join(format!("{name}.png"));
+    save_png(&render_path, pixels, width, height);
+
+    let ref_dir = workspace_screenshot_dir(reference_dir);
+    let ref_path = ref_dir.join(format!("{name}.png"));
 
     if !ref_path.exists() {
-        if is_ref {
-            save_png(&ref_path, pixels, width, height);
-            eprintln!(
-                "[truce-test] Snapshot reference created: {}",
-                ref_path.display()
-            );
-        } else {
-            eprintln!(
-                "[truce-test] No reference at {}; skipping comparison on non-reference platform {}.",
-                ref_path.display(),
-                std::env::consts::OS,
-            );
-        }
+        eprintln!(
+            "[truce-test] No reference at {}.\n\
+             Current render saved to {}.\n\
+             To promote: cp '{}' '{}'",
+            ref_path.display(),
+            render_path.display(),
+            render_path.display(),
+            ref_path.display(),
+        );
         return;
     }
 
@@ -623,16 +649,17 @@ pub fn assert_gui_snapshot_raw(
     }
 
     if diff_count > max_diff_pixels {
-        let fail_path = dir.join(format!("{name}_FAILED.png"));
-        save_png(&fail_path, pixels, width, height);
+        let is_ref = is_reference_platform();
         if is_ref {
             panic!(
-                "GUI snapshot mismatch: {diff_count} pixels differ (max allowed: {max_diff_pixels}). \
+                "GUI screenshot mismatch: {diff_count} pixels differ (max allowed: {max_diff_pixels}).\n\
                  Reference: {}\n\
                  Current:   {}\n\
-                 Delete the reference to regenerate.",
+                 Either fix the regression, or accept the new render with: cp '{}' '{}'",
                 ref_path.display(),
-                fail_path.display(),
+                render_path.display(),
+                render_path.display(),
+                ref_path.display(),
             );
         } else {
             // Non-reference platform: report the diff for visibility
@@ -641,10 +668,10 @@ pub fn assert_gui_snapshot_raw(
             eprintln!(
                 "[truce-test] non-reference diff on {}: {diff_count} pixels differ vs {} \
                  (informational; max allowed on reference: {max_diff_pixels}). \
-                 Saved current to {}.",
+                 Current render at {}.",
                 std::env::consts::OS,
                 ref_path.display(),
-                fail_path.display(),
+                render_path.display(),
             );
         }
     }
@@ -652,32 +679,38 @@ pub fn assert_gui_snapshot_raw(
 
 /// Render the built-in GUI and compare against a reference PNG.
 ///
+/// Same flow as [`assert_gui_screenshot_raw`] — current render lands
+/// in `target/screenshots/`, reference loads from
+/// `<reference_dir>/<name>.png`, missing reference logs a promote
+/// hint and passes.
+///
 /// # Example
 /// ```ignore
 /// #[test]
-/// fn gui_snapshot() {
+/// fn gui_screenshot() {
 ///     let plugin = Gain::new();
 ///     let params = Arc::new(GainParams::new());
-///     truce_test::assert_gui_snapshot_grid::<GainParams>(
-///         "gain_default", params, plugin.layout(), 0,
+///     truce_test::assert_gui_screenshot_grid::<GainParams>(
+///         "gain_default", params, plugin.layout(), 0, "snapshots",
 ///     );
 /// }
 /// ```
-pub fn assert_gui_snapshot_grid<P: Params + 'static>(
+pub fn assert_gui_screenshot_grid<P: Params + 'static>(
     name: &str,
     params: Arc<P>,
     layout: GridLayout,
     max_diff_pixels: usize,
+    reference_dir: &str,
 ) {
-    let (pixels, w, h) = truce_gpu::snapshot::render_to_pixels(params, layout);
-    assert_gui_snapshot_raw(name, &pixels, w, h, max_diff_pixels);
+    let (pixels, w, h) = truce_gpu::screenshot::render_to_pixels(params, layout);
+    assert_gui_screenshot_raw(name, &pixels, w, h, max_diff_pixels, reference_dir);
 }
 
 /// Whether the current process should compare its rendered pixels
 /// against the committed reference PNG. Defaults to macOS; override
-/// with `TRUCE_SNAPSHOT_REFERENCE_OS={macos,linux,windows}` to move
+/// with `TRUCE_SCREENSHOT_REFERENCE_OS={macos,linux,windows}` to move
 /// the reference to a different platform (e.g. for a Linux-only
-/// developer who wants their CI to enforce snapshots).
+/// developer who wants their CI to enforce screenshots).
 ///
 /// Per-backend rasterization differences in wgpu mean the PNG bytes
 /// won't match exactly across platforms even with identical inputs;
@@ -685,7 +718,7 @@ pub fn assert_gui_snapshot_grid<P: Params + 'static>(
 /// smoke coverage of the rendering pipeline.
 fn is_reference_platform() -> bool {
     let target =
-        std::env::var("TRUCE_SNAPSHOT_REFERENCE_OS").unwrap_or_else(|_| "macos".to_string());
+        std::env::var("TRUCE_SCREENSHOT_REFERENCE_OS").unwrap_or_else(|_| "macos".to_string());
     std::env::consts::OS == target
 }
 

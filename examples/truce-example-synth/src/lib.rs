@@ -340,10 +340,16 @@ mod tests {
     }
 
     #[test]
-    fn gui_snapshot() {
+    fn gui_screenshot() {
         let params = Arc::new(SynthParams::new());
         let synth = Synth::new(Arc::clone(&params));
         let layout = synth.layout();
-        truce_test::assert_gui_snapshot_grid::<SynthParams>("synth_default", params, layout, 0);
+        truce_test::assert_gui_screenshot_grid::<SynthParams>(
+            "synth_default",
+            params,
+            layout,
+            0,
+            "examples/screenshots",
+        );
     }
 }

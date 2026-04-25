@@ -193,12 +193,15 @@ mod tests {{
     }}
 
     #[test]
-    fn gui_snapshot() {{
+    fn gui_screenshot() {{
         let params = Arc::new({struct_name}Params::new());
         let p = {struct_name}::new(Arc::clone(&params));
         let layout = p.layout();
-        truce_test::assert_gui_snapshot_grid::<{struct_name}Params>(
-            "{name}_default", params, layout, 0,
+        // Reference PNGs live in the project root's `snapshots/` dir.
+        // First run logs a `cp`-based promote hint with the exact
+        // command to commit the freshly-rendered reference.
+        truce_test::assert_gui_screenshot_grid::<{struct_name}Params>(
+            "{name}_default", params, layout, 0, "snapshots",
         );
     }}
 }}

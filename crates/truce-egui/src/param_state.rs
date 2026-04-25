@@ -93,7 +93,7 @@ impl ParamState {
     /// Create a ParamState backed by real parameter defaults.
     /// Uses `P::default_for_gui()` to provide accurate formatting and
     /// values, and seeds the transport closure with
-    /// [`TransportInfo::for_snapshot`] so transport-aware widgets
+    /// [`TransportInfo::for_screenshot`] so transport-aware widgets
     /// render a populated readout. This is a snapshot-only constructor
     /// — production code paths build their own `EditorContext` from
     /// the host's actual transport slot.
@@ -101,7 +101,7 @@ impl ParamState {
         let p1 = params.clone();
         let p2 = params.clone();
         let p3 = params.clone();
-        let transport = truce_core::events::TransportInfo::for_snapshot();
+        let transport = truce_core::events::TransportInfo::for_screenshot();
         Self {
             ctx: EditorContext {
                 begin_edit: Arc::new(|_| {}),

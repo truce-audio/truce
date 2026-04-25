@@ -497,7 +497,7 @@ pub fn cargo_config_toml() -> &'static str {
 # Screenshot testing — which OS owns the committed reference PNGs?
 # Defaults to `macos`. Other platforms render and report diffs but
 # don't fail the test. See docs/gui/screenshot-testing.md.
-# TRUCE_SNAPSHOT_REFERENCE_OS = "macos"
+# TRUCE_SCREENSHOT_REFERENCE_OS = "macos"
 "#
 }
 

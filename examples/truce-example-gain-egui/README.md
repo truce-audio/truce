@@ -10,7 +10,7 @@ GUI. Same DSP as the built-in gain example, different frontend.
 - Custom header using `egui::TopBottomPanel`
 - Theme color constants from `truce_egui::theme`
 - Consistent window sizing with `WINDOW_W`/`WINDOW_H` constants
-- Screenshot testing with `truce_egui::snapshot`
+- Screenshot testing with `truce_egui::screenshot`
 
 ## Layout
 

@@ -157,9 +157,9 @@ mod tests {
     }
 
     #[test]
-    fn gui_snapshot() {
-        truce_egui::snapshot::assert_snapshot::<GainParams>(
-            "screenshots",
+    fn gui_screenshot() {
+        truce_egui::screenshot::assert_screenshot::<GainParams>(
+            "examples/screenshots",
             "gain_egui_default",
             WINDOW_W,
             WINDOW_H,

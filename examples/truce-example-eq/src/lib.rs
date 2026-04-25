@@ -340,10 +340,16 @@ mod tests {
     }
 
     #[test]
-    fn gui_snapshot() {
+    fn gui_screenshot() {
         let params = Arc::new(EqParams::new());
         let eq = Eq::new(Arc::clone(&params));
         let layout = eq.layout();
-        truce_test::assert_gui_snapshot_grid::<EqParams>("eq_default", params, layout, 0);
+        truce_test::assert_gui_screenshot_grid::<EqParams>(
+            "eq_default",
+            params,
+            layout,
+            0,
+            "examples/screenshots",
+        );
     }
 }

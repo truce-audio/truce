@@ -166,15 +166,15 @@ By host (across all supported platforms):
 
 | Plugin | Type | GUI | Screenshot |
 |--------|------|-----|-----------|
-| [gain](examples/truce-example-gain/) | Effect | Built-in | <img src="screenshots/gain_default.png" width="300"> |
-| [eq](examples/truce-example-eq/) | Effect | Built-in | <img src="screenshots/eq_default.png" width="300"> |
-| [synth](examples/truce-example-synth/) | Instrument | Built-in | <img src="screenshots/synth_default.png" width="300"> |
-| [transpose](examples/truce-example-transpose/) | MIDI | Built-in | <img src="screenshots/transpose_default.png" width="300"> |
-| [arpeggio](examples/truce-example-arpeggio/) | MIDI | Built-in | <img src="screenshots/arpeggio_default.png" width="300"> |
-| [tremolo](examples/truce-example-tremolo/) | Effect | egui | <img src="screenshots/tremolo_default.png" width="300"> |
-| [gain-egui](examples/truce-example-gain-egui/) | Effect | egui | <img src="screenshots/gain_egui_default.png" width="300"> |
-| [gain-iced](examples/truce-example-gain-iced/) | Effect | Iced | <img src="screenshots/gain_iced_default.png" width="300"> |
-| [gain-slint](examples/truce-example-gain-slint/) | Effect | Slint | <img src="screenshots/gain_slint_default.png" width="300"> |
+| [gain](examples/truce-example-gain/) | Effect | Built-in | <img src="examples/screenshots/gain_default.png" width="300"> |
+| [eq](examples/truce-example-eq/) | Effect | Built-in | <img src="examples/screenshots/eq_default.png" width="300"> |
+| [synth](examples/truce-example-synth/) | Instrument | Built-in | <img src="examples/screenshots/synth_default.png" width="300"> |
+| [transpose](examples/truce-example-transpose/) | MIDI | Built-in | <img src="examples/screenshots/transpose_default.png" width="300"> |
+| [arpeggio](examples/truce-example-arpeggio/) | MIDI | Built-in | <img src="examples/screenshots/arpeggio_default.png" width="300"> |
+| [tremolo](examples/truce-example-tremolo/) | Effect | egui | <img src="examples/screenshots/tremolo_default.png" width="300"> |
+| [gain-egui](examples/truce-example-gain-egui/) | Effect | egui | <img src="examples/screenshots/gain_egui_default.png" width="300"> |
+| [gain-iced](examples/truce-example-gain-iced/) | Effect | Iced | <img src="examples/screenshots/gain_iced_default.png" width="300"> |
+| [gain-slint](examples/truce-example-gain-slint/) | Effect | Slint | <img src="examples/screenshots/gain_slint_default.png" width="300"> |
 
 ## Features
 

@@ -168,15 +168,16 @@ mod tests {
     }
 
     #[test]
-    fn gui_snapshot() {
+    fn gui_screenshot() {
         let params = Arc::new(TransposeParams::new());
         let transpose = Transpose::new(Arc::clone(&params));
         let layout = transpose.layout();
-        truce_test::assert_gui_snapshot_grid::<TransposeParams>(
+        truce_test::assert_gui_screenshot_grid::<TransposeParams>(
             "transpose_default",
             params,
             layout,
             0,
+            "examples/screenshots",
         );
     }
 

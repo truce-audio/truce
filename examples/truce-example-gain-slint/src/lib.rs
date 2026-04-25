@@ -134,9 +134,9 @@ mod tests {
     }
 
     #[test]
-    fn gui_snapshot() {
-        truce_slint::snapshot::assert_snapshot::<GainParams>(
-            "screenshots",
+    fn gui_screenshot() {
+        truce_slint::screenshot::assert_screenshot::<GainParams>(
+            "examples/screenshots",
             "gain_slint_default",
             176,
             290,

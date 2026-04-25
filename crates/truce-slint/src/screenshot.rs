@@ -1,4 +1,4 @@
-//! Headless Slint snapshot rendering.
+//! Headless Slint screenshot rendering.
 //!
 //! Renders a Slint UI to an RGBA pixel buffer using the SoftwareRenderer.
 //! No GPU or window needed — runs entirely in-process.
@@ -76,13 +76,21 @@ pub fn render_to_pixels<P: truce_params::Params + 'static>(
     (rgba, phys_w, phys_h)
 }
 
-/// Render a Slint UI and compare against a reference PNG snapshot.
+/// Render a Slint UI and compare against a reference PNG screenshot.
 ///
-/// On first run (no reference exists), saves the reference and returns.
-/// On subsequent runs, compares pixel-by-pixel and panics if the diff
-/// exceeds `max_diff_pixels`.
-pub fn assert_snapshot<P: truce_params::Params + 'static>(
-    snapshot_dir: &str,
+/// Always writes the current render to
+/// `<workspace_root>/target/screenshots/<name>.png` (gitignored).
+/// Loads the committed reference from
+/// `<workspace_root>/<reference_dir>/<name>.png`.
+///
+/// - **No reference yet:** logs a `cp`-based "promote" hint, passes.
+/// - **Reference present, diff <= tolerance:** passes silently.
+/// - **Reference present, diff > tolerance, on the reference
+///   platform:** panics, naming both PNG paths.
+/// - **Reference present, diff > tolerance, on a non-reference
+///   platform:** logs the diff count, passes.
+pub fn assert_screenshot<P: truce_params::Params + 'static>(
+    reference_dir: &str,
     name: &str,
     width: u32,
     height: u32,
@@ -92,29 +100,32 @@ pub fn assert_snapshot<P: truce_params::Params + 'static>(
 ) {
     let (pixels, width, height) = render_to_pixels::<P>(width, height, scale, setup);
 
+    // Walk up from `crates/truce-slint` to the workspace root.
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    // Walk up to workspace root (truce-slint → crates → root)
     let root = manifest_dir.parent().unwrap().parent().unwrap();
-    let dir = root.join(snapshot_dir);
-    fs::create_dir_all(&dir).ok();
 
-    let ref_path = dir.join(format!("{name}.png"));
-    let is_ref = is_reference_platform();
+    // Render always lands in target/screenshots/, regardless of where
+    // the reference lives. Keeps in-tree reference dirs clean of
+    // generated artifacts.
+    let render_dir = root.join("target").join("screenshots");
+    fs::create_dir_all(&render_dir).ok();
+    let render_path = render_dir.join(format!("{name}.png"));
+    save_png(&render_path, &pixels, width, height);
+
+    let ref_dir = root.join(reference_dir);
+    fs::create_dir_all(&ref_dir).ok();
+    let ref_path = ref_dir.join(format!("{name}.png"));
 
     if !ref_path.exists() {
-        if is_ref {
-            save_png(&ref_path, &pixels, width, height);
-            eprintln!(
-                "[truce-slint] Snapshot reference created: {}",
-                ref_path.display()
-            );
-        } else {
-            eprintln!(
-                "[truce-slint] No reference at {}; skipping comparison on non-reference platform {}.",
-                ref_path.display(),
-                std::env::consts::OS,
-            );
-        }
+        eprintln!(
+            "[truce-slint] No reference at {}.\n\
+             Current render saved to {}.\n\
+             To promote: cp '{}' '{}'",
+            ref_path.display(),
+            render_path.display(),
+            render_path.display(),
+            ref_path.display(),
+        );
         return;
     }
 
@@ -135,16 +146,17 @@ pub fn assert_snapshot<P: truce_params::Params + 'static>(
     }
 
     if diff_count > max_diff_pixels {
-        let fail_path = dir.join(format!("{name}_FAILED.png"));
-        save_png(&fail_path, &pixels, width, height);
+        let is_ref = is_reference_platform();
         if is_ref {
             panic!(
-                "GUI snapshot mismatch: {diff_count} pixels differ (max allowed: {max_diff_pixels}).\n\
+                "GUI screenshot mismatch: {diff_count} pixels differ (max allowed: {max_diff_pixels}).\n\
                  Reference: {}\n\
                  Current:   {}\n\
-                 Delete the reference to regenerate.",
+                 Either fix the regression, or accept the new render with: cp '{}' '{}'",
                 ref_path.display(),
-                fail_path.display(),
+                render_path.display(),
+                render_path.display(),
+                ref_path.display(),
             );
         } else {
             // Non-reference platform: report the diff for visibility
@@ -153,10 +165,10 @@ pub fn assert_snapshot<P: truce_params::Params + 'static>(
             eprintln!(
                 "[truce-slint] non-reference diff on {}: {diff_count} pixels differ vs {} \
                  (informational; max allowed on reference: {max_diff_pixels}). \
-                 Saved current to {}.",
+                 Current render at {}.",
                 std::env::consts::OS,
                 ref_path.display(),
-                fail_path.display(),
+                render_path.display(),
             );
         }
     }
@@ -164,11 +176,11 @@ pub fn assert_snapshot<P: truce_params::Params + 'static>(
 
 /// Whether the current process should compare its rendered pixels
 /// against the committed reference PNG. Defaults to macOS; override
-/// with `TRUCE_SNAPSHOT_REFERENCE_OS={macos,linux,windows}` to move
+/// with `TRUCE_SCREENSHOT_REFERENCE_OS={macos,linux,windows}` to move
 /// the reference to a different platform.
 fn is_reference_platform() -> bool {
     let target =
-        std::env::var("TRUCE_SNAPSHOT_REFERENCE_OS").unwrap_or_else(|_| "macos".to_string());
+        std::env::var("TRUCE_SCREENSHOT_REFERENCE_OS").unwrap_or_else(|_| "macos".to_string());
     std::env::consts::OS == target
 }
 

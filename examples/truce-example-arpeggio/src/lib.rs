@@ -324,11 +324,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn gui_snapshot() {
+    fn gui_screenshot() {
         let params = Arc::new(ArpParams::new());
         let arp = Arpeggio::new(Arc::clone(&params));
         let layout = arp.layout();
-        truce_test::assert_gui_snapshot_grid::<ArpParams>("arpeggio_default", params, layout, 0);
+        truce_test::assert_gui_screenshot_grid::<ArpParams>(
+            "arpeggio_default",
+            params,
+            layout,
+            0,
+            "examples/screenshots",
+        );
     }
 
     /// Regression guard for the 2026-04-23 LV2 MIDI bug: the

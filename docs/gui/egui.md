@@ -219,9 +219,9 @@ parameters sync automatically every frame.
 
 ```rust
 #[test]
-fn gui_snapshot() {
-    truce_egui::snapshot::assert_snapshot(
-        "screenshots", "my_plugin_default",
+fn gui_screenshot() {
+    truce_egui::screenshot::assert_snapshot(
+        "snapshots", "my_plugin_default",
         WINDOW_W, WINDOW_H, 2.0, 0,
         Some(truce_gui::font::JETBRAINS_MONO),
         |ctx, state| my_ui(ctx, state),

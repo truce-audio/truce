@@ -11,7 +11,7 @@ GUI. Same DSP as the built-in gain example, different frontend.
 - Custom header using `iced::widget::container` with styled background
 - Default `update()` (no custom messages needed for this simple UI)
 - Consistent window sizing with `WINDOW_W`/`WINDOW_H` constants
-- Screenshot testing with `truce_iced::snapshot`
+- Screenshot testing with `truce_iced::screenshot`
 
 ## Layout
 

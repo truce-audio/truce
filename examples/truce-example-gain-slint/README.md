@@ -11,7 +11,7 @@ GUI. Same DSP as the built-in gain example, different frontend.
 - Formatted value text synced from Rust (`state.format()`)
 - Header bar implemented in `.slint` markup
 - Consistent window sizing between editor and snapshot test
-- Screenshot testing with `truce_slint::snapshot` (software renderer)
+- Screenshot testing with `truce_slint::screenshot` (software renderer)
 
 ## Layout
 

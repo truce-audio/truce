@@ -1,8 +1,8 @@
-//! Headless GPU rendering for snapshot testing.
+//! Headless GPU rendering for screenshot testing.
 //!
 //! Renders a `BuiltinEditor` through the GPU backend (same pipeline as
 //! the DAW) and returns raw RGBA pixels. Used by `truce-test` for
-//! snapshot comparisons.
+//! screenshot comparisons.
 
 use std::sync::Arc;
 

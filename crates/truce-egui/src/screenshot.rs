@@ -1,4 +1,4 @@
-//! Headless egui snapshot rendering for tests.
+//! Headless egui screenshot rendering for tests.
 //!
 //! Renders an egui UI to an offscreen wgpu texture and returns RGBA pixels,
 //! or compares them against a reference PNG.
@@ -12,7 +12,7 @@ use std::sync::Arc;
 /// is `width * ppp × height * ppp` physical pixels.
 ///
 /// Uses `P::default_for_gui()` to provide accurate parameter values
-/// and formatting in the snapshot.
+/// and formatting in the screenshot.
 pub fn render_to_pixels<P: truce_params::Params + 'static>(
     width: u32,
     height: u32,
@@ -53,9 +53,9 @@ pub fn render_to_pixels<P: truce_params::Params + 'static>(
 
     // Headless wgpu rendering. `PRIMARY` picks the platform-default
     // backend (Metal on macOS, DX12 on Windows, Vulkan on Linux) so
-    // the snapshot pipeline runs everywhere. Per-backend rasterization
+    // the screenshot pipeline runs everywhere. Per-backend rasterization
     // differences mean the rendered pixels won't byte-match across
-    // platforms — `assert_snapshot` only enforces the comparison on
+    // platforms — `assert_screenshot` only enforces the comparison on
     // the reference platform (see `is_reference_platform`).
     let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
         backends: wgpu::Backends::PRIMARY,
@@ -67,11 +67,11 @@ pub fn render_to_pixels<P: truce_params::Params + 'static>(
         compatible_surface: None,
         force_fallback_adapter: false,
     }))
-    .expect("no wgpu adapter for snapshot rendering");
+    .expect("no wgpu adapter for screenshot rendering");
 
     let (device, queue) = pollster::block_on(adapter.request_device(
         &wgpu::DeviceDescriptor {
-            label: Some("truce-egui-snapshot"),
+            label: Some("truce-egui-screenshot"),
             required_features: wgpu::Features::empty(),
             required_limits: wgpu::Limits::downlevel_defaults(),
             memory_hints: wgpu::MemoryHints::Performance,
@@ -88,7 +88,7 @@ pub fn render_to_pixels<P: truce_params::Params + 'static>(
 
     // Render target at physical resolution
     let target_tex = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("snapshot-target"),
+        label: Some("screenshot-target"),
         size: wgpu::Extent3d {
             width: phys_w,
             height: phys_h,
@@ -117,7 +117,7 @@ pub fn render_to_pixels<P: truce_params::Params + 'static>(
     };
 
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-        label: Some("snapshot-frame"),
+        label: Some("screenshot-frame"),
     });
 
     egui_renderer.update_buffers(
@@ -131,7 +131,7 @@ pub fn render_to_pixels<P: truce_params::Params + 'static>(
     {
         let mut pass = encoder
             .begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("snapshot-egui"),
+                label: Some("screenshot-egui"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &target_view,
                     resolve_target: None,
@@ -157,7 +157,7 @@ pub fn render_to_pixels<P: truce_params::Params + 'static>(
     // Copy texture to buffer for readback
     let bytes_per_row = (phys_w * 4 + 255) & !255; // align to 256
     let readback_buf = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("snapshot-readback"),
+        label: Some("screenshot-readback"),
         size: (bytes_per_row * phys_h) as u64,
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
@@ -214,16 +214,23 @@ pub fn render_to_pixels<P: truce_params::Params + 'static>(
     pixels
 }
 
-/// Render an egui UI and compare against a reference PNG snapshot.
+/// Render an egui UI and compare against a reference PNG screenshot.
 ///
-/// On first run (no reference exists), saves the reference and returns.
-/// On subsequent runs, compares pixel-by-pixel and panics if the diff
-/// exceeds `max_diff_pixels`.
+/// Always writes the current render to
+/// `<workspace_root>/target/screenshots/<name>.png` (gitignored).
+/// Loads the committed reference from
+/// `<workspace_root>/<reference_dir>/<name>.png`.
 ///
-/// The snapshot directory is resolved relative to the workspace root.
+/// - **No reference yet:** logs a `cp`-based "promote" hint, passes.
+/// - **Reference present, diff <= tolerance:** passes silently.
+/// - **Reference present, diff > tolerance, on the reference
+///   platform:** panics, naming both PNG paths.
+/// - **Reference present, diff > tolerance, on a non-reference
+///   platform:** logs the diff count, passes (per-backend wgpu
+///   rasterization differences are expected).
 #[allow(clippy::too_many_arguments)]
-pub fn assert_snapshot<P: truce_params::Params + 'static>(
-    snapshot_dir: &str,
+pub fn assert_screenshot<P: truce_params::Params + 'static>(
+    reference_dir: &str,
     name: &str,
     width: u32,
     height: u32,
@@ -236,30 +243,32 @@ pub fn assert_snapshot<P: truce_params::Params + 'static>(
     let phys_w = (width as f32 * pixels_per_point) as u32;
     let phys_h = (height as f32 * pixels_per_point) as u32;
 
-    // Resolve snapshot directory from workspace root
+    // Walk up from `crates/truce-egui` to the workspace root.
     let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    // Walk up to workspace root (truce-egui → crates → root)
     let root = manifest_dir.parent().unwrap().parent().unwrap();
-    let dir = root.join(snapshot_dir);
-    std::fs::create_dir_all(&dir).ok();
 
-    let ref_path = dir.join(format!("{name}.png"));
-    let is_ref = is_reference_platform();
+    // Render always lands in target/screenshots/, regardless of where
+    // the reference lives. Keeps in-tree reference dirs clean of
+    // generated artifacts.
+    let render_dir = root.join("target").join("screenshots");
+    std::fs::create_dir_all(&render_dir).ok();
+    let render_path = render_dir.join(format!("{name}.png"));
+    save_png(&render_path, &pixels, phys_w, phys_h);
+
+    let ref_dir = root.join(reference_dir);
+    std::fs::create_dir_all(&ref_dir).ok();
+    let ref_path = ref_dir.join(format!("{name}.png"));
 
     if !ref_path.exists() {
-        if is_ref {
-            save_png(&ref_path, &pixels, phys_w, phys_h);
-            eprintln!(
-                "[truce-egui] Snapshot reference created: {}",
-                ref_path.display()
-            );
-        } else {
-            eprintln!(
-                "[truce-egui] No reference at {}; skipping comparison on non-reference platform {}.",
-                ref_path.display(),
-                std::env::consts::OS,
-            );
-        }
+        eprintln!(
+            "[truce-egui] No reference at {}.\n\
+             Current render saved to {}.\n\
+             To promote: cp '{}' '{}'",
+            ref_path.display(),
+            render_path.display(),
+            render_path.display(),
+            ref_path.display(),
+        );
         return;
     }
 
@@ -280,16 +289,17 @@ pub fn assert_snapshot<P: truce_params::Params + 'static>(
     }
 
     if diff_count > max_diff_pixels {
-        let fail_path = dir.join(format!("{name}_FAILED.png"));
-        save_png(&fail_path, &pixels, phys_w, phys_h);
+        let is_ref = is_reference_platform();
         if is_ref {
             panic!(
-                "GUI snapshot mismatch: {diff_count} pixels differ (max allowed: {max_diff_pixels}).\n\
+                "GUI screenshot mismatch: {diff_count} pixels differ (max allowed: {max_diff_pixels}).\n\
                  Reference: {}\n\
                  Current:   {}\n\
-                 Delete the reference to regenerate.",
+                 Either fix the regression, or accept the new render with: cp '{}' '{}'",
                 ref_path.display(),
-                fail_path.display(),
+                render_path.display(),
+                render_path.display(),
+                ref_path.display(),
             );
         } else {
             // Non-reference platform: report the diff for visibility
@@ -298,10 +308,10 @@ pub fn assert_snapshot<P: truce_params::Params + 'static>(
             eprintln!(
                 "[truce-egui] non-reference diff on {}: {diff_count} pixels differ vs {} \
                  (informational; max allowed on reference: {max_diff_pixels}). \
-                 Saved current to {}.",
+                 Current render at {}.",
                 std::env::consts::OS,
                 ref_path.display(),
-                fail_path.display(),
+                render_path.display(),
             );
         }
     }
@@ -309,9 +319,9 @@ pub fn assert_snapshot<P: truce_params::Params + 'static>(
 
 /// Whether the current process should compare its rendered pixels
 /// against the committed reference PNG. Defaults to macOS; override
-/// with `TRUCE_SNAPSHOT_REFERENCE_OS={macos,linux,windows}` to move
+/// with `TRUCE_SCREENSHOT_REFERENCE_OS={macos,linux,windows}` to move
 /// the reference to a different platform (e.g. for a Linux-only
-/// developer who wants their CI to enforce snapshots).
+/// developer who wants their CI to enforce screenshots).
 ///
 /// Per-backend rasterization differences in wgpu mean the PNG bytes
 /// won't match exactly across platforms even with identical inputs;
@@ -319,7 +329,7 @@ pub fn assert_snapshot<P: truce_params::Params + 'static>(
 /// cross-OS smoke coverage of the rendering pipeline.
 fn is_reference_platform() -> bool {
     let target =
-        std::env::var("TRUCE_SNAPSHOT_REFERENCE_OS").unwrap_or_else(|_| "macos".to_string());
+        std::env::var("TRUCE_SCREENSHOT_REFERENCE_OS").unwrap_or_else(|_| "macos".to_string());
     std::env::consts::OS == target
 }
 

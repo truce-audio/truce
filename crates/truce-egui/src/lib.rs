@@ -24,7 +24,7 @@ pub mod font;
 pub mod param_state;
 pub mod platform;
 pub mod renderer;
-pub mod snapshot;
+pub mod screenshot;
 pub mod theme;
 pub mod widgets;
 

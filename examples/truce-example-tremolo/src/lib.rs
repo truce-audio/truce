@@ -344,9 +344,9 @@ mod tests {
     }
 
     #[test]
-    fn gui_snapshot() {
-        truce_egui::snapshot::assert_snapshot::<TremoloParams>(
-            "screenshots",
+    fn gui_screenshot() {
+        truce_egui::screenshot::assert_screenshot::<TremoloParams>(
+            "examples/screenshots",
             "tremolo_default",
             WINDOW_W,
             WINDOW_H,
