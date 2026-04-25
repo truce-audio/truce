@@ -6,7 +6,14 @@
  *
  * Build: cc -o test_vst2 tests/test_vst2_binary.c -ldl
  * Run:   ./test_vst2 target/release/libtruce_example_gain.dylib
- *        ./test_vst2 target/release/libtruce_example_synth.dylib
+ *        ./test_vst2 target/release/libtruce_example_synth.dylib   --synth
+ *        ./test_vst2 target/release/libtruce_example_arpeggio.dylib --midi-effect
+ *
+ * Plugin kinds:
+ *   default     stereo audio in/out, not a synth
+ *   --synth     no audio in, stereo audio out, effFlagsIsSynth set
+ *   --midi-effect    no audio in, no audio out, MIDI in/out only;
+ *                    skips the audio-output assertion
  */
 
 #include <stdio.h>
@@ -36,14 +43,18 @@ static VstIntPtr host_callback(AEffect* effect, int32_t opcode, int32_t index,
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        fprintf(stderr, "Usage: %s <path-to-vst2-dylib> [--synth]\n", argv[0]);
+        fprintf(stderr, "Usage: %s <path-to-vst2-dylib> [--synth | --midi-effect]\n", argv[0]);
         return 1;
     }
 
     const char* path = argv[1];
     int is_synth = (argc > 2 && strcmp(argv[2], "--synth") == 0);
+    int is_midi_effect = (argc > 2 && strcmp(argv[2], "--midi-effect") == 0);
 
-    printf("Testing VST2: %s %s\n", path, is_synth ? "(instrument)" : "(effect)");
+    const char* kind_label = is_synth ? "(instrument)"
+                          : is_midi_effect ? "(midi effect)"
+                          : "(effect)";
+    printf("Testing VST2: %s %s\n", path, kind_label);
 
     /* Load */
     void* lib = dlopen(path, RTLD_NOW);
@@ -75,6 +86,10 @@ int main(int argc, char** argv) {
         CHECK(effect->numInputs == 0, "instrument: numInputs == 0");
         CHECK(effect->numOutputs == 2, "instrument: numOutputs == 2");
         CHECK(effect->flags & effFlagsIsSynth, "instrument: effFlagsIsSynth set");
+    } else if (is_midi_effect) {
+        CHECK(effect->numInputs == 0, "midi effect: numInputs == 0");
+        CHECK(effect->numOutputs == 0, "midi effect: numOutputs == 0");
+        CHECK(!(effect->flags & effFlagsIsSynth), "midi effect: effFlagsIsSynth not set");
     } else {
         CHECK(effect->numInputs == 2, "effect: numInputs == 2");
         CHECK(effect->numOutputs == 2, "effect: numOutputs == 2");
@@ -136,7 +151,7 @@ int main(int argc, char** argv) {
 
     effect->processReplacing(effect, ins, outs, 512);
 
-    if (!is_synth) {
+    if (!is_synth && !is_midi_effect) {
         /* Effect should pass audio through (at default gain) */
         int has_output = 0;
         for (int i = 0; i < 512; i++) {

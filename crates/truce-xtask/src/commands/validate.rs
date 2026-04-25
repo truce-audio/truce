@@ -485,11 +485,18 @@ fn validate_vst2_macos(plugins: &[&PluginDef]) -> usize {
         }
 
         let dylib = root.join(format!("target/release/lib{}.dylib", p.dylib_stem()));
-        let is_synth = p.resolved_au_type() == "aumu";
+        // AU type tag is the same code path that drives plugin-kind
+        // detection elsewhere: `aumu` → synth, `aumi` → MIDI/note
+        // effect, anything else → audio effect.
+        let kind_flag: Option<&str> = match p.resolved_au_type() {
+            "aumu" => Some("--synth"),
+            "aumi" => Some("--midi-effect"),
+            _ => None,
+        };
         let mut cmd = Command::new(test_bin.to_str().unwrap());
         cmd.arg(dylib.to_str().unwrap());
-        if is_synth {
-            cmd.arg("--synth");
+        if let Some(flag) = kind_flag {
+            cmd.arg(flag);
         }
         match cmd.output() {
             Ok(out) => {
