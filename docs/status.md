@@ -174,7 +174,7 @@ truce-au          — Audio Unit (v2 + v3)
 truce-aax         — AAX format wrapper
 truce-shim-types  — ABI-stable types shared with C/C++ shims
 truce-standalone  — standalone host (cpal audio)
-truce-xtask       — build/bundle/install/package library (powers cargo xtask)
+truce-xtask       — build/bundle/install/package library (powers cargo truce)
 truce-build       — build.rs helper
 truce-test        — test utilities + unified GUI snapshot tests (CPU + iced)
 cargo-truce       — scaffolding + build/install/package CLI (cargo truce new)

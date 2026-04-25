@@ -23,10 +23,12 @@ each framework handles the same layout.
 ## Building
 
 ```bash
-cargo build --workspace                  # build all
-cargo test --workspace                   # run all tests
-cargo xtask install -p truce-example-gain              # install to system plugin folders
-cargo run -p truce-example-synth --features standalone # run synth standalone
+cargo build --workspace                       # build all
+cargo test --workspace                        # run all tests
+cargo truce build                             # build every format into target/bundles/
+cargo truce install -p truce-example-gain     # install one plugin
+cargo truce run -p truce-example-synth        # run a plugin standalone
+cargo truce validate -p truce-example-gain    # auval + pluginval + clap-validator
 ```
 
 ## Project structure
