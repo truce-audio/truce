@@ -25,7 +25,7 @@ use crate::templates;
 use crate::util::fs_ctx;
 use crate::{
     cargo_build_for_arch, deployment_target, dirs, extract_team_id, is_production_identity,
-    lipo_into, release_lib_for_target, run_sudo, run_sudo_silent, tmp_dir, Config, MacArch,
+    lipo_into, release_lib_for_target, run_sudo, run_silent, tmp_dir, Config, MacArch,
     PluginDef, Res,
 };
 use std::fs;
@@ -489,8 +489,8 @@ fn install_au_v3(root: &Path, config: &Config, plugins: &[&PluginDef]) -> Res {
     // cache forces a clean re-scan on the next host launch. The 2s
     // sleep gives `pkd` time to respawn before we call `pluginkit -a`
     // (which silently no-ops if `pkd` is mid-respawn).
-    run_sudo_silent("killall", &["-9", "pkd"]);
-    run_sudo_silent("killall", &["-9", "AudioComponentRegistrar"]);
+    run_silent("killall", &["-9", "pkd"]);
+    run_silent("killall", &["-9", "AudioComponentRegistrar"]);
     let home = dirs::home_dir().unwrap();
     let _ = fs::remove_dir_all(home.join("Library/Caches/AudioUnitCache"));
     std::thread::sleep(std::time::Duration::from_secs(2));

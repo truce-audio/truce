@@ -24,7 +24,7 @@ pub(crate) fn cmd_reset_au_aax(_args: &[String]) -> Res {
 
 #[cfg(target_os = "macos")]
 pub(crate) fn cmd_reset_au_aax(args: &[String]) -> Res {
-    use crate::{confirm_prompt, dirs, load_config, run_sudo_silent, tmp_dir};
+    use crate::{confirm_prompt, dirs, load_config, run_silent, tmp_dir};
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::process::Command;
@@ -156,8 +156,8 @@ pub(crate) fn cmd_reset_au_aax(args: &[String]) -> Res {
 
     // Kill daemons to drop in-memory caches
     eprintln!("Restarting audio daemons...");
-    run_sudo_silent("killall", &["-9", "AudioComponentRegistrar"]);
-    run_sudo_silent("killall", &["-9", "pkd"]);
+    run_silent("killall", &["-9", "AudioComponentRegistrar"]);
+    run_silent("killall", &["-9", "pkd"]);
 
     eprintln!("Done. Restart your DAW to rescan.");
     Ok(())
