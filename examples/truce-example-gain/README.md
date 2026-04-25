@@ -14,7 +14,7 @@ Stereo gain and pan utility with level metering. Uses the built-in GUI.
 | Name | Range | Unit | Description |
 |------|-------|------|-------------|
 | Gain | -60 to +6 | dB | Output level |
-| Pan | -1 to +1 | pan | Stereo balance (equal-power) |
+| Pan | -1 to +1 | pan | Stereo balance |
 
 ## GUI variants
 

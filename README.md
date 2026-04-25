@@ -42,7 +42,7 @@ cargo truce test                 # run tests
 cargo truce validate             # auval + pluginval + clap-validator
 ```
 
-`cargo truce build` is useful for CI, packaging pipelines, and
+`cargo truce build` for CI, packaging pipelines, and
 iterating without touching the system plugin directories — it
 produces the same bundle layout as `install` under
 `target/bundles/` but never writes outside the workspace. Every
