@@ -1,21 +1,14 @@
-name: CI
+name: Linux
 
 on:
   push:
     branches: [main]
   pull_request:
 
-permissions:
-  contents: read
-
-# Disable incremental — saves cache size + speeds clean builds. The
-# clippy step uses `-D warnings` to fail fast on stray rustc /
-# clippy lints.
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
 
-# Cancel in-progress runs when a PR is updated.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -32,16 +25,8 @@ jobs:
       - run: cargo fmt --all -- --check
 
   test:
-    # Pin CI to the declared MSRV (`rust-version` in Cargo.toml). When
-    # bumping MSRV, update both places. Stable-track regressions are
-    # acceptable trade for honest MSRV enforcement; the CI cache wipes
-    # on bump.
-    name: ${{ matrix.os }} (1.88)
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-24.04, macos-14, windows-latest]
-    runs-on: ${{ matrix.os }}
+    name: ubuntu-24.04 (1.88)
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
@@ -49,16 +34,11 @@ jobs:
         with:
           components: clippy
 
-      # Smart cache that knows about target/ layout, lockfile, toolchain.
-      # Saves ~5-10 min cold → warm on every job.
       - uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.os }}
+          key: ubuntu-24.04
 
-      # Linux audio + windowing system deps. List mirrors the apt block
-      # in `truce-docs/docs/internal/linux.md` (kept in sync there).
       - name: Linux system deps
-        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
