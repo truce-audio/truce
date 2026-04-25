@@ -111,11 +111,13 @@ Commands:
   status
       Show installed plugins and AU registration state.
 
-  clean
-      Thin wrapper over `cargo clean`. Wipes `target/` (covers shim
-      builds, bundle staging, and `target/dist/` installers). Does not
+  clean [--all]
+      Run `cargo clean` while preserving `target/dist/` (signed /
+      notarized installers — expensive to rebuild). Pass `--all` to
+      wipe everything, equivalent to a bare `cargo clean`. Does not
       touch installed plugin bundles or AU / AAX host caches — see
       `remove` and `reset-au-aax` for those.
+      --all        Also remove `target/dist/`
 
   reset-au-aax [--yes]
       macOS-only. Flush Audio Unit + Pro Tools AAX caches and restart

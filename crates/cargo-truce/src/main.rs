@@ -93,9 +93,10 @@ USAGE:
   cargo truce test
       Run in-process regression tests.
 
-  cargo truce clean
-      Thin wrapper over `cargo clean`. Wipes `target/` (covers shim
-      builds, bundle staging, and `target/dist/` installers). Does not
+  cargo truce clean [--all]
+      Run `cargo clean` while preserving `target/dist/` (signed /
+      notarized installers — expensive to rebuild). Pass `--all` to
+      wipe everything, equivalent to a bare `cargo clean`. Does not
       touch installed plugin bundles or AU / AAX host caches — see
       `cargo truce remove` and `cargo truce reset-au-aax` for those.
 
