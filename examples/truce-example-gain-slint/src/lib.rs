@@ -76,7 +76,7 @@ impl PluginLogic for GainSlint {
         ProcessStatus::Normal
     }
 
-    fn custom_editor(&self) -> Option<Box<dyn truce_core::editor::Editor>> {
+    fn custom_editor(&self) -> Option<Box<dyn Editor>> {
         Some(Box::new(SlintEditor::new(
             (176, 290),
             |state: ParamState| {

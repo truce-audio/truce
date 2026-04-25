@@ -12,6 +12,7 @@ use truce::prelude::*;
 use truce_egui::theme::{HEADER_BG, HEADER_TEXT};
 use truce_egui::widgets::{param_knob, param_selector};
 use truce_egui::{EguiEditor, ParamState};
+use truce_gui::font;
 
 const WINDOW_W: u32 = 270;
 const WINDOW_H: u32 = 162;
@@ -176,11 +177,11 @@ impl PluginLogic for Tremolo {
         ProcessStatus::Normal
     }
 
-    fn custom_editor(&self) -> Option<Box<dyn truce_core::editor::Editor>> {
+    fn custom_editor(&self) -> Option<Box<dyn Editor>> {
         Some(Box::new(
             EguiEditor::new((WINDOW_W, WINDOW_H), tremolo_ui)
                 .with_visuals(truce_egui::theme::dark())
-                .with_font(truce_gui::font::JETBRAINS_MONO),
+                .with_font(font::JETBRAINS_MONO),
         ))
     }
 }
@@ -236,7 +237,7 @@ fn draw_transport_readout(ui: &mut egui::Ui, state: &ParamState) {
     });
 }
 
-fn format_transport(info: Option<&truce_core::events::TransportInfo>) -> String {
+fn format_transport(info: Option<&TransportInfo>) -> String {
     let Some(t) = info else {
         return "(no host transport)".into();
     };

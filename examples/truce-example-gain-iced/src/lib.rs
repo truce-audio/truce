@@ -11,6 +11,7 @@ const WINDOW_W: u32 = 176;
 const WINDOW_H: u32 = 290;
 
 use truce::prelude::*;
+use truce_gui::font;
 use truce_iced::{knob, meter, xy_pad, IcedEditor, IcedPlugin, IntoElement, Message, ParamState};
 
 // --- Parameters ---
@@ -153,14 +154,14 @@ impl PluginLogic for GainIced {
         ProcessStatus::Normal
     }
 
-    fn custom_editor(&self) -> Option<Box<dyn truce_core::editor::Editor>> {
+    fn custom_editor(&self) -> Option<Box<dyn Editor>> {
         Some(Box::new(
             IcedEditor::<GainParams, GainUi>::new(
                 Arc::new(GainParams::default_for_gui()),
                 (WINDOW_W, WINDOW_H),
             )
             .with_meter_ids(vec![P::MeterLeft, P::MeterRight])
-            .with_font("JetBrains Mono", truce_gui::font::JETBRAINS_MONO),
+            .with_font("JetBrains Mono", font::JETBRAINS_MONO),
         ))
     }
 }
@@ -203,7 +204,7 @@ mod tests {
             params,
             (WINDOW_W, WINDOW_H),
             2.0,
-            Some(("JetBrains Mono", truce_gui::font::JETBRAINS_MONO)),
+            Some(("JetBrains Mono", font::JETBRAINS_MONO)),
         );
         truce_test::assert_gui_snapshot_raw("gain_iced_default", &pixels, w, h, 0);
     }

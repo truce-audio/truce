@@ -2,6 +2,7 @@ use truce::prelude::*;
 use truce_egui::theme::{HEADER_BG, HEADER_TEXT};
 use truce_egui::widgets::{level_meter, param_knob, param_xy_pad};
 use truce_egui::{EguiEditor, ParamState};
+use truce_gui::font;
 
 const WINDOW_W: u32 = 176;
 const WINDOW_H: u32 = 290;
@@ -80,11 +81,11 @@ impl PluginLogic for GainEgui {
         ProcessStatus::Normal
     }
 
-    fn custom_editor(&self) -> Option<Box<dyn truce_core::editor::Editor>> {
+    fn custom_editor(&self) -> Option<Box<dyn Editor>> {
         Some(Box::new(
             EguiEditor::new((WINDOW_W, WINDOW_H), gain_ui)
                 .with_visuals(truce_egui::theme::dark())
-                .with_font(truce_gui::font::JETBRAINS_MONO),
+                .with_font(font::JETBRAINS_MONO),
         ))
     }
 }
@@ -164,7 +165,7 @@ mod tests {
             WINDOW_H,
             2.0,
             0,
-            Some(truce_gui::font::JETBRAINS_MONO),
+            Some(font::JETBRAINS_MONO),
             gain_ui,
         );
     }
