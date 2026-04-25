@@ -24,6 +24,24 @@ pub(crate) fn cmd_reset_au_aax(args: &[String]) -> Res {
         }
     }
 
+    // Hard-fail off macOS — every step touches Apple-only daemons / paths
+    // (`pkd`, `AudioComponentRegistrar`, `~/Library/Caches/AudioUnitCache`,
+    // `/Users/Shared/Pro Tools/...`). Without this guard we'd silently
+    // print the macOS-style banner on Linux/Windows and then no-op.
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = yes;
+        return Err(
+            "`cargo truce reset-au-aax` is macOS-only — it flushes Apple's \
+             AU caches and restarts `pkd` / `AudioComponentRegistrar`, neither \
+             of which exist on Linux or Windows. CLAP / VST3 / VST2 / LV2 \
+             let their host DAWs manage caches; restart your DAW if a plugin \
+             is stuck."
+                .into(),
+        );
+    }
+
+    #[cfg(target_os = "macos")]
     if !yes
         && !confirm_prompt(
             "Reset macOS Audio Unit + Pro Tools AAX caches and restart `pkd` / \
