@@ -352,13 +352,6 @@ mod tests {
             Some(font::JETBRAINS_MONO),
             tremolo_ui,
         );
-        truce_test::assert_screenshot(
-            "tremolo_default",
-            &pixels,
-            w,
-            h,
-            0,
-            "examples/screenshots",
-        );
+        truce_test::assert_screenshot("tremolo_default", &pixels, w, h, 0, "examples/screenshots");
     }
 }

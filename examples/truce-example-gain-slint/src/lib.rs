@@ -135,11 +135,8 @@ mod tests {
 
     #[test]
     fn gui_screenshot() {
-        let (pixels, w, h) = truce_slint::screenshot::render_to_pixels::<GainParams>(
-            176,
-            290,
-            2.0,
-            |_state| {
+        let (pixels, w, h) =
+            truce_slint::screenshot::render_to_pixels::<GainParams>(176, 290, 2.0, |_state| {
                 let ui = GainUi::new().unwrap();
                 Box::new(move |state: &truce_slint::ParamState| {
                     ui.set_gain(state.get(P::Gain) as f32);
@@ -149,8 +146,7 @@ mod tests {
                     ui.set_meter_left(meter_display(state.meter(P::MeterLeft)));
                     ui.set_meter_right(meter_display(state.meter(P::MeterRight)));
                 })
-            },
-        );
+            });
         truce_test::assert_screenshot(
             "gain_slint_default",
             &pixels,

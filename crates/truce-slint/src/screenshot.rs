@@ -71,4 +71,3 @@ pub fn render_to_pixels<P: truce_params::Params + 'static>(
 
     (rgba, phys_w, phys_h)
 }
-

@@ -190,14 +190,7 @@ mod tests {
         let gain = Gain::new(Arc::clone(&params));
         let layout = gain.layout();
         let (pixels, w, h) = truce_gpu::screenshot::render_to_pixels(params, layout);
-        truce_test::assert_screenshot(
-            "gain_default",
-            &pixels,
-            w,
-            h,
-            0,
-            "examples/screenshots",
-        );
+        truce_test::assert_screenshot("gain_default", &pixels, w, h, 0, "examples/screenshots");
     }
 
     /// End-to-end check of `truce_test::in_process` on an effect:
