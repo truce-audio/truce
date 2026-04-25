@@ -16,14 +16,14 @@
 //! concurrently, only `cargo check` is single-threaded to share the
 //! target dir safely.
 //!
-//! The default matrix runs `cargo check` only — ~7s warm. There's
-//! also an `#[ignore]`d full-build test that runs `cargo build` on a
-//! multi-plugin workspace to catch link-time regressions (format
-//! wrapper symbol exports, cdylib link args, etc.) that `check`
-//! skips. Opt in:
+//! Most tests run `cargo check` only — ~7s warm. `workspace_full_build`
+//! does a full `cargo build` on a multi-plugin workspace to catch
+//! link-time regressions (format wrapper symbol exports, cdylib link
+//! args, etc.) that `check` skips — ~60s cold, ~5-10s warm. Run just
+//! that one when iterating on link-related code:
 //!
 //! ```
-//! cargo test -p cargo-truce --test scaffold_e2e -- --ignored
+//! cargo test -p cargo-truce --test scaffold_e2e workspace_full_build
 //! ```
 
 use std::path::{Path, PathBuf};
@@ -339,17 +339,12 @@ fn workspace_with_vendor() {
     s.cargo_check().unwrap();
 }
 
-// Off by default (ignored) — full `cargo build` of a multi-plugin
-// workspace. Catches link-time regressions (format wrapper cdylib
-// symbols, force-load / exported-symbol link args, Mach-O / PE
-// export tables) that `cargo check` can't see. Enable explicitly:
-//
-//     cargo test -p cargo-truce --test scaffold_e2e -- --ignored
-//
-// Cold runtime: ~60s (full release-profile link graph for truce-*).
-// Warm: ~5–10s if the shared target dir is still populated.
+// Full `cargo build` of a multi-plugin workspace. Catches link-time
+// regressions (format wrapper cdylib symbols, force-load /
+// exported-symbol link args, Mach-O / PE export tables) that
+// `cargo check` can't see. Cold runtime ~60s; warm ~5-10s if the
+// shared target dir is still populated.
 #[test]
-#[ignore = "full build — run with `cargo test -- --ignored`"]
 fn workspace_full_build() {
     let s = Scaffold::new_workspace("ws-full-build", "acme", &["gain", "reverb", "delay"]);
     s.run().unwrap();
