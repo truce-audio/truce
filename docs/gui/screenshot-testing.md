@@ -238,6 +238,98 @@ That gives you a way to spot real cross-platform regressions
 (e.g. a Linux-only rendering bug) without having the test be
 permanently red on those platforms.
 
+## API reference
+
+### Comparator (one for everyone)
+
+```rust
+pub fn truce_test::assert_screenshot(
+    name: &str,            // file-stem; ends up at <reference_dir>/<name>.png
+    pixels: &[u8],         // RGBA8, row-major, width*height*4 bytes
+    width: u32,            // physical width (already scale-multiplied)
+    height: u32,            // physical height
+    max_diff_pixels: usize, // RGBA bytes allowed to differ; 0 = exact
+    reference_dir: &str,   // workspace-relative dir for committed PNGs
+)
+```
+
+Always writes the current render to
+`<workspace>/target/screenshots/<name>.png`. Loads the committed
+reference from `<workspace>/<reference_dir>/<name>.png`. Missing
+reference logs a `cp` promote hint and passes; present reference
+fails on diff > `max_diff_pixels` (reference platform only).
+
+### Renderers (one per backend)
+
+All four return `(Vec<u8>, u32, u32)` — RGBA8 bytes plus physical
+width and height — feedable directly into `assert_screenshot`.
+
+#### Built-in widgets — `truce_gpu`
+
+```rust
+pub fn truce_gpu::screenshot::render_to_pixels<P: Params + 'static>(
+    params: Arc<P>,
+    layout: GridLayout,
+) -> (Vec<u8>, u32, u32)
+```
+
+Reads `params` for default values via `P::default_for_gui()`.
+Renders the `GridLayout` headlessly through `truce-gpu`'s wgpu
+pipeline at the layout's intrinsic 2× scale (matches Retina).
+
+#### egui — `truce_egui`
+
+```rust
+pub fn truce_egui::screenshot::render_to_pixels<P: truce_params::Params + 'static>(
+    width: u32,                                          // logical points
+    height: u32,                                         // logical points
+    pixels_per_point: f32,                               // scale factor (2.0 for Retina)
+    font: Option<&'static [u8]>,                         // optional TTF bytes (e.g. truce_font::JETBRAINS_MONO)
+    ui_fn: impl Fn(&egui::Context, &ParamState),         // your egui ui closure
+) -> (Vec<u8>, u32, u32)
+```
+
+`ParamState` is seeded from `P::default_for_gui()` and a synthetic
+"playing" transport (see `TransportInfo::for_screenshot`) so
+transport-aware widgets render a populated readout. Output is at
+physical resolution `width * pixels_per_point` × `height * pixels_per_point`.
+
+#### Iced — `truce_iced`
+
+```rust
+pub fn truce_iced::screenshot::render_to_pixels<P, M>(
+    params: Arc<P>,
+    size: (u32, u32),                                    // (logical_w, logical_h)
+    scale: f64,                                          // 2.0 for Retina
+    font: Option<(&'static str, &'static [u8])>,         // (family_name, TTF bytes)
+) -> (Vec<u8>, u32, u32)
+where
+    P: Params + 'static,
+    M: IcedPlugin<P>,
+```
+
+`M` is your `IcedPlugin` editor type — same one you pass to
+`IcedEditor`. `font` is `(family_name, ttf_bytes)` because iced
+indexes fonts by family name.
+
+#### Slint — `truce_slint`
+
+```rust
+pub fn truce_slint::screenshot::render_to_pixels<P: truce_params::Params + 'static>(
+    width: u32,                                                       // logical points
+    height: u32,                                                      // logical points
+    scale: f32,                                                       // DPI scale factor
+    setup: impl FnOnce(ParamState) -> Box<dyn Fn(&ParamState)>,       // same setup closure as SlintEditor::new
+) -> (Vec<u8>, u32, u32)
+```
+
+The `setup` closure builds the slint `.slint` component, wires
+parameter callbacks, and returns a sync function. Identical to the
+closure passed to `SlintEditor::new` — usually a one-liner if you
+factor your slint setup into a free function.
+
+---
+
 ## Texture format gotchas
 
 `assert_screenshot` always reads RGBA8 bytes; each backend's

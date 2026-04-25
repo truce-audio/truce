@@ -31,8 +31,8 @@ pub fn main() -> ExitCode {
 
 /// Run a command with the given args (e.g. `["install", "--clap"]`).
 ///
-/// Used by both `cargo xtask` (workspace binary) and `cargo truce`
-/// (globally installed binary).
+/// Driven by the `cargo-truce` binary; this crate is the engine, not
+/// the user-facing entry point.
 pub fn run(args: &[String]) -> ExitCode {
     // Strip global `-v` / `--verbose` from anywhere in the arg list.
     // Setting the static once here means every subcommand picks it up
@@ -86,7 +86,7 @@ pub fn run(args: &[String]) -> ExitCode {
 fn print_help() {
     eprintln!(
         "\
-Usage: cargo xtask <command> [options]
+Usage: cargo truce <command> [options]
 
 Commands:
   install [--clap] [--vst3] [--vst2] [--au2] [--au3] [--aax] [--dev] [--no-build] [-p <crate>]

@@ -14,7 +14,7 @@ pub(crate) fn cmd_new(args: &[String]) -> Res {
         }
     }
 
-    let name = name.ok_or("usage: cargo xtask new <name>")?;
+    let name = name.ok_or("usage: cargo truce new <name>")?;
     let root = project_root();
     scaffold_static_plugin(&root, &name)
 }

@@ -22,7 +22,6 @@ members = [
     "examples/truce-example-arpeggio",
     "examples/truce-example-gain-egui",
     "examples/truce-example-tremolo",
-    "xtask",
     "crates/truce-loader",
     "crates/truce-derive",
     "crates/truce-xtask",

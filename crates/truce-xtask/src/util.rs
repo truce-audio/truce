@@ -234,9 +234,9 @@ pub(crate) fn detect_default_features() -> std::collections::HashSet<String> {
 }
 
 pub(crate) fn project_root() -> PathBuf {
-    // Walk up from the current directory looking for truce.toml.
-    // This works from both `cargo xtask` (workspace) and `cargo truce`
-    // (globally installed binary run from any project directory).
+    // Walk up from the current directory looking for truce.toml. This
+    // is what `cargo truce` does — the globally installed binary runs
+    // from any project directory.
     let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let mut dir = cwd.as_path();
     loop {
@@ -248,7 +248,8 @@ pub(crate) fn project_root() -> PathBuf {
             None => break,
         }
     }
-    // Fallback: CARGO_MANIFEST_DIR (works inside `cargo xtask`)
+    // Fallback: CARGO_MANIFEST_DIR (works when invoked inside the
+    // truce repo itself, e.g. for development).
     if let Ok(manifest) = env::var("CARGO_MANIFEST_DIR") {
         let p = Path::new(&manifest).parent().unwrap().to_path_buf();
         if p.join("truce.toml").exists() {

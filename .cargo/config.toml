@@ -1,6 +1,0 @@
-# [env]
-# TRUCE_SIGNING_IDENTITY = "-"
-# AAX_SDK_PATH = "/path/to/aax-sdk-2-9-0"  
-
-[alias]
-xtask = "run --package xtask --"
