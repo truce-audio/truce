@@ -224,7 +224,7 @@ fn ensure_aax_sdk_library(sdk_path: &Path, universal_mac: bool) -> Result<PathBu
     // silently honors the old value unless we clean.
     let _ = fs::remove_dir_all(&build_dir);
 
-    eprintln!(
+    crate::vprintln!(
         "AAX: building SDK library ({}) at {}",
         required_archs.join("+"),
         lib_path.display()
@@ -282,7 +282,7 @@ fn ensure_aax_sdk_library(sdk_path: &Path) -> Result<PathBuf, crate::BoxErr> {
         return Ok(lib_path);
     }
 
-    eprintln!("AAX: building SDK library at {}", lib_path.display());
+    crate::vprintln!("AAX: building SDK library at {}", lib_path.display());
 
     let vcvars = locate_vcvars64()
         .ok_or("could not locate vcvars64.bat — install VS 2022+ with the C++ workload")?;
@@ -362,7 +362,7 @@ fn ensure_template(
     let template = template_binary();
     if let Some(sdk_path) = resolve_aax_sdk_path(config) {
         if !template.exists() {
-            eprintln!("AAX: building template with SDK at {}", sdk_path.display());
+            crate::vprintln!("AAX: building template with SDK at {}", sdk_path.display());
         }
         build_aax_template(root, &sdk_path, universal_mac)?;
     } else if !template.exists() {
@@ -480,7 +480,7 @@ pub(crate) fn emit_aax_bundle(
             config.macos.application_identity(),
             false,
         )?;
-        eprintln!("  AAX:  {}", bundle.display());
+        crate::vprintln!("  AAX:  {}", bundle.display());
     }
 
     #[cfg(target_os = "windows")]
@@ -507,7 +507,7 @@ pub(crate) fn emit_aax_bundle(
         // Authenticode signing is driven by `cargo truce package`'s
         // outer signing loop — the bundle sits unsigned here for
         // `install` to copy verbatim.
-        eprintln!("  AAX:  {}", bundle.display());
+        crate::vprintln!("  AAX:  {}", bundle.display());
     }
 
     Ok(())
@@ -542,7 +542,7 @@ pub(crate) fn install_aax(root: &Path, p: &PluginDef, _config: &Config) -> Res {
         let dst = format!("{aax_dir}/{bundle_name}");
         run_sudo("rm", &["-rf", &dst])?;
         run_sudo("ditto", &[built.to_str().unwrap(), &dst])?;
-        eprintln!("AAX:  {dst}");
+        crate::vprintln!("AAX:  {dst}");
     }
 
     #[cfg(target_os = "windows")]
@@ -555,7 +555,7 @@ pub(crate) fn install_aax(root: &Path, p: &PluginDef, _config: &Config) -> Res {
         let dst = aax_dir.join(&bundle_name);
         let _ = fs::remove_dir_all(&dst);
         crate::util::copy_dir_recursive(&built, &dst)?;
-        eprintln!("AAX:  {}", dst.display());
+        crate::vprintln!("AAX:  {}", dst.display());
     }
 
     Ok(())

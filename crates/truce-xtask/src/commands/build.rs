@@ -122,7 +122,7 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
         } else {
             format!("Building CLAP ({})...", extra_features.join(" + "))
         };
-        eprintln!("{label}");
+        crate::vprintln!("{label}");
         for p in &plugins {
             let mut env_pairs: Vec<(&str, &str)> = Vec::new();
             if let Some(n) = p.clap_name.as_deref() {
@@ -158,7 +158,7 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
         } else {
             format!("Building VST3 ({})...", extra_features.join(" + "))
         };
-        eprintln!("{label}");
+        crate::vprintln!("{label}");
         for p in &plugins {
             let mut env_pairs: Vec<(&str, &str)> = Vec::new();
             if let Some(n) = p.vst3_name.as_deref() {
@@ -184,7 +184,7 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
     }
 
     if vst2 {
-        eprintln!("Building VST2...");
+        crate::vprintln!("Building VST2...");
         for p in &plugins {
             let mut env_pairs: Vec<(&str, &str)> = Vec::new();
             if let Some(n) = p.vst2_name.as_deref() {
@@ -208,7 +208,7 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
     }
 
     if lv2 {
-        eprintln!("Building LV2...");
+        crate::vprintln!("Building LV2...");
         for p in &plugins {
             let mut env_pairs: Vec<(&str, &str)> = Vec::new();
             if let Some(n) = p.lv2_name.as_deref() {
@@ -232,7 +232,7 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
     }
 
     if au2 {
-        eprintln!("Building AU v2...");
+        crate::vprintln!("Building AU v2...");
         for p in &plugins {
             let mut env_pairs: Vec<(&str, &str)> = vec![
                 ("TRUCE_AU_VERSION", "2"),
@@ -259,7 +259,7 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
     }
 
     if aax {
-        eprintln!("Building AAX...");
+        crate::vprintln!("Building AAX...");
         for p in &plugins {
             let mut env_pairs: Vec<(&str, &str)> = Vec::new();
             if let Some(n) = p.aax_name.as_deref() {
@@ -291,7 +291,7 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
     // In dev mode, also build the debug dylibs (the logic that the
     // hot-reload shells watch and load).
     if dev_mode {
-        eprintln!("Building debug dylibs (logic for hot-reload)...");
+        crate::vprintln!("Building debug dylibs (logic for hot-reload)...");
         let mut cmd = Command::new("cargo");
         cmd.arg("build").arg("--workspace");
         #[cfg(target_os = "macos")]
@@ -307,21 +307,21 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
     for p in &plugins {
         if clap {
             stage_clap(&root, p, &bundles_dir, identity)?;
-            eprintln!(
+            crate::vprintln!(
                 "  CLAP: {}",
                 bundles_dir.join(format!("{}.clap", p.name)).display()
             );
         }
         if vst3 {
             stage_vst3(&root, p, &config, &bundles_dir)?;
-            eprintln!(
+            crate::vprintln!(
                 "  VST3: {}",
                 bundles_dir.join(format!("{}.vst3", p.name)).display()
             );
         }
         if vst2 {
             stage_vst2(&root, p, &config, &bundles_dir)?;
-            eprintln!(
+            crate::vprintln!(
                 "  VST2: {}",
                 bundles_dir.join(format!("{}.vst", p.name)).display()
             );
@@ -329,14 +329,14 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
         if lv2 {
             stage_lv2(&root, p, &bundles_dir)?;
             let slug = lv2_slug(&p.name);
-            eprintln!(
+            crate::vprintln!(
                 "  LV2:  {}",
                 bundles_dir.join(format!("{slug}.lv2")).display()
             );
         }
         if au2 {
             stage_au2(&root, p, &config, &bundles_dir)?;
-            eprintln!(
+            crate::vprintln!(
                 "  AU:   {}",
                 bundles_dir.join(format!("{}.component", p.name)).display()
             );

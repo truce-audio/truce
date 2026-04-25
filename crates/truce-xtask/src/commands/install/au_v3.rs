@@ -82,11 +82,11 @@ pub(crate) fn emit_au_v3_bundle(
         let fw_build = tmp_dir().join(format!("au_v3_fw_{}", p.bundle_id));
         let final_app = bundles_dir.join(format!("{}.app", p.au3_app_name()));
 
-        eprintln!("Building AU v3 ({})...", p.name);
+        crate::vprintln!("Building AU v3 ({})...", p.name);
 
         // --- Step 1: Rust framework dylib (per-arch + lipo) -----------------
         for &arch in archs {
-            eprintln!("  Building Rust framework ({})...", arch.triple());
+            crate::vprintln!("  Building Rust framework ({})...", arch.triple());
             let mut env_pairs: Vec<(&str, &str)> = vec![
                 ("TRUCE_AU_VERSION", "3"),
                 ("TRUCE_AU_PLUGIN_ID", &p.bundle_id),
@@ -192,10 +192,7 @@ pub(crate) fn emit_au_v3_bundle(
                 cs_args.extend_from_slice(&["--options", "runtime", "--timestamp"]);
             }
             cs_args.push(fw_root.to_str().unwrap());
-            let status = Command::new("codesign").args(&cs_args).status()?;
-            if !status.success() {
-                return Err("codesign failed for AU v3 framework".into());
-            }
+            crate::run_codesign(&cs_args, false)?;
         }
 
         // --- Step 3: Xcode project scratch ---------------------------------
@@ -275,7 +272,7 @@ pub(crate) fn emit_au_v3_bundle(
         )?;
 
         // --- Step 4: xcodebuild --------------------------------------------
-        eprintln!("  Building with xcodebuild...");
+        crate::vprintln!("  Building with xcodebuild...");
         let archs_flag = format!(
             "ARCHS={}",
             archs
@@ -368,10 +365,7 @@ pub(crate) fn emit_au_v3_bundle(
             let mut args = vec!["--force", "--sign", sign_id];
             args.extend_from_slice(runtime_flags);
             args.push(fw_path);
-            let status = Command::new("codesign").args(&args).status()?;
-            if !status.success() {
-                return Err("codesign failed: embedded framework".into());
-            }
+            crate::run_codesign(&args, false)?;
         }
         let entitlements_appex = build_dir.join("AUExt/AUExt.entitlements");
         let entitlements_app = build_dir.join("App/App.entitlements");
@@ -389,10 +383,7 @@ pub(crate) fn emit_au_v3_bundle(
             ];
             args.extend_from_slice(runtime_flags);
             args.push(appex_str);
-            let status = Command::new("codesign").args(&args).status()?;
-            if !status.success() {
-                return Err("codesign failed: appex".into());
-            }
+            crate::run_codesign(&args, false)?;
         }
         {
             let ent = entitlements_app.to_str().unwrap();
@@ -407,13 +398,10 @@ pub(crate) fn emit_au_v3_bundle(
             ];
             args.extend_from_slice(runtime_flags);
             args.push(app_str);
-            let status = Command::new("codesign").args(&args).status()?;
-            if !status.success() {
-                return Err("codesign failed: app".into());
-            }
+            crate::run_codesign(&args, false)?;
         }
 
-        eprintln!("  AU v3: {}", final_app.display());
+        crate::vprintln!("  AU v3: {}", final_app.display());
     }
     Ok(())
 }
@@ -512,7 +500,7 @@ fn install_au_v3(root: &Path, config: &Config, plugins: &[&PluginDef]) -> Res {
                 s.appex_id, appex_path
             );
         }
-        eprintln!("  Installed: {}", s.app_dir);
+        crate::vprintln!("  Installed: {}", s.app_dir);
     }
 
     Ok(())

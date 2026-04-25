@@ -123,9 +123,9 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
             let features_combined = format_features.join(",");
             if !extra_features.is_empty() {
                 let label = extra_features.join(" + ");
-                eprintln!("Building CLAP ({label})...");
+                crate::vprintln!("Building CLAP ({label})...");
             } else {
-                eprintln!("Building CLAP...");
+                crate::vprintln!("Building CLAP...");
             }
             for p in &plugins {
                 let mut env_pairs: Vec<(&str, &str)> = Vec::new();
@@ -159,9 +159,9 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
             let features_combined = format_features.join(",");
             if !extra_features.is_empty() {
                 let label = extra_features.join(" + ");
-                eprintln!("Building VST3 ({label})...");
+                crate::vprintln!("Building VST3 ({label})...");
             } else {
-                eprintln!("Building VST3...");
+                crate::vprintln!("Building VST3...");
             }
             for p in &plugins {
                 let mut env_pairs: Vec<(&str, &str)> = Vec::new();
@@ -188,7 +188,7 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
         }
 
         if vst2 {
-            eprintln!("Building VST2...");
+            crate::vprintln!("Building VST2...");
             for p in &plugins {
                 let mut env_pairs: Vec<(&str, &str)> = Vec::new();
                 if let Some(n) = p.vst2_name.as_deref() {
@@ -212,7 +212,7 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
         }
 
         if lv2 {
-            eprintln!("Building LV2...");
+            crate::vprintln!("Building LV2...");
             for p in &plugins {
                 let mut env_pairs: Vec<(&str, &str)> = Vec::new();
                 if let Some(n) = p.lv2_name.as_deref() {
@@ -236,7 +236,7 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
         }
 
         if au2 {
-            eprintln!("Building AU v2...");
+            crate::vprintln!("Building AU v2...");
             for p in &plugins {
                 let mut env_pairs: Vec<(&str, &str)> = vec![
                     ("TRUCE_AU_VERSION", "2"),
@@ -263,7 +263,7 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
         }
 
         if aax {
-            eprintln!("Building AAX...");
+            crate::vprintln!("Building AAX...");
             for p in &plugins {
                 let mut env_pairs: Vec<(&str, &str)> = Vec::new();
                 if let Some(n) = p.aax_name.as_deref() {
@@ -290,7 +290,7 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
         // In dev mode, also build the debug dylibs (the logic that
         // the hot-reload shells watch and load).
         if dev_mode {
-            eprintln!("Building debug dylibs (logic for hot-reload)...");
+            crate::vprintln!("Building debug dylibs (logic for hot-reload)...");
             let mut cmd = Command::new("cargo");
             cmd.arg("build").arg("--workspace");
             #[cfg(target_os = "macos")]
@@ -334,7 +334,7 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
             .unwrap()
             .join("Library/Caches/AudioUnitCache");
         let _ = fs::remove_dir_all(&cache);
-        eprintln!("Cleared AU cache.");
+        crate::vprintln!("Cleared AU cache.");
     }
 
     eprintln!("\nDone. Restart your DAW to rescan.");
@@ -361,7 +361,7 @@ pub(crate) fn install_clap(root: &Path, p: &PluginDef, config: &Config) -> Res {
             config.macos.application_identity(),
             false,
         )?;
-        eprintln!("CLAP: {}", dst.display());
+        crate::vprintln!("CLAP: {}", dst.display());
     }
 
     #[cfg(target_os = "windows")]
@@ -370,7 +370,7 @@ pub(crate) fn install_clap(root: &Path, p: &PluginDef, config: &Config) -> Res {
         fs_ctx::create_dir_all(&clap_dir)?;
         let dst = clap_dir.join(format!("{}.clap", p.name));
         fs_ctx::copy(&dylib, &dst)?;
-        eprintln!("CLAP: {}", dst.display());
+        crate::vprintln!("CLAP: {}", dst.display());
     }
 
     #[cfg(target_os = "linux")]
@@ -379,7 +379,7 @@ pub(crate) fn install_clap(root: &Path, p: &PluginDef, config: &Config) -> Res {
         fs_ctx::create_dir_all(&clap_dir)?;
         let dst = clap_dir.join(format!("{}.clap", p.name));
         fs_ctx::copy(&dylib, &dst)?;
-        eprintln!("CLAP: {}", dst.display());
+        crate::vprintln!("CLAP: {}", dst.display());
     }
 
     Ok(())
@@ -434,7 +434,7 @@ fn install_vst3(root: &Path, p: &PluginDef, config: &Config) -> Res {
         fs_ctx::write(&plist_tmp, &plist)?;
         run_sudo("cp", &[&plist_tmp, &format!("{contents}/Info.plist")])?;
         codesign_bundle(&vst3_bundle, config.macos.application_identity(), true)?;
-        eprintln!("VST3: {vst3_bundle}");
+        crate::vprintln!("VST3: {vst3_bundle}");
     }
 
     #[cfg(target_os = "windows")]
@@ -446,7 +446,7 @@ fn install_vst3(root: &Path, p: &PluginDef, config: &Config) -> Res {
         fs_ctx::create_dir_all(&arch_dir)?;
         let dst = arch_dir.join(format!("{}.vst3", p.name));
         fs_ctx::copy(&dylib, &dst)?;
-        eprintln!("VST3: {}", bundle.display());
+        crate::vprintln!("VST3: {}", bundle.display());
     }
 
     #[cfg(target_os = "linux")]
@@ -457,7 +457,7 @@ fn install_vst3(root: &Path, p: &PluginDef, config: &Config) -> Res {
         fs_ctx::create_dir_all(&arch_dir)?;
         let dst = arch_dir.join(format!("{}.so", p.name));
         fs_ctx::copy(&dylib, &dst)?;
-        eprintln!("VST3: {}", bundle.display());
+        crate::vprintln!("VST3: {}", bundle.display());
     }
 
     Ok(())
@@ -508,7 +508,7 @@ fn install_vst2(root: &Path, p: &PluginDef, config: &Config) -> Res {
             config.macos.application_identity(),
             false,
         )?;
-        eprintln!("VST2: {}", bundle.display());
+        crate::vprintln!("VST2: {}", bundle.display());
     }
 
     #[cfg(target_os = "windows")]
@@ -519,7 +519,7 @@ fn install_vst2(root: &Path, p: &PluginDef, config: &Config) -> Res {
         fs_ctx::create_dir_all(&vst_dir)?;
         let dst = vst_dir.join(format!("{}.dll", p.name));
         fs_ctx::copy(&dylib, &dst)?;
-        eprintln!("VST2: {}", dst.display());
+        crate::vprintln!("VST2: {}", dst.display());
     }
 
     #[cfg(target_os = "linux")]
@@ -528,7 +528,7 @@ fn install_vst2(root: &Path, p: &PluginDef, config: &Config) -> Res {
         fs_ctx::create_dir_all(&vst_dir)?;
         let dst = vst_dir.join(format!("{}.so", p.name));
         fs_ctx::copy(&dylib, &dst)?;
-        eprintln!("VST2: {}", dst.display());
+        crate::vprintln!("VST2: {}", dst.display());
     }
 
     Ok(())
@@ -558,7 +558,7 @@ fn install_lv2(root: &Path, p: &PluginDef, _config: &Config) -> Res {
     fs_ctx::create_dir_all(&lv2_dir)?;
     crate::commands::package::stage::stage_lv2(root, p, &lv2_dir)?;
     let slug = crate::commands::package::stage::lv2_slug(&p.name);
-    eprintln!("LV2: {}", lv2_dir.join(format!("{slug}.lv2")).display());
+    crate::vprintln!("LV2: {}", lv2_dir.join(format!("{slug}.lv2")).display());
     Ok(())
 }
 
@@ -668,6 +668,6 @@ fn install_au(root: &Path, p: &PluginDef, config: &Config) -> Res {
     fs_ctx::write(&plist_tmp, &plist)?;
     run_sudo("cp", &[&plist_tmp, &format!("{contents}/Info.plist")])?;
     codesign_bundle(&bundle, config.macos.application_identity(), true)?;
-    eprintln!("AU:   {bundle}");
+    crate::vprintln!("AU:   {bundle}");
     Ok(())
 }

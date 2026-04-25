@@ -258,6 +258,63 @@ pub(crate) fn run_sudo(cmd: &str, args: &[&str]) -> crate::Res {
     Ok(())
 }
 
+/// Process-global verbose flag. Set at the top of `truce_xtask::run`
+/// from `-v` / `--verbose` and consulted by helpers that have output
+/// worth gating (`codesign`'s "replacing existing signature", etc.).
+static VERBOSE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_verbose(v: bool) {
+    VERBOSE.store(v, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub(crate) fn is_verbose() -> bool {
+    VERBOSE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// `eprintln!` that's a no-op unless `--verbose` was passed. Use for
+/// progress chatter (per-format build banners, per-bundle install
+/// destinations) that's load-bearing during debugging but noise during
+/// a normal multi-plugin install.
+macro_rules! vprintln {
+    ($($arg:tt)*) => {
+        if $crate::util::is_verbose() {
+            eprintln!($($arg)*);
+        }
+    };
+}
+pub(crate) use vprintln;
+
+/// Run `codesign` with the given args. In quiet mode (default), stderr
+/// is captured and only printed on failure — drops the "replacing
+/// existing signature" noise on every re-sign without losing real
+/// errors. `--verbose` inherits stderr so everything surfaces. Sudo
+/// path always inherits stderr because sudo's password prompt goes
+/// through there.
+pub(crate) fn run_codesign(args: &[&str], use_sudo: bool) -> crate::Res {
+    use std::process::Stdio;
+    if use_sudo {
+        return run_sudo("codesign", args);
+    }
+    let mut cmd = Command::new("codesign");
+    cmd.args(args);
+    if is_verbose() {
+        let status = cmd.status()?;
+        if !status.success() {
+            return Err("codesign failed".into());
+        }
+    } else {
+        let output = cmd.stderr(Stdio::piped()).output()?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if !stderr.is_empty() {
+                eprintln!("{stderr}");
+            }
+            return Err("codesign failed".into());
+        }
+    }
+    Ok(())
+}
+
 /// Sudo variant that swallows stdout + stderr. Intended for
 /// fire-and-forget cleanup like `killall -9 pkd` where non-zero
 /// exit ("No matching processes were found") is expected noise
@@ -320,29 +377,11 @@ pub(crate) fn codesign_bundle(bundle: &str, identity: &str, use_sudo: bool) -> c
         args.extend_from_slice(&["--entitlements", ent_path]);
     }
     args.push(bundle);
+    run_codesign(&args, use_sudo)?;
 
-    if use_sudo {
-        run_sudo("codesign", &args)?;
-    } else {
-        let status = Command::new("codesign").args(&args).status()?;
-        if !status.success() {
-            return Err(format!("codesign failed for {bundle}").into());
-        }
-    }
-
-    // Verify signature
     if production {
-        let verify_args = ["--verify", "--strict", bundle];
-        if use_sudo {
-            run_sudo("codesign", &verify_args)?;
-        } else {
-            let status = Command::new("codesign").args(verify_args).status()?;
-            if !status.success() {
-                return Err(format!("codesign verification failed for {bundle}").into());
-            }
-        }
+        run_codesign(&["--verify", "--strict", bundle], use_sudo)?;
     }
-
     Ok(())
 }
 

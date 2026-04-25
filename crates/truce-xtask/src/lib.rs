@@ -32,6 +32,19 @@ pub fn main() -> ExitCode {
 /// Used by both `cargo xtask` (workspace binary) and `cargo truce`
 /// (globally installed binary).
 pub fn run(args: &[String]) -> ExitCode {
+    // Strip global `-v` / `--verbose` from anywhere in the arg list.
+    // Setting the static once here means every subcommand picks it up
+    // without each having to parse the flag.
+    let mut filtered: Vec<String> = Vec::with_capacity(args.len());
+    for a in args {
+        if a == "-v" || a == "--verbose" {
+            util::set_verbose(true);
+        } else {
+            filtered.push(a.clone());
+        }
+    }
+    let args = &filtered[..];
+
     let cmd = args.first().map(|s| s.as_str()).unwrap_or("help");
 
     let result = match cmd {
