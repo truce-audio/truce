@@ -153,7 +153,7 @@ By host (across all supported platforms):
 | VST2   | Yes    |       |            | Yes     | Yes       |           |
 | LV2    | Yes    |       |            |         |           |           |
 | AU v2  | Yes    | Yes   | Yes        | Yes     |           |           |
-| AU v3  |        | Yes   | Yes        | Yes     |           |           |
+| AU v3  | Yes    | Yes   | Yes        | Yes     |           |           |
 | AAX    |        |       |            |         |           | Yes       |
 
 ## Examples
