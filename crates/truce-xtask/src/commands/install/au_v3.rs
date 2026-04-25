@@ -25,8 +25,8 @@ use crate::templates;
 use crate::util::fs_ctx;
 use crate::{
     cargo_build_for_arch, deployment_target, dirs, extract_team_id, is_production_identity,
-    lipo_into, release_lib_for_target, run_sudo, run_silent, tmp_dir, Config, MacArch,
-    PluginDef, Res,
+    lipo_into, release_lib_for_target, run_silent, run_sudo, tmp_dir, Config, MacArch, PluginDef,
+    Res,
 };
 use std::fs;
 use std::path::{Path, PathBuf};

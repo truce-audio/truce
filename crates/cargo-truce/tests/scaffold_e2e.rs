@@ -284,7 +284,8 @@ impl Scaffold {
             .collect();
         let count = names.iter().filter(|n| n.ends_with(ext)).count();
         assert_eq!(
-            count, expected,
+            count,
+            expected,
             "[{}] expected {expected} {ext} bundle(s) in {}, got: {names:?}",
             self.label,
             bundles.display()
