@@ -1016,7 +1016,7 @@ mod tests {
             }
         }
 
-        fn default_for_gui() -> Self {
+        fn new() -> Self {
             Self::new()
         }
     }
@@ -1336,7 +1336,7 @@ mod tests {
             }
         }
 
-        fn default_for_gui() -> Self {
+        fn new() -> Self {
             Self::new()
         }
     }

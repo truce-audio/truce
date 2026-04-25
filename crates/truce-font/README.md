@@ -4,7 +4,7 @@ Bundled fonts for the truce audio plugin framework.
 
 Exposes `JETBRAINS_MONO` — JetBrains Mono Regular as `&'static [u8]`
 of TTF bytes — for use by the built-in GUI rasterizer (`truce-gui`),
-the egui / iced / slint editor backends, and the headless snapshot
+the egui / iced / slint editor backends, and the headless screenshot
 rendering pipelines.
 
 ## Why a separate crate

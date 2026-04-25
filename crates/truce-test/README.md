@@ -17,7 +17,7 @@ state persistence, and editor lifecycle.
 - **`assert_state_roundtrip`** -- save state, reload, and verify parameters match
 - **`assert_params_valid`** -- check parameter ranges, names, and formatting
 - **`assert_editor_lifecycle`** -- open, idle, and close editor without panics
-- **GUI snapshot utilities** -- pixel-level regression testing for editors
+- **GUI screenshot utilities** -- pixel-level regression testing for editors
 
 ## Usage
 

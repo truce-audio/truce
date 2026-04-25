@@ -24,7 +24,7 @@ pub mod blit;
 pub mod editor;
 pub mod param_state;
 pub mod platform;
-pub mod screenshot;
+mod screenshot;
 
 pub use editor::SlintEditor;
 pub use param_state::ParamState;

@@ -21,6 +21,7 @@
 //! ```
 
 use truce_core::buffer::AudioBuffer;
+use truce_core::plugin::Plugin as PluginTrait;
 use truce_core::events::{Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
 use truce_core::process::ProcessContext;
@@ -543,6 +544,48 @@ pub fn assert_empty_state_no_crash<P: PluginExport>() {
 /// reference PNGs they didn't intend to.
 pub const DEFAULT_SCREENSHOT_DIR: &str = "target/screenshots";
 
+/// One-line screenshot test for any backend.
+///
+/// Constructs the plugin via `P::create()`, asks it for its editor,
+/// drives `Editor::screenshot()` to get RGBA pixels, and runs
+/// [`assert_screenshot`] against `<reference_dir>/<name>.png`.
+///
+/// # Example
+/// ```ignore
+/// #[test]
+/// fn gui_screenshot() {
+///     truce_test::screenshot::<Plugin>("gain_default", "snapshots");
+/// }
+/// ```
+///
+/// Every built-in backend (`truce-gpu`, `truce-egui`, `truce-iced`,
+/// `truce-slint`) implements `Editor::screenshot()`. Custom editor
+/// implementations only need to override `screenshot()` if they want
+/// to be testable through this helper.
+pub fn screenshot<P: PluginExport>(name: &str, reference_dir: &str) {
+    let mut plugin = P::create();
+    plugin.init();
+    let mut editor = <P as PluginTrait>::editor(&mut plugin)
+        .expect("plugin returned no editor: PluginLogic::custom_editor() returned None and layout() was empty");
+    // `PluginExport::Params` is the concrete params type the
+    // `plugin!` macro wired up. We hand the editor a fresh dyn-erased
+    // instance so each backend can build its own ParamState without
+    // needing to know `P` at construction.
+    let params: std::sync::Arc<dyn truce_params::Params> =
+        std::sync::Arc::new(<P::Params as truce_params::Params>::new());
+    let (pixels, w, h) = editor.screenshot(params).unwrap_or_else(|| {
+        panic!(
+            "editor for {} returned None from Editor::screenshot(). \
+             If this is a custom editor implementation, override \
+             Editor::screenshot() to return RGBA pixels. Built-in \
+             backends (truce-gpu / truce-egui / truce-iced / \
+             truce-slint) all implement it.",
+            std::any::type_name::<P>()
+        )
+    });
+    assert_screenshot(name, &pixels, w, h, 0, reference_dir);
+}
+
 /// Resolve `<workspace_root>/<rel>/`, creating the directory if
 /// needed. Walks up from `CARGO_MANIFEST_DIR` looking for a
 /// `Cargo.toml` with `[workspace]`. Works regardless of how deeply
@@ -588,19 +631,20 @@ pub fn workspace_screenshot_dir(rel: &str) -> std::path::PathBuf {
 ///   rasterization differences are expected; see
 ///   `TRUCE_SCREENSHOT_REFERENCE_OS`).
 ///
-/// Backend-agnostic — caller provides raw RGBA pixels. Pair with one
-/// of:
-///
-/// - `truce_gpu::screenshot::render_to_pixels` (built-in widgets)
-/// - `truce_egui::screenshot::render_to_pixels`
-/// - `truce_iced::screenshot::render_to_pixels`
-/// - `truce_slint::screenshot::render_to_pixels`
+/// Backend-agnostic — caller provides raw RGBA pixels. Most callers
+/// should use [`screenshot`] instead, which drives the editor and
+/// comparison in one line. This is the lower-level entry point for
+/// when you need a non-zero `max_diff_pixels` tolerance or are
+/// rendering pixels through a non-`Editor` path.
 ///
 /// # Example
 /// ```ignore
-/// let (pixels, w, h) = truce_gpu::screenshot::render_to_pixels(params, layout);
+/// let mut editor = <Plugin as PluginTrait>::editor(&mut plugin).unwrap();
+/// let params: Arc<dyn truce_params::Params> =
+///     Arc::new(<MyParams as truce_params::Params>::new());
+/// let (pixels, w, h) = editor.screenshot(params).unwrap();
 /// truce_test::assert_screenshot(
-///     "my_plugin_default", &pixels, w, h, 0, "snapshots",
+///     "my_plugin_default", &pixels, w, h, 100, "snapshots",
 /// );
 /// ```
 pub fn assert_screenshot(

@@ -1148,6 +1148,22 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
         true
     }
 
+    fn screenshot(
+        &mut self,
+        _params: Arc<dyn truce_params::Params>,
+    ) -> Option<(Vec<u8>, u32, u32)> {
+        // Delegate to the standalone helper using the editor's own
+        // typed `Arc<P>` (already on hand from construction). Used by
+        // `truce_test::screenshot::<Plugin>()`. The dyn-erased `params`
+        // arg is unused — IcedEditor carries the concrete type.
+        Some(crate::screenshot::render_to_pixels::<P, M>(
+            Arc::clone(&self.params),
+            self.size,
+            2.0,
+            self.font,
+        ))
+    }
+
     fn set_size(&mut self, width: u32, height: u32) -> bool {
         self.size = (width, height);
         if let Some(ref mut runtime) = self.runtime {

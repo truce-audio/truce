@@ -6,22 +6,27 @@ changes unexpectedly — a widget moves, a color shifts, a label
 disappears — the test fails on the reference platform and points at
 the freshly-rendered PNG so you can compare visually.
 
-The shape is the same regardless of which GUI backend you use. Each
-backend exposes a `render_to_pixels(...) -> (Vec<u8>, u32, u32)`
-helper that returns RGBA bytes and physical dimensions. A single
-backend-agnostic comparator — `truce_test::assert_screenshot` — does
-the diffing, file I/O, and platform gating. Two lines per test:
+The unified API is a single line:
 
 ```rust
-let (pixels, w, h) = truce_<backend>::screenshot::render_to_pixels(...);
-truce_test::assert_screenshot(name, &pixels, w, h, max_diff, "snapshots");
+#[test]
+fn gui_screenshot() {
+    truce_test::screenshot::<Plugin>("my_plugin_default", "snapshots");
+}
 ```
+
+`truce_test::screenshot` instantiates your plugin via the same path the
+host uses, asks the editor for a headless render, and hands the bytes
+to the backend-agnostic comparator. Works for the built-in GUI and all
+custom backends (egui, iced, slint) with no extra wiring — the
+`truce::plugin!` macro already wires `P::Params` through to the
+screenshot path.
 
 ## How it works
 
-1. The backend's `render_to_pixels` runs your GUI headlessly (no
-   window needed) and returns RGBA bytes plus physical dimensions.
-2. `assert_screenshot` writes the current render to
+1. `truce_test::screenshot::<Plugin>` creates the plugin, calls
+   `Editor::screenshot()`, and gets back `(pixels, width, height)`.
+2. The current render is always written to
    `<workspace>/target/screenshots/<name>.png` — gitignored, so it
    never accidentally gets committed.
 3. The committed reference is loaded from
@@ -37,110 +42,6 @@ truce_test::assert_screenshot(name, &pixels, w, h, max_diff, "snapshots");
 
 References are saved at 2× resolution with 144 DPI metadata so they
 look correct on GitHub and in image viewers.
-
-## Adding a screenshot test
-
-Pick the backend matching your editor and use its `render_to_pixels`.
-The `truce_test::assert_screenshot` call is identical in every case.
-
-### Built-in GUI
-
-```rust
-#[test]
-fn gui_screenshot() {
-    let params = Arc::new(MyParams::new());
-    let plugin = MyPlugin::new(Arc::clone(&params));
-    let layout = plugin.layout();
-    let (pixels, w, h) = truce_gpu::screenshot::render_to_pixels(params, layout);
-    truce_test::assert_screenshot(
-        "my_plugin_default", &pixels, w, h,
-        0,             // max pixel differences (0 = exact match)
-        "snapshots",   // workspace-relative dir for committed PNGs
-    );
-}
-```
-
-### egui
-
-```rust
-#[test]
-fn gui_screenshot() {
-    let (pixels, w, h) = truce_egui::screenshot::render_to_pixels::<MyParams>(
-        WINDOW_W, WINDOW_H,   // use the same constants as your editor
-        2.0,                   // scale (2.0 for Retina)
-        Some(truce_font::JETBRAINS_MONO),
-        |ctx, state| my_ui(ctx, state),
-    );
-    truce_test::assert_screenshot(
-        "my_plugin_egui_default", &pixels, w, h, 0, "snapshots",
-    );
-}
-```
-
-### Iced
-
-```rust
-#[test]
-fn gui_screenshot_iced() {
-    let params = Arc::new(MyParams::new());
-    let (pixels, w, h) = truce_iced::screenshot::render_to_pixels::<MyParams, MyEditor>(
-        params,
-        (WINDOW_W, WINDOW_H),
-        2.0,
-        Some(("JetBrains Mono", truce_font::JETBRAINS_MONO)),
-    );
-    truce_test::assert_screenshot(
-        "my_plugin_iced_default", &pixels, w, h, 0, "snapshots",
-    );
-}
-```
-
-### Slint
-
-```rust
-#[test]
-fn gui_screenshot() {
-    let (pixels, w, h) = truce_slint::screenshot::render_to_pixels::<MyParams>(
-        WINDOW_W, WINDOW_H,
-        2.0,
-        |state| {
-            let ui = MyPluginUi::new().unwrap();
-            truce_slint::bind! { state, ui,
-                P::Gain => gain,
-            }
-        },
-    );
-    truce_test::assert_screenshot(
-        "my_plugin_slint_default", &pixels, w, h, 0, "snapshots",
-    );
-}
-```
-
-Slint uses a software renderer — no GPU needed. This makes Slint
-screenshots fast and reproducible across machines (font hinting still
-varies per-OS, see [Cross-OS behavior](#cross-os-behavior)).
-
-## Keeping editor and screenshot sizes in sync
-
-Define your window dimensions as constants and use them in both the
-editor and the screenshot test. This prevents them from drifting
-apart:
-
-```rust
-const WINDOW_W: u32 = 176;
-const WINDOW_H: u32 = 290;
-
-// In custom_editor():
-EguiEditor::new((WINDOW_W, WINDOW_H), my_ui)
-
-// In the test:
-let (pixels, w, h) = truce_egui::screenshot::render_to_pixels::<MyParams>(
-    WINDOW_W, WINDOW_H, 2.0, None, |ctx, state| my_ui(ctx, state),
-);
-truce_test::assert_screenshot(
-    "my_plugin_default", &pixels, w, h, 0, "snapshots",
-);
-```
 
 ## Promoting a new or changed render
 
@@ -173,11 +74,11 @@ git add snapshots/
 
 ## Tolerance
 
-`assert_screenshot`'s `max_diff_pixels` argument is the number of
-RGBA bytes that may differ before the test fails. `0` is exact-match
-(used by every truce example). Bump it to a small number like
-`100`–`500` if anti-aliasing or font hinting introduces flake on
-your reference platform.
+`truce_test::screenshot` compares with a tolerance of `0` (exact
+match). If anti-aliasing or font hinting introduces flake on your
+reference platform, drop down to calling `editor.screenshot(params)`
+directly and pass the pixels to `assert_screenshot` with a non-zero
+`max_diff_pixels` — see [Comparator](#comparator) below.
 
 When a test fails, the current render is at
 `target/screenshots/<name>.png` and the reference is at
@@ -240,102 +141,63 @@ permanently red on those platforms.
 
 ## API reference
 
-### Comparator (one for everyone)
+### Unified helper
+
+```rust
+pub fn truce_test::screenshot<P: PluginExport>(
+    name: &str,            // file-stem; ends up at <reference_dir>/<name>.png
+    reference_dir: &str,   // workspace-relative dir for committed PNGs
+)
+```
+
+Instantiates the plugin, asks its editor for a headless render via
+`Editor::screenshot(Arc<dyn Params>)`, then delegates to
+`assert_screenshot` with `max_diff_pixels = 0`. The synthetic
+`Arc<dyn Params>` is built from `<P::Params as Params>::new()` (defaults).
+
+### Comparator
 
 ```rust
 pub fn truce_test::assert_screenshot(
     name: &str,            // file-stem; ends up at <reference_dir>/<name>.png
     pixels: &[u8],         // RGBA8, row-major, width*height*4 bytes
     width: u32,            // physical width (already scale-multiplied)
-    height: u32,            // physical height
+    height: u32,           // physical height
     max_diff_pixels: usize, // RGBA bytes allowed to differ; 0 = exact
     reference_dir: &str,   // workspace-relative dir for committed PNGs
 )
 ```
 
-Always writes the current render to
+Use this directly if you need a non-zero tolerance: capture pixels
+from `editor.screenshot(params)` yourself, then call `assert_screenshot`
+with your chosen `max_diff_pixels`. Always writes the current render to
 `<workspace>/target/screenshots/<name>.png`. Loads the committed
 reference from `<workspace>/<reference_dir>/<name>.png`. Missing
-reference logs a `cp` promote hint and passes; present reference
-fails on diff > `max_diff_pixels` (reference platform only).
+reference logs a `cp` promote hint and passes; present reference fails
+on diff > `max_diff_pixels` (reference platform only).
 
-### Renderers (one per backend)
-
-All four return `(Vec<u8>, u32, u32)` — RGBA8 bytes plus physical
-width and height — feedable directly into `assert_screenshot`.
-
-#### Built-in widgets — `truce_gpu`
+### Editor trait method
 
 ```rust
-pub fn truce_gpu::screenshot::render_to_pixels<P: Params + 'static>(
-    params: Arc<P>,
-    layout: GridLayout,
-) -> (Vec<u8>, u32, u32)
+fn screenshot(
+    &mut self,
+    params: Arc<dyn truce_params::Params>,
+) -> Option<(Vec<u8>, u32, u32)>;
 ```
 
-Reads `params` for default values via `P::default_for_gui()`.
-Renders the `GridLayout` headlessly through `truce-gpu`'s wgpu
-pipeline at the layout's intrinsic 2× scale (matches Retina).
-
-#### egui — `truce_egui`
-
-```rust
-pub fn truce_egui::screenshot::render_to_pixels<P: truce_params::Params + 'static>(
-    width: u32,                                          // logical points
-    height: u32,                                         // logical points
-    pixels_per_point: f32,                               // scale factor (2.0 for Retina)
-    font: Option<&'static [u8]>,                         // optional TTF bytes (e.g. truce_font::JETBRAINS_MONO)
-    ui_fn: impl Fn(&egui::Context, &ParamState),         // your egui ui closure
-) -> (Vec<u8>, u32, u32)
-```
-
-`ParamState` is seeded from `P::default_for_gui()` and a synthetic
-"playing" transport (see `TransportInfo::for_screenshot`) so
-transport-aware widgets render a populated readout. Output is at
-physical resolution `width * pixels_per_point` × `height * pixels_per_point`.
-
-#### Iced — `truce_iced`
-
-```rust
-pub fn truce_iced::screenshot::render_to_pixels<P, M>(
-    params: Arc<P>,
-    size: (u32, u32),                                    // (logical_w, logical_h)
-    scale: f64,                                          // 2.0 for Retina
-    font: Option<(&'static str, &'static [u8])>,         // (family_name, TTF bytes)
-) -> (Vec<u8>, u32, u32)
-where
-    P: Params + 'static,
-    M: IcedPlugin<P>,
-```
-
-`M` is your `IcedPlugin` editor type — same one you pass to
-`IcedEditor`. `font` is `(family_name, ttf_bytes)` because iced
-indexes fonts by family name.
-
-#### Slint — `truce_slint`
-
-```rust
-pub fn truce_slint::screenshot::render_to_pixels<P: truce_params::Params + 'static>(
-    width: u32,                                                       // logical points
-    height: u32,                                                      // logical points
-    scale: f32,                                                       // DPI scale factor
-    setup: impl FnOnce(ParamState) -> Box<dyn Fn(&ParamState)>,       // same setup closure as SlintEditor::new
-) -> (Vec<u8>, u32, u32)
-```
-
-The `setup` closure builds the slint `.slint` component, wires
-parameter callbacks, and returns a sync function. Identical to the
-closure passed to `SlintEditor::new` — usually a one-liner if you
-factor your slint setup into a free function.
+Built-in backends (`truce-gpu`, `truce-egui`, `truce-iced`,
+`truce-slint`) all implement this. Custom editor implementations only
+need to override it if they want to be testable through the unified
+helper.
 
 ---
 
 ## Texture format gotchas
 
 `assert_screenshot` always reads RGBA8 bytes; each backend's
-`render_to_pixels` is responsible for converting from its native
-format into that shape. Each backend already does this — the table
-below is for debugging color mismatches if you're hand-rolling a
+`Editor::screenshot()` impl is responsible for converting from its
+native format into that shape. Each backend already does this — the
+table below is for debugging color mismatches if you're hand-rolling a
 renderer.
 
 | Backend | Live format | Screenshot bytes returned |

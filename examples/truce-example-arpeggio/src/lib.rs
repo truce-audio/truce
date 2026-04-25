@@ -325,11 +325,7 @@ mod tests {
 
     #[test]
     fn gui_screenshot() {
-        let params = Arc::new(ArpParams::new());
-        let arp = Arpeggio::new(Arc::clone(&params));
-        let layout = arp.layout();
-        let (pixels, w, h) = truce_gpu::screenshot::render_to_pixels(params, layout);
-        truce_test::assert_screenshot("arpeggio_default", &pixels, w, h, 0, "examples/screenshots");
+        truce_test::screenshot::<Plugin>("arpeggio_default", "examples/screenshots");
     }
 
     /// Regression guard for the 2026-04-23 LV2 MIDI bug: the

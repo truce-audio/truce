@@ -169,18 +169,7 @@ mod tests {
 
     #[test]
     fn gui_screenshot() {
-        let params = Arc::new(TransposeParams::new());
-        let transpose = Transpose::new(Arc::clone(&params));
-        let layout = transpose.layout();
-        let (pixels, w, h) = truce_gpu::screenshot::render_to_pixels(params, layout);
-        truce_test::assert_screenshot(
-            "transpose_default",
-            &pixels,
-            w,
-            h,
-            0,
-            "examples/screenshots",
-        );
+        truce_test::screenshot::<Plugin>("transpose_default", "examples/screenshots");
     }
 
     /// Regression guard: see `arpeggio/src/lib.rs::tests::category_is_note_effect`.

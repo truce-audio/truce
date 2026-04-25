@@ -1,32 +1,26 @@
 //! Headless egui screenshot rendering for tests.
 //!
-//! Renders an egui UI to an offscreen wgpu texture and returns RGBA pixels,
-//! or compares them against a reference PNG.
+//! Renders an egui UI to an offscreen wgpu texture and returns RGBA pixels.
+//! Driven by `EguiEditor::screenshot()` (`Editor` trait impl in
+//! `editor.rs`), which is itself called from
+//! `truce_test::screenshot::<Plugin>(...)`.
 
 use crate::ParamState;
-use std::sync::Arc;
 
-/// Render an egui UI function to RGBA pixels using headless wgpu.
-///
-/// `width` and `height` are in logical points. Returns `(pixels,
-/// physical_w, physical_h)` where the pixel buffer is row-major
-/// `physical_w * physical_h` RGBA8 (sRGB).
-///
-/// Uses `P::default_for_gui()` to provide accurate parameter values
-/// and formatting in the screenshot. Pair with
-/// [`truce_test::assert_screenshot`] to compare against a committed
-/// reference PNG.
-pub fn render_to_pixels<P: truce_params::Params + 'static>(
-    width: u32,
-    height: u32,
+/// Headless render path shared by `EguiEditor::screenshot()` and any
+/// future ad-hoc callers in this crate. Kept `pub(crate)` — external
+/// callers should go through the `Editor::screenshot()` trait.
+pub(crate) fn render_with_state(
+    state: &ParamState,
+    size: (u32, u32),
     pixels_per_point: f32,
     font: Option<&'static [u8]>,
+    visuals: Option<egui::Visuals>,
     ui_fn: impl Fn(&egui::Context, &ParamState),
 ) -> (Vec<u8>, u32, u32) {
-    let params = Arc::new(P::default_for_gui());
-    let state = ParamState::from_params(params);
+    let (width, height) = size;
     let ctx = egui::Context::default();
-    ctx.set_visuals(crate::theme::dark());
+    ctx.set_visuals(visuals.unwrap_or_else(crate::theme::dark));
 
     if let Some(font_data) = font {
         crate::font::apply_font(&ctx, font_data);
@@ -49,7 +43,7 @@ pub fn render_to_pixels<P: truce_params::Params + 'static>(
         .native_pixels_per_point = Some(pixels_per_point);
 
     let output = ctx.run(raw_input, |ctx| {
-        ui_fn(ctx, &state);
+        ui_fn(ctx, state);
     });
 
     let clipped_primitives = ctx.tessellate(output.shapes, output.pixels_per_point);

@@ -144,33 +144,29 @@ of the backends.
 ## Screenshot tests
 
 Catch visual regressions by rendering your GUI headlessly and
-diffing the result against a committed reference PNG. Same shape
-across all four backends — render to RGBA pixels, then compare:
+diffing the result against a committed reference PNG. One line
+across every backend:
 
 ```rust
 #[test]
 fn gui_screenshot() {
-    let params = Arc::new(MyParams::new());
-    let plugin = MyPlugin::new(Arc::clone(&params));
-    let layout = plugin.layout();
-    let (pixels, w, h) = truce_gpu::screenshot::render_to_pixels(params, layout);
-    truce_test::assert_screenshot(
-        "my_plugin_default", &pixels, w, h, 0, "snapshots",
-    );
+    truce_test::screenshot::<Plugin>("my_plugin_default", "snapshots");
 }
 ```
 
-Swap `truce_gpu::screenshot::render_to_pixels` for the matching
-helper in `truce_egui`, `truce_iced`, or `truce_slint` and the
-shape stays identical. The current render always lands in
-`target/screenshots/` (gitignored); the comparator loads the
-committed reference from the directory you pass in (`"snapshots"`
-above) and prints a `cp`-based promote hint when the reference
-doesn't exist yet.
+`truce_test::screenshot` instantiates your plugin, asks the editor
+for a headless render, and compares against
+`<workspace>/<reference_dir>/<name>.png`. The current render always
+lands in `target/screenshots/` (gitignored); when the reference
+doesn't exist yet, the test passes and prints a `cp`-based promote
+hint. Works for every built-in backend (built-in GUI, egui, iced,
+slint) — the `truce::plugin!` macro carries the params type through
+to the screenshot path automatically.
 
 See [gui/screenshot-testing.md](../gui/screenshot-testing.md) for
 the full flow — promoting new references, cross-OS behavior, the
-`TRUCE_SCREENSHOT_REFERENCE_OS` override, and per-backend examples.
+`TRUCE_SCREENSHOT_REFERENCE_OS` override, and lower-level APIs for
+custom tolerance / hand-rolled renderers.
 
 ## What's next
 

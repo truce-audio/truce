@@ -33,7 +33,7 @@ pub mod font;
 pub mod param_message;
 pub mod param_state;
 pub mod platform;
-pub mod screenshot;
+mod screenshot;
 pub mod theme;
 pub mod widgets;
 

@@ -220,17 +220,13 @@ parameters sync automatically every frame.
 ```rust
 #[test]
 fn gui_screenshot() {
-    truce_egui::screenshot::assert_snapshot(
-        "snapshots", "my_plugin_default",
-        WINDOW_W, WINDOW_H, 2.0, 0,
-        Some(truce_gui::font::JETBRAINS_MONO),
-        |ctx, state| my_ui(ctx, state),
-    );
+    truce_test::screenshot::<Plugin>("my_plugin_default", "snapshots");
 }
 ```
 
-Use the same `WINDOW_W` / `WINDOW_H` constants as your editor.
-See [screenshot testing](screenshot-testing.md) for more.
+No extra wiring — the `truce::plugin!` macro carries `MyParams` to the
+screenshot path automatically. See
+[screenshot testing](screenshot-testing.md) for more.
 
 ## Example
 

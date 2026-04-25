@@ -104,9 +104,11 @@ pub trait Params: Send + Sync + 'static {
     /// Restore parameter values from a list of (id, value) pairs.
     fn restore_values(&self, values: &[(u32, f64)]);
 
-    /// Create a default instance for GUI parameter display.
-    /// The GUI reads values via atomic reads from this instance.
-    fn default_for_gui() -> Self
+    /// Construct a fresh instance with default parameter values.
+    /// Mirrors the inherent `MyParams::new()` that `#[derive(Params)]`
+    /// emits, exposed on the trait so generic code (snapshot helpers,
+    /// etc.) can call it on `P: Params`.
+    fn new() -> Self
     where
         Self: Sized;
 }

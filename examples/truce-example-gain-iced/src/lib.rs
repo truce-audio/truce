@@ -157,7 +157,7 @@ impl PluginLogic for GainIced {
     fn custom_editor(&self) -> Option<Box<dyn Editor>> {
         Some(Box::new(
             IcedEditor::<GainParams, GainUi>::new(
-                Arc::new(GainParams::default_for_gui()),
+                Arc::new(GainParams::new()),
                 (WINDOW_W, WINDOW_H),
             )
             .with_meter_ids(vec![P::MeterLeft, P::MeterRight])
@@ -198,21 +198,7 @@ mod tests {
     }
 
     #[test]
-    fn gui_screenshot_iced() {
-        let params = Arc::new(GainParams::new());
-        let (pixels, w, h) = truce_iced::screenshot::render_to_pixels::<GainParams, GainUi>(
-            params,
-            (WINDOW_W, WINDOW_H),
-            2.0,
-            Some(("JetBrains Mono", font::JETBRAINS_MONO)),
-        );
-        truce_test::assert_screenshot(
-            "gain_iced_default",
-            &pixels,
-            w,
-            h,
-            0,
-            "examples/screenshots",
-        );
+    fn gui_screenshot() {
+        truce_test::screenshot::<Plugin>("gain_iced_default", "examples/screenshots");
     }
 }

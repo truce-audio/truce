@@ -886,7 +886,7 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
                 }
             }
 
-            fn default_for_gui() -> Self
+            fn new() -> Self
             where
                 Self: Sized,
             {

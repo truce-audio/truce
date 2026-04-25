@@ -9,7 +9,6 @@
 mod backend;
 pub mod editor;
 pub mod platform;
-pub mod screenshot;
 
 pub use backend::WgpuBackend;
 pub use editor::GpuEditor;

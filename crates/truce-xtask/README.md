@@ -21,7 +21,7 @@ CLAP / VST2 single-file installs via Inno Setup `Check:` predicates.
 | `build` | Same build + sign pipeline as `install`, but writes signed bundles to `target/bundles/` without touching system paths. |
 | `package` | Produce a distributable installer: `.pkg` + notarization on macOS, Inno Setup `.exe` + Authenticode + PACE wraptool for AAX on Windows. |
 | `run` | Build a plugin's `--features standalone` binary, stage it into `target/bundles/{Name}.standalone`, and launch. |
-| `test` | Run per-plugin integration tests (render, state round-trip, GUI snapshot, bus config). |
+| `test` | Run per-plugin integration tests (render, state round-trip, GUI screenshot, bus config). |
 | `status` | Show installed plugin versions and bundle paths. |
 | `validate` | Run `auval` (AU v2 + v3), `pluginval` (VST3), `clap-validator` (CLAP). Skips any tool that isn't on `PATH`. |
 | `remove` | Uninstall a specific plugin from every format's install directory. |

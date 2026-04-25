@@ -1,6 +1,6 @@
 # truce — Project Status
 
-Updated 2026-04-25. Version 0.10.1.
+Updated 2026-04-25. Version 0.11.1.
 
 ## Summary
 
@@ -177,7 +177,7 @@ truce-shim-types  — ABI-stable types shared with C/C++ shims
 truce-standalone  — standalone host (cpal audio)
 truce-xtask       — build/bundle/install/package library (powers cargo truce)
 truce-build       — build.rs helper
-truce-test        — test utilities + unified GUI snapshot tests (CPU + iced)
+truce-test        — test utilities + unified GUI screenshot tests (CPU + iced)
 cargo-truce       — scaffolding + build/install/package CLI (cargo truce new)
 ```
 

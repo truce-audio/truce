@@ -66,9 +66,9 @@ unsafe impl Send for SlintEditor {}
 impl SlintEditor {
     /// Create a Slint editor.
     ///
-    /// `size` is the window size in logical points.
-    /// `setup` is called on the UI thread each time the editor opens.
-    /// It must create a fresh Slint component and return a per-frame sync closure.
+    /// `size` is the window size in logical points. `setup` is called
+    /// on the UI thread each time the editor opens. It must create a
+    /// fresh Slint component and return a per-frame sync closure.
     pub fn new(
         size: (u32, u32),
         setup: impl Fn(ParamState) -> Box<dyn Fn(&ParamState)> + Send + Sync + 'static,
@@ -383,5 +383,19 @@ impl Editor for SlintEditor {
 
     fn idle(&mut self) {
         // baseview drives its own frame loop.
+    }
+
+    fn screenshot(
+        &mut self,
+        params: Arc<dyn truce_params::Params>,
+    ) -> Option<(Vec<u8>, u32, u32)> {
+        let state = ParamState::from_params(params);
+        let setup = Arc::clone(&self.setup);
+        Some(crate::screenshot::render_with_state(
+            &state,
+            self.size,
+            2.0,
+            move |s| setup(s.clone()),
+        ))
     }
 }

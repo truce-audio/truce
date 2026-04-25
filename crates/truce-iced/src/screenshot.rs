@@ -22,7 +22,10 @@ use truce_core::editor::EditorContext;
 /// Creates a headless wgpu device (no window/surface needed), builds the
 /// iced program state, renders one frame to an offscreen texture, and
 /// reads back the pixels.
-pub fn render_to_pixels<P, M>(
+///
+/// Used internally by `IcedEditor::screenshot()` — external callers go
+/// through `truce_test::screenshot::<Plugin>(...)`.
+pub(crate) fn render_to_pixels<P, M>(
     params: Arc<P>,
     size: (u32, u32),
     scale: f64,

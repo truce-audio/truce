@@ -93,13 +93,13 @@ impl ParamState {
     }
 
     /// Create a ParamState backed by real parameter defaults.
-    /// Uses `P::default_for_gui()` to provide accurate formatting and
+    /// Uses `P::new()` to provide accurate formatting and
     /// values, and seeds the transport closure with
     /// [`TransportInfo::for_screenshot`] so transport-aware widgets
     /// render a populated readout. This is a snapshot-only constructor
     /// — production code paths build their own `EditorContext` from
     /// the host's actual transport slot.
-    pub fn from_params<P: truce_params::Params + 'static>(params: Arc<P>) -> Self {
+    pub fn from_params(params: Arc<dyn truce_params::Params>) -> Self {
         let p1 = params.clone();
         let p2 = params.clone();
         let p3 = params.clone();

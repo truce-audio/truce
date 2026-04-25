@@ -235,21 +235,14 @@ parameter values sync automatically through `ParamState`.
 
 ```rust
 #[test]
-fn gui_screenshot_iced() {
-    let params = Arc::new(MyParams::new());
-    let (pixels, w, h) = truce_iced::screenshot::render_to_pixels::<MyParams, MyEditor>(
-        params,
-        (WINDOW_W, WINDOW_H),
-        2.0,
-        Some(("JetBrains Mono", truce_font::JETBRAINS_MONO)),
-    );
-    truce_test::assert_screenshot(
-        "my_plugin_iced_default", &pixels, w, h, 0, "snapshots",
-    );
+fn gui_screenshot() {
+    truce_test::screenshot::<Plugin>("my_plugin_iced_default", "snapshots");
 }
 ```
 
-See [screenshot testing](screenshot-testing.md) for more.
+No extra wiring — the `truce::plugin!` macro carries `MyParams` to the
+screenshot path automatically. See
+[screenshot testing](screenshot-testing.md) for more.
 
 ## Example
 

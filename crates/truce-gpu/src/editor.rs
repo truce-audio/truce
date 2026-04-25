@@ -213,4 +213,28 @@ impl<P: Params + 'static> Editor for GpuEditor<P> {
             inner.state_changed();
         }
     }
+
+    fn screenshot(
+        &mut self,
+        _params: Arc<dyn truce_params::Params>,
+    ) -> Option<(Vec<u8>, u32, u32)> {
+        // Headless render of the inner BuiltinEditor at 2× scale.
+        // Drives the same code path as production (`render_to` →
+        // wgpu RenderBackend), just with a `WgpuBackend::headless`
+        // target instead of a window-bound one. Used by
+        // `truce_test::screenshot::<P>()`.
+        //
+        // The inner BuiltinEditor was already built against the
+        // plugin's `Arc<P>` (which is defaults for a fresh plugin),
+        // so the `params` arg is unused.
+        let mut inner = self.inner.lock().ok()?;
+        let (lw, lh) = inner.size();
+        let scale = 2.0_f32;
+        let mut backend = WgpuBackend::headless(lw, lh, scale)?;
+        inner.render_to(&mut backend);
+        let pixels = backend.read_pixels();
+        let phys_w = (lw as f32 * scale) as u32;
+        let phys_h = (lh as f32 * scale) as u32;
+        Some((pixels, phys_w, phys_h))
+    }
 }

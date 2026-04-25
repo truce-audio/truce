@@ -105,6 +105,31 @@ pub trait Editor: Send {
     /// and will be picked up on the next render — this is only needed for
     /// custom state stored outside the parameter system.
     fn state_changed(&mut self) {}
+
+    /// Render a headless screenshot of the editor at its natural size.
+    ///
+    /// `params` is a type-erased default-state instance the caller
+    /// constructs from the plugin's `Params` type. Backends use it to
+    /// build a synthetic `ParamState` / render context so the
+    /// screenshot reflects parameter defaults without needing a live
+    /// host.
+    ///
+    /// Returns `(rgba_pixels, physical_width, physical_height)` — RGBA8
+    /// row-major, ready to feed into `truce_test::assert_screenshot`.
+    /// Default impl returns `None`; backends that support headless
+    /// capture (built-in widgets, egui, iced, slint) override.
+    ///
+    /// Used by `truce_test::screenshot::<Plugin>(...)` for one-line
+    /// snapshot regression tests. Editors backed by frameworks that
+    /// don't expose a headless render path (e.g. raw-window-handle
+    /// users wiring their own Metal/OpenGL) keep the default `None`.
+    fn screenshot(
+        &mut self,
+        params: Arc<dyn truce_params::Params>,
+    ) -> Option<(Vec<u8>, u32, u32)> {
+        let _ = params;
+        None
+    }
 }
 
 /// Context passed to Editor::open(). Provides communication

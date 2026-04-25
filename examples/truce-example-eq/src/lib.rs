@@ -341,10 +341,6 @@ mod tests {
 
     #[test]
     fn gui_screenshot() {
-        let params = Arc::new(EqParams::new());
-        let eq = Eq::new(Arc::clone(&params));
-        let layout = eq.layout();
-        let (pixels, w, h) = truce_gpu::screenshot::render_to_pixels(params, layout);
-        truce_test::assert_screenshot("eq_default", &pixels, w, h, 0, "examples/screenshots");
+        truce_test::screenshot::<Plugin>("eq_default", "examples/screenshots");
     }
 }

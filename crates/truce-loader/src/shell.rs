@@ -401,6 +401,16 @@ impl<P: Params + 'static> Editor for HotEditor<P> {
             HotEditorInner::Custom { editor } => editor.state_changed(),
         }
     }
+
+    fn screenshot(
+        &mut self,
+        params: Arc<dyn truce_params::Params>,
+    ) -> Option<(Vec<u8>, u32, u32)> {
+        match &mut self.kind {
+            HotEditorInner::Builtin { gpu, .. } => gpu.screenshot(params),
+            HotEditorInner::Custom { editor } => editor.screenshot(params),
+        }
+    }
 }
 
 // `export_hot!` (the two-crate shell macro) was removed 2026-04-25;
