@@ -38,8 +38,11 @@ cargo truce build                # bundle all formats into target/bundles/ witho
 cargo truce build --clap --vst3  # subset of formats
 cargo truce build --dev          # hot-reload shell build (see docs/reference/hot-reload.md)
 
+cargo truce run                  # launch the plugin standalone (no DAW)
+cargo truce run -p my-plugin     # standalone for a specific crate
 cargo truce test                 # run tests
 cargo truce validate             # auval + pluginval + clap-validator
+cargo truce clean                # cargo clean, preserving target/dist/ installers
 ```
 
 Use `cargo truce build` for CI, packaging pipelines, and
@@ -165,6 +168,7 @@ By host (across all supported platforms):
 | [synth](examples/truce-example-synth/) | Instrument | Built-in | <img src="screenshots/synth_default.png" width="300"> |
 | [transpose](examples/truce-example-transpose/) | MIDI | Built-in | <img src="screenshots/transpose_default.png" width="300"> |
 | [arpeggio](examples/truce-example-arpeggio/) | MIDI | Built-in | <img src="screenshots/arpeggio_default.png" width="300"> |
+| [tremolo](examples/truce-example-tremolo/) | Effect | egui | <img src="screenshots/tremolo_default.png" width="300"> |
 | [gain-egui](examples/truce-example-gain-egui/) | Effect | egui | <img src="screenshots/gain_egui_default.png" width="300"> |
 | [gain-iced](examples/truce-example-gain-iced/) | Effect | Iced | <img src="screenshots/gain_iced_default.png" width="300"> |
 | [gain-slint](examples/truce-example-gain-slint/) | Effect | Slint | <img src="screenshots/gain_slint_default.png" width="300"> |
