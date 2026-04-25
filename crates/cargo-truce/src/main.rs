@@ -78,13 +78,17 @@ USAGE:
   cargo truce install [--clap] [--vst3] [--vst2] [--au2] [--au3] [--aax] [-p <name>]
       Build, bundle, sign, and install plugins.
 
-  cargo truce build [--clap] [--vst3] [--vst2] [--lv2] [--au2] [-p <name>] [--dev]
-      Build per-format bundles into target/bundles/ without installing.
-      No format flags → every format in the project's default features.
-      AU v3 and AAX are install-only; use `install` for those.
+  cargo truce build [--clap] [--vst3] [--vst2] [--lv2] [--au2] [--au3]
+                    [--aax] [-p <name>] [--dev]
+      Build signed per-format bundles into target/bundles/ without
+      installing. No format flags → every format in the project's
+      default features.
 
-  cargo truce validate [--auval] [--pluginval]
-      Run plugin validators.
+  cargo truce validate [--auval] [--auval3] [--pluginval] [--clap]
+                       [--all] [-p <name>]
+      Run plugin validators against installed bundles. No flags → run
+      all available (auval, auval3, pluginval, clap-validator);
+      missing tools are skipped with a hint.
 
   cargo truce test
       Run in-process regression tests.
