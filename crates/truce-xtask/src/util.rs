@@ -251,11 +251,26 @@ pub(crate) fn project_root() -> PathBuf {
 }
 
 pub(crate) fn run_sudo(cmd: &str, args: &[&str]) -> crate::Res {
+    announce_sudo_once();
     let status = Command::new("sudo").arg(cmd).args(args).status()?;
     if !status.success() {
         return Err(format!("sudo {cmd} failed with {status}").into());
     }
     Ok(())
+}
+
+/// Print a one-line "why" before the first `sudo` call of the run, so the
+/// user understands the password prompt that's about to appear. No-op on
+/// subsequent calls — sudo's own cred cache covers the rest of the install.
+fn announce_sudo_once() {
+    static ANNOUNCED: std::sync::atomic::AtomicBool =
+        std::sync::atomic::AtomicBool::new(false);
+    if !ANNOUNCED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        eprintln!(
+            "→ Installing to system plugin directories (/Library/Audio/Plug-Ins/, \
+             /Library/Application Support/Avid/) — sudo required."
+        );
+    }
 }
 
 /// Process-global verbose flag. Set at the top of `truce_xtask::run`
@@ -284,18 +299,49 @@ macro_rules! vprintln {
 }
 pub(crate) use vprintln;
 
+/// Per-process collector of install destinations so `cmd_install` can
+/// print a summary at the end (always visible, regardless of verbose).
+/// Each `install_*` function pushes one line per bundle it writes.
+static INSTALLED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// Record an install destination + echo it under `--verbose`. Use from
+/// `install_clap` / `install_vst3` / etc. instead of a bare `vprintln!`.
+pub(crate) fn log_install(line: String) {
+    if is_verbose() {
+        eprintln!("{line}");
+    }
+    if let Ok(mut v) = INSTALLED.lock() {
+        v.push(line);
+    }
+}
+
+/// Drain the install log. Called once by `cmd_install` at the end so the
+/// summary prints exactly once and the static stays empty between calls.
+pub(crate) fn take_installed() -> Vec<String> {
+    INSTALLED
+        .lock()
+        .map(|mut v| std::mem::take(&mut *v))
+        .unwrap_or_default()
+}
+
 /// Run `codesign` with the given args. In quiet mode (default), stderr
 /// is captured and only printed on failure — drops the "replacing
 /// existing signature" noise on every re-sign without losing real
-/// errors. `--verbose` inherits stderr so everything surfaces. Sudo
-/// path always inherits stderr because sudo's password prompt goes
-/// through there.
+/// errors. `--verbose` inherits stderr so everything surfaces.
+///
+/// Safe to redirect stderr even on the sudo path: `sudo` opens
+/// `/dev/tty` for the password prompt, not stderr, so the prompt
+/// stays visible to the user.
 pub(crate) fn run_codesign(args: &[&str], use_sudo: bool) -> crate::Res {
     use std::process::Stdio;
-    if use_sudo {
-        return run_sudo("codesign", args);
-    }
-    let mut cmd = Command::new("codesign");
+    let mut cmd = if use_sudo {
+        announce_sudo_once();
+        let mut c = Command::new("sudo");
+        c.arg("codesign");
+        c
+    } else {
+        Command::new("codesign")
+    };
     cmd.args(args);
     if is_verbose() {
         let status = cmd.status()?;

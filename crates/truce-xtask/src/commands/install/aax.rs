@@ -524,14 +524,21 @@ pub(crate) fn install_aax(_root: &Path, p: &PluginDef, _config: &Config) -> Res 
 /// system plug-ins directory. Expects [`emit_aax_bundle`] to have
 /// been called first.
 #[cfg(any(target_os = "macos", target_os = "windows"))]
-pub(crate) fn install_aax(root: &Path, p: &PluginDef, _config: &Config) -> Res {
+pub(crate) fn install_aax(root: &Path, p: &PluginDef, config: &Config) -> Res {
     let bundle_name = format!("{}.aaxplugin", p.name);
     let built = root.join("target/bundles").join(&bundle_name);
     if !built.exists() {
+        // Distinguish "no SDK configured" (silent skip — already warned
+        // during the build phase) from "SDK ok, just rerun build". Telling
+        // the user to run `cargo truce build --aax` when no SDK is set
+        // would just produce the same skip warning.
+        if resolve_aax_sdk_path(config).is_none() {
+            return Ok(());
+        }
         return Err(format!(
             "AAX bundle missing at {}. Run `cargo truce build --aax -p {}` first.",
             built.display(),
-            p.bundle_id,
+            p.crate_name,
         )
         .into());
     }
@@ -542,7 +549,7 @@ pub(crate) fn install_aax(root: &Path, p: &PluginDef, _config: &Config) -> Res {
         let dst = format!("{aax_dir}/{bundle_name}");
         run_sudo("rm", &["-rf", &dst])?;
         run_sudo("ditto", &[built.to_str().unwrap(), &dst])?;
-        crate::vprintln!("AAX:  {dst}");
+        crate::log_install(format!("AAX:  {dst}"));
     }
 
     #[cfg(target_os = "windows")]
@@ -555,7 +562,7 @@ pub(crate) fn install_aax(root: &Path, p: &PluginDef, _config: &Config) -> Res {
         let dst = aax_dir.join(&bundle_name);
         let _ = fs::remove_dir_all(&dst);
         crate::util::copy_dir_recursive(&built, &dst)?;
-        crate::vprintln!("AAX:  {}", dst.display());
+        crate::log_install(format!("AAX:  {}", dst.display()));
     }
 
     Ok(())
