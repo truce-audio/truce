@@ -513,6 +513,9 @@ unsafe fn fit_win32_parent_to_child(parent: *mut c_void) {
     const SWP_NOACTIVATE: u32 = 0x0010;
     const GW_CHILD: u32 = 5;
 
+    // Windows API names are conventionally all-caps (RECT, HWND, etc.).
+    // Renaming would lose that mapping for a Windows reader.
+    #[allow(clippy::upper_case_acronyms)]
     #[repr(C)]
     struct RECT {
         left: i32,
