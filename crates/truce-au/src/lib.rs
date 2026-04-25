@@ -36,6 +36,25 @@ struct AuInstance<P: PluginExport> {
 }
 
 // ---------------------------------------------------------------------------
+// Intentional leaks
+//
+// Every `CString::into_raw()` and `Vec::leak()` / `param_descs.leak()`
+// in this file feeds a `*const c_char` (or `*const SomeDesc`) into a
+// descriptor that the AU host caches for the process lifetime. Hosts
+// re-read these pointers on demand (display, parameter sweeps,
+// validation) — there's no signal back to Rust saying "you may free
+// this now". Freeing is therefore unsound.
+//
+// The leak is bounded: O(plugin_count × (param_count + a few strings))
+// per process, allocated once at registration time. No leak per audio
+// callback, per render, per editor open. AU bundles get unloaded with
+// the host process, which reclaims the allocation.
+//
+// `Box::into_raw(boxed_instance)` in `cb_create` follows the same
+// pattern but is *paired* with `cb_destroy` reconstituting the Box —
+// so it isn't a leak, just a C-lifetime handoff.
+//
+// ---------------------------------------------------------------------------
 // C callback implementations (generic over P)
 //
 // SAFETY for all unsafe extern "C" fn below:

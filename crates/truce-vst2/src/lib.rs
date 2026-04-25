@@ -87,6 +87,26 @@ impl Vst2TransportSnapshot {
 }
 
 // ---------------------------------------------------------------------------
+// Intentional leaks
+//
+// Every `CString::into_raw()` and the `std::mem::forget(boxed)` for
+// per-param descriptor strings (name / unit / group, plugin name +
+// vendor) hands a `*const c_char` to a `Vst2{Plugin,Param}Descriptor`
+// that the VST2 host caches for the process lifetime. Hosts re-read
+// these pointers on demand (display, parameter dialogs, automation)
+// with no callback to signal "you may free this now". Freeing is
+// therefore unsound.
+//
+// The leak is bounded: O(plugin_count × (param_count + a few strings))
+// per process, allocated once at registration time. No leak per audio
+// callback, per render, per editor open. VST2 dylibs get unloaded with
+// the host process, which reclaims the allocation.
+//
+// `Box::into_raw(boxed_instance)` in `cb_create` follows the same
+// pattern but is *paired* with `cb_destroy` reconstituting the Box —
+// so it isn't a leak, just a C-lifetime handoff.
+//
+// ---------------------------------------------------------------------------
 // C callback implementations
 //
 // SAFETY for all unsafe extern "C" fn below:

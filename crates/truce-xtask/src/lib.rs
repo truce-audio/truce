@@ -170,11 +170,8 @@ Commands:
   run [-p <crate>] [-- <args>]
       Build and run a plugin standalone.
 
-  new <name> [--hot] [--instrument] [--midi]
+  new <name>
       Scaffold a new plugin under ./plugins/<name>/.
-      --hot          Shell/logic split for hot-reload
-      --instrument   Instrument template (no audio input)
-      --midi         MIDI effect template
 
   doctor
       Check development environment and installed plugins.

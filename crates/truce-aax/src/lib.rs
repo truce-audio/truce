@@ -433,6 +433,27 @@ macro_rules! export_aax {
 }
 
 // ---------------------------------------------------------------------------
+// Intentional leaks
+//
+// `CString::into_raw()` on plugin name + vendor (in `register_aax`)
+// and the `std::mem::forget(boxed)` of the static `params: Vec<...>`
+// hand `*const c_char` / `*const TruceAaxParamInfo` slices into the
+// `TruceAaxDescriptor` that Pro Tools (via the AAX template's dlopen
+// of this dylib) caches for the process lifetime. Pro Tools re-reads
+// these pointers on demand (parameter editor, automation panel,
+// preset save) with no callback signalling "you may free this now".
+// Freeing is therefore unsound.
+//
+// The leak is bounded: O(plugin_count × (param_count + a few strings))
+// per process, allocated once at `register_aax`. No leak per audio
+// callback, per render, per editor open. The AAX dylib gets unloaded
+// when Pro Tools exits, which reclaims the allocation.
+//
+// `Box::into_raw(boxed_instance)` in `_create` follows the same
+// pattern but is *paired* with `_destroy` reconstituting the Box —
+// so it isn't a leak, just a C-lifetime handoff.
+//
+// ---------------------------------------------------------------------------
 // Implementation functions (called by the macro-generated exports)
 //
 // SAFETY for all pub unsafe fn below:
