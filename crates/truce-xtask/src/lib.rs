@@ -177,6 +177,12 @@ Commands:
   help
       Show this message.
 
+GLOBAL FLAGS (accepted by every subcommand):
+  -v, --verbose
+      Echo per-format build banners, per-bundle paths, and the full
+      `codesign` chatter. Default output is the Built / Installed /
+      Skipped summary plus one `✓ signed <bundle>` line per codesign.
+
 Configuration is read from truce.toml in the project root.
 Run 'cargo truce new <name>' to scaffold a new project."
     );

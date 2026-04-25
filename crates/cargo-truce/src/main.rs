@@ -104,6 +104,13 @@ USAGE:
 
   cargo truce log
       Stream AU v3 appex logs.
+
+GLOBAL FLAGS (accepted by every subcommand):
+  -v, --verbose
+      Echo per-format build banners, per-bundle paths, and the full
+      `codesign` chatter. Default output is the `Built:` /
+      `Installed:` / `Skipped:` summary plus one `✓ signed <bundle>`
+      line per codesign call.
 "
     );
 }
