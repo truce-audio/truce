@@ -61,14 +61,16 @@ pub(crate) fn emit_au_v3_bundle(
     let dt = &deployment_target();
 
     if team_id.is_empty() {
-        crate::log_skip(
+        // `build_and_install_au_v3` filters this out as a soft skip;
+        // standalone `cargo truce build --au3` reaches this branch and
+        // should fail loudly with a resolution hint.
+        return Err(
             "AU v3: requires a Developer ID signing identity with a team ID. \
              Set [macos.signing].application_identity in truce.toml \
              (e.g., \"Developer ID Application: Your Name (TEAMID)\"). \
              Ad-hoc signing (\"-\") is not supported for AU v3 appex bundles."
-                .to_string(),
+                .into(),
         );
-        return Ok(());
     }
 
     if archs.is_empty() {
@@ -541,6 +543,21 @@ pub(crate) fn build_and_install_au_v3(
     plugins: &[&PluginDef],
     no_build: bool,
 ) -> Res {
+    // Single skip gate. If we don't have a real Developer ID, don't
+    // build *or* install — otherwise install_au_v3 would happily copy
+    // a stale signed bundle from a previous run and produce a misleading
+    // "succeeded" line in the install summary.
+    let sign_id = config.macos.application_identity();
+    if extract_team_id(sign_id).is_empty() {
+        crate::log_skip(
+            "AU v3: requires a Developer ID signing identity with a team ID. \
+             Set [macos.signing].application_identity in truce.toml \
+             (e.g., \"Developer ID Application: Your Name (TEAMID)\"). \
+             Ad-hoc signing (\"-\") is not supported for AU v3 appex bundles."
+                .to_string(),
+        );
+        return Ok(());
+    }
     if !no_build {
         // `cargo truce install` only needs the host arch — universal
         // builds are reserved for the packaging path.

@@ -404,14 +404,13 @@ fn ensure_template(
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub(crate) fn emit_aax_bundle(
     _root: &Path,
-    p: &PluginDef,
+    _p: &PluginDef,
     _config: &Config,
     _universal_mac: bool,
 ) -> Res {
-    crate::log_skip(format!(
-        "AAX: not supported on this platform, skipped {}",
-        p.name
-    ));
+    crate::log_skip(
+        "AAX: not supported on this platform. Use macOS or Windows to build AAX.".to_string(),
+    );
     Ok(())
 }
 
@@ -430,9 +429,11 @@ pub(crate) fn emit_aax_bundle(
     let dylib = release_lib(root, &format!("{}_aax", p.dylib_stem()));
     if !dylib.exists() {
         crate::log_skip(format!(
-            "AAX: {} not found, skipped {}",
+            "AAX: build artifact missing for {} at {}. \
+             Re-run `cargo truce build --aax -p {}`.",
+            p.name,
             dylib.display(),
-            p.name
+            p.crate_name,
         ));
         return Ok(());
     }
@@ -521,11 +522,10 @@ pub(crate) fn emit_aax_bundle(
 
 // AAX is only supported on macOS and Windows.
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-pub(crate) fn install_aax(_root: &Path, p: &PluginDef, _config: &Config) -> Res {
-    crate::log_skip(format!(
-        "AAX: not supported on this platform, skipped {}",
-        p.name
-    ));
+pub(crate) fn install_aax(_root: &Path, _p: &PluginDef, _config: &Config) -> Res {
+    crate::log_skip(
+        "AAX: not supported on this platform. Use macOS or Windows to install AAX.".to_string(),
+    );
     Ok(())
 }
 
@@ -537,16 +537,16 @@ pub(crate) fn install_aax(root: &Path, p: &PluginDef, config: &Config) -> Res {
     let bundle_name = format!("{}.aaxplugin", p.name);
     let built = root.join("target/bundles").join(&bundle_name);
     if !built.exists() {
-        // Distinguish "no SDK configured" (already noted in the skipped
-        // summary by the build-phase ensure_template call) from "SDK ok,
-        // just rerun build". Telling the user to run `cargo truce build
-        // --aax` when no SDK is set would just produce the same skip.
+        // Distinguish "no SDK configured" (the build-phase ensure_template
+        // call already pushed one global "set [...].aax_sdk_path" entry to
+        // the skip log; nothing useful to add per-plugin) from "SDK ok,
+        // just rerun build" (genuine state mismatch — point at the build).
         if resolve_aax_sdk_path(config).is_none() {
-            crate::log_skip(format!("AAX: SDK not configured, skipped {}", p.name));
             return Ok(());
         }
         return Err(format!(
-            "AAX bundle missing at {}. Run `cargo truce build --aax -p {}` first.",
+            "AAX: bundle missing for {} at {}. Run `cargo truce build --aax -p {}` to produce it.",
+            p.name,
             built.display(),
             p.crate_name,
         )

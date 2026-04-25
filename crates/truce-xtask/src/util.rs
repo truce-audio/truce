@@ -330,12 +330,18 @@ pub(crate) fn take_installed() -> Vec<String> {
 /// `cmd_install` so the user sees what didn't make it.
 static SKIPPED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
 
+/// Append a soft-skip reason. Duplicates (exact-string match) collapse
+/// to a single entry — emitted via the per-plugin `emit_*_bundle` loop,
+/// the same global "no SDK / no signing identity" hint would otherwise
+/// repeat once per plugin.
 pub(crate) fn log_skip(line: String) {
     if is_verbose() {
         eprintln!("{line}");
     }
     if let Ok(mut v) = SKIPPED.lock() {
-        v.push(line);
+        if !v.iter().any(|existing| existing == &line) {
+            v.push(line);
+        }
     }
 }
 
