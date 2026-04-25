@@ -638,7 +638,7 @@ fn vst3_cid(id: &str) -> [u8; 16] {
     let mut hash: u128 = 0xcbf29ce484222325_u128 | ((0x100000001b3_u128) << 64);
     for byte in id.bytes() {
         hash ^= byte as u128;
-        hash = hash.wrapping_mul(0x01000000_01b3_0000_0000_0000_0001_00B3_u128);
+        hash = hash.wrapping_mul(0x0100_0000_01b3_0000_0000_0000_0001_00b3_u128);
     }
     hash.to_le_bytes()
 }

@@ -157,7 +157,7 @@ impl PluginLogic for Tremolo {
         let mut free_phase = self.free_phase;
 
         for i in 0..buffer.num_samples() {
-            let depth = self.params.depth.smoothed_next() as f32;
+            let depth = self.params.depth.smoothed_next();
             let phase = if host_sync { host_phase } else { free_phase };
             let lfo = shape.at(phase); // in [0, 1]
             let gain = 1.0 - depth * (1.0 - lfo);

@@ -238,7 +238,7 @@ impl<T: State> Default for StateBinding<T> {
     fn default() -> Self {
         Self {
             cached: T::default(),
-            get_state: std::sync::Arc::new(|| Vec::new()),
+            get_state: std::sync::Arc::new(Vec::new),
             set_state: std::sync::Arc::new(|_| {}),
         }
     }
@@ -256,12 +256,12 @@ mod tests {
     fn primitives_round_trip() {
         let mut buf = Vec::new();
         42u32.write_field(&mut buf);
-        3.14f64.write_field(&mut buf);
+        2.5f64.write_field(&mut buf);
         true.write_field(&mut buf);
 
         let mut cursor = StateCursor::new(&buf);
         assert_eq!(u32::read_field(&mut cursor), Some(42));
-        assert_eq!(f64::read_field(&mut cursor), Some(3.14));
+        assert_eq!(f64::read_field(&mut cursor), Some(2.5));
         assert_eq!(bool::read_field(&mut cursor), Some(true));
     }
 

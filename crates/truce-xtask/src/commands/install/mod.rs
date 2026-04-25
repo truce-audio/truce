@@ -546,7 +546,7 @@ fn install_vst2(root: &Path, p: &PluginDef, config: &Config) -> Res {
 /// constraint on the extension, but the Windows loader only accepts
 /// `.dll`), then `LoadLibrary`/`dlopen`s it to call the plugin's
 /// `__truce_lv2_emit_bundle` entry point, which writes `manifest.ttl`
-/// + `plugin.ttl` describing ports, parameters, and the UI type
+/// and `plugin.ttl` describing ports, parameters, and the UI type
 /// appropriate for the host platform.
 ///
 /// Bundle and binary filenames are slugged to lowercase ASCII with hyphens

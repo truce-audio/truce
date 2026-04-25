@@ -458,6 +458,7 @@ unsafe impl Send for DescriptorHolder {}
 unsafe impl Sync for DescriptorHolder {}
 
 impl DescriptorHolder {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         info: &PluginInfo,
         instantiate: InstantiateFn,

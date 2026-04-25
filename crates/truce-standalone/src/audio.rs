@@ -278,6 +278,7 @@ impl BufferSizeMax for cpal::StreamConfig {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn audio_callback<P: PluginExport>(
     data: &mut [f32],
     channels: usize,

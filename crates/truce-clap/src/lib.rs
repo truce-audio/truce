@@ -3,6 +3,13 @@
 //! Provides the [`export_clap!`] macro to expose any
 //! `PluginExport` implementation as a CLAP plugin.
 
+// Several `extern "C" fn`s in the CLAP vtable carry a `<P: PluginExport>`
+// type parameter even though they don't use `P`. The vtable is built per-`P`
+// inside the `export_clap!` macro and uniformity across the table simplifies
+// the macro; removing `P` from individual entries would make the macro
+// branch on which functions are generic.
+#![allow(clippy::extra_unused_type_parameters)]
+
 #[doc(hidden)]
 pub mod __macro_deps {
     pub use truce_core;
@@ -337,11 +344,11 @@ unsafe extern "C" fn clap_plugin_on_main_thread<P: PluginExport>(plugin: *const 
     if data
         .needs_rescan
         .swap(false, std::sync::atomic::Ordering::Relaxed)
+        && !data.host_params.is_null()
+        && !data.host.is_null()
     {
-        if !data.host_params.is_null() && !data.host.is_null() {
-            if let Some(rescan) = (*data.host_params).rescan {
-                rescan(data.host, CLAP_PARAM_RESCAN_VALUES);
-            }
+        if let Some(rescan) = (*data.host_params).rescan {
+            rescan(data.host, CLAP_PARAM_RESCAN_VALUES);
         }
     }
 }
@@ -1076,15 +1083,11 @@ fn make_audio_ports_extension<P: PluginExport>() -> clap_plugin_audio_ports {
 
 unsafe extern "C" fn note_ports_count<P: PluginExport>(
     _plugin: *const clap_plugin,
-    is_input: bool,
+    _is_input: bool,
 ) -> u32 {
     // All plugins declare 1 input + 1 output note port.
     // Effects that don't use MIDI simply ignore the events.
-    if is_input {
-        1
-    } else {
-        1
-    }
+    1
 }
 
 unsafe extern "C" fn note_ports_get<P: PluginExport>(
@@ -1313,8 +1316,10 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
             f(host.as_ptr());
         }
     };
-    let request_flush2 = request_flush.clone();
-    let request_flush3 = request_flush.clone();
+    // `request_flush` is a `move ||` over only `Copy` captures, so the closure
+    // itself is `Copy` and we re-bind rather than `.clone()`.
+    let request_flush2 = request_flush;
+    let request_flush3 = request_flush;
     let needs_rescan = data.needs_rescan.clone();
     let host_for_callback = truce_core::editor::SendPtr::new(data.host);
     let params_for_set = params.clone();

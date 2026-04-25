@@ -53,7 +53,7 @@ pub(crate) fn cmd_test() -> Res {
                         "--features",
                         "vst2",
                     ])
-                    .env("MACOSX_DEPLOYMENT_TARGET", &deployment_target())
+                    .env("MACOSX_DEPLOYMENT_TARGET", deployment_target())
                     .output()?;
                 if !build.status.success() {
                     eprintln!("BUILD FAILED");

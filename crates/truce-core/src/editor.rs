@@ -36,7 +36,7 @@ impl<T> SendPtr<T> {
 
 impl<T> Clone for SendPtr<T> {
     fn clone(&self) -> Self {
-        Self(self.0)
+        *self
     }
 }
 

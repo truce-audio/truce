@@ -371,8 +371,10 @@ impl<P: Params + 'static> BuiltinEditor<P> {
         let owned = self.build_snapshot_closures();
         let snapshot = owned.as_snapshot();
         let edits = interaction::dispatch(events, &self.layout, &snapshot, &mut self.interaction);
-        drop(snapshot);
-        drop(owned);
+        // End `snapshot`'s borrow of `owned` before `owned` itself goes out of
+        // scope. `_ =` instead of `drop(...)` because neither type impls Drop.
+        _ = snapshot;
+        _ = owned;
         let had_edits = !edits.is_empty();
         for e in edits {
             self.apply_edit(e);
@@ -655,22 +657,19 @@ impl<P: Params + 'static> baseview::WindowHandler for BuiltinWindowHandler<P> {
         _window: &mut baseview::Window,
         event: baseview::Event,
     ) -> baseview::EventStatus {
-        match &event {
-            baseview::Event::Mouse(baseview::MouseEvent::ButtonPressed {
+        if let baseview::Event::Mouse(baseview::MouseEvent::ButtonPressed {
                 button: baseview::MouseButton::Left,
                 ..
-            }) => {
-                // WS_CHILD plugin windows don't receive WM_KEYDOWN
-                // until focused; baseview doesn't SetFocus on click,
-                // so we do it here. See truce-egui editor.rs.
-                #[cfg(target_os = "windows")]
-                {
-                    if !_window.has_focus() {
-                        _window.focus();
-                    }
+            }) = &event {
+            // WS_CHILD plugin windows don't receive WM_KEYDOWN
+            // until focused; baseview doesn't SetFocus on click,
+            // so we do it here. See truce-egui editor.rs.
+            #[cfg(target_os = "windows")]
+            {
+                if !_window.has_focus() {
+                    _window.focus();
                 }
             }
-            _ => {}
         }
 
         match event {

@@ -216,7 +216,7 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
                 let output = Command::new("auval")
                     .args([
                         "-v",
-                        &p.resolved_au_type(),
+                        p.resolved_au_type(),
                         p.resolved_fourcc(),
                         &config.vendor.au_manufacturer,
                     ])
@@ -263,7 +263,7 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
                 let output = Command::new("auval")
                     .args([
                         "-v",
-                        &p.resolved_au_type(),
+                        p.resolved_au_type(),
                         sub,
                         &config.vendor.au_manufacturer,
                     ])

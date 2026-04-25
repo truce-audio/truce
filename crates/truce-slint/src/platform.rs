@@ -29,7 +29,7 @@ use truce_core::editor::RawWindowHandle;
 // `create_window_adapter()`. Set this before creating a Slint component so
 // the component attaches to our window (not a throwaway one).
 thread_local! {
-    static NEXT_WINDOW: RefCell<Option<Rc<MinimalSoftwareWindow>>> = RefCell::new(None);
+    static NEXT_WINDOW: RefCell<Option<Rc<MinimalSoftwareWindow>>> = const { RefCell::new(None) };
 }
 
 struct TrucePlatform;

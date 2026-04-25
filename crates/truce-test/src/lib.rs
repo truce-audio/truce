@@ -84,7 +84,7 @@ pub fn render_effect<P: PluginExport>(frames: usize, sample_rate: f64) -> Render
     let mut context = ProcessContext::new(&transport, sample_rate, frames, &mut output_events);
 
     plugin.process(&mut buffer, &events, &mut context);
-    drop(buffer);
+    _ = buffer;
 
     let output: Vec<Vec<f32>> = output_data;
     RenderResult {
@@ -127,7 +127,7 @@ pub fn render_instrument<P: PluginExport>(
     let mut context = ProcessContext::new(&transport, sample_rate, frames, &mut output_events);
 
     plugin.process(&mut buffer, &events, &mut context);
-    drop(buffer);
+    _ = buffer;
 
     let output: Vec<Vec<f32>> = output_data;
     RenderResult {

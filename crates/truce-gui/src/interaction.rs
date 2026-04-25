@@ -642,7 +642,7 @@ pub fn dispatch_in(
                     // the generic knob-scroll path below and silently
                     // advance the param driving this very dropdown.
                     let inside_popup = state.dropdown_popup_hit(x, y).is_some()
-                        || state.dropdown.as_ref().map_or(false, |dd| {
+                        || state.dropdown.as_ref().is_some_and(|dd| {
                             let (px, py, pw, ph) = dd.popup_rect;
                             x >= px && x <= px + pw && y >= py && y <= py + ph
                         });

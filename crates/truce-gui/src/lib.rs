@@ -3,6 +3,12 @@
 //! Uses a `RenderBackend` trait to abstract over rendering implementations.
 //! The default `CpuBackend` uses tiny-skia for software rasterization.
 
+// Widget-drawing helpers, `RenderBackend` trait methods, and interaction
+// dispatch all take many independent geometry / state / theme arguments.
+// Bundling them into builder structs is a worthwhile refactor but a
+// separate change — for now the long signatures are intentional.
+#![allow(clippy::too_many_arguments)]
+
 pub mod backend_cpu;
 pub mod blit;
 pub mod editor;

@@ -202,8 +202,8 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for SliderProgram {
                     }
                 }
             }
-            Event::Mouse(mouse::Event::CursorMoved { .. }) => {
-                if state.dragging {
+            Event::Mouse(mouse::Event::CursorMoved { .. })
+                if state.dragging => {
                     if let Some(pos) = cursor.position() {
                         let current_x = pos.x - bounds.x;
                         let track_width = bounds.width - THUMB_RADIUS * 2.0;
@@ -218,16 +218,14 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for SliderProgram {
                         );
                     }
                 }
-            }
-            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
-                if state.dragging {
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))
+                if state.dragging => {
                     state.dragging = false;
                     return (
                         canvas::event::Status::Captured,
                         Some(Message::Param(ParamMessage::EndEdit(self.id))),
                     );
                 }
-            }
             _ => {}
         }
 

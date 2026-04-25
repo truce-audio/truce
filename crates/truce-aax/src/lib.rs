@@ -4,6 +4,12 @@
 //! loads via dlopen. No AAX SDK dependency — the Rust side only
 //! knows about the C bridge types defined in truce_aax_bridge.h.
 
+// The `pub unsafe fn _*` block below is a single FFI surface whose
+// shared safety contract is documented in the block-header comment
+// preceding the functions. Per-function `# Safety` docs would be
+// uniformly repetitive without adding information.
+#![allow(clippy::missing_safety_doc)]
+
 use std::ffi::{c_void, CString};
 use std::os::raw::c_char;
 use std::slice;
@@ -498,6 +504,7 @@ pub unsafe fn _reset<P: PluginExport>(
     inst.plugin.params().snap_smoothers();
 }
 
+#[allow(clippy::too_many_arguments)]
 pub unsafe fn _process<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     inputs: *const *const f32,

@@ -142,7 +142,7 @@ mod tests {
             290,
             2.0,
             0,
-            |state| {
+            |_state| {
                 let ui = GainUi::new().unwrap();
                 Box::new(move |state: &truce_slint::ParamState| {
                     ui.set_gain(state.get(P::Gain) as f32);

@@ -124,7 +124,7 @@ pub(crate) fn cmd_remove(args: &[String]) -> Res {
                     }
                     // Strip extension to get the display name
                     let display = name.trim_end_matches(&format!(".{ext}"));
-                    if known_names.iter().any(|k| *k == display) {
+                    if known_names.contains(&display) {
                         continue;
                     }
                     targets.push(RemoveTarget {

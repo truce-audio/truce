@@ -122,6 +122,7 @@ fn write_manifest(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn write_plugin_ttl(
     bundle_dir: &Path,
     ttl_basename: &str,
@@ -331,7 +332,7 @@ fn param_symbol(id: u32, name: &str) -> String {
         || !s
             .chars()
             .next()
-            .map_or(false, |c| c.is_ascii_alphabetic() || c == '_')
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
     {
         return format!("p_{id}");
     }

@@ -93,7 +93,7 @@ pub(crate) fn cmd_nuke(args: &[String]) -> Res {
     }
 
     // 5. Clean AU v3 temp dirs
-    if let Ok(entries) = fs::read_dir(&tmp_dir()) {
+    if let Ok(entries) = fs::read_dir(tmp_dir()) {
         for entry in entries.flatten() {
             let name = entry.file_name();
             let name = name.to_string_lossy();

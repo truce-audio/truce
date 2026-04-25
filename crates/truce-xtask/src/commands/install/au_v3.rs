@@ -238,7 +238,7 @@ pub(crate) fn emit_au_v3_bundle(
 
         let plist = templates::au3::APPEX_INFO_PLIST
             .replace("AUVER", &ver)
-            .replace("AUTYPE", &p.resolved_au_type())
+            .replace("AUTYPE", p.resolved_au_type())
             .replace("AUSUB", au_v3_sub)
             .replace("AUMFR", &config.vendor.au_manufacturer)
             .replace(

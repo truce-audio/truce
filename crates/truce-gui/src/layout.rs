@@ -654,9 +654,9 @@ impl From<PluginLayout> for GridLayout {
 
         let mut widgets = Vec::new();
         let mut sections = Vec::new();
-        let mut grid_row = 0u32;
 
-        for row in &pl.rows {
+        for (grid_row, row) in pl.rows.iter().enumerate() {
+            let grid_row = grid_row as u32;
             if let Some(label) = row.label {
                 sections.push((grid_row, label));
             }
@@ -675,7 +675,6 @@ impl From<PluginLayout> for GridLayout {
                 });
                 col += knob.span.max(1);
             }
-            grid_row += 1;
         }
 
         let mut gl = GridLayout {

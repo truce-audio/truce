@@ -101,7 +101,7 @@ where
             })
         },
         get_meter: Arc::new(|_| 0.0),
-        get_state: Arc::new(|| Vec::new()),
+        get_state: Arc::new(Vec::new),
         set_state: Arc::new(|_| {}),
         transport: Arc::new(|| None),
     };

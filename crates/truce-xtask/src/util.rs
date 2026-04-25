@@ -443,7 +443,7 @@ pub(crate) fn pace_sign_aax_macos(bundle: &Path) -> crate::Res {
 /// Used by `doctor` to surface cross-compile readiness.
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(crate) fn rustup_has_target(triple: &str) -> bool {
-    installed_rustup_targets().map_or(false, |set| set.contains(triple))
+    installed_rustup_targets().is_some_and(|set| set.contains(triple))
 }
 
 /// Query `rustup target list --installed` once per process and cache

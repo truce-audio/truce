@@ -129,13 +129,12 @@ impl Arpeggio {
             ArpPattern::Down => {
                 seq.reverse();
             }
-            ArpPattern::UpDown => {
-                if seq.len() > 2 {
+            ArpPattern::UpDown
+                if seq.len() > 2 => {
                     let mut down = seq[1..seq.len() - 1].to_vec();
                     down.reverse();
                     seq.extend(down);
                 }
-            }
             _ => {} // Up and Random use the sequence as-is
         }
 
@@ -170,11 +169,10 @@ impl PluginLogic for Arpeggio {
         // Process input MIDI -- track held notes
         for event in events.iter() {
             match &event.body {
-                EventBody::NoteOn { note, .. } => {
-                    if !self.held_notes.contains(note) {
+                EventBody::NoteOn { note, .. }
+                    if !self.held_notes.contains(note) => {
                         self.held_notes.push(*note);
                     }
-                }
                 EventBody::NoteOff { note, .. } => {
                     self.held_notes.retain(|n| n != note);
                     if self.held_notes.is_empty() {

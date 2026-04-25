@@ -215,6 +215,7 @@ pub fn render_to_pixels<P: truce_params::Params + 'static>(
 /// exceeds `max_diff_pixels`.
 ///
 /// The snapshot directory is resolved relative to the workspace root.
+#[allow(clippy::too_many_arguments)]
 pub fn assert_snapshot<P: truce_params::Params + 'static>(
     snapshot_dir: &str,
     name: &str,

@@ -43,12 +43,21 @@ use crate::platform::{self, ParentWindow};
 ///     })
 /// })
 /// ```
+/// Per-frame sync closure: takes the current `ParamState` and updates the
+/// Slint component's properties. Returned by the editor's `setup` callback.
+pub type SyncFn = Box<dyn Fn(&ParamState)>;
+
+/// Editor `setup` callback: called every time the host re-opens the editor,
+/// creates the Slint component, and returns a `SyncFn` that the editor calls
+/// each frame to push live param values into the component.
+pub type SetupFn = Arc<dyn Fn(ParamState) -> SyncFn + Send + Sync>;
+
 pub struct SlintEditor {
     size: (u32, u32),
     /// Called on each open() to create the Slint component and param bindings.
     /// Must be `Fn` (not `FnOnce`) because the host may close and re-open
     /// the editor window multiple times.
-    setup: Arc<dyn Fn(ParamState) -> Box<dyn Fn(&ParamState)> + Send + Sync>,
+    setup: SetupFn,
     window: Option<baseview::WindowHandle>,
 }
 

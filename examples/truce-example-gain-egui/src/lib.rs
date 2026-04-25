@@ -164,7 +164,7 @@ mod tests {
             2.0,
             0,
             Some(truce_gui::font::JETBRAINS_MONO),
-            |ctx, state| gain_ui(ctx, state),
+            gain_ui,
         );
     }
 }

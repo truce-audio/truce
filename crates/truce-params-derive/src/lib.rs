@@ -186,7 +186,7 @@ fn has_meter_attr(field: &syn::Field) -> bool {
 
 /// Check if a field type is `MeterSlot`.
 fn is_meter_slot(ty: &Type) -> bool {
-    type_last_segment(ty).map_or(false, |s| s == "MeterSlot")
+    type_last_segment(ty).is_some_and(|s| s == "MeterSlot")
 }
 
 /// Check if a field has `#[param(...)]` attribute.
@@ -456,12 +456,8 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
     // proc-macro can't read the constant from truce-params at
     // expansion time, so the literal is duplicated here.
     const METER_ID_BASE: u32 = 1 << 24;
-    {
-        let mut next_meter = METER_ID_BASE;
-        for m in &mut meter_fields {
-            m.id = Some(next_meter);
-            next_meter += 1;
-        }
+    for (next_meter, m) in (METER_ID_BASE..).zip(meter_fields.iter_mut()) {
+        m.id = Some(next_meter);
     }
 
     // --- Compile-time validation: duplicate IDs + range overlap ---

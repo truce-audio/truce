@@ -24,10 +24,10 @@ impl<'a> AudioBuffer<'a> {
             // Verify no input channel aliases any output channel.
             for (i, inp) in inputs.iter().enumerate() {
                 let i_start = inp.as_ptr() as usize;
-                let i_end = i_start + inp.len() * std::mem::size_of::<f32>();
+                let i_end = i_start + std::mem::size_of_val(*inp);
                 for (o, out) in outputs.iter().enumerate() {
                     let o_start = out.as_ptr() as usize;
-                    let o_end = o_start + out.len() * std::mem::size_of::<f32>();
+                    let o_end = o_start + std::mem::size_of_val(*out);
                     assert!(
                         i_end <= o_start || o_end <= i_start,
                         "AudioBuffer: input channel {i} and output channel {o} alias \

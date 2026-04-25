@@ -4,7 +4,6 @@
 
 use truce_core::buffer::AudioBuffer;
 use truce_core::events::{Event, EventBody, EventList, TransportInfo};
-use truce_core::export::PluginExport;
 use truce_core::plugin::Plugin;
 use truce_core::process::{ProcessContext, ProcessStatus};
 use truce_params::Params;

@@ -222,7 +222,7 @@ impl<'a> AtomSequenceReader<'a> {
         // transport before the host has finished reporting all fields;
         // fall back to the current time_sig_num if so, and finally to 4.
         let bpb = beats_per_bar
-            .or_else(|| {
+            .or({
                 if info.time_sig_num > 0 {
                     Some(info.time_sig_num as f64)
                 } else {

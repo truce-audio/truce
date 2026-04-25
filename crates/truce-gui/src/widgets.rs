@@ -906,7 +906,7 @@ fn draw_widget_entry(
             let is_open = state
                 .dropdown
                 .as_ref()
-                .map_or(false, |dd| dd.region_idx == region_idx);
+                .is_some_and(|dd| dd.region_idx == region_idx);
             draw_dropdown(
                 backend,
                 x,

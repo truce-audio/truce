@@ -210,10 +210,10 @@ impl AudioTapConsumer {
         let frames = frames_avail.min(max_frames).min(dest.len() / channels);
         let samples = frames * channels;
 
-        for i in 0..samples {
+        for (i, slot) in dest.iter_mut().enumerate().take(samples) {
             let idx = (r + i) % cap;
             let bits = self.shared.data[idx].load(Ordering::Relaxed);
-            dest[i] = f32::from_bits(bits);
+            *slot = f32::from_bits(bits);
         }
 
         self.shared.read.store(r + samples, Ordering::Relaxed);

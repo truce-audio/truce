@@ -11,6 +11,7 @@ pub struct Voice {
 }
 
 impl Voice {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         note: u8,
         freq: f64,
