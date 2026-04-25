@@ -82,20 +82,27 @@ pub fn list_devices() {
 /// Open the requested output device, instantiate the plugin, start
 /// the stream. Returns the handles the caller needs to keep the
 /// stream alive and push MIDI.
-pub fn start_audio<P: PluginExport>(opts: &Options) -> AudioHandles<P> {
+pub fn start_audio<P: PluginExport>(
+    opts: &Options,
+) -> Result<AudioHandles<P>, Box<dyn std::error::Error>> {
     let audio_host = cpal::default_host();
 
     let output_device = match &opts.output_device {
-        Some(name) => find_device(&audio_host, name, true)
-            .unwrap_or_else(|| panic!("no output device matching '{name}'")),
-        None => audio_host
-            .default_output_device()
-            .expect("no default audio output device"),
+        Some(name) => find_device(&audio_host, name, true).ok_or_else(|| {
+            format!(
+                "no output device matching '{name}'. \
+                 Run with --list-devices to see available outputs."
+            )
+        })?,
+        None => audio_host.default_output_device().ok_or(
+            "no default audio output device. \
+             Plug in or enable an output, then retry.",
+        )?,
     };
 
     let default_config = output_device
         .default_output_config()
-        .expect("no default output config");
+        .map_err(|e| format!("could not query default config for the audio output: {e}"))?;
 
     // If the caller requested a specific sample rate / buffer size,
     // ask cpal for a matching config; fall through to default on miss.
@@ -187,11 +194,19 @@ pub fn start_audio<P: PluginExport>(opts: &Options) -> AudioHandles<P> {
                 |err| eprintln!("Audio error: {err}"),
                 None,
             )
-            .expect("Failed to build output stream"),
-        format => panic!("Unsupported sample format: {format:?}"),
+            .map_err(|e| format!("could not build output stream: {e}"))?,
+        format => {
+            return Err(format!(
+                "audio output format {format:?} is not supported (truce standalone \
+                 currently only handles f32). Try a different output device."
+            )
+            .into())
+        }
     };
 
-    stream.play().expect("Failed to start output stream");
+    stream
+        .play()
+        .map_err(|e| format!("could not start output stream: {e}"))?;
 
     eprintln!(
         "Output: {} @ {} Hz, {} ch",
@@ -200,7 +215,7 @@ pub fn start_audio<P: PluginExport>(opts: &Options) -> AudioHandles<P> {
         channels
     );
 
-    AudioHandles {
+    Ok(AudioHandles {
         _stream: stream,
         _input_stream: input_stream,
         pending,
@@ -209,7 +224,7 @@ pub fn start_audio<P: PluginExport>(opts: &Options) -> AudioHandles<P> {
         channels,
         is_effect,
         transport,
-    }
+    })
 }
 
 fn find_device(host: &cpal::Host, name: &str, output: bool) -> Option<cpal::Device> {

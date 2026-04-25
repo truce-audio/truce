@@ -14,9 +14,13 @@ use truce_params::Params;
 ///     type Params = MyParams;
 ///     fn create() -> Self { Self::new() }
 ///     fn params(&self) -> &MyParams { &self.params }
-///     fn params_mut(&mut self) -> &mut MyParams { &mut self.params }
+///     fn params_arc(&self) -> Arc<MyParams> { self.params.clone() }
 /// }
 /// ```
+///
+/// All parameter mutation goes through the atomic-backed accessors on
+/// `&Params` — no `&mut Params` accessor is required, which keeps the
+/// trait usable while the editor holds an `Arc<Params>` reader.
 pub trait PluginExport: Plugin + Sized {
     type Params: Params;
 
@@ -25,9 +29,6 @@ pub trait PluginExport: Plugin + Sized {
 
     /// Immutable access to the parameter struct.
     fn params(&self) -> &Self::Params;
-
-    /// Mutable access to the parameter struct.
-    fn params_mut(&mut self) -> &mut Self::Params;
 
     /// Get a shared `Arc` reference to the parameter struct.
     ///

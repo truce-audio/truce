@@ -46,7 +46,13 @@ where
         }
     );
 
-    let audio_handles = audio::start_audio::<P>(opts);
+    let audio_handles = match audio::start_audio::<P>(opts) {
+        Ok(h) => h,
+        Err(e) => {
+            eprintln!("Error: {e}");
+            std::process::exit(1);
+        }
+    };
 
     // --state <path>: restore plugin state before opening the editor
     // so the editor reflects the loaded values on first paint.

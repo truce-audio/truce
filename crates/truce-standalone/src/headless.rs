@@ -11,7 +11,13 @@ use crate::midi;
 
 /// Run audio-only and block until SIGINT.
 pub fn run<P: PluginExport>(opts: &Options) {
-    let handles = audio::start_audio::<P>(opts);
+    let handles = match audio::start_audio::<P>(opts) {
+        Ok(h) => h,
+        Err(e) => {
+            eprintln!("Error: {e}");
+            std::process::exit(1);
+        }
+    };
 
     // MIDI device input (if requested and available). On success
     // this spawns a background thread that pushes events into

@@ -278,13 +278,6 @@ macro_rules! export_static {
                 &self.inner.params
             }
 
-            fn params_mut(&mut self) -> &mut $params {
-                // SAFETY: Only called during activate/deactivate when the editor
-                // is not open (no concurrent Arc refs to params).
-                std::sync::Arc::get_mut(&mut self.inner.params)
-                    .expect("params_mut called while Arc has other refs")
-            }
-
             fn params_arc(&self) -> std::sync::Arc<$params> {
                 std::sync::Arc::clone(&self.inner.params)
             }
