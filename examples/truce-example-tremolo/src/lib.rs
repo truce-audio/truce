@@ -342,4 +342,18 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn gui_snapshot() {
+        truce_egui::snapshot::assert_snapshot::<TremoloParams>(
+            "screenshots",
+            "tremolo_default",
+            WINDOW_W,
+            WINDOW_H,
+            2.0,
+            0,
+            Some(font::JETBRAINS_MONO),
+            tremolo_ui,
+        );
+    }
 }

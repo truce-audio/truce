@@ -77,9 +77,12 @@ where
     };
     let mut renderer = iced_wgpu::Renderer::new(&device, &engine, default_font, iced::Pixels(14.0));
 
-    // Build the iced program
+    // Build the iced program. Seeded with [`TransportInfo::for_snapshot`]
+    // so transport-aware widgets render a populated readout instead of
+    // a `(no host transport)` placeholder.
     let mut param_state = ParamState::new(params.clone());
     param_state.set_font(default_font);
+    let snapshot_transport = truce_core::events::TransportInfo::for_snapshot();
     let noop_ctx = EditorContext {
         begin_edit: Arc::new(|_| {}),
         set_param: Arc::new(|_, _| {}),
@@ -103,7 +106,7 @@ where
         get_meter: Arc::new(|_| 0.0),
         get_state: Arc::new(Vec::new),
         set_state: Arc::new(|_| {}),
-        transport: Arc::new(|| None),
+        transport: Arc::new(move || Some(snapshot_transport.clone())),
     };
     let editor_handle = EditorHandle::new(noop_ctx);
 

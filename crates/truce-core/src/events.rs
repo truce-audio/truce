@@ -115,6 +115,25 @@ pub struct TransportInfo {
     pub loop_end_beats: f64,
 }
 
+impl TransportInfo {
+    /// Synthetic transport for snapshot tests — playing at 120 BPM,
+    /// 4/4, position 4.0 beats. Used as the default by every snapshot
+    /// helper (`truce-egui`, `truce-slint`, `truce-iced`,
+    /// `truce-test`) so that transport-aware widgets render a
+    /// populated readout in marketing screenshots instead of a
+    /// `(no host transport)` placeholder.
+    pub fn for_snapshot() -> Self {
+        Self {
+            playing: true,
+            tempo: 120.0,
+            time_sig_num: 4,
+            time_sig_den: 4,
+            position_beats: 4.0,
+            ..Self::default()
+        }
+    }
+}
+
 /// Ordered list of events within a process block.
 #[derive(Clone, Debug, Default)]
 pub struct EventList {
