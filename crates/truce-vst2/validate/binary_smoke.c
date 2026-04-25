@@ -1,17 +1,18 @@
 /**
- * VST2 binary integration test.
+ * VST2 binary smoke validator.
  *
  * Loads the compiled VST2 dylib via dlopen, calls VSTPluginMain,
- * and verifies the AEffect struct fields.
+ * and verifies the AEffect struct fields. Driven by
+ * `cargo truce validate --vst2` (see truce-xtask/src/commands/validate.rs).
  *
- * Build: cc -o test_vst2 tests/test_vst2_binary.c -ldl
- * Run:   ./test_vst2 target/release/libtruce_example_gain.dylib
- *        ./test_vst2 target/release/libtruce_example_synth.dylib   --synth
- *        ./test_vst2 target/release/libtruce_example_arpeggio.dylib --midi-effect
+ * Build: cc -o binary_smoke crates/truce-vst2/validate/binary_smoke.c -ldl
+ * Run:   ./binary_smoke target/release/libtruce_example_gain.dylib
+ *        ./binary_smoke target/release/libtruce_example_synth.dylib    --synth
+ *        ./binary_smoke target/release/libtruce_example_arpeggio.dylib --midi-effect
  *
  * Plugin kinds:
- *   default     stereo audio in/out, not a synth
- *   --synth     no audio in, stereo audio out, effFlagsIsSynth set
+ *   default          stereo audio in/out, not a synth
+ *   --synth          no audio in, stereo audio out, effFlagsIsSynth set
  *   --midi-effect    no audio in, no audio out, MIDI in/out only;
  *                    skips the audio-output assertion
  */
@@ -23,7 +24,7 @@
 #include <stdint.h>
 
 /* Include the actual VST2 types from the shim */
-#include "../crates/truce-vst2/shim/vst2_types.h"
+#include "../shim/vst2_types.h"
 
 static int tests_run = 0;
 static int tests_passed = 0;

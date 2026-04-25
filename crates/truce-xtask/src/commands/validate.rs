@@ -423,13 +423,14 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
 }
 
 /// Build each plugin as a VST2 dylib, dlopen it via the C smoke binary
-/// at `tests/test_vst2_binary.c`, and verify `VSTPluginMain` returns a
-/// well-formed `AEffect`. macOS-only because the smoke binary uses
-/// `dlfcn.h` and we hardcode `.dylib` here. Returns the failure count.
+/// at `crates/truce-vst2/validate/binary_smoke.c`, and verify
+/// `VSTPluginMain` returns a well-formed `AEffect`. macOS-only because
+/// the smoke binary uses `dlfcn.h` and we hardcode `.dylib` here.
+/// Returns the failure count.
 #[cfg(target_os = "macos")]
 fn validate_vst2_macos(plugins: &[&PluginDef]) -> usize {
     let root = project_root();
-    let test_src = root.join("tests/test_vst2_binary.c");
+    let test_src = root.join("crates/truce-vst2/validate/binary_smoke.c");
     if !test_src.exists() {
         eprintln!(
             "  Skipping: smoke source missing at {}.",
@@ -438,7 +439,7 @@ fn validate_vst2_macos(plugins: &[&PluginDef]) -> usize {
         return 0;
     }
 
-    let test_bin = root.join("target/test_vst2");
+    let test_bin = root.join("target/vst2_binary_smoke");
     let cc_status = match Command::new("cc")
         .args(["-o", test_bin.to_str().unwrap(), test_src.to_str().unwrap()])
         .status()
