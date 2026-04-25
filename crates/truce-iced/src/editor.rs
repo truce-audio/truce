@@ -562,10 +562,9 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
 
     /// Drive one frame: update iced state + present to surface.
     fn tick(&mut self) {
-        if self.render.is_none() && self.metal_layer.is_some()
-            && !self.init_render() {
-                return;
-            }
+        if self.render.is_none() && self.metal_layer.is_some() && !self.init_render() {
+            return;
+        }
 
         let render = match self.render.as_mut() {
             Some(r) => r,

@@ -175,41 +175,40 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for XYPadProgram {
 
         match event {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
-                if cursor.position_in(bounds).is_some() => {
-                    state.dragging = true;
+                if cursor.position_in(bounds).is_some() =>
+            {
+                state.dragging = true;
+                return (
+                    canvas::event::Status::Captured,
+                    Some(Message::Param(ParamMessage::Batch(vec![
+                        ParamMessage::BeginEdit(self.x_id),
+                        ParamMessage::BeginEdit(self.y_id),
+                    ]))),
+                );
+            }
+            Event::Mouse(mouse::Event::CursorMoved { .. }) if state.dragging => {
+                if let Some(pos) = cursor.position_in(bounds) {
+                    let x_norm = (pos.x / s).clamp(0.0, 1.0) as f64;
+                    let y_norm = (1.0 - pos.y / s).clamp(0.0, 1.0) as f64;
                     return (
                         canvas::event::Status::Captured,
                         Some(Message::Param(ParamMessage::Batch(vec![
-                            ParamMessage::BeginEdit(self.x_id),
-                            ParamMessage::BeginEdit(self.y_id),
+                            ParamMessage::SetNormalized(self.x_id, x_norm),
+                            ParamMessage::SetNormalized(self.y_id, y_norm),
                         ]))),
                     );
                 }
-            Event::Mouse(mouse::Event::CursorMoved { .. })
-                if state.dragging => {
-                    if let Some(pos) = cursor.position_in(bounds) {
-                        let x_norm = (pos.x / s).clamp(0.0, 1.0) as f64;
-                        let y_norm = (1.0 - pos.y / s).clamp(0.0, 1.0) as f64;
-                        return (
-                            canvas::event::Status::Captured,
-                            Some(Message::Param(ParamMessage::Batch(vec![
-                                ParamMessage::SetNormalized(self.x_id, x_norm),
-                                ParamMessage::SetNormalized(self.y_id, y_norm),
-                            ]))),
-                        );
-                    }
-                }
-            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))
-                if state.dragging => {
-                    state.dragging = false;
-                    return (
-                        canvas::event::Status::Captured,
-                        Some(Message::Param(ParamMessage::Batch(vec![
-                            ParamMessage::EndEdit(self.x_id),
-                            ParamMessage::EndEdit(self.y_id),
-                        ]))),
-                    );
-                }
+            }
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) if state.dragging => {
+                state.dragging = false;
+                return (
+                    canvas::event::Status::Captured,
+                    Some(Message::Param(ParamMessage::Batch(vec![
+                        ParamMessage::EndEdit(self.x_id),
+                        ParamMessage::EndEdit(self.y_id),
+                    ]))),
+                );
+            }
             _ => {}
         }
 

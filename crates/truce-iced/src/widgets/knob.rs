@@ -249,28 +249,26 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for KnobProgram {
                     }
                 }
             }
-            Event::Mouse(mouse::Event::CursorMoved { .. })
-                if state.dragging => {
-                    if let Some(pos) = cursor.position() {
-                        let delta = (state.start_y - (pos.y - bounds.y)) / DRAG_SENSITIVITY;
-                        let new_value = (state.start_value + delta).clamp(0.0, 1.0);
-                        return (
-                            canvas::event::Status::Captured,
-                            Some(Message::Param(ParamMessage::SetNormalized(
-                                self.id,
-                                new_value as f64,
-                            ))),
-                        );
-                    }
-                }
-            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))
-                if state.dragging => {
-                    state.dragging = false;
+            Event::Mouse(mouse::Event::CursorMoved { .. }) if state.dragging => {
+                if let Some(pos) = cursor.position() {
+                    let delta = (state.start_y - (pos.y - bounds.y)) / DRAG_SENSITIVITY;
+                    let new_value = (state.start_value + delta).clamp(0.0, 1.0);
                     return (
                         canvas::event::Status::Captured,
-                        Some(Message::Param(ParamMessage::EndEdit(self.id))),
+                        Some(Message::Param(ParamMessage::SetNormalized(
+                            self.id,
+                            new_value as f64,
+                        ))),
                     );
                 }
+            }
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) if state.dragging => {
+                state.dragging = false;
+                return (
+                    canvas::event::Status::Captured,
+                    Some(Message::Param(ParamMessage::EndEdit(self.id))),
+                );
+            }
             _ => {}
         }
 

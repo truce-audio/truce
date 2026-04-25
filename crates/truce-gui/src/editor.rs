@@ -658,9 +658,10 @@ impl<P: Params + 'static> baseview::WindowHandler for BuiltinWindowHandler<P> {
         event: baseview::Event,
     ) -> baseview::EventStatus {
         if let baseview::Event::Mouse(baseview::MouseEvent::ButtonPressed {
-                button: baseview::MouseButton::Left,
-                ..
-            }) = &event {
+            button: baseview::MouseButton::Left,
+            ..
+        }) = &event
+        {
             // WS_CHILD plugin windows don't receive WM_KEYDOWN
             // until focused; baseview doesn't SetFocus on click,
             // so we do it here. See truce-egui editor.rs.

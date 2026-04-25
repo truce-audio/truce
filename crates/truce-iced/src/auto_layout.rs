@@ -96,9 +96,7 @@ pub fn auto_view<'a, M: Clone + Debug + 'static, P: Params>(
                     .into(),
                 WidgetKind::Meter => {
                     let fallback = [widget.param_id];
-                    let ids = widget
-                        .meter_ids.as_deref()
-                        .unwrap_or(&fallback);
+                    let ids = widget.meter_ids.as_deref().unwrap_or(&fallback);
                     widgets::meter(ids, params)
                         .label(widget.label)
                         .size(

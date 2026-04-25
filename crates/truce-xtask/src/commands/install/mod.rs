@@ -572,7 +572,10 @@ fn install_lv2(root: &Path, p: &PluginDef, _config: &Config) -> Res {
     fs_ctx::create_dir_all(&lv2_dir)?;
     crate::commands::package::stage::stage_lv2(root, p, &lv2_dir)?;
     let slug = crate::commands::package::stage::lv2_slug(&p.name);
-    crate::log_output(format!("LV2:  {}", lv2_dir.join(format!("{slug}.lv2")).display()));
+    crate::log_output(format!(
+        "LV2:  {}",
+        lv2_dir.join(format!("{slug}.lv2")).display()
+    ));
     Ok(())
 }
 

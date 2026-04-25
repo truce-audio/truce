@@ -263,8 +263,7 @@ pub(crate) fn run_sudo(cmd: &str, args: &[&str]) -> crate::Res {
 /// user understands the password prompt that's about to appear. No-op on
 /// subsequent calls — sudo's own cred cache covers the rest of the install.
 fn announce_sudo_once() {
-    static ANNOUNCED: std::sync::atomic::AtomicBool =
-        std::sync::atomic::AtomicBool::new(false);
+    static ANNOUNCED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     if !ANNOUNCED.swap(true, std::sync::atomic::Ordering::Relaxed) {
         eprintln!(
             "→ Installing to system plugin directories (/Library/Audio/Plug-Ins/, \
@@ -367,7 +366,7 @@ pub(crate) fn run_codesign(args: &[&str], use_sudo: bool) -> crate::Res {
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| target.to_string());
-    let is_verify = args.iter().any(|a| *a == "--verify");
+    let is_verify = args.contains(&"--verify");
     let (verb_present, verb_past) = if is_verify {
         ("verify", "verified")
     } else {
