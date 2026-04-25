@@ -1,6 +1,6 @@
 [package]
 name = "cargo-truce"
-version = "0.9.0"
+version = "0.10.1"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 description = "Build tool for truce audio plugins"
@@ -13,6 +13,6 @@ name = "cargo-truce"
 path = "src/main.rs"
 
 [dependencies]
-truce-xtask = { version = "0.9.0", path = "../truce-xtask" }
+truce-xtask = { version = "0.10.1", path = "../truce-xtask" }
 toml = "0.8"
 serde = { version = "1", features = ["derive"] }
