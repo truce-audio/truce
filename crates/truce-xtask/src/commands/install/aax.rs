@@ -420,7 +420,23 @@ pub(crate) fn emit_aax_bundle(
 ) -> Res {
     let template = match ensure_template(root, config, universal_mac)? {
         Some(t) => t,
-        None => return Ok(()),
+        None => {
+            // SDK missing — log per-plugin so the user sees one Skipped
+            // entry per (AAX, plugin) target. Both `cargo truce build`
+            // and `cargo truce install` flow through this point so the
+            // log fires from either entry.
+            let hint = if cfg!(target_os = "windows") {
+                "[windows].aax_sdk_path"
+            } else {
+                "[macos].aax_sdk_path"
+            };
+            crate::log_skip(format!(
+                "AAX: skipped {} — SDK not configured. \
+                 Set {hint} in truce.toml or the AAX_SDK_PATH env var.",
+                p.name
+            ));
+            return Ok(());
+        }
     };
 
     let dylib = release_lib(root, &format!("{}_aax", p.dylib_stem()));
@@ -535,20 +551,10 @@ pub(crate) fn install_aax(root: &Path, p: &PluginDef, config: &Config) -> Res {
     let bundle_name = format!("{}.aaxplugin", p.name);
     let built = root.join("target/bundles").join(&bundle_name);
     if !built.exists() {
-        // Distinguish "no SDK configured" (soft skip, one entry per plugin)
-        // from "SDK ok, just rerun build" (hard error — genuine state mismatch
-        // that wouldn't be fixed by configuring the SDK).
+        // No SDK → emit_aax_bundle (build phase) already logged a per-plugin
+        // skip; just no-op here so we don't double-log. SDK present → genuine
+        // state mismatch, point the user at the build command.
         if resolve_aax_sdk_path(config).is_none() {
-            let hint = if cfg!(target_os = "windows") {
-                "[windows].aax_sdk_path"
-            } else {
-                "[macos].aax_sdk_path"
-            };
-            crate::log_skip(format!(
-                "AAX: skipped {} — SDK not configured. \
-                 Set {hint} in truce.toml or the AAX_SDK_PATH env var.",
-                p.name
-            ));
             return Ok(());
         }
         return Err(format!(
@@ -566,7 +572,7 @@ pub(crate) fn install_aax(root: &Path, p: &PluginDef, config: &Config) -> Res {
         let dst = format!("{aax_dir}/{bundle_name}");
         run_sudo("rm", &["-rf", &dst])?;
         run_sudo("ditto", &[built.to_str().unwrap(), &dst])?;
-        crate::log_install(format!("AAX:  {dst}"));
+        crate::log_output(format!("AAX:  {dst}"));
     }
 
     #[cfg(target_os = "windows")]
@@ -579,7 +585,7 @@ pub(crate) fn install_aax(root: &Path, p: &PluginDef, config: &Config) -> Res {
         let dst = aax_dir.join(&bundle_name);
         let _ = fs::remove_dir_all(&dst);
         crate::util::copy_dir_recursive(&built, &dst)?;
-        crate::log_install(format!("AAX:  {}", dst.display()));
+        crate::log_output(format!("AAX:  {}", dst.display()));
     }
 
     Ok(())

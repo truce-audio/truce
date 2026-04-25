@@ -307,39 +307,39 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
     for p in &plugins {
         if clap {
             stage_clap(&root, p, &bundles_dir, identity)?;
-            crate::vprintln!(
-                "  CLAP: {}",
+            crate::log_output(format!(
+                "CLAP: {}",
                 bundles_dir.join(format!("{}.clap", p.name)).display()
-            );
+            ));
         }
         if vst3 {
             stage_vst3(&root, p, &config, &bundles_dir)?;
-            crate::vprintln!(
-                "  VST3: {}",
+            crate::log_output(format!(
+                "VST3: {}",
                 bundles_dir.join(format!("{}.vst3", p.name)).display()
-            );
+            ));
         }
         if vst2 {
             stage_vst2(&root, p, &config, &bundles_dir)?;
-            crate::vprintln!(
-                "  VST2: {}",
+            crate::log_output(format!(
+                "VST2: {}",
                 bundles_dir.join(format!("{}.vst", p.name)).display()
-            );
+            ));
         }
         if lv2 {
             stage_lv2(&root, p, &bundles_dir)?;
             let slug = lv2_slug(&p.name);
-            crate::vprintln!(
-                "  LV2:  {}",
+            crate::log_output(format!(
+                "LV2:  {}",
                 bundles_dir.join(format!("{slug}.lv2")).display()
-            );
+            ));
         }
         if au2 {
             stage_au2(&root, p, &config, &bundles_dir)?;
-            crate::vprintln!(
-                "  AU:   {}",
+            crate::log_output(format!(
+                "AU:   {}",
                 bundles_dir.join(format!("{}.component", p.name)).display()
-            );
+            ));
         }
     }
 
@@ -350,20 +350,63 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
     if au3 {
         #[cfg(target_os = "macos")]
         {
-            use crate::MacArch;
-            crate::commands::install::au_v3::emit_au_v3_bundle(
-                &root,
-                &config,
-                &plugins,
-                &[MacArch::host()],
-            )?;
+            use crate::{extract_team_id, MacArch};
+            // Same gate as install: ad-hoc / no-team-id makes AU v3
+            // unbuildable. Soft-skip per plugin so the user gets the
+            // same Built/Skipped surface as `cargo truce install`.
+            let sign_id = config.macos.application_identity();
+            if extract_team_id(sign_id).is_empty() {
+                for p in &plugins {
+                    crate::log_skip(format!(
+                        "AU v3: skipped {} — needs a Developer ID with team ID. \
+                         Set [macos.signing].application_identity in truce.toml \
+                         (e.g., \"Developer ID Application: Your Name (TEAMID)\"); \
+                         ad-hoc signing (\"-\") is not supported for AU v3 appex bundles.",
+                        p.name
+                    ));
+                }
+            } else {
+                crate::commands::install::au_v3::emit_au_v3_bundle(
+                    &root,
+                    &config,
+                    &plugins,
+                    &[MacArch::host()],
+                )?;
+                for p in &plugins {
+                    crate::log_output(format!(
+                        "AU3:  {}",
+                        bundles_dir
+                            .join(format!("{}.app", p.au3_app_name()))
+                            .display()
+                    ));
+                }
+            }
         }
         #[cfg(not(target_os = "macos"))]
         {
-            return Err("--au3 is macOS-only".into());
+            for p in &plugins {
+                crate::log_skip(format!(
+                    "AU v3: skipped {} — not supported on this platform. Use macOS to build AU v3.",
+                    p.name
+                ));
+            }
         }
     }
 
-    eprintln!("Bundles in {}", bundles_dir.display());
+    let outputs = crate::take_outputs();
+    if !outputs.is_empty() {
+        eprintln!("\nBuilt:");
+        for line in outputs {
+            eprintln!("  {line}");
+        }
+    }
+    let skipped = crate::take_skipped();
+    if !skipped.is_empty() {
+        eprintln!("\nSkipped:");
+        for line in skipped {
+            eprintln!("  {line}");
+        }
+    }
+    eprintln!("\nBundles in {}", bundles_dir.display());
     Ok(())
 }

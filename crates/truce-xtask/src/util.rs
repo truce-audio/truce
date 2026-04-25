@@ -299,26 +299,28 @@ macro_rules! vprintln {
 }
 pub(crate) use vprintln;
 
-/// Per-process collector of install destinations so `cmd_install` can
-/// print a summary at the end (always visible, regardless of verbose).
-/// Each `install_*` function pushes one line per bundle it writes.
-static INSTALLED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+/// Per-process collector of produced bundle paths so the calling command
+/// (`cmd_install` / `cmd_build`) can print a summary at the end (always
+/// visible, regardless of verbose). Each per-format helper pushes one
+/// line per bundle it writes.
+static OUTPUTS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
 
-/// Record an install destination + echo it under `--verbose`. Use from
-/// `install_clap` / `install_vst3` / etc. instead of a bare `vprintln!`.
-pub(crate) fn log_install(line: String) {
+/// Record an output destination + echo it under `--verbose`. Used by
+/// `install_clap` / `install_vst3` / `stage_clap` / `stage_vst3` / etc.
+pub(crate) fn log_output(line: String) {
     if is_verbose() {
         eprintln!("{line}");
     }
-    if let Ok(mut v) = INSTALLED.lock() {
+    if let Ok(mut v) = OUTPUTS.lock() {
         v.push(line);
     }
 }
 
-/// Drain the install log. Called once by `cmd_install` at the end so the
-/// summary prints exactly once and the static stays empty between calls.
-pub(crate) fn take_installed() -> Vec<String> {
-    INSTALLED
+/// Drain the output log. Called once by the surrounding command at the
+/// end so the summary prints exactly once and the static stays empty
+/// between calls.
+pub(crate) fn take_outputs() -> Vec<String> {
+    OUTPUTS
         .lock()
         .map(|mut v| std::mem::take(&mut *v))
         .unwrap_or_default()
@@ -349,16 +351,29 @@ pub(crate) fn take_skipped() -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Run `codesign` with the given args. In quiet mode (default), stderr
-/// is captured and only printed on failure — drops the "replacing
-/// existing signature" noise on every re-sign without losing real
-/// errors. `--verbose` inherits stderr so everything surfaces.
+/// Run `codesign` with the given args. Prints a one-line success or
+/// failure summary per call (`  ✓ signed Truce Gain.vst3` / `  ✗ ...`).
+/// In quiet mode, the `replacing existing signature` chatter and verify
+/// output is captured and only printed on failure. `--verbose` inherits
+/// stderr so everything surfaces.
 ///
 /// Safe to redirect stderr even on the sudo path: `sudo` opens
 /// `/dev/tty` for the password prompt, not stderr, so the prompt
 /// stays visible to the user.
 pub(crate) fn run_codesign(args: &[&str], use_sudo: bool) -> crate::Res {
     use std::process::Stdio;
+    let target = args.last().copied().unwrap_or("?");
+    let target_label = std::path::Path::new(target)
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| target.to_string());
+    let is_verify = args.iter().any(|a| *a == "--verify");
+    let (verb_present, verb_past) = if is_verify {
+        ("verify", "verified")
+    } else {
+        ("sign", "signed")
+    };
+
     let mut cmd = if use_sudo {
         announce_sudo_once();
         let mut c = Command::new("sudo");
@@ -368,22 +383,27 @@ pub(crate) fn run_codesign(args: &[&str], use_sudo: bool) -> crate::Res {
         Command::new("codesign")
     };
     cmd.args(args);
-    if is_verbose() {
-        let status = cmd.status()?;
-        if !status.success() {
-            return Err("codesign failed".into());
-        }
+
+    let (status, captured_stderr) = if is_verbose() {
+        (cmd.status()?, String::new())
     } else {
         let output = cmd.stderr(Stdio::piped()).output()?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            if !stderr.is_empty() {
-                eprintln!("{stderr}");
-            }
-            return Err("codesign failed".into());
+        (
+            output.status,
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        )
+    };
+
+    if status.success() {
+        eprintln!("  ✓ {verb_past} {target_label}");
+        Ok(())
+    } else {
+        if !captured_stderr.is_empty() {
+            eprintln!("{captured_stderr}");
         }
+        eprintln!("  ✗ failed to {verb_present} {target_label}");
+        Err("codesign failed".into())
     }
-    Ok(())
 }
 
 /// Sudo variant that swallows stdout + stderr. Intended for

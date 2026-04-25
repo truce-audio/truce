@@ -337,7 +337,7 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
         crate::vprintln!("Cleared AU cache.");
     }
 
-    let installed = crate::take_installed();
+    let installed = crate::take_outputs();
     if !installed.is_empty() {
         eprintln!("\nInstalled:");
         for line in installed {
@@ -375,7 +375,7 @@ pub(crate) fn install_clap(root: &Path, p: &PluginDef, config: &Config) -> Res {
             config.macos.application_identity(),
             false,
         )?;
-        crate::log_install(format!("CLAP: {}", dst.display()));
+        crate::log_output(format!("CLAP: {}", dst.display()));
     }
 
     #[cfg(target_os = "windows")]
@@ -384,7 +384,7 @@ pub(crate) fn install_clap(root: &Path, p: &PluginDef, config: &Config) -> Res {
         fs_ctx::create_dir_all(&clap_dir)?;
         let dst = clap_dir.join(format!("{}.clap", p.name));
         fs_ctx::copy(&dylib, &dst)?;
-        crate::log_install(format!("CLAP: {}", dst.display()));
+        crate::log_output(format!("CLAP: {}", dst.display()));
     }
 
     #[cfg(target_os = "linux")]
@@ -393,7 +393,7 @@ pub(crate) fn install_clap(root: &Path, p: &PluginDef, config: &Config) -> Res {
         fs_ctx::create_dir_all(&clap_dir)?;
         let dst = clap_dir.join(format!("{}.clap", p.name));
         fs_ctx::copy(&dylib, &dst)?;
-        crate::log_install(format!("CLAP: {}", dst.display()));
+        crate::log_output(format!("CLAP: {}", dst.display()));
     }
 
     Ok(())
@@ -448,7 +448,7 @@ fn install_vst3(root: &Path, p: &PluginDef, config: &Config) -> Res {
         fs_ctx::write(&plist_tmp, &plist)?;
         run_sudo("cp", &[&plist_tmp, &format!("{contents}/Info.plist")])?;
         codesign_bundle(&vst3_bundle, config.macos.application_identity(), true)?;
-        crate::log_install(format!("VST3: {vst3_bundle}"));
+        crate::log_output(format!("VST3: {vst3_bundle}"));
     }
 
     #[cfg(target_os = "windows")]
@@ -460,7 +460,7 @@ fn install_vst3(root: &Path, p: &PluginDef, config: &Config) -> Res {
         fs_ctx::create_dir_all(&arch_dir)?;
         let dst = arch_dir.join(format!("{}.vst3", p.name));
         fs_ctx::copy(&dylib, &dst)?;
-        crate::log_install(format!("VST3: {}", bundle.display()));
+        crate::log_output(format!("VST3: {}", bundle.display()));
     }
 
     #[cfg(target_os = "linux")]
@@ -471,7 +471,7 @@ fn install_vst3(root: &Path, p: &PluginDef, config: &Config) -> Res {
         fs_ctx::create_dir_all(&arch_dir)?;
         let dst = arch_dir.join(format!("{}.so", p.name));
         fs_ctx::copy(&dylib, &dst)?;
-        crate::log_install(format!("VST3: {}", bundle.display()));
+        crate::log_output(format!("VST3: {}", bundle.display()));
     }
 
     Ok(())
@@ -522,7 +522,7 @@ fn install_vst2(root: &Path, p: &PluginDef, config: &Config) -> Res {
             config.macos.application_identity(),
             false,
         )?;
-        crate::log_install(format!("VST2: {}", bundle.display()));
+        crate::log_output(format!("VST2: {}", bundle.display()));
     }
 
     #[cfg(target_os = "windows")]
@@ -533,7 +533,7 @@ fn install_vst2(root: &Path, p: &PluginDef, config: &Config) -> Res {
         fs_ctx::create_dir_all(&vst_dir)?;
         let dst = vst_dir.join(format!("{}.dll", p.name));
         fs_ctx::copy(&dylib, &dst)?;
-        crate::log_install(format!("VST2: {}", dst.display()));
+        crate::log_output(format!("VST2: {}", dst.display()));
     }
 
     #[cfg(target_os = "linux")]
@@ -542,7 +542,7 @@ fn install_vst2(root: &Path, p: &PluginDef, config: &Config) -> Res {
         fs_ctx::create_dir_all(&vst_dir)?;
         let dst = vst_dir.join(format!("{}.so", p.name));
         fs_ctx::copy(&dylib, &dst)?;
-        crate::log_install(format!("VST2: {}", dst.display()));
+        crate::log_output(format!("VST2: {}", dst.display()));
     }
 
     Ok(())
@@ -572,7 +572,7 @@ fn install_lv2(root: &Path, p: &PluginDef, _config: &Config) -> Res {
     fs_ctx::create_dir_all(&lv2_dir)?;
     crate::commands::package::stage::stage_lv2(root, p, &lv2_dir)?;
     let slug = crate::commands::package::stage::lv2_slug(&p.name);
-    crate::log_install(format!("LV2:  {}", lv2_dir.join(format!("{slug}.lv2")).display()));
+    crate::log_output(format!("LV2:  {}", lv2_dir.join(format!("{slug}.lv2")).display()));
     Ok(())
 }
 
@@ -682,6 +682,6 @@ fn install_au(root: &Path, p: &PluginDef, config: &Config) -> Res {
     fs_ctx::write(&plist_tmp, &plist)?;
     run_sudo("cp", &[&plist_tmp, &format!("{contents}/Info.plist")])?;
     codesign_bundle(&bundle, config.macos.application_identity(), true)?;
-    crate::log_install(format!("AU:   {bundle}"));
+    crate::log_output(format!("AU:   {bundle}"));
     Ok(())
 }

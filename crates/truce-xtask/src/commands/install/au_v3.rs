@@ -505,7 +505,7 @@ fn install_au_v3(root: &Path, config: &Config, plugins: &[&PluginDef]) -> Res {
                 s.appex_id, appex_path
             );
         }
-        crate::log_install(format!("AU3:  {}", s.app_dir));
+        crate::log_output(format!("AU3:  {}", s.app_dir));
     }
 
     Ok(())
