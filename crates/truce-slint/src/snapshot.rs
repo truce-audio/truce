@@ -167,8 +167,8 @@ pub fn assert_snapshot<P: truce_params::Params + 'static>(
 /// with `TRUCE_SNAPSHOT_REFERENCE_OS={macos,linux,windows}` to move
 /// the reference to a different platform.
 fn is_reference_platform() -> bool {
-    let target = std::env::var("TRUCE_SNAPSHOT_REFERENCE_OS")
-        .unwrap_or_else(|_| "macos".to_string());
+    let target =
+        std::env::var("TRUCE_SNAPSHOT_REFERENCE_OS").unwrap_or_else(|_| "macos".to_string());
     std::env::consts::OS == target
 }
 

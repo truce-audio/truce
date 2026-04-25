@@ -684,8 +684,8 @@ pub fn assert_gui_snapshot_grid<P: Params + 'static>(
 /// this gate trades full cross-OS pixel comparison for cross-OS
 /// smoke coverage of the rendering pipeline.
 fn is_reference_platform() -> bool {
-    let target = std::env::var("TRUCE_SNAPSHOT_REFERENCE_OS")
-        .unwrap_or_else(|_| "macos".to_string());
+    let target =
+        std::env::var("TRUCE_SNAPSHOT_REFERENCE_OS").unwrap_or_else(|_| "macos".to_string());
     std::env::consts::OS == target
 }
 
