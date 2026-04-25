@@ -15,7 +15,7 @@ path = "src/main.rs"
 required-features = ["standalone"]
 
 [features]
-default = ["clap", "vst3", "lv2"]
+default = ["clap", "vst3", "lv2", "au", "aax"]
 clap = ["dep:truce-clap", "dep:clap-sys"]
 vst3 = ["dep:truce-vst3"]
 vst2 = ["dep:truce-vst2"]
