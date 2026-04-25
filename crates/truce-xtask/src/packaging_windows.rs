@@ -238,7 +238,7 @@ fn parse_args(args: &[String]) -> std::result::Result<Opts, crate::BoxErr> {
             "-p" => {
                 i += 1;
                 opts.plugin_filter =
-                    Some(args.get(i).cloned().ok_or("-p requires a plugin suffix")?);
+                    Some(args.get(i).cloned().ok_or("-p requires a plugin crate name")?);
             }
             "--formats" => {
                 i += 1;
@@ -309,15 +309,15 @@ fn resolve_plugins<'a>(
         let matched: Vec<&PluginDef> = config
             .plugin
             .iter()
-            .filter(|p| p.suffix == filter)
+            .filter(|p| p.crate_name == filter)
             .collect();
         if matched.is_empty() {
             return Err(format!(
-                "No plugin with suffix '{filter}'. Available: {}",
+                "No plugin with crate name '{filter}'. Available: {}",
                 config
                     .plugin
                     .iter()
-                    .map(|p| p.suffix.as_str())
+                    .map(|p| p.crate_name.as_str())
                     .collect::<Vec<_>>()
                     .join(", ")
             )

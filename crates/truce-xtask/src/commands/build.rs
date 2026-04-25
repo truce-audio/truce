@@ -43,7 +43,8 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
             "--dev" => dev_mode = true,
             "-p" => {
                 i += 1;
-                plugin_filter = Some(args.get(i).cloned().ok_or("-p requires a suffix")?);
+                plugin_filter =
+                    Some(args.get(i).cloned().ok_or("-p requires a plugin crate name")?);
             }
             other => return Err(format!("unknown flag: {other}").into()),
         }
@@ -67,7 +68,24 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
     }
 
     let plugins: Vec<&PluginDef> = if let Some(ref f) = plugin_filter {
-        config.plugin.iter().filter(|p| p.suffix == *f).collect()
+        let matched: Vec<_> = config
+            .plugin
+            .iter()
+            .filter(|p| p.crate_name == *f)
+            .collect();
+        if matched.is_empty() {
+            return Err(format!(
+                "No plugin with crate name '{f}'. Available: {}",
+                config
+                    .plugin
+                    .iter()
+                    .map(|p| p.crate_name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+            .into());
+        }
+        matched
     } else {
         config.plugin.iter().collect()
     };

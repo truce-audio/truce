@@ -27,7 +27,8 @@ pub(crate) fn cmd_run(args: &[String]) -> Res {
             match args[i].as_str() {
                 "-p" => {
                     i += 1;
-                    plugin_filter = Some(args.get(i).cloned().ok_or("-p requires a suffix")?);
+                    plugin_filter =
+                        Some(args.get(i).cloned().ok_or("-p requires a plugin crate name")?);
                 }
                 "--no-build" => no_build = true,
                 "--" => past_separator = true,
@@ -41,8 +42,18 @@ pub(crate) fn cmd_run(args: &[String]) -> Res {
         config
             .plugin
             .iter()
-            .find(|p| p.suffix == *f)
-            .ok_or_else(|| format!("no plugin with suffix '{f}'"))?
+            .find(|p| p.crate_name == *f)
+            .ok_or_else(|| {
+                format!(
+                    "No plugin with crate name '{f}'. Available: {}",
+                    config
+                        .plugin
+                        .iter()
+                        .map(|p| p.crate_name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            })?
     } else {
         config.plugin.first().ok_or("no plugins in truce.toml")?
     };

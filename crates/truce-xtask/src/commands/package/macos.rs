@@ -34,7 +34,8 @@ pub(crate) fn cmd_package_macos(args: &[String]) -> Res {
         match args[i].as_str() {
             "-p" => {
                 i += 1;
-                plugin_filter = Some(args.get(i).cloned().ok_or("-p requires a plugin suffix")?);
+                plugin_filter =
+                    Some(args.get(i).cloned().ok_or("-p requires a plugin crate name")?);
             }
             "--formats" => {
                 i += 1;
@@ -106,15 +107,15 @@ pub(crate) fn cmd_package_macos(args: &[String]) -> Res {
         let matched: Vec<_> = config
             .plugin
             .iter()
-            .filter(|p| p.suffix == *filter)
+            .filter(|p| p.crate_name == *filter)
             .collect();
         if matched.is_empty() {
             return Err(format!(
-                "No plugin with suffix '{filter}'. Available: {}",
+                "No plugin with crate name '{filter}'. Available: {}",
                 config
                     .plugin
                     .iter()
-                    .map(|p| p.suffix.as_str())
+                    .map(|p| p.crate_name.as_str())
                     .collect::<Vec<_>>()
                     .join(", ")
             )

@@ -60,7 +60,7 @@ pub(crate) fn cmd_remove(args: &[String]) -> Res {
     let mut dry_run = false;
     let mut yes = false;
     let mut stale = false;
-    let mut suffix_filter: Option<String> = None;
+    let mut crate_filter: Option<String> = None;
     let mut name_filter: Option<String> = None;
 
     let mut i = 0;
@@ -77,7 +77,8 @@ pub(crate) fn cmd_remove(args: &[String]) -> Res {
             "--stale" => stale = true,
             "-p" => {
                 i += 1;
-                suffix_filter = Some(args.get(i).cloned().ok_or("-p requires a plugin suffix")?);
+                crate_filter =
+                    Some(args.get(i).cloned().ok_or("-p requires a plugin crate name")?);
             }
             "-n" => {
                 i += 1;
@@ -246,7 +247,7 @@ pub(crate) fn cmd_remove(args: &[String]) -> Res {
         }
 
         // Apply -p (substring match on filename) or -n (exact display name match)
-        if let Some(ref filter) = suffix_filter {
+        if let Some(ref filter) = crate_filter {
             let filter_lower = filter.to_lowercase();
             targets.retain(|t| {
                 t.path
@@ -270,20 +271,20 @@ pub(crate) fn cmd_remove(args: &[String]) -> Res {
     } else {
         // Normal mode: remove bundles for plugins in the project
 
-        // Filter plugins by suffix (-p) or display name (-n)
-        let plugins: Vec<&PluginDef> = if let Some(ref filter) = suffix_filter {
+        // Filter plugins by crate name (-p) or display name (-n)
+        let plugins: Vec<&PluginDef> = if let Some(ref filter) = crate_filter {
             let matched: Vec<_> = config
                 .plugin
                 .iter()
-                .filter(|p| p.suffix == *filter)
+                .filter(|p| p.crate_name == *filter)
                 .collect();
             if matched.is_empty() {
                 return Err(format!(
-                    "No plugin with suffix '{filter}'. Available: {}",
+                    "No plugin with crate name '{filter}'. Available: {}",
                     config
                         .plugin
                         .iter()
-                        .map(|p| format!("{} (-p {})", p.name, p.suffix))
+                        .map(|p| format!("{} (-p {})", p.name, p.crate_name))
                         .collect::<Vec<_>>()
                         .join(", ")
                 )
@@ -303,7 +304,7 @@ pub(crate) fn cmd_remove(args: &[String]) -> Res {
                     config
                         .plugin
                         .iter()
-                        .map(|p| format!("\"{}\" (-p {})", p.name, p.suffix))
+                        .map(|p| format!("\"{}\" (-p {})", p.name, p.crate_name))
                         .collect::<Vec<_>>()
                         .join(", ")
                 )

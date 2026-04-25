@@ -161,7 +161,7 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
             "-p" => {
                 i += 1;
                 if i >= args.len() {
-                    return Err("-p requires a plugin suffix".into());
+                    return Err("-p requires a plugin crate name".into());
                 }
                 plugin_filter = Some(args[i].clone());
             }
@@ -177,11 +177,24 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
     }
 
     let plugins: Vec<&PluginDef> = if let Some(ref filter) = plugin_filter {
-        config
+        let matched: Vec<_> = config
             .plugin
             .iter()
-            .filter(|p| p.suffix == *filter)
-            .collect()
+            .filter(|p| p.crate_name == *filter)
+            .collect();
+        if matched.is_empty() {
+            return Err(format!(
+                "No plugin with crate name '{filter}'. Available: {}",
+                config
+                    .plugin
+                    .iter()
+                    .map(|p| p.crate_name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+            .into());
+        }
+        matched
     } else {
         config.plugin.iter().collect()
     };

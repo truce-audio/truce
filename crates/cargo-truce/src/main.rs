@@ -8,7 +8,7 @@
 //!   cargo truce new-workspace studio gain reverb synth
 //!   cargo truce install                # build + bundle + sign + install
 //!   cargo truce install --clap         # single format
-//!   cargo truce validate               # run auval + pluginval
+//!   cargo truce validate               # run auval, auval3, pluginval, clap-validator
 //!   cargo truce doctor                 # check environment
 
 mod scaffold;
@@ -75,17 +75,17 @@ USAGE:
         --midi                      Default all plugins to midi type
         --type:<plugin>=<kind>      Per-plugin type override (effect, instrument, midi)
 
-  cargo truce install [--clap] [--vst3] [--vst2] [--au2] [--au3] [--aax] [-p <name>]
+  cargo truce install [--clap] [--vst3] [--vst2] [--au2] [--au3] [--aax] [-p <crate>]
       Build, bundle, sign, and install plugins.
 
   cargo truce build [--clap] [--vst3] [--vst2] [--lv2] [--au2] [--au3]
-                    [--aax] [-p <name>] [--dev]
+                    [--aax] [-p <crate>] [--dev]
       Build signed per-format bundles into target/bundles/ without
       installing. No format flags → every format in the project's
       default features.
 
   cargo truce validate [--auval] [--auval3] [--pluginval] [--clap]
-                       [--all] [-p <name>]
+                       [--all] [-p <crate>]
       Run plugin validators against installed bundles. No flags → run
       all available (auval, auval3, pluginval, clap-validator);
       missing tools are skipped with a hint.

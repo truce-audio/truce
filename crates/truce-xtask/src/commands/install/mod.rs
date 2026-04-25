@@ -49,7 +49,7 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
             "-p" => {
                 i += 1;
                 if i >= args.len() {
-                    return Err("-p requires a plugin suffix (e.g. -p gain)".into());
+                    return Err("-p requires a plugin crate name (e.g. -p truce-example-gain)".into());
                 }
                 plugin_filter = Some(args[i].clone());
             }
@@ -79,15 +79,15 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
         let matched: Vec<_> = config
             .plugin
             .iter()
-            .filter(|p| p.suffix == *filter)
+            .filter(|p| p.crate_name == *filter)
             .collect();
         if matched.is_empty() {
             return Err(format!(
-                "No plugin with suffix '{filter}'. Available: {}",
+                "No plugin with crate name '{filter}'. Available: {}",
                 config
                     .plugin
                     .iter()
-                    .map(|p| p.suffix.as_str())
+                    .map(|p| p.crate_name.as_str())
                     .collect::<Vec<_>>()
                     .join(", ")
             )
