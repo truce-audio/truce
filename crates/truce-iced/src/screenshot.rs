@@ -7,7 +7,6 @@
 use std::sync::Arc;
 
 use iced::{Color, Size};
-use iced_graphics;
 use iced_wgpu::wgpu;
 use truce_params::Params;
 
