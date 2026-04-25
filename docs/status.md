@@ -10,14 +10,14 @@ custom GUI. Hot-reload via `--features dev`. Single `truce::plugin!`
 macro for all exports. No build.rs needed. Four GUI backends: built-in
 (tiny-skia/wgpu), egui, iced, and slint.
 
-Runs on **macOS**, **Windows**, and **Linux** (Reaper tested; Bitwig / Ardour pending).
+Runs on **macOS**, **Windows**, and **Linux**.
 
 | Format | macOS | Windows | Linux | Custom GUI | Hosts tested |
 |--------|-------|---------|-------|------------|-------------|
 | CLAP | ✅ | ✅ | ✅ | ✅ | Reaper (macOS, Windows, Linux) |
-| VST3 | ✅ | ✅ | ✅ | ✅ | Reaper, Ableton, FL Studio (macOS/Win); Reaper (Linux) |
+| VST3 | ✅ | ✅ | ✅ | ✅ | Reaper, Ableton, FL Studio (macOS/Win) |
 | VST2 | ✅ | ✅ | ✅ | ✅ | Reaper, Ableton, FL Studio (macOS/Win) |
-| LV2 | ✅ | ✅ | ✅ | ✅ | Reaper on all three OSes (macOS, Windows, Linux); Ardour / Carla on macOS pending |
+| LV2 | ✅ | ✅ | ✅ | ✅ | Reaper on all three OSes (macOS, Windows, Linux); Ardour / Carla pending |
 | AU v2 | ✅ | — | — | ✅ | Reaper, Logic, GarageBand*, Ableton |
 | AU v3 | ✅ | — | — | ✅ | Logic, Ableton |
 | AAX | ✅ | ✅† | — | ✅ | Pro Tools Developer |
