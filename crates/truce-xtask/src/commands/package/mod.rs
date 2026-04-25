@@ -55,6 +55,13 @@ impl PkgFormat {
         }
     }
 
+}
+
+// macOS-only `pkgbuild` / `productbuild` plumbing — extensions,
+// install paths, PkgID suffixes, AU3 `.app` naming. Windows packaging
+// drives Inno Setup directly and doesn't need any of this.
+#[cfg(target_os = "macos")]
+impl PkgFormat {
     pub(crate) fn extension(&self) -> &'static str {
         match self {
             PkgFormat::Clap => "clap",

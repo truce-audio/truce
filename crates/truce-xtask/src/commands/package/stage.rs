@@ -1,7 +1,7 @@
 //! Format-specific staging: copy the built dylib into a bundle layout,
 //! write the per-format Info.plist, and codesign.
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(target_os = "macos")]
 use super::PkgFormat;
 #[cfg(target_os = "macos")]
 use crate::pace_sign_aax_macos;
