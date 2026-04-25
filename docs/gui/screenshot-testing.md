@@ -6,10 +6,22 @@ changes unexpectedly — a widget moves, a color shifts, a label
 disappears — the test fails on the reference platform and points at
 the freshly-rendered PNG so you can compare visually.
 
+The shape is the same regardless of which GUI backend you use. Each
+backend exposes a `render_to_pixels(...) -> (Vec<u8>, u32, u32)`
+helper that returns RGBA bytes and physical dimensions. A single
+backend-agnostic comparator — `truce_test::assert_screenshot` — does
+the diffing, file I/O, and platform gating. Two lines per test:
+
+```rust
+let (pixels, w, h) = truce_<backend>::screenshot::render_to_pixels(...);
+truce_test::assert_screenshot(name, &pixels, w, h, max_diff, "snapshots");
+```
+
 ## How it works
 
-1. The test renders your GUI headlessly (no window needed).
-2. The current render is **always** written to
+1. The backend's `render_to_pixels` runs your GUI headlessly (no
+   window needed) and returns RGBA bytes plus physical dimensions.
+2. `assert_screenshot` writes the current render to
    `<workspace>/target/screenshots/<name>.png` — gitignored, so it
    never accidentally gets committed.
 3. The committed reference is loaded from
@@ -23,16 +35,13 @@ the freshly-rendered PNG so you can compare visually.
    fails on the reference platform and reports the diff
    informationally on others.
 
-References are saved at 2x resolution with 144 DPI metadata so they
+References are saved at 2× resolution with 144 DPI metadata so they
 look correct on GitHub and in image viewers.
 
 ## Adding a screenshot test
 
-Every test follows the same shape: a backend-specific
-`render_to_pixels` returns `(pixels, width, height)`, and
-`truce_test::assert_screenshot` compares against the committed
-reference. Same comparator across all four backends; only the
-renderer differs.
+Pick the backend matching your editor and use its `render_to_pixels`.
+The `truce_test::assert_screenshot` call is identical in every case.
 
 ### Built-in GUI
 
@@ -141,7 +150,7 @@ command. A typical flow:
 ```sh
 # 1. Run the test. It either fails (regression) or logs a promote hint
 #    (new test or accepted change).
-cargo test -p my-plugin -- gui_snapshot
+cargo test -p my-plugin -- gui_screenshot
 
 # 2. Inspect target/screenshots/my_plugin_default.png. If it looks
 #    correct, promote it:
@@ -155,7 +164,7 @@ To regenerate every reference at once after an intentional UI change:
 
 ```sh
 rm -f snapshots/*.png
-cargo test --workspace -- gui_snapshot
+cargo test --workspace -- gui_screenshot
 # Tests pass with promote hints. Inspect target/screenshots/*.png,
 # then bulk-promote:
 cp target/screenshots/*.png snapshots/
@@ -164,15 +173,17 @@ git add snapshots/
 
 ## Tolerance
 
-The last argument (`max_diff`) controls how many bytes can differ. Use
-`0` for exact match. If anti-aliasing differs between GPU drivers, bump
-it to a small number like `100`.
+`assert_screenshot`'s `max_diff_pixels` argument is the number of
+RGBA bytes that may differ before the test fails. `0` is exact-match
+(used by every truce example). Bump it to a small number like
+`100`–`500` if anti-aliasing or font hinting introduces flake on
+your reference platform.
 
 When a test fails, the current render is at
 `target/screenshots/<name>.png` and the reference is at
 `<reference_dir>/<name>.png`. Open both and compare visually; if the
-new render is correct, promote it via the `cp` command in the
-panic message.
+new render is correct, promote it via the `cp` command in the panic
+message.
 
 ## Cross-OS behavior
 
@@ -208,7 +219,7 @@ env:
 
 After flipping the reference, regenerate every PNG on the new
 reference platform (`rm <reference_dir>/*.png && cargo test
---workspace -- gui_snapshot`, then `cp target/screenshots/*.png
+--workspace -- gui_screenshot`, then `cp target/screenshots/*.png
 <reference_dir>/`) so the saved bytes match what that platform
 produces.
 
@@ -229,13 +240,20 @@ permanently red on those platforms.
 
 ## Texture format gotchas
 
-Screenshots must use the same texture format as the live editor, or
-colors will look wrong (typically darker or lighter). The backends
-handle this automatically, but if you're debugging color mismatches:
+`assert_screenshot` always reads RGBA8 bytes; each backend's
+`render_to_pixels` is responsible for converting from its native
+format into that shape. Each backend already does this — the table
+below is for debugging color mismatches if you're hand-rolling a
+renderer.
 
-| Backend | Live format | Screenshot format |
-|---------|------------|-------------------|
-| Built-in | Non-sRGB surface default | `Rgba8Unorm` |
-| egui | `Rgba8UnormSrgb` | `Rgba8UnormSrgb` |
-| Iced | `Bgra8UnormSrgb` | `Bgra8UnormSrgb` |
-| Slint | CPU pixels | RGBA8 |
+| Backend | Live format | Screenshot bytes returned |
+|---------|------------|----------------------------|
+| Built-in (`truce-gpu`) | Non-sRGB surface default | RGBA8 |
+| egui (`truce-egui`) | `Rgba8UnormSrgb` | RGBA8 (sRGB) |
+| Iced (`truce-iced`) | `Bgra8UnormSrgb` | RGBA8 (sRGB, swizzled) |
+| Slint (`truce-slint`) | CPU pixels (premultiplied) | RGBA8 (un-premultiplied) |
+
+Mismatches usually look like a uniform tint shift (everything
+darker / lighter / wrong red-blue) — that's a sign the renderer is
+returning bytes in a format `assert_screenshot` can't compare against
+the reference.
