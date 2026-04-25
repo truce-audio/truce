@@ -125,7 +125,7 @@ impl PkgFormat {
 pub(crate) fn cmd_package(_args: &[String]) -> Res {
     #[cfg(target_os = "windows")]
     {
-        return crate::packaging_windows::cmd_package(_args);
+        crate::packaging_windows::cmd_package(_args)
     }
     #[cfg(target_os = "macos")]
     {
