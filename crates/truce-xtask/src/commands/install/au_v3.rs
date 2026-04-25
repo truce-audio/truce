@@ -61,10 +61,13 @@ pub(crate) fn emit_au_v3_bundle(
     let dt = &deployment_target();
 
     if team_id.is_empty() {
-        eprintln!("AU v3: skipping — requires a Developer ID signing identity with a team ID.");
-        eprintln!("  Set [macos.signing].application_identity in truce.toml to your Developer ID certificate,");
-        eprintln!("  e.g., \"Developer ID Application: Your Name (TEAMID)\"");
-        eprintln!("  Ad-hoc signing (\"-\") is not supported for AU v3 appex bundles.");
+        crate::log_skip(
+            "AU v3: requires a Developer ID signing identity with a team ID. \
+             Set [macos.signing].application_identity in truce.toml \
+             (e.g., \"Developer ID Application: Your Name (TEAMID)\"). \
+             Ad-hoc signing (\"-\") is not supported for AU v3 appex bundles."
+                .to_string(),
+        );
         return Ok(());
     }
 

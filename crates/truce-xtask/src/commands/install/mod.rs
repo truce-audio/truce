@@ -344,6 +344,13 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
             eprintln!("  {line}");
         }
     }
+    let skipped = crate::take_skipped();
+    if !skipped.is_empty() {
+        eprintln!("\nSkipped:");
+        for line in skipped {
+            eprintln!("  {line}");
+        }
+    }
     eprintln!("\nDone. Restart your DAW to rescan.");
     Ok(())
 }

@@ -324,6 +324,28 @@ pub(crate) fn take_installed() -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Per-process collector of soft-skipped install reasons (e.g. AAX with
+/// no SDK configured, AU v3 with ad-hoc signing). Same pattern as
+/// `INSTALLED` but printed under a `Skipped:` header at the end of
+/// `cmd_install` so the user sees what didn't make it.
+static SKIPPED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+pub(crate) fn log_skip(line: String) {
+    if is_verbose() {
+        eprintln!("{line}");
+    }
+    if let Ok(mut v) = SKIPPED.lock() {
+        v.push(line);
+    }
+}
+
+pub(crate) fn take_skipped() -> Vec<String> {
+    SKIPPED
+        .lock()
+        .map(|mut v| std::mem::take(&mut *v))
+        .unwrap_or_default()
+}
+
 /// Run `codesign` with the given args. In quiet mode (default), stderr
 /// is captured and only printed on failure — drops the "replacing
 /// existing signature" noise on every re-sign without losing real
