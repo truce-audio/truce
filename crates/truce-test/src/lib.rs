@@ -586,13 +586,22 @@ pub fn assert_gui_snapshot_raw(
 ) {
     let dir = workspace_screenshots_dir();
     let ref_path = dir.join(format!("{name}.png"));
+    let is_ref = is_reference_platform();
 
     if !ref_path.exists() {
-        save_png(&ref_path, pixels, width, height);
-        eprintln!(
-            "[truce-test] Snapshot reference created: {}",
-            ref_path.display()
-        );
+        if is_ref {
+            save_png(&ref_path, pixels, width, height);
+            eprintln!(
+                "[truce-test] Snapshot reference created: {}",
+                ref_path.display()
+            );
+        } else {
+            eprintln!(
+                "[truce-test] No reference at {}; skipping comparison on non-reference platform {}.",
+                ref_path.display(),
+                std::env::consts::OS,
+            );
+        }
         return;
     }
 
@@ -616,14 +625,28 @@ pub fn assert_gui_snapshot_raw(
     if diff_count > max_diff_pixels {
         let fail_path = dir.join(format!("{name}_FAILED.png"));
         save_png(&fail_path, pixels, width, height);
-        panic!(
-            "GUI snapshot mismatch: {diff_count} pixels differ (max allowed: {max_diff_pixels}). \
-             Reference: {}\n\
-             Current:   {}\n\
-             Delete the reference to regenerate.",
-            ref_path.display(),
-            fail_path.display(),
-        );
+        if is_ref {
+            panic!(
+                "GUI snapshot mismatch: {diff_count} pixels differ (max allowed: {max_diff_pixels}). \
+                 Reference: {}\n\
+                 Current:   {}\n\
+                 Delete the reference to regenerate.",
+                ref_path.display(),
+                fail_path.display(),
+            );
+        } else {
+            // Non-reference platform: report the diff for visibility
+            // but don't fail. Per-backend wgpu rasterization
+            // differences make divergence expected.
+            eprintln!(
+                "[truce-test] non-reference diff on {}: {diff_count} pixels differ vs {} \
+                 (informational; max allowed on reference: {max_diff_pixels}). \
+                 Saved current to {}.",
+                std::env::consts::OS,
+                ref_path.display(),
+                fail_path.display(),
+            );
+        }
     }
 }
 
@@ -648,6 +671,22 @@ pub fn assert_gui_snapshot_grid<P: Params + 'static>(
 ) {
     let (pixels, w, h) = truce_gpu::snapshot::render_to_pixels(params, layout);
     assert_gui_snapshot_raw(name, &pixels, w, h, max_diff_pixels);
+}
+
+/// Whether the current process should compare its rendered pixels
+/// against the committed reference PNG. Defaults to macOS; override
+/// with `TRUCE_SNAPSHOT_REFERENCE_OS={macos,linux,windows}` to move
+/// the reference to a different platform (e.g. for a Linux-only
+/// developer who wants their CI to enforce snapshots).
+///
+/// Per-backend rasterization differences in wgpu mean the PNG bytes
+/// won't match exactly across platforms even with identical inputs;
+/// this gate trades full cross-OS pixel comparison for cross-OS
+/// smoke coverage of the rendering pipeline.
+fn is_reference_platform() -> bool {
+    let target = std::env::var("TRUCE_SNAPSHOT_REFERENCE_OS")
+        .unwrap_or_else(|_| "macos".to_string());
+    std::env::consts::OS == target
 }
 
 fn save_png(path: &std::path::Path, pixels: &[u8], w: u32, h: u32) {

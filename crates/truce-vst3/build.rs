@@ -9,7 +9,11 @@ fn main() {
     } else {
         build.flag("-std=c++17");
         if cfg!(target_os = "macos") {
-            build.flag("-mmacosx-version-min=10.13");
+            // Match the workspace's Apple deployment floor. 10.13 was
+            // honored by Xcode <= 14 but newer Xcode SDKs reject it,
+            // breaking with `cstdint not found` since no matching
+            // headers ship.
+            build.flag("-mmacosx-version-min=11.0");
         }
     }
 

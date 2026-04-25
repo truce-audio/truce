@@ -99,13 +99,22 @@ pub fn assert_snapshot<P: truce_params::Params + 'static>(
     fs::create_dir_all(&dir).ok();
 
     let ref_path = dir.join(format!("{name}.png"));
+    let is_ref = is_reference_platform();
 
     if !ref_path.exists() {
-        save_png(&ref_path, &pixels, width, height);
-        eprintln!(
-            "[truce-slint] Snapshot reference created: {}",
-            ref_path.display()
-        );
+        if is_ref {
+            save_png(&ref_path, &pixels, width, height);
+            eprintln!(
+                "[truce-slint] Snapshot reference created: {}",
+                ref_path.display()
+            );
+        } else {
+            eprintln!(
+                "[truce-slint] No reference at {}; skipping comparison on non-reference platform {}.",
+                ref_path.display(),
+                std::env::consts::OS,
+            );
+        }
         return;
     }
 
@@ -128,15 +137,39 @@ pub fn assert_snapshot<P: truce_params::Params + 'static>(
     if diff_count > max_diff_pixels {
         let fail_path = dir.join(format!("{name}_FAILED.png"));
         save_png(&fail_path, &pixels, width, height);
-        panic!(
-            "GUI snapshot mismatch: {diff_count} pixels differ (max allowed: {max_diff_pixels}).\n\
-             Reference: {}\n\
-             Current:   {}\n\
-             Delete the reference to regenerate.",
-            ref_path.display(),
-            fail_path.display(),
-        );
+        if is_ref {
+            panic!(
+                "GUI snapshot mismatch: {diff_count} pixels differ (max allowed: {max_diff_pixels}).\n\
+                 Reference: {}\n\
+                 Current:   {}\n\
+                 Delete the reference to regenerate.",
+                ref_path.display(),
+                fail_path.display(),
+            );
+        } else {
+            // Non-reference platform: report the diff for visibility
+            // but don't fail. Slint is software-rendered, but font
+            // hinting / sub-pixel positioning still varies per-OS.
+            eprintln!(
+                "[truce-slint] non-reference diff on {}: {diff_count} pixels differ vs {} \
+                 (informational; max allowed on reference: {max_diff_pixels}). \
+                 Saved current to {}.",
+                std::env::consts::OS,
+                ref_path.display(),
+                fail_path.display(),
+            );
+        }
     }
+}
+
+/// Whether the current process should compare its rendered pixels
+/// against the committed reference PNG. Defaults to macOS; override
+/// with `TRUCE_SNAPSHOT_REFERENCE_OS={macos,linux,windows}` to move
+/// the reference to a different platform.
+fn is_reference_platform() -> bool {
+    let target = std::env::var("TRUCE_SNAPSHOT_REFERENCE_OS")
+        .unwrap_or_else(|_| "macos".to_string());
+    std::env::consts::OS == target
 }
 
 fn save_png(path: &Path, pixels: &[u8], w: u32, h: u32) {

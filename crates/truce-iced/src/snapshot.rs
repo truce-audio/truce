@@ -35,9 +35,12 @@ where
     let w = (size.0 as f64 * scale) as u32;
     let h = (size.1 as f64 * scale) as u32;
 
-    // Create headless wgpu device
+    // Create headless wgpu device. `PRIMARY` picks the platform-default
+    // backend (Metal on macOS, DX12 on Windows, Vulkan on Linux) so the
+    // pipeline runs everywhere; per-backend rasterization differences
+    // are handled by the reference-platform gate in callers.
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::METAL,
+        backends: wgpu::Backends::PRIMARY,
         ..Default::default()
     });
 

@@ -132,6 +132,58 @@ it to a small number like `100`.
 When a test fails, a `_FAILED.png` is saved next to the reference so
 you can open both and compare visually.
 
+## Cross-OS behavior
+
+The committed reference PNGs are owned by **one platform** — by
+default, macOS. The rendering pipeline runs on every OS (Linux,
+Windows, macOS), so screenshot tests double as smoke coverage that
+the wgpu / Slint software renderer pipeline doesn't crash anywhere.
+Comparison against the reference, however, is gated:
+
+| Platform | Render | Compare | On diff |
+|---|---|---|---|
+| Reference (`macos` by default) | yes | yes | **fail the test**, save `*_FAILED.png` |
+| Non-reference | yes | yes | log diff count, save `*_FAILED.png`, **pass** |
+
+Why one platform owns the references: Metal, DX12, and Vulkan each
+have their own anti-aliasing and text-rasterization quirks, so even
+identical wgpu API calls produce slightly different bytes per
+backend. Pixel-perfect cross-OS reference comparison would either
+require software rendering everywhere or per-platform reference
+trees. The current model keeps one canonical set of references and
+treats per-platform diffs as informational.
+
+### Choosing the reference platform
+
+Override the default with the `TRUCE_SNAPSHOT_REFERENCE_OS`
+environment variable. Valid values match `std::env::consts::OS`:
+`macos`, `linux`, `windows`. For example, in a Linux-first CI:
+
+```yaml
+env:
+  TRUCE_SNAPSHOT_REFERENCE_OS: linux
+```
+
+After flipping the reference, regenerate every PNG on the new
+reference platform (`rm screenshots/*.png && cargo test --workspace
+-- gui_snapshot`) so the saved bytes match what that platform
+produces.
+
+### Inspecting non-reference diffs
+
+Even though non-reference platforms don't fail the test, they still
+write `screenshots/*_FAILED.png` and print a line like:
+
+```
+[truce-egui] non-reference diff on linux: 1532 pixels differ vs
+.../screenshots/gain_egui_default.png (informational; max allowed on
+reference: 0). Saved current to .../screenshots/gain_egui_default_FAILED.png.
+```
+
+That gives you a way to spot real cross-platform regressions
+(e.g. a Linux-only rendering bug) without having the test be
+permanently red on those platforms.
+
 ## Texture format gotchas
 
 Screenshots must use the same texture format as the live editor, or
