@@ -1,11 +1,11 @@
 # truce — Project Status
 
-Updated 2026-04-24. Version 0.6.0.
+Updated 2026-04-25. Version 0.9.0.
 
 ## Summary
 
-7 format wrappers (CLAP, VST3, VST2, AU v2, AU v3, AAX, LV2), 8
-example plugins, 7 widget types, tested in 6 DAWs. All formats have
+7 format wrappers (CLAP, VST3, VST2, AU v2, AU v3, AAX, LV2), 9
+example plugins, 7 widget types, tested in 7 DAWs. All formats have
 custom GUI. Hot-reload via `--features dev`. Single `truce::plugin!`
 macro for all exports. No build.rs needed. Four GUI backends: built-in
 (tiny-skia/wgpu), egui, iced, and slint.
@@ -47,6 +47,7 @@ Pass `--host-only` to skip the cross-arch build during dev iteration. Output lan
 | Gain-slint | Effect | slint | Knob, meter, XY pad (declarative .slint markup) |
 | EQ | Effect | Built-in | Knobs with section breaks (low shelf + peaking + high shelf) |
 | Synth | Instrument | Built-in | Selector, knobs with sections |
+| Tremolo | Effect | egui | Tempo-synced LFO; live transport readout in the editor |
 | Transpose | MIDI effect | Built-in | Knobs |
 | Arpeggio | MIDI effect | Built-in | Knobs, selector |
 
@@ -183,11 +184,15 @@ cargo-truce       — scaffolding + build/install/package CLI (cargo truce new)
 ## What's remaining
 
 **Near-term:**
-- Linux: automation + preset round-trip testing; Bitwig + Ardour validation; `cargo truce package` (`.deb`/`.rpm`); CI job on ubuntu-24.04.
-- CLAP GUI→host slider sync in Reaper
-- CI pipeline with Windows + Linux jobs
+- CI pipeline with macOS + Windows + Linux jobs
+  (`.github/workflows/ci.yml` — `cargo fmt --check`, `cargo clippy -D
+  warnings`, `cargo test --workspace` on each).
+- Linux: automation + preset round-trip testing; Bitwig + Ardour
+  validation; `cargo truce package` (`.deb`/`.rpm`).
+- Retail Pro Tools / iLok smoke test (PACE wraptool path is wired and
+  exercised against dev iLok; needs a retail-account run).
 - Authenticode round-trip verification with a real signing cert
-- PACE wraptool round-trip against retail Pro Tools
+  (Azure Trusted Signing path is wired).
 
 **Future:**
 - WebView GUI
