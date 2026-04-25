@@ -158,15 +158,20 @@ mod tests {
 
     #[test]
     fn gui_screenshot() {
-        truce_egui::screenshot::assert_screenshot::<GainParams>(
-            "examples/screenshots",
-            "gain_egui_default",
+        let (pixels, w, h) = truce_egui::screenshot::render_to_pixels::<GainParams>(
             WINDOW_W,
             WINDOW_H,
             2.0,
-            0,
             Some(font::JETBRAINS_MONO),
             gain_ui,
+        );
+        truce_test::assert_screenshot(
+            "gain_egui_default",
+            &pixels,
+            w,
+            h,
+            0,
+            "examples/screenshots",
         );
     }
 }

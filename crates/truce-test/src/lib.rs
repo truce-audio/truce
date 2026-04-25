@@ -20,14 +20,11 @@
 //! }
 //! ```
 
-use std::sync::Arc;
-
 use truce_core::buffer::AudioBuffer;
 use truce_core::events::{Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
 use truce_core::process::ProcessContext;
 use truce_core::state;
-use truce_gui::layout::GridLayout;
 use truce_params::Params;
 
 /// In-process plugin runner + time-windowed / meter / clipping
@@ -591,16 +588,22 @@ pub fn workspace_screenshot_dir(rel: &str) -> std::path::PathBuf {
 ///   rasterization differences are expected; see
 ///   `TRUCE_SCREENSHOT_REFERENCE_OS`).
 ///
-/// Works with any rendering backend — the caller provides the pixels.
+/// Backend-agnostic — caller provides raw RGBA pixels. Pair with one
+/// of:
+///
+/// - `truce_gpu::screenshot::render_to_pixels` (built-in widgets)
+/// - `truce_egui::screenshot::render_to_pixels`
+/// - `truce_iced::screenshot::render_to_pixels`
+/// - `truce_slint::screenshot::render_to_pixels`
 ///
 /// # Example
 /// ```ignore
-/// let pixels = my_renderer.screenshot();
-/// truce_test::assert_gui_screenshot_raw(
-///     "my_plugin", &pixels, 400, 300, 0, "snapshots",
+/// let (pixels, w, h) = truce_gpu::screenshot::render_to_pixels(params, layout);
+/// truce_test::assert_screenshot(
+///     "my_plugin_default", &pixels, w, h, 0, "snapshots",
 /// );
 /// ```
-pub fn assert_gui_screenshot_raw(
+pub fn assert_screenshot(
     name: &str,
     pixels: &[u8],
     width: u32,
@@ -675,35 +678,6 @@ pub fn assert_gui_screenshot_raw(
             );
         }
     }
-}
-
-/// Render the built-in GUI and compare against a reference PNG.
-///
-/// Same flow as [`assert_gui_screenshot_raw`] — current render lands
-/// in `target/screenshots/`, reference loads from
-/// `<reference_dir>/<name>.png`, missing reference logs a promote
-/// hint and passes.
-///
-/// # Example
-/// ```ignore
-/// #[test]
-/// fn gui_screenshot() {
-///     let plugin = Gain::new();
-///     let params = Arc::new(GainParams::new());
-///     truce_test::assert_gui_screenshot_grid::<GainParams>(
-///         "gain_default", params, plugin.layout(), 0, "snapshots",
-///     );
-/// }
-/// ```
-pub fn assert_gui_screenshot_grid<P: Params + 'static>(
-    name: &str,
-    params: Arc<P>,
-    layout: GridLayout,
-    max_diff_pixels: usize,
-    reference_dir: &str,
-) {
-    let (pixels, w, h) = truce_gpu::screenshot::render_to_pixels(params, layout);
-    assert_gui_screenshot_raw(name, &pixels, w, h, max_diff_pixels, reference_dir);
 }
 
 /// Whether the current process should compare its rendered pixels

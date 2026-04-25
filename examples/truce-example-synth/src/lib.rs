@@ -344,12 +344,7 @@ mod tests {
         let params = Arc::new(SynthParams::new());
         let synth = Synth::new(Arc::clone(&params));
         let layout = synth.layout();
-        truce_test::assert_gui_screenshot_grid::<SynthParams>(
-            "synth_default",
-            params,
-            layout,
-            0,
-            "examples/screenshots",
-        );
+        let (pixels, w, h) = truce_gpu::screenshot::render_to_pixels(params, layout);
+        truce_test::assert_screenshot("synth_default", &pixels, w, h, 0, "examples/screenshots");
     }
 }

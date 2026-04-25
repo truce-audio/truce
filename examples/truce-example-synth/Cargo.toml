@@ -43,4 +43,5 @@ truce-lv2 = { workspace = true, optional = true }
 
 [dev-dependencies]
 truce-test = { workspace = true }
+truce-gpu = { workspace = true }
 

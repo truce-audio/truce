@@ -200,8 +200,9 @@ mod tests {{
         // Reference PNGs live in the project root's `snapshots/` dir.
         // First run logs a `cp`-based promote hint with the exact
         // command to commit the freshly-rendered reference.
-        truce_test::assert_gui_screenshot_grid::<{struct_name}Params>(
-            "{name}_default", params, layout, 0, "snapshots",
+        let (pixels, w, h) = truce_gpu::screenshot::render_to_pixels(params, layout);
+        truce_test::assert_screenshot(
+            "{name}_default", &pixels, w, h, 0, "snapshots",
         );
     }}
 }}

@@ -237,13 +237,15 @@ parameter values sync automatically through `ParamState`.
 #[test]
 fn gui_screenshot_iced() {
     let params = Arc::new(MyParams::new());
-    let (pixels, w, h) = truce_iced::screenshot::render_iced_screenshot::<MyParams, MyEditor>(
+    let (pixels, w, h) = truce_iced::screenshot::render_to_pixels::<MyParams, MyEditor>(
         params,
         (WINDOW_W, WINDOW_H),
         2.0,
-        Some(("JetBrains Mono", truce_gui::font::JETBRAINS_MONO)),
+        Some(("JetBrains Mono", truce_font::JETBRAINS_MONO)),
     );
-    truce_test::assert_gui_screenshot_raw("my_plugin_iced_default", &pixels, w, h, 0);
+    truce_test::assert_screenshot(
+        "my_plugin_iced_default", &pixels, w, h, 0, "snapshots",
+    );
 }
 ```
 

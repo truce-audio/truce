@@ -172,10 +172,12 @@ mod tests {
         let params = Arc::new(TransposeParams::new());
         let transpose = Transpose::new(Arc::clone(&params));
         let layout = transpose.layout();
-        truce_test::assert_gui_screenshot_grid::<TransposeParams>(
+        let (pixels, w, h) = truce_gpu::screenshot::render_to_pixels(params, layout);
+        truce_test::assert_screenshot(
             "transpose_default",
-            params,
-            layout,
+            &pixels,
+            w,
+            h,
             0,
             "examples/screenshots",
         );

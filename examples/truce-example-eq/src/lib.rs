@@ -344,12 +344,7 @@ mod tests {
         let params = Arc::new(EqParams::new());
         let eq = Eq::new(Arc::clone(&params));
         let layout = eq.layout();
-        truce_test::assert_gui_screenshot_grid::<EqParams>(
-            "eq_default",
-            params,
-            layout,
-            0,
-            "examples/screenshots",
-        );
+        let (pixels, w, h) = truce_gpu::screenshot::render_to_pixels(params, layout);
+        truce_test::assert_screenshot("eq_default", &pixels, w, h, 0, "examples/screenshots");
     }
 }

@@ -8,18 +8,21 @@ use std::sync::Arc;
 
 /// Render an egui UI function to RGBA pixels using headless wgpu.
 ///
-/// `width` and `height` are in logical points. The output pixel buffer
-/// is `width * ppp × height * ppp` physical pixels.
+/// `width` and `height` are in logical points. Returns `(pixels,
+/// physical_w, physical_h)` where the pixel buffer is row-major
+/// `physical_w * physical_h` RGBA8 (sRGB).
 ///
 /// Uses `P::default_for_gui()` to provide accurate parameter values
-/// and formatting in the screenshot.
+/// and formatting in the screenshot. Pair with
+/// [`truce_test::assert_screenshot`] to compare against a committed
+/// reference PNG.
 pub fn render_to_pixels<P: truce_params::Params + 'static>(
     width: u32,
     height: u32,
     pixels_per_point: f32,
     font: Option<&'static [u8]>,
     ui_fn: impl Fn(&egui::Context, &ParamState),
-) -> Vec<u8> {
+) -> (Vec<u8>, u32, u32) {
     let params = Arc::new(P::default_for_gui());
     let state = ParamState::from_params(params);
     let ctx = egui::Context::default();
@@ -211,153 +214,5 @@ pub fn render_to_pixels<P: truce_params::Params + 'static>(
         egui_renderer.free_texture(id);
     }
 
-    pixels
-}
-
-/// Render an egui UI and compare against a reference PNG screenshot.
-///
-/// Always writes the current render to
-/// `<workspace_root>/target/screenshots/<name>.png` (gitignored).
-/// Loads the committed reference from
-/// `<workspace_root>/<reference_dir>/<name>.png`.
-///
-/// - **No reference yet:** logs a `cp`-based "promote" hint, passes.
-/// - **Reference present, diff <= tolerance:** passes silently.
-/// - **Reference present, diff > tolerance, on the reference
-///   platform:** panics, naming both PNG paths.
-/// - **Reference present, diff > tolerance, on a non-reference
-///   platform:** logs the diff count, passes (per-backend wgpu
-///   rasterization differences are expected).
-#[allow(clippy::too_many_arguments)]
-pub fn assert_screenshot<P: truce_params::Params + 'static>(
-    reference_dir: &str,
-    name: &str,
-    width: u32,
-    height: u32,
-    pixels_per_point: f32,
-    max_diff_pixels: usize,
-    font: Option<&'static [u8]>,
-    ui_fn: impl Fn(&egui::Context, &ParamState),
-) {
-    let pixels = render_to_pixels::<P>(width, height, pixels_per_point, font, ui_fn);
-    let phys_w = (width as f32 * pixels_per_point) as u32;
-    let phys_h = (height as f32 * pixels_per_point) as u32;
-
-    // Walk up from `crates/truce-egui` to the workspace root.
-    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let root = manifest_dir.parent().unwrap().parent().unwrap();
-
-    // Render always lands in target/screenshots/, regardless of where
-    // the reference lives. Keeps in-tree reference dirs clean of
-    // generated artifacts.
-    let render_dir = root.join("target").join("screenshots");
-    std::fs::create_dir_all(&render_dir).ok();
-    let render_path = render_dir.join(format!("{name}.png"));
-    save_png(&render_path, &pixels, phys_w, phys_h);
-
-    let ref_dir = root.join(reference_dir);
-    std::fs::create_dir_all(&ref_dir).ok();
-    let ref_path = ref_dir.join(format!("{name}.png"));
-
-    if !ref_path.exists() {
-        eprintln!(
-            "[truce-egui] No reference at {}.\n\
-             Current render saved to {}.\n\
-             To promote: cp '{}' '{}'",
-            ref_path.display(),
-            render_path.display(),
-            render_path.display(),
-            ref_path.display(),
-        );
-        return;
-    }
-
-    let (ref_pixels, ref_w, ref_h) = load_png(&ref_path);
-    assert_eq!(
-        (phys_w, phys_h),
-        (ref_w, ref_h),
-        "GUI size changed: current {phys_w}x{phys_h}, reference {ref_w}x{ref_h}. \
-         Delete {} to regenerate.",
-        ref_path.display()
-    );
-
-    let mut diff_count = 0usize;
-    for (&current, &reference) in pixels.iter().zip(ref_pixels.iter()) {
-        if current != reference {
-            diff_count += 1;
-        }
-    }
-
-    if diff_count > max_diff_pixels {
-        let is_ref = is_reference_platform();
-        if is_ref {
-            panic!(
-                "GUI screenshot mismatch: {diff_count} pixels differ (max allowed: {max_diff_pixels}).\n\
-                 Reference: {}\n\
-                 Current:   {}\n\
-                 Either fix the regression, or accept the new render with: cp '{}' '{}'",
-                ref_path.display(),
-                render_path.display(),
-                render_path.display(),
-                ref_path.display(),
-            );
-        } else {
-            // Non-reference platform: report the diff for visibility
-            // but don't fail. Per-backend rasterization differences
-            // make this expected.
-            eprintln!(
-                "[truce-egui] non-reference diff on {}: {diff_count} pixels differ vs {} \
-                 (informational; max allowed on reference: {max_diff_pixels}). \
-                 Current render at {}.",
-                std::env::consts::OS,
-                ref_path.display(),
-                render_path.display(),
-            );
-        }
-    }
-}
-
-/// Whether the current process should compare its rendered pixels
-/// against the committed reference PNG. Defaults to macOS; override
-/// with `TRUCE_SCREENSHOT_REFERENCE_OS={macos,linux,windows}` to move
-/// the reference to a different platform (e.g. for a Linux-only
-/// developer who wants their CI to enforce screenshots).
-///
-/// Per-backend rasterization differences in wgpu mean the PNG bytes
-/// won't match exactly across platforms even with identical inputs;
-/// this gate trades full cross-OS pixel comparison for
-/// cross-OS smoke coverage of the rendering pipeline.
-fn is_reference_platform() -> bool {
-    let target =
-        std::env::var("TRUCE_SCREENSHOT_REFERENCE_OS").unwrap_or_else(|_| "macos".to_string());
-    std::env::consts::OS == target
-}
-
-fn save_png(path: &std::path::Path, pixels: &[u8], w: u32, h: u32) {
-    let file = std::fs::File::create(path)
-        .unwrap_or_else(|e| panic!("Failed to create {}: {e}", path.display()));
-    let mut encoder = png::Encoder::new(file, w, h);
-    encoder.set_color(png::ColorType::Rgba);
-    encoder.set_depth(png::BitDepth::Eight);
-    let mut writer = encoder
-        .write_header()
-        .unwrap_or_else(|e| panic!("Failed to write PNG header: {e}"));
-    writer
-        .write_image_data(pixels)
-        .unwrap_or_else(|e| panic!("Failed to write PNG data: {e}"));
-}
-
-fn load_png(path: &std::path::Path) -> (Vec<u8>, u32, u32) {
-    let file = std::fs::File::open(path)
-        .unwrap_or_else(|e| panic!("Failed to open {}: {e}", path.display()));
-    let decoder = png::Decoder::new(std::io::BufReader::new(file));
-    let mut reader = decoder
-        .read_info()
-        .unwrap_or_else(|e| panic!("Failed to read PNG info: {e}"));
-    let mut buf = vec![0u8; reader.output_buffer_size().unwrap()];
-    let info = reader
-        .next_frame(&mut buf)
-        .unwrap_or_else(|e| panic!("Failed to decode PNG frame: {e}"));
-    buf.truncate(info.buffer_size());
-    (buf, info.width, info.height)
+    (pixels, phys_w, phys_h)
 }

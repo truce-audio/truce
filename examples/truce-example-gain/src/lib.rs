@@ -189,10 +189,12 @@ mod tests {
         let params = Arc::new(GainParams::new());
         let gain = Gain::new(Arc::clone(&params));
         let layout = gain.layout();
-        truce_test::assert_gui_screenshot_grid::<GainParams>(
+        let (pixels, w, h) = truce_gpu::screenshot::render_to_pixels(params, layout);
+        truce_test::assert_screenshot(
             "gain_default",
-            params,
-            layout,
+            &pixels,
+            w,
+            h,
             0,
             "examples/screenshots",
         );

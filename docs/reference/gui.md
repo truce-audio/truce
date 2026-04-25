@@ -141,6 +141,37 @@ layout()` method becomes irrelevant when a custom editor is used.
 See [gui/README.md](../gui/README.md) for a side-by-side comparison
 of the backends.
 
+## Screenshot tests
+
+Catch visual regressions by rendering your GUI headlessly and
+diffing the result against a committed reference PNG. Same shape
+across all four backends — render to RGBA pixels, then compare:
+
+```rust
+#[test]
+fn gui_screenshot() {
+    let params = Arc::new(MyParams::new());
+    let plugin = MyPlugin::new(Arc::clone(&params));
+    let layout = plugin.layout();
+    let (pixels, w, h) = truce_gpu::screenshot::render_to_pixels(params, layout);
+    truce_test::assert_screenshot(
+        "my_plugin_default", &pixels, w, h, 0, "snapshots",
+    );
+}
+```
+
+Swap `truce_gpu::screenshot::render_to_pixels` for the matching
+helper in `truce_egui`, `truce_iced`, or `truce_slint` and the
+shape stays identical. The current render always lands in
+`target/screenshots/` (gitignored); the comparator loads the
+committed reference from the directory you pass in (`"snapshots"`
+above) and prints a `cp`-based promote hint when the reference
+doesn't exist yet.
+
+See [gui/screenshot-testing.md](../gui/screenshot-testing.md) for
+the full flow — promoting new references, cross-OS behavior, the
+`TRUCE_SCREENSHOT_REFERENCE_OS` override, and per-backend examples.
+
 ## What's next
 
 - **[Chapter 7 → hot-reload.md](hot-reload.md)** — edit the
@@ -148,5 +179,7 @@ of the backends.
   closing the DAW.
 - **[Built-in GUI reference](../gui/built-in.md)** — every widget
   constructor, all the cell options, theming.
+- **[Screenshot testing](../gui/screenshot-testing.md)** — diff
+  rendered pixels against committed PNGs.
 - **[GUI backends](../gui/)** — deep-dives per framework when the
   built-in GUI isn't enough.

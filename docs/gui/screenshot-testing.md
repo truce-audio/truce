@@ -28,6 +28,12 @@ look correct on GitHub and in image viewers.
 
 ## Adding a screenshot test
 
+Every test follows the same shape: a backend-specific
+`render_to_pixels` returns `(pixels, width, height)`, and
+`truce_test::assert_screenshot` compares against the committed
+reference. Same comparator across all four backends; only the
+renderer differs.
+
 ### Built-in GUI
 
 ```rust
@@ -36,8 +42,9 @@ fn gui_screenshot() {
     let params = Arc::new(MyParams::new());
     let plugin = MyPlugin::new(Arc::clone(&params));
     let layout = plugin.layout();
-    truce_test::assert_gui_screenshot_grid::<MyParams>(
-        "my_plugin_default", params, layout,
+    let (pixels, w, h) = truce_gpu::screenshot::render_to_pixels(params, layout);
+    truce_test::assert_screenshot(
+        "my_plugin_default", &pixels, w, h,
         0,             // max pixel differences (0 = exact match)
         "snapshots",   // workspace-relative dir for committed PNGs
     );
@@ -49,14 +56,14 @@ fn gui_screenshot() {
 ```rust
 #[test]
 fn gui_screenshot() {
-    truce_egui::screenshot::assert_snapshot(
-        "snapshots",          // reference_dir (workspace-relative)
-        "my_plugin_egui_default",
+    let (pixels, w, h) = truce_egui::screenshot::render_to_pixels::<MyParams>(
         WINDOW_W, WINDOW_H,   // use the same constants as your editor
         2.0,                   // scale (2.0 for Retina)
-        0,                     // max pixel differences
         Some(truce_font::JETBRAINS_MONO),
         |ctx, state| my_ui(ctx, state),
+    );
+    truce_test::assert_screenshot(
+        "my_plugin_egui_default", &pixels, w, h, 0, "snapshots",
     );
 }
 ```
@@ -67,15 +74,14 @@ fn gui_screenshot() {
 #[test]
 fn gui_screenshot_iced() {
     let params = Arc::new(MyParams::new());
-    let (pixels, w, h) = truce_iced::screenshot::render_iced_screenshot::<MyParams, MyEditor>(
+    let (pixels, w, h) = truce_iced::screenshot::render_to_pixels::<MyParams, MyEditor>(
         params,
         (WINDOW_W, WINDOW_H),
         2.0,
         Some(("JetBrains Mono", truce_font::JETBRAINS_MONO)),
     );
-    truce_test::assert_gui_screenshot_raw(
-        "my_plugin_iced_default", &pixels, w, h,
-        0, "snapshots",
+    truce_test::assert_screenshot(
+        "my_plugin_iced_default", &pixels, w, h, 0, "snapshots",
     );
 }
 ```
@@ -85,12 +91,9 @@ fn gui_screenshot_iced() {
 ```rust
 #[test]
 fn gui_screenshot() {
-    truce_slint::screenshot::assert_snapshot(
-        "snapshots",
-        "my_plugin_slint_default",
+    let (pixels, w, h) = truce_slint::screenshot::render_to_pixels::<MyParams>(
         WINDOW_W, WINDOW_H,
         2.0,
-        0,
         |state| {
             let ui = MyPluginUi::new().unwrap();
             truce_slint::bind! { state, ui,
@@ -98,17 +101,21 @@ fn gui_screenshot() {
             }
         },
     );
+    truce_test::assert_screenshot(
+        "my_plugin_slint_default", &pixels, w, h, 0, "snapshots",
+    );
 }
 ```
 
 Slint uses a software renderer — no GPU needed. This makes Slint
-snapshots fast and reproducible across machines (font hinting still
+screenshots fast and reproducible across machines (font hinting still
 varies per-OS, see [Cross-OS behavior](#cross-os-behavior)).
 
-## Keeping editor and snapshot sizes in sync
+## Keeping editor and screenshot sizes in sync
 
 Define your window dimensions as constants and use them in both the
-editor and the snapshot test. This prevents them from drifting apart:
+editor and the screenshot test. This prevents them from drifting
+apart:
 
 ```rust
 const WINDOW_W: u32 = 176;
@@ -118,9 +125,11 @@ const WINDOW_H: u32 = 290;
 EguiEditor::new((WINDOW_W, WINDOW_H), my_ui)
 
 // In the test:
-truce_egui::screenshot::assert_snapshot(
-    "snapshots", "my_plugin_default",
-    WINDOW_W, WINDOW_H, 2.0, 0, None, |ctx, state| my_ui(ctx, state),
+let (pixels, w, h) = truce_egui::screenshot::render_to_pixels::<MyParams>(
+    WINDOW_W, WINDOW_H, 2.0, None, |ctx, state| my_ui(ctx, state),
+);
+truce_test::assert_screenshot(
+    "my_plugin_default", &pixels, w, h, 0, "snapshots",
 );
 ```
 

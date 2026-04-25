@@ -200,13 +200,13 @@ mod tests {
     #[test]
     fn gui_screenshot_iced() {
         let params = Arc::new(GainParams::new());
-        let (pixels, w, h) = truce_iced::screenshot::render_iced_screenshot::<GainParams, GainUi>(
+        let (pixels, w, h) = truce_iced::screenshot::render_to_pixels::<GainParams, GainUi>(
             params,
             (WINDOW_W, WINDOW_H),
             2.0,
             Some(("JetBrains Mono", font::JETBRAINS_MONO)),
         );
-        truce_test::assert_gui_screenshot_raw(
+        truce_test::assert_screenshot(
             "gain_iced_default",
             &pixels,
             w,

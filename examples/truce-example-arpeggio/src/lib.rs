@@ -328,13 +328,8 @@ mod tests {
         let params = Arc::new(ArpParams::new());
         let arp = Arpeggio::new(Arc::clone(&params));
         let layout = arp.layout();
-        truce_test::assert_gui_screenshot_grid::<ArpParams>(
-            "arpeggio_default",
-            params,
-            layout,
-            0,
-            "examples/screenshots",
-        );
+        let (pixels, w, h) = truce_gpu::screenshot::render_to_pixels(params, layout);
+        truce_test::assert_screenshot("arpeggio_default", &pixels, w, h, 0, "examples/screenshots");
     }
 
     /// Regression guard for the 2026-04-23 LV2 MIDI bug: the

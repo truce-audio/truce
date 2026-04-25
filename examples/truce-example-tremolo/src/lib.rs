@@ -345,15 +345,20 @@ mod tests {
 
     #[test]
     fn gui_screenshot() {
-        truce_egui::screenshot::assert_screenshot::<TremoloParams>(
-            "examples/screenshots",
-            "tremolo_default",
+        let (pixels, w, h) = truce_egui::screenshot::render_to_pixels::<TremoloParams>(
             WINDOW_W,
             WINDOW_H,
             2.0,
-            0,
             Some(font::JETBRAINS_MONO),
             tremolo_ui,
+        );
+        truce_test::assert_screenshot(
+            "tremolo_default",
+            &pixels,
+            w,
+            h,
+            0,
+            "examples/screenshots",
         );
     }
 }
