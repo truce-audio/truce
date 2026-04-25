@@ -60,6 +60,14 @@ impl IcedPlatformView {
         }
     }
 
+    /// Non-macOS stub. Always returns `None` — iced child-window
+    /// integration is currently macOS-only (the windowed path uses
+    /// baseview directly on Windows / Linux).
+    ///
+    /// # Safety
+    /// Trivially safe (no pointers dereferenced); `unsafe` is kept on
+    /// the signature only to match the macOS variant so call sites
+    /// don't need a `cfg`-gated `unsafe { ... }` block.
     #[cfg(not(target_os = "macos"))]
     pub unsafe fn new(
         _parent: *mut c_void,
