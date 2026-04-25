@@ -159,9 +159,7 @@ for a headless render, and compares against
 `<workspace>/<reference_dir>/<name>.png`. The current render always
 lands in `target/screenshots/` (gitignored); when the reference
 doesn't exist yet, the test passes and prints a `cp`-based promote
-hint. Works for every built-in backend (built-in GUI, egui, iced,
-slint) — the `truce::plugin!` macro carries the params type through
-to the screenshot path automatically.
+hint. Works for every backend (built-in GUI, egui, iced, slint).
 
 See [gui/screenshot-testing.md](../gui/screenshot-testing.md) for
 the full flow — promoting new references, cross-OS behavior, the

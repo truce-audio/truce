@@ -18,9 +18,7 @@ fn gui_screenshot() {
 `truce_test::screenshot` instantiates your plugin via the same path the
 host uses, asks the editor for a headless render, and hands the bytes
 to the backend-agnostic comparator. Works for the built-in GUI and all
-custom backends (egui, iced, slint) with no extra wiring — the
-`truce::plugin!` macro already wires `P::Params` through to the
-screenshot path.
+custom backends (egui, iced, slint).
 
 ## How it works
 

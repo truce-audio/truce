@@ -240,9 +240,7 @@ fn gui_screenshot() {
 }
 ```
 
-No extra wiring — the `truce::plugin!` macro carries `MyParams` to the
-screenshot path automatically. See
-[screenshot testing](screenshot-testing.md) for more.
+See [screenshot testing](screenshot-testing.md) for more.
 
 ## Licensing
 

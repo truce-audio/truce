@@ -129,6 +129,28 @@ A complete plugin with smoothed params, a GPU-rendered GUI knob, and
 the CLAP + VST3 defaults. Add `vst2`, `lv2`, `au`, or `aax` to your
 `[features].default` to ship more formats from the same code.
 
+## Screenshot Testing
+
+One line catches GUI regressions across every backend (built-in,
+egui, iced, slint):
+
+```rust
+#[test]
+fn gui_screenshot() {
+    truce_test::screenshot::<Plugin>("gain_default", "snapshots");
+}
+```
+
+`truce_test::screenshot` instantiates the plugin, drives the editor
+headlessly, writes the rendered PNG to `target/screenshots/`, and
+diffs against the committed reference at `snapshots/gain_default.png`.
+First run prints a `cp`-based promote hint and passes; subsequent
+runs fail on the reference platform if the diff exceeds tolerance.
+Cross-OS reference comparison is gated via `TRUCE_SCREENSHOT_REFERENCE_OS`.
+
+See [docs/gui/screenshot-testing.md](docs/gui/screenshot-testing.md)
+for the full flow.
+
 ## Format Support
 
 By platform:
@@ -217,7 +239,7 @@ crates/
 ├── truce-slint         # Slint GUI integration
 ├── truce-loader        # Hot-reload (native ABI, PluginLogic trait)
 ├── truce-xtask         # Build/bundle/install/package library
-├── truce-test          # Test utilities + GUI snapshot tests
+├── truce-test          # Test utilities + GUI screenshot tests
 ├── cargo-truce         # `cargo truce` CLI (new, install, build, package, …)
 ```
 
