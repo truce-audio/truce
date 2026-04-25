@@ -1,0 +1,15 @@
+[package]
+name = "truce-font"
+version.workspace = true
+edition.workspace = true
+license = "MIT OR Apache-2.0"
+rust-version.workspace = true
+description = "Bundled fonts for the truce audio plugin framework. JetBrains Mono is bundled under the SIL Open Font License 1.1."
+
+# The font binary is the whole point of this crate; ship it.
+include = [
+    "src/**",
+    "fonts/JetBrainsMono-Regular.ttf",
+    "fonts/OFL.txt",
+    "README.md",
+]

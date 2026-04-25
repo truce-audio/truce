@@ -10,7 +10,7 @@ fn main() {
         .unwrap() // workspace root
         .to_path_buf();
     let widgets = workspace_root.join("crates/truce-slint/ui/widgets.slint");
-    let fonts_dir = workspace_root.join("fonts");
+    let fonts_dir = workspace_root.join("crates/truce-font/fonts");
 
     let config = slint_build::CompilerConfiguration::new()
         .with_library_paths(HashMap::from([("truce".to_string(), widgets)]))

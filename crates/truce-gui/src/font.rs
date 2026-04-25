@@ -1,17 +1,19 @@
 //! Font rendering using fontdue (TrueType rasterization).
 //!
-//! Embeds JetBrains Mono at compile time. Rasterizes glyphs on first
-//! use and caches them for subsequent draws.
+//! The bundled JetBrains Mono ships in the dedicated `truce-font`
+//! crate; this module re-exports it at the historical
+//! `truce_gui::font::JETBRAINS_MONO` path so existing callers keep
+//! working. Advanced users can override the bundled font via Cargo's
+//! `[patch]` table on `truce-font` instead of forking `truce-gui`.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-/// JetBrains Mono Regular TrueType font data.
-///
-/// Shared across all GUI backends for consistent text rendering. The
-/// canonical TTF lives at the workspace root under `fonts/`; see
-/// docs/internal/dedup-fonts.md.
-pub static JETBRAINS_MONO: &[u8] = include_bytes!("../../../fonts/JetBrainsMono-Regular.ttf");
+/// JetBrains Mono Regular TrueType bytes — re-exported from
+/// [`truce_font`] for backwards compatibility. Prefer
+/// `truce_font::JETBRAINS_MONO` in new code; both refer to the same
+/// `&'static [u8]`.
+pub use truce_font::JETBRAINS_MONO;
 
 /// Cached rasterized glyph.
 struct CachedGlyph {

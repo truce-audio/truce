@@ -8,6 +8,7 @@ description = "Built-in GUI for truce plugins"
 
 [dependencies]
 truce-core = { workspace = true }
+truce-font = { workspace = true }
 truce-params = { workspace = true }
 tiny-skia = "0.12"
 fontdue = "0.9"
