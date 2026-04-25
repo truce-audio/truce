@@ -29,20 +29,33 @@ single import path for everything.
 
 ```toml
 [dependencies]
-truce = { version = "0.1", features = ["clap"] }
+truce = { git = "https://github.com/truce-audio/truce", features = ["clap"] }
 ```
 
 ```rust
 use truce::prelude::*;
 
-struct MyPlugin;
+pub struct MyPlugin {
+    params: Arc<MyParams>,
+}
 
-impl Plugin for MyPlugin {
-    type Params = MyParams;
-    fn process(&mut self, buffer: &mut AudioBuffer, ctx: &ProcessContext) -> ProcessStatus {
+impl PluginLogic for MyPlugin {
+    fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {
+        self.params.set_sample_rate(sample_rate);
+    }
+
+    fn process(
+        &mut self,
+        buffer: &mut AudioBuffer,
+        _events: &EventList,
+        _context: &mut ProcessContext,
+    ) -> ProcessStatus {
         // ...
+        ProcessStatus::Normal
     }
 }
+
+truce::plugin! { logic: MyPlugin, params: MyParams }
 ```
 
 Part of [truce](https://github.com/truce-audio/truce).

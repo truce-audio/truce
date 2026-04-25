@@ -1,30 +1,39 @@
 # truce-au
 
-Audio Unit v3 format wrapper for the truce audio plugin framework.
+Audio Unit v2 + v3 format wrapper for the truce audio plugin framework.
 
 ## Overview
 
-Bridges a truce `PluginExport` implementation to Apple's Audio Unit v3 API.
-Uses an Objective-C shim (compiled via `cc`) that implements an `AUAudioUnit`
-subclass, with all plugin logic delegated to Rust through C FFI callbacks.
+Bridges a truce `PluginExport` implementation to Apple's Audio Unit API.
+One Rust crate produces both AU v2 (`.component`, in-process) and AU v3
+(`.appex` inside a container `.app`, sandboxed) — which one gets built
+is selected by the `TRUCE_AU_VERSION` env var that `cargo truce` sets
+per-invocation. The Rust dylib is identical across versions; only the
+C / Swift shim and the bundle shape differ.
 
-This crate only builds on macOS and is not typically depended on directly --
-the `truce-xtask` build system selects it automatically when bundling AU
+This crate only builds on macOS and isn't typically depended on directly —
+`truce-xtask` / `cargo truce` select it automatically when bundling AU
 plugins.
 
 ## What it handles
 
-- `AUAudioUnit` subclass registration
-- Audio render block bridging
+- `AudioComponent` (v2) and `AUAudioUnit` (v3) registration
+- Audio render block bridging + sample-rate / block-size lifecycle
 - Parameter tree construction from truce parameter metadata
-- Factory presets and user preset state
-- GUI view hosting via `AUViewController`
-- Support for effects, instruments, and MIDI processor component types
+- Plugin state serialization via `truce_core::state`
+- GUI view hosting via `NSViewController` (v2) / `AUViewController` (v3)
+- Effects (`aufx`), instruments (`aumu`), and MIDI processors (`aumi`)
 
 ## Architecture
 
-The Objective-C shim owns the `AUAudioUnit` instance and calls into Rust for
-processing, parameter access, and state management. AU type codes (`aufx`,
-`aumu`, `aumi`) are derived from `truce.toml` metadata.
+- **v2** uses a hand-written C shim (`shim/au_v2_shim.c`) that exposes an
+  `AudioComponentFactory` to the host and forwards every callback into
+  Rust via a C ABI function-pointer table.
+- **v3** uses a Swift `AUAudioUnit` subclass generated at install time by
+  `cargo truce` (so it can stamp in plugin-specific identifiers), with the
+  same Rust-side callback table.
+
+AU type codes (`aufx` / `aumu` / `aumi`) are derived from the plugin's
+`category` in `truce.toml` and emitted by `truce-build` at compile time.
 
 Part of [truce](https://github.com/truce-audio/truce).

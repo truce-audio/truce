@@ -6,8 +6,10 @@ Proc macros for truce plugin metadata.
 
 Provides the `plugin_info!()` macro, which reads `truce.toml` at compile time
 and generates a `PluginInfo` struct literal containing the plugin name, unique
-ID, vendor, category, and version. This eliminates the need for hand-written
-metadata constants or a custom `build.rs` in every plugin crate.
+ID, vendor, category, and version. Removes the need for hand-written metadata
+constants. (Plugin crates still need a small `build.rs` calling
+`truce_build::emit_plugin_env()` — that handles format-feature check-cfg and
+optional env-var overrides; see the `truce-build` crate.)
 
 The macro is re-exported through `truce::plugin_info!()`, so plugin authors do
 not need to depend on this crate directly.

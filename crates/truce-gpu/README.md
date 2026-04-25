@@ -21,7 +21,7 @@ Activated by the `gpu` feature on the `truce` crate.
 
 ```toml
 [dependencies]
-truce = { version = "0.1", features = ["clap", "gpu"] }
+truce = { git = "https://github.com/truce-audio/truce", features = ["clap", "gpu"] }
 ```
 
 ```rust

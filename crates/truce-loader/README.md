@@ -34,7 +34,7 @@ Enable hot-reload during development:
 
 ```toml
 [dependencies]
-truce = { version = "0.1", features = ["dev"] }
+truce = { git = "https://github.com/truce-audio/truce", features = ["dev"] }
 ```
 
 Part of [truce](https://github.com/truce-audio/truce).
