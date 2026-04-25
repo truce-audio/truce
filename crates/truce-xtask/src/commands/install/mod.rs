@@ -270,8 +270,7 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
             }
             #[cfg(not(target_os = "macos"))]
             crate::log_skip(
-                "AU v2: not supported on this platform. Audio Unit is macOS-only."
-                    .to_string(),
+                "AU v2: not supported on this platform. Audio Unit is macOS-only.".to_string(),
             );
         }
 

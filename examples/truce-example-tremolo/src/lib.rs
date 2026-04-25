@@ -18,6 +18,7 @@ const WINDOW_H: u32 = 162;
 
 // --- Parameters ---
 
+use std::sync::Arc;
 use TremoloParamsParamId as P;
 
 /// LFO-cycle length as a note value. Maps directly to beats per cycle
@@ -92,7 +93,7 @@ pub struct TremoloParams {
 // --- Plugin ---
 
 pub struct Tremolo {
-    params: std::sync::Arc<TremoloParams>,
+    params: Arc<TremoloParams>,
     /// Free-running phase used when the host provides no tempo (e.g.
     /// standalone running, or a host that does not report transport).
     /// Advances at 2 Hz so the effect stays visibly active offline.
@@ -101,7 +102,7 @@ pub struct Tremolo {
 }
 
 impl Tremolo {
-    pub fn new(params: std::sync::Arc<TremoloParams>) -> Self {
+    pub fn new(params: Arc<TremoloParams>) -> Self {
         Self {
             params,
             free_phase: 0.0,

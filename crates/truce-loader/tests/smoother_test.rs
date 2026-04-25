@@ -2,10 +2,12 @@
 //! Bug: calling snap_smoothers() every block killed gradual smoothing,
 //! causing zipper noise on param changes.
 
+use std::sync::Arc;
 use truce_core::buffer::AudioBuffer;
 use truce_core::events::{Event, EventBody, EventList, TransportInfo};
 use truce_core::plugin::Plugin;
 use truce_core::process::{ProcessContext, ProcessStatus};
+use truce_gui::layout::GridLayout;
 use truce_params::Params;
 #[allow(unused_imports)]
 use truce_params_derive::Params;
@@ -17,12 +19,12 @@ struct SmootherParams {
 }
 
 struct SmootherPlugin {
-    params: std::sync::Arc<SmootherParams>,
+    params: Arc<SmootherParams>,
     samples: Vec<f32>,
 }
 
 impl SmootherPlugin {
-    fn new(params: std::sync::Arc<SmootherParams>) -> Self {
+    fn new(params: Arc<SmootherParams>) -> Self {
         Self {
             params,
             samples: Vec::new(),
@@ -50,15 +52,15 @@ impl truce_loader::PluginLogic for SmootherPlugin {
         ProcessStatus::Normal
     }
 
-    fn layout(&self) -> truce_gui::layout::GridLayout {
-        truce_gui::layout::GridLayout::build("", "", 1, 80.0, vec![])
+    fn layout(&self) -> GridLayout {
+        GridLayout::build("", "", 1, 80.0, vec![])
     }
 }
 
 #[test]
 fn smoother_ramps_gradually() {
-    let params = std::sync::Arc::new(SmootherParams::new());
-    let logic = SmootherPlugin::new(std::sync::Arc::clone(&params));
+    let params = Arc::new(SmootherParams::new());
+    let logic = SmootherPlugin::new(Arc::clone(&params));
     let mut shell =
         truce_loader::static_shell::StaticShell::<SmootherParams, SmootherPlugin>::from_parts(
             params, logic,

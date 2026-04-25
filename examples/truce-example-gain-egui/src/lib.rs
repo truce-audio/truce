@@ -8,6 +8,7 @@ const WINDOW_H: u32 = 290;
 
 // --- Parameters ---
 
+use std::sync::Arc;
 use GainParamsParamId as P;
 
 #[derive(Params)]
@@ -33,11 +34,11 @@ pub struct GainParams {
 // --- Plugin ---
 
 pub struct GainEgui {
-    params: std::sync::Arc<GainParams>,
+    params: Arc<GainParams>,
 }
 
 impl GainEgui {
-    pub fn new(params: std::sync::Arc<GainParams>) -> Self {
+    pub fn new(params: Arc<GainParams>) -> Self {
         Self { params }
     }
 }

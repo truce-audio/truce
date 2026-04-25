@@ -4,6 +4,7 @@
 //! or compares them against a reference PNG.
 
 use crate::ParamState;
+use std::sync::Arc;
 
 /// Render an egui UI function to RGBA pixels using headless wgpu.
 ///
@@ -19,7 +20,7 @@ pub fn render_to_pixels<P: truce_params::Params + 'static>(
     font: Option<&'static [u8]>,
     ui_fn: impl Fn(&egui::Context, &ParamState),
 ) -> Vec<u8> {
-    let params = std::sync::Arc::new(P::default_for_gui());
+    let params = Arc::new(P::default_for_gui());
     let state = ParamState::from_params(params);
     let ctx = egui::Context::default();
     ctx.set_visuals(crate::theme::dark());

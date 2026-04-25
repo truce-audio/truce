@@ -169,6 +169,7 @@ impl<T: StateField> StateField for Option<T> {
 // ---------------------------------------------------------------------------
 
 use crate::editor::EditorContext;
+use std::sync::Arc;
 
 /// Typed state binding for editors.
 ///
@@ -195,8 +196,8 @@ use crate::editor::EditorContext;
 /// ```
 pub struct StateBinding<T: State> {
     cached: T,
-    get_state: std::sync::Arc<dyn Fn() -> Vec<u8> + Send + Sync>,
-    set_state: std::sync::Arc<dyn Fn(Vec<u8>) + Send + Sync>,
+    get_state: Arc<dyn Fn() -> Vec<u8> + Send + Sync>,
+    set_state: Arc<dyn Fn(Vec<u8>) + Send + Sync>,
 }
 
 impl<T: State> StateBinding<T> {
@@ -238,8 +239,8 @@ impl<T: State> Default for StateBinding<T> {
     fn default() -> Self {
         Self {
             cached: T::default(),
-            get_state: std::sync::Arc::new(Vec::new),
-            set_state: std::sync::Arc::new(|_| {}),
+            get_state: Arc::new(Vec::new),
+            set_state: Arc::new(|_| {}),
         }
     }
 }

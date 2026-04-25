@@ -16,6 +16,7 @@ pub enum Waveform {
 
 // --- Parameters ---
 
+use std::sync::Arc;
 use SynthParamsParamId as P;
 
 #[derive(Params)]
@@ -93,13 +94,13 @@ pub struct SynthParams {
 const MAX_VOICES: usize = 16;
 
 pub struct Synth {
-    pub params: std::sync::Arc<SynthParams>,
+    pub params: Arc<SynthParams>,
     voices: Vec<Voice>,
     sample_rate: f64,
 }
 
 impl Synth {
-    pub fn new(params: std::sync::Arc<SynthParams>) -> Self {
+    pub fn new(params: Arc<SynthParams>) -> Self {
         Self {
             params,
             voices: Vec::with_capacity(MAX_VOICES),
@@ -191,7 +192,7 @@ impl PluginLogic for Synth {
         }
     }
 
-    fn layout(&self) -> truce_gui::layout::GridLayout {
+    fn layout(&self) -> GridLayout {
         GridLayout::build(
             "TRUCE SYNTH",
             "V0.1",
@@ -340,8 +341,8 @@ mod tests {
 
     #[test]
     fn gui_snapshot() {
-        let params = std::sync::Arc::new(SynthParams::new());
-        let synth = Synth::new(std::sync::Arc::clone(&params));
+        let params = Arc::new(SynthParams::new());
+        let synth = Synth::new(Arc::clone(&params));
         let layout = synth.layout();
         truce_test::assert_gui_snapshot_grid::<SynthParams>("synth_default", params, layout, 0);
     }

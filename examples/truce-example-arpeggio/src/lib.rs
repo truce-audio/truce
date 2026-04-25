@@ -49,6 +49,7 @@ impl ArpRate {
 
 // --- Parameters ---
 
+use std::sync::Arc;
 use ArpParamsParamId as P;
 
 #[derive(Params)]
@@ -74,7 +75,7 @@ pub struct ArpParams {
 // --- Plugin ---
 
 pub struct Arpeggio {
-    pub params: std::sync::Arc<ArpParams>,
+    pub params: Arc<ArpParams>,
     held_notes: Vec<u8>,
     sample_rate: f64,
     /// Global step index of the currently-sounding arp note.
@@ -93,7 +94,7 @@ pub struct Arpeggio {
 }
 
 impl Arpeggio {
-    pub fn new(params: std::sync::Arc<ArpParams>) -> Self {
+    pub fn new(params: Arc<ArpParams>) -> Self {
         Self {
             params,
             held_notes: Vec::new(),
@@ -292,7 +293,7 @@ impl PluginLogic for Arpeggio {
         ProcessStatus::Normal
     }
 
-    fn layout(&self) -> truce_gui::layout::GridLayout {
+    fn layout(&self) -> GridLayout {
         GridLayout::build(
             "ARPEGGIO",
             "V0.1",
@@ -324,8 +325,8 @@ mod tests {
 
     #[test]
     fn gui_snapshot() {
-        let params = std::sync::Arc::new(ArpParams::new());
-        let arp = Arpeggio::new(std::sync::Arc::clone(&params));
+        let params = Arc::new(ArpParams::new());
+        let arp = Arpeggio::new(Arc::clone(&params));
         let layout = arp.layout();
         truce_test::assert_gui_snapshot_grid::<ArpParams>("arpeggio_default", params, layout, 0);
     }

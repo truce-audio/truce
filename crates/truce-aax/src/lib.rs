@@ -126,7 +126,7 @@ struct AaxInstance<P: PluginExport> {
     sample_rate: f64,
     editor: Option<Box<dyn truce_core::editor::Editor>>,
     /// Shared transport slot: audio thread writes each block, editor reads.
-    transport_slot: std::sync::Arc<truce_core::TransportSlot>,
+    transport_slot: Arc<truce_core::TransportSlot>,
     /// Cached serialized state. Pro Tools calls `GetChunkSize` +
     /// `GetChunk` as a pair, and for undo-checkpointing may call the
     /// pair repeatedly without any intervening state change. Caching

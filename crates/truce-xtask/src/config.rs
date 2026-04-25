@@ -206,10 +206,7 @@ pub(crate) struct PluginDef {
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub(crate) au3_name: Option<String>,
     #[serde(default)]
-    #[cfg_attr(
-        not(any(target_os = "macos", target_os = "windows")),
-        allow(dead_code)
-    )]
+    #[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
     pub(crate) aax_name: Option<String>,
     #[serde(default)]
     pub(crate) lv2_name: Option<String>,

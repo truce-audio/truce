@@ -27,6 +27,7 @@ use truce_core::events::{Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
 use truce_core::process::ProcessContext;
 use truce_core::state;
+use truce_gui::layout::GridLayout;
 use truce_params::Params;
 
 /// In-process plugin runner + time-windowed / meter / clipping
@@ -642,7 +643,7 @@ pub fn assert_gui_snapshot_raw(
 pub fn assert_gui_snapshot_grid<P: Params + 'static>(
     name: &str,
     params: Arc<P>,
-    layout: truce_gui::layout::GridLayout,
+    layout: GridLayout,
     max_diff_pixels: usize,
 ) {
     let (pixels, w, h) = truce_gpu::snapshot::render_to_pixels(params, layout);

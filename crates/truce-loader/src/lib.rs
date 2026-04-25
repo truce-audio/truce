@@ -56,9 +56,9 @@ macro_rules! export_plugin {
     ($logic:ty, $params:ty) => {
         #[no_mangle]
         pub fn truce_create(params_ptr: *const ()) -> Box<dyn $crate::PluginLogic> {
-            let params: std::sync::Arc<$params> = unsafe {
-                std::sync::Arc::increment_strong_count(params_ptr as *const $params);
-                std::sync::Arc::from_raw(params_ptr as *const $params)
+            let params: Arc<$params> = unsafe {
+                Arc::increment_strong_count(params_ptr as *const $params);
+                Arc::from_raw(params_ptr as *const $params)
             };
             Box::new(<$logic>::new(params))
         }

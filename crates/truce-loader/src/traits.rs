@@ -8,6 +8,7 @@ use truce_core::buffer::AudioBuffer;
 use truce_core::events::EventList;
 use truce_core::process::{ProcessContext, ProcessStatus};
 use truce_gui::interaction::WidgetRegion;
+use truce_gui::layout::GridLayout;
 use truce_gui::render::RenderBackend;
 use truce_gui::widgets::WidgetType;
 
@@ -49,8 +50,8 @@ pub trait PluginLogic: Send + 'static {
     ///
     /// Use `GridLayout::build()` for the layout. Widgets auto-flow
     /// left-to-right. Use `.cols(n)` and `.rows(n)` for spanning.
-    fn layout(&self) -> truce_gui::layout::GridLayout {
-        truce_gui::layout::GridLayout::build("", "", 1, 80.0, vec![])
+    fn layout(&self) -> GridLayout {
+        GridLayout::build("", "", 1, 80.0, vec![])
     }
 
     /// Hit test: which widget (if any) is at (x, y)?

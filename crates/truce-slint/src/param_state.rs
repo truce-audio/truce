@@ -3,6 +3,7 @@
 //! Wraps the `begin_edit` / `set_param` / `end_edit` host protocol into
 //! ergonomic accessors. Clone-able so Slint callbacks can capture it.
 
+use std::sync::Arc;
 use truce_core::editor::EditorContext;
 
 /// Bridge between truce's EditorContext and Slint widgets.
@@ -93,27 +94,27 @@ impl ParamState {
 
     /// Create a ParamState backed by real parameter defaults.
     /// Uses `P::default_for_gui()` to provide accurate formatting and values.
-    pub fn from_params<P: truce_params::Params + 'static>(params: std::sync::Arc<P>) -> Self {
+    pub fn from_params<P: truce_params::Params + 'static>(params: Arc<P>) -> Self {
         let p1 = params.clone();
         let p2 = params.clone();
         let p3 = params.clone();
         Self {
             ctx: EditorContext {
-                begin_edit: std::sync::Arc::new(|_| {}),
-                set_param: std::sync::Arc::new(|_, _| {}),
-                end_edit: std::sync::Arc::new(|_| {}),
-                request_resize: std::sync::Arc::new(|_, _| false),
-                get_param: std::sync::Arc::new(move |id| p1.get_normalized(id).unwrap_or(0.5)),
-                get_param_plain: std::sync::Arc::new(move |id| p2.get_plain(id).unwrap_or(0.0)),
-                format_param: std::sync::Arc::new(move |id| {
+                begin_edit: Arc::new(|_| {}),
+                set_param: Arc::new(|_, _| {}),
+                end_edit: Arc::new(|_| {}),
+                request_resize: Arc::new(|_, _| false),
+                get_param: Arc::new(move |id| p1.get_normalized(id).unwrap_or(0.5)),
+                get_param_plain: Arc::new(move |id| p2.get_plain(id).unwrap_or(0.0)),
+                format_param: Arc::new(move |id| {
                     let plain = p3.get_plain(id).unwrap_or(0.0);
                     p3.format_value(id, plain)
                         .unwrap_or_else(|| format!("{plain:.2}"))
                 }),
-                get_meter: std::sync::Arc::new(|_| 0.0),
-                get_state: std::sync::Arc::new(Vec::new),
-                set_state: std::sync::Arc::new(|_| {}),
-                transport: std::sync::Arc::new(|| None),
+                get_meter: Arc::new(|_| 0.0),
+                get_state: Arc::new(Vec::new),
+                set_state: Arc::new(|_| {}),
+                transport: Arc::new(|| None),
             },
         }
     }

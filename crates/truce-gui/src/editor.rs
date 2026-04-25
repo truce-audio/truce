@@ -584,7 +584,7 @@ struct BlitBackend {
 /// — important on AAX where interleaving Metal teardown with baseview's
 /// close sequence inside Pro Tools' outer autorelease pool has been
 /// seen to leave stale refs in DFW container views.
-type SharedBackend = std::sync::Arc<std::sync::Mutex<Option<BlitBackend>>>;
+type SharedBackend = Arc<std::sync::Mutex<Option<BlitBackend>>>;
 
 struct BuiltinWindowHandler<P: Params> {
     /// Raw pointer to the BuiltinEditor owned by the host. Valid between
@@ -800,7 +800,7 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
         // window handler gets the other. At close time the editor
         // takes the inner Option and drops it *before* asking baseview
         // to tear down the NSView.
-        let shared_backend: SharedBackend = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let shared_backend: SharedBackend = Arc::new(std::sync::Mutex::new(None));
         self.blit_backend = Some(shared_backend.clone());
         let shared_for_handler = shared_backend;
 

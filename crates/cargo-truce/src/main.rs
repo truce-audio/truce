@@ -42,8 +42,8 @@ fn main() -> ExitCode {
         },
 
         // Build/install commands — forwarded to truce-xtask
-        "install" | "build" | "package" | "remove" | "run" | "test" | "status"
-        | "reset-au-aax" | "validate" | "doctor" | "log" => truce_xtask::run(&args),
+        "install" | "build" | "package" | "remove" | "run" | "test" | "status" | "reset-au-aax"
+        | "validate" | "doctor" | "log" => truce_xtask::run(&args),
 
         "help" | "--help" | "-h" => {
             print_help();

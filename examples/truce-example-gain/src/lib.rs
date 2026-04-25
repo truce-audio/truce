@@ -3,6 +3,7 @@ use truce_gui::layout::{knob, meter, widgets, xy_pad, GridLayout};
 
 // --- Parameters ---
 
+use std::sync::Arc;
 use GainParamsParamId as P;
 
 #[derive(Params)]
@@ -28,11 +29,11 @@ pub struct GainParams {
 // --- Plugin ---
 
 pub struct Gain {
-    params: std::sync::Arc<GainParams>,
+    params: Arc<GainParams>,
 }
 
 impl Gain {
-    pub fn new(params: std::sync::Arc<GainParams>) -> Self {
+    pub fn new(params: Arc<GainParams>) -> Self {
         Self { params }
     }
 }
@@ -74,7 +75,7 @@ impl PluginLogic for Gain {
         ProcessStatus::Normal
     }
 
-    fn layout(&self) -> truce_gui::layout::GridLayout {
+    fn layout(&self) -> GridLayout {
         GridLayout::build(
             "GAIN",
             "V0.1",
@@ -92,7 +93,6 @@ impl PluginLogic for Gain {
     }
 }
 
-// One macro. That's it.
 truce::plugin! {
     logic: Gain,
     params: GainParams,
@@ -186,8 +186,8 @@ mod tests {
 
     #[test]
     fn gui_snapshot() {
-        let params = std::sync::Arc::new(GainParams::new());
-        let gain = Gain::new(std::sync::Arc::clone(&params));
+        let params = Arc::new(GainParams::new());
+        let gain = Gain::new(Arc::clone(&params));
         let layout = gain.layout();
         truce_test::assert_gui_snapshot_grid::<GainParams>("gain_default", params, layout, 0);
     }

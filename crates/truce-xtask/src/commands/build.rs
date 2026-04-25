@@ -7,9 +7,9 @@
 //! to system paths. See
 //! `truce-docs/docs/internal/build-install-split.md`.
 
-use crate::commands::package::stage::{lv2_slug, stage_clap, stage_lv2, stage_vst2, stage_vst3};
 #[cfg(target_os = "macos")]
 use crate::commands::package::stage::stage_au2;
+use crate::commands::package::stage::{lv2_slug, stage_clap, stage_lv2, stage_vst2, stage_vst3};
 use crate::util::fs_ctx;
 use crate::{
     cargo_build, deployment_target, detect_default_features, load_config, project_root,
@@ -308,8 +308,7 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
         }
         #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         crate::log_skip(
-            "AAX: not supported on this platform. Use macOS or Windows to build AAX."
-                .to_string(),
+            "AAX: not supported on this platform. Use macOS or Windows to build AAX.".to_string(),
         );
     }
 

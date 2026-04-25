@@ -3,6 +3,7 @@ use truce_gui::layout::{knob, widgets, GridLayout};
 
 // --- Parameters ---
 
+use std::sync::Arc;
 use TransposeParamsParamId as P;
 
 #[derive(Params)]
@@ -24,14 +25,14 @@ pub struct TransposeParams {
 // --- Plugin ---
 
 pub struct Transpose {
-    pub params: std::sync::Arc<TransposeParams>,
+    pub params: Arc<TransposeParams>,
     /// Maps input note -> output note that was actually sent.
     /// Used to send correct NoteOff even if shift changes mid-hold.
     active_notes: [Option<u8>; 128],
 }
 
 impl Transpose {
-    pub fn new(params: std::sync::Arc<TransposeParams>) -> Self {
+    pub fn new(params: Arc<TransposeParams>) -> Self {
         Self {
             params,
             active_notes: [None; 128],
@@ -98,7 +99,7 @@ impl PluginLogic for Transpose {
         ProcessStatus::Normal
     }
 
-    fn layout(&self) -> truce_gui::layout::GridLayout {
+    fn layout(&self) -> GridLayout {
         GridLayout::build(
             "TRANSPOSE",
             "V0.1",
@@ -130,8 +131,8 @@ mod tests {
 
     #[test]
     fn transpose_up_octave() {
-        let params = std::sync::Arc::new(TransposeParams::new());
-        let mut plugin = Transpose::new(std::sync::Arc::clone(&params));
+        let params = Arc::new(TransposeParams::new());
+        let mut plugin = Transpose::new(Arc::clone(&params));
         plugin.params.octave.set_value(1.0);
         plugin.reset(44100.0, 512);
 
@@ -168,8 +169,8 @@ mod tests {
 
     #[test]
     fn gui_snapshot() {
-        let params = std::sync::Arc::new(TransposeParams::new());
-        let transpose = Transpose::new(std::sync::Arc::clone(&params));
+        let params = Arc::new(TransposeParams::new());
+        let transpose = Transpose::new(Arc::clone(&params));
         let layout = transpose.layout();
         truce_test::assert_gui_snapshot_grid::<TransposeParams>(
             "transpose_default",

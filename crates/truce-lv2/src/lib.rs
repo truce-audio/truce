@@ -40,6 +40,7 @@ use truce_params::{ParamInfo, Params};
 
 use crate::atom::AtomSequenceReader;
 use crate::urid::UridMap;
+use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
 // Port layout
@@ -142,7 +143,7 @@ pub struct Lv2Instance<P: PluginExport> {
     /// are out-of-process so the UI side still reads `None`; this slot
     /// exists so an in-process consumer (tests / DSP-side code) can
     /// observe host transport.
-    transport_slot: std::sync::Arc<truce_core::TransportSlot>,
+    transport_slot: Arc<truce_core::TransportSlot>,
 }
 
 // Raw pointers only — we never share an instance between threads. LV2 hosts

@@ -12,6 +12,7 @@ use slint::PhysicalSize;
 
 use crate::param_state::ParamState;
 use crate::platform;
+use std::sync::Arc;
 
 /// Render a Slint UI to RGBA pixels.
 ///
@@ -40,7 +41,7 @@ pub fn render_to_pixels<P: truce_params::Params + 'static>(
         scale_factor: scale,
     });
 
-    let params = std::sync::Arc::new(P::default_for_gui());
+    let params = Arc::new(P::default_for_gui());
     let state = ParamState::from_params(params);
     let sync_fn = setup(state.clone());
 

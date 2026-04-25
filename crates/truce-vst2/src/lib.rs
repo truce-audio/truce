@@ -17,6 +17,7 @@ use truce_core::state;
 use truce_params::Params;
 
 use ffi::{Vst2Callbacks, Vst2MidiEvent, Vst2ParamDescriptor, Vst2PluginDescriptor};
+use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
 // Instance wrapper
@@ -36,7 +37,7 @@ struct Vst2Instance<P: PluginExport> {
     /// Buffered parent window handle when editor open arrives before state load.
     pending_editor_parent: Option<*mut std::ffi::c_void>,
     /// Shared transport slot: audio thread writes each block, editor reads.
-    transport_slot: std::sync::Arc<truce_core::TransportSlot>,
+    transport_slot: Arc<truce_core::TransportSlot>,
 }
 
 extern "C" {
@@ -433,12 +434,12 @@ unsafe fn open_editor_inner<P: PluginExport>(
         let params_for_fmt = params.clone();
         let transport_slot = inst.transport_slot.clone();
         let context = truce_core::editor::EditorContext {
-            begin_edit: std::sync::Arc::new(move |id| {
+            begin_edit: Arc::new(move |id| {
                 if !effect_ptr.as_ptr().is_null() {
                     truce_vst2_host_begin_edit(effect_ptr.as_ptr() as *mut std::ffi::c_void, id);
                 }
             }),
-            set_param: std::sync::Arc::new(move |id, value| {
+            set_param: Arc::new(move |id, value| {
                 params_for_set.set_normalized(id, value);
                 if !effect_ptr.as_ptr().is_null() {
                     let norm = params_for_set.get_normalized(id).unwrap_or(0.0) as f32;
@@ -449,37 +450,33 @@ unsafe fn open_editor_inner<P: PluginExport>(
                     );
                 }
             }),
-            end_edit: std::sync::Arc::new(move |id| {
+            end_edit: Arc::new(move |id| {
                 if !effect_ptr.as_ptr().is_null() {
                     truce_vst2_host_end_edit(effect_ptr.as_ptr() as *mut std::ffi::c_void, id);
                 }
             }),
-            request_resize: std::sync::Arc::new(|_w, _h| false),
-            get_param: std::sync::Arc::new(move |id| {
-                params_for_get.get_normalized(id).unwrap_or(0.0)
-            }),
-            get_param_plain: std::sync::Arc::new(move |id| {
-                params_for_plain.get_plain(id).unwrap_or(0.0)
-            }),
-            format_param: std::sync::Arc::new(move |id| {
+            request_resize: Arc::new(|_w, _h| false),
+            get_param: Arc::new(move |id| params_for_get.get_normalized(id).unwrap_or(0.0)),
+            get_param_plain: Arc::new(move |id| params_for_plain.get_plain(id).unwrap_or(0.0)),
+            format_param: Arc::new(move |id| {
                 let plain = params_for_fmt.get_plain(id).unwrap_or(0.0);
                 params_for_fmt
                     .format_value(id, plain)
                     .unwrap_or_else(|| format!("{:.1}", plain))
             }),
-            get_meter: std::sync::Arc::new(move |id| {
+            get_meter: Arc::new(move |id| {
                 let plugin = plugin_ptr.get();
                 plugin.get_meter(id)
             }),
-            get_state: std::sync::Arc::new(move || {
+            get_state: Arc::new(move || {
                 let plugin = plugin_ptr.get();
                 plugin.save_state().unwrap_or_default()
             }),
-            set_state: std::sync::Arc::new(move |data| {
+            set_state: Arc::new(move |data| {
                 let plugin = &mut *(plugin_ptr.as_ptr() as *mut P);
                 plugin.load_state(&data);
             }),
-            transport: std::sync::Arc::new(move || transport_slot.read()),
+            transport: Arc::new(move || transport_slot.read()),
         };
         #[cfg(target_os = "macos")]
         let handle = truce_core::editor::RawWindowHandle::AppKit(parent);

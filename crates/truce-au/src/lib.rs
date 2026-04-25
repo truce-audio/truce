@@ -17,6 +17,7 @@ use truce_core::state;
 use truce_params::Params;
 
 use ffi::{AuCallbacks, AuMidiEvent, AuParamDescriptor, AuPluginDescriptor, AuTransportSnapshot};
+use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
 // Instance wrapper — one per plugin instance, stored as the opaque ctx
@@ -30,7 +31,7 @@ struct AuInstance<P: PluginExport> {
     sample_rate: f64,
     editor: Option<Box<dyn truce_core::editor::Editor>>,
     /// Shared transport slot: audio thread writes each block, editor reads.
-    transport_slot: std::sync::Arc<truce_core::TransportSlot>,
+    transport_slot: Arc<truce_core::TransportSlot>,
 }
 
 // ---------------------------------------------------------------------------
@@ -347,40 +348,36 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
         let params_for_fmt = params.clone();
         let transport_slot = inst.transport_slot.clone();
         let context = truce_core::editor::EditorContext {
-            begin_edit: std::sync::Arc::new(|_id| {}),
-            set_param: std::sync::Arc::new(move |id, value| {
+            begin_edit: Arc::new(|_id| {}),
+            set_param: Arc::new(move |id, value| {
                 params_for_set.set_normalized(id, value);
                 // Notify AU host of the parameter change
                 let plain = params_for_set.get_plain(id).unwrap_or(0.0) as f32;
                 truce_au_v2_host_set_param(ctx_raw.as_ptr() as *mut std::ffi::c_void, id, plain);
             }),
-            end_edit: std::sync::Arc::new(|_id| {}),
-            request_resize: std::sync::Arc::new(|_w, _h| false),
-            get_param: std::sync::Arc::new(move |id| {
-                params_for_get.get_normalized(id).unwrap_or(0.0)
-            }),
-            get_param_plain: std::sync::Arc::new(move |id| {
-                params_for_plain.get_plain(id).unwrap_or(0.0)
-            }),
-            format_param: std::sync::Arc::new(move |id| {
+            end_edit: Arc::new(|_id| {}),
+            request_resize: Arc::new(|_w, _h| false),
+            get_param: Arc::new(move |id| params_for_get.get_normalized(id).unwrap_or(0.0)),
+            get_param_plain: Arc::new(move |id| params_for_plain.get_plain(id).unwrap_or(0.0)),
+            format_param: Arc::new(move |id| {
                 let plain = params_for_fmt.get_plain(id).unwrap_or(0.0);
                 params_for_fmt
                     .format_value(id, plain)
                     .unwrap_or_else(|| format!("{:.1}", plain))
             }),
-            get_meter: std::sync::Arc::new(move |id| {
+            get_meter: Arc::new(move |id| {
                 let plugin = plugin_ptr.get();
                 plugin.get_meter(id)
             }),
-            get_state: std::sync::Arc::new(move || {
+            get_state: Arc::new(move || {
                 let plugin = plugin_ptr.get();
                 plugin.save_state().unwrap_or_default()
             }),
-            set_state: std::sync::Arc::new(move |data| {
+            set_state: Arc::new(move |data| {
                 let plugin = &mut *(plugin_ptr.as_ptr() as *mut P);
                 plugin.load_state(&data);
             }),
-            transport: std::sync::Arc::new(move || transport_slot.read()),
+            transport: Arc::new(move || transport_slot.read()),
         };
         let handle = truce_core::editor::RawWindowHandle::AppKit(parent);
         editor.open(handle, context);

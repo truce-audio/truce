@@ -159,8 +159,8 @@ impl PluginLogic for ProbePlugin {
 
     fn render(&self, _backend: &mut dyn RenderBackend) {}
 
-    fn layout(&self) -> truce_gui::layout::GridLayout {
-        let mut gl = truce_gui::layout::GridLayout::build("", "", 1, 80.0, vec![]);
+    fn layout(&self) -> GridLayout {
+        let mut gl = GridLayout::build("", "", 1, 80.0, vec![]);
         gl.width = 0xDEAD;
         gl.height = 0xBEEF;
         gl

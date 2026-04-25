@@ -11,6 +11,7 @@ use biquad::Biquad;
 
 // --- Parameters ---
 
+use std::sync::Arc;
 use EqParamsParamId as P;
 
 #[derive(Params)]
@@ -124,13 +125,13 @@ const NUM_BANDS: usize = 3;
 const MAX_CHANNELS: usize = 2;
 
 pub struct Eq {
-    pub params: std::sync::Arc<EqParams>,
+    pub params: Arc<EqParams>,
     filters: [[Biquad; NUM_BANDS]; MAX_CHANNELS],
     sample_rate: f64,
 }
 
 impl Eq {
-    pub fn new(params: std::sync::Arc<EqParams>) -> Self {
+    pub fn new(params: Arc<EqParams>) -> Self {
         Self {
             params,
             filters: [[Biquad::new(); NUM_BANDS]; MAX_CHANNELS],
@@ -191,7 +192,7 @@ impl PluginLogic for Eq {
         ProcessStatus::Normal
     }
 
-    fn layout(&self) -> truce_gui::layout::GridLayout {
+    fn layout(&self) -> GridLayout {
         GridLayout::build(
             "EQ",
             "V0.1",
@@ -340,8 +341,8 @@ mod tests {
 
     #[test]
     fn gui_snapshot() {
-        let params = std::sync::Arc::new(EqParams::new());
-        let eq = Eq::new(std::sync::Arc::clone(&params));
+        let params = Arc::new(EqParams::new());
+        let eq = Eq::new(Arc::clone(&params));
         let layout = eq.layout();
         truce_test::assert_gui_snapshot_grid::<EqParams>("eq_default", params, layout, 0);
     }

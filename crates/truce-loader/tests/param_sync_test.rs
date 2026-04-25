@@ -2,10 +2,12 @@
 //! StaticShell must use set_plain(), not set_normalized().
 //! Bug: double-denormalization caused gain to slam to extremes in VST3.
 
+use std::sync::Arc;
 use truce_core::buffer::AudioBuffer;
 use truce_core::events::{Event, EventBody, EventList, TransportInfo};
 use truce_core::plugin::Plugin;
 use truce_core::process::{ProcessContext, ProcessStatus};
+use truce_gui::layout::GridLayout;
 use truce_params::Params;
 #[allow(unused_imports)]
 use truce_params_derive::Params;
@@ -17,12 +19,12 @@ struct TestParams {
 }
 
 struct TestPlugin {
-    params: std::sync::Arc<TestParams>,
+    params: Arc<TestParams>,
     last_gain_plain: f64,
 }
 
 impl TestPlugin {
-    fn new(params: std::sync::Arc<TestParams>) -> Self {
+    fn new(params: Arc<TestParams>) -> Self {
         Self {
             params,
             last_gain_plain: 0.0,
@@ -46,8 +48,8 @@ impl truce_loader::PluginLogic for TestPlugin {
         ProcessStatus::Normal
     }
 
-    fn layout(&self) -> truce_gui::layout::GridLayout {
-        truce_gui::layout::GridLayout::build("", "", 1, 80.0, vec![])
+    fn layout(&self) -> GridLayout {
+        GridLayout::build("", "", 1, 80.0, vec![])
     }
 }
 
@@ -58,8 +60,8 @@ fn plain_param_not_double_denormalized() {
     // If it uses set_normalized, -27.0 dB would be treated as normalized
     // and denormalized to -60 + (-27 * 66) = way out of range.
 
-    let params = std::sync::Arc::new(TestParams::new());
-    let logic = TestPlugin::new(std::sync::Arc::clone(&params));
+    let params = Arc::new(TestParams::new());
+    let logic = TestPlugin::new(Arc::clone(&params));
     let mut shell = truce_loader::static_shell::StaticShell::<TestParams, TestPlugin>::from_parts(
         params, logic,
     );
