@@ -187,8 +187,15 @@ impl Scaffold {
         self.run_cargo("build")
     }
 
-    /// Shared body for `cargo check` and `cargo build`. Both hold
-    /// `build_lock` (cache safety) and share the target dir.
+    /// Run `cargo test --workspace` against the scaffolded project.
+    /// Compiles AND executes every `#[test]` block in the templates,
+    /// so a broken default test rendered by scaffolding fails here.
+    fn cargo_test(&self) -> Result<(), String> {
+        self.run_cargo("test")
+    }
+
+    /// Shared body for `cargo check` / `cargo build` / `cargo test`.
+    /// All hold `build_lock` (cache safety) and share the target dir.
     fn run_cargo(&self, subcommand: &str) -> Result<(), String> {
         let _guard = build_lock().lock().unwrap_or_else(|e| e.into_inner());
         let out = Command::new("cargo")
@@ -211,6 +218,140 @@ impl Scaffold {
         }
         Ok(())
     }
+
+    /// Run a `cargo truce <subcommand>` invocation against the
+    /// scaffolded project. Exercises the actual `cargo-truce` binary
+    /// (not just bare `cargo build`), so xtask-side regressions —
+    /// bundle staging, per-format feature gating, project_root
+    /// resolution from a child cwd — surface here.
+    ///
+    /// Does NOT use the shared target dir: xtask resolves
+    /// `<project_root>/target/...` paths internally for bundle
+    /// staging, and re-pointing `CARGO_TARGET_DIR` would split that
+    /// from where the inner `cargo build` writes the dylib. So this
+    /// test pays for a fresh `<generated>/target/` (~60s cold).
+    fn truce_subcommand(&self, args: &[&str]) -> Result<(), String> {
+        let _guard = build_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let out = Command::new(cargo_truce_bin())
+            .args(args)
+            .current_dir(&self.generated)
+            .output()
+            .map_err(|e| format!("[{}] exec cargo-truce {args:?}: {e}", self.label))?;
+        if !out.status.success() {
+            return Err(format!(
+                "[{}] cargo-truce {args:?} failed: {}\nstdout:\n{}\nstderr:\n{}",
+                self.label,
+                out.status,
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr),
+            ));
+        }
+        // Scaffolded builds should be warning-clean. Templates that
+        // accumulate `warning:` / `error:` lines in cargo output (rustc
+        // warnings, unused-manifest-key, deprecated APIs) get caught
+        // here instead of festering until a user files an issue.
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let diagnostics = scan_for_diagnostics(&stdout, &stderr);
+        if !diagnostics.is_empty() {
+            return Err(format!(
+                "[{}] cargo-truce {args:?} succeeded but emitted {} diagnostic(s):\n{}",
+                self.label,
+                diagnostics.len(),
+                diagnostics.join("\n"),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Assert that `target/bundles/` under the scaffolded project
+    /// holds exactly `expected` entries whose name ends with `ext`
+    /// (e.g. `.clap`, `.vst3`). Stronger end-to-end check than
+    /// "cargo-truce exited 0" — catches silent staging regressions
+    /// (e.g. format-flag honored at build time but bundle never
+    /// materialized).
+    fn assert_bundle_count_by_ext(&self, ext: &str, expected: usize) {
+        let bundles = self.generated.join("target/bundles");
+        let names: Vec<String> = std::fs::read_dir(&bundles)
+            .unwrap_or_else(|e| {
+                panic!(
+                    "[{}] target/bundles missing at {}: {e}",
+                    self.label,
+                    bundles.display()
+                )
+            })
+            .filter_map(|e| e.ok().map(|e| e.file_name().to_string_lossy().to_string()))
+            .collect();
+        let count = names.iter().filter(|n| n.ends_with(ext)).count();
+        assert_eq!(
+            count, expected,
+            "[{}] expected {expected} {ext} bundle(s) in {}, got: {names:?}",
+            self.label,
+            bundles.display()
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Diagnostic scan
+// ---------------------------------------------------------------------------
+
+/// Pluck `warning:` / `error:` lines out of combined cargo output.
+///
+/// Matches the prefix at the start of a line (after optional ANSI color
+/// codes and whitespace). Skips three benign cases:
+///
+/// - "Compiling …": not a diagnostic, just cargo progress.
+/// - rustc's "warnings emitted" / "X warnings emitted" summary lines —
+///   redundant with the underlying warnings we're already capturing.
+/// - "warning: build failed, waiting for other jobs to finish…":
+///   cargo's job-cancellation noise, not a real diagnostic.
+fn scan_for_diagnostics(stdout: &str, stderr: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for stream in [stdout, stderr] {
+        for line in stream.lines() {
+            // Strip ANSI color escapes that cargo emits.
+            let stripped = strip_ansi(line);
+            let trimmed = stripped.trim_start();
+            let is_warning = trimmed.starts_with("warning:");
+            let is_error = trimmed.starts_with("error:");
+            if !(is_warning || is_error) {
+                continue;
+            }
+            if trimmed.contains("warnings emitted")
+                || trimmed.contains("warning emitted")
+                || trimmed.contains("build failed, waiting for other jobs")
+            {
+                continue;
+            }
+            out.push(stripped.into_owned());
+        }
+    }
+    out
+}
+
+fn strip_ansi(line: &str) -> std::borrow::Cow<'_, str> {
+    if !line.contains('\x1b') {
+        return std::borrow::Cow::Borrowed(line);
+    }
+    let mut out = String::with_capacity(line.len());
+    let mut chars = line.chars();
+    while let Some(c) = chars.next() {
+        if c != '\x1b' {
+            out.push(c);
+            continue;
+        }
+        // ESC [ ... <letter>
+        if chars.next() != Some('[') {
+            continue;
+        }
+        for inner in chars.by_ref() {
+            if inner.is_ascii_alphabetic() {
+                break;
+            }
+        }
+    }
+    std::borrow::Cow::Owned(out)
 }
 
 // ---------------------------------------------------------------------------
@@ -352,6 +493,66 @@ fn workspace_full_build() {
     s.cargo_build().unwrap();
 }
 
+// `cargo test --workspace` on a single-plugin scaffold. The
+// scaffolded project ships a default `#[test]` block exercising the
+// templated DSP + bus config + state round-trip; compiling the test
+// binary AND running the tests catches both compile-time regressions
+// and broken assertions that templates accumulate.
+#[test]
+fn single_plugin_tests_pass() {
+    let s = Scaffold::new("single-tests", "demo_effect");
+    s.run().unwrap();
+    s.rewrite_git_to_path().unwrap();
+    s.cargo_test().unwrap();
+}
+
+// `cargo test --workspace` on a multi-plugin workspace mixing every
+// plugin kind (effect + instrument + midi). Doubles as a link-time
+// build check — `cargo test` compiles and links every cdylib like
+// `cargo build` does — and verifies the per-kind default test
+// templates (`render_effect` vs `render_instrument` vs note-effect
+// silence assertion) all pass.
+#[test]
+fn workspace_mixed_types_tests_pass() {
+    let s = Scaffold::new_workspace("ws-mixed-tests", "acme", &["gain", "synth", "arp"])
+        .arg("--type:synth=instrument")
+        .arg("--type:arp=midi");
+    s.run().unwrap();
+    s.rewrite_git_to_path().unwrap();
+    s.cargo_test().unwrap();
+}
+
+// `cargo truce build --clap` on a single-plugin scaffold. Exercises
+// the actual `cargo-truce` binary (not bare `cargo build`), so
+// xtask-side regressions — `project_root` resolution from a child
+// cwd, per-format feature gating in `detect_default_features`,
+// bundle staging into `target/bundles/` — surface here. Single
+// plugin + CLAP only to keep the test under a minute. Does not use
+// the shared target dir; see `truce_subcommand` for why.
+#[test]
+fn scaffold_cargo_truce_build_clap() {
+    let s = Scaffold::new("truce-build-clap", "demo_effect");
+    s.run().unwrap();
+    s.rewrite_git_to_path().unwrap();
+    s.truce_subcommand(&["build", "--clap"]).unwrap();
+    s.assert_bundle_count_by_ext(".clap", 1);
+}
+
+// `cargo truce build --clap --vst3` on a two-plugin workspace.
+// Doubles the matrix coverage of the build integration: workspace
+// (vs single plugin), multi-format invocation (vs one format),
+// and the VST3 C++ shim compile path (vs CLAP-only). One test
+// rather than three so we pay for the truce framework compile once.
+#[test]
+fn scaffold_cargo_truce_build_workspace_multi_format() {
+    let s = Scaffold::new_workspace("truce-build-multi", "acme", &["gain", "reverb"]);
+    s.run().unwrap();
+    s.rewrite_git_to_path().unwrap();
+    s.truce_subcommand(&["build", "--clap", "--vst3"]).unwrap();
+    s.assert_bundle_count_by_ext(".clap", 2);
+    s.assert_bundle_count_by_ext(".vst3", 2);
+}
+
 // ---------------------------------------------------------------------------
 // Unit tests for the rewrite helper
 // ---------------------------------------------------------------------------
@@ -374,6 +575,43 @@ truce-standalone = { git = "https://github.com/truce-audio/truce", features = ["
 truce-standalone = { path = "/abs/crates/truce-standalone", features = ["gui"] }
 "#;
     assert_eq!(rewrite_git_refs(input, "/abs/crates"), expected);
+}
+
+#[test]
+fn scan_diagnostics_picks_up_warning_and_error() {
+    let stderr = "\
+   Compiling foo v0.1.0
+warning: unused import: `Foo`
+  --> src/lib.rs:3:5
+error: cannot find function `bar` in this scope
+  --> src/lib.rs:7:5
+";
+    let got = scan_for_diagnostics("", stderr);
+    assert_eq!(got.len(), 2, "got: {got:?}");
+    assert!(got[0].contains("warning: unused import"));
+    assert!(got[1].contains("error: cannot find function"));
+}
+
+#[test]
+fn scan_diagnostics_skips_summary_and_cancellation_lines() {
+    let stderr = "\
+warning: 3 warnings emitted
+
+warning: build failed, waiting for other jobs to finish...
+warning: real diagnostic here
+";
+    let got = scan_for_diagnostics("", stderr);
+    assert_eq!(got.len(), 1, "got: {got:?}");
+    assert!(got[0].contains("real diagnostic"));
+}
+
+#[test]
+fn scan_diagnostics_strips_ansi_color() {
+    // ESC[33m = yellow, ESC[0m = reset (typical rustc warning coloring).
+    let stderr = "\x1b[1m\x1b[33mwarning\x1b[0m: unused variable\n";
+    let got = scan_for_diagnostics("", stderr);
+    assert_eq!(got.len(), 1, "got: {got:?}");
+    assert!(got[0].contains("warning: unused variable"));
 }
 
 #[test]

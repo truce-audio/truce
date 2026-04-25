@@ -542,7 +542,8 @@ pub fn resolve_fourccs(plugins: &[PluginSpec]) -> HashMap<String, String> {
 // ---------------------------------------------------------------------------
 
 pub fn to_pascal_case(s: &str) -> String {
-    s.split('-')
+    s.split(|c: char| !c.is_alphanumeric())
+        .filter(|part| !part.is_empty())
         .map(|part| {
             let mut chars = part.chars();
             match chars.next() {
@@ -555,12 +556,16 @@ pub fn to_pascal_case(s: &str) -> String {
 
 /// Generate a 4-character code from a plugin name using segment initials.
 ///
-/// 1. Split on hyphens, take the first character (uppercased) of each segment.
+/// 1. Split on any non-alphanumeric (`-`, `_`, `.`, etc.), take the
+///    first character (uppercased) of each segment.
 /// 2. If fewer than 4 initials, backfill from the last segment's remaining
 ///    characters first (the differentiator), then earlier segments.
 /// 3. Pad with 'X' if still short.
 pub fn to_fourcc(s: &str) -> String {
-    let segments: Vec<&str> = s.split('-').filter(|seg| !seg.is_empty()).collect();
+    let segments: Vec<&str> = s
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|seg| !seg.is_empty())
+        .collect();
 
     let mut code: Vec<char> = segments
         .iter()
@@ -591,6 +596,41 @@ pub fn to_fourcc(s: &str) -> String {
 }
 
 #[cfg(test)]
+mod pascal_case_tests {
+    use super::*;
+
+    #[test]
+    fn single_word() {
+        assert_eq!(to_pascal_case("gain"), "Gain");
+    }
+
+    #[test]
+    fn hyphenated() {
+        assert_eq!(to_pascal_case("demo-effect"), "DemoEffect");
+    }
+
+    #[test]
+    fn snake_case_is_camelcased() {
+        // Regression: scaffolded crate names with underscores
+        // (`demo_effect`) used to pass through as `Demo_effect`,
+        // triggering rustc's `non_camel_case_types` warning on every
+        // generated struct. Splitting on any non-alphanumeric fixes it.
+        assert_eq!(to_pascal_case("demo_effect"), "DemoEffect");
+    }
+
+    #[test]
+    fn mixed_separators() {
+        assert_eq!(to_pascal_case("foo_bar-baz"), "FooBarBaz");
+    }
+
+    #[test]
+    fn empty_segments_dropped() {
+        assert_eq!(to_pascal_case("foo--bar"), "FooBar");
+        assert_eq!(to_pascal_case("__foo"), "Foo");
+    }
+}
+
+#[cfg(test)]
 mod fourcc_tests {
     use super::*;
 
@@ -599,6 +639,14 @@ mod fourcc_tests {
     #[test]
     fn single_short_word() {
         assert_eq!(to_fourcc("gain"), "Gain");
+    }
+
+    #[test]
+    fn snake_case_separator() {
+        // Regression: only `-` was treated as a segment separator,
+        // so `demo_effect` collapsed to a single 11-char run instead
+        // of two segments. Now it produces "DE" + backfill.
+        assert_eq!(to_fourcc("demo_effect"), "DEff");
     }
 
     #[test]
