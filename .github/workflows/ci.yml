@@ -23,30 +23,27 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.88
         with:
           components: rustfmt
       - run: cargo fmt --all -- --check
 
   test:
-    name: ${{ matrix.os }} (${{ matrix.toolchain }})
+    # Pin CI to the declared MSRV (`rust-version` in Cargo.toml). When
+    # bumping MSRV, update both places. Stable-track regressions are
+    # acceptable trade for honest MSRV enforcement; the CI cache wipes
+    # on bump.
+    name: ${{ matrix.os }} (1.88)
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: ubuntu-24.04
-            toolchain: stable
-          - os: macos-14
-            toolchain: stable
-          - os: windows-latest
-            toolchain: stable
+        os: [ubuntu-24.04, macos-14, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@master
+      - uses: dtolnay/rust-toolchain@1.88
         with:
-          toolchain: ${{ matrix.toolchain }}
           components: clippy
 
       # Smart cache that knows about target/ layout, lockfile, toolchain.

@@ -642,7 +642,7 @@ unsafe fn install_child_cursor_update(parent: *mut c_void) {
         let class_ptr: *mut Class = msg_send![child, class];
         let selector = sel!(cursorUpdate:);
         // `v@:@` → void (id self, SEL _cmd, id event).
-        let type_encoding = b"v@:@\0".as_ptr() as *const std::os::raw::c_char;
+        let type_encoding = c"v@:@".as_ptr();
         // objc's `class_addMethod` takes an untyped function pointer.
         // Transmute through an intermediate `extern "C" fn()` to keep
         // the ABI intact while satisfying the cast.

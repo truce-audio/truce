@@ -5,7 +5,7 @@ platform-specific C/C++ compiler, and the `cargo truce` CLI.
 
 ## Rust
 
-Rust **1.75+** via [rustup.rs]. `rustup update` if you already have
+Rust **1.88+** via [rustup.rs]. `rustup update` if you already have
 it.
 
 [rustup.rs]: https://rustup.rs

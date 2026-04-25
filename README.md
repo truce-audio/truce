@@ -245,7 +245,7 @@ fourcc = "MyFx"
 
 ## Requirements
 
-- Rust 1.75+ (`rustup update`). Slint integration requires 1.88+.
+- Rust 1.88+ (`rustup update`).
 - **macOS**: Xcode CLI tools (`xcode-select --install`). Full Xcode for AU v3.
 - **Windows**: MSVC build tools (Visual Studio 2019+ with the "Desktop
   development with C++" workload). Rust `x86_64-pc-windows-msvc`

@@ -229,7 +229,7 @@ pub unsafe fn create_wgpu_surface(
                 return None;
             }
             let rwh6_window = wgpu::rwh::RawWindowHandle::Win32(wgpu::rwh::Win32WindowHandle::new(
-                std::num::NonZero::new(hwnd as isize)?,
+                std::num::NonZeroIsize::new(hwnd as isize)?,
             ));
             let rwh6_display =
                 wgpu::rwh::RawDisplayHandle::Windows(wgpu::rwh::WindowsDisplayHandle::new());
