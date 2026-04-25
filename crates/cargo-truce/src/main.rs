@@ -85,10 +85,12 @@ USAGE:
       default features.
 
   cargo truce validate [--auval] [--auval3] [--pluginval] [--clap]
-                       [--all] [-p <crate>]
+                       [--vst2] [--all] [-p <crate>]
       Run plugin validators against installed bundles. No flags → run
-      all available (auval, auval3, pluginval, clap-validator);
-      missing tools are skipped with a hint.
+      all available (auval, auval3, pluginval, clap-validator, vst2);
+      missing tools are skipped with a hint. `--vst2` runs an in-tree
+      `dlopen` + AEffect probe (macOS-only smoke binary; VST2 has no
+      industry-standard validator).
 
   cargo truce test
       Run in-process regression tests.

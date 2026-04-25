@@ -1,6 +1,17 @@
-//! `cargo truce test` — run all plugin tests + the VST2 binary smoke test.
+//! `cargo truce test` — per-plugin `cargo test` driver.
+//!
+//! Iterates `[[plugin]]` entries in `truce.toml` and runs
+//! `cargo test -p <crate> -- --quiet` for each, printing one summary
+//! line per plugin. Functionally a subset of `cargo test --workspace`
+//! (which also runs non-plugin crate tests like `truce-core`,
+//! `truce-params`, `truce-loader`); kept for the per-plugin output
+//! shape and to filter the workspace down to plugin crates only.
+//!
+//! Format-spec validation (auval, pluginval, clap-validator, the VST2
+//! binary smoke) lives under `cargo truce validate` — see
+//! `commands/validate.rs`.
 
-use crate::{deployment_target, load_config, project_root, Res};
+use crate::{load_config, Res};
 use std::process::Command;
 
 pub(crate) fn cmd_test() -> Res {
@@ -16,7 +27,7 @@ pub(crate) fn cmd_test() -> Res {
             .output()?;
         let stderr = String::from_utf8_lossy(&status.stderr);
         if status.status.success() {
-            // Count tests from stderr (cargo test output goes to stderr)
+            // Count tests from stderr (cargo test output goes to stderr).
             let test_line = stderr.lines().find(|l| l.contains("test result"));
             if let Some(line) = test_line {
                 eprintln!("{}", line.trim());
@@ -25,61 +36,8 @@ pub(crate) fn cmd_test() -> Res {
             }
         } else {
             eprintln!("FAIL");
-            eprint!("{}", String::from_utf8_lossy(&status.stderr));
+            eprint!("{}", stderr);
             all_passed = false;
-        }
-    }
-
-    // --- VST2 binary tests ---
-    let root = project_root();
-    let test_src = root.join("tests/test_vst2_binary.c");
-    let test_bin = root.join("target/test_vst2");
-    if test_src.exists() {
-        eprintln!("Running VST2 binary tests...\n");
-        let cc_status = Command::new("cc")
-            .args(["-o", test_bin.to_str().unwrap(), test_src.to_str().unwrap()])
-            .status()?;
-        if cc_status.success() {
-            // Build VST2 plugins
-            for p in &config.plugin {
-                eprint!("  VST2 {} ... ", p.name);
-                let build = Command::new("cargo")
-                    .args([
-                        "build",
-                        "--release",
-                        "-p",
-                        &p.crate_name,
-                        "--no-default-features",
-                        "--features",
-                        "vst2",
-                    ])
-                    .env("MACOSX_DEPLOYMENT_TARGET", deployment_target())
-                    .output()?;
-                if !build.status.success() {
-                    eprintln!("BUILD FAILED");
-                    all_passed = false;
-                    continue;
-                }
-                let dylib = root.join(format!("target/release/lib{}.dylib", p.dylib_stem()));
-                let is_synth = p.resolved_au_type() == "aumu";
-                let mut cmd = Command::new(test_bin.to_str().unwrap());
-                cmd.arg(dylib.to_str().unwrap());
-                if is_synth {
-                    cmd.arg("--synth");
-                }
-                let output = cmd.output()?;
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                if output.status.success() {
-                    if let Some(line) = stdout.lines().last() {
-                        eprintln!("{}", line);
-                    }
-                } else {
-                    eprintln!("FAIL");
-                    eprint!("{}", stdout);
-                    all_passed = false;
-                }
-            }
-            eprintln!();
         }
     }
 

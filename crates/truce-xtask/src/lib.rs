@@ -135,12 +135,13 @@ Commands:
       --dry-run    Show what would be removed without deleting
       --yes        Skip confirmation prompt
 
-  validate [--auval] [--auval3] [--pluginval] [--clap] [--all] [-p <crate>]
+  validate [--auval] [--auval3] [--pluginval] [--clap] [--vst2] [--all] [-p <crate>]
       Run validation tools on installed plugins.
       --auval      AU v2 validation only (macOS)
       --auval3     AU v3 validation only (macOS)
       --pluginval  VST3 validation via pluginval
       --clap       CLAP validation via clap-validator
+      --vst2       VST2 dlopen + AEffect probe (macOS-only smoke binary)
       --all        Run all available validators (default)
       -p <crate>   Validate only the plugin with this cargo crate name
 

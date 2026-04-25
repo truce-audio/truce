@@ -3,6 +3,8 @@
 //! shadow-install collision detection.
 
 use crate::{dirs, load_config, tmp_dir, PluginDef, Res};
+#[cfg(target_os = "macos")]
+use crate::{deployment_target, project_root};
 use std::fs;
 use std::path::Path;
 #[cfg(target_os = "macos")]
@@ -143,6 +145,7 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
     let mut run_auval_v3 = false;
     let mut run_pluginval = false;
     let mut run_clap = false;
+    let mut run_vst2 = false;
     let mut plugin_filter: Option<String> = None;
 
     let mut i = 0;
@@ -152,11 +155,13 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
             "--auval3" => run_auval_v3 = true,
             "--pluginval" => run_pluginval = true,
             "--clap" => run_clap = true,
+            "--vst2" => run_vst2 = true,
             "--all" => {
                 run_auval = true;
                 run_auval_v3 = true;
                 run_pluginval = true;
                 run_clap = true;
+                run_vst2 = true;
             }
             "-p" => {
                 i += 1;
@@ -169,11 +174,12 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
         }
         i += 1;
     }
-    if !run_auval && !run_auval_v3 && !run_pluginval && !run_clap {
+    if !run_auval && !run_auval_v3 && !run_pluginval && !run_clap && !run_vst2 {
         run_auval = true;
         run_auval_v3 = true;
         run_pluginval = true;
         run_clap = true;
+        run_vst2 = true;
     }
 
     let plugins: Vec<&PluginDef> = if let Some(ref filter) = plugin_filter {
@@ -393,6 +399,20 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
         }
     }
 
+    // --- VST2 binary smoke (no industry validator; this is ours) ---
+    if run_vst2 {
+        eprintln!("=== VST2 binary smoke ===\n");
+        #[cfg(target_os = "macos")]
+        {
+            failures += validate_vst2_macos(&plugins);
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            eprintln!("  Skipping: VST2 binary smoke is currently macOS-only.");
+            let _ = &plugins;
+        }
+    }
+
     eprintln!();
     if failures > 0 {
         Err(format!("{failures} validation(s) failed").into())
@@ -400,6 +420,99 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
         eprintln!("All validations passed.");
         Ok(())
     }
+}
+
+/// Build each plugin as a VST2 dylib, dlopen it via the C smoke binary
+/// at `tests/test_vst2_binary.c`, and verify `VSTPluginMain` returns a
+/// well-formed `AEffect`. macOS-only because the smoke binary uses
+/// `dlfcn.h` and we hardcode `.dylib` here. Returns the failure count.
+#[cfg(target_os = "macos")]
+fn validate_vst2_macos(plugins: &[&PluginDef]) -> usize {
+    let root = project_root();
+    let test_src = root.join("tests/test_vst2_binary.c");
+    if !test_src.exists() {
+        eprintln!(
+            "  Skipping: smoke source missing at {}.",
+            test_src.display()
+        );
+        return 0;
+    }
+
+    let test_bin = root.join("target/test_vst2");
+    let cc_status = match Command::new("cc")
+        .args(["-o", test_bin.to_str().unwrap(), test_src.to_str().unwrap()])
+        .status()
+    {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("  Skipping: failed to invoke cc: {e}");
+            return 0;
+        }
+    };
+    if !cc_status.success() {
+        eprintln!("  Skipping: cc failed to build the smoke binary.");
+        return 0;
+    }
+
+    let mut failures = 0;
+    for p in plugins {
+        eprint!("  {} ... ", p.name);
+        let build = Command::new("cargo")
+            .args([
+                "build",
+                "--release",
+                "-p",
+                &p.crate_name,
+                "--no-default-features",
+                "--features",
+                "vst2",
+            ])
+            .env("MACOSX_DEPLOYMENT_TARGET", deployment_target())
+            .output();
+        let build = match build {
+            Ok(o) => o,
+            Err(e) => {
+                eprintln!("BUILD ERROR ({e})");
+                failures += 1;
+                continue;
+            }
+        };
+        if !build.status.success() {
+            eprintln!("BUILD FAILED");
+            eprint!("{}", String::from_utf8_lossy(&build.stderr));
+            failures += 1;
+            continue;
+        }
+
+        let dylib = root.join(format!("target/release/lib{}.dylib", p.dylib_stem()));
+        let is_synth = p.resolved_au_type() == "aumu";
+        let mut cmd = Command::new(test_bin.to_str().unwrap());
+        cmd.arg(dylib.to_str().unwrap());
+        if is_synth {
+            cmd.arg("--synth");
+        }
+        match cmd.output() {
+            Ok(out) => {
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                if out.status.success() {
+                    if let Some(line) = stdout.lines().last() {
+                        eprintln!("{line}");
+                    } else {
+                        eprintln!("PASS");
+                    }
+                } else {
+                    eprintln!("FAIL");
+                    eprint!("{stdout}");
+                    failures += 1;
+                }
+            }
+            Err(e) => {
+                eprintln!("INVOKE ERROR ({e})");
+                failures += 1;
+            }
+        }
+    }
+    failures
 }
 
 fn find_pluginval() -> Option<String> {
