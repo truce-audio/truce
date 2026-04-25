@@ -42,14 +42,14 @@ cargo truce test                 # run tests
 cargo truce validate             # auval + pluginval + clap-validator
 ```
 
-`cargo truce build` for CI, packaging pipelines, and
+Use `cargo truce build` for CI, packaging pipelines, and
 iterating without touching the system plugin directories — it
 produces the same bundle layout as `install` under
 `target/bundles/` but never writes outside the workspace. Every
 format flag (`--clap` / `--vst3` / `--vst2` / `--lv2` / `--au2` /
 `--au3` / `--aax`) is supported.
 
-Ship it — produce a signed distributable installer:
+Produce a signed distributable installer:
 
 ```sh
 cargo truce package              # signed .pkg (macOS) or Inno Setup .exe (Windows)
