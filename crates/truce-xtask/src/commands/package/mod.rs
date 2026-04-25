@@ -121,7 +121,7 @@ pub(crate) fn cmd_package(_args: &[String]) -> Res {
     }
     #[cfg(target_os = "macos")]
     {
-        return macos::cmd_package_macos(_args);
+        macos::cmd_package_macos(_args)
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     Err("`cargo truce package` is not supported on this platform. \
