@@ -232,7 +232,7 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
         eprintln!("Building AU v2...");
         for p in &plugins {
             let mut env_pairs: Vec<(&str, &str)> =
-                vec![("TRUCE_AU_VERSION", "2"), ("TRUCE_AU_PLUGIN_ID", &p.suffix)];
+                vec![("TRUCE_AU_VERSION", "2"), ("TRUCE_AU_PLUGIN_ID", &p.bundle_id)];
             if let Some(n) = p.au_name.as_deref() {
                 env_pairs.push(("TRUCE_AU_NAME_OVERRIDE", n));
             }

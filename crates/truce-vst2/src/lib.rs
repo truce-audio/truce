@@ -524,10 +524,7 @@ unsafe extern "C" fn cb_gui_close<P: PluginExport>(ctx: *mut std::ffi::c_void) {
 const VST2_NAME_OVERRIDE: Option<&'static str> = option_env!("TRUCE_VST2_NAME_OVERRIDE");
 
 fn resolved_plugin_name(info: &truce_core::info::PluginInfo) -> &'static str {
-    match VST2_NAME_OVERRIDE {
-        Some(s) if !s.is_empty() => s,
-        _ => info.name,
-    }
+    truce_core::info::resolve_name_override(VST2_NAME_OVERRIDE, info.name)
 }
 
 pub fn register_vst2<P: PluginExport>() {
@@ -537,8 +534,8 @@ pub fn register_vst2<P: PluginExport>() {
         .first()
         .expect("Plugin must have at least one bus layout");
 
-    let name = CString::new(resolved_plugin_name(&info)).unwrap();
-    let vendor = CString::new(info.vendor).unwrap();
+    let name = CString::new(resolved_plugin_name(&info)).unwrap_or_default();
+    let vendor = CString::new(info.vendor).unwrap_or_default();
 
     let descriptor = Box::leak(Box::new(Vst2PluginDescriptor {
         component_type: info.au_type,
@@ -577,9 +574,9 @@ pub fn register_vst2<P: PluginExport>() {
     let infos = temp_plugin.params().param_infos();
     let mut param_descs: Vec<Vst2ParamDescriptor> = Vec::with_capacity(infos.len());
     for pi in &infos {
-        let name = CString::new(pi.name).unwrap();
-        let unit = CString::new(pi.unit.as_str()).unwrap();
-        let group = CString::new(pi.group).unwrap();
+        let name = CString::new(pi.name).unwrap_or_default();
+        let unit = CString::new(pi.unit.as_str()).unwrap_or_default();
+        let group = CString::new(pi.group).unwrap_or_default();
         param_descs.push(Vst2ParamDescriptor {
             id: pi.id,
             name: name.into_raw(),

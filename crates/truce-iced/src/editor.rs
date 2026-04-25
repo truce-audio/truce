@@ -935,8 +935,20 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
             let auto = AutoPlugin {
                 layout: layout.clone(),
             };
-            // SAFETY: AutoPlugin and M are the same type when layout is Some
-            // (enforced by from_layout constructor which sets M = AutoPlugin).
+            // SAFETY: reinterpret `AutoPlugin` as `M`. Sound because
+            // `IcedEditor::from_layout` is the only constructor that
+            // sets `self.layout = Some(...)`, and it fixes `M =
+            // AutoPlugin` at the type level — every other constructor
+            // (`IcedEditor::new`) uses `M::new(...)` below and leaves
+            // `self.layout` as `None`, so this branch is unreachable
+            // unless `M == AutoPlugin`. The debug-asserted size check
+            // makes the invariant crash loudly if future code ever
+            // violates it.
+            debug_assert_eq!(
+                std::mem::size_of::<AutoPlugin>(),
+                std::mem::size_of::<M>(),
+                "from_layout set self.layout but M != AutoPlugin",
+            );
             unsafe { std::ptr::read(&auto as *const AutoPlugin as *const M) }
         } else {
             M::new(self.params.clone())

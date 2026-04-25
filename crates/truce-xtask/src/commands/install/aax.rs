@@ -459,7 +459,7 @@ pub(crate) fn emit_aax_bundle(
     <key>CFBundleExecutable</key>
     <string>{name}</string>
     <key>CFBundleIdentifier</key>
-    <string>com.truce.{suffix}.aax</string>
+    <string>com.truce.{bundle_id}.aax</string>
     <key>CFBundleName</key>
     <string>{name}</string>
     <key>CFBundlePackageType</key>
@@ -469,7 +469,7 @@ pub(crate) fn emit_aax_bundle(
 </dict>
 </plist>"#,
             name = p.name,
-            suffix = p.suffix,
+            bundle_id = p.bundle_id,
         );
         fs_ctx::write(contents.join("Info.plist"), plist)?;
 
@@ -532,7 +532,7 @@ pub(crate) fn install_aax(root: &Path, p: &PluginDef, _config: &Config) -> Res {
         return Err(format!(
             "AAX bundle missing at {}. Run `cargo truce build --aax -p {}` first.",
             built.display(),
-            p.suffix,
+            p.bundle_id,
         )
         .into());
     }

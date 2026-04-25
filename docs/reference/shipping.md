@@ -175,7 +175,7 @@ cargo truce package (on Windows, Admin prompt)
                                 CLAP/VST2 stage both DLLs side-by-side)
 3. Authenticode-sign binaries  signtool.exe
 4. PACE-sign AAX               wraptool.exe (skipped if PACE_ACCOUNT unset)
-5. Render .iss                 target\package\windows\<suffix>\installer.iss
+5. Render .iss                 target\package\windows\<bundle_id>\installer.iss
 6. Compile installer           ISCC.exe → dist\<Name>-<version>-windows.exe
 7. Authenticode-sign installer signtool.exe
 ```
@@ -387,7 +387,7 @@ or env vars — not here.
 | Field | Type | Required | Notes |
 |-------|------|----------|-------|
 | `name` | string | yes | Human name. Used for bundle filenames and DAW display names. |
-| `suffix` | string | yes | Short lowercase, no-dash identifier. Used internally for bundle / extension reverse-DNS IDs (`com.{vendor}.{suffix}.au`), install plist filenames, and scratch paths. Not used at the CLI. |
+| `bundle_id` | string | yes | Short lowercase, no-dash identifier. Used internally for bundle / extension reverse-DNS IDs (`com.{vendor}.{bundle_id}.au`), install plist filenames, and scratch paths. Not used at the CLI. |
 | `crate` | string | yes | Cargo package name. CLI uses this for `-p <crate>`. Hyphens become underscores in built `.dll`/`.dylib`. |
 | `category` | string | yes | `"effect"` / `"instrument"` / `"midi"`. Drives AU/VST3/CLAP category metadata. |
 | `fourcc` | string | yes† | Exactly 4 ASCII chars. AU subtype + cross-format unique ID. |
@@ -454,7 +454,7 @@ Three credential sources, tried in order; first wins.
 | `installer_icon` | — | Path to a `.ico` for the installer + uninstaller. |
 | `welcome_bmp` | — | Path to a 164×314 `.bmp` for welcome/finish pages. |
 | `license_rtf` | — | Path to `.rtf` or `.txt` license. |
-| `app_id` | `{vendor.id}.{plugin.suffix}` | Inno Setup stable identifier. Only change on rename. |
+| `app_id` | `{vendor.id}.{plugin.bundle_id}` | Inno Setup stable identifier. Only change on rename. |
 
 ### `[packaging]` — both platforms
 
@@ -513,7 +513,7 @@ formats = ["clap", "vst3", "aax"]
 
 [[plugin]]
 name = "Acme Gain"
-suffix = "gain"
+bundle_id = "gain"
 crate = "acme-gain"
 category = "effect"
 fourcc = "AGn1"
@@ -521,7 +521,7 @@ au_tag = "Dynamics"
 
 [[plugin]]
 name = "Acme Synth"
-suffix = "synth"
+bundle_id = "synth"
 crate = "acme-synth"
 category = "instrument"
 fourcc = "ASy1"

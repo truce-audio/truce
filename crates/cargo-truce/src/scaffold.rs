@@ -396,14 +396,14 @@ au_manufacturer = "{au_mfr}"
             r#"
 [[plugin]]
 name = "{display}"
-suffix = "{suffix}"
+bundle_id = "{bundle_id}"
 crate = "{crate_name}"
 category = "{category}"
 fourcc = "{fourcc}"
 au_tag = "{au_tag}"
 "#,
             display = struct_name,
-            suffix = p.name,
+            bundle_id = p.name,
             category = p.kind.category(),
             au_tag = p.kind.au_tag(),
         ));

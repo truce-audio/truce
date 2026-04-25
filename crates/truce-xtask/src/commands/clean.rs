@@ -74,8 +74,8 @@ pub(crate) fn cmd_clean(args: &[String]) -> Res {
     if let Ok(config) = load_config() {
         for p in &config.plugin {
             for pattern in [
-                format!("com.{}.{}.v3.ext", config.vendor.id, p.suffix),
-                format!("com.{}.{}.au", config.vendor.id, p.suffix),
+                format!("com.{}.{}.v3.ext", config.vendor.id, p.bundle_id),
+                format!("com.{}.{}.au", config.vendor.id, p.bundle_id),
             ] {
                 let _ = Command::new("pluginkit")
                     .args(["-e", "ignore", "-i", &pattern])

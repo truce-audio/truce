@@ -237,7 +237,7 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
             eprintln!("Building AU v2...");
             for p in &plugins {
                 let mut env_pairs: Vec<(&str, &str)> =
-                    vec![("TRUCE_AU_VERSION", "2"), ("TRUCE_AU_PLUGIN_ID", &p.suffix)];
+                    vec![("TRUCE_AU_VERSION", "2"), ("TRUCE_AU_PLUGIN_ID", &p.bundle_id)];
                 if let Some(n) = p.au_name.as_deref() {
                     env_pairs.push(("TRUCE_AU_NAME_OVERRIDE", n));
                 }
@@ -410,7 +410,7 @@ fn install_vst3(root: &Path, p: &PluginDef, config: &Config) -> Res {
     <key>CFBundleExecutable</key>
     <string>{name}</string>
     <key>CFBundleIdentifier</key>
-    <string>{vendor_id}.{suffix}</string>
+    <string>{vendor_id}.{bundle_id}</string>
     <key>CFBundleName</key>
     <string>{name}</string>
     <key>CFBundlePackageType</key>
@@ -420,11 +420,11 @@ fn install_vst3(root: &Path, p: &PluginDef, config: &Config) -> Res {
 </dict>
 </plist>"#,
             name = p.name,
-            suffix = p.suffix,
+            bundle_id = p.bundle_id,
             vendor_id = config.vendor.id,
         );
         let plist_tmp = tmp_dir()
-            .join(format!("{}_vst3.plist", p.suffix))
+            .join(format!("{}_vst3.plist", p.bundle_id))
             .to_string_lossy()
             .to_string();
         fs_ctx::write(&plist_tmp, &plist)?;
@@ -484,7 +484,7 @@ fn install_vst2(root: &Path, p: &PluginDef, config: &Config) -> Res {
     <key>CFBundleExecutable</key>
     <string>{name}</string>
     <key>CFBundleIdentifier</key>
-    <string>com.truce.{suffix}.vst2</string>
+    <string>com.truce.{bundle_id}.vst2</string>
     <key>CFBundleName</key>
     <string>{name}</string>
     <key>CFBundlePackageType</key>
@@ -494,7 +494,7 @@ fn install_vst2(root: &Path, p: &PluginDef, config: &Config) -> Res {
 </dict>
 </plist>"#,
             name = p.name,
-            suffix = p.suffix,
+            bundle_id = p.bundle_id,
         );
         fs_ctx::write(bundle.join("Contents/Info.plist"), &plist)?;
         fs_ctx::write(bundle.join("Contents/PkgInfo"), "BNDL????")?;
@@ -614,7 +614,7 @@ fn install_au(root: &Path, p: &PluginDef, config: &Config) -> Res {
     <key>CFBundleExecutable</key>
     <string>{name}</string>
     <key>CFBundleIdentifier</key>
-    <string>{vendor_id}.{suffix}.component</string>
+    <string>{vendor_id}.{bundle_id}.component</string>
     <key>CFBundleName</key>
     <string>{name}</string>
     <key>CFBundlePackageType</key>
@@ -649,7 +649,7 @@ fn install_au(root: &Path, p: &PluginDef, config: &Config) -> Res {
 </dict>
 </plist>"#,
         name = p.name,
-        suffix = p.suffix,
+        bundle_id = p.bundle_id,
         vendor_id = config.vendor.id,
         vendor = config.vendor.name,
         au_type = p.resolved_au_type(),
@@ -658,7 +658,7 @@ fn install_au(root: &Path, p: &PluginDef, config: &Config) -> Res {
         au_tag = p.au_tag,
     );
     let plist_tmp = tmp_dir()
-        .join(format!("{}_au.plist", p.suffix))
+        .join(format!("{}_au.plist", p.bundle_id))
         .to_string_lossy()
         .to_string();
     fs_ctx::write(&plist_tmp, &plist)?;

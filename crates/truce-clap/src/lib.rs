@@ -176,19 +176,16 @@ unsafe impl Sync for DescriptorHolder {}
 const CLAP_NAME_OVERRIDE: Option<&'static str> = option_env!("TRUCE_CLAP_NAME_OVERRIDE");
 
 fn resolved_name(info: &PluginInfo) -> &'static str {
-    match CLAP_NAME_OVERRIDE {
-        Some(s) if !s.is_empty() => s,
-        _ => info.name,
-    }
+    truce_core::info::resolve_name_override(CLAP_NAME_OVERRIDE, info.name)
 }
 
 impl DescriptorHolder {
     pub fn new(info: &PluginInfo) -> Self {
-        let id = CString::new(info.clap_id).unwrap();
-        let name = CString::new(resolved_name(info)).unwrap();
-        let vendor = CString::new(info.vendor).unwrap();
-        let url = CString::new(info.url).unwrap();
-        let version = CString::new(info.version).unwrap();
+        let id = CString::new(info.clap_id).unwrap_or_default();
+        let name = CString::new(resolved_name(info)).unwrap_or_default();
+        let vendor = CString::new(info.vendor).unwrap_or_default();
+        let url = CString::new(info.url).unwrap_or_default();
+        let version = CString::new(info.version).unwrap_or_default();
 
         let features_storage: Vec<&'static CStr> = match info.category {
             PluginCategory::Instrument => {

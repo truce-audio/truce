@@ -165,10 +165,7 @@ static INFO: OnceLock<StaticInfo> = OnceLock::new();
 const AAX_NAME_OVERRIDE: Option<&'static str> = option_env!("TRUCE_AAX_NAME_OVERRIDE");
 
 fn resolved_plugin_name(info: &truce_core::info::PluginInfo) -> &'static str {
-    match AAX_NAME_OVERRIDE {
-        Some(s) if !s.is_empty() => s,
-        _ => info.name,
-    }
+    truce_core::info::resolve_name_override(AAX_NAME_OVERRIDE, info.name)
 }
 
 pub fn register_aax<P: PluginExport>() {
@@ -179,8 +176,8 @@ pub fn register_aax<P: PluginExport>() {
             .first()
             .expect("Plugin must have at least one bus layout");
 
-        let name = CString::new(resolved_plugin_name(&info)).unwrap();
-        let vendor = CString::new(info.vendor).unwrap();
+        let name = CString::new(resolved_plugin_name(&info)).unwrap_or_default();
+        let vendor = CString::new(info.vendor).unwrap_or_default();
 
         let is_instrument = info.au_type == *b"aumu";
         let category = if info.category == PluginCategory::Instrument {
@@ -240,8 +237,8 @@ pub fn register_aax<P: PluginExport>() {
         let param_infos = temp.params().param_infos();
         let mut params = Vec::with_capacity(param_infos.len());
         for pi in &param_infos {
-            let pname = CString::new(pi.name).unwrap();
-            let unit = CString::new(pi.unit.as_str()).unwrap();
+            let pname = CString::new(pi.name).unwrap_or_default();
+            let unit = CString::new(pi.unit.as_str()).unwrap_or_default();
             let info = TruceAaxParamInfo {
                 id: pi.id,
                 name: pname.as_ptr(),
@@ -264,8 +261,8 @@ pub fn register_aax<P: PluginExport>() {
         desc.has_editor = has_editor as i32;
         // Fix name/vendor pointers — need to leak the CStrings
         let info = P::info();
-        let name_leaked = CString::new(resolved_plugin_name(&info)).unwrap();
-        let vendor_leaked = CString::new(info.vendor).unwrap();
+        let name_leaked = CString::new(resolved_plugin_name(&info)).unwrap_or_default();
+        let vendor_leaked = CString::new(info.vendor).unwrap_or_default();
         desc.name = name_leaked.into_raw();
         desc.vendor = vendor_leaked.into_raw();
 

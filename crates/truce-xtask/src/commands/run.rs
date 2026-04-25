@@ -70,9 +70,9 @@ pub(crate) fn cmd_run(args: &[String]) -> Res {
             dt,
         )?;
 
-        let built = standalone_built_path(&root, &plugin.suffix);
+        let built = standalone_built_path(&root, &plugin.bundle_id);
         if !built.exists() {
-            let bin_name = standalone_bin_name(&plugin.suffix);
+            let bin_name = standalone_bin_name(&plugin.bundle_id);
             return Err(format!(
                 "standalone binary not found at {}. \
                  Does your plugin have a [[bin]] target named '{bin_name}'?",
@@ -108,16 +108,16 @@ pub(crate) fn cmd_run(args: &[String]) -> Res {
 }
 
 /// Cargo's output path for the standalone binary inside `target/release/`.
-fn standalone_built_path(root: &std::path::Path, suffix: &str) -> PathBuf {
+fn standalone_built_path(root: &std::path::Path, bundle_id: &str) -> PathBuf {
     root.join("target/release")
-        .join(standalone_bin_name(suffix))
+        .join(standalone_bin_name(bundle_id))
 }
 
-fn standalone_bin_name(suffix: &str) -> String {
+fn standalone_bin_name(bundle_id: &str) -> String {
     if cfg!(windows) {
-        format!("{suffix}-standalone.exe")
+        format!("{bundle_id}-standalone.exe")
     } else {
-        format!("{suffix}-standalone")
+        format!("{bundle_id}-standalone")
     }
 }
 

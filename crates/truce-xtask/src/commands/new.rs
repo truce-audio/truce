@@ -240,7 +240,7 @@ fn main() {{
     eprintln!();
     eprintln!("Next steps:");
     eprintln!("  1. Add \"plugins/{name}\" to [workspace.members] in Cargo.toml");
-    eprintln!("  2. Add a [[plugin]] entry to truce.toml with suffix = \"{name}\"");
+    eprintln!("  2. Add a [[plugin]] entry to truce.toml with bundle_id = \"{name}\"");
     eprintln!("  3. cargo truce install -p {name}");
     Ok(())
 }
@@ -438,7 +438,7 @@ truce_aax::export_aax!(__HotShellWrapper);
     eprintln!(
         "  1. Add \"plugins/{name}/logic\" and \"plugins/{name}/shell\" to [workspace.members] in Cargo.toml"
     );
-    eprintln!("  2. Add a [[plugin]] entry to truce.toml with suffix = \"{name}/shell\"");
+    eprintln!("  2. Add a [[plugin]] entry to truce.toml with bundle_id = \"{name}/shell\"");
     eprintln!("  3. cargo build -p {logic_crate}              # build the logic dylib");
     eprintln!("  4. cargo truce install --clap -p {name}/shell  # install the shell once");
     eprintln!("  5. cargo watch -x \"build -p {logic_crate}\"    # iterate with hot-reload");

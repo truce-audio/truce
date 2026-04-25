@@ -135,7 +135,7 @@ au_manufacturer = "MyCo"
 
 [[plugin]]
 name = "My Gain"
-suffix = "my-gain"
+bundle_id = "my-gain"
 crate = "my-gain"
 category = "effect"
 fourcc = "MyG1"

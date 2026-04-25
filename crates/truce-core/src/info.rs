@@ -19,6 +19,20 @@ pub struct PluginInfo {
     pub aax_category: Option<&'static str>,
 }
 
+/// Resolve a format's install-time display-name override. Each wrapper
+/// reads its own `TRUCE_{FORMAT}_NAME_OVERRIDE` via `option_env!` and
+/// passes the result here along with the `PluginInfo::name` fallback.
+/// Empty overrides (unset or set to `""`) fall through to `fallback`.
+pub fn resolve_name_override(
+    override_value: Option<&'static str>,
+    fallback: &'static str,
+) -> &'static str {
+    match override_value {
+        Some(s) if !s.is_empty() => s,
+        _ => fallback,
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PluginCategory {
     Effect,

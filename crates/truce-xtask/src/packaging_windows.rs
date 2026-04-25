@@ -55,7 +55,7 @@ impl TargetArch {
         }
     }
 
-    /// Short tag used in staging paths (`target/package/windows/{suffix}/clap/{tag}/…`).
+    /// Short tag used in staging paths (`target/package/windows/{bundle_id}/clap/{tag}/…`).
     fn tag(self) -> &'static str {
         match self {
             TargetArch::X64 => "x64",
@@ -134,7 +134,7 @@ pub(crate) fn cmd_package(args: &[String]) -> Res {
     for p in &plugins {
         eprintln!("\n=== Packaging: {} ({}) ===", p.name, archs_label(&archs));
 
-        let staging = root.join("target/package/windows").join(&p.suffix);
+        let staging = root.join("target/package/windows").join(&p.bundle_id);
         let _ = fs::remove_dir_all(&staging);
         fs::create_dir_all(&staging)?;
 
@@ -899,7 +899,7 @@ fn render_iss(
         .packaging
         .app_id
         .clone()
-        .unwrap_or_else(|| format!("{}.{}", config.vendor.id, p.suffix));
+        .unwrap_or_else(|| format!("{}.{}", config.vendor.id, p.bundle_id));
 
     let root = project_root();
 

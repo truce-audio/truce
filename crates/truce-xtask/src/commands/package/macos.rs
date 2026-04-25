@@ -273,7 +273,7 @@ pub(crate) fn cmd_package_macos(args: &[String]) -> Res {
             for &arch in &archs {
                 eprintln!("Building AU v2 ({}, {})...", p.name, arch.triple());
                 cargo_build_for_arch(
-                    &[("TRUCE_AU_VERSION", "2"), ("TRUCE_AU_PLUGIN_ID", &p.suffix)],
+                    &[("TRUCE_AU_VERSION", "2"), ("TRUCE_AU_PLUGIN_ID", &p.bundle_id)],
                     &[
                         "-p",
                         &p.crate_name,
@@ -370,7 +370,7 @@ pub(crate) fn cmd_package_macos(args: &[String]) -> Res {
     for p in &plugins {
         eprintln!("\n=== Packaging: {} ===", p.name);
 
-        let staging = root.join("target/package").join(&p.suffix);
+        let staging = root.join("target/package").join(&p.bundle_id);
         let _ = fs::remove_dir_all(&staging);
         fs::create_dir_all(&staging)?;
 
@@ -409,7 +409,7 @@ pub(crate) fn cmd_package_macos(args: &[String]) -> Res {
         for fmt in &formats {
             let bundle_name = fmt.bundle_name(p);
             let component_path = staging.join(&bundle_name);
-            let pkg_id = format!("{}.{}.{}", config.vendor.id, p.suffix, fmt.pkg_id_suffix());
+            let pkg_id = format!("{}.{}.{}", config.vendor.id, p.bundle_id, fmt.pkg_id_suffix());
             let component_pkg = components_dir.join(format!("{}-{}.pkg", p.name, fmt.label()));
 
             let mut pkgbuild_args = if fmt.is_native_bundle() {
@@ -468,7 +468,7 @@ pub(crate) fn cmd_package_macos(args: &[String]) -> Res {
         let dist_xml = generate_distribution_xml(
             &p.name,
             &config.vendor.id,
-            &p.suffix,
+            &p.bundle_id,
             &formats,
             &version,
             Some(&config.packaging),

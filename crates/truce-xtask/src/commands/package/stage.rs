@@ -108,7 +108,7 @@ pub(crate) fn stage_vst3(root: &Path, p: &PluginDef, config: &Config, staging: &
     <key>CFBundleExecutable</key>
     <string>{name}</string>
     <key>CFBundleIdentifier</key>
-    <string>{vendor_id}.{suffix}</string>
+    <string>{vendor_id}.{bundle_id}</string>
     <key>CFBundleName</key>
     <string>{name}</string>
     <key>CFBundlePackageType</key>
@@ -118,7 +118,7 @@ pub(crate) fn stage_vst3(root: &Path, p: &PluginDef, config: &Config, staging: &
 </dict>
 </plist>"#,
         name = p.name,
-        suffix = p.suffix,
+        bundle_id = p.bundle_id,
         vendor_id = config.vendor.id,
     );
     fs::write(bundle.join("Contents/Info.plist"), &plist)?;
@@ -149,7 +149,7 @@ pub(crate) fn stage_vst2(root: &Path, p: &PluginDef, config: &Config, staging: &
     <key>CFBundleExecutable</key>
     <string>{name}</string>
     <key>CFBundleIdentifier</key>
-    <string>com.truce.{suffix}.vst2</string>
+    <string>com.truce.{bundle_id}.vst2</string>
     <key>CFBundleName</key>
     <string>{name}</string>
     <key>CFBundlePackageType</key>
@@ -159,7 +159,7 @@ pub(crate) fn stage_vst2(root: &Path, p: &PluginDef, config: &Config, staging: &
 </dict>
 </plist>"#,
         name = p.name,
-        suffix = p.suffix,
+        bundle_id = p.bundle_id,
     );
     fs::write(bundle.join("Contents/Info.plist"), &plist)?;
     fs::write(bundle.join("Contents/PkgInfo"), "BNDL????")?;
@@ -190,7 +190,7 @@ pub(crate) fn stage_au2(root: &Path, p: &PluginDef, config: &Config, staging: &P
     <key>CFBundleExecutable</key>
     <string>{name}</string>
     <key>CFBundleIdentifier</key>
-    <string>{vendor_id}.{suffix}.component</string>
+    <string>{vendor_id}.{bundle_id}.component</string>
     <key>CFBundleName</key>
     <string>{name}</string>
     <key>CFBundlePackageType</key>
@@ -225,7 +225,7 @@ pub(crate) fn stage_au2(root: &Path, p: &PluginDef, config: &Config, staging: &P
 </dict>
 </plist>"#,
         name = p.name,
-        suffix = p.suffix,
+        bundle_id = p.bundle_id,
         vendor_id = config.vendor.id,
         vendor = config.vendor.name,
         au_type = p.resolved_au_type(),
@@ -297,17 +297,31 @@ pub(crate) fn stage_au3(root: &Path, p: &PluginDef, _config: &Config, staging: &
         return Err(format!(
             "AU v3 bundle missing at {}. Run `cargo truce build --au3 -p {}` first.",
             built_app.display(),
-            p.suffix,
+            p.bundle_id,
         )
         .into());
     }
 
     let dst = staging.join(&app_name);
-    // May be root-owned from a previous install-based run.
+    // May be root-owned from a previous install-based run. Best-effort
+    // `rm -rf` covers that case; surface a pointed error if it still
+    // fails so the user knows exactly which command to run by hand.
     if dst.exists() && fs::remove_dir_all(&dst).is_err() {
-        let _ = Command::new("rm")
+        let status = Command::new("rm")
             .args(["-rf", dst.to_str().unwrap()])
             .status();
+        if dst.exists() {
+            return Err(format!(
+                "could not remove stale staging dir {} \
+                 (rm exit: {status:?}). \
+                 This is usually root-owned leftovers from an earlier \
+                 `cargo truce install`. Run:\n    \
+                 sudo rm -rf {}",
+                dst.display(),
+                dst.display(),
+            )
+            .into());
+        }
     }
     copy_dir_recursive(&built_app, &dst)?;
     Ok(())
@@ -317,7 +331,7 @@ pub(crate) fn stage_au3(root: &Path, p: &PluginDef, _config: &Config, staging: &
 pub(crate) fn generate_distribution_xml(
     plugin_name: &str,
     vendor_id: &str,
-    suffix: &str,
+    bundle_id: &str,
     formats: &[PkgFormat],
     version: &str,
     resources: Option<&PackagingConfig>,
@@ -328,7 +342,7 @@ pub(crate) fn generate_distribution_xml(
 
     for fmt in formats {
         let id = fmt.pkg_id_suffix();
-        let pkg_id = format!("{vendor_id}.{suffix}.{id}");
+        let pkg_id = format!("{vendor_id}.{bundle_id}.{id}");
         let label = fmt.label();
         let desc = fmt.choice_description();
         let component_file = format!("{plugin_name}-{label}.pkg");

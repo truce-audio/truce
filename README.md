@@ -232,7 +232,7 @@ au_manufacturer = "MyCo"
 
 [[plugin]]
 name = "My Effect"
-suffix = "effect"
+bundle_id = "effect"
 crate = "my-effect"
 category = "effect"
 fourcc = "MyFx"

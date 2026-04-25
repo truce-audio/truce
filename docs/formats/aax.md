@@ -163,7 +163,7 @@ The retail Pro Tools equivalent of "plugin unsigned" is error code
 ```toml
 [[plugin]]
 name = "My Effect"
-suffix = "effect"
+bundle_id = "effect"
 fourcc = "MyFx"
 aax_category = "Dynamics"        # Avid's category string — shows in the
                                   # Pro Tools plug-in menu grouping

@@ -631,10 +631,7 @@ unsafe extern "C" fn cb_gui_close<P: PluginExport>(ctx: *mut std::ffi::c_void) {
 const VST3_NAME_OVERRIDE: Option<&'static str> = option_env!("TRUCE_VST3_NAME_OVERRIDE");
 
 fn resolved_plugin_name(info: &truce_core::info::PluginInfo) -> &'static str {
-    match VST3_NAME_OVERRIDE {
-        Some(s) if !s.is_empty() => s,
-        _ => info.name,
-    }
+    truce_core::info::resolve_name_override(VST3_NAME_OVERRIDE, info.name)
 }
 
 fn vst3_cid(id: &str) -> [u8; 16] {

@@ -58,8 +58,8 @@ pub(crate) fn cmd_nuke(args: &[String]) -> Res {
         // Full remove from pluginkit (not just disable)
         let vid = config.vendor.id.trim_start_matches("com.");
         for pattern in [
-            format!("com.{}.{}.v3.ext", vid, p.suffix),
-            format!("com.{}.{}.au", vid, p.suffix),
+            format!("com.{}.{}.v3.ext", vid, p.bundle_id),
+            format!("com.{}.{}.au", vid, p.bundle_id),
         ] {
             let _ = Command::new("pluginkit")
                 .args(["-r", "-i", &pattern])

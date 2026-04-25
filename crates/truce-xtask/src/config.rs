@@ -88,7 +88,7 @@ pub(crate) struct WindowsPackagingConfig {
     /// License shown on the wizard's license page (.rtf or .txt).
     pub(crate) license_rtf: Option<String>,
     /// Override for the stable `AppId` Inno Setup uses to detect upgrades.
-    /// Defaults to `{vendor_id}.{suffix}` when absent.
+    /// Defaults to `{vendor_id}.{bundle_id}` when absent.
     pub(crate) app_id: Option<String>,
 }
 
@@ -163,7 +163,7 @@ pub(crate) struct VendorConfig {
 #[derive(Deserialize)]
 pub(crate) struct PluginDef {
     pub(crate) name: String,
-    pub(crate) suffix: String,
+    pub(crate) bundle_id: String,
     #[serde(rename = "crate")]
     pub(crate) crate_name: String,
     #[serde(default)]
@@ -236,7 +236,11 @@ impl PluginDef {
         }
     }
     pub(crate) fn fw_name(&self) -> String {
-        let cap = format!("{}{}", self.suffix[..1].to_uppercase(), &self.suffix[1..]);
+        let cap = format!(
+            "{}{}",
+            self.bundle_id[..1].to_uppercase(),
+            &self.bundle_id[1..]
+        );
         format!("Truce{}AU", cap)
     }
     /// Dylib filename stem derived from the crate name (hyphens → underscores).

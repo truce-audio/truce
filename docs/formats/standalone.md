@@ -24,7 +24,7 @@ Two mechanical additions to your plugin crate. No `lib.rs` edits.
 
 ```toml
 [[bin]]
-name = "<suffix>-standalone"
+name = "<bundle_id>-standalone"
 path = "src/main.rs"
 required-features = ["standalone"]
 
@@ -35,7 +35,7 @@ standalone = ["dep:truce-standalone"]
 truce-standalone = { workspace = true, features = ["gui"], optional = true }
 ```
 
-`<suffix>` here is your plugin's `suffix` field from `truce.toml`
+`<bundle_id>` here is your plugin's `bundle_id` field from `truce.toml`
 (e.g. `gain-standalone`).
 
 **`src/main.rs`:**

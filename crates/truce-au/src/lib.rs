@@ -426,10 +426,7 @@ unsafe fn libc_free(ptr: *mut std::ffi::c_void) {
 const AU_NAME_OVERRIDE: Option<&'static str> = option_env!("TRUCE_AU_NAME_OVERRIDE");
 
 fn resolved_plugin_name(info: &truce_core::info::PluginInfo) -> &'static str {
-    match AU_NAME_OVERRIDE {
-        Some(s) if !s.is_empty() => s,
-        _ => info.name,
-    }
+    truce_core::info::resolve_name_override(AU_NAME_OVERRIDE, info.name)
 }
 
 pub fn register_au<P: PluginExport>() {

@@ -42,7 +42,7 @@ au_manufacturer = "Trce"
 
 [[plugin]]
 name = "Truce Gain"
-suffix = "gain"
+bundle_id = "gain"
 crate = "truce-example-gain"
 category = "effect"
 fourcc = "TGan"
@@ -53,7 +53,7 @@ au3_name = "Truce Gain (AUv3)"
 
 [[plugin]]
 name = "Truce Synth"
-suffix = "synth"
+bundle_id = "synth"
 crate = "truce-example-synth"
 category = "instrument"
 fourcc = "TSyn"
@@ -63,7 +63,7 @@ au3_name = "Truce Synth (AUv3)"
 
 [[plugin]]
 name = "Truce EQ"
-suffix = "eq"
+bundle_id = "eq"
 crate = "truce-example-eq"
 category = "effect"
 fourcc = "TEq3"
@@ -74,7 +74,7 @@ au3_name = "Truce EQ (AUv3)"
 
 [[plugin]]
 name = "Truce Transpose"
-suffix = "transpose"
+bundle_id = "transpose"
 crate = "truce-example-transpose"
 category = "midi"
 fourcc = "TTrn"
@@ -85,7 +85,7 @@ au3_name = "Truce Transpose (AUv3)"
 
 [[plugin]]
 name = "Truce Gain Egui"
-suffix = "gain-egui"
+bundle_id = "gain-egui"
 crate = "truce-example-gain-egui"
 category = "effect"
 fourcc = "TGeg"
@@ -96,7 +96,7 @@ au3_name = "Truce Gain Egui (AUv3)"
 
 [[plugin]]
 name = "Truce Arpeggio"
-suffix = "arpeggio"
+bundle_id = "arpeggio"
 crate = "truce-example-arpeggio"
 category = "midi"
 fourcc = "TArp"
@@ -107,7 +107,7 @@ au3_name = "Truce Arpeggio (AUv3)"
 
 [[plugin]]
 name = "Truce Gain Iced"
-suffix = "gain-iced"
+bundle_id = "gain-iced"
 crate = "truce-example-gain-iced"
 category = "effect"
 fourcc = "TGic"
@@ -118,7 +118,7 @@ au3_name = "Truce Gain Iced (AUv3)"
 
 [[plugin]]
 name = "Truce Gain Slint"
-suffix = "gain-slint"
+bundle_id = "gain-slint"
 crate = "truce-example-gain-slint"
 category = "effect"
 fourcc = "TGsl"
@@ -129,7 +129,7 @@ au3_name = "Truce Gain Slint (AUv3)"
 
 [[plugin]]
 name = "Truce Tremolo"
-suffix = "tremolo"
+bundle_id = "tremolo"
 crate = "truce-example-tremolo"
 category = "effect"
 fourcc = "TTrM"

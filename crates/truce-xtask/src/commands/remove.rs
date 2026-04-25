@@ -15,8 +15,8 @@ struct RemoveTarget {
 fn unregister_au3(config: &Config, plugin: &PluginDef, app_path: &Path) {
     let vid = config.vendor.id.trim_start_matches("com.");
     for pattern in [
-        format!("com.{}.{}.v3.ext", vid, plugin.suffix),
-        format!("com.{}.{}.au", vid, plugin.suffix),
+        format!("com.{}.{}.v3.ext", vid, plugin.bundle_id),
+        format!("com.{}.{}.au", vid, plugin.bundle_id),
     ] {
         let _ = Command::new("pluginkit")
             .args(["-e", "ignore", "-i", &pattern])

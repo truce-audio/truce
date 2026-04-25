@@ -100,7 +100,7 @@ I/O, silent-input behavior, real-time safety heuristics.
 ## Gotchas
 
 - **Class ID (`vst3_id`)** in `truce.toml` (auto-derived from
-  vendor + plugin suffix if not set) must not change after release.
+  vendor + plugin bundle_id if not set) must not change after release.
   VST3 hosts key automation and presets on it.
 - **macOS VST3 install is system-wide** and requires `sudo`.
   This is a Steinberg convention — hosts scan `/Library/Audio/Plug-

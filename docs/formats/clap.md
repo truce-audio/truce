@@ -86,6 +86,6 @@ state round-trips, and buffer polarity.
   CLAP hosts and nothing from VST3/AU/AAX hosts (those formats don't
   expose CLAP-style per-voice modulation).
 - **`clap_id`** from `truce.toml` (or auto-derived from vendor + plugin
-  `suffix`) is what CLAP hosts use to identify your plugin. Do not
+  `bundle_id`) is what CLAP hosts use to identify your plugin. Do not
   change it after release — automation and preset associations are
   keyed on it.

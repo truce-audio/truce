@@ -142,5 +142,5 @@ jalv 'https://your-uri/here'
 - **Bundle slugs are case-insensitive**. `Truce Gain`, `TRUCE-gain`,
   and `truce gain` all produce the same slug `truce-gain`. If two
   plugins in the same project slug to the same name they will
-  overwrite each other — differentiate by editing `suffix` /
+  overwrite each other — differentiate by editing `bundle_id` /
   `name` in `truce.toml`.

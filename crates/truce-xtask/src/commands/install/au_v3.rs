@@ -78,8 +78,8 @@ pub(crate) fn emit_au_v3_bundle(
     for p in plugins {
         let fw_name = p.fw_name();
         let au_v3_sub = p.au3_sub();
-        let build_dir = tmp_dir().join(format!("au_v3_build_{}", p.suffix));
-        let fw_build = tmp_dir().join(format!("au_v3_fw_{}", p.suffix));
+        let build_dir = tmp_dir().join(format!("au_v3_build_{}", p.bundle_id));
+        let fw_build = tmp_dir().join(format!("au_v3_fw_{}", p.bundle_id));
         let final_app = bundles_dir.join(format!("{}.app", p.au3_app_name()));
 
         eprintln!("Building AU v3 ({})...", p.name);
@@ -88,7 +88,7 @@ pub(crate) fn emit_au_v3_bundle(
         for &arch in archs {
             eprintln!("  Building Rust framework ({})...", arch.triple());
             let mut env_pairs: Vec<(&str, &str)> =
-                vec![("TRUCE_AU_VERSION", "3"), ("TRUCE_AU_PLUGIN_ID", &p.suffix)];
+                vec![("TRUCE_AU_VERSION", "3"), ("TRUCE_AU_PLUGIN_ID", &p.bundle_id)];
             if let Some(n) = p.au3_name.as_deref() {
                 env_pairs.push(("TRUCE_AU_NAME_OVERRIDE", n));
             }
@@ -180,7 +180,7 @@ pub(crate) fn emit_au_v3_bundle(
 </dict></plist>"#,
                 fw = fw_name,
                 vid = config.vendor.id.trim_start_matches("com."),
-                suf = p.suffix,
+                suf = p.bundle_id,
             ),
         )?;
 
@@ -263,8 +263,8 @@ pub(crate) fn emit_au_v3_bundle(
             &pbx_path,
             generate_pbxproj(
                 &team_id,
-                &format!("{}.v3", p.suffix),
-                &format!("{}.v3.ext", p.suffix),
+                &format!("{}.v3", p.bundle_id),
+                &format!("{}.v3.ext", p.bundle_id),
                 build_dir.join("AUExt").to_str().unwrap(),
                 fw_build.to_str().unwrap(),
                 &fw_name,
@@ -448,7 +448,7 @@ fn install_au_v3(root: &Path, config: &Config, plugins: &[&PluginDef]) -> Res {
             return Err(format!(
                 "AU v3 bundle missing at {}. Run `cargo truce build --au3 -p {}` first.",
                 final_app.display(),
-                p.suffix,
+                p.bundle_id,
             )
             .into());
         }
@@ -457,7 +457,7 @@ fn install_au_v3(root: &Path, config: &Config, plugins: &[&PluginDef]) -> Res {
         let appex_id = format!(
             "com.{}.{}.v3.ext",
             config.vendor.id.trim_start_matches("com."),
-            p.suffix
+            p.bundle_id
         );
 
         // Pre-clean. `pluginkit -e ignore` only disables the registration —
