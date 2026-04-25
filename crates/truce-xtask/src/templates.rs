@@ -22,6 +22,10 @@ pub mod au3 {
 // AAX template files
 // ---------------------------------------------------------------------------
 
+// AAX is macOS / Windows only — Avid's SDK ships no Linux libs and Pro
+// Tools doesn't run on Linux. Gating the module keeps Linux from
+// spuriously warning about unused `include_str!` constants.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 pub mod aax {
     pub const CMAKE_LISTS: &str = include_str!("../templates/aax/CMakeLists.txt");
     pub const BRIDGE_CPP: &str = include_str!("../templates/aax/TruceAAX_Bridge.cpp");

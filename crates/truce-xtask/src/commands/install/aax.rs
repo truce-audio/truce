@@ -29,22 +29,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-// AAX is not supported on Linux — the SDK doesn't ship Linux libs and
-// Pro Tools doesn't run on Linux. Provide a stub that errors loudly so
-// the unconditional `pub(crate) use ...build_aax_template` re-export in
-// `lib.rs` still resolves on every platform.
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
-pub(crate) fn build_aax_template(
-    _root: &Path,
-    _sdk_path: &Path,
-    _universal_mac: bool,
-) -> Res {
-    Err(
-        "AAX is not supported on this platform. AAX builds require macOS or Windows."
-            .into(),
-    )
-}
-
+// AAX is macOS / Windows only — Avid's SDK ships no Linux libs and
+// Pro Tools doesn't run on Linux. The function isn't defined on Linux
+// at all; the `pub(crate) use ...build_aax_template;` re-export in
+// `lib.rs` is matched by the same gate.
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(crate) fn build_aax_template(_root: &Path, sdk_path: &Path, universal_mac: bool) -> Res {
     // Referenced only by the macOS cmake branch below; touch it on Windows so

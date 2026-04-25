@@ -578,7 +578,10 @@ pub(crate) fn rustup_has_target(triple: &str) -> bool {
 /// Query `rustup target list --installed` once per process and cache
 /// the result. Returns `None` when rustup itself isn't on PATH —
 /// callers decide how to handle that (usually: surface a clear error
-/// before invoking cargo with `--target`).
+/// before invoking cargo with `--target`). Only used by the cross-arch
+/// build paths (macOS universal Mach-O, Windows x64+arm64 installer);
+/// no Linux caller today.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 fn installed_rustup_targets() -> Option<&'static std::collections::HashSet<String>> {
     use std::sync::OnceLock;
     static CACHE: OnceLock<Option<std::collections::HashSet<String>>> = OnceLock::new();
@@ -605,7 +608,9 @@ fn installed_rustup_targets() -> Option<&'static std::collections::HashSet<Strin
 /// Ensure `rustup` has `triple` installed, adding it if missing. Errors
 /// with a clear message when rustup itself isn't on PATH (the common
 /// case is a Homebrew `cargo` shadowing rustup's shim; see the
-/// `build-install-split.md` doc for the recovery steps).
+/// `build-install-split.md` doc for the recovery steps). Same gating
+/// rationale as [`installed_rustup_targets`].
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(crate) fn ensure_rustup_target(triple: &str) -> crate::Res {
     let installed = match installed_rustup_targets() {
         Some(s) => s,
