@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 # Disable incremental — saves cache size + speeds clean builds. The
 # clippy step uses `-D warnings` to fail fast on stray rustc /
 # clippy lints.
