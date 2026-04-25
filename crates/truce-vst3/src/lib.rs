@@ -10,6 +10,7 @@ use std::ffi::CString;
 use std::os::raw::c_char;
 use std::slice;
 
+use truce_core::editor::{Editor, EditorContext, RawWindowHandle, SendPtr};
 use truce_core::events::{Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
 use truce_core::info::PluginCategory;
@@ -30,7 +31,7 @@ struct Vst3Instance<P: PluginExport> {
     output_events: EventList,
     plugin_id_hash: u64,
     sample_rate: f64,
-    editor: Option<Box<dyn truce_core::editor::Editor>>,
+    editor: Option<Box<dyn Editor>>,
     /// Shared transport slot: audio thread writes each block, editor reads.
     transport_slot: Arc<truce_core::TransportSlot>,
     /// Content scale reported by the host via
@@ -557,14 +558,14 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
     let inst = &mut *(ctx as *mut Vst3Instance<P>);
     if let Some(ref mut editor) = inst.editor {
         let params = inst.plugin.params_arc();
-        let plugin_ptr = truce_core::editor::SendPtr::new(&inst.plugin as *const P);
-        let ctx_raw = truce_core::editor::SendPtr::new(ctx);
+        let plugin_ptr = SendPtr::new(&inst.plugin as *const P);
+        let ctx_raw = SendPtr::new(ctx);
         let params_for_set = params.clone();
         let params_for_get = params.clone();
         let params_for_plain = params.clone();
         let params_for_fmt = params.clone();
         let transport_slot = inst.transport_slot.clone();
-        let context = truce_core::editor::EditorContext {
+        let context = EditorContext {
             begin_edit: Arc::new(move |id| {
                 ffi::truce_vst3_begin_edit(ctx_raw.as_ptr() as *mut std::ffi::c_void, id);
             }),
@@ -600,11 +601,11 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
             transport: Arc::new(move || transport_slot.read()),
         };
         #[cfg(target_os = "macos")]
-        let handle = truce_core::editor::RawWindowHandle::AppKit(parent);
+        let handle = RawWindowHandle::AppKit(parent);
         #[cfg(target_os = "windows")]
-        let handle = truce_core::editor::RawWindowHandle::Win32(parent);
+        let handle = RawWindowHandle::Win32(parent);
         #[cfg(target_os = "linux")]
-        let handle = truce_core::editor::RawWindowHandle::X11(parent as u64);
+        let handle = RawWindowHandle::X11(parent as u64);
 
         editor.open(handle, context);
     }

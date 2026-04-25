@@ -5,6 +5,7 @@
 //! `Arc<Params>` so the plugin shares params with the shell and GUI.
 
 use truce_core::buffer::AudioBuffer;
+use truce_core::editor::Editor;
 use truce_core::events::EventList;
 use truce_core::process::{ProcessContext, ProcessStatus};
 use truce_gui::interaction::WidgetRegion;
@@ -83,7 +84,7 @@ pub trait PluginLogic: Send + 'static {
     /// (e.g., `truce_egui::EguiEditor`). The shell calls this first;
     /// if it returns `None`, the shell falls back to creating a
     /// `BuiltinEditor` from `layout()`.
-    fn custom_editor(&self) -> Option<Box<dyn truce_core::editor::Editor>> {
+    fn custom_editor(&self) -> Option<Box<dyn Editor>> {
         None
     }
 }

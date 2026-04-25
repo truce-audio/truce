@@ -33,6 +33,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 
 use truce_core::editor::{Editor, EditorContext, RawWindowHandle};
+use truce_core::events::TransportInfo;
 use truce_core::export::PluginExport;
 use truce_core::TransportSlot;
 use truce_params::Params;
@@ -430,7 +431,7 @@ unsafe fn decode_notify_atom<P: PluginExport>(
     let ev_body_dest = scratch.as_mut_ptr().add(core::mem::size_of::<OneEvent>());
     core::ptr::copy_nonoverlapping(body_ptr, ev_body_dest, body_size);
 
-    let mut info = truce_core::events::TransportInfo::default();
+    let mut info = TransportInfo::default();
     let reader = AtomSequenceReader::new(scratch.as_ptr() as *const AtomSequence, &ui.urid_map);
     if reader.apply_time_position(&mut info) {
         ui.transport_slot.write(&info);

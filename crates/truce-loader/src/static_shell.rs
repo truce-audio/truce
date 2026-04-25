@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use truce_core::buffer::AudioBuffer;
 use truce_core::bus::BusLayout;
+use truce_core::editor::Editor;
 use truce_core::events::{EventBody, EventList};
 use truce_core::info::PluginInfo;
 use truce_core::plugin::Plugin;
@@ -56,7 +57,7 @@ impl<P: Params + Default + 'static, L: PluginLogic + 'static> StaticShell<P, L> 
     }
 
     /// Try to get a custom editor from the plugin logic.
-    pub fn try_custom_editor(&self) -> Option<Box<dyn truce_core::editor::Editor>> {
+    pub fn try_custom_editor(&self) -> Option<Box<dyn Editor>> {
         self.logic.custom_editor()
     }
 
@@ -158,12 +159,12 @@ impl<P: Params + Default + 'static, L: PluginLogic + 'static> Plugin for StaticS
         self.logic.load_state(data);
     }
 
-    fn editor(&mut self) -> Option<Box<dyn truce_core::editor::Editor>> {
+    fn editor(&mut self) -> Option<Box<dyn Editor>> {
         if let Some(editor) = self.logic.custom_editor() {
             return Some(editor);
         }
         self.try_builtin_editor()
-            .map(|e| Box::new(truce_gpu::GpuEditor::new(e)) as Box<dyn truce_core::editor::Editor>)
+            .map(|e| Box::new(truce_gpu::GpuEditor::new(e)) as Box<dyn Editor>)
     }
 
     fn latency(&self) -> u32 {

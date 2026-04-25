@@ -63,6 +63,7 @@ use clap_sys::version::CLAP_VERSION;
 
 use truce_core::buffer::AudioBuffer;
 use truce_core::bus::ChannelConfig;
+use truce_core::editor::{Editor, EditorContext, RawWindowHandle, SendPtr};
 use truce_core::events::{Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
 use truce_core::info::{PluginCategory, PluginInfo};
@@ -133,7 +134,7 @@ struct ClapPluginData<P: PluginExport> {
     /// Pre-hashed plugin ID for state serialization.
     plugin_id_hash: u64,
     /// GUI editor (created by the plugin, if it implements editor()).
-    editor: Option<Box<dyn truce_core::editor::Editor>>,
+    editor: Option<Box<dyn Editor>>,
     /// Whether the GUI has been created via the gui extension.
     gui_created: bool,
     /// Host pointer (for querying host extensions).
@@ -1305,12 +1306,12 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
     }
 
     let params = data.plugin.params_arc();
-    let plugin_ptr = truce_core::editor::SendPtr::new(&data.plugin as *const P);
+    let plugin_ptr = SendPtr::new(&data.plugin as *const P);
     let gui_changes = data.gui_changes.clone();
     let gui_changes2 = data.gui_changes.clone();
     let gui_changes3 = data.gui_changes.clone();
-    let host = truce_core::editor::SendPtr::new(data.host);
-    let host_params = truce_core::editor::SendPtr::new(data.host_params);
+    let host = SendPtr::new(data.host);
+    let host_params = SendPtr::new(data.host_params);
     let request_flush = move || unsafe {
         if let Some(f) = (*host_params.as_ptr()).request_flush {
             f(host.as_ptr());
@@ -1321,13 +1322,13 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
     let request_flush2 = request_flush;
     let request_flush3 = request_flush;
     let needs_rescan = data.needs_rescan.clone();
-    let host_for_callback = truce_core::editor::SendPtr::new(data.host);
+    let host_for_callback = SendPtr::new(data.host);
     let params_for_set = params.clone();
     let params_for_get = params.clone();
     let params_for_plain = params.clone();
     let params_for_fmt = params.clone();
     let transport_slot = data.transport_slot.clone();
-    let context = truce_core::editor::EditorContext {
+    let context = EditorContext {
         begin_edit: Arc::new(move |id| {
             gui_changes.push(GuiParamChange::GestureBegin(id));
             request_flush();
@@ -1374,11 +1375,11 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
     };
 
     #[cfg(target_os = "macos")]
-    let handle = truce_core::editor::RawWindowHandle::AppKit(parent_ptr);
+    let handle = RawWindowHandle::AppKit(parent_ptr);
     #[cfg(target_os = "windows")]
-    let handle = truce_core::editor::RawWindowHandle::Win32(parent_ptr);
+    let handle = RawWindowHandle::Win32(parent_ptr);
     #[cfg(target_os = "linux")]
-    let handle = truce_core::editor::RawWindowHandle::X11(parent_ptr as u64);
+    let handle = RawWindowHandle::X11(parent_ptr as u64);
 
     editor.open(handle, context);
     true

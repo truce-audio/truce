@@ -10,6 +10,7 @@ use std::ffi::CString;
 use std::os::raw::c_char;
 use std::slice;
 
+use truce_core::editor::{Editor, EditorContext, RawWindowHandle, SendPtr};
 use truce_core::events::{Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
 use truce_core::process::ProcessContext;
@@ -29,7 +30,7 @@ struct AuInstance<P: PluginExport> {
     output_events: EventList,
     plugin_id_hash: u64,
     sample_rate: f64,
-    editor: Option<Box<dyn truce_core::editor::Editor>>,
+    editor: Option<Box<dyn Editor>>,
     /// Shared transport slot: audio thread writes each block, editor reads.
     transport_slot: Arc<truce_core::TransportSlot>,
 }
@@ -340,14 +341,14 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
     let inst = &mut *(ctx as *mut AuInstance<P>);
     if let Some(ref mut editor) = inst.editor {
         let params = inst.plugin.params_arc();
-        let plugin_ptr = truce_core::editor::SendPtr::new(&inst.plugin as *const P);
-        let ctx_raw = truce_core::editor::SendPtr::new(ctx);
+        let plugin_ptr = SendPtr::new(&inst.plugin as *const P);
+        let ctx_raw = SendPtr::new(ctx);
         let params_for_set = params.clone();
         let params_for_get = params.clone();
         let params_for_plain = params.clone();
         let params_for_fmt = params.clone();
         let transport_slot = inst.transport_slot.clone();
-        let context = truce_core::editor::EditorContext {
+        let context = EditorContext {
             begin_edit: Arc::new(|_id| {}),
             set_param: Arc::new(move |id, value| {
                 params_for_set.set_normalized(id, value);
@@ -379,7 +380,7 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
             }),
             transport: Arc::new(move || transport_slot.read()),
         };
-        let handle = truce_core::editor::RawWindowHandle::AppKit(parent);
+        let handle = RawWindowHandle::AppKit(parent);
         editor.open(handle, context);
     }
 }

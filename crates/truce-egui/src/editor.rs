@@ -75,7 +75,7 @@ pub struct EguiEditor {
     /// Active baseview window handle — exists only while editor is open.
     window: Option<baseview::WindowHandle>,
     /// EditorContext stored at open() for state_changed forwarding.
-    context: Option<truce_core::editor::EditorContext>,
+    context: Option<EditorContext>,
 }
 
 // WindowHandle contains raw pointers; only accessed from host UI thread.
