@@ -137,11 +137,11 @@ egui, iced, slint):
 ```rust
 #[test]
 fn gui_screenshot() {
-    truce_test::screenshot::<Plugin>("gain_default", "snapshots");
+    truce_test::assert_screenshot::<Plugin>("gain_default", "snapshots", 0);
 }
 ```
 
-`truce_test::screenshot` instantiates the plugin, drives the editor
+`truce_test::assert_screenshot` instantiates the plugin, drives the editor
 headlessly, writes the rendered PNG to `target/screenshots/`, and
 diffs against the committed reference at `snapshots/gain_default.png`.
 First run prints a `cp`-based promote hint and passes; subsequent

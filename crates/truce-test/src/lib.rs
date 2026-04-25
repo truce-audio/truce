@@ -21,7 +21,6 @@
 //! ```
 
 use truce_core::buffer::AudioBuffer;
-use truce_core::plugin::Plugin as PluginTrait;
 use truce_core::events::{Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
 use truce_core::process::ProcessContext;
@@ -538,23 +537,30 @@ pub fn assert_empty_state_no_crash<P: PluginExport>() {
 // GUI screenshot tests
 // ---------------------------------------------------------------------------
 
-/// Default screenshot directory: `target/screenshots/` under the
-/// workspace root. Gitignored (covered by `/target`), so plugins
-/// scaffolded with `cargo truce new` won't accidentally commit
-/// reference PNGs they didn't intend to.
-pub const DEFAULT_SCREENSHOT_DIR: &str = "target/screenshots";
+// Render and save are in `truce-core` so non-test contexts (like
+// `cargo truce` tooling) can invoke them without pulling in dev-deps.
+// Re-exported here so existing test code keeps a stable
+// `truce_test::*` import.
+pub use truce_core::screenshot::{
+    render as render_screenshot, save_png, workspace_screenshot_dir, DEFAULT_SCREENSHOT_DIR,
+};
 
 /// One-line screenshot test for any backend.
 ///
 /// Constructs the plugin via `P::create()`, asks it for its editor,
 /// drives `Editor::screenshot()` to get RGBA pixels, and runs
-/// [`assert_screenshot`] against `<reference_dir>/<name>.png`.
+/// [`assert_screenshot_pixels`] against `<reference_dir>/<name>.png`.
+///
+/// `max_diff_pixels` is the number of RGBA bytes allowed to differ
+/// before the test fails on the reference platform. Use `0` for an
+/// exact match (the typical case); raise it if anti-aliasing or font
+/// hinting introduces flake.
 ///
 /// # Example
 /// ```ignore
 /// #[test]
 /// fn gui_screenshot() {
-///     truce_test::screenshot::<Plugin>("gain_default", "snapshots");
+///     truce_test::assert_screenshot::<Plugin>("gain_default", "snapshots", 0);
 /// }
 /// ```
 ///
@@ -562,55 +568,9 @@ pub const DEFAULT_SCREENSHOT_DIR: &str = "target/screenshots";
 /// `truce-slint`) implements `Editor::screenshot()`. Custom editor
 /// implementations only need to override `screenshot()` if they want
 /// to be testable through this helper.
-pub fn screenshot<P: PluginExport>(name: &str, reference_dir: &str) {
-    let mut plugin = P::create();
-    plugin.init();
-    let mut editor = <P as PluginTrait>::editor(&mut plugin)
-        .expect("plugin returned no editor: PluginLogic::custom_editor() returned None and layout() was empty");
-    // `PluginExport::Params` is the concrete params type the
-    // `plugin!` macro wired up. We hand the editor a fresh dyn-erased
-    // instance so each backend can build its own ParamState without
-    // needing to know `P` at construction.
-    let params: std::sync::Arc<dyn truce_params::Params> =
-        std::sync::Arc::new(<P::Params as truce_params::Params>::new());
-    let (pixels, w, h) = editor.screenshot(params).unwrap_or_else(|| {
-        panic!(
-            "editor for {} returned None from Editor::screenshot(). \
-             If this is a custom editor implementation, override \
-             Editor::screenshot() to return RGBA pixels. Built-in \
-             backends (truce-gpu / truce-egui / truce-iced / \
-             truce-slint) all implement it.",
-            std::any::type_name::<P>()
-        )
-    });
-    assert_screenshot(name, &pixels, w, h, 0, reference_dir);
-}
-
-/// Resolve `<workspace_root>/<rel>/`, creating the directory if
-/// needed. Walks up from `CARGO_MANIFEST_DIR` looking for a
-/// `Cargo.toml` with `[workspace]`. Works regardless of how deeply
-/// nested the calling crate is.
-///
-/// Pass [`DEFAULT_SCREENSHOT_DIR`] for the default location, or any
-/// other path (e.g. `"examples/screenshots"` for truce's own
-/// in-tree references).
-pub fn workspace_screenshot_dir(rel: &str) -> std::path::PathBuf {
-    let mut dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    loop {
-        let toml = dir.join("Cargo.toml");
-        if toml.exists() {
-            if let Ok(s) = std::fs::read_to_string(&toml) {
-                if s.contains("[workspace]") {
-                    let snap = dir.join(rel);
-                    std::fs::create_dir_all(&snap).ok();
-                    return snap;
-                }
-            }
-        }
-        if !dir.pop() {
-            panic!("Could not find workspace root from CARGO_MANIFEST_DIR");
-        }
-    }
+pub fn assert_screenshot<P: PluginExport>(name: &str, reference_dir: &str, max_diff_pixels: usize) {
+    let (pixels, w, h) = truce_core::screenshot::render_pixels::<P>();
+    assert_screenshot_pixels(name, &pixels, w, h, max_diff_pixels, reference_dir);
 }
 
 /// Compare raw RGBA pixels against a reference PNG.
@@ -632,9 +592,9 @@ pub fn workspace_screenshot_dir(rel: &str) -> std::path::PathBuf {
 ///   `TRUCE_SCREENSHOT_REFERENCE_OS`).
 ///
 /// Backend-agnostic — caller provides raw RGBA pixels. Most callers
-/// should use [`screenshot`] instead, which drives the editor and
-/// comparison in one line. This is the lower-level entry point for
-/// when you need a non-zero `max_diff_pixels` tolerance or are
+/// should use [`assert_screenshot`] instead, which drives the editor
+/// and comparison in one line. This is the lower-level entry point
+/// for when you need a non-zero `max_diff_pixels` tolerance or are
 /// rendering pixels through a non-`Editor` path.
 ///
 /// # Example
@@ -643,11 +603,11 @@ pub fn workspace_screenshot_dir(rel: &str) -> std::path::PathBuf {
 /// let params: Arc<dyn truce_params::Params> =
 ///     Arc::new(<MyParams as truce_params::Params>::new());
 /// let (pixels, w, h) = editor.screenshot(params).unwrap();
-/// truce_test::assert_screenshot(
+/// truce_test::assert_screenshot_pixels(
 ///     "my_plugin_default", &pixels, w, h, 100, "snapshots",
 /// );
 /// ```
-pub fn assert_screenshot(
+pub fn assert_screenshot_pixels(
     name: &str,
     pixels: &[u8],
     width: u32,
@@ -738,26 +698,6 @@ fn is_reference_platform() -> bool {
     let target =
         std::env::var("TRUCE_SCREENSHOT_REFERENCE_OS").unwrap_or_else(|_| "macos".to_string());
     std::env::consts::OS == target
-}
-
-fn save_png(path: &std::path::Path, pixels: &[u8], w: u32, h: u32) {
-    let file = std::fs::File::create(path)
-        .unwrap_or_else(|e| panic!("Failed to create {}: {e}", path.display()));
-    let mut encoder = png::Encoder::new(file, w, h);
-    encoder.set_color(png::ColorType::Rgba);
-    encoder.set_depth(png::BitDepth::Eight);
-    // 144 DPI (2x Retina) — renders at half pixel size in viewers/GitHub
-    encoder.set_pixel_dims(Some(png::PixelDimensions {
-        xppu: 5669, // 144 DPI in pixels per meter
-        yppu: 5669,
-        unit: png::Unit::Meter,
-    }));
-    let mut writer = encoder
-        .write_header()
-        .unwrap_or_else(|e| panic!("Failed to write PNG header: {e}"));
-    writer
-        .write_image_data(pixels)
-        .unwrap_or_else(|e| panic!("Failed to write PNG data: {e}"));
 }
 
 fn load_png(path: &std::path::Path) -> (Vec<u8>, u32, u32) {

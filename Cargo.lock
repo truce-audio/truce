@@ -5957,6 +5957,7 @@ dependencies = [
 name = "truce-core"
 version = "0.11.1"
 dependencies = [
+ "png 0.18.1",
  "truce-params",
 ]
 

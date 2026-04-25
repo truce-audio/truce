@@ -155,7 +155,6 @@ impl EguiEditor {
         self.font = Some(font_data);
         self
     }
-
 }
 
 // ---------------------------------------------------------------------------
@@ -528,10 +527,7 @@ impl Editor for EguiEditor {
         }
     }
 
-    fn screenshot(
-        &mut self,
-        params: Arc<dyn truce_params::Params>,
-    ) -> Option<(Vec<u8>, u32, u32)> {
+    fn screenshot(&mut self, params: Arc<dyn truce_params::Params>) -> Option<(Vec<u8>, u32, u32)> {
         let state = ParamState::from_params(params);
         let pixels_per_point = self.scale_factor.unwrap_or(2.0) as f32;
         let ui = Arc::clone(&self.ui);

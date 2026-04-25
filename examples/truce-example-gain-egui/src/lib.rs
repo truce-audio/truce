@@ -158,6 +158,6 @@ mod tests {
 
     #[test]
     fn gui_screenshot() {
-        truce_test::screenshot::<Plugin>("gain_egui_default", "examples/screenshots");
+        truce_test::assert_screenshot::<Plugin>("gain_egui_default", "examples/screenshots", 0);
     }
 }

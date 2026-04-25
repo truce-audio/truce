@@ -115,18 +115,15 @@ pub trait Editor: Send {
     /// host.
     ///
     /// Returns `(rgba_pixels, physical_width, physical_height)` — RGBA8
-    /// row-major, ready to feed into `truce_test::assert_screenshot`.
+    /// row-major, ready to feed into `truce_test::assert_screenshot_pixels`.
     /// Default impl returns `None`; backends that support headless
     /// capture (built-in widgets, egui, iced, slint) override.
     ///
-    /// Used by `truce_test::screenshot::<Plugin>(...)` for one-line
+    /// Used by `truce_test::assert_screenshot::<Plugin>(...)` for one-line
     /// snapshot regression tests. Editors backed by frameworks that
     /// don't expose a headless render path (e.g. raw-window-handle
     /// users wiring their own Metal/OpenGL) keep the default `None`.
-    fn screenshot(
-        &mut self,
-        params: Arc<dyn truce_params::Params>,
-    ) -> Option<(Vec<u8>, u32, u32)> {
+    fn screenshot(&mut self, params: Arc<dyn truce_params::Params>) -> Option<(Vec<u8>, u32, u32)> {
         let _ = params;
         None
     }

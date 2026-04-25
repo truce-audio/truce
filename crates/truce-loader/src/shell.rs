@@ -402,10 +402,7 @@ impl<P: Params + 'static> Editor for HotEditor<P> {
         }
     }
 
-    fn screenshot(
-        &mut self,
-        params: Arc<dyn truce_params::Params>,
-    ) -> Option<(Vec<u8>, u32, u32)> {
+    fn screenshot(&mut self, params: Arc<dyn truce_params::Params>) -> Option<(Vec<u8>, u32, u32)> {
         match &mut self.kind {
             HotEditorInner::Builtin { gpu, .. } => gpu.screenshot(params),
             HotEditorInner::Custom { editor } => editor.screenshot(params),

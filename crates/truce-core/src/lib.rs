@@ -8,6 +8,7 @@ pub mod info;
 pub mod midi;
 pub mod plugin;
 pub mod process;
+pub mod screenshot;
 pub mod state;
 pub mod transport;
 pub mod util;

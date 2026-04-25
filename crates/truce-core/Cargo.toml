@@ -8,3 +8,4 @@ description = "Core types for the truce audio plugin framework"
 
 [dependencies]
 truce-params = { workspace = true }
+png = "0.18"

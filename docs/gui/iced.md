@@ -236,7 +236,7 @@ parameter values sync automatically through `ParamState`.
 ```rust
 #[test]
 fn gui_screenshot() {
-    truce_test::screenshot::<Plugin>("my_plugin_iced_default", "snapshots");
+    truce_test::assert_screenshot::<Plugin>("my_plugin_iced_default", "snapshots", 0);
 }
 ```
 

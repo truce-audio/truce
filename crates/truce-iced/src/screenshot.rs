@@ -24,7 +24,7 @@ use truce_core::editor::EditorContext;
 /// reads back the pixels.
 ///
 /// Used internally by `IcedEditor::screenshot()` — external callers go
-/// through `truce_test::screenshot::<Plugin>(...)`.
+/// through `truce_test::assert_screenshot::<Plugin>(...)`.
 pub(crate) fn render_to_pixels<P, M>(
     params: Arc<P>,
     size: (u32, u32),

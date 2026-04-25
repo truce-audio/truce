@@ -1154,7 +1154,7 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
     ) -> Option<(Vec<u8>, u32, u32)> {
         // Delegate to the standalone helper using the editor's own
         // typed `Arc<P>` (already on hand from construction). Used by
-        // `truce_test::screenshot::<Plugin>()`. The dyn-erased `params`
+        // `truce_test::assert_screenshot::<Plugin>()`. The dyn-erased `params`
         // arg is unused — IcedEditor carries the concrete type.
         Some(crate::screenshot::render_to_pixels::<P, M>(
             Arc::clone(&self.params),

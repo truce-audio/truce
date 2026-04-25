@@ -222,7 +222,7 @@ impl<P: Params + 'static> Editor for GpuEditor<P> {
         // Drives the same code path as production (`render_to` →
         // wgpu RenderBackend), just with a `WgpuBackend::headless`
         // target instead of a window-bound one. Used by
-        // `truce_test::screenshot::<P>()`.
+        // `truce_test::assert_screenshot::<P>()`.
         //
         // The inner BuiltinEditor was already built against the
         // plugin's `Arc<P>` (which is defaults for a fresh plugin),

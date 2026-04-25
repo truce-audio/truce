@@ -150,11 +150,11 @@ across every backend:
 ```rust
 #[test]
 fn gui_screenshot() {
-    truce_test::screenshot::<Plugin>("my_plugin_default", "snapshots");
+    truce_test::assert_screenshot::<Plugin>("my_plugin_default", "snapshots", 0);
 }
 ```
 
-`truce_test::screenshot` instantiates your plugin, asks the editor
+`truce_test::assert_screenshot` instantiates your plugin, asks the editor
 for a headless render, and compares against
 `<workspace>/<reference_dir>/<name>.png`. The current render always
 lands in `target/screenshots/` (gitignored); when the reference

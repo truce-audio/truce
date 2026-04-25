@@ -3,7 +3,7 @@
 //! Renders an egui UI to an offscreen wgpu texture and returns RGBA pixels.
 //! Driven by `EguiEditor::screenshot()` (`Editor` trait impl in
 //! `editor.rs`), which is itself called from
-//! `truce_test::screenshot::<Plugin>(...)`.
+//! `truce_test::assert_screenshot::<Plugin>(...)`.
 
 use crate::ParamState;
 

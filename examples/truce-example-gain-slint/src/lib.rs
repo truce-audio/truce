@@ -135,6 +135,6 @@ mod tests {
 
     #[test]
     fn gui_screenshot() {
-        truce_test::screenshot::<Plugin>("gain_slint_default", "examples/screenshots");
+        truce_test::assert_screenshot::<Plugin>("gain_slint_default", "examples/screenshots", 0);
     }
 }

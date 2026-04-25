@@ -11,18 +11,18 @@ The unified API is a single line:
 ```rust
 #[test]
 fn gui_screenshot() {
-    truce_test::screenshot::<Plugin>("my_plugin_default", "snapshots");
+    truce_test::assert_screenshot::<Plugin>("my_plugin_default", "snapshots", 0);
 }
 ```
 
-`truce_test::screenshot` instantiates your plugin via the same path the
+`truce_test::assert_screenshot` instantiates your plugin via the same path the
 host uses, asks the editor for a headless render, and hands the bytes
 to the backend-agnostic comparator. Works for the built-in GUI and all
 custom backends (egui, iced, slint).
 
 ## How it works
 
-1. `truce_test::screenshot::<Plugin>` creates the plugin, calls
+1. `truce_test::assert_screenshot::<Plugin>` creates the plugin, calls
    `Editor::screenshot()`, and gets back `(pixels, width, height)`.
 2. The current render is always written to
    `<workspace>/target/screenshots/<name>.png` — gitignored, so it
@@ -72,11 +72,17 @@ git add snapshots/
 
 ## Tolerance
 
-`truce_test::screenshot` compares with a tolerance of `0` (exact
-match). If anti-aliasing or font hinting introduces flake on your
-reference platform, drop down to calling `editor.screenshot(params)`
-directly and pass the pixels to `assert_screenshot` with a non-zero
-`max_diff_pixels` — see [Comparator](#comparator) below.
+The third argument to `assert_screenshot` is `max_diff_pixels` — how
+many RGBA bytes are allowed to differ before the test fails on the
+reference platform. `0` means exact-match (the typical case). Raise it
+if anti-aliasing or font hinting introduces flake:
+
+```rust
+truce_test::assert_screenshot::<Plugin>("my_plugin_default", "snapshots", 200);
+```
+
+For more elaborate scenarios (rendering pixels through a non-`Editor`
+path), drop down to [`assert_screenshot_pixels`](#pixel-comparator).
 
 When a test fails, the current render is at
 `target/screenshots/<name>.png` and the reference is at
@@ -139,24 +145,49 @@ permanently red on those platforms.
 
 ## API reference
 
-### Unified helper
+### Render and assert
 
 ```rust
-pub fn truce_test::screenshot<P: PluginExport>(
-    name: &str,            // file-stem; ends up at <reference_dir>/<name>.png
-    reference_dir: &str,   // workspace-relative dir for committed PNGs
+pub fn truce_test::assert_screenshot<P: PluginExport>(
+    name: &str,             // file-stem; ends up at <reference_dir>/<name>.png
+    reference_dir: &str,    // workspace-relative dir for committed PNGs
+    max_diff_pixels: usize, // RGBA bytes allowed to differ; 0 = exact
 )
 ```
 
 Instantiates the plugin, asks its editor for a headless render via
 `Editor::screenshot(Arc<dyn Params>)`, then delegates to
-`assert_screenshot` with `max_diff_pixels = 0`. The synthetic
+[`assert_screenshot_pixels`](#pixel-comparator). The synthetic
 `Arc<dyn Params>` is built from `<P::Params as Params>::new()` (defaults).
 
-### Comparator
+### Render only (no comparison)
 
 ```rust
-pub fn truce_test::assert_screenshot(
+pub fn truce_core::screenshot::render<P: PluginExport>(
+    name: &str,
+) -> std::path::PathBuf
+```
+
+Same render as [`assert_screenshot`], but skips the comparison and
+returns the path to the freshly-saved PNG
+(`target/screenshots/<name>.png`). Use it to regenerate README artwork
+or capture a debug snapshot without involving a reference.
+
+```rust
+let path = truce_core::screenshot::render::<Plugin>("gain_dark");
+println!("rendered to {}", path.display());
+```
+
+Lives in `truce-core` (not `truce-test`) so non-test contexts — for
+example a custom binary or a future `cargo truce screenshot` —
+can call it without pulling in dev-dependencies. It's also re-exported
+as `truce_test::render_screenshot` for symmetry with the assert
+helpers.
+
+### Pixel comparator
+
+```rust
+pub fn truce_test::assert_screenshot_pixels(
     name: &str,            // file-stem; ends up at <reference_dir>/<name>.png
     pixels: &[u8],         // RGBA8, row-major, width*height*4 bytes
     width: u32,            // physical width (already scale-multiplied)
@@ -167,12 +198,13 @@ pub fn truce_test::assert_screenshot(
 ```
 
 Use this directly if you need a non-zero tolerance: capture pixels
-from `editor.screenshot(params)` yourself, then call `assert_screenshot`
-with your chosen `max_diff_pixels`. Always writes the current render to
-`<workspace>/target/screenshots/<name>.png`. Loads the committed
-reference from `<workspace>/<reference_dir>/<name>.png`. Missing
-reference logs a `cp` promote hint and passes; present reference fails
-on diff > `max_diff_pixels` (reference platform only).
+from `editor.screenshot(params)` yourself, then call
+`assert_screenshot_pixels` with your chosen `max_diff_pixels`. Always
+writes the current render to `<workspace>/target/screenshots/<name>.png`.
+Loads the committed reference from
+`<workspace>/<reference_dir>/<name>.png`. Missing reference logs a `cp`
+promote hint and passes; present reference fails on diff >
+`max_diff_pixels` (reference platform only).
 
 ### Editor trait method
 
@@ -192,7 +224,7 @@ helper.
 
 ## Texture format gotchas
 
-`assert_screenshot` always reads RGBA8 bytes; each backend's
+`assert_screenshot_pixels` always reads RGBA8 bytes; each backend's
 `Editor::screenshot()` impl is responsible for converting from its
 native format into that shape. Each backend already does this — the
 table below is for debugging color mismatches if you're hand-rolling a
@@ -207,5 +239,5 @@ renderer.
 
 Mismatches usually look like a uniform tint shift (everything
 darker / lighter / wrong red-blue) — that's a sign the renderer is
-returning bytes in a format `assert_screenshot` can't compare against
-the reference.
+returning bytes in a format `assert_screenshot_pixels` can't compare
+against the reference.

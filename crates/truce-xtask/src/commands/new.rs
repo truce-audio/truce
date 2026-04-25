@@ -197,7 +197,7 @@ mod tests {{
         // Reference PNGs live in the project root's `snapshots/` dir.
         // First run logs a `cp`-based promote hint with the exact
         // command to commit the freshly-rendered reference.
-        truce_test::screenshot::<Plugin>("{name}_default", "snapshots");
+        truce_test::assert_screenshot::<Plugin>("{name}_default", "snapshots", 0);
     }}
 }}
 "#,
