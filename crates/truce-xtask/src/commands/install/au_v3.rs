@@ -549,13 +549,15 @@ pub(crate) fn build_and_install_au_v3(
     // "succeeded" line in the install summary.
     let sign_id = config.macos.application_identity();
     if extract_team_id(sign_id).is_empty() {
-        crate::log_skip(
-            "AU v3: requires a Developer ID signing identity with a team ID. \
-             Set [macos.signing].application_identity in truce.toml \
-             (e.g., \"Developer ID Application: Your Name (TEAMID)\"). \
-             Ad-hoc signing (\"-\") is not supported for AU v3 appex bundles."
-                .to_string(),
-        );
+        for p in plugins {
+            crate::log_skip(format!(
+                "AU v3: skipped {} — needs a Developer ID with team ID. \
+                 Set [macos.signing].application_identity in truce.toml \
+                 (e.g., \"Developer ID Application: Your Name (TEAMID)\"); \
+                 ad-hoc signing (\"-\") is not supported for AU v3 appex bundles.",
+                p.name
+            ));
+        }
         return Ok(());
     }
     if !no_build {

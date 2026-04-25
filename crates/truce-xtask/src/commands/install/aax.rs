@@ -366,14 +366,10 @@ fn ensure_template(
         }
         build_aax_template(root, &sdk_path, universal_mac)?;
     } else if !template.exists() {
-        let hint = if cfg!(target_os = "windows") {
-            "[windows].aax_sdk_path"
-        } else {
-            "[macos].aax_sdk_path"
-        };
-        crate::log_skip(format!(
-            "AAX: SDK not configured — set {hint} in truce.toml or AAX_SDK_PATH env var."
-        ));
+        // Per-plugin skip lines are emitted by `install_aax`; `ensure_template`
+        // is called once per plugin during the build phase but the resolution
+        // direction is the same for every plugin, so the user-facing surface
+        // lives in install_aax (which knows the plugin name).
         return Ok(None);
     }
     if !template.exists() {
@@ -404,13 +400,14 @@ fn ensure_template(
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub(crate) fn emit_aax_bundle(
     _root: &Path,
-    _p: &PluginDef,
+    p: &PluginDef,
     _config: &Config,
     _universal_mac: bool,
 ) -> Res {
-    crate::log_skip(
-        "AAX: not supported on this platform. Use macOS or Windows to build AAX.".to_string(),
-    );
+    crate::log_skip(format!(
+        "AAX: skipped {} — not supported on this platform. Use macOS or Windows to build AAX.",
+        p.name
+    ));
     Ok(())
 }
 
@@ -522,10 +519,11 @@ pub(crate) fn emit_aax_bundle(
 
 // AAX is only supported on macOS and Windows.
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-pub(crate) fn install_aax(_root: &Path, _p: &PluginDef, _config: &Config) -> Res {
-    crate::log_skip(
-        "AAX: not supported on this platform. Use macOS or Windows to install AAX.".to_string(),
-    );
+pub(crate) fn install_aax(_root: &Path, p: &PluginDef, _config: &Config) -> Res {
+    crate::log_skip(format!(
+        "AAX: skipped {} — not supported on this platform. Use macOS or Windows to install AAX.",
+        p.name
+    ));
     Ok(())
 }
 
@@ -537,11 +535,20 @@ pub(crate) fn install_aax(root: &Path, p: &PluginDef, config: &Config) -> Res {
     let bundle_name = format!("{}.aaxplugin", p.name);
     let built = root.join("target/bundles").join(&bundle_name);
     if !built.exists() {
-        // Distinguish "no SDK configured" (the build-phase ensure_template
-        // call already pushed one global "set [...].aax_sdk_path" entry to
-        // the skip log; nothing useful to add per-plugin) from "SDK ok,
-        // just rerun build" (genuine state mismatch — point at the build).
+        // Distinguish "no SDK configured" (soft skip, one entry per plugin)
+        // from "SDK ok, just rerun build" (hard error — genuine state mismatch
+        // that wouldn't be fixed by configuring the SDK).
         if resolve_aax_sdk_path(config).is_none() {
+            let hint = if cfg!(target_os = "windows") {
+                "[windows].aax_sdk_path"
+            } else {
+                "[macos].aax_sdk_path"
+            };
+            crate::log_skip(format!(
+                "AAX: skipped {} — SDK not configured. \
+                 Set {hint} in truce.toml or the AAX_SDK_PATH env var.",
+                p.name
+            ));
             return Ok(());
         }
         return Err(format!(
