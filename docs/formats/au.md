@@ -154,7 +154,7 @@ parameters don't sync.
 | Logic Pro | ✅ | ✅ |
 | GarageBand | ✅ | ✅ |
 | Ableton Live | ✅ | ✅ |
-| Reaper | ✅ | — (Reaper prefers AU v2) |
+| Reaper | ✅ | ✅ |
 | Pro Tools | — (uses AAX) | — |
 
 ## Gotchas

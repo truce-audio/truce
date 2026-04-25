@@ -6,7 +6,7 @@ system, so switching between them is straightforward.
 
 ## Starting out
 
-If you haven't built a plugin GUI before, start with the
+If you haven't built a GUI in Rust before, start with the
 **[built-in GUI](built-in.md)**. You define a layout in code and truce
 renders the widgets for you — no custom editor code required.
 
