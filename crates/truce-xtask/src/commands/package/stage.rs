@@ -131,19 +131,46 @@ pub(crate) fn stage_vst3(root: &Path, p: &PluginDef, config: &Config, staging: &
     Ok(())
 }
 
-/// Stage a VST2 bundle into the staging directory.
-pub(crate) fn stage_vst2(root: &Path, p: &PluginDef, config: &Config, staging: &Path) -> Res {
-    let dylib = root.join(format!("target/release/lib{}_vst2.dylib", p.dylib_stem()));
+/// Stage a VST2 build artifact into the staging directory and return
+/// the staged path. macOS produces a `.vst` directory bundle (with
+/// `Contents/MacOS/X` + Info.plist + codesign); Linux / Windows just
+/// copy the bare `.so` / `.dll` since neither platform uses a bundle
+/// layout for VST2.
+pub(crate) fn stage_vst2(
+    root: &Path,
+    p: &PluginDef,
+    config: &Config,
+    staging: &Path,
+) -> Result<std::path::PathBuf, crate::BoxErr> {
+    let _ = config; // only used on macOS
+    let dylib = release_lib(root, &format!("{}_vst2", p.dylib_stem()));
     if !dylib.exists() {
         return Err(format!("Missing: {}", dylib.display()).into());
     }
-    let bundle = staging.join(format!("{}.vst", p.name));
-    let macos_dir = bundle.join("Contents/MacOS");
-    fs::create_dir_all(&macos_dir)?;
-    fs::copy(&dylib, macos_dir.join(&p.name))?;
 
-    let plist = format!(
-        r#"<?xml version="1.0" encoding="UTF-8"?>
+    #[cfg(target_os = "linux")]
+    {
+        let dst = staging.join(format!("{}.so", p.name));
+        fs::copy(&dylib, &dst)?;
+        Ok(dst)
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let dst = staging.join(format!("{}.dll", p.name));
+        fs::copy(&dylib, &dst)?;
+        Ok(dst)
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let bundle = staging.join(format!("{}.vst", p.name));
+        let macos_dir = bundle.join("Contents/MacOS");
+        fs::create_dir_all(&macos_dir)?;
+        fs::copy(&dylib, macos_dir.join(&p.name))?;
+
+        let plist = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
@@ -159,20 +186,23 @@ pub(crate) fn stage_vst2(root: &Path, p: &PluginDef, config: &Config, staging: &
     <string>1</string>
 </dict>
 </plist>"#,
-        name = p.name,
-        bundle_id = p.bundle_id,
-    );
-    fs::write(bundle.join("Contents/Info.plist"), &plist)?;
-    fs::write(bundle.join("Contents/PkgInfo"), "BNDL????")?;
-    codesign_bundle(
-        bundle.to_str().unwrap(),
-        config.macos.application_identity(),
-        false,
-    )?;
-    Ok(())
+            name = p.name,
+            bundle_id = p.bundle_id,
+        );
+        fs::write(bundle.join("Contents/Info.plist"), &plist)?;
+        fs::write(bundle.join("Contents/PkgInfo"), "BNDL????")?;
+        codesign_bundle(
+            bundle.to_str().unwrap(),
+            config.macos.application_identity(),
+            false,
+        )?;
+        Ok(bundle)
+    }
 }
 
-/// Stage an AU v2 bundle into the staging directory.
+/// Stage an AU v2 bundle (`.component` directory) into the staging
+/// directory. Audio Unit is macOS-only.
+#[cfg(target_os = "macos")]
 pub(crate) fn stage_au2(root: &Path, p: &PluginDef, config: &Config, staging: &Path) -> Res {
     let dylib = root.join(format!("target/release/lib{}_au.dylib", p.dylib_stem()));
     if !dylib.exists() {

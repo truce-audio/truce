@@ -7,9 +7,9 @@
 //! to system paths. See
 //! `truce-docs/docs/internal/build-install-split.md`.
 
-use crate::commands::package::stage::{
-    lv2_slug, stage_au2, stage_clap, stage_lv2, stage_vst2, stage_vst3,
-};
+use crate::commands::package::stage::{lv2_slug, stage_clap, stage_lv2, stage_vst2, stage_vst3};
+#[cfg(target_os = "macos")]
+use crate::commands::package::stage::stage_au2;
 use crate::util::fs_ctx;
 use crate::{
     cargo_build, deployment_target, detect_default_features, load_config, project_root,
@@ -345,11 +345,10 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
             ));
         }
         if vst2 {
-            stage_vst2(&root, p, &config, &bundles_dir)?;
-            crate::log_output(format!(
-                "VST2: {}",
-                bundles_dir.join(format!("{}.vst", p.name)).display()
-            ));
+            // macOS produces a `.vst` directory bundle; Linux/Windows
+            // get a bare `.so` / `.dll` since neither uses a bundle.
+            let staged = stage_vst2(&root, p, &config, &bundles_dir)?;
+            crate::log_output(format!("VST2: {}", staged.display()));
         }
         if lv2 {
             stage_lv2(&root, p, &bundles_dir)?;
@@ -360,11 +359,16 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
             ));
         }
         if au2 {
-            stage_au2(&root, p, &config, &bundles_dir)?;
-            crate::log_output(format!(
-                "AU:   {}",
-                bundles_dir.join(format!("{}.component", p.name)).display()
-            ));
+            #[cfg(target_os = "macos")]
+            {
+                stage_au2(&root, p, &config, &bundles_dir)?;
+                crate::log_output(format!(
+                    "AU:   {}",
+                    bundles_dir.join(format!("{}.component", p.name)).display()
+                ));
+            }
+            // AU is macOS-only; the build phase already log_skip'd above
+            // for non-macOS, so nothing to do here.
         }
     }
 

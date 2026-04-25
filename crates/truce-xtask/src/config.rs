@@ -187,6 +187,7 @@ pub(crate) struct PluginDef {
     #[serde(default)]
     pub(crate) au3_subtype: Option<String>,
     #[serde(default = "default_au_tag")]
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub(crate) au_tag: String,
     // Per-format display-name overrides. When set, replace
     // `PluginInfo::name` in the host-facing spot of that format

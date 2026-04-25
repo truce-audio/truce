@@ -387,7 +387,7 @@ pub(crate) fn cmd_package_macos(args: &[String]) -> Res {
                     stage_clap(&root, p, &staging, config.macos.application_identity())
                 }
                 PkgFormat::Vst3 => stage_vst3(&root, p, &config, &staging),
-                PkgFormat::Vst2 => stage_vst2(&root, p, &config, &staging),
+                PkgFormat::Vst2 => stage_vst2(&root, p, &config, &staging).map(|_| ()),
                 PkgFormat::Au2 => stage_au2(&root, p, &config, &staging),
                 PkgFormat::Au3 => stage_au3(&root, p, &config, &staging),
                 PkgFormat::Aax => stage_aax(&root, p, &config, &staging, universal, no_pace_sign),
