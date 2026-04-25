@@ -11,6 +11,7 @@ pub mod process;
 pub mod state;
 pub mod transport;
 pub mod util;
+pub mod wrapper;
 
 pub use buffer::{AudioBuffer, RawBufferScratch};
 pub use bus::{BusConfig, BusLayout, ChannelConfig};

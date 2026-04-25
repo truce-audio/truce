@@ -438,19 +438,16 @@ pub fn register_au<P: PluginExport>() {
     let mut param_descs: Vec<AuParamDescriptor> = Vec::with_capacity(param_infos.len());
 
     for pi in &param_infos {
-        let name = CString::new(pi.name).unwrap_or_default();
-        let unit = CString::new(pi.unit.as_str()).unwrap_or_default();
-        let group = CString::new(pi.group).unwrap_or_default();
-
+        let cs = truce_core::wrapper::ParamCStrings::from_info(pi);
         param_descs.push(AuParamDescriptor {
             id: pi.id,
-            name: name.into_raw(),
+            name: cs.name.into_raw(),
             min: pi.range.min(),
             max: pi.range.max(),
             default_value: pi.default_plain,
             step_count: pi.range.step_count(),
-            unit: unit.into_raw(),
-            group: group.into_raw(),
+            unit: cs.unit.into_raw(),
+            group: cs.group.into_raw(),
         });
     }
 
@@ -464,14 +461,8 @@ pub fn register_au<P: PluginExport>() {
         name: name.into_raw(),
         vendor: vendor.into_raw(),
         version: 0x00010000, // 1.0.0
-        num_inputs: P::bus_layouts()
-            .first()
-            .map(|l| l.total_input_channels())
-            .unwrap_or(0),
-        num_outputs: P::bus_layouts()
-            .first()
-            .map(|l| l.total_output_channels())
-            .unwrap_or(2),
+        num_inputs: truce_core::wrapper::default_io_channels::<P>().0,
+        num_outputs: truce_core::wrapper::default_io_channels::<P>().1,
     }));
 
     let callbacks = Box::leak(Box::new(AuCallbacks {

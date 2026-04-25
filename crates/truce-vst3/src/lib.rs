@@ -650,10 +650,7 @@ pub fn register_vst3<P: PluginExport>() {
 
     let mut param_descs: Vec<Vst3ParamDescriptor> = Vec::with_capacity(param_infos.len());
     for pi in &param_infos {
-        let name = CString::new(pi.name).unwrap_or_default();
-        let short_name = CString::new(pi.short_name).unwrap_or_default();
-        let units = CString::new(pi.unit.as_str()).unwrap_or_default();
-        let group = CString::new(pi.group).unwrap_or_default();
+        let cs = truce_core::wrapper::ParamCStrings::from_info(pi);
 
         let mut flags: i32 = 0;
         if pi.flags.contains(truce_params::ParamFlags::AUTOMATABLE) {
@@ -668,15 +665,15 @@ pub fn register_vst3<P: PluginExport>() {
 
         param_descs.push(Vst3ParamDescriptor {
             id: pi.id,
-            name: name.into_raw(),
-            short_name: short_name.into_raw(),
-            units: units.into_raw(),
+            name: cs.name.into_raw(),
+            short_name: cs.short_name.into_raw(),
+            units: cs.unit.into_raw(),
             min: pi.range.min(),
             max: pi.range.max(),
             default_normalized: pi.range.normalize(pi.default_plain),
             step_count: pi.range.step_count() as i32,
             flags,
-            group: group.into_raw(),
+            group: cs.group.into_raw(),
         });
     }
 
@@ -703,14 +700,8 @@ pub fn register_vst3<P: PluginExport>() {
         cid: vst3_cid(info.vst3_id),
         category: category.into_raw(),
         subcategories: subcategories.into_raw(),
-        num_inputs: P::bus_layouts()
-            .first()
-            .map(|l| l.total_input_channels())
-            .unwrap_or(0),
-        num_outputs: P::bus_layouts()
-            .first()
-            .map(|l| l.total_output_channels())
-            .unwrap_or(2),
+        num_inputs: truce_core::wrapper::default_io_channels::<P>().0,
+        num_outputs: truce_core::wrapper::default_io_channels::<P>().1,
     }));
 
     let callbacks = Box::leak(Box::new(Vst3Callbacks {

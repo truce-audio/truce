@@ -177,10 +177,7 @@ fn resolved_plugin_name(info: &truce_core::info::PluginInfo) -> &'static str {
 pub fn register_aax<P: PluginExport>() {
     INFO.get_or_init(|| {
         let info = P::info();
-        let layouts = P::bus_layouts();
-        let layout = layouts
-            .first()
-            .expect("Plugin must have at least one bus layout");
+        let layout = truce_core::wrapper::first_bus_layout::<P>();
 
         let name = CString::new(resolved_plugin_name(&info)).unwrap_or_default();
         let vendor = CString::new(info.vendor).unwrap_or_default();
@@ -243,21 +240,20 @@ pub fn register_aax<P: PluginExport>() {
         let param_infos = temp.params().param_infos();
         let mut params = Vec::with_capacity(param_infos.len());
         for pi in &param_infos {
-            let pname = CString::new(pi.name).unwrap_or_default();
-            let unit = CString::new(pi.unit.as_str()).unwrap_or_default();
+            let cs = truce_core::wrapper::ParamCStrings::from_info(pi);
             let info = TruceAaxParamInfo {
                 id: pi.id,
-                name: pname.as_ptr(),
+                name: cs.name.as_ptr(),
                 min: pi.range.min(),
                 max: pi.range.max(),
                 default_value: pi.default_plain,
                 step_count: pi.range.step_count(),
-                unit: unit.as_ptr(),
+                unit: cs.unit.as_ptr(),
             };
             params.push(StaticParamInfo {
                 info,
-                _name: pname,
-                _unit: unit,
+                _name: cs.name,
+                _unit: cs.unit,
             });
         }
 

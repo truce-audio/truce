@@ -529,10 +529,7 @@ fn resolved_plugin_name(info: &truce_core::info::PluginInfo) -> &'static str {
 
 pub fn register_vst2<P: PluginExport>() {
     let info = P::info();
-    let layouts = P::bus_layouts();
-    let layout = layouts
-        .first()
-        .expect("Plugin must have at least one bus layout");
+    let layout = truce_core::wrapper::first_bus_layout::<P>();
 
     let name = CString::new(resolved_plugin_name(&info)).unwrap_or_default();
     let vendor = CString::new(info.vendor).unwrap_or_default();
@@ -574,18 +571,16 @@ pub fn register_vst2<P: PluginExport>() {
     let infos = temp_plugin.params().param_infos();
     let mut param_descs: Vec<Vst2ParamDescriptor> = Vec::with_capacity(infos.len());
     for pi in &infos {
-        let name = CString::new(pi.name).unwrap_or_default();
-        let unit = CString::new(pi.unit.as_str()).unwrap_or_default();
-        let group = CString::new(pi.group).unwrap_or_default();
+        let cs = truce_core::wrapper::ParamCStrings::from_info(pi);
         param_descs.push(Vst2ParamDescriptor {
             id: pi.id,
-            name: name.into_raw(),
+            name: cs.name.into_raw(),
             min: pi.range.min(),
             max: pi.range.max(),
             default_value: pi.default_plain,
             step_count: pi.range.step_count(),
-            unit: unit.into_raw(),
-            group: group.into_raw(),
+            unit: cs.unit.into_raw(),
+            group: cs.group.into_raw(),
         });
     }
     let num_params = param_descs.len() as u32;
