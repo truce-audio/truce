@@ -2,9 +2,9 @@
 //! clap-validator (CLAP) against the project's installed bundles, with
 //! shadow-install collision detection.
 
-use crate::{dirs, load_config, tmp_dir, PluginDef, Res};
 #[cfg(target_os = "macos")]
 use crate::{deployment_target, project_root};
+use crate::{dirs, load_config, tmp_dir, PluginDef, Res};
 use std::fs;
 use std::path::Path;
 #[cfg(target_os = "macos")]
