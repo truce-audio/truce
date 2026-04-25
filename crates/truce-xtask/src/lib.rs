@@ -58,6 +58,7 @@ pub fn run(args: &[String]) -> ExitCode {
         "new" => commands::new::cmd_new(&args[1..]),
         "test" => commands::test::cmd_test(),
         "status" => commands::status::cmd_status(),
+        "clean" => commands::clean::cmd_clean(&args[1..]),
         "reset-au-aax" => commands::reset_au_aax::cmd_reset_au_aax(&args[1..]),
         "validate" => commands::validate::cmd_validate(&args[1..]),
         "doctor" => commands::doctor::cmd_doctor(),
@@ -110,6 +111,12 @@ Commands:
   status
       Show installed plugins and AU registration state.
 
+  clean
+      Thin wrapper over `cargo clean`. Wipes `target/` (covers shim
+      builds, bundle staging, and `target/dist/` installers). Does not
+      touch installed plugin bundles or AU / AAX host caches — see
+      `remove` and `reset-au-aax` for those.
+
   reset-au-aax [--yes]
       macOS-only. Flush Audio Unit + Pro Tools AAX caches and restart
       `pkd` / `AudioComponentRegistrar`. CLAP / VST3 / VST2 / LV2 are
@@ -141,7 +148,7 @@ Commands:
 
   package [-p <crate>] [--formats clap,vst3,...] [--no-notarize]
       Build, sign, and package plugins into macOS .pkg installers.
-      Output goes to dist/ directory.
+      Output goes to `target/dist/`.
 
   build [--clap] [--vst3] [--vst2] [--lv2] [--au2] [--au3] [--aax] [-p <crate>] [--dev]
       Build per-format bundles into target/bundles/ without installing.

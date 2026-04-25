@@ -367,7 +367,7 @@ pub(crate) fn cmd_package_macos(args: &[String]) -> Res {
     // Step 2–7: Stage, sign, build .pkg per plugin
     // ---------------------------------------------------------------
 
-    let dist_dir = root.join("dist");
+    let dist_dir = root.join("target/dist");
     fs::create_dir_all(&dist_dir)?;
 
     let version = read_workspace_version(&root).unwrap_or_else(|| "0.0.0".to_string());

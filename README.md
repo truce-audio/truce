@@ -53,7 +53,7 @@ Produce a signed distributable installer:
 
 ```sh
 cargo truce package              # signed .pkg (macOS) or Inno Setup .exe (Windows)
-                                 # → dist/<Plugin>-<version>-<platform>.{pkg,exe}
+                                 # → target/dist/<Plugin>-<version>-<platform>.{pkg,exe}
 
 cargo truce package -p my-plugin --formats clap,vst3,aax   # subset
 cargo truce package --no-sign                              # dev builds, skip signing

@@ -42,8 +42,8 @@ fn main() -> ExitCode {
         },
 
         // Build/install commands — forwarded to truce-xtask
-        "install" | "build" | "package" | "remove" | "run" | "test" | "status" | "reset-au-aax"
-        | "validate" | "doctor" | "log" => truce_xtask::run(&args),
+        "install" | "build" | "package" | "remove" | "run" | "test" | "status" | "clean"
+        | "reset-au-aax" | "validate" | "doctor" | "log" => truce_xtask::run(&args),
 
         "help" | "--help" | "-h" => {
             print_help();
@@ -92,6 +92,12 @@ USAGE:
 
   cargo truce test
       Run in-process regression tests.
+
+  cargo truce clean
+      Thin wrapper over `cargo clean`. Wipes `target/` (covers shim
+      builds, bundle staging, and `target/dist/` installers). Does not
+      touch installed plugin bundles or AU / AAX host caches — see
+      `cargo truce remove` and `cargo truce reset-au-aax` for those.
 
   cargo truce reset-au-aax
       macOS-only. Flush Audio Unit caches (AudioUnitCache, GarageBand /
@@ -190,7 +196,7 @@ fn cmd_new(args: &[String]) -> Res {
     eprintln!("  cd {name}");
     eprintln!("  cargo truce install --clap      # build + install CLAP");
     eprintln!("  cargo truce install              # all formats in default features");
-    eprintln!("  cargo truce package              # signed .pkg / .exe installer in dist/");
+    eprintln!("  cargo truce package              # signed .pkg / .exe installer in target/dist/");
     eprintln!("  cargo truce doctor               # check environment");
     eprintln!();
     eprintln!("Edit src/lib.rs to add your DSP.");
@@ -369,7 +375,7 @@ fn cmd_new_workspace(args: &[String]) -> Res {
     eprintln!("  cd {workspace_name}");
     eprintln!("  cargo truce install --clap      # build + install all as CLAP");
     eprintln!("  cargo truce install              # all formats in default features");
-    eprintln!("  cargo truce package              # signed .pkg / .exe installer in dist/");
+    eprintln!("  cargo truce package              # signed .pkg / .exe installer in target/dist/");
     eprintln!("  cargo truce doctor               # check environment");
     eprintln!();
     eprintln!("Edit plugins/*/src/lib.rs to add your DSP.");

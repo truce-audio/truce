@@ -2,6 +2,7 @@
 //! to one entry in the dispatch match in `crate::run`.
 
 pub(crate) mod build;
+pub(crate) mod clean;
 pub(crate) mod doctor;
 pub(crate) mod install;
 pub(crate) mod log;

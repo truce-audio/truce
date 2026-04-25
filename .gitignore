@@ -1,5 +1,3 @@
 /target
-aax-template/build/
 .DS_STORE
 .cargo/config.toml
-dist/

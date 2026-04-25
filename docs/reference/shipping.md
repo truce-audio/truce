@@ -117,7 +117,7 @@ cargo truce package --no-notarize            # macOS: sign but skip Apple notari
 cargo truce package --no-installer           # Windows: stage files, skip ISCC
 ```
 
-Output: `dist/<Name>-<version>-{macos.pkg,windows.exe}`. Version
+Output: `target/dist/<Name>-<version>-{macos.pkg,windows.exe}`. Version
 comes from `[workspace.package] version` or `[package] version`
 in `Cargo.toml`.
 
@@ -135,7 +135,7 @@ cargo truce package (on macOS)
 3. Stage into target/package/  (one fat bundle per format)
 4. Codesign bundles            Developer ID Application + hardened runtime + timestamp
 5. pkgbuild per format         → components/<name>-<format>.pkg
-6. productbuild                → dist/<Name>-<version>-macos.pkg
+6. productbuild                → target/dist/<Name>-<version>-macos.pkg
                                  (signed with Developer ID Installer)
 7. notarytool + staple         (if [macos.packaging].notarize = true)
 ```
@@ -291,7 +291,7 @@ jobs:
 
       - run: cargo truce package
       - uses: actions/upload-artifact@v4
-        with: { name: macos-installer, path: dist/*.pkg }
+        with: { name: macos-installer, path: target/dist/*.pkg }
 ```
 
 ### Windows (GitHub Actions)
@@ -317,7 +317,7 @@ jobs:
 
       - run: cargo truce package
       - uses: actions/upload-artifact@v4
-        with: { name: windows-installer, path: dist/*.exe }
+        with: { name: windows-installer, path: target/dist/*.exe }
 ```
 
 AAX CI needs the AAX SDK cached on the runner (via
@@ -337,7 +337,7 @@ explicitly.
 Run `cargo truce package --no-notarize`, then submit manually:
 
 ```sh
-xcrun notarytool submit dist/<Name>-<version>-macos.pkg \
+xcrun notarytool submit target/dist/<Name>-<version>-macos.pkg \
   --keychain-profile TRUCE_NOTARY --wait
 xcrun notarytool log <submission-id> --keychain-profile TRUCE_NOTARY
 ```

@@ -128,7 +128,7 @@ pub(crate) fn cmd_package(args: &[String]) -> Res {
 
     build_all_formats(&plugins, &formats, &archs, &root)?;
 
-    let dist_dir = root.join("dist");
+    let dist_dir = root.join("target/dist");
     fs::create_dir_all(&dist_dir)?;
 
     for p in &plugins {

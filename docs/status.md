@@ -35,7 +35,7 @@ AU is macOS-only by design.
 - **macOS** — `.pkg` with Developer ID signing + optional Apple notarization, via `pkgbuild` + `productbuild` + `notarytool`. Plugin bundles contain fat Mach-O binaries (`x86_64-apple-darwin` + `aarch64-apple-darwin`) stitched together with `lipo`, so one install covers both Apple Silicon and Intel Macs.
 - **Windows** — Inno Setup `.exe` with Authenticode (Azure Trusted Signing / SHA1 thumbprint / `.pfx`) + PACE/wraptool for AAX. Single installer carries both x64 and ARM64 slices — bundle formats (VST3, AAX) stage arch-scoped sub-directories; single-file formats (CLAP, VST2) gate DLL copies on Inno Setup's `IsArm64` predicate. AAX stays host-arch (AAX SDK 2.9 Windows libs are x64-only).
 
-Pass `--host-only` to skip the cross-arch build during dev iteration. Output lands in `dist/<Plugin>-<version>-<platform>.{pkg,exe}`. See [docs/reference/shipping.md](reference/shipping.md) for the pipeline.
+Pass `--host-only` to skip the cross-arch build during dev iteration. Output lands in `target/dist/<Plugin>-<version>-<platform>.{pkg,exe}`. See [docs/reference/shipping.md](reference/shipping.md) for the pipeline.
 
 ## Example plugins
 
@@ -133,7 +133,7 @@ cargo truce install              # all formats, GPU rendering (default)
 cargo truce install --dev        # all formats, hot-reload
 cargo truce install -p my-gain   # single plugin (cargo crate name)
 cargo truce install --clap       # CLAP only
-cargo truce package              # signed .pkg / .exe installer in dist/
+cargo truce package              # signed .pkg / .exe installer in target/dist/
 cargo truce test                 # run all tests
 cargo truce validate             # auval + pluginval + clap-validator
 cargo truce doctor               # check toolchain, SDKs, signing, ISCC, signtool
