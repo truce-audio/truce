@@ -361,7 +361,21 @@ pub(crate) fn take_skipped() -> Vec<String> {
 /// Safe to redirect stderr even on the sudo path: `sudo` opens
 /// `/dev/tty` for the password prompt, not stderr, so the prompt
 /// stays visible to the user.
-pub(crate) fn run_codesign(args: &[&str], use_sudo: bool) -> crate::Res {
+///
+/// Non-macOS no-ops cleanly: `codesign` is an Apple-only tool. CLAP /
+/// VST3 / LV2 on Linux are unsigned `.so` files; Windows signs via
+/// `signtool` in `packaging_windows`, not through here. The shared
+/// `stage_*` helpers in `commands/package/stage.rs` call this
+/// unconditionally so the build path stays cross-platform.
+pub(crate) fn run_codesign(_args: &[&str], _use_sudo: bool) -> crate::Res {
+    #[cfg(not(target_os = "macos"))]
+    return Ok(());
+    #[cfg(target_os = "macos")]
+    run_codesign_macos(_args, _use_sudo)
+}
+
+#[cfg(target_os = "macos")]
+fn run_codesign_macos(args: &[&str], use_sudo: bool) -> crate::Res {
     use std::process::Stdio;
     let target = args.last().copied().unwrap_or("?");
     let target_label = std::path::Path::new(target)
