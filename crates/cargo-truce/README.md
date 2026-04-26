@@ -25,6 +25,7 @@ cargo truce install --clap         # single format only
 cargo truce validate               # run auval (AU) + pluginval (CLAP/VST3)
 cargo truce doctor                 # check toolchain, SDKs, signing certs
 cargo truce run                    # build and launch standalone
+cargo truce screenshot             # render every plugin's GUI to target/screenshots/
 cargo truce status                 # show installed plugin versions
 cargo truce remove                 # uninstall plugins from system paths
 ```

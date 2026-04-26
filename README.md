@@ -44,6 +44,7 @@ cargo truce build --dev          # hot-reload shell build (see docs/reference/ho
 cargo truce run                  # launch the plugin standalone (no DAW)
 cargo truce run -p my-plugin     # standalone for a specific crate
 cargo truce test                 # run tests
+cargo truce screenshot           # render every plugin's GUI to target/screenshots/
 cargo truce validate             # auval + pluginval + clap-validator
 cargo truce clean                # cargo clean, preserving target/dist/ installers
 ```
@@ -147,6 +148,15 @@ diffs against the committed reference at `snapshots/gain_default.png`.
 First run prints a `cp`-based promote hint and passes; subsequent
 runs fail on the reference platform if the diff exceeds tolerance.
 Cross-OS reference comparison is gated via `TRUCE_SCREENSHOT_REFERENCE_OS`.
+
+For one-off captures outside the test harness — regenerating README
+artwork, debug snapshots — use `cargo truce screenshot`:
+
+```sh
+cargo truce screenshot                              # every plugin
+cargo truce screenshot -p my-plugin                 # one plugin
+cargo truce screenshot -p my-plugin --name dark     # custom filename
+```
 
 See [docs/gui/screenshot-testing.md](docs/gui/screenshot-testing.md)
 for the full flow.

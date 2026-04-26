@@ -70,6 +70,11 @@ cp target/screenshots/*.png snapshots/
 git add snapshots/
 ```
 
+`cargo truce screenshot` is a faster path when you just want fresh
+PNGs (no test harness, no diffing): it builds each plugin's cdylib
+once and invokes the `__truce_screenshot` symbol directly, writing
+straight to `target/screenshots/`.
+
 ## Tolerance
 
 The third argument to `assert_screenshot` is `max_diff_pixels` — how
@@ -178,11 +183,31 @@ let path = truce_core::screenshot::render::<Plugin>("gain_dark");
 println!("rendered to {}", path.display());
 ```
 
-Lives in `truce-core` (not `truce-test`) so non-test contexts — for
-example a custom binary or a future `cargo truce screenshot` —
-can call it without pulling in dev-dependencies. It's also re-exported
-as `truce_test::render_screenshot` for symmetry with the assert
-helpers.
+Lives in `truce-core` (not `truce-test`) so non-test contexts can call
+it without pulling in dev-dependencies — including the `cargo truce
+screenshot` CLI (see below). Re-exported as
+`truce_test::render_screenshot` for symmetry with the assert helpers.
+
+### `cargo truce screenshot`
+
+Render a plugin's GUI from the command line, no `#[test]` required:
+
+```sh
+cargo truce screenshot                              # every plugin in truce.toml
+cargo truce screenshot -p my-plugin                 # one plugin
+cargo truce screenshot -p my-plugin --name dark     # → target/screenshots/dark.png
+```
+
+Default filename is `<bundle_id>_screenshot.png`. Use this to
+regenerate README artwork or capture debug snapshots without writing
+test code.
+
+How it works: `truce::plugin!` exports a hidden `extern "C" fn
+__truce_screenshot(...)` symbol into the plugin's cdylib (the same
+build artifact CLAP/VST3 use). The CLI builds the cdylib with
+`--no-default-features --lib` (skipping format-wrapper compilation
+for speed), `dlopen`s it, and calls the symbol. No per-plugin
+scaffolding required — the macro provides everything.
 
 ### Pixel comparator
 
