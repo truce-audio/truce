@@ -71,12 +71,9 @@ cargo truce package -p my-plugin --formats clap,vst3,aax   # subset
 cargo truce package --no-sign                              # dev builds, skip signing
 ```
 
-On macOS this runs `pkgbuild` + `productbuild` with Developer ID signing
-and optional notarization. On Windows it stages each format,
-Authenticode-signs via `signtool`, PACE-signs AAX via `wraptool`, and
-compiles an Inno Setup installer via `ISCC.exe`. Credentials (Developer
-ID / Azure Trusted Signing / cert thumbprint / `.pfx`) are configured
-per-platform in `truce.toml`.
+See [docs/reference/shipping.md](docs/reference/shipping.md) for
+signing setup (Developer ID / Authenticode / PACE), notarization,
+and the per-platform `truce.toml` schema.
 
 Scaffolded plugins default to **CLAP + VST3 + standalone**. VST2, AU, and AAX are
 opt-in per plugin via `Cargo.toml` features. On Windows, `cargo truce
