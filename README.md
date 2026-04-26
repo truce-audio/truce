@@ -167,20 +167,6 @@ By host (across all supported platforms):
 | AU v3  | Yes    | Yes   | Yes        | Yes     |           |           |
 | AAX    |        |       |            |         |           | Yes       |
 
-## Examples
-
-A non-trivial GUI built with truce —
-[**truce-analyzer**](https://github.com/truce-audio/truce-analyzer),
-a real-time spectrum analyzer with diff overlay:
-
-<img src="examples/screenshots/analyzer_diff.png" width="600">
-
-Nine smaller example plugins ship in-tree to cover the basics — gain,
-EQ, synth, transpose, arpeggio, tremolo, plus three gain variants
-showing the egui / iced / Slint backends. See
-[examples/README.md](examples/README.md) for the full table with
-screenshots.
-
 ## Features
 
 - **7 plugin formats** from one codebase (CLAP, VST3 default; VST2, LV2, AU v2, AU v3, AAX opt-in)
@@ -195,6 +181,20 @@ screenshots.
 - **Thread-safe params** — atomic storage, lock-free access from any thread
 - **Automated tests** — render, state, params, GUI screenshots, binary validation
 - **Automated validation** — `cargo truce validate` runs auval, pluginval, and clap-validator in one command
+
+## Examples
+
+A non-trivial GUI built with truce —
+[**truce-analyzer**](https://github.com/truce-audio/truce-analyzer),
+a real-time spectrum analyzer with diff overlay:
+
+<img src="examples/screenshots/analyzer_diff.png" width="600">
+
+Nine smaller example plugins ship in-tree to cover the basics — gain,
+EQ, synth, transpose, arpeggio, tremolo, plus three gain variants
+showing the egui / iced / Slint backends. See
+[examples/README.md](examples/README.md) for the full table with
+screenshots.
 
 ## Crate Structure
 

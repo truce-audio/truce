@@ -742,7 +742,7 @@ pub(crate) fn cargo_build_debug(
 fn cargo_build_inner(
     env_vars: &[(&str, &str)],
     extra_args: &[&str],
-    deployment_target: &str,
+    #[cfg_attr(not(target_os = "macos"), allow(unused_variables))] deployment_target: &str,
     release: bool,
 ) -> crate::Res {
     // If the caller passed `--target <triple>`, make sure rustup has
