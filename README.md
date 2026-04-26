@@ -1,14 +1,12 @@
 # truce
 
-Build audio plugins in Rust. One codebase, every format.
+Build audio plugins in Rust. Build CLAP, VST3, VST2, LV2, AU v2, AU v3,
+AAX, and standalone from a single Rust codebase.
 
 [![macOS](https://github.com/truce-audio/truce/actions/workflows/ci-macos.yml/badge.svg)](https://github.com/truce-audio/truce/actions/workflows/ci-macos.yml)
 [![Windows](https://github.com/truce-audio/truce/actions/workflows/ci-windows.yml/badge.svg)](https://github.com/truce-audio/truce/actions/workflows/ci-windows.yml)
 [![Linux](https://github.com/truce-audio/truce/actions/workflows/ci-linux.yml/badge.svg)](https://github.com/truce-audio/truce/actions/workflows/ci-linux.yml)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
-
-Write your plugin once. Build CLAP, VST3, VST2, LV2, AU v2, AU v3,
-AAX, and standalone from a single Rust codebase.
 
 ## Quick Start
 
@@ -187,7 +185,6 @@ By host (across all supported platforms):
 
 ## Examples
 
-A non-trivial GUI built with truce —
 [**truce-analyzer**](https://github.com/truce-audio/truce-analyzer),
 a real-time spectrum analyzer with diff overlay:
 
