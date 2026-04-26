@@ -455,7 +455,7 @@ pub(crate) fn emit_aax_bundle(
         return Ok(());
     }
 
-    let bundles_dir = root.join("target/bundles");
+    let bundles_dir = crate::target_dir(&root).join("bundles");
     fs_ctx::create_dir_all(&bundles_dir)?;
     let bundle = bundles_dir.join(format!("{}.aaxplugin", p.name));
     let _ = fs::remove_dir_all(&bundle);
@@ -552,7 +552,7 @@ pub(crate) fn install_aax(_root: &Path, _p: &PluginDef, _config: &Config) -> Res
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(crate) fn install_aax(root: &Path, p: &PluginDef, config: &Config) -> Res {
     let bundle_name = format!("{}.aaxplugin", p.name);
-    let built = root.join("target/bundles").join(&bundle_name);
+    let built = crate::target_dir(&root).join("bundles").join(&bundle_name);
     if !built.exists() {
         // No SDK → emit_aax_bundle (build phase) already logged a per-plugin
         // skip; just no-op here so we don't double-log. SDK present → genuine

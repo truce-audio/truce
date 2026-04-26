@@ -70,20 +70,31 @@ pub(crate) fn shared_lib_name(stem: &str) -> String {
     }
 }
 
-/// Return `target/release/{shared_lib_name}` for a plugin.
+/// Return the cargo target directory for `root`. Honors the
+/// `CARGO_TARGET_DIR` env var when set (so test harnesses and CI can
+/// share a build cache across crates) and falls back to
+/// `<root>/target/`. Use this anywhere xtask reads or writes inside
+/// the cargo target tree — never hard-code `<root>/target/`.
+pub(crate) fn target_dir(root: &Path) -> PathBuf {
+    match std::env::var_os("CARGO_TARGET_DIR") {
+        Some(v) if !v.is_empty() => PathBuf::from(v),
+        _ => root.join("target"),
+    }
+}
+
+/// Return `<target>/release/{shared_lib_name}` for a plugin.
 pub(crate) fn release_lib(root: &Path, stem: &str) -> PathBuf {
-    root.join("target/release").join(shared_lib_name(stem))
+    crate::target_dir(&root).join("release").join(shared_lib_name(stem))
 }
 
 /// Return the release-mode library path for a specific cargo target triple,
-/// or the default `target/release/` when `target` is `None`. Used by
+/// or the default `<target>/release/` when `target` is `None`. Used by
 /// cross-arch builds (macOS universal, Windows x64+arm64); not reached
 /// on Linux today.
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(crate) fn release_lib_for_target(root: &Path, stem: &str, target: Option<&str>) -> PathBuf {
     match target {
-        Some(t) => root
-            .join("target")
+        Some(t) => crate::target_dir(&root)
             .join(t)
             .join("release")
             .join(shared_lib_name(stem)),
@@ -449,9 +460,9 @@ pub(crate) fn is_production_identity(identity: &str) -> bool {
     identity != "-"
 }
 
-/// Return the project-local temp directory (`target/tmp/`), creating it if needed.
+/// Return the project-local temp directory (`<target>/tmp/`), creating it if needed.
 pub(crate) fn tmp_dir() -> PathBuf {
-    let dir = project_root().join("target/tmp");
+    let dir = target_dir(&project_root()).join("tmp");
     let _ = fs::create_dir_all(&dir);
     dir
 }

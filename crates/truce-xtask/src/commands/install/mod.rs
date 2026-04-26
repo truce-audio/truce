@@ -656,7 +656,7 @@ fn lv2_bundle_root() -> Result<PathBuf, Box<dyn std::error::Error>> {
 
 #[cfg(target_os = "macos")]
 fn install_au(root: &Path, p: &PluginDef, config: &Config) -> Res {
-    let dylib = root.join(format!("target/release/lib{}_au.dylib", p.dylib_stem()));
+    let dylib = crate::target_dir(&root).join(format!("release/lib{}_au.dylib", p.dylib_stem()));
     if !dylib.exists() {
         return Err(format!("Missing: {}", dylib.display()).into());
     }

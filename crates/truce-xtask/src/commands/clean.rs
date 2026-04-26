@@ -28,7 +28,7 @@ pub(crate) fn cmd_clean(args: &[String]) -> Res {
     }
 
     let root = project_root();
-    let dist = root.join("target/dist");
+    let dist = crate::target_dir(&root).join("dist");
     let stash = root.join(".truce-dist-stash");
 
     let stashed = !clean_installers && dist.exists();

@@ -77,7 +77,7 @@ pub(crate) fn emit_au_v3_bundle(
         return Err("emit_au_v3_bundle: empty archs list".into());
     }
 
-    let bundles_dir = root.join("target/bundles");
+    let bundles_dir = crate::target_dir(&root).join("bundles");
     fs_ctx::create_dir_all(&bundles_dir)?;
 
     for p in plugins {
@@ -125,7 +125,7 @@ pub(crate) fn emit_au_v3_bundle(
                 release_lib_for_target(root, &format!("{}_v3", p.dylib_stem()), Some(a.triple()))
             })
             .collect();
-        let lipo_dst = root.join(format!("target/release/lib{}_v3.dylib", p.dylib_stem()));
+        let lipo_dst = crate::target_dir(&root).join(format!("release/lib{}_v3.dylib", p.dylib_stem()));
         lipo_into(&fw_inputs, &lipo_dst)?;
 
         // --- Step 2: .framework bundle in tmp -------------------------------
@@ -437,7 +437,7 @@ fn install_au_v3(root: &Path, config: &Config, plugins: &[&PluginDef]) -> Res {
 
     for p in plugins {
         let app_name = p.au3_app_name();
-        let final_app = root.join("target/bundles").join(format!("{app_name}.app"));
+        let final_app = crate::target_dir(&root).join("bundles").join(format!("{app_name}.app"));
         if !final_app.exists() {
             return Err(format!(
                 "AU v3 bundle missing at {}. Run `cargo truce build --au3 -p {}` first.",

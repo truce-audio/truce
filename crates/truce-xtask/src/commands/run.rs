@@ -61,7 +61,7 @@ pub(crate) fn cmd_run(args: &[String]) -> Res {
         config.plugin.first().ok_or("no plugins in truce.toml")?
     };
 
-    let bundles_dir = root.join("target/bundles");
+    let bundles_dir = crate::target_dir(&root).join("bundles");
     fs_ctx::create_dir_all(&bundles_dir)?;
     let staged = bundles_dir.join(standalone_bundle_name(&plugin.name));
 
@@ -112,7 +112,7 @@ pub(crate) fn cmd_run(args: &[String]) -> Res {
 
 /// Cargo's output path for the standalone binary inside `target/release/`.
 fn standalone_built_path(root: &std::path::Path, bundle_id: &str) -> PathBuf {
-    root.join("target/release")
+    crate::target_dir(&root).join("release")
         .join(standalone_bin_name(bundle_id))
 }
 

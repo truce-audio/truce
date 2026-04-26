@@ -187,7 +187,7 @@ pub(crate) fn cmd_package_macos(args: &[String]) -> Res {
                     )
                 })
                 .collect();
-            let output = root.join(format!("target/release/lib{}_clap.dylib", p.dylib_stem()));
+            let output = crate::target_dir(&root).join(format!("release/lib{}_clap.dylib", p.dylib_stem()));
             lipo_into(&inputs, &output)?;
         }
     }
@@ -225,7 +225,7 @@ pub(crate) fn cmd_package_macos(args: &[String]) -> Res {
                     )
                 })
                 .collect();
-            let output = root.join(format!("target/release/lib{}_vst3.dylib", p.dylib_stem()));
+            let output = crate::target_dir(&root).join(format!("release/lib{}_vst3.dylib", p.dylib_stem()));
             lipo_into(&inputs, &output)?;
         }
     }
@@ -263,7 +263,7 @@ pub(crate) fn cmd_package_macos(args: &[String]) -> Res {
                     )
                 })
                 .collect();
-            let output = root.join(format!("target/release/lib{}_vst2.dylib", p.dylib_stem()));
+            let output = crate::target_dir(&root).join(format!("release/lib{}_vst2.dylib", p.dylib_stem()));
             lipo_into(&inputs, &output)?;
         }
     }
@@ -307,7 +307,7 @@ pub(crate) fn cmd_package_macos(args: &[String]) -> Res {
                     )
                 })
                 .collect();
-            let output = root.join(format!("target/release/lib{}_au.dylib", p.dylib_stem()));
+            let output = crate::target_dir(&root).join(format!("release/lib{}_au.dylib", p.dylib_stem()));
             lipo_into(&inputs, &output)?;
         }
     }
@@ -345,7 +345,7 @@ pub(crate) fn cmd_package_macos(args: &[String]) -> Res {
                     )
                 })
                 .collect();
-            let output = root.join(format!("target/release/lib{}_aax.dylib", p.dylib_stem()));
+            let output = crate::target_dir(&root).join(format!("release/lib{}_aax.dylib", p.dylib_stem()));
             lipo_into(&inputs, &output)?;
         }
         // Apple-sign + assemble the .aaxplugin bundle once we have the
@@ -367,7 +367,7 @@ pub(crate) fn cmd_package_macos(args: &[String]) -> Res {
     // Step 2–7: Stage, sign, build .pkg per plugin
     // ---------------------------------------------------------------
 
-    let dist_dir = root.join("target/dist");
+    let dist_dir = crate::target_dir(&root).join("dist");
     fs::create_dir_all(&dist_dir)?;
 
     let version = read_workspace_version(&root).unwrap_or_else(|| "0.0.0".to_string());
@@ -375,7 +375,7 @@ pub(crate) fn cmd_package_macos(args: &[String]) -> Res {
     for p in &plugins {
         eprintln!("\n=== Packaging: {} ===", p.name);
 
-        let staging = root.join("target/package").join(&p.bundle_id);
+        let staging = crate::target_dir(&root).join("package").join(&p.bundle_id);
         let _ = fs::remove_dir_all(&staging);
         fs::create_dir_all(&staging)?;
 

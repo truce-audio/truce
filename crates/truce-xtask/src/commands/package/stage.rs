@@ -204,7 +204,7 @@ pub(crate) fn stage_vst2(
 /// directory. Audio Unit is macOS-only.
 #[cfg(target_os = "macos")]
 pub(crate) fn stage_au2(root: &Path, p: &PluginDef, config: &Config, staging: &Path) -> Res {
-    let dylib = root.join(format!("target/release/lib{}_au.dylib", p.dylib_stem()));
+    let dylib = crate::target_dir(&root).join(format!("release/lib{}_au.dylib", p.dylib_stem()));
     if !dylib.exists() {
         return Err(format!("Missing: {}", dylib.display()).into());
     }
@@ -296,7 +296,7 @@ pub(crate) fn stage_aax(
     no_pace_sign: bool,
 ) -> Res {
     let bundle_name = format!("{}.aaxplugin", p.name);
-    let built = root.join("target/bundles").join(&bundle_name);
+    let built = crate::target_dir(&root).join("bundles").join(&bundle_name);
     if !built.exists() {
         return Err(format!(
             "AAX bundle missing at {}. Call `emit_aax_bundle` from the package driver before staging.",
@@ -324,7 +324,7 @@ pub(crate) fn stage_aax(
 #[cfg(target_os = "macos")]
 pub(crate) fn stage_au3(root: &Path, p: &PluginDef, _config: &Config, staging: &Path) -> Res {
     let app_name = format!("{}.app", p.au3_app_name());
-    let built_app = root.join("target/bundles").join(&app_name);
+    let built_app = crate::target_dir(&root).join("bundles").join(&app_name);
     if !built_app.exists() {
         return Err(format!(
             "AU v3 bundle missing at {}. Run `cargo truce build --au3 -p {}` first.",

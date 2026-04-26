@@ -233,15 +233,20 @@ impl Scaffold {
     /// bundle staging, per-format feature gating, project_root
     /// resolution from a child cwd — surface here.
     ///
-    /// Does NOT use the shared target dir: xtask resolves
-    /// `<project_root>/target/...` paths internally for bundle
-    /// staging, and re-pointing `CARGO_TARGET_DIR` would split that
-    /// from where the inner `cargo build` writes the dylib. So this
-    /// test pays for a fresh `<generated>/target/` (~60s cold).
+    /// Sets `CARGO_TARGET_DIR` to the shared cache so artifacts
+    /// land alongside the other tests' `cargo check` / `cargo build`
+    /// outputs. xtask honors this env var for both inner cargo
+    /// invocations and its own staging-path resolution.
     fn truce_subcommand(&self, args: &[&str]) -> Result<(), String> {
         let _guard = build_lock().lock().unwrap_or_else(|e| e.into_inner());
+        // Wipe the staged-bundles dir so this test's assertions don't
+        // pick up artifacts from earlier `truce_subcommand` runs.
+        // Cargo build artifacts under `release/` survive — that's the
+        // whole point of sharing the target dir.
+        let _ = std::fs::remove_dir_all(shared_target().join("bundles"));
         let out = Command::new(cargo_truce_bin())
             .args(args)
+            .env("CARGO_TARGET_DIR", shared_target())
             .current_dir(&self.generated)
             .output()
             .map_err(|e| format!("[{}] exec cargo-truce {args:?}: {e}", self.label))?;
@@ -272,14 +277,16 @@ impl Scaffold {
         Ok(())
     }
 
-    /// Assert that `target/bundles/` under the scaffolded project
-    /// holds exactly `expected` entries whose name ends with `ext`
-    /// (e.g. `.clap`, `.vst3`). Stronger end-to-end check than
-    /// "cargo-truce exited 0" — catches silent staging regressions
-    /// (e.g. format-flag honored at build time but bundle never
-    /// materialized).
+    /// Assert that `<shared-target>/bundles/` holds exactly `expected`
+    /// entries whose name ends with `ext` (e.g. `.clap`, `.vst3`).
+    /// Stronger end-to-end check than "cargo-truce exited 0" —
+    /// catches silent staging regressions (e.g. format-flag honored at
+    /// build time but bundle never materialized).
+    ///
+    /// Reads from the shared target dir because `truce_subcommand`
+    /// runs with `CARGO_TARGET_DIR` pointed there.
     fn assert_bundle_count_by_ext(&self, ext: &str, expected: usize) {
-        let bundles = self.generated.join("target/bundles");
+        let bundles = shared_target().join("bundles");
         let names: Vec<String> = std::fs::read_dir(&bundles)
             .unwrap_or_else(|e| {
                 panic!(
