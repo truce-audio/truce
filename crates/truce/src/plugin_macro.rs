@@ -76,6 +76,34 @@ macro_rules! __plugin_impl {
         #[cfg(feature = "dev")]
         $crate::__plugin_dev!($params, [$($layout),*]);
 
+        /// FFI export driven by `cargo truce screenshot`. Renders the
+        /// plugin's editor headlessly and writes the saved PNG path
+        /// into `out_buf` (up to `out_cap` bytes). Returns the byte
+        /// length the path required — the caller treats
+        /// `result > out_cap` as truncation.
+        ///
+        /// # Safety
+        /// `name_ptr` must point to `name_len` valid UTF-8 bytes.
+        /// `out_buf` must be writable for at least `out_cap` bytes.
+        #[doc(hidden)]
+        #[no_mangle]
+        pub unsafe extern "C" fn __truce_screenshot(
+            name_ptr: *const u8,
+            name_len: usize,
+            out_buf: *mut u8,
+            out_cap: usize,
+        ) -> usize {
+            let name_slice = ::std::slice::from_raw_parts(name_ptr, name_len);
+            let name = ::std::str::from_utf8(name_slice).unwrap_or("screenshot");
+            let path = $crate::core::screenshot::render::<Plugin>(name);
+            let path_str = path.to_string_lossy();
+            let bytes = path_str.as_bytes();
+            if bytes.len() <= out_cap {
+                ::std::ptr::copy_nonoverlapping(bytes.as_ptr(), out_buf, bytes.len());
+            }
+            bytes.len()
+        }
+
         // Format exports — same wrapper name in both modes.
         #[cfg(feature = "clap")]
         ::truce_clap::export_clap!(__HotShellWrapper);

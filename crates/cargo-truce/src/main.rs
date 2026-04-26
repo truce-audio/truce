@@ -42,8 +42,8 @@ fn main() -> ExitCode {
         },
 
         // Build/install commands — forwarded to truce-xtask
-        "install" | "build" | "package" | "remove" | "run" | "test" | "status" | "clean"
-        | "reset-au-aax" | "validate" | "doctor" | "log" => truce_xtask::run(&args),
+        "install" | "build" | "package" | "remove" | "run" | "screenshot" | "test" | "status"
+        | "clean" | "reset-au-aax" | "validate" | "doctor" | "log" => truce_xtask::run(&args),
 
         "help" | "--help" | "-h" => {
             print_help();
@@ -94,6 +94,11 @@ USAGE:
 
   cargo truce test
       Run in-process regression tests.
+
+  cargo truce screenshot [-p <crate>] [--name <name>]
+      Render a plugin's editor headlessly and save the PNG to
+      target/screenshots/. With no -p, renders every plugin in
+      truce.toml.
 
   cargo truce clean [--all]
       Run `cargo clean` while preserving `target/dist/` (signed /

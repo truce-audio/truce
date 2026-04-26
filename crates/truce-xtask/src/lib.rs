@@ -55,6 +55,7 @@ pub fn run(args: &[String]) -> ExitCode {
         "package" => commands::package::cmd_package(&args[1..]),
         "remove" => commands::remove::cmd_remove(&args[1..]),
         "run" => commands::run::cmd_run(&args[1..]),
+        "screenshot" => commands::screenshot::cmd_screenshot(&args[1..]),
         "new" => commands::new::cmd_new(&args[1..]),
         "test" => commands::test::cmd_test(),
         "status" => commands::status::cmd_status(),
@@ -170,6 +171,11 @@ Commands:
 
   run [-p <crate>] [-- <args>]
       Build and run a plugin standalone.
+
+  screenshot [-p <crate>] [--name <name>]
+      Render a plugin's editor headlessly and save the PNG to
+      target/screenshots/<name>.png. With no -p, screenshots every
+      plugin in truce.toml. Default name is <bundle_id>_screenshot.
 
   new <name>
       Scaffold a new plugin under ./plugins/<name>/.

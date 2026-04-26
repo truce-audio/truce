@@ -11,6 +11,7 @@ pub(crate) mod package;
 pub(crate) mod remove;
 pub(crate) mod reset_au_aax;
 pub(crate) mod run;
+pub(crate) mod screenshot;
 pub(crate) mod status;
 pub(crate) mod test;
 pub(crate) mod validate;
