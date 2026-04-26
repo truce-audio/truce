@@ -77,7 +77,7 @@ compiles an Inno Setup installer via `ISCC.exe`. Credentials (Developer
 ID / Azure Trusted Signing / cert thumbprint / `.pfx`) are configured
 per-platform in `truce.toml`.
 
-Scaffolded plugins default to **CLAP + VST3**. VST2, AU, and AAX are
+Scaffolded plugins default to **CLAP + VST3 + standalone**. VST2, AU, and AAX are
 opt-in per plugin via `Cargo.toml` features. On Windows, `cargo truce
 install` must be run from an Administrator command prompt (plugin
 directories are system-wide).
@@ -131,8 +131,8 @@ truce::plugin! { logic: Gain, params: GainParams }
 ```
 
 A complete plugin with smoothed params, a GPU-rendered GUI knob, and
-the CLAP + VST3 defaults. Add `vst2`, `lv2`, `au`, or `aax` to your
-`[features].default` to ship more formats from the same code.
+the CLAP + VST3 + standalone defaults. Add `vst2`, `lv2`, `au`, or `aax`
+to your `[features].default` to ship more formats from the same code.
 
 ## Format Support
 

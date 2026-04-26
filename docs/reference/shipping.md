@@ -16,7 +16,7 @@ covers the cross-format `cargo truce` workflow and signing.
 
 ## Enabling formats
 
-Scaffolded plugins ship CLAP + VST3 by default. Add more formats
+Scaffolded plugins ship CLAP + VST3 + standalone by default. Add more formats
 to `[features].default` in `Cargo.toml`, or pass them explicitly:
 
 ```sh

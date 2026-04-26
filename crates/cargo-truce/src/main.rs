@@ -65,8 +65,10 @@ fn print_help() {
 cargo-truce — build tool for truce audio plugins
 
 USAGE:
-  cargo truce new <name> [--instrument] [--midi]
-      Scaffold a new single-plugin project.
+  cargo truce new <name> [--instrument] [--midi] [--no-standalone]
+      Scaffold a new single-plugin project. Defaults include the
+      `standalone` feature + `src/main.rs` host; pass --no-standalone
+      to skip those (saves the bin entry, the dep, and the file).
 
   cargo truce new-workspace <name> <plugin1> [plugin2 ...] [options]
       Scaffold a workspace with multiple plugins.
@@ -75,6 +77,7 @@ USAGE:
         --vendor-id <id>            Reverse-domain vendor ID
         --instrument                Default all plugins to instrument type
         --midi                      Default all plugins to midi type
+        --no-standalone             Skip the standalone feature + host bin in every plugin
         --type:<plugin>=<kind>      Per-plugin type override (effect, instrument, midi)
 
   cargo truce install [--clap] [--vst3] [--vst2] [--au2] [--au3] [--aax] [--debug] [-p <crate>]
@@ -149,17 +152,20 @@ type Res = Result<(), Box<dyn std::error::Error>>;
 fn cmd_new(args: &[String]) -> Res {
     let mut name: Option<String> = None;
     let mut kind = PluginKind::Effect;
+    let mut with_standalone = true;
 
     for arg in args {
         match arg.as_str() {
             "--instrument" => kind = PluginKind::Instrument,
             "--midi" => kind = PluginKind::Midi,
+            "--no-standalone" => with_standalone = false,
             s if !s.starts_with('-') && name.is_none() => name = Some(s.to_string()),
             other => return Err(format!("Unknown argument: {other}").into()),
         }
     }
 
-    let name = name.ok_or("Usage: cargo truce new <name> [--instrument] [--midi]")?;
+    let name = name
+        .ok_or("Usage: cargo truce new <name> [--instrument] [--midi] [--no-standalone]")?;
 
     if Path::new(&name).exists() {
         return Err(format!("Directory '{name}' already exists").into());
@@ -171,7 +177,7 @@ fn cmd_new(args: &[String]) -> Res {
     fs::create_dir_all(format!("{name}/.cargo"))?;
     fs::write(
         format!("{name}/Cargo.toml"),
-        scaffold::plugin_cargo_toml_standalone(&name),
+        scaffold::plugin_cargo_toml_standalone(&name, with_standalone),
     )?;
     fs::write(
         format!("{name}/build.rs"),
@@ -181,6 +187,12 @@ fn cmd_new(args: &[String]) -> Res {
         format!("{name}/src/lib.rs"),
         scaffold::plugin_lib_rs(&struct_name, kind),
     )?;
+    if with_standalone {
+        fs::write(
+            format!("{name}/src/main.rs"),
+            scaffold::plugin_main_rs(&name),
+        )?;
+    }
     fs::write(format!("{name}/.gitignore"), scaffold::gitignore())?;
     fs::write(
         format!("{name}/.cargo/config.toml"),
@@ -237,12 +249,14 @@ fn cmd_new_workspace(args: &[String]) -> Res {
     let mut vendor_name: Option<String> = None;
     let mut vendor_id: Option<String> = None;
     let mut type_overrides: Vec<(String, PluginKind)> = Vec::new();
+    let mut with_standalone = true;
 
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
             "--instrument" => default_kind = PluginKind::Instrument,
             "--midi" => default_kind = PluginKind::Midi,
+            "--no-standalone" => with_standalone = false,
             "--vendor" => {
                 vendor_name = Some(iter.next().ok_or("--vendor requires a value")?.clone());
             }
@@ -334,7 +348,7 @@ fn cmd_new_workspace(args: &[String]) -> Res {
     // Root Cargo.toml
     fs::write(
         format!("{workspace_name}/Cargo.toml"),
-        scaffold::workspace_cargo_toml(&workspace_name, &plugins),
+        scaffold::workspace_cargo_toml(&workspace_name, &plugins, with_standalone),
     )?;
 
     // truce.toml
@@ -362,7 +376,7 @@ fn cmd_new_workspace(args: &[String]) -> Res {
 
         fs::write(
             format!("{workspace_name}/plugins/{}/Cargo.toml", p.name),
-            scaffold::plugin_cargo_toml_workspace(&crate_name),
+            scaffold::plugin_cargo_toml_workspace(&crate_name, with_standalone),
         )?;
 
         fs::write(
@@ -374,6 +388,13 @@ fn cmd_new_workspace(args: &[String]) -> Res {
             format!("{workspace_name}/plugins/{}/src/lib.rs", p.name),
             scaffold::plugin_lib_rs(&struct_name, p.kind),
         )?;
+
+        if with_standalone {
+            fs::write(
+                format!("{workspace_name}/plugins/{}/src/main.rs", p.name),
+                scaffold::plugin_main_rs(&crate_name),
+            )?;
+        }
     }
 
     // Print summary

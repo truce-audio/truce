@@ -153,17 +153,18 @@ credentials) go in `.cargo/config.toml` (gitignored), **not** here.
 
 ```toml
 [features]
-default = ["clap", "vst3"]
+default = ["clap", "vst3", "standalone"]
 clap       = ["truce/clap"]
 vst3       = ["truce/vst3"]
 vst2       = ["truce/vst2"]
 lv2        = ["truce/lv2"]
 au         = ["truce/au"]
 aax        = ["truce/aax"]
+standalone = ["truce/standalone"]
 hot-reload = ["truce/hot-reload"]
 ```
 
-Scaffolded plugins enable CLAP + VST3 by default. Add more formats
+Scaffolded plugins enable CLAP + VST3 + standalone by default. Add more formats
 to `default`, or opt in per-command (`cargo truce install --vst2`).
 Per-format detail (SDKs, env vars, install paths, signing) is in
 [docs/formats/](../formats/).

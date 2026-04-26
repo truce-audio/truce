@@ -496,6 +496,34 @@ fn workspace_with_vendor() {
     s.cargo_check().unwrap();
 }
 
+#[test]
+fn single_plugin_no_standalone() {
+    let s = Scaffold::new("single-no-standalone", "demo_bare").arg("--no-standalone");
+    s.run().unwrap();
+    s.rewrite_git_to_path().unwrap();
+    // No `src/main.rs` — the standalone host shouldn't be scaffolded.
+    assert!(
+        !s.generated.join("src/main.rs").exists(),
+        "[single-no-standalone] src/main.rs leaked into a --no-standalone scaffold"
+    );
+    s.cargo_check().unwrap();
+}
+
+#[test]
+fn workspace_no_standalone() {
+    let s = Scaffold::new_workspace("ws-no-standalone", "acme", &["gain", "reverb"])
+        .arg("--no-standalone");
+    s.run().unwrap();
+    s.rewrite_git_to_path().unwrap();
+    for p in ["gain", "reverb"] {
+        assert!(
+            !s.generated.join(format!("plugins/{p}/src/main.rs")).exists(),
+            "[ws-no-standalone] plugins/{p}/src/main.rs leaked into a --no-standalone scaffold"
+        );
+    }
+    s.cargo_check().unwrap();
+}
+
 // Full `cargo build` of a multi-plugin workspace. Catches link-time
 // regressions (format wrapper cdylib symbols, force-load /
 // exported-symbol link args, Mach-O / PE export tables) that

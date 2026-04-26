@@ -55,7 +55,7 @@ required-features = ["standalone"]
 # in 2018 and distributing VST2 plugins may require agreement with
 # Steinberg's licensing terms. Enable `vst2` only if you understand
 # the implications.
-default = ["clap", "vst3"]
+default = ["clap", "vst3", "standalone"]
 clap = ["dep:truce-clap", "dep:clap-sys"]
 vst3 = ["dep:truce-vst3"]
 vst2 = ["dep:truce-vst2"]
@@ -210,7 +210,15 @@ mod tests {{
     fs::write(
         dir.join("src/main.rs"),
         format!(
-            r#"use {crate_lib}::Plugin;
+            r#"//! Entry point for standalone mode — run the plugin as a regular
+//! desktop app via `cargo truce run`, no DAW needed. Only compiled
+//! when the `standalone` feature is enabled (see `[[bin]]` in
+//! Cargo.toml).
+//!
+//! Safe to delete this file (and the `standalone` feature + bin
+//! entry in Cargo.toml) if you don't want a standalone build.
+
+use {crate_lib}::Plugin;
 
 fn main() {{
     truce_standalone::run::<Plugin>();

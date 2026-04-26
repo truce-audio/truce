@@ -61,7 +61,36 @@ pub struct PluginSpec {
 // Template generators
 // ---------------------------------------------------------------------------
 
-pub fn plugin_cargo_toml_standalone(crate_name: &str) -> String {
+pub fn plugin_cargo_toml_standalone(crate_name: &str, with_standalone: bool) -> String {
+    let bin_block = if with_standalone {
+        format!(
+            "\n[[bin]]\nname = \"{crate_name}-standalone\"\n\
+             path = \"src/main.rs\"\n\
+             required-features = [\"standalone\"]\n"
+        )
+    } else {
+        String::new()
+    };
+    let default_features = if with_standalone {
+        r#"["clap", "vst3", "standalone"]"#
+    } else {
+        r#"["clap", "vst3"]"#
+    };
+    let standalone_feature = if with_standalone {
+        "standalone = [\"dep:truce-standalone\"]\n"
+    } else {
+        ""
+    };
+    let standalone_dep = if with_standalone {
+        "truce-standalone = { git = \"https://github.com/truce-audio/truce\", features = [\"gui\"], optional = true }\n"
+    } else {
+        ""
+    };
+    let default_label = if with_standalone {
+        "CLAP + VST3 + standalone"
+    } else {
+        "CLAP + VST3"
+    };
     format!(
         r#"[package]
 name = "{crate_name}"
@@ -70,8 +99,8 @@ edition = "2021"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
-
-# Scaffolded default: CLAP + VST3 only. To add LV2 / AU / AAX / VST2,
+{bin_block}
+# Scaffolded default: {default_label}. To add LV2 / AU / AAX / VST2,
 # add the matching feature + optional dep below (e.g.
 # `lv2 = ["dep:truce-lv2"]` +
 # `truce-lv2 = {{ git = "https://github.com/truce-audio/truce", optional = true }}`).
@@ -79,17 +108,17 @@ crate-type = ["cdylib", "rlib"]
 # 2018 and distributing VST2 plugins may require agreement with
 # Steinberg's licensing terms.
 [features]
-default = ["clap", "vst3"]
+default = {default_features}
 clap = ["dep:truce-clap", "dep:clap-sys"]
 vst3 = ["dep:truce-vst3"]
-hot-reload = ["truce/hot-reload"]
+{standalone_feature}hot-reload = ["truce/hot-reload"]
 
 [dependencies]
 truce = {{ git = "https://github.com/truce-audio/truce" }}
 truce-gui = {{ git = "https://github.com/truce-audio/truce" }}
 truce-clap = {{ git = "https://github.com/truce-audio/truce", optional = true }}
 truce-vst3 = {{ git = "https://github.com/truce-audio/truce", optional = true }}
-clap-sys = {{ version = "0.5", optional = true }}
+{standalone_dep}clap-sys = {{ version = "0.5", optional = true }}
 
 [dev-dependencies]
 truce-test = {{ git = "https://github.com/truce-audio/truce" }}
@@ -105,7 +134,36 @@ truce-build = {{ git = "https://github.com/truce-audio/truce" }}
     )
 }
 
-pub fn plugin_cargo_toml_workspace(crate_name: &str) -> String {
+pub fn plugin_cargo_toml_workspace(crate_name: &str, with_standalone: bool) -> String {
+    let bin_block = if with_standalone {
+        format!(
+            "\n[[bin]]\nname = \"{crate_name}-standalone\"\n\
+             path = \"src/main.rs\"\n\
+             required-features = [\"standalone\"]\n"
+        )
+    } else {
+        String::new()
+    };
+    let default_features = if with_standalone {
+        r#"["clap", "vst3", "standalone"]"#
+    } else {
+        r#"["clap", "vst3"]"#
+    };
+    let standalone_feature = if with_standalone {
+        "standalone = [\"dep:truce-standalone\"]\n"
+    } else {
+        ""
+    };
+    let standalone_dep = if with_standalone {
+        "truce-standalone = { workspace = true, features = [\"gui\"], optional = true }\n"
+    } else {
+        ""
+    };
+    let default_label = if with_standalone {
+        "CLAP + VST3 + standalone"
+    } else {
+        "CLAP + VST3"
+    };
     format!(
         r#"[package]
 name = "{crate_name}"
@@ -114,24 +172,24 @@ edition.workspace = true
 
 [lib]
 crate-type = ["cdylib", "rlib"]
-
-# Scaffolded default: CLAP + VST3 only. To add LV2 / AU / AAX / VST2,
+{bin_block}
+# Scaffolded default: {default_label}. To add LV2 / AU / AAX / VST2,
 # uncomment the matching line in the root `Cargo.toml`'s
 # `[workspace.dependencies]`, then add the feature + optional dep
 # below (e.g. `lv2 = ["dep:truce-lv2"]` +
 # `truce-lv2 = {{ workspace = true, optional = true }}`).
 [features]
-default = ["clap", "vst3"]
+default = {default_features}
 clap = ["dep:truce-clap", "dep:clap-sys"]
 vst3 = ["dep:truce-vst3"]
-hot-reload = ["truce/hot-reload"]
+{standalone_feature}hot-reload = ["truce/hot-reload"]
 
 [dependencies]
 truce = {{ workspace = true }}
 truce-gui = {{ workspace = true }}
 truce-clap = {{ workspace = true, optional = true }}
 truce-vst3 = {{ workspace = true, optional = true }}
-clap-sys = {{ version = "0.5", optional = true }}
+{standalone_dep}clap-sys = {{ version = "0.5", optional = true }}
 
 [dev-dependencies]
 truce-test = {{ workspace = true }}
@@ -144,6 +202,30 @@ truce-test = {{ workspace = true }}
 [build-dependencies]
 truce-build = {{ workspace = true }}
 "#,
+    )
+}
+
+/// Standalone-host bin source. `cargo truce run` builds this with
+/// `--features standalone`, stages the binary into `target/bundles/`,
+/// and launches it. Gated behind `required-features = ["standalone"]`
+/// in Cargo.toml so release plugin bundles don't drag in the host.
+pub fn plugin_main_rs(crate_name: &str) -> String {
+    let crate_lib = crate_name.replace('-', "_");
+    format!(
+        r#"//! Entry point for standalone mode — run the plugin as a regular
+//! desktop app via `cargo truce run`, no DAW needed. Only compiled
+//! when the `standalone` feature is enabled (see `[[bin]]` in
+//! Cargo.toml).
+//!
+//! Safe to delete this file (and the `standalone` feature + bin
+//! entry in Cargo.toml) if you don't want a standalone build.
+
+use {crate_lib}::Plugin;
+
+fn main() {{
+    truce_standalone::run::<Plugin>();
+}}
+"#
     )
 }
 
@@ -411,12 +493,22 @@ au_tag = "{au_tag}"
     s
 }
 
-pub fn workspace_cargo_toml(workspace_name: &str, plugins: &[PluginSpec]) -> String {
+pub fn workspace_cargo_toml(
+    workspace_name: &str,
+    plugins: &[PluginSpec],
+    with_standalone: bool,
+) -> String {
     let members: Vec<String> = plugins
         .iter()
         .map(|p| format!("    \"plugins/{}\"", p.name))
         .collect();
     let members_str = members.join(",\n");
+
+    let standalone_dep = if with_standalone {
+        "truce-standalone = { git = \"https://github.com/truce-audio/truce\" }\n"
+    } else {
+        ""
+    };
 
     let _ = workspace_name; // reserved for future per-workspace config
     format!(
@@ -435,7 +527,7 @@ truce = {{ git = "https://github.com/truce-audio/truce" }}
 truce-gui = {{ git = "https://github.com/truce-audio/truce" }}
 truce-clap = {{ git = "https://github.com/truce-audio/truce" }}
 truce-vst3 = {{ git = "https://github.com/truce-audio/truce" }}
-truce-test = {{ git = "https://github.com/truce-audio/truce" }}
+{standalone_dep}truce-test = {{ git = "https://github.com/truce-audio/truce" }}
 truce-build = {{ git = "https://github.com/truce-audio/truce" }}
 clap-sys = "0.5"
 
