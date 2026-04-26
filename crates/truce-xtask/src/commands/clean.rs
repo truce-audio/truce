@@ -8,8 +8,9 @@
 //!
 //! Does not touch installed bundles in system plugin paths (see
 //! `cargo truce remove`) and does not flush AU / AAX host caches
-//! (see `cargo truce reset-au-aax`). Both side-effects are loud
-//! enough that they belong behind explicit commands.
+//! (see `cargo truce reset-au` and `cargo truce reset-aax`). Both
+//! side-effects are loud enough that they belong behind explicit
+//! commands.
 
 use std::fs;
 use std::path::Path;

@@ -137,7 +137,8 @@ cargo truce package              # signed .pkg / .exe installer in target/dist/
 cargo truce test                 # run all tests
 cargo truce validate             # auval + pluginval + clap-validator
 cargo truce doctor               # check toolchain, SDKs, signing, ISCC, signtool
-cargo truce reset-au-aax         # macOS: flush AU + Pro Tools AAX caches
+cargo truce reset-au             # macOS: flush AU caches + restart pkd
+cargo truce reset-aax            # macOS: flush Pro Tools AAX cache
 ```
 
 New projects are scaffolded with `cargo truce new`:

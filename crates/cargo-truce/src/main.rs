@@ -43,7 +43,9 @@ fn main() -> ExitCode {
 
         // Build/install commands — forwarded to truce-xtask
         "install" | "build" | "package" | "remove" | "run" | "screenshot" | "test" | "status"
-        | "clean" | "reset-au-aax" | "validate" | "doctor" | "log" => truce_xtask::run(&args),
+        | "clean" | "reset-au" | "reset-aax" | "validate" | "doctor" | "log-stream-au" => {
+            truce_xtask::run(&args)
+        }
 
         "help" | "--help" | "-h" => {
             print_help();
@@ -105,14 +107,17 @@ USAGE:
       notarized installers — expensive to rebuild). Pass `--all` to
       wipe everything, equivalent to a bare `cargo clean`. Does not
       touch installed plugin bundles or AU / AAX host caches — see
-      `cargo truce remove` and `cargo truce reset-au-aax` for those.
+      `cargo truce remove`, `reset-au`, `reset-aax` for those.
 
-  cargo truce reset-au-aax
-      macOS-only. Flush Audio Unit caches (AudioUnitCache, GarageBand /
-      Logic / Reaper plists), reset pluginkit registrations, wipe the
-      Pro Tools AAX cache, and restart `pkd` + `AudioComponentRegistrar`.
-      Use when AU bundles are stuck serving stale binaries; CLAP / VST3 /
-      VST2 / LV2 don't need this — DAWs manage their own caches there.
+  cargo truce reset-au
+      macOS-only. Flush Audio Unit caches (AudioUnitCache, GarageBand
+      / Logic / Reaper plists), reset pluginkit registrations, and
+      restart `pkd` + `AudioComponentRegistrar`. Use when AU bundles
+      are stuck serving stale binaries.
+
+  cargo truce reset-aax
+      macOS-only. Wipe this vendor's entries from the Pro Tools AAX
+      cache. Pro Tools re-scans AAX plugins on next launch.
 
   cargo truce status
       Show installed plugins.
@@ -120,8 +125,8 @@ USAGE:
   cargo truce doctor
       Check development environment.
 
-  cargo truce log
-      Stream AU v3 appex logs.
+  cargo truce log-stream-au
+      Tail AU v3 appex logs live (macOS-only, forward-only).
 
 GLOBAL FLAGS (accepted by every subcommand):
   -v, --verbose

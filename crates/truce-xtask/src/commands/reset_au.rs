@@ -1,20 +1,20 @@
-//! `cargo truce reset-au-aax` — flush macOS Audio Unit + Pro Tools AAX
-//! caches and restart `pkd` / `AudioComponentRegistrar`.
+//! `cargo truce reset-au` — flush macOS Audio Unit caches and restart
+//! `pkd` / `AudioComponentRegistrar`.
 //!
-//! Narrowly Apple-platform: clears `~/Library/Caches/AudioUnitCache`,
-//! the GarageBand / Logic container caches, the Reaper AU plist, the
-//! Pro Tools AAX cache at `/Users/Shared/Pro Tools/AAXPlugInCache`,
-//! pluginkit registrations, and the AU v3 build scratch under
-//! `target/tmp/au_v3_*`. CLAP / VST3 / VST2 / LV2 are unaffected — those
-//! formats let DAWs manage their own caches; macOS just doesn't.
+//! macOS-only. Clears `~/Library/Caches/AudioUnitCache`, the GarageBand
+//! / Logic container caches, the Reaper AU plist, pluginkit
+//! registrations, and the AU v3 build scratch under `target/tmp/au_v3_*`.
+//! Does **not** touch Pro Tools AAX caches — see `cargo truce reset-aax`
+//! for that. CLAP / VST3 / VST2 / LV2 are unaffected; those formats let
+//! their host DAWs manage caches.
 
 use crate::Res;
 
 #[cfg(not(target_os = "macos"))]
-pub(crate) fn cmd_reset_au_aax(_args: &[String]) -> Res {
+pub(crate) fn cmd_reset_au(_args: &[String]) -> Res {
     Err(
-        "`cargo truce reset-au-aax` is macOS-only — it flushes Apple's \
-         AU caches and restarts `pkd` / `AudioComponentRegistrar`, neither \
+        "`cargo truce reset-au` is macOS-only — it flushes Apple's AU \
+         caches and restarts `pkd` / `AudioComponentRegistrar`, neither \
          of which exist on Linux or Windows. CLAP / VST3 / VST2 / LV2 \
          let their host DAWs manage caches; restart your DAW if a plugin \
          is stuck."
@@ -23,10 +23,10 @@ pub(crate) fn cmd_reset_au_aax(_args: &[String]) -> Res {
 }
 
 #[cfg(target_os = "macos")]
-pub(crate) fn cmd_reset_au_aax(args: &[String]) -> Res {
+pub(crate) fn cmd_reset_au(args: &[String]) -> Res {
     use crate::{confirm_prompt, dirs, load_config, run_silent, tmp_dir};
     use std::fs;
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
     use std::process::Command;
 
     let mut yes = false;
@@ -39,9 +39,9 @@ pub(crate) fn cmd_reset_au_aax(args: &[String]) -> Res {
 
     if !yes
         && !confirm_prompt(
-            "Reset macOS Audio Unit + Pro Tools AAX caches and restart `pkd` / \
-             `AudioComponentRegistrar`? This deletes cached plugin metadata, \
-             resets pluginkit registrations, and wipes the AAX cache.",
+            "Reset macOS Audio Unit caches and restart `pkd` / \
+             `AudioComponentRegistrar`? This deletes cached plugin \
+             metadata and resets pluginkit registrations.",
         )
     {
         eprintln!("Cancelled.");
@@ -119,23 +119,6 @@ pub(crate) fn cmd_reset_au_aax(args: &[String]) -> Res {
                     .args(["-f", "-R", &app_path])
                     .output();
                 eprintln!("  Re-registered: {app_path}");
-            }
-        }
-    }
-
-    // AAX plugin cache (Pro Tools)
-    let aax_cache = PathBuf::from("/Users/Shared/Pro Tools/AAXPlugInCache");
-    if aax_cache.exists() {
-        if let Ok(entries) = fs::read_dir(&aax_cache) {
-            for entry in entries.flatten() {
-                let name = entry.file_name();
-                let name = name.to_string_lossy();
-                if let Ok(ref config) = load_config() {
-                    if name.contains(&config.vendor.name) {
-                        let _ = fs::remove_file(entry.path());
-                        eprintln!("  Removed AAX cache: {}", name);
-                    }
-                }
             }
         }
     }

@@ -60,10 +60,11 @@ pub fn run(args: &[String]) -> ExitCode {
         "test" => commands::test::cmd_test(),
         "status" => commands::status::cmd_status(),
         "clean" => commands::clean::cmd_clean(&args[1..]),
-        "reset-au-aax" => commands::reset_au_aax::cmd_reset_au_aax(&args[1..]),
+        "reset-au" => commands::reset_au::cmd_reset_au(&args[1..]),
+        "reset-aax" => commands::reset_aax::cmd_reset_aax(&args[1..]),
         "validate" => commands::validate::cmd_validate(&args[1..]),
         "doctor" => commands::doctor::cmd_doctor(),
-        "log" => commands::log::cmd_log(),
+        "log-stream-au" => commands::log_stream_au::cmd_log_stream_au(),
         "help" | "--help" | "-h" => {
             print_help();
             Ok(())
@@ -117,13 +118,19 @@ Commands:
       notarized installers — expensive to rebuild). Pass `--all` to
       wipe everything, equivalent to a bare `cargo clean`. Does not
       touch installed plugin bundles or AU / AAX host caches — see
-      `remove` and `reset-au-aax` for those.
+      `remove`, `reset-au`, and `reset-aax` for those.
       --all        Also remove `target/dist/`
 
-  reset-au-aax [--yes]
-      macOS-only. Flush Audio Unit + Pro Tools AAX caches and restart
-      `pkd` / `AudioComponentRegistrar`. CLAP / VST3 / VST2 / LV2 are
-      unaffected. Asks for confirmation by default.
+  reset-au [--yes]
+      macOS-only. Flush Audio Unit caches and restart `pkd` /
+      `AudioComponentRegistrar`. Use when AU bundles are stuck
+      serving stale binaries. CLAP / VST3 / VST2 / LV2 unaffected.
+      --yes        Skip confirmation prompt
+
+  reset-aax [--yes]
+      macOS-only. Wipe this vendor's entries from the Pro Tools AAX
+      cache (`/Users/Shared/Pro Tools/AAXPlugInCache`). Pro Tools
+      re-scans AAX plugins on next launch.
       --yes        Skip confirmation prompt
 
   remove [--clap] [--vst3] [--vst2] [--au2] [--au3] [--aax] [-p <crate>] [-n <name>] [--stale] [--dry-run] [--yes]
@@ -146,8 +153,10 @@ Commands:
       --all        Run all available validators (default)
       -p <crate>   Validate only the plugin with this cargo crate name
 
-  log
-      Stream AU v3 appex logs (NSLog output from the extension process).
+  log-stream-au
+      macOS-only. Tail AU v3 appex logs live (`os_log` output from the
+      Swift wrapper, subsystem `com.truce.au3`). Forward-only — for
+      historical entries use `log show --last <duration>` directly.
       Press Ctrl-C to stop.
 
   package [-p <crate>] [--formats clap,vst3,...] [--no-notarize]

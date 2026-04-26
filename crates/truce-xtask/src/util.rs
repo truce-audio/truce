@@ -427,7 +427,7 @@ pub(crate) fn run_codesign(args: &[&str], use_sudo: bool) -> crate::Res {
 /// systems and shouldn't clutter the install log. No sudo: both
 /// daemons run in the user's launchd session, so the user can kill
 /// their own processes. Only used by macOS-side AU v3 install +
-/// `reset-au-aax`.
+/// `reset-au`.
 #[cfg(target_os = "macos")]
 pub(crate) fn run_silent(cmd: &str, args: &[&str]) {
     use std::process::Stdio;

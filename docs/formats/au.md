@@ -78,7 +78,7 @@ on their own. The container app is a minimal stub that exists only
 to host the appex; you don't interact with it.
 
 After an AU v3 install, `pkd` (the PluginKit daemon) picks up the
-new extension. If a host doesn't see it, run `cargo truce reset-au-aax`
+new extension. If a host doesn't see it, run `cargo truce reset-au`
 to flush `pkd` caches and restart the daemon for a clean re-scan.
 
 ## Identifiers
@@ -141,7 +141,7 @@ extension doesn't land in the DAW's log — it goes to unified
 logging. Stream it live with:
 
 ```sh
-cargo truce log
+cargo truce log-stream-au
 ```
 
 Useful when the AU v3 GUI is black, the appex crashes on load, or
@@ -170,10 +170,11 @@ parameters don't sync.
   under `/Library` / `/Applications` which need elevation. `cargo
   truce install` will prompt.
 - **Host caches are sticky.** If a plugin appears broken after
-  changing IDs or reinstalling, `cargo truce reset-au-aax` flushes
-  AU + Pro Tools AAX caches and restarts `pkd` /
-  `AudioComponentRegistrar`. If that doesn't help, follow up with
-  `cargo truce remove --au2 --au3 -p <crate>` and reinstall.
+  changing IDs or reinstalling, `cargo truce reset-au` flushes the AU
+  caches and restarts `pkd` / `AudioComponentRegistrar` (use
+  `cargo truce reset-aax` for the Pro Tools AAX cache). If that
+  doesn't help, follow up with `cargo truce remove --au2 --au3 -p
+  <crate>` and reinstall.
 - **v2 and v3 collision.** If `au3_subtype` equals `fourcc`, hosts
   may only surface one of them. Use distinct subtypes (e.g. `MyFx`
   and `MyF3`) if both must coexist.

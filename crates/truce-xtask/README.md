@@ -29,7 +29,7 @@ CLAP / VST2 single-file installs via Inno Setup `Check:` predicates.
 | `clean` | Drop scratch under `target/tmp/`, clear AU / DAW caches. |
 | `nuke` | Uninstall every truce plugin + restart `pkd` / `AudioComponentRegistrar`. Recovery tool. |
 | `doctor` | Preflight: toolchain, SDKs, signing identities, rustup targets. |
-| `log` | Tail recent unified-log entries from loaded plugins. |
+| `log-stream-au` | macOS-only. Live-tail AU v3 appex `os_log` output (subsystem `com.truce.au3`). Forward-only. |
 
 Scaffolding (`new`, `new-workspace`) lives in `cargo-truce` directly —
 not here.
