@@ -673,6 +673,28 @@ pub(crate) fn cargo_build(
     extra_args: &[&str],
     deployment_target: &str,
 ) -> crate::Res {
+    cargo_build_inner(env_vars, extra_args, deployment_target, true)
+}
+
+/// Like `cargo_build` but compiles with the cargo dev profile (no
+/// `--release`). Used by paths where compile speed matters more than
+/// runtime speed — e.g. `cargo truce screenshot --debug`. Never used
+/// for `install` / `package`: a debug-built plugin in a real DAW
+/// misses real-time deadlines.
+pub(crate) fn cargo_build_debug(
+    env_vars: &[(&str, &str)],
+    extra_args: &[&str],
+    deployment_target: &str,
+) -> crate::Res {
+    cargo_build_inner(env_vars, extra_args, deployment_target, false)
+}
+
+fn cargo_build_inner(
+    env_vars: &[(&str, &str)],
+    extra_args: &[&str],
+    deployment_target: &str,
+    release: bool,
+) -> crate::Res {
     // If the caller passed `--target <triple>`, make sure rustup has
     // it installed before firing cargo. Catches the common "cross-arch
     // build fails with E0463 can't find crate for core" failure mode.
@@ -691,7 +713,10 @@ pub(crate) fn cargo_build(
     }
 
     let mut cmd = Command::new("cargo");
-    cmd.arg("build").arg("--release");
+    cmd.arg("build");
+    if release {
+        cmd.arg("--release");
+    }
     #[cfg(target_os = "macos")]
     cmd.env("MACOSX_DEPLOYMENT_TARGET", deployment_target);
     for (k, v) in env_vars {

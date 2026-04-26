@@ -92,10 +92,16 @@ Usage: cargo truce <command> [options]
 
 Commands:
   install [--clap] [--vst3] [--vst2] [--au2] [--au3] [--aax] [--hot-reload] [--no-build] [-p <crate>]
-      Build and install plugins. Defaults to whichever formats are in the
-      plugin's Cargo.toml default features (typically clap + vst3). VST2, AU,
-      and AAX are opt-in and must be enabled explicitly via these flags or
-      by adding them to the plugin's default features.
+      Build (release profile) and install plugins. Plugins always
+      build release because audio threads can't tolerate debug-build
+      DSP overhead — debug bundles dropout in real DAWs. This differs
+      from `cargo build`'s debug default; for compile-speed iteration
+      see `cargo truce screenshot --debug`.
+
+      Defaults to whichever formats are in the plugin's Cargo.toml
+      default features (typically clap + vst3). VST2, AU, and AAX are
+      opt-in and must be enabled explicitly via these flags or by
+      adding them to the plugin's default features.
       --clap         CLAP only (no sudo)
       --vst3         VST3 only
       --vst2         VST2 only (legacy format — see truce/Cargo.toml note)
@@ -165,6 +171,10 @@ Commands:
 
   build [--clap] [--vst3] [--vst2] [--lv2] [--au2] [--au3] [--aax] [-p <crate>] [--hot-reload]
       Build per-format bundles into target/bundles/ without installing.
+      Always release profile (see `install` above for why); use
+      `cargo truce screenshot --debug` if you need fast-compile
+      iteration outside a DAW.
+
       Defaults match `install`: when no format flags are passed, every
       format in the project's default Cargo features is built.
       --clap         CLAP only

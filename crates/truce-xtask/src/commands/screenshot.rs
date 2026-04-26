@@ -9,7 +9,9 @@
 //! cdylib (the same artifact the CLAP/VST3 wrappers use). This command
 //! builds the cdylib, `dlopen`s it, and calls the symbol.
 
-use crate::{cargo_build, deployment_target, load_config, project_root, Res};
+use crate::{
+    cargo_build, cargo_build_debug, deployment_target, load_config, project_root, Res,
+};
 use std::path::{Path, PathBuf};
 
 /// Maximum byte length of a returned PNG path. 4 KiB is well over any
@@ -23,6 +25,7 @@ type ScreenshotFn = unsafe extern "C" fn(*const u8, usize, *mut u8, usize) -> us
 pub(crate) fn cmd_screenshot(args: &[String]) -> Res {
     let mut plugin_filter: Option<String> = None;
     let mut name_override: Option<String> = None;
+    let mut debug = false;
 
     let mut i = 0;
     while i < args.len() {
@@ -39,6 +42,7 @@ pub(crate) fn cmd_screenshot(args: &[String]) -> Res {
                 i += 1;
                 name_override = Some(args.get(i).cloned().ok_or("--name requires a value")?);
             }
+            "--debug" => debug = true,
             "--help" | "-h" => {
                 print_help();
                 return Ok(());
@@ -86,13 +90,14 @@ pub(crate) fn cmd_screenshot(args: &[String]) -> Res {
         // No format features needed — the screenshot symbol is emitted
         // unconditionally by `truce::plugin!`. Skip CLAP/VST3/etc.
         // compilation for a faster build.
-        cargo_build(
-            &[],
-            &["-p", &plugin.crate_name, "--no-default-features", "--lib"],
-            dt,
-        )?;
+        let build_args = ["-p", &plugin.crate_name, "--no-default-features", "--lib"];
+        if debug {
+            cargo_build_debug(&[], &build_args, dt)?;
+        } else {
+            cargo_build(&[], &build_args, dt)?;
+        }
 
-        let lib_path = cdylib_path(&root, &plugin.crate_name);
+        let lib_path = cdylib_path(&root, &plugin.crate_name, debug);
         if !lib_path.exists() {
             return Err(format!(
                 "cdylib not found at {}. Plugin must declare \
@@ -109,18 +114,19 @@ pub(crate) fn cmd_screenshot(args: &[String]) -> Res {
     Ok(())
 }
 
-/// Resolve `target/release/lib<crate>.<ext>` for the host platform.
-/// Cargo replaces `-` with `_` in the crate name when forming the
-/// shared-library filename.
-fn cdylib_path(root: &Path, crate_name: &str) -> PathBuf {
+/// Resolve `target/{release,debug}/lib<crate>.<ext>` for the host
+/// platform. Cargo replaces `-` with `_` in the crate name when
+/// forming the shared-library filename.
+fn cdylib_path(root: &Path, crate_name: &str, debug: bool) -> PathBuf {
     let normalized = crate_name.replace('-', "_");
-    let release = root.join("target").join("release");
+    let profile_dir = if debug { "debug" } else { "release" };
+    let dir = root.join("target").join(profile_dir);
     if cfg!(target_os = "macos") {
-        release.join(format!("lib{normalized}.dylib"))
+        dir.join(format!("lib{normalized}.dylib"))
     } else if cfg!(target_os = "windows") {
-        release.join(format!("{normalized}.dll"))
+        dir.join(format!("{normalized}.dll"))
     } else {
-        release.join(format!("lib{normalized}.so"))
+        dir.join(format!("lib{normalized}.so"))
     }
 }
 
@@ -164,7 +170,7 @@ unsafe fn call_screenshot(lib_path: &Path, name: &str) -> Result<String, crate::
 fn print_help() {
     eprintln!(
         "\
-Usage: cargo truce screenshot [-p <crate>] [--name <name>]
+Usage: cargo truce screenshot [-p <crate>] [--name <name>] [--debug]
 
 Render a plugin's editor headlessly and save the PNG to
 target/screenshots/<name>.png.
@@ -172,9 +178,11 @@ target/screenshots/<name>.png.
 Options:
   -p <crate>     plugin crate name (default: every plugin in truce.toml)
   --name <name>  output filename stem (default: <bundle_id>_screenshot)
+  --debug        cargo dev profile (faster compile, slower run). Default
+                 is release — matches every other `cargo truce` build.
 
-Builds each plugin's cdylib (`cargo build --release --no-default-features
---lib`), dlopens it, and calls the `__truce_screenshot` symbol exported
-by the `truce::plugin!` macro. No per-plugin scaffolding required."
+Builds each plugin's cdylib, dlopens it, and calls the
+`__truce_screenshot` symbol exported by the `truce::plugin!` macro. No
+per-plugin scaffolding required."
     );
 }
