@@ -18,8 +18,7 @@ use std::path::{Path, PathBuf};
 /// error rather than silently writing a half-path.
 const PATH_BUF_CAP: usize = 4096;
 
-type ScreenshotFn =
-    unsafe extern "C" fn(*const u8, usize, *mut u8, usize) -> usize;
+type ScreenshotFn = unsafe extern "C" fn(*const u8, usize, *mut u8, usize) -> usize;
 
 pub(crate) fn cmd_screenshot(args: &[String]) -> Res {
     let mut plugin_filter: Option<String> = None;
@@ -89,12 +88,7 @@ pub(crate) fn cmd_screenshot(args: &[String]) -> Res {
         // compilation for a faster build.
         cargo_build(
             &[],
-            &[
-                "-p",
-                &plugin.crate_name,
-                "--no-default-features",
-                "--lib",
-            ],
+            &["-p", &plugin.crate_name, "--no-default-features", "--lib"],
             dt,
         )?;
 
@@ -140,13 +134,14 @@ fn cdylib_path(root: &Path, crate_name: &str) -> PathBuf {
 unsafe fn call_screenshot(lib_path: &Path, name: &str) -> Result<String, crate::BoxErr> {
     let lib = libloading::Library::new(lib_path)
         .map_err(|e| format!("failed to dlopen {}: {e}", lib_path.display()))?;
-    let screenshot: libloading::Symbol<ScreenshotFn> = lib
-        .get(b"__truce_screenshot\0")
-        .map_err(|e| format!(
-            "{}: __truce_screenshot symbol not found ({e}). \
+    let screenshot: libloading::Symbol<ScreenshotFn> =
+        lib.get(b"__truce_screenshot\0").map_err(|e| {
+            format!(
+                "{}: __truce_screenshot symbol not found ({e}). \
              Was this plugin built with `truce::plugin!{{ ... }}`?",
-            lib_path.display()
-        ))?;
+                lib_path.display()
+            )
+        })?;
 
     let name_bytes = name.as_bytes();
     let mut out_buf = vec![0u8; PATH_BUF_CAP];
