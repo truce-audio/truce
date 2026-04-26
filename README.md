@@ -1,6 +1,6 @@
 # truce
 
-Build audio plugins in Rust. Build CLAP, VST3, VST2, LV2, AU v2, AU v3,
+Build audio plugins in Rust. CLAP, VST3, VST2, LV2, AU v2, AU v3,
 AAX, and standalone from a single Rust codebase.
 
 [![macOS](https://github.com/truce-audio/truce/actions/workflows/ci-macos.yml/badge.svg)](https://github.com/truce-audio/truce/actions/workflows/ci-macos.yml)
