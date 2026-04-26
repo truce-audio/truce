@@ -36,7 +36,7 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
     let mut au3 = false;
     let mut aax = false;
     let mut no_build = false;
-    let mut dev_mode = false;
+    let mut hot_reload = false;
     let mut plugin_filter: Option<String> = None;
 
     let mut i = 0;
@@ -50,7 +50,7 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
             "--au3" => au3 = true,
             "--aax" => aax = true,
             "--no-build" => no_build = true,
-            "--dev" => dev_mode = true,
+            "--hot-reload" => hot_reload = true,
             "-p" => {
                 i += 1;
                 if i >= args.len() {
@@ -109,8 +109,8 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
     let dt = &deployment_target();
 
     let mut extra_features = Vec::new();
-    if dev_mode {
-        extra_features.push("dev");
+    if hot_reload {
+        extra_features.push("hot-reload");
     }
 
     // --- Build ---
@@ -324,7 +324,7 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
 
         // In dev mode, also build the debug dylibs (the logic that
         // the hot-reload shells watch and load).
-        if dev_mode {
+        if hot_reload {
             crate::vprintln!("Building debug dylibs (logic for hot-reload)...");
             let mut cmd = Command::new("cargo");
             cmd.arg("build").arg("--workspace");

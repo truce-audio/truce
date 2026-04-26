@@ -75,7 +75,7 @@ cargo truce build                    # every default format
 cargo truce build --clap --vst3      # subset
 cargo truce build --au3              # AU v3 .app, fully signed
 cargo truce build --aax              # AAX .aaxplugin, fully signed
-cargo truce build --dev              # hot-reload shell build
+cargo truce build --hot-reload              # hot-reload shell build
 ```
 
 Every format flag produces a complete, signed bundle in

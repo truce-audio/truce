@@ -8,7 +8,7 @@
 | 4 | [parameters.md](parameters.md) | `#[derive(Params)]`, `#[param(...)]` attributes, smoothing, meters |
 | 5 | [processing.md](processing.md) | `process()` patterns for effects, MIDI, sample-accurate events, synths |
 | 6 | [gui.md](gui.md) | Built-in GUI widgets + the alternative backends |
-| 7 | [hot-reload.md](hot-reload.md) | ~2 second edit → hear loop with `--features dev` |
+| 7 | [hot-reload.md](hot-reload.md) | ~2 second edit → hear loop with `--features hot-reload` |
 | 8 | [shipping.md](shipping.md) | `cargo truce install / build / validate / package`, signing, installers |
 
 ## See also

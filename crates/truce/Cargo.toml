@@ -24,7 +24,7 @@ clap = ["dep:truce-clap"]
 vst3 = ["dep:truce-vst3"]
 vst2 = ["dep:truce-vst2"]
 lv2 = ["dep:truce-lv2"]
-dev = ["truce-loader/shell"]
+hot-reload = ["truce-loader/shell"]
 hot-debug = ["truce-loader/hot-debug"]
 
 [dependencies.truce-clap]

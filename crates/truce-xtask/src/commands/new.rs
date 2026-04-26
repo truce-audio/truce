@@ -63,7 +63,7 @@ lv2 = ["dep:truce-lv2"]
 au = ["dep:truce-au"]
 aax = ["dep:truce-aax"]
 standalone = ["dep:truce-standalone"]
-dev = ["truce/dev"]
+hot-reload = ["truce/hot-reload"]
 
 # Direct git refs keep the plugin self-contained — works in any
 # workspace regardless of which `truce-*` crates its root

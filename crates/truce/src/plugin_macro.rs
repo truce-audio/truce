@@ -17,18 +17,19 @@
 ///
 /// # Hot-reload
 ///
-/// Add a `dev` feature to your Cargo.toml and build the shell with
-/// `--features dev --release`. The logic dylib is built normally
-/// (`cargo build`). The shell watches for changes and hot-reloads.
+/// Add a `hot-reload` feature to your Cargo.toml and build the shell
+/// with `--features hot-reload --release`. The logic dylib is built
+/// normally (`cargo build`). The shell watches for changes and
+/// hot-reloads.
 ///
 /// ```toml
 /// [features]
-/// dev = []
+/// hot-reload = ["truce/hot-reload"]
 /// ```
 ///
 /// ```bash
-/// cargo build --release --features dev  # one-time: install shell
-/// cargo watch -x build                  # iterate: logic hot-reloads
+/// cargo build --release --features hot-reload  # one-time: install shell
+/// cargo watch -x build                         # iterate: logic hot-reloads
 /// ```
 ///
 /// Zero code changes. Same `truce::plugin!` macro.
@@ -63,7 +64,7 @@ macro_rules! __plugin_impl {
 
         // --- Static mode (default) ---
         // Embed the logic directly. Zero overhead.
-        #[cfg(not(feature = "dev"))]
+        #[cfg(not(feature = "hot-reload"))]
         $crate::__reexport::export_static! {
             params: $params,
             info: $crate::prelude::plugin_info!(),
@@ -71,10 +72,10 @@ macro_rules! __plugin_impl {
             logic: $logic,
         }
 
-        // --- Dev mode (hot-reload) ---
+        // --- Hot-reload mode ---
         // Load the logic from a dylib. Same crate, debug build.
-        #[cfg(feature = "dev")]
-        $crate::__plugin_dev!($params, [$($layout),*]);
+        #[cfg(feature = "hot-reload")]
+        $crate::__plugin_hot_reload!($params, [$($layout),*]);
 
         /// FFI export driven by `cargo truce screenshot`. Renders the
         /// plugin's editor headlessly and writes the saved PNG path
@@ -125,15 +126,16 @@ macro_rules! __plugin_impl {
     };
 }
 
-/// Dev mode: generate a hot-reload shell that loads the logic from
-/// this same crate's debug-build dylib.
+/// Hot-reload mode: generate a shell that loads the logic from this
+/// same crate's debug-build dylib.
 ///
-/// The developer builds the shell once with `--features dev --release`
-/// and iterates with `cargo build` (debug, fast). The shell watches
-/// `target/debug/lib{crate_name}.dylib` for changes.
+/// The developer builds the shell once with
+/// `--features hot-reload --release` and iterates with `cargo build`
+/// (debug, fast). The shell watches `target/debug/lib{crate_name}.dylib`
+/// for changes.
 #[doc(hidden)]
 #[macro_export]
-macro_rules! __plugin_dev {
+macro_rules! __plugin_hot_reload {
     ($params:ty, [$($layout:expr),*]) => {
         pub struct __HotShellWrapper {
             inner: $crate::__reexport::HotShell<$params>,

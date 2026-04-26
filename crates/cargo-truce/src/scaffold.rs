@@ -82,7 +82,7 @@ crate-type = ["cdylib", "rlib"]
 default = ["clap", "vst3"]
 clap = ["dep:truce-clap", "dep:clap-sys"]
 vst3 = ["dep:truce-vst3"]
-dev = ["truce/dev"]
+hot-reload = ["truce/hot-reload"]
 
 [dependencies]
 truce = {{ git = "https://github.com/truce-audio/truce" }}
@@ -124,7 +124,7 @@ crate-type = ["cdylib", "rlib"]
 default = ["clap", "vst3"]
 clap = ["dep:truce-clap", "dep:clap-sys"]
 vst3 = ["dep:truce-vst3"]
-dev = ["truce/dev"]
+hot-reload = ["truce/hot-reload"]
 
 [dependencies]
 truce = {{ workspace = true }}

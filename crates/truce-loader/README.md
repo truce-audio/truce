@@ -14,7 +14,7 @@ it via `#[no_mangle]` functions. The shell loads the dylib with `libloading`,
 verifies ABI compatibility, and delegates audio processing and GUI rendering to
 the trait object.
 
-This is the infrastructure behind the `dev` feature flag in the `truce` crate.
+This is the infrastructure behind the `hot-reload` feature flag in the `truce` crate.
 
 ## Key types
 
@@ -34,7 +34,7 @@ Enable hot-reload during development:
 
 ```toml
 [dependencies]
-truce = { git = "https://github.com/truce-audio/truce", features = ["dev"] }
+truce = { git = "https://github.com/truce-audio/truce", features = ["hot-reload"] }
 ```
 
 Part of [truce](https://github.com/truce-audio/truce).

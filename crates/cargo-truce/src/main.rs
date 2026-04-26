@@ -81,7 +81,7 @@ USAGE:
       Build, bundle, sign, and install plugins.
 
   cargo truce build [--clap] [--vst3] [--vst2] [--lv2] [--au2] [--au3]
-                    [--aax] [-p <crate>] [--dev]
+                    [--aax] [-p <crate>] [--hot-reload]
       Build signed per-format bundles into target/bundles/ without
       installing. No format flags → every format in the project's
       default features.

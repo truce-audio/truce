@@ -6,7 +6,7 @@ Updated 2026-04-25. Version 0.11.1.
 
 7 format wrappers (CLAP, VST3, VST2, AU v2, AU v3, AAX, LV2), 9
 example plugins, 7 widget types, tested in 7 DAWs. All formats have
-custom GUI. Hot-reload via `--features dev`. Single `truce::plugin!`
+custom GUI. Hot-reload via `--features hot-reload`. Single `truce::plugin!`
 macro for all exports. No build.rs needed. Four GUI backends: built-in
 (tiny-skia/wgpu), egui, iced, and slint.
 
@@ -105,10 +105,10 @@ Column/row spanning via `.cols(n)` / `.rows(n)`. Sections via
 
 ## Hot-reload
 
-`--features dev` on the same crate. No shell/logic split needed.
+`--features hot-reload` on the same crate. No shell/logic split needed.
 
 ```bash
-cargo truce install --dev    # install hot-reload shells + debug dylibs
+cargo truce install --hot-reload    # install hot-reload shells + debug dylibs
 cargo watch -x build         # iterate
 ```
 
@@ -117,7 +117,7 @@ Native Rust ABI, ABI canary + vtable probe verification.
 CRC32 content check, macOS codesign, leak-don't-close.
 
 **GUI hot-reload (built-in GUI):** Layout changes update seamlessly
-in `--dev` mode. The `HotEditor` wrapper watches for dylib changes
+in `--hot-reload` mode. The `HotEditor` wrapper watches for dylib changes
 and swaps the `BuiltinEditor` inside a shared mutex — no window
 flash, no manual close/reopen. DSP changes reload the same way.
 Custom editors (egui, iced, slint) require manually closing and
@@ -130,7 +130,7 @@ provides the user-facing CLI.
 
 ```sh
 cargo truce install              # all formats, GPU rendering (default)
-cargo truce install --dev        # all formats, hot-reload
+cargo truce install --hot-reload        # all formats, hot-reload
 cargo truce install -p my-gain   # single plugin (cargo crate name)
 cargo truce install --clap       # CLAP only
 cargo truce package              # signed .pkg / .exe installer in target/dist/

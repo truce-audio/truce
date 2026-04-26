@@ -39,7 +39,7 @@ cargo truce install --aax        # AAX (requires AAX SDK)
 
 cargo truce build                # bundle all formats into target/bundles/ without installing
 cargo truce build --clap --vst3  # subset of formats
-cargo truce build --dev          # hot-reload shell build (see docs/reference/hot-reload.md)
+cargo truce build --hot-reload          # hot-reload shell build (see docs/reference/hot-reload.md)
 
 cargo truce run                  # launch the plugin standalone (no DAW)
 cargo truce run -p my-plugin     # standalone for a specific crate

@@ -27,7 +27,7 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
     let mut au2 = false;
     let mut au3 = false;
     let mut aax = false;
-    let mut dev_mode = false;
+    let mut hot_reload = false;
     let mut plugin_filter: Option<String> = None;
 
     let mut i = 0;
@@ -40,7 +40,7 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
             "--au2" => au2 = true,
             "--au3" => au3 = true,
             "--aax" => aax = true,
-            "--dev" => dev_mode = true,
+            "--hot-reload" => hot_reload = true,
             "-p" => {
                 i += 1;
                 plugin_filter = Some(
@@ -101,7 +101,7 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
     let bundles_dir = root.join("target/bundles");
     fs_ctx::create_dir_all(&bundles_dir)?;
 
-    let extra_features: Vec<&str> = if dev_mode { vec!["dev"] } else { vec![] };
+    let extra_features: Vec<&str> = if hot_reload { vec!["hot-reload"] } else { vec![] };
 
     // --- Build dylibs per format ---
     //
@@ -314,7 +314,7 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
 
     // In dev mode, also build the debug dylibs (the logic that the
     // hot-reload shells watch and load).
-    if dev_mode {
+    if hot_reload {
         crate::vprintln!("Building debug dylibs (logic for hot-reload)...");
         let mut cmd = Command::new("cargo");
         cmd.arg("build").arg("--workspace");

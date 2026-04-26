@@ -91,21 +91,21 @@ fn print_help() {
 Usage: cargo truce <command> [options]
 
 Commands:
-  install [--clap] [--vst3] [--vst2] [--au2] [--au3] [--aax] [--dev] [--no-build] [-p <crate>]
+  install [--clap] [--vst3] [--vst2] [--au2] [--au3] [--aax] [--hot-reload] [--no-build] [-p <crate>]
       Build and install plugins. Defaults to whichever formats are in the
       plugin's Cargo.toml default features (typically clap + vst3). VST2, AU,
       and AAX are opt-in and must be enabled explicitly via these flags or
       by adding them to the plugin's default features.
-      --clap       CLAP only (no sudo)
-      --vst3       VST3 only
-      --vst2       VST2 only (legacy format — see truce/Cargo.toml note)
-      --au2        AU v2 only (.component, macOS only)
-      --au3        AU v3 only (.appex, requires Xcode, macOS only)
-      --aax        AAX only (requires pre-built template)
-      --dev        Build hot-reload shells (use with cargo watch for iteration)
-      --no-build   Skip build, install existing artifacts
-      -p <crate>   Install only the plugin with this cargo crate name
-                   (e.g. -p truce-example-gain)
+      --clap         CLAP only (no sudo)
+      --vst3         VST3 only
+      --vst2         VST2 only (legacy format — see truce/Cargo.toml note)
+      --au2          AU v2 only (.component, macOS only)
+      --au3          AU v3 only (.appex, requires Xcode, macOS only)
+      --aax          AAX only (requires pre-built template)
+      --hot-reload   Build hot-reload shells (use with cargo watch for iteration)
+      --no-build     Skip build, install existing artifacts
+      -p <crate>     Install only the plugin with this cargo crate name
+                     (e.g. -p truce-example-gain)
 
   test
       Run all plugin tests (render, state, params, metadata).
@@ -163,20 +163,20 @@ Commands:
       Build, sign, and package plugins into macOS .pkg installers.
       Output goes to `target/dist/`.
 
-  build [--clap] [--vst3] [--vst2] [--lv2] [--au2] [--au3] [--aax] [-p <crate>] [--dev]
+  build [--clap] [--vst3] [--vst2] [--lv2] [--au2] [--au3] [--aax] [-p <crate>] [--hot-reload]
       Build per-format bundles into target/bundles/ without installing.
       Defaults match `install`: when no format flags are passed, every
       format in the project's default Cargo features is built.
-      --clap       CLAP only
-      --vst3       VST3 only
-      --vst2       VST2 only
-      --lv2        LV2 only
-      --au2        AU v2 only (.component, macOS only)
-      --au3        AU v3 only (.appex inside .app, macOS only)
-      --aax        AAX only (requires pre-built SDK + template)
-      -p <crate>   Build only the plugin with this cargo crate name
-      --dev        Add the `dev` feature and also build debug dylibs
-                   (the logic libs the hot-reload shells watch)
+      --clap         CLAP only
+      --vst3         VST3 only
+      --vst2         VST2 only
+      --lv2          LV2 only
+      --au2          AU v2 only (.component, macOS only)
+      --au3          AU v3 only (.appex inside .app, macOS only)
+      --aax          AAX only (requires pre-built SDK + template)
+      -p <crate>     Build only the plugin with this cargo crate name
+      --hot-reload   Add the `hot-reload` feature and also build debug
+                     dylibs (the logic libs the hot-reload shells watch)
 
   run [-p <crate>] [-- <args>]
       Build and run a plugin standalone.

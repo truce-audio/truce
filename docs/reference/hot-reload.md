@@ -7,7 +7,7 @@ No DAW restart. No plugin window close. Same source file, same
 ## Setup
 
 The default `cargo truce new` scaffold produces a single-crate
-plugin with the `dev` feature pre-wired:
+plugin with the `hot-reload` feature pre-wired:
 
 ```toml
 [features]
@@ -20,13 +20,13 @@ dev      = ["truce/dev"]     # ← the hot-reload feature
 
 ```sh
 # One-time: build and install the hot-reload shell.
-cargo truce install --dev
+cargo truce install --hot-reload
 
 # Iterate: rebuild the logic dylib on every save (debug, fast).
 cargo watch -x "build -p my-plugin"
 ```
 
-`--dev` flips the `dev` feature on, which makes `truce::plugin!`
+`--hot-reload` flips the `hot-reload` feature on, which makes `truce::plugin!`
 expand into a shell that loads your `PluginLogic` out of a
 separate dylib. The shell watches the dylib for content changes
 and swaps in the new one while the plugin is live.
@@ -34,7 +34,7 @@ and swaps in the new one while the plugin is live.
 When you're done iterating, ship the release build:
 
 ```sh
-cargo truce install          # no --dev = static, zero overhead
+cargo truce install          # no --hot-reload = static, zero overhead
 ```
 
 Zero code changes between dev and release.
@@ -68,7 +68,7 @@ reopen the plugin window to see layout changes in the custom UI.
 | Bus layout | Host configures at init. |
 
 Changing any of these requires rebuilding the shell
-(`cargo truce install --dev`) and having the host rescan. That's
+(`cargo truce install --hot-reload`) and having the host rescan. That's
 rare — most iteration is on DSP and GUI layout.
 
 ## How it works

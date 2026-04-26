@@ -154,13 +154,13 @@ credentials) go in `.cargo/config.toml` (gitignored), **not** here.
 ```toml
 [features]
 default = ["clap", "vst3"]
-clap = ["truce/clap"]
-vst3 = ["truce/vst3"]
-vst2 = ["truce/vst2"]
-lv2  = ["truce/lv2"]
-au   = ["truce/au"]
-aax  = ["truce/aax"]
-dev  = ["truce/dev"]
+clap       = ["truce/clap"]
+vst3       = ["truce/vst3"]
+vst2       = ["truce/vst2"]
+lv2        = ["truce/lv2"]
+au         = ["truce/au"]
+aax        = ["truce/aax"]
+hot-reload = ["truce/hot-reload"]
 ```
 
 Scaffolded plugins enable CLAP + VST3 by default. Add more formats
@@ -271,7 +271,7 @@ Closing and reopening the plugin for every edit gets old fast. Turn
 on hot reload:
 
 ```sh
-cargo truce install --dev      # one-time: installs the hot-reload shell
+cargo truce install --hot-reload      # one-time: installs the hot-reload shell
 cargo watch -x "build -p my-gain"
 ```
 
@@ -280,7 +280,7 @@ no window close. When you're done iterating, ship the static
 release build:
 
 ```sh
-cargo truce install            # no --dev = static, zero overhead
+cargo truce install            # no --hot-reload = static, zero overhead
 ```
 
 Full story in [chapter 7 → hot-reload.md](hot-reload.md).

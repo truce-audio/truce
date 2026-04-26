@@ -23,7 +23,7 @@ lv2 = ["dep:truce-lv2"]
 aax = ["dep:truce-aax"]
 au = ["dep:truce-au"]
 standalone = ["dep:truce-standalone"]
-dev = ["truce/dev"]
+hot-reload = ["truce/hot-reload"]
 
 [dependencies]
 truce = { workspace = true }
