@@ -164,8 +164,8 @@ fn cmd_new(args: &[String]) -> Res {
         }
     }
 
-    let name = name
-        .ok_or("Usage: cargo truce new <name> [--instrument] [--midi] [--no-standalone]")?;
+    let name =
+        name.ok_or("Usage: cargo truce new <name> [--instrument] [--midi] [--no-standalone]")?;
 
     if Path::new(&name).exists() {
         return Err(format!("Directory '{name}' already exists").into());

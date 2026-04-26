@@ -83,8 +83,7 @@ pub fn render_pixels<P: PluginExport>() -> (Vec<u8>, u32, u32) {
 /// other path (e.g. `"examples/screenshots"` for an in-tree reference
 /// directory).
 pub fn workspace_screenshot_dir(rel: &str) -> PathBuf {
-    let start =
-        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let start = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let mut dir = start.clone();
     let mut topmost_package: Option<PathBuf> = None;
     loop {

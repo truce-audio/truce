@@ -517,7 +517,9 @@ fn workspace_no_standalone() {
     s.rewrite_git_to_path().unwrap();
     for p in ["gain", "reverb"] {
         assert!(
-            !s.generated.join(format!("plugins/{p}/src/main.rs")).exists(),
+            !s.generated
+                .join(format!("plugins/{p}/src/main.rs"))
+                .exists(),
             "[ws-no-standalone] plugins/{p}/src/main.rs leaked into a --no-standalone scaffold"
         );
     }
