@@ -101,7 +101,11 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
     let bundles_dir = root.join("target/bundles");
     fs_ctx::create_dir_all(&bundles_dir)?;
 
-    let extra_features: Vec<&str> = if hot_reload { vec!["hot-reload"] } else { vec![] };
+    let extra_features: Vec<&str> = if hot_reload {
+        vec!["hot-reload"]
+    } else {
+        vec![]
+    };
 
     // --- Build dylibs per format ---
     //

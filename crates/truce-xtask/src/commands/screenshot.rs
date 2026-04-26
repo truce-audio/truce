@@ -9,9 +9,7 @@
 //! cdylib (the same artifact the CLAP/VST3 wrappers use). This command
 //! builds the cdylib, `dlopen`s it, and calls the symbol.
 
-use crate::{
-    cargo_build, cargo_build_debug, deployment_target, load_config, project_root, Res,
-};
+use crate::{cargo_build, cargo_build_debug, deployment_target, load_config, project_root, Res};
 use std::path::{Path, PathBuf};
 
 /// Maximum byte length of a returned PNG path. 4 KiB is well over any
