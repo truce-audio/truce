@@ -1,14 +1,15 @@
 # truce — Project Status
 
-Updated 2026-04-25. Version 0.12.1.
+Updated 2026-04-26. Version 0.12.1.
 
 ## Summary
 
-7 format wrappers (CLAP, VST3, VST2, AU v2, AU v3, AAX, LV2), 9
-example plugins, 7 widget types, tested in 7 DAWs. All formats have
-custom GUI. Hot-reload via `--features hot-reload`. Single `truce::plugin!`
-macro for all exports. No build.rs needed. Four GUI backends: built-in
-(tiny-skia/wgpu), egui, iced, and slint.
+7 format wrappers (CLAP, VST3, VST2, AU v2, AU v3, AAX, LV2) plus a
+standalone host, 9 example plugins, 7 widget types, tested in 7 DAWs.
+All formats have custom GUI. Hot-reload via `--features hot-reload`.
+Single `truce::plugin!` macro for all exports. No `build.rs` edits
+needed by the developer. Four GUI backends: built-in (tiny-skia/wgpu),
+egui, iced, and slint.
 
 Runs on **macOS**, **Windows**, and **Linux**.
 
@@ -129,23 +130,33 @@ Build logic lives in `truce-xtask` (library crate). `cargo-truce`
 provides the user-facing CLI.
 
 ```sh
-cargo truce install              # all formats, GPU rendering (default)
-cargo truce install --hot-reload        # all formats, hot-reload
+cargo truce install              # all default-feature formats
+cargo truce install --hot-reload # ... with hot-reload shells + debug dylibs
 cargo truce install -p my-gain   # single plugin (cargo crate name)
 cargo truce install --clap       # CLAP only
+cargo truce build                # bundle into target/bundles/, no system writes
+cargo truce run                  # launch the standalone host (no DAW)
+cargo truce screenshot           # render every plugin's GUI to target/screenshots/
 cargo truce package              # signed .pkg / .exe installer in target/dist/
 cargo truce test                 # run all tests
 cargo truce validate             # auval + pluginval + clap-validator
 cargo truce doctor               # check toolchain, SDKs, signing, ISCC, signtool
 cargo truce reset-au             # macOS: flush AU caches + restart pkd
 cargo truce reset-aax            # macOS: flush Pro Tools AAX cache
+cargo truce log-stream-au        # macOS: live-tail AU v3 appex os_log output
 ```
+
+`build` / `install` / `run` accept `--debug` for cargo dev-profile
+iteration; `package` stays release-only since shipped artifacts
+shouldn't be debug.
 
 New projects are scaffolded with `cargo truce new`:
 
 ```sh
-cargo truce new my-plugin
+cargo truce new my-plugin              # CLAP + VST3 + standalone by default
+cargo truce new my-plugin --no-standalone  # skip the standalone host
 cd my-plugin
+cargo truce run                  # try it standalone, no DAW needed
 cargo truce install --clap       # build + install CLAP
 cargo truce package              # build signed installer
 ```
@@ -185,9 +196,6 @@ cargo-truce       — scaffolding + build/install/package CLI (cargo truce new)
 ## What's remaining
 
 **Near-term:**
-- CI pipeline with macOS + Windows + Linux jobs
-  (`.github/workflows/ci.yml` — `cargo fmt --check`, `cargo clippy -D
-  warnings`, `cargo test --workspace` on each).
 - Linux: automation + preset round-trip testing; Bitwig + Ardour
   validation; `cargo truce package` (`.deb`/`.rpm`).
 - Retail Pro Tools / iLok smoke test (PACE wraptool path is wired and

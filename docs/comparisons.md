@@ -1,6 +1,6 @@
 # Comparisons
 
-Last updated 2026-04-24.
+Last updated 2026-04-26.
 
 ## Overview
 
@@ -31,7 +31,7 @@ Last updated 2026-04-24.
 
 | | truce | JUCE | nih-plug | iPlug2 | DPF |
 |---|---|---|---|---|---|
-| Built-in GUI | Yes (6 widget types) | Yes (comprehensive) | No | Yes (IGraphics) | Yes (DGL) |
+| Built-in GUI | Yes (7 widget types) | Yes (comprehensive) | No | Yes (IGraphics) | Yes (DGL) |
 | GPU rendering | wgpu (Metal/DX12/Vulkan) | OpenGL | N/A | Skia, NanoVG, or Canvas | OpenGL, Cairo, NanoVG, Vulkan |
 | Layout system | Grid + row, declarative | Manual or XML | N/A | Manual | Manual |
 | Framework integrations | egui, iced, slint | None (JUCE only) | iced, vizia, egui | None (IGraphics only) | None (DGL only) |
