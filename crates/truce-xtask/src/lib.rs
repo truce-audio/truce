@@ -91,12 +91,14 @@ fn print_help() {
 Usage: cargo truce <command> [options]
 
 Commands:
-  install [--clap] [--vst3] [--vst2] [--au2] [--au3] [--aax] [--hot-reload] [--no-build] [-p <crate>]
-      Build (release profile) and install plugins. Plugins always
-      build release because audio threads can't tolerate debug-build
-      DSP overhead — debug bundles dropout in real DAWs. This differs
-      from `cargo build`'s debug default; for compile-speed iteration
-      see `cargo truce screenshot --debug`.
+  install [--clap] [--vst3] [--vst2] [--au2] [--au3] [--aax] [--hot-reload] [--debug] [--no-build] [-p <crate>]
+      Build and install plugins into the host's plug-in directories.
+      Defaults to release because installing usually means audio-
+      testing in a DAW — release avoids surprise CPU spikes from
+      debug-build DSP under load. This differs from `cargo build`'s
+      debug default; pass `--debug` to opt back into the cargo dev
+      profile (faster compile, slower DSP — fine for light plugins
+      and wiring checks).
 
       Defaults to whichever formats are in the plugin's Cargo.toml
       default features (typically clap + vst3). VST2, AU, and AAX are
@@ -109,6 +111,8 @@ Commands:
       --au3          AU v3 only (.appex, requires Xcode, macOS only)
       --aax          AAX only (requires pre-built template)
       --hot-reload   Build hot-reload shells (use with cargo watch for iteration)
+      --debug        Compile with the cargo dev profile (faster compile,
+                     slower DSP). Don't ship plugins built this way.
       --no-build     Skip build, install existing artifacts
       -p <crate>     Install only the plugin with this cargo crate name
                      (e.g. -p truce-example-gain)
@@ -169,11 +173,10 @@ Commands:
       Build, sign, and package plugins into macOS .pkg installers.
       Output goes to `target/dist/`.
 
-  build [--clap] [--vst3] [--vst2] [--lv2] [--au2] [--au3] [--aax] [-p <crate>] [--hot-reload]
+  build [--clap] [--vst3] [--vst2] [--lv2] [--au2] [--au3] [--aax] [-p <crate>] [--hot-reload] [--debug]
       Build per-format bundles into target/bundles/ without installing.
-      Always release profile (see `install` above for why); use
-      `cargo truce screenshot --debug` if you need fast-compile
-      iteration outside a DAW.
+      Defaults to release; pass `--debug` for the cargo dev profile
+      when iterating on layout, packaging, or format-wrapper wiring.
 
       Defaults match `install`: when no format flags are passed, every
       format in the project's default Cargo features is built.
@@ -187,9 +190,14 @@ Commands:
       -p <crate>     Build only the plugin with this cargo crate name
       --hot-reload   Add the `hot-reload` feature and also build debug
                      dylibs (the logic libs the hot-reload shells watch)
+      --debug        Cargo dev profile (faster compile, slower DSP).
+                     Bundles still stage and sign correctly, but the
+                     binary inside is debug-quality — not for shipping.
 
-  run [-p <crate>] [-- <args>]
-      Build and run a plugin standalone.
+  run [-p <crate>] [--debug] [-- <args>]
+      Build and run a plugin standalone. Pass `--debug` for a
+      faster-compile dev-profile build (fine when iterating outside
+      a DAW); release otherwise.
 
   screenshot [-p <crate>] [--name <name>]
       Render a plugin's editor headlessly and save the PNG to

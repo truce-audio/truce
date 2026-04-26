@@ -176,8 +176,8 @@ target/screenshots/<name>.png.
 Options:
   -p <crate>     plugin crate name (default: every plugin in truce.toml)
   --name <name>  output filename stem (default: <bundle_id>_screenshot)
-  --debug        cargo dev profile (faster compile, slower run). Default
-                 is release — matches every other `cargo truce` build.
+  --debug        cargo dev profile (faster compile). Default is release
+                 to match `cargo truce build` / `install`.
 
 Builds each plugin's cdylib, dlopens it, and calls the
 `__truce_screenshot` symbol exported by the `truce::plugin!` macro. No

@@ -28,6 +28,7 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
     let mut au3 = false;
     let mut aax = false;
     let mut hot_reload = false;
+    let mut debug = false;
     let mut plugin_filter: Option<String> = None;
 
     let mut i = 0;
@@ -41,6 +42,7 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
             "--au3" => au3 = true,
             "--aax" => aax = true,
             "--hot-reload" => hot_reload = true,
+            "--debug" => debug = true,
             "-p" => {
                 i += 1;
                 plugin_filter = Some(
@@ -95,6 +97,10 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
     if plugins.is_empty() {
         return Err("no matching plugins".into());
     }
+
+    // Flip the global profile flag once. `cargo_build`, `release_lib`,
+    // and the staging functions all consult it transparently.
+    crate::set_debug_profile(debug);
 
     let root = project_root();
     let dt = &deployment_target();

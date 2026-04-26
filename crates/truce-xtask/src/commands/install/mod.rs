@@ -37,6 +37,7 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
     let mut aax = false;
     let mut no_build = false;
     let mut hot_reload = false;
+    let mut debug = false;
     let mut plugin_filter: Option<String> = None;
 
     let mut i = 0;
@@ -51,6 +52,7 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
             "--aax" => aax = true,
             "--no-build" => no_build = true,
             "--hot-reload" => hot_reload = true,
+            "--debug" => debug = true,
             "-p" => {
                 i += 1;
                 if i >= args.len() {
@@ -104,6 +106,8 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
     } else {
         config.plugin.iter().collect()
     };
+
+    crate::set_debug_profile(debug);
 
     let root = project_root();
     let dt = &deployment_target();

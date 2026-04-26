@@ -17,6 +17,7 @@ pub(crate) fn cmd_run(args: &[String]) -> Res {
 
     let mut plugin_filter: Option<String> = None;
     let mut no_build = false;
+    let mut debug = false;
     let mut extra_args: Vec<String> = Vec::new();
     let mut past_separator = false;
     let mut i = 0;
@@ -34,12 +35,15 @@ pub(crate) fn cmd_run(args: &[String]) -> Res {
                     );
                 }
                 "--no-build" => no_build = true,
+                "--debug" => debug = true,
                 "--" => past_separator = true,
                 other => return Err(format!("unknown flag: {other}").into()),
             }
         }
         i += 1;
     }
+
+    crate::set_debug_profile(debug);
 
     let plugin = if let Some(ref f) = plugin_filter {
         config
@@ -110,9 +114,16 @@ pub(crate) fn cmd_run(args: &[String]) -> Res {
     Ok(())
 }
 
-/// Cargo's output path for the standalone binary inside `target/release/`.
+/// Cargo's output path for the standalone binary. Tracks the active
+/// build profile so `--debug` finds the bin under `target/debug/`.
 fn standalone_built_path(root: &std::path::Path, bundle_id: &str) -> PathBuf {
-    crate::target_dir(&root).join("release")
+    let profile = if crate::is_debug_profile() {
+        "debug"
+    } else {
+        "release"
+    };
+    crate::target_dir(&root)
+        .join(profile)
         .join(standalone_bin_name(bundle_id))
 }
 

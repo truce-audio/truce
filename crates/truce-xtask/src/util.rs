@@ -9,6 +9,7 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Path-aware wrappers around `std::fs`. `io::Error` alone doesn't include
 /// the path that triggered it, so a bare `fs::copy(src, dst)?` on a root-owned
@@ -82,21 +83,55 @@ pub(crate) fn target_dir(root: &Path) -> PathBuf {
     }
 }
 
-/// Return `<target>/release/{shared_lib_name}` for a plugin.
-pub(crate) fn release_lib(root: &Path, stem: &str) -> PathBuf {
-    crate::target_dir(&root).join("release").join(shared_lib_name(stem))
+// Process-scoped flag: when true, `release_lib` and friends resolve
+// to `<target>/debug/...` instead of `<target>/release/...`. Set by
+// commands that accept `--debug` (`build`, `install`, `run`) for
+// the duration of that invocation; `package` never flips it, so
+// shipped artifacts stay release. Atomic so any thread sees the
+// same value inside one xtask invocation.
+static DEBUG_PROFILE: AtomicBool = AtomicBool::new(false);
+
+/// Switch the in-process build profile that `release_lib` /
+/// `release_lib_for_target` resolve against. `true` →
+/// `<target>/debug/`, `false` → `<target>/release/`. Default is
+/// release.
+pub(crate) fn set_debug_profile(debug: bool) {
+    DEBUG_PROFILE.store(debug, Ordering::Relaxed);
 }
 
-/// Return the release-mode library path for a specific cargo target triple,
-/// or the default `<target>/release/` when `target` is `None`. Used by
-/// cross-arch builds (macOS universal, Windows x64+arm64); not reached
-/// on Linux today.
+/// Whether the current xtask invocation is operating in debug mode.
+/// Read by `cargo_build` so debug-flagged commands skip `--release`.
+pub(crate) fn is_debug_profile() -> bool {
+    DEBUG_PROFILE.load(Ordering::Relaxed)
+}
+
+fn profile_subdir() -> &'static str {
+    if is_debug_profile() {
+        "debug"
+    } else {
+        "release"
+    }
+}
+
+/// Return `<target>/<profile>/{shared_lib_name}` for a plugin.
+/// `<profile>` is `release` by default; the `--debug` flag on
+/// `cargo truce build` / `cargo truce run` flips it to `debug`.
+pub(crate) fn release_lib(root: &Path, stem: &str) -> PathBuf {
+    target_dir(root)
+        .join(profile_subdir())
+        .join(shared_lib_name(stem))
+}
+
+/// Per-arch sibling of [`release_lib`]. `target` selects the triple
+/// subdir cargo writes to (macOS universal, Windows x64+arm64); the
+/// profile subdir tracks `release_lib` (release by default; debug
+/// when `set_debug_profile(true)` has been called).
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(crate) fn release_lib_for_target(root: &Path, stem: &str, target: Option<&str>) -> PathBuf {
     match target {
-        Some(t) => crate::target_dir(&root)
+        Some(t) => target_dir(root)
             .join(t)
-            .join("release")
+            .join(profile_subdir())
             .join(shared_lib_name(stem)),
         None => release_lib(root, stem),
     }
@@ -679,19 +714,23 @@ pub(crate) fn ensure_rustup_target(triple: &str) -> crate::Res {
 }
 
 #[allow(unused_variables)]
+/// Run `cargo build` with the active profile. Release by default;
+/// flips to dev when `set_debug_profile(true)` has been called — so
+/// commands that accept `--debug` (`build`, `install`, `run`) pick
+/// that up without each call site having to thread a flag through.
+/// `package` never flips the flag, so shipped artifacts stay release.
 pub(crate) fn cargo_build(
     env_vars: &[(&str, &str)],
     extra_args: &[&str],
     deployment_target: &str,
 ) -> crate::Res {
-    cargo_build_inner(env_vars, extra_args, deployment_target, true)
+    cargo_build_inner(env_vars, extra_args, deployment_target, !is_debug_profile())
 }
 
-/// Like `cargo_build` but compiles with the cargo dev profile (no
-/// `--release`). Used by paths where compile speed matters more than
-/// runtime speed — e.g. `cargo truce screenshot --debug`. Never used
-/// for `install` / `package`: a debug-built plugin in a real DAW
-/// misses real-time deadlines.
+/// Force a cargo dev-profile build regardless of the global profile
+/// flag. Used by `cargo truce screenshot --debug`, which builds a
+/// cdylib once and `dlopen`s it without touching the staging/install
+/// paths that consult the global flag.
 pub(crate) fn cargo_build_debug(
     env_vars: &[(&str, &str)],
     extra_args: &[&str],

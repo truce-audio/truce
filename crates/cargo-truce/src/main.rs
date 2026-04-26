@@ -77,14 +77,16 @@ USAGE:
         --midi                      Default all plugins to midi type
         --type:<plugin>=<kind>      Per-plugin type override (effect, instrument, midi)
 
-  cargo truce install [--clap] [--vst3] [--vst2] [--au2] [--au3] [--aax] [-p <crate>]
-      Build, bundle, sign, and install plugins.
+  cargo truce install [--clap] [--vst3] [--vst2] [--au2] [--au3] [--aax] [--debug] [-p <crate>]
+      Build, bundle, sign, and install plugins. Defaults to the cargo
+      release profile (avoids DAW CPU spikes from debug-build DSP);
+      pass `--debug` for fast-compile iteration.
 
   cargo truce build [--clap] [--vst3] [--vst2] [--lv2] [--au2] [--au3]
-                    [--aax] [-p <crate>] [--hot-reload]
+                    [--aax] [-p <crate>] [--hot-reload] [--debug]
       Build signed per-format bundles into target/bundles/ without
       installing. No format flags → every format in the project's
-      default features.
+      default features. Pass `--debug` for the cargo dev profile.
 
   cargo truce validate [--auval] [--auval3] [--pluginval] [--clap]
                        [--vst2] [--all] [-p <crate>]

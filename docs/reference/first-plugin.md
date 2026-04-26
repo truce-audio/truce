@@ -183,6 +183,11 @@ CLAP: ~/Library/Audio/Plug-Ins/CLAP/My Gain.clap
 VST3: /Library/Audio/Plug-Ins/VST3/My Gain.vst3
 ```
 
+Defaults to the cargo release profile — installing usually means
+audio-testing in a DAW, where debug-build DSP can CPU-spike under
+load. Pass `--debug` for fast-compile iteration when DSP correctness
+isn't what you're checking; never ship a `--debug` bundle.
+
 Explicit format selection works too:
 
 ```sh
@@ -192,6 +197,19 @@ cargo truce install --vst3 --lv2
 
 Install destinations per platform live in
 [docs/formats/README.md](../formats/README.md).
+
+To stage bundles into `target/bundles/` without writing to the
+system plug-in directories — useful for CI, packaging dry-runs, or
+just inspecting the produced artifact — use `cargo truce build`:
+
+```sh
+cargo truce build              # all default-feature formats
+cargo truce build --clap       # one format
+cargo truce build --debug      # cargo dev profile (faster compile)
+```
+
+Same defaults as `install`, same `--debug` opt-in, but never touches
+host plug-in paths.
 
 ## Load in a DAW
 
