@@ -102,7 +102,11 @@ where
         let truce_parent = match window.raw_window_handle() {
             RwhHandle::AppKit(h) => RawWindowHandle::AppKit(h.ns_view),
             RwhHandle::Win32(h) => RawWindowHandle::Win32(h.hwnd),
-            RwhHandle::Xlib(h) => RawWindowHandle::X11(h.window),
+            // `h.window` is `c_ulong` — u64 on 64-bit Linux, u32 on
+            // Windows. The match arm has to type-check on every
+            // platform even though X11 only actually fires on Linux,
+            // so widen explicitly.
+            RwhHandle::Xlib(h) => RawWindowHandle::X11(h.window.into()),
             _ => panic!("unsupported raw-window-handle variant"),
         };
 
