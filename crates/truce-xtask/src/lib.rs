@@ -7,6 +7,9 @@ mod util;
 #[cfg(target_os = "windows")]
 mod packaging_windows;
 
+#[cfg(target_os = "windows")]
+mod windows_manifest;
+
 // Re-exports needed by `packaging_windows`. Cfg-gated so the imports
 // don't show as dead on macOS / Linux builds.
 #[cfg(target_os = "windows")]

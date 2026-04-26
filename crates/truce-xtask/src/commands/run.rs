@@ -95,6 +95,11 @@ pub(crate) fn cmd_run(args: &[String]) -> Res {
             perms.set_mode(0o755);
             std::fs::set_permissions(&staged, perms)?;
         }
+        // The standalone exe is parentless — without an embedded
+        // application manifest declaring per-monitor v2 DPI awareness,
+        // the editor renders blurry on non-100% Windows displays.
+        #[cfg(target_os = "windows")]
+        crate::windows_manifest::embed_dpi_manifest(&staged)?;
     }
 
     if !staged.exists() {
