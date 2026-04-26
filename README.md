@@ -20,6 +20,9 @@ cargo install --git https://github.com/truce-audio/truce cargo-truce
 cargo truce new my-plugin
 cd my-plugin
 
+# Run the plugin standalone — no DAW needed
+cargo truce run
+
 # Build and install (CLAP by default)
 cargo truce install --clap
 
