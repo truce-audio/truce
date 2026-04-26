@@ -45,9 +45,14 @@ cargo truce run                  # launch the plugin standalone (no DAW)
 cargo truce run -p my-plugin     # standalone for a specific crate
 cargo truce test                 # run tests
 cargo truce screenshot           # render every plugin's GUI to target/screenshots/
+cargo truce screenshot -p my-plugin --name dark   # one plugin, custom filename
 cargo truce validate             # auval + pluginval + clap-validator
 cargo truce clean                # cargo clean, preserving target/dist/ installers
 ```
+
+`cargo truce screenshot` doubles as a regression-test driver — see
+[docs/gui/screenshot-testing.md](docs/gui/screenshot-testing.md) for
+diffing against committed references.
 
 Use `cargo truce build` for CI, packaging pipelines, and
 iterating without touching the system plugin directories — it
@@ -129,37 +134,6 @@ truce::plugin! { logic: Gain, params: GainParams }
 A complete plugin with smoothed params, a GPU-rendered GUI knob, and
 the CLAP + VST3 defaults. Add `vst2`, `lv2`, `au`, or `aax` to your
 `[features].default` to ship more formats from the same code.
-
-## Screenshot Testing
-
-One line catches GUI regressions across every backend (built-in,
-egui, iced, slint):
-
-```rust
-#[test]
-fn gui_screenshot() {
-    truce_test::assert_screenshot::<Plugin>("gain_default", "snapshots", 0);
-}
-```
-
-`truce_test::assert_screenshot` instantiates the plugin, drives the editor
-headlessly, writes the rendered PNG to `target/screenshots/`, and
-diffs against the committed reference at `snapshots/gain_default.png`.
-First run prints a `cp`-based promote hint and passes; subsequent
-runs fail on the reference platform if the diff exceeds tolerance.
-Cross-OS reference comparison is gated via `TRUCE_SCREENSHOT_REFERENCE_OS`.
-
-For one-off captures outside the test harness — regenerating README
-artwork, debug snapshots — use `cargo truce screenshot`:
-
-```sh
-cargo truce screenshot                              # every plugin
-cargo truce screenshot -p my-plugin                 # one plugin
-cargo truce screenshot -p my-plugin --name dark     # custom filename
-```
-
-See [docs/gui/screenshot-testing.md](docs/gui/screenshot-testing.md)
-for the full flow.
 
 ## Format Support
 
