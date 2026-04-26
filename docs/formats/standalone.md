@@ -18,7 +18,12 @@ standalone binary.
 
 ## Enable
 
-Two mechanical additions to your plugin crate. No `lib.rs` edits.
+Plugins scaffolded with `cargo truce new` (or `new-workspace`) ship
+the standalone host enabled out of the box — `Cargo.toml` lists
+`standalone` in `default = [...]` and `src/main.rs` is pre-written.
+If you opted out at scaffold time with `--no-standalone`, or you're
+adding standalone to an existing crate, do the two mechanical
+additions below. No `lib.rs` edits.
 
 **`Cargo.toml`:**
 

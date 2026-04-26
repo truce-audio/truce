@@ -67,28 +67,46 @@ pub fn render_pixels<P: PluginExport>() -> (Vec<u8>, u32, u32) {
     })
 }
 
-/// Resolve `<workspace_root>/<rel>/`, creating the directory if
-/// needed. Walks up from `CARGO_MANIFEST_DIR` looking for a
-/// `Cargo.toml` with `[workspace]`.
+/// Resolve `<project_root>/<rel>/`, creating the directory if
+/// needed. Walks up from the current working directory looking for a
+/// `Cargo.toml`; prefers a manifest containing `[workspace]` (so
+/// workspace members write to the shared root), and falls back to
+/// the topmost package manifest for single-crate projects.
+///
+/// Uses runtime `cwd` rather than the compile-time
+/// `CARGO_MANIFEST_DIR` of this crate — the latter would resolve to
+/// the cargo git checkout when truce is consumed as a git dep, and
+/// screenshots would land in `~/.cargo/git/checkouts/...` instead of
+/// the user's project.
 ///
 /// Pass [`DEFAULT_SCREENSHOT_DIR`] for the default location, or any
 /// other path (e.g. `"examples/screenshots"` for an in-tree reference
 /// directory).
 pub fn workspace_screenshot_dir(rel: &str) -> PathBuf {
-    let mut dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let start =
+        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let mut dir = start.clone();
+    let mut topmost_package: Option<PathBuf> = None;
     loop {
         let toml = dir.join("Cargo.toml");
         if toml.exists() {
             if let Ok(s) = std::fs::read_to_string(&toml) {
                 if s.contains("[workspace]") {
+                    // Workspace root — workspace members all share this dir.
                     let snap = dir.join(rel);
                     std::fs::create_dir_all(&snap).ok();
                     return snap;
                 }
+                // Track the highest-up package manifest as a fallback for
+                // single-crate projects (no `[workspace]` anywhere up-tree).
+                topmost_package = Some(dir.clone());
             }
         }
         if !dir.pop() {
-            panic!("Could not find workspace root from CARGO_MANIFEST_DIR");
+            let chosen = topmost_package.unwrap_or(start);
+            let snap = chosen.join(rel);
+            std::fs::create_dir_all(&snap).ok();
+            return snap;
         }
     }
 }

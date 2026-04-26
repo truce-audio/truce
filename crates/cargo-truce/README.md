@@ -18,7 +18,8 @@ cargo install --git https://github.com/truce-audio/truce cargo-truce
 ## Commands
 
 ```sh
-cargo truce new my-plugin          # scaffold a new plugin project
+cargo truce new my-plugin          # scaffold a new plugin project (clap+vst3+standalone by default)
+cargo truce new my-plugin --no-standalone  # … without the standalone host bin
 cargo truce new-workspace my-ws    # scaffold a multi-plugin workspace
 cargo truce install                # build + bundle + sign + install all formats
 cargo truce install --clap         # single format only

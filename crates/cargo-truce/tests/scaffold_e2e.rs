@@ -597,6 +597,50 @@ fn scaffold_cargo_truce_build_workspace_multi_format() {
     s.assert_bundle_count_by_ext(".vst3", 2);
 }
 
+// `cargo truce screenshot` on a fresh scaffold. Regression guard for
+// a bug where `truce_core::screenshot::workspace_screenshot_dir`
+// resolved against compile-time `CARGO_MANIFEST_DIR` — when truce
+// was consumed as a git dep, that baked in the cargo git checkout
+// path, so PNGs landed in `~/.cargo/git/checkouts/.../target/...`
+// instead of the user's project. The fix walks from runtime cwd.
+//
+// Test exercises this path-rewritten-to-local: the rewrite makes
+// the truce deps look like a sibling crate rather than the truce
+// repo's `[workspace]`, so a regression would dump the PNG into the
+// in-tree `target/screenshots/` of the truce-xtask test run.
+#[test]
+fn scaffold_cargo_truce_screenshot() {
+    let s = Scaffold::new("truce-screenshot", "demo_effect");
+    s.run().unwrap();
+    s.rewrite_git_to_path().unwrap();
+    // Pre-clean the truce repo's screenshot output for the unique
+    // name we'll use, so the leak-detection assertion below is
+    // sensitive only to *this* test run.
+    let truce_pic = truce_root().join("target/screenshots/scaffold_smoke.png");
+    let _ = std::fs::remove_file(&truce_pic);
+
+    s.truce_subcommand(&["screenshot", "--name", "scaffold_smoke"])
+        .unwrap();
+
+    // Screenshot must land in the SCAFFOLDED project's target dir,
+    // not the truce repo's. `workspace_screenshot_dir` walks from
+    // runtime cwd; the cargo-truce CLI runs in the scaffold dir, so
+    // the dlopen'd cdylib's `__truce_screenshot` should resolve there.
+    let project_pic = s.generated.join("target/screenshots/scaffold_smoke.png");
+    assert!(
+        project_pic.exists(),
+        "[truce-screenshot] expected PNG at {} but it's missing — \
+         workspace_screenshot_dir resolved somewhere else",
+        project_pic.display()
+    );
+    assert!(
+        !truce_pic.exists(),
+        "[truce-screenshot] PNG leaked into truce checkout at {} — \
+         workspace_screenshot_dir reverted to compile-time CARGO_MANIFEST_DIR?",
+        truce_pic.display()
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Unit tests for the rewrite helper
 // ---------------------------------------------------------------------------

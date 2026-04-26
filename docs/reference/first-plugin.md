@@ -16,14 +16,17 @@ cd my-gain
 
 ```
 my-gain/
-├── Cargo.toml       crate with cdylib crate-type + default clap/vst3 features
+├── Cargo.toml       crate with cdylib crate-type + default clap/vst3/standalone features
 ├── truce.toml       vendor identity + this plugin's metadata (name, IDs, AU codes)
 └── src/
-    └── lib.rs       the whole plugin — params, DSP, GUI, export macro
+    ├── lib.rs       the whole plugin — params, DSP, GUI, export macro
+    └── main.rs      standalone host entry point (gated behind the `standalone` feature)
 ```
 
-No `build.rs`. No standalone binary crate. No separate GUI crate.
-One file per concern.
+No `build.rs`. No separate GUI crate. The `src/main.rs` host is a
+4-line `truce_standalone::run::<Plugin>()` call so `cargo truce run`
+works out of the box; pass `--no-standalone` to skip it (drops the
+file, the bin entry, and the `standalone` feature/dep).
 
 **Shipping a suite?** Use `new-workspace` instead to create one
 Cargo workspace with a shared `truce.toml` and one sub-crate per
@@ -34,13 +37,15 @@ cargo truce new-workspace studio gain reverb delay
 cargo truce new-workspace studio gain synth arp \
     --vendor "Studio Audio" --vendor-id com.studio \
     --type:synth=instrument --type:arp=midi
+cargo truce new-workspace studio gain reverb \
+    --no-standalone                            # skip the standalone host in every plugin
 ```
 
 You get `studio/plugins/{gain,synth,arp}/`, each with its own
-`lib.rs`, plus one `truce.toml` with three `[[plugin]]` entries.
-Every `cargo truce` command below works workspace-wide; add
-`-p <crate>` (the cargo crate name, e.g. `-p gain`) to target one
-plugin.
+`lib.rs` (and `main.rs` unless you passed `--no-standalone`), plus
+one `truce.toml` with three `[[plugin]]` entries. Every `cargo truce`
+command below works workspace-wide; add `-p <crate>` (the cargo
+crate name, e.g. `-p gain`) to target one plugin.
 
 ## Tour the generated code
 
