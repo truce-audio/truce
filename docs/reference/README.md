@@ -15,7 +15,7 @@
 
 - [Formats](../formats/) — per-format reference (CLAP, VST3, VST2,
   LV2, AU, AAX) with env vars, install paths, signing, and gotchas.
-- [GUI backends](../gui/) — deep-dive guides for egui, iced, Slint,
+- [GUI backends](gui/) — deep-dive guides for egui, iced, Slint,
   and raw-window-handle.
-- [Built-in GUI reference](../gui/built-in.md) — the `GridLayout` builder, every widget constructor, theming.
+- [Built-in GUI reference](gui/built-in.md) — the `GridLayout` builder, every widget constructor, theming.
 - [Status](../status.md) — what's shipped, what's next.

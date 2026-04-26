@@ -53,7 +53,7 @@ cargo truce clean                # cargo clean, preserving target/dist/ installe
 ```
 
 `cargo truce screenshot` doubles as a regression-test driver — see
-[docs/gui/screenshot-testing.md](docs/gui/screenshot-testing.md) for
+[docs/reference/gui/screenshot-testing.md](docs/reference/gui/screenshot-testing.md) for
 diffing against committed references.
 
 Use `cargo truce build` for CI, packaging pipelines, and

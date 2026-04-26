@@ -20,7 +20,7 @@ and an XY pad. Thin stereo meter spanning the full height on the right.
 
 ## See also
 
-- [iced integration guide](../../docs/gui/iced.md)
+- [iced integration guide](../../docs/reference/gui/iced.md)
 - [gain](../gain/) — same plugin with built-in GUI
 - [gain-egui](../gain-egui/) — same plugin with egui
 - [gain-slint](../gain-slint/) — same plugin with slint

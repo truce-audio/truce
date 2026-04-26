@@ -27,7 +27,7 @@ All defined in `ui/main.slint`.
 
 ## See also
 
-- [slint integration guide](../../docs/gui/slint.md)
+- [slint integration guide](../../docs/reference/gui/slint.md)
 - [gain](../gain/) — same plugin with built-in GUI
 - [gain-egui](../gain-egui/) — same plugin with egui
 - [gain-iced](../gain-iced/) — same plugin with iced

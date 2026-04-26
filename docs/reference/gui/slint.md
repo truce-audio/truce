@@ -223,7 +223,7 @@ cached_state.instance_name = new_name;
 state.set_state(cached_state.serialize());
 ```
 
-See the [state persistence](../reference/plugin-anatomy.md#state-persistence)
+See the [state persistence](../plugin-anatomy.md#state-persistence)
 section for the full `#[derive(State)]` pattern.
 
 If your plugin only uses `#[param]` fields, you don't need any of this —

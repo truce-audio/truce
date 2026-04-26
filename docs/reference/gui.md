@@ -111,7 +111,7 @@ GridLayout::build("MY PLUGIN", "V0.1", 3, 80.0, sections)
 Text renders via fontdue with JetBrains Mono Regular embedded at
 compile time — no font file on disk, no runtime load.
 
-See the [built-in GUI reference](../gui/built-in.md) for every
+See the [built-in GUI reference](gui/built-in.md) for every
 widget constructor, cell-spanning option, and theming detail.
 
 ## Alternatives
@@ -133,12 +133,12 @@ layout()` method becomes irrelevant when a custom editor is used.
 
 | Backend | Crate | When |
 |---------|-------|------|
-| **egui** | `truce-egui` | Immediate-mode. Good for prototyping, CPU-graph-heavy debugging UIs, and dev tools. Full guide: [gui/egui.md](../gui/egui.md). |
-| **iced** | `truce-iced` | Retained-mode with Elm architecture. Good for complex custom UIs where you want a proper widget tree and state machine. Auto-generated from `GridLayout` is also available. [gui/iced.md](../gui/iced.md). |
-| **Slint** | `truce-slint` | Declarative markup (`.slint` files) with data binding. Good for visually rich UIs designed outside Rust. [gui/slint.md](../gui/slint.md). |
-| **BYO** | `truce-core` + `RawWindowHandle` | Full control — Metal, OpenGL, Skia, anything. You handle painting, input, DPI, and lifecycle yourself. [gui/raw-window-handle.md](../gui/raw-window-handle.md). |
+| **egui** | `truce-egui` | Immediate-mode. Good for prototyping, CPU-graph-heavy debugging UIs, and dev tools. Full guide: [gui/egui.md](gui/egui.md). |
+| **iced** | `truce-iced` | Retained-mode with Elm architecture. Good for complex custom UIs where you want a proper widget tree and state machine. Auto-generated from `GridLayout` is also available. [gui/iced.md](gui/iced.md). |
+| **Slint** | `truce-slint` | Declarative markup (`.slint` files) with data binding. Good for visually rich UIs designed outside Rust. [gui/slint.md](gui/slint.md). |
+| **BYO** | `truce-core` + `RawWindowHandle` | Full control — Metal, OpenGL, Skia, anything. You handle painting, input, DPI, and lifecycle yourself. [gui/raw-window-handle.md](gui/raw-window-handle.md). |
 
-See [gui/README.md](../gui/README.md) for a side-by-side comparison
+See [gui/README.md](gui/README.md) for a side-by-side comparison
 of the backends.
 
 ## Screenshot tests
@@ -161,7 +161,7 @@ lands in `target/screenshots/` (gitignored); when the reference
 doesn't exist yet, the test passes and prints a `cp`-based promote
 hint. Works for every backend (built-in GUI, egui, iced, slint).
 
-See [gui/screenshot-testing.md](../gui/screenshot-testing.md) for
+See [gui/screenshot-testing.md](gui/screenshot-testing.md) for
 the full flow — promoting new references, cross-OS behavior, the
 `TRUCE_SCREENSHOT_REFERENCE_OS` override, and lower-level APIs for
 custom tolerance / hand-rolled renderers.
@@ -171,9 +171,9 @@ custom tolerance / hand-rolled renderers.
 - **[Chapter 7 → hot-reload.md](hot-reload.md)** — edit the
   layout, save, see the change in the running plugin without
   closing the DAW.
-- **[Built-in GUI reference](../gui/built-in.md)** — every widget
+- **[Built-in GUI reference](gui/built-in.md)** — every widget
   constructor, all the cell options, theming.
-- **[Screenshot testing](../gui/screenshot-testing.md)** — diff
+- **[Screenshot testing](gui/screenshot-testing.md)** — diff
   rendered pixels against committed PNGs.
-- **[GUI backends](../gui/)** — deep-dives per framework when the
+- **[GUI backends](gui/)** — deep-dives per framework when the
   built-in GUI isn't enough.

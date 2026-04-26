@@ -5,9 +5,8 @@ No custom editor, no framework dependency — declare what you want
 and truce draws it. This is the default; override `layout()` on
 `PluginLogic` and you're done.
 
-For a first walkthrough see
-[reference/gui.md](../reference/gui.md). This page is the
-reference for every option.
+For a first walkthrough see [the GUI chapter](../gui.md). This page
+is the reference for every option.
 
 ## `GridLayout::build`
 

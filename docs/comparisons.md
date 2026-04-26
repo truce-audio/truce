@@ -132,4 +132,4 @@ widget coordinates and event positions are in logical points; the
 backend multiplies by the display scale factor internally for
 physical-pixel rasterization. 
 
-See [GUI backends](gui/README.md) for detailed integration docs.
+See [GUI backends](reference/gui/README.md) for detailed integration docs.

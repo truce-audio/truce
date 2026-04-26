@@ -20,7 +20,7 @@ the knobs.
 
 ## See also
 
-- [egui integration guide](../../docs/gui/egui.md)
+- [egui integration guide](../../docs/reference/gui/egui.md)
 - [gain](../gain/) — same plugin with built-in GUI
 - [gain-iced](../gain-iced/) — same plugin with iced
 - [gain-slint](../gain-slint/) — same plugin with slint
