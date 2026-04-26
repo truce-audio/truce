@@ -6,7 +6,7 @@ changes unexpectedly — a widget moves, a color shifts, a label
 disappears — the test fails on the reference platform and points at
 the freshly-rendered PNG so you can compare visually.
 
-The unified API is a single line:
+The API is a single line:
 
 ```rust
 #[test]
@@ -183,10 +183,8 @@ let path = truce_core::screenshot::render::<Plugin>("gain_dark");
 println!("rendered to {}", path.display());
 ```
 
-Lives in `truce-core` (not `truce-test`) so non-test contexts can call
-it without pulling in dev-dependencies — including the `cargo truce
-screenshot` CLI (see below). Re-exported as
-`truce_test::render_screenshot` for symmetry with the assert helpers.
+Also re-exported as `truce_test::render_screenshot` for use in test
+modules.
 
 ### `cargo truce screenshot`
 
@@ -202,12 +200,9 @@ Default filename is `<bundle_id>_screenshot.png`. Use this to
 regenerate README artwork or capture debug snapshots without writing
 test code.
 
-How it works: `truce::plugin!` exports a hidden `extern "C" fn
-__truce_screenshot(...)` symbol into the plugin's cdylib (the same
-build artifact CLAP/VST3 use). The CLI builds the cdylib with
-`--no-default-features --lib` (skipping format-wrapper compilation
-for speed), `dlopen`s it, and calls the symbol. No per-plugin
-scaffolding required — the macro provides everything.
+No per-plugin scaffolding needed. Under the hood the CLI builds the
+plugin's cdylib, `dlopen`s it, and calls a hidden `__truce_screenshot`
+symbol that `truce::plugin!` exports.
 
 ### Pixel comparator
 
@@ -242,8 +237,7 @@ fn screenshot(
 
 Built-in backends (`truce-gpu`, `truce-egui`, `truce-iced`,
 `truce-slint`) all implement this. Custom editor implementations only
-need to override it if they want to be testable through the unified
-helper.
+need to override it to be testable through `assert_screenshot`.
 
 ---
 

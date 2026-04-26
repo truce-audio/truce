@@ -111,5 +111,4 @@ I/O, silent-input behavior, real-time safety heuristics.
   with UAC consent.
 - **IRunLoop on Linux**: Reaper doesn't require the VST3 IRunLoop
   timer integration; Bitwig and Ardour on Linux may. Not yet
-  verified — currently a known-possible risk for those hosts on
-  Linux.
+  verified — a known-possible risk for those hosts on Linux.

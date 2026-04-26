@@ -116,12 +116,12 @@ Native Rust ABI, ABI canary + vtable probe verification.
 `truce-loader` crate handles dylib loading, file watching,
 CRC32 content check, macOS codesign, leak-don't-close.
 
-**GUI hot-reload (built-in GUI):** Layout changes now update
-seamlessly in `--dev` mode. The `HotEditor` wrapper watches for dylib
-changes and swaps the `BuiltinEditor` inside a shared mutex — no
-window flash, no manual close/reopen. DSP changes continue to work as
-before. Custom editors (egui, iced, slint) still require manually
-closing and reopening the plugin window.
+**GUI hot-reload (built-in GUI):** Layout changes update seamlessly
+in `--dev` mode. The `HotEditor` wrapper watches for dylib changes
+and swaps the `BuiltinEditor` inside a shared mutex — no window
+flash, no manual close/reopen. DSP changes reload the same way.
+Custom editors (egui, iced, slint) require manually closing and
+reopening the plugin window for layout changes.
 
 ## Build system
 
@@ -178,7 +178,7 @@ truce-shim-types  — ABI-stable types shared with C/C++ shims
 truce-standalone  — standalone host (cpal audio)
 truce-xtask       — build/bundle/install/package library (powers cargo truce)
 truce-build       — build.rs helper
-truce-test        — test utilities + unified GUI screenshot tests (CPU + iced)
+truce-test        — test utilities + GUI screenshot tests
 cargo-truce       — scaffolding + build/install/package CLI (cargo truce new)
 ```
 

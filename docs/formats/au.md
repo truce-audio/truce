@@ -178,7 +178,7 @@ parameters don't sync.
 - **v2 and v3 collision.** If `au3_subtype` equals `fourcc`, hosts
   may only surface one of them. Use distinct subtypes (e.g. `MyFx`
   and `MyF3`) if both must coexist.
-- **AU v3 is macOS-only today.** iOS AU v3 is planned; the design
-  mirrors macOS (same Swift `AudioUnitFactory`, `UIViewController`
-  instead of `NSViewController`). Not implemented yet — see the
-  iOS plan for scope.
+- **AU v3 is macOS-only.** iOS AU v3 is planned; the design mirrors
+  macOS (same Swift `AudioUnitFactory`, `UIViewController` instead of
+  `NSViewController`). Not implemented yet — see the iOS plan for
+  scope.

@@ -38,7 +38,7 @@ Last updated 2026-04-24.
 | Raw window handle | Yes | No | Yes | No | No |
 | CSS theming | No | No | vizia only | No | No |
 | Retina/HiDPI | Automatic (logical-point pipeline) | Automatic | Manual | Automatic | Manual |
-| Hot-reload GUI | Yes (layout + DSP) | No | No | No | No |
+| Hot-reload GUI | Yes | No | No | No | No |
 | Screenshot tests | Yes (headless) | No | No | No | No |
 
 ## Parameters
@@ -59,7 +59,7 @@ Last updated 2026-04-24.
 |---|---|---|---|---|---|
 | Scaffolding | `cargo truce new`, `cargo truce new-workspace` | Projucer / CMake | Manual | Duplicate example | Duplicate example |
 | Build system | Cargo | CMake / Projucer | Cargo | CMake / VS / Xcode | Make / CMake |
-| Hot reload | Yes (DSP + GUI layout) | No | No | No | No |
+| Hot reload | Yes | No | No | No | No |
 | Plugin validation | `cargo truce validate` | Manual | Manual | Manual | Manual |
 | Bundle/sign/install | `cargo truce install` | IDE export | `cargo xtask bundle` | IDE export | `make install` |
 | Signed installer | `cargo truce package` (`.pkg` + Inno Setup `.exe`, Authenticode + PACE) | Manual (pkgbuild, Inno Setup) | Manual | Manual | Manual |
@@ -90,7 +90,7 @@ Last updated 2026-04-24.
 ## When to Use What
 
 **truce** — You want Rust, maximum commercial-format coverage (AU,
-AAX, and LV2 in one codebase is currently unique to truce), hot
+AAX, and LV2 in one codebase is unique to truce), hot
 reload, and a batteries-included experience — built-in GUI, `cargo truce
 install` / `package` / `validate`, and signed cross-platform
 installers (`.pkg` + Inno Setup `.exe`). Best for new Rust projects

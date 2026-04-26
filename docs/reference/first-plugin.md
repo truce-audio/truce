@@ -287,8 +287,8 @@ Full story in [chapter 7 → hot-reload.md](hot-reload.md).
 
 ## What's next
 
-- **Parameters you need today** — boolean, int, enum, groups,
-  meters, custom formatting → [chapter 4 → parameters.md](parameters.md).
+- **Other parameter kinds** — boolean, int, enum, groups, meters,
+  custom formatting → [chapter 4 → parameters.md](parameters.md).
 - **Non-trivial processing** — MIDI, transport, sample-accurate
   events, instruments → [chapter 5 → processing.md](processing.md).
 - **A richer UI** — more widgets, `section()`, switching to

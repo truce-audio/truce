@@ -27,7 +27,8 @@ CLAP / VST2 single-file installs via Inno Setup `Check:` predicates.
 | `validate` | Run `auval` (AU v2 + v3), `pluginval` (VST3), `clap-validator` (CLAP). Skips any tool that isn't on `PATH`. |
 | `remove` | Uninstall a specific plugin from every format's install directory. |
 | `clean` | Drop scratch under `target/tmp/`, clear AU / DAW caches. |
-| `nuke` | Uninstall every truce plugin + restart `pkd` / `AudioComponentRegistrar`. Recovery tool. |
+| `reset-au` | macOS-only. Flush AU caches and restart `pkd` / `AudioComponentRegistrar`. |
+| `reset-aax` | macOS-only. Wipe this vendor's entries from the Pro Tools AAX cache. |
 | `doctor` | Preflight: toolchain, SDKs, signing identities, rustup targets. |
 | `log-stream-au` | macOS-only. Live-tail AU v3 appex `os_log` output (subsystem `com.truce.au3`). Forward-only. |
 
