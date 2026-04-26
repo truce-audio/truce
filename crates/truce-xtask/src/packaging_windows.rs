@@ -134,7 +134,9 @@ pub(crate) fn cmd_package(args: &[String]) -> Res {
     for p in &plugins {
         eprintln!("\n=== Packaging: {} ({}) ===", p.name, archs_label(&archs));
 
-        let staging = crate::target_dir(&root).join("package/windows").join(&p.bundle_id);
+        let staging = crate::target_dir(&root)
+            .join("package/windows")
+            .join(&p.bundle_id);
         let _ = fs::remove_dir_all(&staging);
         fs::create_dir_all(&staging)?;
 

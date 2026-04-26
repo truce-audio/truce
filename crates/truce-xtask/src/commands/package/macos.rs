@@ -187,7 +187,8 @@ pub(crate) fn cmd_package_macos(args: &[String]) -> Res {
                     )
                 })
                 .collect();
-            let output = crate::target_dir(&root).join(format!("release/lib{}_clap.dylib", p.dylib_stem()));
+            let output =
+                crate::target_dir(&root).join(format!("release/lib{}_clap.dylib", p.dylib_stem()));
             lipo_into(&inputs, &output)?;
         }
     }
@@ -225,7 +226,8 @@ pub(crate) fn cmd_package_macos(args: &[String]) -> Res {
                     )
                 })
                 .collect();
-            let output = crate::target_dir(&root).join(format!("release/lib{}_vst3.dylib", p.dylib_stem()));
+            let output =
+                crate::target_dir(&root).join(format!("release/lib{}_vst3.dylib", p.dylib_stem()));
             lipo_into(&inputs, &output)?;
         }
     }
@@ -263,7 +265,8 @@ pub(crate) fn cmd_package_macos(args: &[String]) -> Res {
                     )
                 })
                 .collect();
-            let output = crate::target_dir(&root).join(format!("release/lib{}_vst2.dylib", p.dylib_stem()));
+            let output =
+                crate::target_dir(&root).join(format!("release/lib{}_vst2.dylib", p.dylib_stem()));
             lipo_into(&inputs, &output)?;
         }
     }
@@ -307,7 +310,8 @@ pub(crate) fn cmd_package_macos(args: &[String]) -> Res {
                     )
                 })
                 .collect();
-            let output = crate::target_dir(&root).join(format!("release/lib{}_au.dylib", p.dylib_stem()));
+            let output =
+                crate::target_dir(&root).join(format!("release/lib{}_au.dylib", p.dylib_stem()));
             lipo_into(&inputs, &output)?;
         }
     }
@@ -345,7 +349,8 @@ pub(crate) fn cmd_package_macos(args: &[String]) -> Res {
                     )
                 })
                 .collect();
-            let output = crate::target_dir(&root).join(format!("release/lib{}_aax.dylib", p.dylib_stem()));
+            let output =
+                crate::target_dir(&root).join(format!("release/lib{}_aax.dylib", p.dylib_stem()));
             lipo_into(&inputs, &output)?;
         }
         // Apple-sign + assemble the .aaxplugin bundle once we have the
