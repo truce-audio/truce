@@ -122,7 +122,7 @@ fn standalone_built_path(root: &std::path::Path, bundle_id: &str) -> PathBuf {
     } else {
         "release"
     };
-    crate::target_dir(&root)
+    crate::target_dir(root)
         .join(profile)
         .join(standalone_bin_name(bundle_id))
 }

@@ -118,7 +118,7 @@ pub(crate) fn cmd_screenshot(args: &[String]) -> Res {
 fn cdylib_path(root: &Path, crate_name: &str, debug: bool) -> PathBuf {
     let normalized = crate_name.replace('-', "_");
     let profile_dir = if debug { "debug" } else { "release" };
-    let dir = crate::target_dir(&root).join(profile_dir);
+    let dir = crate::target_dir(root).join(profile_dir);
     if cfg!(target_os = "macos") {
         dir.join(format!("lib{normalized}.dylib"))
     } else if cfg!(target_os = "windows") {
