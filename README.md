@@ -169,17 +169,17 @@ By host (across all supported platforms):
 
 ## Examples
 
-| Plugin | Type | GUI | Screenshot |
-|--------|------|-----|-----------|
-| [gain](examples/truce-example-gain/) | Effect | Built-in | <img src="examples/screenshots/gain_default.png" width="300"> |
-| [eq](examples/truce-example-eq/) | Effect | Built-in | <img src="examples/screenshots/eq_default.png" width="300"> |
-| [synth](examples/truce-example-synth/) | Instrument | Built-in | <img src="examples/screenshots/synth_default.png" width="300"> |
-| [transpose](examples/truce-example-transpose/) | MIDI | Built-in | <img src="examples/screenshots/transpose_default.png" width="300"> |
-| [arpeggio](examples/truce-example-arpeggio/) | MIDI | Built-in | <img src="examples/screenshots/arpeggio_default.png" width="300"> |
-| [tremolo](examples/truce-example-tremolo/) | Effect | egui | <img src="examples/screenshots/tremolo_default.png" width="300"> |
-| [gain-egui](examples/truce-example-gain-egui/) | Effect | egui | <img src="examples/screenshots/gain_egui_default.png" width="300"> |
-| [gain-iced](examples/truce-example-gain-iced/) | Effect | Iced | <img src="examples/screenshots/gain_iced_default.png" width="300"> |
-| [gain-slint](examples/truce-example-gain-slint/) | Effect | Slint | <img src="examples/screenshots/gain_slint_default.png" width="300"> |
+A non-trivial GUI built with truce —
+[**truce-analyzer**](https://github.com/truce-audio/truce-analyzer),
+a real-time spectrum analyzer with diff overlay:
+
+<img src="examples/screenshots/analyzer_diff.png" width="600">
+
+Nine smaller example plugins ship in-tree to cover the basics — gain,
+EQ, synth, transpose, arpeggio, tremolo, plus three gain variants
+showing the egui / iced / Slint backends. See
+[examples/README.md](examples/README.md) for the full table with
+screenshots.
 
 ## Features
 

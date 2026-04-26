@@ -226,7 +226,11 @@ fn gui_screenshot() {
 
 See [screenshot testing](screenshot-testing.md) for more.
 
-## Example
+## Examples
 
 `examples/truce-example-gain-egui/` — complete plugin with knobs, XY pad, meter,
 header, custom font, and screenshot test.
+
+[truce-analyzer](https://github.com/truce-audio/truce-analyzer) — non-trivial
+out-of-tree example built on egui: real-time spectrum analyzer with a diff
+overlay. Shows what scaled-up egui code looks like for a plugin GUI.

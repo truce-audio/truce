@@ -5,20 +5,31 @@ GUI framework integrations.
 
 ## Plugins
 
-| Plugin | Type | GUI | What it shows |
-|--------|------|-----|---------------|
-| [gain](gain/) | Effect | Built-in | Gain, pan, metering, XY pad |
-| [gain-egui](gain-egui/) | Effect | egui | Same gain plugin with egui widgets |
-| [gain-iced](gain-iced/) | Effect | Iced | Same gain plugin with iced widgets |
-| [gain-slint](gain-slint/) | Effect | Slint | Same gain plugin with `.slint` markup |
-| [eq](eq/) | Effect | Built-in | 3-band parametric EQ with biquad filters |
-| [synth](synth/) | Instrument | Built-in | 16-voice poly synth with filter and ADSR |
-| [transpose](transpose/) | MIDI Effect | Built-in | Note transposition with stuck-note prevention |
-| [arpeggio](arpeggio/) | MIDI Effect | Built-in | Tempo-synced arpeggiator with 4 patterns |
+| Plugin | Type | GUI | Screenshot |
+|--------|------|-----|-----------|
+| [gain](truce-example-gain/) | Effect | Built-in | <img src="screenshots/gain_default.png" width="300"> |
+| [eq](truce-example-eq/) | Effect | Built-in | <img src="screenshots/eq_default.png" width="300"> |
+| [synth](truce-example-synth/) | Instrument | Built-in | <img src="screenshots/synth_default.png" width="300"> |
+| [transpose](truce-example-transpose/) | MIDI | Built-in | <img src="screenshots/transpose_default.png" width="300"> |
+| [arpeggio](truce-example-arpeggio/) | MIDI | Built-in | <img src="screenshots/arpeggio_default.png" width="300"> |
+| [tremolo](truce-example-tremolo/) | Effect | egui | <img src="screenshots/tremolo_default.png" width="300"> |
+| [gain-egui](truce-example-gain-egui/) | Effect | egui | <img src="screenshots/gain_egui_default.png" width="300"> |
+| [gain-iced](truce-example-gain-iced/) | Effect | Iced | <img src="screenshots/gain_iced_default.png" width="300"> |
+| [gain-slint](truce-example-gain-slint/) | Effect | Slint | <img src="screenshots/gain_slint_default.png" width="300"> |
 
 The four gain variants (gain, gain-egui, gain-iced, gain-slint) implement
 the same plugin with different GUI frameworks. Compare them to see how
 each framework handles the same layout.
+
+## Out-of-tree
+
+Larger examples live in their own repos — useful when you want to
+see what truce looks like at the scale of a real plugin rather than
+a 100-line teaching example.
+
+| Plugin | What it shows |
+|--------|---------------|
+| [truce-analyzer](https://github.com/truce-audio/truce-analyzer) | Real-time spectrum analyzer with diff overlay; non-trivial GUI built on truce. |
 
 ## Building
 
