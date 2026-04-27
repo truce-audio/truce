@@ -68,7 +68,7 @@ directories are system-wide).
 ## Examples
 
 [**truce-analyzer**](https://github.com/truce-audio/truce-analyzer),
-a real-time spectrum analyzer with diff overlay:
+a real-time spectrum analyzer with diff overlay for debugging/reverse-engineering plugins:
 
 <img src="examples/screenshots/analyzer_diff.png" width="600">
 
