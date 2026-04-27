@@ -154,7 +154,7 @@ builds on macOS and Windows — supports audio, MIDI, state, and UI
 (X11UI on Linux, CocoaUI on macOS, WindowsUI on Windows). AAX
 requires the Avid AAX SDK and PACE/iLok signing
 for retail Pro Tools releases. VST2 is opt-in on all platforms — see
-note below. See [Status](docs/status.md) for host coverage.
+note below. See [Status](docs/README.md) for host coverage.
 
 ## Features
 
@@ -203,7 +203,7 @@ crates/
 
 - [Reference](docs/reference/) — install, first plugin, params, processing, GUI, hot reload, shipping
 - [Formats](docs/formats/) — per-format reference (CLAP, VST3, VST2, LV2, AU, AAX) with env vars, signing, install paths, gotchas
-- [Status](docs/status.md) — what's built, what's next
+- [Status](docs/README.md) — what's built, what's next
 
 ## Configuration
 

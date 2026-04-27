@@ -78,4 +78,4 @@ not-present marker.
 
 - [First plugin](../reference/first-plugin.md) — end-to-end walkthrough
 - [Reference → shipping](../reference/shipping.md) — `install` / `build` / `validate` / `package`, signing, installers, and the full `truce.toml` schema
-- [Status](../status.md) — host coverage table
+- [Status](../README.md) — host coverage table

@@ -24,4 +24,4 @@
 - [GUI backends](gui/) — deep-dive guides for egui, iced, Slint,
   and raw-window-handle.
 - [Built-in GUI reference](gui/built-in.md) — the `GridLayout` builder, every widget constructor, theming.
-- [Status](../status.md) — what's shipped, what's next.
+- [Status](../README.md) — what's shipped, what's next.
