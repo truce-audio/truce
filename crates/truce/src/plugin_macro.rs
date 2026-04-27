@@ -106,21 +106,32 @@ macro_rules! __plugin_impl {
         }
 
         // Format exports — same wrapper name in both modes.
+        // `#[allow(unexpected_cfgs)]` suppresses the warning that
+        // fires when a downstream crate doesn't declare every truce
+        // format as a Cargo feature (e.g. analyzers that ship without
+        // LV2 still trigger check-cfg on `feature = "lv2"`). The
+        // `cfg` itself is correct; only the lint is noisy.
+        #[allow(unexpected_cfgs)]
         #[cfg(feature = "clap")]
         ::truce_clap::export_clap!(__HotShellWrapper);
 
+        #[allow(unexpected_cfgs)]
         #[cfg(feature = "vst3")]
         ::truce_vst3::export_vst3!(__HotShellWrapper);
 
+        #[allow(unexpected_cfgs)]
         #[cfg(feature = "vst2")]
         ::truce_vst2::export_vst2!(__HotShellWrapper);
 
+        #[allow(unexpected_cfgs)]
         #[cfg(feature = "lv2")]
         ::truce_lv2::export_lv2!(__HotShellWrapper);
 
+        #[allow(unexpected_cfgs)]
         #[cfg(feature = "aax")]
         ::truce_aax::export_aax!(__HotShellWrapper);
 
+        #[allow(unexpected_cfgs)]
         #[cfg(feature = "au")]
         ::truce_au::export_au!(__HotShellWrapper);
     };
