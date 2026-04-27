@@ -122,9 +122,7 @@ Both `--au2` and `--au3` produce complete, signed bundles in
 `target/bundles/`. `install` is a pure copy + `pluginkit` register
 step — the xcodebuild / framework-assembly / inside-out codesign
 work all happens at build time, no sudo or `/Applications/` write
-needed to produce a bundle. See
-[build-install-split.md](../../../truce-docs/docs/internal/build-install-split.md)
-(in the docs repo) for the rationale.
+needed to produce a bundle.
 
 ## Validate
 

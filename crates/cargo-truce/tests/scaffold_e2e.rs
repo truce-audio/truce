@@ -7,8 +7,6 @@
 //! that unit tests can't see because they only exercise one template
 //! at a time.
 //!
-//! See `truce-docs/docs/internal/scaffold-e2e.md` for the design.
-//!
 //! Run: `cargo test -p cargo-truce --test scaffold_e2e`
 //!
 //! Tests self-serialize at the build step via a process-level mutex,

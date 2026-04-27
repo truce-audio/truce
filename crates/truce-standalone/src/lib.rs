@@ -27,9 +27,7 @@
 //!   instruments the plugin emits silence unless a MIDI device is
 //!   connected (`--midi-input`; see [`midi`]).
 //!
-//! See [`cli`] for the full flag surface and
-//! [`../../../../truce-docs/docs/internal/standalone-bring-up-to-speed.md`](../../../../truce-docs/docs/internal/standalone-bring-up-to-speed.md)
-//! for the phased design plan.
+//! See [`cli`] for the full flag surface.
 
 pub mod audio;
 pub mod cli;

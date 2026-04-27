@@ -160,6 +160,3 @@ The plugin falls back to defaults.
 
 - **[Chapter 8 → shipping.md](shipping.md)** — when you're done
   iterating, package a signed installer.
-- **[docs/internal/hot-reload-architecture.md](../../../truce-docs/docs/internal/hot-reload-architecture.md)**
-  (in the docs repo) — deeper internals: ABI safety, canary,
-  vtable probe, memory model.

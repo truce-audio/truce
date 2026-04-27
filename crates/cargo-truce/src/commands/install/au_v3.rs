@@ -12,9 +12,6 @@
 //!   with pluginkit. Assumes the bundle was produced by
 //!   `emit_au_v3_bundle`.
 //!
-//! See `truce-docs/docs/internal/build-install-split.md` for the
-//! design rationale.
-//!
 //! The xcode project + framework scratch stay in `tmp_dir()` — only
 //! the final signed bundle lives under `target/`. Signatures are
 //! produced against the `target/bundles/` path and remain valid

@@ -13,8 +13,6 @@
 //!   build).
 //! - [`install_aax`] copies an existing `target/bundles/*.aaxplugin`
 //!   to the system AAX plug-ins directory.
-//!
-//! See `truce-docs/docs/internal/build-install-split.md`.
 
 #![allow(unused_imports)]
 

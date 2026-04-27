@@ -124,9 +124,8 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
 
     // AU v3 + shell is unreliable: the appex's sandbox blocks
     // `dlopen` of arbitrary `target/` paths. Until the entitlement
-    // workaround lands (see truce-docs/docs/internal/shell-hardening.md
-    // item 5), warn and let the build proceed; the user might still
-    // want the bundle for non-hot-reload smoke testing.
+    // workaround lands, warn and let the build proceed; the user
+    // might still want the bundle for non-hot-reload smoke testing.
     if shell_mode && au3 && cfg!(target_os = "macos") {
         eprintln!(
             "note: AU v3 + --shell is unreliable. The appex sandbox blocks dlopen of \

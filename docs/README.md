@@ -25,8 +25,8 @@ Tools requires a PACE/iLok signature (untested with a retail
 account — see below).
 
 Hot-reload works on every cell except AAX (untested) and AU v3 (appex
-sandbox blocks `dlopen` of `target/`; tracked in
-`truce-docs/docs/internal/shell-hardening.md`).
+sandbox blocks `dlopen` of `target/`; tracked in the immediate
+backlog).
 
 ## Immediate backlog
 

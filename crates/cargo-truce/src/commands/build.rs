@@ -4,8 +4,7 @@
 //! Every format flag (`--clap` / `--vst3` / `--vst2` / `--lv2` / `--au2`
 //! / `--au3` / `--aax`) produces a self-contained, signed bundle in
 //! `target/bundles/`; `cargo truce install` then copies those bundles
-//! to system paths. See
-//! `truce-docs/docs/internal/build-install-split.md`.
+//! to system paths.
 
 #[cfg(target_os = "macos")]
 use crate::commands::package::stage::stage_au2;

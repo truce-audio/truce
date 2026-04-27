@@ -11,8 +11,7 @@ pub use smooth::{Smoother, SmoothingStyle};
 pub use types::{BoolParam, EnumParam, FloatParam, IntParam, MeterSlot, ParamEnum};
 
 /// Implementation detail — not part of the stable public API.
-/// Used by `truce-loader` to index into meter storage. See
-/// `truce-docs/docs/internal/meter-ids.md`.
+/// Used by `truce-loader` to index into meter storage.
 #[doc(hidden)]
 pub const METER_ID_BASE: u32 = 1 << 24;
 
