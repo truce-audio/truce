@@ -441,4 +441,3 @@ fn check_which_with_env(name: &str, env_var: Option<&str>) {
         }
     }
 }
-

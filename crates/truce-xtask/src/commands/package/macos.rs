@@ -562,12 +562,7 @@ pub(crate) fn cmd_package_macos(args: &[String]) -> Res {
         // the effective one — a `--user` build that quietly widens
         // to system-domain because of AAX still gets the `-user`
         // filename so the developer's CI scripts find it.
-        let pkg_name = format!(
-            "{}-{}-macos{}.pkg",
-            p.name,
-            version,
-            scope.dist_suffix()
-        );
+        let pkg_name = format!("{}-{}-macos{}.pkg", p.name, version, scope.dist_suffix());
         let pkg_path = dist_dir.join(&pkg_name);
 
         let mut pb_args = vec![
@@ -624,7 +619,8 @@ fn resolve_pkg_scope(cli: Option<PkgScope>, config: &Config) -> Result<PkgScope,
         return Ok(s);
     }
     if let Some(ref raw) = config.install.default_scope {
-        let toml = InstallScope::parse_toml_value(raw).map_err(|e| -> crate::BoxErr { e.into() })?;
+        let toml =
+            InstallScope::parse_toml_value(raw).map_err(|e| -> crate::BoxErr { e.into() })?;
         return Ok(toml.for_package());
     }
     Ok(PkgScope::os_default())

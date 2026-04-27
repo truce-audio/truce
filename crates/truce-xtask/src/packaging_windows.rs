@@ -203,14 +203,7 @@ pub(crate) fn cmd_package(args: &[String]) -> Res {
         }
 
         let iss = render_iss(
-            &config,
-            p,
-            &formats,
-            &archs,
-            &staging,
-            &version,
-            &dist_dir,
-            scope,
+            &config, p, &formats, &archs, &staging, &version, &dist_dir, scope,
         );
         let iss_path = staging.join("installer.iss");
         fs::write(&iss_path, &iss)?;
@@ -294,7 +287,8 @@ fn resolve_pkg_scope(cli: Option<PkgScope>, config: &Config) -> Result<PkgScope,
         return Ok(s);
     }
     if let Some(ref raw) = config.install.default_scope {
-        let toml = InstallScope::parse_toml_value(raw).map_err(|e| -> crate::BoxErr { e.into() })?;
+        let toml =
+            InstallScope::parse_toml_value(raw).map_err(|e| -> crate::BoxErr { e.into() })?;
         return Ok(toml.for_package());
     }
     Ok(PkgScope::os_default())
@@ -1292,7 +1286,9 @@ fn iss_dual_dest(
     let arch_clause = arch_check.map(|c| format!(" and {c}")).unwrap_or_default();
     match scope {
         PkgScope::System => {
-            let arch = arch_check.map(|c| format!(" Check: {c};")).unwrap_or_default();
+            let arch = arch_check
+                .map(|c| format!(" Check: {c};"))
+                .unwrap_or_default();
             format!(
                 "Source: \"{src_quoted}\"; DestDir: \"{system_dest}\"; \
                  Components: {component};{arch} \
@@ -1300,7 +1296,9 @@ fn iss_dual_dest(
             )
         }
         PkgScope::User => {
-            let arch = arch_check.map(|c| format!(" Check: {c};")).unwrap_or_default();
+            let arch = arch_check
+                .map(|c| format!(" Check: {c};"))
+                .unwrap_or_default();
             format!(
                 "Source: \"{src_quoted}\"; DestDir: \"{user_dest}\"; \
                  Components: {component};{arch} \
@@ -1345,7 +1343,9 @@ fn iss_admin_only(
     let arch_clause = arch_check.map(|c| format!(" and {c}")).unwrap_or_default();
     match scope {
         PkgScope::System | PkgScope::User => {
-            let arch = arch_check.map(|c| format!(" Check: {c};")).unwrap_or_default();
+            let arch = arch_check
+                .map(|c| format!(" Check: {c};"))
+                .unwrap_or_default();
             format!(
                 "Source: \"{src_quoted}\"; DestDir: \"{system_dest}\"; \
                  Components: {component};{arch} \
