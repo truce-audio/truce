@@ -114,6 +114,28 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
         aax = available.contains("aax");
     }
 
+    // Shell-mode preflight: bail early if the user's Cargo.toml is
+    // missing `[profile.shell]` (plugins scaffolded before 0.13.x).
+    // Catching this here gives a one-line copy-paste fix instead of
+    // cargo's terser "profile `shell` is not declared" downstream.
+    if shell_mode {
+        crate::verify_shell_profile_declared()?;
+    }
+
+    // AU v3 + shell is unreliable: the appex's sandbox blocks
+    // `dlopen` of arbitrary `target/` paths. Until the entitlement
+    // workaround lands (see truce-docs/docs/internal/shell-hardening.md
+    // item 5), warn and let the build proceed; the user might still
+    // want the bundle for non-hot-reload smoke testing.
+    if shell_mode && au3 && cfg!(target_os = "macos") {
+        eprintln!(
+            "note: AU v3 + --shell is unreliable. The appex sandbox blocks dlopen of \
+             target/<profile>/lib<crate>.dylib, so hot-reload won't fire. Use --au2 \
+             for hot-reload iteration; run `cargo truce install --au3` (no --shell) \
+             for AU v3 smoke tests."
+        );
+    }
+
     // Filter plugins if -p specified
     let plugins: Vec<&PluginDef> = if let Some(ref filter) = plugin_filter {
         let matched: Vec<_> = config

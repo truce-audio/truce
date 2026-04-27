@@ -111,6 +111,44 @@ pub(crate) fn set_debug_profile(debug: bool) {
     set_build_profile(if debug { "debug" } else { "release" });
 }
 
+/// Preflight check for `cargo truce install --shell` / `build --shell`:
+/// the project's `Cargo.toml` (single-crate plugin or workspace root)
+/// must declare a `[profile.shell]` table so `cargo build --profile
+/// shell` resolves. Plugins scaffolded before 0.13.x predate the
+/// custom profile and need a one-line addition.
+///
+/// Returns `Ok(())` when the profile is declared. Otherwise returns
+/// an error string the caller can propagate; the message includes
+/// the exact lines to add.
+pub(crate) fn verify_shell_profile_declared() -> Result<(), BoxErr> {
+    let cargo_toml = project_root().join("Cargo.toml");
+    let content = fs::read_to_string(&cargo_toml).map_err(|e| -> BoxErr {
+        format!("failed to read {}: {e}", cargo_toml.display()).into()
+    })?;
+    let doc: toml::Table = content.parse().map_err(|e| -> BoxErr {
+        format!("failed to parse {}: {e}", cargo_toml.display()).into()
+    })?;
+    let has_profile_shell = doc
+        .get("profile")
+        .and_then(|v| v.as_table())
+        .and_then(|t| t.get("shell"))
+        .is_some();
+    if has_profile_shell {
+        return Ok(());
+    }
+    Err(format!(
+        "--shell requires `[profile.shell]` in {}.\n\
+         Add the following two lines and re-run:\n\
+         \n\
+             [profile.shell]\n\
+             inherits = \"release\"\n\
+         \n\
+         (Plugins scaffolded with truce 0.13.x or later already include this.)",
+        cargo_toml.display()
+    )
+    .into())
+}
+
 /// Read the active build profile name, defaulting to `"release"` when
 /// no command has set one.
 pub(crate) fn build_profile_name() -> String {

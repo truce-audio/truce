@@ -105,6 +105,10 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
     let logic_profile = if debug { "debug" } else { "release" };
 
     if shell_mode {
+        // Bail early if the user's Cargo.toml is missing
+        // `[profile.shell]` — clearer than cargo's downstream
+        // "profile `shell` is not declared" message.
+        crate::verify_shell_profile_declared()?;
         crate::set_build_profile("shell");
         // Bake the logic profile into the shell binary via truce-build
         // → `cargo:rustc-env=TRUCE_LOGIC_PROFILE=...`. The shell's
@@ -112,6 +116,16 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
         std::env::set_var("TRUCE_LOGIC_PROFILE", logic_profile);
     } else {
         crate::set_debug_profile(debug);
+    }
+
+    // AU v3 + shell is unreliable due to the appex sandbox. Same
+    // warning as `cargo truce install --shell --au3`.
+    if shell_mode && au3 && cfg!(target_os = "macos") {
+        eprintln!(
+            "note: AU v3 + --shell is unreliable. The appex sandbox blocks dlopen of \
+             target/<profile>/lib<crate>.dylib, so hot-reload won't fire. Use --au2 \
+             for hot-reload iteration."
+        );
     }
 
     let root = project_root();
