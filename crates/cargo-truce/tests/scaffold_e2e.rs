@@ -349,10 +349,10 @@ impl Scaffold {
     }
 }
 
-/// Snapshot the shared target tree (top-level + `release/` + `debug/`
-/// + `bundles/`) for inclusion in failure messages. Helps pinpoint
-/// whether the build wrote to a different profile dir, the staging
-/// step skipped, or cargo silently produced no output.
+/// Snapshot the shared target tree — top-level, `release/`,
+/// `debug/`, `bundles/` — for inclusion in failure messages. Helps
+/// pinpoint whether the build wrote to a different profile dir, the
+/// staging step skipped, or cargo silently produced no output.
 fn diagnose_target_layout() -> String {
     let target = shared_target();
     let mut out = format!("--- shared target dir: {} ---\n", target.display());
