@@ -37,6 +37,12 @@ cargo truce install --lv2        # LV2
 cargo truce install --au3        # AU v3 (macOS, requires Xcode)
 cargo truce install --aax        # AAX (requires AAX SDK)
 
+cargo truce validate             # auval + pluginval + clap-validator on installed plugins
+```
+
+Build without installing:
+
+```sh
 cargo truce build                # bundle all formats into target/bundles/ without installing
 cargo truce build --clap --vst3  # subset of formats
 cargo truce build --hot-reload          # hot-reload shell build (see docs/reference/hot-reload.md)
@@ -46,39 +52,31 @@ cargo truce run -p my-plugin     # standalone for a specific crate
 cargo truce test                 # run tests
 cargo truce screenshot           # render every plugin's GUI to target/screenshots/
 cargo truce screenshot -p my-plugin --name dark   # one plugin, custom filename
-cargo truce validate             # auval + pluginval + clap-validator
-cargo truce clean                # cargo clean, preserving target/dist/ installers
-```
-
-`cargo truce screenshot` doubles as a regression-test driver — see
-[docs/reference/gui/screenshot-testing.md](docs/reference/gui/screenshot-testing.md) for
-diffing against committed references.
-
-Use `cargo truce build` for CI, packaging pipelines, and
-iterating without touching the system plugin directories — it
-produces the same bundle layout as `install` under
-`target/bundles/` but never writes outside the workspace. Every
-format flag (`--clap` / `--vst3` / `--vst2` / `--lv2` / `--au2` /
-`--au3` / `--aax`) is supported.
-
-Produce a signed distributable installer:
-
-```sh
 cargo truce package              # signed .pkg (macOS) or Inno Setup .exe (Windows)
                                  # → target/dist/<Plugin>-<version>-<platform>.{pkg,exe}
 
 cargo truce package -p my-plugin --formats clap,vst3,aax   # subset
 cargo truce package --no-sign                              # dev builds, skip signing
+cargo truce clean                # cargo clean, preserving target/dist/ installers
 ```
-
-See [docs/reference/shipping.md](docs/reference/shipping.md) for
-signing setup (Developer ID / Authenticode / PACE), notarization,
-and the per-platform `truce.toml` schema.
 
 Scaffolded plugins default to **CLAP + VST3 + standalone**. VST2, AU, and AAX are
 opt-in per plugin via `Cargo.toml` features. On Windows, `cargo truce
 install` must be run from an Administrator command prompt (plugin
 directories are system-wide).
+
+## Examples
+
+[**truce-analyzer**](https://github.com/truce-audio/truce-analyzer),
+a real-time spectrum analyzer with diff overlay:
+
+<img src="examples/screenshots/analyzer_diff.png" width="600">
+
+Nine smaller example plugins ship in-tree to cover the basics — gain,
+EQ, synth, transpose, arpeggio, tremolo, plus three gain variants
+showing the egui / iced / Slint backends. See
+[examples/README.md](examples/README.md) for the full table with
+screenshots.
 
 ## Minimal Example
 
@@ -153,18 +151,6 @@ requires the Avid AAX SDK and PACE/iLok signing
 for retail Pro Tools releases. VST2 is opt-in on all platforms — see
 note below. See [Status](docs/status.md) for host coverage.
 
-By host (across all supported platforms):
-
-| Format | Reaper | Logic | GarageBand | Ableton | FL Studio | Pro Tools |
-|--------|--------|-------|------------|---------|-----------|-----------|
-| CLAP   | Yes    |       |            |         |           |           |
-| VST3   | Yes    |       |            | Yes     | Yes       |           |
-| VST2   | Yes    |       |            | Yes     | Yes       |           |
-| LV2    | Yes    |       |            |         |           |           |
-| AU v2  | Yes    | Yes   | Yes        | Yes     |           |           |
-| AU v3  | Yes    | Yes   | Yes        | Yes     |           |           |
-| AAX    |        |       |            |         |           | Yes       |
-
 ## Features
 
 - **7 plugin formats** from one codebase (CLAP, VST3 default; VST2, LV2, AU v2, AU v3, AAX opt-in)
@@ -179,19 +165,6 @@ By host (across all supported platforms):
 - **Thread-safe params** — atomic storage, lock-free access from any thread
 - **Automated tests** — render, state, params, GUI screenshots, binary validation
 - **Automated validation** — `cargo truce validate` runs auval, pluginval, and clap-validator in one command
-
-## Examples
-
-[**truce-analyzer**](https://github.com/truce-audio/truce-analyzer),
-a real-time spectrum analyzer with diff overlay:
-
-<img src="examples/screenshots/analyzer_diff.png" width="600">
-
-Nine smaller example plugins ship in-tree to cover the basics — gain,
-EQ, synth, transpose, arpeggio, tremolo, plus three gain variants
-showing the egui / iced / Slint backends. See
-[examples/README.md](examples/README.md) for the full table with
-screenshots.
 
 ## Crate Structure
 
