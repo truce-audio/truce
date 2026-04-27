@@ -1,9 +1,9 @@
 //! `cargo-truce` library — engine for `cargo truce <subcommand>`.
 //!
 //! `main.rs` owns argument parsing, the `cargo truce` arg strip,
-//! the user-facing help block, and dispatch for `new` /
-//! `new-workspace` (which live in the [`scaffold`] module). Every
-//! other subcommand goes through [`run`].
+//! the user-facing help block, and dispatch for `new` (single +
+//! `--workspace` modes, which live in the [`scaffold`] module).
+//! Every other subcommand goes through [`run`].
 
 mod commands;
 mod config;
@@ -37,7 +37,7 @@ pub(crate) type BoxErr = Box<dyn std::error::Error>;
 
 /// Run a command with the given args (e.g. `["install", "--clap"]`).
 ///
-/// Help, scaffold (`new` / `new-workspace`), and the `cargo truce`
+/// Help, scaffold (`new`), and the `cargo truce`
 /// arg-stripping live in `main.rs`. Unknown commands here surface
 /// back to the caller as an error so `main` can render its own help
 /// block.

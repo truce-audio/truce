@@ -28,16 +28,15 @@ No `build.rs`. No separate GUI crate. The `src/main.rs` host is a
 works out of the box; pass `--no-standalone` to skip it (drops the
 file, the bin entry, and the `standalone` feature/dep).
 
-**Shipping a suite?** Use `new-workspace` instead to create one
-Cargo workspace with a shared `truce.toml` and one sub-crate per
-plugin:
+**Shipping a suite?** Pass `--workspace` to create one Cargo workspace
+with a shared `truce.toml` and one sub-crate per plugin:
 
 ```sh
-cargo truce new-workspace studio gain reverb delay
-cargo truce new-workspace studio gain synth arp \
+cargo truce new studio --workspace gain reverb delay
+cargo truce new studio --workspace gain synth arp \
     --vendor "Studio Audio" --vendor-id com.studio \
     --type:synth=instrument --type:arp=midi
-cargo truce new-workspace studio gain reverb \
+cargo truce new studio --workspace gain reverb \
     --no-standalone                            # skip the standalone host in every plugin
 ```
 

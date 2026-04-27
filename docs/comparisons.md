@@ -57,7 +57,7 @@ Last updated 2026-04-26.
 
 | | truce | JUCE | nih-plug | iPlug2 | DPF |
 |---|---|---|---|---|---|
-| Scaffolding | `cargo truce new`, `cargo truce new-workspace` | Projucer / CMake | Manual | Duplicate example | Duplicate example |
+| Scaffolding | `cargo truce new` (single or `--workspace`) | Projucer / CMake | Manual | Duplicate example | Duplicate example |
 | Build system | Cargo | CMake / Projucer | Cargo | CMake / VS / Xcode | Make / CMake |
 | Hot reload | Yes | No | No | No | No |
 | Plugin validation | `cargo truce validate` | Manual | Manual | Manual | Manual |

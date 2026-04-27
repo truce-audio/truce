@@ -1,4 +1,4 @@
-//! Shared scaffolding templates for `cargo truce new` and `cargo truce new-workspace`.
+//! Shared scaffolding templates for `cargo truce new` (single + `--workspace` modes).
 
 use std::collections::{HashMap, HashSet};
 

@@ -280,7 +280,7 @@ fn locate_plugin_manifest(project_root: &Path, crate_name: &str) -> Option<PathB
 /// 1. **Root `Cargo.toml`'s `[features].default`** — the single-crate
 ///    layout (`cargo truce new` produces this). Most reliable signal.
 /// 2. **Plugin crates listed in `truce.toml`** — the workspace layout
-///    (`cargo truce new-workspace`). Reads each plugin's own
+///    (`cargo truce new --workspace`). Reads each plugin's own
 ///    `[features].default` and returns the **union**, so `install`
 ///    tries the formats declared by at least one plugin and skips the
 ///    rest (vs. the old fall-through that tried *every* format and

@@ -1,6 +1,6 @@
 //! End-to-end scaffold tests.
 //!
-//! Each user-visible `cargo truce new` / `cargo truce new-workspace`
+//! Each user-visible `cargo truce new` / `cargo truce new --workspace`
 //! permutation runs through an actual `cargo check`. Catches
 //! cross-file scaffold bugs (workspace-dep vs plugin-dep mismatches,
 //! missing `[build-dependencies]`, stale feature-flag lists, etc.)
@@ -111,12 +111,12 @@ impl Scaffold {
         }
     }
 
-    /// `cargo truce new-workspace <ws> <p1> [pN..]` → generates
+    /// `cargo truce new <ws> --workspace <p1> [pN..]` → generates
     /// `<tmp>/<ws>/` with one plugin crate per plugin name.
     fn new_workspace(label: &str, ws: &str, plugins: &[&str]) -> Self {
         let run_dir = fresh_tempdir(label);
         let generated = run_dir.join(ws);
-        let mut args = vec!["new-workspace".into(), ws.into()];
+        let mut args = vec!["new".into(), ws.into(), "--workspace".into()];
         args.extend(plugins.iter().map(|s| s.to_string()));
         Self {
             label: label.into(),
