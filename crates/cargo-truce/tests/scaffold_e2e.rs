@@ -202,6 +202,38 @@ impl Scaffold {
         self.run_cargo("test")
     }
 
+    /// Run `cargo clippy --workspace --all-targets -- -D warnings` —
+    /// the same lint policy CI applies to the truce repo itself, run
+    /// against a freshly-scaffolded plugin. Catches templates that
+    /// emit lint-noisy boilerplate that would surface in every user's
+    /// project.
+    fn cargo_clippy(&self) -> Result<(), String> {
+        let _guard = build_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let out = Command::new("cargo")
+            .args([
+                "clippy",
+                "--workspace",
+                "--all-targets",
+                "--",
+                "-D",
+                "warnings",
+            ])
+            .env("CARGO_TARGET_DIR", shared_target())
+            .current_dir(&self.generated)
+            .output()
+            .map_err(|e| format!("[{}] exec cargo clippy: {e}", self.label))?;
+        if !out.status.success() {
+            return Err(format!(
+                "[{}] cargo clippy failed: {}\nstdout:\n{}\nstderr:\n{}",
+                self.label,
+                out.status,
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr),
+            ));
+        }
+        Ok(())
+    }
+
     /// Shared body for `cargo check` / `cargo build` / `cargo test`.
     /// All hold `build_lock` (cache safety) and share the target dir.
     fn run_cargo(&self, subcommand: &str) -> Result<(), String> {
@@ -569,6 +601,18 @@ fn workspace_no_standalone() {
         );
     }
     s.cargo_check().unwrap();
+}
+
+// Lint-clean check on a fresh single-plugin scaffold. `clippy -D
+// warnings` matches the policy CI runs against the truce repo itself
+// — if we let a template emit code that triggers a lint, every user
+// of `cargo truce new` would inherit it.
+#[test]
+fn single_plugin_clippy_clean() {
+    let s = Scaffold::new("single-clippy", "demo_effect");
+    s.run().unwrap();
+    s.rewrite_git_to_path().unwrap();
+    s.cargo_clippy().unwrap();
 }
 
 // Full `cargo build` of a multi-plugin workspace. Catches link-time
