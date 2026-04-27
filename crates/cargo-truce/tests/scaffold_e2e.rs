@@ -274,6 +274,13 @@ impl Scaffold {
                 diagnostics.join("\n"),
             ));
         }
+        // Echo cargo-truce output via eprintln so cargo test captures
+        // it for the panic dump if a downstream assertion fails. No
+        // output unless the test ultimately fails.
+        eprintln!(
+            "[{}] cargo-truce {args:?} succeeded.\nstdout:\n{stdout}\nstderr:\n{stderr}",
+            self.label
+        );
         Ok(())
     }
 
@@ -290,9 +297,10 @@ impl Scaffold {
         let names: Vec<String> = std::fs::read_dir(&bundles)
             .unwrap_or_else(|e| {
                 panic!(
-                    "[{}] target/bundles missing at {}: {e}",
+                    "[{}] target/bundles missing at {}: {e}\n{}",
                     self.label,
-                    bundles.display()
+                    bundles.display(),
+                    diagnose_target_layout(),
                 )
             })
             .filter_map(|e| e.ok().map(|e| e.file_name().to_string_lossy().to_string()))
@@ -301,11 +309,48 @@ impl Scaffold {
         assert_eq!(
             count,
             expected,
-            "[{}] expected {expected} {ext} bundle(s) in {}, got: {names:?}",
+            "[{}] expected {expected} {ext} bundle(s) in {}, got: {names:?}\n{}",
             self.label,
-            bundles.display()
+            bundles.display(),
+            diagnose_target_layout(),
         );
     }
+}
+
+/// Snapshot the shared target tree (top-level + `release/` + `debug/`
+/// + `bundles/`) for inclusion in failure messages. Helps pinpoint
+/// whether the build wrote to a different profile dir, the staging
+/// step skipped, or cargo silently produced no output.
+fn diagnose_target_layout() -> String {
+    let target = shared_target();
+    let mut out = format!("--- shared target dir: {} ---\n", target.display());
+    for sub in ["", "release", "debug", "bundles"] {
+        let dir = if sub.is_empty() {
+            target.to_path_buf()
+        } else {
+            target.join(sub)
+        };
+        let label = if sub.is_empty() { "<root>" } else { sub };
+        match std::fs::read_dir(&dir) {
+            Ok(entries) => {
+                let mut names: Vec<_> = entries
+                    .filter_map(|e| e.ok().map(|e| e.file_name().to_string_lossy().into_owned()))
+                    .collect();
+                names.sort();
+                out.push_str(&format!("  {label}/ ({} entries):\n", names.len()));
+                for n in names.iter().take(40) {
+                    out.push_str(&format!("    {n}\n"));
+                }
+                if names.len() > 40 {
+                    out.push_str(&format!("    ... and {} more\n", names.len() - 40));
+                }
+            }
+            Err(e) => {
+                out.push_str(&format!("  {label}/: <not readable: {e}>\n"));
+            }
+        }
+    }
+    out
 }
 
 // ---------------------------------------------------------------------------
