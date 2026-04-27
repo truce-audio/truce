@@ -165,10 +165,7 @@ pub(crate) struct PackagingConfig {
     /// flags (`--user` / `--system` / `--ask`) override.
     /// Linux has no packaging pipeline, so the field is read only on
     /// macOS / Windows.
-    #[cfg_attr(
-        not(any(target_os = "macos", target_os = "windows")),
-        allow(dead_code)
-    )]
+    #[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
     pub(crate) preferred_scope: Option<String>,
 }
 
