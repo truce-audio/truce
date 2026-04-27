@@ -59,23 +59,46 @@ macro_rules! __plugin_impl {
         // Always export the PluginLogic for dylib use (hot-reload or testing).
         $crate::__reexport::export_plugin!($logic, $params);
 
-        /// Type alias for use in tests and external references.
-        pub type Plugin = __HotShellWrapper;
+        // The static / hot-reload `__HotShellWrapper` definition lives
+        // inside this synthetic module so a single
+        // `#[allow(unexpected_cfgs)]` covers the `feature = "hot-reload"`
+        // gate. Without the wrap, downstream crates that don't declare
+        // a `hot-reload` Cargo feature emit `unexpected_cfgs` warnings
+        // at the `truce::plugin!` invocation site (the lint is
+        // attributed to the macro, not the cfg attribute, so per-item
+        // `#[allow]` doesn't suppress it). Same trick as
+        // `__truce_format_exports` below.
+        #[allow(unexpected_cfgs)]
+        mod __truce_runtime {
+            // `$logic` / `$params` are paths from the user crate root
+            // (e.g. `Gain`, `GainParams`); pull the parent scope in so
+            // they resolve from inside the synthetic module.
+            use super::*;
 
-        // --- Static mode (default) ---
-        // Embed the logic directly. Zero overhead.
-        #[cfg(not(feature = "hot-reload"))]
-        $crate::__reexport::export_static! {
-            params: $params,
-            info: $crate::prelude::plugin_info!(),
-            bus_layouts: [$($layout),*],
-            logic: $logic,
+            // --- Static mode (default) ---
+            // Embed the logic directly. Zero overhead.
+            #[cfg(not(feature = "hot-reload"))]
+            $crate::__reexport::export_static! {
+                params: $params,
+                info: $crate::prelude::plugin_info!(),
+                bus_layouts: [$($layout),*],
+                logic: $logic,
+            }
+
+            // --- Hot-reload mode ---
+            // Load the logic from a dylib. Same crate, debug build.
+            #[cfg(feature = "hot-reload")]
+            $crate::__plugin_hot_reload!($params, [$($layout),*]);
         }
 
-        // --- Hot-reload mode ---
-        // Load the logic from a dylib. Same crate, debug build.
-        #[cfg(feature = "hot-reload")]
-        $crate::__plugin_hot_reload!($params, [$($layout),*]);
+        // Re-export the wrapper so `pub type Plugin`, the screenshot
+        // FFI shim, and the per-format `export_*!` macros below all
+        // resolve `__HotShellWrapper` at the macro invocation scope.
+        #[doc(hidden)]
+        pub use __truce_runtime::__HotShellWrapper;
+
+        /// Type alias for use in tests and external references.
+        pub type Plugin = __HotShellWrapper;
 
         /// FFI export driven by `cargo truce screenshot`. Renders the
         /// plugin's editor headlessly and writes the saved PNG path
