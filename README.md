@@ -3,12 +3,13 @@
 Build audio plugins in Rust. CLAP, VST3, LV2, AU v2, AU v3,
 AAX, and standalone from a single Rust codebase.
 
+[![Status](https://img.shields.io/badge/status-pre--1.0-orange)](docs/README.md)
 [![macOS](https://github.com/truce-audio/truce/actions/workflows/ci-macos.yml/badge.svg)](https://github.com/truce-audio/truce/actions/workflows/ci-macos.yml)
 [![Windows](https://github.com/truce-audio/truce/actions/workflows/ci-windows.yml/badge.svg)](https://github.com/truce-audio/truce/actions/workflows/ci-windows.yml)
 [![Linux](https://github.com/truce-audio/truce/actions/workflows/ci-linux.yml/badge.svg)](https://github.com/truce-audio/truce/actions/workflows/ci-linux.yml)
-[![Docs](https://img.shields.io/badge/docs-rustdoc-blue?logo=rust&logoColor=white)](https://truce-audio.github.io/truce/)
+
 [![Getting Started](https://img.shields.io/badge/getting_started-guide-purple?logo=readthedocs&logoColor=white)](docs/reference/README.md)
-[![Status](https://img.shields.io/badge/status-pre--1.0-orange)](docs/README.md)
+[![Docs](https://img.shields.io/badge/docs-rustdoc-blue?logo=rust&logoColor=white)](https://truce-audio.github.io/truce/)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
 
 > Note: Earlier releases have been yanked, stable release coming soon.
