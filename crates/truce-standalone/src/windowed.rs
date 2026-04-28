@@ -193,6 +193,26 @@ where
     }
 
     fn on_event(&mut self, _window: &mut Window, event: Event) -> EventStatus {
+        // On Linux X11 + NVIDIA, letting baseview unwind the parent
+        // window normally crashes inside `XCloseDisplay` — the
+        // driver's Xlib extension cleanup callback segfaults during
+        // teardown of the wgpu-bearing child window thread, even
+        // when the wgpu surface/device/instance themselves drop
+        // cleanly. The standalone has no clean-shutdown invariants
+        // we care about (audio is a passthrough; persistent state
+        // is saved on Ctrl-S, not at exit), so when the user closes
+        // the window we bypass Drop / atexit entirely via `_exit`.
+        // The OS reclaims the audio FDs, X handles, and the wgpu
+        // child thread — no driver teardown ever runs.
+        #[cfg(target_os = "linux")]
+        if matches!(event, Event::Window(baseview::WindowEvent::WillClose)) {
+            println!("Goodbye!");
+            unsafe extern "C" {
+                fn _exit(status: i32) -> !;
+            }
+            unsafe { _exit(0) };
+        }
+
         match event {
             Event::Keyboard(kb) => self.handle_keyboard(kb),
             _ => EventStatus::Ignored,
