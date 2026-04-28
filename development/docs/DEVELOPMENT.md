@@ -75,88 +75,78 @@ Today truce is on the `0.14.x` train. The current
 after the next** — i.e. when `0.15.0` lands, `preview/0.14` keeps
 receiving compat patches until `0.16.0` cuts, then sunsets.
 
+### One-time setup
+
+```sh
+cargo login <token>             # token from https://crates.io/me
+gh auth login                   # GitHub web flow
+```
+
+The crates.io token is scoped to "publish-update" (and "publish-new"
+until both crates have shipped their first version). Both
+credentials live on the maintainer's machine; verify with
+`cat ~/.cargo/credentials.toml | grep token` and `gh auth status`.
+
 ### Cutting a release
 
-Pre-flight from a clean working tree on `main`:
+Two scripts under `development/scripts/`:
+
+- **`bump.sh`** — opens the version-bump PR from `dev/latest` to
+  `main`. Runs locally; pre-flight asserts you're on `dev/latest`
+  with a clean tree.
+- **`release.sh`** — runs *after* the bump PR is merged. Tags from
+  `main`, publishes both crates to crates.io with the inter-publish
+  index-propagation sleep, fast-forwards the preview branch, pushes
+  everything, and creates the GitHub Release.
+
+Neither script makes any judgment calls (semver, changelog prose,
+etc.) — those stay with the maintainer.
+
+#### Patch release (most common: 0.14.3 → 0.14.4)
 
 ```sh
-git checkout main
-git pull --ff-only
-git status                                   # working tree must be clean
-cargo test --workspace                       # full test suite green
-cargo clippy --workspace -- -D warnings      # no clippy warnings
+# 1. Bump.
+git checkout dev/latest && git pull --ff-only
+./development/scripts/bump.sh patch
+
+# 2. Review + merge the opened PR via the GitHub UI. CI runs across
+#    all three platforms + docs. Diff should be limited to the two
+#    version strings in Cargo.toml (workspace.package + the
+#    truce-shim-types workspace dep) and the matching Cargo.lock
+#    entries — reject anything else.
+
+# 3. Publish.
+git checkout main && git pull --ff-only
+./development/scripts/release.sh
+
+# 4. Smoke-test from a clean install.
+cargo install --force cargo-truce --version 0.14.4
+cargo truce --help
 ```
 
-#### Patch release (most common)
+Total wall-clock: ~5 minutes of maintainer attention spread over
+~30 minutes (CI runs dominate).
 
-You want `0.14.1` → `0.14.2`, branch `preview/0.14` already exists.
-The release commit lands on `main` via PR from `dev/latest`; the
-steps below assume `dev/latest` has been merged and `main` carries
-the version bump.
+#### Minor release (new train: 0.14.x → 0.15.0)
 
-```sh
-# 1. Bump the version. Two strings in Cargo.toml track the release:
-#    `[workspace.package].version` (the source of truth — every
-#    member crate inherits this) and the `truce-shim-types` entry in
-#    `[workspace.dependencies]` (load-bearing because cargo-truce
-#    consumes it via `workspace = true` and ships to crates.io).
-sed -i '' 's/"0.14.1"/"0.14.2"/g' Cargo.toml
-
-# 2. Update CHANGELOG
-$EDITOR CHANGELOG.md
-
-# 3. Refresh Cargo.lock with the bumped versions
-cargo check --workspace
-
-# 4. Open a PR from dev/latest to main with the bump + changelog
-#    entry. Land it via squash- or merge-commit per the project
-#    convention. (No direct push to main.)
-
-# 5. Once the release commit is on main, tag and fast-forward the
-#    release branch.
-git checkout main
-git pull --ff-only
-git tag -a v0.14.2 -m "truce 0.14.2"
-git checkout preview/0.14
-git merge --ff-only main                     # branch was at v0.14.1; FF to main
-git checkout main
-
-# 6. Publish to crates.io (must happen before the push so a failed
-#    publish doesn't leave a tag without a matching crates.io
-#    artifact).
-cargo publish -p truce-shim-types
-sleep 30                                     # crates.io index lag
-cargo publish -p cargo-truce
-
-# 7. Push branch, release branch, and tag in one go.
-git push origin main preview/0.14 v0.14.2
-```
-
-If `git merge --ff-only` rejects (release branch has commits not on
-`main`), you've drifted — see [Hotfixes](#hotfixes) below.
-
-#### Minor release (new release branch)
-
-You want `0.14.x` → `0.15.0`. Same first three steps, then:
+Same flow, with one extra step between merge and `release.sh`: cut
+the new preview branch from `main`, since `release.sh` assumes the
+branch already exists.
 
 ```sh
-# 4. Land the version bump on main via PR from dev/latest.
+# 1. Bump.
+./development/scripts/bump.sh minor
 
-# 5. Cut the new release branch and tag.
-git checkout main
-git pull --ff-only
-git tag -a v0.15.0 -m "truce 0.15.0"
-git branch preview/0.15 v0.15.0              # new branch from the tag
+# 2. Review + merge.
 
-# 6. Publish to crates.io.
-cargo publish -p truce-shim-types
-sleep 30
-cargo publish -p cargo-truce
+# 3. Cut the new preview branch BEFORE release.sh.
+git checkout main && git pull --ff-only
+git branch preview/0.15 main          # main HEAD = v0.15.0 commit
 
-# 7. Push everything.
-git push origin main preview/0.15 v0.15.0
+# 4. Publish.
+./development/scripts/release.sh
 
-# 8. Mark the previous train as sunset-pending in CHANGELOG. The
+# 5. Mark the previous train as sunset-pending in CHANGELOG. The
 #    branch keeps receiving 0.14.x patches for one minor cycle
 #    (i.e. until 0.16.0 cuts).
 ```
@@ -167,54 +157,70 @@ new patches, not by removing the ref.
 
 ### Hotfixes
 
-The release branch and `main` can diverge when a security or
-correctness fix needs to ship before the next normal release on
-`main` is ready. Hotfixes branch from the existing release line, are
-applied via PR (no direct push), and the version bump + tag happen
-on the release branch:
+`bump.sh`'s pre-flight rejects anything other than `dev/latest`, so
+hotfixes are still manual. Branches from the existing release line,
+applied via PR, version bump + tag happen on the release branch:
 
 ```sh
-# 1. Branch off the existing release line for the fix.
-git checkout preview/0.14
-git pull --ff-only
-git checkout -b hotfix/0.14.3-loader-crash
+# 1. Branch off the release line for the fix.
+git checkout preview/0.14 && git pull --ff-only
+git checkout -b hotfix/0.14.5-loader-crash
 
 # 2. Apply the minimal fix; resist scope creep — anything beyond the
 #    bug should land on dev/latest and wait for the next minor.
 $EDITOR crates/truce-loader/...
 git commit -am "Fix: loader crash on AAX session reload (#1234)"
 
-# 3. Bump to 0.14.3 on the hotfix branch.
-sed -i '' 's/"0.14.2"/"0.14.3"/g' Cargo.toml
+# 3. Bump (single sed, same shape bump.sh would use).
+sed -i '' 's/"0.14.4"/"0.14.5"/g' Cargo.toml
 cargo check --workspace
-git commit -am "Release v0.14.3"
+git commit -am "Release v0.14.5"
+git push -u origin hotfix/0.14.5-loader-crash
 
-# 4. Open a PR targeting preview/0.14. Land it via merge-commit.
+# 4. Open PR targeting preview/0.14. Review + merge via merge-commit.
+gh pr create --base preview/0.14 --title "Hotfix v0.14.5"
 
-# 5. Tag from preview/0.14 once the merge lands.
-git checkout preview/0.14
-git pull --ff-only
-git tag -a v0.14.3 -m "truce 0.14.3 (hotfix)"
+# 5. After merge, run release.sh from preview/0.14.
+git checkout preview/0.14 && git pull --ff-only
+./development/scripts/release.sh      # tags + publishes + FFs
 
-# 6. Backport to dev/latest. Cherry-pick the fix commit (not the
-#    version bump — dev/latest is on whatever 0.15.0-dev version
-#    it's tracking).
-git checkout dev/latest
-git pull --ff-only
-git cherry-pick <fix-commit-sha>             # not the version bump
+# 6. Backport the fix commit (NOT the version bump) to dev/latest.
+git checkout dev/latest && git pull --ff-only
+git cherry-pick <fix-commit-sha>      # not the "Release v0.14.5" commit
 git push origin dev/latest
 
-# 7. Publish from the release branch (only re-publish crates whose
-#    bytes actually changed).
-git checkout preview/0.14
-cargo publish -p truce-shim-types --dry-run  # confirm whether re-publish is needed
-cargo publish -p cargo-truce
-git checkout main
-
-# 8. Push everything.
-git push origin preview/0.14 v0.14.3
-git branch -d hotfix/0.14.3-loader-crash
+# 7. Clean up the hotfix branch.
+git branch -d hotfix/0.14.5-loader-crash
+git push origin --delete hotfix/0.14.5-loader-crash
 ```
+
+`release.sh` reads the version from `Cargo.toml` and derives the
+train name from it, so running it from `preview/0.14` correctly tags
+`v0.14.5` and pushes to `preview/0.14`. The script's first two lines
+(`git checkout main && git pull --ff-only`) need to be skipped or
+the script needs a one-line edit for the hotfix — accept that
+friction or write a `hotfix.sh` variant once you've shipped one and
+felt it.
+
+### When release.sh fails partway
+
+The script is linear, not idempotent. Recovery depends on which step
+failed:
+
+- **Before any `cargo publish`** — nothing irreversible happened.
+  Delete the local tag (`git tag -d vX.Y.Z`), fix, re-run.
+- **After `truce-shim-types` publish, before `cargo-truce` publish** —
+  shim-types is now permanent on crates.io at this version. Either
+  retry just the cargo-truce publish (typical: index-lag failure;
+  wait a minute and re-run `cargo publish -p cargo-truce`), or yank
+  shim-types and bump to a new patch end-to-end.
+- **After both publishes, before push** — no user-visible state yet
+  (no tag pushed, no preview-branch FF, no GitHub Release). Run the
+  remaining steps manually: `git push origin main preview/X.Y vX.Y.Z`
+  then `gh release create vX.Y.Z --generate-notes`.
+- **`cargo install` fails post-publish** — yank
+  (`cargo yank -p cargo-truce --version X.Y.Z`) and bump-and-release
+  again. crates.io versions are immutable.
 
 ### What scaffolded plugins resolve to
 
@@ -268,7 +274,7 @@ the scaffold templates need a parallel bump.
   exact tagged commit so `git log preview/0.14 --first-parent` reads
   as a clean list of releases.
 
-### Crates.io publishing
+### What gets published to crates.io
 
 `cargo-truce` is the one crate users `cargo install`, so it lives on
 crates.io. The framework crates (`truce`, `truce-gui`, format
@@ -276,96 +282,41 @@ wrappers, etc.) stay git-only — they transitively depend on
 `baseview`, which is git-only — and scaffolded plugins consume them
 via the git ref + release-branch pin documented above.
 
-#### What gets published
-
-| Crate | Why |
+| Crate | Why on crates.io |
 |---|---|
 | `truce-shim-types` | Direct dep of `cargo-truce`; cargo strips the `path =` half of the workspace dep on publish, so the version must already be on crates.io. |
 | `cargo-truce` | The `cargo install cargo-truce` target. |
 
 If a future release adds a new dep to `cargo-truce` that lives in
 this repo, it joins the publish list (and must publish before
-`cargo-truce`).
+`cargo-truce`). `release.sh` would need a parallel addition.
 
-#### One-time setup
+### Maintainer responsibilities
 
-- Run `cargo login <token>` once per release machine. Token comes
-  from <https://crates.io/me> — scope it to "publish-update" plus
-  "publish-new" for the first-time publish of `truce-shim-types`.
-- The crates.io account must own both crate names. First publish
-  claims them.
-- `truce-shim-types/Cargo.toml` needs `repository.workspace = true`,
-  `homepage.workspace = true`, `categories.workspace = true`, and
-  `keywords` set. crates.io rejects the upload without
-  license + description + repository.
+Things the scripts don't decide:
 
-#### Publish recipe
+- [ ] Patch vs. minor — semver judgment about whether the change is
+      additive on the existing train or breaking enough to need a
+      new train
+- [ ] CHANGELOG entry written before bump (the bump PR carries it)
+- [ ] CI green on all three platforms + docs before merging the
+      bump PR
+- [ ] For minor releases: new `preview/X.Y` branch cut from `main`
+      *before* `release.sh`
+- [ ] For minor releases: previous train marked sunset-pending in
+      CHANGELOG
+- [ ] For hotfixes: fix commit cherry-picked back to `dev/latest`
+      (without it, the next minor regresses the fix)
+- [ ] After release: `cargo install --force cargo-truce` smoke-tested
+- [ ] After release: GitHub Release auto-generated notes lightly
+      edited if anything significant got buried in the PR list
 
-Runs from the version-bumped commit on `main`. The tag should
-already exist locally so a publish failure is recoverable (delete
-the local tag, fix, retry — nothing has been pushed yet).
+What `bump.sh` checks: clean tree, on `dev/latest`, remote up to
+date, version strings in `Cargo.toml` correctly bumped together,
+`Cargo.lock` refreshed, branch + PR opened.
 
-```sh
-# Sanity check what each upload will contain. --dry-run is a full
-# package + verify pass; catches missing metadata, .gitignore'd
-# files, dirty trees, version conflicts.
-cargo publish -p truce-shim-types --dry-run
-cargo publish -p cargo-truce --dry-run
-
-# Real publish, in dependency order. crates.io's index has up to
-# ~30s of CDN lag between accepting a publish and making the new
-# version visible to a downstream resolver, so insert a sleep
-# between the two — otherwise `cargo publish -p cargo-truce` can
-# fail to find the just-published `truce-shim-types`.
-cargo publish -p truce-shim-types
-sleep 30
-cargo publish -p cargo-truce
-```
-
-#### Failure modes
-
-- **`error: failed to verify package`** during `cargo publish` —
-  almost always a `Cargo.toml` metadata gap (missing `description`,
-  `license`, or `repository`). Fix on `main` via PR, retry. The
-  local tag has not been pushed; either re-tag or move the tag to
-  the amended commit with `git tag -fa vX.Y.Z`.
-- **`error: api errors: crate version X.Y.Z is already uploaded`** —
-  someone already published this version. Bump to the next patch and
-  start again. crates.io versions are immutable; you cannot
-  re-publish over them.
-- **`error: failed to select a version for ...`** during the
-  `cargo-truce` publish — the index hasn't propagated
-  `truce-shim-types` yet. Wait 30–60s and retry.
-- **Yanking.** If a published `cargo-truce` turns out to be broken,
-  `cargo yank --version X.Y.Z -p cargo-truce` hides it from new
-  installs without removing it (existing `Cargo.lock` files keep
-  resolving). Fix forward with the next patch — never re-publish the
-  same version.
-
-### Checklist
-
-Pin this on the wall before any release:
-
-- [ ] PR from `dev/latest` → `main` carries the version bump +
-      CHANGELOG entry, and is merged (no direct push to `main`)
-- [ ] Working tree clean on `main` after merge
-- [ ] `cargo test --workspace` green
-- [ ] `cargo clippy --workspace -- -D warnings` clean
-- [ ] All three platform CI runs green on the release commit
-- [ ] Both version strings in `Cargo.toml` bumped to the same value
-      (`[workspace.package].version` and the `truce-shim-types`
-      entry in `[workspace.dependencies]`)
-- [ ] `Cargo.lock` regenerated (`cargo check --workspace`)
-- [ ] Annotated tag created (`git tag -a vX.Y.Z`)
-- [ ] Release branch fast-forwarded to the tag
-- [ ] `cargo publish -p truce-shim-types --dry-run` clean
-- [ ] `cargo publish -p cargo-truce --dry-run` clean
-- [ ] `truce-shim-types` published to crates.io
-- [ ] `cargo-truce` published to crates.io (after the 30s index wait)
-- [ ] `main`, `preview/X.Y`, and `vX.Y.Z` all pushed in one
-      `git push` (atomic from the user's perspective — they never
-      see a tag without its branch update)
-- [ ] GitHub release notes drafted from CHANGELOG
-- [ ] `cargo install cargo-truce` smoke-tested from a clean machine
-      (or `cargo install --force cargo-truce` locally) so the
-      crates.io artifact is verified end-to-end
+What `release.sh` checks: on `main`, version drift between the two
+`Cargo.toml` strings, no pre-existing local tag with this version,
+`truce-shim-types --dry-run` (catches metadata gaps before the
+immutable upload), inter-publish 30s sleep, FF preview branch only
+after both publishes succeed.
