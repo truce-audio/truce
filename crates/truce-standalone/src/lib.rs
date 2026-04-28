@@ -39,6 +39,9 @@ pub mod transport;
 #[cfg(feature = "gui")]
 pub mod windowed;
 
+#[cfg(all(target_os = "macos", feature = "gui"))]
+pub mod menu_macos;
+
 pub mod headless;
 
 pub use truce_core::export::PluginExport;

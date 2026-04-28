@@ -22,6 +22,12 @@ baseview = { workspace = true, optional = true }
 raw-window-handle = { version = "0.5", optional = true }
 keyboard-types = { version = "0.6", optional = true }
 
+# macOS native-menu bridge for `gui`-enabled standalone hosts.
+# Hand-rolled `objc` runtime calls — no `cocoa` / `cacao` dep
+# beyond what `objc` itself pulls in.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc = { version = "0.2", optional = true }
+
 [features]
 default = []
 gui = [
@@ -30,4 +36,8 @@ gui = [
     "dep:baseview",
     "dep:raw-window-handle",
     "dep:keyboard-types",
+    "dep:objc",
 ]
+
+[lints]
+workspace = true

@@ -6301,6 +6301,7 @@ dependencies = [
  "dirs",
  "keyboard-types 0.6.2",
  "midir",
+ "objc",
  "pico-args",
  "raw-window-handle 0.5.2",
  "serde",

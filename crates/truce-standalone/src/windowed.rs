@@ -117,6 +117,16 @@ where
             _ => panic!("unsupported raw-window-handle variant"),
         };
 
+        // Install the macOS native menu bar (App + Plugin → Mic
+        // Input toggle). Must run on the main thread after baseview
+        // has initialized NSApp, which it does as part of opening
+        // the window. The closure builder runs on the main thread
+        // before the event loop starts, so this is the right hook.
+        #[cfg(target_os = "macos")]
+        if is_effect {
+            crate::menu_macos::install(input_ctrl.clone());
+        }
+
         let ctx = synthesize_editor_context::<P>(&plugin, &transport);
         editor.open(truce_parent, ctx);
 
