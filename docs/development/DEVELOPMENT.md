@@ -95,10 +95,12 @@ steps below assume `dev/latest` has been merged and `main` carries
 the version bump.
 
 ```sh
-# 1. Bump the version in the workspace root + cargo-truce
-#    (cargo-truce has its own [package].version that needs bumping
-#    in lock-step with the workspace.)
-sed -i '' 's/"0.14.1"/"0.14.2"/g' Cargo.toml crates/cargo-truce/Cargo.toml
+# 1. Bump the version. Two strings in Cargo.toml track the release:
+#    `[workspace.package].version` (the source of truth — every
+#    member crate inherits this) and the `truce-shim-types` entry in
+#    `[workspace.dependencies]` (load-bearing because cargo-truce
+#    consumes it via `workspace = true` and ships to crates.io).
+sed -i '' 's/"0.14.1"/"0.14.2"/g' Cargo.toml
 
 # 2. Update CHANGELOG
 $EDITOR CHANGELOG.md
@@ -183,7 +185,7 @@ $EDITOR crates/truce-loader/...
 git commit -am "Fix: loader crash on AAX session reload (#1234)"
 
 # 3. Bump to 0.14.3 on the hotfix branch.
-sed -i '' 's/"0.14.2"/"0.14.3"/g' Cargo.toml crates/cargo-truce/Cargo.toml
+sed -i '' 's/"0.14.2"/"0.14.3"/g' Cargo.toml
 cargo check --workspace
 git commit -am "Release v0.14.3"
 
@@ -350,7 +352,9 @@ Pin this on the wall before any release:
 - [ ] `cargo test --workspace` green
 - [ ] `cargo clippy --workspace -- -D warnings` clean
 - [ ] All three platform CI runs green on the release commit
-- [ ] Workspace + `cargo-truce` versions bumped in lock-step
+- [ ] Both version strings in `Cargo.toml` bumped to the same value
+      (`[workspace.package].version` and the `truce-shim-types`
+      entry in `[workspace.dependencies]`)
 - [ ] `Cargo.lock` regenerated (`cargo check --workspace`)
 - [ ] Annotated tag created (`git tag -a vX.Y.Z`)
 - [ ] Release branch fast-forwarded to the tag
