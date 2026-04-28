@@ -1,7 +1,7 @@
 # Development
 
 Notes for contributors working on truce itself. End-user documentation
-lives in [`docs/reference/`](../reference/) and the rendered API docs
+lives in [`docs/reference/`](../../docs/reference/) and the rendered API docs
 at <https://truce-audio.github.io/truce/>.
 
 ## Workflow rules
