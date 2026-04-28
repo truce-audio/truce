@@ -3,10 +3,10 @@
 # bump.sh — open a release-bump PR.
 #
 # Usage:
-#   development/scripts/bump.sh patch                      # X.Y.Z → X.Y.(Z+1)
-#   development/scripts/bump.sh minor                      # X.Y.Z → X.(Y+1).0
-#   development/scripts/bump.sh 0.15.0                     # explicit version
-#   development/scripts/bump.sh patch --release            # use release/ prefix
+#   dev/scripts/bump.sh patch                      # X.Y.Z → X.Y.(Z+1)
+#   dev/scripts/bump.sh minor                      # X.Y.Z → X.(Y+1).0
+#   dev/scripts/bump.sh 0.15.0                     # explicit version
+#   dev/scripts/bump.sh patch --release            # use release/ prefix
 #                                                          # (post-1.0 stable line)
 #
 # Pre-flight: asserts current branch is `dev/latest` with a clean
@@ -175,10 +175,10 @@ Once CI is green and the PR is merged, ship via:
 \`\`\`sh
 git checkout main
 git pull --ff-only
-development/scripts/release.sh
+dev/scripts/release.sh
 \`\`\`
 EOF
 )"
 
 echo
-echo "Bump PR opened. After merge, run development/scripts/release.sh."
+echo "Bump PR opened. After merge, run dev/scripts/release.sh."

@@ -9,4 +9,4 @@ issue](https://github.com/truce-audio/truce/issues/new) describing
 what you have in mind. Drive-by PRs are welcome, but no promises.
 
 The development workflow rules and release process live in
-[`development/docs/DEVELOPMENT.md`](development/docs/DEVELOPMENT.md).
+[`dev/docs/DEVELOPMENT.md`](dev/docs/DEVELOPMENT.md).

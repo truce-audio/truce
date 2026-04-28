@@ -101,7 +101,7 @@ credentials live on the maintainer's machine; verify with
 
 ### Cutting a release
 
-Two scripts under `development/scripts/`:
+Two scripts under `dev/scripts/`:
 
 - **`bump.sh`** — opens the version-bump PR from `dev/latest` to
   `main`. Runs locally. Pre-flight asserts you're on `dev/latest`
@@ -126,7 +126,7 @@ etc.) — those stay with the maintainer.
 ```sh
 # 1. Bump.
 git checkout dev/latest && git pull --ff-only
-./development/scripts/bump.sh patch
+./dev/scripts/bump.sh patch
 
 # 2. Review + merge the opened PR via the GitHub UI. CI runs across
 #    all three platforms + docs. Diff should be limited to the two
@@ -138,7 +138,7 @@ git checkout dev/latest && git pull --ff-only
 
 # 3. Publish.
 git checkout main && git pull --ff-only
-./development/scripts/release.sh
+./dev/scripts/release.sh
 
 # 4. Smoke-test from a clean install.
 cargo install --force cargo-truce --version 0.15.1
@@ -156,7 +156,7 @@ branch already exists.
 
 ```sh
 # 1. Bump.
-./development/scripts/bump.sh minor
+./dev/scripts/bump.sh minor
 
 # 2. Review + merge.
 
@@ -165,7 +165,7 @@ git checkout main && git pull --ff-only
 git branch preview/0.16 main          # main HEAD = v0.16.0 commit
 
 # 4. Publish.
-./development/scripts/release.sh
+./dev/scripts/release.sh
 
 # 5. Mark the previous train as sunset-pending in CHANGELOG. The
 #    branch keeps receiving 0.15.x patches for one minor cycle
@@ -206,7 +206,7 @@ gh pr create --base preview/0.14 --title "Hotfix v0.14.4"
 
 # 5. After merge, run release.sh from preview/0.14.
 git checkout preview/0.14 && git pull --ff-only
-./development/scripts/release.sh      # tags + publishes + FFs
+./dev/scripts/release.sh      # tags + publishes + FFs
 
 # 6. Backport the fix commit (NOT the version bump) to dev/latest.
 git checkout dev/latest && git pull --ff-only

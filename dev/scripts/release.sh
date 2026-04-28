@@ -3,8 +3,8 @@
 # release.sh — tag, publish, and announce a release.
 #
 # Usage:
-#   development/scripts/release.sh             # default: preview/ train
-#   development/scripts/release.sh --release   # post-1.0 stable train
+#   dev/scripts/release.sh             # default: preview/ train
+#   dev/scripts/release.sh --release   # post-1.0 stable train
 #
 # Run from `main` (or the train branch for a hotfix) after the bump
 # PR opened by `bump.sh` has been reviewed and merged. The merged
@@ -42,7 +42,7 @@
 #     (for a brand-new minor release, create <prefix>/X.Y from main
 #      before running this script)
 #
-# Recovery: see development/docs/DEVELOPMENT.md or
+# Recovery: see dev/docs/DEVELOPMENT.md or
 # truce-docs/docs/internal/release.md for what to do when a
 # particular step fails. The script is linear, not idempotent —
 # re-running after a partial failure requires manual cleanup first.
