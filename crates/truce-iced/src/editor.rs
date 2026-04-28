@@ -267,11 +267,7 @@ struct RenderState<P: Params, M: IcedPlugin<P>> {
 
 impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
     /// Initialize the wgpu + iced rendering pipeline from a pre-created surface.
-    fn init_render(
-        &mut self,
-        instance: wgpu::Instance,
-        surface: wgpu::Surface<'static>,
-    ) -> bool {
+    fn init_render(&mut self, instance: wgpu::Instance, surface: wgpu::Surface<'static>) -> bool {
         let program = match self.program.take() {
             Some(p) => p,
             None => return false,
