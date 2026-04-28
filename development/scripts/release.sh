@@ -22,6 +22,10 @@
 #   8. Fast-forward <prefix>/X.Y to the tag
 #   9. Push main, <prefix>/X.Y, and the tag in one go
 #  10. Create the GitHub Release with auto-generated notes
+#  11. Fast-forward dev/latest to main and push it (closes the
+#      rebase-and-merge sync loop — see release.md "Branch sync
+#      model"). Best-effort: a release-already-shipped failure
+#      surfaces as a warning, not an error.
 #
 # Prefix selection:
 #   --preview (default)  pre-1.0 trains and post-1.0 pre-release testing
@@ -158,6 +162,35 @@ echo "→ creating GitHub Release"
 gh release create "$TAG" \
     --generate-notes \
     --title "truce $WS_VERSION"
+
+# Step 11 — sync dev/latest to main ------------------------------------------
+
+# Under the rebase-and-merge rule, dev/latest is reachable from
+# main, so this FF should always succeed. If it rejects, the merge
+# style invariant was violated — print a warning and let the
+# maintainer investigate. The release itself has already shipped, so
+# don't fail the script; just surface the drift loudly.
+
+echo
+echo "→ syncing dev/latest with main"
+
+if git fetch origin dev/latest:dev/latest 2>/dev/null \
+    || git rev-parse --verify dev/latest >/dev/null 2>&1; then
+    git checkout dev/latest
+    if git merge --ff-only main; then
+        git push origin dev/latest
+        echo "  dev/latest is now at main."
+    else
+        echo
+        echo "WARNING: dev/latest can't fast-forward to main." >&2
+        echo "The release itself shipped, but dev/latest is out of sync." >&2
+        echo "Likely cause: bump PR was squash-merged instead of rebased." >&2
+        echo "See release.md \"Branch sync model\" before forcing anything." >&2
+    fi
+    git checkout main
+else
+    echo "  (dev/latest branch not found; skipping sync)"
+fi
 
 # Done ------------------------------------------------------------------------
 

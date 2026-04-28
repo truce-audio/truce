@@ -9,13 +9,20 @@
 #   development/scripts/bump.sh patch --release            # use release/ prefix
 #                                                          # (post-1.0 stable line)
 #
-# Branches off `dev/latest`, bumps both version strings in
+# Pre-flight: asserts current branch is `dev/latest` with a clean
+# tree, pulls latest, then FFs dev/latest to origin/main (catches
+# drift from a squash-merged previous bump PR — see release.md
+# "Branch sync model").
+#
+# Then: branches off `dev/latest`, bumps both version strings in
 # `Cargo.toml` (the only two post-deduplication), refreshes
 # `Cargo.lock`, commits on `<prefix>/vX.Y` (a per-minor bump branch,
 # distinct from the train `<prefix>/X.Y` by the `v` prefix), pushes,
-# and opens a PR against `main`. Re-running on the same minor (e.g.,
-# 0.15.1 → 0.15.2 after a previous bump merged) reuses the same
-# branch name; the local branch is reset to the new commit.
+# and opens a PR against `main`. The PR must be merged using GitHub's
+# "Rebase and merge" — squash-merging breaks the FF invariant.
+# Re-running on the same minor (e.g., 0.15.1 → 0.15.2 after a
+# previous bump merged) reuses the same branch name; the local
+# branch is reset to the new commit.
 #
 # Prefix selection:
 #   --preview (default)  pre-1.0 trains and post-1.0 pre-release testing
@@ -68,6 +75,24 @@ if ! git diff --quiet || ! git diff --cached --quiet; then
 fi
 
 git pull --ff-only
+
+# Catch dev/latest drift from main before any bump work.
+# Under the "rebase-and-merge bump PRs" rule, dev/latest is always
+# reachable from main, so this FF should always succeed. If it
+# rejects, someone squash-merged the previous bump PR (or
+# something equivalent) — investigate before doing anything else,
+# don't force.
+git fetch origin main
+if ! git merge --ff-only origin/main; then
+    echo >&2
+    echo "Error: dev/latest can't fast-forward to origin/main." >&2
+    echo "" >&2
+    echo "This usually means the previous bump PR was squash-merged" >&2
+    echo "instead of rebase-merged. See release.md \"Branch sync" >&2
+    echo "model\" for the recovery — do NOT force-push." >&2
+    exit 1
+fi
+git push origin dev/latest
 
 # Read current version + compute new -----------------------------------------
 
@@ -140,6 +165,10 @@ Diff should be limited to the two version strings in \`Cargo.toml\`
 (\`[workspace.package].version\` + the \`truce-shim-types\` entry in
 \`[workspace.dependencies]\`) and the corresponding entries in
 \`Cargo.lock\`. Reject anything else.
+
+**Merge via "Rebase and merge"** — not squash. Squash-merging
+breaks the dev/latest fast-forward invariant (see release.md
+"Branch sync model").
 
 Once CI is green and the PR is merged, ship via:
 
