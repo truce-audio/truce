@@ -7,6 +7,7 @@
 use crate::BoxErr;
 use std::env;
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -577,10 +578,20 @@ pub(crate) fn write_entitlements_plist() -> PathBuf {
     path
 }
 
-/// Code-sign a bundle. When `identity` is a Developer ID, adds hardened
-/// runtime, timestamp, and entitlements (required for notarization).
-/// When ad-hoc (`"-"`), performs a simple ad-hoc sign.
+/// Code-sign a bundle (or a single Mach-O). When `identity` is a
+/// Developer ID, adds hardened runtime, timestamp, and entitlements
+/// (required for notarization). When ad-hoc (`"-"`), performs a
+/// simple ad-hoc sign.
 /// If `use_sudo` is true the codesign command runs via sudo.
+///
+/// **Inside-out signing.** When `path` is a directory (a bundle),
+/// every Mach-O in the bundle is enumerated and signed explicitly
+/// before the bundle's outer seal is applied. This bypasses Apple's
+/// `codesign --deep` traversal — which doesn't recurse into
+/// `Contents/Resources/` for AAX (TDMw) and other non-app bundle
+/// types, leaving inner dylibs with their linker-applied ad-hoc
+/// signature and breaking notarization. Apple has been deprecating
+/// `--deep` for years anyway; enumerate ourselves to be sure.
 pub(crate) fn codesign_bundle(_bundle: &str, _identity: &str, _use_sudo: bool) -> crate::Res {
     // macOS-only: `codesign` is an Apple tool, and the entitlements plist
     // we write is consumed only by it. On Linux / Windows this is a no-op
@@ -590,20 +601,196 @@ pub(crate) fn codesign_bundle(_bundle: &str, _identity: &str, _use_sudo: bool) -
         let production = is_production_identity(_identity);
         let entitlements = write_entitlements_plist();
         let ent_path = entitlements.to_str().unwrap();
+        let bundle_path = Path::new(_bundle);
 
-        let mut args: Vec<&str> = vec!["--force", "--deep", "--sign", _identity];
-        if production {
-            args.extend_from_slice(&["--options", "runtime", "--timestamp"]);
-            args.extend_from_slice(&["--entitlements", ent_path]);
+        let sign_one = |target: &str| -> crate::Res {
+            let mut args: Vec<&str> = vec!["--force", "--sign", _identity];
+            if production {
+                args.extend_from_slice(&["--options", "runtime", "--timestamp"]);
+                args.extend_from_slice(&["--entitlements", ent_path]);
+            }
+            args.push(target);
+            run_codesign(&args, _use_sudo)
+        };
+
+        // Inside-out: sign each Mach-O in the bundle's tree before
+        // sealing the bundle itself. For a single-file path, this
+        // enumeration is empty and the path goes straight to the
+        // bundle-level sign below.
+        if bundle_path.is_dir() {
+            let mach_os = enumerate_mach_os(bundle_path);
+            for mach_o in &mach_os {
+                let mach_o_str = mach_o.to_str().ok_or("Mach-O path is not UTF-8")?;
+                sign_one(mach_o_str)?;
+            }
         }
-        args.push(_bundle);
-        run_codesign(&args, _use_sudo)?;
+
+        // Bundle-level (or single-file) seal. With the inner Mach-Os
+        // already signed inside-out, we don't need `--deep` here —
+        // codesign will validate the inner signatures and stamp the
+        // outer Info.plist seal.
+        sign_one(_bundle)?;
 
         if production {
             run_codesign(&["--verify", "--strict", _bundle], _use_sudo)?;
         }
     }
     Ok(())
+}
+
+/// Detect a Mach-O file by its 4-byte magic. Catches 32 / 64-bit
+/// thin Mach-O and FAT (universal) binaries in either endianness.
+#[cfg(target_os = "macos")]
+fn is_mach_o_file(path: &Path) -> bool {
+    let Ok(mut f) = fs::File::open(path) else {
+        return false;
+    };
+    let mut buf = [0u8; 4];
+    if f.read_exact(&mut buf).is_err() {
+        return false;
+    }
+    let magic_be = u32::from_be_bytes(buf);
+    matches!(
+        magic_be,
+        0xFEEDFACE      // thin Mach-O 32-bit, BE
+        | 0xFEEDFACF    // thin Mach-O 64-bit, BE
+        | 0xCEFAEDFE    // thin Mach-O 32-bit, LE
+        | 0xCFFAEDFE    // thin Mach-O 64-bit, LE
+        | 0xCAFEBABE    // FAT/universal, BE
+        | 0xBEBAFECA // FAT/universal, LE
+    )
+}
+
+/// Walk a directory recursively and return every Mach-O file found.
+/// Used by `codesign_bundle` to drive inside-out signing and by the
+/// notarization-readiness check.
+#[cfg(target_os = "macos")]
+fn enumerate_mach_os(dir: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    walk_mach_os(dir, &mut out);
+    out
+}
+
+#[cfg(target_os = "macos")]
+fn walk_mach_os(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Ok(metadata) = entry.metadata() else {
+            continue;
+        };
+        if metadata.is_dir() {
+            walk_mach_os(&path, out);
+        } else if metadata.is_file() && is_mach_o_file(&path) {
+            out.push(path);
+        }
+    }
+}
+
+/// Verify that every Mach-O under `path` is signed for notarization:
+///   - signed with a Developer ID Application Authority,
+///   - has a secure timestamp,
+///   - has the hardened runtime enabled.
+///
+/// These mirror the checks Apple's notarization service runs server-
+/// side; running them locally before submission catches issues
+/// (unsigned Mach-Os, missing `--timestamp`, missing
+/// `--options runtime`, ad-hoc cert leakage) without a six-minute
+/// round-trip to Apple's servers.
+///
+/// No-op when `identity` is ad-hoc — ad-hoc bundles are deliberately
+/// not notarization-ready and the checks would all fail by design.
+#[cfg(target_os = "macos")]
+pub(crate) fn verify_signed_for_notarization(path: &Path, identity: &str) -> crate::Res {
+    if !is_production_identity(identity) {
+        return Ok(());
+    }
+
+    let mach_os = enumerate_mach_os(path);
+    if mach_os.is_empty() {
+        return Ok(());
+    }
+
+    let mut failures: Vec<(PathBuf, Vec<String>)> = Vec::new();
+    for mach_o in &mach_os {
+        let issues = check_mach_o_signing(mach_o)?;
+        if !issues.is_empty() {
+            failures.push((mach_o.clone(), issues));
+        }
+    }
+
+    if failures.is_empty() {
+        return Ok(());
+    }
+
+    eprintln!();
+    eprintln!(
+        "❌ Notarization-readiness check failed for {} Mach-O(s) under {}:",
+        failures.len(),
+        path.display()
+    );
+    for (path, issues) in &failures {
+        eprintln!("    {}", path.display());
+        for issue in issues {
+            eprintln!("      - {issue}");
+        }
+    }
+    eprintln!();
+    eprintln!(
+        "These issues mirror Apple's notarization-server checks. \
+         Submitting now would fail the same way, with a ~6-minute \
+         round-trip per attempt."
+    );
+    Err("notarization-readiness check failed".into())
+}
+
+/// Inspect a single Mach-O via `codesign -d -vvvv` and return any
+/// notarization-blocking issues. Empty Vec = passes.
+#[cfg(target_os = "macos")]
+fn check_mach_o_signing(path: &Path) -> Result<Vec<String>, BoxErr> {
+    let path_str = path.to_str().ok_or("Mach-O path is not UTF-8")?;
+    let output = Command::new("codesign")
+        .args(["-d", "-vvvv", path_str])
+        .output()?;
+    // codesign writes its detail report to stderr.
+    let report = String::from_utf8_lossy(&output.stderr);
+
+    let mut issues = Vec::new();
+
+    if report.contains("code object is not signed at all")
+        || report.contains("is not signed at all")
+    {
+        issues.push("not signed".to_string());
+        return Ok(issues);
+    }
+
+    if !report.contains("Authority=Developer ID Application:") {
+        if report.contains("Signature=adhoc") {
+            issues.push("ad-hoc signature (not a Developer ID cert)".to_string());
+        } else {
+            issues.push("not signed with a Developer ID Application certificate".to_string());
+        }
+    }
+
+    // Timestamp line shows e.g. "Timestamp=Apr 28, 2026 at ..." or
+    // "Signed Time=...". Absence (or "Timestamp=none") means no
+    // secure timestamp.
+    let has_timestamp = report
+        .lines()
+        .any(|l| l.starts_with("Timestamp=") && !l.contains("Timestamp=none"));
+    if !has_timestamp {
+        issues.push("missing secure timestamp (--timestamp)".to_string());
+    }
+
+    // Hardened runtime: codesign reports it on the CodeDirectory
+    // flags line, e.g. "flags=0x10000(runtime)".
+    if !report.contains("(runtime)") {
+        issues.push("hardened runtime not enabled (--options runtime)".to_string());
+    }
+
+    Ok(issues)
 }
 
 /// PACE / iLok wraptool, the canonical macOS install path. Eden 5 ships under

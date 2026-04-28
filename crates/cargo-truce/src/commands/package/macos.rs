@@ -455,6 +455,26 @@ pub(crate) fn cmd_package_macos(args: &[String]) -> Res {
             }
         }
 
+        // Step 2.5: Notarization-readiness check.
+        // Mirror Apple's notarization-server checks locally — every
+        // Mach-O under the staged tree needs Developer ID +
+        // timestamp + hardened runtime. Catches unsigned inner
+        // Mach-Os (codesign --deep doesn't recurse into AAX
+        // Resources/), missing --timestamp, missing --options
+        // runtime, ad-hoc cert leakage. No-op when the signing
+        // identity is ad-hoc.
+        eprint!("  Verifying signing readiness... ");
+        match crate::util::verify_signed_for_notarization(
+            &staging,
+            config.macos.application_identity(),
+        ) {
+            Ok(()) => eprintln!("ok"),
+            Err(e) => {
+                eprintln!("FAILED");
+                return Err(e);
+            }
+        }
+
         // Step 3: Build component .pkg per format
         let components_dir = staging.join("components");
         fs::create_dir_all(&components_dir)?;
