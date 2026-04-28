@@ -18,6 +18,16 @@ off `dev/latest`, not `main`. PRs target `dev/latest`. Periodically,
 users who scaffold new plugins should be able to track `main` without
 seeing in-progress work.
 
+**Bump PRs (`dev/latest` → `main`) use "Rebase and merge", never
+"Squash and merge".** Squash-merging the bump PR rewrites
+dev/latest's commits into a new SHA on main, breaking the
+fast-forward sync that keeps `dev/latest` aligned with `main` after
+each release. Repo branch protection on `main` should disable
+squash-merging so the green PR button only offers safe options.
+Feature PRs to `dev/latest` can use any merge style — the
+SHA-preservation requirement only applies at the `dev/latest` →
+`main` boundary.
+
 ```sh
 git checkout dev/latest
 git pull --ff-only
@@ -94,12 +104,19 @@ credentials live on the maintainer's machine; verify with
 Two scripts under `development/scripts/`:
 
 - **`bump.sh`** — opens the version-bump PR from `dev/latest` to
-  `main`. Runs locally; pre-flight asserts you're on `dev/latest`
-  with a clean tree.
-- **`release.sh`** — runs *after* the bump PR is merged. Tags from
-  `main`, publishes both crates to crates.io with the inter-publish
-  index-propagation sleep, fast-forwards the preview branch, pushes
-  everything, and creates the GitHub Release.
+  `main`. Runs locally. Pre-flight asserts you're on `dev/latest`
+  with a clean tree, then FFs `dev/latest` to `origin/main` to
+  catch any drift from a previous release. If the FF rejects, the
+  script aborts before any version-bump work — usually a sign the
+  previous bump PR was squash-merged instead of rebase-merged.
+- **`release.sh`** — runs *after* the bump PR is merged via
+  "Rebase and merge". Tags from `main`, publishes both crates to
+  crates.io with the inter-publish index-propagation sleep,
+  fast-forwards the preview branch, pushes everything, creates the
+  GitHub Release, and finally FFs `dev/latest` to `main` to close
+  the sync loop. The dev/latest FF is best-effort: if it rejects,
+  the script prints a warning rather than failing (the release has
+  already shipped at that point).
 
 Neither script makes any judgment calls (semver, changelog prose,
 etc.) — those stay with the maintainer.
@@ -115,7 +132,9 @@ git checkout dev/latest && git pull --ff-only
 #    all three platforms + docs. Diff should be limited to the two
 #    version strings in Cargo.toml (workspace.package + the
 #    truce-shim-types workspace dep) and the matching Cargo.lock
-#    entries — reject anything else.
+#    entries — reject anything else. Merge using "Rebase and merge"
+#    — NOT squash. (Branch protection on main should disable squash
+#    so the wrong button isn't available.)
 
 # 3. Publish.
 git checkout main && git pull --ff-only
@@ -223,6 +242,14 @@ failed:
   (no tag pushed, no preview-branch FF, no GitHub Release). Run the
   remaining steps manually: `git push origin main preview/X.Y vX.Y.Z`
   then `gh release create vX.Y.Z --generate-notes`.
+- **`dev/latest` sync fails (warning, not an error)** — release
+  itself succeeded. The FF rejection means the rebase-and-merge
+  invariant was violated upstream (someone squash-merged a previous
+  bump PR). Don't force-push `dev/latest`. Investigate which PR
+  broke the rule, agree with co-maintainers on the fix (typically:
+  re-create dev/latest from main and pick up any unique commits via
+  cherry-pick), and tighten branch protection so the wrong merge
+  style can't happen again.
 - **`cargo install` fails post-publish** — yank
   (`cargo yank -p cargo-truce --version X.Y.Z`) and bump-and-release
   again. crates.io versions are immutable.
@@ -319,11 +346,14 @@ Things the scripts don't decide:
       edited if anything significant got buried in the PR list
 
 What `bump.sh` checks: clean tree, on `dev/latest`, remote up to
-date, version strings in `Cargo.toml` correctly bumped together,
-`Cargo.lock` refreshed, branch + PR opened.
+date, **`dev/latest` fast-forwards to `origin/main`** (catches drift
+from a squash-merged previous bump), version strings in `Cargo.toml`
+correctly bumped together, `Cargo.lock` refreshed, branch + PR
+opened.
 
 What `release.sh` checks: on `main`, version drift between the two
 `Cargo.toml` strings, no pre-existing local tag with this version,
 `truce-shim-types --dry-run` (catches metadata gaps before the
 immutable upload), inter-publish 30s sleep, FF preview branch only
-after both publishes succeed.
+after both publishes succeed, **dev/latest FFs to main at the end**
+(warns rather than fails if the FF rejects).
