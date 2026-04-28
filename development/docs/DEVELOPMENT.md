@@ -249,9 +249,11 @@ against and stops at the next minor — the lowest-friction upgrade
 path that's still bounded by semver. Users who want bit-for-bit
 reproducibility can pin to a tag manually after scaffolding.
 
-The branch name is hard-coded in `crates/cargo-truce/src/scaffold.rs`
-today. When cutting a new minor (`preview/0.15`, `preview/0.16`, …)
-the scaffold templates need a parallel bump.
+The branch name is derived at scaffold time from `cargo-truce`'s
+version (which inherits from `[workspace.package].version`). When
+the workspace bumps from 0.15.x to 0.16.0, scaffolds automatically
+emit `branch = "preview/0.16"` from the next compiled `cargo-truce`
+binary onward — no parallel edit to `scaffold.rs` required.
 
 ### Tag hygiene
 
