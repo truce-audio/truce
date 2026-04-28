@@ -1114,7 +1114,7 @@ fn render_iss(
     setup.push_str("[Components]\r\n");
     for fmt in formats {
         let (name, desc, types) = iss_component_spec(fmt);
-        let size = component_install_size(fmt, p, staging, archs);
+        let size = component_install_size(fmt, p, staging, archs, universal, scope);
         setup.push_str(&format!(
             "Name: \"{}\"; Description: \"{}\"; Types: {}; ExtraDiskSpaceRequired: {}\r\n",
             name, desc, types, size
@@ -1144,22 +1144,32 @@ fn render_iss(
     setup
 }
 
-/// Bytes a component will occupy when loaded. Used for
-/// `ExtraDiskSpaceRequired` on `[Components]` so the wizard's component-size
-/// column is populated even for entries gated with `Check:`.
+/// Bytes to add via `ExtraDiskSpaceRequired` so the wizard's per-component
+/// size column reflects the install footprint.
 ///
-/// We report the *effective* install size (one arch's worth), not the on-disk
-/// footprint. VST3 writes both arch sub-bundles side-by-side, but the host
-/// only ever loads one — reporting the sum makes VST3 read 2× larger than its
-/// peers for no reason a user cares about. Max-of-arches keeps the numbers
-/// comparable across CLAP/VST2/VST3. AAX is host-arch-only so its bundle
-/// already reflects a single arch.
+/// Inno's `[Components]` page auto-sums `[Files]` entries — but excludes any
+/// entry carrying a `Check:` directive (since those may not install).
+/// `ExtraDiskSpaceRequired` is then *added on top* of that auto-sum. So we
+/// only emit a non-zero hint when every `[Files]` entry for the component is
+/// `Check:`-gated; otherwise the auto-sum already covers it and a hint would
+/// double-count (e.g. universal VST3 was reading ~3× actual install size).
+///
+/// For multi-arch components we report one arch's worth (max-of-arches). The
+/// host loads only the matching arch, so reporting the sum makes the entry
+/// look 2× larger than its peers for no reason a user cares about. AAX is
+/// host-arch-only so its bundle already reflects a single arch.
 fn component_install_size(
     fmt: &PkgFormat,
     p: &PluginDef,
     staging: &Path,
     archs: &[TargetArch],
+    universal: bool,
+    scope: PkgScope,
 ) -> u64 {
+    if !files_all_check_gated(fmt, universal, scope) {
+        // Inno's `[Files]` auto-sum already counts this component correctly.
+        return 0;
+    }
     match fmt {
         PkgFormat::Clap => archs
             .iter()
@@ -1198,6 +1208,32 @@ fn component_install_size(
             dir_size_recursive(&staging.join("aax").join(format!("{}.aaxplugin", p.name)))
         }
         PkgFormat::Au2 | PkgFormat::Au3 => 0,
+    }
+}
+
+/// Whether every `[Files]` entry this component will emit carries a `Check:`
+/// directive. Inno excludes such entries from the per-component size auto-sum
+/// (since they may not install), so we have to supply the size ourselves via
+/// `ExtraDiskSpaceRequired:`. When this returns `false` the auto-sum is
+/// already correct and we must not emit a hint, or it will double-count.
+///
+/// Mirror of the `iss_files_block` / `iss_admin_only` logic — keep these in
+/// sync if the gating policy changes.
+fn files_all_check_gated(fmt: &PkgFormat, universal: bool, scope: PkgScope) -> bool {
+    match fmt {
+        // Single-file: arch-gated (`Check: not IsArm64` etc.) only when universal.
+        PkgFormat::Clap => universal,
+        // Bundle, but only the matching arch's sub-dir installs — same arch
+        // gating as CLAP/VST2 when universal.
+        PkgFormat::Vst3 => universal,
+        // System-rooted; gated on `IsAdminInstallMode` in `--ask`, plus
+        // arch-gated when universal. In `--system`/`--user` the iss_admin_only
+        // emitter drops the IsAdminInstallMode check, so single-arch is bare.
+        PkgFormat::Vst2 => universal || matches!(scope, PkgScope::Ask),
+        // Host-arch only (single arch dir staged), so no per-arch Check.
+        // Only gated in `--ask` (on IsAdminInstallMode).
+        PkgFormat::Aax => matches!(scope, PkgScope::Ask),
+        PkgFormat::Au2 | PkgFormat::Au3 => false,
     }
 }
 
@@ -1273,9 +1309,11 @@ fn iss_files_block(
             )
         }
         PkgFormat::Vst3 => {
-            // Bundle: copy just this arch's sub-directory. No Check: — hosts
-            // of either arch can coexist on ARM64 machines (x64 hosts run via
-            // emulation), so both sub-dirs should always be present.
+            // Bundle: install only the matching arch's sub-directory. The
+            // staging tree carries both, but we arch-gate at install time so
+            // an ARM64 machine doesn't waste ~9MB on an x86_64-win sub-bundle
+            // it won't load (x64 hosts running on ARM64 via emulation are not
+            // a use case we're optimizing for here).
             let src_dir = staging
                 .join("vst3")
                 .join(format!("{}.vst3", p.name))
@@ -1293,7 +1331,7 @@ fn iss_files_block(
                 &src_quoted,
                 &dest,
                 "vst3",
-                /* arch_check = */ None,
+                arch_check,
                 /* is_dir = */ true,
             )
         }
