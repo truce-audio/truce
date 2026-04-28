@@ -6,9 +6,6 @@ AAX, and standalone from a single Rust codebase.
 [![Status](https://img.shields.io/badge/status-preview-orange)](docs/README.md)
 [![Latest](https://img.shields.io/github/v/tag/truce-audio/truce?label=latest&logo=git&logoColor=white&sort=semver)](https://github.com/truce-audio/truce/releases/latest)
 [![crates.io](https://img.shields.io/crates/v/cargo-truce?logo=rust&logoColor=white)](https://crates.io/crates/cargo-truce)
-[![macOS](https://github.com/truce-audio/truce/actions/workflows/ci-macos.yml/badge.svg)](https://github.com/truce-audio/truce/actions/workflows/ci-macos.yml)
-[![Windows](https://github.com/truce-audio/truce/actions/workflows/ci-windows.yml/badge.svg)](https://github.com/truce-audio/truce/actions/workflows/ci-windows.yml)
-[![Linux](https://github.com/truce-audio/truce/actions/workflows/ci-linux.yml/badge.svg)](https://github.com/truce-audio/truce/actions/workflows/ci-linux.yml)
 
 ## Quick Start
 

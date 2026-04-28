@@ -1,4 +1,4 @@
-# truce plugin project configuration
+# truce plugin project configuration 
 #
 # Per-developer build environment (signing, SDK paths) lives in the local
 # `.cargo/config.toml` (gitignored), not here — this file is tracked.

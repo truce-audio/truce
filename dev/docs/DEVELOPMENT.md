@@ -40,6 +40,10 @@ as a clean sequence of changes.)
 
 ## Building and testing
 
+[![macOS](https://github.com/truce-audio/truce/actions/workflows/ci-macos.yml/badge.svg)](https://github.com/truce-audio/truce/actions/workflows/ci-macos.yml)
+[![Windows](https://github.com/truce-audio/truce/actions/workflows/ci-windows.yml/badge.svg)](https://github.com/truce-audio/truce/actions/workflows/ci-windows.yml)
+[![Linux](https://github.com/truce-audio/truce/actions/workflows/ci-linux.yml/badge.svg)](https://github.com/truce-audio/truce/actions/workflows/ci-linux.yml)
+
 ```sh
 cargo build --workspace
 cargo test --workspace
