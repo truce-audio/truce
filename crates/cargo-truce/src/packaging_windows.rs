@@ -118,7 +118,7 @@ pub(crate) fn cmd_package(args: &[String]) -> Res {
     // user will see a UAC prompt for those. The `.iss` template
     // routes CLAP / VST3 to user paths and AAX / VST2 to system
     // paths in that mode (and bumps `PrivilegesRequired` to admin
-    // so the installer can write to `{commoncf}` / `{pf}`).
+    // so the installer can write to `{commoncf}` / `{commonpf}`).
     if matches!(scope, PkgScope::User) {
         for f in &formats {
             match f {
@@ -1009,8 +1009,18 @@ fn render_iss(
             iss_escape(&publisher_url)
         ));
     }
+    // `{autopf}` resolves to `{commonpf}` in admin install mode and
+    // `{userpf}` (`%LOCALAPPDATA%\Programs`) in non-admin mode, so the
+    // AppId-tracked install dir lands somewhere the installer can write
+    // without elevation when the end user picks "for me only". `--system`
+    // hard-locks to admin so `{commonpf}` is fine.
+    let pf_const = match scope {
+        PkgScope::System => "{commonpf}",
+        PkgScope::User | PkgScope::Ask => "{autopf}",
+    };
     setup.push_str(&format!(
-        "DefaultDirName={{commonpf}}\\{}\\{}\r\n",
+        "DefaultDirName={}\\{}\\{}\r\n",
+        pf_const,
         iss_escape(publisher),
         iss_escape(&p.name),
     ));
@@ -1052,6 +1062,12 @@ fn render_iss(
     match scope {
         PkgScope::User if has_system_only_format => {
             setup.push_str("PrivilegesRequired=admin\r\n");
+            // Mixing admin elevation with `{usercf}` (per-user CLAP/VST3
+            // dest) is intentional here — the elevation exists to host
+            // the AAX/VST2 payloads, not to upgrade CLAP/VST3 to common
+            // areas. Suppress ISCC's UsedUserAreasWarning so the
+            // intentional mix doesn't read as a script bug.
+            setup.push_str("UsedUserAreasWarning=no\r\n");
         }
         PkgScope::User => {
             setup.push_str("PrivilegesRequired=lowest\r\n");
@@ -1062,6 +1078,10 @@ fn render_iss(
         PkgScope::Ask => {
             setup.push_str("PrivilegesRequired=admin\r\n");
             setup.push_str("PrivilegesRequiredOverridesAllowed=commandline dialog\r\n");
+            // `{auto*}` constants resolve per the runtime install mode,
+            // but ISCC's static check still flags the admin-default +
+            // user-area combination. The override is what makes this safe.
+            setup.push_str("UsedUserAreasWarning=no\r\n");
         }
     }
     setup.push_str("WizardStyle=modern\r\n");
@@ -1086,13 +1106,18 @@ fn render_iss(
         "Name: \"custom\"; Description: \"Custom installation\"; Flags: iscustom\r\n\r\n",
     );
 
-    // [Components] — one per format.
+    // [Components] — one per format. ExtraDiskSpaceRequired drives the size
+    // shown on the Components wizard page: Inno Setup excludes [Files] entries
+    // with a `Check:` from that auto-sum, so without this only VST3 (the one
+    // unconditional format) would display a size. We compute the install
+    // footprint per component from staging and emit it explicitly.
     setup.push_str("[Components]\r\n");
     for fmt in formats {
         let (name, desc, types) = iss_component_spec(fmt);
+        let size = component_install_size(fmt, p, staging, archs);
         setup.push_str(&format!(
-            "Name: \"{}\"; Description: \"{}\"; Types: {}\r\n",
-            name, desc, types
+            "Name: \"{}\"; Description: \"{}\"; Types: {}; ExtraDiskSpaceRequired: {}\r\n",
+            name, desc, types, size
         ));
     }
     setup.push_str("\r\n");
@@ -1119,12 +1144,76 @@ fn render_iss(
     setup
 }
 
+/// Bytes a component will occupy on disk after install. Used for
+/// `ExtraDiskSpaceRequired` on `[Components]` so the wizard's component-size
+/// column is populated even for entries gated with `Check:`.
+///
+/// CLAP/VST2 stage one DLL per arch but only the matching arch installs (gated
+/// on `IsArm64`), so we take the max of the per-arch sizes — close enough, and
+/// the two are usually within a few KB. VST3 ships both arch sub-bundles
+/// side-by-side, so we sum the whole bundle. AAX is host-arch-only and the
+/// staging dir already reflects that.
+fn component_install_size(
+    fmt: &PkgFormat,
+    p: &PluginDef,
+    staging: &Path,
+    archs: &[TargetArch],
+) -> u64 {
+    match fmt {
+        PkgFormat::Clap => archs
+            .iter()
+            .filter_map(|a| {
+                let f = staging
+                    .join("clap")
+                    .join(a.tag())
+                    .join(format!("{}.clap", p.name));
+                fs::metadata(&f).ok().map(|m| m.len())
+            })
+            .max()
+            .unwrap_or(0),
+        PkgFormat::Vst2 => archs
+            .iter()
+            .filter_map(|a| {
+                let f = staging
+                    .join("vst2")
+                    .join(a.tag())
+                    .join(format!("{}.dll", p.name));
+                fs::metadata(&f).ok().map(|m| m.len())
+            })
+            .max()
+            .unwrap_or(0),
+        PkgFormat::Vst3 => {
+            dir_size_recursive(&staging.join("vst3").join(format!("{}.vst3", p.name)))
+        }
+        PkgFormat::Aax => {
+            dir_size_recursive(&staging.join("aax").join(format!("{}.aaxplugin", p.name)))
+        }
+        PkgFormat::Au2 | PkgFormat::Au3 => 0,
+    }
+}
+
+fn dir_size_recursive(path: &Path) -> u64 {
+    let Ok(entries) = fs::read_dir(path) else {
+        return 0;
+    };
+    let mut total = 0u64;
+    for entry in entries.flatten() {
+        let p = entry.path();
+        match fs::metadata(&p) {
+            Ok(md) if md.is_dir() => total += dir_size_recursive(&p),
+            Ok(md) => total += md.len(),
+            Err(_) => {}
+        }
+    }
+    total
+}
+
 fn iss_component_spec(fmt: &PkgFormat) -> (&'static str, &'static str, &'static str) {
     match fmt {
-        PkgFormat::Clap => ("clap", "CLAP (Reaper, Bitwig)", "full"),
-        PkgFormat::Vst3 => ("vst3", "VST3 (most DAWs)", "full"),
-        PkgFormat::Vst2 => ("vst2", "VST2 (legacy — Reaper, older hosts)", "custom"),
-        PkgFormat::Aax => ("aax", "AAX (Pro Tools)", "full"),
+        PkgFormat::Clap => ("clap", "CLAP", "full"),
+        PkgFormat::Vst3 => ("vst3", "VST3", "full"),
+        PkgFormat::Vst2 => ("vst2", "VST2 (legacy)", "custom"),
+        PkgFormat::Aax => ("aax", "AAX", "full"),
         PkgFormat::Au2 | PkgFormat::Au3 => unreachable!("AU is filtered out on Windows"),
     }
 }
@@ -1135,11 +1224,13 @@ fn iss_component_spec(fmt: &PkgFormat) -> (&'static str, &'static str, &'static 
 /// both archs side-by-side; the host picks at load time.
 ///
 /// Scope-driven destinations:
-/// - `--system` and `--user` use a single hard-coded DestDir.
-/// - `--ask` emits *two* entries for CLAP / VST3 (system + user) gated on
-///   `IsAdminInstallMode` so the runtime install mode picks one. AAX always
-///   stays system-rooted with `Check: IsAdminInstallMode` — end users who
-///   pick "for me only" simply don't get AAX (per the install-scope doc).
+/// - `--system` pins to `{commoncf}` (admin-only install mode).
+/// - `--user` pins to `{usercf}` (`%LOCALAPPDATA%\Programs\Common`), even
+///   when the installer is running elevated to host AAX/VST2 alongside.
+/// - `--ask` uses `{autocf}` so Inno picks per the runtime install mode.
+///   AAX/VST2 stay system-rooted with `Check: IsAdminInstallMode` — end
+///   users who pick "for me only" simply don't get AAX (per the
+///   install-scope doc).
 fn iss_files_block(
     fmt: &PkgFormat,
     p: &PluginDef,
@@ -1163,11 +1254,10 @@ fn iss_files_block(
                 .join(arch.tag())
                 .join(format!("{}.clap", p.name));
             let src_quoted = iss_escape_path(&src);
+            let dest = format!("{}\\CLAP", scoped_cf(scope));
             iss_dual_dest(
-                scope,
                 &src_quoted,
-                "{commoncf}\\CLAP",
-                "{localappdata}\\Programs\\Common\\CLAP",
+                &dest,
                 "clap",
                 arch_check,
                 /* is_dir= */ false,
@@ -1186,15 +1276,13 @@ fn iss_files_block(
             let src_quoted = iss_escape_path(&src_glob);
             let name = iss_escape(&p.name);
             let subdir = arch.vst3_bundle_subdir();
-            let system_dest = format!("{{commoncf}}\\VST3\\{name}.vst3\\Contents\\{subdir}");
-            let user_dest = format!(
-                "{{localappdata}}\\Programs\\Common\\VST3\\{name}.vst3\\Contents\\{subdir}"
+            let dest = format!(
+                "{}\\VST3\\{name}.vst3\\Contents\\{subdir}",
+                scoped_cf(scope)
             );
             iss_dual_dest(
-                scope,
                 &src_quoted,
-                &system_dest,
-                &user_dest,
+                &dest,
                 "vst3",
                 /* arch_check = */ None,
                 /* is_dir = */ true,
@@ -1213,7 +1301,7 @@ fn iss_files_block(
             iss_admin_only(
                 scope,
                 &src_quoted,
-                "{pf}\\Steinberg\\VstPlugins",
+                "{commonpf}\\Steinberg\\VstPlugins",
                 "vst2",
                 arch_check,
                 /* is_dir = */ false,
@@ -1265,13 +1353,26 @@ fn iss_files_block(
     }
 }
 
-/// Emit the `[Files]` line(s) for a system-or-user-aware destination.
-/// Under `--ask` two lines are produced, branched on `IsAdminInstallMode`.
+/// Inno Setup "common files" constant for the requested scope.
+/// `{autocf}` does the right thing under `--ask` (resolves per the
+/// runtime install mode picked by the user); `--system` and `--user`
+/// pin to fixed constants so the destination doesn't depend on whether
+/// the installer happened to escalate for a sibling system-only format.
+fn scoped_cf(scope: PkgScope) -> &'static str {
+    match scope {
+        PkgScope::System => "{commoncf}",
+        PkgScope::User => "{usercf}",
+        PkgScope::Ask => "{autocf}",
+    }
+}
+
+/// Emit one `[Files]` line for a destination computed via `scoped_cf`.
+/// One line covers all three scopes — Inno's `{auto*}` constants handle
+/// the `--ask` branching for us, so we no longer need a pair of
+/// `IsAdminInstallMode`-gated entries.
 fn iss_dual_dest(
-    scope: PkgScope,
     src_quoted: &str,
-    system_dest: &str,
-    user_dest: &str,
+    dest: &str,
     component: &str,
     arch_check: Option<&str>,
     is_dir: bool,
@@ -1281,42 +1382,14 @@ fn iss_dual_dest(
     } else {
         ""
     };
-    let arch_clause = arch_check.map(|c| format!(" and {c}")).unwrap_or_default();
-    match scope {
-        PkgScope::System => {
-            let arch = arch_check
-                .map(|c| format!(" Check: {c};"))
-                .unwrap_or_default();
-            format!(
-                "Source: \"{src_quoted}\"; DestDir: \"{system_dest}\"; \
-                 Components: {component};{arch} \
-                 Flags: ignoreversion overwritereadonly{dir_flags}\r\n"
-            )
-        }
-        PkgScope::User => {
-            let arch = arch_check
-                .map(|c| format!(" Check: {c};"))
-                .unwrap_or_default();
-            format!(
-                "Source: \"{src_quoted}\"; DestDir: \"{user_dest}\"; \
-                 Components: {component};{arch} \
-                 Flags: ignoreversion overwritereadonly{dir_flags}\r\n"
-            )
-        }
-        PkgScope::Ask => {
-            // Two entries, branched on IsAdminInstallMode. Inno Setup
-            // sets it after the "Choose installation mode" page; only
-            // one of the two `Check:` predicates fires per install.
-            format!(
-                "Source: \"{src_quoted}\"; DestDir: \"{system_dest}\"; \
-                 Components: {component}; Check: IsAdminInstallMode{arch_clause}; \
-                 Flags: ignoreversion overwritereadonly{dir_flags}\r\n\
-                 Source: \"{src_quoted}\"; DestDir: \"{user_dest}\"; \
-                 Components: {component}; Check: (not IsAdminInstallMode){arch_clause}; \
-                 Flags: ignoreversion overwritereadonly{dir_flags}\r\n"
-            )
-        }
-    }
+    let arch = arch_check
+        .map(|c| format!(" Check: {c};"))
+        .unwrap_or_default();
+    format!(
+        "Source: \"{src_quoted}\"; DestDir: \"{dest}\"; \
+         Components: {component};{arch} \
+         Flags: ignoreversion overwritereadonly{dir_flags}\r\n"
+    )
 }
 
 /// Emit the `[Files]` line for a payload that is always system-rooted
@@ -1360,41 +1433,27 @@ fn iss_admin_only(
 
 fn iss_uninstall_lines(fmt: &PkgFormat, plugin_name: &str, scope: PkgScope) -> Vec<String> {
     let name = iss_escape(plugin_name);
-    let system = match fmt {
-        PkgFormat::Vst3 => Some(format!("{{commoncf}}\\VST3\\{name}.vst3")),
-        PkgFormat::Aax => Some(format!(
-            "{{commoncf}}\\Avid\\Audio\\Plug-Ins\\{name}.aaxplugin"
-        )),
-        _ => None,
-    };
-    let user = match fmt {
-        PkgFormat::Vst3 => Some(format!(
-            "{{localappdata}}\\Programs\\Common\\VST3\\{name}.vst3"
-        )),
-        // AAX has no per-user uninstall path (always system).
-        _ => None,
-    };
-    let component = match fmt {
-        PkgFormat::Vst3 => "vst3",
-        PkgFormat::Aax => "aax",
-        _ => return Vec::new(),
-    };
-    let mut out = Vec::new();
-    if let Some(p) = system.as_ref() {
-        if matches!(scope, PkgScope::System | PkgScope::Ask) {
-            out.push(format!(
-                "Type: filesandordirs; Name: \"{p}\"; Components: {component}"
-            ));
+    match fmt {
+        PkgFormat::Vst3 => {
+            // Mirror the install destination: `{autocf}` under `--ask`
+            // matches whichever mode the user picked at install time, so
+            // the uninstall hits the same path the bundle was written to.
+            let path = format!("{}\\VST3\\{name}.vst3", scoped_cf(scope));
+            vec![format!(
+                "Type: filesandordirs; Name: \"{path}\"; Components: vst3"
+            )]
         }
-    }
-    if let Some(p) = user.as_ref() {
-        if matches!(scope, PkgScope::User | PkgScope::Ask) {
-            out.push(format!(
-                "Type: filesandordirs; Name: \"{p}\"; Components: {component}"
-            ));
+        PkgFormat::Aax => {
+            // AAX is system-rooted regardless of scope (`iss_admin_only`
+            // installs to `{commoncf}\Avid\…` for both `--system` and
+            // `--user`, and gates on `IsAdminInstallMode` under `--ask`).
+            // One line covers every case the file actually lands.
+            vec![format!(
+                "Type: filesandordirs; Name: \"{{commoncf}}\\Avid\\Audio\\Plug-Ins\\{name}.aaxplugin\"; Components: aax"
+            )]
         }
+        _ => Vec::new(),
     }
-    out
 }
 
 fn run_iscc(iss_path: &Path) -> Res {
