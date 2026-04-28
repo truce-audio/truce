@@ -9,6 +9,8 @@
 #   dev/scripts/bump.sh 1.0.0-rc.1           # explicit version (any SemVer)
 #   dev/scripts/bump.sh 0.16.5               # explicit version (e.g., hotfix)
 #
+#   dev/scripts/bump.sh --edit-only <bump>   # edit files only, no git/PR
+#
 # Branches off origin/main, bumps both version strings in
 # `Cargo.toml`, refreshes `Cargo.lock`, commits on `bump/vX.Y.Z`,
 # pushes, opens a PR against `main`. The PR must be merged using
@@ -18,24 +20,51 @@
 # Idempotent: re-running with the same version resets the bump
 # branch to a fresh state and force-pushes. Re-opening the PR is a
 # no-op if one's already open for the branch.
+#
+# With --edit-only, the script only rewrites `Cargo.toml` +
+# `Cargo.lock` in the working tree and exits. No clean-tree check,
+# no branch, no commit, no push, no PR.
 
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
 
-BUMP="${1:-}"
+EDIT_ONLY=0
+BUMP=""
+for arg in "$@"; do
+    case "$arg" in
+        --edit-only) EDIT_ONLY=1 ;;
+        -h|--help)
+            sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'
+            exit 0
+            ;;
+        -*)
+            echo "Error: unknown flag $arg" >&2
+            exit 1
+            ;;
+        *)
+            if [[ -n "$BUMP" ]]; then
+                echo "Error: unexpected extra argument $arg" >&2
+                exit 1
+            fi
+            BUMP="$arg"
+            ;;
+    esac
+done
 
 if [[ -z "$BUMP" ]]; then
-    echo "Usage: bump.sh patch | minor | major | <X.Y.Z>" >&2
+    echo "Usage: bump.sh [--edit-only] patch | minor | major | <X.Y.Z>" >&2
     exit 1
 fi
 
 # Pre-flight ------------------------------------------------------------------
 
-echo "→ pre-flight: clean working tree"
-if ! git diff --quiet || ! git diff --cached --quiet; then
-    echo "Error: working tree is dirty — commit or stash first" >&2
-    exit 1
+if (( ! EDIT_ONLY )); then
+    echo "→ pre-flight: clean working tree"
+    if ! git diff --quiet || ! git diff --cached --quiet; then
+        echo "Error: working tree is dirty — commit or stash first" >&2
+        exit 1
+    fi
 fi
 
 # Read current version + compute new -----------------------------------------
@@ -75,13 +104,15 @@ echo
 
 # Sync main locally + branch off it ------------------------------------------
 
-echo "→ fetching origin/main"
-git fetch origin main
+if (( ! EDIT_ONLY )); then
+    echo "→ fetching origin/main"
+    git fetch origin main
 
-BRANCH="bump/v$NEW"
+    BRANCH="bump/v$NEW"
 
-echo "→ creating bump branch $BRANCH from origin/main"
-git checkout -B "$BRANCH" origin/main
+    echo "→ creating bump branch $BRANCH from origin/main"
+    git checkout -B "$BRANCH" origin/main
+fi
 
 # Edit Cargo.toml -------------------------------------------------------------
 
@@ -107,6 +138,12 @@ echo "→ refreshing Cargo.lock (cargo check --workspace)"
 cargo check --workspace
 
 # Commit, push, PR ------------------------------------------------------------
+
+if (( EDIT_ONLY )); then
+    echo
+    echo "Edited Cargo.toml + Cargo.lock for v$NEW. No git operations performed."
+    exit 0
+fi
 
 echo "→ committing"
 git add Cargo.toml Cargo.lock
