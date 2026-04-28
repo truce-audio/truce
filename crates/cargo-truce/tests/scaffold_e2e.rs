@@ -772,9 +772,9 @@ truce-standalone = { path = "/abs/crates/truce-standalone", features = ["gui"] }
 
 #[test]
 fn rewrite_strips_branch_pin() {
-    let input = r#"truce = { git = "https://github.com/truce-audio/truce", branch = "preview/0.14" }
-truce-clap = { git = "https://github.com/truce-audio/truce", branch = "preview/0.14", optional = true }
-truce-standalone = { git = "https://github.com/truce-audio/truce", branch = "preview/0.14", features = ["gui"], optional = true }
+    let input = r#"truce = { git = "https://github.com/truce-audio/truce", branch = "preview/0.15" }
+truce-clap = { git = "https://github.com/truce-audio/truce", branch = "preview/0.15", optional = true }
+truce-standalone = { git = "https://github.com/truce-audio/truce", branch = "preview/0.15", features = ["gui"], optional = true }
 "#;
     let expected = r#"truce = { path = "/abs/crates/truce" }
 truce-clap = { path = "/abs/crates/truce-clap", optional = true }

@@ -1,6 +1,6 @@
 # Status
 
-Updated 2026-04-27. Version 0.14.1. **Pre-1.0 — active development.**
+Updated 2026-04-27. Version 0.15.0. **Pre-1.0 — active development.**
 
 Plugin authors can build, install, validate, and package across CLAP,
 VST3, VST2, LV2, AU v2, AU v3, and AAX from a single Rust crate, on
