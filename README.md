@@ -4,7 +4,7 @@ Build audio plugins in Rust. CLAP, VST3, LV2, AU v2, AU v3,
 AAX, and standalone from a single Rust codebase.
 
 [![Status](https://img.shields.io/badge/status-preview-orange)](docs/README.md)
-[![Latest](https://img.shields.io/badge/latest-preview%2F0.14-blue?logo=git&logoColor=white)](https://github.com/truce-audio/truce/tree/preview/0.14)
+[![Latest](https://img.shields.io/badge/latest-preview%2F0.15-blue?logo=git&logoColor=white)](https://github.com/truce-audio/truce/tree/preview/0.15)
 [![Getting Started](https://img.shields.io/badge/getting_started-guide-purple?logo=readthedocs&logoColor=white)](docs/reference/README.md)
 [![Docs](https://img.shields.io/badge/docs-rustdoc-purple?logo=rust&logoColor=white)](https://truce-audio.github.io/truce/)
 [![macOS](https://github.com/truce-audio/truce/actions/workflows/ci-macos.yml/badge.svg)](https://github.com/truce-audio/truce/actions/workflows/ci-macos.yml)

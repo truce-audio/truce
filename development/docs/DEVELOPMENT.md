@@ -49,31 +49,33 @@ a release branch (`preview/{major}.{minor}` while pre-1.0;
 `release/{major}.{minor}` post-1.0):
 
 - The **tag** is the immutable snapshot. CI artifacts, the
-  `cargo install --tag v0.14.2 cargo-truce` recipe, and any
-  `tag = "v0.14.2"` pin in a user's `Cargo.toml` resolve to it.
-- The **branch** is what users pin via `branch = "preview/0.14"`
-  to float patches automatically. Each `0.14.x` patch release
-  fast-forwards `preview/0.14` to the new tag.
+  `cargo install --tag v0.15.0 cargo-truce` recipe, and any
+  `tag = "v0.15.0"` pin in a user's `Cargo.toml` resolve to it.
+- The **branch** is what users pin via `branch = "preview/0.15"`
+  to float patches automatically. Each `0.15.x` patch release
+  fast-forwards `preview/0.15` to the new tag.
 
 The branch costs one extra `git push` per release and gives users
 the cargo-flavoured upgrade path they expect from semver.
 
 ### When to release
 
-- **Patch (`0.14.1` → `0.14.2`):** bug fixes, doc changes, and any
+- **Patch (`0.15.0` → `0.15.1`):** bug fixes, doc changes, and any
   *additive* API change that doesn't break existing scaffolded
-  plugins. Goes onto the existing `preview/0.14` branch.
-- **Minor (`0.14.x` → `0.15.0`):** new features that change the
+  plugins. Goes onto the existing `preview/0.15` branch.
+- **Minor (`0.15.x` → `0.16.0`):** new features that change the
   surface in a forwards-compatible way for new code, or fix a
   bug in a way that requires a recompile (e.g. ABI change in a
-  format wrapper). Cuts a new `preview/0.15` branch; the old
-  `preview/0.14` branch stays alive for users who haven't migrated.
+  format wrapper). Cuts a new `preview/0.16` branch; the old
+  `preview/0.15` branch stays alive for users who haven't migrated.
 - **Major (`0.x` → `1.0`):** deferred until the surface settles.
 
-Today truce is on the `0.14.x` train. The current
+Today truce is on the `0.15.x` train. The current
 `preview/{major}.{minor}` branch stays open for **one minor release
-after the next** — i.e. when `0.15.0` lands, `preview/0.14` keeps
-receiving compat patches until `0.16.0` cuts, then sunsets.
+after the next** — i.e. when `0.16.0` lands, `preview/0.15` keeps
+receiving compat patches until `0.17.0` cuts, then sunsets.
+`preview/0.14` is now sunset-pending: it keeps receiving any
+remaining `0.14.x` hotfixes until `0.16.0` ships, then no more.
 
 ### One-time setup
 
@@ -102,7 +104,7 @@ Two scripts under `development/scripts/`:
 Neither script makes any judgment calls (semver, changelog prose,
 etc.) — those stay with the maintainer.
 
-#### Patch release (most common: 0.14.3 → 0.14.4)
+#### Patch release (most common: 0.15.0 → 0.15.1)
 
 ```sh
 # 1. Bump.
@@ -120,14 +122,14 @@ git checkout main && git pull --ff-only
 ./development/scripts/release.sh
 
 # 4. Smoke-test from a clean install.
-cargo install --force cargo-truce --version 0.14.4
+cargo install --force cargo-truce --version 0.15.1
 cargo truce --help
 ```
 
 Total wall-clock: ~5 minutes of maintainer attention spread over
 ~30 minutes (CI runs dominate).
 
-#### Minor release (new train: 0.14.x → 0.15.0)
+#### Minor release (new train: 0.15.x → 0.16.0)
 
 Same flow, with one extra step between merge and `release.sh`: cut
 the new preview branch from `main`, since `release.sh` assumes the
@@ -141,18 +143,18 @@ branch already exists.
 
 # 3. Cut the new preview branch BEFORE release.sh.
 git checkout main && git pull --ff-only
-git branch preview/0.15 main          # main HEAD = v0.15.0 commit
+git branch preview/0.16 main          # main HEAD = v0.16.0 commit
 
 # 4. Publish.
 ./development/scripts/release.sh
 
 # 5. Mark the previous train as sunset-pending in CHANGELOG. The
-#    branch keeps receiving 0.14.x patches for one minor cycle
-#    (i.e. until 0.16.0 cuts).
+#    branch keeps receiving 0.15.x patches for one minor cycle
+#    (i.e. until 0.17.0 cuts).
 ```
 
-Don't delete `preview/0.14` — users still have
-`branch = "preview/0.14"` in their `Cargo.toml`. Sunset by stopping
+Don't delete `preview/0.15` — users still have
+`branch = "preview/0.15"` in their `Cargo.toml`. Sunset by stopping
 new patches, not by removing the ref.
 
 ### Hotfixes
@@ -161,10 +163,13 @@ new patches, not by removing the ref.
 hotfixes are still manual. Branches from the existing release line,
 applied via PR, version bump + tag happen on the release branch:
 
+Example: shipping a fix on the now-sunset-pending `preview/0.14`
+train (last release was `0.14.3`):
+
 ```sh
 # 1. Branch off the release line for the fix.
 git checkout preview/0.14 && git pull --ff-only
-git checkout -b hotfix/0.14.5-loader-crash
+git checkout -b hotfix/0.14.4-loader-crash
 
 # 2. Apply the minimal fix; resist scope creep — anything beyond the
 #    bug should land on dev/latest and wait for the next minor.
@@ -172,13 +177,13 @@ $EDITOR crates/truce-loader/...
 git commit -am "Fix: loader crash on AAX session reload (#1234)"
 
 # 3. Bump (single sed, same shape bump.sh would use).
-sed -i '' 's/"0.14.4"/"0.14.5"/g' Cargo.toml
+sed -i '' 's/"0.14.3"/"0.14.4"/g' Cargo.toml
 cargo check --workspace
-git commit -am "Release v0.14.5"
-git push -u origin hotfix/0.14.5-loader-crash
+git commit -am "Release v0.14.4"
+git push -u origin hotfix/0.14.4-loader-crash
 
 # 4. Open PR targeting preview/0.14. Review + merge via merge-commit.
-gh pr create --base preview/0.14 --title "Hotfix v0.14.5"
+gh pr create --base preview/0.14 --title "Hotfix v0.14.4"
 
 # 5. After merge, run release.sh from preview/0.14.
 git checkout preview/0.14 && git pull --ff-only
@@ -186,17 +191,17 @@ git checkout preview/0.14 && git pull --ff-only
 
 # 6. Backport the fix commit (NOT the version bump) to dev/latest.
 git checkout dev/latest && git pull --ff-only
-git cherry-pick <fix-commit-sha>      # not the "Release v0.14.5" commit
+git cherry-pick <fix-commit-sha>      # not the "Release v0.14.4" commit
 git push origin dev/latest
 
 # 7. Clean up the hotfix branch.
-git branch -d hotfix/0.14.5-loader-crash
-git push origin --delete hotfix/0.14.5-loader-crash
+git branch -d hotfix/0.14.4-loader-crash
+git push origin --delete hotfix/0.14.4-loader-crash
 ```
 
 `release.sh` reads the version from `Cargo.toml` and derives the
 train name from it, so running it from `preview/0.14` correctly tags
-`v0.14.5` and pushes to `preview/0.14`. The script's first two lines
+`v0.14.4` and pushes to `preview/0.14`. The script's first two lines
 (`git checkout main && git pull --ff-only`) need to be skipped or
 the script needs a one-line edit for the hotfix — accept that
 friction or write a `hotfix.sh` variant once you've shipped one and
