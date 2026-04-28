@@ -120,8 +120,9 @@ impl<P: Params + Default + 'static, L: PluginLogic + 'static> Plugin for StaticS
         let meters = &self.meters;
         let param_fn = |id: u32| -> f64 { params.get_plain(id).unwrap_or(0.0) };
         let meter_fn = |id: u32, v: f32| {
-            // Meter IDs start at 256; storage is offset.
-            let idx = id.wrapping_sub(256) as usize;
+            // Meter IDs are offset by `truce_params::METER_ID_BASE`;
+            // mirror the offset in `get_meter` exactly.
+            let idx = id.wrapping_sub(truce_params::METER_ID_BASE) as usize;
             if let Some(slot) = meters.get(idx) {
                 slot.store(v.to_bits(), Ordering::Relaxed);
             }

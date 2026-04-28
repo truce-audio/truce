@@ -124,7 +124,7 @@ where
         // before the event loop starts, so this is the right hook.
         #[cfg(target_os = "macos")]
         if is_effect {
-            crate::menu_macos::install(input_ctrl.clone());
+            crate::menu_macos::install(P::info().name, input_ctrl.clone());
         }
 
         let ctx = synthesize_editor_context::<P>(&plugin, &transport);

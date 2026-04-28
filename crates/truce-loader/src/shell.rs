@@ -165,7 +165,7 @@ impl<P: Params + 'static> Plugin for HotShell<P> {
         let meters = &self.meters;
         let param_fn = |id: u32| -> f64 { params.get_plain(id).unwrap_or(0.0) };
         let meter_fn = |id: u32, v: f32| {
-            let idx = id.wrapping_sub(256) as usize;
+            let idx = id.wrapping_sub(truce_params::METER_ID_BASE) as usize;
             if let Some(slot) = meters.get(idx) {
                 slot.store(v.to_bits(), Ordering::Relaxed);
             }

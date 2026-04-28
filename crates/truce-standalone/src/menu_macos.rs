@@ -41,16 +41,25 @@ struct MenuState {
 /// Install the native menu bar on the running `NSApplication`.
 /// Must be called on the main thread, after `NSApp` has been
 /// initialized (baseview does this when its window opens).
-pub fn install(input: InputController) {
+///
+/// `app_name` is the user-visible app name shown in the menu bar
+/// (e.g., the plugin's display name). macOS reads this from the
+/// **first menu item's title** in the main menu — *not* from
+/// CFBundleName, despite common assumptions. Leaving it empty
+/// makes the OS fall back to the bundle directory name (which
+/// would render as `Truce Gain.standalone` for a
+/// `Truce Gain.standalone.app` bundle), so we set it explicitly.
+pub fn install(app_name: &str, input: InputController) {
     unsafe {
         let app: *mut Object = msg_send![class!(NSApplication), sharedApplication];
 
-        // App menu (top-level) — Cocoa autopopulates "About",
-        // "Hide", "Quit" etc. when the menu's title matches the
-        // app name and it's set as the first item.
-        let app_menu_item = make_menu_item("");
-        let app_menu = make_menu("");
-        add_app_menu_items(app_menu);
+        // App menu (top-level). The title here is what shows up in
+        // the menu bar. The submenu's items also use the app name
+        // for "About <App>" / "Hide <App>" / "Quit <App>" —
+        // standard macOS convention.
+        let app_menu_item = make_menu_item(app_name);
+        let app_menu = make_menu(app_name);
+        add_app_menu_items(app_menu, app_name);
         let _: () = msg_send![app_menu_item, setSubmenu: app_menu];
 
         // Plugin menu (next to it) — holds host-controlled items.
@@ -118,12 +127,12 @@ unsafe fn make_toggle_item(
     item
 }
 
-/// Add the standard App-menu items. The system fills in the app
-/// name; we just provide the "Quit AppName" tail.
-unsafe fn add_app_menu_items(menu: *mut Object) {
-    // "Quit AppName" — `terminate:` on NSApp is the conventional
+/// Add the standard App-menu items. macOS does NOT auto-fill the
+/// app name here — we have to spell out "Quit <App>" ourselves.
+unsafe fn add_app_menu_items(menu: *mut Object, app_name: &str) {
+    // "Quit <App>" — `terminate:` on NSApp is the conventional
     // selector, fired by Cmd+Q.
-    let title = ns_string("Quit");
+    let title = ns_string(&format!("Quit {app_name}"));
     let key = ns_string("q");
     let quit_item: *mut Object = msg_send![class!(NSMenuItem), alloc];
     let quit_item: *mut Object = msg_send![
