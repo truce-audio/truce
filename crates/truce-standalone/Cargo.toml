@@ -28,6 +28,16 @@ keyboard-types = { version = "0.6", optional = true }
 [target.'cfg(target_os = "macos")'.dependencies]
 objc = { version = "0.2", optional = true }
 
+# Windows native menu bar for `gui`-enabled standalone hosts.
+# Direct `windows-sys` calls — same crate already pulled in
+# transitively by baseview/wgpu, so no new dep tree.
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Shell",
+], optional = true }
+
 [features]
 default = []
 gui = [
@@ -37,6 +47,7 @@ gui = [
     "dep:raw-window-handle",
     "dep:keyboard-types",
     "dep:objc",
+    "dep:windows-sys",
 ]
 
 [lints]

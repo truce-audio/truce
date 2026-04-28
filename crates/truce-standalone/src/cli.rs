@@ -150,9 +150,7 @@ fn parse_on_off(s: &str, flag: &str) -> Result<bool, String> {
     match s.trim().to_lowercase().as_str() {
         "on" | "true" | "1" | "yes" => Ok(true),
         "off" | "false" | "0" | "no" => Ok(false),
-        other => Err(format!(
-            "{flag}: expected `on` or `off` (got `{other}`)"
-        )),
+        other => Err(format!("{flag}: expected `on` or `off` (got `{other}`)")),
     }
 }
 

@@ -127,6 +127,18 @@ where
             crate::menu_macos::install(P::info().name, input_ctrl.clone());
         }
 
+        // Windows: same idea, but the menu bar lives inside the
+        // window's non-client area, so the install path also grows
+        // the parent so the editor child keeps its requested size.
+        // Must run BEFORE `editor.open()` below — the resize has to
+        // settle before the editor's child window sizes itself.
+        #[cfg(target_os = "windows")]
+        if is_effect {
+            if let RwhHandle::Win32(h) = window.raw_window_handle() {
+                crate::menu_windows::install(h.hwnd, P::info().name, input_ctrl.clone());
+            }
+        }
+
         let ctx = synthesize_editor_context::<P>(&plugin, &transport);
         editor.open(truce_parent, ctx);
 
@@ -210,18 +222,26 @@ where
         // I → toggle mic input (only meaningful for effects).
         // First press on macOS triggers the system permission
         // dialog; subsequent presses toggle without prompting.
-        if kb.state == KeyState::Down
-            && kb.code == Code::KeyI
-            && !is_mod_pressed(&kb.modifiers)
-            && self.is_effect
-        {
-            let want = !self.input_ctrl.is_enabled();
-            self.input_ctrl.set_enabled(want);
-            eprintln!(
-                "[truce-standalone] mic: {} (request)",
-                if want { "ON" } else { "OFF" }
-            );
-            return EventStatus::Captured;
+        // On Windows, Ctrl+I is also accepted to mirror the
+        // native menu's accelerator hint (Win32 menu accelerators
+        // need an HACCEL table + TranslateAccelerator in the
+        // message loop, which baseview doesn't expose — so we
+        // dispatch the modifier shortcut from here instead).
+        if kb.state == KeyState::Down && kb.code == Code::KeyI && self.is_effect {
+            let bare = !is_mod_pressed(&kb.modifiers);
+            #[cfg(target_os = "windows")]
+            let with_ctrl = kb.modifiers.contains(Modifiers::CONTROL);
+            #[cfg(not(target_os = "windows"))]
+            let with_ctrl = false;
+            if bare || with_ctrl {
+                let want = !self.input_ctrl.is_enabled();
+                self.input_ctrl.set_enabled(want);
+                eprintln!(
+                    "[truce-standalone] mic: {} (request)",
+                    if want { "ON" } else { "OFF" }
+                );
+                return EventStatus::Captured;
+            }
         }
 
         if kb.state == KeyState::Down {

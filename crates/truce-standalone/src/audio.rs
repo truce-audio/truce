@@ -343,9 +343,7 @@ fn input_worker(
                     }
                 },
                 None => {
-                    eprintln!(
-                        "[truce-standalone] mic enable failed: no input device available"
-                    );
+                    eprintln!("[truce-standalone] mic enable failed: no input device available");
                     enabled_flag.store(false, Ordering::Relaxed);
                 }
             }
@@ -394,11 +392,9 @@ fn build_and_play_input_stream(
         .map_err(|e| -> Box<dyn std::error::Error> {
             format!("could not build input stream: {e}").into()
         })?;
-    stream
-        .play()
-        .map_err(|e| -> Box<dyn std::error::Error> {
-            format!("could not start input stream: {e}").into()
-        })?;
+    stream.play().map_err(|e| -> Box<dyn std::error::Error> {
+        format!("could not start input stream: {e}").into()
+    })?;
     Ok(stream)
 }
 

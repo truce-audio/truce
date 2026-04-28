@@ -109,11 +109,7 @@ unsafe fn make_menu_item(title: &str) -> *mut Object {
     item
 }
 
-unsafe fn make_toggle_item(
-    title: &str,
-    key_equiv: &str,
-    target: *mut Object,
-) -> *mut Object {
+unsafe fn make_toggle_item(title: &str, key_equiv: &str, target: *mut Object) -> *mut Object {
     let title = ns_string(title);
     let key = ns_string(key_equiv);
     let item: *mut Object = msg_send![class!(NSMenuItem), alloc];

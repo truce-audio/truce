@@ -216,7 +216,8 @@ fn stage_macos_app_bundle(
 /// staged IS the binary.
 fn exec_path_inside_stage(
     staged: &std::path::Path,
-    #[cfg_attr(not(target_os = "macos"), allow(unused_variables))] plugin: &crate::config::PluginDef,
+    #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
+    plugin: &crate::config::PluginDef,
 ) -> PathBuf {
     #[cfg(target_os = "macos")]
     {
