@@ -3,14 +3,27 @@
 # bump.sh — open a release-bump PR.
 #
 # Usage:
-#   development/scripts/bump.sh patch          # X.Y.Z → X.Y.(Z+1)
-#   development/scripts/bump.sh minor          # X.Y.Z → X.(Y+1).0
-#   development/scripts/bump.sh 0.15.0         # explicit version
+#   development/scripts/bump.sh patch                      # X.Y.Z → X.Y.(Z+1)
+#   development/scripts/bump.sh minor                      # X.Y.Z → X.(Y+1).0
+#   development/scripts/bump.sh 0.15.0                     # explicit version
+#   development/scripts/bump.sh patch --release            # use release/ prefix
+#                                                          # (post-1.0 stable line)
 #
 # Branches off `dev/latest`, bumps both version strings in
 # `Cargo.toml` (the only two post-deduplication), refreshes
-# `Cargo.lock`, commits on `release/vX.Y.Z`, pushes, and opens a PR
-# against `main`.
+# `Cargo.lock`, commits on `<prefix>/vX.Y` (a per-minor bump branch,
+# distinct from the train `<prefix>/X.Y` by the `v` prefix), pushes,
+# and opens a PR against `main`. Re-running on the same minor (e.g.,
+# 0.15.1 → 0.15.2 after a previous bump merged) reuses the same
+# branch name; the local branch is reset to the new commit.
+#
+# Prefix selection:
+#   --preview (default)  pre-1.0 trains and post-1.0 pre-release testing
+#   --release            post-1.0 stable trains
+# Pre-1.0 always uses preview/. Post-1.0, both `preview/X.Y` and
+# `release/X.Y` may coexist (preview/ for the next minor's RC line,
+# release/ for the current stable). The flag picks which one the bump
+# targets.
 #
 # Does NOT tag, push to main, or publish. Run `release.sh` from
 # `main` after the PR is reviewed and merged.
@@ -19,10 +32,25 @@ set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
 
-BUMP="${1:-}"
+BUMP=""
+PREFIX="preview"
+
+for arg in "$@"; do
+    case "$arg" in
+        --preview) PREFIX="preview" ;;
+        --release) PREFIX="release" ;;
+        patch|minor) BUMP="$arg" ;;
+        *.*.*) BUMP="$arg" ;;
+        *)
+            echo "Unknown argument: $arg" >&2
+            echo "Usage: bump.sh [--preview|--release] patch | minor | X.Y.Z" >&2
+            exit 1
+            ;;
+    esac
+done
 
 if [[ -z "$BUMP" ]]; then
-    echo "Usage: bump.sh patch | minor | X.Y.Z" >&2
+    echo "Usage: bump.sh [--preview|--release] patch | minor | X.Y.Z" >&2
     exit 1
 fi
 
@@ -65,7 +93,7 @@ case "$BUMP" in
         ;;
 esac
 
-echo "Bumping $CURRENT → $NEW"
+echo "Bumping $CURRENT → $NEW (prefix: $PREFIX)"
 
 # Edit Cargo.toml -------------------------------------------------------------
 
@@ -90,17 +118,20 @@ cargo check --workspace
 
 # Commit, push, PR ------------------------------------------------------------
 
-BRANCH="release/v$NEW"
+# Per-minor bump branch — `<prefix>/v0.15` for any patch on 0.15.x,
+# `<prefix>/v0.16` for the minor bump that initiates the 0.16 train.
+# Named after the NEW version's minor so a minor bump's branch
+# matches the train it's introducing. Distinct from the train branch
+# `<prefix>/X.Y` (no `v` prefix) so they don't collide. Reused across
+# patches on the same minor: `git checkout -B` resets the branch if
+# a previous bump's local branch is still around.
+IFS=. read -r NEW_MAJOR NEW_MINOR _ <<< "$NEW"
+BRANCH="$PREFIX/v$NEW_MAJOR.$NEW_MINOR"
 
-if git rev-parse --verify "$BRANCH" >/dev/null 2>&1; then
-    echo "Error: branch $BRANCH already exists locally — delete it first" >&2
-    exit 1
-fi
-
-git checkout -b "$BRANCH"
+git checkout -B "$BRANCH"
 git add Cargo.toml Cargo.lock
 git commit -m "Release v$NEW"
-git push -u origin "$BRANCH"
+git push -u --force-with-lease origin "$BRANCH"
 
 gh pr create --base main --title "Release v$NEW" --body "$(cat <<EOF
 Mechanical version bump: \`$CURRENT\` → \`$NEW\`.

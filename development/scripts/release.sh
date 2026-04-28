@@ -2,8 +2,13 @@
 #
 # release.sh — tag, publish, and announce a release.
 #
-# Run from `main` after the bump PR opened by `bump.sh` has been
-# reviewed and merged. The merged release commit must be HEAD.
+# Usage:
+#   development/scripts/release.sh             # default: preview/ train
+#   development/scripts/release.sh --release   # post-1.0 stable train
+#
+# Run from `main` (or the train branch for a hotfix) after the bump
+# PR opened by `bump.sh` has been reviewed and merged. The merged
+# release commit must be HEAD.
 #
 # What this does, in order:
 #   1. Pull latest main
@@ -14,25 +19,47 @@
 #   5. Publish truce-shim-types to crates.io
 #   6. Sleep 30s for crates.io index propagation
 #   7. Publish cargo-truce to crates.io
-#   8. Fast-forward preview/X.Y to the tag
-#   9. Push main, preview/X.Y, and the tag in one go
+#   8. Fast-forward <prefix>/X.Y to the tag
+#   9. Push main, <prefix>/X.Y, and the tag in one go
 #  10. Create the GitHub Release with auto-generated notes
+#
+# Prefix selection:
+#   --preview (default)  pre-1.0 trains and post-1.0 pre-release testing
+#   --release            post-1.0 stable trains
+# Pre-1.0 always uses preview/. Post-1.0, both `preview/X.Y` and
+# `release/X.Y` may coexist (preview/ for the next minor's RC line,
+# release/ for the current stable). The flag picks which one this
+# release advances.
 #
 # Pre-reqs:
 #   - `cargo login <token>` already run (check ~/.cargo/credentials.toml)
 #   - `gh auth login` already run (check `gh auth status`)
-#   - main is at the bump commit and preview/X.Y exists for this train
-#     (for a brand-new minor release, create preview/X.Y from main
+#   - main is at the bump commit and <prefix>/X.Y exists for this train
+#     (for a brand-new minor release, create <prefix>/X.Y from main
 #      before running this script)
 #
 # Recovery: see development/docs/DEVELOPMENT.md or
-# truce-docs/docs/internal/release-automation.md for what to do when
-# a particular step fails. The script is linear, not idempotent —
+# truce-docs/docs/internal/release.md for what to do when a
+# particular step fails. The script is linear, not idempotent —
 # re-running after a partial failure requires manual cleanup first.
 
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
+
+PREFIX="preview"
+
+for arg in "$@"; do
+    case "$arg" in
+        --preview) PREFIX="preview" ;;
+        --release) PREFIX="release" ;;
+        *)
+            echo "Unknown argument: $arg" >&2
+            echo "Usage: release.sh [--preview|--release]" >&2
+            exit 1
+            ;;
+    esac
+done
 
 # Step 1 — sync main ----------------------------------------------------------
 
@@ -63,7 +90,7 @@ if [[ "$WS_VERSION" != "$SHIM_VERSION" ]]; then
 fi
 
 TAG="v$WS_VERSION"
-TRAIN="preview/$(echo "$WS_VERSION" | cut -d. -f1,2)"
+TRAIN="$PREFIX/$(echo "$WS_VERSION" | cut -d. -f1,2)"
 
 echo "Releasing $TAG (train: $TRAIN)"
 
