@@ -22,7 +22,7 @@ use truce_core::export::PluginExport;
 use truce_core::info::PluginCategory;
 use truce_params::Params;
 
-use crate::audio::{self, MidiEvent};
+use crate::audio::{self, InputController, MidiEvent};
 use crate::cli::Options;
 use crate::keyboard;
 use crate::midi::MidiInputThread;
@@ -98,6 +98,13 @@ where
     let pending = Arc::clone(&audio_handles.pending);
     let transport = audio_handles.transport.clone();
 
+    // InputController is Send + Sync (it's Clone, holds an Arc +
+    // mpsc::Sender). The full AudioHandles is !Send because of
+    // cpal::Stream, so we keep the handles in this outer scope and
+    // only pass the Send-able pieces into the window's closure.
+    let input_ctrl = audio_handles.input.clone();
+    let is_effect = audio_handles.is_effect;
+
     Window::open_blocking(window_opts, move |window| {
         let truce_parent = match window.raw_window_handle() {
             RwhHandle::AppKit(h) => RawWindowHandle::AppKit(h.ns_view),
@@ -118,6 +125,8 @@ where
             plugin,
             pending,
             transport,
+            input_ctrl,
+            is_effect,
             octave_offset: 0,
             _midi_thread: midi_thread,
         }
@@ -135,6 +144,12 @@ where
     plugin: Arc<Mutex<P>>,
     pending: Arc<Mutex<Vec<MidiEvent>>>,
     transport: Transport,
+    /// Toggle handle for mic input (sends to the worker thread
+    /// owning the cpal input stream).
+    input_ctrl: InputController,
+    /// True only for effect plugins; gates the `I` keyboard
+    /// shortcut.
+    is_effect: bool,
     octave_offset: i8,
     /// Keeps the MIDI hot-plug thread alive for the lifetime of the
     /// window; dropped when the window closes.
@@ -178,6 +193,23 @@ where
                 } else {
                     "stopped"
                 }
+            );
+            return EventStatus::Captured;
+        }
+
+        // I → toggle mic input (only meaningful for effects).
+        // First press on macOS triggers the system permission
+        // dialog; subsequent presses toggle without prompting.
+        if kb.state == KeyState::Down
+            && kb.code == Code::KeyI
+            && !is_mod_pressed(&kb.modifiers)
+            && self.is_effect
+        {
+            let want = !self.input_ctrl.is_enabled();
+            self.input_ctrl.set_enabled(want);
+            eprintln!(
+                "[truce-standalone] mic: {} (request)",
+                if want { "ON" } else { "OFF" }
             );
             return EventStatus::Captured;
         }

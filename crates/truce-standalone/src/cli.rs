@@ -20,6 +20,10 @@ pub struct Options {
     pub list_midi: bool,
     pub output_device: Option<String>,
     pub input_device: Option<String>,
+    /// Whether the mic input is enabled at launch. `None` →
+    /// privacy default (off). Set explicitly via `--input-enabled
+    /// on|off` or `default_input_enabled` in the config file.
+    pub input_enabled: Option<bool>,
     pub sample_rate: Option<u32>,
     pub buffer_size: Option<u32>,
     pub midi_input: Option<String>,
@@ -40,6 +44,8 @@ OPTIONS:
   --list-midi               List MIDI input devices and exit
   --output <name>           Audio output device (substring match)
   --input <name>            Audio input device (effect plugins)
+  --input-enabled <on|off>  Enable mic input at launch (default: off).
+                            Press `I` in the window to toggle live.
   --sample-rate <hz>        e.g. 44100, 48000, 96000
   --buffer <frames>         Audio buffer size (power of two recommended)
   --midi-input <name>       MIDI input device (substring match)
@@ -81,6 +87,11 @@ pub fn parse() -> Result<Options, String> {
     let input_device = args
         .opt_value_from_str::<_, String>("--input")
         .map_err(|e| format!("--input: {e}"))?;
+    let input_enabled = args
+        .opt_value_from_str::<_, String>("--input-enabled")
+        .map_err(|e| format!("--input-enabled: {e}"))?
+        .map(|s| parse_on_off(&s, "--input-enabled"))
+        .transpose()?;
     let sample_rate = args
         .opt_value_from_str::<_, u32>("--sample-rate")
         .map_err(|e| format!("--sample-rate: {e}"))?;
@@ -109,6 +120,10 @@ pub fn parse() -> Result<Options, String> {
         list_midi,
         output_device: output_device.or_else(|| env("OUTPUT")),
         input_device: input_device.or_else(|| env("INPUT")),
+        input_enabled: input_enabled.or_else(|| {
+            env("INPUT_ENABLED")
+                .and_then(|s| parse_on_off(&s, "TRUCE_STANDALONE_INPUT_ENABLED").ok())
+        }),
         sample_rate: sample_rate.or_else(|| env("SAMPLE_RATE").and_then(|s| s.parse().ok())),
         buffer_size: buffer_size.or_else(|| env("BUFFER").and_then(|s| s.parse().ok())),
         midi_input: midi_input.or_else(|| env("MIDI_INPUT")),
@@ -121,6 +136,7 @@ pub fn parse() -> Result<Options, String> {
     if let Some(config) = load_config() {
         opts.output_device = opts.output_device.or(config.default_output);
         opts.input_device = opts.input_device.or(config.default_input);
+        opts.input_enabled = opts.input_enabled.or(config.default_input_enabled);
         opts.sample_rate = opts.sample_rate.or(config.default_sample_rate);
         opts.buffer_size = opts.buffer_size.or(config.default_buffer);
         opts.midi_input = opts.midi_input.or(config.default_midi_input);
@@ -128,6 +144,16 @@ pub fn parse() -> Result<Options, String> {
     }
 
     Ok(opts)
+}
+
+fn parse_on_off(s: &str, flag: &str) -> Result<bool, String> {
+    match s.trim().to_lowercase().as_str() {
+        "on" | "true" | "1" | "yes" => Ok(true),
+        "off" | "false" | "0" | "no" => Ok(false),
+        other => Err(format!(
+            "{flag}: expected `on` or `off` (got `{other}`)"
+        )),
+    }
 }
 
 fn env(name: &str) -> Option<String> {
@@ -140,6 +166,11 @@ struct Config {
     default_output: Option<String>,
     #[serde(default)]
     default_input: Option<String>,
+    /// Privacy default: `None` (unset in config) means the runtime
+    /// default takes effect (off). Set to `true` / `false` in config
+    /// to override at launch.
+    #[serde(default)]
+    default_input_enabled: Option<bool>,
     #[serde(default)]
     default_sample_rate: Option<u32>,
     #[serde(default)]
