@@ -9,9 +9,15 @@ use crate::install_scope::InstallScope;
 use crate::locate_wraptool_macos;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use crate::rustup_has_target;
-use crate::{check_cmd, dirs, load_config, project_root, resolve_aax_sdk_path, Res};
+use crate::{
+    check_cmd, dirs, load_config, project_root, resolve_aax_sdk_path, tag_fail, tag_info, tag_ok,
+    tag_warn, Res,
+};
 #[cfg(target_os = "windows")]
-use crate::{common_program_files, locate_cmake, locate_ninja, packaging_windows, program_files};
+use crate::{
+    common_program_files, locate_cmake, locate_msvc_cl, locate_ninja, packaging_windows,
+    program_files, which_exe,
+};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -32,7 +38,7 @@ pub(crate) fn cmd_doctor() -> Res {
     check_cmd("rustc", &["--version"], "rustc");
     check_cmd("cargo", &["--version"], "cargo");
     if root.join("rust-toolchain.toml").exists() {
-        eprintln!("    ✅ rust-toolchain.toml present");
+        eprintln!("    {} rust-toolchain.toml present", tag_ok());
     }
 
     // Platform tools
@@ -44,11 +50,12 @@ pub(crate) fn cmd_doctor() -> Res {
         check_cmd("xcodebuild", &["-version"], "xcodebuild (AU v3)");
         check_cmd("codesign", &["--help"], "codesign");
         match locate_wraptool_macos() {
-            Some(p) => eprintln!("    ✅ wraptool (PACE) at {}", p.display()),
+            Some(p) => eprintln!("    {} wraptool (PACE) at {}", tag_ok(), p.display()),
             None => eprintln!(
-                "    ℹ️  wraptool not found — only needed for signed AAX builds. \
+                "    {} wraptool not found — only needed for signed AAX builds. \
                  Install Eden via the iLok License Manager, then optionally \
-                 `sudo ln -s /Applications/PACEAntiPiracy/Eden/Fusion/Current/bin/wraptool /usr/local/bin/wraptool`"
+                 `sudo ln -s /Applications/PACEAntiPiracy/Eden/Fusion/Current/bin/wraptool /usr/local/bin/wraptool`",
+                tag_info()
             ),
         }
 
@@ -59,16 +66,20 @@ pub(crate) fn cmd_doctor() -> Res {
         let has_arm = rustup_has_target("aarch64-apple-darwin");
         match (has_x64, has_arm) {
             (true, true) => eprintln!(
-                "    ✅ Rust targets: x86_64-apple-darwin + aarch64-apple-darwin — `cargo truce package` will produce universal Mach-O binaries"
+                "    {} Rust targets: x86_64-apple-darwin + aarch64-apple-darwin — `cargo truce package` will produce universal Mach-O binaries",
+                tag_ok()
             ),
             (false, true) => eprintln!(
-                "    ⚠️  Rust target x86_64-apple-darwin missing — run: rustup target add x86_64-apple-darwin (or pass `--host-only` to skip)"
+                "    {} Rust target x86_64-apple-darwin missing — run: rustup target add x86_64-apple-darwin (or pass `--host-only` to skip)",
+                tag_warn()
             ),
             (true, false) => eprintln!(
-                "    ⚠️  Rust target aarch64-apple-darwin missing — run: rustup target add aarch64-apple-darwin (or pass `--host-only` to skip)"
+                "    {} Rust target aarch64-apple-darwin missing — run: rustup target add aarch64-apple-darwin (or pass `--host-only` to skip)",
+                tag_warn()
             ),
             (false, false) => eprintln!(
-                "    ⚠️  No Apple Rust targets installed — run: rustup target add x86_64-apple-darwin aarch64-apple-darwin (or pass `--host-only` to skip)"
+                "    {} No Apple Rust targets installed — run: rustup target add x86_64-apple-darwin aarch64-apple-darwin (or pass `--host-only` to skip)",
+                tag_warn()
             ),
         }
     }
@@ -77,16 +88,26 @@ pub(crate) fn cmd_doctor() -> Res {
         eprintln!();
         eprintln!("  Windows");
         match locate_cmake() {
-            Some(p) => eprintln!("    ✅ cmake (AAX template build): {}", p.display()),
-            None => {
-                eprintln!("    ❌ cmake.exe not found — install cmake or VS \"C++ CMake tools\"")
-            }
+            Some(p) => eprintln!(
+                "    {} cmake (AAX template build): {}",
+                tag_ok(),
+                p.display()
+            ),
+            None => eprintln!(
+                "    {} cmake.exe not found — install cmake or VS \"C++ CMake tools\"",
+                tag_fail()
+            ),
         }
         match locate_ninja() {
-            Some(p) => eprintln!("    ✅ ninja (AAX template build): {}", p.display()),
-            None => {
-                eprintln!("    ❌ ninja.exe not found — install ninja or VS \"C++ CMake tools\"")
-            }
+            Some(p) => eprintln!(
+                "    {} ninja (AAX template build): {}",
+                tag_ok(),
+                p.display()
+            ),
+            None => eprintln!(
+                "    {} ninja.exe not found — install ninja or VS \"C++ CMake tools\"",
+                tag_fail()
+            ),
         }
 
         eprintln!();
@@ -104,11 +125,25 @@ pub(crate) fn cmd_doctor() -> Res {
     }
     #[cfg(target_os = "windows")]
     {
-        check_cmd(
-            "cl",
-            &["/?"],
-            "MSVC compiler (run from Developer Command Prompt)",
-        );
+        // `cl.exe` is only on PATH inside a Developer Command Prompt, but Rust
+        // (cc-rs) and CMake both auto-discover MSVC via vswhere — so the bare
+        // PATH check would falsely flag the tool as missing on a perfectly
+        // working setup. Try PATH first, then fall back to vswhere.
+        if which_exe("cl.exe").is_some() {
+            check_cmd("cl", &["/?"], "MSVC compiler (in current PATH)");
+        } else {
+            match locate_msvc_cl() {
+                Some(p) => eprintln!(
+                    "    {} MSVC compiler at {} (not in PATH — Rust/CMake auto-discover it via vswhere)",
+                    tag_ok(),
+                    p.display()
+                ),
+                None => eprintln!(
+                    "    {} MSVC compiler: not found — install VS \"Desktop development with C++\" workload",
+                    tag_fail()
+                ),
+            }
+        }
     }
 
     // Validation tools
@@ -124,16 +159,20 @@ pub(crate) fn cmd_doctor() -> Res {
     let config = if root.join("truce.toml").exists() {
         match load_config() {
             Ok(c) => {
-                eprintln!("    ✅ truce.toml: {} plugins configured", c.plugin.len());
+                eprintln!(
+                    "    {} truce.toml: {} plugins configured",
+                    tag_ok(),
+                    c.plugin.len()
+                );
                 Some(c)
             }
             Err(e) => {
-                eprintln!("    ❌ truce.toml parse error: {e}");
+                eprintln!("    {} truce.toml parse error: {e}", tag_fail());
                 None
             }
         }
     } else {
-        eprintln!("    ❌ truce.toml not found");
+        eprintln!("    {} truce.toml not found", tag_fail());
         None
     };
 
@@ -142,7 +181,7 @@ pub(crate) fn cmd_doctor() -> Res {
     eprintln!("  SDKs");
     let aax_sdk = config.as_ref().and_then(resolve_aax_sdk_path);
     match aax_sdk {
-        Some(p) => eprintln!("    ✅ AAX SDK at {}", p.display()),
+        Some(p) => eprintln!("    {} AAX SDK at {}", tag_ok(), p.display()),
         None => {
             let hint = if cfg!(target_os = "windows") {
                 "[windows].aax_sdk_path"
@@ -150,7 +189,8 @@ pub(crate) fn cmd_doctor() -> Res {
                 "[macos].aax_sdk_path"
             };
             eprintln!(
-                "    ⚠️  AAX SDK not configured (set {hint} in truce.toml or AAX_SDK_PATH env var)"
+                "    {} AAX SDK not configured (set {hint} in truce.toml or AAX_SDK_PATH env var)",
+                tag_warn()
             );
         }
     }
@@ -335,11 +375,11 @@ fn report_path_line(label: &str, needs_sudo: bool, path: &Path, ext: &str) {
         format!(" ({count} plug-in{plural})")
     };
     let state = if needs_sudo {
-        format!("⚠️  needs sudo{count_str}")
+        format!("{} needs sudo{count_str}", tag_warn())
     } else if path_is_writable(path) {
-        format!("✅ writable{count_str}")
+        format!("{} writable{count_str}", tag_ok())
     } else {
-        format!("⚠️  not writable{count_str}")
+        format!("{} not writable{count_str}", tag_warn())
     };
     eprintln!(
         "    {label:<14} {}{}{state}",
@@ -422,22 +462,25 @@ fn check_which_with_env(name: &str, env_var: Option<&str>) {
         {
             let p = PathBuf::from(&path);
             if p.is_file() {
-                eprintln!("    ✅ {name}: {path} (via ${var})");
+                eprintln!("    {} {name}: {path} (via ${var})", tag_ok());
                 return;
             }
-            eprintln!("    ⚠️  {name}: ${var}={path} but file not found — falling back to $PATH");
+            eprintln!(
+                "    {} {name}: ${var}={path} but file not found — falling back to $PATH",
+                tag_warn()
+            );
         }
     }
     match Command::new("which").arg(name).output() {
         Ok(o) if o.status.success() => {
             let path = String::from_utf8_lossy(&o.stdout).trim().to_string();
-            eprintln!("    ✅ {name}: {path}");
+            eprintln!("    {} {name}: {path}", tag_ok());
         }
         _ => {
             let hint = env_var
                 .map(|v| format!(" (or set ${v} in shell or .cargo/config.toml [env])"))
                 .unwrap_or_default();
-            eprintln!("    ⚠️  {name}: not found{hint}");
+            eprintln!("    {} {name}: not found{hint}", tag_warn());
         }
     }
 }

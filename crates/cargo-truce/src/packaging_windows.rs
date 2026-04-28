@@ -22,7 +22,7 @@ use crate::install_scope::{note_once, PkgScope};
 use crate::{
     build_aax_template, cargo_build, detect_default_features, load_config, project_root,
     read_workspace_version, release_lib_for_target, resolve_aax_sdk_path, rustup_has_target,
-    tmp_dir, Config, PkgFormat, PluginDef, Res, WindowsSigningConfig,
+    tag_info, tag_ok, tag_warn, tmp_dir, Config, PkgFormat, PluginDef, Res, WindowsSigningConfig,
 };
 
 // ---------------------------------------------------------------------------
@@ -1430,20 +1430,29 @@ fn iss_escape_path(p: &Path) -> String {
 
 pub(crate) fn doctor() {
     match locate_iscc() {
-        Some(p) => eprintln!("    ✅ Inno Setup 6 (ISCC.exe) at {}", p.display()),
-        None => {
-            eprintln!("    ⚠️  ISCC.exe not found — install Inno Setup 6 to produce installers")
-        }
+        Some(p) => eprintln!(
+            "    {} Inno Setup 6 (ISCC.exe) at {}",
+            tag_ok(),
+            p.display()
+        ),
+        None => eprintln!(
+            "    {} ISCC.exe not found — install Inno Setup 6 to produce installers",
+            tag_warn()
+        ),
     }
     match locate_signtool() {
-        Some(p) => eprintln!("    ✅ signtool.exe at {}", p.display()),
-        None => {
-            eprintln!("    ⚠️  signtool.exe not found — install Windows 10/11 SDK for Authenticode")
-        }
+        Some(p) => eprintln!("    {} signtool.exe at {}", tag_ok(), p.display()),
+        None => eprintln!(
+            "    {} signtool.exe not found — install Windows 10/11 SDK for Authenticode",
+            tag_warn()
+        ),
     }
     match locate_wraptool() {
-        Some(p) => eprintln!("    ✅ wraptool.exe (PACE) at {}", p.display()),
-        None => eprintln!("    ℹ️  wraptool.exe not found — only needed for signed AAX builds"),
+        Some(p) => eprintln!("    {} wraptool.exe (PACE) at {}", tag_ok(), p.display()),
+        None => eprintln!(
+            "    {} wraptool.exe not found — only needed for signed AAX builds",
+            tag_info()
+        ),
     }
 
     // ARM64 readiness. Universal is the default, so missing ARM64 toolchain
@@ -1452,16 +1461,20 @@ pub(crate) fn doctor() {
     let has_msvc_arm64 = has_arm64_msvc_toolchain();
     match (has_rust_arm64, has_msvc_arm64) {
         (true, true) => eprintln!(
-            "    ✅ ARM64 cross-compile available — `cargo truce package` will produce dual-arch installers by default"
+            "    {} ARM64 cross-compile available — `cargo truce package` will produce dual-arch installers by default",
+            tag_ok()
         ),
         (true, false) => eprintln!(
-            "    ⚠️  Rust has aarch64-pc-windows-msvc but VS is missing the ARM64 MSVC toolchain — C++ shims won't cross-compile. Install \"MSVC v143 - VS 2022 C++ ARM64/ARM64EC build tools\" via the VS Installer, or pass `--host-only` to skip ARM64."
+            "    {} Rust has aarch64-pc-windows-msvc but VS is missing the ARM64 MSVC toolchain — C++ shims won't cross-compile. Install \"MSVC v143 - VS 2022 C++ ARM64/ARM64EC build tools\" via the VS Installer, or pass `--host-only` to skip ARM64.",
+            tag_warn()
         ),
         (false, true) => eprintln!(
-            "    ⚠️  VS has ARM64 MSVC but the Rust target isn't installed — run: rustup target add aarch64-pc-windows-msvc (or pass `--host-only` to skip)"
+            "    {} VS has ARM64 MSVC but the Rust target isn't installed — run: rustup target add aarch64-pc-windows-msvc (or pass `--host-only` to skip)",
+            tag_warn()
         ),
         (false, false) => eprintln!(
-            "    ⚠️  ARM64 cross-compile not set up. `cargo truce package` defaults to universal and will fail without it — add the Rust target and the VS ARM64 toolchain, or pass `--host-only` to skip ARM64."
+            "    {} ARM64 cross-compile not set up. `cargo truce package` defaults to universal and will fail without it — add the Rust target and the VS ARM64 toolchain, or pass `--host-only` to skip ARM64.",
+            tag_warn()
         ),
     }
 }

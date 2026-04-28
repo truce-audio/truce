@@ -5,7 +5,7 @@
 use crate::install_scope::InstallScope;
 #[cfg(target_os = "macos")]
 use crate::{deployment_target, project_root};
-use crate::{dirs, load_config, tmp_dir, PluginDef, Res};
+use crate::{dirs, load_config, tag_warn, tmp_dir, PluginDef, Res};
 use std::fs;
 use std::path::Path;
 #[cfg(target_os = "macos")]
@@ -18,7 +18,7 @@ use std::process::Command;
 /// frequent cause of "DAW loads my old build" support questions.
 fn warn_on_scope_collision(format: &str, user_path: &Path, system_path: &Path) {
     if user_path.exists() && system_path.exists() {
-        eprintln!("    ⚠️  {format} installed in both scopes:");
+        eprintln!("    {} {format} installed in both scopes:", tag_warn());
         eprintln!("        • user:   {}", user_path.display());
         eprintln!("        • system: {}", system_path.display());
         eprintln!(
@@ -138,7 +138,8 @@ fn warn_on_au_collision(au_type: &str, subtype: &str, manufacturer: &str, expect
         return;
     }
     eprintln!(
-        "    ⚠️  collision: {} other bundle(s) also claim {}/{}/{}",
+        "    {} collision: {} other bundle(s) also claim {}/{}/{}",
+        tag_warn(),
         hits.len() - 1,
         au_type,
         subtype,

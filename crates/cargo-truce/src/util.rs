@@ -728,7 +728,8 @@ pub(crate) fn verify_signed_for_notarization(path: &Path, identity: &str) -> cra
 
     eprintln!();
     eprintln!(
-        "❌ Notarization-readiness check failed for {} Mach-O(s) under {}:",
+        "{} Notarization-readiness check failed for {} Mach-O(s) under {}:",
+        tag_fail(),
         failures.len(),
         path.display()
     );
@@ -1233,6 +1234,38 @@ pub(crate) fn locate_ninja() -> Option<PathBuf> {
     None
 }
 
+/// Locate `cl.exe` (the MSVC C/C++ compiler). Tries `%PATH%` first — that
+/// only succeeds inside a Developer Command Prompt — then falls back to
+/// scanning `VC\Tools\MSVC\<version>\bin\Hostx64\x64\cl.exe` under each VS
+/// install reported by `vswhere.exe`. Returns the newest toolchain version
+/// found across all VS installs.
+#[cfg(target_os = "windows")]
+pub(crate) fn locate_msvc_cl() -> Option<PathBuf> {
+    if let Some(p) = which_exe("cl.exe") {
+        return Some(p);
+    }
+    let mut candidates: Vec<(String, PathBuf)> = Vec::new();
+    for vs_install in vs_install_paths() {
+        let msvc_root = vs_install.join(r"VC\Tools\MSVC");
+        let Ok(entries) = fs::read_dir(&msvc_root) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let cl = entry.path().join(r"bin\Hostx64\x64\cl.exe");
+            if cl.is_file() {
+                let ver = entry.file_name().to_string_lossy().into_owned();
+                candidates.push((ver, cl));
+            }
+        }
+    }
+    // Pick the highest version string. MSVC toolchain dirs are dotted numerics
+    // (e.g. "14.50.35728"), so lexicographic compare on equal-length segments
+    // is wrong, but in practice all entries share the same major and the minor
+    // is two digits, so string compare picks the newest correctly here.
+    candidates.sort_by(|a, b| b.0.cmp(&a.0));
+    candidates.into_iter().next().map(|(_, p)| p)
+}
+
 /// Enumerate all VS installation roots known to `vswhere.exe`. Returned in
 /// the order vswhere produces (latest first when called with `-latest`, or
 /// all installs otherwise). We pass no filter here so we also pick up the old
@@ -1304,6 +1337,44 @@ pub(crate) fn confirm_prompt(message: &str) -> bool {
     matches!(input.trim(), "y" | "Y" | "yes" | "YES")
 }
 
+/// Status markers for `cargo truce doctor` output. Colored when stderr is a
+/// terminal and `NO_COLOR` is unset; plain otherwise. All markers are 6 cols
+/// wide so they line up regardless of whether color is active.
+pub(crate) fn tag_ok() -> String {
+    paint("[ OK ]", "\x1b[1;32m")
+}
+pub(crate) fn tag_fail() -> String {
+    paint("[FAIL]", "\x1b[1;31m")
+}
+pub(crate) fn tag_warn() -> String {
+    paint("[WARN]", "\x1b[1;33m")
+}
+pub(crate) fn tag_info() -> String {
+    paint("[INFO]", "\x1b[1;36m")
+}
+
+fn paint(text: &str, ansi: &str) -> String {
+    if doctor_use_color() {
+        format!("{ansi}{text}\x1b[0m")
+    } else {
+        text.to_string()
+    }
+}
+
+/// Cached check: `NO_COLOR` unset AND stderr is a tty. Decided once per
+/// process — no need to re-stat the terminal on every line.
+fn doctor_use_color() -> bool {
+    use std::io::IsTerminal;
+    use std::sync::OnceLock;
+    static USE: OnceLock<bool> = OnceLock::new();
+    *USE.get_or_init(|| {
+        if env::var_os("NO_COLOR").is_some() {
+            return false;
+        }
+        std::io::stderr().is_terminal()
+    })
+}
+
 /// Print a "tool present" line for `cargo truce doctor`. Runs the command
 /// with `args` and shows the first stdout line as the version, or "not found"
 /// when the command can't be executed.
@@ -1313,12 +1384,12 @@ pub(crate) fn check_cmd(cmd: &str, args: &[&str], label: &str) {
             let ver = String::from_utf8_lossy(&o.stdout);
             let first_line = ver.lines().next().unwrap_or("").trim();
             if first_line.is_empty() {
-                eprintln!("    ✅ {label}");
+                eprintln!("    {} {label}", tag_ok());
             } else {
-                eprintln!("    ✅ {label}: {first_line}");
+                eprintln!("    {} {label}: {first_line}", tag_ok());
             }
         }
-        Ok(_) => eprintln!("    ✅ {label}"),
-        Err(_) => eprintln!("    ❌ {label}: not found"),
+        Ok(_) => eprintln!("    {} {label}", tag_ok()),
+        Err(_) => eprintln!("    {} {label}: not found", tag_fail()),
     }
 }
