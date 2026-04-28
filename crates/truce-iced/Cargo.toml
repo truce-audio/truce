@@ -18,6 +18,3 @@ iced_graphics = "0.13"
 pollster = "0.4"
 baseview = { workspace = true }
 raw-window-handle = "0.5"
-
-[build-dependencies]
-cc = "1"

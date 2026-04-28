@@ -125,7 +125,7 @@ the framework runs on macOS and Windows too.
 | Built-in (CPU) | `truce-gui` | tiny-skia, logical-point contract | Layout-driven | Knob, slider, toggle, selector, dropdown, meter, XY pad |
 | Built-in (GPU) | `truce-gpu` | wgpu (Metal/DX12/Vulkan/GL) | Layout-driven | Same widget set as CPU backend |
 | egui | `truce-egui` | wgpu via baseview | Immediate mode | Knob, slider, toggle, selector, meter, XY pad |
-| iced | `truce-iced` | wgpu (native NSView on macOS, baseview on Windows / Linux) | Elm architecture | Knob, slider, toggle, selector, meter, XY pad + full iced widgets |
+| iced | `truce-iced` | wgpu via baseview | Elm architecture | Knob, slider, toggle, selector, meter, XY pad + full iced widgets |
 | Slint | `truce-slint` | wgpu via baseview | Declarative `.slint` DSL | Knob, slider, toggle, selector, meter |
 | Raw | `truce-core` | Bring your own | Any | BYO |
 

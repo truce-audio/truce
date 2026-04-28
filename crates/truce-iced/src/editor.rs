@@ -1,12 +1,10 @@
 //! IcedEditor — implements `truce_core::Editor` using iced for rendering.
 //!
 //! Uses `iced_runtime::program::State` for manual iced runtime driving
-//! and `iced_wgpu` for GPU-accelerated rendering, all embedded as a child
-//! view of the DAW's parent window.
+//! and `iced_wgpu` for GPU-accelerated rendering, embedded as a child
+//! of the host's parent window via baseview.
 
-use std::ffi::c_void;
 use std::fmt::Debug;
-use std::ptr::NonNull;
 use std::sync::Arc;
 
 use iced::{Color, Event, Point, Size, Task};
@@ -22,9 +20,6 @@ use crate::auto_layout;
 use crate::editor_handle::EditorHandle;
 use crate::param_message::{Message, ParamMessage};
 use crate::param_state::ParamState;
-use crate::platform::IcedPlatformView;
-#[cfg(target_os = "macos")]
-use crate::platform::IcedViewCallbacks;
 
 // ---------------------------------------------------------------------------
 // IcedPlugin trait — what plugin authors implement
@@ -168,8 +163,6 @@ where
     runtime: Option<IcedRuntime<P, M>>,
     layout: Option<GridLayout>,
     meter_ids: Vec<u32>,
-    /// Baseview window handle (Windows/Linux).
-    #[cfg(not(target_os = "macos"))]
     baseview_window: Option<baseview::WindowHandle>,
 }
 
@@ -195,7 +188,6 @@ impl<P: Params + 'static> IcedEditor<P, AutoPlugin> {
             runtime: None,
             layout: Some(layout),
             meter_ids,
-            #[cfg(not(target_os = "macos"))]
             baseview_window: None,
         }
     }
@@ -212,7 +204,6 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedEditor<P, M> {
             runtime: None,
             layout: None,
             meter_ids: Vec::new(),
-            #[cfg(not(target_os = "macos"))]
             baseview_window: None,
         }
     }
@@ -240,12 +231,9 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedEditor<P, M> {
 // ---------------------------------------------------------------------------
 
 struct IcedRuntime<P: Params, M: IcedPlugin<P>> {
-    /// Rendering pipeline — initialized lazily on first render after setup.
+    /// Rendering pipeline — initialized lazily when the baseview window
+    /// finishes building and a wgpu surface is available.
     render: Option<RenderState<P, M>>,
-    /// Platform view (RAII — drop destroys the NSView). Set after view creation.
-    _view: Option<IcedPlatformView>,
-    /// CAMetalLayer pointer received from setup callback.
-    metal_layer: Option<NonNull<c_void>>,
     /// Current cursor position in logical coordinates.
     cursor_position: Point,
     /// Whether the left mouse button is pressed.
@@ -263,10 +251,6 @@ struct IcedRuntime<P: Params, M: IcedPlugin<P>> {
 }
 
 /// Holds the full wgpu + iced rendering pipeline.
-///
-/// Uses manual wgpu setup (surface from CAMetalLayer) combined with
-/// `iced_wgpu::Engine` and `iced_wgpu::Renderer` for iced rendering.
-/// This bypasses iced's compositor to use the proven Metal layer approach.
 struct RenderState<P: Params, M: IcedPlugin<P>> {
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -282,18 +266,8 @@ struct RenderState<P: Params, M: IcedPlugin<P>> {
 }
 
 impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
-    /// Initialize the wgpu + iced rendering pipeline (non-macOS stub — use init_render_with_surface).
-    #[cfg(not(target_os = "macos"))]
-    fn init_render(&mut self) -> bool {
-        // On non-macOS, rendering is initialized via init_render_with_surface()
-        // called from the baseview window handler.
-        false
-    }
-
     /// Initialize the wgpu + iced rendering pipeline from a pre-created surface.
-    /// Used on Windows/Linux where baseview provides the window and wgpu surface.
-    #[cfg(not(target_os = "macos"))]
-    fn init_render_with_surface(
+    fn init_render(
         &mut self,
         instance: wgpu::Instance,
         surface: wgpu::Surface<'static>,
@@ -415,157 +389,8 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
         true
     }
 
-    #[cfg(target_os = "macos")]
-    fn init_render(&mut self) -> bool {
-        let metal_layer = match self.metal_layer {
-            Some(v) => v.as_ptr(),
-            None => return false,
-        };
-
-        let program = match self.program.take() {
-            Some(p) => p,
-            None => return false,
-        };
-
-        let (lw, lh) = self.size;
-        // Always use the actual display backing scale for rendering,
-        // not the host-reported scale. CLAP hosts may report 1.0
-        // ("I handle scaling") but the Metal layer still needs physical pixels.
-        let render_scale = truce_gui::backing_scale();
-        self.scale_factor = render_scale;
-        let w = (lw as f64 * render_scale) as u32;
-        let h = (lh as f64 * render_scale) as u32;
-
-        // Create wgpu infrastructure from the CAMetalLayer
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::METAL,
-            ..Default::default()
-        });
-
-        let surface = match unsafe {
-            instance
-                .create_surface_unsafe(wgpu::SurfaceTargetUnsafe::CoreAnimationLayer(metal_layer))
-        } {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("[truce-iced] Failed to create wgpu surface: {e}");
-                self.program = Some(program);
-                return false;
-            }
-        };
-
-        let adapter =
-            match pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::LowPower,
-                compatible_surface: Some(&surface),
-                force_fallback_adapter: false,
-            })) {
-                Some(a) => a,
-                None => {
-                    eprintln!("[truce-iced] No suitable GPU adapter found");
-                    self.program = Some(program);
-                    return false;
-                }
-            };
-
-        let (device, queue) = match pollster::block_on(adapter.request_device(
-            &wgpu::DeviceDescriptor {
-                label: Some("truce-iced"),
-                required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::downlevel_defaults(),
-            },
-            None,
-        )) {
-            Ok(dq) => dq,
-            Err(e) => {
-                eprintln!("[truce-iced] Failed to create wgpu device: {e}");
-                self.program = Some(program);
-                return false;
-            }
-        };
-
-        let surface_caps = surface.get_capabilities(&adapter);
-        if surface_caps.formats.is_empty() {
-            eprintln!("[truce-iced] No surface formats available");
-            self.program = Some(program);
-            return false;
-        }
-
-        let surface_format = surface_caps.formats[0];
-        let alpha_mode = if surface_caps
-            .alpha_modes
-            .contains(&wgpu::CompositeAlphaMode::PostMultiplied)
-        {
-            wgpu::CompositeAlphaMode::PostMultiplied
-        } else {
-            surface_caps.alpha_modes[0]
-        };
-
-        let surface_config = wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format: surface_format,
-            width: w,
-            height: h,
-            present_mode: wgpu::PresentMode::AutoVsync,
-            desired_maximum_frame_latency: 2,
-            alpha_mode,
-            view_formats: vec![],
-        };
-        surface.configure(&device, &surface_config);
-
-        let engine = iced_wgpu::Engine::new(
-            &adapter,
-            &device,
-            &queue,
-            surface_format,
-            Some(iced_graphics::Antialiasing::MSAAx4),
-        );
-
-        let default_font = if let Some((family, data)) = self.font {
-            crate::font::apply_font(family, data)
-        } else {
-            iced::Font::DEFAULT
-        };
-        let mut renderer =
-            iced_wgpu::Renderer::new(&device, &engine, default_font, iced::Pixels(14.0));
-
-        let viewport = iced_graphics::Viewport::with_physical_size(Size::new(w, h), render_scale);
-        let mut debug = iced_runtime::Debug::new();
-        let theme = program.plugin.theme();
-
-        let state = iced_runtime::program::State::new(
-            program,
-            viewport.logical_size(),
-            &mut renderer,
-            &mut debug,
-        );
-
-        let bg = crate::theme::truce_dark_theme().palette().background;
-
-        self.render = Some(RenderState {
-            device,
-            queue,
-            surface,
-            surface_config,
-            engine,
-            renderer,
-            state,
-            viewport,
-            debug,
-            theme,
-            bg_color: bg,
-        });
-
-        eprintln!("[truce-iced] GPU active (wgpu/Metal, {w}x{h})");
-        true
-    }
-
     /// Drive one frame: update iced state + present to surface.
     fn tick(&mut self) {
-        if self.render.is_none() && self.metal_layer.is_some() && !self.init_render() {
-            return;
-        }
-
         let render = match self.render.as_mut() {
             Some(r) => r,
             None => return,
@@ -647,26 +472,23 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
 }
 
 // ---------------------------------------------------------------------------
-// Baseview window handler (Windows/Linux)
+// Baseview window handler (all platforms)
 // ---------------------------------------------------------------------------
 
-#[cfg(not(target_os = "macos"))]
 struct IcedBaseviewHandler<P: Params + 'static, M: IcedPlugin<P>> {
     editor: *mut IcedEditor<P, M>,
-    scale: f32,
+    last_cursor: Option<baseview::MouseCursor>,
 }
 
-#[cfg(not(target_os = "macos"))]
 unsafe impl<P: Params, M: IcedPlugin<P>> Send for IcedBaseviewHandler<P, M> {}
 
-#[cfg(not(target_os = "macos"))]
 impl<P: Params + 'static, M: IcedPlugin<P>> Drop for IcedBaseviewHandler<P, M> {
     fn drop(&mut self) {
-        // Drop wgpu/iced render state on the baseview render thread, while
-        // its XcbConnection (X11 Display) is still alive. If we let the
-        // host-thread close() path drop `runtime.render` instead, NVIDIA's
-        // Vulkan surface-destruction code tries to use a freed Display and
-        // segfaults inside _XSend.
+        // Drop wgpu/iced render state on the baseview event thread, while
+        // any underlying display connection (e.g. X11 Display via XcbConnection)
+        // is still alive. If we let the host-thread close() path drop
+        // `runtime.render` instead, NVIDIA's Vulkan surface-destruction code
+        // tries to use a freed Display and segfaults inside _XSend.
         //
         // Safety: close() always calls window.close() which joins this
         // thread before returning. While this drop runs, the host thread
@@ -678,12 +500,34 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Drop for IcedBaseviewHandler<P, M> {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+fn iced_interaction_to_cursor(interaction: iced::mouse::Interaction) -> baseview::MouseCursor {
+    use iced::mouse::Interaction;
+    match interaction {
+        Interaction::Idle | Interaction::None => baseview::MouseCursor::Default,
+        Interaction::Pointer | Interaction::Grab => baseview::MouseCursor::Hand,
+        Interaction::Grabbing => baseview::MouseCursor::HandGrabbing,
+        Interaction::Text => baseview::MouseCursor::Text,
+        Interaction::Crosshair => baseview::MouseCursor::Crosshair,
+        Interaction::Working => baseview::MouseCursor::Working,
+        Interaction::NotAllowed => baseview::MouseCursor::NotAllowed,
+        Interaction::ResizingHorizontally => baseview::MouseCursor::EwResize,
+        Interaction::ResizingVertically => baseview::MouseCursor::NsResize,
+        _ => baseview::MouseCursor::Default,
+    }
+}
+
 impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBaseviewHandler<P, M> {
-    fn on_frame(&mut self, _window: &mut baseview::Window) {
+    fn on_frame(&mut self, window: &mut baseview::Window) {
         let editor = unsafe { &mut *self.editor };
         if let Some(ref mut runtime) = editor.runtime {
             runtime.tick();
+            if let Some(ref render) = runtime.render {
+                let cursor = iced_interaction_to_cursor(render.state.mouse_interaction());
+                if self.last_cursor != Some(cursor) {
+                    self.last_cursor = Some(cursor);
+                    window.set_mouse_cursor(cursor);
+                }
+            }
         }
     }
 
@@ -702,9 +546,15 @@ impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBase
             baseview::Event::Mouse(mouse) => {
                 match mouse {
                     baseview::MouseEvent::CursorMoved { position, .. } => {
-                        let x = position.x as f32 * self.scale;
-                        let y = position.y as f32 * self.scale;
-                        runtime.queue_cursor_move(x, y);
+                        // baseview reports logical points; iced widgets
+                        // hit-test in logical units against
+                        // `viewport.logical_size()`, so forward as-is.
+                        runtime.queue_cursor_move(position.x as f32, position.y as f32);
+                    }
+                    baseview::MouseEvent::CursorLeft => {
+                        runtime
+                            .pending_events
+                            .push(Event::Mouse(iced::mouse::Event::CursorLeft));
                     }
                     baseview::MouseEvent::ButtonPressed {
                         button: baseview::MouseButton::Left,
@@ -748,7 +598,6 @@ impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBase
                 baseview::EventStatus::Captured
             }
             baseview::Event::Window(baseview::WindowEvent::Resized(info)) => {
-                self.scale = info.scale() as f32;
                 truce_gui::platform::note_linux_scale_factor(info.scale());
                 if let Some(ref mut render) = runtime.render {
                     let pw = info.physical_size().width;
@@ -771,149 +620,57 @@ impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBase
 }
 
 // ---------------------------------------------------------------------------
-// C callbacks from the platform view
+// Bridge baseview's raw-window-handle 0.5 to a wgpu 0.6 SurfaceTargetUnsafe
 // ---------------------------------------------------------------------------
 
-#[cfg(target_os = "macos")]
-unsafe extern "C" fn cb_setup<P: Params + 'static, M: IcedPlugin<P>>(
-    ctx: *mut c_void,
-    metal_layer: *mut c_void,
-) {
-    let editor = &mut *(ctx as *mut IcedEditor<P, M>);
-    if let Some(ref mut runtime) = editor.runtime {
-        runtime.metal_layer = NonNull::new(metal_layer);
-        if runtime.metal_layer.is_some() {
-            eprintln!("[truce-iced] View setup complete, CAMetalLayer received");
+unsafe fn create_wgpu_surface(
+    instance: &wgpu::Instance,
+    window: &baseview::Window,
+) -> Option<wgpu::Surface<'static>> {
+    use raw_window_handle::HasRawWindowHandle;
+    let rwh = window.raw_window_handle();
+    let target = match rwh {
+        #[cfg(target_os = "macos")]
+        raw_window_handle::RawWindowHandle::AppKit(h) => {
+            let ns_view = std::ptr::NonNull::new(h.ns_view)?;
+            wgpu::SurfaceTargetUnsafe::RawHandle {
+                raw_display_handle: wgpu::rwh::RawDisplayHandle::AppKit(
+                    wgpu::rwh::AppKitDisplayHandle::new(),
+                ),
+                raw_window_handle: wgpu::rwh::RawWindowHandle::AppKit(
+                    wgpu::rwh::AppKitWindowHandle::new(ns_view),
+                ),
+            }
         }
-    }
-}
-
-#[cfg(target_os = "macos")]
-unsafe extern "C" fn cb_render<P: Params + 'static, M: IcedPlugin<P>>(ctx: *mut c_void) {
-    let editor = &mut *(ctx as *mut IcedEditor<P, M>);
-    if let Some(ref mut runtime) = editor.runtime {
-        runtime.tick();
-    }
-}
-
-#[cfg(target_os = "macos")]
-unsafe extern "C" fn cb_mouse_down<P: Params + 'static, M: IcedPlugin<P>>(
-    ctx: *mut c_void,
-    x: f32,
-    y: f32,
-) {
-    let editor = &mut *(ctx as *mut IcedEditor<P, M>);
-    if let Some(ref mut runtime) = editor.runtime {
-        runtime.queue_cursor_move(x, y);
-        runtime.mouse_left_pressed = true;
-        runtime
-            .pending_events
-            .push(Event::Mouse(iced::mouse::Event::ButtonPressed(
-                iced::mouse::Button::Left,
-            )));
-    }
-}
-
-#[cfg(target_os = "macos")]
-unsafe extern "C" fn cb_mouse_dragged<P: Params + 'static, M: IcedPlugin<P>>(
-    ctx: *mut c_void,
-    x: f32,
-    y: f32,
-) {
-    let editor = &mut *(ctx as *mut IcedEditor<P, M>);
-    if let Some(ref mut runtime) = editor.runtime {
-        runtime.queue_cursor_move(x, y);
-    }
-}
-
-#[cfg(target_os = "macos")]
-unsafe extern "C" fn cb_mouse_up<P: Params + 'static, M: IcedPlugin<P>>(
-    ctx: *mut c_void,
-    x: f32,
-    y: f32,
-) {
-    let editor = &mut *(ctx as *mut IcedEditor<P, M>);
-    if let Some(ref mut runtime) = editor.runtime {
-        runtime.queue_cursor_move(x, y);
-        runtime.mouse_left_pressed = false;
-        runtime
-            .pending_events
-            .push(Event::Mouse(iced::mouse::Event::ButtonReleased(
-                iced::mouse::Button::Left,
-            )));
-    }
-}
-
-#[cfg(target_os = "macos")]
-unsafe extern "C" fn cb_scroll<P: Params + 'static, M: IcedPlugin<P>>(
-    ctx: *mut c_void,
-    x: f32,
-    y: f32,
-    delta_y: f32,
-) {
-    let editor = &mut *(ctx as *mut IcedEditor<P, M>);
-    if let Some(ref mut runtime) = editor.runtime {
-        runtime.queue_cursor_move(x, y);
-        runtime
-            .pending_events
-            .push(Event::Mouse(iced::mouse::Event::WheelScrolled {
-                delta: iced::mouse::ScrollDelta::Lines { x: 0.0, y: delta_y },
-            }));
-    }
-}
-
-#[cfg(target_os = "macos")]
-unsafe extern "C" fn cb_double_click<P: Params + 'static, M: IcedPlugin<P>>(
-    ctx: *mut c_void,
-    x: f32,
-    y: f32,
-) {
-    let editor = &mut *(ctx as *mut IcedEditor<P, M>);
-    if let Some(ref mut runtime) = editor.runtime {
-        // Double-click = two rapid button presses. Iced's widgets handle
-        // double-click detection internally, so just send press+release.
-        runtime.queue_cursor_move(x, y);
-        runtime
-            .pending_events
-            .push(Event::Mouse(iced::mouse::Event::ButtonPressed(
-                iced::mouse::Button::Left,
-            )));
-        runtime
-            .pending_events
-            .push(Event::Mouse(iced::mouse::Event::ButtonReleased(
-                iced::mouse::Button::Left,
-            )));
-    }
-}
-
-#[cfg(target_os = "macos")]
-unsafe extern "C" fn cb_mouse_moved<P: Params + 'static, M: IcedPlugin<P>>(
-    ctx: *mut c_void,
-    x: f32,
-    y: f32,
-) -> u8 {
-    let editor = &mut *(ctx as *mut IcedEditor<P, M>);
-    if let Some(ref mut runtime) = editor.runtime {
-        if x < 0.0 || y < 0.0 {
-            // Mouse exited
-            runtime
-                .pending_events
-                .push(Event::Mouse(iced::mouse::Event::CursorLeft));
-        } else {
-            runtime.queue_cursor_move(x, y);
-        }
-        // Return 1 if cursor indicates a clickable widget
-        if let Some(ref render) = runtime.render {
-            let interaction = render.state.mouse_interaction();
-            return match interaction {
-                iced::mouse::Interaction::Pointer
-                | iced::mouse::Interaction::Grab
-                | iced::mouse::Interaction::Grabbing => 1,
-                _ => 0,
+        #[cfg(target_os = "windows")]
+        raw_window_handle::RawWindowHandle::Win32(h) => wgpu::SurfaceTargetUnsafe::RawHandle {
+            raw_display_handle: wgpu::rwh::RawDisplayHandle::Windows(
+                wgpu::rwh::WindowsDisplayHandle::new(),
+            ),
+            raw_window_handle: wgpu::rwh::RawWindowHandle::Win32(
+                wgpu::rwh::Win32WindowHandle::new(std::num::NonZero::new(h.hwnd as isize)?),
+            ),
+        },
+        #[cfg(target_os = "linux")]
+        raw_window_handle::RawWindowHandle::Xlib(h) => {
+            use raw_window_handle::HasRawDisplayHandle;
+            let display = match window.raw_display_handle() {
+                raw_window_handle::RawDisplayHandle::Xlib(d) => d,
+                _ => return None,
             };
+            let display_ptr = std::ptr::NonNull::new(display.display);
+            wgpu::SurfaceTargetUnsafe::RawHandle {
+                raw_display_handle: wgpu::rwh::RawDisplayHandle::Xlib(
+                    wgpu::rwh::XlibDisplayHandle::new(display_ptr, display.screen),
+                ),
+                raw_window_handle: wgpu::rwh::RawWindowHandle::Xlib(
+                    wgpu::rwh::XlibWindowHandle::new(h.window as std::ffi::c_ulong),
+                ),
+            }
         }
-    }
-    0
+        _ => return None,
+    };
+    instance.create_surface_unsafe(target).ok()
 }
 
 // ---------------------------------------------------------------------------
@@ -967,13 +724,8 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
             meter_ids: self.meter_ids.clone(),
         };
 
-        // Set runtime BEFORE creating the platform view, because
-        // cb_setup fires synchronously during view creation and needs
-        // to store the Metal layer pointer on the runtime.
         self.runtime = Some(IcedRuntime {
             render: None,
-            _view: None,
-            metal_layer: None,
             cursor_position: Point::ORIGIN,
             mouse_left_pressed: false,
             pending_events: Vec::new(),
@@ -983,165 +735,59 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
             font: self.font,
         });
 
-        // --- macOS path: native NSView + CAMetalLayer (no baseview) ---
-        #[cfg(target_os = "macos")]
-        {
-            let parent_ptr = match parent {
-                truce_core::editor::RawWindowHandle::AppKit(ptr) => ptr,
-                _ => std::ptr::null_mut(),
-            };
+        let parent_wrapper = truce_gui::platform::ParentWindow(parent);
+        let options = baseview::WindowOpenOptions {
+            title: String::from("truce-iced"),
+            size: baseview::Size::new(w as f64, h as f64),
+            scale: baseview::WindowScalePolicy::SystemScaleFactor,
+        };
 
-            if parent_ptr.is_null() {
-                self.runtime = None;
-                return;
-            }
+        let editor_addr = self as *mut IcedEditor<P, M> as usize;
 
-            let self_ptr = self as *mut IcedEditor<P, M> as *mut c_void;
+        let window = baseview::Window::open_parented(
+            &parent_wrapper,
+            options,
+            move |window: &mut baseview::Window| {
+                let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+                    backends: wgpu::Backends::PRIMARY,
+                    ..Default::default()
+                });
 
-            let callbacks = IcedViewCallbacks {
-                setup: Some(cb_setup::<P, M>),
-                render: Some(cb_render::<P, M>),
-                mouse_down: Some(cb_mouse_down::<P, M>),
-                mouse_dragged: Some(cb_mouse_dragged::<P, M>),
-                mouse_up: Some(cb_mouse_up::<P, M>),
-                scroll: Some(cb_scroll::<P, M>),
-                double_click: Some(cb_double_click::<P, M>),
-                mouse_moved: Some(cb_mouse_moved::<P, M>),
-            };
+                let surface = unsafe { create_wgpu_surface(&instance, window) };
 
-            let view = unsafe { IcedPlatformView::new(parent_ptr, w, h, self_ptr, &callbacks) };
-
-            if let Some(view) = view {
-                if let Some(ref mut runtime) = self.runtime {
-                    runtime._view = Some(view);
+                if let Some(surface) = surface {
+                    let editor = unsafe { &mut *(editor_addr as *mut IcedEditor<P, M>) };
+                    if let Some(ref mut runtime) = editor.runtime {
+                        runtime.init_render(instance, surface);
+                    }
                 }
-                eprintln!("[truce-iced] Editor opened ({w}x{h})");
-            } else {
-                self.runtime = None;
-            }
-        }
 
-        // --- Windows/Linux path: baseview + wgpu ---
-        #[cfg(not(target_os = "macos"))]
-        {
-            let parent_wrapper = truce_gui::platform::ParentWindow(parent);
-            let options = baseview::WindowOpenOptions {
-                title: String::from("truce-iced"),
-                size: baseview::Size::new(w as f64, h as f64),
-                scale: baseview::WindowScalePolicy::SystemScaleFactor,
-            };
+                IcedBaseviewHandler::<P, M> {
+                    editor: editor_addr as *mut IcedEditor<P, M>,
+                    last_cursor: None,
+                }
+            },
+        );
 
-            let editor_addr = self as *mut IcedEditor<P, M> as usize;
-
-            let window = baseview::Window::open_parented(
-                &parent_wrapper,
-                options,
-                move |window: &mut baseview::Window| {
-                    use raw_window_handle::HasRawWindowHandle;
-
-                    // Create wgpu surface from the baseview window.
-                    // Bridge rwh 0.5 (baseview) → rwh 0.6 (wgpu 0.19).
-                    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-                        backends: wgpu::Backends::PRIMARY,
-                        ..Default::default()
-                    });
-
-                    let rwh5 = window.raw_window_handle();
-                    #[cfg(target_os = "linux")]
-                    let rdh5 = {
-                        use raw_window_handle::HasRawDisplayHandle;
-                        window.raw_display_handle()
-                    };
-                    let surface = unsafe {
-                        let target = match rwh5 {
-                            #[cfg(target_os = "windows")]
-                            raw_window_handle::RawWindowHandle::Win32(h) => {
-                                wgpu::SurfaceTargetUnsafe::RawHandle {
-                                    raw_display_handle: wgpu::rwh::RawDisplayHandle::Windows(
-                                        wgpu::rwh::WindowsDisplayHandle::new(),
-                                    ),
-                                    raw_window_handle: wgpu::rwh::RawWindowHandle::Win32(
-                                        wgpu::rwh::Win32WindowHandle::new(
-                                            std::num::NonZero::new(h.hwnd as isize).unwrap(),
-                                        ),
-                                    ),
-                                }
-                            }
-                            #[cfg(target_os = "linux")]
-                            raw_window_handle::RawWindowHandle::Xlib(h) => {
-                                let xlib_display = match rdh5 {
-                                    raw_window_handle::RawDisplayHandle::Xlib(d) => d,
-                                    _ => {
-                                        eprintln!("[truce-iced] Expected Xlib display handle");
-                                        return IcedBaseviewHandler::<P, M> {
-                                            editor: editor_addr as *mut IcedEditor<P, M>,
-                                            scale: 1.0,
-                                        };
-                                    }
-                                };
-                                let display_ptr = std::ptr::NonNull::new(xlib_display.display);
-                                wgpu::SurfaceTargetUnsafe::RawHandle {
-                                    raw_display_handle: wgpu::rwh::RawDisplayHandle::Xlib(
-                                        wgpu::rwh::XlibDisplayHandle::new(
-                                            display_ptr,
-                                            xlib_display.screen,
-                                        ),
-                                    ),
-                                    raw_window_handle: wgpu::rwh::RawWindowHandle::Xlib(
-                                        wgpu::rwh::XlibWindowHandle::new(
-                                            h.window as std::ffi::c_ulong,
-                                        ),
-                                    ),
-                                }
-                            }
-                            _ => {
-                                eprintln!("[truce-iced] Unsupported window handle");
-                                return IcedBaseviewHandler::<P, M> {
-                                    editor: editor_addr as *mut IcedEditor<P, M>,
-                                    scale: 1.0,
-                                };
-                            }
-                        };
-                        instance.create_surface_unsafe(target).ok()
-                    };
-
-                    if let Some(surface) = surface {
-                        let editor = unsafe { &mut *(editor_addr as *mut IcedEditor<P, M>) };
-                        if let Some(ref mut runtime) = editor.runtime {
-                            runtime.init_render_with_surface(instance, surface);
-                        }
-                    }
-
-                    IcedBaseviewHandler::<P, M> {
-                        editor: editor_addr as *mut IcedEditor<P, M>,
-                        scale: 1.0,
-                    }
-                },
-            );
-
-            self.baseview_window = Some(window);
-            eprintln!("[truce-iced] Editor opened via baseview ({w}x{h})");
-        }
+        self.baseview_window = Some(window);
+        eprintln!("[truce-iced] Editor opened via baseview ({w}x{h})");
     }
 
     fn close(&mut self) {
-        #[cfg(not(target_os = "macos"))]
-        {
-            // baseview's Linux WindowHandle has no Drop impl — we must call
-            // close() explicitly to request shutdown and join the render
-            // thread. Without this, the thread keeps running against a
-            // dangling self pointer after the host drops this editor, which
-            // later panics inside wgpu as surfaces get torn down.
-            if let Some(mut window) = self.baseview_window.take() {
-                window.close();
-            }
+        // baseview's Linux WindowHandle has no Drop impl — we must call
+        // close() explicitly to request shutdown and join the render
+        // thread. Without this, the thread keeps running against a
+        // dangling self pointer after the host drops this editor, which
+        // later panics inside wgpu as surfaces get torn down.
+        if let Some(mut window) = self.baseview_window.take() {
+            window.close();
         }
         self.runtime = None;
         eprintln!("[truce-iced] Editor closed");
     }
 
     fn idle(&mut self) {
-        // Timer-driven rendering in cb_render handles everything.
+        // baseview drives its own frame loop via on_frame().
     }
 
     fn can_resize(&self) -> bool {
