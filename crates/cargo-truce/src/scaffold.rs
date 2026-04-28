@@ -8,15 +8,22 @@ use std::collections::{HashMap, HashSet};
 /// scaffolds automatically follow without a parallel string edit
 /// here.
 ///
-/// `0.15.3` → `"preview/0.15"`. Pre-1.0 uses `preview/{major}.{minor}`;
-/// post-1.0 the convention is `release/{major}.{minor}` (one-line edit
-/// when 1.0 ships).
+/// `0.15.3` → `"preview/0.15"`, `2.4.1` → `"release/2.4"`.
+///
+/// Pre-1.0: always `preview/X.Y`. Post-1.0: stable releases pin to
+/// `release/X.Y`; pre-release testing of the next minor (e.g.,
+/// preparing 2.5 while 2.4 is the stable) continues to use
+/// `preview/X.Y`. The `release.sh` / `bump.sh` scripts have a
+/// `--preview` / `--release` flag for that case; this helper picks
+/// the prefix purely from the major version so scaffolded plugins
+/// always pin to a stable train when one exists.
 fn train_branch() -> String {
     let v = env!("CARGO_PKG_VERSION");
     let mut parts = v.split('.');
     let major = parts.next().expect("CARGO_PKG_VERSION has a major");
     let minor = parts.next().expect("CARGO_PKG_VERSION has a minor");
-    format!("preview/{major}.{minor}")
+    let prefix = if major == "0" { "preview" } else { "release" };
+    format!("{prefix}/{major}.{minor}")
 }
 
 #[derive(Clone, Copy, PartialEq)]
