@@ -2,28 +2,23 @@
 
 use std::collections::{HashMap, HashSet};
 
-/// The git branch scaffolded plugins pin against — derived from
+/// The version tag scaffolded plugins pin against — derived from
 /// cargo-truce's own version (which inherits from the workspace via
 /// `version.workspace = true`). When the workspace version bumps,
 /// scaffolds automatically follow without a parallel string edit
 /// here.
 ///
-/// `0.15.3` → `"preview/0.15"`, `2.4.1` → `"release/2.4"`.
+/// Returns just the tag string, e.g. `"v0.15.3"`. Templates wrap it
+/// as `tag = "v0.15.3"` in dep lines.
 ///
-/// Pre-1.0: always `preview/X.Y`. Post-1.0: stable releases pin to
-/// `release/X.Y`; pre-release testing of the next minor (e.g.,
-/// preparing 2.5 while 2.4 is the stable) continues to use
-/// `preview/X.Y`. The `release.sh` / `bump.sh` scripts have a
-/// `--preview` / `--release` flag for that case; this helper picks
-/// the prefix purely from the major version so scaffolded plugins
-/// always pin to a stable train when one exists.
-fn train_branch() -> String {
-    let v = env!("CARGO_PKG_VERSION");
-    let mut parts = v.split('.');
-    let major = parts.next().expect("CARGO_PKG_VERSION has a major");
-    let minor = parts.next().expect("CARGO_PKG_VERSION has a minor");
-    let prefix = if major == "0" { "preview" } else { "release" };
-    format!("{prefix}/{major}.{minor}")
+/// Why a tag (full patch) and not a branch (minor only): scaffolds
+/// pin to a specific immutable point so a fresh `cargo build` a
+/// month later reproduces the exact same build. Users who want to
+/// float on the latest patch can swap `tag = "vX.Y.Z"` for
+/// `branch = "preview/X.Y"` after scaffolding — the train branch
+/// still exists for that, it's just not the default pin form.
+fn current_tag() -> String {
+    format!("v{}", env!("CARGO_PKG_VERSION"))
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -86,7 +81,7 @@ pub struct PluginSpec {
 // ---------------------------------------------------------------------------
 
 pub fn plugin_cargo_toml_standalone(crate_name: &str, with_standalone: bool) -> String {
-    let train_branch = train_branch();
+    let current_tag = current_tag();
     let bin_block = if with_standalone {
         format!(
             "\n[[bin]]\nname = \"{crate_name}-standalone\"\n\
@@ -107,7 +102,7 @@ pub fn plugin_cargo_toml_standalone(crate_name: &str, with_standalone: bool) -> 
         ""
     };
     let standalone_dep = if with_standalone {
-        format!("truce-standalone = {{ git = \"https://github.com/truce-audio/truce\", branch = \"{train_branch}\", features = [\"gui\"], optional = true }}\n")
+        format!("truce-standalone = {{ git = \"https://github.com/truce-audio/truce\", tag = \"{current_tag}\", features = [\"gui\"], optional = true }}\n")
     } else {
         String::new()
     };
@@ -128,7 +123,7 @@ crate-type = ["cdylib", "rlib"]
 # Scaffolded default: {default_label}. To add LV2 / AU / AAX / VST2,
 # add the matching feature + optional dep below (e.g.
 # `lv2 = ["dep:truce-lv2"]` +
-# `truce-lv2 = {{ git = "https://github.com/truce-audio/truce", branch = "{train_branch}", optional = true }}`).
+# `truce-lv2 = {{ git = "https://github.com/truce-audio/truce", tag = "{current_tag}", optional = true }}`).
 # VST2 is a legacy format — the Steinberg VST2 SDK was deprecated in
 # 2018 and distributing VST2 plugins may require agreement with
 # Steinberg's licensing terms.
@@ -139,14 +134,14 @@ vst3 = ["dep:truce-vst3"]
 {standalone_feature}shell = ["truce/shell"]
 
 [dependencies]
-truce = {{ git = "https://github.com/truce-audio/truce", branch = "{train_branch}" }}
-truce-gui = {{ git = "https://github.com/truce-audio/truce", branch = "{train_branch}" }}
-truce-clap = {{ git = "https://github.com/truce-audio/truce", branch = "{train_branch}", optional = true }}
-truce-vst3 = {{ git = "https://github.com/truce-audio/truce", branch = "{train_branch}", optional = true }}
+truce = {{ git = "https://github.com/truce-audio/truce", tag = "{current_tag}" }}
+truce-gui = {{ git = "https://github.com/truce-audio/truce", tag = "{current_tag}" }}
+truce-clap = {{ git = "https://github.com/truce-audio/truce", tag = "{current_tag}", optional = true }}
+truce-vst3 = {{ git = "https://github.com/truce-audio/truce", tag = "{current_tag}", optional = true }}
 {standalone_dep}clap-sys = {{ version = "0.5", optional = true }}
 
 [dev-dependencies]
-truce-test = {{ git = "https://github.com/truce-audio/truce", branch = "{train_branch}" }}
+truce-test = {{ git = "https://github.com/truce-audio/truce", tag = "{current_tag}" }}
 
 # `truce-build` emits `TRUCE_PLUGIN_*` env vars (consumed by
 # `plugin_info!()`) + a `rustc-check-cfg` declaration covering every
@@ -154,7 +149,7 @@ truce-test = {{ git = "https://github.com/truce-audio/truce", branch = "{train_b
 # rustc fires `unexpected_cfgs` warnings for every format this
 # crate doesn't declare.
 [build-dependencies]
-truce-build = {{ git = "https://github.com/truce-audio/truce", branch = "{train_branch}" }}
+truce-build = {{ git = "https://github.com/truce-audio/truce", tag = "{current_tag}" }}
 
 # Custom profile for `cargo truce install --shell`. The shell-mode
 # build (`cargo build --profile shell --features ...,shell`) lands the
@@ -532,7 +527,7 @@ pub fn workspace_cargo_toml(
     plugins: &[PluginSpec],
     with_standalone: bool,
 ) -> String {
-    let train_branch = train_branch();
+    let current_tag = current_tag();
     let members: Vec<String> = plugins
         .iter()
         .map(|p| format!("    \"plugins/{}\"", p.name))
@@ -540,7 +535,7 @@ pub fn workspace_cargo_toml(
     let members_str = members.join(",\n");
 
     let standalone_dep = if with_standalone {
-        format!("truce-standalone = {{ git = \"https://github.com/truce-audio/truce\", branch = \"{train_branch}\" }}\n")
+        format!("truce-standalone = {{ git = \"https://github.com/truce-audio/truce\", tag = \"{current_tag}\" }}\n")
     } else {
         String::new()
     };
@@ -558,25 +553,25 @@ version = "0.1.0"
 edition = "2021"
 
 [workspace.dependencies]
-truce = {{ git = "https://github.com/truce-audio/truce", branch = "{train_branch}" }}
-truce-gui = {{ git = "https://github.com/truce-audio/truce", branch = "{train_branch}" }}
-truce-clap = {{ git = "https://github.com/truce-audio/truce", branch = "{train_branch}" }}
-truce-vst3 = {{ git = "https://github.com/truce-audio/truce", branch = "{train_branch}" }}
-{standalone_dep}truce-test = {{ git = "https://github.com/truce-audio/truce", branch = "{train_branch}" }}
-truce-build = {{ git = "https://github.com/truce-audio/truce", branch = "{train_branch}" }}
+truce = {{ git = "https://github.com/truce-audio/truce", tag = "{current_tag}" }}
+truce-gui = {{ git = "https://github.com/truce-audio/truce", tag = "{current_tag}" }}
+truce-clap = {{ git = "https://github.com/truce-audio/truce", tag = "{current_tag}" }}
+truce-vst3 = {{ git = "https://github.com/truce-audio/truce", tag = "{current_tag}" }}
+{standalone_dep}truce-test = {{ git = "https://github.com/truce-audio/truce", tag = "{current_tag}" }}
+truce-build = {{ git = "https://github.com/truce-audio/truce", tag = "{current_tag}" }}
 clap-sys = "0.5"
 
 # Uncomment to opt in. After uncommenting here, add the matching
 # feature + optional dep to each plugin's Cargo.toml.
-# truce-lv2 = {{ git = "https://github.com/truce-audio/truce", branch = "{train_branch}" }}
-# truce-au  = {{ git = "https://github.com/truce-audio/truce", branch = "{train_branch}" }}
-# truce-aax = {{ git = "https://github.com/truce-audio/truce", branch = "{train_branch}" }}
+# truce-lv2 = {{ git = "https://github.com/truce-audio/truce", tag = "{current_tag}" }}
+# truce-au  = {{ git = "https://github.com/truce-audio/truce", tag = "{current_tag}" }}
+# truce-aax = {{ git = "https://github.com/truce-audio/truce", tag = "{current_tag}" }}
 #
 # VST2 is a legacy format — the Steinberg VST2 SDK was deprecated in
 # 2018 and distributing VST2 plugins may require agreement with
 # Steinberg's licensing terms. Enable only if you understand the
 # implications:
-# truce-vst2 = {{ git = "https://github.com/truce-audio/truce", branch = "{train_branch}" }}
+# truce-vst2 = {{ git = "https://github.com/truce-audio/truce", tag = "{current_tag}" }}
 
 # Custom profile for `cargo truce install --shell`. The shell-mode
 # build lands at `target/shell/lib<crate>.dylib`, independent of

@@ -261,26 +261,29 @@ After the `git push`, a user's `Cargo.toml` resolves as:
 | Pin form (in user's `Cargo.toml`) | Resolves to |
 |---|---|
 | `git = "https://github.com/truce-audio/truce"` | latest commit on `main` (no pin — every `cargo update` moves) |
-| `git = "...", tag = "v0.14.2"` | exact tag, immutable |
+| `git = "...", tag = "v0.16.1"` | exact tag, immutable (**scaffold default**) |
 | `git = "...", rev = "<sha>"` | exact commit, immutable |
-| `git = "...", branch = "preview/0.14"` | latest patch in the `0.14.x` train (auto-tracks `0.14.3`, `0.14.4`, …; stops at `0.15`) |
+| `git = "...", branch = "preview/X.Y"` | latest patch on the `X.Y` preview train (auto-tracks; stops at the next minor) |
+| `git = "...", branch = "release/X.Y"` | latest patch on the `X.Y` stable train (post-1.0; auto-tracks; stops at the next minor) |
 
-`cargo truce new` emits the **train branch** form:
+`cargo truce new` emits the **tag** form, pinned to the current
+patch:
 
 ```toml
-truce = { git = "https://github.com/truce-audio/truce", branch = "preview/0.14" }
+truce = { git = "https://github.com/truce-audio/truce", tag = "v0.16.1" }
 ```
 
-This auto-tracks patch releases on the train the user scaffolded
-against and stops at the next minor — the lowest-friction upgrade
-path that's still bounded by semver. Users who want bit-for-bit
-reproducibility can pin to a tag manually after scaffolding.
+The tag pin is reproducible by default — a fresh `cargo build`
+resolves to the exact same SHAs every time. Users who want
+auto-tracking on a minor train can manually swap to
+`branch = "preview/X.Y"` after scaffolding; the train branch still
+exists for that purpose.
 
-The branch name is derived at scaffold time from `cargo-truce`'s
-version (which inherits from `[workspace.package].version`). When
-the workspace bumps from 0.15.x to 0.16.0, scaffolds automatically
-emit `branch = "preview/0.16"` from the next compiled `cargo-truce`
-binary onward — no parallel edit to `scaffold.rs` required.
+The tag is derived at scaffold time from `cargo-truce`'s version
+(which inherits from `[workspace.package].version`). When the
+workspace bumps from 0.16.0 to 0.16.1, scaffolds built from the new
+`cargo-truce` automatically emit `tag = "v0.16.1"` — no parallel
+edit to `scaffold.rs` required.
 
 ### Tag hygiene
 
