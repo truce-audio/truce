@@ -14,7 +14,8 @@ rejected.
 **`main` is the only long-lived branch.** Feature work lives on
 short-lived feature branches (e.g., `feat/your-change`) created off
 `main`, PR'd to `main`, and deleted on merge. Release bumps live on
-short-lived `bump/vX.Y.Z` branches managed by `bump.sh`. Releases
+short-lived `bump/vX.Y.Z` branches managed by `bump.sh` /
+`bump-pr.sh`. Releases
 themselves are tags (`vX.Y.Z`).
 
 ```sh
@@ -60,10 +61,15 @@ broken intra-doc links fail the build.
 
 Two scripts under `dev/scripts/`:
 
-- **`bump.sh`** — opens the version-bump PR. Branches off
-  `origin/main`, bumps `Cargo.toml`, refreshes `Cargo.lock`, pushes
-  on `bump/vX.Y.Z`, opens the PR. Idempotent: re-running with the
-  same version resets the bump branch and reuses the open PR.
+- **`bump.sh`** — prepares the version-bump commit locally.
+  Branches off `origin/main`, bumps `Cargo.toml`, refreshes
+  `Cargo.lock`, commits on `bump/vX.Y.Z`. Stops at the commit so
+  you can review before publishing. Idempotent: re-running with the
+  same version resets the bump branch.
+- **`bump-pr.sh`** — pushes the bump branch and opens the PR (or
+  surfaces the existing one). Reads both versions for the PR body
+  from the branch name and `origin/main`. Force-with-lease, so
+  safe to re-run after a `bump.sh` re-run.
 - **`release.sh`** — runs *after* the bump PR is merged. Reads the
   version from main HEAD, tags, publishes both crates with the
   inter-publish sleep, pushes the tag, creates the GitHub Release.
@@ -88,19 +94,22 @@ until both crates have shipped their first version). Verify with
 ### Patch / minor / major release
 
 ```sh
-# 1. Bump.
+# 1. Prepare the bump commit locally.
 ./dev/scripts/bump.sh patch       # or `minor` or `major`
 
-# 2. Review + merge the opened PR via the GitHub UI. Diff should be
+# 2. Push + open the PR.
+./dev/scripts/bump-pr.sh
+
+# 3. Review + merge the opened PR via the GitHub UI. Diff should be
 #    limited to the two version strings in Cargo.toml + Cargo.lock
 #    entries — reject anything else. Merge using "Rebase and merge"
 #    (the only style allowed by branch protection on `main`).
 
-# 3. Publish.
+# 4. Publish.
 git checkout main && git pull --ff-only
 ./dev/scripts/release.sh
 
-# 4. Smoke-test from a clean install.
+# 5. Smoke-test from a clean install.
 cargo install --force cargo-truce --version <X.Y.Z>
 cargo truce --help
 ```
@@ -108,14 +117,14 @@ cargo truce --help
 ### Pre-release builds
 
 For RCs (`v1.0.0-rc.1`, etc.), pass the explicit version to
-`bump.sh`:
+`bump.sh`, then push as usual:
 
 ```sh
-./dev/scripts/bump.sh 1.0.0-rc.1
+./dev/scripts/bump.sh 1.0.0-rc.1 && ./dev/scripts/bump-pr.sh
 # review, merge, ./dev/scripts/release.sh — ships v1.0.0-rc.1
-./dev/scripts/bump.sh 1.0.0-rc.2
+./dev/scripts/bump.sh 1.0.0-rc.2 && ./dev/scripts/bump-pr.sh
 # ...
-./dev/scripts/bump.sh 1.0.0       # finalize
+./dev/scripts/bump.sh 1.0.0 && ./dev/scripts/bump-pr.sh   # finalize
 ```
 
 Cargo handles SemVer pre-release semantics — `tag = "v1.0.0-rc.1"`
@@ -207,7 +216,9 @@ Things the scripts don't decide:
 
 What `bump.sh` checks: clean working tree, version strings in
 `Cargo.toml` correctly bumped together, `Cargo.lock` refreshed,
-branch + PR opened (or surfaces the existing PR if one's open).
+branch + commit created. `bump-pr.sh` then sanity-checks that the
+branch name and `Cargo.toml` HEAD agree on the new version before
+pushing + opening (or surfacing) the PR.
 
 What `release.sh` checks: version drift between the two `Cargo.toml`
 strings, idempotent skip for tag (already pushed), publishes

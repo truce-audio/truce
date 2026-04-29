@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# bump.sh — open a release-bump PR.
+# bump.sh — prepare a release-bump commit locally.
 #
 # Usage:
 #   dev/scripts/bump.sh patch                # X.Y.Z → X.Y.(Z+1)
@@ -9,21 +9,20 @@
 #   dev/scripts/bump.sh 1.0.0-rc.1           # explicit version (any SemVer)
 #   dev/scripts/bump.sh 0.16.5               # explicit version (e.g., hotfix)
 #
-#   dev/scripts/bump.sh --edit-only <bump>   # edit files only, no git/PR
+#   dev/scripts/bump.sh --edit-only <bump>   # edit files only, no git
 #
 # Branches off origin/main, bumps both version strings in
-# `Cargo.toml`, refreshes `Cargo.lock`, commits on `bump/vX.Y.Z`,
-# pushes, opens a PR against `main`. The PR must be merged using
-# GitHub's "Rebase and merge" — branch protection on `main` should
-# already enforce this; see DEVELOPMENT.md "Workflow rules".
+# `Cargo.toml`, refreshes `Cargo.lock`, and commits on
+# `bump/vX.Y.Z`. Stops there. Run `dev/scripts/bump-pr.sh` to push
+# the branch and open the PR.
 #
 # Idempotent: re-running with the same version resets the bump
-# branch to a fresh state and force-pushes. Re-opening the PR is a
-# no-op if one's already open for the branch.
+# branch to a fresh state. The push + PR step is force-with-lease,
+# so re-runs converge.
 #
-# With --edit-only, the script only rewrites `Cargo.toml` +
-# `Cargo.lock` in the working tree and exits. No clean-tree check,
-# no branch, no commit, no push, no PR.
+# With --edit-only, only rewrites `Cargo.toml` + `Cargo.lock` in
+# the working tree and exits. No clean-tree check, no branch, no
+# commit.
 
 set -euo pipefail
 
@@ -137,7 +136,7 @@ sed_inplace "s/\"$CURRENT\"/\"$NEW\"/g" Cargo.toml
 echo "→ refreshing Cargo.lock (cargo check --workspace)"
 cargo check --workspace
 
-# Commit, push, PR ------------------------------------------------------------
+# Commit ----------------------------------------------------------------------
 
 if (( EDIT_ONLY )); then
     echo
@@ -149,34 +148,6 @@ echo "→ committing"
 git add Cargo.toml Cargo.lock
 git commit -m "Release v$NEW"
 
-echo "→ pushing $BRANCH"
-git push -u --force-with-lease origin "$BRANCH"
-
-echo "→ opening PR (or surfacing existing)"
-existing_pr="$(gh pr list --head "$BRANCH" --state open --json url --jq '.[0].url' 2>/dev/null || true)"
-if [[ -n "$existing_pr" ]]; then
-    echo "  PR already open: $existing_pr"
-else
-    gh pr create --base main --title "Release v$NEW" --body "$(cat <<EOF
-Mechanical version bump: \`$CURRENT\` → \`$NEW\`.
-
-Diff should be limited to the two version strings in \`Cargo.toml\`
-(\`[workspace.package].version\` + the \`truce-shim-types\` entry in
-\`[workspace.dependencies]\`) and the corresponding entries in
-\`Cargo.lock\`. Reject anything else.
-
-**Merge using "Rebase and merge"** — branch protection on \`main\`
-enforces this; the green button should only offer that option.
-
-After merging, ship via:
-
-\`\`\`sh
-git checkout main && git pull --ff-only
-dev/scripts/release.sh
-\`\`\`
-EOF
-)"
-fi
-
 echo
-echo "Bump PR ready. After merge, run dev/scripts/release.sh."
+echo "Bump committed locally on $BRANCH."
+echo "Run dev/scripts/bump-pr.sh to push the branch and open the PR."

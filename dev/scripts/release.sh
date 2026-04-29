@@ -9,9 +9,9 @@
 # Run from `main` after the bump PR has been merged. The version is
 # read from `Cargo.toml`'s [workspace.package].version, and the tag
 # is `vX.Y.Z` against HEAD. (For a hotfix on a previous release,
-# check out the earlier commit / tag, run bump.sh from there to
-# create a new feature branch + PR, merge, then run this script
-# from main with main pointing at the merged hotfix commit.)
+# check out the earlier commit / tag, run bump.sh + bump-pr.sh from
+# there to create a new feature branch + PR, merge, then run this
+# script from main with main pointing at the merged hotfix commit.)
 #
 # Idempotency:
 #   - If the tag already exists locally + on origin: skip create + push.
