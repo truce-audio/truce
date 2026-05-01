@@ -1,7 +1,9 @@
 # truce
 
 Build audio plugins in Rust. CLAP, VST3, LV2, AU v2, AU v3,
-AAX, and standalone from a single Rust codebase.
+AAX, and standalone from a single Rust codebase. Dead simple
+developer experience--install and load your plugin in a DAW 
+in 5 minutes. 
 
 [![Status](https://img.shields.io/badge/status-preview-orange)](docs/README.md)
 [![Latest](https://img.shields.io/github/v/tag/truce-audio/truce?label=latest&logo=git&logoColor=white&sort=semver)](https://github.com/truce-audio/truce/releases/latest)
