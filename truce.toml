@@ -39,14 +39,6 @@ au_manufacturer = "Trce"
 #   au3_name  = "..."
 #   aax_name  = "..."
 #   lv2_name  = "..."
-#
-# Standalone-binary launch defaults (optional, per plugin) baked at
-# compile time by `truce-build`. CLI flags and `TRUCE_STANDALONE_*`
-# env vars override these at run time.
-#
-#   [plugin.standalone]
-#   input_enabled  = true   # mic on at launch (effects only)
-#   output_enabled = true   # speakers on at launch (default; set false to launch muted)
 
 [[plugin]]
 name = "Truce Gain"

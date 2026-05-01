@@ -47,24 +47,6 @@ struct PluginDef {
     au_subtype: Option<String>,
     #[serde(default)]
     aax_category: Option<String>,
-    /// Per-plugin standalone-binary launch defaults. Read here so
-    /// the values can be baked into the standalone binary as
-    /// `option_env!`-visible compile-time defaults — a shipped `.app`
-    /// bundle won't have the source tree on disk to read at runtime.
-    #[serde(default)]
-    standalone: StandaloneDefaults,
-}
-
-#[derive(Deserialize, Default)]
-struct StandaloneDefaults {
-    /// Whether the mic is enabled at launch. Absent = privacy
-    /// default (off).
-    #[serde(default)]
-    input_enabled: Option<bool>,
-    /// Whether the speakers are enabled at launch. Absent = runtime
-    /// default (on).
-    #[serde(default)]
-    output_enabled: Option<bool>,
 }
 
 /// Reads `truce.toml` from the workspace root, finds the `[[plugin]]`
@@ -155,17 +137,6 @@ pub fn emit_plugin_env() {
     println!("cargo:rustc-env=TRUCE_CATEGORY={category}");
     if let Some(ref cat) = plugin.aax_category {
         println!("cargo:rustc-env=TRUCE_AAX_CATEGORY={cat}");
-    }
-
-    // Bake standalone audio-launch defaults from `[plugin.standalone]`.
-    // Emitted only when set, so `option_env!` returns `None` for
-    // plugins that don't opt in and the runtime default kicks in
-    // (input off, output on).
-    if let Some(v) = plugin.standalone.input_enabled {
-        println!("cargo:rustc-env=TRUCE_STANDALONE_BAKED_INPUT_ENABLED={v}");
-    }
-    if let Some(v) = plugin.standalone.output_enabled {
-        println!("cargo:rustc-env=TRUCE_STANDALONE_BAKED_OUTPUT_ENABLED={v}");
     }
 
     // Bake the resolved cargo target dir + the logic profile into

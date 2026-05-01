@@ -52,54 +52,40 @@ pub use truce_core::export::PluginExport;
 /// Re-export for backward compatibility.
 pub use truce_core::export::PluginExport as StandaloneExport;
 
-/// Compile-time-baked launch defaults from `[plugin.standalone]` in
-/// the consumer's `truce.toml`. Constructed by the
-/// [`baked_defaults!`] macro and threaded through CLI resolution as
-/// the lowest tier (above the runtime default, below env / CLI).
-///
-/// Constructing this directly with `Defaults::default()` is fine —
-/// it disables the bake tier entirely.
+/// Plugin-author launch defaults — used as the lowest tier of the
+/// CLI parser, beneath argv and `TRUCE_STANDALONE_*` env vars.
+/// Empty `Defaults::default()` lets every value fall through to the
+/// compiled runtime default (input off, output on, cpal-picked
+/// devices). Pass to [`run_with`] when you want to override.
 #[derive(Default, Clone, Copy, Debug)]
 pub struct Defaults {
+    /// Whether the mic is enabled at launch. `None` = use the
+    /// privacy default (off).
     pub input_enabled: Option<bool>,
+    /// Whether the speakers are enabled at launch. `None` = use the
+    /// runtime default (on).
     pub output_enabled: Option<bool>,
 }
 
-/// Read launch defaults baked by `truce-build` from
-/// `[plugin.standalone]` in the consumer's `truce.toml`. The
-/// `option_env!` reads must happen in the consumer's compile context
-/// (build-script env vars don't reach dependencies), so this is a
-/// macro the consumer expands inside its own `main.rs`.
-///
-/// ```ignore
-/// fn main() {
-///     truce_standalone::run::<Plugin>(truce_standalone::baked_defaults!());
-/// }
-/// ```
-#[macro_export]
-macro_rules! baked_defaults {
-    () => {
-        $crate::Defaults {
-            input_enabled: option_env!("TRUCE_STANDALONE_BAKED_INPUT_ENABLED")
-                .and_then(|s| s.parse().ok()),
-            output_enabled: option_env!("TRUCE_STANDALONE_BAKED_OUTPUT_ENABLED")
-                .and_then(|s| s.parse().ok()),
-        }
-    };
-}
-
-/// Run the plugin standalone.
-///
-/// Parses CLI flags + env vars on top of the supplied baked defaults
-/// (use [`baked_defaults!`] to read them from `truce.toml`, or pass
-/// `Defaults::default()` to skip the bake tier). Dispatches to the
-/// windowed or headless runner. Returns when the user closes the
-/// window or sends SIGINT.
-pub fn run<P: PluginExport>(defaults: Defaults)
+/// Run the plugin standalone with no plugin-author defaults. Argv,
+/// env, and the compiled runtime defaults are the only inputs.
+/// Dispatches to the windowed or headless runner; returns when the
+/// user closes the window or sends SIGINT.
+pub fn run<P: PluginExport>()
 where
     P::Params: 'static,
 {
-    let opts = match cli::parse(defaults) {
+    run_with::<P>(Defaults::default())
+}
+
+/// Run the plugin standalone with the supplied launch defaults.
+/// Argv and env still take precedence — `defaults` only fills in
+/// values neither layer set. Same dispatch as [`run`].
+pub fn run_with<P: PluginExport>(defaults: Defaults)
+where
+    P::Params: 'static,
+{
+    let mut opts = match cli::parse() {
         Ok(o) => o,
         Err(e) => {
             eprintln!("Error: {e}");
@@ -107,6 +93,13 @@ where
             std::process::exit(2);
         }
     };
+
+    // Layer the plugin-author defaults beneath whatever argv / env
+    // already resolved. Other Options fields stay CLI/env-only —
+    // device, sample rate, buffer, MIDI, BPM, state are
+    // per-machine concerns the developer shouldn't pin in code.
+    opts.input_enabled = opts.input_enabled.or(defaults.input_enabled);
+    opts.output_enabled = opts.output_enabled.or(defaults.output_enabled);
 
     if opts.list_devices {
         audio::list_devices();

@@ -4,15 +4,13 @@
 //!
 //! 1. CLI flag (`--output "…"`)
 //! 2. Environment variable (`TRUCE_STANDALONE_OUTPUT`)
-//! 3. Project-baked default (from `[plugin.standalone]` in
-//!    `truce.toml`, captured at compile time by `truce-build` and
-//!    passed in via [`crate::Defaults`])
+//! 3. Plugin-author defaults supplied via
+//!    [`crate::run_with`] / [`crate::Defaults`] (only `input_enabled`
+//!    and `output_enabled` participate at this tier)
 //! 4. Compiled runtime default (input off, output on, cpal-picked
 //!    devices)
 
 use std::path::PathBuf;
-
-use crate::Defaults;
 
 /// Resolved CLI + env + project-baked + runtime defaults.
 #[derive(Clone, Debug, Default)]
@@ -64,30 +62,20 @@ OPTIONS:
   --state <path>            Load plugin state from this file on launch
   -h, --help                Show this message
 
-PROJECT DEFAULTS:
-  Per-plugin launch defaults can be set in `truce.toml`:
-
-    [[plugin]]
-    name = \"…\"
-    # …
-    [plugin.standalone]
-    input_enabled  = true
-    output_enabled = true
-
-  Baked at build time by `truce-build` and threaded into the
-  binary via the `truce_standalone::baked_defaults!()` macro
-  (the scaffolded `main.rs` calls it for you).
-
 PRECEDENCE (first match wins):
-  CLI flag > TRUCE_STANDALONE_* env var > truce.toml baked default
+  CLI flag > TRUCE_STANDALONE_* env var > plugin-author Defaults
    > runtime default (input off, output on, cpal-picked devices)
+
+  Plugin-author defaults are set in code by calling
+  `truce_standalone::run_with::<Plugin>(Defaults { … })` instead
+  of `truce_standalone::run::<Plugin>()`.
 ";
 
-/// Parse argv + env, layered on top of `baked` (compile-time-baked
-/// defaults from `truce.toml` — see [`crate::Defaults`]). Returns
-/// resolved options. Prints help and exits if `--help` / `-h` seen;
-/// prints error and returns `Err` on parse failure.
-pub fn parse(baked: Defaults) -> Result<Options, String> {
+/// Parse argv + env and return resolved options. Plugin-author
+/// defaults are not handled here — [`crate::run_with`] applies them
+/// after parsing. Prints help and exits if `--help` / `-h` seen;
+/// returns `Err` on parse failure.
+pub fn parse() -> Result<Options, String> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     let mut args = pico_args::Arguments::from_vec(args);
 
@@ -140,30 +128,23 @@ pub fn parse(baked: Defaults) -> Result<Options, String> {
         return Err(format!("unknown arguments: {leftover:?}"));
     }
 
-    // Layer env variables beneath CLI, then the baked-at-build-time
-    // defaults the caller passed in (resolved from
-    // `[plugin.standalone]` in `truce.toml` via the
-    // `truce_standalone::baked_defaults!` macro at the consumer's
-    // compile site). `Defaults::default()` disables that tier and
-    // we fall through to the runtime default in `audio.rs`.
+    // Layer env variables beneath CLI. Plugin-author defaults are
+    // applied later by `run_with` (only `input_enabled` /
+    // `output_enabled` participate at that tier).
     let opts = Options {
         headless,
         list_devices,
         list_midi,
         output_device: output_device.or_else(|| env("OUTPUT")),
         input_device: input_device.or_else(|| env("INPUT")),
-        input_enabled: input_enabled
-            .or_else(|| {
-                env("INPUT_ENABLED")
-                    .and_then(|s| parse_on_off(&s, "TRUCE_STANDALONE_INPUT_ENABLED").ok())
-            })
-            .or(baked.input_enabled),
-        output_enabled: output_enabled
-            .or_else(|| {
-                env("OUTPUT_ENABLED")
-                    .and_then(|s| parse_on_off(&s, "TRUCE_STANDALONE_OUTPUT_ENABLED").ok())
-            })
-            .or(baked.output_enabled),
+        input_enabled: input_enabled.or_else(|| {
+            env("INPUT_ENABLED")
+                .and_then(|s| parse_on_off(&s, "TRUCE_STANDALONE_INPUT_ENABLED").ok())
+        }),
+        output_enabled: output_enabled.or_else(|| {
+            env("OUTPUT_ENABLED")
+                .and_then(|s| parse_on_off(&s, "TRUCE_STANDALONE_OUTPUT_ENABLED").ok())
+        }),
         sample_rate: sample_rate.or_else(|| env("SAMPLE_RATE").and_then(|s| s.parse().ok())),
         buffer_size: buffer_size.or_else(|| env("BUFFER").and_then(|s| s.parse().ok())),
         midi_input: midi_input.or_else(|| env("MIDI_INPUT")),
