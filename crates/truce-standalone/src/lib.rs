@@ -111,13 +111,10 @@ where
     }
 
     #[cfg(feature = "gui")]
-    {
-        if opts.headless {
-            headless::run::<P>(&opts);
-        } else {
-            windowed::run::<P>(&opts);
-        }
-        return;
+    if opts.headless {
+        headless::run::<P>(&opts);
+    } else {
+        windowed::run::<P>(&opts);
     }
     #[cfg(not(feature = "gui"))]
     headless::run::<P>(&opts);

@@ -111,7 +111,9 @@ where
             // `h.window` is `c_ulong` — u64 on 64-bit Linux, u32 on
             // Windows. The match arm has to type-check on every
             // platform even though X11 only actually fires on Linux,
-            // so widen explicitly.
+            // so widen explicitly. Identity on Linux/macOS, real
+            // u32→u64 widening on Windows.
+            #[allow(clippy::useless_conversion)]
             RwhHandle::Xlib(h) => RawWindowHandle::X11(h.window.into()),
             _ => panic!("unsupported raw-window-handle variant"),
         };
@@ -382,8 +384,8 @@ where
         }),
         end_edit: Arc::new(|_id| {}),
         request_resize: Arc::new(|_w, _h| false),
-        get_param: Arc::new(move |id| params_read.get_normalized(id).unwrap_or(0.0) as f64),
-        get_param_plain: Arc::new(move |id| params_plain.get_plain(id).unwrap_or(0.0) as f64),
+        get_param: Arc::new(move |id| params_read.get_normalized(id).unwrap_or(0.0)),
+        get_param_plain: Arc::new(move |id| params_plain.get_plain(id).unwrap_or(0.0)),
         format_param: Arc::new(move |id| {
             let value = params_format.get_plain(id).unwrap_or(0.0);
             params_format.format_value(id, value).unwrap_or_default()
