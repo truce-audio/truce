@@ -351,10 +351,7 @@ where
                 path.display(),
                 blob.len(),
             ),
-            Err(e) => eprintln!(
-                "[truce-standalone] write {}: {e}",
-                path.display()
-            ),
+            Err(e) => eprintln!("[truce-standalone] write {}: {e}", path.display()),
         }
     }
 }
