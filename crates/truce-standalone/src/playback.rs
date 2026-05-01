@@ -11,7 +11,9 @@
 //! `--help`.
 
 use std::path::Path;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{mpsc, Arc};
+use std::thread;
 
 /// Pre-decoded WAV at the device's sample rate and channel count.
 /// `Send + Sync` (just owns a `Vec<f32>` and an atomic) so it can
@@ -149,6 +151,223 @@ impl PlaybackSource {
         }
         self.cursor.store(start + take, Ordering::Relaxed);
     }
+
+    /// Inspect the cursor without advancing it. Used by the
+    /// real-time runner's input-EOF watcher to drive clean exit
+    /// when paired with `--output-file`.
+    pub fn is_eof(&self) -> bool {
+        self.cursor.load(Ordering::Relaxed) >= self.total_frames
+    }
+
+    /// Native sample rate / channel count of the file as decoded
+    /// (matches `target_sr` / `target_channels` from `from_wav`).
+    /// Used by the offline runner so it can derive the output
+    /// WAV's spec from the resolved input spec.
+    pub fn channels(&self) -> usize {
+        self.channels
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Capture sink — `--output-file` real-time path.
+// ---------------------------------------------------------------------------
+
+/// `--output-file` capture: owned by the runner. Spawns a writer
+/// thread on `create`; runner calls `finalize` (consuming `self`)
+/// during shutdown to set the shutdown flag and join the writer.
+///
+/// The audio callback doesn't hold `CaptureSink` directly — it
+/// holds a [`CapturePusher`] (cheap Clone) which references the
+/// same channel + flags.
+///
+/// Shutdown isn't driven by sender drop because cpal on macOS may
+/// keep the closure (and therefore the SyncSender clone) alive
+/// for some time after the cpal Stream is dropped — a
+/// `CapturePusher` left holding a sender would block the writer
+/// thread's `recv` indefinitely. Instead, an `Arc<AtomicBool>`
+/// shutdown flag short-circuits both sides: the runner sets it
+/// in `finalize`, the audio callback checks it before submitting,
+/// and the writer drains whatever's already in flight, then exits.
+pub struct CaptureSink {
+    chunk_tx: mpsc::SyncSender<Vec<f32>>,
+    blocked_at_least_once: Arc<AtomicBool>,
+    shutdown: Arc<AtomicBool>,
+    writer: Option<thread::JoinHandle<()>>,
+    /// Mirror of the spec for the diagnostic line on finalize.
+    spec: hound::WavSpec,
+    path: std::path::PathBuf,
+}
+
+/// Cheap-clone handle the audio callback uses to push blocks.
+/// Each clone holds its own `mpsc::SyncSender` (also cheap to
+/// clone — internally `Arc<…>`); the writer thread exits via the
+/// shared shutdown flag, not channel close, so it doesn't matter
+/// how many sender clones outlive the runner.
+#[derive(Clone)]
+pub struct CapturePusher {
+    chunk_tx: mpsc::SyncSender<Vec<f32>>,
+    blocked_at_least_once: Arc<AtomicBool>,
+    shutdown: Arc<AtomicBool>,
+}
+
+/// Channel depth in blocks. Tuned for typical block sizes
+/// (256–1024 frames @ 48 kHz = 5–20 ms each), so the disk has
+/// ~0.5–2 s of headroom before the audio thread starts blocking.
+const CAPTURE_CHANNEL_DEPTH: usize = 128;
+
+impl CaptureSink {
+    /// Open `path` for writing, spawn a writer thread that
+    /// drains `chunk_rx` until the shutdown flag is set. Errors
+    /// only on filesystem / hound problems (path unwritable,
+    /// parent missing, etc).
+    pub fn create(
+        path: &Path,
+        sample_rate: f64,
+        channels: usize,
+    ) -> Result<Self, String> {
+        let spec = hound::WavSpec {
+            channels: channels as u16,
+            sample_rate: sample_rate as u32,
+            bits_per_sample: 32,
+            sample_format: hound::SampleFormat::Float,
+        };
+        let mut writer = hound::WavWriter::create(path, spec).map_err(|e| {
+            format!("could not create '{}': {e}", path.display())
+        })?;
+
+        let (chunk_tx, chunk_rx) = mpsc::sync_channel::<Vec<f32>>(CAPTURE_CHANNEL_DEPTH);
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let shutdown_w = Arc::clone(&shutdown);
+        let writer_thread = thread::Builder::new()
+            .name("truce-standalone-capture".into())
+            .spawn(move || {
+                // Drain loop. Use a short `recv_timeout` so the
+                // shutdown flag is checked even when no chunks
+                // are arriving (e.g. cpal stream already torn
+                // down). On shutdown, take one more pass through
+                // the channel with `try_recv` to flush any
+                // chunks that landed after the flag flipped.
+                loop {
+                    match chunk_rx.recv_timeout(std::time::Duration::from_millis(50)) {
+                        Ok(chunk) => {
+                            for sample in chunk {
+                                if let Err(e) = writer.write_sample(sample) {
+                                    eprintln!("[truce-standalone] capture write failed: {e}");
+                                    return;
+                                }
+                            }
+                        }
+                        Err(mpsc::RecvTimeoutError::Timeout) => {
+                            if shutdown_w.load(Ordering::Relaxed) {
+                                break;
+                            }
+                        }
+                        Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                    }
+                }
+                // Final drain: anything queued before the audio
+                // thread saw the flag should still make it to
+                // disk so the WAV's tail is byte-complete.
+                while let Ok(chunk) = chunk_rx.try_recv() {
+                    for sample in chunk {
+                        if let Err(e) = writer.write_sample(sample) {
+                            eprintln!("[truce-standalone] capture write failed: {e}");
+                            return;
+                        }
+                    }
+                }
+                if let Err(e) = writer.finalize() {
+                    eprintln!("[truce-standalone] capture finalize failed: {e}");
+                }
+            })
+            .map_err(|e| format!("could not spawn capture writer: {e}"))?;
+
+        Ok(Self {
+            chunk_tx,
+            blocked_at_least_once: Arc::new(AtomicBool::new(false)),
+            shutdown,
+            writer: Some(writer_thread),
+            spec,
+            path: path.to_path_buf(),
+        })
+    }
+
+    /// Get a cheap-clone handle suitable for the audio
+    /// callback. Multiple pushers can coexist; the writer thread
+    /// shuts down via the shared flag, not channel close.
+    pub fn pusher(&self) -> CapturePusher {
+        CapturePusher {
+            chunk_tx: self.chunk_tx.clone(),
+            blocked_at_least_once: Arc::clone(&self.blocked_at_least_once),
+            shutdown: Arc::clone(&self.shutdown),
+        }
+    }
+
+    /// Signal the writer to stop and join it. Any audio-thread
+    /// `CapturePusher` clones still alive (e.g. held inside a
+    /// cpal closure that hasn't dropped yet on macOS) will see
+    /// the same flag and skip further `submit` calls, so they
+    /// don't fight the writer for the channel.
+    pub fn finalize(mut self) {
+        self.shutdown.store(true, Ordering::Relaxed);
+        if let Some(handle) = self.writer.take() {
+            let _ = handle.join();
+        }
+        eprintln!(
+            "[truce-standalone] captured to {} ({} Hz, {} ch, f32)",
+            self.path.display(),
+            self.spec.sample_rate,
+            self.spec.channels,
+        );
+    }
+}
+
+impl CapturePusher {
+    /// Hand a block of interleaved samples to the writer thread.
+    /// No-op once the shutdown flag is set (typically because
+    /// the runner already finalized — cpal callbacks may keep
+    /// firing for a few hundred ms after the Stream is dropped
+    /// on macOS, and we don't want to enqueue garbage past
+    /// finalize). Try non-blocking first; on full, warn once and
+    /// fall through to a blocking `send` so the WAV stays
+    /// byte-complete (audible glitch on speakers when this trips
+    /// is the documented trade-off).
+    pub fn submit(&self, interleaved: Vec<f32>) {
+        if self.shutdown.load(Ordering::Relaxed) {
+            return;
+        }
+        match self.chunk_tx.try_send(interleaved) {
+            Ok(()) => {}
+            Err(mpsc::TrySendError::Full(samples)) => {
+                if !self
+                    .blocked_at_least_once
+                    .swap(true, Ordering::Relaxed)
+                {
+                    eprintln!(
+                        "[truce-standalone] capture: audio thread blocking on \
+                         disk write — output may glitch (this warning fires once)"
+                    );
+                }
+                let _ = self.chunk_tx.send(samples);
+            }
+            Err(mpsc::TrySendError::Disconnected(_)) => {
+                // Writer exited — capture is dead. Audio
+                // continues; the file is whatever got flushed.
+            }
+        }
+    }
+}
+
+impl Drop for CaptureSink {
+    /// Cover the unhappy path (panic / early exit). Set the
+    /// shutdown flag and best-effort join so the WAV header is
+    /// still rewritten with the real sample count.
+    fn drop(&mut self) {
+        self.shutdown.store(true, Ordering::Relaxed);
+        if let Some(handle) = self.writer.take() {
+            let _ = handle.join();
+        }
+    }
 }
 
 /// Linear-interp resample interleaved `src` from `src_sr` to
@@ -258,6 +477,50 @@ mod tests {
         src.mix_into(&mut bufs, 2);
         // 0.5 + ~0.5 = ~1.0 (mic-style pre-existing signal + file).
         assert!((bufs[0][0] - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn capture_sink_writes_submitted_samples() {
+        let dir = tempdir_path();
+        let path = dir.join("capture.wav");
+        let sink = CaptureSink::create(&path, 48_000.0, 2).unwrap();
+        let pusher = sink.pusher();
+
+        // Submit two stereo blocks of distinguishable values.
+        pusher.submit(vec![0.1, 0.2, 0.3, 0.4]);
+        pusher.submit(vec![0.5, 0.6, 0.7, 0.8]);
+        sink.finalize();
+
+        let mut r = hound::WavReader::open(&path).unwrap();
+        assert_eq!(r.spec().channels, 2);
+        assert_eq!(r.spec().sample_rate, 48_000);
+        assert_eq!(r.spec().sample_format, hound::SampleFormat::Float);
+        assert_eq!(r.duration(), 4); // 4 frames total (2 per block, 2 blocks)
+        let samples: Vec<f32> = r.samples::<f32>().collect::<Result<_, _>>().unwrap();
+        assert_eq!(samples.len(), 8);
+        assert!((samples[0] - 0.1).abs() < 1e-6);
+        assert!((samples[7] - 0.8).abs() < 1e-6);
+    }
+
+    #[test]
+    fn capture_sink_skips_submit_after_finalize() {
+        // The shutdown flag short-circuits cpal callbacks that
+        // keep firing after the runner has called `finalize`.
+        let dir = tempdir_path();
+        let path = dir.join("late.wav");
+        let sink = CaptureSink::create(&path, 48_000.0, 2).unwrap();
+        let pusher = sink.pusher();
+        pusher.submit(vec![0.1, 0.1]);
+        sink.finalize();
+        // Late submit — the audio thread didn't see the flag in
+        // time. Should be a no-op (no panic, no late write).
+        pusher.submit(vec![0.9, 0.9]);
+
+        let mut r = hound::WavReader::open(&path).unwrap();
+        assert_eq!(r.duration(), 1);
+        let samples: Vec<f32> = r.samples::<f32>().collect::<Result<_, _>>().unwrap();
+        assert_eq!(samples.len(), 2);
+        assert!((samples[0] - 0.1).abs() < 1e-6);
     }
 
     fn tempdir_path() -> std::path::PathBuf {

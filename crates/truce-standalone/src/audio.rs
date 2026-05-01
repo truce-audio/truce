@@ -63,6 +63,17 @@ pub struct AudioHandles<P: PluginExport> {
     /// Shared transport state; UI thread toggles play/stop, audio
     /// thread advances position each block.
     pub transport: Transport,
+    /// Live-mode `--input-file` source (gated on the `playback`
+    /// feature). Exposed so the runner can poll
+    /// `playback.is_eof()` to drive clean shutdown when paired
+    /// with `--output-file`.
+    #[cfg(feature = "playback")]
+    pub playback: Option<Arc<crate::playback::PlaybackSource>>,
+    /// Live-mode `--output-file` capture sink. The runner calls
+    /// `take_capture().finalize()` on its way out so the WAV
+    /// header gets the correct sample count.
+    #[cfg(feature = "playback")]
+    pub capture: Option<crate::playback::CaptureSink>,
 }
 
 // ---------------------------------------------------------------------------
@@ -396,6 +407,25 @@ pub fn start_audio<P: PluginExport>(
         None => None,
     };
 
+    // `--output-file` capture sink. Created here so any
+    // filesystem error (missing parent dir, unwritable target,
+    // …) propagates back to the runner before audio starts.
+    #[cfg(feature = "playback")]
+    let capture = match &opts.output_file {
+        Some(path) => {
+            let sink = crate::playback::CaptureSink::create(path, sample_rate, channels)
+                .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+            eprintln!(
+                "Capture: {} ({} Hz, {} ch, f32) — pre-mute output",
+                path.display(),
+                sample_rate,
+                channels,
+            );
+            Some(sink)
+        }
+        None => None,
+    };
+
     let res = OutputResources {
         plugin: Arc::clone(&plugin),
         pending: Arc::clone(&pending),
@@ -405,7 +435,9 @@ pub fn start_audio<P: PluginExport>(
         transport: transport.clone(),
         current_name: Arc::clone(&output_current_name),
         #[cfg(feature = "playback")]
-        playback,
+        playback: playback.clone(),
+        #[cfg(feature = "playback")]
+        capture: capture.as_ref().map(|s| s.pusher()),
     };
 
     let initial_output_name_for_worker = initial_output_name.clone();
@@ -451,6 +483,10 @@ pub fn start_audio<P: PluginExport>(
         input: input_controller,
         output: output_controller,
         transport,
+        #[cfg(feature = "playback")]
+        playback,
+        #[cfg(feature = "playback")]
+        capture,
     })
 }
 
@@ -476,6 +512,12 @@ struct OutputResources<P: PluginExport> {
     /// the mic ring — see the matrix in `cli.rs::HELP`.
     #[cfg(feature = "playback")]
     playback: Option<Arc<crate::playback::PlaybackSource>>,
+    /// Optional `--output-file` capture pusher. Cloned into each
+    /// cpal callback closure, so device switches don't tear down
+    /// the capture. The owning `CaptureSink` lives on
+    /// `AudioHandles`; finalize is the runner's responsibility.
+    #[cfg(feature = "playback")]
+    capture: Option<crate::playback::CapturePusher>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -526,6 +568,7 @@ fn output_worker<P: PluginExport>(
             }
         }
     }
+    drop(stream);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -560,6 +603,8 @@ fn open_output_stream<P: PluginExport>(
     let transport_a = res.transport.clone();
     #[cfg(feature = "playback")]
     let playback_a = res.playback.clone();
+    #[cfg(feature = "playback")]
+    let capture_a = res.capture.clone();
 
     let stream = match sample_format {
         cpal::SampleFormat::F32 => device
@@ -579,6 +624,8 @@ fn open_output_stream<P: PluginExport>(
                         &transport_a,
                         #[cfg(feature = "playback")]
                         playback_a.as_ref(),
+                        #[cfg(feature = "playback")]
+                        capture_a.as_ref(),
                     );
                 },
                 |err| eprintln!("Audio error: {err}"),
@@ -842,6 +889,7 @@ fn audio_callback<P: PluginExport>(
     output_enabled: &Arc<AtomicBool>,
     transport: &Transport,
     #[cfg(feature = "playback")] playback: Option<&Arc<crate::playback::PlaybackSource>>,
+    #[cfg(feature = "playback")] capture: Option<&crate::playback::CapturePusher>,
 ) {
     let num_frames = data.len() / channels;
 
@@ -907,6 +955,22 @@ fn audio_callback<P: PluginExport>(
         ProcessContext::new(&transport_info, sample_rate, num_frames, &mut output_events);
 
     plugin.process(&mut audio_buffer, &event_list, &mut context);
+
+    // `--output-file` capture: hand a copy of the post-process,
+    // pre-mute output to the writer thread. Mute is *device*
+    // silence (speakers off); the file should still get the
+    // real plugin output, matching every DAW's mute-and-bounce.
+    #[cfg(feature = "playback")]
+    if let Some(pusher) = capture {
+        let mut interleaved = vec![0.0_f32; num_frames * channels];
+        for frame in 0..num_frames {
+            for ch in 0..channels {
+                let ch_idx = ch.min(channel_bufs.len() - 1);
+                interleaved[frame * channels + ch] = channel_bufs[ch_idx][frame];
+            }
+        }
+        pusher.submit(interleaved);
+    }
 
     // Output mute: keep the plugin running (transport, MIDI, meters
     // all still tick) but zero-fill the device buffer so the

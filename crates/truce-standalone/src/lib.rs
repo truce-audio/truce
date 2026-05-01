@@ -35,6 +35,8 @@ pub mod in_process;
 pub mod keyboard;
 pub mod midi;
 #[cfg(feature = "playback")]
+pub mod offline;
+#[cfg(feature = "playback")]
 pub mod playback;
 pub mod transport;
 
@@ -110,6 +112,44 @@ where
     if opts.list_midi {
         midi::list_midi();
         return;
+    }
+
+    // `--output-file` always forces headless: opening a window
+    // during a render burns GPU/CPU on a UI nobody is watching,
+    // and offline mode doesn't drive an event loop at all. Notice
+    // only fires when the user didn't explicitly ask for headless,
+    // so we don't double-message the deliberate case.
+    #[cfg(feature = "playback")]
+    if opts.output_file.is_some() && !opts.headless {
+        eprintln!(
+            "[truce-standalone] --output-file implies --headless; \
+             running without a window."
+        );
+        opts.headless = true;
+    }
+
+    // `--no-playback` only applies in the canonical CI render
+    // shape (--input-file + --output-file). In any other combo
+    // there's either no driver or no destination — soft-warn and
+    // fall through to real-time so the runner stays useful.
+    #[cfg(feature = "playback")]
+    if opts.no_playback && !(opts.input_file.is_some() && opts.output_file.is_some()) {
+        eprintln!(
+            "[truce-standalone] --no-playback ignored: \
+             requires both --input-file and --output-file"
+        );
+        opts.no_playback = false;
+    }
+
+    #[cfg(feature = "playback")]
+    if opts.no_playback {
+        match offline::render::<P>(&opts) {
+            Ok(()) => return,
+            Err(e) => {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
+        }
     }
 
     #[cfg(feature = "gui")]
