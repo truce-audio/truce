@@ -41,6 +41,16 @@ pub struct Options {
     /// the `playback` feature is enabled.
     #[cfg(feature = "playback")]
     pub input_file: Option<PathBuf>,
+    /// `.wav` file to write the plugin's output bus to. Forces
+    /// headless. Only populated when the `playback` feature is
+    /// enabled.
+    #[cfg(feature = "playback")]
+    pub output_file: Option<PathBuf>,
+    /// Bypass cpal entirely and render as fast as the CPU
+    /// allows. Only meaningful with both `input_file` and
+    /// `output_file` set; ignored with a warning otherwise.
+    #[cfg(feature = "playback")]
+    pub no_playback: bool,
     pub help: bool,
 }
 
@@ -76,6 +86,13 @@ const HELP_PLAYBACK: &str = "\
                             enabled. Linear-interp resample if file SR
                             doesn't match device SR; channel-count
                             mismatches are soft-warned and adapted.
+  --output-file <path>      Capture the plugin's output bus to <path>.wav.
+                            32-bit float; pre-mute. Implies --headless.
+                            Real-time by default; pair with --no-playback
+                            for offline rendering.
+  --no-playback             Bypass cpal entirely; render as fast as the
+                            CPU allows. Requires both --input-file and
+                            --output-file (otherwise ignored with a warn).
 ";
 
 const HELP_TAIL: &str = "\
@@ -152,6 +169,12 @@ pub fn parse() -> Result<Options, String> {
     let input_file = args
         .opt_value_from_str::<_, PathBuf>("--input-file")
         .map_err(|e| format!("--input-file: {e}"))?;
+    #[cfg(feature = "playback")]
+    let output_file = args
+        .opt_value_from_str::<_, PathBuf>("--output-file")
+        .map_err(|e| format!("--output-file: {e}"))?;
+    #[cfg(feature = "playback")]
+    let no_playback = args.contains("--no-playback");
 
     let leftover = args.finish();
     if !leftover.is_empty() {
@@ -182,6 +205,10 @@ pub fn parse() -> Result<Options, String> {
         state_path: state_path.or_else(|| env("STATE").map(PathBuf::from)),
         #[cfg(feature = "playback")]
         input_file: input_file.or_else(|| env("INPUT_FILE").map(PathBuf::from)),
+        #[cfg(feature = "playback")]
+        output_file: output_file.or_else(|| env("OUTPUT_FILE").map(PathBuf::from)),
+        #[cfg(feature = "playback")]
+        no_playback,
         help: false,
     };
 
