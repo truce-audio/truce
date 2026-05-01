@@ -74,6 +74,10 @@ other truce-produced artifact.
   --list-midi              List MIDI input devices and exit
   --output <name>          Audio output device (substring match)
   --input <name>           Audio input device (for effect plugins)
+  --input-enabled <on|off> Enable mic input at launch (default: off).
+                           Press `I` in the window to toggle live.
+  --output-enabled <on|off> Enable speaker output at launch (default: on).
+                           Toggle live from the Plugin menu (Cmd+O / Ctrl+O).
   --sample-rate <hz>       e.g. 44100, 48000, 96000
   --buffer <frames>        Audio buffer size
   --midi-input <name>      MIDI input device (substring match)
@@ -82,11 +86,68 @@ other truce-produced artifact.
   -h, --help               Show this message
 ```
 
+### `playback` feature: WAV in / WAV out
+
+The optional `playback` feature on `truce-standalone` adds three
+flags for piping `.wav` files in and out of the plugin without an
+audio interface — useful for snapshot regression tests, batch
+rendering, and CI runs on headless build agents. Enable from your
+plugin crate with:
+
+```toml
+[features]
+standalone-playback = ["standalone", "truce-standalone/playback"]
+```
+
+…then build the binary with `--features standalone-playback`.
+
+```
+  --input-file <path>      Decode <path>.wav and feed it into the
+                           plugin's input bus. One-shot — plays
+                           once, then the file channel goes silent.
+                           Mic + file sum when both are enabled.
+                           Linear-interp resample if the file's SR
+                           differs from the device's; channel-count
+                           mismatches are soft-warned and adapted.
+  --output-file <path>     Capture the plugin's output bus to
+                           <path>.wav (32-bit float, pre-mute).
+                           Implies --headless. Real-time by default
+                           (cpal still drives the audio thread);
+                           pair with --no-playback for offline.
+  --no-playback            Bypass cpal entirely; render as fast as
+                           the CPU allows. Requires both
+                           --input-file and --output-file
+                           (otherwise ignored with a warn).
+```
+
+Common shapes:
+
+```sh
+# Real-time capture: hear it while it records.
+gain-standalone --input-file in.wav --output-file out.wav
+
+# Offline render — sub-real-time, no audio device touched.
+# This is the CI / batch recipe.
+gain-standalone --no-playback --input-file in.wav --output-file out.wav
+```
+
+In offline mode the runner inherits the input WAV's sample rate
+and channel count by default (override with `--sample-rate` if
+needed); output WAV is always 32-bit float at the resolved SR.
+Mute (`--output-enabled off`) silences the speakers but **does
+not** affect what `--output-file` captures — bounce-to-disk
+behaviour matches what every DAW does.
+
 ## In-window hotkeys
 
 - **SPACE** — toggle transport play / stop
 - **Ctrl-S / Cmd-S** — quick-save plugin state to
   `$XDG_DATA_HOME/truce/<slug>/quicksave-<ts>.state`
+- **I** — toggle mic input (effect plugins only). First press on
+  macOS triggers the system permission prompt.
+- **Cmd-O / Ctrl-O** — toggle audio output (mute / unmute). Plugin
+  keeps processing — meters, transport, MIDI all still tick — only
+  the speaker output is zeroed.
 - **Z / X** — shift QWERTY-MIDI octave down / up
 - **A S D F G H J K L ;** — white keys (C D E F G A B C D E)
 - **W E T Y U O P** — black keys
@@ -100,25 +161,28 @@ Each setting resolves first-match-wins:
 
 1. CLI flag (`--output "…"`)
 2. Environment variable (`TRUCE_STANDALONE_OUTPUT="…"`)
-3. Config file
-4. cpal / midir default
+3. Plugin-author defaults via `run_with::<P>(Defaults { … })`
+4. Compiled runtime default (input off, output on, cpal-picked
+   devices)
 
-Config-file location:
+Plugin authors can pin `input_enabled` / `output_enabled` defaults
+in code without giving up CLI / env override:
 
-| OS | Path |
-|----|------|
-| macOS | `~/Library/Application Support/truce/standalone.toml` |
-| Linux | `$XDG_CONFIG_HOME/truce/standalone.toml` |
-| Windows | `%APPDATA%\truce\standalone.toml` |
+```rust
+use truce_standalone::{run_with, Defaults};
 
-```toml
-default_output = "External Headphones"
-default_input = "Built-in Microphone"
-default_sample_rate = 48000
-default_buffer = 512
-default_midi_input = "IAC Bus 1"
-default_bpm = 120.0
+fn main() {
+    run_with::<my_plugin::Plugin>(Defaults {
+        input_enabled: Some(true),  // effect plugin wants mic on by default
+        ..Defaults::default()
+    });
+}
 ```
+
+Other settings (device names, sample rate, buffer size, MIDI
+input, BPM, state path) are intentionally CLI/env-only — those
+are per-machine concerns the plugin author shouldn't be pinning
+in code.
 
 ## MIDI
 
