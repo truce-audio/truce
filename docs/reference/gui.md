@@ -22,7 +22,7 @@ impl PluginLogic for MyPlugin {
     // ...
 
     fn layout(&self) -> GridLayout {
-        GridLayout::build("MY PLUGIN", "V0.1", 3, 80.0, vec![
+        GridLayout::build(vec![
             widgets(vec![
                 knob(P::Gain, "Gain"),
                 knob(P::Pan,  "Pan"),
@@ -37,10 +37,18 @@ impl PluginLogic for MyPlugin {
 }
 ```
 
-`GridLayout::build(title, version, cols, cell_size_dp, sections)`.
-Each section is either a `widgets(vec![...])` row or a labelled
-`section("NAME", vec![...])` group. Widgets flow left-to-right;
-use `.cols(n)` / `.rows(n)` to span cells.
+`GridLayout::build(sections)` — each section is either a
+`widgets(vec![...])` row or a labelled `section("NAME", vec![...])`
+group. Widgets flow left-to-right; use `.cols(n)` / `.rows(n)` to
+span cells. By default there's no header, `cols` resolves to the
+widest section's widget count, and the cell size is 50 logical
+points. Override any of those:
+
+- `.with_header("title", "v0.1")` — adds the title/version header band.
+- `.with_cols(n)` — force a specific column count (useful to wrap a
+  long row into a grid).
+- `.with_cell_size(s)` — bigger / smaller cells.
+- `.with_grid(cols, cell_size)` — both at once.
 
 ### The seven widgets
 
@@ -104,7 +112,8 @@ Colours come from a named theme — dark by default. Swap to light or
 a custom palette:
 
 ```rust
-GridLayout::build("MY PLUGIN", "V0.1", 3, 80.0, sections)
+GridLayout::build(sections)
+    .with_header("MY PLUGIN", "V0.1")
     .theme(truce_gui::theme::Theme::light())
 ```
 

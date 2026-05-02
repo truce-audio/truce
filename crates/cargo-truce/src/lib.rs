@@ -64,7 +64,6 @@ pub fn run(args: &[String]) -> ExitCode {
         "remove" => commands::remove::cmd_remove(&args[1..]),
         "run" => commands::run::cmd_run(&args[1..]),
         "screenshot" => commands::screenshot::cmd_screenshot(&args[1..]),
-        "test" => commands::test::cmd_test(),
         "status" => commands::status::cmd_status(),
         "reset-au" => commands::reset_au::cmd_reset_au(&args[1..]),
         "reset-aax" => commands::reset_aax::cmd_reset_aax(&args[1..]),

@@ -12,5 +12,4 @@ pub(crate) mod reset_au;
 pub(crate) mod run;
 pub(crate) mod screenshot;
 pub(crate) mod status;
-pub(crate) mod test;
 pub(crate) mod validate;

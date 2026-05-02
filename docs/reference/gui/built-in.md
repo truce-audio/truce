@@ -15,7 +15,7 @@ use truce_gui::layout::{GridLayout, knob, slider, toggle, widgets};
 use MyParamsParamId as P;
 
 fn layout(&self) -> GridLayout {
-    GridLayout::build("MY PLUGIN", "V1.0", 3, 50.0, vec![widgets(vec![
+    GridLayout::build(vec![widgets(vec![
         knob(P::Gain, "Gain"),
         slider(P::Pan, "Pan"),
         toggle(P::Bypass, "Bypass"),
@@ -26,13 +26,25 @@ fn layout(&self) -> GridLayout {
 Signature:
 
 ```rust
-GridLayout::build(
-    title: &str,          // header bar text
-    version: &str,        // header bar version label
-    cols: u32,            // number of grid columns
-    cell_size: f32,       // cell size in pixels (square cells)
-    sections: Vec<Section>, // widgets() or section() entries
-) -> GridLayout
+GridLayout::build(sections: Vec<Section>) -> GridLayout
+```
+
+Defaults:
+
+- **No header band**. Add one with `.with_header("title", "v1.0")`.
+- **`cols`** = the widest section's widget count (extended to fit
+  any explicitly-positioned widget). Override with `.with_cols(n)`
+  to force wrapping — e.g. `.with_cols(2)` on a 4-widget section
+  produces a 2×2 grid.
+- **`cell_size`** = `GRID_DEFAULT_CELL_SIZE` (50.0 logical points).
+  Override with `.with_cell_size(s)`. Set both at once with
+  `.with_grid(cols, cell_size)`.
+
+```rust
+GridLayout::build(sections)                       // 95% case
+GridLayout::build(sections).with_header("EQ", "v0.1")
+GridLayout::build(sections).with_cols(2)          // force 2-col wrapping
+GridLayout::build(sections).with_grid(4, 60.0)    // both at once
 ```
 
 Widget constructors accept `impl Into<u32>`, so both typed enum IDs
@@ -62,7 +74,7 @@ Group widgets under labelled headers with `section()`. Use
 ```rust
 use truce_gui::layout::{GridLayout, knob, section, widgets};
 
-GridLayout::build("EQ", "V0.1", 3, 50.0, vec![
+GridLayout::build(vec![
     section("LOW", vec![
         knob(P::LowFreq, "Freq"),
         knob(P::LowGain, "Gain"),
@@ -75,7 +87,11 @@ GridLayout::build("EQ", "V0.1", 3, 50.0, vec![
     ]),
     widgets(vec![knob(P::Output, "Output")]),
 ])
+.with_header("EQ", "V0.1")
 ```
+
+`cols` auto-resolves to 3 here (the widest section has 3 widgets),
+so each section renders as one row.
 
 Each `section` starts a new row with a header strip. Widgets inside
 a section flow left-to-right within that section's row.
@@ -134,12 +150,14 @@ themes or override individual colours:
 ```rust
 use truce_gui::theme::{Theme, Color};
 
-GridLayout::build("MY PLUGIN", "V0.1", 3, 50.0, sections)
+GridLayout::build(sections)
+    .with_header("MY PLUGIN", "V0.1")
     .theme(Theme::light())
 ```
 
 ```rust
-GridLayout::build("MY PLUGIN", "V0.1", 3, 50.0, sections)
+GridLayout::build(sections)
+    .with_header("MY PLUGIN", "V0.1")
     .theme(Theme {
         primary: Color::rgb(0x00, 0xd2, 0xff),
         ..Theme::dark()
@@ -175,12 +193,13 @@ use GainParamsParamId as P;
 use truce_gui::layout::{GridLayout, knob, meter, widgets, xy_pad};
 
 fn layout(&self) -> GridLayout {
-    GridLayout::build("GAIN", "V0.1", 3, 50.0, vec![widgets(vec![
+    GridLayout::build(vec![widgets(vec![
         knob(P::Gain, "Gain"),
         knob(P::Pan,  "Pan"),
         xy_pad(P::Pan, P::Gain, "XY"),
         meter(&[P::MeterLeft, P::MeterRight], "Level").rows(2),
     ])])
+    .with_header("GAIN", "V0.1")
 }
 ```
 

@@ -39,7 +39,7 @@ fn main() -> ExitCode {
         }
 
         // Build/install commands — forwarded to the engine in lib.rs.
-        "install" | "build" | "package" | "remove" | "run" | "screenshot" | "test" | "status"
+        "install" | "build" | "package" | "remove" | "run" | "screenshot" | "status"
         | "reset-au" | "reset-aax" | "validate" | "doctor" | "log-stream-au" => {
             cargo_truce::run(&args)
         }
@@ -207,9 +207,6 @@ Validation / Inspection:
       Render a plugin's editor headlessly and save the PNG to
       target/screenshots/<name>.png. With no -p, screenshots every
       plugin in truce.toml. Default name is <bundle_id>_screenshot.
-
-  test
-      Run all plugin tests (render, state, params, metadata).
 
   status
       Show installed plugins and AU registration state.
