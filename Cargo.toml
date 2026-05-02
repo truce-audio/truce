@@ -54,13 +54,6 @@ readme = "README.md"
 # about an upstream macro-hygiene issue.
 [workspace.lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("cargo-clippy"))'] }
-# 2024-edition tightening — every unsafe call inside an `unsafe fn`
-# body must be wrapped in its own `unsafe { ... }` block. Truce's
-# FFI-heavy format wrappers (clap / vst2 / vst3 / au / aax / lv2)
-# have hundreds of such call sites; the lint is high-signal but
-# tracking the cleanup as one focused PR rather than holding the
-# edition bump on it. Re-enable when we're ready to walk those sites.
-unsafe_op_in_unsafe_fn = "allow"
 
 # Workspace deps. `version =` is intentionally only set on path deps
 # whose crate is published to crates.io and consumed by another

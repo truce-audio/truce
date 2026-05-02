@@ -163,7 +163,7 @@ pub unsafe fn instantiate_ui<P: PluginExport>(
     controller: Lv2UiController,
     widget: *mut *mut c_void,
     features: *const *const LV2Feature,
-) -> Lv2UiHandle {
+) -> Lv2UiHandle { unsafe {
     // Locate PARENT feature — on X11 the host passes the window id the UI
     // should embed in; on macOS it passes an `NSView*` from Cocoa. Both
     // arrive as `feature.data: *mut c_void` and we reinterpret per
@@ -308,12 +308,12 @@ pub unsafe fn instantiate_ui<P: PluginExport>(
         _phantom: PhantomData,
     });
     Box::into_raw(ui) as Lv2UiHandle
-}
+}}
 
 /// # Safety
 /// `handle` must be a valid UI instance pointer previously returned from
 /// `instantiate_ui`.
-pub unsafe fn cleanup_ui<P: PluginExport>(handle: Lv2UiHandle) {
+pub unsafe fn cleanup_ui<P: PluginExport>(handle: Lv2UiHandle) { unsafe {
     if handle.is_null() {
         return;
     }
@@ -324,7 +324,7 @@ pub unsafe fn cleanup_ui<P: PluginExport>(handle: Lv2UiHandle) {
         }
     }
     drop(ui);
-}
+}}
 
 /// Port value update from host.
 ///
@@ -344,7 +344,7 @@ pub unsafe fn port_event<P: PluginExport>(
     buffer_size: u32,
     format: u32,
     buffer: *const c_void,
-) {
+) { unsafe {
     if handle.is_null() || buffer.is_null() {
         return;
     }
@@ -378,7 +378,7 @@ pub unsafe fn port_event<P: PluginExport>(
     {
         decode_notify_atom::<P>(ui, buffer, buffer_size);
     }
-}
+}}
 
 /// Decode an atom delivered via `atom:eventTransfer` to the notify-out
 /// port. We reuse `AtomSequenceReader::read_time_position` by wrapping
@@ -391,7 +391,7 @@ unsafe fn decode_notify_atom<P: PluginExport>(
     ui: &Lv2UiInstance<P>,
     buffer: *const c_void,
     buffer_size: u32,
-) {
+) { unsafe {
     use crate::atom::{Atom, AtomSequence, AtomSequenceBody};
 
     let header_size = core::mem::size_of::<Atom>();
@@ -436,7 +436,7 @@ unsafe fn decode_notify_atom<P: PluginExport>(
     if reader.apply_time_position(&mut info) {
         ui.transport_slot.write(&info);
     }
-}
+}}
 
 /// # Safety
 /// `uri` must be null or a valid null-terminated C string.
@@ -452,25 +452,25 @@ pub unsafe fn ui_extension_data(_uri: *const c_char) -> *const c_void {
 /// Locate the host-supplied `ui:parent` feature. The returned pointer is
 /// semantically an `NSView*` under CocoaUI and an `xcb_window_t` under
 /// X11UI; callers reinterpret it per platform.
-unsafe fn parse_parent_feature(features: *const *const LV2Feature) -> Option<*mut c_void> {
+unsafe fn parse_parent_feature(features: *const *const LV2Feature) -> Option<*mut c_void> { unsafe {
     find_feature(features, LV2_UI__PARENT).map(|f| f.data)
-}
+}}
 
 /// Locate the host-supplied `ui:resize` feature. When present, the UI
 /// may call `ui_resize(handle, w, h)` to ask the host to resize the
 /// embedding container.
-unsafe fn parse_resize_feature(features: *const *const LV2Feature) -> Option<&'static Lv2UiResize> {
+unsafe fn parse_resize_feature(features: *const *const LV2Feature) -> Option<&'static Lv2UiResize> { unsafe {
     let feat = find_feature(features, LV2_UI__RESIZE)?;
     if feat.data.is_null() {
         return None;
     }
     Some(&*(feat.data as *const Lv2UiResize))
-}
+}}
 
 unsafe fn find_feature(
     features: *const *const LV2Feature,
     uri: &str,
-) -> Option<&'static LV2Feature> {
+) -> Option<&'static LV2Feature> { unsafe {
     if features.is_null() {
         return None;
     }
@@ -487,7 +487,7 @@ unsafe fn find_feature(
         }
         i += 1;
     }
-}
+}}
 
 /// Resize the host-supplied parent HWND so its client area exactly
 /// matches baseview's child HWND. Win32 analogue of `resize_ns_view`.
@@ -503,7 +503,7 @@ unsafe fn find_feature(
 /// extent, and a `SetWindowPos` on the child after the fact makes the
 /// rendered content stretch rather than re-layout.
 #[cfg(target_os = "windows")]
-unsafe fn fit_win32_parent_to_child(parent: *mut c_void) {
+unsafe fn fit_win32_parent_to_child(parent: *mut c_void) { unsafe {
     if parent.is_null() {
         return;
     }
@@ -524,7 +524,7 @@ unsafe fn fit_win32_parent_to_child(parent: *mut c_void) {
         bottom: i32,
     }
 
-    extern "system" {
+    unsafe extern "system" {
         fn SetWindowPos(
             hwnd: *mut c_void,
             hwnd_insert_after: *mut c_void,
@@ -567,7 +567,7 @@ unsafe fn fit_win32_parent_to_child(parent: *mut c_void) {
         h,
         SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
     );
-}
+}}
 
 /// Set the frame of a Cocoa view to (width, height) preserving its
 /// origin. Used as a fallback when the host doesn't honor `ui:resize`.
@@ -650,9 +650,13 @@ unsafe fn install_child_cursor_update(parent: *mut c_void) {
         // Transmute through an intermediate `extern "C" fn()` to keep
         // the ABI intact while satisfying the cast.
         type ImpFn = unsafe extern "C" fn();
-        let imp: ImpFn =
-            core::mem::transmute::<extern "C" fn(&Object, Sel, *mut Object), ImpFn>(cursor_update);
-        class_addMethod(class_ptr, selector, imp, type_encoding);
+        // SAFETY: `cursor_update` has the canonical Cocoa `IMP` ABI
+        // (self, _cmd, sender) and `class_addMethod` is documented
+        // to accept any function with that calling convention.
+        let imp: ImpFn = unsafe {
+            core::mem::transmute::<extern "C" fn(&Object, Sel, *mut Object), ImpFn>(cursor_update)
+        };
+        unsafe { class_addMethod(class_ptr, selector, imp, type_encoding) };
     }
 }
 
@@ -745,7 +749,7 @@ unsafe extern "C" fn instantiate_ui_tramp<P: PluginExport>(
     controller: Lv2UiController,
     widget: *mut *mut c_void,
     features: *const *const LV2Feature,
-) -> Lv2UiHandle {
+) -> Lv2UiHandle { unsafe {
     instantiate_ui::<P>(
         descriptor,
         plugin_uri,
@@ -755,11 +759,11 @@ unsafe extern "C" fn instantiate_ui_tramp<P: PluginExport>(
         widget,
         features,
     )
-}
+}}
 
-unsafe extern "C" fn cleanup_ui_tramp<P: PluginExport>(handle: Lv2UiHandle) {
+unsafe extern "C" fn cleanup_ui_tramp<P: PluginExport>(handle: Lv2UiHandle) { unsafe {
     cleanup_ui::<P>(handle);
-}
+}}
 
 unsafe extern "C" fn port_event_tramp<P: PluginExport>(
     handle: Lv2UiHandle,
@@ -767,10 +771,10 @@ unsafe extern "C" fn port_event_tramp<P: PluginExport>(
     buffer_size: u32,
     format: u32,
     buffer: *const c_void,
-) {
+) { unsafe {
     port_event::<P>(handle, port_index, buffer_size, format, buffer);
-}
+}}
 
-unsafe extern "C" fn ui_extension_data_tramp(uri: *const c_char) -> *const c_void {
+unsafe extern "C" fn ui_extension_data_tramp(uri: *const c_char) -> *const c_void { unsafe {
     ui_extension_data(uri)
-}
+}}
