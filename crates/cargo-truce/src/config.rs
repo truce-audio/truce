@@ -286,17 +286,15 @@ fn default_au_tag() -> String {
 /// `.cargo/config.toml` `[env].TRUCE_SIGNING_IDENTITY` → ad-hoc.
 fn resolve_signing_identity(config: &Config) -> String {
     // 1. truce.toml explicit value
-    if let Some(id) = &config.macos.signing.application_identity {
-        if !id.is_empty() && id != "-" {
+    if let Some(id) = &config.macos.signing.application_identity
+        && !id.is_empty() && id != "-" {
             return id.clone();
         }
-    }
     // 2. Environment variable
-    if let Ok(id) = std::env::var("TRUCE_SIGNING_IDENTITY") {
-        if !id.is_empty() {
+    if let Ok(id) = std::env::var("TRUCE_SIGNING_IDENTITY")
+        && !id.is_empty() {
             return id;
         }
-    }
     // 3. .cargo/config.toml [env] section
     if let Some(id) = read_cargo_config_env("TRUCE_SIGNING_IDENTITY") {
         return id;
@@ -323,16 +321,14 @@ pub(crate) fn read_cargo_config_env(key: &str) -> Option<String> {
 /// `[macos.signing].installer_identity` → `TRUCE_INSTALLER_SIGNING_IDENTITY`
 /// env → `.cargo/config.toml` → None.
 fn resolve_installer_identity(config: &Config) -> Option<String> {
-    if let Some(ref id) = config.macos.signing.installer_identity {
-        if !id.is_empty() {
+    if let Some(ref id) = config.macos.signing.installer_identity
+        && !id.is_empty() {
             return Some(id.clone());
         }
-    }
-    if let Ok(id) = std::env::var("TRUCE_INSTALLER_SIGNING_IDENTITY") {
-        if !id.is_empty() {
+    if let Ok(id) = std::env::var("TRUCE_INSTALLER_SIGNING_IDENTITY")
+        && !id.is_empty() {
             return Some(id);
         }
-    }
     if let Some(id) = read_cargo_config_env("TRUCE_INSTALLER_SIGNING_IDENTITY") {
         return Some(id);
     }

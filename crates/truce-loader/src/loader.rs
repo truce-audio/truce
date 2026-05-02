@@ -187,11 +187,10 @@ impl NativeLoader {
         }
 
         // Restore state.
-        if let (Some(state), Some(plugin)) = (state, self.plugin.as_mut()) {
-            if !state.is_empty() {
+        if let (Some(state), Some(plugin)) = (state, self.plugin.as_mut())
+            && !state.is_empty() {
                 plugin.load_state(&state);
             }
-        }
 
         log::info!(
             "hot-reload complete (load #{}, {} leaked handles)",

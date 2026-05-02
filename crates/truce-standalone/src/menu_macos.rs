@@ -143,14 +143,14 @@ pub fn install(app_name: &str, is_effect: bool, input: InputController, output: 
     }
 }
 
-unsafe fn make_menu(title: &str) -> *mut Object {
+unsafe fn make_menu(title: &str) -> *mut Object { unsafe {
     let title = ns_string(title);
     let menu: *mut Object = msg_send![class!(NSMenu), alloc];
     let menu: *mut Object = msg_send![menu, initWithTitle: title];
     menu
-}
+}}
 
-unsafe fn make_menu_item(title: &str) -> *mut Object {
+unsafe fn make_menu_item(title: &str) -> *mut Object { unsafe {
     let title = ns_string(title);
     let empty = ns_string("");
     let item: *mut Object = msg_send![class!(NSMenuItem), alloc];
@@ -161,14 +161,14 @@ unsafe fn make_menu_item(title: &str) -> *mut Object {
         keyEquivalent: empty
     ];
     item
-}
+}}
 
 unsafe fn make_toggle_item(
     title: &str,
     key_equiv: &str,
     action: Sel,
     target: *mut Object,
-) -> *mut Object {
+) -> *mut Object { unsafe {
     let title = ns_string(title);
     let key = ns_string(key_equiv);
     let item: *mut Object = msg_send![class!(NSMenuItem), alloc];
@@ -180,11 +180,11 @@ unsafe fn make_toggle_item(
     ];
     let _: () = msg_send![item, setTarget: target];
     item
-}
+}}
 
 /// Add the standard App-menu items. macOS does NOT auto-fill the
 /// app name here — we have to spell out "Quit <App>" ourselves.
-unsafe fn add_app_menu_items(menu: *mut Object, app_name: &str) {
+unsafe fn add_app_menu_items(menu: *mut Object, app_name: &str) { unsafe {
     let title = ns_string(&format!("Quit {app_name}"));
     let key = ns_string("q");
     let quit_item: *mut Object = msg_send![class!(NSMenuItem), alloc];
@@ -195,7 +195,7 @@ unsafe fn add_app_menu_items(menu: *mut Object, app_name: &str) {
         keyEquivalent: key
     ];
     let _: () = msg_send![menu, addItem: quit_item];
-}
+}}
 
 /// Replace the contents of `menu` with a fresh device list. Items
 /// fire `action` on `target`; the chosen item gets a checkmark
@@ -435,14 +435,14 @@ fn ensure_class() -> &'static Class {
     Class::get("TruceMenuTarget").unwrap()
 }
 
-unsafe fn state_from<'a>(this: &Object) -> Option<&'a MenuState> {
+unsafe fn state_from<'a>(this: &Object) -> Option<&'a MenuState> { unsafe {
     let state_ptr: *mut c_void = *this.get_ivar(STATE_IVAR);
     if state_ptr.is_null() {
         None
     } else {
         Some(&*(state_ptr as *const MenuState))
     }
-}
+}}
 
 unsafe fn make_menu_target(input: InputController, output: OutputController) -> *mut Object {
     let cls = ensure_class();
@@ -468,7 +468,7 @@ unsafe fn update_menu_state(
     input_device_menu: *mut Object,
     output_device_menu: *mut Object,
     target_self: *mut Object,
-) {
+) { unsafe {
     let state_ptr: *mut c_void = *(*target).get_ivar(STATE_IVAR);
     if state_ptr.is_null() {
         return;
@@ -479,4 +479,4 @@ unsafe fn update_menu_state(
     state.input_device_menu = input_device_menu;
     state.output_device_menu = output_device_menu;
     state.target = target_self;
-}
+}}

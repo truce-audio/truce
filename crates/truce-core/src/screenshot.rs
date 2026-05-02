@@ -88,8 +88,8 @@ pub fn workspace_screenshot_dir(rel: &str) -> PathBuf {
     let mut topmost_package: Option<PathBuf> = None;
     loop {
         let toml = dir.join("Cargo.toml");
-        if toml.exists() {
-            if let Ok(s) = std::fs::read_to_string(&toml) {
+        if toml.exists()
+            && let Ok(s) = std::fs::read_to_string(&toml) {
                 if s.contains("[workspace]") {
                     // Workspace root — workspace members all share this dir.
                     let snap = dir.join(rel);
@@ -100,7 +100,6 @@ pub fn workspace_screenshot_dir(rel: &str) -> PathBuf {
                 // single-crate projects (no `[workspace]` anywhere up-tree).
                 topmost_package = Some(dir.clone());
             }
-        }
         if !dir.pop() {
             let chosen = topmost_package.unwrap_or(start);
             let snap = chosen.join(rel);

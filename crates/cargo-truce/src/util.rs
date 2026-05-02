@@ -49,11 +49,10 @@ pub(crate) mod fs_ctx {
     ) -> Result<bool, BoxErr> {
         let path = path.as_ref();
         let new = contents.as_ref();
-        if let Ok(existing) = fs::read(path) {
-            if existing == new {
+        if let Ok(existing) = fs::read(path)
+            && existing == new {
                 return Ok(false);
             }
-        }
         fs::write(path, new)
             .map_err(|e| -> BoxErr { format!("write {}: {e}", path.display()).into() })?;
         Ok(true)
@@ -291,39 +290,32 @@ pub(crate) fn detect_default_features() -> std::collections::HashSet<String> {
     let root = project_root();
 
     // Single-crate layout: root Cargo.toml has a `[features]` table.
-    if let Ok(content) = fs::read_to_string(root.join("Cargo.toml")) {
-        if let Ok(doc) = content.parse::<toml::Table>() {
-            if let Some(toml::Value::Table(feat)) = doc.get("features") {
-                if let Some(toml::Value::Array(defaults)) = feat.get("default") {
+    if let Ok(content) = fs::read_to_string(root.join("Cargo.toml"))
+        && let Ok(doc) = content.parse::<toml::Table>()
+            && let Some(toml::Value::Table(feat)) = doc.get("features")
+                && let Some(toml::Value::Array(defaults)) = feat.get("default") {
                     return defaults
                         .iter()
                         .filter_map(|v| v.as_str().map(|s| s.to_string()))
                         .collect();
                 }
-            }
-        }
-    }
 
     // Workspace layout: iterate plugins from `truce.toml` and union
     // their declared default features.
     let mut union = std::collections::HashSet::new();
     if let Ok(config) = crate::load_config() {
         for p in &config.plugin {
-            if let Some(manifest) = locate_plugin_manifest(&root, &p.crate_name) {
-                if let Ok(content) = fs::read_to_string(&manifest) {
-                    if let Ok(doc) = content.parse::<toml::Table>() {
-                        if let Some(toml::Value::Table(feat)) = doc.get("features") {
-                            if let Some(toml::Value::Array(defaults)) = feat.get("default") {
+            if let Some(manifest) = locate_plugin_manifest(&root, &p.crate_name)
+                && let Ok(content) = fs::read_to_string(&manifest)
+                    && let Ok(doc) = content.parse::<toml::Table>()
+                        && let Some(toml::Value::Table(feat)) = doc.get("features")
+                            && let Some(toml::Value::Array(defaults)) = feat.get("default") {
                                 for v in defaults {
                                     if let Some(s) = v.as_str() {
                                         union.insert(s.to_string());
                                     }
                                 }
                             }
-                        }
-                    }
-                }
-            }
         }
     }
     if !union.is_empty() {
@@ -1167,11 +1159,10 @@ pub(crate) fn copy_dir_recursive(src: &Path, dst: &Path) -> crate::Res {
 /// `"Developer ID Application: Name (TEAMID)"`.
 #[cfg(target_os = "macos")]
 pub(crate) fn extract_team_id(sign_id: &str) -> String {
-    if let Some(start) = sign_id.rfind('(') {
-        if let Some(end) = sign_id.rfind(')') {
+    if let Some(start) = sign_id.rfind('(')
+        && let Some(end) = sign_id.rfind(')') {
             return sign_id[start + 1..end].to_string();
         }
-    }
     String::new()
 }
 

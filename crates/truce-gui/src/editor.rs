@@ -702,8 +702,8 @@ impl<P: Params + 'static> baseview::WindowHandler for BuiltinWindowHandler<P> {
                 }
                 editor.request_repaint();
 
-                if let Ok(mut guard) = self.backend.lock() {
-                    if let Some(BlitBackend {
+                if let Ok(mut guard) = self.backend.lock()
+                    && let Some(BlitBackend {
                         device,
                         surface,
                         surface_config,
@@ -716,7 +716,6 @@ impl<P: Params + 'static> baseview::WindowHandler for BuiltinWindowHandler<P> {
                         surface.configure(device, surface_config);
                         blit.resize(device, pw, ph);
                     }
-                }
                 baseview::EventStatus::Captured
             }
             _ => baseview::EventStatus::Ignored,
@@ -880,11 +879,10 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
         // Drop the wgpu surface (CAMetalLayer, MTLDevice, command
         // queue, etc.) before asking baseview to release the NSView.
         // Keeps the Metal teardown order deterministic.
-        if let Some(shared) = self.blit_backend.take() {
-            if let Ok(mut guard) = shared.lock() {
+        if let Some(shared) = self.blit_backend.take()
+            && let Ok(mut guard) = shared.lock() {
                 drop(guard.take());
             }
-        }
 
         if let Some(mut window) = self.window.take() {
             window.close();

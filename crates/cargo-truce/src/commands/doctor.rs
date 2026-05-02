@@ -407,11 +407,10 @@ fn spacer(path: &Path) -> String {
 /// the absolute path. Keeps the matrix readable on macOS / Linux
 /// where the user-scope paths all begin with the home directory.
 fn display_path(path: &Path) -> String {
-    if let Some(home) = dirs::home_dir() {
-        if let Ok(rel) = path.strip_prefix(&home) {
+    if let Some(home) = dirs::home_dir()
+        && let Ok(rel) = path.strip_prefix(&home) {
             return format!("~/{}", rel.display());
         }
-    }
     path.display().to_string()
 }
 
@@ -457,8 +456,8 @@ fn path_is_writable(dir: &Path) -> bool {
 /// point doctor at tools installed outside `$PATH` — useful for `.app`-bundled
 /// binaries (pluginval) or sibling source checkouts (clap-validator).
 fn check_which_with_env(name: &str, env_var: Option<&str>) {
-    if let Some(var) = env_var {
-        if let Some(path) = std::env::var(var)
+    if let Some(var) = env_var
+        && let Some(path) = std::env::var(var)
             .ok()
             .or_else(|| read_cargo_config_env(var))
         {
@@ -472,7 +471,6 @@ fn check_which_with_env(name: &str, env_var: Option<&str>) {
                 tag_warn()
             );
         }
-    }
     match Command::new("which").arg(name).output() {
         Ok(o) if o.status.success() => {
             let path = String::from_utf8_lossy(&o.stdout).trim().to_string();

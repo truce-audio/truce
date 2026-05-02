@@ -380,11 +380,10 @@ unsafe extern "C" fn cb_state_load<P: PluginExport>(
                 inst.plugin.load_state(extra);
             }
             // Notify an already-open editor that state changed (undo, preset recall).
-            if inst.pending_editor_parent.is_none() {
-                if let Some(ref mut editor) = inst.editor {
+            if inst.pending_editor_parent.is_none()
+                && let Some(ref mut editor) = inst.editor {
                     editor.state_changed();
                 }
-            }
         }
         inst.state_loaded = true;
 

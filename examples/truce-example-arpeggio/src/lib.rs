@@ -270,8 +270,8 @@ impl PluginLogic for Arpeggio {
                 // Same step — check whether we've crossed the gate-off
                 // boundary within it.
                 let gate_off_beat = (step as f64 + gate_frac) * beats_per_step;
-                if beat >= gate_off_beat {
-                    if let Some(cn) = self.active_note.take() {
+                if beat >= gate_off_beat
+                    && let Some(cn) = self.active_note.take() {
                         context.output_events.push(Event {
                             sample_offset: i as u32,
                             body: EventBody::NoteOff {
@@ -281,7 +281,6 @@ impl PluginLogic for Arpeggio {
                             },
                         });
                     }
-                }
             }
         }
 

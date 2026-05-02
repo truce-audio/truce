@@ -135,11 +135,10 @@ fn midi_thread(requested: String, pending: Arc<Mutex<Vec<MidiEvent>>>, stop: Arc
                     port,
                     "truce-standalone-in",
                     move |_t, bytes, _| {
-                        if let Some(body) = decode_midi(bytes) {
-                            if let Ok(mut q) = pending.lock() {
+                        if let Some(body) = decode_midi(bytes)
+                            && let Ok(mut q) = pending.lock() {
                                 q.push(MidiEvent { body });
                             }
-                        }
                     },
                     (),
                 ) {

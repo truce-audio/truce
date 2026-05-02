@@ -615,11 +615,10 @@ pub fn dispatch_in(
                     let region_idx = drag.region_idx;
                     state.end_drag();
                     edits.push(ParamEdit::End { id: param_id });
-                    if was_xy {
-                        if let Some(y_id) = layout_param_id_y(layout, region_idx) {
+                    if was_xy
+                        && let Some(y_id) = layout_param_id_y(layout, region_idx) {
                             edits.push(ParamEdit::End { id: y_id });
                         }
-                    }
                 }
             }
             InputEvent::MouseDoubleClick { x, y } => {
@@ -721,11 +720,10 @@ fn handle_mouse_down(
         // button, swallow the click (don't reopen).
         let open_region = state.dropdown.as_ref().unwrap().region_idx;
         state.dropdown_close();
-        if let Some(idx) = state.hit_test(x, y) {
-            if idx == open_region && state.widget_type_at(idx) == Some(WidgetType::Dropdown) {
+        if let Some(idx) = state.hit_test(x, y)
+            && idx == open_region && state.widget_type_at(idx) == Some(WidgetType::Dropdown) {
                 return;
             }
-        }
         // Fall through to normal widget hit-test.
     }
 
@@ -764,11 +762,10 @@ fn handle_mouse_down(
             let norm = (snapshot.get_param)(param_id) as f64;
             state.begin_drag(idx, norm, y);
             edits.push(ParamEdit::Begin { id: param_id });
-            if wtype == Some(WidgetType::XYPad) {
-                if let Some(y_id) = layout_param_id_y(layout, idx) {
+            if wtype == Some(WidgetType::XYPad)
+                && let Some(y_id) = layout_param_id_y(layout, idx) {
                     edits.push(ParamEdit::Begin { id: y_id });
                 }
-            }
         }
     }
 }

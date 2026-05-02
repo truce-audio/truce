@@ -79,9 +79,9 @@ pub(crate) fn cmd_reset_au(args: &[String]) -> Res {
 
     // Reaper AU cache
     let reaper_cache = home.join("Library/Application Support/REAPER/reaper-auplugins_arm64.ini");
-    if reaper_cache.exists() {
-        if let Ok(content) = fs::read_to_string(&reaper_cache) {
-            if let Ok(config) = load_config() {
+    if reaper_cache.exists()
+        && let Ok(content) = fs::read_to_string(&reaper_cache)
+            && let Ok(config) = load_config() {
                 let filtered: String = content
                     .lines()
                     .filter(|l| !l.contains(&config.vendor.name))
@@ -90,8 +90,6 @@ pub(crate) fn cmd_reset_au(args: &[String]) -> Res {
                 let _ = fs::write(&reaper_cache, filtered);
                 eprintln!("  Cleaned Reaper AU cache");
             }
-        }
-    }
 
     // Flush pluginkit registrations (AU v3 appex cache)
     eprintln!("Flushing pluginkit registrations...");
