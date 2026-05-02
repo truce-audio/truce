@@ -26,15 +26,15 @@ use crate::cli::Options;
 use crate::keyboard;
 use crate::midi::MidiInputThread;
 use crate::transport::Transport;
+use crate::vlog;
 
 /// Run the plugin with a window. Blocks until the window closes.
 pub fn run<P: PluginExport>(opts: &Options)
 where
     P::Params: 'static,
 {
-    println!("=== truce standalone ===");
-    println!("Plugin: {}", P::info().name);
-    println!(
+    vlog!("Plugin: {}", P::info().name);
+    vlog!(
         "Category: {}",
         match P::info().category {
             PluginCategory::Effect => "effect",
@@ -158,7 +158,7 @@ where
     });
 
     drop(audio_handles);
-    println!("Goodbye!");
+    vlog!("Goodbye!");
 }
 
 struct StandaloneHandler<P: PluginExport + 'static>
@@ -206,7 +206,7 @@ where
         // child thread — no driver teardown ever runs.
         #[cfg(target_os = "linux")]
         if matches!(event, Event::Window(baseview::WindowEvent::WillClose)) {
-            println!("Goodbye!");
+            vlog!("Goodbye!");
             unsafe extern "C" {
                 fn _exit(status: i32) -> !;
             }
@@ -234,8 +234,8 @@ where
         // SPACE → transport play/stop (on keydown only; ignore repeats).
         if kb.state == KeyState::Down && kb.code == Code::Space {
             self.transport.toggle_playing();
-            eprintln!(
-                "[truce-standalone] transport: {}",
+            vlog!(
+                "transport: {}",
                 if self.transport.is_playing() {
                     "playing"
                 } else {
@@ -245,29 +245,23 @@ where
             return EventStatus::Captured;
         }
 
-        // I → toggle mic input (only meaningful for effects).
-        // First press on macOS triggers the system permission
-        // dialog; subsequent presses toggle without prompting.
-        // On Windows, Ctrl+I is also accepted to mirror the
-        // native menu's accelerator hint (Win32 menu accelerators
-        // need an HACCEL table + TranslateAccelerator in the
-        // message loop, which baseview doesn't expose — so we
-        // dispatch the modifier shortcut from here instead).
-        if kb.state == KeyState::Down && kb.code == Code::KeyI && self.is_effect {
-            let bare = !is_mod_pressed(&kb.modifiers);
-            #[cfg(target_os = "windows")]
-            let with_ctrl = kb.modifiers.contains(Modifiers::CONTROL);
-            #[cfg(not(target_os = "windows"))]
-            let with_ctrl = false;
-            if bare || with_ctrl {
+        // Cmd+I (macOS) / Ctrl+I (Linux / Windows) → toggle mic
+        // input (effects only). First press on macOS triggers the
+        // system permission dialog; subsequent toggles don't
+        // re-prompt. On macOS the NSMenuItem accelerator usually
+        // dispatches this before baseview sees the event — the
+        // handler below is the only path on Windows / Linux (Win32
+        // menu accelerators need an HACCEL table baseview doesn't
+        // expose) and a guard on macOS. Capture both Down and Up
+        // so the note-handler below never sees a stray modifier+I
+        // Up that would emit a NoteOff for a note we never played.
+        if kb.code == Code::KeyI && self.is_effect && is_mod_pressed(&kb.modifiers) {
+            if kb.state == KeyState::Down {
                 let want = !self.input_ctrl.is_enabled();
                 self.input_ctrl.set_enabled(want);
-                eprintln!(
-                    "[truce-standalone] mic: {} (request)",
-                    if want { "ON" } else { "OFF" }
-                );
-                return EventStatus::Captured;
+                vlog!("mic: {} (request)", if want { "ON" } else { "OFF" });
             }
+            return EventStatus::Captured;
         }
 
         // Cmd+O (macOS) / Ctrl+O (Linux / Windows) → toggle audio
@@ -286,10 +280,7 @@ where
             if kb.state == KeyState::Down {
                 let want = !self.output_ctrl.is_enabled();
                 self.output_ctrl.set_enabled(want);
-                eprintln!(
-                    "[truce-standalone] output: {} (request)",
-                    if want { "ON" } else { "OFF" }
-                );
+                vlog!("output: {} (request)", if want { "ON" } else { "OFF" });
             }
             return EventStatus::Captured;
         }
@@ -324,13 +315,13 @@ where
 
     /// Snapshot the plugin (params + custom state) and write it to a
     /// user-picked path. Same envelope every other host format
-    /// produces, so the resulting `.state` file round-trips into
-    /// CLAP / VST3 / AU / a future `--state foo.state` standalone
-    /// launch.
+    /// produces, so the resulting `.pluginstate` file round-trips
+    /// into CLAP / VST3 / AU / a future
+    /// `--state foo.pluginstate` standalone launch.
     ///
     /// On macOS / Windows the path comes from a native save
     /// dialog; on Linux we fall back to a default
-    /// `<data_local_dir>/truce/<slug>/quicksave-<ts>.state` path
+    /// `<data_local_dir>/truce/<slug>/quicksave-<ts>.pluginstate` path
     /// because `rfd`'s Linux backend (xdg-portal) drags
     /// `wayland-sys` into the dep tree, which would force every
     /// truce-using project on a typical Linux dev machine to
@@ -339,7 +330,7 @@ where
     /// backend (or once that dep tree thins out).
     fn save_state_via_picker(&self) {
         let Ok(plugin) = self.plugin.lock() else {
-            eprintln!("[truce-standalone] could not lock plugin to save state");
+            eprintln!("could not lock plugin to save state");
             return;
         };
         let blob = truce_core::state::snapshot_plugin(&*plugin);
@@ -354,12 +345,12 @@ where
             return; // user cancelled, or no fallback dir on Linux
         };
         match std::fs::write(&path, &blob) {
-            Ok(()) => eprintln!(
-                "[truce-standalone] state saved: {} ({param_count} params, {} bytes)",
+            Ok(()) => vlog!(
+                "state saved: {} ({param_count} params, {} bytes)",
                 path.display(),
                 blob.len(),
             ),
-            Err(e) => eprintln!("[truce-standalone] write {}: {e}", path.display()),
+            Err(e) => eprintln!("write {}: {e}", path.display()),
         }
     }
 }
@@ -381,15 +372,15 @@ fn slugify(name: &str) -> String {
 fn pick_save_path<P: PluginExport>(plugin_slug: &str) -> Option<std::path::PathBuf> {
     // Default to <data_local_dir>/truce/<slug>/ if it exists,
     // otherwise the home dir. User can navigate elsewhere from the
-    // dialog. `<plugin>.state` is the suggested filename.
+    // dialog. `<plugin>.pluginstate` is the suggested filename.
     let initial_dir = dirs::data_local_dir()
         .map(|d| d.join("truce").join(plugin_slug))
         .filter(|p| p.exists())
         .or_else(dirs::home_dir);
     let mut dialog = rfd::FileDialog::new()
         .set_title(format!("Save state for {}", P::info().name))
-        .add_filter("Truce state", &["state"])
-        .set_file_name(format!("{plugin_slug}.state"));
+        .add_filter(".pluginstate file", &["pluginstate"])
+        .set_file_name(format!("{plugin_slug}.pluginstate"));
     if let Some(dir) = initial_dir {
         dialog = dialog.set_directory(dir);
     }
@@ -400,16 +391,16 @@ fn pick_save_path<P: PluginExport>(plugin_slug: &str) -> Option<std::path::PathB
 fn pick_save_path<P: PluginExport>(plugin_slug: &str) -> Option<std::path::PathBuf> {
     let dir = dirs::data_local_dir()?.join("truce").join(plugin_slug);
     if let Err(e) = std::fs::create_dir_all(&dir) {
-        eprintln!("[truce-standalone] mkdir {}: {e}", dir.display());
+        eprintln!("mkdir {}: {e}", dir.display());
         return None;
     }
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .ok()?
         .as_secs();
-    let path = dir.join(format!("quicksave-{ts}.state"));
+    let path = dir.join(format!("quicksave-{ts}.pluginstate"));
     eprintln!(
-        "[truce-standalone] native save dialog not yet wired on Linux — \
+        "native save dialog not yet wired on Linux — \
          saving to {}",
         path.display()
     );

@@ -36,6 +36,11 @@ pub struct Options {
     pub midi_input: Option<String>,
     pub bpm: Option<f64>,
     pub state_path: Option<PathBuf>,
+    /// Print status chatter (device picks, toggles, save / load
+    /// confirmations, transport state). Off by default; set with
+    /// `--verbose` / `-v`. Errors and `--list-*` output ignore
+    /// this flag and always print.
+    pub verbose: bool,
     /// `.wav` file to feed into the plugin's input bus, summed
     /// with mic input when both are active. Only populated when
     /// the `playback` feature is enabled.
@@ -75,6 +80,9 @@ OPTIONS:
   --midi-input <name>       MIDI input device (substring match)
   --bpm <n>                 Transport BPM (default 120)
   --state <path>            Load plugin state from this file on launch
+  -v, --verbose             Print status chatter (device picks, toggles,
+                            save/load notices, transport state). Errors
+                            and --list-* output always print.
 ";
 
 #[cfg(feature = "playback")]
@@ -132,6 +140,7 @@ pub fn parse() -> Result<Options, String> {
     let headless = args.contains("--headless");
     let list_devices = args.contains("--list-devices");
     let list_midi = args.contains("--list-midi");
+    let verbose = args.contains(["-v", "--verbose"]);
 
     // Parse values — each `Option<...>` short-circuits to None if absent.
     let output_device = args
@@ -203,6 +212,10 @@ pub fn parse() -> Result<Options, String> {
         midi_input: midi_input.or_else(|| env("MIDI_INPUT")),
         bpm: bpm.or_else(|| env("BPM").and_then(|s| s.parse().ok())),
         state_path: state_path.or_else(|| env("STATE").map(PathBuf::from)),
+        verbose: verbose
+            || env("VERBOSE")
+                .map(|s| matches!(s.trim(), "1" | "true" | "on" | "yes"))
+                .unwrap_or(false),
         #[cfg(feature = "playback")]
         input_file: input_file.or_else(|| env("INPUT_FILE").map(PathBuf::from)),
         #[cfg(feature = "playback")]

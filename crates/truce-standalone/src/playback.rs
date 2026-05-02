@@ -105,12 +105,12 @@ impl PlaybackSource {
         } else {
             if src_channels > target_channels {
                 eprintln!(
-                    "[truce-standalone] file is {src_channels}ch, device is \
+                    "file is {src_channels}ch, device is \
                      {target_channels}ch — discarding channels [{target_channels}..{src_channels}]"
                 );
             } else {
                 eprintln!(
-                    "[truce-standalone] file is {src_channels}ch, device is \
+                    "file is {src_channels}ch, device is \
                      {target_channels}ch — zero-filling channels [{src_channels}..{target_channels}]"
                 );
             }
@@ -247,7 +247,7 @@ impl CaptureSink {
                         Ok(chunk) => {
                             for sample in chunk {
                                 if let Err(e) = writer.write_sample(sample) {
-                                    eprintln!("[truce-standalone] capture write failed: {e}");
+                                    eprintln!("capture write failed: {e}");
                                     return;
                                 }
                             }
@@ -266,13 +266,13 @@ impl CaptureSink {
                 while let Ok(chunk) = chunk_rx.try_recv() {
                     for sample in chunk {
                         if let Err(e) = writer.write_sample(sample) {
-                            eprintln!("[truce-standalone] capture write failed: {e}");
+                            eprintln!("capture write failed: {e}");
                             return;
                         }
                     }
                 }
                 if let Err(e) = writer.finalize() {
-                    eprintln!("[truce-standalone] capture finalize failed: {e}");
+                    eprintln!("capture finalize failed: {e}");
                 }
             })
             .map_err(|e| format!("could not spawn capture writer: {e}"))?;
@@ -309,7 +309,7 @@ impl CaptureSink {
             let _ = handle.join();
         }
         eprintln!(
-            "[truce-standalone] captured to {} ({} Hz, {} ch, f32)",
+            "captured to {} ({} Hz, {} ch, f32)",
             self.path.display(),
             self.spec.sample_rate,
             self.spec.channels,
@@ -336,7 +336,7 @@ impl CapturePusher {
             Err(mpsc::TrySendError::Full(samples)) => {
                 if !self.blocked_at_least_once.swap(true, Ordering::Relaxed) {
                     eprintln!(
-                        "[truce-standalone] capture: audio thread blocking on \
+                        "capture: audio thread blocking on \
                          disk write — output may glitch (this warning fires once)"
                     );
                 }

@@ -34,6 +34,7 @@ use objc::runtime::{Class, Object, Sel, BOOL, NO, YES};
 use objc::{class, msg_send, sel, sel_impl};
 
 use crate::audio::{self, InputController, OutputController};
+use crate::vlog;
 
 /// Heap-allocated state the Objective-C class points at via ivar.
 struct MenuState {
@@ -298,8 +299,8 @@ fn ensure_class() -> &'static Class {
                 };
                 let want = !state.input.is_enabled();
                 state.input.set_enabled(want);
-                eprintln!(
-                    "[truce-standalone] mic: {} (request, via menu)",
+                vlog!(
+                    "mic: {} (request, via menu)",
                     if want { "ON" } else { "OFF" }
                 );
                 let new_state: BOOL = if want { YES } else { NO };
@@ -319,8 +320,8 @@ fn ensure_class() -> &'static Class {
                 };
                 let want = !state.output.is_enabled();
                 state.output.set_enabled(want);
-                eprintln!(
-                    "[truce-standalone] output: {} (request, via menu)",
+                vlog!(
+                    "output: {} (request, via menu)",
                     if want { "ON" } else { "OFF" }
                 );
                 let new_state: BOOL = if want { YES } else { NO };
@@ -339,7 +340,7 @@ fn ensure_class() -> &'static Class {
                     return;
                 };
                 if let Some(name) = item_title(sender) {
-                    eprintln!("[truce-standalone] input device: {name}");
+                    vlog!("input device: {name}");
                     state.input.set_device(Some(name));
                 }
             }
@@ -356,7 +357,7 @@ fn ensure_class() -> &'static Class {
                     return;
                 };
                 if let Some(name) = item_title(sender) {
-                    eprintln!("[truce-standalone] output device: {name}");
+                    vlog!("output device: {name}");
                     state.output.set_device(Some(name));
                 }
             }

@@ -8,6 +8,7 @@ use truce_core::info::PluginCategory;
 use crate::audio;
 use crate::cli::Options;
 use crate::midi;
+use crate::vlog;
 
 /// Run audio-only and block until SIGINT (or, when capturing a
 /// finite `--input-file` to `--output-file`, until the input file
@@ -29,10 +30,10 @@ pub fn run<P: PluginExport>(opts: &Options) {
     let _midi_guard = midi::MidiInputThread::start(opts, Arc::clone(&handles.pending));
 
     let is_instrument = P::info().category != PluginCategory::Effect;
-    println!("=== truce standalone (headless) ===");
-    println!("Plugin: {}", P::info().name);
+    vlog!("Plugin: {}", P::info().name);
     if is_instrument && opts.midi_input.is_none() {
-        println!(
+        // Soft warning — actionable, so always print.
+        eprintln!(
             "(instrument; no --midi-input specified — plugin will \
              emit silence. Use --list-midi to see available devices.)"
         );
@@ -48,9 +49,12 @@ pub fn run<P: PluginExport>(opts: &Options) {
     let auto_exit_on_eof = false;
 
     if auto_exit_on_eof {
-        println!("Rendering input file to output file in real-time. Ctrl-C to abort.");
+        // The render-to-file flow blocks until the input drains,
+        // so a "starting" / "abort with Ctrl-C" hint is useful
+        // enough to print unconditionally.
+        eprintln!("Rendering input file to output file in real-time. Ctrl-C to abort.");
     } else {
-        println!("Ctrl-C to quit.");
+        vlog!("Ctrl-C to quit.");
     }
 
     if auto_exit_on_eof {

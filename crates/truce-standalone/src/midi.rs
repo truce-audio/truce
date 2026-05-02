@@ -20,6 +20,7 @@ use truce_core::events::EventBody;
 
 use crate::audio::MidiEvent;
 use crate::cli::Options;
+use crate::vlog;
 
 const HOTPLUG_POLL: Duration = Duration::from_secs(1);
 
@@ -40,7 +41,7 @@ pub fn list_midi() {
                 }
             }
         }
-        Err(e) => eprintln!("[truce-standalone] MIDI init failed: {e}"),
+        Err(e) => eprintln!("MIDI init failed: {e}"),
     }
 }
 
@@ -100,7 +101,7 @@ fn midi_thread(requested: String, pending: Arc<Mutex<Vec<MidiEvent>>>, stop: Arc
             };
             if !still_present {
                 eprintln!(
-                    "[truce-standalone] MIDI device '{current_name}' \
+                    "MIDI device '{current_name}' \
                      disconnected — falling back to QWERTY."
                 );
                 connection = None;
@@ -113,7 +114,7 @@ fn midi_thread(requested: String, pending: Arc<Mutex<Vec<MidiEvent>>>, stop: Arc
             let midi_in = match MidiInput::new("truce-standalone") {
                 Ok(m) => m,
                 Err(e) => {
-                    eprintln!("[truce-standalone] MIDI init failed: {e}");
+                    eprintln!("MIDI init failed: {e}");
                     std::thread::sleep(HOTPLUG_POLL);
                     continue;
                 }
@@ -143,12 +144,12 @@ fn midi_thread(requested: String, pending: Arc<Mutex<Vec<MidiEvent>>>, stop: Arc
                     (),
                 ) {
                     Ok(conn) => {
-                        eprintln!("[truce-standalone] MIDI input: {name}");
+                        vlog!("MIDI input: {name}");
                         connection = Some(conn);
                         current_name = name;
                     }
                     Err(e) => {
-                        eprintln!("[truce-standalone] MIDI connect failed: {e}");
+                        eprintln!("MIDI connect failed: {e}");
                     }
                 }
             }

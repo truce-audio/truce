@@ -7,6 +7,8 @@ use std::path::Path;
 
 use truce_core::export::PluginExport;
 
+use crate::vlog;
+
 /// Read `path` and apply it to `plugin` via the canonical state
 /// envelope. Logs a single line on success, a single line on each
 /// failure mode (read error vs envelope mismatch). Never panics —
@@ -15,17 +17,14 @@ pub fn load_into<P: PluginExport>(plugin: &mut P, path: &Path) {
     let bytes = match std::fs::read(path) {
         Ok(b) => b,
         Err(e) => {
-            eprintln!(
-                "[truce-standalone] failed to read state {}: {e}",
-                path.display()
-            );
+            eprintln!("failed to read state {}: {e}", path.display());
             return;
         }
     };
     match truce_core::state::restore_plugin(plugin, &bytes) {
-        Ok(()) => eprintln!("[truce-standalone] loaded state from {}", path.display()),
+        Ok(()) => vlog!("loaded state from {}", path.display()),
         Err(truce_core::state::RestoreError::Invalid) => eprintln!(
-            "[truce-standalone] {} doesn't look like a state file for {} \
+            "{} doesn't look like a state file for {} \
              (wrong magic / version / plugin ID)",
             path.display(),
             P::info().name,

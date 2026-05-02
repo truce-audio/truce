@@ -30,6 +30,7 @@ use truce_params::Params;
 
 use crate::cli::Options;
 use crate::transport::Transport;
+use crate::vlog;
 
 /// A queued MIDI event the UI thread hands off to the audio callback.
 pub struct MidiEvent {
@@ -358,13 +359,22 @@ pub fn start_audio<P: PluginExport>(
     }
 
     if is_effect {
-        eprintln!(
+        vlog!(
             "Input:  {} ({})",
             initial_input_name.as_deref().unwrap_or("(none)"),
             if want_input_enabled {
                 "enabled"
             } else {
-                "disabled — press 'I' in the window or pass --input-enabled on"
+                {
+                    #[cfg(target_os = "macos")]
+                    {
+                        "disabled — press Cmd+I in the window or pass --input-enabled on"
+                    }
+                    #[cfg(not(target_os = "macos"))]
+                    {
+                        "disabled — press Ctrl+I in the window or pass --input-enabled on"
+                    }
+                }
             }
         );
     }
@@ -398,7 +408,7 @@ pub fn start_audio<P: PluginExport>(
         Some(path) if is_effect => {
             let src = crate::playback::PlaybackSource::from_wav(path, sample_rate, channels)
                 .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
-            eprintln!(
+            vlog!(
                 "Playback: {} → input bus (one-shot, sums with mic when enabled)",
                 path.display()
             );
@@ -407,7 +417,7 @@ pub fn start_audio<P: PluginExport>(
         Some(_) => {
             // Instrument plugins have no input bus to feed; warn
             // and ignore rather than failing.
-            eprintln!("[truce-standalone] --input-file ignored: plugin is not an effect");
+            eprintln!("--input-file ignored: plugin is not an effect");
             None
         }
         None => None,
@@ -421,7 +431,7 @@ pub fn start_audio<P: PluginExport>(
         Some(path) => {
             let sink = crate::playback::CaptureSink::create(path, sample_rate, channels)
                 .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
-            eprintln!(
+            vlog!(
                 "Capture: {} ({} Hz, {} ch, f32) — pre-mute output",
                 path.display(),
                 sample_rate,
@@ -474,7 +484,7 @@ pub fn start_audio<P: PluginExport>(
     }
 
     if !output_enabled.load(Ordering::Relaxed) {
-        eprintln!(
+        vlog!(
             "Output: muted at launch — toggle from the Plugin menu or \
              pass --output-enabled on"
         );
@@ -569,7 +579,7 @@ fn output_worker<P: PluginExport>(
                     &res,
                     &mut stream,
                 ) {
-                    eprintln!("[truce-standalone] output device switch failed: {e}");
+                    eprintln!("output device switch failed: {e}");
                 }
             }
         }
@@ -655,7 +665,7 @@ fn open_output_stream<P: PluginExport>(
         *g = resolved_name.clone();
     }
 
-    eprintln!(
+    vlog!(
         "Output: {} @ {} Hz, {} ch",
         resolved_name.as_deref().unwrap_or("(unnamed)"),
         sample_rate,
@@ -759,13 +769,13 @@ fn apply_input_state(
                         }
                     }
                     Err(e) => {
-                        eprintln!("[truce-standalone] mic enable failed: {e}");
+                        eprintln!("mic enable failed: {e}");
                         enabled_flag.store(false, Ordering::Relaxed);
                     }
                 }
             }
             None => {
-                eprintln!("[truce-standalone] mic enable failed: no input device available");
+                eprintln!("mic enable failed: no input device available");
                 enabled_flag.store(false, Ordering::Relaxed);
             }
         }
@@ -852,7 +862,7 @@ fn resolve_config(
                 sample_rate = desired;
             } else {
                 eprintln!(
-                    "[truce-standalone] sample rate {sr} Hz not supported; \
+                    "sample rate {sr} Hz not supported; \
                      using device default {}",
                     default.sample_rate().0
                 );

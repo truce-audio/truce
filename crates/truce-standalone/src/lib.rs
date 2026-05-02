@@ -57,6 +57,37 @@ pub use truce_core::export::PluginExport;
 /// Re-export for backward compatibility.
 pub use truce_core::export::PluginExport as StandaloneExport;
 
+// ---------------------------------------------------------------------------
+// Verbose state — set once from CLI / env, read everywhere via `vlog!`.
+// ---------------------------------------------------------------------------
+
+use std::sync::atomic::{AtomicBool, Ordering};
+
+static VERBOSE: AtomicBool = AtomicBool::new(false);
+
+/// True when `--verbose` / `-v` (or `TRUCE_STANDALONE_VERBOSE=1`) was
+/// passed at launch. Errors and `--list-*` output ignore this flag.
+pub fn is_verbose() -> bool {
+    VERBOSE.load(Ordering::Relaxed)
+}
+
+pub(crate) fn set_verbose(on: bool) {
+    VERBOSE.store(on, Ordering::Relaxed);
+}
+
+/// `eprintln!`, but only fires when [`is_verbose`] is true. Used for
+/// status chatter (device picks, toggles, transport state, save /
+/// load notices) — anything the user might want a trace of but that
+/// shouldn't clutter the default output.
+macro_rules! vlog {
+    ($($arg:tt)*) => {
+        if $crate::is_verbose() {
+            eprintln!($($arg)*);
+        }
+    };
+}
+pub(crate) use vlog;
+
 /// Plugin-author launch defaults — used as the lowest tier of the
 /// CLI parser, beneath argv and `TRUCE_STANDALONE_*` env vars.
 /// Empty `Defaults::default()` lets every value fall through to the
@@ -99,6 +130,10 @@ where
         }
     };
 
+    // Latch the verbose flag before anything else logs — every
+    // `vlog!` checks this static.
+    set_verbose(opts.verbose);
+
     // Layer the plugin-author defaults beneath whatever argv / env
     // already resolved. Other Options fields stay CLI/env-only —
     // device, sample rate, buffer, MIDI, BPM, state are
@@ -123,7 +158,7 @@ where
     #[cfg(feature = "playback")]
     if opts.output_file.is_some() && !opts.headless {
         eprintln!(
-            "[truce-standalone] --output-file implies --headless; \
+            "--output-file implies --headless; \
              running without a window."
         );
         opts.headless = true;
@@ -136,7 +171,7 @@ where
     #[cfg(feature = "playback")]
     if opts.no_playback && !(opts.input_file.is_some() && opts.output_file.is_some()) {
         eprintln!(
-            "[truce-standalone] --no-playback ignored: \
+            "--no-playback ignored: \
              requires both --input-file and --output-file"
         );
         opts.no_playback = false;

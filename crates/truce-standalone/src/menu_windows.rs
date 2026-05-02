@@ -49,6 +49,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 };
 
 use crate::audio::{self, InputController, OutputController};
+use crate::vlog;
 
 /// Command ID for the mic-input toggle.
 const MENU_CMD_MIC: u16 = 0xC001;
@@ -247,8 +248,8 @@ unsafe extern "system" fn subclass_proc(
             if cmd_id == MENU_CMD_MIC && state.has_mic_item {
                 let want = !state.input.is_enabled();
                 state.input.set_enabled(want);
-                eprintln!(
-                    "[truce-standalone] mic: {} (request, via menu)",
+                vlog!(
+                    "mic: {} (request, via menu)",
                     if want { "ON" } else { "OFF" }
                 );
                 let flag = if want { MF_CHECKED } else { MF_UNCHECKED };
@@ -259,8 +260,8 @@ unsafe extern "system" fn subclass_proc(
             if cmd_id == MENU_CMD_OUTPUT {
                 let want = !state.output.is_enabled();
                 state.output.set_enabled(want);
-                eprintln!(
-                    "[truce-standalone] output: {} (request, via menu)",
+                vlog!(
+                    "output: {} (request, via menu)",
                     if want { "ON" } else { "OFF" }
                 );
                 let flag = if want { MF_CHECKED } else { MF_UNCHECKED };
@@ -276,7 +277,7 @@ unsafe extern "system" fn subclass_proc(
                 && (MENU_CMD_INPUT_DEVICE_BASE..=MENU_CMD_INPUT_DEVICE_END).contains(&cmd_id)
             {
                 if let Some(name) = get_menu_string(state.hmenu_input_devices, cmd_id as u32) {
-                    eprintln!("[truce-standalone] input device: {name}");
+                    vlog!("input device: {name}");
                     state.input.set_device(Some(name));
                 }
                 return 0;
@@ -284,7 +285,7 @@ unsafe extern "system" fn subclass_proc(
 
             if (MENU_CMD_OUTPUT_DEVICE_BASE..=MENU_CMD_OUTPUT_DEVICE_END).contains(&cmd_id) {
                 if let Some(name) = get_menu_string(state.hmenu_output_devices, cmd_id as u32) {
-                    eprintln!("[truce-standalone] output device: {name}");
+                    vlog!("output device: {name}");
                     state.output.set_device(Some(name));
                 }
                 return 0;
