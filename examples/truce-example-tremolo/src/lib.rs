@@ -19,8 +19,8 @@ const WINDOW_H: u32 = 162;
 
 // --- Parameters ---
 
-use std::sync::Arc;
 use TremoloParamsParamId as P;
+use std::sync::Arc;
 
 /// LFO-cycle length as a note value. Maps directly to beats per cycle
 /// (`Quarter == 1.0`, `Eighth == 0.5`, ...).

@@ -5,14 +5,14 @@
 //! handle. We stash a single blob of truce's standard `serialize_state`
 //! output under a well-known URI.
 
-use std::ffi::{c_char, c_void, CString};
+use std::ffi::{CString, c_char, c_void};
 
 use truce_core::export::PluginExport;
 use truce_core::state::{deserialize_state, serialize_state};
 use truce_params::Params;
 
-use crate::urid::Urid;
 use crate::Lv2Instance;
+use crate::urid::Urid;
 
 pub(crate) const LV2_STATE__INTERFACE_URI: &str = "http://lv2plug.in/ns/ext/state#interface";
 
@@ -83,31 +83,33 @@ unsafe extern "C" fn save_cb<P: PluginExport>(
     handle: *mut c_void,
     _flags: u32,
     _features: *const *const crate::types::LV2Feature,
-) -> u32 { unsafe {
-    if instance.is_null() {
-        return 0;
-    }
-    let inst = &mut *(instance as *mut Lv2Instance<P>);
-    let (ids, values) = inst.plugin.params().collect_values();
-    let extra = inst.plugin.save_state();
-    let blob = serialize_state(inst.plugin_id_hash, &ids, &values, extra.as_deref());
+) -> u32 {
+    unsafe {
+        if instance.is_null() {
+            return 0;
+        }
+        let inst = &mut *(instance as *mut Lv2Instance<P>);
+        let (ids, values) = inst.plugin.params().collect_values();
+        let extra = inst.plugin.save_state();
+        let blob = serialize_state(inst.plugin_id_hash, &ids, &values, extra.as_deref());
 
-    let key = inst.urid_map.intern(TRUCE_STATE_KEY_URI);
-    let chunk_urid = inst.urid_map.atom_chunk;
-    if key == 0 || chunk_urid == 0 {
-        return 0;
+        let key = inst.urid_map.intern(TRUCE_STATE_KEY_URI);
+        let chunk_urid = inst.urid_map.atom_chunk;
+        if key == 0 || chunk_urid == 0 {
+            return 0;
+        }
+        let flags = LV2_STATE_IS_POD | LV2_STATE_IS_PORTABLE;
+        let _ = store(
+            handle,
+            key,
+            blob.as_ptr() as *const c_void,
+            blob.len(),
+            chunk_urid,
+            flags,
+        );
+        LV2_STATE_SUCCESS
     }
-    let flags = LV2_STATE_IS_POD | LV2_STATE_IS_PORTABLE;
-    let _ = store(
-        handle,
-        key,
-        blob.as_ptr() as *const c_void,
-        blob.len(),
-        chunk_urid,
-        flags,
-    );
-    LV2_STATE_SUCCESS
-}}
+}
 
 unsafe extern "C" fn restore_cb<P: PluginExport>(
     instance: *mut c_void,
@@ -115,32 +117,34 @@ unsafe extern "C" fn restore_cb<P: PluginExport>(
     handle: *mut c_void,
     _flags: u32,
     _features: *const *const crate::types::LV2Feature,
-) -> u32 { unsafe {
-    if instance.is_null() {
-        return 0;
-    }
-    let inst = &mut *(instance as *mut Lv2Instance<P>);
-    let key = inst.urid_map.intern(TRUCE_STATE_KEY_URI);
-    if key == 0 {
-        return 0;
-    }
-    let mut size = 0usize;
-    let mut type_: Urid = 0;
-    let mut state_flags: u32 = 0;
-    let data = retrieve(handle, key, &mut size, &mut type_, &mut state_flags);
-    if data.is_null() || size == 0 {
-        return 0;
-    }
-    let slice = core::slice::from_raw_parts(data as *const u8, size);
-    if let Some(state) = deserialize_state(slice, inst.plugin_id_hash) {
-        inst.plugin.params().restore_values(&state.params);
-        inst.plugin.params().snap_smoothers();
-        if let Some(extra) = state.extra {
-            inst.plugin.load_state(&extra);
+) -> u32 {
+    unsafe {
+        if instance.is_null() {
+            return 0;
         }
+        let inst = &mut *(instance as *mut Lv2Instance<P>);
+        let key = inst.urid_map.intern(TRUCE_STATE_KEY_URI);
+        if key == 0 {
+            return 0;
+        }
+        let mut size = 0usize;
+        let mut type_: Urid = 0;
+        let mut state_flags: u32 = 0;
+        let data = retrieve(handle, key, &mut size, &mut type_, &mut state_flags);
+        if data.is_null() || size == 0 {
+            return 0;
+        }
+        let slice = core::slice::from_raw_parts(data as *const u8, size);
+        if let Some(state) = deserialize_state(slice, inst.plugin_id_hash) {
+            inst.plugin.params().restore_values(&state.params);
+            inst.plugin.params().snap_smoothers();
+            if let Some(extra) = state.extra {
+                inst.plugin.load_state(&extra);
+            }
+        }
+        LV2_STATE_SUCCESS
     }
-    LV2_STATE_SUCCESS
-}}
+}
 
 // Quiet unused-import for future generic symbol lookups.
 const _: Option<CString> = None;

@@ -12,8 +12,8 @@ use crate::rustup_has_target;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use crate::tag_info;
 use crate::{
-    check_cmd, dirs, load_config, project_root, resolve_aax_sdk_path, tag_fail, tag_ok, tag_warn,
-    Res,
+    Res, check_cmd, dirs, load_config, project_root, resolve_aax_sdk_path, tag_fail, tag_ok,
+    tag_warn,
 };
 #[cfg(target_os = "windows")]
 use crate::{

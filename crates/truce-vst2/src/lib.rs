@@ -138,36 +138,40 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
     Box::into_raw(instance) as *mut std::ffi::c_void
 }
 
-unsafe extern "C" fn cb_destroy<P: PluginExport>(ctx: *mut std::ffi::c_void) { unsafe {
-    if !ctx.is_null() {
-        drop(Box::from_raw(ctx as *mut Vst2Instance<P>));
+unsafe extern "C" fn cb_destroy<P: PluginExport>(ctx: *mut std::ffi::c_void) {
+    unsafe {
+        if !ctx.is_null() {
+            drop(Box::from_raw(ctx as *mut Vst2Instance<P>));
+        }
     }
-}}
+}
 
 unsafe extern "C" fn cb_reset<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     sample_rate: f64,
     max_frames: u32,
-) { unsafe {
-    let inst = &mut *(ctx as *mut Vst2Instance<P>);
-    inst.sample_rate = sample_rate;
-    inst.plugin.reset(sample_rate, max_frames as usize);
-    inst.plugin.params().set_sample_rate(sample_rate);
-    inst.plugin.params().snap_smoothers();
+) {
+    unsafe {
+        let inst = &mut *(ctx as *mut Vst2Instance<P>);
+        inst.sample_rate = sample_rate;
+        inst.plugin.reset(sample_rate, max_frames as usize);
+        inst.plugin.params().set_sample_rate(sample_rate);
+        inst.plugin.params().snap_smoothers();
 
-    // Mark the instance as "fully initialized" so any subsequent
-    // `cb_gui_open` calls open the editor immediately rather than
-    // deferring. This covers the fresh-instance case where the host
-    // calls `effMainsChanged(true)` (→ this reset) but never calls
-    // `effSetChunk` because there's no saved state.
-    inst.state_loaded = true;
+        // Mark the instance as "fully initialized" so any subsequent
+        // `cb_gui_open` calls open the editor immediately rather than
+        // deferring. This covers the fresh-instance case where the host
+        // calls `effMainsChanged(true)` (→ this reset) but never calls
+        // `effSetChunk` because there's no saved state.
+        inst.state_loaded = true;
 
-    // If the host opened the editor before state_load but never called
-    // state_load (new instance, no saved state), flush the pending open now.
-    if let Some(parent) = inst.pending_editor_parent.take() {
-        open_editor_inner(inst, parent);
+        // If the host opened the editor before state_load but never called
+        // state_load (new instance, no saved state), flush the pending open now.
+        if let Some(parent) = inst.pending_editor_parent.take() {
+            open_editor_inner(inst, parent);
+        }
     }
-}}
+}
 
 unsafe extern "C" fn cb_process<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
@@ -178,136 +182,146 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
     num_frames: u32,
     events: *const Vst2MidiEvent,
     num_events: u32,
-) { unsafe {
-    let inst = &mut *(ctx as *mut Vst2Instance<P>);
-    let num_frames = num_frames as usize;
+) {
+    unsafe {
+        let inst = &mut *(ctx as *mut Vst2Instance<P>);
+        let num_frames = num_frames as usize;
 
-    // Convert MIDI events
-    inst.event_list.clear();
-    if !events.is_null() && num_events > 0 {
-        let event_slice = slice::from_raw_parts(events, num_events as usize);
-        for ev in event_slice {
-            let status = ev.status & 0xF0;
-            let channel = ev.status & 0x0F;
-            let body = match status {
-                0x90 if ev.data2 > 0 => Some(EventBody::NoteOn {
-                    channel,
-                    note: ev.data1,
-                    velocity: ev.data2 as f32 / 127.0,
-                }),
-                0x90 => Some(EventBody::NoteOff {
-                    channel,
-                    note: ev.data1,
-                    velocity: 0.0,
-                }),
-                0x80 => Some(EventBody::NoteOff {
-                    channel,
-                    note: ev.data1,
-                    velocity: ev.data2 as f32 / 127.0,
-                }),
-                0xB0 => Some(EventBody::ControlChange {
-                    channel,
-                    cc: ev.data1,
-                    value: ev.data2 as f32 / 127.0,
-                }),
-                0xE0 => {
-                    let raw = ((ev.data2 as u16) << 7) | (ev.data1 as u16);
-                    Some(EventBody::PitchBend {
+        // Convert MIDI events
+        inst.event_list.clear();
+        if !events.is_null() && num_events > 0 {
+            let event_slice = slice::from_raw_parts(events, num_events as usize);
+            for ev in event_slice {
+                let status = ev.status & 0xF0;
+                let channel = ev.status & 0x0F;
+                let body = match status {
+                    0x90 if ev.data2 > 0 => Some(EventBody::NoteOn {
                         channel,
-                        value: (raw as f32 - 8192.0) / 8192.0,
-                    })
+                        note: ev.data1,
+                        velocity: ev.data2 as f32 / 127.0,
+                    }),
+                    0x90 => Some(EventBody::NoteOff {
+                        channel,
+                        note: ev.data1,
+                        velocity: 0.0,
+                    }),
+                    0x80 => Some(EventBody::NoteOff {
+                        channel,
+                        note: ev.data1,
+                        velocity: ev.data2 as f32 / 127.0,
+                    }),
+                    0xB0 => Some(EventBody::ControlChange {
+                        channel,
+                        cc: ev.data1,
+                        value: ev.data2 as f32 / 127.0,
+                    }),
+                    0xE0 => {
+                        let raw = ((ev.data2 as u16) << 7) | (ev.data1 as u16);
+                        Some(EventBody::PitchBend {
+                            channel,
+                            value: (raw as f32 - 8192.0) / 8192.0,
+                        })
+                    }
+                    _ => None,
+                };
+                if let Some(body) = body {
+                    inst.event_list.push(Event {
+                        sample_offset: ev.delta_frames,
+                        body,
+                    });
                 }
-                _ => None,
-            };
-            if let Some(body) = body {
-                inst.event_list.push(Event {
-                    sample_offset: ev.delta_frames,
-                    body,
-                });
             }
         }
-    }
-    inst.event_list.sort();
+        inst.event_list.sort();
 
-    // Build AudioBuffer from raw pointers (copies input→output for effects)
-    let mut scratch = truce_core::buffer::RawBufferScratch::default();
-    let mut audio_buffer = scratch.build(
-        inputs,
-        outputs,
-        num_input_channels,
-        num_output_channels,
-        num_frames as u32,
-    );
+        // Build AudioBuffer from raw pointers (copies input→output for effects)
+        let mut scratch = truce_core::buffer::RawBufferScratch::default();
+        let mut audio_buffer = scratch.build(
+            inputs,
+            outputs,
+            num_input_channels,
+            num_output_channels,
+            num_frames as u32,
+        );
 
-    let transport = if !inst.aeffect_ptr.is_null() {
-        let mut snap = Vst2TransportSnapshot::default();
-        truce_vst2_host_get_time(inst.aeffect_ptr, &mut snap);
-        if snap.valid != 0 {
-            snap.to_transport_info()
+        let transport = if !inst.aeffect_ptr.is_null() {
+            let mut snap = Vst2TransportSnapshot::default();
+            truce_vst2_host_get_time(inst.aeffect_ptr, &mut snap);
+            if snap.valid != 0 {
+                snap.to_transport_info()
+            } else {
+                TransportInfo::default()
+            }
         } else {
             TransportInfo::default()
-        }
-    } else {
-        TransportInfo::default()
-    };
-    inst.output_events.clear();
-    inst.transport_slot.write(&transport);
-    let mut context = ProcessContext::new(
-        &transport,
-        inst.sample_rate,
-        num_frames,
-        &mut inst.output_events,
-    );
+        };
+        inst.output_events.clear();
+        inst.transport_slot.write(&transport);
+        let mut context = ProcessContext::new(
+            &transport,
+            inst.sample_rate,
+            num_frames,
+            &mut inst.output_events,
+        );
 
-    inst.plugin
-        .process(&mut audio_buffer, &inst.event_list, &mut context);
-}}
+        inst.plugin
+            .process(&mut audio_buffer, &inst.event_list, &mut context);
+    }
+}
 
-unsafe extern "C" fn cb_param_count<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 { unsafe {
-    let inst = &*(ctx as *mut Vst2Instance<P>);
-    inst.plugin.params().count() as u32
-}}
+unsafe extern "C" fn cb_param_count<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
+    unsafe {
+        let inst = &*(ctx as *mut Vst2Instance<P>);
+        inst.plugin.params().count() as u32
+    }
+}
 
 unsafe extern "C" fn cb_param_get_descriptor<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     index: u32,
     out: *mut Vst2ParamDescriptor,
-) { unsafe {
-    let inst = &*(ctx as *mut Vst2Instance<P>);
-    let infos = inst.plugin.params().param_infos();
-    if let Some(info) = infos.get(index as usize) {
-        let name = CString::new(info.name).unwrap_or_default();
-        let unit = CString::new(info.unit.as_str()).unwrap_or_default();
-        let group = CString::new(info.group).unwrap_or_default();
+) {
+    unsafe {
+        let inst = &*(ctx as *mut Vst2Instance<P>);
+        let infos = inst.plugin.params().param_infos();
+        if let Some(info) = infos.get(index as usize) {
+            let name = CString::new(info.name).unwrap_or_default();
+            let unit = CString::new(info.unit.as_str()).unwrap_or_default();
+            let group = CString::new(info.group).unwrap_or_default();
 
-        let desc = &mut *out;
-        desc.id = info.id;
-        desc.name = name.into_raw();
-        desc.min = info.range.min();
-        desc.max = info.range.max();
-        desc.default_value = info.default_plain;
-        desc.step_count = info.range.step_count();
-        desc.unit = unit.into_raw();
-        desc.group = group.into_raw();
+            let desc = &mut *out;
+            desc.id = info.id;
+            desc.name = name.into_raw();
+            desc.min = info.range.min();
+            desc.max = info.range.max();
+            desc.default_value = info.default_plain;
+            desc.step_count = info.range.step_count();
+            desc.unit = unit.into_raw();
+            desc.group = group.into_raw();
+        }
     }
-}}
+}
 
 unsafe extern "C" fn cb_param_get_value<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     id: u32,
-) -> f64 { unsafe {
-    let inst = &*(ctx as *mut Vst2Instance<P>);
-    inst.plugin.params().get_plain(id).unwrap_or(0.0)
-}}
+) -> f64 {
+    unsafe {
+        let inst = &*(ctx as *mut Vst2Instance<P>);
+        inst.plugin.params().get_plain(id).unwrap_or(0.0)
+    }
+}
 
 unsafe extern "C" fn cb_param_set_value<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     id: u32,
     value: f64,
-) { unsafe {
-    let inst = &*(ctx as *mut Vst2Instance<P>);
-    inst.plugin.params().set_plain(id, value);
-}}
+) {
+    unsafe {
+        let inst = &*(ctx as *mut Vst2Instance<P>);
+        inst.plugin.params().set_plain(id, value);
+    }
+}
 
 unsafe extern "C" fn cb_param_format_value<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
@@ -315,222 +329,245 @@ unsafe extern "C" fn cb_param_format_value<P: PluginExport>(
     value: f64,
     out: *mut c_char,
     out_len: u32,
-) -> u32 { unsafe {
-    let inst = &*(ctx as *mut Vst2Instance<P>);
-    match inst.plugin.params().format_value(id, value) {
-        Some(text) => {
-            let bytes = text.as_bytes();
-            let len = bytes.len().min(out_len as usize - 1);
-            std::ptr::copy_nonoverlapping(bytes.as_ptr() as *const c_char, out, len);
-            *out.add(len) = 0;
-            len as u32
+) -> u32 {
+    unsafe {
+        let inst = &*(ctx as *mut Vst2Instance<P>);
+        match inst.plugin.params().format_value(id, value) {
+            Some(text) => {
+                let bytes = text.as_bytes();
+                let len = bytes.len().min(out_len as usize - 1);
+                std::ptr::copy_nonoverlapping(bytes.as_ptr() as *const c_char, out, len);
+                *out.add(len) = 0;
+                len as u32
+            }
+            None => 0,
         }
-        None => 0,
     }
-}}
+}
 
 unsafe extern "C" fn cb_state_save<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     out_data: *mut *mut u8,
     out_len: *mut u32,
-) { unsafe {
-    let inst = &*(ctx as *mut Vst2Instance<P>);
-    let (ids, values) = inst.plugin.params().collect_values();
-    let extra = inst.plugin.save_state();
-    let blob = state::serialize_state(inst.plugin_id_hash, &ids, &values, extra.as_deref());
+) {
+    unsafe {
+        let inst = &*(ctx as *mut Vst2Instance<P>);
+        let (ids, values) = inst.plugin.params().collect_values();
+        let extra = inst.plugin.save_state();
+        let blob = state::serialize_state(inst.plugin_id_hash, &ids, &values, extra.as_deref());
 
-    let len = blob.len();
-    // Use Vec::into_raw_parts pattern for the C shim to free later
-    let mut boxed = blob.into_boxed_slice();
-    let ptr = boxed.as_mut_ptr();
-    std::mem::forget(boxed);
-    *out_data = ptr;
-    *out_len = len as u32;
-}}
+        let len = blob.len();
+        // Use Vec::into_raw_parts pattern for the C shim to free later
+        let mut boxed = blob.into_boxed_slice();
+        let ptr = boxed.as_mut_ptr();
+        std::mem::forget(boxed);
+        *out_data = ptr;
+        *out_len = len as u32;
+    }
+}
 
 unsafe extern "C" fn cb_state_load<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     data: *const u8,
     len: u32,
-) { unsafe {
-    let inst = &mut *(ctx as *mut Vst2Instance<P>);
-    let blob = slice::from_raw_parts(data, len as usize);
-    if let Some(deserialized) = state::deserialize_state(blob, inst.plugin_id_hash) {
-        inst.plugin.params().restore_values(&deserialized.params);
-        if let Some(extra) = &deserialized.extra {
-            inst.plugin.load_state(extra);
-        }
-        // Notify an already-open editor that state changed (undo, preset recall).
-        if inst.pending_editor_parent.is_none() {
-            if let Some(ref mut editor) = inst.editor {
-                editor.state_changed();
+) {
+    unsafe {
+        let inst = &mut *(ctx as *mut Vst2Instance<P>);
+        let blob = slice::from_raw_parts(data, len as usize);
+        if let Some(deserialized) = state::deserialize_state(blob, inst.plugin_id_hash) {
+            inst.plugin.params().restore_values(&deserialized.params);
+            if let Some(extra) = &deserialized.extra {
+                inst.plugin.load_state(extra);
+            }
+            // Notify an already-open editor that state changed (undo, preset recall).
+            if inst.pending_editor_parent.is_none() {
+                if let Some(ref mut editor) = inst.editor {
+                    editor.state_changed();
+                }
             }
         }
-    }
-    inst.state_loaded = true;
+        inst.state_loaded = true;
 
-    // If the host opened the editor before loading state, open it now.
-    if let Some(parent) = inst.pending_editor_parent.take() {
-        open_editor_inner(inst, parent);
+        // If the host opened the editor before loading state, open it now.
+        if let Some(parent) = inst.pending_editor_parent.take() {
+            open_editor_inner(inst, parent);
+        }
     }
-}}
+}
 
-unsafe extern "C" fn cb_state_free(data: *mut u8, len: u32) { unsafe {
-    if !data.is_null() && len > 0 {
-        drop(Vec::from_raw_parts(data, len as usize, len as usize));
+unsafe extern "C" fn cb_state_free(data: *mut u8, len: u32) {
+    unsafe {
+        if !data.is_null() && len > 0 {
+            drop(Vec::from_raw_parts(data, len as usize, len as usize));
+        }
     }
-}}
+}
 
 // ---------------------------------------------------------------------------
 // Latency + tail
 // ---------------------------------------------------------------------------
 
-unsafe extern "C" fn cb_get_latency<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 { unsafe {
-    let inst = &*(ctx as *mut Vst2Instance<P>);
-    inst.plugin.latency()
-}}
+unsafe extern "C" fn cb_get_latency<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
+    unsafe {
+        let inst = &*(ctx as *mut Vst2Instance<P>);
+        inst.plugin.latency()
+    }
+}
 
-unsafe extern "C" fn cb_get_tail<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 { unsafe {
-    let inst = &*(ctx as *mut Vst2Instance<P>);
-    inst.plugin.tail()
-}}
+unsafe extern "C" fn cb_get_tail<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
+    unsafe {
+        let inst = &*(ctx as *mut Vst2Instance<P>);
+        inst.plugin.tail()
+    }
+}
 
 // ---------------------------------------------------------------------------
 // GUI callbacks
 // ---------------------------------------------------------------------------
 
-unsafe extern "C" fn cb_gui_has_editor<P: PluginExport>(ctx: *mut std::ffi::c_void) -> i32 { unsafe {
-    if ctx.is_null() {
-        return 0;
+unsafe extern "C" fn cb_gui_has_editor<P: PluginExport>(ctx: *mut std::ffi::c_void) -> i32 {
+    unsafe {
+        if ctx.is_null() {
+            return 0;
+        }
+        let inst = &mut *(ctx as *mut Vst2Instance<P>);
+        if inst.editor.is_none() {
+            inst.editor = inst.plugin.editor();
+        }
+        if inst.editor.is_some() { 1 } else { 0 }
     }
-    let inst = &mut *(ctx as *mut Vst2Instance<P>);
-    if inst.editor.is_none() {
-        inst.editor = inst.plugin.editor();
-    }
-    if inst.editor.is_some() {
-        1
-    } else {
-        0
-    }
-}}
+}
 
 unsafe extern "C" fn cb_gui_get_size<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     w: *mut u32,
     h: *mut u32,
-) { unsafe {
-    let inst = &*(ctx as *mut Vst2Instance<P>);
-    if let Some(ref editor) = inst.editor {
-        // VST2 has no standardised DPI channel — hosts read back
-        // whatever `effEditGetRect` returns and embed the NSView /
-        // HWND at that pixel size. Report the editor's logical size
-        // unchanged; hosts on Retina macOS will scale through AppKit
-        // and Windows VST2 plugins have never been HiDPI-aware.
-        let (ew, eh) = editor.size();
-        *w = ew;
-        *h = eh;
+) {
+    unsafe {
+        let inst = &*(ctx as *mut Vst2Instance<P>);
+        if let Some(ref editor) = inst.editor {
+            // VST2 has no standardised DPI channel — hosts read back
+            // whatever `effEditGetRect` returns and embed the NSView /
+            // HWND at that pixel size. Report the editor's logical size
+            // unchanged; hosts on Retina macOS will scale through AppKit
+            // and Windows VST2 plugins have never been HiDPI-aware.
+            let (ew, eh) = editor.size();
+            *w = ew;
+            *h = eh;
+        }
     }
-}}
+}
 
 unsafe extern "C" fn cb_set_effect_ptr<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     effect: *mut std::ffi::c_void,
-) { unsafe {
-    let inst = &mut *(ctx as *mut Vst2Instance<P>);
-    inst.aeffect_ptr = effect;
-}}
+) {
+    unsafe {
+        let inst = &mut *(ctx as *mut Vst2Instance<P>);
+        inst.aeffect_ptr = effect;
+    }
+}
 
 /// Actually open the editor with the given parent window handle.
 unsafe fn open_editor_inner<P: PluginExport>(
     inst: &mut Vst2Instance<P>,
     parent: *mut std::ffi::c_void,
-) { unsafe {
-    if let Some(ref mut editor) = inst.editor {
-        let params = inst.plugin.params_arc();
-        let plugin_ptr = SendPtr::new(&inst.plugin as *const P);
-        let effect_ptr = SendPtr::new(inst.aeffect_ptr);
-        let params_for_set = params.clone();
-        let params_for_get = params.clone();
-        let params_for_plain = params.clone();
-        let params_for_fmt = params.clone();
-        let transport_slot = inst.transport_slot.clone();
-        let context = EditorContext {
-            begin_edit: Arc::new(move |id| {
-                if !effect_ptr.as_ptr().is_null() {
-                    truce_vst2_host_begin_edit(effect_ptr.as_ptr() as *mut std::ffi::c_void, id);
-                }
-            }),
-            set_param: Arc::new(move |id, value| {
-                params_for_set.set_normalized(id, value);
-                if !effect_ptr.as_ptr().is_null() {
-                    let norm = params_for_set.get_normalized(id).unwrap_or(0.0) as f32;
-                    truce_vst2_host_automate(
-                        effect_ptr.as_ptr() as *mut std::ffi::c_void,
-                        id,
-                        norm,
-                    );
-                }
-            }),
-            end_edit: Arc::new(move |id| {
-                if !effect_ptr.as_ptr().is_null() {
-                    truce_vst2_host_end_edit(effect_ptr.as_ptr() as *mut std::ffi::c_void, id);
-                }
-            }),
-            request_resize: Arc::new(|_w, _h| false),
-            get_param: Arc::new(move |id| params_for_get.get_normalized(id).unwrap_or(0.0)),
-            get_param_plain: Arc::new(move |id| params_for_plain.get_plain(id).unwrap_or(0.0)),
-            format_param: Arc::new(move |id| {
-                let plain = params_for_fmt.get_plain(id).unwrap_or(0.0);
-                params_for_fmt
-                    .format_value(id, plain)
-                    .unwrap_or_else(|| format!("{:.1}", plain))
-            }),
-            get_meter: Arc::new(move |id| {
-                let plugin = plugin_ptr.get();
-                plugin.get_meter(id)
-            }),
-            get_state: Arc::new(move || {
-                let plugin = plugin_ptr.get();
-                plugin.save_state().unwrap_or_default()
-            }),
-            set_state: Arc::new(move |data| {
-                let plugin = &mut *(plugin_ptr.as_ptr() as *mut P);
-                plugin.load_state(&data);
-            }),
-            transport: Arc::new(move || transport_slot.read()),
-        };
-        #[cfg(target_os = "macos")]
-        let handle = RawWindowHandle::AppKit(parent);
-        #[cfg(target_os = "windows")]
-        let handle = RawWindowHandle::Win32(parent);
-        #[cfg(target_os = "linux")]
-        let handle = RawWindowHandle::X11(parent as u64);
+) {
+    unsafe {
+        if let Some(ref mut editor) = inst.editor {
+            let params = inst.plugin.params_arc();
+            let plugin_ptr = SendPtr::new(&inst.plugin as *const P);
+            let effect_ptr = SendPtr::new(inst.aeffect_ptr);
+            let params_for_set = params.clone();
+            let params_for_get = params.clone();
+            let params_for_plain = params.clone();
+            let params_for_fmt = params.clone();
+            let transport_slot = inst.transport_slot.clone();
+            let context = EditorContext {
+                begin_edit: Arc::new(move |id| {
+                    if !effect_ptr.as_ptr().is_null() {
+                        truce_vst2_host_begin_edit(
+                            effect_ptr.as_ptr() as *mut std::ffi::c_void,
+                            id,
+                        );
+                    }
+                }),
+                set_param: Arc::new(move |id, value| {
+                    params_for_set.set_normalized(id, value);
+                    if !effect_ptr.as_ptr().is_null() {
+                        let norm = params_for_set.get_normalized(id).unwrap_or(0.0) as f32;
+                        truce_vst2_host_automate(
+                            effect_ptr.as_ptr() as *mut std::ffi::c_void,
+                            id,
+                            norm,
+                        );
+                    }
+                }),
+                end_edit: Arc::new(move |id| {
+                    if !effect_ptr.as_ptr().is_null() {
+                        truce_vst2_host_end_edit(effect_ptr.as_ptr() as *mut std::ffi::c_void, id);
+                    }
+                }),
+                request_resize: Arc::new(|_w, _h| false),
+                get_param: Arc::new(move |id| params_for_get.get_normalized(id).unwrap_or(0.0)),
+                get_param_plain: Arc::new(move |id| params_for_plain.get_plain(id).unwrap_or(0.0)),
+                format_param: Arc::new(move |id| {
+                    let plain = params_for_fmt.get_plain(id).unwrap_or(0.0);
+                    params_for_fmt
+                        .format_value(id, plain)
+                        .unwrap_or_else(|| format!("{:.1}", plain))
+                }),
+                get_meter: Arc::new(move |id| {
+                    let plugin = plugin_ptr.get();
+                    plugin.get_meter(id)
+                }),
+                get_state: Arc::new(move || {
+                    let plugin = plugin_ptr.get();
+                    plugin.save_state().unwrap_or_default()
+                }),
+                set_state: Arc::new(move |data| {
+                    let plugin = &mut *(plugin_ptr.as_ptr() as *mut P);
+                    plugin.load_state(&data);
+                }),
+                transport: Arc::new(move || transport_slot.read()),
+            };
+            #[cfg(target_os = "macos")]
+            let handle = RawWindowHandle::AppKit(parent);
+            #[cfg(target_os = "windows")]
+            let handle = RawWindowHandle::Win32(parent);
+            #[cfg(target_os = "linux")]
+            let handle = RawWindowHandle::X11(parent as u64);
 
-        editor.open(handle, context);
+            editor.open(handle, context);
+        }
     }
-}}
+}
 
 unsafe extern "C" fn cb_gui_open<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     parent: *mut std::ffi::c_void,
-) { unsafe {
-    let inst = &mut *(ctx as *mut Vst2Instance<P>);
-    if inst.state_loaded {
-        // State already restored — open immediately.
-        open_editor_inner(inst, parent);
-    } else {
-        // Host opened editor before loading state (Reaper VST2 ordering).
-        // Buffer the parent handle; we'll open after state_load.
-        inst.pending_editor_parent = Some(parent);
+) {
+    unsafe {
+        let inst = &mut *(ctx as *mut Vst2Instance<P>);
+        if inst.state_loaded {
+            // State already restored — open immediately.
+            open_editor_inner(inst, parent);
+        } else {
+            // Host opened editor before loading state (Reaper VST2 ordering).
+            // Buffer the parent handle; we'll open after state_load.
+            inst.pending_editor_parent = Some(parent);
+        }
     }
-}}
+}
 
-unsafe extern "C" fn cb_gui_close<P: PluginExport>(ctx: *mut std::ffi::c_void) { unsafe {
-    let inst = &mut *(ctx as *mut Vst2Instance<P>);
-    if let Some(ref mut editor) = inst.editor {
-        editor.close();
+unsafe extern "C" fn cb_gui_close<P: PluginExport>(ctx: *mut std::ffi::c_void) {
+    unsafe {
+        let inst = &mut *(ctx as *mut Vst2Instance<P>);
+        if let Some(ref mut editor) = inst.editor {
+            editor.close();
+        }
     }
-}}
+}
 
 // ---------------------------------------------------------------------------
 // Registration

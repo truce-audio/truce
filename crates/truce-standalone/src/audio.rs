@@ -17,7 +17,7 @@
 //!   audio callback keeps running unchanged.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
@@ -652,7 +652,7 @@ fn open_output_stream<P: PluginExport>(
             return Err(format!(
                 "audio output format {format:?} is not supported \
                  (truce standalone currently only handles f32)"
-            ))
+            ));
         }
     };
 

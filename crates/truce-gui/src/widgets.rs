@@ -4,8 +4,8 @@ use std::f32::consts::PI;
 
 use crate::interaction::InteractionState;
 use crate::layout::{
-    compute_section_offsets, GridLayout, Layout, PluginLayout, WidgetKind, GRID_GAP, GRID_HEADER_H,
-    GRID_PADDING, GRID_SECTION_H,
+    GRID_GAP, GRID_HEADER_H, GRID_PADDING, GRID_SECTION_H, GridLayout, Layout, PluginLayout,
+    WidgetKind, compute_section_offsets,
 };
 use crate::render::RenderBackend;
 use crate::snapshot::ParamSnapshot;

@@ -3,9 +3,9 @@
 use std::fmt::Debug;
 use std::marker::PhantomData;
 
-use iced::widget::canvas::{self, Frame, Geometry, Path};
 use iced::widget::Canvas;
-use iced::{mouse, Element, Length, Point, Rectangle, Renderer, Size, Theme};
+use iced::widget::canvas::{self, Frame, Geometry, Path};
+use iced::{Element, Length, Point, Rectangle, Renderer, Size, Theme, mouse};
 
 use truce_core::meter_display;
 use truce_params::Params;

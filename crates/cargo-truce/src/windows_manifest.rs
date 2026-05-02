@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::util::fs_ctx;
-use crate::{tmp_dir, Res};
+use crate::{Res, tmp_dir};
 
 /// Per-monitor v2 with v1 fallback for older Win10 builds. The
 /// `supportedOS` Windows 10 GUID opts in to non-virtualized DPI APIs.

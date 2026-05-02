@@ -12,7 +12,7 @@
 
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{mpsc, Arc};
+use std::sync::{Arc, mpsc};
 use std::thread;
 
 /// Pre-decoded WAV at the device's sample rate and channel count.

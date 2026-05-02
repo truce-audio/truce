@@ -9,4 +9,4 @@
 
 pub mod audio_tap;
 
-pub use audio_tap::{audio_tap, AudioTapConsumer, AudioTapProducer};
+pub use audio_tap::{AudioTapConsumer, AudioTapProducer, audio_tap};

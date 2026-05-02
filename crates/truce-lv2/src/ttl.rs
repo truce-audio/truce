@@ -28,7 +28,7 @@ fn resolved_plugin_name(info: &PluginInfo) -> &'static str {
 use truce_core::info::{PluginCategory, PluginInfo};
 use truce_params::{ParamInfo, ParamRange, ParamUnit};
 
-use crate::{derive_port_layout, plugin_uri, ui_uri, PortLayout};
+use crate::{PortLayout, derive_port_layout, plugin_uri, ui_uri};
 use truce_core::export::PluginExport;
 use truce_params::Params;
 

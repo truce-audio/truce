@@ -10,7 +10,7 @@
 // uniformly repetitive without adding information.
 #![allow(clippy::missing_safety_doc)]
 
-use std::ffi::{c_void, CString};
+use std::ffi::{CString, c_void};
 use std::os::raw::c_char;
 use std::slice;
 use std::sync::{Arc, OnceLock};
@@ -654,43 +654,49 @@ pub unsafe fn _format_param<P: PluginExport>(
 pub unsafe fn _save_state<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     out_data: *mut *mut u8,
-) -> u32 { unsafe {
-    let inst = &*(ctx as *mut AaxInstance<P>);
-    // Hot-path optimization for Pro Tools undo/snapshot flows, which
-    // call the `GetChunkSize` + `GetChunk` pair repeatedly. On a
-    // clean cache we hand back a clone of the last serialized blob;
-    // otherwise we re-serialize and cache for the next call.
-    let dirty = inst
-        .state_dirty
-        .swap(false, std::sync::atomic::Ordering::AcqRel);
-    let blob = {
-        let mut guard = match inst.state_cache.lock() {
-            Ok(g) => g,
-            // Poisoned (shouldn't happen; save_state is single-threaded
-            // in practice). Bypass the cache rather than panicking
-            // inside the AAX callback.
-            Err(_) => {
+) -> u32 {
+    unsafe {
+        let inst = &*(ctx as *mut AaxInstance<P>);
+        // Hot-path optimization for Pro Tools undo/snapshot flows, which
+        // call the `GetChunkSize` + `GetChunk` pair repeatedly. On a
+        // clean cache we hand back a clone of the last serialized blob;
+        // otherwise we re-serialize and cache for the next call.
+        let dirty = inst
+            .state_dirty
+            .swap(false, std::sync::atomic::Ordering::AcqRel);
+        let blob = {
+            let mut guard = match inst.state_cache.lock() {
+                Ok(g) => g,
+                // Poisoned (shouldn't happen; save_state is single-threaded
+                // in practice). Bypass the cache rather than panicking
+                // inside the AAX callback.
+                Err(_) => {
+                    let (ids, values) = inst.plugin.params().collect_values();
+                    let extra = inst.plugin.save_state();
+                    let fresh = state::serialize_state(
+                        inst.plugin_id_hash,
+                        &ids,
+                        &values,
+                        extra.as_deref(),
+                    );
+                    return finalize_blob(fresh, out_data);
+                }
+            };
+            if dirty || guard.is_none() {
                 let (ids, values) = inst.plugin.params().collect_values();
                 let extra = inst.plugin.save_state();
                 let fresh =
                     state::serialize_state(inst.plugin_id_hash, &ids, &values, extra.as_deref());
-                return finalize_blob(fresh, out_data);
+                *guard = Some(fresh.clone());
+                fresh
+            } else {
+                // SAFETY: we just checked is_some().
+                guard.as_ref().unwrap().clone()
             }
         };
-        if dirty || guard.is_none() {
-            let (ids, values) = inst.plugin.params().collect_values();
-            let extra = inst.plugin.save_state();
-            let fresh =
-                state::serialize_state(inst.plugin_id_hash, &ids, &values, extra.as_deref());
-            *guard = Some(fresh.clone());
-            fresh
-        } else {
-            // SAFETY: we just checked is_some().
-            guard.as_ref().unwrap().clone()
-        }
-    };
-    finalize_blob(blob, out_data)
-}}
+        finalize_blob(blob, out_data)
+    }
+}
 
 /// Hand a serialized state blob to the C caller as a raw pointer +
 /// length. Caller later calls `_free_state` to drop the Box.
@@ -725,133 +731,143 @@ pub unsafe fn _load_state<P: PluginExport>(ctx: *mut std::ffi::c_void, data: *co
 // GUI bridge functions
 // ---------------------------------------------------------------------------
 
-pub unsafe fn _editor_create<P: PluginExport>(ctx: *mut c_void, out: *mut TruceAaxEditorInfo) { unsafe {
-    let inst = &mut *(ctx as *mut AaxInstance<P>);
-    inst.editor = inst.plugin.editor();
-    let info = match &inst.editor {
-        Some(editor) => {
-            // Report logical size; the patched baseview CGLayer path
-            // applies the host scale factor internally when it
-            // configures the wgpu surface (same contract as CLAP /
-            // VST3 / AU on macOS).
-            let (w, h) = editor.size();
-            TruceAaxEditorInfo {
-                has_editor: 1,
-                width: w,
-                height: h,
+pub unsafe fn _editor_create<P: PluginExport>(ctx: *mut c_void, out: *mut TruceAaxEditorInfo) {
+    unsafe {
+        let inst = &mut *(ctx as *mut AaxInstance<P>);
+        inst.editor = inst.plugin.editor();
+        let info = match &inst.editor {
+            Some(editor) => {
+                // Report logical size; the patched baseview CGLayer path
+                // applies the host scale factor internally when it
+                // configures the wgpu surface (same contract as CLAP /
+                // VST3 / AU on macOS).
+                let (w, h) = editor.size();
+                TruceAaxEditorInfo {
+                    has_editor: 1,
+                    width: w,
+                    height: h,
+                }
             }
-        }
-        None => TruceAaxEditorInfo {
-            has_editor: 0,
-            width: 0,
-            height: 0,
-        },
-    };
-    *out = info;
-}}
+            None => TruceAaxEditorInfo {
+                has_editor: 0,
+                width: 0,
+                height: 0,
+            },
+        };
+        *out = info;
+    }
+}
 
 pub unsafe fn _editor_open<P: PluginExport>(
     ctx: *mut c_void,
     parent_view: *mut c_void,
     platform: i32,
     callbacks: *const TruceAaxGuiCallbacks,
-) { unsafe {
-    let inst = &mut *(ctx as *mut AaxInstance<P>);
-    let editor = match inst.editor.as_mut() {
-        Some(e) => e,
-        None => return,
-    };
+) {
+    unsafe {
+        let inst = &mut *(ctx as *mut AaxInstance<P>);
+        let editor = match inst.editor.as_mut() {
+            Some(e) => e,
+            None => return,
+        };
 
-    let cb = &*callbacks;
-    // Wrap raw pointers in SendPtr for Send+Sync
-    let aax_ctx = SendPtr::new(cb.aax_ctx);
-    let touch_fn = cb.touch_param;
-    let set_fn = cb.set_param;
-    let release_fn = cb.release_param;
-    let resize_fn = cb.request_resize;
-    let params = inst.plugin.params_arc();
-    let plugin_ptr = SendPtr::new(&inst.plugin as *const P);
-    let params_for_set = params.clone();
-    let params_for_get = params.clone();
-    let params_for_plain = params.clone();
-    let params_for_fmt = params.clone();
-    let transport_slot = inst.transport_slot.clone();
+        let cb = &*callbacks;
+        // Wrap raw pointers in SendPtr for Send+Sync
+        let aax_ctx = SendPtr::new(cb.aax_ctx);
+        let touch_fn = cb.touch_param;
+        let set_fn = cb.set_param;
+        let release_fn = cb.release_param;
+        let resize_fn = cb.request_resize;
+        let params = inst.plugin.params_arc();
+        let plugin_ptr = SendPtr::new(&inst.plugin as *const P);
+        let params_for_set = params.clone();
+        let params_for_get = params.clone();
+        let params_for_plain = params.clone();
+        let params_for_fmt = params.clone();
+        let transport_slot = inst.transport_slot.clone();
 
-    let context = EditorContext {
-        begin_edit: Arc::new(move |id| {
-            touch_fn(aax_ctx.as_ptr() as *mut c_void, id);
-        }),
-        set_param: Arc::new(move |id, value| {
-            params_for_set.set_normalized(id, value);
-            let normalized = params_for_set.get_normalized(id).unwrap_or(0.0);
-            set_fn(aax_ctx.as_ptr() as *mut c_void, id, normalized);
-        }),
-        end_edit: Arc::new(move |id| {
-            release_fn(aax_ctx.as_ptr() as *mut c_void, id);
-        }),
-        request_resize: Arc::new(move |w, h| {
-            resize_fn(aax_ctx.as_ptr() as *mut c_void, w, h) != 0
-        }),
-        get_param: Arc::new(move |id| params_for_get.get_normalized(id).unwrap_or(0.0)),
-        get_param_plain: Arc::new(move |id| params_for_plain.get_plain(id).unwrap_or(0.0)),
-        format_param: Arc::new(move |id| {
-            let val = params_for_fmt.get_plain(id).unwrap_or(0.0);
-            params_for_fmt
-                .format_value(id, val)
-                .unwrap_or_else(|| format!("{:.1}", val))
-        }),
-        get_meter: Arc::new(move |id| {
-            let plugin = plugin_ptr.get();
-            plugin.get_meter(id)
-        }),
-        get_state: Arc::new(move || {
-            let plugin = plugin_ptr.get();
-            plugin.save_state().unwrap_or_default()
-        }),
-        set_state: Arc::new(move |data| {
-            let plugin = &mut *(plugin_ptr.as_ptr() as *mut P);
-            plugin.load_state(&data);
-        }),
-        transport: Arc::new(move || transport_slot.read()),
-    };
+        let context = EditorContext {
+            begin_edit: Arc::new(move |id| {
+                touch_fn(aax_ctx.as_ptr() as *mut c_void, id);
+            }),
+            set_param: Arc::new(move |id, value| {
+                params_for_set.set_normalized(id, value);
+                let normalized = params_for_set.get_normalized(id).unwrap_or(0.0);
+                set_fn(aax_ctx.as_ptr() as *mut c_void, id, normalized);
+            }),
+            end_edit: Arc::new(move |id| {
+                release_fn(aax_ctx.as_ptr() as *mut c_void, id);
+            }),
+            request_resize: Arc::new(move |w, h| {
+                resize_fn(aax_ctx.as_ptr() as *mut c_void, w, h) != 0
+            }),
+            get_param: Arc::new(move |id| params_for_get.get_normalized(id).unwrap_or(0.0)),
+            get_param_plain: Arc::new(move |id| params_for_plain.get_plain(id).unwrap_or(0.0)),
+            format_param: Arc::new(move |id| {
+                let val = params_for_fmt.get_plain(id).unwrap_or(0.0);
+                params_for_fmt
+                    .format_value(id, val)
+                    .unwrap_or_else(|| format!("{:.1}", val))
+            }),
+            get_meter: Arc::new(move |id| {
+                let plugin = plugin_ptr.get();
+                plugin.get_meter(id)
+            }),
+            get_state: Arc::new(move || {
+                let plugin = plugin_ptr.get();
+                plugin.save_state().unwrap_or_default()
+            }),
+            set_state: Arc::new(move |data| {
+                let plugin = &mut *(plugin_ptr.as_ptr() as *mut P);
+                plugin.load_state(&data);
+            }),
+            transport: Arc::new(move || transport_slot.read()),
+        };
 
-    let handle = match platform {
-        1 => RawWindowHandle::AppKit(parent_view),
-        3 => RawWindowHandle::Win32(parent_view),
-        _ => return,
-    };
+        let handle = match platform {
+            1 => RawWindowHandle::AppKit(parent_view),
+            3 => RawWindowHandle::Win32(parent_view),
+            _ => return,
+        };
 
-    editor.open(handle, context);
-}}
-
-pub unsafe fn _editor_close<P: PluginExport>(ctx: *mut c_void) { unsafe {
-    let inst = &mut *(ctx as *mut AaxInstance<P>);
-    if let Some(ref mut editor) = inst.editor {
-        editor.close();
+        editor.open(handle, context);
     }
-}}
+}
 
-pub unsafe fn _editor_idle<P: PluginExport>(ctx: *mut c_void) { unsafe {
-    let inst = &mut *(ctx as *mut AaxInstance<P>);
-    if let Some(ref mut editor) = inst.editor {
-        editor.idle();
-    }
-}}
-
-pub unsafe fn _editor_get_size<P: PluginExport>(ctx: *mut c_void, w: *mut u32, h: *mut u32) -> i32 { unsafe {
-    let inst = &*(ctx as *mut AaxInstance<P>);
-    match &inst.editor {
-        Some(editor) => {
-            // Logical size. The patched baseview CGLayer path handles
-            // HiDPI internally — same contract as CLAP / VST3 / AU.
-            let (ew, eh) = editor.size();
-            *w = ew;
-            *h = eh;
-            1
+pub unsafe fn _editor_close<P: PluginExport>(ctx: *mut c_void) {
+    unsafe {
+        let inst = &mut *(ctx as *mut AaxInstance<P>);
+        if let Some(ref mut editor) = inst.editor {
+            editor.close();
         }
-        None => 0,
     }
-}}
+}
+
+pub unsafe fn _editor_idle<P: PluginExport>(ctx: *mut c_void) {
+    unsafe {
+        let inst = &mut *(ctx as *mut AaxInstance<P>);
+        if let Some(ref mut editor) = inst.editor {
+            editor.idle();
+        }
+    }
+}
+
+pub unsafe fn _editor_get_size<P: PluginExport>(ctx: *mut c_void, w: *mut u32, h: *mut u32) -> i32 {
+    unsafe {
+        let inst = &*(ctx as *mut AaxInstance<P>);
+        match &inst.editor {
+            Some(editor) => {
+                // Logical size. The patched baseview CGLayer path handles
+                // HiDPI internally — same contract as CLAP / VST3 / AU.
+                let (ew, eh) = editor.size();
+                *w = ew;
+                *h = eh;
+                1
+            }
+            None => 0,
+        }
+    }
+}
 
 pub unsafe fn _free_state(data: *mut u8, len: u32) {
     if !data.is_null() && len > 0 {

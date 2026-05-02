@@ -3,9 +3,9 @@
 use std::fmt::Debug;
 use std::marker::PhantomData;
 
-use iced::widget::canvas::{self, Event, Frame, Geometry, Path, Stroke};
 use iced::widget::Canvas;
-use iced::{mouse, Color, Element, Length, Point, Rectangle, Renderer, Size, Theme};
+use iced::widget::canvas::{self, Event, Frame, Geometry, Path, Stroke};
+use iced::{Color, Element, Length, Point, Rectangle, Renderer, Size, Theme, mouse};
 
 use crate::param_message::{Message, ParamMessage};
 use crate::param_state::ParamState;

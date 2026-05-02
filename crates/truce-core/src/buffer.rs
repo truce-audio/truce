@@ -191,44 +191,46 @@ impl RawBufferScratch {
         num_in: u32,
         num_out: u32,
         num_frames: u32,
-    ) -> AudioBuffer<'a> { unsafe {
-        let nf = num_frames as usize;
+    ) -> AudioBuffer<'a> {
+        unsafe {
+            let nf = num_frames as usize;
 
-        self.input_slices.clear();
-        for ch in 0..num_in as usize {
-            let ptr = *inputs.add(ch);
-            if !ptr.is_null() {
-                self.input_slices.push(std::slice::from_raw_parts(ptr, nf));
+            self.input_slices.clear();
+            for ch in 0..num_in as usize {
+                let ptr = *inputs.add(ch);
+                if !ptr.is_null() {
+                    self.input_slices.push(std::slice::from_raw_parts(ptr, nf));
+                }
             }
-        }
 
-        self.output_slices.clear();
-        for ch in 0..num_out as usize {
-            let ptr = *outputs.add(ch);
-            if !ptr.is_null() {
-                self.output_slices
-                    .push(std::slice::from_raw_parts_mut(ptr, nf));
+            self.output_slices.clear();
+            for ch in 0..num_out as usize {
+                let ptr = *outputs.add(ch);
+                if !ptr.is_null() {
+                    self.output_slices
+                        .push(std::slice::from_raw_parts_mut(ptr, nf));
+                }
             }
-        }
 
-        // Copy input to output for in-place effect processing.
-        let copy_ch = self.input_slices.len().min(self.output_slices.len());
-        for ch in 0..copy_ch {
-            self.output_slices[ch][..nf].copy_from_slice(&self.input_slices[ch][..nf]);
-        }
+            // Copy input to output for in-place effect processing.
+            let copy_ch = self.input_slices.len().min(self.output_slices.len());
+            for ch in 0..copy_ch {
+                self.output_slices[ch][..nf].copy_from_slice(&self.input_slices[ch][..nf]);
+            }
 
-        // SAFETY: Same transmute pattern as AudioBuffer::slice().
-        // RawBufferScratch stores 'static slices but we return AudioBuffer<'a>.
-        // Sound because the caller's raw pointers must outlive 'a, and
-        // &'a mut self prevents aliasing.
-        let self_ptr: *mut Self = self;
-        let s = &mut *self_ptr;
-        std::mem::transmute::<AudioBuffer<'static>, AudioBuffer<'a>>(AudioBuffer::from_slices(
-            &s.input_slices,
-            &mut s.output_slices,
-            nf,
-        ))
-}}
+            // SAFETY: Same transmute pattern as AudioBuffer::slice().
+            // RawBufferScratch stores 'static slices but we return AudioBuffer<'a>.
+            // Sound because the caller's raw pointers must outlive 'a, and
+            // &'a mut self prevents aliasing.
+            let self_ptr: *mut Self = self;
+            let s = &mut *self_ptr;
+            std::mem::transmute::<AudioBuffer<'static>, AudioBuffer<'a>>(AudioBuffer::from_slices(
+                &s.input_slices,
+                &mut s.output_slices,
+                nf,
+            ))
+        }
+    }
 }
 
 impl Default for RawBufferScratch {

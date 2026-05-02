@@ -11,7 +11,7 @@
 //! binary smoke) lives under `cargo truce validate` — see
 //! `commands/validate.rs`.
 
-use crate::{load_config, Res};
+use crate::{Res, load_config};
 use std::process::Command;
 
 pub(crate) fn cmd_test() -> Res {

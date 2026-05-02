@@ -7,9 +7,9 @@ use super::PkgFormat;
 use crate::install_scope::PkgScope;
 #[cfg(target_os = "macos")]
 use crate::pace_sign_aax_macos;
-use crate::{codesign_bundle, release_lib, Config, PluginDef, Res};
+use crate::{Config, PluginDef, Res, codesign_bundle, release_lib};
 #[cfg(target_os = "macos")]
-use crate::{copy_dir_recursive, PackagingConfig};
+use crate::{PackagingConfig, copy_dir_recursive};
 use std::fs;
 use std::path::Path;
 #[cfg(target_os = "macos")]
@@ -37,7 +37,7 @@ pub(crate) fn lv2_slug(name: &str) -> String {
 /// it and calls `__truce_lv2_emit_bundle` to emit `manifest.ttl` +
 /// `plugin.ttl`.
 pub(crate) fn stage_lv2(root: &Path, p: &PluginDef, staging: &Path) -> Res {
-    use std::ffi::{c_char, CString};
+    use std::ffi::{CString, c_char};
     let built = release_lib(root, &format!("{}_lv2", p.dylib_stem()));
     if !built.exists() {
         return Err(format!("Missing: {}", built.display()).into());

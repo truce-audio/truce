@@ -622,52 +622,54 @@ impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBase
 unsafe fn create_wgpu_surface(
     instance: &wgpu::Instance,
     window: &baseview::Window,
-) -> Option<wgpu::Surface<'static>> { unsafe {
-    use raw_window_handle::HasRawWindowHandle;
-    let rwh = window.raw_window_handle();
-    let target = match rwh {
-        #[cfg(target_os = "macos")]
-        raw_window_handle::RawWindowHandle::AppKit(h) => {
-            let ns_view = std::ptr::NonNull::new(h.ns_view)?;
-            wgpu::SurfaceTargetUnsafe::RawHandle {
-                raw_display_handle: wgpu::rwh::RawDisplayHandle::AppKit(
-                    wgpu::rwh::AppKitDisplayHandle::new(),
-                ),
-                raw_window_handle: wgpu::rwh::RawWindowHandle::AppKit(
-                    wgpu::rwh::AppKitWindowHandle::new(ns_view),
-                ),
+) -> Option<wgpu::Surface<'static>> {
+    unsafe {
+        use raw_window_handle::HasRawWindowHandle;
+        let rwh = window.raw_window_handle();
+        let target = match rwh {
+            #[cfg(target_os = "macos")]
+            raw_window_handle::RawWindowHandle::AppKit(h) => {
+                let ns_view = std::ptr::NonNull::new(h.ns_view)?;
+                wgpu::SurfaceTargetUnsafe::RawHandle {
+                    raw_display_handle: wgpu::rwh::RawDisplayHandle::AppKit(
+                        wgpu::rwh::AppKitDisplayHandle::new(),
+                    ),
+                    raw_window_handle: wgpu::rwh::RawWindowHandle::AppKit(
+                        wgpu::rwh::AppKitWindowHandle::new(ns_view),
+                    ),
+                }
             }
-        }
-        #[cfg(target_os = "windows")]
-        raw_window_handle::RawWindowHandle::Win32(h) => wgpu::SurfaceTargetUnsafe::RawHandle {
-            raw_display_handle: wgpu::rwh::RawDisplayHandle::Windows(
-                wgpu::rwh::WindowsDisplayHandle::new(),
-            ),
-            raw_window_handle: wgpu::rwh::RawWindowHandle::Win32(
-                wgpu::rwh::Win32WindowHandle::new(std::num::NonZero::new(h.hwnd as isize)?),
-            ),
-        },
-        #[cfg(target_os = "linux")]
-        raw_window_handle::RawWindowHandle::Xlib(h) => {
-            use raw_window_handle::HasRawDisplayHandle;
-            let display = match window.raw_display_handle() {
-                raw_window_handle::RawDisplayHandle::Xlib(d) => d,
-                _ => return None,
-            };
-            let display_ptr = std::ptr::NonNull::new(display.display);
-            wgpu::SurfaceTargetUnsafe::RawHandle {
-                raw_display_handle: wgpu::rwh::RawDisplayHandle::Xlib(
-                    wgpu::rwh::XlibDisplayHandle::new(display_ptr, display.screen),
+            #[cfg(target_os = "windows")]
+            raw_window_handle::RawWindowHandle::Win32(h) => wgpu::SurfaceTargetUnsafe::RawHandle {
+                raw_display_handle: wgpu::rwh::RawDisplayHandle::Windows(
+                    wgpu::rwh::WindowsDisplayHandle::new(),
                 ),
-                raw_window_handle: wgpu::rwh::RawWindowHandle::Xlib(
-                    wgpu::rwh::XlibWindowHandle::new(h.window as std::ffi::c_ulong),
+                raw_window_handle: wgpu::rwh::RawWindowHandle::Win32(
+                    wgpu::rwh::Win32WindowHandle::new(std::num::NonZero::new(h.hwnd as isize)?),
                 ),
+            },
+            #[cfg(target_os = "linux")]
+            raw_window_handle::RawWindowHandle::Xlib(h) => {
+                use raw_window_handle::HasRawDisplayHandle;
+                let display = match window.raw_display_handle() {
+                    raw_window_handle::RawDisplayHandle::Xlib(d) => d,
+                    _ => return None,
+                };
+                let display_ptr = std::ptr::NonNull::new(display.display);
+                wgpu::SurfaceTargetUnsafe::RawHandle {
+                    raw_display_handle: wgpu::rwh::RawDisplayHandle::Xlib(
+                        wgpu::rwh::XlibDisplayHandle::new(display_ptr, display.screen),
+                    ),
+                    raw_window_handle: wgpu::rwh::RawWindowHandle::Xlib(
+                        wgpu::rwh::XlibWindowHandle::new(h.window as std::ffi::c_ulong),
+                    ),
+                }
             }
-        }
-        _ => return None,
-    };
-    instance.create_surface_unsafe(target).ok()
-}}
+            _ => return None,
+        };
+        instance.create_surface_unsafe(target).ok()
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Editor trait implementation

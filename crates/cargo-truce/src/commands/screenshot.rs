@@ -9,7 +9,7 @@
 //! cdylib (the same artifact the CLAP/VST3 wrappers use). This command
 //! builds the cdylib, `dlopen`s it, and calls the symbol.
 
-use crate::{cargo_build, cargo_build_debug, deployment_target, load_config, project_root, Res};
+use crate::{Res, cargo_build, cargo_build_debug, deployment_target, load_config, project_root};
 use std::path::{Path, PathBuf};
 
 /// Maximum byte length of a returned PNG path. 4 KiB is well over any
@@ -135,35 +135,37 @@ fn cdylib_path(root: &Path, crate_name: &str, debug: bool) -> PathBuf {
 /// The library at `lib_path` must export the symbol with the FFI
 /// signature emitted by the `truce::plugin!` macro. Plugins built
 /// from any in-tree truce version satisfy this.
-unsafe fn call_screenshot(lib_path: &Path, name: &str) -> Result<String, crate::BoxErr> { unsafe {
-    let lib = libloading::Library::new(lib_path)
-        .map_err(|e| format!("failed to dlopen {}: {e}", lib_path.display()))?;
-    let screenshot: libloading::Symbol<ScreenshotFn> =
-        lib.get(b"__truce_screenshot\0").map_err(|e| {
-            format!(
-                "{}: __truce_screenshot symbol not found ({e}). \
+unsafe fn call_screenshot(lib_path: &Path, name: &str) -> Result<String, crate::BoxErr> {
+    unsafe {
+        let lib = libloading::Library::new(lib_path)
+            .map_err(|e| format!("failed to dlopen {}: {e}", lib_path.display()))?;
+        let screenshot: libloading::Symbol<ScreenshotFn> =
+            lib.get(b"__truce_screenshot\0").map_err(|e| {
+                format!(
+                    "{}: __truce_screenshot symbol not found ({e}). \
              Was this plugin built with `truce::plugin!{{ ... }}`?",
-                lib_path.display()
-            )
-        })?;
+                    lib_path.display()
+                )
+            })?;
 
-    let name_bytes = name.as_bytes();
-    let mut out_buf = vec![0u8; PATH_BUF_CAP];
-    let written = screenshot(
-        name_bytes.as_ptr(),
-        name_bytes.len(),
-        out_buf.as_mut_ptr(),
-        out_buf.len(),
-    );
-    if written > out_buf.len() {
-        return Err(format!(
-            "screenshot path of {written} bytes exceeds the {PATH_BUF_CAP}-byte buffer"
-        )
-        .into());
+        let name_bytes = name.as_bytes();
+        let mut out_buf = vec![0u8; PATH_BUF_CAP];
+        let written = screenshot(
+            name_bytes.as_ptr(),
+            name_bytes.len(),
+            out_buf.as_mut_ptr(),
+            out_buf.len(),
+        );
+        if written > out_buf.len() {
+            return Err(format!(
+                "screenshot path of {written} bytes exceeds the {PATH_BUF_CAP}-byte buffer"
+            )
+            .into());
+        }
+        out_buf.truncate(written);
+        String::from_utf8(out_buf).map_err(|e| format!("non-UTF8 path returned: {e}").into())
     }
-    out_buf.truncate(written);
-    String::from_utf8(out_buf).map_err(|e| format!("non-UTF8 path returned: {e}").into())
-}}
+}
 
 fn print_help() {
     eprintln!(

@@ -5,8 +5,8 @@
 
 use std::fmt::Debug;
 
-use iced::widget::{container, row, text, Column, Row};
-use iced::{alignment, Element, Length};
+use iced::widget::{Column, Row, container, row, text};
+use iced::{Element, Length, alignment};
 
 use truce_gui::layout::{GridLayout, WidgetKind};
 use truce_params::Params;

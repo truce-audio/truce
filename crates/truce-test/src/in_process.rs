@@ -33,7 +33,7 @@
 
 use std::time::Duration;
 
-pub use truce_standalone::in_process::{run, InProcessOpts, MidiScript, RunResult};
+pub use truce_standalone::in_process::{InProcessOpts, MidiScript, RunResult, run};
 
 const AUDIBLE_THRESHOLD: f32 = 0.001;
 

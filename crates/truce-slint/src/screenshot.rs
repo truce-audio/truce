@@ -5,8 +5,8 @@
 //! `SlintEditor::screenshot()` (`Editor` trait impl in `editor.rs`),
 //! which is itself called from `truce_test::assert_screenshot::<Plugin>(...)`.
 
-use slint::platform::software_renderer::PremultipliedRgbaColor;
 use slint::PhysicalSize;
+use slint::platform::software_renderer::PremultipliedRgbaColor;
 
 use crate::param_state::ParamState;
 use crate::platform;

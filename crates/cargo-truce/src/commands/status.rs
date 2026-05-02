@@ -1,6 +1,6 @@
 //! `cargo truce status` — show installed plugins and AU registration state.
 
-use crate::{dirs, load_config, run_quiet, Res};
+use crate::{Res, dirs, load_config, run_quiet};
 use std::fs;
 use std::path::Path;
 

@@ -3,8 +3,8 @@
 //! No dlopen, no file watcher, no Mutex. Same types as HotShell
 //! but zero runtime overhead. Use via `export_static!`.
 
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use truce_core::buffer::AudioBuffer;
 use truce_core::bus::BusLayout;
@@ -149,11 +149,7 @@ impl<P: Params + Default + 'static, L: PluginLogic + 'static> Plugin for StaticS
 
     fn save_state(&self) -> Option<Vec<u8>> {
         let data = self.logic.save_state();
-        if data.is_empty() {
-            None
-        } else {
-            Some(data)
-        }
+        if data.is_empty() { None } else { Some(data) }
     }
 
     fn load_state(&mut self, data: &[u8]) {

@@ -531,7 +531,7 @@ pub fn assert_empty_state_no_crash<P: PluginExport>() {
 // Re-exported here so existing test code keeps a stable
 // `truce_test::*` import.
 pub use truce_core::screenshot::{
-    render as render_screenshot, save_png, workspace_screenshot_dir, DEFAULT_SCREENSHOT_DIR,
+    DEFAULT_SCREENSHOT_DIR, render as render_screenshot, save_png, workspace_screenshot_dir,
 };
 
 /// One-line screenshot test for any backend.

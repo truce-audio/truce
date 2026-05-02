@@ -4,10 +4,10 @@
 //! cache the IDs we need at `instantiate()` time so the audio-thread
 //! code (run(), atom decoding) never has to call back into the host.
 
-use std::ffi::{c_char, c_void, CStr, CString};
+use std::ffi::{CStr, CString, c_char, c_void};
 use std::ptr;
 
-use crate::types::{LV2Feature, LV2_ATOM__SEQUENCE, LV2_MIDI__MIDI_EVENT, LV2_URID__MAP};
+use crate::types::{LV2_ATOM__SEQUENCE, LV2_MIDI__MIDI_EVENT, LV2_URID__MAP, LV2Feature};
 
 pub type Urid = u32;
 
@@ -57,48 +57,50 @@ impl UridMap {
     /// # Safety
     /// `features` is a null-terminated array of `*const LV2Feature`, or
     /// null itself.
-    pub unsafe fn from_features(features: *const *const LV2Feature) -> Self { unsafe {
-        let mut out = UridMap::default();
-        if features.is_null() {
-            return out;
-        }
-        let map_uri = CString::new(LV2_URID__MAP).unwrap();
-        let mut i = 0;
-        while !(*features.add(i)).is_null() {
-            let feat = &**features.add(i);
-            if !feat.uri.is_null() && CStr::from_ptr(feat.uri) == map_uri.as_c_str() {
-                let map_feat = feat.data as *const Lv2UridMapFeature;
-                if !map_feat.is_null() {
-                    out.handle = (*map_feat).handle;
-                    out.map_fn = (*map_feat).map;
-                }
-                break;
+    pub unsafe fn from_features(features: *const *const LV2Feature) -> Self {
+        unsafe {
+            let mut out = UridMap::default();
+            if features.is_null() {
+                return out;
             }
-            i += 1;
+            let map_uri = CString::new(LV2_URID__MAP).unwrap();
+            let mut i = 0;
+            while !(*features.add(i)).is_null() {
+                let feat = &**features.add(i);
+                if !feat.uri.is_null() && CStr::from_ptr(feat.uri) == map_uri.as_c_str() {
+                    let map_feat = feat.data as *const Lv2UridMapFeature;
+                    if !map_feat.is_null() {
+                        out.handle = (*map_feat).handle;
+                        out.map_fn = (*map_feat).map;
+                    }
+                    break;
+                }
+                i += 1;
+            }
+            out.midi_event = out.intern(LV2_MIDI__MIDI_EVENT);
+            out.atom_sequence = out.intern(LV2_ATOM__SEQUENCE);
+            out.atom_chunk = out.intern("http://lv2plug.in/ns/ext/atom#Chunk");
+            // Atom value types.
+            out.atom_blank = out.intern("http://lv2plug.in/ns/ext/atom#Blank");
+            out.atom_object = out.intern("http://lv2plug.in/ns/ext/atom#Object");
+            out.atom_bool = out.intern("http://lv2plug.in/ns/ext/atom#Bool");
+            out.atom_int = out.intern("http://lv2plug.in/ns/ext/atom#Int");
+            out.atom_long = out.intern("http://lv2plug.in/ns/ext/atom#Long");
+            out.atom_float = out.intern("http://lv2plug.in/ns/ext/atom#Float");
+            out.atom_double = out.intern("http://lv2plug.in/ns/ext/atom#Double");
+            // LV2 time:* vocabulary.
+            out.time_position = out.intern("http://lv2plug.in/ns/ext/time#Position");
+            out.time_bar = out.intern("http://lv2plug.in/ns/ext/time#bar");
+            out.time_bar_beat = out.intern("http://lv2plug.in/ns/ext/time#barBeat");
+            out.time_beat = out.intern("http://lv2plug.in/ns/ext/time#beat");
+            out.time_beat_unit = out.intern("http://lv2plug.in/ns/ext/time#beatUnit");
+            out.time_beats_per_bar = out.intern("http://lv2plug.in/ns/ext/time#beatsPerBar");
+            out.time_beats_per_minute = out.intern("http://lv2plug.in/ns/ext/time#beatsPerMinute");
+            out.time_frame = out.intern("http://lv2plug.in/ns/ext/time#frame");
+            out.time_speed = out.intern("http://lv2plug.in/ns/ext/time#speed");
+            out
         }
-        out.midi_event = out.intern(LV2_MIDI__MIDI_EVENT);
-        out.atom_sequence = out.intern(LV2_ATOM__SEQUENCE);
-        out.atom_chunk = out.intern("http://lv2plug.in/ns/ext/atom#Chunk");
-        // Atom value types.
-        out.atom_blank = out.intern("http://lv2plug.in/ns/ext/atom#Blank");
-        out.atom_object = out.intern("http://lv2plug.in/ns/ext/atom#Object");
-        out.atom_bool = out.intern("http://lv2plug.in/ns/ext/atom#Bool");
-        out.atom_int = out.intern("http://lv2plug.in/ns/ext/atom#Int");
-        out.atom_long = out.intern("http://lv2plug.in/ns/ext/atom#Long");
-        out.atom_float = out.intern("http://lv2plug.in/ns/ext/atom#Float");
-        out.atom_double = out.intern("http://lv2plug.in/ns/ext/atom#Double");
-        // LV2 time:* vocabulary.
-        out.time_position = out.intern("http://lv2plug.in/ns/ext/time#Position");
-        out.time_bar = out.intern("http://lv2plug.in/ns/ext/time#bar");
-        out.time_bar_beat = out.intern("http://lv2plug.in/ns/ext/time#barBeat");
-        out.time_beat = out.intern("http://lv2plug.in/ns/ext/time#beat");
-        out.time_beat_unit = out.intern("http://lv2plug.in/ns/ext/time#beatUnit");
-        out.time_beats_per_bar = out.intern("http://lv2plug.in/ns/ext/time#beatsPerBar");
-        out.time_beats_per_minute = out.intern("http://lv2plug.in/ns/ext/time#beatsPerMinute");
-        out.time_frame = out.intern("http://lv2plug.in/ns/ext/time#frame");
-        out.time_speed = out.intern("http://lv2plug.in/ns/ext/time#speed");
-        out
-}}
+    }
 
     /// Intern a URI string. Returns 0 if URID:map is unavailable.
     pub fn intern(&self, uri: &str) -> Urid {

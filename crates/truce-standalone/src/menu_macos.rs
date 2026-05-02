@@ -30,7 +30,7 @@ use std::ffi::c_void;
 use std::sync::Once;
 
 use objc::declare::ClassDecl;
-use objc::runtime::{Class, Object, Sel, BOOL, NO, YES};
+use objc::runtime::{BOOL, Class, NO, Object, Sel, YES};
 use objc::{class, msg_send, sel, sel_impl};
 
 use crate::audio::{self, InputController, OutputController};

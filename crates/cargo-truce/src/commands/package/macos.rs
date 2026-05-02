@@ -3,16 +3,16 @@
 
 #![cfg(target_os = "macos")]
 
+use super::PkgFormat;
 use super::stage::{
     generate_distribution_xml, stage_aax, stage_au2, stage_au3, stage_clap, stage_vst2, stage_vst3,
     write_postinstall_script,
 };
-use super::PkgFormat;
-use crate::install_scope::{note_once, PkgScope};
+use crate::install_scope::{PkgScope, note_once};
 use crate::{
-    cargo_build_for_arch, copy_dir_recursive, deployment_target, detect_default_features,
-    lipo_into, load_config, project_root, read_workspace_version, release_lib_for_target, Config,
-    MacArch, PluginDef, Res,
+    Config, MacArch, PluginDef, Res, cargo_build_for_arch, copy_dir_recursive, deployment_target,
+    detect_default_features, lipo_into, load_config, project_root, read_workspace_version,
+    release_lib_for_target,
 };
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -706,9 +706,9 @@ fn notarize_and_staple(pkg_path: &Path, config: &Config) -> Res {
         // Try explicit credentials as fallback
         if !apple_id.is_empty() && !team_id.is_empty() {
             eprintln!("  Keychain profile failed, trying explicit credentials...");
-            let password = std::env::var("APP_SPECIFIC_PASSWORD").map_err(|_| {
-                "notarization requires APP_SPECIFIC_PASSWORD env var or a keychain profile"
-            })?;
+            let password = std::env::var("APP_SPECIFIC_PASSWORD").map_err(
+                |_| "notarization requires APP_SPECIFIC_PASSWORD env var or a keychain profile",
+            )?;
             let output = Command::new("xcrun")
                 .args([
                     "notarytool",

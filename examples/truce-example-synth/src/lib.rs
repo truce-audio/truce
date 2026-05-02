@@ -1,5 +1,5 @@
 use truce::prelude::*;
-use truce_gui::layout::{dropdown, knob, section, widgets, GridLayout};
+use truce_gui::layout::{GridLayout, dropdown, knob, section, widgets};
 
 mod voice;
 use voice::Voice;
@@ -16,8 +16,8 @@ pub enum Waveform {
 
 // --- Parameters ---
 
-use std::sync::Arc;
 use SynthParamsParamId as P;
+use std::sync::Arc;
 
 #[derive(Params)]
 pub struct SynthParams {

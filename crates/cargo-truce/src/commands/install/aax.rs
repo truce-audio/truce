@@ -19,7 +19,7 @@
 use crate::templates;
 use crate::util::fs_ctx;
 use crate::{
-    codesign_bundle, release_lib, resolve_aax_sdk_path, run_sudo, tmp_dir, Config, PluginDef, Res,
+    Config, PluginDef, Res, codesign_bundle, release_lib, resolve_aax_sdk_path, run_sudo, tmp_dir,
 };
 #[cfg(target_os = "windows")]
 use crate::{common_program_files, locate_cmake, locate_ninja, locate_vcvars64};

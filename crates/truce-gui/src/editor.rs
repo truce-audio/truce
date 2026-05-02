@@ -914,10 +914,10 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::layout::{section, widgets, GridLayout, GridWidget, Layout};
+    use crate::layout::{GridLayout, GridWidget, Layout, section, widgets};
     use crate::widgets::WidgetType;
-    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use truce_params::{ParamFlags, ParamInfo, ParamRange, ParamUnit, Params};
 
     // -- Mock Params with one enum param (4 options) and one float --

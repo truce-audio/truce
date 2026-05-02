@@ -1322,11 +1322,7 @@ pub(crate) fn locate_vcvars64() -> Option<PathBuf> {
         return None;
     }
     let vcvars = PathBuf::from(install).join(r"VC\Auxiliary\Build\vcvars64.bat");
-    if vcvars.exists() {
-        Some(vcvars)
-    } else {
-        None
-    }
+    if vcvars.exists() { Some(vcvars) } else { None }
 }
 
 /// Interactive `[y/N]` prompt that returns `true` only on an explicit yes.

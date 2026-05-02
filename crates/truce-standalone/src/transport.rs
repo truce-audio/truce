@@ -9,8 +9,8 @@
 //! lanes. Just enough to let plugins that care about host tempo
 //! (LFOs, tempo-synced effects, arpeggiators) see a live beat grid.
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use truce_core::events::TransportInfo;
 

@@ -67,11 +67,7 @@ pub fn query_backing_scale(parent: &RawWindowHandle) -> f64 {
                 2.0
             }
         };
-        if scale < 1.0 {
-            1.0
-        } else {
-            scale
-        }
+        if scale < 1.0 { 1.0 } else { scale }
     }
 }
 
@@ -88,61 +84,64 @@ pub fn query_backing_scale(_parent: &RawWindowHandle) -> f64 {
 pub unsafe fn create_wgpu_surface(
     instance: &wgpu::Instance,
     window: &baseview::Window,
-) -> Option<wgpu::Surface<'static>> { unsafe {
-    let rwh = window.raw_window_handle();
-    let surface_target = match rwh {
-        #[cfg(target_os = "macos")]
-        RwhRawWindowHandle::AppKit(handle) => {
-            let ns_view = handle.ns_view;
-            if ns_view.is_null() {
-                return None;
+) -> Option<wgpu::Surface<'static>> {
+    unsafe {
+        let rwh = window.raw_window_handle();
+        let surface_target = match rwh {
+            #[cfg(target_os = "macos")]
+            RwhRawWindowHandle::AppKit(handle) => {
+                let ns_view = handle.ns_view;
+                if ns_view.is_null() {
+                    return None;
+                }
+                // Construct rwh 0.6 handles for wgpu
+                let rwh6_window = wgpu::rwh::RawWindowHandle::AppKit(
+                    wgpu::rwh::AppKitWindowHandle::new(std::ptr::NonNull::new(ns_view)?),
+                );
+                let rwh6_display =
+                    wgpu::rwh::RawDisplayHandle::AppKit(wgpu::rwh::AppKitDisplayHandle::new());
+                wgpu::SurfaceTargetUnsafe::RawHandle {
+                    raw_display_handle: rwh6_display,
+                    raw_window_handle: rwh6_window,
+                }
             }
-            // Construct rwh 0.6 handles for wgpu
-            let rwh6_window = wgpu::rwh::RawWindowHandle::AppKit(
-                wgpu::rwh::AppKitWindowHandle::new(std::ptr::NonNull::new(ns_view)?),
-            );
-            let rwh6_display =
-                wgpu::rwh::RawDisplayHandle::AppKit(wgpu::rwh::AppKitDisplayHandle::new());
-            wgpu::SurfaceTargetUnsafe::RawHandle {
-                raw_display_handle: rwh6_display,
-                raw_window_handle: rwh6_window,
+            #[cfg(target_os = "windows")]
+            RwhRawWindowHandle::Win32(handle) => {
+                let hwnd = handle.hwnd;
+                if hwnd.is_null() {
+                    return None;
+                }
+                let rwh6_window = wgpu::rwh::RawWindowHandle::Win32(
+                    wgpu::rwh::Win32WindowHandle::new(std::num::NonZero::new(hwnd as isize)?),
+                );
+                let rwh6_display =
+                    wgpu::rwh::RawDisplayHandle::Windows(wgpu::rwh::WindowsDisplayHandle::new());
+                wgpu::SurfaceTargetUnsafe::RawHandle {
+                    raw_display_handle: rwh6_display,
+                    raw_window_handle: rwh6_window,
+                }
             }
-        }
-        #[cfg(target_os = "windows")]
-        RwhRawWindowHandle::Win32(handle) => {
-            let hwnd = handle.hwnd;
-            if hwnd.is_null() {
-                return None;
+            #[cfg(target_os = "linux")]
+            RwhRawWindowHandle::Xlib(handle) => {
+                let display_handle = match window.raw_display_handle() {
+                    RwhRawDisplayHandle::Xlib(d) => d,
+                    _ => return None,
+                };
+                let display_ptr = std::ptr::NonNull::new(display_handle.display);
+                let rwh6_window = wgpu::rwh::RawWindowHandle::Xlib(
+                    wgpu::rwh::XlibWindowHandle::new(handle.window),
+                );
+                let rwh6_display = wgpu::rwh::RawDisplayHandle::Xlib(
+                    wgpu::rwh::XlibDisplayHandle::new(display_ptr, display_handle.screen),
+                );
+                wgpu::SurfaceTargetUnsafe::RawHandle {
+                    raw_display_handle: rwh6_display,
+                    raw_window_handle: rwh6_window,
+                }
             }
-            let rwh6_window = wgpu::rwh::RawWindowHandle::Win32(wgpu::rwh::Win32WindowHandle::new(
-                std::num::NonZero::new(hwnd as isize)?,
-            ));
-            let rwh6_display =
-                wgpu::rwh::RawDisplayHandle::Windows(wgpu::rwh::WindowsDisplayHandle::new());
-            wgpu::SurfaceTargetUnsafe::RawHandle {
-                raw_display_handle: rwh6_display,
-                raw_window_handle: rwh6_window,
-            }
-        }
-        #[cfg(target_os = "linux")]
-        RwhRawWindowHandle::Xlib(handle) => {
-            let display_handle = match window.raw_display_handle() {
-                RwhRawDisplayHandle::Xlib(d) => d,
-                _ => return None,
-            };
-            let display_ptr = std::ptr::NonNull::new(display_handle.display);
-            let rwh6_window =
-                wgpu::rwh::RawWindowHandle::Xlib(wgpu::rwh::XlibWindowHandle::new(handle.window));
-            let rwh6_display = wgpu::rwh::RawDisplayHandle::Xlib(
-                wgpu::rwh::XlibDisplayHandle::new(display_ptr, display_handle.screen),
-            );
-            wgpu::SurfaceTargetUnsafe::RawHandle {
-                raw_display_handle: rwh6_display,
-                raw_window_handle: rwh6_window,
-            }
-        }
-        _ => return None,
-    };
+            _ => return None,
+        };
 
-    instance.create_surface_unsafe(surface_target).ok()
-}}
+        instance.create_surface_unsafe(surface_target).ok()
+    }
+}

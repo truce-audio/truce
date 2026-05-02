@@ -5,7 +5,7 @@
 //! `.cargo/config.toml` so per-developer credentials stay out of the
 //! tracked `truce.toml`.
 
-use crate::{project_root, BoxErr};
+use crate::{BoxErr, project_root};
 use serde::Deserialize;
 use std::fs;
 use std::path::PathBuf;

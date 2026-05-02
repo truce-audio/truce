@@ -3,11 +3,11 @@
 
 #![allow(unused_imports)]
 
-use crate::install_scope::{effective_scope, note_once, Format, InstallScope};
+use crate::install_scope::{Format, InstallScope, effective_scope, note_once};
 use crate::util::fs_ctx;
 use crate::{
-    cargo_build, codesign_bundle, deployment_target, detect_default_features, dirs, load_config,
-    project_root, release_lib, run_sudo, tmp_dir, Config, PluginDef, Res,
+    Config, PluginDef, Res, cargo_build, codesign_bundle, deployment_target,
+    detect_default_features, dirs, load_config, project_root, release_lib, run_sudo, tmp_dir,
 };
 #[cfg(target_os = "windows")]
 use crate::{common_program_files, program_files};

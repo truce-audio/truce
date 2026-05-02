@@ -1,10 +1,10 @@
 use truce::prelude::*;
-use truce_gui::layout::{knob, widgets, GridLayout};
+use truce_gui::layout::{GridLayout, knob, widgets};
 
 // --- Parameters ---
 
-use std::sync::Arc;
 use TransposeParamsParamId as P;
+use std::sync::Arc;
 
 #[derive(Params)]
 pub struct TransposeParams {

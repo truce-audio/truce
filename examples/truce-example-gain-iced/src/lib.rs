@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use iced::widget::{container, text, Column, Row};
-use iced::{alignment, Element, Font, Length};
+use iced::widget::{Column, Row, container, text};
+use iced::{Element, Font, Length, alignment};
 
 const JETBRAINS_MONO: Font = Font {
     family: iced::font::Family::Name("JetBrains Mono"),
@@ -12,7 +12,7 @@ const WINDOW_H: u32 = 290;
 
 use truce::prelude::*;
 use truce_gui::font;
-use truce_iced::{knob, meter, xy_pad, IcedEditor, IcedPlugin, IntoElement, Message, ParamState};
+use truce_iced::{IcedEditor, IcedPlugin, IntoElement, Message, ParamState, knob, meter, xy_pad};
 
 // --- Parameters ---
 

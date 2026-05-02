@@ -9,8 +9,8 @@ const WINDOW_H: u32 = 290;
 
 // --- Parameters ---
 
-use std::sync::Arc;
 use GainParamsParamId as P;
+use std::sync::Arc;
 
 #[derive(Params)]
 pub struct GainParams {

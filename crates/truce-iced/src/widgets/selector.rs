@@ -3,8 +3,8 @@
 use std::fmt::Debug;
 use std::marker::PhantomData;
 
-use iced::widget::{column, pick_list, text};
 use iced::Element;
+use iced::widget::{column, pick_list, text};
 
 use crate::param_message::{Message, ParamMessage};
 use crate::param_state::ParamState;

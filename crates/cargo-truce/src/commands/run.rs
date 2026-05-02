@@ -6,7 +6,7 @@
 //! alongside the standalone executable. `cargo clean` sweeps it.
 
 use crate::util::fs_ctx;
-use crate::{cargo_build, deployment_target, load_config, project_root, Res};
+use crate::{Res, cargo_build, deployment_target, load_config, project_root};
 use std::path::PathBuf;
 use std::process::Command;
 

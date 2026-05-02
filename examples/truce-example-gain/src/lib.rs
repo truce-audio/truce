@@ -1,10 +1,10 @@
 use truce::prelude::*;
-use truce_gui::layout::{knob, meter, widgets, xy_pad, GridLayout};
+use truce_gui::layout::{GridLayout, knob, meter, widgets, xy_pad};
 
 // --- Parameters ---
 
-use std::sync::Arc;
 use GainParamsParamId as P;
+use std::sync::Arc;
 
 #[derive(Params)]
 pub struct GainParams {

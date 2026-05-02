@@ -4,8 +4,8 @@
 //! compatibility via AbiCanary + vtable probe before use.
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::SystemTime;
 
 /// Global counter so each NativeLoader instance gets a unique ID for temp files.
@@ -13,7 +13,7 @@ static LOADER_ID: AtomicU64 = AtomicU64::new(0);
 
 use libloading::{Library, Symbol};
 
-use crate::canary::{verify_probe, AbiCanary};
+use crate::canary::{AbiCanary, verify_probe};
 use crate::traits::PluginLogic;
 
 type ProbeFn = fn() -> Box<dyn PluginLogic>;

@@ -18,11 +18,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::install_scope::{note_once, PkgScope};
+use crate::install_scope::{PkgScope, note_once};
 use crate::{
-    build_aax_template, cargo_build, detect_default_features, load_config, project_root,
-    read_workspace_version, release_lib_for_target, resolve_aax_sdk_path, rustup_has_target,
-    tag_info, tag_ok, tag_warn, tmp_dir, Config, PkgFormat, PluginDef, Res, WindowsSigningConfig,
+    Config, PkgFormat, PluginDef, Res, WindowsSigningConfig, build_aax_template, cargo_build,
+    detect_default_features, load_config, project_root, read_workspace_version,
+    release_lib_for_target, resolve_aax_sdk_path, rustup_has_target, tag_info, tag_ok, tag_warn,
+    tmp_dir,
 };
 
 // ---------------------------------------------------------------------------

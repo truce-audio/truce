@@ -890,11 +890,7 @@ fn scaffold_standalone_offline_render() {
         .fold(
             (0_usize, 0.0_f32),
             |(bi, bd), (i, d)| {
-                if d > bd {
-                    (i, d)
-                } else {
-                    (bi, bd)
-                }
+                if d > bd { (i, d) } else { (bi, bd) }
             },
         );
     // 1 / 32768 ≈ 3.05e-5 is the i16 quant floor. Unity-gain

@@ -27,15 +27,15 @@
 //! (pragmatic for Ardour/Jalv which accept it; stricter X11UI / CocoaUI
 //! hosts may want the actual child window / view — follow-up).
 
-use std::ffi::{c_char, c_void, CStr, CString};
+use std::ffi::{CStr, CString, c_char, c_void};
 use std::marker::PhantomData;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
+use truce_core::TransportSlot;
 use truce_core::editor::{Editor, EditorContext, RawWindowHandle};
 use truce_core::events::TransportInfo;
 use truce_core::export::PluginExport;
-use truce_core::TransportSlot;
 use truce_params::Params;
 
 use crate::atom::AtomSequenceReader;
@@ -163,168 +163,173 @@ pub unsafe fn instantiate_ui<P: PluginExport>(
     controller: Lv2UiController,
     widget: *mut *mut c_void,
     features: *const *const LV2Feature,
-) -> Lv2UiHandle { unsafe {
-    // Locate PARENT feature — on X11 the host passes the window id the UI
-    // should embed in; on macOS it passes an `NSView*` from Cocoa. Both
-    // arrive as `feature.data: *mut c_void` and we reinterpret per
-    // platform.
-    let parent_ptr = parse_parent_feature(features);
-    let Some(parent_ptr) = parent_ptr else {
-        return std::ptr::null_mut();
-    };
+) -> Lv2UiHandle {
+    unsafe {
+        // Locate PARENT feature — on X11 the host passes the window id the UI
+        // should embed in; on macOS it passes an `NSView*` from Cocoa. Both
+        // arrive as `feature.data: *mut c_void` and we reinterpret per
+        // platform.
+        let parent_ptr = parse_parent_feature(features);
+        let Some(parent_ptr) = parent_ptr else {
+            return std::ptr::null_mut();
+        };
 
-    // Build a shadow plugin instance. It stays alive for the UI's lifetime
-    // so editors that hold internal references to the plugin's params (e.g.
-    // via Arc clones) remain valid.
-    let mut plugin = Box::new(P::create());
-    let params_arc = plugin.params_arc();
-    let param_infos = plugin.params().param_infos();
+        // Build a shadow plugin instance. It stays alive for the UI's lifetime
+        // so editors that hold internal references to the plugin's params (e.g.
+        // via Arc clones) remain valid.
+        let mut plugin = Box::new(P::create());
+        let params_arc = plugin.params_arc();
+        let param_infos = plugin.params().param_infos();
 
-    let layout = crate::derive_port_layout::<P>();
-    let control_start = layout.control_start();
+        let layout = crate::derive_port_layout::<P>();
+        let control_start = layout.control_start();
 
-    let param_slots: Vec<ParamSlot> = param_infos
-        .iter()
-        .enumerate()
-        .map(|(i, pi)| ParamSlot {
-            id: pi.id,
-            port_index: control_start + i as u32,
-            range: pi.range.clone(),
-        })
-        .collect();
-
-    // Mirror the DSP-side `#[meter]` declaration order onto the
-    // corresponding output control-port range so `port_event` can map an
-    // incoming port update back to the meter's declared ID.
-    let meter_ids = plugin.params().meter_ids();
-    let meter_start = layout.meter_start();
-    let meter_slots: Arc<Vec<MeterSlot>> = Arc::new(
-        meter_ids
+        let param_slots: Vec<ParamSlot> = param_infos
             .iter()
             .enumerate()
-            .map(|(i, &id)| MeterSlot {
-                id,
-                port_index: meter_start + i as u32,
-                value: AtomicU32::new(0),
+            .map(|(i, pi)| ParamSlot {
+                id: pi.id,
+                port_index: control_start + i as u32,
+                range: pi.range.clone(),
             })
-            .collect(),
-    );
+            .collect();
 
-    let Some(mut editor) = plugin.editor() else {
-        return std::ptr::null_mut();
-    };
+        // Mirror the DSP-side `#[meter]` declaration order onto the
+        // corresponding output control-port range so `port_event` can map an
+        // incoming port update back to the meter's declared ID.
+        let meter_ids = plugin.params().meter_ids();
+        let meter_start = layout.meter_start();
+        let meter_slots: Arc<Vec<MeterSlot>> = Arc::new(
+            meter_ids
+                .iter()
+                .enumerate()
+                .map(|(i, &id)| MeterSlot {
+                    id,
+                    port_index: meter_start + i as u32,
+                    value: AtomicU32::new(0),
+                })
+                .collect(),
+        );
 
-    // Resolve host URIDs for atom-event decoding on the UI side.
-    let urid_map = UridMap::from_features(features);
-    let atom_event_transfer_urid = urid_map.intern("http://lv2plug.in/ns/ext/atom#eventTransfer");
-    let transport_slot = TransportSlot::new();
+        let Some(mut editor) = plugin.editor() else {
+            return std::ptr::null_mut();
+        };
 
-    // Build EditorContext closures driven by write_function / shadow params.
-    let ctx = build_editor_context::<P>(
-        params_arc.clone(),
-        &param_slots,
-        meter_slots.clone(),
-        write_function,
-        controller,
-        transport_slot.clone(),
-    );
+        // Resolve host URIDs for atom-event decoding on the UI side.
+        let urid_map = UridMap::from_features(features);
+        let atom_event_transfer_urid =
+            urid_map.intern("http://lv2plug.in/ns/ext/atom#eventTransfer");
+        let transport_slot = TransportSlot::new();
 
-    // Record the editor's preferred size BEFORE `open()` — hosts that
-    // pre-size their container based on the widget's initial bounds
-    // (Reaper's LV2 runner, for one) need us to hand back a correctly-
-    // sized parent before the first repaint.
-    //
-    // On Windows and X11 the host works in physical pixels, so we scale
-    // logical-point `editor.size()` by the editor's DPI. On macOS the
-    // native view coordinate system is logical points — no scaling.
-    let (pref_w, pref_h) = editor.size();
-    // LV2 hosts on X11 conventionally expect pixel sizes, but we have
-    // no host-provided scale channel today; report logical points and
-    // let the host resize accordingly. macOS CocoaUI handles Retina
-    // backing automatically.
+        // Build EditorContext closures driven by write_function / shadow params.
+        let ctx = build_editor_context::<P>(
+            params_arc.clone(),
+            &param_slots,
+            meter_slots.clone(),
+            write_function,
+            controller,
+            transport_slot.clone(),
+        );
 
-    #[cfg(target_os = "macos")]
-    let handle = RawWindowHandle::AppKit(parent_ptr);
-    #[cfg(target_os = "windows")]
-    let handle = RawWindowHandle::Win32(parent_ptr);
-    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
-    let handle = RawWindowHandle::X11(parent_ptr as u64);
-    editor.open(handle, ctx);
+        // Record the editor's preferred size BEFORE `open()` — hosts that
+        // pre-size their container based on the widget's initial bounds
+        // (Reaper's LV2 runner, for one) need us to hand back a correctly-
+        // sized parent before the first repaint.
+        //
+        // On Windows and X11 the host works in physical pixels, so we scale
+        // logical-point `editor.size()` by the editor's DPI. On macOS the
+        // native view coordinate system is logical points — no scaling.
+        let (pref_w, pref_h) = editor.size();
+        // LV2 hosts on X11 conventionally expect pixel sizes, but we have
+        // no host-provided scale channel today; report logical points and
+        // let the host resize accordingly. macOS CocoaUI handles Retina
+        // backing automatically.
 
-    // Ask the host to match our preferred size via the `ui:resize`
-    // extension (optional — not every host provides it, but Reaper
-    // honors it, and without it the UI floats inside a default-sized
-    // window with large empty margins).
-    if let Some(resize) = parse_resize_feature(features) {
-        if let Some(func) = resize.ui_resize {
-            func(resize.handle, pref_w as i32, pref_h as i32);
+        #[cfg(target_os = "macos")]
+        let handle = RawWindowHandle::AppKit(parent_ptr);
+        #[cfg(target_os = "windows")]
+        let handle = RawWindowHandle::Win32(parent_ptr);
+        #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+        let handle = RawWindowHandle::X11(parent_ptr as u64);
+        editor.open(handle, ctx);
+
+        // Ask the host to match our preferred size via the `ui:resize`
+        // extension (optional — not every host provides it, but Reaper
+        // honors it, and without it the UI floats inside a default-sized
+        // window with large empty margins).
+        if let Some(resize) = parse_resize_feature(features) {
+            if let Some(func) = resize.ui_resize {
+                func(resize.handle, pref_w as i32, pref_h as i32);
+            }
         }
+
+        // On macOS we also resize the host-supplied parent NSView directly,
+        // as a belt-and-braces backup for hosts that don't honor
+        // `ui:resize`. Reaper on macOS reads the parent's frame after
+        // `instantiate` returns.
+        #[cfg(target_os = "macos")]
+        resize_ns_view(parent_ptr, pref_w, pref_h);
+
+        // `editor.open()` just added baseview's child NSView under the
+        // host's parent. Install a `cursorUpdate:` handler on that child so
+        // macOS shows an arrow cursor over our editor instead of inheriting
+        // whatever the host set last (Reaper leaves a crosshair behind when
+        // dragging from the FX chain).
+        #[cfg(target_os = "macos")]
+        install_child_cursor_update(parent_ptr);
+
+        // Windows belt-and-braces: resize the host-supplied parent HWND to
+        // match baseview's child client area. Reaper on Windows doesn't
+        // honor `ui:resize` reliably at instantiate time; without this, the
+        // parent stays at Reaper's default size and the child renders
+        // inside a too-large frame that overflows the FX-slot chrome. We
+        // deliberately do NOT resize baseview's child — it already rendered
+        // itself at the correct physical extent, and a second `SetWindowPos`
+        // makes wgpu stretch the previously-rendered surface.
+        #[cfg(target_os = "windows")]
+        fit_win32_parent_to_child(parent_ptr);
+
+        // Set widget out-param. Strict X11UI / CocoaUI hosts want the child
+        // window / view we created; pragmatic ones (Ardour, Jalv, Reaper)
+        // accept the parent. See the module comment for follow-up.
+        if !widget.is_null() {
+            *widget = parent_ptr;
+        }
+
+        let ui = Box::new(Lv2UiInstance::<P> {
+            _plugin: plugin,
+            params: params_arc,
+            param_slots,
+            meter_slots,
+            editor: Some(editor),
+            opened: AtomicBool::new(true),
+            urid_map,
+            notify_port_index: layout.notify_out_port(),
+            atom_event_transfer_urid,
+            transport_slot,
+            _phantom: PhantomData,
+        });
+        Box::into_raw(ui) as Lv2UiHandle
     }
-
-    // On macOS we also resize the host-supplied parent NSView directly,
-    // as a belt-and-braces backup for hosts that don't honor
-    // `ui:resize`. Reaper on macOS reads the parent's frame after
-    // `instantiate` returns.
-    #[cfg(target_os = "macos")]
-    resize_ns_view(parent_ptr, pref_w, pref_h);
-
-    // `editor.open()` just added baseview's child NSView under the
-    // host's parent. Install a `cursorUpdate:` handler on that child so
-    // macOS shows an arrow cursor over our editor instead of inheriting
-    // whatever the host set last (Reaper leaves a crosshair behind when
-    // dragging from the FX chain).
-    #[cfg(target_os = "macos")]
-    install_child_cursor_update(parent_ptr);
-
-    // Windows belt-and-braces: resize the host-supplied parent HWND to
-    // match baseview's child client area. Reaper on Windows doesn't
-    // honor `ui:resize` reliably at instantiate time; without this, the
-    // parent stays at Reaper's default size and the child renders
-    // inside a too-large frame that overflows the FX-slot chrome. We
-    // deliberately do NOT resize baseview's child — it already rendered
-    // itself at the correct physical extent, and a second `SetWindowPos`
-    // makes wgpu stretch the previously-rendered surface.
-    #[cfg(target_os = "windows")]
-    fit_win32_parent_to_child(parent_ptr);
-
-    // Set widget out-param. Strict X11UI / CocoaUI hosts want the child
-    // window / view we created; pragmatic ones (Ardour, Jalv, Reaper)
-    // accept the parent. See the module comment for follow-up.
-    if !widget.is_null() {
-        *widget = parent_ptr;
-    }
-
-    let ui = Box::new(Lv2UiInstance::<P> {
-        _plugin: plugin,
-        params: params_arc,
-        param_slots,
-        meter_slots,
-        editor: Some(editor),
-        opened: AtomicBool::new(true),
-        urid_map,
-        notify_port_index: layout.notify_out_port(),
-        atom_event_transfer_urid,
-        transport_slot,
-        _phantom: PhantomData,
-    });
-    Box::into_raw(ui) as Lv2UiHandle
-}}
+}
 
 /// # Safety
 /// `handle` must be a valid UI instance pointer previously returned from
 /// `instantiate_ui`.
-pub unsafe fn cleanup_ui<P: PluginExport>(handle: Lv2UiHandle) { unsafe {
-    if handle.is_null() {
-        return;
-    }
-    let mut ui = Box::from_raw(handle as *mut Lv2UiInstance<P>);
-    if ui.opened.swap(false, Ordering::AcqRel) {
-        if let Some(mut ed) = ui.editor.take() {
-            ed.close();
+pub unsafe fn cleanup_ui<P: PluginExport>(handle: Lv2UiHandle) {
+    unsafe {
+        if handle.is_null() {
+            return;
         }
+        let mut ui = Box::from_raw(handle as *mut Lv2UiInstance<P>);
+        if ui.opened.swap(false, Ordering::AcqRel) {
+            if let Some(mut ed) = ui.editor.take() {
+                ed.close();
+            }
+        }
+        drop(ui);
     }
-    drop(ui);
-}}
+}
 
 /// Port value update from host.
 ///
@@ -344,41 +349,43 @@ pub unsafe fn port_event<P: PluginExport>(
     buffer_size: u32,
     format: u32,
     buffer: *const c_void,
-) { unsafe {
-    if handle.is_null() || buffer.is_null() {
-        return;
-    }
-    let ui = &*(handle as *const Lv2UiInstance<P>);
+) {
+    unsafe {
+        if handle.is_null() || buffer.is_null() {
+            return;
+        }
+        let ui = &*(handle as *const Lv2UiInstance<P>);
 
-    // Control-port float update.
-    if format == 0 {
-        if buffer_size < core::mem::size_of::<f32>() as u32 {
+        // Control-port float update.
+        if format == 0 {
+            if buffer_size < core::mem::size_of::<f32>() as u32 {
+                return;
+            }
+            let value = *(buffer as *const f32);
+            if !value.is_finite() {
+                return;
+            }
+            if let Some(slot) = ui.param_slots.iter().find(|s| s.port_index == port_index) {
+                ui.params.set_plain(slot.id, value as f64);
+                return;
+            }
+            // Meter output: shadow the latest reading so the editor's
+            // `get_meter` closure can hand it back without touching the DSP.
+            if let Some(meter) = ui.meter_slots.iter().find(|m| m.port_index == port_index) {
+                meter.value.store(value.to_bits(), Ordering::Relaxed);
+            }
             return;
         }
-        let value = *(buffer as *const f32);
-        if !value.is_finite() {
-            return;
-        }
-        if let Some(slot) = ui.param_slots.iter().find(|s| s.port_index == port_index) {
-            ui.params.set_plain(slot.id, value as f64);
-            return;
-        }
-        // Meter output: shadow the latest reading so the editor's
-        // `get_meter` closure can hand it back without touching the DSP.
-        if let Some(meter) = ui.meter_slots.iter().find(|m| m.port_index == port_index) {
-            meter.value.store(value.to_bits(), Ordering::Relaxed);
-        }
-        return;
-    }
 
-    // Atom event on the notify-out port — look for time:Position.
-    if port_index == ui.notify_port_index
-        && ui.atom_event_transfer_urid != 0
-        && format == ui.atom_event_transfer_urid
-    {
-        decode_notify_atom::<P>(ui, buffer, buffer_size);
+        // Atom event on the notify-out port — look for time:Position.
+        if port_index == ui.notify_port_index
+            && ui.atom_event_transfer_urid != 0
+            && format == ui.atom_event_transfer_urid
+        {
+            decode_notify_atom::<P>(ui, buffer, buffer_size);
+        }
     }
-}}
+}
 
 /// Decode an atom delivered via `atom:eventTransfer` to the notify-out
 /// port. We reuse `AtomSequenceReader::read_time_position` by wrapping
@@ -391,52 +398,54 @@ unsafe fn decode_notify_atom<P: PluginExport>(
     ui: &Lv2UiInstance<P>,
     buffer: *const c_void,
     buffer_size: u32,
-) { unsafe {
-    use crate::atom::{Atom, AtomSequence, AtomSequenceBody};
+) {
+    unsafe {
+        use crate::atom::{Atom, AtomSequence, AtomSequenceBody};
 
-    let header_size = core::mem::size_of::<Atom>();
-    if (buffer_size as usize) < header_size {
-        return;
-    }
-    let atom_hdr = *(buffer as *const Atom);
-    if atom_hdr.type_ != ui.urid_map.atom_object && atom_hdr.type_ != ui.urid_map.atom_blank {
-        return;
-    }
-    let body_ptr = (buffer as *const u8).add(header_size);
-    let body_size = atom_hdr.size as usize;
-    if header_size + body_size > buffer_size as usize {
-        return;
-    }
+        let header_size = core::mem::size_of::<Atom>();
+        if (buffer_size as usize) < header_size {
+            return;
+        }
+        let atom_hdr = *(buffer as *const Atom);
+        if atom_hdr.type_ != ui.urid_map.atom_object && atom_hdr.type_ != ui.urid_map.atom_blank {
+            return;
+        }
+        let body_ptr = (buffer as *const u8).add(header_size);
+        let body_size = atom_hdr.size as usize;
+        if header_size + body_size > buffer_size as usize {
+            return;
+        }
 
-    // Stack-allocate a one-event sequence pointing at the delivered atom.
-    // The reader walks events, so wrap: AtomSequence { seq header, event
-    // header, body... }. Cheaper than reconstructing atom parsing here.
-    #[repr(C)]
-    struct OneEvent {
-        seq_header: AtomSequence,
-        event_time: i64,
-        event_body: Atom,
-    }
-    let mut scratch = vec![0u8; core::mem::size_of::<OneEvent>() + body_size + 8];
-    let one = scratch.as_mut_ptr() as *mut OneEvent;
-    (*one).seq_header.atom.type_ = ui.urid_map.atom_sequence;
-    (*one).seq_header.atom.size = (core::mem::size_of::<AtomSequenceBody>()
-        + core::mem::size_of::<i64>()
-        + core::mem::size_of::<Atom>()
-        + body_size) as u32;
-    (*one).seq_header.body.unit = 0;
-    (*one).seq_header.body.pad = 0;
-    (*one).event_time = 0;
-    (*one).event_body = atom_hdr;
-    let ev_body_dest = scratch.as_mut_ptr().add(core::mem::size_of::<OneEvent>());
-    core::ptr::copy_nonoverlapping(body_ptr, ev_body_dest, body_size);
+        // Stack-allocate a one-event sequence pointing at the delivered atom.
+        // The reader walks events, so wrap: AtomSequence { seq header, event
+        // header, body... }. Cheaper than reconstructing atom parsing here.
+        #[repr(C)]
+        struct OneEvent {
+            seq_header: AtomSequence,
+            event_time: i64,
+            event_body: Atom,
+        }
+        let mut scratch = vec![0u8; core::mem::size_of::<OneEvent>() + body_size + 8];
+        let one = scratch.as_mut_ptr() as *mut OneEvent;
+        (*one).seq_header.atom.type_ = ui.urid_map.atom_sequence;
+        (*one).seq_header.atom.size = (core::mem::size_of::<AtomSequenceBody>()
+            + core::mem::size_of::<i64>()
+            + core::mem::size_of::<Atom>()
+            + body_size) as u32;
+        (*one).seq_header.body.unit = 0;
+        (*one).seq_header.body.pad = 0;
+        (*one).event_time = 0;
+        (*one).event_body = atom_hdr;
+        let ev_body_dest = scratch.as_mut_ptr().add(core::mem::size_of::<OneEvent>());
+        core::ptr::copy_nonoverlapping(body_ptr, ev_body_dest, body_size);
 
-    let mut info = TransportInfo::default();
-    let reader = AtomSequenceReader::new(scratch.as_ptr() as *const AtomSequence, &ui.urid_map);
-    if reader.apply_time_position(&mut info) {
-        ui.transport_slot.write(&info);
+        let mut info = TransportInfo::default();
+        let reader = AtomSequenceReader::new(scratch.as_ptr() as *const AtomSequence, &ui.urid_map);
+        if reader.apply_time_position(&mut info) {
+            ui.transport_slot.write(&info);
+        }
     }
-}}
+}
 
 /// # Safety
 /// `uri` must be null or a valid null-terminated C string.
@@ -452,42 +461,46 @@ pub unsafe fn ui_extension_data(_uri: *const c_char) -> *const c_void {
 /// Locate the host-supplied `ui:parent` feature. The returned pointer is
 /// semantically an `NSView*` under CocoaUI and an `xcb_window_t` under
 /// X11UI; callers reinterpret it per platform.
-unsafe fn parse_parent_feature(features: *const *const LV2Feature) -> Option<*mut c_void> { unsafe {
-    find_feature(features, LV2_UI__PARENT).map(|f| f.data)
-}}
+unsafe fn parse_parent_feature(features: *const *const LV2Feature) -> Option<*mut c_void> {
+    unsafe { find_feature(features, LV2_UI__PARENT).map(|f| f.data) }
+}
 
 /// Locate the host-supplied `ui:resize` feature. When present, the UI
 /// may call `ui_resize(handle, w, h)` to ask the host to resize the
 /// embedding container.
-unsafe fn parse_resize_feature(features: *const *const LV2Feature) -> Option<&'static Lv2UiResize> { unsafe {
-    let feat = find_feature(features, LV2_UI__RESIZE)?;
-    if feat.data.is_null() {
-        return None;
+unsafe fn parse_resize_feature(features: *const *const LV2Feature) -> Option<&'static Lv2UiResize> {
+    unsafe {
+        let feat = find_feature(features, LV2_UI__RESIZE)?;
+        if feat.data.is_null() {
+            return None;
+        }
+        Some(&*(feat.data as *const Lv2UiResize))
     }
-    Some(&*(feat.data as *const Lv2UiResize))
-}}
+}
 
 unsafe fn find_feature(
     features: *const *const LV2Feature,
     uri: &str,
-) -> Option<&'static LV2Feature> { unsafe {
-    if features.is_null() {
-        return None;
-    }
-    let target = CString::new(uri).ok()?;
-    let mut i = 0usize;
-    loop {
-        let feat_ptr = *features.add(i);
-        if feat_ptr.is_null() {
+) -> Option<&'static LV2Feature> {
+    unsafe {
+        if features.is_null() {
             return None;
         }
-        let feat = &*feat_ptr;
-        if !feat.uri.is_null() && CStr::from_ptr(feat.uri) == target.as_c_str() {
-            return Some(feat);
+        let target = CString::new(uri).ok()?;
+        let mut i = 0usize;
+        loop {
+            let feat_ptr = *features.add(i);
+            if feat_ptr.is_null() {
+                return None;
+            }
+            let feat = &*feat_ptr;
+            if !feat.uri.is_null() && CStr::from_ptr(feat.uri) == target.as_c_str() {
+                return Some(feat);
+            }
+            i += 1;
         }
-        i += 1;
     }
-}}
+}
 
 /// Resize the host-supplied parent HWND so its client area exactly
 /// matches baseview's child HWND. Win32 analogue of `resize_ns_view`.
@@ -503,71 +516,73 @@ unsafe fn find_feature(
 /// extent, and a `SetWindowPos` on the child after the fact makes the
 /// rendered content stretch rather than re-layout.
 #[cfg(target_os = "windows")]
-unsafe fn fit_win32_parent_to_child(parent: *mut c_void) { unsafe {
-    if parent.is_null() {
-        return;
-    }
+unsafe fn fit_win32_parent_to_child(parent: *mut c_void) {
+    unsafe {
+        if parent.is_null() {
+            return;
+        }
 
-    const SWP_NOMOVE: u32 = 0x0002;
-    const SWP_NOZORDER: u32 = 0x0004;
-    const SWP_NOACTIVATE: u32 = 0x0010;
-    const GW_CHILD: u32 = 5;
+        const SWP_NOMOVE: u32 = 0x0002;
+        const SWP_NOZORDER: u32 = 0x0004;
+        const SWP_NOACTIVATE: u32 = 0x0010;
+        const GW_CHILD: u32 = 5;
 
-    // Windows API names are conventionally all-caps (RECT, HWND, etc.).
-    // Renaming would lose that mapping for a Windows reader.
-    #[allow(clippy::upper_case_acronyms)]
-    #[repr(C)]
-    struct RECT {
-        left: i32,
-        top: i32,
-        right: i32,
-        bottom: i32,
-    }
+        // Windows API names are conventionally all-caps (RECT, HWND, etc.).
+        // Renaming would lose that mapping for a Windows reader.
+        #[allow(clippy::upper_case_acronyms)]
+        #[repr(C)]
+        struct RECT {
+            left: i32,
+            top: i32,
+            right: i32,
+            bottom: i32,
+        }
 
-    unsafe extern "system" {
-        fn SetWindowPos(
-            hwnd: *mut c_void,
-            hwnd_insert_after: *mut c_void,
-            x: i32,
-            y: i32,
-            cx: i32,
-            cy: i32,
-            flags: u32,
-        ) -> i32;
-        fn GetWindow(hwnd: *mut c_void, cmd: u32) -> *mut c_void;
-        fn GetClientRect(hwnd: *mut c_void, rect: *mut RECT) -> i32;
-    }
+        unsafe extern "system" {
+            fn SetWindowPos(
+                hwnd: *mut c_void,
+                hwnd_insert_after: *mut c_void,
+                x: i32,
+                y: i32,
+                cx: i32,
+                cy: i32,
+                flags: u32,
+            ) -> i32;
+            fn GetWindow(hwnd: *mut c_void, cmd: u32) -> *mut c_void;
+            fn GetClientRect(hwnd: *mut c_void, rect: *mut RECT) -> i32;
+        }
 
-    let child = GetWindow(parent, GW_CHILD);
-    if child.is_null() {
-        return;
-    }
+        let child = GetWindow(parent, GW_CHILD);
+        if child.is_null() {
+            return;
+        }
 
-    let mut rect = RECT {
-        left: 0,
-        top: 0,
-        right: 0,
-        bottom: 0,
-    };
-    if GetClientRect(child, &mut rect) == 0 {
-        return;
-    }
-    let w = rect.right - rect.left;
-    let h = rect.bottom - rect.top;
-    if w <= 0 || h <= 0 {
-        return;
-    }
+        let mut rect = RECT {
+            left: 0,
+            top: 0,
+            right: 0,
+            bottom: 0,
+        };
+        if GetClientRect(child, &mut rect) == 0 {
+            return;
+        }
+        let w = rect.right - rect.left;
+        let h = rect.bottom - rect.top;
+        if w <= 0 || h <= 0 {
+            return;
+        }
 
-    let _ = SetWindowPos(
-        parent,
-        std::ptr::null_mut(),
-        0,
-        0,
-        w,
-        h,
-        SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
-    );
-}}
+        let _ = SetWindowPos(
+            parent,
+            std::ptr::null_mut(),
+            0,
+            0,
+            w,
+            h,
+            SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
+        );
+    }
+}
 
 /// Set the frame of a Cocoa view to (width, height) preserving its
 /// origin. Used as a fallback when the host doesn't honor `ui:resize`.
@@ -615,7 +630,7 @@ unsafe fn resize_ns_view(view: *mut c_void, width: u32, height: u32) {
 /// fresh classes and a silent fail on the unlikely duplicate.
 #[cfg(target_os = "macos")]
 unsafe fn install_child_cursor_update(parent: *mut c_void) {
-    use objc::runtime::{class_addMethod, Class, Object, Sel};
+    use objc::runtime::{Class, Object, Sel, class_addMethod};
     use objc::{class, msg_send, sel, sel_impl};
 
     if parent.is_null() {
@@ -749,21 +764,25 @@ unsafe extern "C" fn instantiate_ui_tramp<P: PluginExport>(
     controller: Lv2UiController,
     widget: *mut *mut c_void,
     features: *const *const LV2Feature,
-) -> Lv2UiHandle { unsafe {
-    instantiate_ui::<P>(
-        descriptor,
-        plugin_uri,
-        bundle_path,
-        write_function,
-        controller,
-        widget,
-        features,
-    )
-}}
+) -> Lv2UiHandle {
+    unsafe {
+        instantiate_ui::<P>(
+            descriptor,
+            plugin_uri,
+            bundle_path,
+            write_function,
+            controller,
+            widget,
+            features,
+        )
+    }
+}
 
-unsafe extern "C" fn cleanup_ui_tramp<P: PluginExport>(handle: Lv2UiHandle) { unsafe {
-    cleanup_ui::<P>(handle);
-}}
+unsafe extern "C" fn cleanup_ui_tramp<P: PluginExport>(handle: Lv2UiHandle) {
+    unsafe {
+        cleanup_ui::<P>(handle);
+    }
+}
 
 unsafe extern "C" fn port_event_tramp<P: PluginExport>(
     handle: Lv2UiHandle,
@@ -771,10 +790,12 @@ unsafe extern "C" fn port_event_tramp<P: PluginExport>(
     buffer_size: u32,
     format: u32,
     buffer: *const c_void,
-) { unsafe {
-    port_event::<P>(handle, port_index, buffer_size, format, buffer);
-}}
+) {
+    unsafe {
+        port_event::<P>(handle, port_index, buffer_size, format, buffer);
+    }
+}
 
-unsafe extern "C" fn ui_extension_data_tramp(uri: *const c_char) -> *const c_void { unsafe {
-    ui_extension_data(uri)
-}}
+unsafe extern "C" fn ui_extension_data_tramp(uri: *const c_char) -> *const c_void {
+    unsafe { ui_extension_data(uri) }
+}

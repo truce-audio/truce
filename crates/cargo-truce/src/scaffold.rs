@@ -100,7 +100,9 @@ pub fn plugin_cargo_toml_standalone(crate_name: &str, with_standalone: bool) -> 
         ""
     };
     let standalone_dep = if with_standalone {
-        format!("truce-standalone = {{ git = \"https://github.com/truce-audio/truce\", tag = \"{current_tag}\", features = [\"gui\"], optional = true }}\n")
+        format!(
+            "truce-standalone = {{ git = \"https://github.com/truce-audio/truce\", tag = \"{current_tag}\", features = [\"gui\"], optional = true }}\n"
+        )
     } else {
         String::new()
     };
@@ -537,7 +539,9 @@ pub fn workspace_cargo_toml(
     let members_str = members.join(",\n");
 
     let standalone_dep = if with_standalone {
-        format!("truce-standalone = {{ git = \"https://github.com/truce-audio/truce\", tag = \"{current_tag}\" }}\n")
+        format!(
+            "truce-standalone = {{ git = \"https://github.com/truce-audio/truce\", tag = \"{current_tag}\" }}\n"
+        )
     } else {
         String::new()
     };

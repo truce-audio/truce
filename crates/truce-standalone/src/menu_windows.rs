@@ -43,9 +43,9 @@ use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows_sys::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CheckMenuItem, CreateMenu, CreatePopupMenu, DeleteMenu, DrawMenuBar,
-    GetMenuItemCount, GetMenuStringW, GetSystemMetrics, GetWindowRect, SetMenu, SetWindowPos,
-    HMENU, MF_BYCOMMAND, MF_BYPOSITION, MF_CHECKED, MF_GRAYED, MF_POPUP, MF_STRING, MF_UNCHECKED,
-    SM_CYMENU, SWP_NOMOVE, SWP_NOZORDER, WM_COMMAND, WM_INITMENUPOPUP, WM_NCDESTROY,
+    GetMenuItemCount, GetMenuStringW, GetSystemMetrics, GetWindowRect, HMENU, MF_BYCOMMAND,
+    MF_BYPOSITION, MF_CHECKED, MF_GRAYED, MF_POPUP, MF_STRING, MF_UNCHECKED, SM_CYMENU, SWP_NOMOVE,
+    SWP_NOZORDER, SetMenu, SetWindowPos, WM_COMMAND, WM_INITMENUPOPUP, WM_NCDESTROY,
 };
 
 use crate::audio::{self, InputController, OutputController};
@@ -201,27 +201,29 @@ pub fn install(
     }
 }
 
-unsafe fn grow_window_for_menu(hwnd: HWND) { unsafe {
-    let menu_h = GetSystemMetrics(SM_CYMENU);
-    if menu_h <= 0 {
-        return;
+unsafe fn grow_window_for_menu(hwnd: HWND) {
+    unsafe {
+        let menu_h = GetSystemMetrics(SM_CYMENU);
+        if menu_h <= 0 {
+            return;
+        }
+        let mut rect: RECT = std::mem::zeroed();
+        if GetWindowRect(hwnd, &mut rect) == 0 {
+            return;
+        }
+        let w = rect.right - rect.left;
+        let h = (rect.bottom - rect.top) + menu_h;
+        SetWindowPos(
+            hwnd,
+            std::ptr::null_mut(),
+            0,
+            0,
+            w,
+            h,
+            SWP_NOMOVE | SWP_NOZORDER,
+        );
     }
-    let mut rect: RECT = std::mem::zeroed();
-    if GetWindowRect(hwnd, &mut rect) == 0 {
-        return;
-    }
-    let w = rect.right - rect.left;
-    let h = (rect.bottom - rect.top) + menu_h;
-    SetWindowPos(
-        hwnd,
-        std::ptr::null_mut(),
-        0,
-        0,
-        w,
-        h,
-        SWP_NOMOVE | SWP_NOZORDER,
-    );
-}}
+}
 
 /// Subclassed window procedure. Handles WM_COMMAND for our menu
 /// item (mic toggle + dynamic device items), refreshes the
@@ -234,114 +236,116 @@ unsafe extern "system" fn subclass_proc(
     lparam: LPARAM,
     _uid: usize,
     dwrefdata: usize,
-) -> LRESULT { unsafe {
-    let state_ptr = dwrefdata as *mut MenuState;
+) -> LRESULT {
+    unsafe {
+        let state_ptr = dwrefdata as *mut MenuState;
 
-    match msg {
-        WM_COMMAND => {
-            if state_ptr.is_null() {
-                return DefSubclassProc(hwnd, msg, wparam, lparam);
-            }
-            let state = &*state_ptr;
-            let cmd_id = (wparam & 0xFFFF) as u16;
-
-            if cmd_id == MENU_CMD_MIC && state.has_mic_item {
-                let want = !state.input.is_enabled();
-                state.input.set_enabled(want);
-                vlog!(
-                    "mic: {} (request, via menu)",
-                    if want { "ON" } else { "OFF" }
-                );
-                let flag = if want { MF_CHECKED } else { MF_UNCHECKED };
-                CheckMenuItem(state.hmenu_plugin, MENU_CMD_MIC as u32, MF_BYCOMMAND | flag);
-                return 0;
-            }
-
-            if cmd_id == MENU_CMD_OUTPUT {
-                let want = !state.output.is_enabled();
-                state.output.set_enabled(want);
-                vlog!(
-                    "output: {} (request, via menu)",
-                    if want { "ON" } else { "OFF" }
-                );
-                let flag = if want { MF_CHECKED } else { MF_UNCHECKED };
-                CheckMenuItem(
-                    state.hmenu_plugin,
-                    MENU_CMD_OUTPUT as u32,
-                    MF_BYCOMMAND | flag,
-                );
-                return 0;
-            }
-
-            if !state.hmenu_input_devices.is_null()
-                && (MENU_CMD_INPUT_DEVICE_BASE..=MENU_CMD_INPUT_DEVICE_END).contains(&cmd_id)
-            {
-                if let Some(name) = get_menu_string(state.hmenu_input_devices, cmd_id as u32) {
-                    vlog!("input device: {name}");
-                    state.input.set_device(Some(name));
+        match msg {
+            WM_COMMAND => {
+                if state_ptr.is_null() {
+                    return DefSubclassProc(hwnd, msg, wparam, lparam);
                 }
-                return 0;
-            }
+                let state = &*state_ptr;
+                let cmd_id = (wparam & 0xFFFF) as u16;
 
-            if (MENU_CMD_OUTPUT_DEVICE_BASE..=MENU_CMD_OUTPUT_DEVICE_END).contains(&cmd_id) {
-                if let Some(name) = get_menu_string(state.hmenu_output_devices, cmd_id as u32) {
-                    vlog!("output device: {name}");
-                    state.output.set_device(Some(name));
-                }
-                return 0;
-            }
-        }
-        WM_INITMENUPOPUP => {
-            if state_ptr.is_null() {
-                return DefSubclassProc(hwnd, msg, wparam, lparam);
-            }
-            let state = &*state_ptr;
-            let popup = wparam as HMENU;
-
-            if !state.hmenu_input_devices.is_null() && popup == state.hmenu_input_devices {
-                let (_, names) = audio::list_input_devices();
-                let current = state.input.current_name();
-                repopulate_device_menu(
-                    popup,
-                    &names,
-                    current.as_deref(),
-                    MENU_CMD_INPUT_DEVICE_BASE,
-                );
-            } else if popup == state.hmenu_output_devices {
-                let (_, names) = audio::list_output_devices();
-                let current = state.output.current_name();
-                repopulate_device_menu(
-                    popup,
-                    &names,
-                    current.as_deref(),
-                    MENU_CMD_OUTPUT_DEVICE_BASE,
-                );
-            } else if popup == state.hmenu_plugin {
-                if state.has_mic_item {
-                    let on = state.input.is_enabled();
-                    let flag = if on { MF_CHECKED } else { MF_UNCHECKED };
+                if cmd_id == MENU_CMD_MIC && state.has_mic_item {
+                    let want = !state.input.is_enabled();
+                    state.input.set_enabled(want);
+                    vlog!(
+                        "mic: {} (request, via menu)",
+                        if want { "ON" } else { "OFF" }
+                    );
+                    let flag = if want { MF_CHECKED } else { MF_UNCHECKED };
                     CheckMenuItem(state.hmenu_plugin, MENU_CMD_MIC as u32, MF_BYCOMMAND | flag);
+                    return 0;
                 }
-                let out_on = state.output.is_enabled();
-                let out_flag = if out_on { MF_CHECKED } else { MF_UNCHECKED };
-                CheckMenuItem(
-                    state.hmenu_plugin,
-                    MENU_CMD_OUTPUT as u32,
-                    MF_BYCOMMAND | out_flag,
-                );
-            }
-        }
-        WM_NCDESTROY => {
-            if !state_ptr.is_null() {
-                drop(Box::from_raw(state_ptr));
-            }
-            RemoveWindowSubclass(hwnd, Some(subclass_proc), SUBCLASS_ID);
-        }
-        _ => {}
-    }
 
-    DefSubclassProc(hwnd, msg, wparam, lparam)
-}}
+                if cmd_id == MENU_CMD_OUTPUT {
+                    let want = !state.output.is_enabled();
+                    state.output.set_enabled(want);
+                    vlog!(
+                        "output: {} (request, via menu)",
+                        if want { "ON" } else { "OFF" }
+                    );
+                    let flag = if want { MF_CHECKED } else { MF_UNCHECKED };
+                    CheckMenuItem(
+                        state.hmenu_plugin,
+                        MENU_CMD_OUTPUT as u32,
+                        MF_BYCOMMAND | flag,
+                    );
+                    return 0;
+                }
+
+                if !state.hmenu_input_devices.is_null()
+                    && (MENU_CMD_INPUT_DEVICE_BASE..=MENU_CMD_INPUT_DEVICE_END).contains(&cmd_id)
+                {
+                    if let Some(name) = get_menu_string(state.hmenu_input_devices, cmd_id as u32) {
+                        vlog!("input device: {name}");
+                        state.input.set_device(Some(name));
+                    }
+                    return 0;
+                }
+
+                if (MENU_CMD_OUTPUT_DEVICE_BASE..=MENU_CMD_OUTPUT_DEVICE_END).contains(&cmd_id) {
+                    if let Some(name) = get_menu_string(state.hmenu_output_devices, cmd_id as u32) {
+                        vlog!("output device: {name}");
+                        state.output.set_device(Some(name));
+                    }
+                    return 0;
+                }
+            }
+            WM_INITMENUPOPUP => {
+                if state_ptr.is_null() {
+                    return DefSubclassProc(hwnd, msg, wparam, lparam);
+                }
+                let state = &*state_ptr;
+                let popup = wparam as HMENU;
+
+                if !state.hmenu_input_devices.is_null() && popup == state.hmenu_input_devices {
+                    let (_, names) = audio::list_input_devices();
+                    let current = state.input.current_name();
+                    repopulate_device_menu(
+                        popup,
+                        &names,
+                        current.as_deref(),
+                        MENU_CMD_INPUT_DEVICE_BASE,
+                    );
+                } else if popup == state.hmenu_output_devices {
+                    let (_, names) = audio::list_output_devices();
+                    let current = state.output.current_name();
+                    repopulate_device_menu(
+                        popup,
+                        &names,
+                        current.as_deref(),
+                        MENU_CMD_OUTPUT_DEVICE_BASE,
+                    );
+                } else if popup == state.hmenu_plugin {
+                    if state.has_mic_item {
+                        let on = state.input.is_enabled();
+                        let flag = if on { MF_CHECKED } else { MF_UNCHECKED };
+                        CheckMenuItem(state.hmenu_plugin, MENU_CMD_MIC as u32, MF_BYCOMMAND | flag);
+                    }
+                    let out_on = state.output.is_enabled();
+                    let out_flag = if out_on { MF_CHECKED } else { MF_UNCHECKED };
+                    CheckMenuItem(
+                        state.hmenu_plugin,
+                        MENU_CMD_OUTPUT as u32,
+                        MF_BYCOMMAND | out_flag,
+                    );
+                }
+            }
+            WM_NCDESTROY => {
+                if !state_ptr.is_null() {
+                    drop(Box::from_raw(state_ptr));
+                }
+                RemoveWindowSubclass(hwnd, Some(subclass_proc), SUBCLASS_ID);
+            }
+            _ => {}
+        }
+
+        DefSubclassProc(hwnd, msg, wparam, lparam)
+    }
+}
 
 /// Replace all items in `popup` with one entry per device. Items
 /// fire command IDs in `[cmd_base .. cmd_base + devices.len())`;
@@ -351,57 +355,61 @@ unsafe fn repopulate_device_menu(
     devices: &[String],
     current: Option<&str>,
     cmd_base: u16,
-) { unsafe {
-    // Remove all existing items. Always delete by position 0 since
-    // the menu shrinks under us as we delete.
-    let count = GetMenuItemCount(popup);
-    for _ in 0..count {
-        DeleteMenu(popup, 0, MF_BYPOSITION);
-    }
-
-    if devices.is_empty() {
-        let text = wide("(no devices)");
-        AppendMenuW(popup, MF_STRING | MF_GRAYED, 0, text.as_ptr());
-        return;
-    }
-
-    for (i, name) in devices.iter().enumerate() {
-        // Don't blow past the reserved range — a system with >256
-        // devices on one side would silently drop the rest.
-        if i >= 256 {
-            break;
+) {
+    unsafe {
+        // Remove all existing items. Always delete by position 0 since
+        // the menu shrinks under us as we delete.
+        let count = GetMenuItemCount(popup);
+        for _ in 0..count {
+            DeleteMenu(popup, 0, MF_BYPOSITION);
         }
-        let text = wide(name);
-        let cmd_id = cmd_base + i as u16;
-        let mut flags = MF_STRING;
-        if current.map(|c| c == name.as_str()).unwrap_or(false) {
-            flags |= MF_CHECKED;
+
+        if devices.is_empty() {
+            let text = wide("(no devices)");
+            AppendMenuW(popup, MF_STRING | MF_GRAYED, 0, text.as_ptr());
+            return;
         }
-        AppendMenuW(popup, flags, cmd_id as usize, text.as_ptr());
+
+        for (i, name) in devices.iter().enumerate() {
+            // Don't blow past the reserved range — a system with >256
+            // devices on one side would silently drop the rest.
+            if i >= 256 {
+                break;
+            }
+            let text = wide(name);
+            let cmd_id = cmd_base + i as u16;
+            let mut flags = MF_STRING;
+            if current.map(|c| c == name.as_str()).unwrap_or(false) {
+                flags |= MF_CHECKED;
+            }
+            AppendMenuW(popup, flags, cmd_id as usize, text.as_ptr());
+        }
     }
-}}
+}
 
 /// Look up a menu item's display string by command ID. Returns
 /// `None` if the ID isn't in the menu (or `GetMenuStringW` fails).
-unsafe fn get_menu_string(hmenu: HMENU, cmd_id: u32) -> Option<String> { unsafe {
-    // First call with a null buffer to get the required length.
-    let len = GetMenuStringW(hmenu, cmd_id, std::ptr::null_mut(), 0, MF_BYCOMMAND);
-    if len <= 0 {
-        return None;
+unsafe fn get_menu_string(hmenu: HMENU, cmd_id: u32) -> Option<String> {
+    unsafe {
+        // First call with a null buffer to get the required length.
+        let len = GetMenuStringW(hmenu, cmd_id, std::ptr::null_mut(), 0, MF_BYCOMMAND);
+        if len <= 0 {
+            return None;
+        }
+        let mut buf = vec![0u16; (len + 1) as usize];
+        let written = GetMenuStringW(
+            hmenu,
+            cmd_id,
+            buf.as_mut_ptr(),
+            buf.len() as i32,
+            MF_BYCOMMAND,
+        );
+        if written <= 0 {
+            return None;
+        }
+        Some(String::from_utf16_lossy(&buf[..written as usize]))
     }
-    let mut buf = vec![0u16; (len + 1) as usize];
-    let written = GetMenuStringW(
-        hmenu,
-        cmd_id,
-        buf.as_mut_ptr(),
-        buf.len() as i32,
-        MF_BYCOMMAND,
-    );
-    if written <= 0 {
-        return None;
-    }
-    Some(String::from_utf16_lossy(&buf[..written as usize]))
-}}
+}
 
 /// UTF-8 → null-terminated UTF-16 (Win32's `W` APIs).
 fn wide(s: &str) -> Vec<u16> {

@@ -115,29 +115,31 @@ impl<'a> AtomSequenceReader<'a> {
     ///
     /// # Safety
     /// `self.seq` must be valid for the duration of the call.
-    unsafe fn walk<F: FnMut(i64, Urid, *const u8, usize)>(&self, mut f: F) { unsafe {
-        let seq = &*self.seq;
-        let body_size = seq.atom.size as usize;
-        if body_size < core::mem::size_of::<AtomSequenceBody>() {
-            return;
-        }
-        let data_size = body_size - core::mem::size_of::<AtomSequenceBody>();
-        let data_start = (self.seq as *const u8).add(core::mem::size_of::<AtomSequence>());
-        let mut offset = 0usize;
-        while offset + core::mem::size_of::<AtomEventHeader>() <= data_size {
-            let ev_ptr = data_start.add(offset) as *const AtomEventHeader;
-            let ev = *ev_ptr;
-            let body_bytes = ev.body.size as usize;
-            let total = core::mem::size_of::<AtomEventHeader>() + body_bytes;
-            let padded = (total + 7) & !7;
-            if offset + padded > data_size {
-                break;
+    unsafe fn walk<F: FnMut(i64, Urid, *const u8, usize)>(&self, mut f: F) {
+        unsafe {
+            let seq = &*self.seq;
+            let body_size = seq.atom.size as usize;
+            if body_size < core::mem::size_of::<AtomSequenceBody>() {
+                return;
             }
-            let body_ptr = data_start.add(offset + core::mem::size_of::<AtomEventHeader>());
-            f(ev.time_frames, ev.body.type_, body_ptr, body_bytes);
-            offset += padded;
+            let data_size = body_size - core::mem::size_of::<AtomSequenceBody>();
+            let data_start = (self.seq as *const u8).add(core::mem::size_of::<AtomSequence>());
+            let mut offset = 0usize;
+            while offset + core::mem::size_of::<AtomEventHeader>() <= data_size {
+                let ev_ptr = data_start.add(offset) as *const AtomEventHeader;
+                let ev = *ev_ptr;
+                let body_bytes = ev.body.size as usize;
+                let total = core::mem::size_of::<AtomEventHeader>() + body_bytes;
+                let padded = (total + 7) & !7;
+                if offset + padded > data_size {
+                    break;
+                }
+                let body_ptr = data_start.add(offset + core::mem::size_of::<AtomEventHeader>());
+                f(ev.time_frames, ev.body.type_, body_ptr, body_bytes);
+                offset += padded;
+            }
         }
-}}
+    }
 
     /// Decode an `LV2_Atom_Object` body as a `time:Position` and merge
     /// its fields into `info`. Returns true on success.
@@ -150,100 +152,103 @@ impl<'a> AtomSequenceReader<'a> {
         body_ptr: *const u8,
         body_bytes: usize,
         info: &mut TransportInfo,
-    ) -> bool { unsafe {
-        // LV2_Atom_Object_Body per lv2/atom/atom.h:
-        //   { uint32_t id; uint32_t otype; }
-        // id is a per-object instance identifier (0 for blank); otype is
-        // the class URID we key on.
-        let header_size = core::mem::size_of::<Urid>() * 2;
-        if body_bytes < header_size {
-            return false;
-        }
-        let otype = *(body_ptr.add(core::mem::size_of::<Urid>()) as *const Urid);
-        if otype != self.urid.time_position {
-            return false;
-        }
-        // Collect raw LV2 time:* fields first, then reconcile them to the
-        // truce `TransportInfo` schema. The LV2 time extension reports
-        // position as `bar` (0-based bar index) + `barBeat` (float beat
-        // position within the bar) + `beatsPerBar`, while truce exposes
-        // a monotonically-increasing `position_beats` since transport
-        // start plus `bar_start_beats` as the anchor. We compute both
-        // from the raw fields once we've read them all.
-        let mut bar: Option<f64> = None;
-        let mut bar_beat: Option<f64> = None;
-        let mut beats_per_bar: Option<f64> = None;
+    ) -> bool {
+        unsafe {
+            // LV2_Atom_Object_Body per lv2/atom/atom.h:
+            //   { uint32_t id; uint32_t otype; }
+            // id is a per-object instance identifier (0 for blank); otype is
+            // the class URID we key on.
+            let header_size = core::mem::size_of::<Urid>() * 2;
+            if body_bytes < header_size {
+                return false;
+            }
+            let otype = *(body_ptr.add(core::mem::size_of::<Urid>()) as *const Urid);
+            if otype != self.urid.time_position {
+                return false;
+            }
+            // Collect raw LV2 time:* fields first, then reconcile them to the
+            // truce `TransportInfo` schema. The LV2 time extension reports
+            // position as `bar` (0-based bar index) + `barBeat` (float beat
+            // position within the bar) + `beatsPerBar`, while truce exposes
+            // a monotonically-increasing `position_beats` since transport
+            // start plus `bar_start_beats` as the anchor. We compute both
+            // from the raw fields once we've read them all.
+            let mut bar: Option<f64> = None;
+            let mut bar_beat: Option<f64> = None;
+            let mut beats_per_bar: Option<f64> = None;
 
-        let mut offset = header_size;
-        while offset + core::mem::size_of::<Urid>() * 2 + core::mem::size_of::<Atom>() <= body_bytes
-        {
-            // Property = { key: Urid, context: Urid, value: Atom + data }
-            let key = *(body_ptr.add(offset) as *const Urid);
-            // `context` is unused by time:Position writers in practice.
-            let value_header = body_ptr.add(offset + core::mem::size_of::<Urid>() * 2);
-            let value_atom = *(value_header as *const Atom);
-            let value_data = value_header.add(core::mem::size_of::<Atom>());
-            let value_size = value_atom.size as usize;
-            let entry_total =
-                core::mem::size_of::<Urid>() * 2 + core::mem::size_of::<Atom>() + value_size;
-            let padded = (entry_total + 7) & !7;
+            let mut offset = header_size;
+            while offset + core::mem::size_of::<Urid>() * 2 + core::mem::size_of::<Atom>()
+                <= body_bytes
+            {
+                // Property = { key: Urid, context: Urid, value: Atom + data }
+                let key = *(body_ptr.add(offset) as *const Urid);
+                // `context` is unused by time:Position writers in practice.
+                let value_header = body_ptr.add(offset + core::mem::size_of::<Urid>() * 2);
+                let value_atom = *(value_header as *const Atom);
+                let value_data = value_header.add(core::mem::size_of::<Atom>());
+                let value_size = value_atom.size as usize;
+                let entry_total =
+                    core::mem::size_of::<Urid>() * 2 + core::mem::size_of::<Atom>() + value_size;
+                let padded = (entry_total + 7) & !7;
 
-            if let Some(v) = self.read_atom_number(value_atom.type_, value_data, value_size) {
-                if key == self.urid.time_beats_per_minute {
-                    info.tempo = v;
-                } else if key == self.urid.time_bar {
-                    bar = Some(v);
-                } else if key == self.urid.time_bar_beat {
-                    bar_beat = Some(v);
-                } else if key == self.urid.time_beats_per_bar {
-                    beats_per_bar = Some(v);
-                    info.time_sig_num = v.round().clamp(0.0, u8::MAX as f64) as u8;
-                } else if key == self.urid.time_beat {
-                    // Non-standard but some hosts still emit it — treat
-                    // it as the absolute beat position directly.
-                    info.position_beats = v;
-                } else if key == self.urid.time_frame {
-                    info.position_samples = v as i64;
-                } else if key == self.urid.time_speed {
-                    info.playing = v.abs() > 1e-9;
-                } else if key == self.urid.time_beat_unit {
-                    info.time_sig_den = v.round().clamp(0.0, u8::MAX as f64) as u8;
+                if let Some(v) = self.read_atom_number(value_atom.type_, value_data, value_size) {
+                    if key == self.urid.time_beats_per_minute {
+                        info.tempo = v;
+                    } else if key == self.urid.time_bar {
+                        bar = Some(v);
+                    } else if key == self.urid.time_bar_beat {
+                        bar_beat = Some(v);
+                    } else if key == self.urid.time_beats_per_bar {
+                        beats_per_bar = Some(v);
+                        info.time_sig_num = v.round().clamp(0.0, u8::MAX as f64) as u8;
+                    } else if key == self.urid.time_beat {
+                        // Non-standard but some hosts still emit it — treat
+                        // it as the absolute beat position directly.
+                        info.position_beats = v;
+                    } else if key == self.urid.time_frame {
+                        info.position_samples = v as i64;
+                    } else if key == self.urid.time_speed {
+                        info.playing = v.abs() > 1e-9;
+                    } else if key == self.urid.time_beat_unit {
+                        info.time_sig_den = v.round().clamp(0.0, u8::MAX as f64) as u8;
+                    }
+                }
+
+                offset += padded;
+                if padded == 0 {
+                    break;
                 }
             }
 
-            offset += padded;
-            if padded == 0 {
-                break;
-            }
-        }
-
-        // Derive truce-shaped fields from the raw bar/barBeat/beatsPerBar
-        // triple. `beatsPerBar` can be missing when the plugin asks for
-        // transport before the host has finished reporting all fields;
-        // fall back to the current time_sig_num if so, and finally to 4.
-        let bpb = beats_per_bar
-            .or({
-                if info.time_sig_num > 0 {
-                    Some(info.time_sig_num as f64)
-                } else {
-                    None
+            // Derive truce-shaped fields from the raw bar/barBeat/beatsPerBar
+            // triple. `beatsPerBar` can be missing when the plugin asks for
+            // transport before the host has finished reporting all fields;
+            // fall back to the current time_sig_num if so, and finally to 4.
+            let bpb = beats_per_bar
+                .or({
+                    if info.time_sig_num > 0 {
+                        Some(info.time_sig_num as f64)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(4.0);
+            if let Some(b) = bar {
+                info.bar_start_beats = b * bpb;
+                if let Some(bb) = bar_beat {
+                    info.position_beats = info.bar_start_beats + bb;
                 }
-            })
-            .unwrap_or(4.0);
-        if let Some(b) = bar {
-            info.bar_start_beats = b * bpb;
-            if let Some(bb) = bar_beat {
-                info.position_beats = info.bar_start_beats + bb;
+            } else if let Some(bb) = bar_beat {
+                // No bar field — best we can do is surface the intra-bar
+                // offset as the position, matching our previous behavior
+                // for hosts that only emit `time:barBeat`.
+                info.position_beats = bb;
             }
-        } else if let Some(bb) = bar_beat {
-            // No bar field — best we can do is surface the intra-bar
-            // offset as the position, matching our previous behavior
-            // for hosts that only emit `time:barBeat`.
-            info.position_beats = bb;
-        }
 
-        true
-}}
+            true
+        }
+    }
 
     /// Read a numeric atom value as f64, handling the common number types
     /// LV2 hosts use for time:Position fields.
@@ -252,21 +257,23 @@ impl<'a> AtomSequenceReader<'a> {
         atom_type: Urid,
         data: *const u8,
         size: usize,
-    ) -> Option<f64> { unsafe {
-        if atom_type == self.urid.atom_float && size >= core::mem::size_of::<f32>() {
-            Some(*(data as *const f32) as f64)
-        } else if atom_type == self.urid.atom_double && size >= core::mem::size_of::<f64>() {
-            Some(*(data as *const f64))
-        } else if atom_type == self.urid.atom_int && size >= core::mem::size_of::<i32>() {
-            Some(*(data as *const i32) as f64)
-        } else if atom_type == self.urid.atom_long && size >= core::mem::size_of::<i64>() {
-            Some(*(data as *const i64) as f64)
-        } else if atom_type == self.urid.atom_bool && size >= core::mem::size_of::<i32>() {
-            Some(if *(data as *const i32) != 0 { 1.0 } else { 0.0 })
-        } else {
-            None
+    ) -> Option<f64> {
+        unsafe {
+            if atom_type == self.urid.atom_float && size >= core::mem::size_of::<f32>() {
+                Some(*(data as *const f32) as f64)
+            } else if atom_type == self.urid.atom_double && size >= core::mem::size_of::<f64>() {
+                Some(*(data as *const f64))
+            } else if atom_type == self.urid.atom_int && size >= core::mem::size_of::<i32>() {
+                Some(*(data as *const i32) as f64)
+            } else if atom_type == self.urid.atom_long && size >= core::mem::size_of::<i64>() {
+                Some(*(data as *const i64) as f64)
+            } else if atom_type == self.urid.atom_bool && size >= core::mem::size_of::<i32>() {
+                Some(if *(data as *const i32) != 0 { 1.0 } else { 0.0 })
+            } else {
+                None
+            }
         }
-}}
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -345,71 +352,73 @@ pub fn midi_bytes_to_event(sample_offset: u32, bytes: &[u8]) -> Option<Event> {
 /// # Safety
 /// `out` must point to a writable atom sequence buffer with capacity the
 /// host allocated (typically a few KB).
-pub unsafe fn write_midi_out_sequence(out: *mut AtomSequence, events: &EventList, urid: &UridMap) { unsafe {
-    if out.is_null() || urid.midi_event == 0 {
-        return;
-    }
-    // Host passes us a sequence where atom.size is the *capacity* of the
-    // body buffer on entry. We overwrite it with the actual size on exit.
-    let capacity = (*out).atom.size as usize;
-    let atom_size = core::mem::size_of::<Atom>();
-    let header_size = core::mem::size_of::<AtomSequenceBody>();
-    let body_start = (out as *mut u8).add(atom_size + header_size);
-    let mut offset = 0usize;
-    // Reset sequence metadata.
-    (*out).atom.type_ = urid.atom_sequence;
-    (*out).body.unit = 0;
-    (*out).body.pad = 0;
-    for event in events.iter() {
-        let mut buf = [0u8; 3];
-        let (n, frame) = match &event.body {
-            EventBody::NoteOn {
-                channel,
-                note,
-                velocity,
-            } => {
-                buf[0] = 0x90 | (channel & 0x0F);
-                buf[1] = note & 0x7F;
-                buf[2] = ((velocity * 127.0).clamp(0.0, 127.0)) as u8;
-                (3, event.sample_offset)
-            }
-            EventBody::NoteOff {
-                channel,
-                note,
-                velocity,
-            } => {
-                buf[0] = 0x80 | (channel & 0x0F);
-                buf[1] = note & 0x7F;
-                buf[2] = ((velocity * 127.0).clamp(0.0, 127.0)) as u8;
-                (3, event.sample_offset)
-            }
-            EventBody::ControlChange { channel, cc, value } => {
-                buf[0] = 0xB0 | (channel & 0x0F);
-                buf[1] = cc & 0x7F;
-                buf[2] = ((value * 127.0).clamp(0.0, 127.0)) as u8;
-                (3, event.sample_offset)
-            }
-            _ => continue,
-        };
-        let total = core::mem::size_of::<AtomEventHeader>() + n;
-        let padded = (total + 7) & !7;
-        if offset + padded > capacity {
-            break; // out of buffer space; drop remaining events
+pub unsafe fn write_midi_out_sequence(out: *mut AtomSequence, events: &EventList, urid: &UridMap) {
+    unsafe {
+        if out.is_null() || urid.midi_event == 0 {
+            return;
         }
-        let ev_ptr = body_start.add(offset) as *mut AtomEventHeader;
-        (*ev_ptr).time_frames = frame as i64;
-        (*ev_ptr).body.size = n as u32;
-        (*ev_ptr).body.type_ = urid.midi_event;
-        let body_ptr = body_start.add(offset + core::mem::size_of::<AtomEventHeader>());
-        core::ptr::copy_nonoverlapping(buf.as_ptr(), body_ptr, n);
-        // Zero the padding bytes.
-        for i in n..(padded - core::mem::size_of::<AtomEventHeader>()) {
-            *body_ptr.add(i) = 0;
+        // Host passes us a sequence where atom.size is the *capacity* of the
+        // body buffer on entry. We overwrite it with the actual size on exit.
+        let capacity = (*out).atom.size as usize;
+        let atom_size = core::mem::size_of::<Atom>();
+        let header_size = core::mem::size_of::<AtomSequenceBody>();
+        let body_start = (out as *mut u8).add(atom_size + header_size);
+        let mut offset = 0usize;
+        // Reset sequence metadata.
+        (*out).atom.type_ = urid.atom_sequence;
+        (*out).body.unit = 0;
+        (*out).body.pad = 0;
+        for event in events.iter() {
+            let mut buf = [0u8; 3];
+            let (n, frame) = match &event.body {
+                EventBody::NoteOn {
+                    channel,
+                    note,
+                    velocity,
+                } => {
+                    buf[0] = 0x90 | (channel & 0x0F);
+                    buf[1] = note & 0x7F;
+                    buf[2] = ((velocity * 127.0).clamp(0.0, 127.0)) as u8;
+                    (3, event.sample_offset)
+                }
+                EventBody::NoteOff {
+                    channel,
+                    note,
+                    velocity,
+                } => {
+                    buf[0] = 0x80 | (channel & 0x0F);
+                    buf[1] = note & 0x7F;
+                    buf[2] = ((velocity * 127.0).clamp(0.0, 127.0)) as u8;
+                    (3, event.sample_offset)
+                }
+                EventBody::ControlChange { channel, cc, value } => {
+                    buf[0] = 0xB0 | (channel & 0x0F);
+                    buf[1] = cc & 0x7F;
+                    buf[2] = ((value * 127.0).clamp(0.0, 127.0)) as u8;
+                    (3, event.sample_offset)
+                }
+                _ => continue,
+            };
+            let total = core::mem::size_of::<AtomEventHeader>() + n;
+            let padded = (total + 7) & !7;
+            if offset + padded > capacity {
+                break; // out of buffer space; drop remaining events
+            }
+            let ev_ptr = body_start.add(offset) as *mut AtomEventHeader;
+            (*ev_ptr).time_frames = frame as i64;
+            (*ev_ptr).body.size = n as u32;
+            (*ev_ptr).body.type_ = urid.midi_event;
+            let body_ptr = body_start.add(offset + core::mem::size_of::<AtomEventHeader>());
+            core::ptr::copy_nonoverlapping(buf.as_ptr(), body_ptr, n);
+            // Zero the padding bytes.
+            for i in n..(padded - core::mem::size_of::<AtomEventHeader>()) {
+                *body_ptr.add(i) = 0;
+            }
+            offset += padded;
         }
-        offset += padded;
+        (*out).atom.size = (header_size + offset) as u32;
     }
-    (*out).atom.size = (header_size + offset) as u32;
-}}
+}
 
 /// Write a single `time:Position` atom object into a notify-out sequence.
 /// Called each run() block so the UI's `port_event` receives the latest
@@ -426,97 +435,99 @@ pub unsafe fn write_time_position_sequence(
     out: *mut AtomSequence,
     info: &TransportInfo,
     urid: &UridMap,
-) { unsafe {
-    if out.is_null() || urid.time_position == 0 || urid.atom_object == 0 {
-        return;
-    }
-    let capacity = (*out).atom.size as usize;
-    let atom_size = core::mem::size_of::<Atom>();
-    let body_header = core::mem::size_of::<AtomSequenceBody>();
-    let body_start = (out as *mut u8).add(atom_size + body_header);
-
-    (*out).atom.type_ = urid.atom_sequence;
-    (*out).body.unit = 0;
-    (*out).body.pad = 0;
-
-    // Build the Object body's properties. Layout per LV2 atom-object spec:
-    //
-    //   AtomEventHeader { time_frames, body: Atom { size, type: Object } }
-    //   LV2_Atom_Object_Body { id: Urid, otype: Urid }
-    //   LV2_Atom_Property_Body { key: Urid, context: Urid, value: Atom, data[] }
-    //   ...
-    //
-    // We emit a small fixed set of properties and carry Double values for
-    // all of them so the UI-side decoder can use one reader.
-    let ev_header_size = core::mem::size_of::<AtomEventHeader>();
-    let obj_header_size = core::mem::size_of::<Urid>() * 2; // id + otype
-
-    // Reserve the whole event in-place so property writers can align.
-    let ev_ptr = body_start as *mut AtomEventHeader;
-    if ev_header_size + obj_header_size > capacity {
-        (*out).atom.size = body_header as u32;
-        return;
-    }
-    (*ev_ptr).time_frames = 0;
-    (*ev_ptr).body.type_ = urid.atom_object;
-    let obj_body_start = body_start.add(ev_header_size);
-    // Per lv2/atom/atom.h: `id` first, then `otype`.
-    *(obj_body_start as *mut Urid) = 0; // id = blank
-    *(obj_body_start.add(core::mem::size_of::<Urid>()) as *mut Urid) = urid.time_position;
-
-    let mut prop_offset = obj_header_size;
-    let prop_header_size = core::mem::size_of::<Urid>() * 2 + core::mem::size_of::<Atom>();
-
-    let mut write_double = |key: Urid, value: f64| -> bool {
-        if key == 0 || urid.atom_double == 0 {
-            return false;
+) {
+    unsafe {
+        if out.is_null() || urid.time_position == 0 || urid.atom_object == 0 {
+            return;
         }
-        let value_size = core::mem::size_of::<f64>();
-        let total = prop_header_size + value_size;
-        let padded = (total + 7) & !7;
-        if ev_header_size + prop_offset + padded > capacity {
-            return false;
+        let capacity = (*out).atom.size as usize;
+        let atom_size = core::mem::size_of::<Atom>();
+        let body_header = core::mem::size_of::<AtomSequenceBody>();
+        let body_start = (out as *mut u8).add(atom_size + body_header);
+
+        (*out).atom.type_ = urid.atom_sequence;
+        (*out).body.unit = 0;
+        (*out).body.pad = 0;
+
+        // Build the Object body's properties. Layout per LV2 atom-object spec:
+        //
+        //   AtomEventHeader { time_frames, body: Atom { size, type: Object } }
+        //   LV2_Atom_Object_Body { id: Urid, otype: Urid }
+        //   LV2_Atom_Property_Body { key: Urid, context: Urid, value: Atom, data[] }
+        //   ...
+        //
+        // We emit a small fixed set of properties and carry Double values for
+        // all of them so the UI-side decoder can use one reader.
+        let ev_header_size = core::mem::size_of::<AtomEventHeader>();
+        let obj_header_size = core::mem::size_of::<Urid>() * 2; // id + otype
+
+        // Reserve the whole event in-place so property writers can align.
+        let ev_ptr = body_start as *mut AtomEventHeader;
+        if ev_header_size + obj_header_size > capacity {
+            (*out).atom.size = body_header as u32;
+            return;
         }
-        let entry = obj_body_start.add(prop_offset);
-        *(entry as *mut Urid) = key;
-        *(entry.add(core::mem::size_of::<Urid>()) as *mut Urid) = 0; // context
-        let atom_hdr = entry.add(core::mem::size_of::<Urid>() * 2) as *mut Atom;
-        (*atom_hdr).size = value_size as u32;
-        (*atom_hdr).type_ = urid.atom_double;
-        let value_ptr = entry.add(prop_header_size);
-        *(value_ptr as *mut f64) = value;
-        prop_offset += padded;
-        true
-    };
+        (*ev_ptr).time_frames = 0;
+        (*ev_ptr).body.type_ = urid.atom_object;
+        let obj_body_start = body_start.add(ev_header_size);
+        // Per lv2/atom/atom.h: `id` first, then `otype`.
+        *(obj_body_start as *mut Urid) = 0; // id = blank
+        *(obj_body_start.add(core::mem::size_of::<Urid>()) as *mut Urid) = urid.time_position;
 
-    // LV2 `time:bar` is an integer bar index (0-based); `time:barBeat`
-    // is the float position within that bar in [0, beatsPerBar). Our
-    // TransportInfo stores `bar_start_beats` as the absolute beat
-    // position at which the current bar started, so the bar index is
-    // `bar_start_beats / beatsPerBar`. Writers never emit a raw global
-    // beat count — the reader reconstructs it on the other side.
-    let bpb = if info.time_sig_num > 0 {
-        info.time_sig_num as f64
-    } else {
-        4.0
-    };
-    let bar_index = (info.bar_start_beats / bpb).round();
-    let bar_beat = info.position_beats - info.bar_start_beats;
-    write_double(urid.time_speed, if info.playing { 1.0 } else { 0.0 });
-    write_double(urid.time_beats_per_minute, info.tempo);
-    write_double(urid.time_bar_beat, bar_beat);
-    write_double(urid.time_bar, bar_index);
-    write_double(urid.time_frame, info.position_samples as f64);
-    write_double(urid.time_beats_per_bar, info.time_sig_num as f64);
-    write_double(urid.time_beat_unit, info.time_sig_den as f64);
+        let mut prop_offset = obj_header_size;
+        let prop_header_size = core::mem::size_of::<Urid>() * 2 + core::mem::size_of::<Atom>();
 
-    // `prop_offset` already includes `obj_header_size` — it started at
-    // that value and advanced for each property written.
-    (*ev_ptr).body.size = prop_offset as u32;
-    // Sequence size = body header + event header + event body size.
-    let event_total = ev_header_size + prop_offset;
-    (*out).atom.size = (body_header + event_total) as u32;
-}}
+        let mut write_double = |key: Urid, value: f64| -> bool {
+            if key == 0 || urid.atom_double == 0 {
+                return false;
+            }
+            let value_size = core::mem::size_of::<f64>();
+            let total = prop_header_size + value_size;
+            let padded = (total + 7) & !7;
+            if ev_header_size + prop_offset + padded > capacity {
+                return false;
+            }
+            let entry = obj_body_start.add(prop_offset);
+            *(entry as *mut Urid) = key;
+            *(entry.add(core::mem::size_of::<Urid>()) as *mut Urid) = 0; // context
+            let atom_hdr = entry.add(core::mem::size_of::<Urid>() * 2) as *mut Atom;
+            (*atom_hdr).size = value_size as u32;
+            (*atom_hdr).type_ = urid.atom_double;
+            let value_ptr = entry.add(prop_header_size);
+            *(value_ptr as *mut f64) = value;
+            prop_offset += padded;
+            true
+        };
+
+        // LV2 `time:bar` is an integer bar index (0-based); `time:barBeat`
+        // is the float position within that bar in [0, beatsPerBar). Our
+        // TransportInfo stores `bar_start_beats` as the absolute beat
+        // position at which the current bar started, so the bar index is
+        // `bar_start_beats / beatsPerBar`. Writers never emit a raw global
+        // beat count — the reader reconstructs it on the other side.
+        let bpb = if info.time_sig_num > 0 {
+            info.time_sig_num as f64
+        } else {
+            4.0
+        };
+        let bar_index = (info.bar_start_beats / bpb).round();
+        let bar_beat = info.position_beats - info.bar_start_beats;
+        write_double(urid.time_speed, if info.playing { 1.0 } else { 0.0 });
+        write_double(urid.time_beats_per_minute, info.tempo);
+        write_double(urid.time_bar_beat, bar_beat);
+        write_double(urid.time_bar, bar_index);
+        write_double(urid.time_frame, info.position_samples as f64);
+        write_double(urid.time_beats_per_bar, info.time_sig_num as f64);
+        write_double(urid.time_beat_unit, info.time_sig_den as f64);
+
+        // `prop_offset` already includes `obj_header_size` — it started at
+        // that value and advanced for each property written.
+        (*ev_ptr).body.size = prop_offset as u32;
+        // Sequence size = body header + event header + event body size.
+        let event_total = ev_header_size + prop_offset;
+        (*out).atom.size = (body_header + event_total) as u32;
+    }
+}
 
 // Dead-import quiet: keep c_void referenced so future extension code
 // compiles without edits.

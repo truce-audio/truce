@@ -71,11 +71,7 @@ impl Voice {
     }
 
     fn osc_square(&self) -> f64 {
-        if self.phase < 0.5 {
-            1.0
-        } else {
-            -1.0
-        }
+        if self.phase < 0.5 { 1.0 } else { -1.0 }
     }
 
     fn osc_triangle(&self) -> f64 {

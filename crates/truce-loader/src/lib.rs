@@ -40,7 +40,7 @@ mod loader;
 pub mod shell;
 pub mod static_shell;
 
-pub use canary::{verify_probe, AbiCanary, ProbePlugin};
+pub use canary::{AbiCanary, ProbePlugin, verify_probe};
 pub use safe_types::*;
 pub use traits::*;
 

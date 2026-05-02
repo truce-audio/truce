@@ -11,8 +11,8 @@ use crate::commands::package::stage::stage_au2;
 use crate::commands::package::stage::{lv2_slug, stage_clap, stage_lv2, stage_vst2, stage_vst3};
 use crate::util::fs_ctx;
 use crate::{
-    cargo_build, deployment_target, detect_default_features, load_config, project_root,
-    release_lib, PluginDef, Res,
+    PluginDef, Res, cargo_build, deployment_target, detect_default_features, load_config,
+    project_root, release_lib,
 };
 use std::process::Command;
 
@@ -430,7 +430,7 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
     if au3 {
         #[cfg(target_os = "macos")]
         {
-            use crate::{extract_team_id, MacArch};
+            use crate::{MacArch, extract_team_id};
             // Same gate as install: ad-hoc / no-team-id makes AU v3
             // unbuildable. The "no team id" case is project-wide
             // (signing identity isn't per-plugin), so emit one skip

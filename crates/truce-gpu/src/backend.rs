@@ -618,15 +618,17 @@ impl WgpuBackend {
         logical_w: u32,
         logical_h: u32,
         scale: f32,
-    ) -> Option<Self> { unsafe {
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::PRIMARY,
-            ..Default::default()
-        });
+    ) -> Option<Self> {
+        unsafe {
+            let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+                backends: wgpu::Backends::PRIMARY,
+                ..Default::default()
+            });
 
-        let surface = crate::platform::create_wgpu_surface(&instance, window)?;
-        Self::from_surface(&instance, surface, logical_w, logical_h, scale)
-}}
+            let surface = crate::platform::create_wgpu_surface(&instance, window)?;
+            Self::from_surface(&instance, surface, logical_w, logical_h, scale)
+        }
+    }
 
     /// Build a standalone `WgpuBackend` that records into encoders
     /// supplied per-frame by the caller.

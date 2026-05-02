@@ -10,7 +10,7 @@ use baseview::{Event, EventStatus, Window, WindowHandler, WindowOpenOptions, Win
 use truce_core::editor::{Editor, EditorContext, RawWindowHandle};
 
 use crate::param_state::ParamState;
-use crate::platform::{query_backing_scale, ParentWindow};
+use crate::platform::{ParentWindow, query_backing_scale};
 use crate::renderer::EguiRenderer;
 
 /// Trait for stateful egui UI implementations.

@@ -1,5 +1,5 @@
 use truce::prelude::*;
-use truce_gui::layout::{dropdown, knob, widgets, GridLayout};
+use truce_gui::layout::{GridLayout, dropdown, knob, widgets};
 
 // --- Arp pattern enum ---
 
@@ -49,8 +49,8 @@ impl ArpRate {
 
 // --- Parameters ---
 
-use std::sync::Arc;
 use ArpParamsParamId as P;
+use std::sync::Arc;
 
 #[derive(Params)]
 pub struct ArpParams {

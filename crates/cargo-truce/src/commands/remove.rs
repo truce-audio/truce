@@ -1,10 +1,10 @@
 //! `cargo truce remove` — uninstall plugin bundles for the current project,
 //! or with `--stale` evict vendor-matching bundles no longer in `truce.toml`.
 
-use crate::install_scope::{note_once, InstallScope};
 #[cfg(target_os = "macos")]
 use crate::Config;
-use crate::{confirm_prompt, dirs, load_config, run_sudo, PluginDef, Res};
+use crate::install_scope::{InstallScope, note_once};
+use crate::{PluginDef, Res, confirm_prompt, dirs, load_config, run_sudo};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;

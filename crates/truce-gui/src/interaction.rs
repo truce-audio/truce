@@ -3,8 +3,8 @@
 //! Tracks widget hit regions and maps mouse drags to parameter value changes.
 
 use crate::layout::{
-    compute_section_offsets, GridLayout, Layout, PluginLayout, WidgetKind, GRID_GAP, GRID_HEADER_H,
-    GRID_PADDING,
+    GRID_GAP, GRID_HEADER_H, GRID_PADDING, GridLayout, Layout, PluginLayout, WidgetKind,
+    compute_section_offsets,
 };
 use crate::snapshot::ParamSnapshot;
 use crate::widgets::WidgetType;

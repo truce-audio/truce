@@ -27,7 +27,7 @@ mod urid;
 pub use ttl::emit_bundle;
 pub use types::*;
 
-use std::ffi::{c_char, c_void, CStr, CString};
+use std::ffi::{CStr, CString, c_char, c_void};
 use std::ptr;
 
 use truce_core::buffer::AudioBuffer;
@@ -188,51 +188,53 @@ pub unsafe fn instantiate<P: PluginExport>(
     sample_rate: f64,
     _bundle_path: *const c_char,
     features: *const *const LV2Feature,
-) -> *mut Lv2Instance<P> { unsafe {
-    let layout = derive_port_layout::<P>();
-    let plugin = P::create();
-    let info = P::info();
-    let param_infos = plugin.params().param_infos();
+) -> *mut Lv2Instance<P> {
+    unsafe {
+        let layout = derive_port_layout::<P>();
+        let plugin = P::create();
+        let info = P::info();
+        let param_infos = plugin.params().param_infos();
 
-    let control_port_count = layout.num_params as usize;
-    let audio_in_count = layout.num_audio_in as usize;
-    let audio_out_count = layout.num_audio_out as usize;
-    let meter_ids = plugin.params().meter_ids();
-    let meter_count = meter_ids.len();
+        let control_port_count = layout.num_params as usize;
+        let audio_in_count = layout.num_audio_in as usize;
+        let audio_out_count = layout.num_audio_out as usize;
+        let meter_ids = plugin.params().meter_ids();
+        let meter_count = meter_ids.len();
 
-    let urid_map = UridMap::from_features(features);
+        let urid_map = UridMap::from_features(features);
 
-    let instance = Box::new(Lv2Instance::<P> {
-        plugin,
-        sample_rate,
-        max_block_size: 0,
-        plugin_id_hash: hash_plugin_id(info.clap_id),
-        param_infos,
-        layout,
+        let instance = Box::new(Lv2Instance::<P> {
+            plugin,
+            sample_rate,
+            max_block_size: 0,
+            plugin_id_hash: hash_plugin_id(info.clap_id),
+            param_infos,
+            layout,
 
-        audio_inputs: vec![ptr::null(); audio_in_count],
-        audio_outputs: vec![ptr::null_mut(); audio_out_count],
-        control_ports: vec![ptr::null(); control_port_count],
-        meter_ports: vec![ptr::null_mut(); meter_count],
-        meter_ids,
-        atom_in_port: ptr::null(),
-        midi_out_port: ptr::null_mut(),
-        notify_out_port: ptr::null_mut(),
+            audio_inputs: vec![ptr::null(); audio_in_count],
+            audio_outputs: vec![ptr::null_mut(); audio_out_count],
+            control_ports: vec![ptr::null(); control_port_count],
+            meter_ports: vec![ptr::null_mut(); meter_count],
+            meter_ids,
+            atom_in_port: ptr::null(),
+            midi_out_port: ptr::null_mut(),
+            notify_out_port: ptr::null_mut(),
 
-        last_control: vec![f32::NAN; control_port_count],
+            last_control: vec![f32::NAN; control_port_count],
 
-        event_list: EventList::new(),
-        output_events: EventList::new(),
+            event_list: EventList::new(),
+            output_events: EventList::new(),
 
-        urid_map,
+            urid_map,
 
-        input_slices: Vec::with_capacity(audio_in_count),
-        output_slices: Vec::with_capacity(audio_out_count),
+            input_slices: Vec::with_capacity(audio_in_count),
+            output_slices: Vec::with_capacity(audio_out_count),
 
-        transport_slot: truce_core::TransportSlot::new(),
-    });
-    Box::into_raw(instance)
-}}
+            transport_slot: truce_core::TransportSlot::new(),
+        });
+        Box::into_raw(instance)
+    }
+}
 
 /// # Safety
 /// `handle` must be a valid `Lv2Instance<P>` pointer previously returned
@@ -241,160 +243,166 @@ pub unsafe fn connect_port<P: PluginExport>(
     handle: *mut Lv2Instance<P>,
     port: u32,
     data: *mut c_void,
-) { unsafe {
-    let inst = &mut *handle;
-    let layout = inst.layout.clone();
+) {
+    unsafe {
+        let inst = &mut *handle;
+        let layout = inst.layout.clone();
 
-    if port < layout.audio_out_start() {
-        inst.audio_inputs[(port - layout.audio_in_start()) as usize] = data as *const f32;
-    } else if port < layout.control_start() {
-        inst.audio_outputs[(port - layout.audio_out_start()) as usize] = data as *mut f32;
-    } else if port < layout.meter_start() {
-        inst.control_ports[(port - layout.control_start()) as usize] = data as *const f32;
-    } else if port < layout.meter_start() + layout.num_meters {
-        inst.meter_ports[(port - layout.meter_start()) as usize] = data as *mut f32;
-    } else if port == layout.atom_in_port() {
-        inst.atom_in_port = data as *const AtomSequence;
-    } else if Some(port) == layout.midi_out_port() {
-        inst.midi_out_port = data as *mut AtomSequence;
-    } else if port == layout.notify_out_port() {
-        inst.notify_out_port = data as *mut AtomSequence;
+        if port < layout.audio_out_start() {
+            inst.audio_inputs[(port - layout.audio_in_start()) as usize] = data as *const f32;
+        } else if port < layout.control_start() {
+            inst.audio_outputs[(port - layout.audio_out_start()) as usize] = data as *mut f32;
+        } else if port < layout.meter_start() {
+            inst.control_ports[(port - layout.control_start()) as usize] = data as *const f32;
+        } else if port < layout.meter_start() + layout.num_meters {
+            inst.meter_ports[(port - layout.meter_start()) as usize] = data as *mut f32;
+        } else if port == layout.atom_in_port() {
+            inst.atom_in_port = data as *const AtomSequence;
+        } else if Some(port) == layout.midi_out_port() {
+            inst.midi_out_port = data as *mut AtomSequence;
+        } else if port == layout.notify_out_port() {
+            inst.notify_out_port = data as *mut AtomSequence;
+        }
     }
-}}
+}
 
 /// # Safety
 /// `handle` must be a valid `Lv2Instance<P>` pointer.
-pub unsafe fn activate<P: PluginExport>(handle: *mut Lv2Instance<P>) { unsafe {
-    let inst = &mut *handle;
-    // LV2 doesn't tell us max block size up front; use a generous default.
-    // run() passes n_samples each call, so we can resize if it ever exceeds.
-    let max_block = 8192usize;
-    inst.max_block_size = max_block;
-    inst.plugin.reset(inst.sample_rate, max_block);
-    inst.plugin.params().set_sample_rate(inst.sample_rate);
-    inst.plugin.params().snap_smoothers();
-}}
+pub unsafe fn activate<P: PluginExport>(handle: *mut Lv2Instance<P>) {
+    unsafe {
+        let inst = &mut *handle;
+        // LV2 doesn't tell us max block size up front; use a generous default.
+        // run() passes n_samples each call, so we can resize if it ever exceeds.
+        let max_block = 8192usize;
+        inst.max_block_size = max_block;
+        inst.plugin.reset(inst.sample_rate, max_block);
+        inst.plugin.params().set_sample_rate(inst.sample_rate);
+        inst.plugin.params().snap_smoothers();
+    }
+}
 
 /// # Safety
 /// `handle` must be a valid `Lv2Instance<P>` pointer with port connections
 /// established by prior calls to `connect_port()`. Audio and control port
 /// memory must be valid for `n_samples`.
-pub unsafe fn run<P: PluginExport>(handle: *mut Lv2Instance<P>, n_samples: u32) { unsafe {
-    let inst = &mut *handle;
-    let n = n_samples as usize;
-    if n == 0 {
-        return;
-    }
-    if n > inst.max_block_size {
-        inst.plugin.reset(inst.sample_rate, n);
-        inst.max_block_size = n;
-    }
-
-    inst.event_list.clear();
-    inst.output_events.clear();
-
-    // Emit ParamChange events for any control port that moved since last
-    // run. The event carries the PLAIN value — format wrappers agree on
-    // plain (see `HotShell::process`'s comment). Writing plain directly
-    // also lets the plugin see the value immediately via its params Arc;
-    // the event is only there so `PluginLogic`s that observe param
-    // changes via events (rather than reading atomics) pick the change up
-    // at the right sample offset.
-    for (i, &port_ptr) in inst.control_ports.iter().enumerate() {
-        if port_ptr.is_null() {
-            continue;
+pub unsafe fn run<P: PluginExport>(handle: *mut Lv2Instance<P>, n_samples: u32) {
+    unsafe {
+        let inst = &mut *handle;
+        let n = n_samples as usize;
+        if n == 0 {
+            return;
         }
-        let v = *port_ptr;
-        if !v.is_finite() {
-            continue;
+        if n > inst.max_block_size {
+            inst.plugin.reset(inst.sample_rate, n);
+            inst.max_block_size = n;
         }
-        let last = inst.last_control[i];
-        if last.is_nan() || (v - last).abs() > f32::EPSILON {
-            inst.last_control[i] = v;
-            let pid = inst.param_infos[i].id;
-            let plain = v as f64;
-            inst.plugin.params().set_plain(pid, plain);
-            inst.event_list.push(Event {
-                sample_offset: 0,
-                body: EventBody::ParamChange {
-                    id: pid,
-                    value: plain,
-                },
-            });
+
+        inst.event_list.clear();
+        inst.output_events.clear();
+
+        // Emit ParamChange events for any control port that moved since last
+        // run. The event carries the PLAIN value — format wrappers agree on
+        // plain (see `HotShell::process`'s comment). Writing plain directly
+        // also lets the plugin see the value immediately via its params Arc;
+        // the event is only there so `PluginLogic`s that observe param
+        // changes via events (rather than reading atomics) pick the change up
+        // at the right sample offset.
+        for (i, &port_ptr) in inst.control_ports.iter().enumerate() {
+            if port_ptr.is_null() {
+                continue;
+            }
+            let v = *port_ptr;
+            if !v.is_finite() {
+                continue;
+            }
+            let last = inst.last_control[i];
+            if last.is_nan() || (v - last).abs() > f32::EPSILON {
+                inst.last_control[i] = v;
+                let pid = inst.param_infos[i].id;
+                let plain = v as f64;
+                inst.plugin.params().set_plain(pid, plain);
+                inst.event_list.push(Event {
+                    sample_offset: 0,
+                    body: EventBody::ParamChange {
+                        id: pid,
+                        value: plain,
+                    },
+                });
+            }
+        }
+
+        // Decode MIDI + time:Position from the input atom sequence port. The
+        // port is always declared so every plugin type (effects included)
+        // can receive host transport; MIDI events are only parsed when the
+        // plugin's category opts in.
+        let mut transport = TransportInfo::default();
+        if !inst.atom_in_port.is_null() {
+            let reader = AtomSequenceReader::new(inst.atom_in_port, &inst.urid_map);
+            if inst.layout.accepts_midi_in {
+                reader.for_each_midi(|sample_offset, bytes| {
+                    if let Some(event) = atom::midi_bytes_to_event(sample_offset, bytes) {
+                        inst.event_list.push(event);
+                    }
+                });
+            }
+            reader.apply_time_position(&mut transport);
+        }
+
+        // Build AudioBuffer from port pointers.
+        inst.input_slices.clear();
+        inst.output_slices.clear();
+        for &ptr in &inst.audio_inputs {
+            if !ptr.is_null() {
+                let sl: &[f32] = std::slice::from_raw_parts(ptr, n);
+                inst.input_slices
+                    .push(std::mem::transmute::<&[f32], &'static [f32]>(sl));
+            }
+        }
+        for &ptr in &inst.audio_outputs {
+            if !ptr.is_null() {
+                let sl: &mut [f32] = std::slice::from_raw_parts_mut(ptr, n);
+                inst.output_slices
+                    .push(std::mem::transmute::<&mut [f32], &'static mut [f32]>(sl));
+            }
+        }
+
+        // Copy input to output for in-place effects (matches CLAP/VST2 convention).
+        let copy_ch = inst.input_slices.len().min(inst.output_slices.len());
+        for ch in 0..copy_ch {
+            inst.output_slices[ch][..n].copy_from_slice(&inst.input_slices[ch][..n]);
+        }
+
+        let mut audio = AudioBuffer::from_slices(&inst.input_slices, &mut inst.output_slices, n);
+        inst.transport_slot.write(&transport);
+        let mut ctx = ProcessContext::new(&transport, inst.sample_rate, n, &mut inst.output_events);
+        let _ = inst.plugin.process(&mut audio, &inst.event_list, &mut ctx);
+
+        // Copy meter readings out to the host. The plugin's process() has
+        // already written the latest peaks into the HotShell via
+        // `ctx.set_meter`; reading them back via `plugin.get_meter` picks
+        // up those atomics. Hosts forward the updated port value to the UI
+        // through `port_event` so the editor's meter widget animates.
+        for (slot, &id) in inst.meter_ports.iter().zip(inst.meter_ids.iter()) {
+            if slot.is_null() {
+                continue;
+            }
+            let v = inst.plugin.get_meter(id);
+            **slot = v;
+        }
+
+        // Write MIDI output to the atom sequence port, if connected.
+        if !inst.midi_out_port.is_null() {
+            atom::write_midi_out_sequence(inst.midi_out_port, &inst.output_events, &inst.urid_map);
+        }
+
+        // Forward transport to the UI as a time:Position atom on the
+        // notify-out port. Hosts deliver this to the UI's port_event each
+        // block; the UI decodes it and updates its shared `TransportSlot`.
+        if !inst.notify_out_port.is_null() {
+            atom::write_time_position_sequence(inst.notify_out_port, &transport, &inst.urid_map);
         }
     }
-
-    // Decode MIDI + time:Position from the input atom sequence port. The
-    // port is always declared so every plugin type (effects included)
-    // can receive host transport; MIDI events are only parsed when the
-    // plugin's category opts in.
-    let mut transport = TransportInfo::default();
-    if !inst.atom_in_port.is_null() {
-        let reader = AtomSequenceReader::new(inst.atom_in_port, &inst.urid_map);
-        if inst.layout.accepts_midi_in {
-            reader.for_each_midi(|sample_offset, bytes| {
-                if let Some(event) = atom::midi_bytes_to_event(sample_offset, bytes) {
-                    inst.event_list.push(event);
-                }
-            });
-        }
-        reader.apply_time_position(&mut transport);
-    }
-
-    // Build AudioBuffer from port pointers.
-    inst.input_slices.clear();
-    inst.output_slices.clear();
-    for &ptr in &inst.audio_inputs {
-        if !ptr.is_null() {
-            let sl: &[f32] = std::slice::from_raw_parts(ptr, n);
-            inst.input_slices
-                .push(std::mem::transmute::<&[f32], &'static [f32]>(sl));
-        }
-    }
-    for &ptr in &inst.audio_outputs {
-        if !ptr.is_null() {
-            let sl: &mut [f32] = std::slice::from_raw_parts_mut(ptr, n);
-            inst.output_slices
-                .push(std::mem::transmute::<&mut [f32], &'static mut [f32]>(sl));
-        }
-    }
-
-    // Copy input to output for in-place effects (matches CLAP/VST2 convention).
-    let copy_ch = inst.input_slices.len().min(inst.output_slices.len());
-    for ch in 0..copy_ch {
-        inst.output_slices[ch][..n].copy_from_slice(&inst.input_slices[ch][..n]);
-    }
-
-    let mut audio = AudioBuffer::from_slices(&inst.input_slices, &mut inst.output_slices, n);
-    inst.transport_slot.write(&transport);
-    let mut ctx = ProcessContext::new(&transport, inst.sample_rate, n, &mut inst.output_events);
-    let _ = inst.plugin.process(&mut audio, &inst.event_list, &mut ctx);
-
-    // Copy meter readings out to the host. The plugin's process() has
-    // already written the latest peaks into the HotShell via
-    // `ctx.set_meter`; reading them back via `plugin.get_meter` picks
-    // up those atomics. Hosts forward the updated port value to the UI
-    // through `port_event` so the editor's meter widget animates.
-    for (slot, &id) in inst.meter_ports.iter().zip(inst.meter_ids.iter()) {
-        if slot.is_null() {
-            continue;
-        }
-        let v = inst.plugin.get_meter(id);
-        **slot = v;
-    }
-
-    // Write MIDI output to the atom sequence port, if connected.
-    if !inst.midi_out_port.is_null() {
-        atom::write_midi_out_sequence(inst.midi_out_port, &inst.output_events, &inst.urid_map);
-    }
-
-    // Forward transport to the UI as a time:Position atom on the
-    // notify-out port. Hosts deliver this to the UI's port_event each
-    // block; the UI decodes it and updates its shared `TransportSlot`.
-    if !inst.notify_out_port.is_null() {
-        atom::write_time_position_sequence(inst.notify_out_port, &transport, &inst.urid_map);
-    }
-}}
+}
 
 /// # Safety
 /// `handle` must be a valid `Lv2Instance<P>` pointer.
@@ -406,27 +414,31 @@ pub unsafe fn deactivate<P: PluginExport>(_handle: *mut Lv2Instance<P>) {
 /// # Safety
 /// `handle` must be a valid `Lv2Instance<P>` pointer. After this call the
 /// pointer is dangling and must not be used.
-pub unsafe fn cleanup<P: PluginExport>(handle: *mut Lv2Instance<P>) { unsafe {
-    if !handle.is_null() {
-        drop(Box::from_raw(handle));
+pub unsafe fn cleanup<P: PluginExport>(handle: *mut Lv2Instance<P>) {
+    unsafe {
+        if !handle.is_null() {
+            drop(Box::from_raw(handle));
+        }
     }
-}}
+}
 
 /// # Safety
 /// `uri` must be a valid null-terminated C string or null.
-pub unsafe fn extension_data<P: PluginExport>(uri: *const c_char) -> *const c_void { unsafe {
-    if uri.is_null() {
-        return ptr::null();
+pub unsafe fn extension_data<P: PluginExport>(uri: *const c_char) -> *const c_void {
+    unsafe {
+        if uri.is_null() {
+            return ptr::null();
+        }
+        let uri = match CStr::from_ptr(uri).to_str() {
+            Ok(s) => s,
+            Err(_) => return ptr::null(),
+        };
+        if uri == state::LV2_STATE__INTERFACE_URI {
+            return state::state_interface::<P>() as *const _ as *const c_void;
+        }
+        ptr::null()
     }
-    let uri = match CStr::from_ptr(uri).to_str() {
-        Ok(s) => s,
-        Err(_) => return ptr::null(),
-    };
-    if uri == state::LV2_STATE__INTERFACE_URI {
-        return state::state_interface::<P>() as *const _ as *const c_void;
-    }
-    ptr::null()
-}}
+}
 
 // ---------------------------------------------------------------------------
 // Plugin URI
@@ -634,7 +646,7 @@ macro_rules! export_lv2 {
 pub use atom::AtomSequence;
 
 // Re-export UI types for the export_lv2 macro to use.
-pub use ui::{ui_descriptor, Lv2UiDescriptor};
+pub use ui::{Lv2UiDescriptor, ui_descriptor};
 
 /// Derive the plugin's LV2 UI URI (plugin URI + "#ui").
 pub fn ui_uri(info: &PluginInfo) -> String {

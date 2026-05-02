@@ -4,15 +4,15 @@
 //! multi-parameter DSP, filter state management, and parameter groups.
 
 use truce::prelude::*;
-use truce_gui::layout::{knob, section, widgets, GridLayout};
+use truce_gui::layout::{GridLayout, knob, section, widgets};
 
 mod biquad;
 use biquad::Biquad;
 
 // --- Parameters ---
 
-use std::sync::Arc;
 use EqParamsParamId as P;
+use std::sync::Arc;
 
 #[derive(Params)]
 pub struct EqParams {

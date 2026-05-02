@@ -32,7 +32,7 @@ pub mod prelude {
         EventList, Plugin, PluginCategory, PluginExport, PluginInfo, ProcessContext, ProcessStatus,
         TransportInfo,
     };
-    pub use truce_derive::{plugin_info, ParamEnum, Params, State};
+    pub use truce_derive::{ParamEnum, Params, State, plugin_info};
     pub use truce_params::{
         BoolParam, EnumParam, FloatParam, IntParam, MeterSlot, ParamEnum, ParamFlags, ParamInfo,
         ParamRange, ParamUnit, Params,

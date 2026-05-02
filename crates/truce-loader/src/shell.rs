@@ -5,8 +5,8 @@
 //! hot-reloadable dylib.
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use parking_lot::Mutex;
 use truce_core::buffer::AudioBuffer;
@@ -306,23 +306,37 @@ impl<P: Params + 'static> HotEditor<P> {
                             hot_debug!("[truce-gui-reload] dylib reloaded successfully");
                             if let Some(plugin) = gui_loader.plugin() {
                                 let layout = plugin.layout();
-                                hot_debug!("[truce-gui-reload] layout: {}x{}", layout.width, layout.height);
+                                hot_debug!(
+                                    "[truce-gui-reload] layout: {}x{}",
+                                    layout.width,
+                                    layout.height
+                                );
                                 if layout.width > 0 && layout.height > 0 {
                                     let new_builtin = truce_gui::editor::BuiltinEditor::new_grid(
-                                        Arc::clone(&params_for_thread), layout,
+                                        Arc::clone(&params_for_thread),
+                                        layout,
                                     );
                                     if let Ok(mut guard) = inner_for_thread.lock() {
                                         let had_ctx = guard.take_context();
-                                        hot_debug!("[truce-gui-reload] old editor had context: {}", had_ctx.is_some());
+                                        hot_debug!(
+                                            "[truce-gui-reload] old editor had context: {}",
+                                            had_ctx.is_some()
+                                        );
                                         *guard = new_builtin;
                                         if let Some(ctx) = had_ctx {
                                             guard.set_context(ctx);
-                                            hot_debug!("[truce-gui-reload] context restored on new editor");
+                                            hot_debug!(
+                                                "[truce-gui-reload] context restored on new editor"
+                                            );
                                         } else {
-                                            hot_debug!("[truce-gui-reload] WARNING: no context to restore!");
+                                            hot_debug!(
+                                                "[truce-gui-reload] WARNING: no context to restore!"
+                                            );
                                         }
                                     } else {
-                                        hot_debug!("[truce-gui-reload] ERROR: failed to lock inner mutex");
+                                        hot_debug!(
+                                            "[truce-gui-reload] ERROR: failed to lock inner mutex"
+                                        );
                                     }
                                 } else {
                                     hot_debug!("[truce-gui-reload] skipping: layout has zero size");

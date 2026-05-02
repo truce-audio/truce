@@ -105,11 +105,7 @@ impl Smoother {
             SmoothingStyle::None => 1.0,
             SmoothingStyle::Linear(ms) => {
                 let samples = (ms / 1000.0) * sr;
-                if samples > 1.0 {
-                    1.0 / samples
-                } else {
-                    1.0
-                }
+                if samples > 1.0 { 1.0 / samples } else { 1.0 }
             }
             SmoothingStyle::Exponential(ms) => {
                 let samples = (ms / 1000.0) * sr;

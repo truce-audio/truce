@@ -38,8 +38,8 @@
 //! assert_eq!(frames, 3);
 //! ```
 
-use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 
 struct AudioTapShared {
     /// Sample storage. Length is fixed at construction to `cap` samples

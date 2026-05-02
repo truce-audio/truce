@@ -3,9 +3,9 @@
 //! shadow-install collision detection.
 
 use crate::install_scope::InstallScope;
+use crate::{PluginDef, Res, dirs, load_config, tag_warn, tmp_dir};
 #[cfg(target_os = "macos")]
 use crate::{deployment_target, project_root};
-use crate::{dirs, load_config, tag_warn, tmp_dir, PluginDef, Res};
 use std::fs;
 use std::path::Path;
 #[cfg(target_os = "macos")]
@@ -40,11 +40,7 @@ fn plist_extract(plist: &Path, key_path: &str) -> Option<String> {
         return None;
     }
     let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if s.is_empty() {
-        None
-    } else {
-        Some(s)
-    }
+    if s.is_empty() { None } else { Some(s) }
 }
 
 /// Find every AU bundle on disk that declares the given component code.
