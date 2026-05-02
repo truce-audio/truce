@@ -100,32 +100,50 @@ macro_rules! __plugin_impl {
         /// Type alias for use in tests and external references.
         pub type Plugin = __HotShellWrapper;
 
-        /// FFI export driven by `cargo truce screenshot`. Renders the
-        /// plugin's editor headlessly and writes the saved PNG path
-        /// into `out_buf` (up to `out_cap` bytes). Returns the byte
-        /// length the path required — the caller treats
-        /// `result > out_cap` as truncation.
+        /// FFI export driven by `cargo truce screenshot`. Renders
+        /// the plugin's editor (optionally after loading a
+        /// `.pluginstate` blob) and writes the PNG to the caller-
+        /// specified path. Returns 0 on success, non-zero on
+        /// failure (error message is printed to stderr).
         ///
         /// # Safety
-        /// `name_ptr` must point to `name_len` valid UTF-8 bytes.
-        /// `out_buf` must be writable for at least `out_cap` bytes.
+        /// - `state_ptr` may be null when `state_len == 0`.
+        /// - `state_ptr` (if non-null) must point to `state_len`
+        ///   readable bytes (the contents of a `.pluginstate` file).
+        /// - `out_path_ptr` must point to `out_path_len` valid
+        ///   UTF-8 bytes — the absolute path the caller wants the
+        ///   PNG written to.
         #[doc(hidden)]
         #[unsafe(no_mangle)]
         pub unsafe extern "C" fn __truce_screenshot(
-            name_ptr: *const u8,
-            name_len: usize,
-            out_buf: *mut u8,
-            out_cap: usize,
-        ) -> usize {
-            let name_slice = ::std::slice::from_raw_parts(name_ptr, name_len);
-            let name = ::std::str::from_utf8(name_slice).unwrap_or("screenshot");
-            let path = $crate::core::screenshot::render::<Plugin>(name);
-            let path_str = path.to_string_lossy();
-            let bytes = path_str.as_bytes();
-            if bytes.len() <= out_cap {
-                ::std::ptr::copy_nonoverlapping(bytes.as_ptr(), out_buf, bytes.len());
+            state_ptr: *const u8,
+            state_len: usize,
+            out_path_ptr: *const u8,
+            out_path_len: usize,
+        ) -> u32 {
+            let state: Option<&[u8]> = if state_len == 0 {
+                None
+            } else {
+                Some(::std::slice::from_raw_parts(state_ptr, state_len))
+            };
+            let path_bytes = ::std::slice::from_raw_parts(out_path_ptr, out_path_len);
+            let path_str = match ::std::str::from_utf8(path_bytes) {
+                Ok(s) => s,
+                Err(e) => {
+                    ::std::eprintln!(
+                        "[truce] __truce_screenshot: invalid UTF-8 in out_path: {e}"
+                    );
+                    return 1;
+                }
+            };
+            let path = ::std::path::Path::new(path_str);
+            if let Some(parent) = path.parent() {
+                let _ = ::std::fs::create_dir_all(parent);
             }
-            bytes.len()
+            let (pixels, w, h) =
+                $crate::core::screenshot::render_with_state::<Plugin>(state);
+            $crate::core::screenshot::save_png(path, &pixels, w, h);
+            0
         }
 
         // Format exports — same wrapper name in both modes.

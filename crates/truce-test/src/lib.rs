@@ -526,93 +526,231 @@ pub fn assert_empty_state_no_crash<P: PluginExport>() {
 // GUI screenshot tests
 // ---------------------------------------------------------------------------
 
-// Render and save are in `truce-core` so non-test contexts (like
+// Render + save are in `truce-core` so non-test contexts (like
 // `cargo truce` tooling) can invoke them without pulling in dev-deps.
-// Re-exported here so existing test code keeps a stable
-// `truce_test::*` import.
-pub use truce_core::screenshot::{
-    DEFAULT_SCREENSHOT_DIR, render as render_screenshot, save_png, workspace_screenshot_dir,
-};
+pub use truce_core::screenshot::save_png;
 
-/// One-line screenshot test for any backend.
+// ---------------------------------------------------------------------------
+// ScreenshotTest builder
+// ---------------------------------------------------------------------------
+
+use std::path::PathBuf;
+
+/// Builder for a screenshot regression test.
 ///
-/// Constructs the plugin via `P::create()`, asks it for its editor,
-/// drives `Editor::screenshot()` to get RGBA pixels, and runs
-/// [`assert_screenshot_pixels`] against `<reference_dir>/<name>.png`.
+/// Construct via the [`screenshot!`] macro (which fills in the
+/// calling crate's manifest dir + crate name from `env!`). Configure
+/// with `setup` / `state_file` / `name` / `path` / `tolerance`,
+/// then call `run()` inside a `#[test]` fn.
 ///
-/// `max_diff_pixels` is the number of RGBA bytes allowed to differ
-/// before the test fails on the reference platform. Use `0` for an
-/// exact match (the typical case); raise it if anti-aliasing or font
-/// hinting introduces flake.
+/// # Examples
 ///
-/// # Example
 /// ```ignore
+/// // Simplest: render the editor with default params and compare
+/// // against `<crate>/screenshots/<crate>.png`.
 /// #[test]
-/// fn gui_screenshot() {
-///     truce_test::assert_screenshot::<Plugin>("gain_default", "snapshots", 0);
+/// fn screenshot() {
+///     truce_test::screenshot!(Plugin).run();
+/// }
+///
+/// // State-dependent: tweak params before rendering, compare against
+/// // `<crate>/screenshots/max_gain.png`.
+/// #[test]
+/// fn screenshot_max_gain() {
+///     truce_test::screenshot!(Plugin)
+///         .name("max_gain")
+///         .setup(|p| p.params().gain.set_normalized(1.0))
+///         .run();
+/// }
+///
+/// // Pre-saved state from the standalone host's Cmd+S.
+/// #[test]
+/// fn screenshot_evening() {
+///     truce_test::screenshot!(Plugin)
+///         .name("evening")
+///         .state_file("test_states/evening.pluginstate")
+///         .run();
 /// }
 /// ```
-///
-/// Every built-in backend (`truce-gpu`, `truce-egui`, `truce-iced`,
-/// `truce-slint`) implements `Editor::screenshot()`. Custom editor
-/// implementations only need to override `screenshot()` if they want
-/// to be testable through this helper.
-pub fn assert_screenshot<P: PluginExport>(name: &str, reference_dir: &str, max_diff_pixels: usize) {
-    let (pixels, w, h) = truce_core::screenshot::render_pixels::<P>();
-    assert_screenshot_pixels(name, &pixels, w, h, max_diff_pixels, reference_dir);
+pub struct ScreenshotTest<P: PluginExport> {
+    /// Crate's manifest dir, captured from the macro's `env!`.
+    /// Anchors all relative paths.
+    manifest_dir: PathBuf,
+    /// Crate name, captured from the macro's `env!`. Default
+    /// filename stem.
+    crate_name: &'static str,
+    /// Where the reference PNG lives. Default:
+    /// `<manifest_dir>/screenshots/<crate>.png`.
+    path: PathSpec,
+    /// Max allowed differing-pixel count. `0` = strict.
+    tolerance: usize,
+    /// Optional plugin mutation between `P::create()` and render.
+    setup: Option<Box<dyn FnOnce(&mut P)>>,
+    _marker: std::marker::PhantomData<P>,
 }
 
-/// Compare raw RGBA pixels against a reference PNG.
+enum PathSpec {
+    /// `<manifest_dir>/screenshots/<crate_name>.png`
+    Default,
+    /// `<manifest_dir>/screenshots/<name>.png`
+    Named(String),
+    /// Caller-supplied. Absolute, or relative to `manifest_dir`.
+    Explicit(PathBuf),
+}
+
+impl<P: PluginExport> ScreenshotTest<P> {
+    /// Internal constructor used by [`screenshot!`]. Plugin authors
+    /// should not call this directly — the macro fills in
+    /// `manifest_dir` / `crate_name` from the calling crate's
+    /// compile-time `env!` values.
+    #[doc(hidden)]
+    pub fn __from_env(manifest_dir: &str, crate_name: &'static str) -> Self {
+        Self {
+            manifest_dir: PathBuf::from(manifest_dir),
+            crate_name,
+            path: PathSpec::Default,
+            tolerance: 0,
+            setup: None,
+            _marker: std::marker::PhantomData,
+        }
+    }
+
+    /// Mutate the plugin between `P::create()` / `init()` and the
+    /// render. Use this to set params, load a state blob, drive a
+    /// `process()` block to populate meters, etc.
+    pub fn setup<F: FnOnce(&mut P) + 'static>(mut self, f: F) -> Self {
+        self.setup = Some(Box::new(f));
+        self
+    }
+
+    /// Shorthand for `.setup(|p| p.load_state(&fs::read(path)?))`.
+    /// Mirrors the CLI's `--state` flag — a `.pluginstate` file the
+    /// standalone host wrote becomes the rendered state. `path` is
+    /// resolved relative to the crate's manifest dir, or used as-is
+    /// if absolute.
+    pub fn state_file<S: Into<PathBuf>>(self, path: S) -> Self {
+        let raw = path.into();
+        let resolved = if raw.is_absolute() {
+            raw
+        } else {
+            self.manifest_dir.join(&raw)
+        };
+        self.setup(move |p| {
+            let bytes = std::fs::read(&resolved).unwrap_or_else(|e| {
+                panic!("state_file: failed to read {}: {e}", resolved.display())
+            });
+            p.load_state(&bytes);
+        })
+    }
+
+    /// Use the conventional `screenshots/` directory but a different
+    /// filename stem. Useful for multiple screenshots per plugin
+    /// (`"main"`, `"panel_open"`, …).
+    pub fn name<S: Into<String>>(mut self, name: S) -> Self {
+        self.path = PathSpec::Named(name.into());
+        self
+    }
+
+    /// Explicit reference-PNG path. Absolute paths are used as-is;
+    /// relative paths are resolved against the calling crate's
+    /// manifest dir.
+    pub fn path<S: Into<PathBuf>>(mut self, path: S) -> Self {
+        self.path = PathSpec::Explicit(path.into());
+        self
+    }
+
+    /// Max allowed differing-pixel count on the reference platform.
+    /// `0` is strict equality; bump for cross-machine antialiasing
+    /// tolerance.
+    pub fn tolerance(mut self, t: usize) -> Self {
+        self.tolerance = t;
+        self
+    }
+
+    fn resolve_path(&self) -> PathBuf {
+        match &self.path {
+            PathSpec::Default => self
+                .manifest_dir
+                .join("screenshots")
+                .join(format!("{}.png", self.crate_name)),
+            PathSpec::Named(n) => self
+                .manifest_dir
+                .join("screenshots")
+                .join(format!("{n}.png")),
+            PathSpec::Explicit(p) => {
+                if p.is_absolute() {
+                    p.clone()
+                } else {
+                    self.manifest_dir.join(p)
+                }
+            }
+        }
+    }
+
+    /// Build the plugin (with `setup` applied if present), render,
+    /// and compare against the reference. Same comparator semantics
+    /// as the lower-level `assert_screenshot_pixels`:
+    ///
+    /// - No reference → log a `cp` hint and pass.
+    /// - Match within tolerance → pass silently.
+    /// - Mismatch on reference platform → panic.
+    /// - Mismatch on non-reference platform → log + pass.
+    pub fn run(self) {
+        let ref_path = self.resolve_path();
+        let tolerance = self.tolerance;
+        let setup = self.setup;
+        let mut plugin = P::create();
+        plugin.init();
+        if let Some(f) = setup {
+            f(&mut plugin);
+        }
+        let (pixels, w, h) = truce_core::screenshot::render_pixels_for::<P>(&mut plugin);
+        compare_against_reference(&pixels, w, h, &ref_path, tolerance);
+    }
+}
+
+/// Construct a [`ScreenshotTest`] for the given plugin type, anchored
+/// to the calling crate's manifest dir + crate name.
 ///
-/// Always writes the current render to
-/// `<workspace_root>/target/screenshots/<name>.png` (gitignored).
-/// Loads the committed reference from
-/// `<workspace_root>/<reference_dir>/<name>.png`.
-///
-/// - **No reference yet:** logs a one-line "promote" hint with the
-///   exact `cp` command and passes. Lets new tests land before their
-///   reference is committed.
-/// - **Reference present, diff <= tolerance:** passes silently.
-/// - **Reference present, diff > tolerance, on the reference
-///   platform:** panics, naming both PNG paths.
-/// - **Reference present, diff > tolerance, on a non-reference
-///   platform:** logs the diff count and passes (per-backend wgpu
-///   rasterization differences are expected; see
-///   `TRUCE_SCREENSHOT_REFERENCE_OS`).
-///
-/// Backend-agnostic — caller provides raw RGBA pixels. Most callers
-/// should use [`assert_screenshot`] instead, which drives the editor
-/// and comparison in one line. This is the lower-level entry point
-/// for when you need a non-zero `max_diff_pixels` tolerance or are
-/// rendering pixels through a non-`Editor` path.
-///
-/// # Example
 /// ```ignore
-/// let mut editor = <Plugin as PluginTrait>::editor(&mut plugin).unwrap();
-/// let params: Arc<dyn truce_params::Params> =
-///     Arc::new(<MyParams as truce_params::Params>::new());
-/// let (pixels, w, h) = editor.screenshot(params).unwrap();
-/// truce_test::assert_screenshot_pixels(
-///     "my_plugin_default", &pixels, w, h, 100, "snapshots",
-/// );
+/// #[test]
+/// fn screenshot() {
+///     truce_test::screenshot!(Plugin).run();
+/// }
 /// ```
-pub fn assert_screenshot_pixels(
-    name: &str,
+#[macro_export]
+macro_rules! screenshot {
+    ($plugin:ty) => {
+        $crate::ScreenshotTest::<$plugin>::__from_env(
+            env!("CARGO_MANIFEST_DIR"),
+            env!("CARGO_PKG_NAME"),
+        )
+    };
+}
+
+/// Compare RGBA pixels against the reference PNG at `ref_path`.
+/// Render gets saved to `<workspace>/target/screenshots/<basename>`
+/// regardless of where the reference lives, so a failed comparison
+/// always has a sibling artifact to inspect.
+fn compare_against_reference(
     pixels: &[u8],
     width: u32,
     height: u32,
+    ref_path: &std::path::Path,
     max_diff_pixels: usize,
-    reference_dir: &str,
 ) {
-    // Render always lands in target/screenshots/, regardless of where
-    // the reference lives. Keeps in-tree reference dirs clean of
-    // generated artifacts.
-    let render_dir = workspace_screenshot_dir(DEFAULT_SCREENSHOT_DIR);
-    let render_path = render_dir.join(format!("{name}.png"));
+    // Render artifact lives in `target/screenshots/` — gitignored,
+    // colocated with whatever workspace owns the test invocation.
+    let render_dir = workspace_target_screenshots_dir();
+    std::fs::create_dir_all(&render_dir).ok();
+    let render_path = render_dir.join(
+        ref_path
+            .file_name()
+            .map(std::path::Path::new)
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| PathBuf::from("screenshot.png")),
+    );
     save_png(&render_path, pixels, width, height);
-
-    let ref_dir = workspace_screenshot_dir(reference_dir);
-    let ref_path = ref_dir.join(format!("{name}.png"));
 
     if !ref_path.exists() {
         eprintln!(
@@ -627,8 +765,7 @@ pub fn assert_screenshot_pixels(
         return;
     }
 
-    let (ref_pixels, ref_w, ref_h) = load_png(&ref_path);
-
+    let (ref_pixels, ref_w, ref_h) = truce_core::screenshot::load_png(ref_path);
     assert_eq!(
         (width, height),
         (ref_w, ref_h),
@@ -645,8 +782,7 @@ pub fn assert_screenshot_pixels(
     }
 
     if diff_count > max_diff_pixels {
-        let is_ref = is_reference_platform();
-        if is_ref {
+        if truce_core::screenshot::is_reference_platform() {
             panic!(
                 "GUI screenshot mismatch: {diff_count} pixels differ (max allowed: {max_diff_pixels}).\n\
                  Reference: {}\n\
@@ -673,33 +809,28 @@ pub fn assert_screenshot_pixels(
     }
 }
 
-/// Whether the current process should compare its rendered pixels
-/// against the committed reference PNG. Defaults to macOS; override
-/// with `TRUCE_SCREENSHOT_REFERENCE_OS={macos,linux,windows}` to move
-/// the reference to a different platform (e.g. for a Linux-only
-/// developer who wants their CI to enforce screenshots).
-///
-/// Per-backend rasterization differences in wgpu mean the PNG bytes
-/// won't match exactly across platforms even with identical inputs;
-/// this gate trades full cross-OS pixel comparison for cross-OS
-/// smoke coverage of the rendering pipeline.
-fn is_reference_platform() -> bool {
-    let target =
-        std::env::var("TRUCE_SCREENSHOT_REFERENCE_OS").unwrap_or_else(|_| "macos".to_string());
-    std::env::consts::OS == target
+/// `<workspace_or_package_root>/target/screenshots/`. Walks up from
+/// CWD looking for the topmost `Cargo.toml` (preferring one with
+/// `[workspace]`). Used only for the failing-render artifact path —
+/// committed reference paths come from the builder's
+/// manifest-dir-anchored resolution.
+fn workspace_target_screenshots_dir() -> PathBuf {
+    let start = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let mut dir = start.clone();
+    let mut topmost_package: Option<PathBuf> = None;
+    loop {
+        let toml = dir.join("Cargo.toml");
+        if toml.exists()
+            && let Ok(s) = std::fs::read_to_string(&toml)
+        {
+            if s.contains("[workspace]") {
+                return dir.join("target/screenshots");
+            }
+            topmost_package = Some(dir.clone());
+        }
+        if !dir.pop() {
+            return topmost_package.unwrap_or(start).join("target/screenshots");
+        }
+    }
 }
 
-fn load_png(path: &std::path::Path) -> (Vec<u8>, u32, u32) {
-    let file = std::fs::File::open(path)
-        .unwrap_or_else(|e| panic!("Failed to open {}: {e}", path.display()));
-    let decoder = png::Decoder::new(std::io::BufReader::new(file));
-    let mut reader = decoder
-        .read_info()
-        .unwrap_or_else(|e| panic!("Failed to read PNG info: {e}"));
-    let mut buf = vec![0u8; reader.output_buffer_size().unwrap()];
-    let info = reader
-        .next_frame(&mut buf)
-        .unwrap_or_else(|e| panic!("Failed to decode PNG frame: {e}"));
-    buf.truncate(info.buffer_size());
-    (buf, info.width, info.height)
-}

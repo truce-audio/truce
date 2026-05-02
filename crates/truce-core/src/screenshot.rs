@@ -9,52 +9,48 @@
 //! similar tooling that needs to produce a PNG without running through
 //! the test harness.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use crate::export::PluginExport;
 use crate::plugin::Plugin;
 
-/// Default screenshot directory: `target/screenshots/` under the
-/// workspace root. Gitignored (covered by `/target`).
-pub const DEFAULT_SCREENSHOT_DIR: &str = "target/screenshots";
-
-/// Render a plugin's editor headlessly and save the PNG.
-///
-/// Constructs a fresh `P` via `P::create()`, asks it for its editor,
-/// drives `Editor::screenshot()` to get RGBA pixels, and writes
-/// `<workspace>/target/screenshots/<name>.png`. Returns the path.
-///
-/// # Example
-/// ```ignore
-/// let path = truce_core::screenshot::render::<Plugin>("gain_dark");
-/// println!("rendered to {}", path.display());
-/// ```
-pub fn render<P: PluginExport>(name: &str) -> PathBuf {
-    let (pixels, w, h) = render_pixels::<P>();
-    let dir = workspace_screenshot_dir(DEFAULT_SCREENSHOT_DIR);
-    let path = dir.join(format!("{name}.png"));
-    save_png(&path, &pixels, w, h);
-    path
-}
-
 /// Drive a fresh plugin through `Editor::screenshot()` and return raw
 /// RGBA pixels + physical dimensions. No PNG save.
-///
-/// Used by [`render`] (which goes on to save a file) and by
-/// `truce_test::assert_screenshot` (which goes on to compare against
-/// a reference).
 pub fn render_pixels<P: PluginExport>() -> (Vec<u8>, u32, u32) {
     let mut plugin = P::create();
     plugin.init();
-    let mut editor = <P as Plugin>::editor(&mut plugin)
+    render_pixels_for::<P>(&mut plugin)
+}
+
+/// Construct `P`, optionally apply a saved-state blob (`.pluginstate`
+/// bytes), then render. Used by the `__truce_screenshot` FFI so
+/// `cargo truce screenshot --state` can capture the editor under
+/// arbitrary pre-saved state without needing a test harness.
+pub fn render_with_state<P: PluginExport>(state: Option<&[u8]>) -> (Vec<u8>, u32, u32) {
+    let mut plugin = P::create();
+    plugin.init();
+    if let Some(bytes) = state {
+        plugin.load_state(bytes);
+    }
+    render_pixels_for::<P>(&mut plugin)
+}
+
+/// Render the given (already-mutated) plugin's editor.
+///
+/// Lets callers prepare plugin state — set params, load a state
+/// blob, drive a `process()` block to populate meters — before the
+/// editor renders. The `truce-test` `ScreenshotTest::setup` /
+/// `state_file` paths and the `cargo truce screenshot --state` flag
+/// both ride on this entry point.
+pub fn render_pixels_for<P: PluginExport>(plugin: &mut P) -> (Vec<u8>, u32, u32) {
+    let mut editor = <P as Plugin>::editor(plugin)
         .expect("plugin returned no editor: PluginLogic::custom_editor() returned None and layout() was empty");
     // `PluginExport::Params` is the concrete params type the
-    // `plugin!` macro wired up. We hand the editor a fresh dyn-erased
-    // instance so each backend can build its own ParamState without
-    // needing to know `P` at construction.
-    let params: Arc<dyn truce_params::Params> =
-        Arc::new(<P::Params as truce_params::Params>::new());
+    // `plugin!` macro wired up. Hand the editor the live params Arc
+    // (so any state we pre-loaded into `plugin` flows through), erased
+    // to the dyn `Params` trait the editor expects.
+    let params: Arc<dyn truce_params::Params> = plugin.params_arc();
     editor.screenshot(params).unwrap_or_else(|| {
         panic!(
             "editor for {} returned None from Editor::screenshot(). \
@@ -67,47 +63,38 @@ pub fn render_pixels<P: PluginExport>() -> (Vec<u8>, u32, u32) {
     })
 }
 
-/// Resolve `<project_root>/<rel>/`, creating the directory if
-/// needed. Walks up from the current working directory looking for a
-/// `Cargo.toml`; prefers a manifest containing `[workspace]` (so
-/// workspace members write to the shared root), and falls back to
-/// the topmost package manifest for single-crate projects.
+/// Read an RGBA PNG from disk. Panics on I/O / decode error — the
+/// caller (test or CLI) is expected to surface a meaningful message
+/// in that case, so a crash here is sufficient for callers that
+/// already failed `Path::exists()`.
+pub fn load_png(path: &Path) -> (Vec<u8>, u32, u32) {
+    let file = std::fs::File::open(path)
+        .unwrap_or_else(|e| panic!("Failed to open {}: {e}", path.display()));
+    let decoder = png::Decoder::new(std::io::BufReader::new(file));
+    let mut reader = decoder
+        .read_info()
+        .unwrap_or_else(|e| panic!("Failed to read PNG info: {e}"));
+    let mut buf = vec![0u8; reader.output_buffer_size().unwrap()];
+    let info = reader
+        .next_frame(&mut buf)
+        .unwrap_or_else(|e| panic!("Failed to decode PNG frame: {e}"));
+    buf.truncate(info.buffer_size());
+    (buf, info.width, info.height)
+}
+
+/// Whether the current host should enforce strict pixel comparison.
+/// Defaults to macOS; override with
+/// `TRUCE_SCREENSHOT_REFERENCE_OS={macos,linux,windows}`.
 ///
-/// Uses runtime `cwd` rather than the compile-time
-/// `CARGO_MANIFEST_DIR` of this crate — the latter would resolve to
-/// the cargo git checkout when truce is consumed as a git dep, and
-/// screenshots would land in `~/.cargo/git/checkouts/...` instead of
-/// the user's project.
-///
-/// Pass [`DEFAULT_SCREENSHOT_DIR`] for the default location, or any
-/// other path (e.g. `"examples/screenshots"` for an in-tree reference
-/// directory).
-pub fn workspace_screenshot_dir(rel: &str) -> PathBuf {
-    let start = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let mut dir = start.clone();
-    let mut topmost_package: Option<PathBuf> = None;
-    loop {
-        let toml = dir.join("Cargo.toml");
-        if toml.exists()
-            && let Ok(s) = std::fs::read_to_string(&toml)
-        {
-            if s.contains("[workspace]") {
-                // Workspace root — workspace members all share this dir.
-                let snap = dir.join(rel);
-                std::fs::create_dir_all(&snap).ok();
-                return snap;
-            }
-            // Track the highest-up package manifest as a fallback for
-            // single-crate projects (no `[workspace]` anywhere up-tree).
-            topmost_package = Some(dir.clone());
-        }
-        if !dir.pop() {
-            let chosen = topmost_package.unwrap_or(start);
-            let snap = chosen.join(rel);
-            std::fs::create_dir_all(&snap).ok();
-            return snap;
-        }
-    }
+/// Per-backend wgpu rasterization differs across GPU/OS combinations,
+/// so cross-platform pixel comparison isn't meaningful. The
+/// "reference platform" gate trades that for cross-platform smoke
+/// coverage of the rendering pipeline (every platform renders, only
+/// one enforces).
+pub fn is_reference_platform() -> bool {
+    let target =
+        std::env::var("TRUCE_SCREENSHOT_REFERENCE_OS").unwrap_or_else(|_| "macos".to_string());
+    std::env::consts::OS == target
 }
 
 /// Write RGBA bytes to a PNG with 144 DPI metadata so the file

@@ -169,7 +169,7 @@ mod tests {
 
     #[test]
     fn gui_screenshot() {
-        truce_test::assert_screenshot::<Plugin>("transpose_default", "examples/screenshots", 0);
+        truce_test::screenshot!(Plugin).name("transpose_default").run();
     }
 
     /// Regression guard: see `arpeggio/src/lib.rs::tests::category_is_note_effect`.

@@ -186,7 +186,7 @@ mod tests {
 
     #[test]
     fn gui_screenshot() {
-        truce_test::assert_screenshot::<Plugin>("gain_default", "examples/screenshots", 0);
+        truce_test::screenshot!(Plugin).name("gain_default").run();
     }
 
     /// End-to-end check of `truce_test::in_process` on an effect:

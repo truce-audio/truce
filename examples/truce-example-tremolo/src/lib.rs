@@ -345,6 +345,6 @@ mod tests {
 
     #[test]
     fn gui_screenshot() {
-        truce_test::assert_screenshot::<Plugin>("tremolo_default", "examples/screenshots", 0);
+        truce_test::screenshot!(Plugin).name("tremolo_default").run();
     }
 }

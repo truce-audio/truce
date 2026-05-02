@@ -341,6 +341,6 @@ mod tests {
 
     #[test]
     fn gui_screenshot() {
-        truce_test::assert_screenshot::<Plugin>("eq_default", "examples/screenshots", 0);
+        truce_test::screenshot!(Plugin).name("eq_default").run();
     }
 }

@@ -341,6 +341,6 @@ mod tests {
 
     #[test]
     fn gui_screenshot() {
-        truce_test::assert_screenshot::<Plugin>("synth_default", "examples/screenshots", 0);
+        truce_test::screenshot!(Plugin).name("synth_default").run();
     }
 }

@@ -50,9 +50,6 @@ truce-standalone = \{ {dep_args | unescaped}, features = ["gui"], optional = tru
 {{ endif -}}
 clap-sys = \{ version = "0.5", optional = true }
 
-[dev-dependencies]
-truce-test = \{ {dep_args | unescaped} }
-
 # `truce-build` emits `TRUCE_PLUGIN_*` env vars (consumed by
 # `plugin_info!()`) + a `rustc-check-cfg` declaration covering every
 # format feature the `truce::plugin!` macro references. Without it,
