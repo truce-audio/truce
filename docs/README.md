@@ -30,8 +30,6 @@ backlog).
 
 ## Immediate backlog
 
-Things blocking confidence in the surface, roughly in priority order:
-
 - **Retail iLok / PACE round-trip.** PACE wraptool is wired and
   exercised against a dev iLok account; we haven't yet round-tripped
   through a retail iLok + retail Pro Tools install. Needed before
@@ -57,19 +55,14 @@ Things blocking confidence in the surface, roughly in priority order:
   leak-don't-close pattern is correct but each rebuild leaks the
   previous DLL's address space. Need to confirm the upper bound is
   sane over a multi-hour session.
-- **Cross-scope install collision smoke.** `cargo truce validate`
-  warns when a plugin is in both user and system scopes; manual
-  verification across all formats is open.
 
 ## Future
 
+- More example plugins (delay, compressor, reverb).
 - WebView GUI backend.
-- ARA support.
 - Distribution-grade dynamic shell (today's `--shell` is dev-loop
   only; making it a shipping mechanism is a phase-2 question — see
   `shell-hardening.md` item 8).
-- More example plugins (delay, compressor, reverb).
-- crates.io publication once `baseview` ships a release.
 
 ## See also
 

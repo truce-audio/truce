@@ -1,32 +1,32 @@
 //! Offline render — `--no-playback --input-file in.wav --output-file out.wav`.
 //!
-//! Bypasses cpal entirely. A tight loop reads from
-//! `PlaybackSource`, runs `plugin.process`, and writes to a
-//! `hound::WavWriter` as fast as the CPU allows. Mirrors
-//! `in_process::run` but with WAV I/O instead of in-memory
-//! buffers and scripted MIDI.
+//! Decodes the input WAV to channel-major buffers, hands the whole
+//! thing to [`truce_driver::PluginDriver`] as an
+//! [`InputSource::Buffer`] for a fixed duration, then writes the
+//! captured output via [`DriverResult::write_wav`]. No threads, no
+//! mpsc, no cpal. Disk slowness stretches render time but never
+//! causes glitches.
 //!
-//! Gated on `feature = "playback"`; called from
-//! `lib.rs::run_with` when the user's flag combination
-//! resolves to offline mode (see `cli.rs::HELP_PLAYBACK`).
+//! Gated on `feature = "playback"`; called from `lib.rs::run_with`
+//! when the user's flag combination resolves to offline mode (see
+//! `cli.rs::HELP_PLAYBACK`).
 //!
-//! No threads, no atomics, no mpsc. Just a synchronous loop —
-//! disk slowness stretches render time but never causes
-//! glitches.
+//! The driver lives in `truce-driver` so the same engine powers
+//! tests (`truce-test::driver!`) and plugin authors writing custom
+//! `main.rs` bins. This module just adapts the CLI input/output
+//! shape to the driver's builder.
+//!
+//! Instrument support is currently disabled — instruments need a
+//! MIDI-file driver, not yet wired up.
 
 use std::path::Path;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-use truce_core::buffer::AudioBuffer;
-use truce_core::events::EventList;
 use truce_core::export::PluginExport;
 use truce_core::info::PluginCategory;
-use truce_core::process::ProcessContext;
-use truce_params::Params;
+use truce_driver::{InputSource, PluginDriver};
 
 use crate::cli::Options;
-use crate::playback::PlaybackSource;
-use crate::transport::Transport;
 
 /// Block size when `--buffer` isn't supplied. 1024 frames at
 /// 48 kHz is ~21 ms — plenty of room for plugin work, small
@@ -49,17 +49,12 @@ where
         .as_deref()
         .ok_or("offline render requires --output-file")?;
 
-    let is_effect = P::info().category == PluginCategory::Effect;
-    if !is_effect {
+    if P::info().category != PluginCategory::Effect {
         return Err("offline render currently only supports effect plugins \
              (instruments need a --midi-file driver, not yet implemented)"
             .into());
     }
 
-    // Resolve sample rate: CLI override wins; else inherit the
-    // input file's native SR. Channel count: read the file's
-    // spec separately so we can pick a sensible target without
-    // double-decoding.
     let (file_sr, file_channels) = peek_wav_spec(input_path)?;
     let sample_rate = opts
         .sample_rate
@@ -82,81 +77,28 @@ where
         block_size,
     );
 
-    let input = PlaybackSource::from_wav(input_path, sample_rate, channels)?;
+    let input_buf = decode_wav_channel_major(input_path, sample_rate, channels)?;
+    let total_frames = input_buf.first().map(|c| c.len()).unwrap_or(0);
+    let duration = Duration::from_secs_f64(total_frames as f64 / sample_rate);
 
-    let writer_spec = hound::WavSpec {
-        channels: channels as u16,
-        sample_rate: sample_rate as u32,
-        bits_per_sample: 32,
-        sample_format: hound::SampleFormat::Float,
-    };
-    let mut writer = hound::WavWriter::create(output_path, writer_spec)
-        .map_err(|e| format!("could not create '{}': {e}", output_path.display()))?;
-
-    let mut plugin = P::create();
-    plugin.init();
-    plugin.reset(sample_rate, block_size);
-    plugin.params().set_sample_rate(sample_rate);
-    // Apply `--state <path>` BEFORE snapping smoothers so the
-    // restored param values are what the smoothers latch onto on
-    // the first block — otherwise the render starts at defaults
-    // and ramps to the loaded values over the smoother's window.
-    if let Some(path) = opts.state_path.as_deref() {
-        crate::state::load_into(&mut plugin, path);
-    }
-    plugin.params().snap_smoothers();
-
-    let transport = Transport::new(opts.bpm.unwrap_or(120.0), sample_rate);
-
-    let mut total_frames = 0_usize;
     let started = Instant::now();
 
-    while !input.is_eof() {
-        // Per-block scratch buffers. v1 reallocs each block —
-        // negligible against plugin process cost; can hoist to
-        // a single pre-allocated buffer in v2 if a profile
-        // shows it matters.
-        let mut channel_bufs: Vec<Vec<f32>> =
-            (0..channels).map(|_| vec![0.0_f32; block_size]).collect();
+    let mut driver = PluginDriver::<P>::new()
+        .sample_rate(sample_rate)
+        .channels(channels)
+        .block_size(block_size)
+        .duration(duration)
+        .bpm(opts.bpm.unwrap_or(120.0))
+        .input(InputSource::Buffer(input_buf));
 
-        // Sum the input file's contribution into the per-channel
-        // buffers (offline mode has no mic to add).
-        input.mix_into(&mut channel_bufs, block_size);
-
-        // Build the AudioBuffer / context for this block. Same
-        // shape as `audio.rs::audio_callback` and `in_process.rs`.
-        let input_bufs: Vec<Vec<f32>> = channel_bufs.clone();
-        let input_slices: Vec<&[f32]> = input_bufs.iter().map(|b| b.as_slice()).collect();
-        let mut output_slices: Vec<&mut [f32]> =
-            channel_bufs.iter_mut().map(|b| b.as_mut_slice()).collect();
-        let mut audio =
-            unsafe { AudioBuffer::from_slices(&input_slices, &mut output_slices, block_size) };
-
-        let transport_info = transport.tick_audio(block_size);
-        let event_list = EventList::new();
-        let mut output_events = EventList::new();
-        let mut ctx =
-            ProcessContext::new(&transport_info, sample_rate, block_size, &mut output_events);
-
-        plugin.process(&mut audio, &event_list, &mut ctx);
-
-        // Write the block to disk, one sample at a time
-        // (interleaved). Hound's `write_sample` is a thin wrap
-        // over the underlying writer — fine for v1, can switch
-        // to `write_sample_buffer` later if it's a hot path.
-        for f in 0..block_size {
-            for buf in channel_bufs.iter().take(channels) {
-                writer
-                    .write_sample(buf[f])
-                    .map_err(|e| format!("WAV write failed: {e}"))?;
-            }
-        }
-        total_frames += block_size;
+    if let Some(path) = opts.state_path.as_deref() {
+        driver = driver.state_file(path);
     }
 
-    writer
-        .finalize()
-        .map_err(|e| format!("WAV finalize failed: {e}"))?;
+    let result = driver.run();
+    result
+        .write_wav(output_path)
+        .map_err(|e| format!("WAV write failed: {e}"))?;
 
     let elapsed = started.elapsed();
     let render_secs = total_frames as f64 / sample_rate;
@@ -179,4 +121,22 @@ fn peek_wav_spec(path: &Path) -> Result<(u32, usize), String> {
         .map_err(|e| format!("could not open '{}': {e}", path.display()))?;
     let spec = reader.spec();
     Ok((spec.sample_rate, spec.channels as usize))
+}
+
+/// Decode `path` to channel-major `Vec<Vec<f32>>`, adapted to
+/// `target_sr` / `target_channels`. Reuses [`crate::playback::PlaybackSource`]
+/// for the format/SR/channel adapter logic — this drains the source
+/// once into per-channel buffers sized to the file length.
+fn decode_wav_channel_major(
+    path: &Path,
+    target_sr: f64,
+    target_channels: usize,
+) -> Result<Vec<Vec<f32>>, String> {
+    use crate::playback::PlaybackSource;
+
+    let source = PlaybackSource::from_wav(path, target_sr, target_channels)?;
+    let total = source.total_frames();
+    let mut out: Vec<Vec<f32>> = (0..target_channels).map(|_| vec![0.0_f32; total]).collect();
+    source.mix_into(&mut out, total);
+    Ok(out)
 }

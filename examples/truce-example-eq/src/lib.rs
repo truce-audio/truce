@@ -245,15 +245,25 @@ mod tests {
 
     #[test]
     fn renders_nonzero_output() {
-        let result = truce_test::render_effect::<Plugin>(512, 44100.0);
-        truce_test::assert_nonzero(&result.output);
-        truce_test::assert_no_nans(&result.output);
+        use std::time::Duration;
+        use truce_test::{InputSource, assertions, driver};
+        let result = driver!(Plugin)
+            .duration(Duration::from_millis(12))
+            .input(InputSource::Constant(0.5))
+            .run();
+        assertions::assert_nonzero(&result);
+        assertions::assert_no_nans(&result);
     }
 
     #[test]
     fn flat_eq_passes_audio() {
+        use std::time::Duration;
+        use truce_test::{InputSource, driver};
         // Default EQ (0dB gain on all bands) should pass audio ~unchanged
-        let result = truce_test::render_effect::<Plugin>(512, 44100.0);
+        let result = driver!(Plugin)
+            .duration(Duration::from_millis(12))
+            .input(InputSource::Constant(0.5))
+            .run();
         let max = result.output[0]
             .iter()
             .map(|s| s.abs())

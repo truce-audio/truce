@@ -166,6 +166,13 @@ impl PlaybackSource {
     pub fn channels(&self) -> usize {
         self.channels
     }
+
+    /// Total decoded frame count after SR + channel adapt. Used by
+    /// the offline runner to size the channel-major buffer it hands
+    /// to [`truce_driver::PluginDriver`].
+    pub fn total_frames(&self) -> usize {
+        self.total_frames
+    }
 }
 
 // ---------------------------------------------------------------------------

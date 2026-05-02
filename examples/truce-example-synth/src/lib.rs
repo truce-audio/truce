@@ -233,29 +233,42 @@ mod tests {
 
     #[test]
     fn info_is_valid() {
-        truce_test::assert_valid_info::<__HotShellWrapper>();
+        truce_test::assert_valid_info::<Plugin>();
     }
 
     #[test]
     fn silence_without_midi() {
-        let result = truce_test::render_instrument::<__HotShellWrapper>(512, 44100.0, &[]);
-        truce_test::assert_silence(&result.output);
+        use std::time::Duration;
+        use truce_test::{assertions, driver};
+        let result = driver!(Plugin).duration(Duration::from_millis(12)).run();
+        assertions::assert_silence(&result);
     }
 
     #[test]
     fn produces_sound_on_note_on() {
-        let events = vec![truce_test::note_on(60, 100, 0)];
-        let result = truce_test::render_instrument::<__HotShellWrapper>(512, 44100.0, &events);
-        truce_test::assert_nonzero(&result.output);
-        truce_test::assert_no_nans(&result.output);
+        use std::time::Duration;
+        use truce_test::{assertions, driver};
+        let result = driver!(Plugin)
+            .duration(Duration::from_millis(12))
+            .script(|s| s.note_on(60, 100.0 / 127.0))
+            .run();
+        assertions::assert_nonzero(&result);
+        assertions::assert_no_nans(&result);
     }
 
     #[test]
     fn note_off_decays_to_silence() {
-        let events = vec![truce_test::note_on(60, 100, 0), truce_test::note_off(60, 0)];
-        // Render many blocks to let the release tail finish
-        let result = truce_test::render_instrument::<__HotShellWrapper>(44100, 44100.0, &events);
-        // Last 1000 samples should be near silence
+        use std::time::Duration;
+        use truce_test::driver;
+        // Render ~1 second to let the release tail finish.
+        let result = driver!(Plugin)
+            .duration(Duration::from_secs(1))
+            .script(|s| {
+                s.note_on(60, 100.0 / 127.0);
+                s.note_off(60);
+            })
+            .run();
+        // Last 1000 samples should be near silence.
         let tail: Vec<f32> = result.output[0][43000..].to_vec();
         let max = tail.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
         assert!(max < 0.01, "Expected decay to silence, but max was {max}");
@@ -263,80 +276,80 @@ mod tests {
 
     #[test]
     fn has_editor() {
-        truce_test::assert_has_editor::<__HotShellWrapper>();
+        truce_test::assert_has_editor::<Plugin>();
     }
 
     #[test]
     fn state_round_trips() {
-        truce_test::assert_state_round_trip::<__HotShellWrapper>();
+        truce_test::assert_state_round_trip::<Plugin>();
     }
 
     // --- AU metadata ---
 
     #[test]
     fn au_type_codes_ascii() {
-        truce_test::assert_au_type_codes_ascii::<__HotShellWrapper>();
+        truce_test::assert_au_type_codes_ascii::<Plugin>();
     }
 
     #[test]
     fn fourcc_roundtrip() {
-        truce_test::assert_fourcc_roundtrip::<__HotShellWrapper>();
+        truce_test::assert_fourcc_roundtrip::<Plugin>();
     }
 
     #[test]
     fn bus_config_instrument() {
-        truce_test::assert_bus_config_instrument::<__HotShellWrapper>();
+        truce_test::assert_bus_config_instrument::<Plugin>();
     }
 
     // --- GUI lifecycle ---
 
     #[test]
     fn editor_lifecycle() {
-        truce_test::assert_editor_lifecycle::<__HotShellWrapper>();
+        truce_test::assert_editor_lifecycle::<Plugin>();
     }
 
     #[test]
     fn editor_size_consistent() {
-        truce_test::assert_editor_size_consistent::<__HotShellWrapper>();
+        truce_test::assert_editor_size_consistent::<Plugin>();
     }
 
     // --- Parameters ---
 
     #[test]
     fn param_defaults_match() {
-        truce_test::assert_param_defaults_match::<__HotShellWrapper>();
+        truce_test::assert_param_defaults_match::<Plugin>();
     }
 
     #[test]
     fn param_normalized_clamped() {
-        truce_test::assert_param_normalized_clamped::<__HotShellWrapper>();
+        truce_test::assert_param_normalized_clamped::<Plugin>();
     }
 
     #[test]
     fn param_normalized_roundtrip() {
-        truce_test::assert_param_normalized_roundtrip::<__HotShellWrapper>();
+        truce_test::assert_param_normalized_roundtrip::<Plugin>();
     }
 
     #[test]
     fn param_count_matches() {
-        truce_test::assert_param_count_matches::<__HotShellWrapper>();
+        truce_test::assert_param_count_matches::<Plugin>();
     }
 
     #[test]
     fn no_duplicate_param_ids() {
-        truce_test::assert_no_duplicate_param_ids::<__HotShellWrapper>();
+        truce_test::assert_no_duplicate_param_ids::<Plugin>();
     }
 
     // --- State resilience ---
 
     #[test]
     fn corrupt_state_no_crash() {
-        truce_test::assert_corrupt_state_no_crash::<__HotShellWrapper>();
+        truce_test::assert_corrupt_state_no_crash::<Plugin>();
     }
 
     #[test]
     fn empty_state_no_crash() {
-        truce_test::assert_empty_state_no_crash::<__HotShellWrapper>();
+        truce_test::assert_empty_state_no_crash::<Plugin>();
     }
     #[cfg(target_os = "macos")]
     #[test]

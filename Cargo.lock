@@ -6087,6 +6087,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "truce-driver"
+version = "0.20.0"
+dependencies = [
+ "hound",
+ "truce-core",
+ "truce-params",
+]
+
+[[package]]
 name = "truce-dsp"
 version = "0.20.0"
 
@@ -6420,6 +6429,7 @@ dependencies = [
  "raw-window-handle 0.5.2",
  "rfd",
  "truce-core",
+ "truce-driver",
  "truce-gpu",
  "truce-gui",
  "truce-params",
@@ -6432,8 +6442,8 @@ version = "0.20.0"
 dependencies = [
  "png 0.18.1",
  "truce-core",
+ "truce-driver",
  "truce-params",
- "truce-standalone",
 ]
 
 [[package]]

@@ -109,9 +109,15 @@ mod tests {
 
     #[test]
     fn renders_nonzero_output() {
-        let result = truce_test::render_effect::<Plugin>(512, 44100.0);
-        truce_test::assert_nonzero(&result.output);
-        truce_test::assert_no_nans(&result.output);
+        use std::time::Duration;
+        use truce_test::{InputSource, assertions, driver};
+
+        let result = driver!(Plugin)
+            .duration(Duration::from_millis(12))
+            .input(InputSource::Constant(0.5))
+            .run();
+        assertions::assert_nonzero(&result);
+        assertions::assert_no_nans(&result);
     }
 
     #[test]
@@ -201,31 +207,25 @@ mod tests {
         truce_test::screenshot!(Plugin, "screenshots/gain_default_windows.png").run();
     }
 
-    /// End-to-end check of `truce_test::in_process` on an effect:
-    /// feed a block of non-zero input, assert the output is
-    /// non-silent and not clipping or NaNing. Acts as the canonical
-    /// "does the in-process pipeline work?" smoke test.
+    /// End-to-end check of [`truce_test::PluginDriver`] on an
+    /// effect: feed a block of non-zero input, assert the output is
+    /// non-silent and not clipping or NaNing. The canonical smoke
+    /// test for the driver pipeline.
     #[test]
-    fn in_process_passthrough() {
+    fn driver_passthrough() {
         use std::time::Duration;
-        use truce_test::in_process;
+        use truce_test::{InputSource, assertions, driver};
 
-        // 1 second of unity-amplitude input on two channels.
-        let sr = 44_100.0;
-        let frames = sr as usize;
-        let input = vec![vec![0.5f32; frames]; 2];
+        let result = driver!(Plugin)
+            .sample_rate(44_100.0)
+            .channels(2)
+            .block_size(256)
+            .duration(Duration::from_secs(1))
+            .input(InputSource::Constant(0.5))
+            .run();
 
-        let result = in_process::run::<Plugin>(
-            in_process::InProcessOpts::default()
-                .sample_rate(sr)
-                .channels(2)
-                .block_size(256)
-                .duration(Duration::from_secs(1))
-                .input(input),
-        );
-
-        in_process::assert_no_nans(&result);
-        in_process::assert_nonzero(&result);
-        in_process::assert_peak_below(&result, 1.0);
+        assertions::assert_no_nans(&result);
+        assertions::assert_nonzero(&result);
+        assertions::assert_peak_below(&result, 1.0);
     }
 }

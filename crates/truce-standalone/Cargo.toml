@@ -9,6 +9,7 @@ description = "Standalone host wrapper for truce plugins"
 [dependencies]
 truce-core = { workspace = true }
 truce-params = { workspace = true }
+truce-driver = { workspace = true, optional = true }
 cpal = "0.15"
 pico-args = "0.5"
 dirs = "5"
@@ -58,7 +59,7 @@ gui = [
     "dep:windows-sys",
     "dep:rfd",
 ]
-playback = ["dep:hound"]
+playback = ["dep:hound", "dep:truce-driver", "truce-driver/wav"]
 
 [lints]
 workspace = true

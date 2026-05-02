@@ -1,7 +1,17 @@
 //! Test utilities for truce plugins.
 //!
-//! Provides helpers to render audio, inject MIDI, verify output,
-//! and round-trip state — all in-process, no host simulation needed.
+//! Two layers:
+//!
+//! - **Audio runs** — built on top of [`truce_driver::PluginDriver`].
+//!   Re-exported here so plugin tests have one crate to depend on.
+//!   Use the [`driver!`] macro for ergonomic builder construction
+//!   (it wires `manifest_dir` from the calling crate's
+//!   `CARGO_MANIFEST_DIR`, so `state_file` paths resolve correctly).
+//!   Assertions live in [`assertions`].
+//! - **Static plugin checks** — `assert_state_round_trip`,
+//!   `assert_has_editor`, AU FourCC, bus config, param defaults, GUI
+//!   lifecycle, etc. These don't render audio, just instantiate the
+//!   plugin and inspect.
 //!
 //! # Usage
 //!
@@ -11,184 +21,59 @@
 //! truce-test = { workspace = true }
 //! ```
 //!
-//! Then in your tests:
 //! ```ignore
+//! use truce_test::{assertions, driver, InputSource};
+//! use std::time::Duration;
+//!
 //! #[test]
-//! fn effect_produces_audio() {
-//!     let result = truce_test::render_effect::<MyEffect>(512, 44100.0);
-//!     truce_test::assert_nonzero(&result.output);
+//! fn passthrough() {
+//!     let result = driver!(MyPlugin)
+//!         .duration(Duration::from_millis(100))
+//!         .input(InputSource::Constant(0.5))
+//!         .run();
+//!     assertions::assert_nonzero(&result);
+//!     assertions::assert_no_nans(&result);
+//!     assertions::assert_peak_below(&result, 1.0);
 //! }
 //! ```
 
-use truce_core::buffer::AudioBuffer;
-use truce_core::events::{Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
-use truce_core::process::ProcessContext;
 use truce_core::state;
 use truce_params::Params;
 
-/// In-process plugin runner + time-windowed / meter / clipping
-/// assertion helpers, built on [`truce_standalone::in_process`].
-/// Behind the `in-process` feature so this crate's default use —
-/// render / state / params / GUI assertions — doesn't pull cpal /
-/// midir transitively.
-#[cfg(feature = "in-process")]
-pub mod in_process;
+// ---------------------------------------------------------------------------
+// Driver re-exports + ergonomic macro
+// ---------------------------------------------------------------------------
 
-/// Result of a render operation.
-pub struct RenderResult {
-    /// Output audio channels. Each `Vec<f32>` is one channel.
-    pub output: Vec<Vec<f32>>,
-    /// The plugin instance (for further inspection).
-    pub num_frames: usize,
-}
+pub use truce_driver::{
+    CaptureSpec, DriverResult, InputSource, MeterCapture, MeterReadings, PluginDriver, Script,
+    TransportSpec,
+};
 
-/// Render N frames through an effect plugin.
+pub mod assertions;
+
+/// Construct a [`PluginDriver`] for the given plugin type, with
+/// `manifest_dir` wired to the calling crate's `CARGO_MANIFEST_DIR`.
+/// That lets `.state_file("test_states/foo.pluginstate")` resolve
+/// against the crate's own directory regardless of where `cargo
+/// test` was launched.
 ///
-/// Creates a new instance, resets at the given sample rate,
-/// fills input with 0.5 on all channels, and processes.
-pub fn render_effect<P: PluginExport>(frames: usize, sample_rate: f64) -> RenderResult {
-    let mut plugin = P::create();
-    plugin.init();
-    plugin.reset(sample_rate, frames);
-    plugin.params().set_sample_rate(sample_rate);
-    plugin.params().snap_smoothers();
-
-    let _info = P::info();
-    let layouts = P::bus_layouts();
-    let layout = &layouts[0];
-    let num_in = layout.total_input_channels() as usize;
-    let num_out = layout.total_output_channels() as usize;
-
-    // Create input buffers filled with 0.5
-    let input_data: Vec<Vec<f32>> = (0..num_in).map(|_| vec![0.5f32; frames]).collect();
-    let input_slices: Vec<&[f32]> = input_data.iter().map(|v| v.as_slice()).collect();
-
-    // Create output buffers
-    let mut output_data: Vec<Vec<f32>> = (0..num_out).map(|_| vec![0.0f32; frames]).collect();
-
-    // Copy input to output (in-place processing, like hosts do for effects)
-    for ch in 0..num_in.min(num_out) {
-        output_data[ch].copy_from_slice(&input_data[ch]);
-    }
-
-    let mut output_slices: Vec<&mut [f32]> =
-        output_data.iter_mut().map(|v| v.as_mut_slice()).collect();
-
-    let mut buffer = unsafe { AudioBuffer::from_slices(&input_slices, &mut output_slices, frames) };
-    let events = EventList::new();
-    let transport = TransportInfo::default();
-    let mut output_events = EventList::new();
-    let mut context = ProcessContext::new(&transport, sample_rate, frames, &mut output_events);
-
-    plugin.process(&mut buffer, &events, &mut context);
-    _ = buffer;
-
-    let output: Vec<Vec<f32>> = output_data;
-    RenderResult {
-        output,
-        num_frames: frames,
-    }
+/// ```ignore
+/// truce_test::driver!(MyPlugin)
+///     .duration(Duration::from_millis(100))
+///     .state_file("test_states/preset.pluginstate")
+///     .run();
+/// ```
+#[macro_export]
+macro_rules! driver {
+    ($plugin:ty $(,)?) => {
+        $crate::PluginDriver::<$plugin>::new().manifest_dir(env!("CARGO_MANIFEST_DIR"))
+    };
 }
 
-/// Render N frames through an instrument plugin with MIDI events.
-///
-/// Creates a new instance, resets, injects the given events, and processes.
-/// No audio input (instruments generate output from MIDI).
-pub fn render_instrument<P: PluginExport>(
-    frames: usize,
-    sample_rate: f64,
-    midi_events: &[Event],
-) -> RenderResult {
-    let mut plugin = P::create();
-    plugin.init();
-    plugin.reset(sample_rate, frames);
-    plugin.params().set_sample_rate(sample_rate);
-    plugin.params().snap_smoothers();
-
-    let layouts = P::bus_layouts();
-    let layout = &layouts[0];
-    let num_out = layout.total_output_channels() as usize;
-
-    let input_slices: Vec<&[f32]> = vec![];
-    let mut output_data: Vec<Vec<f32>> = (0..num_out).map(|_| vec![0.0f32; frames]).collect();
-    let mut output_slices: Vec<&mut [f32]> =
-        output_data.iter_mut().map(|v| v.as_mut_slice()).collect();
-
-    let mut buffer = unsafe { AudioBuffer::from_slices(&input_slices, &mut output_slices, frames) };
-    let mut events = EventList::new();
-    for ev in midi_events {
-        events.push(ev.clone());
-    }
-    let transport = TransportInfo::default();
-    let mut output_events = EventList::new();
-    let mut context = ProcessContext::new(&transport, sample_rate, frames, &mut output_events);
-
-    plugin.process(&mut buffer, &events, &mut context);
-    _ = buffer;
-
-    let output: Vec<Vec<f32>> = output_data;
-    RenderResult {
-        output,
-        num_frames: frames,
-    }
-}
-
-/// Create a Note On event.
-pub fn note_on(note: u8, velocity: u8, offset: u32) -> Event {
-    Event {
-        sample_offset: offset,
-        body: EventBody::NoteOn {
-            channel: 0,
-            note,
-            velocity: velocity as f32 / 127.0,
-        },
-    }
-}
-
-/// Create a Note Off event.
-pub fn note_off(note: u8, offset: u32) -> Event {
-    Event {
-        sample_offset: offset,
-        body: EventBody::NoteOff {
-            channel: 0,
-            note,
-            velocity: 0.0,
-        },
-    }
-}
-
-/// Assert that at least one channel has audio above the threshold.
-pub fn assert_nonzero(output: &[Vec<f32>]) {
-    let max = output
-        .iter()
-        .flat_map(|ch| ch.iter())
-        .map(|s| s.abs())
-        .fold(0.0f32, f32::max);
-    assert!(
-        max > 0.001,
-        "Expected non-zero audio output, but max sample was {max}"
-    );
-}
-
-/// Assert all channels are silence (below threshold).
-pub fn assert_silence(output: &[Vec<f32>]) {
-    let max = output
-        .iter()
-        .flat_map(|ch| ch.iter())
-        .map(|s| s.abs())
-        .fold(0.0f32, f32::max);
-    assert!(max < 0.001, "Expected silence, but max sample was {max}");
-}
-
-/// Assert no NaN or Inf values in output.
-pub fn assert_no_nans(output: &[Vec<f32>]) {
-    for (ch, data) in output.iter().enumerate() {
-        for (i, &s) in data.iter().enumerate() {
-            assert!(s.is_finite(), "NaN/Inf at channel {ch} sample {i}: {s}");
-        }
-    }
-}
+// ---------------------------------------------------------------------------
+// Static plugin checks (no audio render)
+// ---------------------------------------------------------------------------
 
 /// Assert state save/load round-trips correctly.
 ///
@@ -550,6 +435,11 @@ type SetupFn<P> = Box<dyn FnOnce(&mut P)>;
 /// directory and no auto-derived filename; every test names its
 /// own reference.
 ///
+/// Lifecycle: `P::create()` → `init()` → optional `state_file` load
+/// → optional `set_param` shortcuts → optional `setup` closure →
+/// render. Mirrors [`PluginDriver`]'s ordering so the same builder
+/// vocabulary works for both audio and GUI tests.
+///
 /// # Examples
 ///
 /// ```ignore
@@ -562,7 +452,7 @@ type SetupFn<P> = Box<dyn FnOnce(&mut P)>;
 /// #[test]
 /// fn screenshot_max_gain() {
 ///     truce_test::screenshot!(Plugin, "screenshots/max_gain.png")
-///         .setup(|p| p.params().gain.set_normalized(1.0))
+///         .set_param(MyParamId::Gain, 1.0)
 ///         .run();
 /// }
 ///
@@ -584,6 +474,12 @@ pub struct ScreenshotTest<P: PluginExport> {
     manifest_dir: PathBuf,
     /// Max allowed differing-pixel count. `0` = strict.
     tolerance: usize,
+    /// `.pluginstate` bytes loaded after init, before `set_param`
+    /// shortcuts and `setup` closure.
+    state_bytes: Option<Vec<u8>>,
+    /// `.set_param(id, v)` shortcuts — applied after state load,
+    /// before the `setup` closure.
+    param_overrides: Vec<(u32, f32)>,
     /// Optional plugin mutation between `P::create()` and render.
     setup: Option<SetupFn<P>>,
     _marker: std::marker::PhantomData<P>,
@@ -607,37 +503,51 @@ impl<P: PluginExport> ScreenshotTest<P> {
             ref_path,
             manifest_dir,
             tolerance: 0,
+            state_bytes: None,
+            param_overrides: Vec::new(),
             setup: None,
             _marker: std::marker::PhantomData,
         }
     }
 
     /// Mutate the plugin between `P::create()` / `init()` and the
-    /// render. Use this to set params, load a state blob, drive a
+    /// render. Use this to set custom (non-param) state, drive a
     /// `process()` block to populate meters, etc.
+    ///
+    /// Composes with [`Self::state_file`] (state loads first) and
+    /// [`Self::set_param`] (shortcuts apply first); the closure runs
+    /// last.
     pub fn setup<F: FnOnce(&mut P) + 'static>(mut self, f: F) -> Self {
         self.setup = Some(Box::new(f));
         self
     }
 
-    /// Shorthand for `.setup(|p| p.load_state(&fs::read(path)?))`.
-    /// Mirrors the CLI's `--state` flag — a `.pluginstate` file the
-    /// standalone host wrote becomes the rendered state. `path` is
-    /// resolved relative to the crate's manifest dir, or used as-is
-    /// if absolute.
-    pub fn state_file<S: Into<PathBuf>>(self, path: S) -> Self {
+    /// Set a parameter to a normalized [0, 1] value before the
+    /// render. Equivalent to a `setup(|p| p.params().set_normalized(id, v))`
+    /// closure but written as one builder call. Multiple `.set_param`
+    /// calls compose; they apply after `.state_file` (if any) and
+    /// before `.setup`.
+    pub fn set_param(mut self, id: impl Into<u32>, normalized: f32) -> Self {
+        self.param_overrides.push((id.into(), normalized));
+        self
+    }
+
+    /// Read a `.pluginstate` file (the standalone host's `Cmd+S`
+    /// save format) and apply it via `plugin.load_state(&bytes)`
+    /// after init and before any `set_param` overrides / `setup`
+    /// closure. Path is resolved relative to the crate's manifest
+    /// dir, or used as-is if absolute.
+    pub fn state_file<S: Into<PathBuf>>(mut self, path: S) -> Self {
         let raw = path.into();
         let resolved = if raw.is_absolute() {
             raw
         } else {
             self.manifest_dir.join(&raw)
         };
-        self.setup(move |p| {
-            let bytes = std::fs::read(&resolved).unwrap_or_else(|e| {
-                panic!("state_file: failed to read {}: {e}", resolved.display())
-            });
-            p.load_state(&bytes);
-        })
+        let bytes = std::fs::read(&resolved)
+            .unwrap_or_else(|e| panic!("state_file: failed to read {}: {e}", resolved.display()));
+        self.state_bytes = Some(bytes);
+        self
     }
 
     /// Max allowed differing-pixel count. `0` is strict equality;
@@ -647,8 +557,9 @@ impl<P: PluginExport> ScreenshotTest<P> {
         self
     }
 
-    /// Build the plugin (with `setup` applied if present), render,
-    /// and compare against the reference at the supplied path:
+    /// Build the plugin (with `state_file`/`set_param`/`setup`
+    /// applied if present, in that order), render, and compare
+    /// against the reference at the supplied path:
     ///
     /// - No reference → panic, pointing at
     ///   `cargo truce screenshot --out <ref_path>` to create one.
@@ -658,9 +569,19 @@ impl<P: PluginExport> ScreenshotTest<P> {
     pub fn run(self) {
         let ref_path = self.ref_path;
         let tolerance = self.tolerance;
+        let state_bytes = self.state_bytes;
+        let param_overrides = self.param_overrides;
         let setup = self.setup;
+
         let mut plugin = P::create();
         plugin.init();
+        if let Some(bytes) = state_bytes.as_deref() {
+            plugin.load_state(bytes);
+        }
+        for (id, value) in &param_overrides {
+            plugin.params().set_normalized(*id, *value as f64);
+        }
+        plugin.params().snap_smoothers();
         if let Some(f) = setup {
             f(&mut plugin);
         }

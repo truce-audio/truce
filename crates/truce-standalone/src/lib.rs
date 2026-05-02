@@ -31,7 +31,6 @@
 
 pub mod audio;
 pub mod cli;
-pub mod in_process;
 pub mod keyboard;
 pub mod midi;
 #[cfg(feature = "playback")]

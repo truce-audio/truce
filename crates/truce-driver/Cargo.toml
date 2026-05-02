@@ -1,0 +1,23 @@
+[package]
+name = "truce-driver"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Headless driver for truce plugins — instantiate, feed scripted audio + events, capture output"
+
+[dependencies]
+truce-core = { workspace = true }
+truce-params = { workspace = true }
+hound = { version = "3", optional = true }
+
+[features]
+default = []
+# Adds `DriverResult::write_wav(path)` via hound. Used by the
+# standalone host's offline-render path and by plugin authors who
+# pipe captured audio out to disk from `main.rs`. Test-only
+# consumers leave it off.
+wav = ["dep:hound"]
+
+[lints]
+workspace = true
