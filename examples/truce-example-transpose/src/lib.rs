@@ -166,12 +166,22 @@ mod tests {
             _ => panic!("Expected NoteOn"),
         }
     }
-
+    #[cfg(target_os = "macos")]
     #[test]
-    fn gui_screenshot() {
-        truce_test::screenshot!(Plugin)
-            .name("transpose_default")
-            .run();
+    fn gui_screenshot_macos() {
+        truce_test::screenshot!(Plugin).name("transpose_default_macos").run();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn gui_screenshot_linux() {
+        truce_test::screenshot!(Plugin).name("transpose_default_linux").run();
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn gui_screenshot_windows() {
+        truce_test::screenshot!(Plugin).name("transpose_default_windows").run();
     }
 
     /// Regression guard: see `arpeggio/src/lib.rs::tests::category_is_note_effect`.
