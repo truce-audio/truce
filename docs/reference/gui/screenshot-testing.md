@@ -99,16 +99,21 @@ open, a meter reading a particular level — the builder's
 #[test]
 fn gui_screenshot_max_gain() {
     truce_test::screenshot!(Plugin, "screenshots/max_gain.png")
-        .setup(|p| p.params().gain.set_normalized(1.0))
+        .set_param(MyParamId::Gain, 1.0)
         .run();
 }
 ```
 
-`setup` gets `&mut Plugin`, so you can:
+The builder applies, in order, `state_file` (if any), `set_param`
+shortcuts, then the `setup` closure — same lifecycle the audio
+[`PluginDriver`](../audio-testing.md) uses, so the same vocabulary
+works for both audio and GUI tests.
 
-- Set parameter values directly (`p.params().<param>.set_normalized(…)`).
-- Load saved state (`p.load_state(&bytes)`).
-- Tick `p.process(…)` to populate meters or animations.
+For more than one-shot param tweaks, drop down to the `setup`
+closure (`&mut Plugin`):
+
+- Drive `p.process(…)` to populate meters or animations.
+- Mutate custom (non-param) state on the plugin struct.
 
 For state you'd rather author interactively than spell out in
 code, the standalone host's `Cmd+S` / `Ctrl+S` saves a
@@ -251,8 +256,9 @@ auto-derived path, no implicit directory.
 
 ```rust
 impl<P: PluginExport> ScreenshotTest<P> {
-    pub fn setup<F: FnOnce(&mut P) + 'static>(self, f: F) -> Self;
     pub fn state_file<S: Into<PathBuf>>(self, path: S) -> Self;
+    pub fn set_param(self, id: impl Into<u32>, normalized: f32) -> Self;
+    pub fn setup<F: FnOnce(&mut P) + 'static>(self, f: F) -> Self;
     pub fn tolerance(self, t: usize) -> Self;
     pub fn run(self);
 }
@@ -260,8 +266,9 @@ impl<P: PluginExport> ScreenshotTest<P> {
 
 | Method | Effect |
 |---|---|
-| `setup(\|p\| …)` | Mutate the plugin between `P::create()` and the render. Set params, drive `process()`, load arbitrary state. |
-| `state_file("path")` | Sugar for `setup(\|p\| p.load_state(&fs::read(path)?))`. Loads a `.pluginstate` blob written by the standalone host's `Cmd+S` / `Ctrl+S`. |
+| `state_file("path")` | Load a `.pluginstate` blob (the standalone host's `Cmd+S` save format) via `plugin.load_state(&bytes)`. Applied first. |
+| `set_param(id, v)` | Set a parameter to a normalized [0, 1] value via `params().set_normalized(id, v)`. Applied after state load. Multiple calls compose. |
+| `setup(\|p\| …)` | Mutate the plugin between `P::create()` and the render. Drive `process()`, mutate custom state. Applied last. |
 | `tolerance(n)` | Max allowed differing-pixel count. `0` = strict. |
 | `run()` | Build, render, compare. |
 

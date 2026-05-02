@@ -207,35 +207,42 @@ Atomic-backed — UI-thread toggles don't block the audio thread.
 
 ## Integration tests
 
-`truce-standalone`'s `in_process` module runs the plugin headlessly
-in memory — no cpal, no window, no devices. Captures output audio
-and meter readings; drives MIDI via a scripting helper.
+The same engine that backs `--no-playback` also drives in-process
+audio tests via [`truce_test::PluginDriver`](../reference/audio-testing.md).
+No cpal, no window, no devices — instantiate the plugin, feed
+scripted audio + MIDI for a fixed duration, capture the output:
 
 ```rust
 use std::time::Duration;
-use truce_test::in_process;
+use truce_test::{assertions, driver};
 
-let result = in_process::run::<Plugin>(
-    in_process::InProcessOpts::default()
-        .sample_rate(48_000.0)
-        .midi(|m| { m.note_on(60, 0.8); m.wait_ms(100); m.note_off(60); })
-        .duration(Duration::from_secs(3)),
-);
+let result = driver!(Plugin)
+    .sample_rate(48_000.0)
+    .duration(Duration::from_secs(3))
+    .script(|s| {
+        s.note_on(60, 0.8);
+        s.wait_ms(100);
+        s.note_off(60);
+    })
+    .run();
 
-in_process::assert_no_nans(&result);
-in_process::assert_nonzero(&result);
-in_process::assert_silence_after(&result, Duration::from_millis(2_500));
+assertions::assert_no_nans(&result);
+assertions::assert_nonzero(&result);
+assertions::assert_silence_after(&result, Duration::from_millis(2_500));
 ```
 
 Opt in from the plugin crate:
 
 ```toml
 [dev-dependencies]
-truce-test = { workspace = true, features = ["in-process"] }
+truce-test = { workspace = true }
 ```
 
 Good for tail-silence / release-decay tests, sustained-load stability,
-clipping guards, and MIDI-recorded regression tests.
+clipping guards, and MIDI-recorded regression tests. See
+[`../reference/audio-testing.md`](../reference/audio-testing.md) for
+the full builder surface — input shapes, state-file loading,
+per-block meters, output-event capture.
 
 ## Limitations
 

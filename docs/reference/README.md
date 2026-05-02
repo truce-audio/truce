@@ -24,4 +24,8 @@
 - [GUI backends](gui/) — deep-dive guides for egui, iced, Slint,
   and raw-window-handle.
 - [Built-in GUI reference](gui/built-in.md) — the `GridLayout` builder, every widget constructor, theming.
+- [Audio testing](audio-testing.md) — `truce_test::PluginDriver` for
+  in-process audio + MIDI tests.
+- [Screenshot testing](gui/screenshot-testing.md) — visual regression
+  tests for the GUI.
 - [Status](../README.md) — what's shipped, what's next.
