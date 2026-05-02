@@ -11,11 +11,10 @@
 //!   cargo truce validate               # run auval, auval3, pluginval, clap-validator
 //!   cargo truce doctor                 # check environment
 
-use std::fs;
 use std::path::Path;
 use std::process::ExitCode;
 
-use cargo_truce::scaffold::{self, PluginKind, PluginSpec};
+use cargo_truce::scaffold::{FeatureSet, PluginKind, PluginSpec, Scaffolder, VendorInfo};
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).filter(|a| a != "truce").collect();
@@ -255,13 +254,38 @@ type Res = Result<(), Box<dyn std::error::Error>>;
 // ---------------------------------------------------------------------------
 
 fn cmd_new(args: &[String]) -> Res {
-    // Single-plugin AND multi-plugin workspace scaffolding share one
-    // command: `cargo truce new`. Without `--workspace`, the first
-    // positional is the project name, additional positionals are an
-    // error. With `--workspace`, the first positional is the
-    // workspace directory name and any additional positionals are
-    // plugin names; a single positional + `--workspace` produces a
-    // workspace-shaped layout with one plugin.
+    let parsed = parse_new_args(args)?;
+    if Path::new(&parsed.name).exists() {
+        return Err(format!("Directory '{}' already exists", parsed.name).into());
+    }
+
+    let scaffolder = Scaffolder::new();
+    let features = FeatureSet {
+        standalone: parsed.with_standalone,
+    };
+
+    if parsed.workspace_mode {
+        scaffold_workspace(&scaffolder, parsed, features)
+    } else {
+        scaffold_single(&scaffolder, parsed, features)
+    }
+}
+
+/// Parsed `cargo truce new` flags. Single + workspace modes share
+/// one parser; the validity of mode-specific combinations is
+/// asserted later by the per-mode entrypoints.
+struct NewArgs {
+    name: String,
+    plugin_names: Vec<String>,
+    default_kind: PluginKind,
+    vendor_name: Option<String>,
+    vendor_id: Option<String>,
+    type_overrides: Vec<(String, PluginKind)>,
+    with_standalone: bool,
+    workspace_mode: bool,
+}
+
+fn parse_new_args(args: &[String]) -> Result<NewArgs, Box<dyn std::error::Error>> {
     let mut name: Option<String> = None;
     let mut plugin_names: Vec<String> = Vec::new();
     let mut default_kind = PluginKind::Effect;
@@ -306,8 +330,6 @@ fn cmd_new(args: &[String]) -> Res {
          cargo truce new <workspace-name> --workspace <plugin1> [plugin2 ...] [options]",
     )?;
 
-    // Single-plugin path: extra positionals are an error (probably
-    // the user forgot --workspace).
     if !workspace_mode && !plugin_names.is_empty() {
         return Err(format!(
             "extra positional arguments: {}\n\
@@ -317,92 +339,52 @@ fn cmd_new(args: &[String]) -> Res {
         .into());
     }
 
-    if Path::new(&name).exists() {
-        return Err(format!("Directory '{name}' already exists").into());
-    }
-
-    if workspace_mode {
-        scaffold_workspace(
-            &name,
-            &plugin_names,
-            default_kind,
-            &type_overrides,
-            vendor_name,
-            vendor_id,
-            with_standalone,
-        )
-    } else {
-        // The plugin-type override flags only make sense in workspace
-        // mode where multiple plugins exist; reject early in single
-        // mode so users notice typos.
-        if !type_overrides.is_empty() {
-            return Err(
-                "--type:<plugin>=<kind> only applies to --workspace scaffolds (multiple plugins)."
-                    .into(),
-            );
-        }
-        if vendor_name.is_some() || vendor_id.is_some() {
-            return Err(
-                "--vendor / --vendor-id only apply to --workspace scaffolds; \
-                 single-plugin scaffolds use placeholder vendor info you edit \
-                 in truce.toml."
-                    .into(),
-            );
-        }
-        scaffold_single(&name, default_kind, with_standalone)
-    }
+    Ok(NewArgs {
+        name,
+        plugin_names,
+        default_kind,
+        vendor_name,
+        vendor_id,
+        type_overrides,
+        with_standalone,
+        workspace_mode,
+    })
 }
 
-fn scaffold_single(name: &str, kind: PluginKind, with_standalone: bool) -> Res {
-    let struct_name = scaffold::to_pascal_case(name);
-
-    fs::create_dir_all(format!("{name}/src"))?;
-    fs::create_dir_all(format!("{name}/.cargo"))?;
-    fs::write(
-        format!("{name}/Cargo.toml"),
-        scaffold::plugin_cargo_toml_standalone(name, with_standalone),
-    )?;
-    fs::write(
-        format!("{name}/build.rs"),
-        "fn main() { truce_build::emit_plugin_env(); }\n",
-    )?;
-    fs::write(
-        format!("{name}/src/lib.rs"),
-        scaffold::plugin_lib_rs(&struct_name, kind),
-    )?;
-    if with_standalone {
-        fs::write(
-            format!("{name}/src/main.rs"),
-            scaffold::plugin_main_rs(name),
-        )?;
+fn scaffold_single(scaffolder: &Scaffolder, parsed: NewArgs, features: FeatureSet) -> Res {
+    // `--type:` overrides only make sense across multiple plugins;
+    // reject in single mode so a typo (e.g., the user forgot
+    // `--workspace`) surfaces as an error instead of silently
+    // dropping the override.
+    if !parsed.type_overrides.is_empty() {
+        return Err(
+            "--type:<plugin>=<kind> only applies to --workspace scaffolds (multiple plugins)."
+                .into(),
+        );
     }
-    fs::write(format!("{name}/.gitignore"), scaffold::gitignore())?;
-    fs::write(
-        format!("{name}/.cargo/config.toml"),
-        scaffold::cargo_config_toml(),
-    )?;
+
+    let vendor = match (parsed.vendor_name, parsed.vendor_id) {
+        (Some(name), Some(id)) => VendorInfo { name, id },
+        (Some(name), None) => VendorInfo {
+            name,
+            id: VendorInfo::placeholder().id,
+        },
+        (None, Some(id)) => VendorInfo {
+            name: VendorInfo::placeholder().name,
+            id,
+        },
+        (None, None) => VendorInfo::placeholder(),
+    };
 
     let plugin = PluginSpec {
-        name: name.to_string(),
-        kind,
+        name: parsed.name.clone(),
+        kind: parsed.default_kind,
     };
-    let plugins = [plugin];
-    let fourcc_map = scaffold::resolve_fourccs(&plugins);
-    fs::write(
-        format!("{name}/truce.toml"),
-        scaffold::truce_toml(
-            "My Company",
-            "com.mycompany",
-            &plugins,
-            name,
-            &fourcc_map,
-            false,
-        ),
-    )?;
+    scaffolder.single(Path::new(&parsed.name), &plugin, features, &vendor)?;
 
-    eprintln!("Created {name}/");
+    eprintln!("Created {}/", parsed.name);
     eprintln!();
-    eprintln!("  cd {name}");
+    eprintln!("  cd {}", parsed.name);
     eprintln!("  cargo truce install --clap      # build + install CLAP");
     eprintln!("  cargo truce install              # all formats in default features");
     eprintln!("  cargo truce package              # signed .pkg / .exe installer in target/dist/");
@@ -420,50 +402,48 @@ fn scaffold_single(name: &str, kind: PluginKind, with_standalone: bool) -> Res {
     Ok(())
 }
 
-fn scaffold_workspace(
-    workspace_name: &str,
-    plugin_names: &[String],
-    default_kind: PluginKind,
-    type_overrides: &[(String, PluginKind)],
-    vendor_name: Option<String>,
-    vendor_id: Option<String>,
-    with_standalone: bool,
-) -> Res {
-    if plugin_names.is_empty() {
+fn scaffold_workspace(scaffolder: &Scaffolder, parsed: NewArgs, features: FeatureSet) -> Res {
+    if parsed.plugin_names.is_empty() {
         return Err("--workspace requires at least one plugin name.\n\
             Usage: cargo truce new <workspace-name> --workspace <plugin1> [plugin2 ...]"
             .into());
     }
 
-    // Check for duplicate plugin names
+    // Duplicate plugin names → a workspace where two crates would
+    // try to live at the same `plugins/<name>/` path. Caught here
+    // for a clearer error than "directory already exists" mid-run.
     let mut seen = std::collections::HashSet::new();
-    for pn in plugin_names {
+    for pn in &parsed.plugin_names {
         if !seen.insert(pn.as_str()) {
             return Err(format!("Duplicate plugin name: '{pn}'").into());
         }
     }
 
-    // Check that all --type: overrides reference actual plugin names
-    for (override_name, _) in type_overrides {
-        if !plugin_names.contains(override_name) {
+    // `--type:foo=instrument` must reference an actual plugin name
+    // — typos here would silently apply the default kind to every
+    // plugin, which is exactly the trap the override is supposed
+    // to avoid.
+    for (override_name, _) in &parsed.type_overrides {
+        if !parsed.plugin_names.contains(override_name) {
             return Err(format!(
                 "--type:{override_name}=... does not match any plugin name. \
                  Available plugins: {}",
-                plugin_names.join(", "),
+                parsed.plugin_names.join(", "),
             )
             .into());
         }
     }
 
-    // Build plugin specs
-    let plugins: Vec<PluginSpec> = plugin_names
+    let plugins: Vec<PluginSpec> = parsed
+        .plugin_names
         .iter()
         .map(|pn| {
-            let kind = type_overrides
+            let kind = parsed
+                .type_overrides
                 .iter()
                 .find(|(n, _)| n == pn)
                 .map(|(_, k)| *k)
-                .unwrap_or(default_kind);
+                .unwrap_or(parsed.default_kind);
             PluginSpec {
                 name: pn.clone(),
                 kind,
@@ -471,63 +451,21 @@ fn scaffold_workspace(
         })
         .collect();
 
-    let fourcc_map = scaffold::resolve_fourccs(&plugins);
-    let vendor = vendor_name.unwrap_or_else(|| scaffold::to_pascal_case(workspace_name));
-    let vid = vendor_id.unwrap_or_else(|| format!("com.{}", workspace_name.replace('-', "")));
+    let derived = VendorInfo::derive_from_workspace_name(&parsed.name);
+    let vendor = VendorInfo {
+        name: parsed.vendor_name.unwrap_or(derived.name),
+        id: parsed.vendor_id.unwrap_or(derived.id),
+    };
 
-    for p in &plugins {
-        fs::create_dir_all(format!("{workspace_name}/plugins/{}/src", p.name))?;
-    }
-    fs::create_dir_all(format!("{workspace_name}/.cargo"))?;
-
-    fs::write(
-        format!("{workspace_name}/Cargo.toml"),
-        scaffold::workspace_cargo_toml(workspace_name, &plugins, with_standalone),
+    scaffolder.workspace(
+        Path::new(&parsed.name),
+        &parsed.name,
+        &plugins,
+        features,
+        &vendor,
     )?;
 
-    fs::write(
-        format!("{workspace_name}/truce.toml"),
-        scaffold::truce_toml(&vendor, &vid, &plugins, workspace_name, &fourcc_map, true),
-    )?;
-
-    fs::write(
-        format!("{workspace_name}/.gitignore"),
-        scaffold::gitignore(),
-    )?;
-
-    fs::write(
-        format!("{workspace_name}/.cargo/config.toml"),
-        scaffold::cargo_config_toml(),
-    )?;
-
-    for p in &plugins {
-        let crate_name = format!("{workspace_name}-{}", p.name);
-        let struct_name = scaffold::to_pascal_case(&p.name);
-
-        fs::write(
-            format!("{workspace_name}/plugins/{}/Cargo.toml", p.name),
-            scaffold::plugin_cargo_toml_workspace(&crate_name, with_standalone),
-        )?;
-
-        fs::write(
-            format!("{workspace_name}/plugins/{}/build.rs", p.name),
-            "fn main() { truce_build::emit_plugin_env(); }\n",
-        )?;
-
-        fs::write(
-            format!("{workspace_name}/plugins/{}/src/lib.rs", p.name),
-            scaffold::plugin_lib_rs(&struct_name, p.kind),
-        )?;
-
-        if with_standalone {
-            fs::write(
-                format!("{workspace_name}/plugins/{}/src/main.rs", p.name),
-                scaffold::plugin_main_rs(&crate_name),
-            )?;
-        }
-    }
-
-    eprintln!("Created {workspace_name}/ with {} plugins:", plugins.len());
+    eprintln!("Created {}/ with {} plugins:", parsed.name, plugins.len());
     for p in &plugins {
         let kind_label = match p.kind {
             PluginKind::Effect => "effect",
@@ -537,7 +475,7 @@ fn scaffold_workspace(
         eprintln!("  plugins/{:<20} ({})", p.name, kind_label);
     }
     eprintln!();
-    eprintln!("  cd {workspace_name}");
+    eprintln!("  cd {}", parsed.name);
     eprintln!("  cargo truce install --clap      # build + install all as CLAP");
     eprintln!("  cargo truce install              # all formats in default features");
     eprintln!("  cargo truce package              # signed .pkg / .exe installer in target/dist/");

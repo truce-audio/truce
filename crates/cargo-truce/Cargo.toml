@@ -19,6 +19,9 @@ path = "src/main.rs"
 [dependencies]
 toml = "1"
 serde = { version = "1", features = ["derive"] }
+# Substitution engine for `cargo truce new` scaffolds. Single dep on
+# top of the existing serde — the only transitive that lands.
+tinytemplate = "1.2"
 truce-shim-types = { workspace = true }
 
 [dependencies.libloading]

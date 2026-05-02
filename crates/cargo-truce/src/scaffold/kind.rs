@@ -1,0 +1,189 @@
+//! Plugin kind — drives the per-kind text fragments injected into
+//! the scaffold's lib.rs (params struct, process body, layout knob,
+//! plugin macro args, effect-only tests).
+//!
+//! Every per-kind axis lives as a method on `PluginKind` so adding
+//! a fourth variant (or tweaking one variant's `process` template)
+//! is a one-place change.
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum PluginKind {
+    Effect,
+    Instrument,
+    Midi,
+}
+
+impl PluginKind {
+    pub fn parse(s: &str) -> Result<Self, String> {
+        match s {
+            "effect" => Ok(Self::Effect),
+            "instrument" => Ok(Self::Instrument),
+            "midi" => Ok(Self::Midi),
+            other => Err(format!(
+                "Unknown plugin type: {other} (expected effect, instrument, or midi)"
+            )),
+        }
+    }
+
+    pub fn category(self) -> &'static str {
+        match self {
+            Self::Instrument => "instrument",
+            Self::Midi => "midi",
+            Self::Effect => "effect",
+        }
+    }
+
+    pub fn au_tag(self) -> &'static str {
+        match self {
+            Self::Instrument => "Synthesizer",
+            Self::Midi => "MIDI",
+            Self::Effect => "Effects",
+        }
+    }
+
+    pub fn bus_layouts(self) -> &'static str {
+        match self {
+            Self::Instrument => "BusLayout::new().with_output(\"Main\", ChannelConfig::Stereo)",
+            _ => "BusLayout::stereo()",
+        }
+    }
+
+    pub fn test_body(self) -> &'static str {
+        match self {
+            Self::Instrument => "truce_test::render_instrument::<Plugin>(512, 44100.0, &[])",
+            _ => "truce_test::render_effect::<Plugin>(512, 44100.0)",
+        }
+    }
+
+    /// Per-kind `Params` struct, with `{struct_name}` substituted.
+    pub fn params_struct(self, struct_name: &str) -> String {
+        let tpl = match self {
+            Self::Midi => MIDI_PARAMS_STRUCT,
+            _ => DEFAULT_PARAMS_STRUCT,
+        };
+        tpl.replace("{struct_name}", struct_name)
+    }
+
+    pub fn layout_knob(self) -> &'static str {
+        match self {
+            Self::Midi => "knob(P::Semitones, \"Semitones\")",
+            _ => "knob(P::Gain, \"Gain\")",
+        }
+    }
+
+    pub fn process_body(self) -> &'static str {
+        match self {
+            Self::Instrument => INSTRUMENT_PROCESS_BODY,
+            Self::Midi => MIDI_PROCESS_BODY,
+            Self::Effect => EFFECT_PROCESS_BODY,
+        }
+    }
+
+    /// `truce::plugin!` invocation. Instrument adds a custom
+    /// `bus_layouts:` line; effect / midi default to stereo.
+    pub fn plugin_macro(self, struct_name: &str) -> String {
+        match self {
+            Self::Instrument => format!(
+                "truce::plugin! {{\n    \
+                 logic: {struct_name},\n    \
+                 params: {struct_name}Params,\n    \
+                 bus_layouts: [{bus}],\n\
+                 }}",
+                bus = self.bus_layouts(),
+            ),
+            _ => format!(
+                "truce::plugin! {{\n    \
+                 logic: {struct_name},\n    \
+                 params: {struct_name}Params,\n\
+                 }}"
+            ),
+        }
+    }
+
+    pub fn is_effect(self) -> bool {
+        matches!(self, Self::Effect)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Per-kind text fragments
+// ---------------------------------------------------------------------------
+
+const DEFAULT_PARAMS_STRUCT: &str = r#"#[derive(Params)]
+pub struct {struct_name}Params {
+    #[param(name = "Gain", range = "linear(-60, 6)",
+            unit = "dB", smooth = "exp(5)")]
+    pub gain: FloatParam,
+}"#;
+
+const MIDI_PARAMS_STRUCT: &str = r#"#[derive(Params)]
+pub struct {struct_name}Params {
+    #[param(name = "Semitones", range = "discrete(-12, 12)")]
+    pub semitones: FloatParam,
+}"#;
+
+const EFFECT_PROCESS_BODY: &str = r#"    fn process(&mut self, buffer: &mut AudioBuffer, _events: &EventList,
+               _context: &mut ProcessContext) -> ProcessStatus {
+        for i in 0..buffer.num_samples() {
+            let gain = db_to_linear(self.params.gain.smoothed_next() as f64) as f32;
+            for ch in 0..buffer.channels() {
+                let (inp, out) = buffer.io(ch);
+                out[i] = inp[i] * gain;
+            }
+        }
+        ProcessStatus::Normal
+    }"#;
+
+const INSTRUMENT_PROCESS_BODY: &str = r#"    fn process(&mut self, buffer: &mut AudioBuffer, events: &EventList,
+               _context: &mut ProcessContext) -> ProcessStatus {
+        for event in events.iter() {
+            match &event.body {
+                EventBody::NoteOn { note, velocity, .. } => {
+                    // TODO: start a voice
+                    let _ = (note, velocity);
+                }
+                EventBody::NoteOff { note, .. } => {
+                    // TODO: release the voice
+                    let _ = note;
+                }
+                _ => {}
+            }
+        }
+
+        for ch in 0..buffer.num_output_channels() {
+            for i in 0..buffer.num_samples() {
+                buffer.output(ch)[i] = 0.0;
+            }
+        }
+        ProcessStatus::Normal
+    }"#;
+
+const MIDI_PROCESS_BODY: &str = r#"    fn process(&mut self, _buffer: &mut AudioBuffer, events: &EventList,
+               context: &mut ProcessContext) -> ProcessStatus {
+        for event in events.iter() {
+            match &event.body {
+                EventBody::NoteOn { channel, note, velocity } => {
+                    let shifted = (*note as i16 + self.params.semitones.value() as i16)
+                        .clamp(0, 127) as u8;
+                    context.output_events.push(Event {
+                        sample_offset: event.sample_offset,
+                        body: EventBody::NoteOn {
+                            channel: *channel, note: shifted, velocity: *velocity,
+                        },
+                    });
+                }
+                EventBody::NoteOff { channel, note, velocity } => {
+                    let shifted = (*note as i16 + self.params.semitones.value() as i16)
+                        .clamp(0, 127) as u8;
+                    context.output_events.push(Event {
+                        sample_offset: event.sample_offset,
+                        body: EventBody::NoteOff {
+                            channel: *channel, note: shifted, velocity: *velocity,
+                        },
+                    });
+                }
+                _ => {}
+            }
+        }
+        ProcessStatus::Normal
+    }"#;
