@@ -257,9 +257,9 @@ fn copy_str_to_buf(dst: &mut [c_char], src: &str) {
 
 unsafe fn data_from_plugin<P: PluginExport>(
     plugin: *const clap_plugin,
-) -> &'static mut ClapPluginData<P> {
+) -> &'static mut ClapPluginData<P> { unsafe {
     &mut *((*plugin).plugin_data as *mut ClapPluginData<P>)
-}
+}}
 
 // ---------------------------------------------------------------------------
 // Plugin callbacks
@@ -281,7 +281,7 @@ unsafe fn data_from_plugin<P: PluginExport>(
 //   guarantees non-aliasing between input and output buffers.
 // ---------------------------------------------------------------------------
 
-unsafe extern "C" fn clap_plugin_init<P: PluginExport>(plugin: *const clap_plugin) -> bool {
+unsafe extern "C" fn clap_plugin_init<P: PluginExport>(plugin: *const clap_plugin) -> bool { unsafe {
     let data = data_from_plugin::<P>(plugin);
     data.plugin.init();
     data.param_infos = data.plugin.params().param_infos();
@@ -295,22 +295,22 @@ unsafe extern "C" fn clap_plugin_init<P: PluginExport>(plugin: *const clap_plugi
         }
     }
     true
-}
+}}
 
-unsafe extern "C" fn clap_plugin_destroy<P: PluginExport>(plugin: *const clap_plugin) {
+unsafe extern "C" fn clap_plugin_destroy<P: PluginExport>(plugin: *const clap_plugin) { unsafe {
     // Drop the ClapPluginData
     let ptr = (*plugin).plugin_data as *mut ClapPluginData<P>;
     drop(Box::from_raw(ptr));
     // Drop the clap_plugin itself (we boxed it in create_plugin)
     drop(Box::from_raw(plugin as *mut clap_plugin));
-}
+}}
 
 unsafe extern "C" fn clap_plugin_activate<P: PluginExport>(
     plugin: *const clap_plugin,
     sample_rate: f64,
     _min_frames_count: u32,
     max_frames_count: u32,
-) -> bool {
+) -> bool { unsafe {
     let data = data_from_plugin::<P>(plugin);
     data.sample_rate = sample_rate;
     data.max_block_size = max_frames_count as usize;
@@ -318,7 +318,7 @@ unsafe extern "C" fn clap_plugin_activate<P: PluginExport>(
     data.plugin.params().set_sample_rate(sample_rate);
     data.plugin.params().snap_smoothers();
     true
-}
+}}
 
 unsafe extern "C" fn clap_plugin_deactivate<P: PluginExport>(_plugin: *const clap_plugin) {
     // Nothing to do.
@@ -334,13 +334,13 @@ unsafe extern "C" fn clap_plugin_stop_processing<P: PluginExport>(_plugin: *cons
     // Nothing to do.
 }
 
-unsafe extern "C" fn clap_plugin_reset<P: PluginExport>(plugin: *const clap_plugin) {
+unsafe extern "C" fn clap_plugin_reset<P: PluginExport>(plugin: *const clap_plugin) { unsafe {
     let data = data_from_plugin::<P>(plugin);
     data.plugin.reset(data.sample_rate, data.max_block_size);
     data.plugin.params().snap_smoothers();
-}
+}}
 
-unsafe extern "C" fn clap_plugin_on_main_thread<P: PluginExport>(plugin: *const clap_plugin) {
+unsafe extern "C" fn clap_plugin_on_main_thread<P: PluginExport>(plugin: *const clap_plugin) { unsafe {
     let data = data_from_plugin::<P>(plugin);
     if data
         .needs_rescan
@@ -352,7 +352,7 @@ unsafe extern "C" fn clap_plugin_on_main_thread<P: PluginExport>(plugin: *const 
             rescan(data.host, CLAP_PARAM_RESCAN_VALUES);
         }
     }
-}
+}}
 
 // ---------------------------------------------------------------------------
 // Event conversion: CLAP input events -> EventList
@@ -361,7 +361,7 @@ unsafe extern "C" fn clap_plugin_on_main_thread<P: PluginExport>(plugin: *const 
 unsafe fn convert_input_events<P: PluginExport>(
     data: &mut ClapPluginData<P>,
     in_events: *const clap_input_events,
-) {
+) { unsafe {
     data.event_list.clear();
 
     if in_events.is_null() {
@@ -501,7 +501,7 @@ unsafe fn convert_input_events<P: PluginExport>(
     }
 
     data.event_list.sort();
-}
+}}
 
 // ---------------------------------------------------------------------------
 // Flush GUI-initiated param changes to CLAP output events
@@ -510,7 +510,7 @@ unsafe fn convert_input_events<P: PluginExport>(
 unsafe fn flush_gui_changes<P: PluginExport>(
     data: &mut ClapPluginData<P>,
     out_events: *const clap_output_events,
-) {
+) { unsafe {
     if out_events.is_null() {
         return;
     }
@@ -571,7 +571,7 @@ unsafe fn flush_gui_changes<P: PluginExport>(
             }
         }
     }
-}
+}}
 
 // ---------------------------------------------------------------------------
 // Process callback
@@ -580,7 +580,7 @@ unsafe fn flush_gui_changes<P: PluginExport>(
 unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
     plugin: *const clap_plugin,
     process: *const clap_process,
-) -> i32 {
+) -> i32 { unsafe {
     if process.is_null() {
         return CLAP_PROCESS_ERROR;
     }
@@ -771,22 +771,22 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
         ProcessStatus::Tail(_) => CLAP_PROCESS_TAIL,
         ProcessStatus::KeepAlive => CLAP_PROCESS_CONTINUE_IF_NOT_QUIET,
     }
-}
+}}
 
 // ---------------------------------------------------------------------------
 // Extension: params
 // ---------------------------------------------------------------------------
 
-unsafe extern "C" fn params_count<P: PluginExport>(plugin: *const clap_plugin) -> u32 {
+unsafe extern "C" fn params_count<P: PluginExport>(plugin: *const clap_plugin) -> u32 { unsafe {
     let data = data_from_plugin::<P>(plugin);
     data.param_infos.len() as u32
-}
+}}
 
 unsafe extern "C" fn params_get_info<P: PluginExport>(
     plugin: *const clap_plugin,
     param_index: u32,
     out: *mut clap_param_info,
-) -> bool {
+) -> bool { unsafe {
     let data = data_from_plugin::<P>(plugin);
     let infos = &data.param_infos;
 
@@ -840,13 +840,13 @@ unsafe extern "C" fn params_get_info<P: PluginExport>(
     }
 
     true
-}
+}}
 
 unsafe extern "C" fn params_get_value<P: PluginExport>(
     plugin: *const clap_plugin,
     param_id: clap_id,
     out_value: *mut f64,
-) -> bool {
+) -> bool { unsafe {
     let data = data_from_plugin::<P>(plugin);
     match data.plugin.params().get_plain(param_id) {
         Some(v) => {
@@ -855,7 +855,7 @@ unsafe extern "C" fn params_get_value<P: PluginExport>(
         }
         None => false,
     }
-}
+}}
 
 unsafe extern "C" fn params_value_to_text<P: PluginExport>(
     plugin: *const clap_plugin,
@@ -863,7 +863,7 @@ unsafe extern "C" fn params_value_to_text<P: PluginExport>(
     value: f64,
     out_buffer: *mut c_char,
     out_buffer_capacity: u32,
-) -> bool {
+) -> bool { unsafe {
     let data = data_from_plugin::<P>(plugin);
     match data.plugin.params().format_value(param_id, value) {
         Some(text) => {
@@ -876,14 +876,14 @@ unsafe extern "C" fn params_value_to_text<P: PluginExport>(
         }
         None => false,
     }
-}
+}}
 
 unsafe extern "C" fn params_text_to_value<P: PluginExport>(
     plugin: *const clap_plugin,
     param_id: clap_id,
     param_value_text: *const c_char,
     out_value: *mut f64,
-) -> bool {
+) -> bool { unsafe {
     if param_value_text.is_null() {
         return false;
     }
@@ -899,17 +899,17 @@ unsafe extern "C" fn params_text_to_value<P: PluginExport>(
         }
         None => false,
     }
-}
+}}
 
 unsafe extern "C" fn params_flush<P: PluginExport>(
     plugin: *const clap_plugin,
     in_events: *const clap_input_events,
     out_events: *const clap_output_events,
-) {
+) { unsafe {
     let data = data_from_plugin::<P>(plugin);
     convert_input_events::<P>(data, in_events);
     flush_gui_changes::<P>(data, out_events);
-}
+}}
 
 fn make_params_extension<P: PluginExport>() -> clap_plugin_params {
     clap_plugin_params {
@@ -929,7 +929,7 @@ fn make_params_extension<P: PluginExport>() -> clap_plugin_params {
 unsafe extern "C" fn state_save<P: PluginExport>(
     plugin: *const clap_plugin,
     stream: *const clap_ostream,
-) -> bool {
+) -> bool { unsafe {
     let data = data_from_plugin::<P>(plugin);
     let (ids, values) = data.plugin.params().collect_values();
     let extra = data.plugin.save_state();
@@ -955,12 +955,12 @@ unsafe extern "C" fn state_save<P: PluginExport>(
     }
 
     true
-}
+}}
 
 unsafe extern "C" fn state_load<P: PluginExport>(
     plugin: *const clap_plugin,
     stream: *const clap_istream,
-) -> bool {
+) -> bool { unsafe {
     let data = data_from_plugin::<P>(plugin);
 
     let read_fn = match (*stream).read {
@@ -999,7 +999,7 @@ unsafe extern "C" fn state_load<P: PluginExport>(
     }
 
     true
-}
+}}
 
 fn make_state_extension<P: PluginExport>() -> clap_plugin_state {
     clap_plugin_state {
@@ -1033,7 +1033,7 @@ unsafe extern "C" fn audio_ports_get<P: PluginExport>(
     index: u32,
     is_input: bool,
     info: *mut clap_audio_port_info,
-) -> bool {
+) -> bool { unsafe {
     let layouts = P::bus_layouts();
     let layout = match layouts.first() {
         Some(l) => l,
@@ -1069,7 +1069,7 @@ unsafe extern "C" fn audio_ports_get<P: PluginExport>(
     out.in_place_pair = CLAP_INVALID_ID;
 
     true
-}
+}}
 
 fn make_audio_ports_extension<P: PluginExport>() -> clap_plugin_audio_ports {
     clap_plugin_audio_ports {
@@ -1096,7 +1096,7 @@ unsafe extern "C" fn note_ports_get<P: PluginExport>(
     index: u32,
     is_input: bool,
     info: *mut clap_note_port_info,
-) -> bool {
+) -> bool { unsafe {
     if index != 0 {
         return false;
     }
@@ -1116,7 +1116,7 @@ unsafe extern "C" fn note_ports_get<P: PluginExport>(
     );
 
     true
-}
+}}
 
 fn make_note_ports_extension<P: PluginExport>() -> clap_plugin_note_ports {
     clap_plugin_note_ports {
@@ -1141,7 +1141,7 @@ unsafe extern "C" fn gui_is_api_supported<P: PluginExport>(
     _plugin: *const clap_plugin,
     api: *const c_char,
     is_floating: bool,
-) -> bool {
+) -> bool { unsafe {
     if is_floating {
         return false;
     }
@@ -1159,13 +1159,13 @@ unsafe extern "C" fn gui_is_api_supported<P: PluginExport>(
         return true;
     }
     false
-}
+}}
 
 unsafe extern "C" fn gui_get_preferred_api<P: PluginExport>(
     _plugin: *const clap_plugin,
     api: *mut *const c_char,
     is_floating: *mut bool,
-) -> bool {
+) -> bool { unsafe {
     #[cfg(target_os = "macos")]
     {
         *api = CLAP_WINDOW_API_COCOA.as_ptr();
@@ -1186,13 +1186,13 @@ unsafe extern "C" fn gui_get_preferred_api<P: PluginExport>(
     }
     #[allow(unreachable_code)]
     false
-}
+}}
 
 unsafe extern "C" fn gui_create<P: PluginExport>(
     plugin: *const clap_plugin,
     _api: *const c_char,
     _is_floating: bool,
-) -> bool {
+) -> bool { unsafe {
     let data = data_from_plugin::<P>(plugin);
     if data.gui_created {
         return true;
@@ -1201,21 +1201,21 @@ unsafe extern "C" fn gui_create<P: PluginExport>(
     data.editor = data.plugin.editor();
     data.gui_created = data.editor.is_some();
     data.gui_created
-}
+}}
 
-unsafe extern "C" fn gui_destroy<P: PluginExport>(plugin: *const clap_plugin) {
+unsafe extern "C" fn gui_destroy<P: PluginExport>(plugin: *const clap_plugin) { unsafe {
     let data = data_from_plugin::<P>(plugin);
     if let Some(ref mut editor) = data.editor {
         editor.close();
     }
     data.editor = None;
     data.gui_created = false;
-}
+}}
 
 unsafe extern "C" fn gui_set_scale<P: PluginExport>(
     plugin: *const clap_plugin,
     scale: f64,
-) -> bool {
+) -> bool { unsafe {
     if !scale.is_finite() || scale <= 0.0 {
         return false;
     }
@@ -1225,13 +1225,13 @@ unsafe extern "C" fn gui_set_scale<P: PluginExport>(
         editor.set_scale_factor(scale);
     }
     true
-}
+}}
 
 unsafe extern "C" fn gui_get_size<P: PluginExport>(
     plugin: *const clap_plugin,
     width: *mut u32,
     height: *mut u32,
-) -> bool {
+) -> bool { unsafe {
     let data = data_from_plugin::<P>(plugin);
     if let Some(ref editor) = data.editor {
         let (w, h) = editor.size();
@@ -1253,17 +1253,17 @@ unsafe extern "C" fn gui_get_size<P: PluginExport>(
         return true;
     }
     false
-}
+}}
 
-unsafe extern "C" fn gui_can_resize<P: PluginExport>(plugin: *const clap_plugin) -> bool {
+unsafe extern "C" fn gui_can_resize<P: PluginExport>(plugin: *const clap_plugin) -> bool { unsafe {
     let data = data_from_plugin::<P>(plugin);
     data.editor.as_ref().is_some_and(|e| e.can_resize())
-}
+}}
 
 unsafe extern "C" fn gui_set_parent<P: PluginExport>(
     plugin: *const clap_plugin,
     window: *const clap_window,
-) -> bool {
+) -> bool { unsafe {
     // Wrap in catch_unwind to prevent panics from aborting the host.
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         gui_set_parent_inner::<P>(plugin, window)
@@ -1282,12 +1282,12 @@ unsafe extern "C" fn gui_set_parent<P: PluginExport>(
             false
         }
     }
-}
+}}
 
 unsafe fn gui_set_parent_inner<P: PluginExport>(
     plugin: *const clap_plugin,
     window: *const clap_window,
-) -> bool {
+) -> bool { unsafe {
     let data = data_from_plugin::<P>(plugin);
     let editor = match data.editor.as_mut() {
         Some(e) => e,
@@ -1312,7 +1312,7 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
     let gui_changes3 = data.gui_changes.clone();
     let host = SendPtr::new(data.host);
     let host_params = SendPtr::new(data.host_params);
-    let request_flush = move || unsafe {
+    let request_flush = move || {
         if let Some(f) = (*host_params.as_ptr()).request_flush {
             f(host.as_ptr());
         }
@@ -1339,10 +1339,8 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
             gui_changes2.push(GuiParamChange::Value(id, plain));
             request_flush2();
             if !needs_rescan.swap(true, std::sync::atomic::Ordering::Relaxed) {
-                unsafe {
-                    if let Some(req_cb) = (*host_for_callback.as_ptr()).request_callback {
-                        req_cb(host_for_callback.as_ptr());
-                    }
+                if let Some(req_cb) = (*host_for_callback.as_ptr()).request_callback {
+                    req_cb(host_for_callback.as_ptr());
                 }
             }
         }),
@@ -1360,15 +1358,15 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
                 .unwrap_or_else(|| format!("{:.1}", plain))
         }),
         get_meter: Arc::new(move |id| {
-            let plugin = unsafe { plugin_ptr.get() };
+            let plugin = plugin_ptr.get();
             plugin.get_meter(id)
         }),
         get_state: Arc::new(move || {
-            let plugin = unsafe { plugin_ptr.get() };
+            let plugin = plugin_ptr.get();
             plugin.save_state().unwrap_or_default()
         }),
         set_state: Arc::new(move |data| {
-            let plugin = unsafe { &mut *(plugin_ptr.as_ptr() as *mut P) };
+            let plugin = &mut *(plugin_ptr.as_ptr() as *mut P);
             plugin.load_state(&data);
         }),
         transport: Arc::new(move || transport_slot.read()),
@@ -1383,7 +1381,7 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
 
     editor.open(handle, context);
     true
-}
+}}
 
 unsafe extern "C" fn gui_show<P: PluginExport>(_plugin: *const clap_plugin) -> bool {
     true
@@ -1430,15 +1428,15 @@ struct Extensions<P: PluginExport> {
     _phantom: PhantomData<P>,
 }
 
-unsafe extern "C" fn latency_get<P: PluginExport>(plugin: *const clap_plugin) -> u32 {
+unsafe extern "C" fn latency_get<P: PluginExport>(plugin: *const clap_plugin) -> u32 { unsafe {
     let data = data_from_plugin::<P>(plugin);
     data.plugin.latency()
-}
+}}
 
-unsafe extern "C" fn tail_get<P: PluginExport>(plugin: *const clap_plugin) -> u32 {
+unsafe extern "C" fn tail_get<P: PluginExport>(plugin: *const clap_plugin) -> u32 { unsafe {
     let data = data_from_plugin::<P>(plugin);
     data.plugin.tail()
-}
+}}
 
 impl<P: PluginExport> Extensions<P> {
     fn new() -> Self {
@@ -1501,7 +1499,7 @@ impl<P: PluginExport> Extensions<P> {
 unsafe extern "C" fn clap_plugin_get_extension<P: PluginExport>(
     _plugin: *const clap_plugin,
     id: *const c_char,
-) -> *const c_void {
+) -> *const c_void { unsafe {
     if id.is_null() {
         return ptr::null();
     }
@@ -1532,7 +1530,7 @@ unsafe extern "C" fn clap_plugin_get_extension<P: PluginExport>(
     }
 
     ptr::null()
-}
+}}
 
 // ---------------------------------------------------------------------------
 // Factory: create_plugin

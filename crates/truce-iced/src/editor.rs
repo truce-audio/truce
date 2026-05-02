@@ -622,7 +622,7 @@ impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBase
 unsafe fn create_wgpu_surface(
     instance: &wgpu::Instance,
     window: &baseview::Window,
-) -> Option<wgpu::Surface<'static>> {
+) -> Option<wgpu::Surface<'static>> { unsafe {
     use raw_window_handle::HasRawWindowHandle;
     let rwh = window.raw_window_handle();
     let target = match rwh {
@@ -667,7 +667,7 @@ unsafe fn create_wgpu_surface(
         _ => return None,
     };
     instance.create_surface_unsafe(target).ok()
-}
+}}
 
 // ---------------------------------------------------------------------------
 // Editor trait implementation

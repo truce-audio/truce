@@ -88,7 +88,7 @@ impl EguiRenderer {
         metal_layer: *mut std::ffi::c_void,
         width: u32,
         height: u32,
-    ) -> Option<Self> {
+    ) -> Option<Self> { unsafe {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::METAL,
             ..Default::default()
@@ -146,7 +146,7 @@ impl EguiRenderer {
             width,
             height,
         })
-    }
+}}
 
     /// Paint a frame of egui output to the surface.
     pub fn render(

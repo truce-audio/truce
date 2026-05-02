@@ -75,23 +75,23 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
     Box::into_raw(instance) as *mut std::ffi::c_void
 }
 
-unsafe extern "C" fn cb_destroy<P: PluginExport>(ctx: *mut std::ffi::c_void) {
+unsafe extern "C" fn cb_destroy<P: PluginExport>(ctx: *mut std::ffi::c_void) { unsafe {
     if !ctx.is_null() {
         drop(Box::from_raw(ctx as *mut Vst3Instance<P>));
     }
-}
+}}
 
 unsafe extern "C" fn cb_reset<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     sample_rate: f64,
     max_frames: u32,
-) {
+) { unsafe {
     let inst = &mut *(ctx as *mut Vst3Instance<P>);
     inst.sample_rate = sample_rate;
     inst.plugin.reset(sample_rate, max_frames as usize);
     inst.plugin.params().set_sample_rate(sample_rate);
     inst.plugin.params().snap_smoothers();
-}
+}}
 
 unsafe extern "C" fn cb_process<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
@@ -105,7 +105,7 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
     transport_ptr: *const ffi::Vst3Transport,
     param_changes: *const ffi::Vst3ParamChange,
     num_param_changes: u32,
-) {
+) { unsafe {
     let inst = &mut *(ctx as *mut Vst3Instance<P>);
     let num_frames = num_frames as usize;
 
@@ -256,18 +256,18 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
 
     inst.plugin
         .process(&mut audio_buffer, &inst.event_list, &mut context);
-}
+}}
 
-unsafe extern "C" fn cb_param_count<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
+unsafe extern "C" fn cb_param_count<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 { unsafe {
     let inst = &*(ctx as *mut Vst3Instance<P>);
     inst.plugin.params().count() as u32
-}
+}}
 
 unsafe extern "C" fn cb_param_get_descriptor<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     index: u32,
     out: *mut Vst3ParamDescriptor,
-) {
+) { unsafe {
     let inst = &*(ctx as *mut Vst3Instance<P>);
     let infos = inst.plugin.params().param_infos();
     if let Some(info) = infos.get(index as usize) {
@@ -305,30 +305,30 @@ unsafe extern "C" fn cb_param_get_descriptor<P: PluginExport>(
         desc.flags = flags;
         desc.group = group.into_raw();
     }
-}
+}}
 
 unsafe extern "C" fn cb_param_get_value<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     id: u32,
-) -> f64 {
+) -> f64 { unsafe {
     let inst = &*(ctx as *mut Vst3Instance<P>);
     inst.plugin.params().get_plain(id).unwrap_or(0.0)
-}
+}}
 
 unsafe extern "C" fn cb_param_set_value<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     id: u32,
     value: f64,
-) {
+) { unsafe {
     let inst = &*(ctx as *mut Vst3Instance<P>);
     inst.plugin.params().set_plain(id, value);
-}
+}}
 
 unsafe extern "C" fn cb_param_normalize<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     id: u32,
     plain: f64,
-) -> f64 {
+) -> f64 { unsafe {
     let inst = &*(ctx as *mut Vst3Instance<P>);
     let infos = inst.plugin.params().param_infos();
     infos
@@ -336,13 +336,13 @@ unsafe extern "C" fn cb_param_normalize<P: PluginExport>(
         .find(|i| i.id == id)
         .map(|i| i.range.normalize(plain))
         .unwrap_or(plain)
-}
+}}
 
 unsafe extern "C" fn cb_param_denormalize<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     id: u32,
     normalized: f64,
-) -> f64 {
+) -> f64 { unsafe {
     let inst = &*(ctx as *mut Vst3Instance<P>);
     let infos = inst.plugin.params().param_infos();
     infos
@@ -350,7 +350,7 @@ unsafe extern "C" fn cb_param_denormalize<P: PluginExport>(
         .find(|i| i.id == id)
         .map(|i| i.range.denormalize(normalized))
         .unwrap_or(normalized)
-}
+}}
 
 unsafe extern "C" fn cb_param_format<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
@@ -358,7 +358,7 @@ unsafe extern "C" fn cb_param_format<P: PluginExport>(
     value: f64,
     out: *mut c_char,
     out_len: u32,
-) -> u32 {
+) -> u32 { unsafe {
     let inst = &*(ctx as *mut Vst3Instance<P>);
     match inst.plugin.params().format_value(id, value) {
         Some(text) => {
@@ -370,13 +370,13 @@ unsafe extern "C" fn cb_param_format<P: PluginExport>(
         }
         None => 0,
     }
-}
+}}
 
 unsafe extern "C" fn cb_state_save<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     out_data: *mut *mut u8,
     out_len: *mut u32,
-) {
+) { unsafe {
     let inst = &*(ctx as *mut Vst3Instance<P>);
     let (ids, values) = inst.plugin.params().collect_values();
     let extra = inst.plugin.save_state();
@@ -388,13 +388,13 @@ unsafe extern "C" fn cb_state_save<P: PluginExport>(
     }
     *out_data = ptr;
     *out_len = len as u32;
-}
+}}
 
 unsafe extern "C" fn cb_state_load<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     data: *const u8,
     len: u32,
-) {
+) { unsafe {
     let inst = &mut *(ctx as *mut Vst3Instance<P>);
     let blob = slice::from_raw_parts(data, len as usize);
     if let Some(deserialized) = state::deserialize_state(blob, inst.plugin_id_hash) {
@@ -406,53 +406,53 @@ unsafe extern "C" fn cb_state_load<P: PluginExport>(
             editor.state_changed();
         }
     }
-}
+}}
 
-unsafe extern "C" fn cb_state_free(_data: *mut u8, _len: u32) {
+unsafe extern "C" fn cb_state_free(_data: *mut u8, _len: u32) { unsafe {
     if !_data.is_null() {
         libc_free(_data as *mut std::ffi::c_void);
     }
-}
+}}
 
 unsafe extern "C" {
     fn malloc(size: usize) -> *mut std::ffi::c_void;
     fn free(ptr: *mut std::ffi::c_void);
 }
-unsafe fn libc_malloc(size: usize) -> *mut std::ffi::c_void {
+unsafe fn libc_malloc(size: usize) -> *mut std::ffi::c_void { unsafe {
     malloc(size)
-}
-unsafe fn libc_free(ptr: *mut std::ffi::c_void) {
+}}
+unsafe fn libc_free(ptr: *mut std::ffi::c_void) { unsafe {
     free(ptr)
-}
+}}
 
 // ---------------------------------------------------------------------------
 // Latency + tail callbacks
 // ---------------------------------------------------------------------------
 
-unsafe extern "C" fn cb_get_latency<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
+unsafe extern "C" fn cb_get_latency<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 { unsafe {
     let inst = &*(ctx as *mut Vst3Instance<P>);
     inst.plugin.latency()
-}
+}}
 
-unsafe extern "C" fn cb_get_tail<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
+unsafe extern "C" fn cb_get_tail<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 { unsafe {
     let inst = &*(ctx as *mut Vst3Instance<P>);
     inst.plugin.tail()
-}
+}}
 
 // ---------------------------------------------------------------------------
 // Output event callbacks
 // ---------------------------------------------------------------------------
 
-unsafe extern "C" fn cb_get_output_event_count<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
+unsafe extern "C" fn cb_get_output_event_count<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 { unsafe {
     let inst = &*(ctx as *mut Vst3Instance<P>);
     inst.output_events.len() as u32
-}
+}}
 
 unsafe extern "C" fn cb_get_output_event<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     index: u32,
     out: *mut Vst3MidiEvent,
-) {
+) { unsafe {
     let inst = &*(ctx as *mut Vst3Instance<P>);
     if let Some(event) = inst.output_events.get(index as usize) {
         let midi = &mut *out;
@@ -489,13 +489,13 @@ unsafe extern "C" fn cb_get_output_event<P: PluginExport>(
         }
         midi._pad = 0;
     }
-}
+}}
 
 // ---------------------------------------------------------------------------
 // GUI callbacks
 // ---------------------------------------------------------------------------
 
-unsafe extern "C" fn cb_gui_has_editor<P: PluginExport>(ctx: *mut std::ffi::c_void) -> i32 {
+unsafe extern "C" fn cb_gui_has_editor<P: PluginExport>(ctx: *mut std::ffi::c_void) -> i32 { unsafe {
     if ctx.is_null() {
         return 0;
     }
@@ -508,13 +508,13 @@ unsafe extern "C" fn cb_gui_has_editor<P: PluginExport>(ctx: *mut std::ffi::c_vo
     } else {
         0
     }
-}
+}}
 
 unsafe extern "C" fn cb_gui_get_size<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     w: *mut u32,
     h: *mut u32,
-) {
+) { unsafe {
     let inst = &*(ctx as *mut Vst3Instance<P>);
     if let Some(ref editor) = inst.editor {
         let (ew, eh) = editor.size();
@@ -535,12 +535,12 @@ unsafe extern "C" fn cb_gui_get_size<P: PluginExport>(
             *h = (eh as f64 * inst.host_scale) as u32;
         }
     }
-}
+}}
 
 unsafe extern "C" fn cb_gui_set_content_scale<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     scale: f64,
-) {
+) { unsafe {
     if ctx.is_null() || !scale.is_finite() || scale <= 0.0 {
         return;
     }
@@ -549,12 +549,12 @@ unsafe extern "C" fn cb_gui_set_content_scale<P: PluginExport>(
     if let Some(ref mut editor) = inst.editor {
         editor.set_scale_factor(scale);
     }
-}
+}}
 
 unsafe extern "C" fn cb_gui_open<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     parent: *mut std::ffi::c_void,
-) {
+) { unsafe {
     let inst = &mut *(ctx as *mut Vst3Instance<P>);
     if let Some(ref mut editor) = inst.editor {
         let params = inst.plugin.params_arc();
@@ -609,14 +609,14 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
 
         editor.open(handle, context);
     }
-}
+}}
 
-unsafe extern "C" fn cb_gui_close<P: PluginExport>(ctx: *mut std::ffi::c_void) {
+unsafe extern "C" fn cb_gui_close<P: PluginExport>(ctx: *mut std::ffi::c_void) { unsafe {
     let inst = &mut *(ctx as *mut Vst3Instance<P>);
     if let Some(ref mut editor) = inst.editor {
         editor.close();
     }
-}
+}}
 
 // ---------------------------------------------------------------------------
 // Registration

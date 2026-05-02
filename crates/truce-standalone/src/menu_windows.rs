@@ -201,7 +201,7 @@ pub fn install(
     }
 }
 
-unsafe fn grow_window_for_menu(hwnd: HWND) {
+unsafe fn grow_window_for_menu(hwnd: HWND) { unsafe {
     let menu_h = GetSystemMetrics(SM_CYMENU);
     if menu_h <= 0 {
         return;
@@ -221,7 +221,7 @@ unsafe fn grow_window_for_menu(hwnd: HWND) {
         h,
         SWP_NOMOVE | SWP_NOZORDER,
     );
-}
+}}
 
 /// Subclassed window procedure. Handles WM_COMMAND for our menu
 /// item (mic toggle + dynamic device items), refreshes the
@@ -234,7 +234,7 @@ unsafe extern "system" fn subclass_proc(
     lparam: LPARAM,
     _uid: usize,
     dwrefdata: usize,
-) -> LRESULT {
+) -> LRESULT { unsafe {
     let state_ptr = dwrefdata as *mut MenuState;
 
     match msg {
@@ -341,7 +341,7 @@ unsafe extern "system" fn subclass_proc(
     }
 
     DefSubclassProc(hwnd, msg, wparam, lparam)
-}
+}}
 
 /// Replace all items in `popup` with one entry per device. Items
 /// fire command IDs in `[cmd_base .. cmd_base + devices.len())`;
@@ -351,7 +351,7 @@ unsafe fn repopulate_device_menu(
     devices: &[String],
     current: Option<&str>,
     cmd_base: u16,
-) {
+) { unsafe {
     // Remove all existing items. Always delete by position 0 since
     // the menu shrinks under us as we delete.
     let count = GetMenuItemCount(popup);
@@ -379,11 +379,11 @@ unsafe fn repopulate_device_menu(
         }
         AppendMenuW(popup, flags, cmd_id as usize, text.as_ptr());
     }
-}
+}}
 
 /// Look up a menu item's display string by command ID. Returns
 /// `None` if the ID isn't in the menu (or `GetMenuStringW` fails).
-unsafe fn get_menu_string(hmenu: HMENU, cmd_id: u32) -> Option<String> {
+unsafe fn get_menu_string(hmenu: HMENU, cmd_id: u32) -> Option<String> { unsafe {
     // First call with a null buffer to get the required length.
     let len = GetMenuStringW(hmenu, cmd_id, std::ptr::null_mut(), 0, MF_BYCOMMAND);
     if len <= 0 {
@@ -401,7 +401,7 @@ unsafe fn get_menu_string(hmenu: HMENU, cmd_id: u32) -> Option<String> {
         return None;
     }
     Some(String::from_utf16_lossy(&buf[..written as usize]))
-}
+}}
 
 /// UTF-8 → null-terminated UTF-16 (Win32's `W` APIs).
 fn wide(s: &str) -> Vec<u16> {

@@ -24,9 +24,9 @@ impl<T> SendPtr<T> {
     ///
     /// # Safety
     /// The pointed-to data must still be alive.
-    pub unsafe fn get(&self) -> &T {
+    pub unsafe fn get(&self) -> &T { unsafe {
         &*self.0
-    }
+}}
 
     /// Get the raw pointer.
     pub fn as_ptr(&self) -> *const T {

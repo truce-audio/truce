@@ -115,7 +115,7 @@ impl<'a> AtomSequenceReader<'a> {
     ///
     /// # Safety
     /// `self.seq` must be valid for the duration of the call.
-    unsafe fn walk<F: FnMut(i64, Urid, *const u8, usize)>(&self, mut f: F) {
+    unsafe fn walk<F: FnMut(i64, Urid, *const u8, usize)>(&self, mut f: F) { unsafe {
         let seq = &*self.seq;
         let body_size = seq.atom.size as usize;
         if body_size < core::mem::size_of::<AtomSequenceBody>() {
@@ -137,7 +137,7 @@ impl<'a> AtomSequenceReader<'a> {
             f(ev.time_frames, ev.body.type_, body_ptr, body_bytes);
             offset += padded;
         }
-    }
+}}
 
     /// Decode an `LV2_Atom_Object` body as a `time:Position` and merge
     /// its fields into `info`. Returns true on success.
@@ -150,7 +150,7 @@ impl<'a> AtomSequenceReader<'a> {
         body_ptr: *const u8,
         body_bytes: usize,
         info: &mut TransportInfo,
-    ) -> bool {
+    ) -> bool { unsafe {
         // LV2_Atom_Object_Body per lv2/atom/atom.h:
         //   { uint32_t id; uint32_t otype; }
         // id is a per-object instance identifier (0 for blank); otype is
@@ -243,7 +243,7 @@ impl<'a> AtomSequenceReader<'a> {
         }
 
         true
-    }
+}}
 
     /// Read a numeric atom value as f64, handling the common number types
     /// LV2 hosts use for time:Position fields.
@@ -252,7 +252,7 @@ impl<'a> AtomSequenceReader<'a> {
         atom_type: Urid,
         data: *const u8,
         size: usize,
-    ) -> Option<f64> {
+    ) -> Option<f64> { unsafe {
         if atom_type == self.urid.atom_float && size >= core::mem::size_of::<f32>() {
             Some(*(data as *const f32) as f64)
         } else if atom_type == self.urid.atom_double && size >= core::mem::size_of::<f64>() {
@@ -266,7 +266,7 @@ impl<'a> AtomSequenceReader<'a> {
         } else {
             None
         }
-    }
+}}
 }
 
 // ---------------------------------------------------------------------------
@@ -345,7 +345,7 @@ pub fn midi_bytes_to_event(sample_offset: u32, bytes: &[u8]) -> Option<Event> {
 /// # Safety
 /// `out` must point to a writable atom sequence buffer with capacity the
 /// host allocated (typically a few KB).
-pub unsafe fn write_midi_out_sequence(out: *mut AtomSequence, events: &EventList, urid: &UridMap) {
+pub unsafe fn write_midi_out_sequence(out: *mut AtomSequence, events: &EventList, urid: &UridMap) { unsafe {
     if out.is_null() || urid.midi_event == 0 {
         return;
     }
@@ -409,7 +409,7 @@ pub unsafe fn write_midi_out_sequence(out: *mut AtomSequence, events: &EventList
         offset += padded;
     }
     (*out).atom.size = (header_size + offset) as u32;
-}
+}}
 
 /// Write a single `time:Position` atom object into a notify-out sequence.
 /// Called each run() block so the UI's `port_event` receives the latest
@@ -426,7 +426,7 @@ pub unsafe fn write_time_position_sequence(
     out: *mut AtomSequence,
     info: &TransportInfo,
     urid: &UridMap,
-) {
+) { unsafe {
     if out.is_null() || urid.time_position == 0 || urid.atom_object == 0 {
         return;
     }
@@ -516,7 +516,7 @@ pub unsafe fn write_time_position_sequence(
     // Sequence size = body header + event header + event body size.
     let event_total = ev_header_size + prop_offset;
     (*out).atom.size = (body_header + event_total) as u32;
-}
+}}
 
 // Dead-import quiet: keep c_void referenced so future extension code
 // compiles without edits.

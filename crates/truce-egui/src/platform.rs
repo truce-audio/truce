@@ -88,7 +88,7 @@ pub fn query_backing_scale(_parent: &RawWindowHandle) -> f64 {
 pub unsafe fn create_wgpu_surface(
     instance: &wgpu::Instance,
     window: &baseview::Window,
-) -> Option<wgpu::Surface<'static>> {
+) -> Option<wgpu::Surface<'static>> { unsafe {
     let rwh = window.raw_window_handle();
     let surface_target = match rwh {
         #[cfg(target_os = "macos")]
@@ -145,4 +145,4 @@ pub unsafe fn create_wgpu_surface(
     };
 
     instance.create_surface_unsafe(surface_target).ok()
-}
+}}

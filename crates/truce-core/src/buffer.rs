@@ -191,7 +191,7 @@ impl RawBufferScratch {
         num_in: u32,
         num_out: u32,
         num_frames: u32,
-    ) -> AudioBuffer<'a> {
+    ) -> AudioBuffer<'a> { unsafe {
         let nf = num_frames as usize;
 
         self.input_slices.clear();
@@ -228,7 +228,7 @@ impl RawBufferScratch {
             &mut s.output_slices,
             nf,
         ))
-    }
+}}
 }
 
 impl Default for RawBufferScratch {

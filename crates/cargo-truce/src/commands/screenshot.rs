@@ -135,7 +135,7 @@ fn cdylib_path(root: &Path, crate_name: &str, debug: bool) -> PathBuf {
 /// The library at `lib_path` must export the symbol with the FFI
 /// signature emitted by the `truce::plugin!` macro. Plugins built
 /// from any in-tree truce version satisfy this.
-unsafe fn call_screenshot(lib_path: &Path, name: &str) -> Result<String, crate::BoxErr> {
+unsafe fn call_screenshot(lib_path: &Path, name: &str) -> Result<String, crate::BoxErr> { unsafe {
     let lib = libloading::Library::new(lib_path)
         .map_err(|e| format!("failed to dlopen {}: {e}", lib_path.display()))?;
     let screenshot: libloading::Symbol<ScreenshotFn> =
@@ -163,7 +163,7 @@ unsafe fn call_screenshot(lib_path: &Path, name: &str) -> Result<String, crate::
     }
     out_buf.truncate(written);
     String::from_utf8(out_buf).map_err(|e| format!("non-UTF8 path returned: {e}").into())
-}
+}}
 
 fn print_help() {
     eprintln!(

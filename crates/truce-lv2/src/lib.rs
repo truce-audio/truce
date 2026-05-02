@@ -188,7 +188,7 @@ pub unsafe fn instantiate<P: PluginExport>(
     sample_rate: f64,
     _bundle_path: *const c_char,
     features: *const *const LV2Feature,
-) -> *mut Lv2Instance<P> {
+) -> *mut Lv2Instance<P> { unsafe {
     let layout = derive_port_layout::<P>();
     let plugin = P::create();
     let info = P::info();
@@ -232,7 +232,7 @@ pub unsafe fn instantiate<P: PluginExport>(
         transport_slot: truce_core::TransportSlot::new(),
     });
     Box::into_raw(instance)
-}
+}}
 
 /// # Safety
 /// `handle` must be a valid `Lv2Instance<P>` pointer previously returned
@@ -241,7 +241,7 @@ pub unsafe fn connect_port<P: PluginExport>(
     handle: *mut Lv2Instance<P>,
     port: u32,
     data: *mut c_void,
-) {
+) { unsafe {
     let inst = &mut *handle;
     let layout = inst.layout.clone();
 
@@ -260,11 +260,11 @@ pub unsafe fn connect_port<P: PluginExport>(
     } else if port == layout.notify_out_port() {
         inst.notify_out_port = data as *mut AtomSequence;
     }
-}
+}}
 
 /// # Safety
 /// `handle` must be a valid `Lv2Instance<P>` pointer.
-pub unsafe fn activate<P: PluginExport>(handle: *mut Lv2Instance<P>) {
+pub unsafe fn activate<P: PluginExport>(handle: *mut Lv2Instance<P>) { unsafe {
     let inst = &mut *handle;
     // LV2 doesn't tell us max block size up front; use a generous default.
     // run() passes n_samples each call, so we can resize if it ever exceeds.
@@ -273,13 +273,13 @@ pub unsafe fn activate<P: PluginExport>(handle: *mut Lv2Instance<P>) {
     inst.plugin.reset(inst.sample_rate, max_block);
     inst.plugin.params().set_sample_rate(inst.sample_rate);
     inst.plugin.params().snap_smoothers();
-}
+}}
 
 /// # Safety
 /// `handle` must be a valid `Lv2Instance<P>` pointer with port connections
 /// established by prior calls to `connect_port()`. Audio and control port
 /// memory must be valid for `n_samples`.
-pub unsafe fn run<P: PluginExport>(handle: *mut Lv2Instance<P>, n_samples: u32) {
+pub unsafe fn run<P: PluginExport>(handle: *mut Lv2Instance<P>, n_samples: u32) { unsafe {
     let inst = &mut *handle;
     let n = n_samples as usize;
     if n == 0 {
@@ -394,7 +394,7 @@ pub unsafe fn run<P: PluginExport>(handle: *mut Lv2Instance<P>, n_samples: u32) 
     if !inst.notify_out_port.is_null() {
         atom::write_time_position_sequence(inst.notify_out_port, &transport, &inst.urid_map);
     }
-}
+}}
 
 /// # Safety
 /// `handle` must be a valid `Lv2Instance<P>` pointer.
@@ -406,15 +406,15 @@ pub unsafe fn deactivate<P: PluginExport>(_handle: *mut Lv2Instance<P>) {
 /// # Safety
 /// `handle` must be a valid `Lv2Instance<P>` pointer. After this call the
 /// pointer is dangling and must not be used.
-pub unsafe fn cleanup<P: PluginExport>(handle: *mut Lv2Instance<P>) {
+pub unsafe fn cleanup<P: PluginExport>(handle: *mut Lv2Instance<P>) { unsafe {
     if !handle.is_null() {
         drop(Box::from_raw(handle));
     }
-}
+}}
 
 /// # Safety
 /// `uri` must be a valid null-terminated C string or null.
-pub unsafe fn extension_data<P: PluginExport>(uri: *const c_char) -> *const c_void {
+pub unsafe fn extension_data<P: PluginExport>(uri: *const c_char) -> *const c_void { unsafe {
     if uri.is_null() {
         return ptr::null();
     }
@@ -426,7 +426,7 @@ pub unsafe fn extension_data<P: PluginExport>(uri: *const c_char) -> *const c_vo
         return state::state_interface::<P>() as *const _ as *const c_void;
     }
     ptr::null()
-}
+}}
 
 // ---------------------------------------------------------------------------
 // Plugin URI

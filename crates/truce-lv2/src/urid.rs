@@ -57,7 +57,7 @@ impl UridMap {
     /// # Safety
     /// `features` is a null-terminated array of `*const LV2Feature`, or
     /// null itself.
-    pub unsafe fn from_features(features: *const *const LV2Feature) -> Self {
+    pub unsafe fn from_features(features: *const *const LV2Feature) -> Self { unsafe {
         let mut out = UridMap::default();
         if features.is_null() {
             return out;
@@ -98,7 +98,7 @@ impl UridMap {
         out.time_frame = out.intern("http://lv2plug.in/ns/ext/time#frame");
         out.time_speed = out.intern("http://lv2plug.in/ns/ext/time#speed");
         out
-    }
+}}
 
     /// Intern a URI string. Returns 0 if URID:map is unavailable.
     pub fn intern(&self, uri: &str) -> Urid {

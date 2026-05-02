@@ -83,7 +83,7 @@ unsafe extern "C" fn save_cb<P: PluginExport>(
     handle: *mut c_void,
     _flags: u32,
     _features: *const *const crate::types::LV2Feature,
-) -> u32 {
+) -> u32 { unsafe {
     if instance.is_null() {
         return 0;
     }
@@ -107,7 +107,7 @@ unsafe extern "C" fn save_cb<P: PluginExport>(
         flags,
     );
     LV2_STATE_SUCCESS
-}
+}}
 
 unsafe extern "C" fn restore_cb<P: PluginExport>(
     instance: *mut c_void,
@@ -115,7 +115,7 @@ unsafe extern "C" fn restore_cb<P: PluginExport>(
     handle: *mut c_void,
     _flags: u32,
     _features: *const *const crate::types::LV2Feature,
-) -> u32 {
+) -> u32 { unsafe {
     if instance.is_null() {
         return 0;
     }
@@ -140,7 +140,7 @@ unsafe extern "C" fn restore_cb<P: PluginExport>(
         }
     }
     LV2_STATE_SUCCESS
-}
+}}
 
 // Quiet unused-import for future generic symbol lookups.
 const _: Option<CString> = None;

@@ -172,7 +172,7 @@ fn win32_dpi_scale(hwnd: *mut std::ffi::c_void) -> f64 {
     // Default DPI is 96; scale = actual_dpi / 96.
     const DEFAULT_DPI: u32 = 96;
 
-    extern "system" {
+    unsafe extern "system" {
         fn GetDpiForWindow(hwnd: *mut std::ffi::c_void) -> u32;
         fn GetDpiForSystem() -> u32;
     }
@@ -203,7 +203,7 @@ fn win32_dpi_scale(hwnd: *mut std::ffi::c_void) -> f64 {
 pub unsafe fn create_wgpu_surface(
     instance: &wgpu::Instance,
     window: &baseview::Window,
-) -> Option<wgpu::Surface<'static>> {
+) -> Option<wgpu::Surface<'static>> { unsafe {
     let rwh = window.raw_window_handle();
     let surface_target = match rwh {
         #[cfg(target_os = "macos")]
@@ -259,4 +259,4 @@ pub unsafe fn create_wgpu_surface(
     };
 
     instance.create_surface_unsafe(surface_target).ok()
-}
+}}

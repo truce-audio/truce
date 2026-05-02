@@ -86,23 +86,23 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
     Box::into_raw(instance) as *mut std::ffi::c_void
 }
 
-unsafe extern "C" fn cb_destroy<P: PluginExport>(ctx: *mut std::ffi::c_void) {
+unsafe extern "C" fn cb_destroy<P: PluginExport>(ctx: *mut std::ffi::c_void) { unsafe {
     if !ctx.is_null() {
         drop(Box::from_raw(ctx as *mut AuInstance<P>));
     }
-}
+}}
 
 unsafe extern "C" fn cb_reset<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     sample_rate: f64,
     max_frames: u32,
-) {
+) { unsafe {
     let inst = &mut *(ctx as *mut AuInstance<P>);
     inst.sample_rate = sample_rate;
     inst.plugin.reset(sample_rate, max_frames as usize);
     inst.plugin.params().set_sample_rate(sample_rate);
     inst.plugin.params().snap_smoothers();
-}
+}}
 
 unsafe extern "C" fn cb_process<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
@@ -114,7 +114,7 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
     events: *const AuMidiEvent,
     num_events: u32,
     transport_ptr: *const AuTransportSnapshot,
-) {
+) { unsafe {
     let inst = &mut *(ctx as *mut AuInstance<P>);
     let num_frames = num_frames as usize;
 
@@ -205,18 +205,18 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
 
     inst.plugin
         .process(&mut audio_buffer, &inst.event_list, &mut context);
-}
+}}
 
-unsafe extern "C" fn cb_param_count<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
+unsafe extern "C" fn cb_param_count<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 { unsafe {
     let inst = &*(ctx as *mut AuInstance<P>);
     inst.plugin.params().count() as u32
-}
+}}
 
 unsafe extern "C" fn cb_param_get_descriptor<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     index: u32,
     out: *mut AuParamDescriptor,
-) {
+) { unsafe {
     let inst = &*(ctx as *mut AuInstance<P>);
     let infos = inst.plugin.params().param_infos();
     if let Some(info) = infos.get(index as usize) {
@@ -235,24 +235,24 @@ unsafe extern "C" fn cb_param_get_descriptor<P: PluginExport>(
         desc.unit = unit.into_raw();
         desc.group = group.into_raw();
     }
-}
+}}
 
 unsafe extern "C" fn cb_param_get_value<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     id: u32,
-) -> f64 {
+) -> f64 { unsafe {
     let inst = &*(ctx as *mut AuInstance<P>);
     inst.plugin.params().get_plain(id).unwrap_or(0.0)
-}
+}}
 
 unsafe extern "C" fn cb_param_set_value<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     id: u32,
     value: f64,
-) {
+) { unsafe {
     let inst = &*(ctx as *mut AuInstance<P>);
     inst.plugin.params().set_plain(id, value);
-}
+}}
 
 unsafe extern "C" fn cb_param_format_value<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
@@ -260,7 +260,7 @@ unsafe extern "C" fn cb_param_format_value<P: PluginExport>(
     value: f64,
     out: *mut c_char,
     out_len: u32,
-) -> u32 {
+) -> u32 { unsafe {
     let inst = &*(ctx as *mut AuInstance<P>);
     match inst.plugin.params().format_value(id, value) {
         Some(text) => {
@@ -272,13 +272,13 @@ unsafe extern "C" fn cb_param_format_value<P: PluginExport>(
         }
         None => 0,
     }
-}
+}}
 
 unsafe extern "C" fn cb_state_save<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     out_data: *mut *mut u8,
     out_len: *mut u32,
-) {
+) { unsafe {
     let inst = &*(ctx as *mut AuInstance<P>);
     let (ids, values) = inst.plugin.params().collect_values();
     let extra = inst.plugin.save_state();
@@ -291,13 +291,13 @@ unsafe extern "C" fn cb_state_save<P: PluginExport>(
     }
     *out_data = ptr;
     *out_len = len as u32;
-}
+}}
 
 unsafe extern "C" fn cb_state_load<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     data: *const u8,
     len: u32,
-) {
+) { unsafe {
     let inst = &mut *(ctx as *mut AuInstance<P>);
     let blob = slice::from_raw_parts(data, len as usize);
     if let Some(deserialized) = state::deserialize_state(blob, inst.plugin_id_hash) {
@@ -309,19 +309,19 @@ unsafe extern "C" fn cb_state_load<P: PluginExport>(
             editor.state_changed();
         }
     }
-}
+}}
 
-unsafe extern "C" fn cb_state_free(_data: *mut u8, _len: u32) {
+unsafe extern "C" fn cb_state_free(_data: *mut u8, _len: u32) { unsafe {
     if !_data.is_null() {
         libc_free(_data as *mut std::ffi::c_void);
     }
-}
+}}
 
 // ---------------------------------------------------------------------------
 // GUI callbacks
 // ---------------------------------------------------------------------------
 
-unsafe extern "C" fn cb_gui_has_editor<P: PluginExport>(ctx: *mut std::ffi::c_void) -> i32 {
+unsafe extern "C" fn cb_gui_has_editor<P: PluginExport>(ctx: *mut std::ffi::c_void) -> i32 { unsafe {
     if ctx.is_null() {
         return 0;
     }
@@ -334,13 +334,13 @@ unsafe extern "C" fn cb_gui_has_editor<P: PluginExport>(ctx: *mut std::ffi::c_vo
     } else {
         0
     }
-}
+}}
 
 unsafe extern "C" fn cb_gui_get_size<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     w: *mut u32,
     h: *mut u32,
-) {
+) { unsafe {
     let inst = &*(ctx as *mut AuInstance<P>);
     if let Some(ref editor) = inst.editor {
         // AU is macOS-only; hosts embed our NSView inside a Cocoa
@@ -351,12 +351,12 @@ unsafe extern "C" fn cb_gui_get_size<P: PluginExport>(
         *w = ew;
         *h = eh;
     }
-}
+}}
 
 unsafe extern "C" fn cb_gui_open<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     parent: *mut std::ffi::c_void,
-) {
+) { unsafe {
     let inst = &mut *(ctx as *mut AuInstance<P>);
     if let Some(ref mut editor) = inst.editor {
         let params = inst.plugin.params_arc();
@@ -402,9 +402,9 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
         let handle = RawWindowHandle::AppKit(parent);
         editor.open(handle, context);
     }
-}
+}}
 
-unsafe extern "C" fn cb_gui_close<P: PluginExport>(ctx: *mut std::ffi::c_void) {
+unsafe extern "C" fn cb_gui_close<P: PluginExport>(ctx: *mut std::ffi::c_void) { unsafe {
     let inst = &mut *(ctx as *mut AuInstance<P>);
     if let Some(ref mut editor) = inst.editor {
         editor.close();
@@ -414,7 +414,7 @@ unsafe extern "C" fn cb_gui_close<P: PluginExport>(ctx: *mut std::ffi::c_void) {
     // instability in AU v3 appex (the audio thread accesses the same
     // AuInstance via raw pointer). The editor will be reopened in-place
     // by the next gui_open call.
-}
+}}
 
 unsafe extern "C" {
     fn malloc(size: usize) -> *mut std::ffi::c_void;
@@ -422,13 +422,13 @@ unsafe extern "C" {
     fn truce_au_v2_host_set_param(ctx: *mut std::ffi::c_void, param_id: u32, value: f32);
 }
 
-unsafe fn libc_malloc(size: usize) -> *mut std::ffi::c_void {
+unsafe fn libc_malloc(size: usize) -> *mut std::ffi::c_void { unsafe {
     malloc(size)
-}
+}}
 
-unsafe fn libc_free(ptr: *mut std::ffi::c_void) {
+unsafe fn libc_free(ptr: *mut std::ffi::c_void) { unsafe {
     free(ptr)
-}
+}}
 
 // ---------------------------------------------------------------------------
 // Registration: called once from the export_au! macro
