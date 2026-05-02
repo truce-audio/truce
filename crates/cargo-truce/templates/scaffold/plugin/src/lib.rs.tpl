@@ -36,34 +36,38 @@ impl PluginLogic for {struct_name} \{
 mod tests \{
     use super::*;
 
-    /// Renders the plugin's editor headlessly and compares the
-    /// resulting PNG to a committed reference at
-    /// `screenshots/default.png`. Catches visual regressions in
-    /// the layout, theme, widget rendering, and GPU pipeline
-    /// without needing a DAW.
-    ///
-    /// # First run / regenerating the reference
-    ///
-    /// On first invocation (no reference PNG yet) the test will
-    /// fail and write the rendered image to
-    /// `screenshots/default.png.actual`. Inspect that file; if it
-    /// looks correct, commit it as the new reference:
-    ///
-    ///     cargo truce screenshot -p {crate_name}
-    ///
-    /// That command renders the current state and writes
-    /// `target/screenshots/{crate_name}_screenshot.png` — copy it
-    /// (or re-render with `--name default`) to
-    /// `screenshots/default.png` to make it the test's baseline.
-    ///
-    /// # Tuning the threshold
-    ///
-    /// The third arg (`0`) is the maximum allowed pixel
-    /// difference. Set to `0` for strict equality. Bump it to
-    /// tolerate small rasterizer drift across OS / GPU drivers
-    /// (typical: 50–500 pixels for fonts and antialiasing).
+    // Renders the plugin's editor headlessly and compares the
+    // pixels against a committed reference PNG at
+    // `screenshots/{crate_name}.png` (relative to the workspace
+    // root that owns this `Cargo.toml`). Catches visual
+    // regressions in the layout, theme, widget rendering, and
+    // GPU pipeline without needing a DAW.
+    //
+    // First run: no reference exists, so the test logs a
+    // "promote" hint and PASSES (it doesn't fail — committing
+    // the first reference is meant to be a deliberate step). The
+    // current render lands in `target/screenshots/{crate_name}.png`;
+    // the log line prints the exact `cp` command to copy it into
+    // `screenshots/`. Inspect the rendered PNG, then run that
+    // `cp` and commit the file.
+    //
+    // Subsequent runs:
+    //   - pixel-equal → pass silently
+    //   - diff > threshold on the reference platform → panic with
+    //     both PNG paths so you can diff them
+    //   - diff > threshold on a non-reference platform → log the
+    //     diff count and pass (per-OS wgpu rasterization differs;
+    //     cross-OS pixel comparison isn't meaningful)
+    //
+    // The reference platform defaults to macOS; override with
+    // `TRUCE_SCREENSHOT_REFERENCE_OS=linux` (or `windows`) if
+    // your CI runs on a different host.
+    //
+    // The third arg is the max allowed differing-pixel count. `0`
+    // is strict equality; bump it (50–500 is typical) if anti-
+    // aliasing on fonts or curves wobbles between machines.
     #[test]
     fn gui_screenshot() \{
-        truce_test::assert_screenshot::<Plugin>("default", "screenshots", 0);
+        truce_test::assert_screenshot::<Plugin>("{crate_name}", "screenshots", 0);
     }
 }
