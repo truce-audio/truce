@@ -48,13 +48,6 @@ impl PluginKind {
         }
     }
 
-    pub fn test_body(self) -> &'static str {
-        match self {
-            Self::Instrument => "truce_test::render_instrument::<Plugin>(512, 44100.0, &[])",
-            _ => "truce_test::render_effect::<Plugin>(512, 44100.0)",
-        }
-    }
-
     /// Per-kind `Params` struct, with `{struct_name}` substituted.
     pub fn params_struct(self, struct_name: &str) -> String {
         let tpl = match self {
@@ -98,10 +91,6 @@ impl PluginKind {
                  }}"
             ),
         }
-    }
-
-    pub fn is_effect(self) -> bool {
-        matches!(self, Self::Effect)
     }
 }
 

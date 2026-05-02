@@ -36,57 +36,34 @@ impl PluginLogic for {struct_name} \{
 mod tests \{
     use super::*;
 
+    /// Renders the plugin's editor headlessly and compares the
+    /// resulting PNG to a committed reference at
+    /// `screenshots/default.png`. Catches visual regressions in
+    /// the layout, theme, widget rendering, and GPU pipeline
+    /// without needing a DAW.
+    ///
+    /// # First run / regenerating the reference
+    ///
+    /// On first invocation (no reference PNG yet) the test will
+    /// fail and write the rendered image to
+    /// `screenshots/default.png.actual`. Inspect that file; if it
+    /// looks correct, commit it as the new reference:
+    ///
+    ///     cargo truce screenshot -p {crate_name}
+    ///
+    /// That command renders the current state and writes
+    /// `target/screenshots/{crate_name}_screenshot.png` — copy it
+    /// (or re-render with `--name default`) to
+    /// `screenshots/default.png` to make it the test's baseline.
+    ///
+    /// # Tuning the threshold
+    ///
+    /// The third arg (`0`) is the maximum allowed pixel
+    /// difference. Set to `0` for strict equality. Bump it to
+    /// tolerate small rasterizer drift across OS / GPU drivers
+    /// (typical: 50–500 pixels for fonts and antialiasing).
     #[test]
-    fn builds_and_runs() \{
-        let result = {test_body | unescaped};
-        truce_test::assert_no_nans(&result.output);
-    }
-{{- if is_effect }}
-
-    #[test]
-    fn renders_nonzero_output() \{
-        let result = {test_body | unescaped};
-        truce_test::assert_nonzero(&result.output);
-    }
-
-    #[test]
-    fn bus_config_effect() \{
-        truce_test::assert_bus_config_effect::<Plugin>();
-    }
-{{- endif }}
-
-    #[test]
-    fn info_is_valid() \{
-        truce_test::assert_valid_info::<Plugin>();
-    }
-
-    #[test]
-    fn has_editor() \{
-        truce_test::assert_has_editor::<Plugin>();
-    }
-
-    #[test]
-    fn state_round_trips() \{
-        truce_test::assert_state_round_trip::<Plugin>();
-    }
-
-    #[test]
-    fn param_defaults_match() \{
-        truce_test::assert_param_defaults_match::<Plugin>();
-    }
-
-    #[test]
-    fn no_duplicate_param_ids() \{
-        truce_test::assert_no_duplicate_param_ids::<Plugin>();
-    }
-
-    #[test]
-    fn corrupt_state_no_crash() \{
-        truce_test::assert_corrupt_state_no_crash::<Plugin>();
-    }
-
-    #[test]
-    fn param_normalized_clamped() \{
-        truce_test::assert_param_normalized_clamped::<Plugin>();
+    fn gui_screenshot() \{
+        truce_test::assert_screenshot::<Plugin>("default", "screenshots", 0);
     }
 }

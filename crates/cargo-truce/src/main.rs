@@ -64,10 +64,13 @@ cargo-truce — build tool for truce audio plugins
 Usage: cargo truce <command> [options]
 
 Scaffold:
-  new <name> [--instrument] [--midi] [--no-standalone]
+  new <name> [--instrument] [--midi] [--no-standalone] [--vendor <n>] [--vendor-id <id>]
       Scaffold a new single-plugin project. Defaults include the
       `standalone` feature + `src/main.rs` host; pass --no-standalone
       to skip those (saves the bin entry, the dep, and the file).
+      `--vendor` / `--vendor-id` populate `truce.toml` directly;
+      omit them to get a `My Company` / `com.mycompany` placeholder
+      to edit by hand.
 
   new <name> --workspace <plugin1> [plugin2 ...] [options]
       Scaffold a workspace with multiple plugins. The first positional
@@ -75,8 +78,8 @@ Scaffold:
       plugin names (a single plugin produces a workspace-shaped layout
       with one crate).
       Options:
-        --vendor <name>             Vendor display name
-        --vendor-id <id>            Reverse-domain vendor ID
+        --vendor <name>             Vendor display name (defaults to PascalCase of <name>)
+        --vendor-id <id>            Reverse-domain vendor ID (defaults to com.<name>)
         --instrument                Default all plugins to instrument type
         --midi                      Default all plugins to midi type
         --no-standalone             Skip the standalone feature + host bin in every plugin

@@ -29,7 +29,6 @@ pub(crate) struct PluginContext {
 
     pub is_workspace: bool,
     pub has_standalone: bool,
-    pub is_effect: bool,
 
     pub default_label: &'static str,
     pub default_features: &'static str,
@@ -39,7 +38,6 @@ pub(crate) struct PluginContext {
     pub process_body: &'static str,
     pub layout_knob: &'static str,
     pub plugin_macro: String,
-    pub test_body: &'static str,
 }
 
 impl PluginContext {
@@ -62,7 +60,6 @@ impl PluginContext {
             tag: tag.to_string(),
             is_workspace,
             has_standalone,
-            is_effect: kind.is_effect(),
             default_label: default_label(features),
             default_features: default_features(features),
             dep_args: dep_args(dep_form, tag),
@@ -70,7 +67,6 @@ impl PluginContext {
             process_body: kind.process_body(),
             layout_knob: kind.layout_knob(),
             plugin_macro: kind.plugin_macro(&struct_name),
-            test_body: kind.test_body(),
             struct_name,
         }
     }
