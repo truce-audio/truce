@@ -77,7 +77,6 @@ pub enum InputSource {
     Generator(Box<dyn FnMut(usize, f64) -> f32>),
 }
 
-
 // ---------------------------------------------------------------------------
 // TransportSpec
 // ---------------------------------------------------------------------------
@@ -106,8 +105,7 @@ impl Default for TransportSpec {
 // MeterCapture / CaptureSpec
 // ---------------------------------------------------------------------------
 
-#[derive(Clone, Copy)]
-#[derive(Default)]
+#[derive(Clone, Copy, Default)]
 pub enum MeterCapture {
     None,
     /// One snapshot at end-of-run.
@@ -116,7 +114,6 @@ pub enum MeterCapture {
     /// One snapshot per process block (post-process).
     PerBlock,
 }
-
 
 #[derive(Clone, Copy, Default)]
 pub struct CaptureSpec {

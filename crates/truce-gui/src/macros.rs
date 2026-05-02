@@ -112,26 +112,90 @@ macro_rules! __layout_widgets {
 
 /// Declarative grid layout DSL for plugin GUIs.
 ///
+/// Defaults: no header, `cols` = max widgets per section,
+/// `cell_size` = `GRID_DEFAULT_CELL_SIZE`. Override any of those
+/// via the `cols:` / `cell:` keyword args, or prepend
+/// `"title", "version",` to opt in to a header band.
+///
 /// # Example
 /// ```ignore
 /// use truce_gui::grid;
 ///
+/// // Minimal — auto-cols, default cell size, no header.
 /// fn gui_layout() -> truce_gui::layout::GridLayout {
-///     grid!("MY PLUGIN", "V1.0", cols: 4, cell: 50.0, {
+///     grid!({
+///         knob(ID_GAIN, "Gain")
+///         slider(ID_PAN, "Pan")
+///     })
+/// }
+///
+/// // Force wrapping: 4 widgets on a 2-col grid.
+/// fn wrapped() -> truce_gui::layout::GridLayout {
+///     grid!(cols: 2, {
 ///         knob(ID_GAIN, "Gain")
 ///         slider(ID_PAN, "Pan")
 ///         toggle(ID_BYPASS, "Bypass")
-///         meter(&[METER_L, METER_R], "Level").rows(2)
+///         meter(&[METER_L, METER_R], "Level")
+///     })
+/// }
 ///
-///         section("FILTER")
-///         knob(ID_CUTOFF, "Cutoff")
-///         knob(ID_RESO, "Reso")
+/// // Header opt-in.
+/// fn with_header() -> truce_gui::layout::GridLayout {
+///     grid!("MY PLUGIN", "V1.0", cols: 4, cell: 50.0, {
+///         knob(ID_GAIN, "Gain")
 ///     })
 /// }
 /// ```
 #[macro_export]
 macro_rules! grid {
+    // Minimal: just the body.
+    ({ $($body:tt)* }) => {{
+        $crate::layout::GridLayout::build($crate::__grid_sections!($($body)*))
+    }};
+    // cols only.
+    (cols: $cols:expr, { $($body:tt)* }) => {{
+        $crate::layout::GridLayout::build($crate::__grid_sections!($($body)*))
+            .with_cols($cols)
+    }};
+    // cell only.
+    (cell: $cell:expr, { $($body:tt)* }) => {{
+        $crate::layout::GridLayout::build($crate::__grid_sections!($($body)*))
+            .with_cell_size($cell)
+    }};
+    // cols + cell.
+    (cols: $cols:expr, cell: $cell:expr, { $($body:tt)* }) => {{
+        $crate::layout::GridLayout::build($crate::__grid_sections!($($body)*))
+            .with_grid($cols, $cell)
+    }};
+    // header + body.
+    ($title:expr, $version:expr, { $($body:tt)* }) => {{
+        $crate::layout::GridLayout::build($crate::__grid_sections!($($body)*))
+            .with_header($title, $version)
+    }};
+    // header + cols.
+    ($title:expr, $version:expr, cols: $cols:expr, { $($body:tt)* }) => {{
+        $crate::layout::GridLayout::build($crate::__grid_sections!($($body)*))
+            .with_cols($cols)
+            .with_header($title, $version)
+    }};
+    // header + cell.
+    ($title:expr, $version:expr, cell: $cell:expr, { $($body:tt)* }) => {{
+        $crate::layout::GridLayout::build($crate::__grid_sections!($($body)*))
+            .with_cell_size($cell)
+            .with_header($title, $version)
+    }};
+    // header + cols + cell — full form.
     ($title:expr, $version:expr, cols: $cols:expr, cell: $cell:expr, { $($body:tt)* }) => {{
+        $crate::layout::GridLayout::build($crate::__grid_sections!($($body)*))
+            .with_grid($cols, $cell)
+            .with_header($title, $version)
+    }};
+}
+
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __grid_sections {
+    ($($body:tt)*) => {{
         let mut _widgets: Vec<$crate::layout::GridWidget> = Vec::new();
         let mut _breaks: Vec<(usize, &'static str)> = Vec::new();
         $crate::__grid_items!(_widgets, _breaks, $($body)*);
@@ -141,7 +205,6 @@ macro_rules! grid {
         let mut _cur_label: Option<&'static str> = None;
         for (i, w) in _widgets.into_iter().enumerate() {
             if let Some(&(_, label)) = _breaks.iter().find(|(idx, _)| *idx == i) {
-                // Flush current section
                 if !_cur_widgets.is_empty() || _cur_label.is_some() {
                     _sections.push($crate::layout::Section {
                         label: _cur_label,
@@ -158,9 +221,7 @@ macro_rules! grid {
                 widgets: _cur_widgets,
             });
         }
-        $crate::layout::GridLayout::build(
-            $title, $version, $cols, $cell, _sections,
-        )
+        _sections
     }};
 }
 

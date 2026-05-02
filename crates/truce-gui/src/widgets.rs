@@ -4,8 +4,8 @@ use std::f32::consts::PI;
 
 use crate::interaction::InteractionState;
 use crate::layout::{
-    GRID_GAP, GRID_HEADER_H, GRID_PADDING, GRID_SECTION_H, GridLayout, Layout, PluginLayout,
-    WidgetKind, compute_section_offsets,
+    GRID_GAP, GRID_PADDING, GRID_SECTION_H, GridLayout, Layout, PluginLayout, WidgetKind,
+    compute_section_offsets,
 };
 use crate::render::RenderBackend;
 use crate::snapshot::ParamSnapshot;
@@ -791,21 +791,24 @@ fn draw_grid(
     state: &mut InteractionState,
 ) {
     let w = grid.width;
-    draw_header(
-        backend,
-        0.0,
-        0.0,
-        w as f32,
-        20.0,
-        grid.title,
-        grid.version,
-        theme,
-    );
+    if let Some(header) = &grid.header {
+        draw_header(
+            backend,
+            0.0,
+            0.0,
+            w as f32,
+            20.0,
+            header.title,
+            header.version,
+            theme,
+        );
+    }
 
+    let header_h = grid.header_height();
     let section_offsets = compute_section_offsets(grid);
 
     for &(row_idx, label) in &grid.sections {
-        let y = GRID_HEADER_H
+        let y = header_h
             + GRID_PADDING
             + row_idx as f32 * (grid.cell_size + GRID_GAP)
             + section_offsets[row_idx as usize]
@@ -815,7 +818,7 @@ fn draw_grid(
 
     for (idx, gw) in grid.widgets.iter().enumerate() {
         let x = GRID_PADDING + gw.col as f32 * (grid.cell_size + GRID_GAP);
-        let y = GRID_HEADER_H
+        let y = header_h
             + GRID_PADDING
             + gw.row as f32 * (grid.cell_size + GRID_GAP)
             + section_offsets[gw.row as usize];

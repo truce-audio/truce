@@ -33,22 +33,25 @@ pub fn auto_view<'a, M: Clone + Debug + 'static, P: Params>(
 
     let mut main_col: Column<'a, Message<M>> = Column::new().spacing(8).padding(15);
 
-    // Header
-    let header = container(
-        row![
-            text(layout.title).size(16),
-            text(layout.version).size(10).color(theme::TEXT_DIM),
-        ]
-        .spacing(8)
-        .align_y(alignment::Vertical::Center),
-    )
-    .padding(8)
-    .style(|_theme: &iced::Theme| container::Style {
-        background: Some(theme::HEADER_BG.into()),
-        ..Default::default()
-    })
-    .width(Length::Fill);
-    main_col = main_col.push(header);
+    // Optional title / version header band — drawn only when the
+    // layout opted in via `.with_header(...)`.
+    if let Some(h) = &layout.header {
+        let header = container(
+            row![
+                text(h.title).size(16),
+                text(h.version).size(10).color(theme::TEXT_DIM),
+            ]
+            .spacing(8)
+            .align_y(alignment::Vertical::Center),
+        )
+        .padding(8)
+        .style(|_theme: &iced::Theme| container::Style {
+            background: Some(theme::HEADER_BG.into()),
+            ..Default::default()
+        })
+        .width(Length::Fill);
+        main_col = main_col.push(header);
+    }
 
     // Build rows
     for r in 0..max_row {

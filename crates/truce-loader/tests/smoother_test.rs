@@ -53,7 +53,7 @@ impl truce_loader::PluginLogic for SmootherPlugin {
     }
 
     fn layout(&self) -> GridLayout {
-        GridLayout::build("", "", 1, 80.0, vec![])
+        GridLayout::build(vec![])
     }
 }
 

@@ -100,16 +100,11 @@ impl PluginLogic for Transpose {
     }
 
     fn layout(&self) -> GridLayout {
-        GridLayout::build(
-            "TRANSPOSE",
-            "V0.1",
-            2,
-            50.0,
-            vec![widgets(vec![
-                knob(P::Semitones, "Semitones"),
-                knob(P::Octave, "Octave"),
-            ])],
-        )
+        GridLayout::build(vec![widgets(vec![
+            knob(P::Semitones, "Semitones"),
+            knob(P::Octave, "Octave"),
+        ])])
+        .with_header("TRANSPOSE", "V0.1")
     }
 }
 

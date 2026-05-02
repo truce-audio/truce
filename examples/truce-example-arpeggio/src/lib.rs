@@ -294,18 +294,14 @@ impl PluginLogic for Arpeggio {
     }
 
     fn layout(&self) -> GridLayout {
-        GridLayout::build(
-            "ARPEGGIO",
-            "V0.1",
-            2,
-            50.0,
-            vec![widgets(vec![
-                dropdown(P::Rate, "Rate"),
-                knob(P::Gate, "Gate"),
-                knob(P::Octaves, "Octaves"),
-                dropdown(P::Pattern, "Pattern"),
-            ])],
-        )
+        GridLayout::build(vec![widgets(vec![
+            dropdown(P::Rate, "Rate"),
+            knob(P::Gate, "Gate"),
+            knob(P::Octaves, "Octaves"),
+            dropdown(P::Pattern, "Pattern"),
+        ])])
+        .with_cols(2)
+        .with_header("ARPEGGIO", "V0.1")
     }
 }
 

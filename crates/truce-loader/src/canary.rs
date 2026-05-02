@@ -160,7 +160,7 @@ impl PluginLogic for ProbePlugin {
     fn render(&self, _backend: &mut dyn RenderBackend) {}
 
     fn layout(&self) -> GridLayout {
-        let mut gl = GridLayout::build("", "", 1, 80.0, vec![]);
+        let mut gl = GridLayout::build(vec![]);
         gl.width = 0xDEAD;
         gl.height = 0xBEEF;
         gl

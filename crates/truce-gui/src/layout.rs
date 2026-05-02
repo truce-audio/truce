@@ -449,11 +449,21 @@ impl From<GridWidget> for Section {
     }
 }
 
+/// Optional header drawn above a [`GridLayout`] — title on the
+/// left, version on the right. Plugins that don't set one render
+/// straight from the top edge.
+#[derive(Clone, Debug)]
+pub struct GridHeader {
+    pub title: &'static str,
+    pub version: &'static str,
+}
+
 /// Grid-based layout for a plugin UI.
 #[derive(Clone, Debug)]
 pub struct GridLayout {
-    pub title: &'static str,
-    pub version: &'static str,
+    /// Optional header band above the grid. `None` means no header
+    /// is drawn and the grid starts at `y = 0` (plus padding).
+    pub header: Option<GridHeader>,
     /// Number of columns in the grid.
     pub cols: u32,
     /// Section labels positioned above specific rows: (row_index, label).
@@ -466,16 +476,37 @@ pub struct GridLayout {
     pub width: u32,
     /// Computed height in logical points.
     pub height: u32,
+    /// Pre-flow widget snapshot — copy of `widgets` before
+    /// `auto_flow_with_breaks` ran. Lets [`Self::with_cols`] reset
+    /// and re-flow against a different column count without
+    /// losing AUTO-vs-explicit placement.
+    original_widgets: Vec<GridWidget>,
+    /// Pre-flow section breaks — `(widget_index, label)` pairs as
+    /// passed to `auto_flow_with_breaks` originally. Stored so
+    /// re-flow recovers the same section labels.
+    original_breaks: Vec<(usize, &'static str)>,
 }
 
+/// Default cell size in logical points when `GridLayout::build` is
+/// called without `.with_cell_size(...)`. Matches the scaffolded
+/// plugin's pre-refactor value so untouched scaffolds render the
+/// same as before.
+pub const GRID_DEFAULT_CELL_SIZE: f32 = 50.0;
+
 impl GridLayout {
-    /// Build a grid layout from sections containing widgets.
+    /// Build a grid layout from sections containing widgets. No
+    /// header is drawn, `cols` defaults to the widest section's
+    /// widget count (extended to fit any explicitly-positioned
+    /// widget), and `cell_size` defaults to
+    /// [`GRID_DEFAULT_CELL_SIZE`]. Override any of those via
+    /// [`Self::with_header`] / [`Self::with_cols`] /
+    /// [`Self::with_cell_size`].
     ///
     /// Each entry is either a `Section` (created with `section("LABEL", vec![...])`)
     /// or a bare `GridWidget` (auto-wrapped via `From`). Example:
     ///
     /// ```ignore
-    /// GridLayout::build("EQ", "V0.1", 3, 50.0, vec![
+    /// GridLayout::build(vec![
     ///     section("LOW", vec![
     ///         GridWidget::knob(P::Freq, "Freq"),
     ///         GridWidget::knob(P::Gain, "Gain"),
@@ -483,36 +514,113 @@ impl GridLayout {
     ///     GridWidget::knob(P::Output, "Output").into(),
     /// ])
     /// ```
-    pub fn build(
-        title: &'static str,
-        version: &'static str,
-        cols: u32,
-        cell_size: f32,
-        entries: Vec<Section>,
-    ) -> Self {
+    pub fn build(entries: Vec<Section>) -> Self {
         let mut widgets = Vec::new();
         let mut breaks = Vec::new();
+        let mut max_widgets_per_section = 0usize;
         for s in entries {
             if let Some(label) = s.label {
                 breaks.push((widgets.len(), label));
             }
+            max_widgets_per_section = max_widgets_per_section.max(s.widgets.len());
             widgets.extend(s.widgets);
         }
+        // Account for explicitly-positioned widgets that reach
+        // beyond the widest auto-flow row — the grid still has to
+        // be wide enough to seat them.
+        let max_explicit_col = widgets
+            .iter()
+            .filter(|w| w.col != AUTO)
+            .map(|w| w.col + w.col_span)
+            .max()
+            .unwrap_or(0);
+        let cols = (max_widgets_per_section as u32)
+            .max(max_explicit_col)
+            .max(1);
+
         let mut layout = Self {
-            title,
-            version,
+            header: None,
             cols,
             sections: Vec::new(),
-            widgets,
-            cell_size,
+            widgets: widgets.clone(),
+            cell_size: GRID_DEFAULT_CELL_SIZE,
             width: 0,
             height: 0,
+            original_widgets: widgets,
+            original_breaks: breaks,
         };
-        layout.auto_flow_with_breaks(&breaks);
-        let (w, h) = layout.compute_size();
-        layout.width = w;
-        layout.height = h;
+        layout.flow_and_size();
         layout
+    }
+
+    /// Override the default column count (which is the widest
+    /// section's widget count, or whatever explicit positions
+    /// require — whichever is larger). Use to force wrapping:
+    /// `.with_cols(2)` on a 4-widget section produces a 2×2 grid.
+    /// Recomputes auto-flow placement and window size.
+    pub fn with_cols(mut self, cols: u32) -> Self {
+        self.cols = cols.max(1);
+        self.flow_and_size();
+        self
+    }
+
+    /// Override the default cell size ([`GRID_DEFAULT_CELL_SIZE`]).
+    /// The cell is square — this is both the width and height of
+    /// one grid cell in logical points.
+    pub fn with_cell_size(mut self, cell_size: f32) -> Self {
+        self.cell_size = cell_size;
+        let (w, h) = self.compute_size();
+        self.width = w;
+        self.height = h;
+        self
+    }
+
+    /// Like [`Self::with_cols`] but accepts the cell size in the
+    /// same call — useful when both are non-default. Equivalent to
+    /// `.with_cell_size(s).with_cols(c)`.
+    pub fn with_grid(self, cols: u32, cell_size: f32) -> Self {
+        self.with_cell_size(cell_size).with_cols(cols)
+    }
+
+    /// Add a title / version header band above the grid. Recomputes
+    /// the height to account for the extra band — width stays the
+    /// same since the header spans the full grid width.
+    ///
+    /// ```ignore
+    /// GridLayout::build(sections).with_header("EQ", "v0.1")
+    /// ```
+    pub fn with_header(mut self, title: &'static str, version: &'static str) -> Self {
+        self.header = Some(GridHeader { title, version });
+        let (w, h) = self.compute_size();
+        self.width = w;
+        self.height = h;
+        self
+    }
+
+    /// Pixel height of the header band, or `0.0` when no header is
+    /// configured. Internal helper used by `compute_size`,
+    /// `widgets::draw_grid`, and `interaction::build_regions_grid`
+    /// to keep the "is there a header?" check in one place.
+    pub(crate) fn header_height(&self) -> f32 {
+        if self.header.is_some() {
+            GRID_HEADER_H
+        } else {
+            0.0
+        }
+    }
+
+    /// Reset to the pre-flow widget snapshot, run `auto_flow_with_breaks`
+    /// against `self.cols`, then recompute window size. Used by
+    /// `build`, `with_cols`, and `with_cell_size` so the layout
+    /// stays consistent after any configuration change.
+    fn flow_and_size(&mut self) {
+        self.widgets = self.original_widgets.clone();
+        self.sections.clear();
+        let breaks: Vec<(usize, &'static str)> = self.original_breaks.clone();
+        self.auto_flow_with_breaks(&breaks);
+        let (w, h) = self.compute_size();
+        self.width = w;
+        self.height = h;
     }
 
     /// Compute the window size from the grid.
@@ -533,7 +641,7 @@ impl GridLayout {
 
         let w = GRID_PADDING * 2.0 + max_col as f32 * (self.cell_size + GRID_GAP) - GRID_GAP;
         let bottom_label_h = 22.0; // label + value text below the last row of widgets
-        let h = GRID_HEADER_H + GRID_PADDING + max_row as f32 * (self.cell_size + GRID_GAP)
+        let h = self.header_height() + GRID_PADDING + max_row as f32 * (self.cell_size + GRID_GAP)
             - GRID_GAP
             + section_count * GRID_SECTION_H
             + bottom_label_h
@@ -678,14 +786,23 @@ impl From<PluginLayout> for GridLayout {
         }
 
         let mut gl = GridLayout {
-            title: pl.title,
-            version: pl.version,
+            header: Some(GridHeader {
+                title: pl.title,
+                version: pl.version,
+            }),
             cols,
             sections,
-            widgets,
+            widgets: widgets.clone(),
             cell_size: pl.knob_size,
             width: 0,
             height: 0,
+            // PluginLayout drives placement from `rows` directly,
+            // so widgets are already explicitly positioned. The
+            // re-flow stash is the same widgets with no breaks —
+            // calling `with_cols` would re-run auto-flow against
+            // explicit (col,row) values, which is a no-op.
+            original_widgets: widgets,
+            original_breaks: Vec::new(),
         };
         let (w, h) = gl.compute_size();
         gl.width = w;
@@ -714,16 +831,21 @@ impl Layout {
             Layout::Grid(g) => g.height,
         }
     }
-    pub fn title(&self) -> &str {
+    /// Title shown in the editor's header band, if any. `Rows`
+    /// layouts always have one (legacy `PluginLayout`); `Grid`
+    /// layouts only when the builder called `.with_header(...)`.
+    pub fn title(&self) -> Option<&str> {
         match self {
-            Layout::Rows(l) => l.title,
-            Layout::Grid(g) => g.title,
+            Layout::Rows(l) => Some(l.title),
+            Layout::Grid(g) => g.header.as_ref().map(|h| h.title),
         }
     }
-    pub fn version(&self) -> &str {
+    /// Version shown in the editor's header band, if any. Pairs
+    /// with [`Self::title`] — both come from the same header.
+    pub fn version(&self) -> Option<&str> {
         match self {
-            Layout::Rows(l) => l.version,
-            Layout::Grid(g) => g.version,
+            Layout::Rows(l) => Some(l.version),
+            Layout::Grid(g) => g.header.as_ref().map(|h| h.version),
         }
     }
 }

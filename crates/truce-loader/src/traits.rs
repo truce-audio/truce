@@ -52,7 +52,7 @@ pub trait PluginLogic: Send + 'static {
     /// Use `GridLayout::build()` for the layout. Widgets auto-flow
     /// left-to-right. Use `.cols(n)` and `.rows(n)` for spanning.
     fn layout(&self) -> GridLayout {
-        GridLayout::build("", "", 1, 80.0, vec![])
+        GridLayout::build(vec![])
     }
 
     /// Hit test: which widget (if any) is at (x, y)?

@@ -193,39 +193,34 @@ impl PluginLogic for Eq {
     }
 
     fn layout(&self) -> GridLayout {
-        GridLayout::build(
-            "EQ",
-            "V0.1",
-            3,
-            50.0,
-            vec![
-                section(
-                    "LOW",
-                    vec![
-                        knob(P::LowFreq, "Freq"),
-                        knob(P::LowGain, "Gain"),
-                        knob(P::LowQ, "Q"),
-                    ],
-                ),
-                section(
-                    "MID",
-                    vec![
-                        knob(P::MidFreq, "Freq"),
-                        knob(P::MidGain, "Gain"),
-                        knob(P::MidQ, "Q"),
-                    ],
-                ),
-                section(
-                    "HIGH",
-                    vec![
-                        knob(P::HighFreq, "Freq"),
-                        knob(P::HighGain, "Gain"),
-                        knob(P::HighQ, "Q"),
-                    ],
-                ),
-                widgets(vec![knob(P::Output, "Output")]),
-            ],
-        )
+        GridLayout::build(vec![
+            section(
+                "LOW",
+                vec![
+                    knob(P::LowFreq, "Freq"),
+                    knob(P::LowGain, "Gain"),
+                    knob(P::LowQ, "Q"),
+                ],
+            ),
+            section(
+                "MID",
+                vec![
+                    knob(P::MidFreq, "Freq"),
+                    knob(P::MidGain, "Gain"),
+                    knob(P::MidQ, "Q"),
+                ],
+            ),
+            section(
+                "HIGH",
+                vec![
+                    knob(P::HighFreq, "Freq"),
+                    knob(P::HighGain, "Gain"),
+                    knob(P::HighQ, "Q"),
+                ],
+            ),
+            widgets(vec![knob(P::Output, "Output")]),
+        ])
+        .with_header("EQ", "V0.1")
     }
 }
 

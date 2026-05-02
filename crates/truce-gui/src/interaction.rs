@@ -3,8 +3,7 @@
 //! Tracks widget hit regions and maps mouse drags to parameter value changes.
 
 use crate::layout::{
-    GRID_GAP, GRID_HEADER_H, GRID_PADDING, GridLayout, Layout, PluginLayout, WidgetKind,
-    compute_section_offsets,
+    GRID_GAP, GRID_PADDING, GridLayout, Layout, PluginLayout, WidgetKind, compute_section_offsets,
 };
 use crate::snapshot::ParamSnapshot;
 use crate::widgets::WidgetType;
@@ -490,11 +489,12 @@ impl InteractionState {
     pub fn build_regions_grid(&mut self, layout: &GridLayout) {
         self.knob_regions.clear();
 
+        let header_h = layout.header_height();
         let section_offsets = compute_section_offsets(layout);
 
         for gw in &layout.widgets {
             let x = GRID_PADDING + gw.col as f32 * (layout.cell_size + GRID_GAP);
-            let y = GRID_HEADER_H
+            let y = header_h
                 + GRID_PADDING
                 + gw.row as f32 * (layout.cell_size + GRID_GAP)
                 + section_offsets[gw.row as usize];

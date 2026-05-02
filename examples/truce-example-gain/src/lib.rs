@@ -76,20 +76,15 @@ impl PluginLogic for Gain {
     }
 
     fn layout(&self) -> GridLayout {
-        GridLayout::build(
-            "GAIN",
-            "V0.1",
-            3,
-            50.0,
-            vec![widgets(vec![
-                knob(P::Gain, "Gain"),
-                knob(P::Pan, "Pan"),
-                meter(&[P::MeterLeft, P::MeterRight], "Level")
-                    .at(2, 0)
-                    .rows(3),
-                xy_pad(P::Pan, P::Gain, "XY"),
-            ])],
-        )
+        GridLayout::build(vec![widgets(vec![
+            knob(P::Gain, "Gain"),
+            knob(P::Pan, "Pan"),
+            meter(&[P::MeterLeft, P::MeterRight], "Level")
+                .at(2, 0)
+                .rows(3),
+            xy_pad(P::Pan, P::Gain, "XY"),
+        ])])
+        .with_header("GAIN", "V0.1")
     }
 }
 

@@ -24,7 +24,7 @@ impl PluginLogic for {struct_name} \{
 {process_body | unescaped}
 
     fn layout(&self) -> truce_gui::layout::GridLayout \{
-        GridLayout::build("{upper_name}", "V0.1", 2, 50.0, vec![widgets(vec![
+        GridLayout::build(vec![widgets(vec![
             {layout_knob | unescaped},
         ])])
     }

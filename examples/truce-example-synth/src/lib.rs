@@ -193,31 +193,26 @@ impl PluginLogic for Synth {
     }
 
     fn layout(&self) -> GridLayout {
-        GridLayout::build(
-            "TRUCE SYNTH",
-            "V0.1",
-            4,
-            50.0,
-            vec![
-                widgets(vec![
-                    dropdown(P::Waveform, "Wave").cols(2),
-                    knob(P::Volume, "Volume"),
-                ]),
-                section(
-                    "FILTER",
-                    vec![knob(P::Cutoff, "Cutoff"), knob(P::Resonance, "Reso")],
-                ),
-                section(
-                    "ENVELOPE",
-                    vec![
-                        knob(P::Attack, "Attack"),
-                        knob(P::Decay, "Decay"),
-                        knob(P::Sustain, "Sustain"),
-                        knob(P::Release, "Release"),
-                    ],
-                ),
-            ],
-        )
+        GridLayout::build(vec![
+            widgets(vec![
+                dropdown(P::Waveform, "Wave").cols(2),
+                knob(P::Volume, "Volume"),
+            ]),
+            section(
+                "FILTER",
+                vec![knob(P::Cutoff, "Cutoff"), knob(P::Resonance, "Reso")],
+            ),
+            section(
+                "ENVELOPE",
+                vec![
+                    knob(P::Attack, "Attack"),
+                    knob(P::Decay, "Decay"),
+                    knob(P::Sustain, "Sustain"),
+                    knob(P::Release, "Release"),
+                ],
+            ),
+        ])
+        .with_header("TRUCE SYNTH", "V0.1")
     }
 }
 
