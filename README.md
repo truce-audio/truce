@@ -57,8 +57,10 @@ cargo truce build --shell        # hot-reload shell build (see docs/reference/ho
 cargo truce run                  # launch the plugin standalone (no DAW)
 cargo truce run -p my-plugin     # standalone for a specific crate
 cargo truce test                 # run tests
-cargo truce screenshot           # render every plugin's GUI to target/screenshots/
+cargo truce screenshot           # render every plugin's GUI to <crate>/screenshots/<crate>.png
 cargo truce screenshot -p my-plugin --name dark   # one plugin, custom filename
+cargo truce screenshot -p my-plugin --state s.pluginstate   # load saved state first
+cargo truce screenshot --check   # CI gate: diff against committed baseline
 
 cargo truce package              # signed .pkg (macOS) or Inno Setup .exe (Windows)
                                  # → target/dist/<Plugin>-<version>-<platform>.{pkg,exe}

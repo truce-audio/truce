@@ -150,21 +150,24 @@ across every backend:
 ```rust
 #[test]
 fn gui_screenshot() {
-    truce_test::assert_screenshot::<Plugin>("my_plugin_default", "snapshots", 0);
+    truce_test::screenshot!(Plugin).run();
 }
 ```
 
-`truce_test::assert_screenshot` instantiates your plugin, asks the editor
-for a headless render, and compares against
-`<workspace>/<reference_dir>/<name>.png`. The current render always
-lands in `target/screenshots/` (gitignored); when the reference
-doesn't exist yet, the test passes and prints a `cp`-based promote
-hint. Works for every backend (built-in GUI, egui, iced, slint).
+The `screenshot!` macro reads `CARGO_PKG_NAME` +
+`CARGO_MANIFEST_DIR` from the calling crate, so the test
+renders your plugin's editor and compares against
+`<crate>/screenshots/<crate>.png`. The current render lands in
+`target/screenshots/` (gitignored); when the reference doesn't
+exist yet, the test passes and prints a `cp`-based promote
+hint. Works for every backend (built-in GUI, egui, iced,
+slint).
 
 See [gui/screenshot-testing.md](gui/screenshot-testing.md) for
-the full flow — promoting new references, cross-OS behavior, the
-`TRUCE_SCREENSHOT_REFERENCE_OS` override, and lower-level APIs for
-custom tolerance / hand-rolled renderers.
+the full flow — promoting new references, state-dependent shots
+via `setup` / `state_file`, cross-OS reference handling via
+`cfg(target_os = …)` gating, and the `cargo truce screenshot`
+CLI for renders that don't need a `#[test]`.
 
 ## What's next
 

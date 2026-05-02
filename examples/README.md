@@ -7,15 +7,15 @@ GUI framework integrations.
 
 | Plugin | Type | GUI | Screenshot |
 |--------|------|-----|-----------|
-| [gain](truce-example-gain/) | Effect | Built-in | <img src="screenshots/gain_default.png" width="300"> |
-| [eq](truce-example-eq/) | Effect | Built-in | <img src="screenshots/eq_default.png" width="300"> |
-| [synth](truce-example-synth/) | Instrument | Built-in | <img src="screenshots/synth_default.png" width="300"> |
-| [transpose](truce-example-transpose/) | MIDI | Built-in | <img src="screenshots/transpose_default.png" width="300"> |
-| [arpeggio](truce-example-arpeggio/) | MIDI | Built-in | <img src="screenshots/arpeggio_default.png" width="300"> |
-| [tremolo](truce-example-tremolo/) | Effect | egui | <img src="screenshots/tremolo_default.png" width="300"> |
-| [gain-egui](truce-example-gain-egui/) | Effect | egui | <img src="screenshots/gain_egui_default.png" width="300"> |
-| [gain-iced](truce-example-gain-iced/) | Effect | Iced | <img src="screenshots/gain_iced_default.png" width="300"> |
-| [gain-slint](truce-example-gain-slint/) | Effect | Slint | <img src="screenshots/gain_slint_default.png" width="300"> |
+| [gain](truce-example-gain/) | Effect | Built-in | <img src="truce-example-gain/screenshots/gain_default_macos.png" width="300"> |
+| [eq](truce-example-eq/) | Effect | Built-in | <img src="truce-example-eq/screenshots/eq_default_macos.png" width="300"> |
+| [synth](truce-example-synth/) | Instrument | Built-in | <img src="truce-example-synth/screenshots/synth_default_macos.png" width="300"> |
+| [transpose](truce-example-transpose/) | MIDI | Built-in | <img src="truce-example-transpose/screenshots/transpose_default_macos.png" width="300"> |
+| [arpeggio](truce-example-arpeggio/) | MIDI | Built-in | <img src="truce-example-arpeggio/screenshots/arpeggio_default_macos.png" width="300"> |
+| [tremolo](truce-example-tremolo/) | Effect | egui | <img src="truce-example-tremolo/screenshots/tremolo_default_macos.png" width="300"> |
+| [gain-egui](truce-example-gain-egui/) | Effect | egui | <img src="truce-example-gain-egui/screenshots/gain_egui_default_macos.png" width="300"> |
+| [gain-iced](truce-example-gain-iced/) | Effect | Iced | <img src="truce-example-gain-iced/screenshots/gain_iced_default_macos.png" width="300"> |
+| [gain-slint](truce-example-gain-slint/) | Effect | Slint | <img src="truce-example-gain-slint/screenshots/gain_slint_default_macos.png" width="300"> |
 
 The four gain variants (gain, gain-egui, gain-iced, gain-slint) implement
 the same plugin with different GUI frameworks. Compare them to see how
