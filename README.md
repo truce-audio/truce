@@ -56,7 +56,6 @@ cargo truce build --shell        # hot-reload shell build (see docs/reference/ho
 
 cargo truce run                  # launch the plugin standalone (no DAW)
 cargo truce run -p my-plugin     # standalone for a specific crate
-cargo truce test                 # run tests
 cargo truce screenshot --out screenshots/main.png            # render the editor to a file
 cargo truce screenshot -p my-plugin --out screenshots/main.png   # multi-plugin: pick one
 cargo truce screenshot --state s.pluginstate --out shots/cool.png   # load saved state first
@@ -125,9 +124,7 @@ impl PluginLogic for Gain {
     }
 
     fn layout(&self) -> GridLayout {
-        GridLayout::build("GAIN", "V0.1", 2, 50.0, vec![widgets(vec![
-            knob(P::Gain, "Gain"),
-        ])])
+        GridLayout::build(vec![widgets(vec![knob(P::Gain, "Gain")])])
     }
 }
 
@@ -173,34 +170,6 @@ note below. See [Status](docs/README.md) for host coverage.
 - **Thread-safe params** — atomic storage, lock-free access from any thread
 - **Automated tests** — render, state, params, GUI screenshots, binary validation
 - **Automated validation** — `cargo truce validate` runs auval, pluginval, and clap-validator in one command
-
-## Crate Structure
-
-```
-crates/
-├── truce               # Facade (re-exports, plugin! macro)
-├── truce-core          # Plugin, AudioBuffer, events, state
-├── truce-params        # FloatParam, BoolParam, EnumParam, smoothing
-├── truce-derive        # All proc macros (#[derive(Params)], plugin_info!(), …)
-├── truce-build         # build.rs helper (reads truce.toml)
-├── truce-clap          # CLAP format wrapper
-├── truce-vst3          # VST3 format wrapper
-├── truce-vst2          # VST2 format wrapper (clean-room)
-├── truce-lv2           # LV2 format wrapper (hand-rolled C bindings)
-├── truce-aax           # AAX format wrapper
-├── truce-au            # Audio Unit (v2 + v3)
-├── truce-shim-types    # Shared FFI types for VST3/AAX C++ shims
-├── truce-standalone    # Standalone host (cpal audio)
-├── truce-gui           # Built-in GUI (7 widgets, layout DSL)
-├── truce-gpu           # wgpu rendering backend for truce-gui
-├── truce-dsp           # Realtime-safe DSP utilities (AudioTap SPSC ring)
-├── truce-egui          # egui GUI integration
-├── truce-iced          # Iced GUI integration
-├── truce-slint         # Slint GUI integration
-├── truce-loader        # Hot-reload (native ABI, PluginLogic trait)
-├── truce-test          # Test utilities + GUI screenshot tests
-├── cargo-truce         # `cargo truce` CLI (new, install, build, package, …)
-```
 
 ## Documentation
 

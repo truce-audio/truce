@@ -99,9 +99,7 @@ impl PluginLogic for MyGain {
 
     fn layout(&self) -> truce_gui::layout::GridLayout {
         use truce_gui::layout::{GridLayout, knob, widgets};
-        GridLayout::build("MY GAIN", "V0.1", 1, 80.0, vec![widgets(vec![
-            knob(P::Gain, "Gain"),
-        ])])
+        GridLayout::build(vec![widgets(vec![knob(P::Gain, "Gain")])])
     }
 }
 ```
@@ -280,7 +278,7 @@ Show it in the GUI:
 
 ```rust
 fn layout(&self) -> GridLayout {
-    GridLayout::build("MY GAIN", "V0.1", 2, 50.0, vec![widgets(vec![
+    GridLayout::build(vec![widgets(vec![
         knob(P::Gain, "Gain"),
         knob(P::Pan,  "Pan"),
     ])])
