@@ -274,10 +274,10 @@ impl Opts {
 }
 
 fn set_cli_scope(slot: &mut Option<PkgScope>, want: PkgScope) -> Res {
-    if let Some(prev) = *slot {
-        if prev != want {
-            return Err("--user, --system, and --ask are mutually exclusive".into());
-        }
+    if let Some(prev) = *slot
+        && prev != want
+    {
+        return Err("--user, --system, and --ask are mutually exclusive".into());
     }
     *slot = Some(want);
     Ok(())

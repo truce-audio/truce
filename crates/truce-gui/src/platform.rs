@@ -138,12 +138,12 @@ pub fn main_screen_scale() -> f64 {
     // observed from baseview → 1.0 fallback. No side-channel Xlib calls —
     // those crashed inside NVIDIA's Vulkan driver when invoked from the
     // render thread (see docs/internal/linux.md, DPI section).
-    if let Ok(s) = std::env::var("TRUCE_SCALE") {
-        if let Ok(v) = s.parse::<f64>() {
-            if v.is_finite() && v > 0.0 {
-                return v;
-            }
-        }
+    if let Ok(s) = std::env::var("TRUCE_SCALE")
+        && let Ok(v) = s.parse::<f64>()
+        && v.is_finite()
+        && v > 0.0
+    {
+        return v;
     }
     let bits = LINUX_SCALE_BITS.load(Ordering::Relaxed);
     if bits == 0 {
