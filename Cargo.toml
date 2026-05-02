@@ -36,7 +36,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.19.2"
+version = "0.19.3"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 rust-version = "1.88"
@@ -82,7 +82,7 @@ truce-gpu = { path = "crates/truce-gpu" }
 truce-egui = { path = "crates/truce-egui" }
 truce-iced = { path = "crates/truce-iced" }
 truce-slint = { path = "crates/truce-slint" }
-truce-shim-types = { version = "0.19.2", path = "crates/truce-shim-types" }
+truce-shim-types = { version = "0.19.3", path = "crates/truce-shim-types" }
 truce-dsp = { path = "crates/truce-dsp" }
 truce-font = { path = "crates/truce-font" }
 
