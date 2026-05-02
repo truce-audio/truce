@@ -303,13 +303,14 @@ impl WindowHandler for EguiWindowHandler {
 
                 // Text input
                 if kb.state == KeyState::Down
-                    && let keyboard_types::Key::Character(ref ch) = kb.key {
-                        for c in ch.chars() {
-                            if !c.is_control() {
-                                self.pending_events.push(egui::Event::Text(c.to_string()));
-                            }
+                    && let keyboard_types::Key::Character(ref ch) = kb.key
+                {
+                    for c in ch.chars() {
+                        if !c.is_control() {
+                            self.pending_events.push(egui::Event::Text(c.to_string()));
                         }
                     }
+                }
 
                 // Key event
                 if let Some(key) = convert_key(&kb.key) {

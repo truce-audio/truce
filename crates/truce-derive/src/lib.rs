@@ -256,9 +256,10 @@ fn extract_enum_type_arg(ty: &Type) -> Option<syn::Type> {
         let seg = path.segments.last()?;
         if seg.ident == "EnumParam"
             && let syn::PathArguments::AngleBracketed(args) = &seg.arguments
-                && let Some(syn::GenericArgument::Type(inner)) = args.args.first() {
-                    return Some(inner.clone());
-                }
+            && let Some(syn::GenericArgument::Type(inner)) = args.args.first()
+        {
+            return Some(inner.clone());
+        }
     }
     None
 }
@@ -677,10 +678,11 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
         }
         for m in &meter_fields {
             if let Some(id) = m.id
-                && !seen_ids.insert(id) {
-                    let msg = format!("Meter ID {id} collides with a parameter ID.");
-                    return syn::Error::new_spanned(&ast, msg).to_compile_error().into();
-                }
+                && !seen_ids.insert(id)
+            {
+                let msg = format!("Meter ID {id} collides with a parameter ID.");
+                return syn::Error::new_spanned(&ast, msg).to_compile_error().into();
+            }
         }
     }
 
@@ -1169,9 +1171,9 @@ pub fn derive_param_enum(input: TokenStream) -> TokenStream {
                             }),
                         ..
                     }) = attr.meta.require_name_value()
-                    {
-                        return lit.value();
-                    }
+                {
+                    return lit.value();
+                }
             }
             v.ident.to_string()
         })

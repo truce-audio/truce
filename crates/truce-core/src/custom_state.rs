@@ -216,9 +216,10 @@ impl<T: State> StateBinding<T> {
     pub fn sync(&mut self) {
         let data = (self.get_state)();
         if !data.is_empty()
-            && let Some(s) = T::deserialize(&data) {
-                self.cached = s;
-            }
+            && let Some(s) = T::deserialize(&data)
+        {
+            self.cached = s;
+        }
     }
 
     /// Get the current cached state.

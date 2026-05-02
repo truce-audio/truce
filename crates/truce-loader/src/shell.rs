@@ -137,10 +137,12 @@ impl<P: Params + 'static> Plugin for HotShell<P> {
         let mut loader = self.loader.lock();
 
         // Check for hot-reload.
-        if loader.is_reload_pending() && loader.reload()
-            && let Some(plugin) = loader.plugin_mut() {
-                plugin.reset(self.sample_rate, self.max_block_size);
-            }
+        if loader.is_reload_pending()
+            && loader.reload()
+            && let Some(plugin) = loader.plugin_mut()
+        {
+            plugin.reset(self.sample_rate, self.max_block_size);
+        }
 
         let Some(plugin) = loader.plugin_mut() else {
             return ProcessStatus::Normal;

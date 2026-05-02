@@ -240,9 +240,10 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for SliderProgram {
             return mouse::Interaction::Grabbing;
         }
         if let Some(pos) = cursor.position_in(bounds)
-            && pos.y <= THUMB_RADIUS * 2.0 {
-                return mouse::Interaction::Grab;
-            }
+            && pos.y <= THUMB_RADIUS * 2.0
+        {
+            return mouse::Interaction::Grab;
+        }
         mouse::Interaction::default()
     }
 }

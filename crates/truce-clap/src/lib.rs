@@ -288,12 +288,13 @@ unsafe extern "C" fn clap_plugin_init<P: PluginExport>(plugin: *const clap_plugi
         data.param_infos = data.plugin.params().param_infos();
         // Query host params extension for request_flush support
         if !data.host.is_null()
-            && let Some(get_ext) = (*data.host).get_extension {
-                let ext = get_ext(data.host, CLAP_EXT_PARAMS.as_ptr());
-                if !ext.is_null() {
-                    data.host_params = ext as *const clap_host_params;
-                }
+            && let Some(get_ext) = (*data.host).get_extension
+        {
+            let ext = get_ext(data.host, CLAP_EXT_PARAMS.as_ptr());
+            if !ext.is_null() {
+                data.host_params = ext as *const clap_host_params;
             }
+        }
         true
     }
 }
@@ -355,9 +356,10 @@ unsafe extern "C" fn clap_plugin_on_main_thread<P: PluginExport>(plugin: *const 
             .swap(false, std::sync::atomic::Ordering::Relaxed)
             && !data.host_params.is_null()
             && !data.host.is_null()
-            && let Some(rescan) = (*data.host_params).rescan {
-                rescan(data.host, CLAP_PARAM_RESCAN_VALUES);
-            }
+            && let Some(rescan) = (*data.host_params).rescan
+        {
+            rescan(data.host, CLAP_PARAM_RESCAN_VALUES);
+        }
     }
 }
 
@@ -1390,9 +1392,10 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
                 gui_changes2.push(GuiParamChange::Value(id, plain));
                 request_flush2();
                 if !needs_rescan.swap(true, std::sync::atomic::Ordering::Relaxed)
-                    && let Some(req_cb) = (*host_for_callback.as_ptr()).request_callback {
-                        req_cb(host_for_callback.as_ptr());
-                    }
+                    && let Some(req_cb) = (*host_for_callback.as_ptr()).request_callback
+                {
+                    req_cb(host_for_callback.as_ptr());
+                }
             }),
             end_edit: Arc::new(move |id| {
                 gui_changes3.push(GuiParamChange::GestureEnd(id));

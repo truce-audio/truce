@@ -286,10 +286,11 @@ where
         }
 
         if kb.state == KeyState::Down
-            && let Some(shift) = keyboard::code_to_octave_shift(kb.code) {
-                self.octave_offset = (self.octave_offset + shift).clamp(-3, 3);
-                return EventStatus::Captured;
-            }
+            && let Some(shift) = keyboard::code_to_octave_shift(kb.code)
+        {
+            self.octave_offset = (self.octave_offset + shift).clamp(-3, 3);
+            return EventStatus::Captured;
+        }
 
         if let Some(note) = keyboard::code_to_midi_note(kb.code, self.octave_offset) {
             let body = match kb.state {

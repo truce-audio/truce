@@ -603,9 +603,10 @@ fn find_pluginval() -> Option<String> {
 fn find_clap_validator() -> Option<String> {
     // Check env var override
     if let Ok(path) = std::env::var("CLAP_VALIDATOR")
-        && Path::new(&path).exists() {
-            return Some(path);
-        }
+        && Path::new(&path).exists()
+    {
+        return Some(path);
+    }
     // Check PATH
     if Command::new("clap-validator")
         .arg("--version")

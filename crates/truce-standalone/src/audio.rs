@@ -929,27 +929,28 @@ fn audio_callback<P: PluginExport>(
     // Mic + file are independent input sources that *sum* into the
     // plugin's bus. Each path starts from a zero-init `channel_bufs`
     // and adds its contribution; single-source cases are unchanged.
-    if is_effect && input_enabled.load(Ordering::Relaxed)
-        && let Ok(mut ring) = input_ring.try_lock() {
-            let needed = num_frames * channels;
-            let available = ring.len().min(needed);
-            for i in 0..available / channels {
-                for ch in 0..channels {
-                    if i < num_frames {
-                        channel_bufs[ch][i] += ring[i * channels + ch];
-                    }
+    if is_effect
+        && input_enabled.load(Ordering::Relaxed)
+        && let Ok(mut ring) = input_ring.try_lock()
+    {
+        let needed = num_frames * channels;
+        let available = ring.len().min(needed);
+        for i in 0..available / channels {
+            for ch in 0..channels {
+                if i < num_frames {
+                    channel_bufs[ch][i] += ring[i * channels + ch];
                 }
             }
-            if available > 0 {
-                ring.drain(..available);
-            }
         }
+        if available > 0 {
+            ring.drain(..available);
+        }
+    }
 
     #[cfg(feature = "playback")]
-    if is_effect
-        && let Some(src) = playback {
-            src.mix_into(&mut channel_bufs, num_frames);
-        }
+    if is_effect && let Some(src) = playback {
+        src.mix_into(&mut channel_bufs, num_frames);
+    }
 
     let input_bufs: Vec<Vec<f32>> = if is_effect {
         channel_bufs.clone()

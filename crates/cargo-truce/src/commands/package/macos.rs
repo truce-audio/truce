@@ -627,9 +627,10 @@ pub(crate) fn cmd_package_macos(args: &[String]) -> Res {
 
 fn set_cli_scope(slot: &mut Option<PkgScope>, want: PkgScope) -> Res {
     if let Some(prev) = *slot
-        && prev != want {
-            return Err("--user, --system, and --ask are mutually exclusive".into());
-        }
+        && prev != want
+    {
+        return Err("--user, --system, and --ask are mutually exclusive".into());
+    }
     *slot = Some(want);
     Ok(())
 }

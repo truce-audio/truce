@@ -271,16 +271,17 @@ impl PluginLogic for Arpeggio {
                 // boundary within it.
                 let gate_off_beat = (step as f64 + gate_frac) * beats_per_step;
                 if beat >= gate_off_beat
-                    && let Some(cn) = self.active_note.take() {
-                        context.output_events.push(Event {
-                            sample_offset: i as u32,
-                            body: EventBody::NoteOff {
-                                channel: 0,
-                                note: cn,
-                                velocity: 0.0,
-                            },
-                        });
-                    }
+                    && let Some(cn) = self.active_note.take()
+                {
+                    context.output_events.push(Event {
+                        sample_offset: i as u32,
+                        body: EventBody::NoteOff {
+                            channel: 0,
+                            note: cn,
+                            velocity: 0.0,
+                        },
+                    });
+                }
             }
         }
 

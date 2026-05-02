@@ -710,12 +710,12 @@ impl<P: Params + 'static> baseview::WindowHandler for BuiltinWindowHandler<P> {
                         blit,
                         ..
                     }) = guard.as_mut()
-                    {
-                        surface_config.width = pw;
-                        surface_config.height = ph;
-                        surface.configure(device, surface_config);
-                        blit.resize(device, pw, ph);
-                    }
+                {
+                    surface_config.width = pw;
+                    surface_config.height = ph;
+                    surface.configure(device, surface_config);
+                    blit.resize(device, pw, ph);
+                }
                 baseview::EventStatus::Captured
             }
             _ => baseview::EventStatus::Ignored,
@@ -880,9 +880,10 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
         // queue, etc.) before asking baseview to release the NSView.
         // Keeps the Metal teardown order deterministic.
         if let Some(shared) = self.blit_backend.take()
-            && let Ok(mut guard) = shared.lock() {
-                drop(guard.take());
-            }
+            && let Ok(mut guard) = shared.lock()
+        {
+            drop(guard.take());
+        }
 
         if let Some(mut window) = self.window.take() {
             window.close();

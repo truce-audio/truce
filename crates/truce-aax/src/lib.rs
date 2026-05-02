@@ -479,9 +479,10 @@ pub unsafe fn _get_descriptor(out: *mut TruceAaxDescriptor) {
 
 pub unsafe fn _get_param_info(index: u32, out: *mut TruceAaxParamInfo) {
     if let Some(info) = INFO.get()
-        && let Some(p) = info.params.get(index as usize) {
-            unsafe { *out = std::ptr::read(&p.info) };
-        }
+        && let Some(p) = info.params.get(index as usize)
+    {
+        unsafe { *out = std::ptr::read(&p.info) };
+    }
 }
 
 pub unsafe fn _create<P: PluginExport>() -> *mut std::ffi::c_void {

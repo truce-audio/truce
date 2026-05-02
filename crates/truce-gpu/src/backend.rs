@@ -1085,12 +1085,13 @@ impl WgpuBackend {
         self.height = new_h;
 
         if let Some(ref surface) = self.surface
-            && let Some(ref mut config) = self.surface_config {
-                config.width = new_w;
-                config.height = new_h;
-                surface.configure(&self.device, config);
-                self.msaa_texture = Self::create_msaa_texture(&self.device, config);
-            }
+            && let Some(ref mut config) = self.surface_config
+        {
+            config.width = new_w;
+            config.height = new_h;
+            surface.configure(&self.device, config);
+            self.msaa_texture = Self::create_msaa_texture(&self.device, config);
+        }
 
         // Update the orthographic projection matrix.
         let matrix = ortho_matrix(new_w as f32, new_h as f32);

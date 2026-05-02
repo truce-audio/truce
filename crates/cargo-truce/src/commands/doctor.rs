@@ -408,9 +408,10 @@ fn spacer(path: &Path) -> String {
 /// where the user-scope paths all begin with the home directory.
 fn display_path(path: &Path) -> String {
     if let Some(home) = dirs::home_dir()
-        && let Ok(rel) = path.strip_prefix(&home) {
-            return format!("~/{}", rel.display());
-        }
+        && let Ok(rel) = path.strip_prefix(&home)
+    {
+        return format!("~/{}", rel.display());
+    }
     path.display().to_string()
 }
 
@@ -460,17 +461,17 @@ fn check_which_with_env(name: &str, env_var: Option<&str>) {
         && let Some(path) = std::env::var(var)
             .ok()
             .or_else(|| read_cargo_config_env(var))
-        {
-            let p = PathBuf::from(&path);
-            if p.is_file() {
-                eprintln!("    {} {name}: {path} (via ${var})", tag_ok());
-                return;
-            }
-            eprintln!(
-                "    {} {name}: ${var}={path} but file not found — falling back to $PATH",
-                tag_warn()
-            );
+    {
+        let p = PathBuf::from(&path);
+        if p.is_file() {
+            eprintln!("    {} {name}: {path} (via ${var})", tag_ok());
+            return;
         }
+        eprintln!(
+            "    {} {name}: ${var}={path} but file not found — falling back to $PATH",
+            tag_warn()
+        );
+    }
     match Command::new("which").arg(name).output() {
         Ok(o) if o.status.success() => {
             let path = String::from_utf8_lossy(&o.stdout).trim().to_string();

@@ -34,12 +34,13 @@ pub fn param_xy_pad(
         state.begin_gesture(id_y);
     }
     if (response.dragged() || response.drag_started())
-        && let Some(pos) = response.interact_pointer_pos() {
-            vx = ((pos.x - pad_rect.left()) / pad_rect.width()).clamp(0.0, 1.0);
-            vy = 1.0 - ((pos.y - pad_rect.top()) / pad_rect.height()).clamp(0.0, 1.0);
-            state.set_value(id_x, vx as f64);
-            state.set_value(id_y, vy as f64);
-        }
+        && let Some(pos) = response.interact_pointer_pos()
+    {
+        vx = ((pos.x - pad_rect.left()) / pad_rect.width()).clamp(0.0, 1.0);
+        vy = 1.0 - ((pos.y - pad_rect.top()) / pad_rect.height()).clamp(0.0, 1.0);
+        state.set_value(id_x, vx as f64);
+        state.set_value(id_y, vy as f64);
+    }
     if response.drag_stopped() {
         state.end_gesture(id_x);
         state.end_gesture(id_y);

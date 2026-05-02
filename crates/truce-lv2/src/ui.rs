@@ -258,9 +258,10 @@ pub unsafe fn instantiate_ui<P: PluginExport>(
         // honors it, and without it the UI floats inside a default-sized
         // window with large empty margins).
         if let Some(resize) = parse_resize_feature(features)
-            && let Some(func) = resize.ui_resize {
-                func(resize.handle, pref_w as i32, pref_h as i32);
-            }
+            && let Some(func) = resize.ui_resize
+        {
+            func(resize.handle, pref_w as i32, pref_h as i32);
+        }
 
         // On macOS we also resize the host-supplied parent NSView directly,
         // as a belt-and-braces backup for hosts that don't honor
@@ -322,9 +323,10 @@ pub unsafe fn cleanup_ui<P: PluginExport>(handle: Lv2UiHandle) {
         }
         let mut ui = Box::from_raw(handle as *mut Lv2UiInstance<P>);
         if ui.opened.swap(false, Ordering::AcqRel)
-            && let Some(mut ed) = ui.editor.take() {
-                ed.close();
-            }
+            && let Some(mut ed) = ui.editor.take()
+        {
+            ed.close();
+        }
         drop(ui);
     }
 }

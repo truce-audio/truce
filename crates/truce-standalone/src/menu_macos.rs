@@ -143,59 +143,67 @@ pub fn install(app_name: &str, is_effect: bool, input: InputController, output: 
     }
 }
 
-unsafe fn make_menu(title: &str) -> *mut Object { unsafe {
-    let title = ns_string(title);
-    let menu: *mut Object = msg_send![class!(NSMenu), alloc];
-    let menu: *mut Object = msg_send![menu, initWithTitle: title];
-    menu
-}}
+unsafe fn make_menu(title: &str) -> *mut Object {
+    unsafe {
+        let title = ns_string(title);
+        let menu: *mut Object = msg_send![class!(NSMenu), alloc];
+        let menu: *mut Object = msg_send![menu, initWithTitle: title];
+        menu
+    }
+}
 
-unsafe fn make_menu_item(title: &str) -> *mut Object { unsafe {
-    let title = ns_string(title);
-    let empty = ns_string("");
-    let item: *mut Object = msg_send![class!(NSMenuItem), alloc];
-    let item: *mut Object = msg_send![
-        item,
-        initWithTitle: title
-        action: sel!(noopAction:)
-        keyEquivalent: empty
-    ];
-    item
-}}
+unsafe fn make_menu_item(title: &str) -> *mut Object {
+    unsafe {
+        let title = ns_string(title);
+        let empty = ns_string("");
+        let item: *mut Object = msg_send![class!(NSMenuItem), alloc];
+        let item: *mut Object = msg_send![
+            item,
+            initWithTitle: title
+            action: sel!(noopAction:)
+            keyEquivalent: empty
+        ];
+        item
+    }
+}
 
 unsafe fn make_toggle_item(
     title: &str,
     key_equiv: &str,
     action: Sel,
     target: *mut Object,
-) -> *mut Object { unsafe {
-    let title = ns_string(title);
-    let key = ns_string(key_equiv);
-    let item: *mut Object = msg_send![class!(NSMenuItem), alloc];
-    let item: *mut Object = msg_send![
-        item,
-        initWithTitle: title
-        action: action
-        keyEquivalent: key
-    ];
-    let _: () = msg_send![item, setTarget: target];
-    item
-}}
+) -> *mut Object {
+    unsafe {
+        let title = ns_string(title);
+        let key = ns_string(key_equiv);
+        let item: *mut Object = msg_send![class!(NSMenuItem), alloc];
+        let item: *mut Object = msg_send![
+            item,
+            initWithTitle: title
+            action: action
+            keyEquivalent: key
+        ];
+        let _: () = msg_send![item, setTarget: target];
+        item
+    }
+}
 
 /// Add the standard App-menu items. macOS does NOT auto-fill the
 /// app name here — we have to spell out "Quit <App>" ourselves.
-unsafe fn add_app_menu_items(menu: *mut Object, app_name: &str) { unsafe {
-    let title = ns_string(&format!("Quit {app_name}"));
-    let key = ns_string("q");
-    let quit_item: *mut Object = msg_send![class!(NSMenuItem), alloc];
-    let quit_item: *mut Object = msg_send![
-        quit_item,
-        initWithTitle: title
-        action: sel!(terminate:)
-        keyEquivalent: key
-    ];
-    let _: () = msg_send![menu, addItem: quit_item];
-}}
+unsafe fn add_app_menu_items(menu: *mut Object, app_name: &str) {
+    unsafe {
+        let title = ns_string(&format!("Quit {app_name}"));
+        let key = ns_string("q");
+        let quit_item: *mut Object = msg_send![class!(NSMenuItem), alloc];
+        let quit_item: *mut Object = msg_send![
+            quit_item,
+            initWithTitle: title
+            action: sel!(terminate:)
+            keyEquivalent: key
+        ];
+        let _: () = msg_send![menu, addItem: quit_item];
+    }
+}
 
 /// Replace the contents of `menu` with a fresh device list. Items
 /// fire `action` on `target`; the chosen item gets a checkmark
@@ -210,8 +218,8 @@ unsafe fn populate_device_menu(
     let _: () = msg_send![menu, removeAllItems];
 
     if devices.is_empty() {
-        let title = ns_string("(no devices)");
-        let empty = ns_string("");
+        let title = unsafe { ns_string("(no devices)") };
+        let empty = unsafe { ns_string("") };
         let item: *mut Object = msg_send![class!(NSMenuItem), alloc];
         let item: *mut Object = msg_send![
             item,
@@ -225,8 +233,8 @@ unsafe fn populate_device_menu(
     }
 
     for name in devices {
-        let title = ns_string(name);
-        let empty = ns_string("");
+        let title = unsafe { ns_string(name) };
+        let empty = unsafe { ns_string("") };
         let item: *mut Object = msg_send![class!(NSMenuItem), alloc];
         let item: *mut Object = msg_send![
             item,
@@ -268,11 +276,13 @@ unsafe fn item_title(item: *mut Object) -> Option<String> {
     if cstr.is_null() {
         return None;
     }
-    Some(
+    // SAFETY: `UTF8String` returns a NUL-terminated buffer owned by
+    // the autoreleased NSString — valid for the duration of this call.
+    Some(unsafe {
         std::ffi::CStr::from_ptr(cstr)
             .to_string_lossy()
-            .into_owned(),
-    )
+            .into_owned()
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -435,14 +445,16 @@ fn ensure_class() -> &'static Class {
     Class::get("TruceMenuTarget").unwrap()
 }
 
-unsafe fn state_from<'a>(this: &Object) -> Option<&'a MenuState> { unsafe {
-    let state_ptr: *mut c_void = *this.get_ivar(STATE_IVAR);
-    if state_ptr.is_null() {
-        None
-    } else {
-        Some(&*(state_ptr as *const MenuState))
+unsafe fn state_from<'a>(this: &Object) -> Option<&'a MenuState> {
+    unsafe {
+        let state_ptr: *mut c_void = *this.get_ivar(STATE_IVAR);
+        if state_ptr.is_null() {
+            None
+        } else {
+            Some(&*(state_ptr as *const MenuState))
+        }
     }
-}}
+}
 
 unsafe fn make_menu_target(input: InputController, output: OutputController) -> *mut Object {
     let cls = ensure_class();
@@ -457,7 +469,9 @@ unsafe fn make_menu_target(input: InputController, output: OutputController) -> 
         output_device_menu: std::ptr::null_mut(),
         target: std::ptr::null_mut(),
     }));
-    (*target).set_ivar::<*mut c_void>(STATE_IVAR, state as *mut c_void);
+    // SAFETY: `target` was just `alloc`+`init`'d above; it's a valid
+    // TruceMenuTarget instance whose ivar layout we declared.
+    unsafe { (*target).set_ivar::<*mut c_void>(STATE_IVAR, state as *mut c_void) };
     target
 }
 
@@ -468,15 +482,17 @@ unsafe fn update_menu_state(
     input_device_menu: *mut Object,
     output_device_menu: *mut Object,
     target_self: *mut Object,
-) { unsafe {
-    let state_ptr: *mut c_void = *(*target).get_ivar(STATE_IVAR);
-    if state_ptr.is_null() {
-        return;
+) {
+    unsafe {
+        let state_ptr: *mut c_void = *(*target).get_ivar(STATE_IVAR);
+        if state_ptr.is_null() {
+            return;
+        }
+        let state = &mut *(state_ptr as *mut MenuState);
+        state.mic_item = mic_item;
+        state.output_item = output_item;
+        state.input_device_menu = input_device_menu;
+        state.output_device_menu = output_device_menu;
+        state.target = target_self;
     }
-    let state = &mut *(state_ptr as *mut MenuState);
-    state.mic_item = mic_item;
-    state.output_item = output_item;
-    state.input_device_menu = input_device_menu;
-    state.output_device_menu = output_device_menu;
-    state.target = target_self;
-}}
+}
