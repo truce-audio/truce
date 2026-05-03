@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex};
 use baseview::{Event, EventStatus, Window, WindowHandler, WindowOpenOptions, WindowScalePolicy};
 
 use truce_core::editor::{Editor, EditorBridge, PluginContext, RawWindowHandle};
+use truce_gui::EditorScale;
 use truce_gui::editor::BuiltinEditor;
 use truce_gui::render::RenderBackend;
 use truce_params::Params;
@@ -23,6 +24,13 @@ use crate::platform::ParentWindow;
 pub struct GpuEditor<P: Params> {
     inner: Arc<Mutex<BuiltinEditor<P>>>,
     size: (u32, u32),
+    /// Live content-scale factor, shared with the baseview handler via
+    /// [`truce_gui::EditorScale`]. `set_scale_factor` (host) writes
+    /// here; the handler reads it each frame and updates the
+    /// `WgpuBackend` scale + reconfigures the surface when the value
+    /// diverges from `last_applied_scale`. Single source of truth
+    /// shared with egui / iced / slint backends.
+    scale: EditorScale,
     window: Option<baseview::WindowHandle>,
 }
 
@@ -43,6 +51,7 @@ impl<P: Params + 'static> GpuEditor<P> {
         Self {
             inner: Arc::new(Mutex::new(inner)),
             size,
+            scale: EditorScale::new(truce_gui::backing_scale()),
             window: None,
         }
     }
@@ -55,6 +64,7 @@ impl<P: Params + 'static> GpuEditor<P> {
         Self {
             inner,
             size,
+            scale: EditorScale::new(truce_gui::backing_scale()),
             window: None,
         }
     }
@@ -76,11 +86,29 @@ struct GpuWindowHandler<P: Params> {
     /// Bridge handle, retained so we can drive `request_resize` from
     /// the render loop when hot-reload changes the editor's size.
     bridge: Arc<dyn EditorBridge>,
+    /// Shared with the parent `GpuEditor`; written by `set_scale_factor`
+    /// (host). `on_frame` compares against `last_applied_scale` and
+    /// reconfigures the wgpu surface + MSAA target via
+    /// `WgpuBackend::set_scale` + `resize` when they diverge.
+    scale: EditorScale,
+    last_applied_scale: f32,
 }
 
 impl<P: Params + 'static> WindowHandler for GpuWindowHandler<P> {
     fn on_frame(&mut self, _window: &mut Window) {
         if let Some(ref mut gpu) = self.gpu {
+            // Pick up host-driven scale changes (CLAP `set_scale`, VST3
+            // `IPlugViewContentScaleSupport`) that landed in the shared
+            // cell since the last frame. There is no Resized fallback
+            // here because the GPU path disallows host-driven resize
+            // (see on_event), so the shared cell is the only writer.
+            let cur_scale = self.scale.get() as f32;
+            if cur_scale != self.last_applied_scale {
+                gpu.set_scale(cur_scale);
+                gpu.resize(self.current_size.0, self.current_size.1);
+                self.last_applied_scale = cur_scale;
+            }
+
             if let Ok(mut inner) = self.inner.lock() {
                 #[cfg(feature = "hot-debug")]
                 if !inner.has_context() {
@@ -158,7 +186,14 @@ impl<P: Params + 'static> Editor for GpuEditor<P> {
     }
 
     fn open(&mut self, parent: RawWindowHandle, context: PluginContext) {
-        let system_scale = truce_gui::backing_scale();
+        // Refresh the shared scale from the parent window — on macOS
+        // this is the live `[NSWindow backingScaleFactor]`, on Windows
+        // the per-monitor DPI from the parent HWND. Any
+        // `set_scale_factor` the host issues *after* open will
+        // overwrite this through the same shared cell.
+        self.scale
+            .set(crate::platform::query_backing_scale(&parent));
+        let system_scale = self.scale.get();
         let (lw, lh) = self.size; // logical points
 
         hot_debug!("[truce-gpu] open() called, size={}x{}", lw, lh);
@@ -175,6 +210,7 @@ impl<P: Params + 'static> Editor for GpuEditor<P> {
 
         let inner = Arc::clone(&self.inner);
         let size = self.size;
+        let scale_handle = self.scale.clone();
 
         let options = WindowOpenOptions {
             title: String::from("truce-gpu"),
@@ -197,11 +233,22 @@ impl<P: Params + 'static> Editor for GpuEditor<P> {
                     translator: truce_gui::interaction::BaseviewTranslator::new(),
                     current_size: size,
                     bridge,
+                    scale: scale_handle,
+                    last_applied_scale: scale,
                 }
             },
         );
 
         self.window = Some(window);
+    }
+
+    fn set_scale_factor(&mut self, factor: f64) {
+        // Write to the shared cell; the baseview handler picks up the
+        // change on its next frame and reconfigures the wgpu surface +
+        // MSAA target via `WgpuBackend::set_scale` + `resize`. Replaces
+        // the default no-op (host scale was previously dropped on the
+        // floor for the GPU path).
+        self.scale.set(factor);
     }
 
     fn close(&mut self) {

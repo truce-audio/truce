@@ -9,4 +9,4 @@
 //! the four GUI crates' versions could (and did) drift in tiny ways
 //! between releases.
 
-pub use truce_gui::platform::{ParentWindow, create_wgpu_surface};
+pub use truce_gui::platform::{ParentWindow, create_wgpu_surface, query_backing_scale};

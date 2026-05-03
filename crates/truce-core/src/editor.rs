@@ -186,6 +186,20 @@ pub trait EditorBridge: Send + Sync {
     /// Format the parameter's current value as a display string,
     /// applying the plugin's `format_value` impl + unit suffix.
     fn format_param(&self, id: u32) -> String;
+    /// Format into a caller-provided buffer instead of returning a
+    /// fresh `String`. The default impl calls
+    /// [`Self::format_param`] and copies, so the *bridge-internal*
+    /// allocation still happens; the win for the caller is that the
+    /// `out` buffer's capacity is reused across calls (e.g.
+    /// `ParamCache::sync` polls one label per changed param per
+    /// frame and would otherwise drop+reallocate the cached
+    /// `String` slot every time). Bridges that produce the formatted
+    /// string from raw value bytes can override to drop the
+    /// internal allocation too.
+    fn format_param_into(&self, id: u32, out: &mut String) {
+        out.clear();
+        out.push_str(&self.format_param(id));
+    }
     /// Read a meter value (0.0–1.0) by meter ID. Returns 0.0 if the
     /// meter ID isn't registered.
     fn get_meter(&self, id: u32) -> f32;
@@ -354,6 +368,13 @@ impl<P: ?Sized> PluginContext<P> {
     }
     pub fn format_param(&self, id: impl Into<u32>) -> String {
         self.bridge.format_param(id.into())
+    }
+    /// Format into a caller-owned buffer. See
+    /// [`EditorBridge::format_param_into`] for the allocation
+    /// trade-off — the caller's buffer is reused, but bridges that
+    /// don't override the default impl still allocate internally.
+    pub fn format_param_into(&self, id: impl Into<u32>, out: &mut String) {
+        self.bridge.format_param_into(id.into(), out);
     }
     pub fn get_meter(&self, id: impl Into<u32>) -> f32 {
         self.bridge.get_meter(id.into())

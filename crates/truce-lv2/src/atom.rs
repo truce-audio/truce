@@ -519,11 +519,14 @@ pub unsafe fn write_time_position_sequence(
         let mut prop_offset = obj_header_size;
         let prop_header_size = core::mem::size_of::<Urid>() * 2 + core::mem::size_of::<Atom>();
 
-        let mut write_double = |key: Urid, value: f64| -> bool {
-            if key == 0 || urid.atom_double == 0 {
+        // Both writers share `prop_offset` and the same prop-header
+        // layout. `atom_typed_size` is parameterized so `time:bar` /
+        // `time:frame` / `time:beatsPerBar` / `time:beatUnit` can use
+        // the spec's `xsd:long` / `xsd:int` types instead of `xsd:double`.
+        let mut write_typed = |key: Urid, atom_type: Urid, value_size: usize, write_value: &dyn Fn(*mut u8)| -> bool {
+            if key == 0 || atom_type == 0 {
                 return false;
             }
-            let value_size = core::mem::size_of::<f64>();
             let total = prop_header_size + value_size;
             let padded = (total + 7) & !7;
             if ev_header_size + prop_offset + padded > capacity {
@@ -534,9 +537,9 @@ pub unsafe fn write_time_position_sequence(
             *(entry.add(core::mem::size_of::<Urid>()) as *mut Urid) = 0; // context
             let atom_hdr = entry.add(core::mem::size_of::<Urid>() * 2) as *mut Atom;
             (*atom_hdr).size = value_size as u32;
-            (*atom_hdr).type_ = urid.atom_double;
+            (*atom_hdr).type_ = atom_type;
             let value_ptr = entry.add(prop_header_size);
-            *(value_ptr as *mut f64) = value;
+            write_value(value_ptr);
             prop_offset += padded;
             true
         };
@@ -552,15 +555,50 @@ pub unsafe fn write_time_position_sequence(
         } else {
             4.0
         };
-        let bar_index = (info.bar_start_beats / bpb).round();
+        let bar_index = (info.bar_start_beats / bpb).round() as i64;
         let bar_beat = info.position_beats - info.bar_start_beats;
-        write_double(urid.time_speed, if info.playing { 1.0 } else { 0.0 });
-        write_double(urid.time_beats_per_minute, info.tempo);
-        write_double(urid.time_bar_beat, bar_beat);
-        write_double(urid.time_bar, bar_index);
-        write_double(urid.time_frame, info.position_samples as f64);
-        write_double(urid.time_beats_per_bar, info.time_sig_num as f64);
-        write_double(urid.time_beat_unit, info.time_sig_den as f64);
+        // Bail at the first overflow so the partial atom-object we'd
+        // otherwise emit (with a body.size derived from `prop_offset`
+        // but missing later properties) doesn't end up in the wire
+        // stream — strict hosts (Ardour, Carla) reject malformed
+        // objects.
+        let mut ok = true;
+        ok = ok && write_typed(urid.time_speed, urid.atom_double, 8, &|p| {
+            *(p as *mut f64) = if info.playing { 1.0 } else { 0.0 };
+        });
+        ok = ok && write_typed(urid.time_beats_per_minute, urid.atom_double, 8, &|p| {
+            *(p as *mut f64) = info.tempo;
+        });
+        ok = ok && write_typed(urid.time_bar_beat, urid.atom_float, 4, &|p| {
+            *(p as *mut f32) = bar_beat as f32;
+        });
+        // LV2 spec types: `time:bar` is `xsd:long`, `time:frame` is
+        // `xsd:long`, `time:beatsPerBar` is `xsd:int`, `time:beatUnit`
+        // is `xsd:int`. Strict hosts (Ardour, Carla) type-check the
+        // atom value and reject `xsd:double` for these. Round-trip
+        // works in-tree because our reader (`read_atom_number`)
+        // accepts any numeric type, but cross-host interop suffers.
+        ok = ok && write_typed(urid.time_bar, urid.atom_long, 8, &|p| {
+            *(p as *mut i64) = bar_index;
+        });
+        ok = ok && write_typed(urid.time_frame, urid.atom_long, 8, &|p| {
+            *(p as *mut i64) = info.position_samples;
+        });
+        ok = ok && write_typed(urid.time_beats_per_bar, urid.atom_int, 4, &|p| {
+            *(p as *mut i32) = info.time_sig_num as i32;
+        });
+        ok = ok && write_typed(urid.time_beat_unit, urid.atom_int, 4, &|p| {
+            *(p as *mut i32) = info.time_sig_den as i32;
+        });
+        if !ok {
+            // Drop the whole notify event if any property didn't fit.
+            // The notify-out port's `rsz:minimumSize 4096` is sized
+            // for the worst case (~150B for this object) so we
+            // shouldn't hit this in practice — but the bail makes the
+            // wire format strictly correct rather than relying on the
+            // size declaration.
+            return;
+        }
 
         // `prop_offset` already includes `obj_header_size` — it started at
         // that value and advanced for each property written.

@@ -301,9 +301,23 @@ impl<P: Params + 'static> HotEditor<P> {
         //
         // The watcher shares the audio-path `NativeLoader` so the
         // version the GUI renders is always the version the audio
-        // path is running. Lock contention is handled with
-        // `try_lock` — audio thread always wins, the watcher backs
-        // off and retries on the next 500 ms tick.
+        // path is running.
+        //
+        // Lock contention with the audio thread is handled with
+        // `try_lock_for(50ms)` rather than `try_lock`. The audio
+        // thread holds the loader lock for the entire `process()`
+        // call (a few ms per buffer); a bare `try_lock` against a
+        // process-rate of ~344 Hz routinely misses, and under
+        // sustained audio load (large blocks, heavy DSP) the bare
+        // `try_lock` can starve indefinitely. 50 ms is large enough
+        // to wait through several audio buffers but small enough that
+        // the watcher tick still feels live.
+        //
+        // The 500 ms poll cadence is chunked into 50 ms stop-flag
+        // checks so that dropping the editor (Drop calls
+        // `stop_flag.store(true)`) wakes the watcher within ~50 ms
+        // instead of having to wait the full poll interval. Same
+        // shape as `loader::watch_loop`.
         //
         // Last-seen `load_counter` is tracked locally so the watcher
         // can also detect *audio-driven* reloads (audio's `process()`
@@ -318,21 +332,35 @@ impl<P: Params + 'static> HotEditor<P> {
             .name("truce-gui-reload".into())
             .spawn(move || {
                 hot_debug!("[truce-gui-reload] watcher thread started");
+                const POLL_INTERVAL: std::time::Duration =
+                    std::time::Duration::from_millis(500);
+                const STOP_CHECK: std::time::Duration =
+                    std::time::Duration::from_millis(50);
+                const LOCK_WAIT: std::time::Duration = std::time::Duration::from_millis(50);
+                let chunks = (POLL_INTERVAL.as_millis() / STOP_CHECK.as_millis()) as u32;
+
                 let mut last_seen_counter: u64 = 0;
-                if let Some(guard) = loader_for_thread.try_lock() {
+                if let Some(guard) = loader_for_thread.try_lock_for(LOCK_WAIT) {
                     last_seen_counter = guard.load_counter();
                 }
                 loop {
-                    std::thread::sleep(std::time::Duration::from_millis(500));
-                    if stop_flag.load(Ordering::Relaxed) {
-                        hot_debug!("[truce-gui-reload] watcher thread stopping (editor dropped)");
-                        return;
+                    for _ in 0..chunks {
+                        std::thread::sleep(STOP_CHECK);
+                        if stop_flag.load(Ordering::Relaxed) {
+                            hot_debug!(
+                                "[truce-gui-reload] watcher thread stopping (editor dropped)"
+                            );
+                            return;
+                        }
                     }
 
-                    // Take the shared loader lock with `try_lock`. If
-                    // audio has the lock, fall through to the next
-                    // tick — the dylib state isn't going anywhere.
-                    let Some(mut guard) = loader_for_thread.try_lock() else {
+                    // Wait briefly for the loader lock — the audio
+                    // thread holds it across each `process()` call,
+                    // and a bare `try_lock` would routinely miss
+                    // under sustained audio activity. 50 ms is big
+                    // enough to span multiple buffers but small
+                    // enough that the watcher tick still feels live.
+                    let Some(mut guard) = loader_for_thread.try_lock_for(LOCK_WAIT) else {
                         hot_debug!("[truce-gui-reload] loader busy (audio holds lock); retrying");
                         continue;
                     };

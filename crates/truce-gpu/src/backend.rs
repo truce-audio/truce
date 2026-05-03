@@ -926,12 +926,25 @@ impl WgpuBackend {
         }
     }
 
-    /// Display scale factor baked at construction: `logical × scale =
-    /// physical`. Callers sizing sibling GPU resources (e.g. an
-    /// intermediate texture that the backend will resolve into) should
-    /// use this to stay consistent with the backend's raster dimensions.
+    /// Display scale factor: `logical × scale = physical`. Callers
+    /// sizing sibling GPU resources (e.g. an intermediate texture that
+    /// the backend will resolve into) should use this to stay
+    /// consistent with the backend's raster dimensions.
     pub fn scale(&self) -> f32 {
         self.scale
+    }
+
+    /// Update the display scale factor. The next [`Self::resize`] (or
+    /// [`Self::begin_frame`] in headless mode) recomputes physical
+    /// dimensions and reconfigures the surface / MSAA target. Callers
+    /// driving a windowed surface should follow with a `resize` so the
+    /// surface_config picks up the new size on the same frame; the
+    /// short-circuit in `resize` doesn't trigger because the scale
+    /// change makes the new physical dims differ from the old.
+    pub fn set_scale(&mut self, scale: f32) {
+        if scale.is_finite() && scale > 0.0 {
+            self.scale = scale;
+        }
     }
 
     /// Flush accumulated geometry into a single render pass on `view`,

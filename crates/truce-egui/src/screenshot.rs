@@ -92,7 +92,12 @@ pub(crate) fn render_with_state<P: Params + ?Sized>(
     ))
     .ok()?;
 
-    let format = wgpu::TextureFormat::Rgba8UnormSrgb;
+    // Match the live render path, which picks the first non-sRGB
+    // surface format in `renderer.rs` (`!f.is_srgb()`). Also matches
+    // `truce-gpu::WgpuBackend::headless`, so all GPU-backed
+    // screenshots produce pixel bytes in the same color space and
+    // each backend's screenshot reflects its own live output.
+    let format = wgpu::TextureFormat::Rgba8Unorm;
 
     // Physical pixel dimensions
     let phys_w = (width as f32 * pixels_per_point) as u32;

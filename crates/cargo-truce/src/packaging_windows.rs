@@ -374,28 +374,7 @@ fn resolve_plugins<'a>(
     config: &'a Config,
     filter: Option<&str>,
 ) -> std::result::Result<Vec<&'a PluginDef>, crate::BoxErr> {
-    Ok(if let Some(filter) = filter {
-        let matched: Vec<&PluginDef> = config
-            .plugin
-            .iter()
-            .filter(|p| p.crate_name == filter)
-            .collect();
-        if matched.is_empty() {
-            return Err(format!(
-                "No plugin with crate name '{filter}'. Available: {}",
-                config
-                    .plugin
-                    .iter()
-                    .map(|p| p.crate_name.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )
-            .into());
-        }
-        matched
-    } else {
-        config.plugin.iter().collect()
-    })
+    crate::commands::pick_plugins(config, filter)
 }
 
 // ---------------------------------------------------------------------------

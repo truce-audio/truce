@@ -102,9 +102,13 @@ impl NativeLoader {
     /// Build, verify, and instantiate a fresh dylib at `dylib_path`.
     /// Does not touch `self.library` / `self.plugin`. Caller decides
     /// whether to swap the old state out for the result.
-    fn build_candidate(&mut self) -> Option<Candidate> {
-        let new_hash = crc32_file(&self.dylib_path);
-
+    ///
+    /// `new_hash` comes from the caller to avoid re-reading the dylib
+    /// — `load` and `reload` already hashed it to detect "unchanged"
+    /// before deciding to call us. The previous shape re-hashed inside
+    /// here, doubling I/O on every successful reload (a 5-20 MB read
+    /// twice per poll for a 5-20 MB dylib).
+    fn build_candidate(&mut self, new_hash: u32) -> Option<Candidate> {
         // Copy to versioned temp path to defeat macOS dyld cache.
         let temp = match self.copy_versioned() {
             Ok(p) => p,
@@ -197,12 +201,18 @@ impl NativeLoader {
 
     /// Initial load. Called from `new()`.
     fn load(&mut self) -> bool {
-        let new_hash = crc32_file(&self.dylib_path);
+        let Some(new_hash) = crc32_file(&self.dylib_path) else {
+            log::warn!(
+                "failed to hash dylib at {} (missing / unreadable / mid-write); skipping load",
+                self.dylib_path.display()
+            );
+            return false;
+        };
         if new_hash == self.last_hash && self.library.is_some() {
             log::debug!("dylib unchanged (CRC32 match), skipping reload");
             return true;
         }
-        match self.build_candidate() {
+        match self.build_candidate(new_hash) {
             Some(cand) => {
                 self.library = Some(cand.library);
                 self.plugin = Some(cand.plugin);
@@ -223,14 +233,20 @@ impl NativeLoader {
     pub fn reload(&mut self) -> bool {
         self.reload_pending.store(false, Ordering::Relaxed);
 
-        let new_hash = crc32_file(&self.dylib_path);
+        let Some(new_hash) = crc32_file(&self.dylib_path) else {
+            log::warn!(
+                "failed to hash dylib at {} (missing / unreadable / mid-write); keeping previous plugin loaded",
+                self.dylib_path.display()
+            );
+            return false;
+        };
         if new_hash == self.last_hash && self.library.is_some() {
             log::debug!("dylib unchanged (CRC32 match), skipping reload");
             return true;
         }
 
         // Build + verify the candidate while the old plugin is still alive.
-        let Some(candidate) = self.build_candidate() else {
+        let Some(candidate) = self.build_candidate(new_hash) else {
             log::warn!("hot-reload failed; keeping previous plugin loaded");
             return false;
         };
@@ -383,23 +399,27 @@ fn file_mtime(path: &std::path::Path) -> SystemTime {
 /// transitively (via `png`/`image` etc.) and is roughly 30× faster
 /// than the table-free byte-at-a-time implementation we previously
 /// inlined to avoid adding an explicit dep.
-fn crc32_file(path: &std::path::Path) -> u32 {
+///
+/// Returns `None` on `open` / `read` failure (file missing,
+/// permissions, mid-write interruption). An empty file successfully
+/// hashes to `Some(0)` (CRC of empty input) — distinct from the I/O
+/// failure case so callers can log the two differently. The previous
+/// signature collapsed both into `0`, which then aliased the initial
+/// `last_hash = 0` and silently treated unreadable files as "unchanged".
+fn crc32_file(path: &std::path::Path) -> Option<u32> {
     use std::io::Read;
-    let Ok(mut file) = std::fs::File::open(path) else {
-        return 0;
-    };
+    let mut file = std::fs::File::open(path).ok()?;
     let mut hasher = crc32fast::Hasher::new();
     let mut buf = [0u8; 8 * 1024];
     loop {
         match file.read(&mut buf) {
             Ok(0) => break,
             Ok(n) => hasher.update(&buf[..n]),
-            // Treat partial-read interruption / I/O failure the same way
-            // the old whole-file `read()` did — return 0 and let the
-            // caller retry on the next poll. The compiler's mid-write
-            // window is the common case here.
-            Err(_) => return 0,
+            // Partial-read interruption / I/O failure — return None and
+            // let the caller retry on the next poll. The compiler's
+            // mid-write window is the common case here.
+            Err(_) => return None,
         }
     }
-    hasher.finalize()
+    Some(hasher.finalize())
 }

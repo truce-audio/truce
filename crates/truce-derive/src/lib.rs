@@ -244,6 +244,11 @@ struct ParamAttrs {
     smooth: Option<String>,
     format_fn: Option<String>,
     parse_fn: Option<String>,
+    /// Compile-error tokens collected during parsing — emitted by
+    /// the derive output so unknown keys and unexpected literal
+    /// kinds surface at compile time instead of as silent default
+    /// values.
+    errors: Vec<proc_macro2::TokenStream>,
 }
 
 fn type_last_segment(ty: &Type) -> Option<String> {
@@ -279,50 +284,79 @@ fn classify_param_type(ty: &Type) -> Option<ParamKind> {
     }
 }
 
-/// Parse `#[param(...)]` attributes from a field.
+/// Parse `#[param(...)]` attributes from a field. Errors carried in
+/// `attrs.errors` instead of bubbling out so the caller can keep
+/// collecting (each malformed attribute should produce a separate
+/// `compile_error!` rather than the first one short-circuiting).
 fn parse_param_attrs(field: &syn::Field) -> ParamAttrs {
     let mut attrs = ParamAttrs::default();
+    // Helper: turn a `syn::Error` into a `compile_error!` token stream
+    // and stash it. Used both by the explicit "unknown key" / "wrong
+    // literal kind" arms and by `parse_nested_meta`'s own bubbled
+    // errors below.
+    let push_err = |attrs: &mut ParamAttrs, e: syn::Error| {
+        attrs.errors.push(e.to_compile_error());
+    };
     for attr in &field.attrs {
         if !attr.path().is_ident("param") {
             continue;
         }
-        let _ = attr.parse_nested_meta(|meta| {
+        // `parse_nested_meta`'s closure can only return one error per
+        // call (it short-circuits the *current* attribute group on
+        // first Err), so route per-key errors through `attrs.errors`
+        // instead — each malformed key generates a `compile_error!`
+        // and parsing continues.
+        let parse_result = attr.parse_nested_meta(|meta| {
             let key = meta
                 .path
                 .get_ident()
                 .map(|i| i.to_string())
                 .unwrap_or_default();
+            // Two-step pattern for the string-typed keys: parse the
+            // literal first, then either assign or stash a
+            // compile_error. Avoids needing `&mut attrs` aliased with
+            // `&mut attrs.<field>` inside a closure.
+            let take_str_into = |slot: &mut Option<String>,
+                                 errors: &mut Vec<proc_macro2::TokenStream>,
+                                 key_name: &str|
+             -> syn::Result<()> {
+                let value: Lit = meta.value()?.parse()?;
+                match value {
+                    Lit::Str(lit) => {
+                        *slot = Some(lit.value());
+                    }
+                    other => {
+                        errors.push(
+                            syn::Error::new_spanned(
+                                other,
+                                format!("`#[param({key_name} = ...)]` expects a string literal"),
+                            )
+                            .to_compile_error(),
+                        );
+                    }
+                }
+                Ok(())
+            };
             match key.as_str() {
                 "id" => {
                     let value: Lit = meta.value()?.parse()?;
-                    if let Lit::Int(lit) = value {
-                        attrs.id = Some(lit.base10_parse()?);
+                    match value {
+                        Lit::Int(lit) => attrs.id = Some(lit.base10_parse()?),
+                        other => push_err(
+                            &mut attrs,
+                            syn::Error::new_spanned(
+                                other,
+                                "`#[param(id = ...)]` expects an integer literal",
+                            ),
+                        ),
                     }
                 }
-                "name" => {
-                    let value: Lit = meta.value()?.parse()?;
-                    if let Lit::Str(lit) = value {
-                        attrs.name = Some(lit.value());
-                    }
-                }
+                "name" => take_str_into(&mut attrs.name, &mut attrs.errors, "name")?,
                 "short_name" => {
-                    let value: Lit = meta.value()?.parse()?;
-                    if let Lit::Str(lit) = value {
-                        attrs.short_name = Some(lit.value());
-                    }
+                    take_str_into(&mut attrs.short_name, &mut attrs.errors, "short_name")?
                 }
-                "group" => {
-                    let value: Lit = meta.value()?.parse()?;
-                    if let Lit::Str(lit) = value {
-                        attrs.group = Some(lit.value());
-                    }
-                }
-                "range" => {
-                    let value: Lit = meta.value()?.parse()?;
-                    if let Lit::Str(lit) = value {
-                        attrs.range = Some(lit.value());
-                    }
-                }
+                "group" => take_str_into(&mut attrs.group, &mut attrs.errors, "group")?,
+                "range" => take_str_into(&mut attrs.range, &mut attrs.errors, "range")?,
                 "default" => {
                     // `meta.value()` returns the stream after `=`. Parse as
                     // an `Expr` so we accept negative literals like
@@ -331,49 +365,38 @@ fn parse_param_attrs(field: &syn::Field) -> ParamAttrs {
                     let expr: Expr = meta.value()?.parse()?;
                     match parse_default_expr(&expr) {
                         Some(v) => attrs.default = Some(v),
-                        None => {
-                            return Err(meta.error(
+                        None => push_err(
+                            &mut attrs,
+                            syn::Error::new_spanned(
+                                &expr,
                                 "expected a numeric literal for `default` \
-                                 (e.g. `default = 0.5`, `default = 3`, \
-                                 `default = -1`)",
-                            ));
-                        }
+                                 (e.g. `default = 0.5`, `default = 3`, `default = -1`)",
+                            ),
+                        ),
                     }
                 }
-                "unit" => {
-                    let value: Lit = meta.value()?.parse()?;
-                    if let Lit::Str(lit) = value {
-                        attrs.unit = Some(lit.value());
-                    }
+                "unit" => take_str_into(&mut attrs.unit, &mut attrs.errors, "unit")?,
+                "flags" => take_str_into(&mut attrs.flags, &mut attrs.errors, "flags")?,
+                "smooth" => take_str_into(&mut attrs.smooth, &mut attrs.errors, "smooth")?,
+                "format" => take_str_into(&mut attrs.format_fn, &mut attrs.errors, "format")?,
+                "parse" => take_str_into(&mut attrs.parse_fn, &mut attrs.errors, "parse")?,
+                other => {
+                    push_err(
+                        &mut attrs,
+                        meta.error(format!(
+                            "unknown `#[param]` key `{other}` (expected one of: id, name, \
+                             short_name, group, range, default, unit, flags, smooth, format, parse)",
+                        )),
+                    );
                 }
-                "flags" => {
-                    let value: Lit = meta.value()?.parse()?;
-                    if let Lit::Str(lit) = value {
-                        attrs.flags = Some(lit.value());
-                    }
-                }
-                "smooth" => {
-                    let value: Lit = meta.value()?.parse()?;
-                    if let Lit::Str(lit) = value {
-                        attrs.smooth = Some(lit.value());
-                    }
-                }
-                "format" => {
-                    let value: Lit = meta.value()?.parse()?;
-                    if let Lit::Str(lit) = value {
-                        attrs.format_fn = Some(lit.value());
-                    }
-                }
-                "parse" => {
-                    let value: Lit = meta.value()?.parse()?;
-                    if let Lit::Str(lit) = value {
-                        attrs.parse_fn = Some(lit.value());
-                    }
-                }
-                _ => {}
             }
             Ok(())
         });
+        // `parse_nested_meta` itself can fail at the tokenizer level
+        // (mis-typed `=`, stray punctuation). Surface those too.
+        if let Err(e) = parse_result {
+            push_err(&mut attrs, e);
+        }
     }
     attrs
 }
@@ -590,8 +613,12 @@ fn parse_flags_tokens(flags: &str) -> proc_macro2::TokenStream {
     }
 }
 
-/// Parse a smoothing string into SmoothingStyle tokens.
+/// Parse a smoothing string into SmoothingStyle tokens. Same
+/// loud-on-malformed contract as `parse_unit_tokens` /
+/// `parse_range_tokens`: every typo emits a `compile_error!` instead
+/// of silently swallowing the bad value.
 fn parse_smooth_tokens(smooth: &str) -> proc_macro2::TokenStream {
+    let bad = |msg: String| quote! { compile_error!(#msg) };
     if smooth == "none" {
         return quote! { ::truce::params::SmoothingStyle::None };
     }
@@ -599,24 +626,43 @@ fn parse_smooth_tokens(smooth: &str) -> proc_macro2::TokenStream {
         .strip_prefix("linear(")
         .and_then(|s| s.strip_suffix(')'))
     {
-        let ms: f64 = inner.trim().parse().unwrap_or(20.0);
-        return quote! { ::truce::params::SmoothingStyle::Linear(#ms) };
+        return match inner.trim().parse::<f64>() {
+            Ok(ms) => quote! { ::truce::params::SmoothingStyle::Linear(#ms) },
+            Err(_) => bad(format!(
+                "smooth = \"linear({inner})\" expects a numeric milliseconds value \
+                 (e.g. `smooth = \"linear(20)\"`)",
+            )),
+        };
     }
     if let Some(inner) = smooth
         .strip_prefix("exp(")
         .and_then(|s| s.strip_suffix(')'))
     {
-        let ms: f64 = inner.trim().parse().unwrap_or(5.0);
-        return quote! { ::truce::params::SmoothingStyle::Exponential(#ms) };
+        return match inner.trim().parse::<f64>() {
+            Ok(ms) => quote! { ::truce::params::SmoothingStyle::Exponential(#ms) },
+            Err(_) => bad(format!(
+                "smooth = \"exp({inner})\" expects a numeric milliseconds value \
+                 (e.g. `smooth = \"exp(5)\"`)",
+            )),
+        };
     }
-    quote! { ::truce::params::SmoothingStyle::None }
+    bad(format!(
+        "unknown smoothing style `{smooth}` — supported: \"none\", \"linear(<ms>)\", \"exp(<ms>)\"",
+    ))
 }
 
 /// Generate a constructor call for a field with `#[param(...)]` attributes.
 fn gen_field_constructor(f: &ParamField) -> proc_macro2::TokenStream {
     let a = &f.attrs;
 
-    let id = a.id.unwrap_or(0);
+    // `f.id()` carries the `expect`-guarded "must run after auto-assign"
+    // invariant; using it here surfaces the order-of-call contract at
+    // construction time instead of silently minting `id = 0`. Today
+    // every caller drives this via `assign_param_ids` first, but a
+    // future refactor that calls `gen_field_constructor` out of order
+    // panics with a precise message rather than producing colliding
+    // id=0 params.
+    let id = f.id();
     let name = a.name.as_deref().unwrap_or("Unnamed");
     let short_name = a.short_name.as_deref().unwrap_or(name);
     let group = a.group.as_deref().unwrap_or("");
@@ -847,10 +893,28 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
     let infos_expr = if nested_fields.is_empty() {
         quote! { vec![#(#own_infos),*] }
     } else {
+        // Recurse via `append_param_infos` so each nested struct
+        // pushes directly into the shared buffer instead of building
+        // its own `Vec` that the outer call then extends. Saves
+        // O(depth) intermediate allocations per `param_infos()` call.
         quote! {
             let mut infos = vec![#(#own_infos),*];
-            #(infos.extend(self.#nested_idents.param_infos());)*
+            #(self.#nested_idents.append_param_infos(&mut infos);)*
             infos
+        }
+    };
+
+    // Override `append_param_infos` so the buffer-based form
+    // recurses without the extra `Vec` round-trip in nested cases.
+    // Plain (non-nested) structs accept the default impl.
+    let append_infos_impl = if nested_fields.is_empty() {
+        quote! {}
+    } else {
+        quote! {
+            fn append_param_infos(&self, into: &mut Vec<::truce::params::ParamInfo>) {
+                #(into.push(#own_infos);)*
+                #(self.#nested_idents.append_param_infos(into);)*
+            }
         }
     };
 
@@ -1206,7 +1270,19 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
         quote! {}
     };
 
+    // Surface every `compile_error!` collected by `parse_param_attrs`
+    // (unknown keys, wrong literal kinds, malformed `default = ...`).
+    // Emitted alongside the impl rather than instead of it so the
+    // diagnostics are precise; downstream type errors from a malformed
+    // attribute aren't masked by a missing `Params` impl.
+    let attr_errors: Vec<proc_macro2::TokenStream> = param_fields
+        .iter()
+        .flat_map(|f| f.attrs.errors.iter().cloned())
+        .collect();
+
     let expanded = quote! {
+        #(#attr_errors)*
+
         #new_impl
 
         #param_id_enum
@@ -1215,6 +1291,8 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
             fn param_infos(&self) -> Vec<::truce::params::ParamInfo> {
                 #infos_expr
             }
+
+            #append_infos_impl
 
             fn count(&self) -> usize {
                 #count_expr
@@ -1572,7 +1650,17 @@ pub fn derive_state(input: TokenStream) -> TokenStream {
             fn deserialize(data: &[u8]) -> Option<Self> {
                 let mut cursor = ::truce::core::custom_state::StateCursor::new(data);
                 let count_bytes = cursor.read_bytes(4)?;
-                let stored_count = u32::from_le_bytes(count_bytes.try_into().ok()?) as usize;
+                // Cap `stored_count` at the cursor's remaining-byte
+                // count: each forward-compat field carries at minimum
+                // a 4-byte length prefix (read inside `skip_field`),
+                // so a `stored_count` larger than the data can possibly
+                // hold is hostile / corrupt input. The break inside
+                // the loop already terminates on `skip_field()` →
+                // false, but bounding `stored_count` up front keeps a
+                // multi-GB synthetic count from forcing a long loop
+                // before the buffer underrun is detected.
+                let stored_count = (u32::from_le_bytes(count_bytes.try_into().ok()?) as usize)
+                    .min(cursor.remaining() / 4 + #field_count);
                 let mut result = Self::default();
                 let mut field_idx: usize = 0;
                 #(#read_fields)*

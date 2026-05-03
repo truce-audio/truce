@@ -66,6 +66,14 @@ pub trait Params: Send + Sync + 'static {
     /// All parameter infos, in declaration order.
     fn param_infos(&self) -> Vec<ParamInfo>;
 
+    /// Append parameter infos onto an existing buffer. Default impl
+    /// delegates to [`Self::param_infos`] and `extend`s; the derive
+    /// macro overrides for nested structs so deep trees don't pay
+    /// O(depth) intermediate `Vec` allocations per outer call.
+    fn append_param_infos(&self, into: &mut Vec<ParamInfo>) {
+        into.extend(self.param_infos());
+    }
+
     /// Number of parameters.
     fn count(&self) -> usize;
 
@@ -94,6 +102,28 @@ pub trait Params: Send + Sync + 'static {
     /// without coordination — every implementation must be sound under
     /// concurrent `&self` writes from multiple threads.
     fn set_normalized(&self, id: u32, value: f64);
+
+    /// Set normalized value and read back the resulting plain value in
+    /// one call. CLAP / AU forward the plain value to the host's
+    /// automation channel after a GUI write. The default impl is the
+    /// obvious `set_normalized` then `get_plain`; concrete `Params`
+    /// implementations that can compute both in one trait dispatch
+    /// (e.g. the `#[derive(Params)]` output) should override for a
+    /// single match-arm walk.
+    fn set_normalized_returning_plain(&self, id: u32, value: f64) -> f64 {
+        self.set_normalized(id, value);
+        self.get_plain(id).unwrap_or(0.0)
+    }
+
+    /// Set normalized value and read back the (post-clamp / post-step)
+    /// normalized value in one call. VST3 / VST2 / AAX forward
+    /// normalized values to the host's automation channel. Same
+    /// override-for-single-dispatch contract as
+    /// [`Self::set_normalized_returning_plain`].
+    fn set_normalized_returning_normalized(&self, id: u32, value: f64) -> f64 {
+        self.set_normalized(id, value);
+        self.get_normalized(id).unwrap_or(0.0)
+    }
 
     /// Get plain value by ID.
     fn get_plain(&self, id: u32) -> Option<f64>;

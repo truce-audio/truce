@@ -307,8 +307,13 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
 
 unsafe extern "C" fn cb_param_count<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
     unsafe {
+        // Read the cached `param_ranges.len()` rather than walking the
+        // `Params` impl. The cache is built once at instantiation
+        // (`Vst3Instance::new`) and never grows; trait dispatch was
+        // free per-call but consistent with the cache-first pattern
+        // the rest of the file uses.
         let inst = &*(ctx as *mut Vst3Instance<P>);
-        inst.plugin.params().count() as u32
+        inst.param_ranges.len() as u32
     }
 }
 
@@ -555,14 +560,21 @@ unsafe extern "C" fn cb_get_output_event<P: PluginExport>(
 ) {
     unsafe {
         let inst = &*(ctx as *mut Vst3Instance<P>);
-        // Walk the filtered iterator until we hit the index-th encodable event.
-        if let Some(packet) = inst
+        // Walk the filtered iterator until we hit the index-th
+        // encodable event. Out-of-range index → leave `*out` untouched
+        // is the documented contract; `*out` was zero-initialized by
+        // the C++ shim before calling. Returning explicitly here makes
+        // a future shim regression (forgetting to bounds-check
+        // against `cb_get_output_event_count`) fail loudly rather
+        // than emit stale stack data.
+        match inst
             .output_events
             .iter()
             .filter_map(try_encode_vst3_midi)
             .nth(index as usize)
         {
-            *out = packet;
+            Some(packet) => *out = packet,
+            None => return,
         }
     }
 }
@@ -621,6 +633,11 @@ unsafe extern "C" fn cb_gui_set_content_scale<P: PluginExport>(
         if ctx.is_null() || !scale.is_finite() || scale <= 0.0 {
             return;
         }
+        // Clamp to the same range the GUI cluster's `EditorScale`
+        // cell uses. A buggy host passing `f64::MAX` would otherwise
+        // propagate to the editor and overflow when the editor
+        // multiplies its logical size to physical pixels.
+        let scale = scale.clamp(0.25, 8.0);
         let inst = &mut *(ctx as *mut Vst3Instance<P>);
         inst.host_scale = scale;
         if let Some(ref mut editor) = inst.editor {
@@ -651,8 +668,11 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                         ffi::truce_vst3_begin_edit(ctx_raw.as_ptr() as *mut std::ffi::c_void, id);
                     }),
                     set_param: Box::new(move |id, value| {
-                        params_for_set.set_normalized(id, value);
-                        let norm = params_for_set.get_normalized(id).unwrap_or(0.0);
+                        // Single trait dispatch: same value-then-readback
+                        // pattern collapsed via the trait helper. The
+                        // post-clamp normalized value is what the host
+                        // expects for `IComponentHandler::performEdit`.
+                        let norm = params_for_set.set_normalized_returning_normalized(id, value);
                         ffi::truce_vst3_perform_edit(
                             ctx_raw.as_ptr() as *mut std::ffi::c_void,
                             id,

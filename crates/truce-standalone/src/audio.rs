@@ -995,8 +995,11 @@ fn audio_callback<P: PluginExport>(
     let mut output_slices: Vec<&mut [f32]> =
         channel_bufs.iter_mut().map(|b| b.as_mut_slice()).collect();
 
+    // The slices we pass here all live within this stack frame, so
+    // the safe wrapper's borrow-checker proof of `'a` is enough —
+    // no need for the unsafe constructor.
     let mut audio_buffer =
-        unsafe { AudioBuffer::from_slices(&input_slices, &mut output_slices, num_frames) };
+        AudioBuffer::from_slices_checked(&input_slices, &mut output_slices, num_frames);
 
     let transport_info = transport.tick_audio(num_frames);
     let mut output_events = EventList::new();

@@ -202,6 +202,22 @@ where
 // `Send`-bounded; runtime / meter_ids / size are trivially `Send`.
 unsafe impl<P: Params, M: IcedPlugin<P>> Send for IcedEditor<P, M> {}
 
+impl<P: Params + 'static, M: IcedPlugin<P> + 'static> Drop for IcedEditor<P, M> {
+    /// Defensive cleanup for hosts that drop the editor without first
+    /// calling `Editor::close`. Pro Tools AAX has been seen to do this
+    /// on plugin removal under certain conditions; live-coding hosts
+    /// and unit tests can also short-circuit the lifecycle. On Linux
+    /// `baseview::WindowHandle` has no `Drop`, so without an explicit
+    /// `close` the render thread would keep running against a freed
+    /// `*mut IcedEditor` and later panic inside wgpu as surfaces tear
+    /// down. `close()` is idempotent — `baseview_window.take()`
+    /// no-ops on the second call — so calling it here on top of a
+    /// well-behaved host's earlier `close()` is safe.
+    fn drop(&mut self) {
+        Editor::close(self);
+    }
+}
+
 impl<P: Params + 'static> IcedEditor<P, AutoPlugin> {
     /// Create an editor that auto-generates the UI from a `GridLayout`.
     pub fn from_layout(params: Arc<P>, layout: GridLayout) -> Self {
@@ -447,8 +463,18 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
         // cell since the last frame. The Resized path applies its own
         // scale changes inline so this branch only fires when scale
         // moved without a corresponding window event.
+        //
+        // Bit-level comparison rather than `!=` so the implicit
+        // invariant — "values come through `EditorScale::set` /
+        // `.get()`, both of which round-trip via `to_bits` /
+        // `from_bits`, so equal inputs produce equal stored bits" —
+        // is explicit at the comparison site. `2.0 != 2.0` would
+        // never be true via this path today, but a clippy lint and
+        // a future refactor that narrowed the type to `f32` somewhere
+        // could turn the implicit guarantee into an actual NaN-flavored
+        // bug.
         let cur_scale = self.scale.get();
-        if cur_scale != self.last_applied_scale {
+        if cur_scale.to_bits() != self.last_applied_scale.to_bits() {
             let (lw, lh) = self.size;
             let pw = truce_gui::to_physical_px(lw, cur_scale);
             let ph = truce_gui::to_physical_px(lh, cur_scale);

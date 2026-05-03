@@ -455,11 +455,30 @@ impl<P: PluginExport> PluginDriver<P> {
     /// / etc. lands at the cursor's current sample offset; `wait_ms`
     /// advances the cursor.
     pub fn script(mut self, f: impl FnOnce(&mut Script)) -> Self {
-        // The script's sample rate is wired in `run` (so `wait_ms`
-        // resolves against the actual run SR). Set it provisionally
-        // here so build-time `wait_ms` calls work even when the
-        // user reads the cursor immediately.
-        self.script.sample_rate = self.sample_rate;
+        // If a previous `.script` call already populated events at a
+        // different SR (because `.sample_rate(...)` was called in
+        // between two `.script` calls), rescale both the cursor and
+        // the existing event offsets to the current SR before
+        // appending. The previous shape just overwrote
+        // `script.sample_rate` and treated the pre-existing offsets
+        // as the new SR's, silently shifting "100 ms at 44.1 kHz"
+        // (4410 samples) to "91.875 ms at 48 kHz" once the new SR
+        // was painted onto the stale cursor.
+        //
+        // The single-`.script` case (the common one) is handled by
+        // the run-time rescale at `run()` — both safety nets are
+        // needed so any builder ordering produces correct offsets.
+        let old_sr = self.script.sample_rate;
+        let new_sr = self.sample_rate;
+        if old_sr > 0.0 && (old_sr - new_sr).abs() > f64::EPSILON {
+            let scale = new_sr / old_sr;
+            self.script.cursor_samples =
+                ((self.script.cursor_samples as f64) * scale).round() as usize;
+            for (off, _) in self.script.events.iter_mut() {
+                *off = ((*off as f64) * scale).round() as usize;
+            }
+        }
+        self.script.sample_rate = new_sr;
         f(&mut self.script);
         self
     }

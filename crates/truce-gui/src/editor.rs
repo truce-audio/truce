@@ -14,6 +14,7 @@ use truce_params::Params;
 use crate::backend_cpu::CpuBackend;
 use crate::interaction::{self, InputEvent, InteractionState, ParamEdit};
 use crate::layout::{GridLayout, Layout, PluginLayout};
+use crate::platform::EditorScale;
 use crate::render::RenderBackend;
 use crate::snapshot::ParamSnapshot;
 use crate::theme::Theme;
@@ -82,11 +83,13 @@ pub struct BuiltinEditor<P: Params> {
     /// live value drifts from the last-painted one, we force a
     /// repaint even if the UI never received a direct edit.
     last_painted_values: Vec<f32>,
-    /// Display scale factor (`logical × scale = physical`). Queried
-    /// from the parent window in `open()` and updated by the `Resized`
-    /// event. Threaded into `CpuBackend::new` / `resize` so the
-    /// pixmap rasterizes at physical density.
-    scale: f32,
+    /// Live content-scale factor, shared with the baseview handler via
+    /// [`crate::platform::EditorScale`]. `set_scale_factor` (host)
+    /// writes the cell; the handler holds a clone, compares against
+    /// `last_applied_scale` each frame, and rebuilds the CPU pixmap +
+    /// reconfigures the wgpu surface when the value diverges. Single
+    /// source of truth shared with egui / iced / slint / gpu backends.
+    scale: EditorScale,
 }
 
 // SAFETY: `baseview::WindowHandle` holds a raw native window pointer
@@ -155,7 +158,7 @@ impl<P: Params + 'static> BuiltinEditor<P> {
             blit_backend: None,
             needs_repaint: Arc::new(AtomicBool::new(false)),
             last_painted_values: Vec::new(),
-            scale: 1.0,
+            scale: EditorScale::new(crate::backing_scale()),
         }
     }
 
@@ -171,7 +174,7 @@ impl<P: Params + 'static> BuiltinEditor<P> {
             blit_backend: None,
             needs_repaint: Arc::new(AtomicBool::new(false)),
             last_painted_values: Vec::new(),
-            scale: 1.0,
+            scale: EditorScale::new(crate::backing_scale()),
         }
     }
 
@@ -187,7 +190,7 @@ impl<P: Params + 'static> BuiltinEditor<P> {
             blit_backend: None,
             needs_repaint: Arc::new(AtomicBool::new(false)),
             last_painted_values: Vec::new(),
-            scale: 1.0,
+            scale: EditorScale::new(crate::backing_scale()),
         }
     }
 
@@ -199,7 +202,7 @@ impl<P: Params + 'static> BuiltinEditor<P> {
     /// Render the full UI to the internal CPU pixel buffer.
     pub fn render(&mut self) {
         let (w, h) = (self.layout.width(), self.layout.height());
-        let scale = self.scale;
+        let scale = self.scale.get() as f32;
         let owned = self.build_snapshot_closures();
         let snapshot = owned.as_snapshot();
         let backend = self
@@ -389,9 +392,12 @@ impl<P: Params + 'static> BuiltinEditor<P> {
         }
         // Anything that changes a pixel on screen flips the dirty
         // bit: param edits (already covered by `apply_edit`), hover
-        // highlights moving between widgets, and dropdown open/close
-        // transitions.
+        // highlights moving between widgets, dropdown open/close
+        // transitions, and any event that explicitly requested a
+        // repaint (e.g. MouseLeave clearing hover state).
+        let explicit = self.interaction.take_repaint_request();
         if had_edits
+            || explicit
             || self.interaction.hover_idx != hover_before
             || self.interaction.dropdown_is_open() != dd_before
         {
@@ -582,6 +588,7 @@ fn create_wgpu_backend(window: &mut baseview::Window, phys_w: u32, phys_h: u32) 
         device,
         queue,
         surface,
+        surface_config,
         blit,
     }
 }
@@ -590,7 +597,21 @@ struct BlitBackend {
     device: wgpu::Device,
     queue: wgpu::Queue,
     surface: wgpu::Surface<'static>,
+    surface_config: wgpu::SurfaceConfiguration,
     blit: crate::blit::BlitPipeline,
+}
+
+impl BlitBackend {
+    /// Reconfigure the wgpu surface and blit texture for a new physical
+    /// size. Used when `Editor::set_scale_factor` reports a host-driven
+    /// DPI change — the logical editor size doesn't change, but the
+    /// physical pixmap and surface need to grow / shrink to match.
+    fn resize(&mut self, phys_w: u32, phys_h: u32) {
+        self.surface_config.width = phys_w.max(1);
+        self.surface_config.height = phys_h.max(1);
+        self.surface.configure(&self.device, &self.surface_config);
+        self.blit.resize(&self.device, phys_w, phys_h);
+    }
 }
 
 /// Shared ownership of the blit backend between `BuiltinEditor` and the
@@ -619,6 +640,15 @@ struct BuiltinWindowHandler<P: Params> {
     /// tracking, double-click synthesis, and line→pixel scroll
     /// conversion once for everyone.
     translator: crate::interaction::BaseviewTranslator,
+    /// Last scale we built the CPU pixmap + wgpu surface against.
+    /// `on_frame` reads `editor.scale.get()` (via the raw ptr deref
+    /// it already does) and compares; on divergence it rebuilds the
+    /// pixmap and reconfigures the surface. Unlike egui / iced /
+    /// slint we don't need a separate `EditorScale` clone on the
+    /// handler — the editor is reachable through the same ptr that
+    /// guards the lifecycle, so reading `editor.scale` is the
+    /// canonical access path.
+    last_applied_scale: f32,
 }
 
 // SAFETY: The raw pointer is only accessed from the GUI thread.
@@ -644,6 +674,25 @@ impl<P: Params + 'static> baseview::WindowHandler for BuiltinWindowHandler<P> {
         }
 
         let editor = unsafe { &mut *self.editor };
+
+        // Pick up host-driven scale changes (CLAP `set_scale`, VST3
+        // `IPlugViewContentScaleSupport`) that landed in the shared
+        // cell since the last frame. The OS-driven `Resized` path
+        // intentionally stays a no-op (resize is disallowed per
+        // `Editor::can_resize`'s `false` default), so this branch is
+        // the only way scale changes propagate.
+        let cur_scale = editor.scale.get() as f32;
+        if cur_scale != self.last_applied_scale {
+            let (lw, lh) = editor.size();
+            let phys_w = crate::platform::to_physical_px(lw, cur_scale as f64);
+            let phys_h = crate::platform::to_physical_px(lh, cur_scale as f64);
+            editor.backend = CpuBackend::new(lw, lh, cur_scale);
+            if let Some(backend) = guard.as_mut() {
+                backend.resize(phys_w, phys_h);
+            }
+            self.last_applied_scale = cur_scale;
+            editor.request_repaint();
+        }
 
         update_interaction(editor);
         // Pick up host automation / preset recall that changed params
@@ -791,9 +840,15 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
 
     fn open(&mut self, parent: RawWindowHandle, context: PluginContext) {
         let (w, h) = self.size();
-        let scale = crate::platform::query_backing_scale(&parent);
-        self.scale = scale as f32;
-        self.backend = CpuBackend::new(w, h, self.scale);
+        // Refresh the shared scale from the parent window — on macOS
+        // this is the live `[NSWindow backingScaleFactor]`, on
+        // Windows the per-monitor DPI from the parent HWND. Any
+        // `set_scale_factor` the host issues after open will overwrite
+        // through the same shared cell.
+        self.scale.set(crate::platform::query_backing_scale(&parent));
+        let scale = self.scale.get();
+        let scale_f32 = scale as f32;
+        self.backend = CpuBackend::new(w, h, scale_f32);
         self.context = Some(context);
 
         // Build interaction regions
@@ -880,11 +935,21 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
                     editor: editor_addr as *mut BuiltinEditor<P>,
                     backend: shared_for_handler.clone(),
                     translator: crate::interaction::BaseviewTranslator::new(),
+                    last_applied_scale: scale_f32,
                 }
             },
         );
 
         self.window = Some(window);
+    }
+
+    fn set_scale_factor(&mut self, factor: f64) {
+        // Write to the shared cell; the baseview handler picks up the
+        // change on its next frame and rebuilds the CPU pixmap +
+        // reconfigures the wgpu surface. Replaces the default no-op
+        // (host scale was previously dropped on the floor for the CPU
+        // path, the only backend not yet on `EditorScale`).
+        self.scale.set(factor);
     }
 
     fn close(&mut self) {

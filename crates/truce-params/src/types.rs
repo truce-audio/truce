@@ -45,10 +45,27 @@ impl FloatParam {
         }
     }
 
-    /// Current raw value. Safe from any thread.
+    /// Current raw value, narrowed to `f32` for direct DSP use.
+    /// Safe from any thread.
+    ///
+    /// **Precision.** Storage is `f64` (preserved across the
+    /// `set_normalized` / `set_plain` / host-automation path); this
+    /// accessor narrows to `f32` because the typical caller is a
+    /// per-sample DSP loop that runs in `f32`. If you need full host
+    /// precision (parameter export, state serialization, the format
+    /// wrappers' read-back paths), call [`Self::value_f64`] instead.
     #[inline]
     pub fn value(&self) -> f32 {
         self.value.load() as f32
+    }
+
+    /// Current raw value at full `f64` precision. Safe from any
+    /// thread. Prefer this over [`Self::value`] when interoperating
+    /// with the host's `f64` automation channel or the
+    /// `Params::get_plain` API surface.
+    #[inline]
+    pub fn value_f64(&self) -> f64 {
+        self.value.load()
     }
 
     /// Set the plain value (used by host automation).

@@ -71,6 +71,7 @@ pub(crate) fn cmd_remove(args: &[String]) -> Res {
     let mut clap = false;
     let mut vst3 = false;
     let mut vst2 = false;
+    let mut lv2 = false;
     let mut au2 = false;
     let mut au3 = false;
     let mut aax = false;
@@ -87,6 +88,7 @@ pub(crate) fn cmd_remove(args: &[String]) -> Res {
             "--clap" => clap = true,
             "--vst3" => vst3 = true,
             "--vst2" => vst2 = true,
+            "--lv2" => lv2 = true,
             "--au2" => au2 = true,
             "--au3" => au3 = true,
             "--aax" => aax = true,
@@ -146,10 +148,11 @@ pub(crate) fn cmd_remove(args: &[String]) -> Res {
     // intentional — keeping the flag uniform across platforms is more
     // readable than a per-platform `if`.
     #[allow(unused_assignments)]
-    if !clap && !vst3 && !vst2 && !au2 && !au3 && !aax {
+    if !clap && !vst3 && !vst2 && !lv2 && !au2 && !au3 && !aax {
         clap = true;
         vst3 = true;
         vst2 = true;
+        lv2 = true;
         au2 = true;
         au3 = true;
         aax = true;
@@ -213,6 +216,33 @@ pub(crate) fn cmd_remove(args: &[String]) -> Res {
                 InstallScope::System.needs_sudo(),
                 &mut targets,
             );
+        }
+        if lv2 {
+            // LV2 bundles are directories ending in `.lv2`. The shared
+            // `scan` helper trims the trailing `.{ext}` from the
+            // filename and compares against the project's display
+            // names; the bundle directory uses `lv2_slug` (lowercase,
+            // hyphenated) rather than the raw display name, so the
+            // not-in-project check is best-effort and may keep some
+            // bundles that *are* in the project but whose display name
+            // hash-mangles into something else. That's the same
+            // best-effort posture as the other format scans —
+            // vendor-matching catches the common case of "shipped a
+            // plugin, then renamed it" without false positives across
+            // unrelated vendors.
+            #[cfg(target_os = "linux")]
+            {
+                // Linux LV2 lives at `~/.lv2/`; scope is irrelevant
+                // (`lv2_dir` returns the same path for User and System).
+                let s = InstallScope::User;
+                scan(&s.lv2_dir(), "lv2", "LV2", s.needs_sudo(), &mut targets);
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                for s in &scopes_to_scan {
+                    scan(&s.lv2_dir(), "lv2", "LV2", s.needs_sudo(), &mut targets);
+                }
+            }
         }
         #[cfg(target_os = "macos")]
         if au2 {
@@ -399,6 +429,26 @@ pub(crate) fn cmd_remove(args: &[String]) -> Res {
                     push_if_exists("VST2", path, s.needs_sudo(), &mut targets);
                 }
             }
+            if lv2 {
+                // LV2 bundle name uses the slugged display name to
+                // match what `install_lv2` writes via
+                // `package::stage::lv2_slug(&p.name)`.
+                let slug = crate::commands::package::stage::lv2_slug(&p.name);
+                #[cfg(target_os = "linux")]
+                {
+                    // Linux LV2 lives at `~/.lv2/`; scope is irrelevant.
+                    let s = InstallScope::User;
+                    let path = s.lv2_dir().join(format!("{slug}.lv2"));
+                    push_if_exists("LV2", path, s.needs_sudo(), &mut targets);
+                }
+                #[cfg(not(target_os = "linux"))]
+                {
+                    for s in &scopes_to_scan {
+                        let path = s.lv2_dir().join(format!("{slug}.lv2"));
+                        push_if_exists("LV2", path, s.needs_sudo(), &mut targets);
+                    }
+                }
+            }
             #[cfg(target_os = "macos")]
             if au2 {
                 for s in &scopes_to_scan {
@@ -510,7 +560,7 @@ pub(crate) fn cmd_remove(args: &[String]) -> Res {
 fn print_help() {
     eprintln!(
         "\
-Usage: cargo truce remove [--clap] [--vst3] [--vst2] [--au2] [--au3] [--aax]
+Usage: cargo truce remove [--clap] [--vst3] [--vst2] [--lv2] [--au2] [--au3] [--aax]
                           [--user|--system] [-p <crate>] [-n <name>]
                           [--stale] [--dry-run] [--yes]
 
@@ -522,6 +572,7 @@ Options:
   --clap           CLAP only
   --vst3           VST3 only
   --vst2           VST2 only
+  --lv2            LV2 only
   --au2            AU v2 only (.component, macOS only)
   --au3            AU v3 only (.app, macOS only)
   --aax            AAX only

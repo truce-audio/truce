@@ -478,21 +478,29 @@ fn convert_kb_modifiers(mods: &keyboard_types::Modifiers) -> egui::Modifiers {
     let ctrl = mods.contains(keyboard_types::Modifiers::CONTROL);
     let shift = mods.contains(keyboard_types::Modifiers::SHIFT);
     let meta = mods.contains(keyboard_types::Modifiers::META);
+    // `mac_cmd` — Mac-specific Cmd-key flag, fed by META on macOS only.
+    // `command` — egui's cross-platform "primary modifier" alias:
+    //   on macOS it tracks Cmd (= `mac_cmd`); elsewhere it tracks
+    //   Ctrl. Mapping META→command on Linux/Windows (the original
+    //   behavior) made egui treat Super as the shortcut modifier,
+    //   breaking Ctrl+C/V/X/Z in plugin editors.
+    //
+    // Derive `command` from `mac_cmd` on macOS so the structural
+    // redundancy (both fields end up with the same boolean on
+    // macOS) flows from one source instead of computing each
+    // independently from `meta`.
+    let mac_cmd = cfg!(target_os = "macos") && meta;
+    let command = if cfg!(target_os = "macos") {
+        mac_cmd
+    } else {
+        ctrl
+    };
     egui::Modifiers {
         alt,
         ctrl,
         shift,
-        // `mac_cmd` is Mac-specific, fed by Cmd (META on macOS).
-        mac_cmd: cfg!(target_os = "macos") && meta,
-        // `command` is the cross-platform "primary modifier": Cmd on
-        // macOS, Ctrl elsewhere. Mapping META→command on Linux/Windows
-        // (the previous behavior) made egui treat the Super key as the
-        // shortcut modifier, breaking Ctrl+C/V/X/Z in plugin editors.
-        command: if cfg!(target_os = "macos") {
-            meta
-        } else {
-            ctrl
-        },
+        mac_cmd,
+        command,
     }
 }
 

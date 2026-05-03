@@ -526,8 +526,85 @@ unsafe fn convert_input_events<P: PluginExport>(
                         body: EventBody::Transport(build_transport_info(transport)),
                     });
                 }
+                CLAP_EVENT_MIDI => {
+                    // CLAP carries MIDI 1.0 channel-voice messages as
+                    // 3-byte packets. Demux back into the typed
+                    // `EventBody` variants the plugin sees on every
+                    // other format. Mirrors the encoder at the output
+                    // path (`process()`'s `EventBody::*` → `clap_event_midi`
+                    // arms): without this, hosts that route raw MIDI
+                    // (`CLAP_NOTE_DIALECT_MIDI` ports) silently drop
+                    // CC / PitchBend / Aftertouch / ChannelPressure /
+                    // ProgramChange at the wrapper.
+                    let midi = &*(header as *const clap_event_midi);
+                    let status = midi.data[0];
+                    let channel = status & 0x0F;
+                    let d1 = midi.data[1];
+                    let d2 = midi.data[2];
+                    let body = match status & 0xF0 {
+                        0x80 => Some(EventBody::NoteOff {
+                            channel,
+                            note: d1,
+                            velocity: (d2 as f32) / 127.0,
+                        }),
+                        0x90 => {
+                            // MIDI 1.0 quirk: NoteOn with velocity 0 = NoteOff.
+                            if d2 == 0 {
+                                Some(EventBody::NoteOff {
+                                    channel,
+                                    note: d1,
+                                    velocity: 0.0,
+                                })
+                            } else {
+                                Some(EventBody::NoteOn {
+                                    channel,
+                                    note: d1,
+                                    velocity: (d2 as f32) / 127.0,
+                                })
+                            }
+                        }
+                        0xA0 => Some(EventBody::Aftertouch {
+                            channel,
+                            note: d1,
+                            pressure: (d2 as f32) / 127.0,
+                        }),
+                        0xB0 => Some(EventBody::ControlChange {
+                            channel,
+                            cc: d1,
+                            value: (d2 as f32) / 127.0,
+                        }),
+                        0xC0 => Some(EventBody::ProgramChange {
+                            channel,
+                            program: d1,
+                        }),
+                        0xD0 => Some(EventBody::ChannelPressure {
+                            channel,
+                            pressure: (d1 as f32) / 127.0,
+                        }),
+                        0xE0 => {
+                            // 14-bit unsigned 0..16383 → signed [-1, 1]
+                            // with 8192 = center. Mirrors the encoder.
+                            let n = ((d2 as u16) << 7) | (d1 as u16);
+                            let v = ((n as f32) - 8192.0) / 8192.0;
+                            Some(EventBody::PitchBend {
+                                channel,
+                                value: v.clamp(-1.0, 1.0),
+                            })
+                        }
+                        _ => None,
+                    };
+                    if let Some(body) = body {
+                        data.event_list.push(Event {
+                            sample_offset,
+                            body,
+                        });
+                    }
+                }
                 _ => {
-                    // Unsupported event type — skip.
+                    // Unsupported event type (system real-time, sysex,
+                    // MIDI 2.0) — skip silently. MIDI 2.0 demux is a
+                    // future extension if we add `EventBody::*2` input
+                    // support.
                 }
             }
         }
@@ -607,6 +684,13 @@ unsafe fn flush_gui_changes<P: PluginExport>(
                 }
             }
         }
+        // Reclaim memory after a burst of GUI gestures (automation
+        // pass, MIDI-learn drag) so the buffer doesn't hold its
+        // high-water capacity for the plugin's lifetime. 64 events
+        // covers the steady-state per-block load (≤ 1 gesture begin
+        // + setting + end per visible widget) without rallocating
+        // on every flush.
+        data.gui_drain_buf.shrink_to(64);
     }
 }
 
@@ -1540,14 +1624,22 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
                     request_flush();
                 }),
                 set_param: Box::new(move |id, value| {
-                    params_for_set.set_normalized(id, value);
-                    let plain = params_for_set.get_plain(id).unwrap_or(0.0);
+                    let plain = params_for_set.set_normalized_returning_plain(id, value);
                     gui_changes2.push(GuiParamChange::Value(id, plain));
                     request_flush2();
+                    // Symmetry with the host-pointer null guards at
+                    // `:297, :365, :1404`. CLAP guarantees a valid
+                    // host on init, but a host that creates a plugin
+                    // without ever calling `clap_plugin_init`-style
+                    // setup (rare validators) could leave `data.host`
+                    // null; the deref below would crash inside the
+                    // GUI thread.
+                    let host_ptr = host_for_callback.as_ptr();
                     if !needs_rescan.swap(true, std::sync::atomic::Ordering::Relaxed)
-                        && let Some(req_cb) = (*host_for_callback.as_ptr()).request_callback
+                        && !host_ptr.is_null()
+                        && let Some(req_cb) = (*host_ptr).request_callback
                     {
-                        req_cb(host_for_callback.as_ptr());
+                        req_cb(host_ptr);
                     }
                 }),
                 end_edit: Box::new(move |id| {

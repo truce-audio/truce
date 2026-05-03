@@ -106,7 +106,16 @@ impl<P: Params + ?Sized> ParamCache<P> {
             let old_val = self.values.get(&id).copied().unwrap_or(-1.0);
             if (new_val - old_val).abs() > 1e-10 {
                 self.values.insert(id, new_val);
-                self.labels.insert(id, ctx.format_param(id));
+                // Reuse the existing label slot's capacity instead of
+                // dropping it on every change. `entry().or_default()`
+                // returns the slot's `&mut String` (or inserts an
+                // empty one); `format_param_into` clears + writes.
+                // The bridge's default impl still allocates a
+                // temporary internally, but bridges can override for
+                // a fully alloc-free path. Either way the cache's
+                // own storage no longer churns.
+                let slot = self.labels.entry(id).or_default();
+                ctx.format_param_into(id, slot);
                 changed.push(id);
             }
         }

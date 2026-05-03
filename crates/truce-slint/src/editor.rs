@@ -153,6 +153,12 @@ struct SlintWindowHandler<P: Params + ?Sized> {
     /// changes that didn't come through a `Resized` event.
     scale: EditorScale,
     last_applied_scale: f32,
+    /// Cached physical extents derived from `(width, height,
+    /// last_applied_scale)`. Updated only when the scale-change branch
+    /// fires — `on_frame`'s render path reads these directly instead
+    /// of re-calling `to_physical_px` twice per frame.
+    last_phys_w: u32,
+    last_phys_h: u32,
     /// Last known cursor position in logical points.
     last_pos: LogicalPosition,
 }
@@ -184,6 +190,8 @@ impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
                 blit.resize(&self.device, phys_w, phys_h);
             }
             self.last_applied_scale = cur_scale;
+            self.last_phys_w = phys_w;
+            self.last_phys_h = phys_h;
         }
 
         // 1. Drive Slint timers/animations
@@ -195,9 +203,11 @@ impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
         // 3. Force redraw — params/meters change externally every frame
         self.slint_window.request_redraw();
 
-        // 4. Render Slint to pixel buffer
-        let phys_w = truce_gui::to_physical_px(self.width, self.last_applied_scale as f64);
-        let phys_h = truce_gui::to_physical_px(self.height, self.last_applied_scale as f64);
+        // 4. Render Slint to pixel buffer. Reuse the cached physical
+        // extents — the scale-change branch above is the only writer,
+        // so re-multiplying every frame would just duplicate work.
+        let phys_w = self.last_phys_w;
+        let phys_h = self.last_phys_h;
         platform::render_to_rgba(
             &self.slint_window,
             phys_w,
@@ -462,6 +472,8 @@ impl<P: Params + 'static> Editor for SlintEditor<P> {
                     height: lh,
                     scale: scale_handle,
                     last_applied_scale: scale as f32,
+                    last_phys_w: phys_w,
+                    last_phys_h: phys_h,
                     last_pos: LogicalPosition::default(),
                 }
             },

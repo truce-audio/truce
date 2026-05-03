@@ -153,29 +153,8 @@ pub(crate) fn cmd_package_macos(args: &[String]) -> Res {
         return Err("no formats to package".into());
     }
 
-    // Resolve plugins
-    let plugins: Vec<&PluginDef> = if let Some(ref filter) = plugin_filter {
-        let matched: Vec<_> = config
-            .plugin
-            .iter()
-            .filter(|p| p.crate_name == *filter)
-            .collect();
-        if matched.is_empty() {
-            return Err(format!(
-                "No plugin with crate name '{filter}'. Available: {}",
-                config
-                    .plugin
-                    .iter()
-                    .map(|p| p.crate_name.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )
-            .into());
-        }
-        matched
-    } else {
-        config.plugin.iter().collect()
-    };
+    let plugins: Vec<&PluginDef> =
+        crate::commands::pick_plugins(&config, plugin_filter.as_deref())?;
 
     let has_clap = formats.contains(&PkgFormat::Clap);
     let has_vst3 = formats.contains(&PkgFormat::Vst3);

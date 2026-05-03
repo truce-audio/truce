@@ -35,7 +35,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use truce_core::TransportSlot;
-use truce_core::editor::{ClosureBridge, Editor, PluginContext, RawWindowHandle};
+use truce_core::editor::{ClosureBridge, Editor, PluginContext, RawWindowHandle, SendPtr};
 use truce_core::events::TransportInfo;
 use truce_core::export::PluginExport;
 use truce_params::Params;
@@ -775,7 +775,19 @@ fn build_editor_context<P: PluginExport>(
     let slots_for_begin: Vec<(u32, u32)> =
         slots.iter().map(|s| (s.id, s.port_index)).collect();
     let slots_for_end = slots_for_begin.clone();
-    let controller_raw = controller as usize;
+    // `Lv2UiController = *mut c_void`. `SendPtr` is the workspace's
+    // canonical Send/Sync wrapper for raw pointers held across
+    // closures (CLAP / VST3 / AU / AAX use it for `host_for_callback`,
+    // `aax_ctx`, etc.). Going through `usize` worked but obscured the
+    // intent that the value is a pointer; `SendPtr` makes the transit
+    // explicit and matches the rest of the workspace.
+    //
+    // SAFETY: the LV2 host owns `controller` and guarantees it
+    // outlives every UI callback that closes over it (LV2_UI__cleanup
+    // is the only thing that may invalidate it, and the host doesn't
+    // call any of these closures after cleanup).
+    let controller_ptr: SendPtr<core::ffi::c_void> =
+        unsafe { SendPtr::new(controller.cast_const()) };
 
     let params_get = params.clone();
     let params_get_plain = params.clone();
@@ -834,7 +846,7 @@ fn build_editor_context<P: PluginExport>(
                 unsafe {
                     let value = plain;
                     write_set(
-                        controller_raw as Lv2UiController,
+                        controller_ptr.as_ptr() as Lv2UiController,
                         *port_index,
                         core::mem::size_of::<f32>() as u32,
                         0, // LV2_UI_FLOAT_PROTOCOL = 0 (control ports)

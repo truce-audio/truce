@@ -83,27 +83,7 @@ pub(crate) fn cmd_screenshot(args: &[String]) -> Res {
     )?;
 
     let config = load_config()?;
-    let plugins: Vec<_> = match &plugin_filter {
-        Some(f) => {
-            let p = config
-                .plugin
-                .iter()
-                .find(|p| p.crate_name == *f)
-                .ok_or_else(|| {
-                    format!(
-                        "No plugin with crate name '{f}'. Available: {}",
-                        config
-                            .plugin
-                            .iter()
-                            .map(|p| p.crate_name.as_str())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )
-                })?;
-            vec![p]
-        }
-        None => config.plugin.iter().collect(),
-    };
+    let plugins = super::pick_plugins(&config, plugin_filter.as_deref())?;
 
     if plugins.is_empty() {
         return Err("no plugins in truce.toml".into());

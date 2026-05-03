@@ -93,6 +93,11 @@ const DOUBLE_CLICK_MS: u128 = 300;
 const DOUBLE_CLICK_SLOP: f32 = 4.0;
 const WHEEL_LINE_PX: f32 = 20.0;
 
+/// Pixels of vertical drag (or wheel travel) that map to a full
+/// 0.0 → 1.0 normalized parameter range. Shared between knob drag
+/// and the scroll-wheel knob adjustment so the two feel uniform.
+const KNOB_PIXELS_PER_UNIT: f32 = 200.0;
+
 /// Stateful translator from baseview events to truce-gui's
 /// platform-agnostic [`InputEvent`] stream.
 ///
@@ -258,6 +263,12 @@ pub struct InteractionState {
     pub hover_idx: Option<usize>,
     /// Currently open dropdown popup (at most one at a time).
     pub dropdown: Option<DropdownState>,
+    /// Set by event handlers whose visible side effect isn't otherwise
+    /// observable to `dispatch_events` (e.g. `MouseLeave` clearing
+    /// hover state). The editor reads this via `take_repaint_request`
+    /// to avoid relying on diff-checks of every individual visible
+    /// field.
+    needs_repaint: bool,
 }
 
 pub struct DragState {
@@ -285,7 +296,13 @@ impl InteractionState {
             dragging: None,
             hover_idx: None,
             dropdown: None,
+            needs_repaint: false,
         }
+    }
+
+    /// Read and clear the explicit repaint flag set by event handlers.
+    pub fn take_repaint_request(&mut self) -> bool {
+        std::mem::replace(&mut self.needs_repaint, false)
     }
 
     /// Rebuild hit regions from the layout. Call after render.
@@ -399,7 +416,7 @@ impl InteractionState {
     pub fn update_drag(&self, mouse_y: f32) -> Option<(u32, f64)> {
         let drag = self.dragging.as_ref()?;
         let dy = drag.start_y - mouse_y;
-        let delta = dy as f64 / 200.0;
+        let delta = dy as f64 / KNOB_PIXELS_PER_UNIT as f64;
         let new_value = (drag.start_value + delta).clamp(0.0, 1.0);
         Some((drag.param_id, new_value))
     }
@@ -647,8 +664,17 @@ pub fn dispatch_in(
                             x >= px && x <= px + pw && y >= py && y <= py + ph
                         });
                     if inside_popup {
-                        let delta = if dy > 0.0 { -1 } else { 1 };
-                        state.dropdown_scroll(delta);
+                        // dy == 0 should be a no-op — falling through to
+                        // the else branch would silently scroll +1 each
+                        // time a host emits a zero-magnitude wheel event.
+                        let delta = match dy.partial_cmp(&0.0) {
+                            Some(std::cmp::Ordering::Greater) => -1,
+                            Some(std::cmp::Ordering::Less) => 1,
+                            _ => 0,
+                        };
+                        if delta != 0 {
+                            state.dropdown_scroll(delta);
+                        }
                     }
                     continue;
                 }
@@ -664,7 +690,7 @@ pub fn dispatch_in(
                     ) {
                         let param_id = state.knob_regions[idx].param_id;
                         let norm = (snapshot.get_param)(param_id);
-                        let step = dy / 200.0;
+                        let step = dy / KNOB_PIXELS_PER_UNIT;
                         let new_norm = (norm + step).clamp(0.0, 1.0);
                         edits.push(ParamEdit::Begin { id: param_id });
                         edits.push(ParamEdit::Set {
@@ -676,7 +702,10 @@ pub fn dispatch_in(
                 }
             }
             InputEvent::MouseLeave => {
-                state.hover_idx = None;
+                if state.hover_idx.is_some() {
+                    state.hover_idx = None;
+                    state.needs_repaint = true;
+                }
             }
             // Right- and middle-click are intentionally ignored. The
             // built-in editor doesn't have a context menu of its own,

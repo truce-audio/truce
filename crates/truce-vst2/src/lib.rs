@@ -146,7 +146,7 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
         plugin,
         event_list: EventList::new(),
         output_events: EventList::new(),
-        plugin_id_hash: state::hash_plugin_id(info.clap_id),
+        plugin_id_hash: state::shared_plugin_state_hash(&info),
         sample_rate: 44100.0,
         max_block_size: 0,
         scratch: truce_core::buffer::RawBufferScratch::default(),
@@ -477,7 +477,17 @@ unsafe extern "C" fn cb_state_save<P: PluginExport>(
         let blob = state::serialize_state(inst.plugin_id_hash, &ids, &values, extra.as_deref());
 
         let len = blob.len();
-        // Use Vec::into_raw_parts pattern for the C shim to free later
+        // Hand the C shim a heap-allocated buffer it'll later return
+        // via `cb_state_free`, which reconstitutes a `Vec` with
+        // `Vec::from_raw_parts(data, len, len)`. That symmetry has
+        // two preconditions:
+        //   1. Both sides must use the **same allocator** (the Rust
+        //      global allocator here on save → the same global on
+        //      `cb_state_free`). VST3 / AU split state alloc and free
+        //      across `libc_malloc` / Rust; this code path must NOT.
+        //   2. `cap == len`, which `Box<[T]>` guarantees by definition
+        //      (a boxed slice has no capacity bookkeeping). Avoid
+        //      replacing this with `blob.into_raw_parts()` etc.
         let mut boxed = blob.into_boxed_slice();
         let ptr = boxed.as_mut_ptr();
         std::mem::forget(boxed);
@@ -647,9 +657,9 @@ unsafe fn open_editor_inner<P: PluginExport>(
                         }
                     }),
                     set_param: Box::new(move |id, value| {
-                        params_for_set.set_normalized(id, value);
+                        let norm =
+                            params_for_set.set_normalized_returning_normalized(id, value) as f32;
                         if !effect_ptr.as_ptr().is_null() {
-                            let norm = params_for_set.get_normalized(id).unwrap_or(0.0) as f32;
                             truce_vst2_host_automate(
                                 effect_ptr.as_ptr() as *mut std::ffi::c_void,
                                 id,
@@ -708,14 +718,24 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     parent: *mut std::ffi::c_void,
 ) {
+    // `vst2_shim.c` is the primary owner of the gui_open ordering: on
+    // `effEditOpen` it stashes `parent` in its own `deferred_parent`
+    // when `state_loaded == 0` and only forwards to this callback
+    // *after* `effSetChunk` (or the fresh-instance `effMainsChanged`)
+    // bumps `state_loaded`. The Rust-side `pending_editor_parent`
+    // path below is a defensive backstop — it covers a hypothetical
+    // future caller (e.g. an integration-test driver) that bypasses
+    // the C shim and invokes `cb_gui_open` directly. The two paths
+    // never race in practice because the C shim's `state_loaded`
+    // and the Rust-side `inst.state_loaded` are both flipped along
+    // the same `effSetChunk → state_load → gui_open` chain. If
+    // either side is ever extracted, this comment names the contract
+    // to keep.
     unsafe {
         let inst = &mut *(ctx as *mut Vst2Instance<P>);
         if inst.state_loaded {
-            // State already restored — open immediately.
             open_editor_inner(inst, parent);
         } else {
-            // Host opened editor before loading state (Reaper VST2 ordering).
-            // Buffer the parent handle; we'll open after state_load.
             inst.pending_editor_parent = Some(parent);
         }
     }

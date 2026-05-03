@@ -254,7 +254,46 @@ type Res = Result<(), Box<dyn std::error::Error>>;
 // new — single standalone plugin
 // ---------------------------------------------------------------------------
 
+fn print_new_help() {
+    eprintln!(
+        "\
+Usage:
+  cargo truce new <name> [--instrument] [--midi] [--no-standalone]
+                        [--vendor <name>] [--vendor-id <id>]
+  cargo truce new <workspace-name> --workspace <plugin1> [plugin2 ...]
+                                   [--instrument] [--midi] [--no-standalone]
+                                   [--vendor <name>] [--vendor-id <id>]
+                                   [--type:<plugin>=<kind> ...]
+
+Scaffold a new truce plugin project.
+
+Single mode (no --workspace):
+  Creates a single-crate project at ./<name>/ with one plugin.
+
+Workspace mode (--workspace):
+  Creates a workspace at ./<workspace-name>/ with one crate per plugin
+  under plugins/<plugin>/. The default plugin kind is `effect`; override
+  per-plugin with --type:<plugin>=<effect|instrument|midi>.
+
+Options:
+  --instrument            Default plugin kind is `instrument` (synth).
+  --midi                  Default plugin kind is `midi`.
+  --no-standalone         Skip generating a standalone runner crate.
+  --workspace             Multi-plugin workspace mode (positional args
+                          after the name are plugin names).
+  --vendor <name>         Vendor display name (default: placeholder).
+  --vendor-id <id>        Vendor reverse-DNS id (default: placeholder).
+  --type:<plugin>=<kind>  Per-plugin kind override (workspace only).
+                          <kind> is `effect`, `instrument`, or `midi`.
+  -h, --help              Show this message."
+    );
+}
+
 fn cmd_new(args: &[String]) -> Res {
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        print_new_help();
+        return Ok(());
+    }
     let parsed = parse_new_args(args)?;
     if Path::new(&parsed.name).exists() {
         return Err(format!("Directory '{}' already exists", parsed.name).into());

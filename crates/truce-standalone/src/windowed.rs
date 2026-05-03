@@ -45,7 +45,8 @@ where
         }
     );
 
-    let audio_handles = match audio::start_audio::<P>(opts) {
+    #[cfg_attr(not(feature = "playback"), allow(unused_mut))]
+    let mut audio_handles = match audio::start_audio::<P>(opts) {
         Ok(h) => h,
         Err(e) => {
             eprintln!("Error: {e}");
@@ -60,7 +61,16 @@ where
     let midi_thread = MidiInputThread::start(opts, Arc::clone(&audio_handles.pending));
 
     let editor: Option<Box<dyn Editor>> = {
-        let mut plugin = audio_handles.plugin.lock().unwrap();
+        // Recover from a poisoned plugin mutex (audio thread panicked
+        // while holding the lock) instead of cascading the panic
+        // through the UI thread. The plugin instance itself may be
+        // in a degraded state but the editor handle is just a
+        // factory — recovering is enough to keep the standalone
+        // alive long enough for the user to save state and exit.
+        let mut plugin = audio_handles
+            .plugin
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         plugin.editor()
     };
     let mut editor = match editor {
@@ -89,6 +99,13 @@ where
     let input_ctrl = audio_handles.input.clone();
     let output_ctrl = audio_handles.output.clone();
     let is_effect = audio_handles.is_effect;
+    // Move the `--output-file` capture sink into the handler so the
+    // Linux WillClose path (which bypasses Drop via `_exit(0)`) can
+    // explicitly finalize it. On non-Linux the handler is dropped
+    // normally, which runs `CaptureSink::Drop` and joins the writer
+    // thread.
+    #[cfg(feature = "playback")]
+    let capture = audio_handles.capture.take();
 
     Window::open_blocking(window_opts, move |window| {
         let truce_parent = match window.raw_window_handle() {
@@ -154,6 +171,8 @@ where
             is_effect,
             octave_offset: 0,
             _midi_thread: midi_thread,
+            #[cfg(feature = "playback")]
+            capture,
         }
     });
 
@@ -182,6 +201,13 @@ where
     /// Keeps the MIDI hot-plug thread alive for the lifetime of the
     /// window; dropped when the window closes.
     _midi_thread: Option<MidiInputThread>,
+    /// `--output-file` capture sink, owned by the handler so the
+    /// Linux WillClose path can finalize it before `_exit(0)`. On
+    /// non-Linux the handler's Drop runs naturally and
+    /// `CaptureSink::Drop` joins the writer thread to flush the WAV
+    /// header.
+    #[cfg(feature = "playback")]
+    capture: Option<crate::playback::CaptureSink>,
 }
 
 impl<P: PluginExport + 'static> WindowHandler for StandaloneHandler<P>
@@ -204,9 +230,19 @@ where
         // the window we bypass Drop / atexit entirely via `_exit`.
         // The OS reclaims the audio FDs, X handles, and the wgpu
         // child thread — no driver teardown ever runs.
+        //
+        // The one piece of state we *do* finalize explicitly is the
+        // `--output-file` capture sink: skipping its writer-thread
+        // join would leave the WAV header un-rewritten and the file
+        // truncated. We take it here and call `finalize` (signals
+        // shutdown + joins the writer) before `_exit`.
         #[cfg(target_os = "linux")]
         if matches!(event, Event::Window(baseview::WindowEvent::WillClose)) {
             vlog!("Goodbye!");
+            #[cfg(feature = "playback")]
+            if let Some(capture) = self.capture.take() {
+                capture.finalize();
+            }
             unsafe extern "C" {
                 fn _exit(status: i32) -> !;
             }
@@ -428,7 +464,14 @@ fn synthesize_editor_context<P: PluginExport>(
 where
     P::Params: 'static,
 {
-    let params: Arc<P::Params> = plugin.lock().unwrap().params_arc();
+    // Poison-tolerant: if the audio thread panicked, the editor
+    // context still needs the params Arc to function. Recovering
+    // the inner guard is safe because params_arc only clones an
+    // Arc<P::Params> — it doesn't read mutable state.
+    let params: Arc<P::Params> = plugin
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .params_arc();
     let transport_read = transport.clone();
 
     let params_read = Arc::clone(&params);

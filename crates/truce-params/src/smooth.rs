@@ -8,13 +8,25 @@ pub enum SmoothingStyle {
     Exponential(f64),
 }
 
-/// Per-parameter smoother. All methods take `&self` for interior mutability,
-/// enabling use through `Arc<Params>`. Thread safety relies on the host
-/// guarantee that `process()` and `reset()` never run concurrently.
+/// Per-parameter smoother. All methods take `&self` for interior
+/// mutability, enabling use through `Arc<Params>`.
+///
+/// **Threading.** The audio thread is the sole writer of `current`
+/// (via `next` / `snap`) and the sole reader of `coeff`. The
+/// editor / main thread is the sole writer of `sample_rate` and
+/// `coeff` (via `set_sample_rate` / `recalculate_coeff`). The four
+/// `AtomicF64` accesses are individually atomic, but a
+/// `set_sample_rate` call from the editor thread that lands
+/// mid-block can leave `coeff` momentarily inconsistent with
+/// `sample_rate` from the audio thread's point of view (one
+/// updated, the other not). This produces at most one block of
+/// "smooth in the wrong cadence" output and self-corrects on the
+/// next sample. `reset()` and `process()` never run concurrently
+/// per the host contract; sample-rate changes outside `reset` are
+/// tolerated as best-effort.
 pub struct Smoother {
     style: SmoothingStyle,
     current: AtomicF64,
-    target: AtomicF64,
     coeff: AtomicF64,
     sample_rate: AtomicF64,
 }
@@ -24,7 +36,6 @@ impl Smoother {
         let s = Self {
             style,
             current: AtomicF64::new(0.0),
-            target: AtomicF64::new(0.0),
             coeff: AtomicF64::new(0.0),
             sample_rate: AtomicF64::new(44100.0),
         };
@@ -45,13 +56,11 @@ impl Smoother {
     /// Snap to a value immediately (used on reset/init).
     pub fn snap(&self, value: f64) {
         self.current.store(value);
-        self.target.store(value);
     }
 
     /// Get next smoothed value, advancing one sample.
     #[inline]
     pub fn next(&self, target: f64) -> f32 {
-        self.target.store(target);
         let current = self.current.load();
         let coeff = self.coeff.load();
 

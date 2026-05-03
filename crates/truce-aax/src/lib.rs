@@ -261,7 +261,13 @@ pub fn register_aax<P: PluginExport>() {
             bypass_param_id: u32::MAX, // filled below
         };
 
-        // Build param info + check for editor
+        // Build param info + check for editor. Constructing a full
+        // plugin instance just to read static metadata is wasteful
+        // (same shape in VST2 / AU / VST3) but unavoidable while
+        // `PluginExport::param_infos` lives on the instance rather
+        // than as an associated `const` / `fn`. The instance dies at
+        // the end of this closure; the cost is one construction at
+        // library load.
         let mut temp = P::create();
         let param_infos = temp.params().param_infos();
         let bypass_param_id = param_infos
@@ -528,7 +534,7 @@ pub unsafe fn _create<P: PluginExport>() -> *mut std::ffi::c_void {
         plugin,
         event_list: EventList::new(),
         output_events: EventList::new(),
-        plugin_id_hash: state::hash_plugin_id(info.clap_id),
+        plugin_id_hash: state::shared_plugin_state_hash(&info),
         sample_rate: 44100.0,
         max_block_size: 0,
         scratch: truce_core::buffer::RawBufferScratch::default(),
@@ -747,15 +753,16 @@ pub unsafe fn _save_state<P: PluginExport>(
     };
 
     let blob: std::sync::Arc<Vec<u8>> = {
-        let mut guard = match inst.state_cache.lock() {
-            Ok(g) => g,
-            // Poisoned (shouldn't happen; save_state is single-threaded
-            // in practice). Bypass the cache rather than panicking
-            // inside the AAX callback.
-            Err(_) => {
-                return unsafe { finalize_blob(&serialize_now(inst), out_data) };
-            }
-        };
+        // Recover from poisoning rather than bypassing the cache for
+        // the rest of the plugin's lifetime. A panic anywhere on the
+        // main thread (the only `_save_state` caller in Pro Tools)
+        // would otherwise silently disable the seqlock-style cache
+        // — the next save would re-serialize, the next after that
+        // would too, and the audit-noted hot-path optimization would
+        // be effectively gone. The cache content is just an
+        // `Option<(u64, Arc<Vec<u8>>)>`, with no invariants a panic
+        // could break, so `into_inner()` is sound.
+        let mut guard = inst.state_cache.lock().unwrap_or_else(|e| e.into_inner());
         match guard.as_ref() {
             // `Arc::clone` on a hit — refcount bump, no Vec copy.
             Some((rev, blob)) if *rev == revision_before => std::sync::Arc::clone(blob),
@@ -782,6 +789,18 @@ pub unsafe fn _save_state<P: PluginExport>(
 /// later free with `_free_state` — taking `&[u8]` rather than `Vec<u8>`
 /// lets callers hand us either a freshly-built `Vec` or a borrow into
 /// an `Arc<Vec<u8>>` without an intermediate clone.
+///
+/// **Note on the `to_vec`:** the `Arc<Vec<u8>>` cache route still
+/// pays a copy here because `_free_state` reconstitutes ownership via
+/// `Vec::from_raw_parts`, which requires the Rust global allocator
+/// **and** uniquely-owned bytes (no other Arc clones outstanding).
+/// Pro Tools holds the buffer until it calls `_free_state`, but the
+/// in-memory cache also keeps an `Arc` clone — there are at least 2
+/// references at the moment of hand-off, so we can't `Arc::try_unwrap`.
+/// A ref-counted hand-off (a small bridge type the C side would
+/// decrement on free) would eliminate the copy entirely; today's
+/// shape trades the extra `to_vec` allocation for keeping the C
+/// boundary simple.
 unsafe fn finalize_blob(blob: &[u8], out_data: *mut *mut u8) -> u32 {
     let len = blob.len() as u32;
     let mut boxed = blob.to_vec().into_boxed_slice();
@@ -853,6 +872,15 @@ pub unsafe fn _editor_open<P: PluginExport>(
     callbacks: *const TruceAaxGuiCallbacks,
 ) {
     unsafe {
+        // Defensive null checks — the AAX template is in-tree so the
+        // contract is between matched halves, but every other format
+        // wrapper guards parent + callback pointers (CLAP `:1455`,
+        // VST3 `cb_gui_open`). Mismatched ABI between a stale shim
+        // build and a fresh Rust build would otherwise fault inside
+        // `&*callbacks`.
+        if ctx.is_null() || callbacks.is_null() || parent_view.is_null() {
+            return;
+        }
         let inst = &mut *(ctx as *mut AaxInstance<P>);
         let editor = match inst.editor.as_mut() {
             Some(e) => e,
@@ -881,8 +909,8 @@ pub unsafe fn _editor_open<P: PluginExport>(
                     touch_fn(aax_ctx.as_ptr() as *mut c_void, id);
                 }),
                 set_param: Box::new(move |id, value| {
-                    params_for_set.set_normalized(id, value);
-                    let normalized = params_for_set.get_normalized(id).unwrap_or(0.0);
+                    let normalized =
+                        params_for_set.set_normalized_returning_normalized(id, value);
                     set_fn(aax_ctx.as_ptr() as *mut c_void, id, normalized);
                 }),
                 end_edit: Box::new(move |id| {

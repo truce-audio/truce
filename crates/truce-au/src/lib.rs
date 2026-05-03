@@ -85,7 +85,7 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
         plugin,
         event_list: EventList::new(),
         output_events: EventList::new(),
-        plugin_id_hash: state::hash_plugin_id(info.clap_id), // reuse CLAP ID for hashing
+        plugin_id_hash: state::shared_plugin_state_hash(&info),
         sample_rate: 44100.0,
         max_block_size: 0,
         scratch: truce_core::buffer::RawBufferScratch::default(),
@@ -482,7 +482,20 @@ unsafe extern "C" fn cb_gui_get_size<P: PluginExport>(
     h: *mut u32,
 ) {
     unsafe {
-        let inst = &*(ctx as *mut AuInstance<P>);
+        if ctx.is_null() {
+            return;
+        }
+        // Lazily install the editor here too — some AU validators
+        // (`auval`, Logic Pro's plugin validator) call `..._get_size`
+        // before `..._has_editor`, which is the canonical install
+        // site. Without this, those validators saw `inst.editor ==
+        // None` and silently received a 0×0 view, which shows up as
+        // "plugin reports invalid size" in their reports. Mirrors
+        // `cb_gui_has_editor`'s `&mut *` install.
+        let inst = &mut *(ctx as *mut AuInstance<P>);
+        if inst.editor.is_none() {
+            inst.editor = inst.plugin.editor();
+        }
         if let Some(ref editor) = inst.editor {
             // AU is macOS-only; hosts embed our NSView inside a Cocoa
             // container at logical-point coordinates and AppKit handles
@@ -526,9 +539,12 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                         );
                     }),
                     set_param: Box::new(move |id, value| {
-                        params_for_set.set_normalized(id, value);
-                        // Notify AU host of the parameter change
-                        let plain = params_for_set.get_plain(id).unwrap_or(0.0) as f32;
+                        // One combined trait dispatch (set_normalized
+                        // + get_plain) instead of two — the
+                        // `#[derive(Params)]` impl can compute both in
+                        // a single match-arm walk.
+                        let plain =
+                            params_for_set.set_normalized_returning_plain(id, value) as f32;
                         truce_au_v2_host_set_param(
                             ctx_raw.as_ptr() as *mut std::ffi::c_void,
                             id,
@@ -585,15 +601,19 @@ unsafe extern "C" fn cb_gui_close<P: PluginExport>(ctx: *mut std::ffi::c_void) {
         }
         // Keep the editor alive — just closed, not dropped.
         //
-        // Dropping the editor here would tear down its baseview window
-        // synchronously, and on AU we've observed crashes from that
-        // teardown re-entering the host's NSTimer / autorelease pool
-        // mid-callback (the host typically calls our `gui_close` from
-        // inside a draw or timer fire — see `aax_editor_crash` in the
-        // memory notes for the related Pro Tools incident). The
-        // editor's `close()` already drops the NSView and Metal
-        // resources; the lightweight Rust struct that survives is
-        // reopened in-place by the next `gui_open` call.
+        // Dropping the editor here would synchronously deallocate its
+        // baseview NSWindow + content NSView. Logic / Pro Tools tend
+        // to call `gui_close` from inside their own NSTimer fire or
+        // a `[CALayer display]` callback, both of which run inside an
+        // implicit autorelease pool that's about to pop. If
+        // `[NSTimer invalidate]` (which baseview's drop chain calls
+        // via `WindowHandle::drop`) re-enters that pool's pop
+        // sequence, the host crashes inside `objc_release` on a
+        // freed `NSAutoreleasePool*` (same root cause as the AAX
+        // incident in `aax_editor_crash` memory note). The editor's
+        // `close()` has already released the NSView contents and
+        // Metal resources; the lightweight Rust struct that survives
+        // is reopened in-place by the next `gui_open` call.
     }
 }
 

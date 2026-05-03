@@ -49,25 +49,8 @@ pub(crate) fn cmd_run(args: &[String]) -> Res {
 
     crate::set_debug_profile(debug);
 
-    let plugin = if let Some(ref f) = plugin_filter {
-        config
-            .plugin
-            .iter()
-            .find(|p| p.crate_name == *f)
-            .ok_or_else(|| {
-                format!(
-                    "No plugin with crate name '{f}'. Available: {}",
-                    config
-                        .plugin
-                        .iter()
-                        .map(|p| p.crate_name.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )
-            })?
-    } else {
-        config.plugin.first().ok_or("no plugins in truce.toml")?
-    };
+    let matched = super::pick_plugins(&config, plugin_filter.as_deref())?;
+    let plugin = *matched.first().ok_or("no plugins in truce.toml")?;
 
     let bundles_dir = crate::target_dir(&root).join("bundles");
     fs_ctx::create_dir_all(&bundles_dir)?;

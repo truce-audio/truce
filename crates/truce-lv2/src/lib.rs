@@ -35,7 +35,7 @@ use truce_core::events::{Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
 use truce_core::info::{PluginCategory, PluginInfo};
 use truce_core::process::ProcessContext;
-use truce_core::state::hash_plugin_id;
+use truce_core::state::shared_plugin_state_hash;
 use truce_params::{ParamInfo, Params};
 
 use crate::atom::AtomSequenceReader;
@@ -166,6 +166,15 @@ unsafe impl<P: PluginExport> Send for Lv2Instance<P> {}
 // ---------------------------------------------------------------------------
 
 /// Build a PortLayout from the plugin's declared bus layout + params.
+///
+/// **Prefer [`derive_port_layout_from`] when you already hold a `&P`.**
+/// This convenience form constructs a fresh `P::create()` only to
+/// extract the static layout, which can allocate plugin-internal
+/// buffers (DSP scratch, etc.) for no payoff. After the
+/// `derive_port_layout_from` extraction, every in-tree caller
+/// (`instantiate`, `emit_bundle`) routes through the `_from` variant;
+/// this entry point exists for external consumers that don't have a
+/// plugin instance handy.
 pub fn derive_port_layout<P: PluginExport>() -> PortLayout {
     let plugin = P::create();
     derive_port_layout_from::<P>(&plugin)
@@ -226,7 +235,7 @@ pub unsafe fn instantiate<P: PluginExport>(
             plugin,
             sample_rate,
             max_block_size: 0,
-            plugin_id_hash: hash_plugin_id(info.clap_id),
+            plugin_id_hash: shared_plugin_state_hash(&info),
             param_infos,
             layout,
 
@@ -417,10 +426,25 @@ pub unsafe fn run<P: PluginExport>(handle: *mut Lv2Instance<P>, n_samples: u32) 
             let sl: &[f32] = if in_ptr.is_null() {
                 &[]
             } else {
-                let aliases_output = inst
-                    .audio_outputs
-                    .iter()
-                    .any(|&out_ptr| !out_ptr.is_null() && out_ptr.cast_const() == in_ptr);
+                // Range-overlap check, not just exact start-pointer
+                // equality: a host that connects channel-0 input and
+                // channel-1 output to the same allocation at offsets
+                // 0 / sizeof(f32) would miss an exact-pointer test
+                // and produce a partial in-place run. LV2 hosts in
+                // practice hand each port a distinct allocation, so
+                // this is a contracts-edge guard rather than a
+                // real-world break — but the cost is just a couple
+                // of `usize` compares per output channel.
+                let in_start = in_ptr as usize;
+                let in_end = in_start + n * core::mem::size_of::<f32>();
+                let aliases_output = inst.audio_outputs.iter().any(|&out_ptr| {
+                    if out_ptr.is_null() {
+                        return false;
+                    }
+                    let out_start = out_ptr as usize;
+                    let out_end = out_start + n * core::mem::size_of::<f32>();
+                    in_start < out_end && out_start < in_end
+                });
                 if aliases_output {
                     // Copy host's input bytes into our scratch *before* we
                     // hand any `&mut [f32]` to the same memory below.
