@@ -72,8 +72,10 @@ where
     // Use sRGB to match the windowed Metal surface (Bgra8UnormSrgb).
     let format = wgpu::TextureFormat::Bgra8UnormSrgb;
 
-    // Create iced engine + renderer (MSAA 4x for smooth edges)
-    let engine = iced_wgpu::Engine::new(
+    // Create iced engine + renderer (MSAA 4x for smooth edges).
+    // `mut` because `Engine::submit` (later) consumes the engine and
+    // `Renderer::present` borrows it `&mut` — we own it through both.
+    let mut engine = iced_wgpu::Engine::new(
         &adapter,
         &device,
         &queue,
@@ -179,7 +181,6 @@ where
         label: Some("truce-iced-screenshot-enc"),
     });
 
-    let mut engine = engine;
     renderer.present(
         &mut engine,
         &device,

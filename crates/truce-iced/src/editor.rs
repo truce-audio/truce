@@ -302,8 +302,12 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
         };
 
         let (lw, lh) = self.size;
-        let render_scale = truce_gui::backing_scale();
-        self.scale_factor = render_scale;
+        // Use the scale factor the editor stored at construction (or
+        // last `set_scale_factor`); re-querying `truce_gui::backing_scale()`
+        // here would drop a host-supplied value and on Linux the
+        // process-wide cache may not have been populated yet, so the
+        // first frame would render at 1.0 even on a HiDPI display.
+        let render_scale = self.scale_factor;
         let w = (lw as f64 * render_scale) as u32;
         let h = (lh as f64 * render_scale) as u32;
 
@@ -469,6 +473,14 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
                 label: Some("truce-iced-encoder"),
             });
 
+        // `Debug::overlay()` allocates a fresh `Vec<String>` from iced's
+        // internal frame metrics every call; that's wasted work in
+        // release where the overlay is invisible anyway.
+        let overlay: Vec<String> = if cfg!(debug_assertions) {
+            render.debug.overlay()
+        } else {
+            Vec::new()
+        };
         render.renderer.present(
             &mut render.engine,
             &render.device,
@@ -478,7 +490,7 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
             render.surface_config.format,
             &view,
             &render.viewport,
-            &render.debug.overlay(),
+            &overlay,
         );
 
         render.engine.submit(&render.queue, encoder);
@@ -564,7 +576,8 @@ impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBase
 
     fn on_event(
         &mut self,
-        _window: &mut baseview::Window,
+        #[cfg_attr(not(target_os = "windows"), allow(unused_variables))]
+        window: &mut baseview::Window,
         event: baseview::Event,
     ) -> baseview::EventStatus {
         let editor = unsafe { &mut *self.editor };
@@ -595,8 +608,8 @@ impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBase
                         // on Windows. See truce-egui editor.rs for rationale.
                         #[cfg(target_os = "windows")]
                         {
-                            if !_window.has_focus() {
-                                _window.focus();
+                            if !window.has_focus() {
+                                window.focus();
                             }
                         }
                         runtime.mouse_left_pressed = true;

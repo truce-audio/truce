@@ -16,7 +16,6 @@ use crate::theme;
 
 /// Builder for a multi-channel level meter.
 pub struct MeterWidget<'a, M> {
-    _ids: Vec<u32>,
     values: Vec<f32>,
     label: Option<&'a str>,
     width: f32,
@@ -29,7 +28,6 @@ impl<'a, M: Clone + Debug + 'static> MeterWidget<'a, M> {
     pub fn new(ids: &[u32], params: &'a ParamState<impl Params>) -> Self {
         let values: Vec<f32> = ids.iter().map(|&id| params.meter(id)).collect();
         Self {
-            _ids: ids.to_vec(),
             values,
             label: None,
             width: 16.0,

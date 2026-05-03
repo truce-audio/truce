@@ -13,6 +13,10 @@ use truce_params::Params;
 /// Cached parameter values for iced widget consumption.
 pub struct ParamState<P: Params> {
     params: Arc<P>,
+    /// Param IDs (cached at construction so each `sync` doesn't reallocate
+    /// `Vec<ParamInfo>`). The set is fixed for the lifetime of the editor —
+    /// `param_infos()` returns the same list every call.
+    ids: Vec<u32>,
     /// Cached normalized values, indexed by param ID.
     values: HashMap<u32, f64>,
     /// Cached formatted display strings.
@@ -26,24 +30,27 @@ pub struct ParamState<P: Params> {
 impl<P: Params> ParamState<P> {
     /// Create a new ParamState, populating initial values from the params.
     pub fn new(params: Arc<P>) -> Self {
-        let mut state = Self {
-            params,
-            values: HashMap::new(),
-            labels: HashMap::new(),
-            meters: HashMap::new(),
-            font: iced::Font::DEFAULT,
-        };
-        // Initial population
-        for info in state.params.param_infos() {
-            if let Some(v) = state.params.get_normalized(info.id) {
-                state.values.insert(info.id, v);
+        let infos = params.param_infos();
+        let ids: Vec<u32> = infos.iter().map(|i| i.id).collect();
+        let mut values = HashMap::with_capacity(ids.len());
+        let mut labels = HashMap::with_capacity(ids.len());
+        for info in &infos {
+            if let Some(v) = params.get_normalized(info.id) {
+                values.insert(info.id, v);
             }
-            let plain = state.params.get_plain(info.id).unwrap_or(0.0);
-            if let Some(label) = state.params.format_value(info.id, plain) {
-                state.labels.insert(info.id, label);
+            let plain = params.get_plain(info.id).unwrap_or(0.0);
+            if let Some(label) = params.format_value(info.id, plain) {
+                labels.insert(info.id, label);
             }
         }
-        state
+        Self {
+            params,
+            ids,
+            values,
+            labels,
+            meters: HashMap::new(),
+            font: iced::Font::DEFAULT,
+        }
     }
 
     /// Read a param's normalized value (0.0–1.0).
@@ -87,13 +94,13 @@ impl<P: Params> ParamState<P> {
     /// Poll all params from the editor context, return IDs that changed.
     pub(crate) fn sync(&mut self, ctx: &EditorContext) -> Vec<u32> {
         let mut changed = Vec::new();
-        for info in self.params.param_infos() {
-            let new_val = ctx.get_param(info.id);
-            let old_val = self.values.get(&info.id).copied().unwrap_or(-1.0);
+        for &id in &self.ids {
+            let new_val = ctx.get_param(id);
+            let old_val = self.values.get(&id).copied().unwrap_or(-1.0);
             if (new_val - old_val).abs() > 1e-10 {
-                self.values.insert(info.id, new_val);
-                self.labels.insert(info.id, ctx.format_param(info.id));
-                changed.push(info.id);
+                self.values.insert(id, new_val);
+                self.labels.insert(id, ctx.format_param(id));
+                changed.push(id);
             }
         }
         changed

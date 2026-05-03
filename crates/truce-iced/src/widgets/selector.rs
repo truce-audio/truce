@@ -14,7 +14,6 @@ use truce_params::Params;
 /// Builder for a parameter-bound selector (pick list).
 pub struct SelectorWidget<'a, M> {
     id: u32,
-    _value: f64,
     options: Vec<String>,
     selected: Option<String>,
     label: Option<&'a str>,
@@ -53,7 +52,6 @@ impl<'a, M: Clone + Debug + 'static> SelectorWidget<'a, M> {
 
         Self {
             id,
-            _value: value,
             options,
             selected,
             label: None,

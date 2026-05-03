@@ -17,6 +17,7 @@ pub mod interaction;
 pub mod layout;
 #[macro_use]
 pub mod macros;
+pub mod param_state;
 pub mod platform;
 pub mod render;
 pub mod snapshot;
@@ -24,6 +25,7 @@ pub mod theme;
 pub mod widgets;
 
 pub use editor::BuiltinEditor;
+pub use param_state::ParamState;
 pub use render::{ImageId, RenderBackend};
 pub use snapshot::ParamSnapshot;
 pub use theme::Theme;
