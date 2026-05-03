@@ -133,16 +133,21 @@ struct AaxInstance<P: PluginExport> {
     editor: Option<Box<dyn Editor>>,
     /// Shared transport slot: audio thread writes each block, editor reads.
     transport_slot: Arc<truce_core::TransportSlot>,
-    /// Cached serialized state. Pro Tools calls `GetChunkSize` +
-    /// `GetChunk` as a pair, and for undo-checkpointing may call the
-    /// pair repeatedly without any intervening state change. Caching
-    /// avoids re-running `collect_values` + `serialize_state` on every
-    /// call. Invalidated by `_set_param` and `_load_state`.
-    state_cache: std::sync::Mutex<Option<Vec<u8>>>,
-    /// Set when a param write or explicit load invalidates the cache.
-    /// `_save_state` checks this; when true it re-serializes and
-    /// clears the flag, when false it clones from the cache.
-    state_dirty: std::sync::atomic::AtomicBool,
+    /// Cached serialized state plus the `state_revision` value it was
+    /// captured at. Pro Tools calls `GetChunkSize` + `GetChunk` as a
+    /// pair, and for undo-checkpointing may call the pair repeatedly
+    /// without any intervening state change. Caching avoids re-running
+    /// `collect_values` + `serialize_state` on every call.
+    state_cache: std::sync::Mutex<Option<(u64, Vec<u8>)>>,
+    /// Monotonically-incrementing counter bumped by `_set_param` (audio
+    /// thread) and `_load_state` (main thread). `_save_state` snapshots
+    /// it before reading params and re-checks after serialization; if
+    /// the counter advanced during the read the result isn't cached
+    /// (it would be an inconsistent snapshot of the audio state). The
+    /// previous `AtomicBool`-based dirty flag had a race where
+    /// `swap(false)` could clear a bit that the audio thread had just
+    /// re-set, leaving the cache one update behind.
+    state_revision: std::sync::atomic::AtomicU64,
 }
 
 // ---------------------------------------------------------------------------
@@ -506,7 +511,9 @@ pub unsafe fn _create<P: PluginExport>() -> *mut std::ffi::c_void {
         editor: None,
         transport_slot: truce_core::TransportSlot::new(),
         state_cache: std::sync::Mutex::new(None),
-        state_dirty: std::sync::atomic::AtomicBool::new(true),
+        // Start at 1 so the first cached entry (revision 0) never
+        // matches and we always serialize on the first save_state call.
+        state_revision: std::sync::atomic::AtomicU64::new(1),
     });
     Box::into_raw(instance) as *mut std::ffi::c_void
 }
@@ -644,9 +651,12 @@ pub unsafe fn _get_param<P: PluginExport>(ctx: *mut std::ffi::c_void, id: u32) -
 pub unsafe fn _set_param<P: PluginExport>(ctx: *mut std::ffi::c_void, id: u32, value: f64) {
     let inst = unsafe { &*(ctx as *mut AaxInstance<P>) };
     inst.plugin.params().set_plain(id, value);
-    // A param moved — the cached state blob is now stale.
-    inst.state_dirty
-        .store(true, std::sync::atomic::Ordering::Release);
+    // Bump the revision counter so the next `_save_state` notices the
+    // change. `Release` synchronizes with the `Acquire` load in
+    // `_save_state` — anyone seeing the bumped revision also sees the
+    // param store.
+    inst.state_revision
+        .fetch_add(1, std::sync::atomic::Ordering::Release);
 }
 
 pub unsafe fn _format_param<P: PluginExport>(
@@ -678,13 +688,34 @@ pub unsafe fn _save_state<P: PluginExport>(
 ) -> u32 {
     unsafe {
         let inst = &*(ctx as *mut AaxInstance<P>);
-        // Hot-path optimization for Pro Tools undo/snapshot flows, which
-        // call the `GetChunkSize` + `GetChunk` pair repeatedly. On a
-        // clean cache we hand back a clone of the last serialized blob;
-        // otherwise we re-serialize and cache for the next call.
-        let dirty = inst
-            .state_dirty
-            .swap(false, std::sync::atomic::Ordering::AcqRel);
+        // Hot-path optimization for Pro Tools undo/snapshot flows,
+        // which call the `GetChunkSize` + `GetChunk` pair repeatedly.
+        // We use a seqlock-style protocol against the audio thread:
+        //
+        //   1. Snapshot `state_revision` *before* reading params.
+        //   2. If the cache exists and was captured at this revision,
+        //      hand back a clone — no audio update has happened since.
+        //   3. Otherwise serialize the current param snapshot.
+        //   4. Re-read `state_revision` *after* serialization. If it
+        //      didn't advance, the serialized blob is consistent with
+        //      `revision_before` and we cache it. If it did advance, an
+        //      audio-thread `_set_param` ran during our read and the
+        //      blob may not represent any single moment in time —
+        //      return it (best-effort) but don't cache, so the next
+        //      call re-serializes.
+        //
+        // The previous `AtomicBool::swap(false)` design had a window
+        // where the audio thread could re-set the flag between the
+        // swap and the read, then have its update overwritten when we
+        // wrote the cache; this counter scheme detects that case.
+        let revision_before = inst.state_revision.load(std::sync::atomic::Ordering::Acquire);
+
+        let serialize_now = |inst: &AaxInstance<P>| -> Vec<u8> {
+            let (ids, values) = inst.plugin.params().collect_values();
+            let extra = inst.plugin.save_state();
+            state::serialize_state(inst.plugin_id_hash, &ids, &values, extra.as_deref())
+        };
+
         let blob = {
             let mut guard = match inst.state_cache.lock() {
                 Ok(g) => g,
@@ -692,27 +723,23 @@ pub unsafe fn _save_state<P: PluginExport>(
                 // in practice). Bypass the cache rather than panicking
                 // inside the AAX callback.
                 Err(_) => {
-                    let (ids, values) = inst.plugin.params().collect_values();
-                    let extra = inst.plugin.save_state();
-                    let fresh = state::serialize_state(
-                        inst.plugin_id_hash,
-                        &ids,
-                        &values,
-                        extra.as_deref(),
-                    );
-                    return finalize_blob(fresh, out_data);
+                    return finalize_blob(serialize_now(inst), out_data);
                 }
             };
-            if dirty || guard.is_none() {
-                let (ids, values) = inst.plugin.params().collect_values();
-                let extra = inst.plugin.save_state();
-                let fresh =
-                    state::serialize_state(inst.plugin_id_hash, &ids, &values, extra.as_deref());
-                *guard = Some(fresh.clone());
-                fresh
-            } else {
-                // SAFETY: we just checked is_some().
-                guard.as_ref().unwrap().clone()
+            match guard.as_ref() {
+                Some((rev, blob)) if *rev == revision_before => blob.clone(),
+                _ => {
+                    let fresh = serialize_now(inst);
+                    let revision_after =
+                        inst.state_revision.load(std::sync::atomic::Ordering::Acquire);
+                    if revision_after == revision_before {
+                        // No audio update during serialization — safe to cache.
+                        *guard = Some((revision_before, fresh.clone()));
+                    }
+                    // else: audio updated mid-read; return the blob but
+                    // skip caching so the next call re-serializes.
+                    fresh
+                }
             }
         };
         finalize_blob(blob, out_data)
@@ -738,10 +765,10 @@ pub unsafe fn _load_state<P: PluginExport>(ctx: *mut std::ffi::c_void, data: *co
         if let Some(extra) = &deserialized.extra {
             inst.plugin.load_state(extra);
         }
-        // State changed wholesale — invalidate the serialization cache
-        // so the next `_save_state` re-captures the restored values.
-        inst.state_dirty
-            .store(true, std::sync::atomic::Ordering::Release);
+        // State changed wholesale — bump the revision counter so the
+        // next `_save_state` re-captures the restored values.
+        inst.state_revision
+            .fetch_add(1, std::sync::atomic::Ordering::Release);
         if let Some(ref mut editor) = inst.editor {
             editor.state_changed();
         }

@@ -135,6 +135,14 @@ pub struct Lv2UiInstance<P: PluginExport> {
     /// Shared transport state. Written from `port_event` (main thread in
     /// practice), read by the editor's `transport` closure.
     transport_slot: Arc<TransportSlot>,
+    /// Reusable scratch buffer for the synthetic `AtomSequence` we
+    /// build per notify-port atom. LV2 hosts can deliver `time:Position`
+    /// updates 60-180×/sec and the previous code allocated a fresh
+    /// `Vec<u8>` on every event. `RefCell` because `port_event` only
+    /// has `&self` (the LV2 host hands us a `LV2UI_Handle`, which we
+    /// cast to `&Lv2UiInstance<P>`) — fine on the UI thread, which
+    /// hosts are required to use single-threaded.
+    notify_scratch: core::cell::RefCell<Vec<u8>>,
     _phantom: PhantomData<P>,
 }
 
@@ -307,6 +315,7 @@ pub unsafe fn instantiate_ui<P: PluginExport>(
             notify_port_index: layout.notify_out_port(),
             atom_event_transfer_urid,
             transport_slot,
+            notify_scratch: core::cell::RefCell::new(Vec::new()),
             _phantom: PhantomData,
         });
         Box::into_raw(ui) as Lv2UiHandle
@@ -416,16 +425,21 @@ unsafe fn decode_notify_atom<P: PluginExport>(
             return;
         }
 
-        // Stack-allocate a one-event sequence pointing at the delivered atom.
-        // The reader walks events, so wrap: AtomSequence { seq header, event
-        // header, body... }. Cheaper than reconstructing atom parsing here.
+        // Reuse the per-instance scratch (re-allocates only when the
+        // requested size grows past the current capacity). Hosts emit
+        // `time:Position` 60-180×/sec, and a fresh `Vec<u8>` per notify
+        // is ~10k allocations/min on the UI thread.
         #[repr(C)]
         struct OneEvent {
             seq_header: AtomSequence,
             event_time: i64,
             event_body: Atom,
         }
-        let mut scratch = vec![0u8; core::mem::size_of::<OneEvent>() + body_size + 8];
+        let needed = core::mem::size_of::<OneEvent>() + body_size + 8;
+        let mut scratch = ui.notify_scratch.borrow_mut();
+        if scratch.len() < needed {
+            scratch.resize(needed, 0);
+        }
         let one = scratch.as_mut_ptr() as *mut OneEvent;
         (*one).seq_header.atom.type_ = ui.urid_map.atom_sequence;
         (*one).seq_header.atom.size = (core::mem::size_of::<AtomSequenceBody>()

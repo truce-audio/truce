@@ -622,6 +622,15 @@ fn open_output_stream<P: PluginExport>(
     #[cfg(feature = "playback")]
     let capture_a = res.capture.clone();
 
+    // Per-stream audio-callback scratch. Owned by the move-closure so
+    // it lives across callbacks but never crosses threads — cpal calls
+    // the closure on a single dedicated audio thread per stream. Used
+    // to amortize the `vec![0.0; num_frames]` per-channel allocation
+    // and the `channel_bufs.clone()` for the effect input mirror that
+    // the audit flagged as per-block heap traffic.
+    let mut channel_bufs: Vec<Vec<f32>> = Vec::new();
+    let mut input_bufs: Vec<Vec<f32>> = Vec::new();
+
     let stream = match sample_format {
         cpal::SampleFormat::F32 => device
             .build_output_stream(
@@ -638,6 +647,8 @@ fn open_output_stream<P: PluginExport>(
                         &enabled_a,
                         &out_enabled_a,
                         &transport_a,
+                        &mut channel_bufs,
+                        &mut input_bufs,
                         #[cfg(feature = "playback")]
                         playback_a.as_ref(),
                         #[cfg(feature = "playback")]
@@ -904,6 +915,8 @@ fn audio_callback<P: PluginExport>(
     input_enabled: &Arc<AtomicBool>,
     output_enabled: &Arc<AtomicBool>,
     transport: &Transport,
+    channel_bufs: &mut Vec<Vec<f32>>,
+    input_bufs: &mut Vec<Vec<f32>>,
     #[cfg(feature = "playback")] playback: Option<&Arc<crate::playback::PlaybackSource>>,
     #[cfg(feature = "playback")] capture: Option<&crate::playback::CapturePusher>,
 ) {
@@ -924,7 +937,15 @@ fn audio_callback<P: PluginExport>(
         return;
     };
 
-    let mut channel_bufs: Vec<Vec<f32>> = (0..channels).map(|_| vec![0.0f32; num_frames]).collect();
+    // Re-shape the persistent channel scratch to (channels, num_frames)
+    // and zero it. `Vec::resize` and `Vec::resize(.., 0.0)` only
+    // allocate when growing past capacity, so a stable cpal stream
+    // (fixed channels + buffer size) does not allocate after warm-up.
+    channel_bufs.resize_with(channels, Vec::new);
+    for buf in channel_bufs.iter_mut() {
+        buf.clear();
+        buf.resize(num_frames, 0.0);
+    }
 
     // Mic + file are independent input sources that *sum* into the
     // plugin's bus. Each path starts from a zero-init `channel_bufs`
@@ -949,14 +970,21 @@ fn audio_callback<P: PluginExport>(
 
     #[cfg(feature = "playback")]
     if is_effect && let Some(src) = playback {
-        src.mix_into(&mut channel_bufs, num_frames);
+        src.mix_into(channel_bufs, num_frames);
     }
 
-    let input_bufs: Vec<Vec<f32>> = if is_effect {
-        channel_bufs.clone()
+    // Mirror `channel_bufs` into `input_bufs` for the effect path
+    // (the plugin reads from `input_bufs` and writes to
+    // `channel_bufs`). Same resize-without-realloc trick as above.
+    if is_effect {
+        input_bufs.resize_with(channels, Vec::new);
+        for (dst, src) in input_bufs.iter_mut().zip(channel_bufs.iter()) {
+            dst.clear();
+            dst.extend_from_slice(src);
+        }
     } else {
-        Vec::new()
-    };
+        input_bufs.clear();
+    }
     let input_slices: Vec<&[f32]> = input_bufs.iter().map(|b| b.as_slice()).collect();
     let mut output_slices: Vec<&mut [f32]> =
         channel_bufs.iter_mut().map(|b| b.as_mut_slice()).collect();

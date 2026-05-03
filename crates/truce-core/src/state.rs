@@ -72,7 +72,15 @@ pub fn deserialize_state(data: &[u8], expected_plugin_id: u64) -> Option<Deseria
     let count = u32::from_le_bytes(data[offset..offset + 4].try_into().ok()?) as usize;
     offset += 4;
 
-    let mut params = Vec::with_capacity(count);
+    // Cap the pre-allocation by what the remaining buffer could
+    // possibly hold. Each entry is 12 bytes (`u32 id` + `f64 value`),
+    // so a hostile or corrupted blob with `count = u32::MAX` (≈64 GB
+    // request) is clamped to at most the remaining byte budget. The
+    // per-iteration bounds check below still rejects entries that
+    // overrun the buffer; this just keeps the up-front allocation
+    // honest.
+    let max_count = data.len().saturating_sub(offset) / 12;
+    let mut params = Vec::with_capacity(count.min(max_count));
     for _ in 0..count {
         if offset + 12 > data.len() {
             return None;

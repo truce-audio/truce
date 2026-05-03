@@ -38,6 +38,14 @@ struct Vst3Instance<P: PluginExport> {
     /// Reused per-block scratch for `RawBufferScratch::build`.
     /// Lives on the instance so the audio thread doesn't allocate.
     scratch: truce_core::buffer::RawBufferScratch,
+    /// Cached `(id, range)` pairs sorted by id. Built once in
+    /// `cb_create` from `params().param_infos()`. Hosts call
+    /// `cb_param_normalize` / `cb_param_denormalize` extremely often
+    /// while reading automation; rebuilding the full `Vec<ParamInfo>`
+    /// per call (the previous behavior) is a heap allocation on what
+    /// the host treats as a tight read path. Ranges are static for
+    /// the life of the plugin instance, so caching them is safe.
+    param_ranges: Vec<(u32, truce_params::ParamRange)>,
     editor: Option<Box<dyn Editor>>,
     /// Shared transport slot: audio thread writes each block, editor reads.
     transport_slot: Arc<truce_core::TransportSlot>,
@@ -69,6 +77,14 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
     let mut plugin = P::create();
     plugin.init();
     let info = P::info();
+    let mut param_ranges: Vec<(u32, truce_params::ParamRange)> = plugin
+        .params()
+        .param_infos()
+        .into_iter()
+        .map(|i| (i.id, i.range))
+        .collect();
+    // Sort by id so `binary_search_by_key` works in the hot lookups.
+    param_ranges.sort_by_key(|(id, _)| *id);
     let instance = Box::new(Vst3Instance::<P> {
         plugin,
         event_list: EventList::new(),
@@ -77,6 +93,7 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
         sample_rate: 44100.0,
         max_block_size: 0,
         scratch: truce_core::buffer::RawBufferScratch::default(),
+        param_ranges,
         editor: None,
         transport_slot: truce_core::TransportSlot::new(),
         host_scale: 1.0,
@@ -323,12 +340,10 @@ unsafe extern "C" fn cb_param_normalize<P: PluginExport>(
 ) -> f64 {
     unsafe {
         let inst = &*(ctx as *mut Vst3Instance<P>);
-        let infos = inst.plugin.params().param_infos();
-        infos
-            .iter()
-            .find(|i| i.id == id)
-            .map(|i| i.range.normalize(plain))
-            .unwrap_or(plain)
+        match inst.param_ranges.binary_search_by_key(&id, |(i, _)| *i) {
+            Ok(idx) => inst.param_ranges[idx].1.normalize(plain),
+            Err(_) => plain,
+        }
     }
 }
 
@@ -339,12 +354,10 @@ unsafe extern "C" fn cb_param_denormalize<P: PluginExport>(
 ) -> f64 {
     unsafe {
         let inst = &*(ctx as *mut Vst3Instance<P>);
-        let infos = inst.plugin.params().param_infos();
-        infos
-            .iter()
-            .find(|i| i.id == id)
-            .map(|i| i.range.denormalize(normalized))
-            .unwrap_or(normalized)
+        match inst.param_ranges.binary_search_by_key(&id, |(i, _)| *i) {
+            Ok(idx) => inst.param_ranges[idx].1.denormalize(normalized),
+            Err(_) => normalized,
+        }
     }
 }
 
