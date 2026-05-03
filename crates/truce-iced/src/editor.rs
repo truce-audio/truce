@@ -163,23 +163,30 @@ where
     scale: EditorScale,
     font: Option<(&'static str, &'static [u8])>,
     runtime: Option<IcedRuntime<P, M>>,
-    /// One-shot constructor closure consumed in `open()`. Each
-    /// constructor stores a closure that produces an `M` of the
-    /// correct concrete type:
+    /// Constructor closure for the plugin model. Each constructor
+    /// stores a closure that produces an `M` of the correct concrete
+    /// type:
     /// - `from_layout` captures the `GridLayout` and returns
-    ///   `AutoPlugin { layout }` (the `impl` block fixes
-    ///   `M = AutoPlugin`).
+    ///   `AutoPlugin { layout: layout.clone() }` (the `impl` block
+    ///   fixes `M = AutoPlugin`).
     /// - `new` defers to `M::new(params)`.
+    ///
+    /// `Fn` (not `FnOnce`) so `open()` and `screenshot()` can each
+    /// produce a fresh `M`. Hosts that destroy and recreate the editor
+    /// (CLAP `gui_destroy`/`gui_create`) call `open()` more than once;
+    /// `screenshot()` builds a separate offscreen iced program. Going
+    /// through `M::new` from the screenshot path used to panic for
+    /// `AutoPlugin`, whose `IcedPlugin::new` is `panic!("must be
+    /// created via from_layout")` — the closure carries the construction
+    /// invariant the trait method can't.
     ///
     /// Replaces an earlier `unsafe { std::ptr::read(&auto as *const
     /// AutoPlugin as *const M) }` reinterpret guarded only by a
     /// `debug_assert_eq` on size — release builds skipped the
     /// check, alignment / Drop / repr layout weren't validated, and
     /// the "M is constrained to AutoPlugin" invariant lived in a
-    /// comment instead of the type system. The closure version is
-    /// fully type-safe: each constructor produces a closure of the
-    /// right return type for *its* `M`, no transmute needed.
-    make_plugin: Option<Box<dyn FnOnce(Arc<P>) -> M + Send>>,
+    /// comment instead of the type system.
+    make_plugin: Box<dyn Fn(Arc<P>) -> M + Send + Sync>,
     meter_ids: Vec<u32>,
     baseview_window: Option<baseview::WindowHandle>,
 }
@@ -207,8 +214,10 @@ impl<P: Params + 'static> IcedEditor<P, AutoPlugin> {
             .copied()
             .collect();
 
-        let make_plugin: Box<dyn FnOnce(Arc<P>) -> AutoPlugin + Send> =
-            Box::new(move |_params| AutoPlugin { layout });
+        let make_plugin: Box<dyn Fn(Arc<P>) -> AutoPlugin + Send + Sync> =
+            Box::new(move |_params| AutoPlugin {
+                layout: layout.clone(),
+            });
 
         Self {
             params,
@@ -216,7 +225,7 @@ impl<P: Params + 'static> IcedEditor<P, AutoPlugin> {
             scale: EditorScale::new(truce_gui::backing_scale()),
             font: None,
             runtime: None,
-            make_plugin: Some(make_plugin),
+            make_plugin,
             meter_ids,
             baseview_window: None,
         }
@@ -232,7 +241,7 @@ impl<P: Params + 'static, M: IcedPlugin<P> + 'static> IcedEditor<P, M> {
             scale: EditorScale::new(truce_gui::backing_scale()),
             font: None,
             runtime: None,
-            make_plugin: Some(Box::new(|p| M::new(p))),
+            make_plugin: Box::new(|p| M::new(p)),
             meter_ids: Vec::new(),
             baseview_window: None,
         }
@@ -776,14 +785,11 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
     fn open(&mut self, parent: truce_core::editor::RawWindowHandle, context: PluginContext) {
         let (w, h) = self.size;
 
-        // Create the plugin model. Each constructor stores a closure
-        // that returns the right concrete `M`, so this just runs it.
-        let plugin = self
-            .make_plugin
-            .take()
-            .expect("IcedEditor::open called twice without re-construction")(
-            self.params.clone()
-        );
+        // Create the plugin model. The closure is `Fn`, not `FnOnce`,
+        // so destroy/recreate cycles (CLAP `gui_destroy`/`gui_create`,
+        // some VST3 hosts) work — earlier versions `take()`'d the
+        // closure once and panicked on the second open.
+        let plugin = (self.make_plugin)(self.params.clone());
 
         let mut param_cache = ParamCache::new(self.params.clone());
         if let Some((family, _)) = self.font {
@@ -877,12 +883,15 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
         &mut self,
         _params: Arc<dyn truce_params::Params>,
     ) -> Option<(Vec<u8>, u32, u32)> {
-        // Delegate to the standalone helper using the editor's own
-        // typed `Arc<P>` (already on hand from construction). Used by
-        // `truce_test::assert_screenshot::<Plugin>()`. The dyn-erased `params`
-        // arg is unused — IcedEditor carries the concrete type.
+        // Build the plugin via the editor's own constructor closure.
+        // Calling `M::new` directly would panic for `AutoPlugin` —
+        // `from_layout` captures the `GridLayout` in the closure and
+        // the `IcedPlugin::new` impl on `AutoPlugin` is `panic!("must
+        // be created via from_layout")`.
+        let plugin = (self.make_plugin)(Arc::clone(&self.params));
         crate::screenshot::render_to_pixels::<P, M>(
             Arc::clone(&self.params),
+            plugin,
             self.size,
             2.0,
             self.font,

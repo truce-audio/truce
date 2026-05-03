@@ -30,6 +30,7 @@ use truce_core::editor::for_test_params;
 /// screenshot paths handle adapter-acquisition failures uniformly.
 pub(crate) fn render_to_pixels<P, M>(
     params: Arc<P>,
+    plugin: M,
     size: (u32, u32),
     scale: f64,
     font: Option<(&'static str, &'static [u8])>,
@@ -101,7 +102,6 @@ where
     param_cache.set_font(default_font);
     let context = for_test_params(params.clone() as Arc<dyn Params>).with_params(params.clone());
 
-    let plugin = M::new(params);
     let program = IcedProgram {
         plugin,
         param_cache,

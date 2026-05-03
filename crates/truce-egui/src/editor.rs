@@ -4,6 +4,7 @@
 //! Each `on_frame()` tick, runs the egui frame, tessellates, and renders.
 
 use std::marker::PhantomData;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use baseview::{Event, EventStatus, Window, WindowHandler, WindowOpenOptions, WindowScalePolicy};
@@ -80,6 +81,14 @@ impl<P: Params + ?Sized> EditorUi<P> for WithStateChanged<P> {
 pub struct EguiEditor<P: Params + ?Sized> {
     params: Arc<P>,
     size: (u32, u32),
+    /// Pending logical size shared with the baseview handler. Packed as
+    /// `(width << 32) | height`. `set_size` writes here; the handler's
+    /// `on_frame` checks for divergence from its own cached size and
+    /// resizes the baseview window + wgpu surface inline. baseview's
+    /// macOS `Window::resize` doesn't synthesise a `Resized` event, so
+    /// the diff-on-frame pattern is the only thing that catches a
+    /// host-driven resize before the next paint.
+    pending_size: Arc<AtomicU64>,
     /// Shared with the baseview WindowHandler so it survives open/close cycles.
     ui: Arc<Mutex<Box<dyn EditorUi<P>>>>,
     visuals: Option<egui::Visuals>,
@@ -119,6 +128,7 @@ impl<P: Params + 'static> EguiEditor<P> {
         Self {
             params,
             size,
+            pending_size: Arc::new(AtomicU64::new(pack_size(size))),
             ui: Arc::new(Mutex::new(Box::new(ui_fn))),
             visuals: None,
             font: None,
@@ -133,6 +143,7 @@ impl<P: Params + 'static> EguiEditor<P> {
         Self {
             params,
             size,
+            pending_size: Arc::new(AtomicU64::new(pack_size(size))),
             ui: Arc::new(Mutex::new(Box::new(ui))),
             visuals: None,
             font: None,
@@ -188,6 +199,16 @@ impl<P: Params + 'static> EguiEditor<P> {
     }
 }
 
+#[inline]
+fn pack_size(size: (u32, u32)) -> u64 {
+    ((size.0 as u64) << 32) | size.1 as u64
+}
+
+#[inline]
+fn unpack_size(packed: u64) -> (u32, u32) {
+    ((packed >> 32) as u32, packed as u32)
+}
+
 // ---------------------------------------------------------------------------
 // Baseview WindowHandler — owns the egui frame loop + wgpu renderer
 // ---------------------------------------------------------------------------
@@ -201,6 +222,10 @@ struct EguiWindowHandler<P: Params + ?Sized> {
     modifiers: egui::Modifiers,
     start_time: std::time::Instant,
     size: (u32, u32),
+    /// Shared with the parent `EguiEditor::set_size`. Re-checked at the
+    /// top of `on_frame`; if the packed value diverges from `self.size`,
+    /// the handler resizes the baseview window and wgpu surface inline.
+    pending_size: Arc<AtomicU64>,
     /// Shared with the parent `EguiEditor`; the editor's
     /// `set_scale_factor` and the baseview `Resized` handler both write
     /// here. `run_frame` compares against `last_applied_scale` to
@@ -273,6 +298,23 @@ impl<P: Params + ?Sized> EguiWindowHandler<P> {
 
 impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
     fn on_frame(&mut self, _window: &mut Window) {
+        // Pick up host-driven `set_size` requests since the last frame.
+        // baseview's macOS `Window::resize` doesn't synthesise a
+        // `Resized` event, so the wgpu surface has to be reconfigured
+        // here even though the OS-level resize happens via
+        // `_window.resize`. Linux/Win32 backends *do* fire `Resized`,
+        // but reapplying the surface config is idempotent.
+        let pending = unpack_size(self.pending_size.load(Ordering::Relaxed));
+        if pending != self.size && pending.0 > 0 && pending.1 > 0 {
+            let scale = self.scale.get() as f32;
+            let phys_w = (pending.0 as f32 * scale).round() as u32;
+            let phys_h = (pending.1 as f32 * scale).round() as u32;
+            _window.resize(baseview::Size::new(pending.0 as f64, pending.1 as f64));
+            if let Some(renderer) = self.renderer.as_mut() {
+                renderer.resize(phys_w, phys_h);
+            }
+            self.size = pending;
+        }
         self.run_frame();
     }
 
@@ -559,6 +601,11 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
         let parent_wrapper = ParentWindow(parent);
         let handler_ctx = typed_ctx.clone();
         let scale_handle = self.scale.clone();
+        // Reset the pending-size cell to the editor's current size so a
+        // stale `set_size` from before this open() doesn't immediately
+        // re-resize the freshly built window.
+        self.pending_size.store(pack_size(self.size), Ordering::Relaxed);
+        let pending_size = self.pending_size.clone();
 
         let window = baseview::Window::open_parented(
             &parent_wrapper,
@@ -585,6 +632,7 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
                     modifiers: egui::Modifiers::NONE,
                     start_time: std::time::Instant::now(),
                     size,
+                    pending_size,
                     scale: scale_handle,
                     last_applied_scale: scale,
                     last_cursor_pos: egui::Pos2::ZERO,
@@ -606,12 +654,23 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
     }
 
     fn set_size(&mut self, width: u32, height: u32) -> bool {
+        if width == 0 || height == 0 {
+            return false;
+        }
         self.size = (width, height);
+        // Hand the new logical size off to the live baseview handler.
+        // It picks the change up at the top of `on_frame`, calls
+        // `Window::resize`, and reconfigures the wgpu surface so the
+        // next frame paints at the new size. If no editor is open the
+        // store still primes the cell for the next `open()` call (which
+        // re-syncs from `self.size` anyway, so the value is harmless).
+        self.pending_size
+            .store(pack_size((width, height)), Ordering::Relaxed);
         true
     }
 
     fn can_resize(&self) -> bool {
-        false
+        true
     }
 
     fn set_scale_factor(&mut self, factor: f64) {
