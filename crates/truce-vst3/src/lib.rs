@@ -610,43 +610,45 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
             let transport_slot = inst.transport_slot.clone();
             let context = EditorContext::from_closures(
                 ClosureBridge {
-                begin_edit: Box::new(move |id| {
-                    ffi::truce_vst3_begin_edit(ctx_raw.as_ptr() as *mut std::ffi::c_void, id);
-                }),
-                set_param: Box::new(move |id, value| {
-                    params_for_set.set_normalized(id, value);
-                    let norm = params_for_set.get_normalized(id).unwrap_or(0.0);
-                    ffi::truce_vst3_perform_edit(
-                        ctx_raw.as_ptr() as *mut std::ffi::c_void,
-                        id,
-                        norm,
-                    );
-                }),
-                end_edit: Box::new(move |id| {
-                    ffi::truce_vst3_end_edit(ctx_raw.as_ptr() as *mut std::ffi::c_void, id);
-                }),
-                request_resize: Box::new(|_w, _h| false),
-                get_param: Box::new(move |id| params_for_get.get_normalized(id).unwrap_or(0.0)),
-                get_param_plain: Box::new(move |id| params_for_plain.get_plain(id).unwrap_or(0.0)),
-                format_param: Box::new(move |id| {
-                    let plain = params_for_fmt.get_plain(id).unwrap_or(0.0);
-                    params_for_fmt
-                        .format_value(id, plain)
-                        .unwrap_or_else(|| format!("{:.1}", plain))
-                }),
-                get_meter: Box::new(move |id| {
-                    let plugin = plugin_ptr.get();
-                    plugin.get_meter(id)
-                }),
-                get_state: Box::new(move || {
-                    let plugin = plugin_ptr.get();
-                    plugin.save_state().unwrap_or_default()
-                }),
-                set_state: Box::new(move |data| {
-                    let plugin = &mut *(plugin_ptr.as_ptr() as *mut P);
-                    plugin.load_state(&data);
-                }),
-                transport: Box::new(move || transport_slot.read()),
+                    begin_edit: Box::new(move |id| {
+                        ffi::truce_vst3_begin_edit(ctx_raw.as_ptr() as *mut std::ffi::c_void, id);
+                    }),
+                    set_param: Box::new(move |id, value| {
+                        params_for_set.set_normalized(id, value);
+                        let norm = params_for_set.get_normalized(id).unwrap_or(0.0);
+                        ffi::truce_vst3_perform_edit(
+                            ctx_raw.as_ptr() as *mut std::ffi::c_void,
+                            id,
+                            norm,
+                        );
+                    }),
+                    end_edit: Box::new(move |id| {
+                        ffi::truce_vst3_end_edit(ctx_raw.as_ptr() as *mut std::ffi::c_void, id);
+                    }),
+                    request_resize: Box::new(|_w, _h| false),
+                    get_param: Box::new(move |id| params_for_get.get_normalized(id).unwrap_or(0.0)),
+                    get_param_plain: Box::new(move |id| {
+                        params_for_plain.get_plain(id).unwrap_or(0.0)
+                    }),
+                    format_param: Box::new(move |id| {
+                        let plain = params_for_fmt.get_plain(id).unwrap_or(0.0);
+                        params_for_fmt
+                            .format_value(id, plain)
+                            .unwrap_or_else(|| format!("{:.1}", plain))
+                    }),
+                    get_meter: Box::new(move |id| {
+                        let plugin = plugin_ptr.get();
+                        plugin.get_meter(id)
+                    }),
+                    get_state: Box::new(move || {
+                        let plugin = plugin_ptr.get();
+                        plugin.save_state().unwrap_or_default()
+                    }),
+                    set_state: Box::new(move |data| {
+                        let plugin = &mut *(plugin_ptr.as_ptr() as *mut P);
+                        plugin.load_state(&data);
+                    }),
+                    transport: Box::new(move || transport_slot.read()),
                 },
                 params_for_ctx,
             );

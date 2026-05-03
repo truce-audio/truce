@@ -11,8 +11,8 @@ use iced::{Element, Length, alignment};
 use truce_gui::layout::{GridLayout, WidgetKind};
 use truce_params::Params;
 
-use crate::param_message::Message;
 use crate::param_cache::ParamCache;
+use crate::param_message::Message;
 use crate::theme;
 use crate::widgets;
 

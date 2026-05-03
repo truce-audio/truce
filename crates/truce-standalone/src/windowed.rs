@@ -442,37 +442,37 @@ where
 
     EditorContext::from_closures(
         ClosureBridge {
-        begin_edit: Box::new(|_id| {}),
-        set_param: Box::new(move |id, norm| {
-            params_write.set_normalized(id, norm);
-        }),
-        end_edit: Box::new(|_id| {}),
-        request_resize: Box::new(|_w, _h| false),
-        get_param: Box::new(move |id| params_read.get_normalized(id).unwrap_or(0.0)),
-        get_param_plain: Box::new(move |id| params_plain.get_plain(id).unwrap_or(0.0)),
-        format_param: Box::new(move |id| {
-            let value = params_format.get_plain(id).unwrap_or(0.0);
-            params_format.format_value(id, value).unwrap_or_default()
-        }),
-        get_meter: Box::new(move |id| {
-            plugin_meter
-                .try_lock()
-                .map(|p| p.get_meter(id))
-                .unwrap_or(0.0)
-        }),
-        get_state: Box::new(move || {
-            plugin_save
-                .try_lock()
-                .ok()
-                .and_then(|p| p.save_state())
-                .unwrap_or_default()
-        }),
-        set_state: Box::new(move |bytes| {
-            if let Ok(mut p) = plugin_load.try_lock() {
-                p.load_state(&bytes);
-            }
-        }),
-        transport: Box::new(move || Some(transport_read.snapshot())),
+            begin_edit: Box::new(|_id| {}),
+            set_param: Box::new(move |id, norm| {
+                params_write.set_normalized(id, norm);
+            }),
+            end_edit: Box::new(|_id| {}),
+            request_resize: Box::new(|_w, _h| false),
+            get_param: Box::new(move |id| params_read.get_normalized(id).unwrap_or(0.0)),
+            get_param_plain: Box::new(move |id| params_plain.get_plain(id).unwrap_or(0.0)),
+            format_param: Box::new(move |id| {
+                let value = params_format.get_plain(id).unwrap_or(0.0);
+                params_format.format_value(id, value).unwrap_or_default()
+            }),
+            get_meter: Box::new(move |id| {
+                plugin_meter
+                    .try_lock()
+                    .map(|p| p.get_meter(id))
+                    .unwrap_or(0.0)
+            }),
+            get_state: Box::new(move || {
+                plugin_save
+                    .try_lock()
+                    .ok()
+                    .and_then(|p| p.save_state())
+                    .unwrap_or_default()
+            }),
+            set_state: Box::new(move |bytes| {
+                if let Ok(mut p) = plugin_load.try_lock() {
+                    p.load_state(&bytes);
+                }
+            }),
+            transport: Box::new(move || Some(transport_read.snapshot())),
         },
         params_for_ctx,
     )

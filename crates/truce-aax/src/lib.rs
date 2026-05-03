@@ -858,41 +858,41 @@ pub unsafe fn _editor_open<P: PluginExport>(
 
         let context = EditorContext::from_closures(
             ClosureBridge {
-            begin_edit: Box::new(move |id| {
-                touch_fn(aax_ctx.as_ptr() as *mut c_void, id);
-            }),
-            set_param: Box::new(move |id, value| {
-                params_for_set.set_normalized(id, value);
-                let normalized = params_for_set.get_normalized(id).unwrap_or(0.0);
-                set_fn(aax_ctx.as_ptr() as *mut c_void, id, normalized);
-            }),
-            end_edit: Box::new(move |id| {
-                release_fn(aax_ctx.as_ptr() as *mut c_void, id);
-            }),
-            request_resize: Box::new(move |w, h| {
-                resize_fn(aax_ctx.as_ptr() as *mut c_void, w, h) != 0
-            }),
-            get_param: Box::new(move |id| params_for_get.get_normalized(id).unwrap_or(0.0)),
-            get_param_plain: Box::new(move |id| params_for_plain.get_plain(id).unwrap_or(0.0)),
-            format_param: Box::new(move |id| {
-                let val = params_for_fmt.get_plain(id).unwrap_or(0.0);
-                params_for_fmt
-                    .format_value(id, val)
-                    .unwrap_or_else(|| format!("{:.1}", val))
-            }),
-            get_meter: Box::new(move |id| {
-                let plugin = plugin_ptr.get();
-                plugin.get_meter(id)
-            }),
-            get_state: Box::new(move || {
-                let plugin = plugin_ptr.get();
-                plugin.save_state().unwrap_or_default()
-            }),
-            set_state: Box::new(move |data| {
-                let plugin = &mut *(plugin_ptr.as_ptr() as *mut P);
-                plugin.load_state(&data);
-            }),
-            transport: Box::new(move || transport_slot.read()),
+                begin_edit: Box::new(move |id| {
+                    touch_fn(aax_ctx.as_ptr() as *mut c_void, id);
+                }),
+                set_param: Box::new(move |id, value| {
+                    params_for_set.set_normalized(id, value);
+                    let normalized = params_for_set.get_normalized(id).unwrap_or(0.0);
+                    set_fn(aax_ctx.as_ptr() as *mut c_void, id, normalized);
+                }),
+                end_edit: Box::new(move |id| {
+                    release_fn(aax_ctx.as_ptr() as *mut c_void, id);
+                }),
+                request_resize: Box::new(move |w, h| {
+                    resize_fn(aax_ctx.as_ptr() as *mut c_void, w, h) != 0
+                }),
+                get_param: Box::new(move |id| params_for_get.get_normalized(id).unwrap_or(0.0)),
+                get_param_plain: Box::new(move |id| params_for_plain.get_plain(id).unwrap_or(0.0)),
+                format_param: Box::new(move |id| {
+                    let val = params_for_fmt.get_plain(id).unwrap_or(0.0);
+                    params_for_fmt
+                        .format_value(id, val)
+                        .unwrap_or_else(|| format!("{:.1}", val))
+                }),
+                get_meter: Box::new(move |id| {
+                    let plugin = plugin_ptr.get();
+                    plugin.get_meter(id)
+                }),
+                get_state: Box::new(move || {
+                    let plugin = plugin_ptr.get();
+                    plugin.save_state().unwrap_or_default()
+                }),
+                set_state: Box::new(move |data| {
+                    let plugin = &mut *(plugin_ptr.as_ptr() as *mut P);
+                    plugin.load_state(&data);
+                }),
+                transport: Box::new(move || transport_slot.read()),
             },
             params_for_ctx,
         );

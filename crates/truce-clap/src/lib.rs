@@ -1422,47 +1422,47 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
         let transport_slot = data.transport_slot.clone();
         let context = EditorContext::from_closures(
             ClosureBridge {
-            begin_edit: Box::new(move |id| {
-                gui_changes.push(GuiParamChange::GestureBegin(id));
-                request_flush();
-            }),
-            set_param: Box::new(move |id, value| {
-                params_for_set.set_normalized(id, value);
-                let plain = params_for_set.get_plain(id).unwrap_or(0.0);
-                gui_changes2.push(GuiParamChange::Value(id, plain));
-                request_flush2();
-                if !needs_rescan.swap(true, std::sync::atomic::Ordering::Relaxed)
-                    && let Some(req_cb) = (*host_for_callback.as_ptr()).request_callback
-                {
-                    req_cb(host_for_callback.as_ptr());
-                }
-            }),
-            end_edit: Box::new(move |id| {
-                gui_changes3.push(GuiParamChange::GestureEnd(id));
-                request_flush3();
-            }),
-            request_resize: Box::new(|_w, _h| false),
-            get_param: Box::new(move |id| params_for_get.get_normalized(id).unwrap_or(0.0)),
-            get_param_plain: Box::new(move |id| params_for_plain.get_plain(id).unwrap_or(0.0)),
-            format_param: Box::new(move |id| {
-                let plain = params_for_fmt.get_plain(id).unwrap_or(0.0);
-                params_for_fmt
-                    .format_value(id, plain)
-                    .unwrap_or_else(|| format!("{:.1}", plain))
-            }),
-            get_meter: Box::new(move |id| {
-                let plugin = plugin_ptr.get();
-                plugin.get_meter(id)
-            }),
-            get_state: Box::new(move || {
-                let plugin = plugin_ptr.get();
-                plugin.save_state().unwrap_or_default()
-            }),
-            set_state: Box::new(move |data| {
-                let plugin = &mut *(plugin_ptr.as_ptr() as *mut P);
-                plugin.load_state(&data);
-            }),
-            transport: Box::new(move || transport_slot.read()),
+                begin_edit: Box::new(move |id| {
+                    gui_changes.push(GuiParamChange::GestureBegin(id));
+                    request_flush();
+                }),
+                set_param: Box::new(move |id, value| {
+                    params_for_set.set_normalized(id, value);
+                    let plain = params_for_set.get_plain(id).unwrap_or(0.0);
+                    gui_changes2.push(GuiParamChange::Value(id, plain));
+                    request_flush2();
+                    if !needs_rescan.swap(true, std::sync::atomic::Ordering::Relaxed)
+                        && let Some(req_cb) = (*host_for_callback.as_ptr()).request_callback
+                    {
+                        req_cb(host_for_callback.as_ptr());
+                    }
+                }),
+                end_edit: Box::new(move |id| {
+                    gui_changes3.push(GuiParamChange::GestureEnd(id));
+                    request_flush3();
+                }),
+                request_resize: Box::new(|_w, _h| false),
+                get_param: Box::new(move |id| params_for_get.get_normalized(id).unwrap_or(0.0)),
+                get_param_plain: Box::new(move |id| params_for_plain.get_plain(id).unwrap_or(0.0)),
+                format_param: Box::new(move |id| {
+                    let plain = params_for_fmt.get_plain(id).unwrap_or(0.0);
+                    params_for_fmt
+                        .format_value(id, plain)
+                        .unwrap_or_else(|| format!("{:.1}", plain))
+                }),
+                get_meter: Box::new(move |id| {
+                    let plugin = plugin_ptr.get();
+                    plugin.get_meter(id)
+                }),
+                get_state: Box::new(move || {
+                    let plugin = plugin_ptr.get();
+                    plugin.save_state().unwrap_or_default()
+                }),
+                set_state: Box::new(move |data| {
+                    let plugin = &mut *(plugin_ptr.as_ptr() as *mut P);
+                    plugin.load_state(&data);
+                }),
+                transport: Box::new(move || transport_slot.read()),
             },
             params_for_ctx,
         );

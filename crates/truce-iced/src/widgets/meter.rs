@@ -10,8 +10,8 @@ use iced::{Element, Length, Point, Rectangle, Renderer, Size, Theme, mouse};
 use truce_core::meter_display;
 use truce_params::Params;
 
-use crate::param_message::Message;
 use crate::param_cache::ParamCache;
+use crate::param_message::Message;
 use crate::theme;
 
 /// Builder for a multi-channel level meter.

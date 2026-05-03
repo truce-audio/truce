@@ -144,13 +144,12 @@ impl<P: Params + 'static> EguiEditor<P> {
     /// EguiEditor::new(params, (400, 300), |ctx, state| { /* ui */ })
     ///     .on_state_changed(|state| { /* re-read cached state */ })
     /// ```
-    pub fn on_state_changed(
-        mut self,
-        f: impl FnMut(&EditorContext<P>) + Send + 'static,
-    ) -> Self {
+    pub fn on_state_changed(mut self, f: impl FnMut(&EditorContext<P>) + Send + 'static) -> Self {
         let old = std::mem::replace(
             &mut self.ui,
-            Arc::new(Mutex::new(Box::new(NopUi::<P>(PhantomData)) as Box<dyn EditorUi<P>>)),
+            Arc::new(Mutex::new(
+                Box::new(NopUi::<P>(PhantomData)) as Box<dyn EditorUi<P>>
+            )),
         );
         let inner = Arc::try_unwrap(old)
             .ok()
@@ -585,7 +584,10 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
         }
     }
 
-    fn screenshot(&mut self, _params: Arc<dyn truce_params::Params>) -> Option<(Vec<u8>, u32, u32)> {
+    fn screenshot(
+        &mut self,
+        _params: Arc<dyn truce_params::Params>,
+    ) -> Option<(Vec<u8>, u32, u32)> {
         let context = truce_core::editor::for_test_params(self.params.clone() as Arc<dyn Params>)
             .with_params(self.params.clone());
         // Pin to 2.0 so screenshots are reproducible across hosts and CI

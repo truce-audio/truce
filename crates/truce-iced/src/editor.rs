@@ -126,8 +126,7 @@ impl<P: Params + 'static, M: IcedPlugin<P>> iced_runtime::Program for IcedProgra
             Message::Tick => {
                 // Sync params and meters from atomics
                 self.param_cache.sync(&self.context);
-                self.param_cache
-                    .sync_meters(&self.context, &self.meter_ids);
+                self.param_cache.sync_meters(&self.context, &self.meter_ids);
                 Task::none()
             }
             other => self.plugin.update(other, &self.param_cache, &self.context),

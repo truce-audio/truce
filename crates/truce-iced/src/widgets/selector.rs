@@ -6,8 +6,8 @@ use std::marker::PhantomData;
 use iced::Element;
 use iced::widget::{column, pick_list, text};
 
-use crate::param_message::{Message, ParamMessage};
 use crate::param_cache::ParamCache;
+use crate::param_message::{Message, ParamMessage};
 use crate::theme;
 use truce_params::Params;
 

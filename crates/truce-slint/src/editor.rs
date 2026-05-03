@@ -426,7 +426,10 @@ impl<P: Params + 'static> Editor for SlintEditor<P> {
         // baseview drives its own frame loop.
     }
 
-    fn screenshot(&mut self, _params: Arc<dyn truce_params::Params>) -> Option<(Vec<u8>, u32, u32)> {
+    fn screenshot(
+        &mut self,
+        _params: Arc<dyn truce_params::Params>,
+    ) -> Option<(Vec<u8>, u32, u32)> {
         let state = truce_core::editor::for_test_params(self.params.clone() as Arc<dyn Params>)
             .with_params(self.params.clone());
         let setup = Arc::clone(&self.setup);
