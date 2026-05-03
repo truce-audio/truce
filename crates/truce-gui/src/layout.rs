@@ -1,33 +1,43 @@
 //! Simple layout helpers for positioning widgets.
 
-/// A widget definition in the layout.
-#[derive(Clone, Debug)]
-pub enum WidgetDef {
-    /// Rotary knob (default for continuous params).
-    Knob { param_id: u32, label: &'static str },
-    /// Horizontal slider.
-    Slider { param_id: u32, label: &'static str },
-    /// Toggle button (on/off).
-    Toggle { param_id: u32, label: &'static str },
-}
+// ---------------------------------------------------------------------------
+// Rows-layout shared constants
+// ---------------------------------------------------------------------------
+//
+// Coordinates the rows-layout uses to step through `Row`s. `widgets::draw_rows`
+// (paint side) and `interaction::build_regions` (hit-test side) walk the
+// rows in lock-step, so they have to agree on these step sizes — drift
+// would make hover / drag rectangles miss the painted widget.
 
-impl WidgetDef {
-    pub fn param_id(&self) -> u32 {
-        match self {
-            WidgetDef::Knob { param_id, .. } => *param_id,
-            WidgetDef::Slider { param_id, .. } => *param_id,
-            WidgetDef::Toggle { param_id, .. } => *param_id,
-        }
-    }
+/// Pixel height of the title-bar header `widgets::draw_header` paints
+/// at the top of the editor.
+pub const HEADER_HEIGHT: f32 = 20.0;
 
-    pub fn label(&self) -> &'static str {
-        match self {
-            WidgetDef::Knob { label, .. } => label,
-            WidgetDef::Slider { label, .. } => label,
-            WidgetDef::Toggle { label, .. } => label,
-        }
-    }
-}
+/// Y-offset of the first row below the header. The 4-pixel gap between
+/// `HEADER_HEIGHT` and `ROWS_LAYOUT_TOP` is the breathing room between
+/// the title bar and the first row of widgets.
+pub const ROWS_LAYOUT_TOP: f32 = 24.0;
+
+/// Vertical pixels reserved for a section label (`Row::label`) drawn
+/// above its row.
+pub const ROWS_SECTION_LABEL_HEIGHT: f32 = 14.0;
+
+/// Horizontal gap between adjacent widgets in a row. The full pitch
+/// between widget origins is `knob_size + ROWS_COLUMN_GAP`.
+pub const ROWS_COLUMN_GAP: f32 = 7.0;
+
+/// Vertical gap below a row. The full pitch between row origins is
+/// `knob_size + ROWS_ROW_GAP`.
+pub const ROWS_ROW_GAP: f32 = 19.0;
+
+// ---------------------------------------------------------------------------
+// Dropdown widget shared constants
+// ---------------------------------------------------------------------------
+
+/// Pixel height of the dropdown button box (the closed state — clicking
+/// this opens the popup). Both `widgets::draw_dropdown` (paint side) and
+/// `interaction::open_dropdown` (popup-anchor math) need to agree.
+pub const DROPDOWN_BOX_HEIGHT: f32 = 20.0;
 
 /// A widget definition for the layout — either explicit type or auto-detected.
 #[derive(Clone, Debug)]

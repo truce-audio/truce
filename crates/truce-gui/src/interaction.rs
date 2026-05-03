@@ -3,7 +3,8 @@
 //! Tracks widget hit regions and maps mouse drags to parameter value changes.
 
 use crate::layout::{
-    GRID_GAP, GRID_PADDING, GridLayout, Layout, PluginLayout, WidgetKind, compute_section_offsets,
+    DROPDOWN_BOX_HEIGHT, GRID_GAP, GRID_PADDING, GridLayout, Layout, PluginLayout, ROWS_COLUMN_GAP,
+    ROWS_LAYOUT_TOP, ROWS_ROW_GAP, ROWS_SECTION_LABEL_HEIGHT, WidgetKind, compute_section_offsets,
 };
 use crate::snapshot::ParamSnapshot;
 use crate::widgets::WidgetType;
@@ -229,9 +230,6 @@ pub struct WidgetRegion {
     pub dropdown_anchor_y: f32,
 }
 
-/// Backward-compatible alias.
-pub type KnobRegion = WidgetRegion;
-
 /// State for an open dropdown popup.
 pub struct DropdownState {
     /// Region index of the dropdown widget that is open.
@@ -295,22 +293,23 @@ impl InteractionState {
         self.knob_regions.clear();
 
         let knob_size = layout.knob_size;
-        let mut y = 24.0f32;
+        let pitch = knob_size + ROWS_COLUMN_GAP;
+        let mut y = ROWS_LAYOUT_TOP;
 
         for row in &layout.rows {
             if row.label.is_some() {
-                y += 14.0;
+                y += ROWS_SECTION_LABEL_HEIGHT;
             }
 
             let total_cols: u32 = row.knobs.iter().map(|k| k.span.max(1)).sum();
-            let total_w = total_cols as f32 * (knob_size + 7.0) - 7.0;
+            let total_w = total_cols as f32 * pitch - ROWS_COLUMN_GAP;
             let start_x = (layout.width as f32 - total_w) / 2.0;
 
             let mut col = 0u32;
             for knob_def in row.knobs.iter() {
                 let span = knob_def.span.max(1);
-                let x = start_x + col as f32 * (knob_size + 7.0);
-                let widget_w = span as f32 * (knob_size + 7.0) - 7.0;
+                let x = start_x + col as f32 * pitch;
+                let widget_w = span as f32 * pitch - ROWS_COLUMN_GAP;
                 let cx = x + widget_w / 2.0;
                 let cy = y + knob_size / 2.0 - 5.0;
                 let radius = knob_size / 2.0 - 4.0;
@@ -331,7 +330,7 @@ impl InteractionState {
                 col += span;
             }
 
-            y += knob_size + 19.0;
+            y += knob_size + ROWS_ROW_GAP;
         }
     }
 
@@ -463,9 +462,12 @@ impl InteractionState {
         self.dropdown.is_some()
     }
 
-    /// Close the dropdown popup.
-    pub fn dropdown_close(&mut self) {
-        self.dropdown = None;
+    /// Close the dropdown popup. Returns the region index of the
+    /// dropdown that was open, so the caller can suppress an
+    /// immediate-reopen click landing on the same button without
+    /// having to read `self.dropdown` *before* closing.
+    pub fn dropdown_close(&mut self) -> Option<usize> {
+        self.dropdown.take().map(|dd| dd.region_idx)
     }
 
     /// Scroll the dropdown popup by `delta` items (positive = down, negative = up).
@@ -676,7 +678,12 @@ pub fn dispatch_in(
             InputEvent::MouseLeave => {
                 state.hover_idx = None;
             }
-            // Non-left mouse buttons are currently not wired to any action.
+            // Right- and middle-click are intentionally ignored. The
+            // built-in editor doesn't have a context menu of its own,
+            // and most plugin hosts (VST3, AU, AAX) treat right-click
+            // inside the editor surface as their hook for the host's
+            // own automation / parameter-link menu — swallowing the
+            // event here would suppress that.
             InputEvent::MouseDown { .. } | InputEvent::MouseUp { .. } => {}
         }
     }
@@ -717,9 +724,8 @@ fn handle_mouse_down(
         }
         // Click outside popup: close. If it landed on the same dropdown
         // button, swallow the click (don't reopen).
-        let open_region = state.dropdown.as_ref().unwrap().region_idx;
-        state.dropdown_close();
-        if let Some(idx) = state.hit_test(x, y)
+        if let Some(open_region) = state.dropdown_close()
+            && let Some(idx) = state.hit_test(x, y)
             && idx == open_region
             && state.widget_type_at(idx) == Some(WidgetType::Dropdown)
         {
@@ -793,7 +799,7 @@ fn open_dropdown(
     let padding = 4.0f32;
 
     let anchor_below = region.dropdown_anchor_y; // bottom of button box
-    let anchor_above = anchor_below - 20.0; // top of button box (box_h=20)
+    let anchor_above = anchor_below - DROPDOWN_BOX_HEIGHT; // top of button box
     let popup_w = region.w.max(80.0);
     let full_popup_h = options.len() as f32 * item_h + padding * 2.0;
 

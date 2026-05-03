@@ -6,6 +6,7 @@
 //! crate which provides `GpuEditor` wrapping this editor.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use truce_core::editor::{Editor, EditorContext, RawWindowHandle};
 use truce_params::Params;
@@ -74,7 +75,7 @@ pub struct BuiltinEditor<P: Params> {
     ///
     /// Shared so `EditorContext::set_param` and `state_changed`
     /// closures can flip it without touching editor internals.
-    needs_repaint: Arc<std::sync::atomic::AtomicBool>,
+    needs_repaint: Arc<AtomicBool>,
     /// Normalized values captured at the last render pass, in the
     /// same order as `interaction.knob_regions`. Used to detect
     /// host-driven param changes (automation, preset recall) — if any
@@ -105,13 +106,11 @@ impl<P: Params + 'static> BuiltinEditor<P> {
     /// `state_changed` pathways (uncommon). User interaction and
     /// host automation already flag themselves dirty automatically.
     pub fn request_repaint(&self) {
-        self.needs_repaint
-            .store(true, std::sync::atomic::Ordering::Release);
+        self.needs_repaint.store(true, Ordering::Release);
     }
 
     fn take_needs_repaint(&self) -> bool {
-        self.needs_repaint
-            .swap(false, std::sync::atomic::Ordering::AcqRel)
+        self.needs_repaint.swap(false, Ordering::AcqRel)
     }
 
     /// Compare the values just read by `update_interaction` (live from
@@ -154,7 +153,7 @@ impl<P: Params + 'static> BuiltinEditor<P> {
             context: None,
             window: None,
             blit_backend: None,
-            needs_repaint: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            needs_repaint: Arc::new(AtomicBool::new(false)),
             last_painted_values: Vec::new(),
             scale: 1.0,
         }
@@ -170,7 +169,7 @@ impl<P: Params + 'static> BuiltinEditor<P> {
             context: None,
             window: None,
             blit_backend: None,
-            needs_repaint: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            needs_repaint: Arc::new(AtomicBool::new(false)),
             last_painted_values: Vec::new(),
             scale: 1.0,
         }
@@ -186,7 +185,7 @@ impl<P: Params + 'static> BuiltinEditor<P> {
             context: None,
             window: None,
             blit_backend: None,
-            needs_repaint: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            needs_repaint: Arc::new(AtomicBool::new(false)),
             last_painted_values: Vec::new(),
             scale: 1.0,
         }
@@ -384,10 +383,6 @@ impl<P: Params + 'static> BuiltinEditor<P> {
         let owned = self.build_snapshot_closures();
         let snapshot = owned.as_snapshot();
         let edits = interaction::dispatch(events, &self.layout, &snapshot, &mut self.interaction);
-        // End `snapshot`'s borrow of `owned` before `owned` itself goes out of
-        // scope. `_ =` instead of `drop(...)` because neither type impls Drop.
-        _ = snapshot;
-        _ = owned;
         let had_edits = !edits.is_empty();
         for e in edits {
             self.apply_edit(e);
@@ -829,8 +824,11 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
             Layout::Grid(gl) => self.interaction.build_regions_grid(gl),
         }
 
-        // Render initial frame
+        // Render initial frame and flag dirty so the first `on_frame`
+        // blit also runs (the construction default is `false` because a
+        // not-yet-opened editor has nothing to paint to).
         self.render();
+        self.request_repaint();
 
         let (lw, lh) = (w as f64, h as f64);
         let phys_w = (lw * scale) as u32;

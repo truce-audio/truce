@@ -4,8 +4,9 @@ use std::f32::consts::PI;
 
 use crate::interaction::InteractionState;
 use crate::layout::{
-    GRID_GAP, GRID_PADDING, GRID_SECTION_H, GridLayout, Layout, PluginLayout, WidgetKind,
-    compute_section_offsets,
+    DROPDOWN_BOX_HEIGHT, GRID_GAP, GRID_PADDING, GRID_SECTION_H, GridLayout, HEADER_HEIGHT, Layout,
+    PluginLayout, ROWS_COLUMN_GAP, ROWS_LAYOUT_TOP, ROWS_ROW_GAP, ROWS_SECTION_LABEL_HEIGHT,
+    WidgetKind, compute_section_offsets,
 };
 use crate::render::RenderBackend;
 use crate::snapshot::ParamSnapshot;
@@ -373,7 +374,7 @@ pub fn draw_dropdown(
     let arrow_pad = 14.0;
     let val_w = ctx.text_width(value_text, val_size);
     let box_w = (val_w + arrow_pad + 12.0).max(width - 12.0);
-    let box_h = 20.0;
+    let box_h = DROPDOWN_BOX_HEIGHT;
     let box_x = cx - box_w / 2.0;
     let box_y = cy - box_h / 2.0;
     let bg = if is_open || highlighted {
@@ -733,28 +734,36 @@ fn draw_rows(
 ) {
     let w = pl.width;
     let knob_size = pl.knob_size;
+    let pitch = knob_size + ROWS_COLUMN_GAP;
     draw_header(
-        backend, 0.0, 0.0, w as f32, 20.0, pl.title, pl.version, theme,
+        backend,
+        0.0,
+        0.0,
+        w as f32,
+        HEADER_HEIGHT,
+        pl.title,
+        pl.version,
+        theme,
     );
 
-    let mut y = 24.0;
+    let mut y = ROWS_LAYOUT_TOP;
     let mut region_idx = 0usize;
 
     for row in &pl.rows {
         if let Some(label) = row.label {
             draw_section_label(backend, 0.0, y, w as f32, label, theme);
-            y += 14.0;
+            y += ROWS_SECTION_LABEL_HEIGHT;
         }
 
         let total_cols: u32 = row.knobs.iter().map(|k| k.span.max(1)).sum();
-        let total_w = total_cols as f32 * (knob_size + 7.0) - 7.0;
+        let total_w = total_cols as f32 * pitch - ROWS_COLUMN_GAP;
         let start_x = (w as f32 - total_w) / 2.0;
 
         let mut col = 0u32;
         for kd in row.knobs.iter() {
             let span = kd.span.max(1);
-            let x = start_x + col as f32 * (knob_size + 7.0);
-            let widget_w = span as f32 * (knob_size + 7.0) - 7.0;
+            let x = start_x + col as f32 * pitch;
+            let widget_w = span as f32 * pitch - ROWS_COLUMN_GAP;
             let widget_h = knob_size;
 
             draw_widget_entry(
@@ -779,7 +788,7 @@ fn draw_rows(
             col += span;
         }
 
-        y += knob_size + 19.0;
+        y += knob_size + ROWS_ROW_GAP;
     }
 }
 
@@ -797,7 +806,7 @@ fn draw_grid(
             0.0,
             0.0,
             w as f32,
-            20.0,
+            HEADER_HEIGHT,
             header.title,
             header.version,
             theme,
@@ -923,9 +932,13 @@ fn draw_widget_entry(
                 is_hovered,
                 is_open,
             );
+            // Mirrors `draw_dropdown`: the visible button box is
+            // `DROPDOWN_BOX_HEIGHT` tall, centered on `cy = y + h/2 - 8`.
+            // We store the *bottom* of that box so `open_dropdown` can
+            // anchor the popup directly underneath.
             let anchor_cy = y + widget_h / 2.0 - 8.0;
             if let Some(region) = state.knob_regions.get_mut(region_idx) {
-                region.dropdown_anchor_y = anchor_cy + 10.0;
+                region.dropdown_anchor_y = anchor_cy + DROPDOWN_BOX_HEIGHT / 2.0;
             }
         }
         WidgetType::Meter => {
