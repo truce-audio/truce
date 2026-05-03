@@ -170,13 +170,17 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn gui_screenshot_linux() {
-        truce_test::screenshot!(Plugin, "screenshots/transpose_default_linux.png").run();
+        truce_test::screenshot!(Plugin, "screenshots/transpose_default_linux.png")
+            .pixel_threshold(2)
+            .run();
     }
 
     #[cfg(target_os = "windows")]
     #[test]
     fn gui_screenshot_windows() {
-        truce_test::screenshot!(Plugin, "screenshots/transpose_default_windows.png").run();
+        truce_test::screenshot!(Plugin, "screenshots/transpose_default_windows.png")
+            .pixel_threshold(2)
+            .run();
     }
 
     /// Regression guard: see `arpeggio/src/lib.rs::tests::category_is_note_effect`.

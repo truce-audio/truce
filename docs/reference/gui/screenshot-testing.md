@@ -260,6 +260,7 @@ impl<P: PluginExport> ScreenshotTest<P> {
     pub fn set_param(self, id: impl Into<u32>, normalized: f32) -> Self;
     pub fn setup<F: FnOnce(&mut P) + 'static>(self, f: F) -> Self;
     pub fn tolerance(self, t: usize) -> Self;
+    pub fn pixel_threshold(self, d: u8) -> Self;
     pub fn run(self);
 }
 ```
@@ -269,7 +270,8 @@ impl<P: PluginExport> ScreenshotTest<P> {
 | `state_file("path")` | Load a `.pluginstate` blob (the standalone host's `Cmd+S` save format) via `plugin.load_state(&bytes)`. Applied first. |
 | `set_param(id, v)` | Set a parameter to a normalized [0, 1] value via `params().set_normalized(id, v)`. Applied after state load. Multiple calls compose. |
 | `setup(\|p\| …)` | Mutate the plugin between `P::create()` and the render. Drive `process()`, mutate custom state. Applied last. |
-| `tolerance(n)` | Max allowed differing-pixel count. `0` = strict. |
+| `tolerance(n)` | Max allowed differing-pixel count. `0` = strict. Composes with `pixel_threshold` — only pixels above the threshold count toward this budget. |
+| `pixel_threshold(d)` | Per-pixel "different enough to count" knob: a pixel only consumes `tolerance` if at least one R/G/B/A channel differs from the reference by more than `d`. `0` = strict (any byte difference counts). `1`–`3` ignores sub-perceptual rasterizer drift; `8`+ starts hiding things a human would notice. |
 | `run()` | Build, render, compare. |
 
 ### `Editor::screenshot` trait method

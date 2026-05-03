@@ -474,6 +474,11 @@ pub struct ScreenshotTest<P: PluginExport> {
     manifest_dir: PathBuf,
     /// Max allowed differing-pixel count. `0` = strict.
     tolerance: usize,
+    /// Per-pixel "different enough to count" threshold: a pixel only
+    /// adds to `tolerance` if any RGBA channel differs from the
+    /// reference by more than this. `0` = strict (any byte
+    /// difference counts).
+    pixel_threshold: u8,
     /// `.pluginstate` bytes loaded after init, before `set_param`
     /// shortcuts and `setup` closure.
     state_bytes: Option<Vec<u8>>,
@@ -503,6 +508,7 @@ impl<P: PluginExport> ScreenshotTest<P> {
             ref_path,
             manifest_dir,
             tolerance: 0,
+            pixel_threshold: 0,
             state_bytes: None,
             param_overrides: Vec::new(),
             setup: None,
@@ -552,8 +558,26 @@ impl<P: PluginExport> ScreenshotTest<P> {
 
     /// Max allowed differing-pixel count. `0` is strict equality;
     /// bump for cross-machine antialiasing tolerance.
+    ///
+    /// Composes with [`Self::pixel_threshold`]: a pixel only counts
+    /// toward this budget if its max channel delta exceeds the
+    /// threshold, so sub-perceptual AA wobble doesn't have to inflate
+    /// `tolerance` to numbers that would also hide real regressions.
     pub fn tolerance(mut self, t: usize) -> Self {
         self.tolerance = t;
+        self
+    }
+
+    /// Per-pixel "different enough to count" threshold. A pixel
+    /// only adds to the [`Self::tolerance`] budget if at least one
+    /// of its R/G/B/A channels differs from the reference by more
+    /// than this. `0` = strict (any byte difference counts).
+    ///
+    /// Practical values: `1`–`3` ignore tiny rasterizer / filter
+    /// drift between machines without masking real visual changes;
+    /// `8`+ starts to hide things a human would notice.
+    pub fn pixel_threshold(mut self, d: u8) -> Self {
+        self.pixel_threshold = d;
         self
     }
 
@@ -569,6 +593,7 @@ impl<P: PluginExport> ScreenshotTest<P> {
     pub fn run(self) {
         let ref_path = self.ref_path;
         let tolerance = self.tolerance;
+        let pixel_threshold = self.pixel_threshold;
         let state_bytes = self.state_bytes;
         let param_overrides = self.param_overrides;
         let setup = self.setup;
@@ -586,7 +611,7 @@ impl<P: PluginExport> ScreenshotTest<P> {
             f(&mut plugin);
         }
         let (pixels, w, h) = truce_core::screenshot::render_pixels_for::<P>(&mut plugin);
-        compare_against_reference(&pixels, w, h, &ref_path, tolerance);
+        compare_against_reference(&pixels, w, h, &ref_path, tolerance, pixel_threshold);
     }
 }
 
@@ -618,6 +643,7 @@ fn compare_against_reference(
     height: u32,
     ref_path: &std::path::Path,
     max_diff_pixels: usize,
+    pixel_threshold: u8,
 ) {
     // Render artifact lives in `target/screenshots/` — gitignored,
     // colocated with whatever workspace owns the test invocation.
@@ -650,16 +676,33 @@ fn compare_against_reference(
         ref_path.display()
     );
 
+    // Walk pixel-by-pixel (4 bytes each), counting only pixels whose
+    // max RGBA channel delta exceeds `pixel_threshold`. Threshold = 0
+    // recovers strict byte-equality at pixel granularity.
     let mut diff_count = 0usize;
-    for (&current, &reference) in pixels.iter().zip(ref_pixels.iter()) {
-        if current != reference {
+    let mut max_delta_seen: u8 = 0;
+    for (cur, refp) in pixels
+        .chunks_exact(4)
+        .zip(ref_pixels.chunks_exact(4))
+    {
+        let delta = cur
+            .iter()
+            .zip(refp.iter())
+            .map(|(c, r)| c.abs_diff(*r))
+            .max()
+            .unwrap_or(0);
+        if delta > pixel_threshold {
             diff_count += 1;
+        }
+        if delta > max_delta_seen {
+            max_delta_seen = delta;
         }
     }
 
     if diff_count > max_diff_pixels {
         panic!(
-            "GUI screenshot mismatch: {diff_count} pixels differ (max allowed: {max_diff_pixels}).\n\
+            "GUI screenshot mismatch: {diff_count} pixels differ above threshold {pixel_threshold} \
+             (max allowed: {max_diff_pixels}; largest channel delta seen: {max_delta_seen}).\n\
              Reference: {}\n\
              Current:   {}\n\
              Either fix the regression, or accept the new render with: cp '{}' '{}'",
