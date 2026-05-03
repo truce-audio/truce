@@ -39,9 +39,9 @@ pub mod widgets;
 pub use editor::{AutoPlugin, IcedEditor, IcedPlugin};
 pub use param_cache::ParamCache;
 pub use param_message::{Message, ParamMessage};
-// Re-export `EditorContext` so plugin authors can use it without a direct
+// Re-export `PluginContext` so plugin authors can use it without a direct
 // truce-core dependency.
-pub use truce_core::editor::EditorContext;
+pub use truce_core::editor::PluginContext;
 
 // Re-export widget helper functions.
 pub use widgets::{knob, meter, param_selector, param_slider, param_toggle, xy_pad};

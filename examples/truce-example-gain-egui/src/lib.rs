@@ -1,5 +1,5 @@
 use truce::prelude::*;
-use truce_core::editor::EditorContext;
+use truce_core::editor::PluginContext;
 use truce_egui::EguiEditor;
 use truce_egui::theme::{HEADER_BG, HEADER_TEXT};
 use truce_egui::widgets::{level_meter, param_knob, param_xy_pad};
@@ -91,7 +91,7 @@ impl PluginLogic for GainEgui {
     }
 }
 
-fn gain_ui(ctx: &egui::Context, state: &EditorContext<GainParams>) {
+fn gain_ui(ctx: &egui::Context, state: &PluginContext<GainParams>) {
     egui::TopBottomPanel::top("header")
         .exact_height(30.0)
         .frame(egui::Frame::NONE.fill(HEADER_BG))

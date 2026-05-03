@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use iced::{Color, Event, Point, Size, Task};
 use iced_wgpu::wgpu;
-use truce_core::editor::{Editor, EditorContext};
+use truce_core::editor::{Editor, PluginContext};
 use truce_gui::EditorScale;
 use truce_gui::layout::GridLayout;
 use truce_params::Params;
@@ -42,7 +42,7 @@ pub trait IcedPlugin<P: Params>: Sized + 'static {
         &mut self,
         _message: Message<Self::Message>,
         _params: &ParamCache<P>,
-        _ctx: &EditorContext<P>,
+        _ctx: &PluginContext<P>,
     ) -> Task<Message<Self::Message>> {
         Task::none()
     }
@@ -93,7 +93,7 @@ impl<P: Params> IcedPlugin<P> for AutoPlugin {
 pub(crate) struct IcedProgram<P: Params + 'static, M: IcedPlugin<P>> {
     pub(crate) plugin: M,
     pub(crate) param_cache: ParamCache<P>,
-    pub(crate) context: EditorContext<P>,
+    pub(crate) context: PluginContext<P>,
     pub(crate) meter_ids: Vec<u32>,
 }
 
@@ -773,7 +773,7 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
         self.size
     }
 
-    fn open(&mut self, parent: truce_core::editor::RawWindowHandle, context: EditorContext) {
+    fn open(&mut self, parent: truce_core::editor::RawWindowHandle, context: PluginContext) {
         let (w, h) = self.size;
 
         // Create the plugin model. Each constructor stores a closure

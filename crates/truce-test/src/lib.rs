@@ -52,7 +52,7 @@ pub use truce_driver::{
 
 pub mod assertions;
 
-/// Re-export of [`truce_core::editor::EditorContext::for_test_params`]
+/// Re-export of [`truce_core::editor::PluginContext::for_test_params`]
 /// for plugin authors who want to drive snapshot tests directly
 /// without the `assert_screenshot!` macro.
 pub use truce_core::editor::for_test_params;

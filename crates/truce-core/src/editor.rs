@@ -8,7 +8,7 @@ use crate::events::TransportInfo;
 /// A raw pointer wrapper that is `Send + Sync`.
 ///
 /// Used to capture `*const Params` / host-handle pointers in
-/// EditorContext closures without the `ptr as usize` hack. The
+/// PluginContext closures without the `ptr as usize` hack. The
 /// `Send`/`Sync` impls are unconditional in `T` — they have to be,
 /// because the wrapped types are typically `#[repr(C)]` host structs
 /// that are themselves `!Send + !Sync` by default. Construction is
@@ -20,7 +20,7 @@ use crate::events::TransportInfo;
 ///   GUI thread while the audio thread writes are safe by design.
 /// - **Format-host handles** (`clap_host`, `AEffect`, etc.) — used
 ///   only from a single thread (UI), and the wrapping is purely for
-///   capturing in `Send + Sync` closures stored in `EditorContext`.
+///   capturing in `Send + Sync` closures stored in `PluginContext`.
 ///
 /// The pointed-to data must outlive the `SendPtr`. In the plugin
 /// context, the plugin instance (which owns the params) always
@@ -85,7 +85,7 @@ pub trait Editor: Send {
     fn size(&self) -> (u32, u32);
 
     /// Create the GUI as a child of the host-provided parent window.
-    fn open(&mut self, parent: RawWindowHandle, context: EditorContext);
+    fn open(&mut self, parent: RawWindowHandle, context: PluginContext);
 
     /// Destroy the GUI.
     fn close(&mut self);
@@ -150,7 +150,7 @@ pub trait Editor: Send {
 /// Bridge between the editor and the host / plugin. Format wrappers
 /// (CLAP / VST3 / VST2 / AU / AAX / LV2) implement this trait — or
 /// build a [`ClosureBridge`] from per-method closures — and pass an
-/// `Arc<dyn EditorBridge>` to the editor through [`EditorContext`].
+/// `Arc<dyn EditorBridge>` to the editor through [`PluginContext`].
 ///
 /// Editors call into the bridge for everything they can't do
 /// directly: starting / ending an automation gesture, reading or
@@ -270,21 +270,21 @@ impl EditorBridge for ClosureBridge {
 ///   `&P` and read fields directly: `state.gain.smoothed_next()`.
 ///
 /// The default `P = dyn Params` keeps the trait-object boundary
-/// (`Editor::open(ctx: EditorContext)`) one-typed; editor crates
+/// (`Editor::open(ctx: PluginContext)`) one-typed; editor crates
 /// that want typed access (truce-egui, truce-slint, truce-iced) carry
-/// their own `<P>` and reconstitute `EditorContext<P>` internally
-/// via [`EditorContext::with_params`] using the `Arc<P>` they stored
+/// their own `<P>` and reconstitute `PluginContext<P>` internally
+/// via [`PluginContext::with_params`] using the `Arc<P>` they stored
 /// at editor construction.
 ///
 /// `Clone` is two refcount bumps (bridge + params). Editors that need
 /// to hand the context to UI worker threads or animation timers clone
 /// freely.
-pub struct EditorContext<P: ?Sized = dyn Params> {
+pub struct PluginContext<P: ?Sized = dyn Params> {
     bridge: Arc<dyn EditorBridge>,
     params: Arc<P>,
 }
 
-impl<P: ?Sized> Clone for EditorContext<P> {
+impl<P: ?Sized> Clone for PluginContext<P> {
     fn clone(&self) -> Self {
         Self {
             bridge: Arc::clone(&self.bridge),
@@ -293,7 +293,7 @@ impl<P: ?Sized> Clone for EditorContext<P> {
     }
 }
 
-impl<P: ?Sized> EditorContext<P> {
+impl<P: ?Sized> PluginContext<P> {
     /// Build a typed context from any [`EditorBridge`] implementor and
     /// the plugin's typed param store.
     pub fn new(bridge: Arc<dyn EditorBridge>, params: Arc<P>) -> Self {
@@ -302,7 +302,7 @@ impl<P: ?Sized> EditorContext<P> {
 
     /// Access the underlying bridge handle. Editors that want to clone
     /// the bridge into a worker thread without cloning the surrounding
-    /// `EditorContext` use this.
+    /// `PluginContext` use this.
     pub fn bridge(&self) -> &Arc<dyn EditorBridge> {
         &self.bridge
     }
@@ -316,10 +316,10 @@ impl<P: ?Sized> EditorContext<P> {
 
     /// Replace the param-store generic parameter while reusing the
     /// same bridge. Used by editor crates that receive the dyn-erased
-    /// `EditorContext` from [`Editor::open`] and want the typed
-    /// `EditorContext<P>` for their UI closure.
-    pub fn with_params<Q: ?Sized>(&self, params: Arc<Q>) -> EditorContext<Q> {
-        EditorContext {
+    /// `PluginContext` from [`Editor::open`] and want the typed
+    /// `PluginContext<P>` for their UI closure.
+    pub fn with_params<Q: ?Sized>(&self, params: Arc<Q>) -> PluginContext<Q> {
+        PluginContext {
             bridge: Arc::clone(&self.bridge),
             params,
         }
@@ -369,7 +369,7 @@ impl<P: ?Sized> EditorContext<P> {
     }
 }
 
-impl EditorContext<dyn Params> {
+impl PluginContext<dyn Params> {
     /// Build a dyn-erased context from a [`ClosureBridge`]. Convenience
     /// for format wrappers that compose state inline via closures.
     pub fn from_closures(bridge: ClosureBridge, params: Arc<dyn Params>) -> Self {
@@ -380,11 +380,11 @@ impl EditorContext<dyn Params> {
     }
 }
 
-impl<P: Params + 'static> EditorContext<P> {
+impl<P: Params + 'static> PluginContext<P> {
     /// Drop the typed `<P>` and return the dyn-erased context that
     /// crosses the `Editor::open` trait-object boundary.
-    pub fn dyn_erase(self) -> EditorContext<dyn Params> {
-        EditorContext {
+    pub fn dyn_erase(self) -> PluginContext<dyn Params> {
+        PluginContext {
             bridge: self.bridge,
             params: self.params as Arc<dyn Params>,
         }
@@ -393,15 +393,15 @@ impl<P: Params + 'static> EditorContext<P> {
 
 /// Plugin authors read parameter fields directly via `Deref`:
 /// `state.gain.smoothed_next()`, `state.bypass.value()`. The `state`
-/// here is `&EditorContext<MyParams>` and `Deref::Target = MyParams`.
-impl<P: ?Sized> Deref for EditorContext<P> {
+/// here is `&PluginContext<MyParams>` and `Deref::Target = MyParams`.
+impl<P: ?Sized> Deref for PluginContext<P> {
     type Target = P;
     fn deref(&self) -> &P {
         &self.params
     }
 }
 
-/// Build an [`EditorContext`] backed only by `params`. All write
+/// Build an [`PluginContext`] backed only by `params`. All write
 /// closures are no-ops; reads delegate to the params `Arc`; the
 /// transport reports the deterministic
 /// [`crate::events::TransportInfo::for_screenshot`] state so
@@ -410,12 +410,12 @@ impl<P: ?Sized> Deref for EditorContext<P> {
 /// Used by editor backends inside their `Editor::screenshot()` impl,
 /// and re-exported from `truce-test` for plugin authors that want to
 /// drive snapshot tests directly.
-pub fn for_test_params(params: Arc<dyn Params>) -> EditorContext<dyn Params> {
+pub fn for_test_params(params: Arc<dyn Params>) -> PluginContext<dyn Params> {
     let p_get = Arc::clone(&params);
     let p_plain = Arc::clone(&params);
     let p_fmt = Arc::clone(&params);
     let transport = TransportInfo::for_screenshot();
-    EditorContext::from_closures(
+    PluginContext::from_closures(
         ClosureBridge {
             begin_edit: Box::new(|_| {}),
             set_param: Box::new(|_, _| {}),

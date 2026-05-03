@@ -119,7 +119,7 @@ Import `IntoElement` from `truce_iced` and call `.el()` on any widget.
 `ParamCache<P>` is a per-tick read-only snapshot — iced's `view`
 function can't have side effects, so the cache is what widgets read
 from. The host bridge (gestures, automation writes) lives on
-`EditorContext<P>` and is passed to `update()`:
+`PluginContext<P>` and is passed to `update()`:
 
 ```rust
 // Read — from ParamCache (passed to view + update)
@@ -128,7 +128,7 @@ params.get_plain(P::Gain)    // plain value
 params.label(P::Gain)        // formatted string
 params.meter(P::MeterLeft)   // meter level
 
-// Write — from EditorContext (passed to update)
+// Write — from PluginContext (passed to update)
 ctx.automate(P::Gain, 0.75)        // begin + set + end (one shot)
 ctx.begin_edit(P::Gain)            // gesture: start
 ctx.set_param(P::Gain, new_value)  // gesture: in progress
@@ -137,7 +137,7 @@ ctx.end_edit(P::Gain)              // gesture: end
 
 The built-in widgets (`knob`, `param_slider`, `param_toggle`, etc.)
 emit their own `Message::Param(...)` variants — the iced runtime
-forwards those to the host via the underlying `EditorContext`, so
+forwards those to the host via the underlying `PluginContext`, so
 direct writes are only needed for custom widgets and `Msg::*` handling.
 
 ## Widgets
@@ -171,7 +171,7 @@ fn update(
     &mut self,
     msg: Message<Msg>,
     params: &ParamCache<MyParams>,
-    ctx: &EditorContext<MyParams>,
+    ctx: &PluginContext<MyParams>,
 ) -> Task<Message<Msg>> {
     match msg {
         Message::Custom(Msg::ResetGain) => {
@@ -216,7 +216,7 @@ impl IcedPlugin<MyParams> for MyEditor {
         &mut self,
         _msg: Message<()>,
         _params: &ParamCache<MyParams>,
-        ctx: &EditorContext<MyParams>,
+        ctx: &PluginContext<MyParams>,
     ) -> Task<Message<()>> {
         if !self.initialized {
             self.state = StateBinding::new(ctx.clone().dyn_erase());
@@ -247,7 +247,7 @@ self.state.update(|s| s.instance_name = new_name);
 ```
 
 You can also access state directly via `ctx.get_state()` /
-`ctx.set_state()` on the `EditorContext` passed to `update()`.
+`ctx.set_state()` on the `PluginContext` passed to `update()`.
 
 If your plugin only uses `#[param]` fields, you don't need any of this —
 parameter values sync automatically through `ParamCache`.

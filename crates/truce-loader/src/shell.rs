@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use parking_lot::Mutex;
 use truce_core::buffer::AudioBuffer;
 use truce_core::bus::BusLayout;
-use truce_core::editor::{Editor, EditorContext, RawWindowHandle};
+use truce_core::editor::{Editor, PluginContext, RawWindowHandle};
 use truce_core::events::{EventBody, EventList};
 use truce_core::info::PluginInfo;
 use truce_core::plugin::Plugin;
@@ -441,7 +441,7 @@ impl<P: Params + 'static> Editor for HotEditor<P> {
         }
     }
 
-    fn open(&mut self, parent: RawWindowHandle, context: EditorContext) {
+    fn open(&mut self, parent: RawWindowHandle, context: PluginContext) {
         match &mut self.kind {
             HotEditorInner::Builtin { gpu, .. } => gpu.open(parent, context),
             HotEditorInner::Custom { editor } => editor.open(parent, context),

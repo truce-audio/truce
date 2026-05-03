@@ -175,12 +175,12 @@ impl<T: StateField> StateField for Option<T> {
 // StateBinding — typed wrapper for editor state access
 // ---------------------------------------------------------------------------
 
-use crate::editor::EditorContext;
+use crate::editor::PluginContext;
 use std::sync::Arc;
 
 /// Typed state binding for editors.
 ///
-/// Wraps the `get_state`/`set_state` closures from `EditorContext` with
+/// Wraps the `get_state`/`set_state` closures from `PluginContext` with
 /// typed serialization. Caches the deserialized state to avoid repeated
 /// deserialization each frame.
 ///
@@ -212,7 +212,7 @@ impl<T: State> StateBinding<T> {
     /// context's `<P>` since `StateBinding` cares only about the
     /// `get_state` / `set_state` channel on the underlying
     /// `EditorBridge`, never about parameter typing.
-    pub fn new<P: ?Sized>(context: &EditorContext<P>) -> Self {
+    pub fn new<P: ?Sized>(context: &PluginContext<P>) -> Self {
         let bridge_for_get = Arc::clone(context.bridge());
         let bridge_for_set = Arc::clone(context.bridge());
         let mut binding = Self {

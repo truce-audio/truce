@@ -10,7 +10,7 @@ use std::ffi::CString;
 use std::os::raw::c_char;
 use std::slice;
 
-use truce_core::editor::{ClosureBridge, Editor, EditorContext, RawWindowHandle, SendPtr};
+use truce_core::editor::{ClosureBridge, Editor, PluginContext, RawWindowHandle, SendPtr};
 use truce_core::events::{Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
 use truce_core::process::ProcessContext;
@@ -423,7 +423,7 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
             let params_for_fmt = params.clone();
             let params_for_ctx = params.clone();
             let transport_slot = inst.transport_slot.clone();
-            let context = EditorContext::from_closures(
+            let context = PluginContext::from_closures(
                 ClosureBridge {
                     begin_edit: Box::new(|_id| {}),
                     set_param: Box::new(move |id, value| {

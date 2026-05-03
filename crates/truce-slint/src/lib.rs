@@ -3,15 +3,15 @@
 //! Provides `SlintEditor`, which implements `truce_core::Editor` using
 //! Slint's software renderer + baseview + wgpu. Developers write their UI
 //! in `.slint` markup (compiled at build time) and wire parameters through
-//! `EditorContext<P>`.
+//! `PluginContext<P>`.
 //!
 //! # Usage
 //!
 //! ```ignore
 //! use truce_slint::SlintEditor;
-//! use truce_core::editor::EditorContext;
+//! use truce_core::editor::PluginContext;
 //!
-//! SlintEditor::new(params, (400, 300), |state: EditorContext<MyParams>| {
+//! SlintEditor::new(params, (400, 300), |state: PluginContext<MyParams>| {
 //!     let ui = MyPluginUi::new().unwrap();
 //!     truce_slint::bind! { state, ui,
 //!         P::Gain   => gain,
@@ -28,9 +28,9 @@ mod screenshot;
 
 pub use editor::{SlintEditor, SyncFn};
 
-// Re-export `EditorContext` so plugin authors using the `bind!` macro
+// Re-export `PluginContext` so plugin authors using the `bind!` macro
 // don't need a direct truce-core dependency.
-pub use truce_core::editor::EditorContext;
+pub use truce_core::editor::PluginContext;
 
 // Re-export slint so plugin authors can use it without a direct dependency.
 pub use slint;
@@ -75,8 +75,8 @@ macro_rules! bind {
         )*
         let ui = $ui;
         // Return type is inferred from the surrounding `SetupFn` —
-        // typically `SyncFn<P>` aka `Box<dyn Fn(&EditorContext<P>)>`.
-        Box::new(move |state: &$crate::EditorContext<_>| {
+        // typically `SyncFn<P>` aka `Box<dyn Fn(&PluginContext<P>)>`.
+        Box::new(move |state: &$crate::PluginContext<_>| {
             $(
                 $crate::bind!(@sync state, ui, $id, $name $( : $ty $(($arg))? )?);
             )*

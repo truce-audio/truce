@@ -63,7 +63,7 @@ use clap_sys::version::CLAP_VERSION;
 
 use truce_core::buffer::AudioBuffer;
 use truce_core::bus::ChannelConfig;
-use truce_core::editor::{ClosureBridge, Editor, EditorContext, RawWindowHandle, SendPtr};
+use truce_core::editor::{ClosureBridge, Editor, PluginContext, RawWindowHandle, SendPtr};
 use truce_core::events::{Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
 use truce_core::info::{PluginCategory, PluginInfo};
@@ -1420,7 +1420,7 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
         let params_for_fmt = params.clone();
         let params_for_ctx = params.clone();
         let transport_slot = data.transport_slot.clone();
-        let context = EditorContext::from_closures(
+        let context = PluginContext::from_closures(
             ClosureBridge {
                 begin_edit: Box::new(move |id| {
                     gui_changes.push(GuiParamChange::GestureBegin(id));

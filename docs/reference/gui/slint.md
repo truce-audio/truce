@@ -75,7 +75,7 @@ impl PluginLogic for MyPlugin {
         Some(Box::new(SlintEditor::new(
             self.params.clone(),
             (200, 120),
-            |state: EditorContext<MyParams>| -> SyncFn<MyParams> {
+            |state: PluginContext<MyParams>| -> SyncFn<MyParams> {
                 let ui = MyPluginUi::new().unwrap();
 
                 // UI → host: when the user drags the knob
@@ -83,7 +83,7 @@ impl PluginLogic for MyPlugin {
                 ui.on_gain_changed(move |v| s.automate(P::Gain, v as f64));
 
                 // host → UI: sync every frame
-                Box::new(move |state: &EditorContext<MyParams>| {
+                Box::new(move |state: &PluginContext<MyParams>| {
                     ui.set_gain(state.get_param(P::Gain) as f32);
                     ui.set_meter_left(meter_display(state.get_meter(P::MeterLeft)));
                     ui.set_meter_right(meter_display(state.get_meter(P::MeterRight)));
@@ -94,7 +94,7 @@ impl PluginLogic for MyPlugin {
 }
 ```
 
-The setup closure receives an `EditorContext<MyParams>` (typed for
+The setup closure receives a `PluginContext<MyParams>` (typed for
 direct `Deref` access to `MyParams` fields) and returns a `SyncFn<P>`.
 Slint calls the sync function every frame (~60fps) to push host
 values into the UI.
@@ -177,9 +177,9 @@ truce_slint::bind! { state, ui,
 }
 ```
 
-## EditorContext
+## PluginContext
 
-Same as the other backends — `EditorContext<P>` exposes its host
+Same as the other backends — `PluginContext<P>` exposes its host
 bridge as methods. IDs use `#[derive(Params)]`'s generated
 `*ParamId` enum and convert to `u32` through `impl Into<u32>`:
 
@@ -194,7 +194,7 @@ state.set_param(P::Gain, v)       // gesture: in progress
 state.end_edit(P::Gain)           // gesture: end
 ```
 
-`EditorContext<P>` is `Clone`-able (cheap — internally an
+`PluginContext<P>` is `Clone`-able (cheap — internally an
 `Arc<dyn EditorBridge>`), so Slint callbacks can capture copies.
 `Deref` to `&P` is also available, so `state.gain.smoothed_next()`
 works directly when you need to peek at param metadata or smoothed
@@ -237,7 +237,7 @@ See the [state persistence](../plugin-anatomy.md#state-persistence)
 section for the full `#[derive(State)]` pattern.
 
 If your plugin only uses `#[param]` fields, you don't need any of this —
-parameter values sync automatically through `EditorContext<P>`.
+parameter values sync automatically through `PluginContext<P>`.
 
 ## Screenshot testing
 

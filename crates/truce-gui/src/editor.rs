@@ -8,7 +8,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use truce_core::editor::{Editor, EditorContext, RawWindowHandle};
+use truce_core::editor::{Editor, PluginContext, RawWindowHandle};
 use truce_params::Params;
 
 use crate::backend_cpu::CpuBackend;
@@ -60,7 +60,7 @@ pub struct BuiltinEditor<P: Params> {
     theme: Theme,
     backend: Option<CpuBackend>,
     interaction: InteractionState,
-    context: Option<EditorContext>,
+    context: Option<PluginContext>,
     window: Option<baseview::WindowHandle>,
     /// Weak-ish handle to the blit backend the window-handler
     /// materializes. The editor keeps the canonical `Arc` and the
@@ -73,7 +73,7 @@ pub struct BuiltinEditor<P: Params> {
     /// plugin code). `on_frame` clears it and only does the
     /// rasterize + blit pass when it was true.
     ///
-    /// Shared so `EditorContext::set_param` and `state_changed`
+    /// Shared so `PluginContext::set_param` and `state_changed`
     /// closures can flip it without touching editor internals.
     needs_repaint: Arc<AtomicBool>,
     /// Normalized values captured at the last render pass, in the
@@ -233,7 +233,7 @@ impl<P: Params + 'static> BuiltinEditor<P> {
 
     /// Build owned boxed closures from `self.context` / `self.params` that
     /// back a `ParamSnapshot`. Each closure clones the `Arc<P>` or the
-    /// `EditorContext`, so `EditorSnapshotClosures` is `'static` and safe
+    /// `PluginContext`, so `EditorSnapshotClosures` is `'static` and safe
     /// to hold across a borrow of `&mut self.interaction`.
     fn build_snapshot_closures(&self) -> EditorSnapshotClosures {
         let ctx = self.context.clone();
@@ -413,12 +413,12 @@ impl<P: Params + 'static> BuiltinEditor<P> {
 
     /// Take the editor context, leaving `None` in its place.
     /// Used by hot-reload to preserve the context when swapping editors.
-    pub fn take_context(&mut self) -> Option<EditorContext> {
+    pub fn take_context(&mut self) -> Option<PluginContext> {
         self.context.take()
     }
 
     /// Set the editor context (host callbacks) without opening the CPU view.
-    pub fn set_context(&mut self, context: EditorContext) {
+    pub fn set_context(&mut self, context: PluginContext) {
         self.context = Some(context);
         match &self.layout {
             Layout::Rows(pl) => self.interaction.build_regions(pl),
@@ -811,7 +811,7 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
         self.request_repaint();
     }
 
-    fn open(&mut self, parent: RawWindowHandle, context: EditorContext) {
+    fn open(&mut self, parent: RawWindowHandle, context: PluginContext) {
         let (w, h) = self.size();
         let scale = crate::platform::query_backing_scale(&parent);
         self.scale = scale as f32;

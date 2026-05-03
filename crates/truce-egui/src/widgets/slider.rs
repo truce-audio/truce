@@ -1,6 +1,6 @@
 //! Parameter slider bound to truce's gesture protocol.
 
-use truce_core::editor::EditorContext;
+use truce_core::editor::PluginContext;
 
 /// Show a horizontal slider bound to a truce parameter.
 ///
@@ -8,7 +8,7 @@ use truce_core::editor::EditorContext;
 /// Automatically handles begin/set/end gesture protocol for host automation.
 pub fn param_slider<P: ?Sized>(
     ui: &mut egui::Ui,
-    state: &EditorContext<P>,
+    state: &PluginContext<P>,
     id: impl Into<u32>,
 ) -> egui::Response {
     let id = id.into();

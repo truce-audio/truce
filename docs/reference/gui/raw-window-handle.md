@@ -23,11 +23,11 @@ Here's the minimum implementation. The host calls `open()` with a parent
 window handle, and you create your UI as a child of that window:
 
 ```rust
-use truce_core::editor::{Editor, EditorContext, RawWindowHandle};
+use truce_core::editor::{Editor, PluginContext, RawWindowHandle};
 
 pub struct MyEditor {
     size: (u32, u32),
-    context: Option<EditorContext>,
+    context: Option<PluginContext>,
     // your renderer state goes here
 }
 
@@ -36,7 +36,7 @@ impl Editor for MyEditor {
         self.size
     }
 
-    fn open(&mut self, parent: RawWindowHandle, context: EditorContext) {
+    fn open(&mut self, parent: RawWindowHandle, context: PluginContext) {
         self.context = Some(context);
 
         // parent tells you what kind of window to create:
@@ -83,7 +83,7 @@ unsafe impl Send for MyEditor {}
 
 ## Reading and writing parameters
 
-`EditorContext` exposes its host bridge as methods. IDs use
+`PluginContext` exposes its host bridge as methods. IDs use
 `#[derive(Params)]`'s generated `*ParamId` enum and convert to `u32`
 through `impl Into<u32>`, so you can pass either the enum variant or a
 literal `u32`:
@@ -152,7 +152,7 @@ window creation, event dispatch, and DPI scaling:
 ```rust
 use baseview::{Window, WindowOpenOptions, Size, WindowScalePolicy};
 
-fn open(&mut self, parent: RawWindowHandle, context: EditorContext) {
+fn open(&mut self, parent: RawWindowHandle, context: PluginContext) {
     let options = WindowOpenOptions {
         title: String::from("My Plugin"),
         size: Size::new(800.0, 600.0),

@@ -1,6 +1,6 @@
 //! XY pad control bound to two truce parameters.
 
-use truce_core::editor::EditorContext;
+use truce_core::editor::PluginContext;
 
 const LABEL_H: f32 = 16.0;
 const DOT_RADIUS: f32 = 5.0;
@@ -12,7 +12,7 @@ const DOT_RADIUS: f32 = 5.0;
 /// Drag anywhere in the pad to set both values simultaneously.
 pub fn param_xy_pad<P: ?Sized>(
     ui: &mut egui::Ui,
-    state: &EditorContext<P>,
+    state: &PluginContext<P>,
     id_x: impl Into<u32>,
     id_y: impl Into<u32>,
     label: &str,

@@ -5,7 +5,7 @@
 //! `editor.rs`), which is itself called from
 //! `truce_test::assert_screenshot::<Plugin>(...)`.
 
-use truce_core::editor::EditorContext;
+use truce_core::editor::PluginContext;
 use truce_params::Params;
 
 /// Headless render path shared by `EguiEditor::screenshot()` and any
@@ -18,12 +18,12 @@ use truce_params::Params;
 /// screenshot paths funnel adapter-acquisition failures through `None`
 /// rather than mixing panics with optional returns.
 pub(crate) fn render_with_state<P: Params + ?Sized>(
-    state: &EditorContext<P>,
+    state: &PluginContext<P>,
     size: (u32, u32),
     pixels_per_point: f32,
     font: Option<&'static [u8]>,
     visuals: Option<egui::Visuals>,
-    ui_fn: impl Fn(&egui::Context, &EditorContext<P>),
+    ui_fn: impl Fn(&egui::Context, &PluginContext<P>),
 ) -> Option<(Vec<u8>, u32, u32)> {
     let (width, height) = size;
     let ctx = egui::Context::default();

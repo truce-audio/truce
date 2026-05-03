@@ -26,7 +26,7 @@ impl PluginLogic for MyPlugin {
         Some(Box::new(EguiEditor::new(
             self.params.clone(),
             (400, 300),
-            |ctx: &egui::Context, state: &EditorContext<MyParams>| {
+            |ctx: &egui::Context, state: &PluginContext<MyParams>| {
                 egui::CentralPanel::default().show(ctx, |ui| {
                     ui.heading("My Plugin");
                     param_knob(ui, state, P::Gain, "Gain");
@@ -39,13 +39,13 @@ impl PluginLogic for MyPlugin {
 
 The closure is your egui frame function — it runs every frame, same as
 `eframe::App::update`. `(400, 300)` is the window size in logical points.
-`EditorContext<MyParams>` is typed for direct `Deref` access to the
+`PluginContext<MyParams>` is typed for direct `Deref` access to the
 plugin's `Params` fields (`state.gain.smoothed_next()` etc.) inside the
 closure.
 
-## EditorContext
+## PluginContext
 
-`EditorContext<P>` is the bridge between egui and the DAW's parameter
+`PluginContext<P>` is the bridge between egui and the DAW's parameter
 system. It wraps `begin_edit` / `set_param` / `end_edit` into an
 ergonomic API; IDs use `#[derive(Params)]`'s generated `*ParamId` enum
 and convert to `u32` through `impl Into<u32>`:
@@ -85,7 +85,7 @@ use truce_egui::widgets::{
 Typical layout:
 
 ```rust
-fn my_ui(ctx: &egui::Context, state: &EditorContext<MyParams>) {
+fn my_ui(ctx: &egui::Context, state: &PluginContext<MyParams>) {
     egui::CentralPanel::default().show(ctx, |ui| {
         ui.horizontal(|ui| {
             param_knob(ui, state, P::Gain, "Gain");
@@ -148,7 +148,7 @@ use truce_egui::EditorUi;
 struct MyUi { tab: usize }
 
 impl EditorUi<MyParams> for MyUi {
-    fn ui(&mut self, ctx: &egui::Context, state: &EditorContext<MyParams>) {
+    fn ui(&mut self, ctx: &egui::Context, state: &PluginContext<MyParams>) {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.selectable_value(&mut self.tab, 0, "Controls");
@@ -167,9 +167,9 @@ EguiEditor::with_ui(self.params.clone(), (640, 480), MyUi { tab: 0 })
 
 | Method | When | Use for |
 |---|---|---|
-| `opened(&mut self, &EditorContext<P>)` | Editor window opens | Initialize `StateBinding`, load resources |
-| `ui(&mut self, &egui::Context, &EditorContext<P>)` | Every frame | Draw your UI |
-| `state_changed(&mut self, &EditorContext<P>)` | Preset recall, undo, session load | Re-sync cached state |
+| `opened(&mut self, &PluginContext<P>)` | Editor window opens | Initialize `StateBinding`, load resources |
+| `ui(&mut self, &egui::Context, &PluginContext<P>)` | Every frame | Draw your UI |
+| `state_changed(&mut self, &PluginContext<P>)` | Preset recall, undo, session load | Re-sync cached state |
 
 All have default no-ops. Only `ui()` is required.
 
@@ -190,17 +190,17 @@ struct MyUi {
 }
 
 impl EditorUi<MyParams> for MyUi {
-    fn opened(&mut self, ctx: &EditorContext<MyParams>) {
+    fn opened(&mut self, ctx: &PluginContext<MyParams>) {
         self.state = StateBinding::new(ctx.clone().dyn_erase());
     }
 
-    fn ui(&mut self, egui_ctx: &egui::Context, _ctx: &EditorContext<MyParams>) {
+    fn ui(&mut self, egui_ctx: &egui::Context, _ctx: &PluginContext<MyParams>) {
         egui::CentralPanel::default().show(egui_ctx, |ui| {
             ui.label(&self.state.get().instance_name);
         });
     }
 
-    fn state_changed(&mut self, _ctx: &EditorContext<MyParams>) {
+    fn state_changed(&mut self, _ctx: &PluginContext<MyParams>) {
         self.state.sync();
     }
 }

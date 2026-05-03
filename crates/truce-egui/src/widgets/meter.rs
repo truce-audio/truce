@@ -1,6 +1,6 @@
 //! Level meter (display-only) reading truce meter values.
 
-use truce_core::editor::EditorContext;
+use truce_core::editor::PluginContext;
 use truce_core::meter_display;
 
 /// Show a vertical level meter reading truce meter values.
@@ -16,7 +16,7 @@ const TRACK_BG: egui::Color32 = egui::Color32::from_rgb(42, 42, 48);
 
 pub fn level_meter<P: ?Sized>(
     ui: &mut egui::Ui,
-    state: &EditorContext<P>,
+    state: &PluginContext<P>,
     meter_ids: &[impl Into<u32> + Copy],
     height: f32,
 ) -> egui::Response {

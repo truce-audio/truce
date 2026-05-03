@@ -15,12 +15,12 @@ use super::spec::{DepForm, FeatureSet, PluginSpec, VendorInfo};
 const REPO_URL: &str = "https://github.com/truce-audio/truce";
 
 // ---------------------------------------------------------------------------
-// PluginContext — fields the per-plugin templates (Cargo.toml,
+// PluginScaffoldingContext — fields the per-plugin templates (Cargo.toml,
 // build.rs, src/lib.rs, src/main.rs) reference.
 // ---------------------------------------------------------------------------
 
 #[derive(Serialize)]
-pub(crate) struct PluginContext {
+pub(crate) struct PluginScaffoldingContext {
     pub crate_name: String,
     pub crate_lib: String,
     pub struct_name: String,
@@ -40,7 +40,7 @@ pub(crate) struct PluginContext {
     pub plugin_macro: String,
 }
 
-impl PluginContext {
+impl PluginScaffoldingContext {
     pub fn new(
         crate_name: &str,
         kind: PluginKind,

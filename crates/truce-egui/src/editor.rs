@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 
 use baseview::{Event, EventStatus, Window, WindowHandler, WindowOpenOptions, WindowScalePolicy};
 
-use truce_core::editor::{Editor, EditorContext, RawWindowHandle};
+use truce_core::editor::{Editor, PluginContext, RawWindowHandle};
 use truce_params::Params;
 
 use crate::platform::ParentWindow;
@@ -20,18 +20,18 @@ use truce_gui::EditorScale;
 /// Implement this for complex UIs that need internal state. For simple
 /// closure-based UIs, use `EguiEditor::new()` instead.
 pub trait EditorUi<P: Params + ?Sized>: Send {
-    fn ui(&mut self, ctx: &egui::Context, state: &EditorContext<P>);
+    fn ui(&mut self, ctx: &egui::Context, state: &PluginContext<P>);
 
     /// Called once when the editor window opens. Use to create StateBindings.
-    fn opened(&mut self, _state: &EditorContext<P>) {}
+    fn opened(&mut self, _state: &PluginContext<P>) {}
 
     /// Plugin state was restored (preset recall, undo, session load).
     /// Re-read any cached custom state. Parameter values update automatically.
-    fn state_changed(&mut self, _state: &EditorContext<P>) {}
+    fn state_changed(&mut self, _state: &PluginContext<P>) {}
 }
 
-impl<P: Params + ?Sized, F: FnMut(&egui::Context, &EditorContext<P>) + Send> EditorUi<P> for F {
-    fn ui(&mut self, ctx: &egui::Context, state: &EditorContext<P>) {
+impl<P: Params + ?Sized, F: FnMut(&egui::Context, &PluginContext<P>) + Send> EditorUi<P> for F {
+    fn ui(&mut self, ctx: &egui::Context, state: &PluginContext<P>) {
         self(ctx, state);
     }
 }
@@ -39,12 +39,12 @@ impl<P: Params + ?Sized, F: FnMut(&egui::Context, &EditorContext<P>) + Send> Edi
 /// No-op placeholder for `mem::replace` during builder chain.
 struct NopUi<P: ?Sized>(PhantomData<fn(&P)>);
 impl<P: Params + ?Sized> EditorUi<P> for NopUi<P> {
-    fn ui(&mut self, _ctx: &egui::Context, _state: &EditorContext<P>) {}
+    fn ui(&mut self, _ctx: &egui::Context, _state: &PluginContext<P>) {}
 }
 
 /// Type alias to keep the `WithStateChanged` field signature within
 /// clippy's complexity budget without losing the `Send` bound.
-type StateChangedFn<P> = Box<dyn FnMut(&EditorContext<P>) + Send>;
+type StateChangedFn<P> = Box<dyn FnMut(&PluginContext<P>) + Send>;
 
 /// Wraps an EditorUi with an additional state_changed callback.
 struct WithStateChanged<P: Params + ?Sized> {
@@ -53,15 +53,15 @@ struct WithStateChanged<P: Params + ?Sized> {
 }
 
 impl<P: Params + ?Sized> EditorUi<P> for WithStateChanged<P> {
-    fn ui(&mut self, ctx: &egui::Context, state: &EditorContext<P>) {
+    fn ui(&mut self, ctx: &egui::Context, state: &PluginContext<P>) {
         self.inner.ui(ctx, state);
     }
 
-    fn opened(&mut self, state: &EditorContext<P>) {
+    fn opened(&mut self, state: &PluginContext<P>) {
         self.inner.opened(state);
     }
 
-    fn state_changed(&mut self, state: &EditorContext<P>) {
+    fn state_changed(&mut self, state: &PluginContext<P>) {
         (self.on_changed)(state);
     }
 }
@@ -75,8 +75,8 @@ impl<P: Params + ?Sized> EditorUi<P> for WithStateChanged<P> {
 /// Generic in the plugin's `Params` type so the closure / struct UI can
 /// `Deref` straight to typed parameter fields:
 /// `state.gain.smoothed_next()`, `state.bypass.value()`. Stores its own
-/// `Arc<P>` from construction; rebuilds the typed `EditorContext<P>`
-/// every time the host opens the window via [`EditorContext::with_params`].
+/// `Arc<P>` from construction; rebuilds the typed `PluginContext<P>`
+/// every time the host opens the window via [`PluginContext::with_params`].
 pub struct EguiEditor<P: Params + ?Sized> {
     params: Arc<P>,
     size: (u32, u32),
@@ -94,7 +94,7 @@ pub struct EguiEditor<P: Params + ?Sized> {
     /// Active baseview window handle — exists only while editor is open.
     window: Option<baseview::WindowHandle>,
     /// Typed editor context stored at open() for state_changed forwarding.
-    context: Option<EditorContext<P>>,
+    context: Option<PluginContext<P>>,
 }
 
 // SAFETY: `baseview::WindowHandle` holds a raw native window pointer
@@ -114,7 +114,7 @@ impl<P: Params + 'static> EguiEditor<P> {
     pub fn new(
         params: Arc<P>,
         size: (u32, u32),
-        ui_fn: impl FnMut(&egui::Context, &EditorContext<P>) + Send + 'static,
+        ui_fn: impl FnMut(&egui::Context, &PluginContext<P>) + Send + 'static,
     ) -> Self {
         Self {
             params,
@@ -151,7 +151,7 @@ impl<P: Params + 'static> EguiEditor<P> {
     /// EguiEditor::new(params, (400, 300), |ctx, state| { /* ui */ })
     ///     .on_state_changed(|state| { /* re-read cached state */ })
     /// ```
-    pub fn on_state_changed(mut self, f: impl FnMut(&EditorContext<P>) + Send + 'static) -> Self {
+    pub fn on_state_changed(mut self, f: impl FnMut(&PluginContext<P>) + Send + 'static) -> Self {
         let old = std::mem::replace(
             &mut self.ui,
             Arc::new(Mutex::new(
@@ -194,7 +194,7 @@ impl<P: Params + 'static> EguiEditor<P> {
 
 struct EguiWindowHandler<P: Params + ?Sized> {
     ui: Arc<Mutex<Box<dyn EditorUi<P>>>>,
-    context: EditorContext<P>,
+    context: PluginContext<P>,
     egui_ctx: egui::Context,
     renderer: Option<EguiRenderer>,
     pending_events: Vec<egui::Event>,
@@ -522,8 +522,8 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
         self.size
     }
 
-    fn open(&mut self, parent: RawWindowHandle, context: EditorContext) {
-        // Re-type the dyn-erased context to `EditorContext<P>` using
+    fn open(&mut self, parent: RawWindowHandle, context: PluginContext) {
+        // Re-type the dyn-erased context to `PluginContext<P>` using
         // the Arc<P> we stored at construction.
         let typed_ctx = context.with_params(self.params.clone());
         self.context = Some(typed_ctx.clone());

@@ -28,7 +28,7 @@ use std::path::{Path, PathBuf};
 
 use crate::{BoxErr, Res};
 
-use context::{PluginContext, TruceTomlContext, WorkspaceContext};
+use context::{PluginScaffoldingContext, TruceTomlContext, WorkspaceContext};
 use layout::{ProjectLayout, WorkspaceLayout};
 use render::{Renderer, tpl};
 
@@ -148,7 +148,7 @@ impl Scaffolder {
         fs::create_dir_all(layout.src_dir())?;
         fs::create_dir_all(layout.cargo_dir())?;
 
-        let ctx = PluginContext::new(crate_name, kind, dep_form, features, &self.tag);
+        let ctx = PluginScaffoldingContext::new(crate_name, kind, dep_form, features, &self.tag);
 
         write(
             &layout.cargo_toml(),

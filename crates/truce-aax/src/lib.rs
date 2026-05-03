@@ -15,7 +15,7 @@ use std::os::raw::c_char;
 use std::slice;
 use std::sync::{Arc, OnceLock};
 
-use truce_core::editor::{ClosureBridge, Editor, EditorContext, RawWindowHandle, SendPtr};
+use truce_core::editor::{ClosureBridge, Editor, PluginContext, RawWindowHandle, SendPtr};
 use truce_core::events::{Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
 use truce_core::info::PluginCategory;
@@ -856,7 +856,7 @@ pub unsafe fn _editor_open<P: PluginExport>(
         let params_for_ctx = params.clone();
         let transport_slot = inst.transport_slot.clone();
 
-        let context = EditorContext::from_closures(
+        let context = PluginContext::from_closures(
             ClosureBridge {
                 begin_edit: Box::new(move |id| {
                     touch_fn(aax_ctx.as_ptr() as *mut c_void, id);

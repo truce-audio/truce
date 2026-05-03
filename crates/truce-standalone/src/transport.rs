@@ -89,7 +89,7 @@ impl Transport {
         self.info(start, bpm, sr, playing)
     }
 
-    /// Called from the UI thread (via `EditorContext::transport`).
+    /// Called from the UI thread (via `PluginContext::transport`).
     /// Non-mutating — just reads the current position.
     pub fn snapshot(&self) -> TransportInfo {
         let sr = self.inner.sample_rate.load(Ordering::Relaxed) as f64;

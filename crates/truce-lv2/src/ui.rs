@@ -16,7 +16,7 @@
 //!
 //! We implement this by keeping a shadow `Params` instance that mirrors the
 //! plugin's state from the UI side. The existing `Editor` trait expects a
-//! `EditorContext` of closures over a live plugin; we satisfy it by giving
+//! `PluginContext` of closures over a live plugin; we satisfy it by giving
 //! those closures access to the shadow params + write_function.
 //!
 //! # Scope
@@ -33,7 +33,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use truce_core::TransportSlot;
-use truce_core::editor::{ClosureBridge, Editor, EditorContext, RawWindowHandle};
+use truce_core::editor::{ClosureBridge, Editor, PluginContext, RawWindowHandle};
 use truce_core::events::TransportInfo;
 use truce_core::export::PluginExport;
 use truce_params::Params;
@@ -109,7 +109,7 @@ pub struct Lv2UiInstance<P: PluginExport> {
     /// Shadow plugin kept alive so the editor's internal refs stay valid.
     /// Not dropped until cleanup_ui().
     _plugin: Box<P>,
-    /// Arc into `_plugin`'s params — used by EditorContext closures.
+    /// Arc into `_plugin`'s params — used by PluginContext closures.
     params: Arc<P::Params>,
     /// Param metadata (id → port index, range for denormalization).
     param_slots: Vec<ParamSlot>,
@@ -118,7 +118,7 @@ pub struct Lv2UiInstance<P: PluginExport> {
     /// reading without a trip to the plugin.
     meter_slots: Arc<Vec<MeterSlot>>,
     /// The plugin's editor — drives rendering. The host's
-    /// `write_function` + controller are captured by `EditorContext`'s
+    /// `write_function` + controller are captured by `PluginContext`'s
     /// closures and don't need to live on the struct itself.
     editor: Option<Box<dyn Editor>>,
     /// Set once open() has run so cleanup can be idempotent.
@@ -234,7 +234,7 @@ pub unsafe fn instantiate_ui<P: PluginExport>(
             urid_map.intern("http://lv2plug.in/ns/ext/atom#eventTransfer");
         let transport_slot = TransportSlot::new();
 
-        // Build EditorContext closures driven by write_function / shadow params.
+        // Build PluginContext closures driven by write_function / shadow params.
         let ctx = build_editor_context::<P>(
             params_arc.clone(),
             &param_slots,
@@ -733,7 +733,7 @@ fn build_editor_context<P: PluginExport>(
     write_function: Lv2UiWriteFn,
     controller: Lv2UiController,
     transport_slot: Arc<TransportSlot>,
-) -> EditorContext {
+) -> PluginContext {
     // Clone slot metadata into each closure — small vec, cheap.
     let slots_for_set: Vec<(u32, u32, truce_params::ParamRange)> = slots
         .iter()
@@ -753,7 +753,7 @@ fn build_editor_context<P: PluginExport>(
     // raw-pointer Send issues.
     let write_set = write_function;
 
-    EditorContext::from_closures(
+    PluginContext::from_closures(
         ClosureBridge {
             begin_edit: Box::new(|_id: u32| {}),
             end_edit: Box::new(|_id: u32| {}),

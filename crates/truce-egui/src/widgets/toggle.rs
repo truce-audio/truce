@@ -1,6 +1,6 @@
 //! Toggle switch bound to a truce parameter.
 
-use truce_core::editor::EditorContext;
+use truce_core::editor::PluginContext;
 
 /// Show a toggle switch bound to a truce boolean parameter.
 ///
@@ -8,7 +8,7 @@ use truce_core::editor::EditorContext;
 /// gesture protocol (begin + set + end in one shot).
 pub fn param_toggle<P: ?Sized>(
     ui: &mut egui::Ui,
-    state: &EditorContext<P>,
+    state: &PluginContext<P>,
     id: impl Into<u32>,
     label: &str,
 ) -> egui::Response {

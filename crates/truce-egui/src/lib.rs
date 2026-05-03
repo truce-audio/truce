@@ -10,9 +10,9 @@
 //! ```ignore
 //! use truce_egui::EguiEditor;
 //! use truce_egui::widgets::{param_knob, param_slider};
-//! use truce_core::editor::EditorContext;
+//! use truce_core::editor::PluginContext;
 //!
-//! let editor = EguiEditor::new(params, (800, 600), |ctx: &egui::Context, state: &EditorContext<MyParams>| {
+//! let editor = EguiEditor::new(params, (800, 600), |ctx: &egui::Context, state: &PluginContext<MyParams>| {
 //!     egui::CentralPanel::default().show(ctx, |ui| {
 //!         ui.heading("My Plugin");
 //!         param_slider(ui, state, 0u32);

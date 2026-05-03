@@ -1,7 +1,7 @@
 //! Tempo-synced tremolo — exercises the host-transport feature.
 //!
 //! The DSP reads `ProcessContext::transport` to lock an amplitude LFO
-//! to the host's beat grid. The editor reads `EditorContext::transport`
+//! to the host's beat grid. The editor reads `PluginContext::transport`
 //! to display tempo / play state / beat position live in the UI.
 //!
 //! Both paths drop back to sensible defaults when the host doesn't
@@ -9,7 +9,7 @@
 //! ("—") for unknown fields in the readout.
 
 use truce::prelude::*;
-use truce_core::editor::EditorContext;
+use truce_core::editor::PluginContext;
 use truce_egui::EguiEditor;
 use truce_egui::theme::{HEADER_BG, HEADER_TEXT};
 use truce_egui::widgets::{param_knob, param_selector};
@@ -187,7 +187,7 @@ impl PluginLogic for Tremolo {
     }
 }
 
-fn tremolo_ui(ctx: &egui::Context, state: &EditorContext<TremoloParams>) {
+fn tremolo_ui(ctx: &egui::Context, state: &PluginContext<TremoloParams>) {
     egui::TopBottomPanel::top("header")
         .exact_height(30.0)
         .frame(egui::Frame::NONE.fill(HEADER_BG))
@@ -224,7 +224,7 @@ fn tremolo_ui(ctx: &egui::Context, state: &EditorContext<TremoloParams>) {
 
 /// Read the editor's transport closure and render a compact readout
 /// like `▶ 128.0 BPM • 4/4 • ♩ 12.25` (or `■ — BPM` when stopped).
-fn draw_transport_readout(ui: &mut egui::Ui, state: &EditorContext<TremoloParams>) {
+fn draw_transport_readout(ui: &mut egui::Ui, state: &PluginContext<TremoloParams>) {
     let transport = state.transport();
     let line = format_transport(transport.as_ref());
 

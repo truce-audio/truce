@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 
 use baseview::{Event, EventStatus, Window, WindowHandler, WindowOpenOptions, WindowScalePolicy};
 
-use truce_core::editor::{Editor, EditorBridge, EditorContext, RawWindowHandle};
+use truce_core::editor::{Editor, EditorBridge, PluginContext, RawWindowHandle};
 use truce_gui::editor::BuiltinEditor;
 use truce_gui::render::RenderBackend;
 use truce_params::Params;
@@ -145,7 +145,7 @@ impl<P: Params + 'static> Editor for GpuEditor<P> {
         self.inner.lock().map(|g| g.size()).unwrap_or(self.size)
     }
 
-    fn open(&mut self, parent: RawWindowHandle, context: EditorContext) {
+    fn open(&mut self, parent: RawWindowHandle, context: PluginContext) {
         let system_scale = truce_gui::backing_scale();
         let (lw, lh) = self.size; // logical points
 

@@ -3,7 +3,7 @@
 Beat-synced amplitude LFO. Demonstrates the host-transport feature
 end-to-end: the DSP reads `ProcessContext::transport` to lock the LFO
 phase to the host's beat grid, and the editor reads
-`EditorContext::transport` to show the current tempo / play state /
+`PluginContext::transport` to show the current tempo / play state /
 beat position live in the UI.
 
 When the host does not report transport (standalone, hosts that don't
@@ -13,7 +13,7 @@ stays audible, and the readout shows `—` placeholders.
 ## What it demonstrates
 
 - Reading tempo + beat position on the audio thread from `ProcessContext::transport`.
-- Reading transport on the editor thread from `EditorContext::transport`.
+- Reading transport on the editor thread from `PluginContext::transport`.
 - `#[derive(ParamEnum)]` with a selector widget.
 - Graceful fallback when the host does not populate transport.
 

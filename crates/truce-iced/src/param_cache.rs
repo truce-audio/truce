@@ -4,17 +4,17 @@
 //! once per tick (~60fps) and caches them as plain values that iced
 //! widgets can read without atomic loads on every frame. The cache is
 //! polled from `IcedProgram::update(Message::Tick)` against the
-//! `EditorContext` the editor was opened with.
+//! `PluginContext` the editor was opened with.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use truce_core::editor::EditorContext;
+use truce_core::editor::PluginContext;
 use truce_params::Params;
 
 /// Cached parameter values for iced widget consumption.
 ///
-/// Distinct from `EditorContext<P>`: that is the host-plugin protocol
+/// Distinct from `PluginContext<P>`: that is the host-plugin protocol
 /// surface (live atomic reads, host gestures); this is a per-tick
 /// snapshot used inside `Canvas::draw` closures where iced doesn't
 /// allow side effects.
@@ -99,7 +99,7 @@ impl<P: Params + ?Sized> ParamCache<P> {
     }
 
     /// Poll all params from the editor context, return IDs that changed.
-    pub(crate) fn sync<Q: ?Sized>(&mut self, ctx: &EditorContext<Q>) -> Vec<u32> {
+    pub(crate) fn sync<Q: ?Sized>(&mut self, ctx: &PluginContext<Q>) -> Vec<u32> {
         let mut changed = Vec::new();
         for &id in &self.ids {
             let new_val = ctx.get_param(id);
@@ -114,7 +114,7 @@ impl<P: Params + ?Sized> ParamCache<P> {
     }
 
     /// Poll meter values from the editor context.
-    pub(crate) fn sync_meters<Q: ?Sized>(&mut self, ctx: &EditorContext<Q>, meter_ids: &[u32]) {
+    pub(crate) fn sync_meters<Q: ?Sized>(&mut self, ctx: &PluginContext<Q>, meter_ids: &[u32]) {
         for &id in meter_ids {
             self.meters.insert(id, ctx.get_meter(id));
         }

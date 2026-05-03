@@ -18,21 +18,21 @@ use slint::platform::software_renderer::{MinimalSoftwareWindow, PremultipliedRgb
 use slint::platform::{PointerEventButton, WindowAdapter, WindowEvent};
 use slint::{LogicalPosition, PhysicalSize};
 
-use truce_core::editor::{Editor, EditorContext, RawWindowHandle};
+use truce_core::editor::{Editor, PluginContext, RawWindowHandle};
 use truce_gui::EditorScale;
 use truce_params::Params;
 
 use crate::blit::BlitPipeline;
 use crate::platform::{self, ParentWindow};
 
-/// Per-frame sync closure: takes the current `EditorContext` and updates the
+/// Per-frame sync closure: takes the current `PluginContext` and updates the
 /// Slint component's properties. Returned by the editor's `setup` callback.
 ///
 /// Deliberately not `Send`-bounded — Slint's generated UI types contain
 /// `Rc<...>` and are `!Send`, so they can only be captured here (the
 /// closure stays on whichever thread `setup` was called on, namely
 /// baseview's window thread or the screenshot caller's thread).
-pub type SyncFn<P> = Box<dyn Fn(&EditorContext<P>)>;
+pub type SyncFn<P> = Box<dyn Fn(&PluginContext<P>)>;
 
 /// Editor `setup` callback: called every time the host re-opens the editor,
 /// creates the Slint component, and returns a `SyncFn` that the editor calls
@@ -44,7 +44,7 @@ pub type SyncFn<P> = Box<dyn Fn(&EditorContext<P>)>;
 /// that `Arc<dyn Fn(...) + Send + Sync>` is itself `Send`, which is in
 /// turn required because `SlintEditor: Send` (the `Editor` trait
 /// demands it). It does **not** propagate to the `SyncFn` the closure
-/// returns: the inner `Box<dyn Fn(&EditorContext<P>)>` is unbounded
+/// returns: the inner `Box<dyn Fn(&PluginContext<P>)>` is unbounded
 /// and is where Slint's `!Send` UI types are meant to live.
 ///
 /// In practice this means the setup closure must:
@@ -60,23 +60,23 @@ pub type SyncFn<P> = Box<dyn Fn(&EditorContext<P>)>;
 /// Both the setup-time outer call and the per-frame returned call run
 /// on the same window thread, so no thread crossing actually happens
 /// for the Slint values themselves.
-pub type SetupFn<P> = Arc<dyn Fn(EditorContext<P>) -> SyncFn<P> + Send + Sync>;
+pub type SetupFn<P> = Arc<dyn Fn(PluginContext<P>) -> SyncFn<P> + Send + Sync>;
 
 /// Slint-based editor implementing truce's `Editor` trait.
 ///
 /// The developer provides a setup closure that:
 /// 1. Creates the Slint component
-/// 2. Wires Slint callbacks to `EditorContext` for UI→host parameter changes
+/// 2. Wires Slint callbacks to `PluginContext` for UI→host parameter changes
 /// 3. Returns a per-frame sync closure for host→UI parameter updates
 ///
 /// # Example
 ///
 /// ```ignore
-/// SlintEditor::new(params, (400, 300), |state: EditorContext<MyParams>| {
+/// SlintEditor::new(params, (400, 300), |state: PluginContext<MyParams>| {
 ///     let ui = MyPluginUi::new().unwrap();
 ///     let s = state.clone();
 ///     ui.on_gain_changed(move |v| s.automate(0u32, v as f64));
-///     Box::new(move |state: &EditorContext<MyParams>| {
+///     Box::new(move |state: &PluginContext<MyParams>| {
 ///         ui.set_gain(state.get_param(0u32) as f32);
 ///     })
 /// })
@@ -118,7 +118,7 @@ impl<P: Params + 'static> SlintEditor<P> {
     pub fn new(
         params: Arc<P>,
         size: (u32, u32),
-        setup: impl Fn(EditorContext<P>) -> SyncFn<P> + Send + Sync + 'static,
+        setup: impl Fn(PluginContext<P>) -> SyncFn<P> + Send + Sync + 'static,
     ) -> Self {
         Self {
             params,
@@ -137,7 +137,7 @@ impl<P: Params + 'static> SlintEditor<P> {
 struct SlintWindowHandler<P: Params + ?Sized> {
     slint_window: Rc<MinimalSoftwareWindow>,
     sync_fn: SyncFn<P>,
-    state: EditorContext<P>,
+    state: PluginContext<P>,
     blit: Option<BlitPipeline>,
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -347,7 +347,7 @@ impl<P: Params + 'static> Editor for SlintEditor<P> {
         self.size
     }
 
-    fn open(&mut self, parent: RawWindowHandle, context: EditorContext) {
+    fn open(&mut self, parent: RawWindowHandle, context: PluginContext) {
         platform::ensure_platform();
 
         let (lw, lh) = self.size;

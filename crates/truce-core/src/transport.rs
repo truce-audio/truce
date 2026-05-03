@@ -2,7 +2,7 @@
 //!
 //! Each format wrapper owns a [`TransportSlot`] and writes it at the
 //! top of every process block. The editor closure on
-//! [`crate::editor::EditorContext`] reads from the same slot, giving
+//! [`crate::editor::PluginContext`] reads from the same slot, giving
 //! UI code access to host tempo / play state / beat position without
 //! a format-specific callback.
 //!
@@ -21,7 +21,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use crate::events::TransportInfo;
 
 /// Single-writer / multi-reader transport slot. Held by format
-/// wrappers; exposed to editors via `EditorContext::transport`.
+/// wrappers; exposed to editors via `PluginContext::transport`.
 ///
 /// The audio thread calls [`TransportSlot::write`] each block; readers
 /// (UI thread, worker threads) call [`TransportSlot::read`].

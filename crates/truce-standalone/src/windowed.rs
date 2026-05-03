@@ -15,7 +15,7 @@ use baseview::{Event, EventStatus, Window, WindowHandler, WindowOpenOptions, Win
 use keyboard_types::{Code, KeyState, Modifiers};
 use raw_window_handle::{HasRawWindowHandle, RawWindowHandle as RwhHandle};
 
-use truce_core::editor::{ClosureBridge, Editor, EditorContext, RawWindowHandle};
+use truce_core::editor::{ClosureBridge, Editor, PluginContext, RawWindowHandle};
 use truce_core::events::EventBody;
 use truce_core::export::PluginExport;
 use truce_core::info::PluginCategory;
@@ -418,13 +418,13 @@ fn is_mod_pressed(mods: &Modifiers) -> bool {
     return mods.contains(Modifiers::CONTROL);
 }
 
-/// Build a minimal `EditorContext` that routes parameter reads /
+/// Build a minimal `PluginContext` that routes parameter reads /
 /// writes / meter reads through the live plugin instance. Transport
 /// closure reads from the shared `Transport` the audio thread writes.
 fn synthesize_editor_context<P: PluginExport>(
     plugin: &Arc<Mutex<P>>,
     transport: &Transport,
-) -> EditorContext
+) -> PluginContext
 where
     P::Params: 'static,
 {
@@ -440,7 +440,7 @@ where
     let plugin_save = Arc::clone(plugin);
     let plugin_load = Arc::clone(plugin);
 
-    EditorContext::from_closures(
+    PluginContext::from_closures(
         ClosureBridge {
             begin_edit: Box::new(|_id| {}),
             set_param: Box::new(move |id, norm| {

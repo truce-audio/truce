@@ -1,5 +1,5 @@
 use truce::prelude::*;
-use truce_slint::{EditorContext, SlintEditor, SyncFn};
+use truce_slint::{PluginContext, SlintEditor, SyncFn};
 
 slint::include_modules!();
 
@@ -80,7 +80,7 @@ impl PluginLogic for GainSlint {
         Some(Box::new(SlintEditor::new(
             self.params.clone(),
             (176, 290),
-            |state: EditorContext<GainParams>| -> SyncFn<GainParams> {
+            |state: PluginContext<GainParams>| -> SyncFn<GainParams> {
                 let ui = GainUi::new().unwrap();
 
                 // UI → host
@@ -90,7 +90,7 @@ impl PluginLogic for GainSlint {
                 ui.on_pan_changed(move |v| s.automate(P::Pan, v as f64));
 
                 // host → UI (params + meters)
-                Box::new(move |state: &EditorContext<GainParams>| {
+                Box::new(move |state: &PluginContext<GainParams>| {
                     ui.set_gain(state.get_param(P::Gain) as f32);
                     ui.set_pan(state.get_param(P::Pan) as f32);
                     ui.set_gain_text(slint::SharedString::from(state.format_param(P::Gain)));

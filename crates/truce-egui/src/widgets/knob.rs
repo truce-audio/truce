@@ -1,6 +1,6 @@
 //! Rotary knob control bound to a truce parameter.
 
-use truce_core::editor::EditorContext;
+use truce_core::editor::PluginContext;
 
 const KNOB_SIZE: f32 = 60.0;
 const KNOB_TOTAL_H: f32 = 82.0;
@@ -17,7 +17,7 @@ const SWEEP: f32 = std::f32::consts::FRAC_PI_2 * 3.0; // 270° = 1.5π
 /// arc with a value indicator and the parameter's formatted value text.
 pub fn param_knob<P: ?Sized>(
     ui: &mut egui::Ui,
-    state: &EditorContext<P>,
+    state: &PluginContext<P>,
     id: impl Into<u32>,
     label: &str,
 ) -> egui::Response {

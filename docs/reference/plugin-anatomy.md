@@ -297,7 +297,7 @@ struct MyEditor {
 }
 
 impl Editor for MyEditor {
-    fn open(&mut self, parent: RawWindowHandle, context: EditorContext) {
+    fn open(&mut self, parent: RawWindowHandle, context: PluginContext) {
         self.state = StateBinding::new(&context);
     }
 

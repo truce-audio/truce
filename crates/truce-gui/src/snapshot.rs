@@ -3,7 +3,7 @@
 //! `interaction::dispatch`).
 //!
 //! Callers build a `ParamSnapshot` per frame from their own parameter
-//! store — typically `BuiltinEditor` forwards `EditorContext` + `Params`
+//! store — typically `BuiltinEditor` forwards `PluginContext` + `Params`
 //! accesses, but any plugin that owns its own frame can populate it
 //! from whatever source it likes.
 

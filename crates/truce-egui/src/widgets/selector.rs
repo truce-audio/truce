@@ -1,6 +1,6 @@
 //! Parameter selector (dropdown/cycle) bound to a truce parameter.
 
-use truce_core::editor::EditorContext;
+use truce_core::editor::PluginContext;
 
 /// Show a cycling selector bound to a truce parameter.
 ///
@@ -12,7 +12,7 @@ use truce_core::editor::EditorContext;
 /// with 3 variants). If 0, cycles in 0.1 increments.
 pub fn param_selector<P: ?Sized>(
     ui: &mut egui::Ui,
-    state: &EditorContext<P>,
+    state: &PluginContext<P>,
     id: impl Into<u32>,
     label: &str,
     step_count: u32,

@@ -46,7 +46,7 @@ implement the `Editor` trait directly. See
 
 ## Parameter communication
 
-Every backend hands you an `EditorContext<P>` typed for your plugin's
+Every backend hands you a `PluginContext<P>` typed for your plugin's
 `Params`. The same method API works in egui, iced, slint, and
 raw-window-handle editors:
 
@@ -63,7 +63,7 @@ state.end_edit(P::Gain)          // write (end drag)
 The gesture protocol tells the DAW that the user is dragging a control,
 so it records smooth automation. For single-click actions (toggles),
 `automate()` handles everything (begin + set + end in one call).
-`EditorContext<P>` also `Deref`s to `&P`, so
+`PluginContext<P>` also `Deref`s to `&P`, so
 `state.gain.smoothed_next()` works directly when you need to peek at
 parameter metadata.
 
