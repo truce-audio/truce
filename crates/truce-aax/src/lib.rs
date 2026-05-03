@@ -482,6 +482,15 @@ macro_rules! export_aax {
 //   channel count × buffer size.
 // - State pointers (out_data in save_state, data in load_state) are
 //   managed by the AAX chunk system. The template handles allocation.
+//
+// `&*` vs `&mut *` on the `ctx` cast below: the choice tracks what each
+// callback actually mutates on the `AaxInstance`. Read-only or
+// interior-mutability-only paths (`_get_param`, `_set_param` — which
+// goes through atomics in `Params`, `_format_param`, `_save_state`)
+// take `&*`; paths that write `inst.event_list` / `inst.sample_rate` /
+// `inst.editor` take `&mut *`. The sequential-per-instance guarantee
+// from the AAX SDK means a single mutable reference is always exclusive
+// when we take one. Mirrors the pattern in `truce-au` and `truce-vst3`.
 // ---------------------------------------------------------------------------
 
 pub unsafe fn _get_descriptor(out: *mut TruceAaxDescriptor) {
