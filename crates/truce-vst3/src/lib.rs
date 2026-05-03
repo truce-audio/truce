@@ -404,9 +404,16 @@ unsafe extern "C" fn cb_state_save<P: PluginExport>(
         let blob = state::serialize_state(inst.plugin_id_hash, &ids, &values, extra.as_deref());
         let len = blob.len();
         let ptr = libc_malloc(len) as *mut u8;
-        if !ptr.is_null() {
-            std::ptr::copy_nonoverlapping(blob.as_ptr(), ptr, len);
+        if ptr.is_null() {
+            // malloc failed — tell the host we wrote nothing rather
+            // than leaving `*out_data` as a stale value while
+            // `*out_len = len` claims `len` bytes are there. The C++
+            // shim's `getState` returns kResultFalse / null on this.
+            *out_data = std::ptr::null_mut();
+            *out_len = 0;
+            return;
         }
+        std::ptr::copy_nonoverlapping(blob.as_ptr(), ptr, len);
         *out_data = ptr;
         *out_len = len as u32;
     }

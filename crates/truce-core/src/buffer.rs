@@ -172,18 +172,35 @@ impl RawBufferScratch {
     /// Build an `AudioBuffer` from raw C pointers.
     ///
     /// This is the common FFI pattern used by VST3, VST2, AU, and AAX
-    /// wrappers. It:
-    /// 1. Converts raw `*const f32` / `*mut f32` channel pointers to slices
-    /// 2. Copies input channels to output channels (in-place effect processing)
-    /// 3. Returns an `AudioBuffer` borrowing the scratch slices
+    /// wrappers. It converts raw `*const f32` / `*mut f32` channel
+    /// pointers into slices and returns an `AudioBuffer` that borrows
+    /// the scratch storage.
+    ///
+    /// **No input-to-output copy is performed.** Earlier revisions
+    /// silently copied each input channel into the matching output
+    /// channel as a "convenience for in-place effects"; that
+    /// clobbered the previous-block tail of any plugin that reads its
+    /// own output (delay/reverb feedback) and turned out to be hidden
+    /// silent corruption. Plugins that genuinely want pass-through
+    /// must do `output.copy_from_slice(input)` themselves; almost
+    /// every plugin overwrites outputs anyway.
+    ///
+    /// **Channel indexing is preserved.** A null channel pointer
+    /// becomes an empty slice at that index rather than being skipped
+    /// — preserving channel index avoids the silent re-mapping bug
+    /// where (input null, output non-null) pairs would shift the
+    /// output assignments.
     ///
     /// # Safety
-    /// - `inputs` must point to `num_in` valid `*const f32` pointers,
-    ///   each pointing to `num_frames` samples.
-    /// - `outputs` must point to `num_out` valid `*mut f32` pointers,
-    ///   each pointing to `num_frames` samples.
+    /// - `inputs` must point to `num_in` valid `*const f32` pointers
+    ///   (each non-null pointer must address at least `num_frames`
+    ///   readable samples; null is allowed and yields an empty slice).
+    /// - `outputs` must point to `num_out` valid `*mut f32` pointers
+    ///   (each non-null pointer must address at least `num_frames`
+    ///   writable samples; null is allowed and yields an empty slice).
     /// - The pointed-to memory must remain valid for the lifetime of
     ///   the returned `AudioBuffer`.
+    /// - No input pointer may alias any output pointer.
     pub unsafe fn build<'a>(
         &'a mut self,
         inputs: *const *const f32,
@@ -196,26 +213,27 @@ impl RawBufferScratch {
             let nf = num_frames as usize;
 
             self.input_slices.clear();
+            self.input_slices.reserve(num_in as usize);
             for ch in 0..num_in as usize {
                 let ptr = *inputs.add(ch);
-                if !ptr.is_null() {
-                    self.input_slices.push(std::slice::from_raw_parts(ptr, nf));
-                }
+                let slice: &[f32] = if ptr.is_null() {
+                    &[]
+                } else {
+                    std::slice::from_raw_parts(ptr, nf)
+                };
+                self.input_slices.push(slice);
             }
 
             self.output_slices.clear();
+            self.output_slices.reserve(num_out as usize);
             for ch in 0..num_out as usize {
                 let ptr = *outputs.add(ch);
-                if !ptr.is_null() {
-                    self.output_slices
-                        .push(std::slice::from_raw_parts_mut(ptr, nf));
-                }
-            }
-
-            // Copy input to output for in-place effect processing.
-            let copy_ch = self.input_slices.len().min(self.output_slices.len());
-            for ch in 0..copy_ch {
-                self.output_slices[ch][..nf].copy_from_slice(&self.input_slices[ch][..nf]);
+                let slice: &mut [f32] = if ptr.is_null() {
+                    &mut []
+                } else {
+                    std::slice::from_raw_parts_mut(ptr, nf)
+                };
+                self.output_slices.push(slice);
             }
 
             // SAFETY: Same transmute pattern as AudioBuffer::slice().

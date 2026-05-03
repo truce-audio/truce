@@ -1359,6 +1359,11 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
         }
 
         let params = data.plugin.params_arc();
+        // SAFETY: `data.plugin` is the `Box::into_raw` plugin instance owned
+        // by the host's plugin slot — outlives the editor. Params fields are
+        // atomic; cross-thread reads from the GUI thread are sound. The host
+        // pointers are valid for the plugin's lifetime; closures capturing
+        // them run on the main thread only.
         let plugin_ptr = SendPtr::new(&data.plugin as *const P);
         let gui_changes = data.gui_changes.clone();
         let gui_changes2 = data.gui_changes.clone();

@@ -139,6 +139,16 @@ pub struct Lv2Instance<P: PluginExport> {
     input_slices: Vec<&'static [f32]>,
     output_slices: Vec<&'static mut [f32]>,
 
+    /// Per-channel input scratch used when an input port shares
+    /// memory with an output port (LV2 hosts may connect both to the
+    /// same buffer for in-place processing). `&[f32]` and `&mut [f32]`
+    /// to overlapping memory is UB regardless of the access order, so
+    /// in the aliased case we copy the input into this scratch first
+    /// and hand the scratch slice to the plugin instead.
+    /// One `Vec<f32>` per audio-in channel, sized to `max_block_size`
+    /// in `activate()` and resized only when `run()` exceeds it.
+    input_scratch: Vec<Vec<f32>>,
+
     /// Shared transport slot — audio thread writes each block. LV2 UIs
     /// are out-of-process so the UI side still reads `None`; this slot
     /// exists so an in-process consumer (tests / DSP-side code) can
@@ -229,6 +239,7 @@ pub unsafe fn instantiate<P: PluginExport>(
 
             input_slices: Vec::with_capacity(audio_in_count),
             output_slices: Vec::with_capacity(audio_out_count),
+            input_scratch: (0..audio_in_count).map(|_| Vec::new()).collect(),
 
             transport_slot: truce_core::TransportSlot::new(),
         });
@@ -275,6 +286,9 @@ pub unsafe fn activate<P: PluginExport>(handle: *mut Lv2Instance<P>) {
         // run() passes n_samples each call, so we can resize if it ever exceeds.
         let max_block = 8192usize;
         inst.max_block_size = max_block;
+        for buf in &mut inst.input_scratch {
+            buf.resize(max_block, 0.0);
+        }
         inst.plugin.reset(inst.sample_rate, max_block);
         inst.plugin.params().set_sample_rate(inst.sample_rate);
         inst.plugin.params().snap_smoothers();
@@ -349,27 +363,67 @@ pub unsafe fn run<P: PluginExport>(handle: *mut Lv2Instance<P>, n_samples: u32) 
         }
 
         // Build AudioBuffer from port pointers.
+        //
+        // Three soundness considerations:
+        //
+        // 1. **Channel indexing.** A null `audio_inputs[ch]` becomes
+        //    an empty slice at the same index rather than being
+        //    dropped — preserving channel layout avoids the silent
+        //    re-mapping that the densifying loop used to produce.
+        // 2. **Input/output aliasing.** LV2 hosts may connect an
+        //    input and an output port to the same buffer (in-place
+        //    processing). Constructing both `&[f32]` and
+        //    `&mut [f32]` to that memory is UB. For each input we
+        //    check against every output pointer; if they alias, we
+        //    copy the input into `inst.input_scratch[ch]` first and
+        //    hand the scratch slice to the plugin.
+        // 3. **No auto input→output copy.** Earlier revisions
+        //    silently copied each input channel into the matching
+        //    output channel; that clobbered the previous-block tail
+        //    of any plugin reading its own output (delay/reverb
+        //    feedback). Plugins that want pass-through must do
+        //    `output.copy_from_slice(input)` themselves.
         inst.input_slices.clear();
         inst.output_slices.clear();
-        for &ptr in &inst.audio_inputs {
-            if !ptr.is_null() {
-                let sl: &[f32] = std::slice::from_raw_parts(ptr, n);
-                inst.input_slices
-                    .push(std::mem::transmute::<&[f32], &'static [f32]>(sl));
-            }
-        }
-        for &ptr in &inst.audio_outputs {
-            if !ptr.is_null() {
-                let sl: &mut [f32] = std::slice::from_raw_parts_mut(ptr, n);
-                inst.output_slices
-                    .push(std::mem::transmute::<&mut [f32], &'static mut [f32]>(sl));
+
+        // Grow input scratch lazily if a host ever passes more
+        // samples than we sized for in `activate()`.
+        for buf in &mut inst.input_scratch {
+            if buf.len() < n {
+                buf.resize(n, 0.0);
             }
         }
 
-        // Copy input to output for in-place effects (matches CLAP/VST2 convention).
-        let copy_ch = inst.input_slices.len().min(inst.output_slices.len());
-        for ch in 0..copy_ch {
-            inst.output_slices[ch][..n].copy_from_slice(&inst.input_slices[ch][..n]);
+        for (ch, &in_ptr) in inst.audio_inputs.iter().enumerate() {
+            let sl: &[f32] = if in_ptr.is_null() {
+                &[]
+            } else {
+                let aliases_output = inst
+                    .audio_outputs
+                    .iter()
+                    .any(|&out_ptr| !out_ptr.is_null() && out_ptr.cast_const() == in_ptr);
+                if aliases_output {
+                    // Copy host's input bytes into our scratch *before* we
+                    // hand any `&mut [f32]` to the same memory below.
+                    let src = std::slice::from_raw_parts(in_ptr, n);
+                    let dst = &mut inst.input_scratch[ch][..n];
+                    dst.copy_from_slice(src);
+                    dst
+                } else {
+                    std::slice::from_raw_parts(in_ptr, n)
+                }
+            };
+            inst.input_slices
+                .push(std::mem::transmute::<&[f32], &'static [f32]>(sl));
+        }
+        for &ptr in &inst.audio_outputs {
+            let sl: &mut [f32] = if ptr.is_null() {
+                &mut []
+            } else {
+                std::slice::from_raw_parts_mut(ptr, n)
+            };
+            inst.output_slices
+                .push(std::mem::transmute::<&mut [f32], &'static mut [f32]>(sl));
         }
 
         let mut audio = AudioBuffer::from_slices(&inst.input_slices, &mut inst.output_slices, n);

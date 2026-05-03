@@ -4,10 +4,20 @@ use crate::events::TransportInfo;
 
 /// A raw pointer wrapper that is `Send + Sync`.
 ///
-/// Used to capture `*const Params` in EditorContext closures without
-/// the `ptr as usize` hack. Safe because `Params` fields use atomic
-/// storage — concurrent reads from the GUI thread while the audio
-/// thread writes are safe by design.
+/// Used to capture `*const Params` / host-handle pointers in
+/// EditorContext closures without the `ptr as usize` hack. The
+/// `Send`/`Sync` impls are unconditional in `T` — they have to be,
+/// because the wrapped types are typically `#[repr(C)]` host structs
+/// that are themselves `!Send + !Sync` by default. Construction is
+/// therefore `unsafe`: each call site must justify why cross-thread
+/// access to the pointed-to data is sound.
+///
+/// Justifications used in-tree:
+/// - **`P: Params`** — fields are atomic; concurrent reads from the
+///   GUI thread while the audio thread writes are safe by design.
+/// - **Format-host handles** (`clap_host`, `AEffect`, etc.) — used
+///   only from a single thread (UI), and the wrapping is purely for
+///   capturing in `Send + Sync` closures stored in `EditorContext`.
 ///
 /// The pointed-to data must outlive the `SendPtr`. In the plugin
 /// context, the plugin instance (which owns the params) always
@@ -16,7 +26,16 @@ pub struct SendPtr<T>(*const T);
 
 impl<T> SendPtr<T> {
     /// Wrap a raw pointer.
-    pub fn new(ptr: *const T) -> Self {
+    ///
+    /// # Safety
+    /// The caller must ensure that:
+    /// 1. The pointed-to data outlives every clone of this `SendPtr`.
+    /// 2. Cross-thread access to `*ptr` is sound — either because `T`
+    ///    is `Sync`, because access is synchronized externally
+    ///    (atomic fields, Mutex, single-thread-only access pattern),
+    ///    or because the wrapper is only ever read on a thread where
+    ///    `T: Sync` would hold.
+    pub unsafe fn new(ptr: *const T) -> Self {
         Self(ptr)
     }
 
@@ -42,11 +61,7 @@ impl<T> Clone for SendPtr<T> {
 
 impl<T> Copy for SendPtr<T> {}
 
-// SAFETY: The pointed-to data is accessed only from the GUI thread
-// (EditorContext closures run on the main/GUI thread). The data is
-// pinned (Box::into_raw'd plugin instance) and outlives the editor.
-// For Params types, concurrent reads are safe because they use
-// AtomicF64. For Plugin types, access is single-threaded (GUI only).
+// SAFETY: justified at each `unsafe SendPtr::new(...)` call site.
 unsafe impl<T> Send for SendPtr<T> {}
 unsafe impl<T> Sync for SendPtr<T> {}
 
