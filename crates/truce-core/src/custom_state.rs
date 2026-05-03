@@ -208,7 +208,7 @@ pub struct StateBinding<T: State> {
 }
 
 impl<T: State> StateBinding<T> {
-    /// Create a new binding from an editor context. Generic over the
+    /// Create a new binding from a [`PluginContext`]. Generic over the
     /// context's `<P>` since `StateBinding` cares only about the
     /// `get_state` / `set_state` channel on the underlying
     /// `EditorBridge`, never about parameter typing.
@@ -248,11 +248,11 @@ impl<T: State> StateBinding<T> {
 }
 
 impl<T: State> Default for StateBinding<T> {
-    /// Construct an **unwired** binding: `read()` returns `T::default()`
+    /// Construct an **unwired** binding: `get()` returns `T::default()`
     /// and `update()` *silently discards* the new state. Only useful
-    /// as a placeholder before the framework calls
-    /// `bind_get`/`bind_set` to install real closures (typically the
-    /// `#[derive(Plugin)]` expansion does this in `init()`). If you
+    /// as a placeholder before the editor is opened; replace with
+    /// [`StateBinding::new(&context)`](StateBinding::new) inside
+    /// `Editor::open` once a [`PluginContext`] is available. If you
     /// see writes vanishing, check that the binding has been wired up
     /// before you call `update`.
     fn default() -> Self {

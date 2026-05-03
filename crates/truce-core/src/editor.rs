@@ -128,7 +128,7 @@ pub trait Editor: Send {
     ///
     /// `params` is a type-erased default-state instance the caller
     /// constructs from the plugin's `Params` type. Backends use it to
-    /// build a synthetic `ParamState` / render context so the
+    /// build a synthetic `PluginContext` / render context so the
     /// screenshot reflects parameter defaults without needing a live
     /// host.
     ///
@@ -401,7 +401,7 @@ impl<P: ?Sized> Deref for PluginContext<P> {
     }
 }
 
-/// Build an [`PluginContext`] backed only by `params`. All write
+/// Build a [`PluginContext`] backed only by `params`. All write
 /// closures are no-ops; reads delegate to the params `Arc`; the
 /// transport reports the deterministic
 /// [`crate::events::TransportInfo::for_screenshot`] state so

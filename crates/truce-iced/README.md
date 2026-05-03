@@ -23,15 +23,23 @@ message-driven UI with Iced's layout engine and widget ecosystem.
 ```rust
 struct MyIcedUi;
 
-impl IcedPlugin for MyIcedUi {
+impl<P: Params> IcedPlugin<P> for MyIcedUi {
     type Message = MyMessage;
 
-    fn view(&self, params: &ParamState) -> Element<MyMessage> {
+    fn new(params: Arc<P>) -> Self { /* build initial model */ }
+
+    fn view<'a>(&'a self, params: &'a ParamCache<P>) -> Element<'a, Message<MyMessage>> {
         // Build your iced widget tree here
     }
 
-    fn update(&mut self, message: MyMessage, params: &mut ParamState) {
+    fn update(
+        &mut self,
+        message: Message<MyMessage>,
+        params: &ParamCache<P>,
+        ctx: &PluginContext<P>,
+    ) -> Task<Message<MyMessage>> {
         // Handle messages
+        Task::none()
     }
 }
 ```

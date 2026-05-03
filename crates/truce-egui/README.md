@@ -17,17 +17,18 @@ using egui's immediate-mode paradigm.
 
 - **`EguiEditor`** -- the `Editor` implementation
 - **`EditorUi`** -- trait you implement to define your plugin's UI
-- **`ParamState`** -- parameter state bridge for reading/writing truce params from egui widgets
+- **`PluginContext`** -- parameter bridge for reading/writing truce
+  params from egui widgets (re-exported from `truce-core`)
 
 ## Usage
 
 ```rust
 struct MyUi;
 
-impl EditorUi for MyUi {
-    fn ui(&mut self, ctx: &egui::Context, params: &ParamState) {
+impl<P: Params> EditorUi<P> for MyUi {
+    fn ui(&mut self, ctx: &egui::Context, state: &PluginContext<P>) {
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.add(egui::Slider::new(&mut params.get("gain"), -60.0..=0.0));
+            // bind widgets via the PluginContext
         });
     }
 }
