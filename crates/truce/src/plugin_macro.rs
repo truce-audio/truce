@@ -15,6 +15,27 @@
 /// }
 /// ```
 ///
+/// # Feature-combination matrix
+///
+/// The macro doesn't statically require *any* feature gate — every
+/// arm is `#[cfg(feature = "...")]`-guarded so consumers can mix and
+/// match. The four legitimate combinations:
+///
+/// | Features                    | Result                                      |
+/// |-----------------------------|---------------------------------------------|
+/// | none                        | `cargo check` / test-only logic dylib       |
+/// | one or more of `clap`, `vst3`, `vst2`, `lv2`, `aax`, `au` | multi-format cdylib that exports every enabled format from one binary |
+/// | `shell` only                | shell-mode loader (logic dylib loaded at runtime) |
+/// | `shell` + format(s)         | shell-mode cdylib that re-exports the loaded logic to the enabled formats |
+///
+/// `cargo truce build` / `cargo truce install` set the appropriate
+/// features per format on each invocation, so the multi-format case
+/// is the typical end-user shape; `cargo check` without features is
+/// the typical dev-iteration shape and intentionally produces no
+/// format exports. There is no static "exactly one format" check
+/// because zero is legitimate (cargo check) and many is intentional
+/// (multi-format cdylib).
+///
 /// # Hot-reload
 ///
 /// Add a `shell` feature to your Cargo.toml and build the shell with
@@ -105,6 +126,17 @@ macro_rules! __plugin_impl {
         /// `.pluginstate` blob) and writes the PNG to the caller-
         /// specified path. Returns 0 on success, non-zero on
         /// failure (error message is printed to stderr).
+        ///
+        /// # FFI contract
+        ///
+        /// **Signature must stay byte-identical to
+        /// `cargo-truce::commands::screenshot::ScreenshotFn`:**
+        /// `unsafe extern "C" fn(*const u8, usize, *const u8, usize) -> u32`.
+        /// The CLI dlopens this plugin's cdylib and casts the
+        /// `__truce_screenshot` symbol to that type — any drift (extra
+        /// arg, reordered args, return-type change) becomes silent UB
+        /// at the call site rather than a link-time error. Update both
+        /// sides together.
         ///
         /// # Safety
         /// - `state_ptr` may be null when `state_len == 0`.

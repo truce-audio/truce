@@ -45,19 +45,49 @@ impl Platform for TrucePlatform {
 }
 
 thread_local! {
-    static PLATFORM_INIT: Cell<bool> = const { Cell::new(false) };
+    /// Per-thread outcome of the one-time `set_platform` attempt.
+    ///
+    /// `None` = haven't attempted yet, `Some(Ok(()))` = our `TrucePlatform`
+    /// is the active platform on this thread (so the `NEXT_WINDOW`
+    /// hand-off in `create_window_adapter` will fire), `Some(Err(()))` =
+    /// another platform was already registered (Slint's `set_platform`
+    /// is itself a `OnceCell` and refuses to be replaced) and our
+    /// `create_window_adapter` override will never run on this thread.
+    static PLATFORM_STATE: Cell<Option<Result<(), ()>>> = const { Cell::new(None) };
 }
 
 /// Ensure the custom Slint platform is registered on the calling thread.
 ///
-/// Slint's `set_platform` is thread-local, so this must be called on every
-/// thread that creates Slint components — including the baseview render
-/// thread, not just the plugin thread. Idempotent per thread.
+/// Slint's `set_platform` is thread-local *and* one-shot: the first
+/// successful call wins; subsequent calls — by us or anyone else
+/// linking against the same `slint` runtime — return `Err`. We can't
+/// recover from that, so the goal here is to record what actually
+/// happened the first time `ensure_platform` ran on this thread and
+/// stop trying. The retained `Some(Ok)` / `Some(Err)` distinction is
+/// what lets diagnostic code tell "we own the platform" from "we're a
+/// guest on someone else's", instead of the previous bool that flipped
+/// to `true` regardless of outcome.
+///
+/// Must be called on every thread that creates Slint components —
+/// including the baseview render thread, not just the plugin thread.
+/// Idempotent per thread.
 pub fn ensure_platform() {
-    PLATFORM_INIT.with(|init| {
-        if !init.get() {
-            let _ = slint::platform::set_platform(Box::new(TrucePlatform));
-            init.set(true);
+    PLATFORM_STATE.with(|state| {
+        if state.get().is_some() {
+            return;
+        }
+        match slint::platform::set_platform(Box::new(TrucePlatform)) {
+            Ok(()) => state.set(Some(Ok(()))),
+            Err(_) => {
+                state.set(Some(Err(())));
+                log::warn!(
+                    "[truce-slint] slint::platform::set_platform returned Err — \
+                     another platform is already registered on this thread; the \
+                     pre-attached MinimalSoftwareWindow handed off via NEXT_WINDOW \
+                     won't be picked up by Component::new(), so the editor will \
+                     render to a different window than the one we hold for blitting"
+                );
+            }
         }
     });
 }
@@ -104,26 +134,30 @@ pub fn render_to_rgba(
     // linear sample comes out attenuated by sRGB(α) instead of α.
     // Matches the screenshot path's un-premultiplication so the live
     // window and reference PNGs agree on color.
-    rgba_buf.resize(pixel_count * 4, 0);
-    for (i, px) in px_buf.iter().enumerate() {
-        let off = i * 4;
-        if px.alpha == 0 {
-            rgba_buf[off] = 0;
-            rgba_buf[off + 1] = 0;
-            rgba_buf[off + 2] = 0;
-            rgba_buf[off + 3] = 0;
+    //
+    // `clear` + `extend_from_slice` instead of `resize(..., 0)` +
+    // index-write: the resize-with-fill seeds new bytes with a
+    // sentinel that's never observed (every byte is overwritten on
+    // the next line), but if it ever leaked through it'd be wrong in
+    // a different way for each fill value (0 = transparent black,
+    // 255 = opaque white), so we just don't write a sentinel at all.
+    rgba_buf.clear();
+    rgba_buf.reserve(pixel_count * 4);
+    for px in px_buf.iter() {
+        let bytes = if px.alpha == 0 {
+            [0, 0, 0, 0]
         } else if px.alpha == 255 {
-            rgba_buf[off] = px.red;
-            rgba_buf[off + 1] = px.green;
-            rgba_buf[off + 2] = px.blue;
-            rgba_buf[off + 3] = 255;
+            [px.red, px.green, px.blue, 255]
         } else {
             let a = px.alpha as u16;
-            rgba_buf[off] = ((px.red as u16 * 255) / a).min(255) as u8;
-            rgba_buf[off + 1] = ((px.green as u16 * 255) / a).min(255) as u8;
-            rgba_buf[off + 2] = ((px.blue as u16 * 255) / a).min(255) as u8;
-            rgba_buf[off + 3] = px.alpha;
-        }
+            [
+                ((px.red as u16 * 255) / a).min(255) as u8,
+                ((px.green as u16 * 255) / a).min(255) as u8,
+                ((px.blue as u16 * 255) / a).min(255) as u8,
+                px.alpha,
+            ]
+        };
+        rgba_buf.extend_from_slice(&bytes);
     }
 }
 

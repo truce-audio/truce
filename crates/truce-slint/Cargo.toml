@@ -17,6 +17,7 @@ wgpu = "24"
 pollster = "0.4"
 bytemuck = { version = "1", features = ["derive"] }
 paste = "1"
+log = "0.4"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc = "0.2"
