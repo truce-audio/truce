@@ -20,94 +20,46 @@
 
 use proc_macro::TokenStream;
 use quote::quote;
-use serde::Deserialize;
 use std::collections::HashSet;
-use std::path::PathBuf;
+use syn::ext::IdentExt;
 use syn::{Data, DeriveInput, Fields, Lit, Type, TypePath};
+use truce_build::{Config, PluginDef};
 
-#[derive(Deserialize)]
-struct Config {
-    vendor: VendorConfig,
-    plugin: Vec<PluginDef>,
-}
+/// Resolve `truce.toml` and pull out the `[[plugin]]` entry for the
+/// current crate. Routes every failure mode through `Result<…, String>`
+/// so callers can convert errors into `compile_error!` tokens with a
+/// span — `panic!`-ing from a proc macro produces a span-less,
+/// multi-line error frame instead of the clean compiler diagnostic the
+/// caller actually wants.
+fn try_resolve_plugin() -> Result<(Config, String), String> {
+    let path = truce_build::find_truce_toml()?;
+    let config = truce_build::load_config(&path)?;
 
-#[derive(Deserialize)]
-struct VendorConfig {
-    name: String,
-    #[serde(default)]
-    id: String,
-    #[serde(default)]
-    url: String,
-    au_manufacturer: String,
-}
-
-#[derive(Deserialize)]
-struct PluginDef {
-    name: String,
-    // Required, matching `cargo-truce::PluginDef`. Not consumed here, but
-    // making the field mandatory keeps the schema in lockstep — a config
-    // missing `bundle_id` fails at the earliest point (proc-macro
-    // expansion) rather than later (`cargo truce install`).
-    #[allow(dead_code)]
-    bundle_id: String,
-    #[serde(rename = "crate")]
-    crate_name: String,
-    #[serde(default)]
-    version: Option<String>,
-    #[serde(default)]
-    fourcc: Option<String>,
-    category: String,
-    #[serde(default)]
-    au_type: Option<String>,
-    #[serde(default)]
-    au_subtype: Option<String>,
-    #[serde(default)]
-    aax_category: Option<String>,
-}
-
-fn find_truce_toml() -> PathBuf {
-    // CARGO_MANIFEST_DIR is available to proc macros at expansion time.
-    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
-    let mut dir = PathBuf::from(&manifest_dir);
-    loop {
-        let candidate = dir.join("truce.toml");
-        if candidate.exists() {
-            return candidate;
-        }
-        if !dir.pop() {
-            panic!(
-                "truce.toml not found (searched up from {manifest_dir}). \
-                 Copy truce.toml.example to get started."
-            );
-        }
+    let pkg_name =
+        std::env::var("CARGO_PKG_NAME").map_err(|_| "CARGO_PKG_NAME not set".to_string())?;
+    if !config.plugin.iter().any(|p| p.crate_name == pkg_name) {
+        let available: Vec<_> = config
+            .plugin
+            .iter()
+            .map(|p| p.crate_name.as_str())
+            .collect();
+        return Err(format!(
+            "No [[plugin]] entry with crate = \"{pkg_name}\" in {}. \
+             Available: {}",
+            path.display(),
+            available.join(", ")
+        ));
     }
+    Ok((config, pkg_name))
 }
 
-fn load_config() -> Config {
-    let path = find_truce_toml();
-    let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("Failed to read {}: {e}", path.display()));
-    toml::from_str(&content).unwrap_or_else(|e| panic!("Failed to parse {}: {e}", path.display()))
-}
-
-fn find_plugin(config: &Config) -> &PluginDef {
-    let pkg_name = std::env::var("CARGO_PKG_NAME").expect("CARGO_PKG_NAME not set");
+fn find_plugin<'a>(config: &'a Config, pkg_name: &str) -> &'a PluginDef {
+    // try_resolve_plugin already verified the entry exists.
     config
         .plugin
         .iter()
         .find(|p| p.crate_name == pkg_name)
-        .unwrap_or_else(|| {
-            let available: Vec<_> = config
-                .plugin
-                .iter()
-                .map(|p| p.crate_name.as_str())
-                .collect();
-            panic!(
-                "No [[plugin]] entry with crate = \"{pkg_name}\" in truce.toml. \
-                 Available: {}",
-                available.join(", ")
-            );
-        })
+        .expect("try_resolve_plugin verified this entry exists")
 }
 
 /// Generate a `PluginInfo` struct literal from `truce.toml`.
@@ -122,8 +74,19 @@ fn find_plugin(config: &Config) -> &PluginDef {
 /// ```
 #[proc_macro]
 pub fn plugin_info(_input: TokenStream) -> TokenStream {
-    let config = load_config();
-    let plugin = find_plugin(&config);
+    let (config, pkg_name) = match try_resolve_plugin() {
+        Ok(v) => v,
+        Err(msg) => {
+            // Surface the problem as a compile_error with a span at
+            // the macro call-site instead of an opaque proc-macro
+            // `panic!` (which renders as `error: proc macro panicked`
+            // followed by a multi-line backtrace and no source span).
+            return syn::Error::new(proc_macro2::Span::call_site(), msg)
+                .to_compile_error()
+                .into();
+        }
+    };
+    let plugin = find_plugin(&config, &pkg_name);
 
     let name = &plugin.name;
     let vendor = &config.vendor.name;
@@ -171,11 +134,20 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
         plugin.name.to_lowercase().replace(' ', "")
     );
 
-    let resolved_fourcc = plugin
-        .fourcc
-        .as_ref()
-        .or(plugin.au_subtype.as_ref())
-        .expect("truce.toml: each [[plugin]] requires `fourcc` or `au_subtype`");
+    let resolved_fourcc = match plugin.fourcc.as_ref().or(plugin.au_subtype.as_ref()) {
+        Some(s) => s,
+        None => {
+            return syn::Error::new(
+                proc_macro2::Span::call_site(),
+                format!(
+                    "truce.toml: [[plugin]] entry `{}` requires `fourcc` or `au_subtype`",
+                    plugin.crate_name
+                ),
+            )
+            .to_compile_error()
+            .into();
+        }
+    };
     let au_manufacturer = &config.vendor.au_manufacturer;
 
     let aax_category = match &plugin.aax_category {
@@ -221,6 +193,20 @@ struct ParamField {
     enum_type: Option<syn::Type>,
 }
 
+impl ParamField {
+    /// ID that the auto-assignment block at the top of `derive_params`
+    /// has guaranteed is populated. Calling this before the auto-assign
+    /// loop runs is a logic error — the `expect` message names the
+    /// invariant rather than just panicking with `unwrap`'s opaque
+    /// `called Option::unwrap on a None`.
+    fn id(&self) -> u32 {
+        self.attrs.id.expect(
+            "ParamField::id called before the auto-assignment block ran; \
+             see `Auto-assign parameter IDs` near the top of derive_params",
+        )
+    }
+}
+
 /// A nested Params field (delegates to inner struct).
 struct NestedField {
     ident: syn::Ident,
@@ -230,6 +216,18 @@ struct NestedField {
 struct MeterField {
     ident: syn::Ident,
     id: Option<u32>,
+}
+
+impl MeterField {
+    /// ID that the auto-assignment block at the top of `derive_params`
+    /// has guaranteed is populated. Same invariant as
+    /// [`ParamField::id`].
+    fn id(&self) -> u32 {
+        self.id.expect(
+            "MeterField::id called before the auto-assignment block ran; \
+             see `Auto-assign meter IDs` near the top of derive_params",
+        )
+    }
 }
 
 /// Parsed `#[param(...)]` attributes.
@@ -951,7 +949,7 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
             .iter()
             .map(|m| {
                 let ident = &m.ident;
-                let id = m.id.unwrap();
+                let id = m.id();
                 quote! { #ident: ::truce::params::MeterSlot { id: #id } }
             })
             .collect();
@@ -984,8 +982,7 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
             .iter()
             .map(|f| {
                 let variant = snake_to_pascal(&f.ident);
-                let id = f.attrs.id.unwrap();
-                let id_lit = proc_macro2::Literal::u32_unsuffixed(id);
+                let id_lit = proc_macro2::Literal::u32_unsuffixed(f.id());
                 quote! { #variant = #id_lit }
             })
             .collect();
@@ -994,8 +991,7 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
             .iter()
             .map(|m| {
                 let variant = snake_to_pascal(&m.ident);
-                let id = m.id.unwrap();
-                let id_lit = proc_macro2::Literal::u32_unsuffixed(id);
+                let id_lit = proc_macro2::Literal::u32_unsuffixed(m.id());
                 quote! { #variant = #id_lit }
             })
             .collect();
@@ -1010,14 +1006,12 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
             .iter()
             .map(|f| {
                 let variant = snake_to_pascal(&f.ident);
-                let id = f.attrs.id.unwrap();
-                let id_lit = proc_macro2::Literal::u32_unsuffixed(id);
+                let id_lit = proc_macro2::Literal::u32_unsuffixed(f.id());
                 quote! { #id_lit => Some(#enum_name::#variant) }
             })
             .chain(meter_fields.iter().map(|m| {
                 let variant = snake_to_pascal(&m.ident);
-                let id = m.id.unwrap();
-                let id_lit = proc_macro2::Literal::u32_unsuffixed(id);
+                let id_lit = proc_macro2::Literal::u32_unsuffixed(m.id());
                 quote! { #id_lit => Some(#enum_name::#variant) }
             }))
             .collect();
@@ -1139,10 +1133,24 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
 }
 
 /// Convert a snake_case field name to a PascalCase enum variant ident.
+///
+/// Handles the awkward edge cases the original `split('_').map(...)` form
+/// would silently produce nonsense for:
+///
+/// - **Raw idents** (`r#type`, `r#3band`): the `r#` prefix is stripped via
+///   `Ident::to_string`'s `unraw`-aware `Display` impl using `unraw()`,
+///   not by string-prefix matching.
+/// - **Leading digit** (`r#3band` → `"3band"`): variants can't start with
+///   a digit, so we prepend `_` to produce `"_3band"` → `"_3band"`.
+/// - **All-non-alphanumeric** (`__`, `_`): `Ident::new("", span)` would
+///   panic, so we fall back to `_` as a single-char placeholder. The
+///   user already wrote a degenerate field name; the variant is still a
+///   valid (if ugly) ident, surfacing the cause in compile errors.
 fn snake_to_pascal(ident: &syn::Ident) -> syn::Ident {
-    let s = ident.to_string();
-    let pascal: String = s
+    let raw = ident.unraw().to_string();
+    let mut pascal: String = raw
         .split('_')
+        .filter(|w| !w.is_empty())
         .map(|word| {
             let mut chars = word.chars();
             match chars.next() {
@@ -1151,7 +1159,60 @@ fn snake_to_pascal(ident: &syn::Ident) -> syn::Ident {
             }
         })
         .collect();
+    if pascal.is_empty() {
+        pascal.push('_');
+    } else if pascal.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+        pascal.insert(0, '_');
+    }
     syn::Ident::new(&pascal, ident.span())
+}
+
+#[cfg(test)]
+mod snake_to_pascal_tests {
+    use super::snake_to_pascal;
+    use proc_macro2::Span;
+
+    fn convert(s: &str) -> String {
+        // Keywords need raw-ident syntax to round-trip through `syn::Ident`.
+        // Idents starting with a digit aren't constructible at all (not even
+        // as `Ident::new_raw`), which is why the audit's `r#3band` example
+        // is actually unreachable from real source — but a leading-`_`
+        // ident like `_3band` *is* valid and exercises the same branch
+        // after `split('_')` strips the underscore.
+        let id = if matches!(s, "type" | "fn" | "let" | "match") {
+            syn::Ident::new_raw(s, Span::call_site())
+        } else {
+            syn::Ident::new(s, Span::call_site())
+        };
+        snake_to_pascal(&id).to_string()
+    }
+
+    #[test]
+    fn ordinary_snake_case() {
+        assert_eq!(convert("gain"), "Gain");
+        assert_eq!(convert("low_pass"), "LowPass");
+        assert_eq!(convert("multi_word_field"), "MultiWordField");
+    }
+
+    #[test]
+    fn raw_keyword_ident() {
+        assert_eq!(convert("type"), "Type");
+    }
+
+    #[test]
+    fn leading_digit_prepends_underscore() {
+        // `_3band` is a legal Rust ident; `split('_')` strips the leading
+        // underscore and the surviving fragment "3band" starts with a
+        // digit, which can't begin an enum variant. Guard prepends `_` so
+        // the output `_3band` is a valid variant ident.
+        assert_eq!(convert("_3band"), "_3band");
+    }
+
+    #[test]
+    fn all_underscores_falls_back_to_underscore() {
+        // `___` would otherwise produce "" → Ident::new("") panic.
+        assert_eq!(convert("___"), "_");
+    }
 }
 
 // ============================================================================

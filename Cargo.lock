@@ -6081,9 +6081,8 @@ version = "0.21.1"
 dependencies = [
  "proc-macro2",
  "quote",
- "serde",
  "syn 2.0.117",
- "toml 1.1.2+spec-1.1.0",
+ "truce-build",
 ]
 
 [[package]]
@@ -6404,6 +6403,7 @@ version = "0.21.1"
 dependencies = [
  "baseview",
  "bytemuck",
+ "log",
  "objc",
  "paste",
  "pollster",

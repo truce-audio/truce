@@ -85,12 +85,23 @@ pub trait Params: Send + Sync + 'static {
     fn get_normalized(&self, id: u32) -> Option<f64>;
 
     /// Set normalized value (0.0–1.0) by ID.
+    ///
+    /// Takes `&self`, not `&mut self` — the per-param storage in
+    /// `FloatParam` / `BoolParam` / `IntParam` / `EnumParam` is built
+    /// on `AtomicU32` / `AtomicU64`, so writes go through interior
+    /// mutability. Format wrappers, GUI editors, and the audio thread
+    /// all hold `&Params` (or `Arc<Params>`) concurrently and write
+    /// without coordination — every implementation must be sound under
+    /// concurrent `&self` writes from multiple threads.
     fn set_normalized(&self, id: u32, value: f64);
 
     /// Get plain value by ID.
     fn get_plain(&self, id: u32) -> Option<f64>;
 
     /// Set plain value by ID.
+    ///
+    /// Same `&self` interior-mutability contract as
+    /// [`Self::set_normalized`].
     fn set_plain(&self, id: u32, value: f64);
 
     /// Format a plain value to display string.

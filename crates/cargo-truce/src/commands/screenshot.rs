@@ -25,6 +25,13 @@ use std::path::{Path, PathBuf};
 /// FFI signature emitted by `truce::plugin!`'s `__truce_screenshot`.
 /// `(state_ptr, state_len, out_path_ptr, out_path_len) -> u32` — 0
 /// on success, non-zero on failure (logged to stderr by the plugin).
+///
+/// **Must stay byte-identical to the `__truce_screenshot` definition in
+/// `crates/truce/src/plugin_macro.rs`.** This typedef is what the CLI
+/// casts the dlopen'd symbol to; the cdylib has no link-time signature
+/// to cross-check against, so a mismatch (extra arg, reordered args,
+/// return-type change) becomes silent UB at the first call rather than
+/// a build failure. Update both sides together.
 type ScreenshotFn = unsafe extern "C" fn(*const u8, usize, *const u8, usize) -> u32;
 
 pub(crate) fn cmd_screenshot(args: &[String]) -> Res {
