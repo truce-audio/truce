@@ -1412,7 +1412,17 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
         let host = SendPtr::new(data.host);
         let host_params = SendPtr::new(data.host_params);
         let request_flush = move || {
-            if let Some(f) = (*host_params.as_ptr()).request_flush {
+            // `host_params` is null when the host omits the optional
+            // `clap_host_params` extension (the spec marks it
+            // optional). Earlier revisions dereferenced it
+            // unconditionally and crashed any host that didn't
+            // implement params. The `clap_plugin_on_main_thread` path
+            // checks the same way (line 364).
+            let hp = host_params.as_ptr();
+            if hp.is_null() {
+                return;
+            }
+            if let Some(f) = (*hp).request_flush {
                 f(host.as_ptr());
             }
         };

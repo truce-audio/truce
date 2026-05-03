@@ -91,8 +91,6 @@ pub struct Vst3Callbacks {
         num_param_changes: u32,
     ),
     pub param_count: unsafe extern "C" fn(ctx: *mut c_void) -> u32,
-    pub param_get_descriptor:
-        unsafe extern "C" fn(ctx: *mut c_void, index: u32, out: *mut Vst3ParamDescriptor),
     pub param_get_value: unsafe extern "C" fn(ctx: *mut c_void, id: u32) -> f64,
     pub param_set_value: unsafe extern "C" fn(ctx: *mut c_void, id: u32, value: f64),
     pub param_normalize: unsafe extern "C" fn(ctx: *mut c_void, id: u32, plain: f64) -> f64,

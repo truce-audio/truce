@@ -161,7 +161,23 @@ where
     scale_factor: f64,
     font: Option<(&'static str, &'static [u8])>,
     runtime: Option<IcedRuntime<P, M>>,
-    layout: Option<GridLayout>,
+    /// One-shot constructor closure consumed in `open()`. Each
+    /// constructor stores a closure that produces an `M` of the
+    /// correct concrete type:
+    /// - `from_layout` captures the `GridLayout` and returns
+    ///   `AutoPlugin { layout }` (the `impl` block fixes
+    ///   `M = AutoPlugin`).
+    /// - `new` defers to `M::new(params)`.
+    ///
+    /// Replaces an earlier `unsafe { std::ptr::read(&auto as *const
+    /// AutoPlugin as *const M) }` reinterpret guarded only by a
+    /// `debug_assert_eq` on size — release builds skipped the
+    /// check, alignment / Drop / repr layout weren't validated, and
+    /// the "M is constrained to AutoPlugin" invariant lived in a
+    /// comment instead of the type system. The closure version is
+    /// fully type-safe: each constructor produces a closure of the
+    /// right return type for *its* `M`, no transmute needed.
+    make_plugin: Option<Box<dyn FnOnce(Arc<P>) -> M + Send>>,
     meter_ids: Vec<u32>,
     baseview_window: Option<baseview::WindowHandle>,
 }
@@ -180,20 +196,23 @@ impl<P: Params + 'static> IcedEditor<P, AutoPlugin> {
             .copied()
             .collect();
 
+        let make_plugin: Box<dyn FnOnce(Arc<P>) -> AutoPlugin + Send> =
+            Box::new(move |_params| AutoPlugin { layout });
+
         Self {
             params,
             size,
             scale_factor: truce_gui::backing_scale(),
             font: None,
             runtime: None,
-            layout: Some(layout),
+            make_plugin: Some(make_plugin),
             meter_ids,
             baseview_window: None,
         }
     }
 }
 
-impl<P: Params + 'static, M: IcedPlugin<P>> IcedEditor<P, M> {
+impl<P: Params + 'static, M: IcedPlugin<P> + 'static> IcedEditor<P, M> {
     /// Create an editor with a custom `IcedPlugin` implementation.
     pub fn new(params: Arc<P>, size: (u32, u32)) -> Self {
         Self {
@@ -202,7 +221,7 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedEditor<P, M> {
             scale_factor: truce_gui::backing_scale(),
             font: None,
             runtime: None,
-            layout: None,
+            make_plugin: Some(Box::new(|p| M::new(p))),
             meter_ids: Vec::new(),
             baseview_window: None,
         }
@@ -683,29 +702,14 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
     fn open(&mut self, parent: truce_core::editor::RawWindowHandle, context: EditorContext) {
         let (w, h) = self.size;
 
-        // Create the plugin model
-        let plugin = if let Some(ref layout) = self.layout {
-            let auto = AutoPlugin {
-                layout: layout.clone(),
-            };
-            // SAFETY: reinterpret `AutoPlugin` as `M`. Sound because
-            // `IcedEditor::from_layout` is the only constructor that
-            // sets `self.layout = Some(...)`, and it fixes `M =
-            // AutoPlugin` at the type level — every other constructor
-            // (`IcedEditor::new`) uses `M::new(...)` below and leaves
-            // `self.layout` as `None`, so this branch is unreachable
-            // unless `M == AutoPlugin`. The debug-asserted size check
-            // makes the invariant crash loudly if future code ever
-            // violates it.
-            debug_assert_eq!(
-                std::mem::size_of::<AutoPlugin>(),
-                std::mem::size_of::<M>(),
-                "from_layout set self.layout but M != AutoPlugin",
-            );
-            unsafe { std::ptr::read(&auto as *const AutoPlugin as *const M) }
-        } else {
-            M::new(self.params.clone())
-        };
+        // Create the plugin model. Each constructor stores a closure
+        // that returns the right concrete `M`, so this just runs it.
+        let plugin = self
+            .make_plugin
+            .take()
+            .expect("IcedEditor::open called twice without re-construction")(
+            self.params.clone()
+        );
 
         let mut param_state = ParamState::new(self.params.clone());
         if let Some((family, _)) = self.font {

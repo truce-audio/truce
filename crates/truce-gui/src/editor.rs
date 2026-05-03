@@ -587,8 +587,17 @@ struct BlitBackend {
 type SharedBackend = Arc<std::sync::Mutex<Option<BlitBackend>>>;
 
 struct BuiltinWindowHandler<P: Params> {
-    /// Raw pointer to the BuiltinEditor owned by the host. Valid between
-    /// open() and close(). Only accessed from the GUI thread.
+    /// Raw pointer to the BuiltinEditor owned by the host. Valid only
+    /// while `backend.lock()` returns `Some(_)`. `BuiltinEditor::close`
+    /// takes the inner `Option<BlitBackend>` (atomically through this
+    /// mutex) before returning, and the host can only drop the editor
+    /// after `close()` returns — so any frame that holds the lock and
+    /// finds the inner option `Some` is guaranteed the editor is still
+    /// alive. Concretely, this lock acquire is the synchronization
+    /// point that prevents the use-after-free that the audit flagged
+    /// (an in-flight `on_frame` deref'ing a freed pointer if the host
+    /// dropped the editor while baseview's render thread still had a
+    /// callback queued). Only accessed from the GUI thread.
     editor: *mut BuiltinEditor<P>,
     backend: SharedBackend,
     scale: f32,
@@ -604,6 +613,22 @@ unsafe impl<P: Params> Send for BuiltinWindowHandler<P> {}
 
 impl<P: Params + 'static> baseview::WindowHandler for BuiltinWindowHandler<P> {
     fn on_frame(&mut self, _window: &mut baseview::Window) {
+        // Lock the shared backend cell *before* deref'ing `self.editor`.
+        // `BuiltinEditor::close` calls `drop(guard.take())` on the same
+        // mutex before returning; the host then drops the editor. So
+        // either we observe `Some(_)` here (close hasn't taken it yet,
+        // editor still alive) or we observe `None` and return without
+        // touching `self.editor`. Either way the deref below is sound.
+        let mut guard = match self.backend.lock() {
+            Ok(g) => g,
+            Err(_) => return,
+        };
+        if guard.is_none() {
+            // Editor already dropped the backend in its close path.
+            // Nothing to do — baseview will tear us down next.
+            return;
+        }
+
         let editor = unsafe { &mut *self.editor };
 
         unsafe { update_interaction(editor) };
@@ -619,16 +644,9 @@ impl<P: Params + 'static> baseview::WindowHandler for BuiltinWindowHandler<P> {
         editor.stash_painted_values();
 
         if let Some(pixels) = editor.pixel_data() {
-            let mut guard = match self.backend.lock() {
-                Ok(g) => g,
-                Err(_) => return,
-            };
-            let Some(ref mut backend) = *guard else {
-                // Editor already dropped the backend in its close
-                // path. Nothing to do — baseview will tear us down
-                // next.
-                return;
-            };
+            let backend = guard
+                .as_mut()
+                .expect("guard was checked Some above and the lock is still held");
             let BlitBackend {
                 device,
                 queue,
@@ -673,6 +691,18 @@ impl<P: Params + 'static> baseview::WindowHandler for BuiltinWindowHandler<P> {
             }
         }
 
+        // Lock-then-check-then-deref pattern, same as `on_frame` —
+        // the backend cell is the synchronization point with
+        // `BuiltinEditor::close`. If the cell is `None`, the editor
+        // pointer is no longer guaranteed valid and we must not deref.
+        let mut guard = match self.backend.lock() {
+            Ok(g) => g,
+            Err(_) => return baseview::EventStatus::Ignored,
+        };
+        if guard.is_none() {
+            return baseview::EventStatus::Ignored;
+        }
+
         match event {
             baseview::Event::Mouse(_) => {
                 let Some(input) = self.translator.translate(&event) else {
@@ -702,14 +732,13 @@ impl<P: Params + 'static> baseview::WindowHandler for BuiltinWindowHandler<P> {
                 }
                 editor.request_repaint();
 
-                if let Ok(mut guard) = self.backend.lock()
-                    && let Some(BlitBackend {
-                        device,
-                        surface,
-                        surface_config,
-                        blit,
-                        ..
-                    }) = guard.as_mut()
+                if let Some(BlitBackend {
+                    device,
+                    surface,
+                    surface_config,
+                    blit,
+                    ..
+                }) = guard.as_mut()
                 {
                     surface_config.width = pw;
                     surface_config.height = ph;

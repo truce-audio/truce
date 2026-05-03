@@ -656,10 +656,15 @@ pub unsafe fn _format_param<P: PluginExport>(
     out: *mut c_char,
     out_len: u32,
 ) {
+    // `out_len == 0` would underflow on `out_len as usize - 1` and
+    // let `copy_nonoverlapping` write past the host-supplied buffer.
+    if out_len == 0 || out.is_null() {
+        return;
+    }
     let inst = unsafe { &*(ctx as *mut AaxInstance<P>) };
     if let Some(text) = inst.plugin.params().format_value(id, value) {
         let bytes = text.as_bytes();
-        let len = bytes.len().min(out_len as usize - 1);
+        let len = bytes.len().min((out_len as usize) - 1);
         unsafe {
             std::ptr::copy_nonoverlapping(bytes.as_ptr() as *const c_char, out, len);
             *out.add(len) = 0;

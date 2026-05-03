@@ -291,11 +291,17 @@ unsafe extern "C" fn cb_param_format_value<P: PluginExport>(
     out_len: u32,
 ) -> u32 {
     unsafe {
+        // `out_len == 0` would underflow on `out_len as usize - 1`
+        // and let `copy_nonoverlapping` write past the host-supplied
+        // buffer. Treat zero capacity as "host wants nothing".
+        if out_len == 0 || out.is_null() {
+            return 0;
+        }
         let inst = &*(ctx as *mut AuInstance<P>);
         match inst.plugin.params().format_value(id, value) {
             Some(text) => {
                 let bytes = text.as_bytes();
-                let len = bytes.len().min(out_len as usize - 1);
+                let len = bytes.len().min((out_len as usize) - 1);
                 std::ptr::copy_nonoverlapping(bytes.as_ptr() as *const c_char, out, len);
                 *out.add(len) = 0;
                 len as u32

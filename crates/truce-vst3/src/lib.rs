@@ -287,52 +287,6 @@ unsafe extern "C" fn cb_param_count<P: PluginExport>(ctx: *mut std::ffi::c_void)
     }
 }
 
-unsafe extern "C" fn cb_param_get_descriptor<P: PluginExport>(
-    ctx: *mut std::ffi::c_void,
-    index: u32,
-    out: *mut Vst3ParamDescriptor,
-) {
-    unsafe {
-        let inst = &*(ctx as *mut Vst3Instance<P>);
-        let infos = inst.plugin.params().param_infos();
-        if let Some(info) = infos.get(index as usize) {
-            let name = CString::new(info.name).unwrap_or_default();
-            let short_name = CString::new(info.short_name).unwrap_or_default();
-            let units = CString::new(info.unit.as_str()).unwrap_or_default();
-            let group = CString::new(info.group).unwrap_or_default();
-
-            let mut flags: i32 = 0;
-            if info.flags.contains(truce_params::ParamFlags::AUTOMATABLE) {
-                flags |= 1;
-            } // kCanAutomate
-            if info.flags.contains(truce_params::ParamFlags::READONLY) {
-                flags |= 1 << 1;
-            }
-            if info.flags.contains(truce_params::ParamFlags::IS_BYPASS) {
-                flags |= 1 << 16;
-            } // kIsBypass
-            if info.flags.contains(truce_params::ParamFlags::HIDDEN) {
-                flags |= 1 << 4;
-            }
-            if info.range.step_count() > 0 {
-                flags |= 1 << 8;
-            } // kIsList
-
-            let desc = &mut *out;
-            desc.id = info.id;
-            desc.name = name.into_raw();
-            desc.short_name = short_name.into_raw();
-            desc.units = units.into_raw();
-            desc.min = info.range.min();
-            desc.max = info.range.max();
-            desc.default_normalized = info.range.normalize(info.default_plain);
-            desc.step_count = info.range.step_count() as i32;
-            desc.flags = flags;
-            desc.group = group.into_raw();
-        }
-    }
-}
-
 unsafe extern "C" fn cb_param_get_value<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     id: u32,
@@ -394,11 +348,18 @@ unsafe extern "C" fn cb_param_format<P: PluginExport>(
     out_len: u32,
 ) -> u32 {
     unsafe {
+        // `out_len == 0` would underflow on `out_len as usize - 1`
+        // and let `copy_nonoverlapping` write the full formatted
+        // string into a buffer the host claimed had zero capacity.
+        // Treat zero capacity as "host wants nothing" and return.
+        if out_len == 0 || out.is_null() {
+            return 0;
+        }
         let inst = &*(ctx as *mut Vst3Instance<P>);
         match inst.plugin.params().format_value(id, value) {
             Some(text) => {
                 let bytes = text.as_bytes();
-                let len = bytes.len().min(out_len as usize - 1);
+                let len = bytes.len().min((out_len as usize) - 1);
                 std::ptr::copy_nonoverlapping(bytes.as_ptr() as *const c_char, out, len);
                 *out.add(len) = 0;
                 len as u32
@@ -775,7 +736,6 @@ pub fn register_vst3<P: PluginExport>() {
         reset: cb_reset::<P>,
         process: cb_process::<P>,
         param_count: cb_param_count::<P>,
-        param_get_descriptor: cb_param_get_descriptor::<P>,
         param_get_value: cb_param_get_value::<P>,
         param_set_value: cb_param_set_value::<P>,
         param_normalize: cb_param_normalize::<P>,

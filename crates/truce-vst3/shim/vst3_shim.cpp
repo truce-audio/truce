@@ -165,7 +165,6 @@ struct Vst3Callbacks {
                     const Vst3MidiEvent*, uint32_t,
                     const Vst3Transport*, const Vst3ParamChange*, uint32_t);
     uint32_t (*param_count)(void*);
-    void (*param_get_descriptor)(void*, uint32_t, Vst3ParamDescriptor*);
     double (*param_get_value)(void*, uint32_t);
     void (*param_set_value)(void*, uint32_t, double);
     double (*param_normalize)(void*, uint32_t, double);
