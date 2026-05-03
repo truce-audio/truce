@@ -149,7 +149,6 @@ impl NativeLoader {
             }
         };
         let dylib_canary = canary_fn();
-        drop(canary_fn);
         let shell_canary = AbiCanary::current();
         if !shell_canary.matches(&dylib_canary) {
             log::error!(
@@ -171,7 +170,6 @@ impl NativeLoader {
         let probe = probe_fn();
         let probe_result = verify_probe(probe.as_ref());
         drop(probe);
-        drop(probe_fn);
         if let Err(msg) = probe_result {
             log::error!("vtable probe failed: {msg}");
             cleanup_temp(lib, &temp);
@@ -187,7 +185,6 @@ impl NativeLoader {
             }
         };
         let plugin = create_fn(self.params_ptr);
-        drop(create_fn);
 
         Some(Candidate {
             library: lib,

@@ -94,7 +94,7 @@ impl BuildFormat {
     }
 
     /// Plugin's per-format display-name override, if any.
-    fn name_override<'a>(self, p: &'a PluginDef) -> Option<&'a str> {
+    fn name_override(self, p: &PluginDef) -> Option<&str> {
         match self {
             BuildFormat::Clap => p.clap_name.as_deref(),
             BuildFormat::Vst3 => p.vst3_name.as_deref(),
@@ -103,6 +103,32 @@ impl BuildFormat {
             BuildFormat::Au2 => p.au_name.as_deref(),
             BuildFormat::Aax => p.aax_name.as_deref(),
         }
+    }
+}
+
+/// Returns a skip-reason string if AAX cannot be built on this host —
+/// either the platform isn't supported (Linux) or the SDK isn't
+/// configured (mac/Windows without `[macos|windows].aax_sdk_path`).
+/// `None` means AAX is buildable.
+fn aax_skip_reason(config: &Config) -> Option<String> {
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        let _ = config;
+        Some("AAX: not supported on this platform. Use macOS or Windows to build AAX.".to_string())
+    }
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    {
+        if crate::resolve_aax_sdk_path(config).is_some() {
+            return None;
+        }
+        let hint = if cfg!(target_os = "windows") {
+            "[windows].aax_sdk_path"
+        } else {
+            "[macos].aax_sdk_path"
+        };
+        Some(format!(
+            "AAX: SDK not configured. Set {hint} in truce.toml or the AAX_SDK_PATH env var."
+        ))
     }
 }
 
@@ -142,24 +168,8 @@ pub(crate) fn build_format_dylibs(
             }
         }
         BuildFormat::Aax => {
-            #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-            {
-                crate::log_skip(
-                    "AAX: not supported on this platform. Use macOS or Windows to build AAX."
-                        .to_string(),
-                );
-                return Ok(());
-            }
-            #[cfg(any(target_os = "macos", target_os = "windows"))]
-            if crate::resolve_aax_sdk_path(config).is_none() {
-                let hint = if cfg!(target_os = "windows") {
-                    "[windows].aax_sdk_path"
-                } else {
-                    "[macos].aax_sdk_path"
-                };
-                crate::log_skip(format!(
-                    "AAX: SDK not configured. Set {hint} in truce.toml or the AAX_SDK_PATH env var."
-                ));
+            if let Some(reason) = aax_skip_reason(config) {
+                crate::log_skip(reason);
                 return Ok(());
             }
         }

@@ -1168,54 +1168,6 @@ fn snake_to_pascal(ident: &syn::Ident) -> syn::Ident {
     syn::Ident::new(&pascal, ident.span())
 }
 
-#[cfg(test)]
-mod snake_to_pascal_tests {
-    use super::snake_to_pascal;
-    use proc_macro2::Span;
-
-    fn convert(s: &str) -> String {
-        // Keywords need raw-ident syntax to round-trip through `syn::Ident`.
-        // Idents starting with a digit aren't constructible at all (not even
-        // as `Ident::new_raw`), which is why the audit's `r#3band` example
-        // is actually unreachable from real source — but a leading-`_`
-        // ident like `_3band` *is* valid and exercises the same branch
-        // after `split('_')` strips the underscore.
-        let id = if matches!(s, "type" | "fn" | "let" | "match") {
-            syn::Ident::new_raw(s, Span::call_site())
-        } else {
-            syn::Ident::new(s, Span::call_site())
-        };
-        snake_to_pascal(&id).to_string()
-    }
-
-    #[test]
-    fn ordinary_snake_case() {
-        assert_eq!(convert("gain"), "Gain");
-        assert_eq!(convert("low_pass"), "LowPass");
-        assert_eq!(convert("multi_word_field"), "MultiWordField");
-    }
-
-    #[test]
-    fn raw_keyword_ident() {
-        assert_eq!(convert("type"), "Type");
-    }
-
-    #[test]
-    fn leading_digit_prepends_underscore() {
-        // `_3band` is a legal Rust ident; `split('_')` strips the leading
-        // underscore and the surviving fragment "3band" starts with a
-        // digit, which can't begin an enum variant. Guard prepends `_` so
-        // the output `_3band` is a valid variant ident.
-        assert_eq!(convert("_3band"), "_3band");
-    }
-
-    #[test]
-    fn all_underscores_falls_back_to_underscore() {
-        // `___` would otherwise produce "" → Ident::new("") panic.
-        assert_eq!(convert("___"), "_");
-    }
-}
-
 // ============================================================================
 // ParamEnum derive macro
 // ============================================================================
@@ -1472,4 +1424,52 @@ pub fn derive_state(input: TokenStream) -> TokenStream {
     };
 
     expanded.into()
+}
+
+#[cfg(test)]
+mod snake_to_pascal_tests {
+    use super::snake_to_pascal;
+    use proc_macro2::Span;
+
+    fn convert(s: &str) -> String {
+        // Keywords need raw-ident syntax to round-trip through `syn::Ident`.
+        // Idents starting with a digit aren't constructible at all (not even
+        // as `Ident::new_raw`), which is why the audit's `r#3band` example
+        // is actually unreachable from real source — but a leading-`_`
+        // ident like `_3band` *is* valid and exercises the same branch
+        // after `split('_')` strips the underscore.
+        let id = if matches!(s, "type" | "fn" | "let" | "match") {
+            syn::Ident::new_raw(s, Span::call_site())
+        } else {
+            syn::Ident::new(s, Span::call_site())
+        };
+        snake_to_pascal(&id).to_string()
+    }
+
+    #[test]
+    fn ordinary_snake_case() {
+        assert_eq!(convert("gain"), "Gain");
+        assert_eq!(convert("low_pass"), "LowPass");
+        assert_eq!(convert("multi_word_field"), "MultiWordField");
+    }
+
+    #[test]
+    fn raw_keyword_ident() {
+        assert_eq!(convert("type"), "Type");
+    }
+
+    #[test]
+    fn leading_digit_prepends_underscore() {
+        // `_3band` is a legal Rust ident; `split('_')` strips the leading
+        // underscore and the surviving fragment "3band" starts with a
+        // digit, which can't begin an enum variant. Guard prepends `_` so
+        // the output `_3band` is a valid variant ident.
+        assert_eq!(convert("_3band"), "_3band");
+    }
+
+    #[test]
+    fn all_underscores_falls_back_to_underscore() {
+        // `___` would otherwise produce "" → Ident::new("") panic.
+        assert_eq!(convert("___"), "_");
+    }
 }
