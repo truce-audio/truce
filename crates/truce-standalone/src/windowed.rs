@@ -388,6 +388,9 @@ fn pick_save_path<P: PluginExport>(plugin_slug: &str) -> Option<std::path::PathB
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+// `P` unused on this branch (no native picker), but kept for signature
+// parity with the macOS/Windows variant so the call site's turbofish works.
+#[allow(clippy::extra_unused_type_parameters)]
 fn pick_save_path<P: PluginExport>(plugin_slug: &str) -> Option<std::path::PathBuf> {
     let dir = dirs::data_local_dir()?.join("truce").join(plugin_slug);
     if let Err(e) = std::fs::create_dir_all(&dir) {
