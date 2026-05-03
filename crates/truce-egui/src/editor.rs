@@ -529,7 +529,9 @@ impl Editor for EguiEditor {
 
     fn screenshot(&mut self, params: Arc<dyn truce_params::Params>) -> Option<(Vec<u8>, u32, u32)> {
         let state = ParamState::from_params(params);
-        let pixels_per_point = self.scale_factor.unwrap_or(2.0) as f32;
+        // Pin to 2.0 so screenshots are reproducible across hosts and CI
+        // regardless of any prior `set_scale_factor` from a live window.
+        let pixels_per_point = 2.0_f32;
         let ui = Arc::clone(&self.ui);
         Some(crate::screenshot::render_with_state(
             &state,
