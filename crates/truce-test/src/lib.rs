@@ -681,10 +681,7 @@ fn compare_against_reference(
     // recovers strict byte-equality at pixel granularity.
     let mut diff_count = 0usize;
     let mut max_delta_seen: u8 = 0;
-    for (cur, refp) in pixels
-        .chunks_exact(4)
-        .zip(ref_pixels.chunks_exact(4))
-    {
+    for (cur, refp) in pixels.chunks_exact(4).zip(ref_pixels.chunks_exact(4)) {
         let delta = cur
             .iter()
             .zip(refp.iter())
