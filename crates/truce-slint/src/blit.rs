@@ -33,7 +33,15 @@ fn vs_main(@builtin(vertex_index) idx: u32) -> VertexOutput {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    return textureSample(tex, samp, in.uv);
+    // The texture stores straight-alpha sRGB bytes (Slint output is
+    // un-premultiplied in `render_to_rgba`). Sampling decodes sRGB to
+    // linear, so `c.rgb` is full-strength linear color and `c.a` is
+    // the straight alpha. Multiplying by alpha here premultiplies in
+    // linear space, which is what the sRGB-encoding surface format
+    // expects for correct gamma — un-premultiplied sRGB bytes blended
+    // directly would render translucent pixels too bright.
+    let c = textureSample(tex, samp, in.uv);
+    return vec4(c.rgb * c.a, c.a);
 }
 "#;
 

@@ -94,14 +94,36 @@ pub fn render_to_rgba(
         renderer.render(px_buf, width as usize);
     });
 
-    // Copy premultiplied RGBA to byte buffer for wgpu upload.
-    rgba_buf.resize(pixel_count * 4, 255);
+    // Un-premultiply Slint's premultiplied output before uploading.
+    // The blit shader re-premultiplies in linear space, which is what
+    // an `Rgba8UnormSrgb` texture + sRGB surface needs to draw
+    // antialiased edges and translucent overlays at the correct
+    // brightness. Writing premultiplied sRGB bytes directly here
+    // (the previous behavior) made every alpha < 1 pixel render too
+    // dark on screen — Slint multiplies in sRGB byte space, so the
+    // linear sample comes out attenuated by sRGB(α) instead of α.
+    // Matches the screenshot path's un-premultiplication so the live
+    // window and reference PNGs agree on color.
+    rgba_buf.resize(pixel_count * 4, 0);
     for (i, px) in px_buf.iter().enumerate() {
         let off = i * 4;
-        rgba_buf[off] = px.red;
-        rgba_buf[off + 1] = px.green;
-        rgba_buf[off + 2] = px.blue;
-        rgba_buf[off + 3] = px.alpha;
+        if px.alpha == 0 {
+            rgba_buf[off] = 0;
+            rgba_buf[off + 1] = 0;
+            rgba_buf[off + 2] = 0;
+            rgba_buf[off + 3] = 0;
+        } else if px.alpha == 255 {
+            rgba_buf[off] = px.red;
+            rgba_buf[off + 1] = px.green;
+            rgba_buf[off + 2] = px.blue;
+            rgba_buf[off + 3] = 255;
+        } else {
+            let a = px.alpha as u16;
+            rgba_buf[off] = ((px.red as u16 * 255) / a).min(255) as u8;
+            rgba_buf[off + 1] = ((px.green as u16 * 255) / a).min(255) as u8;
+            rgba_buf[off + 2] = ((px.blue as u16 * 255) / a).min(255) as u8;
+            rgba_buf[off + 3] = px.alpha;
+        }
     }
 }
 
