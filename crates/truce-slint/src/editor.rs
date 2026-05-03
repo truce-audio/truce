@@ -45,22 +45,60 @@ use crate::platform::{self, ParentWindow};
 /// ```
 /// Per-frame sync closure: takes the current `ParamState` and updates the
 /// Slint component's properties. Returned by the editor's `setup` callback.
+///
+/// Deliberately not `Send`-bounded — Slint's generated UI types contain
+/// `Rc<...>` and are `!Send`, so they can only be captured here (the
+/// closure stays on whichever thread `setup` was called on, namely
+/// baseview's window thread or the screenshot caller's thread).
 pub type SyncFn = Box<dyn Fn(&ParamState)>;
 
 /// Editor `setup` callback: called every time the host re-opens the editor,
 /// creates the Slint component, and returns a `SyncFn` that the editor calls
 /// each frame to push live param values into the component.
+///
+/// # Contract
+///
+/// The `Send + Sync` bound is on the *outer* closure only — required so
+/// that `Arc<dyn Fn(...) + Send + Sync>` is itself `Send`, which is in
+/// turn required because `SlintEditor: Send` (the `Editor` trait
+/// demands it). It does **not** propagate to the `SyncFn` the closure
+/// returns: the inner `Box<dyn Fn(&ParamState)>` is unbounded and is
+/// where Slint's `!Send` UI types are meant to live.
+///
+/// In practice this means the setup closure must:
+/// - Construct the Slint component **inside** the closure body
+///   (`let ui = MyUi::new()?;`), never capture it from the surrounding
+///   environment — that would force the outer closure to be `!Send`
+///   and violate this bound.
+/// - Capture only `Send + Sync` data in its environment (e.g. plain
+///   handles, `Arc<...>`, etc.).
+/// - Move the freshly-built Slint component into the returned
+///   `SyncFn`, where `!Send` types are fine.
+///
+/// Both the setup-time outer call and the per-frame returned call run
+/// on the same window thread, so no thread crossing actually happens
+/// for the Slint values themselves.
 pub type SetupFn = Arc<dyn Fn(ParamState) -> SyncFn + Send + Sync>;
 
 pub struct SlintEditor {
     size: (u32, u32),
     /// Called on each open() to create the Slint component and param bindings.
     /// Must be `Fn` (not `FnOnce`) because the host may close and re-open
-    /// the editor window multiple times.
+    /// the editor window multiple times. See [`SetupFn`] for the
+    /// `Send + Sync` rationale.
     setup: SetupFn,
     window: Option<baseview::WindowHandle>,
 }
 
+// SAFETY: `baseview::WindowHandle` holds a raw native window pointer
+// (HWND / NSView / X11 Window) and is not auto-`Send`. Hosts call
+// `Editor::open` / `idle` / `close` from a single dedicated GUI thread
+// — never concurrently and never from the audio thread — so the
+// handle is only ever touched on the thread that created it. The
+// `Editor` trait requires `Send` so the editor can live behind a
+// trait object; this impl asserts that the type doesn't escape its
+// thread in practice. The `setup` closure is already `Send +
+// Sync`-bounded at construction.
 unsafe impl Send for SlintEditor {}
 
 impl SlintEditor {

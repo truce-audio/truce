@@ -88,6 +88,15 @@ pub struct BuiltinEditor<P: Params> {
     scale: f32,
 }
 
+// SAFETY: `baseview::WindowHandle` holds a raw native window pointer
+// (HWND / NSView / X11 Window) and is not auto-`Send`. Hosts call
+// `Editor::open` / `idle` / `close` from a single dedicated GUI thread
+// — never concurrently and never from the audio thread — so the
+// handle is only ever touched on the thread that created it. The
+// `Editor` trait requires `Send` so the editor can live behind a
+// trait object; this impl asserts that the type doesn't escape its
+// thread in practice. All other fields (`Arc<P>`, `Layout`, `Theme`,
+// `Option<CpuBackend>`, etc.) are themselves `Send`.
 unsafe impl<P: Params> Send for BuiltinEditor<P> {}
 
 impl<P: Params + 'static> BuiltinEditor<P> {
@@ -192,31 +201,35 @@ impl<P: Params + 'static> BuiltinEditor<P> {
     pub fn render(&mut self) {
         let (w, h) = (self.layout.width(), self.layout.height());
         let scale = self.scale;
+        let owned = self.build_snapshot_closures();
+        let snapshot = owned.as_snapshot();
         let backend = self
             .backend
             .get_or_insert_with(|| CpuBackend::new(w, h, scale).expect("Failed to create backend"));
-        // SAFETY: we split the borrow — backend is a separate field from layout/params/etc.
-        let backend_ptr = backend as *mut CpuBackend;
-        self.render_widgets(unsafe { &mut *backend_ptr });
-    }
-
-    /// Render all widgets to any `RenderBackend`.
-    ///
-    /// Thin wrapper over [`widgets::draw`] that builds a [`ParamSnapshot`]
-    /// from the editor's context or fallback params.
-    fn render_widgets(&mut self, backend: &mut dyn RenderBackend) {
-        // `widgets::draw` does not clear; do it here so the built-in
-        // editor's background matches the theme.
-        backend.clear(self.theme.background);
-        let owned = self.build_snapshot_closures();
-        let snapshot = owned.as_snapshot();
-        widgets::draw(
-            backend,
+        Self::render_widgets(
             &self.layout,
             &self.theme,
-            &snapshot,
             &mut self.interaction,
+            &snapshot,
+            backend,
         );
+    }
+
+    /// Render all widgets to a `RenderBackend`. Takes split borrows of
+    /// the relevant editor fields rather than `&mut self`, so callers
+    /// can hold `&mut self.backend` (or pass an external backend) at
+    /// the same time.
+    fn render_widgets(
+        layout: &Layout,
+        theme: &Theme,
+        interaction: &mut InteractionState,
+        snapshot: &ParamSnapshot<'_>,
+        backend: &mut dyn RenderBackend,
+    ) {
+        // `widgets::draw` does not clear; do it here so the built-in
+        // editor's background matches the theme.
+        backend.clear(theme.background);
+        widgets::draw(backend, layout, theme, snapshot, interaction);
     }
 
     /// Build owned boxed closures from `self.context` / `self.params` that
@@ -424,7 +437,15 @@ impl<P: Params + 'static> BuiltinEditor<P> {
     /// the internal CPU backend.
     pub fn render_to(&mut self, backend: &mut dyn RenderBackend) {
         unsafe { update_interaction(self) };
-        self.render_widgets(backend);
+        let owned = self.build_snapshot_closures();
+        let snapshot = owned.as_snapshot();
+        Self::render_widgets(
+            &self.layout,
+            &self.theme,
+            &mut self.interaction,
+            &snapshot,
+            backend,
+        );
     }
 }
 

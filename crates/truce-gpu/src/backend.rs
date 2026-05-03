@@ -966,10 +966,18 @@ impl WgpuBackend {
                 usage: wgpu::BufferUsages::INDEX,
             });
 
-        let load = if self.clear_pending {
-            wgpu::LoadOp::Clear(self.clear_color)
+        // MSAA load/store must agree across frames: if we plan to `Load`
+        // next pass, this pass must `Store` (otherwise the next pass loads
+        // undefined contents). With a `resolve_target` set, `Discard` is
+        // standard for MSAA — but it's only well-defined when we also
+        // `Clear` on entry, since a fresh load after a discard is UB.
+        let (load, store) = if self.clear_pending {
+            (
+                wgpu::LoadOp::Clear(self.clear_color),
+                wgpu::StoreOp::Discard,
+            )
         } else {
-            wgpu::LoadOp::Load
+            (wgpu::LoadOp::Load, wgpu::StoreOp::Store)
         };
 
         {
@@ -978,10 +986,7 @@ impl WgpuBackend {
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &self.msaa_texture,
                     resolve_target: Some(view),
-                    ops: wgpu::Operations {
-                        load,
-                        store: wgpu::StoreOp::Discard,
-                    },
+                    ops: wgpu::Operations { load, store },
                 })],
                 depth_stencil_attachment: None,
                 timestamp_writes: None,

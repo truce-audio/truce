@@ -78,7 +78,14 @@ pub struct EguiEditor {
     context: Option<EditorContext>,
 }
 
-// WindowHandle contains raw pointers; only accessed from host UI thread.
+// SAFETY: `baseview::WindowHandle` holds a raw native window pointer
+// (HWND / NSView / X11 Window) and is not auto-`Send`. Hosts call
+// `Editor::open` / `idle` / `close` from a single dedicated GUI thread
+// — never concurrently and never from the audio thread — so the
+// handle is only ever touched on the thread that created it. The
+// `Editor` trait requires `Send` so the editor can live behind a
+// trait object; this impl asserts that the type doesn't escape its
+// thread in practice.
 unsafe impl Send for EguiEditor {}
 
 impl EguiEditor {

@@ -33,6 +33,15 @@ pub struct GpuEditor<P: Params> {
     window: Option<baseview::WindowHandle>,
 }
 
+// SAFETY: `baseview::WindowHandle` holds a raw native window pointer
+// (HWND / NSView / X11 Window) and is therefore not auto-`Send`. Hosts
+// call `Editor::open` / `idle` / `close` from a single dedicated GUI
+// thread, never concurrently and never from the audio thread, so the
+// handle is only ever touched on the thread that created it. The
+// `Editor` trait requires `Send` so the editor can live behind a
+// trait object — this impl asserts that the *type* doesn't escape its
+// thread in practice. All other fields (`Arc<Mutex<...>>`, `(u32,
+// u32)`) are already `Send`.
 unsafe impl<P: Params> Send for GpuEditor<P> {}
 
 impl<P: Params + 'static> GpuEditor<P> {

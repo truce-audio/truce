@@ -182,6 +182,15 @@ where
     baseview_window: Option<baseview::WindowHandle>,
 }
 
+// SAFETY: `baseview::WindowHandle` holds a raw native window pointer
+// (HWND / NSView / X11 Window) and is not auto-`Send`. Hosts call
+// `Editor::open` / `idle` / `close` from a single dedicated GUI thread
+// — never concurrently and never from the audio thread — so the
+// handle is only ever touched on the thread that created it. The
+// `Editor` trait requires `Send` so the editor can live behind a
+// trait object; this impl asserts that the type doesn't escape its
+// thread in practice. The `make_plugin` boxed closure is already
+// `Send`-bounded; runtime / meter_ids / size are trivially `Send`.
 unsafe impl<P: Params, M: IcedPlugin<P>> Send for IcedEditor<P, M> {}
 
 impl<P: Params + 'static> IcedEditor<P, AutoPlugin> {
@@ -495,6 +504,13 @@ struct IcedBaseviewHandler<P: Params + 'static, M: IcedPlugin<P>> {
     last_cursor: Option<baseview::MouseCursor>,
 }
 
+// SAFETY: The raw `*mut IcedEditor<P, M>` is only dereferenced from
+// the baseview event thread (which `WindowHandler` is bound to). The
+// editor's host-side close path joins this thread before dropping the
+// editor, so the pointer is always valid while `WindowHandler`
+// methods run. baseview requires `Send` for its handler types so that
+// the handler can be moved onto the dedicated event thread on
+// construction; once moved, it never crosses threads again.
 unsafe impl<P: Params, M: IcedPlugin<P>> Send for IcedBaseviewHandler<P, M> {}
 
 impl<P: Params + 'static, M: IcedPlugin<P>> Drop for IcedBaseviewHandler<P, M> {
