@@ -115,7 +115,7 @@ pub enum MeterCapture {
     PerBlock,
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct CaptureSpec {
     /// Capture the rendered audio. Default true — turning it off
     /// means `DriverResult::output` is empty (use case: a meter-only
@@ -129,8 +129,13 @@ pub struct CaptureSpec {
     pub block_snapshots: bool,
 }
 
-impl CaptureSpec {
-    fn defaults() -> Self {
+impl Default for CaptureSpec {
+    /// Audio + final meters captured; output events + block snapshots
+    /// off. Earlier revisions had a derived `Default` that produced
+    /// `audio: false` (useless for almost every test) plus a private
+    /// `defaults()` constructor that returned the right values — easy
+    /// footgun. The `Default` impl now *is* the canonical defaults.
+    fn default() -> Self {
         Self {
             audio: true,
             meters: MeterCapture::Final,
@@ -324,6 +329,11 @@ fn io_err(e: hound::Error) -> std::io::Error {
 
 type SetupFn<P> = Box<dyn FnOnce(&mut P)>;
 
+enum StateSource {
+    Blob(Vec<u8>),
+    File(PathBuf),
+}
+
 pub struct PluginDriver<P: PluginExport> {
     sample_rate: f64,
     channels: Option<usize>,
@@ -334,10 +344,13 @@ pub struct PluginDriver<P: PluginExport> {
     input: InputSource,
     script: Script,
 
-    /// `.pluginstate` bytes loaded after init/reset, before
-    /// `set_param` shortcuts and `setup` run. See "State files"
-    /// section of the design doc for lifecycle ordering.
-    state_bytes: Option<Vec<u8>>,
+    /// Pending state source. Either an in-memory blob (set directly by
+    /// callers that already have the bytes) or a path to read at
+    /// `run()` time. Reading is deferred so a builder that's
+    /// constructed but never `.run()`-ed doesn't touch the disk, and
+    /// I/O errors surface alongside the rest of the run rather than
+    /// inside an unrelated builder method.
+    state_source: Option<StateSource>,
     /// Manifest dir for `state_file` path resolution. Set by callers
     /// that pass a relative path; absolute paths bypass.
     manifest_dir: PathBuf,
@@ -366,11 +379,11 @@ impl<P: PluginExport> PluginDriver<P> {
             transport: TransportSpec::default(),
             input: InputSource::Silence,
             script: Script::default(),
-            state_bytes: None,
+            state_source: None,
             manifest_dir: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
             param_overrides: Vec::new(),
             setup: None,
-            capture: CaptureSpec::defaults(),
+            capture: CaptureSpec::default(),
         }
     }
 
@@ -457,11 +470,26 @@ impl<P: PluginExport> PluginDriver<P> {
         self
     }
 
+    /// Apply an in-memory `.pluginstate` blob via
+    /// `plugin.load_state(&bytes)` at the same lifecycle point as
+    /// [`Self::state_file`] (after init/reset, before `set_param`
+    /// shortcuts and `setup`). Use when the test already has the
+    /// bytes in hand and doesn't want a temp file round-trip.
+    pub fn state_blob(mut self, bytes: Vec<u8>) -> Self {
+        self.state_source = Some(StateSource::Blob(bytes));
+        self
+    }
+
     /// Read a `.pluginstate` file (the standalone host's `Cmd+S`
     /// save format) and apply it via `plugin.load_state(&bytes)`
     /// after init/reset and before any `set_param` overrides /
     /// `setup` closure. Path is resolved relative to
     /// `manifest_dir`, or used as-is if absolute.
+    ///
+    /// I/O is deferred to `.run()`. The builder records the path; a
+    /// missing or unreadable file panics at run time with the resolved
+    /// path in the message, alongside other run-time failures, rather
+    /// than from inside this method.
     pub fn state_file(mut self, path: impl Into<PathBuf>) -> Self {
         let raw = path.into();
         let resolved = if raw.is_absolute() {
@@ -469,9 +497,7 @@ impl<P: PluginExport> PluginDriver<P> {
         } else {
             self.manifest_dir.join(&raw)
         };
-        let bytes = std::fs::read(&resolved)
-            .unwrap_or_else(|e| panic!("state_file: failed to read {}: {e}", resolved.display()));
-        self.state_bytes = Some(bytes);
+        self.state_source = Some(StateSource::File(resolved));
         self
     }
 
@@ -501,8 +527,19 @@ impl<P: PluginExport> PluginDriver<P> {
         plugin.params().set_sample_rate(self.sample_rate);
         plugin.params().snap_smoothers();
 
-        // 1. State load (if any).
-        if let Some(bytes) = self.state_bytes.as_deref() {
+        // 1. State load (if any). Reads from disk here rather than at
+        // builder time, so the I/O failure (if any) surfaces as a
+        // run-time panic at the same lifecycle stage as smoother /
+        // process panics.
+        let state_bytes = match self.state_source.take() {
+            Some(StateSource::Blob(b)) => Some(b),
+            Some(StateSource::File(path)) => Some(
+                std::fs::read(&path)
+                    .unwrap_or_else(|e| panic!("state_file: failed to read {}: {e}", path.display())),
+            ),
+            None => None,
+        };
+        if let Some(bytes) = state_bytes.as_deref() {
             plugin.load_state(bytes);
         }
 
@@ -574,9 +611,56 @@ impl<P: PluginExport> PluginDriver<P> {
 
         let meter_ids: Vec<u32> = plugin.params().meter_ids().into_iter().collect();
 
+        // Validate `InputSource::Buffer` shape up front so a mismatched
+        // channel count panics before the run starts (rather than
+        // mid-loop after capture buffers have been partially built).
+        if let InputSource::Buffer(bufs) = &self.input {
+            assert_eq!(
+                bufs.len(),
+                channels,
+                "InputSource::Buffer channel count {} doesn't match driver channels {channels}",
+                bufs.len(),
+            );
+        }
+
+        // Track how many events fall past `total_frames` so the run
+        // surfaces a warning instead of silently dropping them. Tests
+        // that schedule events past their declared duration almost
+        // always have a cursor-arithmetic bug; surfacing it loudly is
+        // cheap.
+        let dropped_events = script_events.iter().filter(|(off, _)| *off >= total_frames).count();
+        if dropped_events > 0 {
+            eprintln!(
+                "[truce-driver] warning: {dropped_events} script event(s) scheduled past \
+                 total_frames ({total_frames}) — they will not be delivered. Check \
+                 `.duration(...)` vs `wait_ms`/`wait_samples` calls in your script."
+            );
+        }
+
+        // Pre-allocate per-block scratch outside the loop. The previous
+        // implementation built fresh `Vec<Vec<f32>>` instances every
+        // block; for long runs (`30s @ 512` ≈ 2800 blocks) that's a
+        // measurable allocator workout. Reusing the buffers keeps the
+        // hot loop allocation-free for `Silence` / `Constant` /
+        // `Buffer` and reduces per-block work for `Generator`.
+        let mut out_bufs: Vec<Vec<f32>> =
+            (0..channels).map(|_| vec![0.0f32; self.block_size]).collect();
+        let mut in_bufs: Vec<Vec<f32>> = if is_effect {
+            (0..channels).map(|_| vec![0.0f32; self.block_size]).collect()
+        } else {
+            Vec::new()
+        };
+
         let mut cursor = 0usize;
         while cursor < total_frames {
             let block_len = self.block_size.min(total_frames - cursor);
+
+            // Resize scratch to `block_len` (cheap: identical size on
+            // every iteration except the final tail block).
+            for b in &mut out_bufs {
+                b.clear();
+                b.resize(block_len, 0.0);
+            }
 
             // Pull events that fall inside [cursor, cursor+block_len).
             let mut event_list = EventList::new();
@@ -589,44 +673,50 @@ impl<P: PluginExport> PluginDriver<P> {
                 }
             }
 
-            // Allocate per-block channel buffers.
-            let mut out_bufs: Vec<Vec<f32>> =
-                (0..channels).map(|_| vec![0.0f32; block_len]).collect();
-
-            // Build input slices.
-            let in_bufs_owned: Vec<Vec<f32>> = if !is_effect {
-                Vec::new()
-            } else {
+            // Refill input scratch for this block. Constant / Silence
+            // collapse to a memset; Buffer slice-copies; Generator
+            // calls the closure into the existing buffer.
+            if is_effect {
+                for b in &mut in_bufs {
+                    b.resize(block_len, 0.0);
+                }
                 match (&mut self.input, constant_value) {
-                    (_, Some(v)) => (0..channels).map(|_| vec![v; block_len]).collect(),
-                    (InputSource::Buffer(bufs), _) => {
-                        assert_eq!(
-                            bufs.len(),
-                            channels,
-                            "InputSource::Buffer channel count {} doesn't match driver channels {channels}",
-                            bufs.len(),
-                        );
-                        bufs.iter()
-                            .map(|ch| {
-                                let end = (cursor + block_len).min(ch.len());
-                                let start = cursor.min(ch.len());
-                                let mut block = ch[start..end].to_vec();
-                                block.resize(block_len, 0.0);
-                                block
-                            })
-                            .collect()
+                    (_, Some(v)) => {
+                        for b in &mut in_bufs {
+                            b.fill(v);
+                        }
                     }
-                    (InputSource::Generator(g), _) => (0..channels)
-                        .map(|_| {
-                            (0..block_len)
-                                .map(|i| g(cursor + i, self.sample_rate))
-                                .collect()
-                        })
-                        .collect(),
+                    (InputSource::Buffer(bufs), _) => {
+                        for (dst, src) in in_bufs.iter_mut().zip(bufs.iter()) {
+                            let start = cursor.min(src.len());
+                            let end = (cursor + block_len).min(src.len());
+                            let copied = end - start;
+                            dst[..copied].copy_from_slice(&src[start..end]);
+                            // Pad the tail past `src` with zeros if the
+                            // user-supplied buffer ran short.
+                            for s in &mut dst[copied..] {
+                                *s = 0.0;
+                            }
+                        }
+                    }
+                    (InputSource::Generator(g), _) => {
+                        // Generator is mono-broadcast; compute into the
+                        // first channel, then `clone_from_slice` the
+                        // others. Saves N-1 closure calls per sample.
+                        if let Some((first, rest)) = in_bufs.split_first_mut() {
+                            for (i, slot) in first.iter_mut().enumerate() {
+                                *slot = g(cursor + i, self.sample_rate);
+                            }
+                            for ch in rest {
+                                ch.copy_from_slice(first);
+                            }
+                        }
+                    }
                     _ => unreachable!(),
                 }
-            };
-            let in_slices: Vec<&[f32]> = in_bufs_owned.iter().map(|b| b.as_slice()).collect();
+            }
+
+            let in_slices: Vec<&[f32]> = in_bufs.iter().map(|b| b.as_slice()).collect();
             let mut out_slices: Vec<&mut [f32]> =
                 out_bufs.iter_mut().map(|b| b.as_mut_slice()).collect();
             let mut audio =
@@ -653,18 +743,25 @@ impl<P: PluginExport> PluginDriver<P> {
 
             plugin.process(&mut audio, &event_list, &mut ctx);
 
-            // Capture audio.
+            // Capture audio. `out_bufs` is reused across iterations,
+            // so we copy out rather than consuming.
             if self.capture.audio {
-                for (ch, buf) in out_bufs.into_iter().enumerate() {
-                    output[ch].extend_from_slice(&buf);
+                for (ch, buf) in out_bufs.iter().enumerate() {
+                    output[ch].extend_from_slice(buf);
                 }
             }
 
-            // Capture output events with absolute offsets.
+            // Capture output events with absolute offsets. Use
+            // `saturating_add` so a long run (~24h at 48 kHz puts
+            // `cursor` past `u32::MAX`) clamps the offset rather than
+            // wrapping. The captured offsets are still informative
+            // up to that point and clamped beyond rather than
+            // silently mis-attributed to early frames.
             if self.capture.output_events {
+                let cursor_u32 = u32::try_from(cursor).unwrap_or(u32::MAX);
                 for ev in output_events_block.iter() {
                     let mut e = ev.clone();
-                    e.sample_offset += cursor as u32;
+                    e.sample_offset = e.sample_offset.saturating_add(cursor_u32);
                     output_events_capture.push(e);
                 }
             }
