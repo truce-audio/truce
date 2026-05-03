@@ -22,6 +22,11 @@ pub struct AuPluginDescriptor {
     pub num_inputs: u32,
     /// Number of output channels
     pub num_outputs: u32,
+    /// Param ID flagged as `IS_BYPASS`, or `u32::MAX` if the plugin has
+    /// no bypass param. The AU shim routes
+    /// `kAudioUnitProperty_BypassEffect` get/set through this ID so the
+    /// host's master-bypass UI tracks the param's value.
+    pub bypass_param_id: u32,
 }
 
 /// Parameter descriptor for the ObjC shim.

@@ -59,9 +59,18 @@ AAX_Result TruceAAX_Parameters::EffectInit() {
         TruceAaxParamInfo info = {};
         g_bridge.get_param_info(i, &info);
 
-        std::ostringstream idStr;
-        idStr << "truce_p" << info.id;
-        AAX_CString paramID(idStr.str().c_str());
+        // Pro Tools' master-bypass UI binds to the well-known
+        // parameter ID `cDefaultMasterBypassID`. Use that string for
+        // the IS_BYPASS-flagged param so the host's bypass button
+        // tracks the param value; everything else gets `truce_p<id>`.
+        AAX_CString paramID;
+        if (info.id == g_descriptor.bypass_param_id) {
+            paramID = cDefaultMasterBypassID;
+        } else {
+            std::ostringstream idStr;
+            idStr << "truce_p" << info.id;
+            paramID = AAX_CString(idStr.str().c_str());
+        }
 
         auto param = std::unique_ptr<AAX_IParameter>(new AAX_CParameter<float>(
             paramID,

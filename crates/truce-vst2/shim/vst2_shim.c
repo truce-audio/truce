@@ -168,9 +168,8 @@ static VstIntPtr dispatcher(AEffect* e, int32_t opcode, int32_t index,
             if (!ptr || !g_vst2_callbacks || !inst->rust_ctx) return 0;
             if ((uint32_t)index >= g_vst2_num_params) return 0;
             uint32_t id = g_vst2_params[index].id;
-            double val = g_vst2_callbacks->param_get_value(inst->rust_ctx, id);
-            g_vst2_callbacks->param_format_value(
-                inst->rust_ctx, id, val, (char*)ptr, 32);
+            g_vst2_callbacks->param_format_current(
+                inst->rust_ctx, id, (char*)ptr, 32);
             return 0;
         }
 
@@ -201,6 +200,15 @@ static VstIntPtr dispatcher(AEffect* e, int32_t opcode, int32_t index,
             if (strcmp(s, "receiveVstMidiEvent") == 0) return 1;
             if (strcmp(s, "receiveVstEvents") == 0) return 1;
             if (strcmp(s, "sendVstMidiEvent") == 0) return 0;
+            if (strcmp(s, "bypass") == 0) {
+                /* Advertise bypass support only if the plugin actually
+                 * has an IS_BYPASS-flagged param wired into the
+                 * descriptor — the effSetBypass handler is a no-op
+                 * otherwise. */
+                return (g_vst2_descriptor
+                        && g_vst2_descriptor->bypass_param_id != 0xFFFFFFFFu)
+                       ? 1 : 0;
+            }
             return 0;
         }
 
@@ -233,6 +241,19 @@ static VstIntPtr dispatcher(AEffect* e, int32_t opcode, int32_t index,
                 inst->deferred_parent = NULL;
             }
             return 0;
+        }
+
+        /* opcode 44 — host announces bypass on/off. Route to the
+         * IS_BYPASS-flagged param (if any) so the param value tracks
+         * the host's master-bypass UI. `value` is 0 (off) or 1 (on). */
+        case 44 /* effSetBypass */: {
+            if (!g_vst2_callbacks || !inst->rust_ctx || !g_vst2_descriptor) return 0;
+            if (g_vst2_descriptor->bypass_param_id == 0xFFFFFFFFu) return 0;
+            g_vst2_callbacks->param_set_normalized(
+                inst->rust_ctx,
+                g_vst2_descriptor->bypass_param_id,
+                value ? 1.0 : 0.0);
+            return 1;
         }
 
         default:
@@ -324,10 +345,12 @@ static void setParameter(AEffect* e, int32_t index, float value) {
     if (!g_vst2_callbacks || !inst->rust_ctx) return;
     if ((uint32_t)index >= g_vst2_num_params) return;
 
-    /* VST2 parameters are normalized [0,1]. Convert to plain value. */
-    const Vst2ParamDescriptor* desc = &g_vst2_params[index];
-    double plain = desc->min + (double)value * (desc->max - desc->min);
-    g_vst2_callbacks->param_set_value(inst->rust_ctx, desc->id, plain);
+    /* VST2 parameters are normalized [0,1]. Hand the raw normalized
+     * value through to Rust; the Params layer routes through
+     * `ParamRange::denormalize` so non-linear tapers (Logarithmic,
+     * Enum, Discrete) round-trip correctly. */
+    uint32_t id = g_vst2_params[index].id;
+    g_vst2_callbacks->param_set_normalized(inst->rust_ctx, id, (double)value);
 }
 
 static float getParameter(AEffect* e, int32_t index) {
@@ -335,12 +358,8 @@ static float getParameter(AEffect* e, int32_t index) {
     if (!g_vst2_callbacks || !inst->rust_ctx) return 0.0f;
     if ((uint32_t)index >= g_vst2_num_params) return 0.0f;
 
-    /* Convert plain value to normalized [0,1]. */
-    const Vst2ParamDescriptor* desc = &g_vst2_params[index];
-    double plain = g_vst2_callbacks->param_get_value(inst->rust_ctx, desc->id);
-    double range = desc->max - desc->min;
-    if (range <= 0.0) return 0.0f;
-    return (float)((plain - desc->min) / range);
+    uint32_t id = g_vst2_params[index].id;
+    return (float)g_vst2_callbacks->param_get_normalized(inst->rust_ctx, id);
 }
 
 /* ---------------------------------------------------------------------------

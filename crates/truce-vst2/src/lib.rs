@@ -15,7 +15,7 @@ use truce_core::events::{Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
 use truce_core::process::ProcessContext;
 use truce_core::state;
-use truce_params::Params;
+use truce_params::{ParamFlags, Params};
 
 use ffi::{Vst2Callbacks, Vst2MidiEvent, Vst2ParamDescriptor, Vst2PluginDescriptor};
 use std::sync::Arc;
@@ -334,31 +334,30 @@ unsafe extern "C" fn cb_param_get_descriptor<P: PluginExport>(
     }
 }
 
-unsafe extern "C" fn cb_param_get_value<P: PluginExport>(
+unsafe extern "C" fn cb_param_get_normalized<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     id: u32,
 ) -> f64 {
     unsafe {
         let inst = &*(ctx as *mut Vst2Instance<P>);
-        inst.plugin.params().get_plain(id).unwrap_or(0.0)
+        inst.plugin.params().get_normalized(id).unwrap_or(0.0)
     }
 }
 
-unsafe extern "C" fn cb_param_set_value<P: PluginExport>(
+unsafe extern "C" fn cb_param_set_normalized<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     id: u32,
     value: f64,
 ) {
     unsafe {
         let inst = &*(ctx as *mut Vst2Instance<P>);
-        inst.plugin.params().set_plain(id, value);
+        inst.plugin.params().set_normalized(id, value);
     }
 }
 
-unsafe extern "C" fn cb_param_format_value<P: PluginExport>(
+unsafe extern "C" fn cb_param_format_current<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     id: u32,
-    value: f64,
     out: *mut c_char,
     out_len: u32,
 ) -> u32 {
@@ -370,7 +369,11 @@ unsafe extern "C" fn cb_param_format_value<P: PluginExport>(
             return 0;
         }
         let inst = &*(ctx as *mut Vst2Instance<P>);
-        match inst.plugin.params().format_value(id, value) {
+        let plain = match inst.plugin.params().get_plain(id) {
+            Some(v) => v,
+            None => return 0,
+        };
+        match inst.plugin.params().format_value(id, plain) {
             Some(text) => {
                 let bytes = text.as_bytes();
                 let len = bytes.len().min((out_len as usize) - 1);
@@ -420,6 +423,7 @@ unsafe extern "C" fn cb_state_load<P: PluginExport>(
             let blob = slice::from_raw_parts(data, len as usize);
             if let Some(deserialized) = state::deserialize_state(blob, inst.plugin_id_hash) {
                 inst.plugin.params().restore_values(&deserialized.params);
+                inst.plugin.params().snap_smoothers();
                 if let Some(extra) = &deserialized.extra {
                     inst.plugin.load_state(extra);
                 }
@@ -667,6 +671,14 @@ pub fn register_vst2<P: PluginExport>() {
     let name = CString::new(resolved_plugin_name(&info)).unwrap_or_default();
     let vendor = CString::new(info.vendor).unwrap_or_default();
 
+    let temp_plugin = P::create();
+    let infos = temp_plugin.params().param_infos();
+    let bypass_param_id = infos
+        .iter()
+        .find(|pi| pi.flags.contains(ParamFlags::IS_BYPASS))
+        .map(|pi| pi.id)
+        .unwrap_or(u32::MAX);
+
     let descriptor = Box::leak(Box::new(Vst2PluginDescriptor {
         component_type: info.au_type,
         component_subtype: info.fourcc,
@@ -675,6 +687,7 @@ pub fn register_vst2<P: PluginExport>() {
         version: 1,
         num_inputs: layout.total_input_channels(),
         num_outputs: layout.total_output_channels(),
+        bypass_param_id,
     }));
 
     let callbacks = Box::leak(Box::new(Vst2Callbacks {
@@ -684,9 +697,9 @@ pub fn register_vst2<P: PluginExport>() {
         process: cb_process::<P>,
         param_count: cb_param_count::<P>,
         param_get_descriptor: cb_param_get_descriptor::<P>,
-        param_get_value: cb_param_get_value::<P>,
-        param_set_value: cb_param_set_value::<P>,
-        param_format_value: cb_param_format_value::<P>,
+        param_get_normalized: cb_param_get_normalized::<P>,
+        param_set_normalized: cb_param_set_normalized::<P>,
+        param_format_current: cb_param_format_current::<P>,
         state_save: cb_state_save::<P>,
         state_load: cb_state_load::<P>,
         state_free: cb_state_free,
@@ -699,9 +712,8 @@ pub fn register_vst2<P: PluginExport>() {
         gui_close: cb_gui_close::<P>,
     }));
 
-    // Build param descriptors
-    let temp_plugin = P::create();
-    let infos = temp_plugin.params().param_infos();
+    // Build param descriptors (param_infos was already collected for
+    // the bypass-id scan above).
     let mut param_descs: Vec<Vst2ParamDescriptor> = Vec::with_capacity(infos.len());
     for pi in &infos {
         let cs = truce_core::wrapper::ParamCStrings::from_info(pi);

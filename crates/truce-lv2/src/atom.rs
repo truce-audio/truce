@@ -408,6 +408,37 @@ pub unsafe fn write_midi_out_sequence(out: *mut AtomSequence, events: &EventList
                     buf[2] = ((value * 127.0).clamp(0.0, 127.0)) as u8;
                     (3, event.sample_offset)
                 }
+                EventBody::Aftertouch {
+                    channel,
+                    note,
+                    pressure,
+                } => {
+                    buf[0] = 0xA0 | (channel & 0x0F);
+                    buf[1] = note & 0x7F;
+                    buf[2] = ((pressure * 127.0).clamp(0.0, 127.0)) as u8;
+                    (3, event.sample_offset)
+                }
+                EventBody::ChannelPressure { channel, pressure } => {
+                    buf[0] = 0xD0 | (channel & 0x0F);
+                    buf[1] = ((pressure * 127.0).clamp(0.0, 127.0)) as u8;
+                    // 2-byte channel pressure — emit a 2-byte MIDI msg.
+                    (2, event.sample_offset)
+                }
+                EventBody::PitchBend { channel, value } => {
+                    let n = ((value.clamp(-1.0, 1.0) + 1.0) * 8191.5).round() as u16;
+                    buf[0] = 0xE0 | (channel & 0x0F);
+                    buf[1] = (n & 0x7F) as u8;
+                    buf[2] = ((n >> 7) & 0x7F) as u8;
+                    (3, event.sample_offset)
+                }
+                EventBody::ProgramChange { channel, program } => {
+                    buf[0] = 0xC0 | (channel & 0x0F);
+                    buf[1] = program & 0x7F;
+                    (2, event.sample_offset)
+                }
+                // MIDI 2.0, ParamChange, Transport, per-note events:
+                // not encodable as 1- to 3-byte MIDI 1.0 messages; drop
+                // rather than emit a malformed atom.
                 _ => continue,
             };
             let total = core::mem::size_of::<AtomEventHeader>() + n;

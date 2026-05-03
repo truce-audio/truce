@@ -15,7 +15,7 @@ use truce_core::events::{Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
 use truce_core::process::ProcessContext;
 use truce_core::state;
-use truce_params::Params;
+use truce_params::{ParamFlags, Params};
 
 use ffi::{AuCallbacks, AuMidiEvent, AuParamDescriptor, AuPluginDescriptor, AuTransportSnapshot};
 use std::sync::Arc;
@@ -350,9 +350,15 @@ unsafe extern "C" fn cb_state_load<P: PluginExport>(
 ) {
     unsafe {
         let inst = &mut *(ctx as *mut AuInstance<P>);
+        // `slice::from_raw_parts(null, n)` for `n > 0` is UB. Treat
+        // `(null, *)` and `(_, 0)` the same as "host gave us nothing".
+        if data.is_null() || len == 0 {
+            return;
+        }
         let blob = slice::from_raw_parts(data, len as usize);
         if let Some(deserialized) = state::deserialize_state(blob, inst.plugin_id_hash) {
             inst.plugin.params().restore_values(&deserialized.params);
+            inst.plugin.params().snap_smoothers();
             if let Some(extra) = &deserialized.extra {
                 inst.plugin.load_state(extra);
             }
@@ -545,6 +551,12 @@ pub fn register_au<P: PluginExport>() {
     let name = CString::new(resolved_plugin_name(&info)).unwrap_or_default();
     let vendor = CString::new(info.vendor).unwrap_or_default();
 
+    let bypass_param_id = param_infos
+        .iter()
+        .find(|pi| pi.flags.contains(ParamFlags::IS_BYPASS))
+        .map(|pi| pi.id)
+        .unwrap_or(u32::MAX);
+
     let descriptor = Box::leak(Box::new(AuPluginDescriptor {
         component_type: info.au_type,
         component_subtype: info.fourcc,
@@ -554,6 +566,7 @@ pub fn register_au<P: PluginExport>() {
         version: 0x00010000, // 1.0.0
         num_inputs: truce_core::wrapper::default_io_channels::<P>().0,
         num_outputs: truce_core::wrapper::default_io_channels::<P>().1,
+        bypass_param_id,
     }));
 
     let callbacks = Box::leak(Box::new(AuCallbacks {

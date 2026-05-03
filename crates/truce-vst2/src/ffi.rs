@@ -12,6 +12,11 @@ pub struct Vst2PluginDescriptor {
     pub version: u32,
     pub num_inputs: u32,
     pub num_outputs: u32,
+    /// Param ID flagged as `IS_BYPASS`, or `u32::MAX` for "no bypass
+    /// param". The C shim handles `effSetBypass` (opcode 44) by
+    /// writing `0.0`/`1.0` to this param so the host's master-bypass
+    /// UI tracks the param value.
+    pub bypass_param_id: u32,
 }
 
 #[repr(C)]
@@ -53,12 +58,18 @@ pub struct Vst2Callbacks {
     pub param_count: unsafe extern "C" fn(ctx: *mut c_void) -> u32,
     pub param_get_descriptor:
         unsafe extern "C" fn(ctx: *mut c_void, index: u32, out: *mut Vst2ParamDescriptor),
-    pub param_get_value: unsafe extern "C" fn(ctx: *mut c_void, id: u32) -> f64,
-    pub param_set_value: unsafe extern "C" fn(ctx: *mut c_void, id: u32, value: f64),
-    pub param_format_value: unsafe extern "C" fn(
+    /// VST2 hosts work in normalized `[0, 1]` space. The Rust side
+    /// is responsible for routing through `ParamRange::denormalize`
+    /// so non-linear tapers (e.g. `Logarithmic` for a 20 Hz – 20 kHz
+    /// freq knob) round-trip correctly.
+    pub param_get_normalized: unsafe extern "C" fn(ctx: *mut c_void, id: u32) -> f64,
+    pub param_set_normalized: unsafe extern "C" fn(ctx: *mut c_void, id: u32, value: f64),
+    /// Format the param's *current* plain value for display. The shim
+    /// can call this directly inside `effGetParamDisplay` without
+    /// having to round-trip a value through normalize/denormalize.
+    pub param_format_current: unsafe extern "C" fn(
         ctx: *mut c_void,
         id: u32,
-        value: f64,
         out: *mut c_char,
         out_len: u32,
     ) -> u32,

@@ -400,7 +400,16 @@ static OSStatus au_v2_get_property(void *self_, AudioUnitPropertyID prop,
 
         case kAudioUnitProperty_BypassEffect: {
             if (scope != kAudioUnitScope_Global) return kAudioUnitErr_InvalidScope;
-            *(UInt32 *)outData = 0; // not bypassed
+            UInt32 bypassed = 0;
+            if (g_descriptor->bypass_param_id != UINT32_MAX
+                && g_callbacks && inst->rustCtx) {
+                /* IS_BYPASS-flagged param: 0 = inactive, 1 = bypassed.
+                 * Plain value is 0/1 for BoolParam (the common case). */
+                double v = g_callbacks->param_get_value(
+                    inst->rustCtx, g_descriptor->bypass_param_id);
+                bypassed = (v >= 0.5) ? 1 : 0;
+            }
+            *(UInt32 *)outData = bypassed;
             *ioSize = sizeof(UInt32);
             return noErr;
         }
@@ -618,7 +627,20 @@ static OSStatus au_v2_set_property(void *self_, AudioUnitPropertyID prop,
             return noErr;
         }
 
-        case kAudioUnitProperty_BypassEffect:
+        case kAudioUnitProperty_BypassEffect: {
+            if (scope != kAudioUnitScope_Global) return kAudioUnitErr_InvalidScope;
+            if (!inData || inSize < sizeof(UInt32))
+                return kAudioUnitErr_InvalidPropertyValue;
+            UInt32 bypassed = *(const UInt32 *)inData;
+            if (g_descriptor->bypass_param_id != UINT32_MAX
+                && g_callbacks && inst->rustCtx) {
+                g_callbacks->param_set_value(
+                    inst->rustCtx,
+                    g_descriptor->bypass_param_id,
+                    bypassed ? 1.0 : 0.0);
+            }
+            return noErr;
+        }
         case 28: // kAudioUnitProperty_CurrentPreset (legacy)
         case 36: // kAudioUnitProperty_PresentPreset
             return noErr; // accept but ignore

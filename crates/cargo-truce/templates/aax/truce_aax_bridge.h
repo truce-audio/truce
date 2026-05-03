@@ -28,6 +28,11 @@ typedef struct {
     int is_instrument;          /* 1 for instruments, 0 for effects */
     uint32_t category;          /* AAX_ePlugInCategory bitmask */
     int has_editor;             /* 1 if plugin provides custom GUI */
+    uint32_t bypass_param_id;   /* IS_BYPASS-flagged param ID, or
+                                 * UINT32_MAX for no bypass param. The
+                                 * AAX C++ template registers this as
+                                 * the master bypass via
+                                 * cDefaultMasterBypassID. */
 } TruceAaxDescriptor;
 
 /* Parameter info. */

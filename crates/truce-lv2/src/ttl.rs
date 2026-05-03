@@ -26,7 +26,7 @@ fn resolved_plugin_name(info: &PluginInfo) -> &'static str {
 }
 
 use truce_core::info::{PluginCategory, PluginInfo};
-use truce_params::{ParamInfo, ParamRange, ParamUnit};
+use truce_params::{ParamFlags, ParamInfo, ParamRange, ParamUnit};
 
 use crate::{PortLayout, derive_port_layout_from, plugin_uri, ui_uri};
 use truce_core::export::PluginExport;
@@ -309,7 +309,30 @@ fn emit_control_port(f: &mut fs::File, index: u32, p: &ParamInfo) -> std::io::Re
         ParamRange::Enum { .. } => {
             writeln!(f, "        lv2:portProperty lv2:integer, lv2:enumeration ;")?;
         }
+        ParamRange::Logarithmic { .. } => {
+            writeln!(f, "        lv2:portProperty pprop:logarithmic ;")?;
+        }
         _ => {}
+    }
+    if p.flags.contains(ParamFlags::IS_BYPASS) {
+        // LV2's `lv2:enabled` designation has inverted semantics:
+        // `1` = active, `0` = bypassed. truce's IS_BYPASS param is
+        // `1` = bypassed. Hosts that drive `lv2:enabled` directly
+        // will end up with the param inverted; documenting via
+        // rdfs:comment so users wiring host bypass know to invert
+        // their parameter sense or read the value from
+        // `pg:bypass`-style controls instead.
+        writeln!(f, "        lv2:designation lv2:enabled ;")?;
+        writeln!(
+            f,
+            "        rdfs:comment \"truce IS_BYPASS — `1` is bypassed (inverse of lv2:enabled)\" ;"
+        )?;
+    }
+    if p.flags.contains(ParamFlags::READONLY) {
+        writeln!(f, "        lv2:portProperty pprop:notAutomatic ;")?;
+    }
+    if p.flags.contains(ParamFlags::HIDDEN) {
+        writeln!(f, "        lv2:portProperty pprop:notOnGUI ;")?;
     }
     Ok(())
 }

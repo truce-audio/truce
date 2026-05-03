@@ -21,13 +21,14 @@ use std::ptr;
 use std::sync::Arc;
 
 use clap_sys::events::{
-    CLAP_CORE_EVENT_SPACE_ID, CLAP_EVENT_IS_LIVE, CLAP_EVENT_NOTE_OFF, CLAP_EVENT_NOTE_ON,
-    CLAP_EVENT_PARAM_GESTURE_BEGIN, CLAP_EVENT_PARAM_GESTURE_END, CLAP_EVENT_PARAM_MOD,
-    CLAP_EVENT_PARAM_VALUE, CLAP_EVENT_TRANSPORT, CLAP_TRANSPORT_HAS_BEATS_TIMELINE,
-    CLAP_TRANSPORT_HAS_SECONDS_TIMELINE, CLAP_TRANSPORT_HAS_TEMPO,
-    CLAP_TRANSPORT_HAS_TIME_SIGNATURE, CLAP_TRANSPORT_IS_LOOP_ACTIVE, CLAP_TRANSPORT_IS_PLAYING,
-    CLAP_TRANSPORT_IS_RECORDING, clap_event_header, clap_event_note, clap_event_param_gesture,
-    clap_event_param_value, clap_event_transport, clap_input_events, clap_output_events,
+    CLAP_CORE_EVENT_SPACE_ID, CLAP_EVENT_IS_LIVE, CLAP_EVENT_MIDI, CLAP_EVENT_NOTE_OFF,
+    CLAP_EVENT_NOTE_ON, CLAP_EVENT_PARAM_GESTURE_BEGIN, CLAP_EVENT_PARAM_GESTURE_END,
+    CLAP_EVENT_PARAM_MOD, CLAP_EVENT_PARAM_VALUE, CLAP_EVENT_TRANSPORT,
+    CLAP_TRANSPORT_HAS_BEATS_TIMELINE, CLAP_TRANSPORT_HAS_SECONDS_TIMELINE,
+    CLAP_TRANSPORT_HAS_TEMPO, CLAP_TRANSPORT_HAS_TIME_SIGNATURE, CLAP_TRANSPORT_IS_LOOP_ACTIVE,
+    CLAP_TRANSPORT_IS_PLAYING, CLAP_TRANSPORT_IS_RECORDING, clap_event_header, clap_event_midi,
+    clap_event_note, clap_event_param_gesture, clap_event_param_value, clap_event_transport,
+    clap_input_events, clap_output_events,
 };
 use clap_sys::ext::audio_ports::{
     CLAP_AUDIO_PORT_IS_MAIN, CLAP_EXT_AUDIO_PORTS, CLAP_PORT_MONO, CLAP_PORT_STEREO,
@@ -786,6 +787,117 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                         };
                         try_push(proc.out_events, &ev.header);
                     }
+                    // CLAP carries MIDI 1.0 control / channel events as
+                    // `CLAP_EVENT_MIDI` 3-byte packets. The host
+                    // demuxes them on the receiving side; we just
+                    // build the standard MIDI status byte and pass
+                    // the data bytes through.
+                    EventBody::ControlChange { channel, cc, value } => {
+                        let v = (value.clamp(0.0, 1.0) * 127.0).round() as u8;
+                        let ev = clap_event_midi {
+                            header: clap_event_header {
+                                size: std::mem::size_of::<clap_event_midi>() as u32,
+                                time: event.sample_offset,
+                                space_id: CLAP_CORE_EVENT_SPACE_ID,
+                                type_: CLAP_EVENT_MIDI,
+                                flags: 0,
+                            },
+                            port_index: 0,
+                            data: [0xB0 | (channel & 0x0F), *cc, v],
+                        };
+                        try_push(proc.out_events, &ev.header);
+                    }
+                    EventBody::Aftertouch {
+                        channel,
+                        note,
+                        pressure,
+                    } => {
+                        let p = (pressure.clamp(0.0, 1.0) * 127.0).round() as u8;
+                        let ev = clap_event_midi {
+                            header: clap_event_header {
+                                size: std::mem::size_of::<clap_event_midi>() as u32,
+                                time: event.sample_offset,
+                                space_id: CLAP_CORE_EVENT_SPACE_ID,
+                                type_: CLAP_EVENT_MIDI,
+                                flags: 0,
+                            },
+                            port_index: 0,
+                            data: [0xA0 | (channel & 0x0F), *note, p],
+                        };
+                        try_push(proc.out_events, &ev.header);
+                    }
+                    EventBody::ChannelPressure { channel, pressure } => {
+                        let p = (pressure.clamp(0.0, 1.0) * 127.0).round() as u8;
+                        let ev = clap_event_midi {
+                            header: clap_event_header {
+                                size: std::mem::size_of::<clap_event_midi>() as u32,
+                                time: event.sample_offset,
+                                space_id: CLAP_CORE_EVENT_SPACE_ID,
+                                type_: CLAP_EVENT_MIDI,
+                                flags: 0,
+                            },
+                            port_index: 0,
+                            data: [0xD0 | (channel & 0x0F), p, 0],
+                        };
+                        try_push(proc.out_events, &ev.header);
+                    }
+                    EventBody::PitchBend { channel, value } => {
+                        // 14-bit signed [-1, 1] → unsigned 0..16383 with
+                        // 8192 = center. LSB first per MIDI spec.
+                        let n = ((value.clamp(-1.0, 1.0) + 1.0) * 8191.5).round() as u16;
+                        let lsb = (n & 0x7F) as u8;
+                        let msb = ((n >> 7) & 0x7F) as u8;
+                        let ev = clap_event_midi {
+                            header: clap_event_header {
+                                size: std::mem::size_of::<clap_event_midi>() as u32,
+                                time: event.sample_offset,
+                                space_id: CLAP_CORE_EVENT_SPACE_ID,
+                                type_: CLAP_EVENT_MIDI,
+                                flags: 0,
+                            },
+                            port_index: 0,
+                            data: [0xE0 | (channel & 0x0F), lsb, msb],
+                        };
+                        try_push(proc.out_events, &ev.header);
+                    }
+                    EventBody::ProgramChange { channel, program } => {
+                        let ev = clap_event_midi {
+                            header: clap_event_header {
+                                size: std::mem::size_of::<clap_event_midi>() as u32,
+                                time: event.sample_offset,
+                                space_id: CLAP_CORE_EVENT_SPACE_ID,
+                                type_: CLAP_EVENT_MIDI,
+                                flags: 0,
+                            },
+                            port_index: 0,
+                            data: [0xC0 | (channel & 0x0F), *program, 0],
+                        };
+                        try_push(proc.out_events, &ev.header);
+                    }
+                    EventBody::ParamChange { id, value } => {
+                        let ev = clap_event_param_value {
+                            header: clap_event_header {
+                                size: std::mem::size_of::<clap_event_param_value>() as u32,
+                                time: event.sample_offset,
+                                space_id: CLAP_CORE_EVENT_SPACE_ID,
+                                type_: CLAP_EVENT_PARAM_VALUE,
+                                flags: 0,
+                            },
+                            param_id: *id,
+                            cookie: ptr::null_mut(),
+                            note_id: -1,
+                            port_index: 0,
+                            channel: -1,
+                            key: -1,
+                            value: *value,
+                        };
+                        try_push(proc.out_events, &ev.header);
+                    }
+                    // MIDI 2.0, ParamMod, Transport, and per-note
+                    // events: the plugin-output direction isn't
+                    // routinely emitted by truce plugins; leave them
+                    // as silent skips rather than building partial
+                    // encoders.
                     _ => {}
                 }
             }
@@ -1043,6 +1155,7 @@ unsafe extern "C" fn state_load<P: PluginExport>(
         };
 
         data.plugin.params().restore_values(&deserialized.params);
+        data.plugin.params().snap_smoothers();
 
         if let Some(extra) = &deserialized.extra {
             data.plugin.load_state(extra);

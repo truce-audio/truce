@@ -37,8 +37,11 @@ pub struct Vst3ParamDescriptor {
     pub group: *const c_char,
 }
 
-/// MIDI event passed from the C++ shim to Rust.
+/// MIDI event passed across the Rust ↔ C++ boundary in both
+/// directions (host → plugin via `events` / `num_events` and plugin →
+/// host via `cb_get_output_event`).
 #[repr(C)]
+#[derive(Copy, Clone)]
 pub struct Vst3MidiEvent {
     pub sample_offset: u32,
     pub status: u8,

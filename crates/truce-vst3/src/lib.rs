@@ -424,9 +424,15 @@ unsafe extern "C" fn cb_state_load<P: PluginExport>(
 ) {
     unsafe {
         let inst = &mut *(ctx as *mut Vst3Instance<P>);
+        // `slice::from_raw_parts(null, n)` for `n > 0` is UB. Treat
+        // `(null, *)` and `(_, 0)` the same as "host gave us nothing".
+        if data.is_null() || len == 0 {
+            return;
+        }
         let blob = slice::from_raw_parts(data, len as usize);
         if let Some(deserialized) = state::deserialize_state(blob, inst.plugin_id_hash) {
             inst.plugin.params().restore_values(&deserialized.params);
+            inst.plugin.params().snap_smoothers();
             if let Some(extra) = &deserialized.extra {
                 inst.plugin.load_state(extra);
             }
@@ -478,10 +484,67 @@ unsafe extern "C" fn cb_get_tail<P: PluginExport>(ctx: *mut std::ffi::c_void) ->
 // Output event callbacks
 // ---------------------------------------------------------------------------
 
+/// Map a truce `Event` body to a 3-byte VST3 MIDI packet. Returns
+/// `None` for event types that don't fit (MIDI 2.0, ParamChange,
+/// Transport, etc.). The output count and the index→event lookup
+/// share this filter so unsupported events are skipped cleanly
+/// rather than emitted as a zeroed packet (which earlier hosts
+/// interpreted as a `note 0` Note-Off).
+fn try_encode_vst3_midi(event: &Event) -> Option<Vst3MidiEvent> {
+    let (status, data1, data2) = match &event.body {
+        EventBody::NoteOn {
+            channel,
+            note,
+            velocity,
+        } => (0x90 | (channel & 0x0F), *note, (*velocity * 127.0) as u8),
+        EventBody::NoteOff {
+            channel,
+            note,
+            velocity,
+        } => (0x80 | (channel & 0x0F), *note, (*velocity * 127.0) as u8),
+        EventBody::ControlChange { channel, cc, value } => (
+            0xB0 | (channel & 0x0F),
+            *cc,
+            (value.clamp(0.0, 1.0) * 127.0) as u8,
+        ),
+        EventBody::Aftertouch {
+            channel,
+            note,
+            pressure,
+        } => (
+            0xA0 | (channel & 0x0F),
+            *note,
+            (pressure.clamp(0.0, 1.0) * 127.0) as u8,
+        ),
+        EventBody::ChannelPressure { channel, pressure } => (
+            0xD0 | (channel & 0x0F),
+            (pressure.clamp(0.0, 1.0) * 127.0) as u8,
+            0,
+        ),
+        EventBody::PitchBend { channel, value } => {
+            // 14-bit signed [-1, 1] → unsigned 0..16383, 8192 = center.
+            let n = ((value.clamp(-1.0, 1.0) + 1.0) * 8191.5).round() as u16;
+            (0xE0 | (channel & 0x0F), (n & 0x7F) as u8, ((n >> 7) & 0x7F) as u8)
+        }
+        EventBody::ProgramChange { channel, program } => (0xC0 | (channel & 0x0F), *program, 0),
+        _ => return None,
+    };
+    Some(Vst3MidiEvent {
+        sample_offset: event.sample_offset,
+        status,
+        data1,
+        data2,
+        _pad: 0,
+    })
+}
+
 unsafe extern "C" fn cb_get_output_event_count<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
     unsafe {
         let inst = &*(ctx as *mut Vst3Instance<P>);
-        inst.output_events.len() as u32
+        inst.output_events
+            .iter()
+            .filter(|e| try_encode_vst3_midi(e).is_some())
+            .count() as u32
     }
 }
 
@@ -492,40 +555,14 @@ unsafe extern "C" fn cb_get_output_event<P: PluginExport>(
 ) {
     unsafe {
         let inst = &*(ctx as *mut Vst3Instance<P>);
-        if let Some(event) = inst.output_events.get(index as usize) {
-            let midi = &mut *out;
-            midi.sample_offset = event.sample_offset;
-            match &event.body {
-                EventBody::NoteOn {
-                    channel,
-                    note,
-                    velocity,
-                } => {
-                    midi.status = 0x90 | (channel & 0x0F);
-                    midi.data1 = *note;
-                    midi.data2 = (*velocity * 127.0) as u8;
-                }
-                EventBody::NoteOff {
-                    channel,
-                    note,
-                    velocity,
-                } => {
-                    midi.status = 0x80 | (channel & 0x0F);
-                    midi.data1 = *note;
-                    midi.data2 = (*velocity * 127.0) as u8;
-                }
-                EventBody::ControlChange { channel, cc, value } => {
-                    midi.status = 0xB0 | (channel & 0x0F);
-                    midi.data1 = *cc;
-                    midi.data2 = (*value * 127.0) as u8;
-                }
-                _ => {
-                    midi.status = 0;
-                    midi.data1 = 0;
-                    midi.data2 = 0;
-                }
-            }
-            midi._pad = 0;
+        // Walk the filtered iterator until we hit the index-th encodable event.
+        if let Some(packet) = inst
+            .output_events
+            .iter()
+            .filter_map(try_encode_vst3_midi)
+            .nth(index as usize)
+        {
+            *out = packet;
         }
     }
 }

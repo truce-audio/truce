@@ -212,6 +212,10 @@ typedef struct {
     uint32_t version;
     uint32_t num_inputs;
     uint32_t num_outputs;
+    /* Param ID flagged as IS_BYPASS, or UINT32_MAX for "no bypass
+     * param". The shim handles effSetBypass (opcode 44) by writing
+     * 0/1 to this param so the host's master-bypass UI tracks it. */
+    uint32_t bypass_param_id;
 } Vst2PluginDescriptor;
 
 typedef struct {
@@ -233,10 +237,14 @@ typedef struct {
                      const Vst2MidiEventCompact* events, uint32_t num_events);
     uint32_t (*param_count)(void* ctx);
     void     (*param_get_descriptor)(void* ctx, uint32_t index, Vst2ParamDescriptor* out);
-    double   (*param_get_value)(void* ctx, uint32_t id);
-    void     (*param_set_value)(void* ctx, uint32_t id, double value);
-    uint32_t (*param_format_value)(void* ctx, uint32_t id, double value,
-                                    char* out, uint32_t out_len);
+    /* VST2 hosts work in normalized [0, 1] space. The Rust side
+     * routes through `ParamRange::denormalize` so non-linear tapers
+     * round-trip correctly. */
+    double   (*param_get_normalized)(void* ctx, uint32_t id);
+    void     (*param_set_normalized)(void* ctx, uint32_t id, double value);
+    /* Format the param's *current* plain value for display. */
+    uint32_t (*param_format_current)(void* ctx, uint32_t id,
+                                      char* out, uint32_t out_len);
     void (*state_save)(void* ctx, uint8_t** out_data, uint32_t* out_len);
     void (*state_load)(void* ctx, const uint8_t* data, uint32_t len);
     void (*state_free)(uint8_t* data, uint32_t len);

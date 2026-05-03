@@ -21,7 +21,7 @@ use truce_core::export::PluginExport;
 use truce_core::info::PluginCategory;
 use truce_core::process::ProcessContext;
 use truce_core::state;
-use truce_params::Params;
+use truce_params::{ParamFlags, Params};
 
 // ---------------------------------------------------------------------------
 // C ABI types (must match truce_aax_bridge.h)
@@ -42,6 +42,11 @@ pub struct TruceAaxDescriptor {
     pub is_instrument: i32,
     pub category: u32,
     pub has_editor: i32,
+    /// Param ID flagged as `IS_BYPASS`, or `u32::MAX` for "no bypass
+    /// param". The AAX C++ template registers this param under the
+    /// well-known `cDefaultMasterBypassID` so Pro Tools' master-bypass
+    /// UI tracks the param value.
+    pub bypass_param_id: u32,
 }
 
 #[repr(C)]
@@ -252,11 +257,17 @@ pub fn register_aax<P: PluginExport>() {
             is_instrument: is_instrument as i32,
             category,
             has_editor: 0, // filled below
+            bypass_param_id: u32::MAX, // filled below
         };
 
         // Build param info + check for editor
         let mut temp = P::create();
         let param_infos = temp.params().param_infos();
+        let bypass_param_id = param_infos
+            .iter()
+            .find(|pi| pi.flags.contains(ParamFlags::IS_BYPASS))
+            .map(|pi| pi.id)
+            .unwrap_or(u32::MAX);
         let mut params = Vec::with_capacity(param_infos.len());
         for pi in &param_infos {
             let cs = truce_core::wrapper::ParamCStrings::from_info(pi);
@@ -280,6 +291,7 @@ pub fn register_aax<P: PluginExport>() {
         let mut desc = descriptor;
         desc.num_params = params.len() as u32;
         desc.has_editor = has_editor as i32;
+        desc.bypass_param_id = bypass_param_id;
 
         StaticInfo {
             descriptor: desc,
@@ -780,9 +792,15 @@ unsafe fn finalize_blob(blob: &[u8], out_data: *mut *mut u8) -> u32 {
 
 pub unsafe fn _load_state<P: PluginExport>(ctx: *mut std::ffi::c_void, data: *const u8, len: u32) {
     let inst = unsafe { &mut *(ctx as *mut AaxInstance<P>) };
+    // `slice::from_raw_parts(null, n)` for `n > 0` is UB. Treat
+    // `(null, *)` and `(_, 0)` the same as "host gave us nothing".
+    if data.is_null() || len == 0 {
+        return;
+    }
     let blob = unsafe { slice::from_raw_parts(data, len as usize) };
     if let Some(deserialized) = state::deserialize_state(blob, inst.plugin_id_hash) {
         inst.plugin.params().restore_values(&deserialized.params);
+        inst.plugin.params().snap_smoothers();
         if let Some(extra) = &deserialized.extra {
             inst.plugin.load_state(extra);
         }

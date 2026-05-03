@@ -15,6 +15,10 @@ typedef struct {
     uint32_t version;
     uint32_t num_inputs;
     uint32_t num_outputs;
+    /* Param ID flagged as IS_BYPASS, or UINT32_MAX for "no bypass param".
+     * The shim routes kAudioUnitProperty_BypassEffect get/set through
+     * this ID so the host's master-bypass UI tracks the param value. */
+    uint32_t bypass_param_id;
 } AuPluginDescriptor;
 
 typedef struct {
