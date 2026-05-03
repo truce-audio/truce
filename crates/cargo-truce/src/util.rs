@@ -113,21 +113,36 @@ pub(crate) fn set_debug_profile(debug: bool) {
     set_build_profile(if debug { "debug" } else { "release" });
 }
 
-/// Set a process-wide env var for downstream `cargo build` invocations
-/// to inherit. Wraps the 2024-edition `unsafe std::env::set_var` so
-/// the soundness comment lives in one place.
+/// Filename of the build-config sidecar `cargo-truce` writes into the
+/// workspace's target directory before invoking `cargo build`.
+/// `truce-build`'s build script reads this file directly via
+/// `cargo:rerun-if-changed=<path>` — replaces the older
+/// `set_build_env` → process-env → `cargo:rerun-if-env-changed` chain
+/// the audit flagged as fragile (see open-issues.md).
+pub(crate) const HOT_RELOAD_CONFIG_FILE: &str = ".truce-build-config";
+
+/// Write the build-config sidecar that `truce-build`'s build.rs reads
+/// to decide which target subdir (`debug` / `release` / custom) the
+/// installed shell binary should look up its hot-reload logic dylib in.
 ///
-/// Soundness: `set_var` is `unsafe` because it mutates process-wide env
-/// state without synchronization, and Rust can't see other threads
-/// reading the same map (e.g. cpal / coreaudio threads on macOS,
-/// allocator threads on Linux). `cargo truce` reaches this helper from
-/// the install / build paths, both of which run only on the main
-/// thread before any worker thread spawns — at the call site we hold
-/// no concurrent reader. New callers must satisfy the same invariant.
-pub(crate) fn set_build_env(key: &str, value: &str) {
-    unsafe {
-        std::env::set_var(key, value);
-    }
+/// File format is one `key=value` per line — kept deliberately simple
+/// (not TOML) so `truce-build` doesn't need a TOML parser. Today there
+/// is one key (`logic_profile`); new keys append cleanly.
+///
+/// The file lives in `<target_dir>/.truce-build-config`. Cargo cleans
+/// it via `cargo clean`; `truce-build` rebuilds the consumer crate
+/// when the file changes via `cargo:rerun-if-changed=`.
+pub(crate) fn write_hot_reload_config(root: &Path, logic_profile: &str) -> Result<(), BoxErr> {
+    let dir = target_dir(root);
+    fs::create_dir_all(&dir).map_err(|e| -> BoxErr {
+        format!("failed to create {}: {e}", dir.display()).into()
+    })?;
+    let path = dir.join(HOT_RELOAD_CONFIG_FILE);
+    let body = format!("logic_profile={logic_profile}\n");
+    fs::write(&path, body).map_err(|e| -> BoxErr {
+        format!("failed to write {}: {e}", path.display()).into()
+    })?;
+    Ok(())
 }
 
 /// Preflight check for `cargo truce install --shell` / `build --shell`:

@@ -281,6 +281,16 @@ impl NativeLoader {
         self.reload_pending.load(Ordering::Relaxed)
     }
 
+    /// Monotonic counter of successful (or attempted) reloads — bumps
+    /// once per `copy_versioned()` invocation, which precedes every
+    /// candidate build. Two consumers (audio path + GUI watcher) that
+    /// share the same `NativeLoader` use this to detect "the other
+    /// side already reloaded" without having to drive reload
+    /// themselves.
+    pub fn load_counter(&self) -> u64 {
+        self.load_counter
+    }
+
     fn copy_versioned(&mut self) -> Result<PathBuf, std::io::Error> {
         self.load_counter += 1;
         let ext = self
@@ -362,25 +372,34 @@ fn file_mtime(path: &std::path::Path) -> SystemTime {
         .unwrap_or(SystemTime::UNIX_EPOCH)
 }
 
-/// Simple CRC32 of a file's contents (no external dependency).
+/// Streaming CRC32 fingerprint of `path`'s contents.
+///
+/// Reads through an 8 KiB buffer instead of slurping the whole dylib
+/// into memory. A 5–20 MB dylib, polled every 500 ms, used to allocate
+/// + free its full contents on every poll cycle; this keeps the working
+/// set bounded and lets the kernel page-cache do the actual I/O work.
+///
+/// Uses `crc32fast`, which is already in the workspace dep graph
+/// transitively (via `png`/`image` etc.) and is roughly 30× faster
+/// than the table-free byte-at-a-time implementation we previously
+/// inlined to avoid adding an explicit dep.
 fn crc32_file(path: &std::path::Path) -> u32 {
-    let Ok(data) = std::fs::read(path) else {
+    use std::io::Read;
+    let Ok(mut file) = std::fs::File::open(path) else {
         return 0;
     };
-    crc32(&data)
-}
-
-fn crc32(data: &[u8]) -> u32 {
-    let mut crc: u32 = 0xFFFFFFFF;
-    for &byte in data {
-        crc ^= byte as u32;
-        for _ in 0..8 {
-            if crc & 1 != 0 {
-                crc = (crc >> 1) ^ 0xEDB88320;
-            } else {
-                crc >>= 1;
-            }
+    let mut hasher = crc32fast::Hasher::new();
+    let mut buf = [0u8; 8 * 1024];
+    loop {
+        match file.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => hasher.update(&buf[..n]),
+            // Treat partial-read interruption / I/O failure the same way
+            // the old whole-file `read()` did — return 0 and let the
+            // caller retry on the next poll. The compiler's mid-write
+            // window is the common case here.
+            Err(_) => return 0,
         }
     }
-    !crc
+    hasher.finalize()
 }

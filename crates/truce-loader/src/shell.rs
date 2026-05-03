@@ -39,6 +39,11 @@ macro_rules! hot_debug {
 pub struct HotShell<P: Params> {
     pub params: Arc<P>,
     loader: Arc<Mutex<NativeLoader>>,
+    /// Path to the dylib being watched. Owned by `loader` for live
+    /// use; kept on the struct as the construction-time handle so a
+    /// future reload-from-different-path API has somewhere to read
+    /// from. `NativeLoader` already stores its own copy.
+    #[allow(dead_code)]
     dylib_path: PathBuf,
     /// Meter values written by DSP, read by GUI.
     meters: Arc<[AtomicU32; 256]>,
@@ -205,8 +210,6 @@ impl<P: Params + 'static> Plugin for HotShell<P> {
 
     fn editor(&mut self) -> Option<Box<dyn Editor>> {
         hot_debug!("[truce-hot] editor() called");
-        let params_ptr = Arc::as_ptr(&self.params) as *const ();
-        let gui_loader = NativeLoader::new(self.dylib_path.clone(), params_ptr);
 
         // Custom editor path (egui, iced)
         if let Some(custom) = self.try_custom_editor() {
@@ -214,7 +217,14 @@ impl<P: Params + 'static> Plugin for HotShell<P> {
             return Some(Box::new(HotEditor::<P>::new_custom(custom)));
         }
 
-        // Built-in editor path (layout + GPU)
+        // Built-in editor path (layout + GPU). Shares `self.loader`
+        // with the audio path — replaces an earlier "spawn a second
+        // NativeLoader for the GUI" design that could load a newer
+        // version of the dylib for rendering than the one the audio
+        // thread was processing through. Audit 2026-05-02 flagged the
+        // skew; this codepath unifies on the single shared loader,
+        // and the watcher uses `try_lock` so the audio thread keeps
+        // priority on the mutex.
         let builtin = self.try_builtin_editor()?;
         hot_debug!("[truce-hot] using builtin editor (GPU path)");
         let inner = Arc::new(std::sync::Mutex::new(builtin));
@@ -222,7 +232,7 @@ impl<P: Params + 'static> Plugin for HotShell<P> {
         Some(Box::new(HotEditor::new_builtin(
             gpu,
             inner,
-            gui_loader,
+            Arc::clone(&self.loader),
             Arc::clone(&self.params),
         )))
     }
@@ -281,72 +291,130 @@ impl<P: Params + 'static> HotEditor<P> {
     fn new_builtin(
         gpu: truce_gpu::GpuEditor<P>,
         inner: Arc<std::sync::Mutex<truce_gui::editor::BuiltinEditor<P>>>,
-        mut gui_loader: NativeLoader,
+        loader: Arc<Mutex<NativeLoader>>,
         params: Arc<P>,
     ) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
 
         // Spawn a background thread that watches for dylib changes
-        // and swaps the BuiltinEditor inside the shared mutex.
+        // and swaps the `BuiltinEditor` inside the shared mutex.
+        //
+        // The watcher shares the audio-path `NativeLoader` so the
+        // version the GUI renders is always the version the audio
+        // path is running. Lock contention is handled with
+        // `try_lock` — audio thread always wins, the watcher backs
+        // off and retries on the next 500 ms tick.
+        //
+        // Last-seen `load_counter` is tracked locally so the watcher
+        // can also detect *audio-driven* reloads (audio's `process()`
+        // calls `reload()` itself when `is_reload_pending`). When the
+        // counter advances without the watcher having driven reload,
+        // it just rebuilds the GUI to match.
         let inner_for_thread = Arc::clone(&inner);
         let params_for_thread = Arc::clone(&params);
+        let loader_for_thread = Arc::clone(&loader);
         let stop_flag = Arc::clone(&stop);
         let watcher = std::thread::Builder::new()
             .name("truce-gui-reload".into())
             .spawn(move || {
                 hot_debug!("[truce-gui-reload] watcher thread started");
+                let mut last_seen_counter: u64 = 0;
+                if let Some(guard) = loader_for_thread.try_lock() {
+                    last_seen_counter = guard.load_counter();
+                }
                 loop {
                     std::thread::sleep(std::time::Duration::from_millis(500));
                     if stop_flag.load(Ordering::Relaxed) {
                         hot_debug!("[truce-gui-reload] watcher thread stopping (editor dropped)");
                         return;
                     }
-                    if gui_loader.is_reload_pending() {
-                        hot_debug!("[truce-gui-reload] reload pending, attempting reload...");
-                        if gui_loader.reload() {
+
+                    // Take the shared loader lock with `try_lock`. If
+                    // audio has the lock, fall through to the next
+                    // tick — the dylib state isn't going anywhere.
+                    let Some(mut guard) = loader_for_thread.try_lock() else {
+                        hot_debug!(
+                            "[truce-gui-reload] loader busy (audio holds lock); retrying"
+                        );
+                        continue;
+                    };
+
+                    let mut new_layout = None;
+
+                    if guard.load_counter() != last_seen_counter {
+                        // Audio thread already reloaded between ticks —
+                        // just resync the GUI layout to the new version.
+                        hot_debug!(
+                            "[truce-gui-reload] audio reloaded (counter {} → {}); resyncing GUI",
+                            last_seen_counter,
+                            guard.load_counter()
+                        );
+                        last_seen_counter = guard.load_counter();
+                        if let Some(plugin) = guard.plugin() {
+                            new_layout = Some(plugin.layout());
+                        }
+                    } else if guard.is_reload_pending() {
+                        // Watcher drives reload itself when audio is
+                        // idle (no `process()` calls — between songs,
+                        // standalone host paused, etc.).
+                        hot_debug!("[truce-gui-reload] reload pending, attempting reload");
+                        if guard.reload() {
                             hot_debug!("[truce-gui-reload] dylib reloaded successfully");
-                            if let Some(plugin) = gui_loader.plugin() {
-                                let layout = plugin.layout();
-                                hot_debug!(
-                                    "[truce-gui-reload] layout: {}x{}",
-                                    layout.width,
-                                    layout.height
-                                );
-                                if layout.width > 0 && layout.height > 0 {
-                                    let new_builtin = truce_gui::editor::BuiltinEditor::new_grid(
-                                        Arc::clone(&params_for_thread),
-                                        layout,
-                                    );
-                                    if let Ok(mut guard) = inner_for_thread.lock() {
-                                        let had_ctx = guard.take_context();
-                                        hot_debug!(
-                                            "[truce-gui-reload] old editor had context: {}",
-                                            had_ctx.is_some()
-                                        );
-                                        *guard = new_builtin;
-                                        if let Some(ctx) = had_ctx {
-                                            guard.set_context(ctx);
-                                            hot_debug!(
-                                                "[truce-gui-reload] context restored on new editor"
-                                            );
-                                        } else {
-                                            hot_debug!(
-                                                "[truce-gui-reload] WARNING: no context to restore!"
-                                            );
-                                        }
-                                    } else {
-                                        hot_debug!(
-                                            "[truce-gui-reload] ERROR: failed to lock inner mutex"
-                                        );
-                                    }
-                                } else {
-                                    hot_debug!("[truce-gui-reload] skipping: layout has zero size");
-                                }
+                            last_seen_counter = guard.load_counter();
+                            if let Some(plugin) = guard.plugin() {
+                                new_layout = Some(plugin.layout());
                             } else {
                                 hot_debug!("[truce-gui-reload] ERROR: no plugin after reload");
                             }
                         } else {
                             hot_debug!("[truce-gui-reload] reload failed");
+                        }
+                    }
+
+                    // Release the loader lock before touching the
+                    // BuiltinEditor mutex so the audio thread can
+                    // resume process() the moment we hand the layout
+                    // off.
+                    drop(guard);
+
+                    if let Some(layout) = new_layout {
+                        hot_debug!(
+                            "[truce-gui-reload] layout: {}x{}",
+                            layout.width,
+                            layout.height
+                        );
+                        if layout.width == 0 || layout.height == 0 {
+                            hot_debug!("[truce-gui-reload] skipping: layout has zero size");
+                            continue;
+                        }
+                        let new_builtin = truce_gui::editor::BuiltinEditor::new_grid(
+                            Arc::clone(&params_for_thread),
+                            layout,
+                        );
+                        match inner_for_thread.lock() {
+                            Ok(mut g) => {
+                                let had_ctx = g.take_context();
+                                hot_debug!(
+                                    "[truce-gui-reload] old editor had context: {}",
+                                    had_ctx.is_some()
+                                );
+                                *g = new_builtin;
+                                if let Some(ctx) = had_ctx {
+                                    g.set_context(ctx);
+                                    hot_debug!(
+                                        "[truce-gui-reload] context restored on new editor"
+                                    );
+                                } else {
+                                    hot_debug!(
+                                        "[truce-gui-reload] WARNING: no context to restore!"
+                                    );
+                                }
+                            }
+                            Err(_) => {
+                                hot_debug!(
+                                    "[truce-gui-reload] ERROR: failed to lock inner mutex"
+                                );
+                            }
                         }
                     }
                 }

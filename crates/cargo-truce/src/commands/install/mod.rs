@@ -157,14 +157,17 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
     let mut extra_features = Vec::new();
     if shell_mode {
         extra_features.push("shell");
-        // Set in the process env so every child cargo build inherits
-        // it. truce-build's `emit_plugin_env()` reads the var and
-        // re-emits it via `cargo:rustc-env=`, which bakes it into the
-        // shell binary as a compile-time constant. The shell's runtime
-        // dylib_path() lookup uses `option_env!("TRUCE_LOGIC_PROFILE")`
-        // to know which target subdir holds the logic dylib. The
-        // 2024-edition unsafety is documented once on `set_build_env`.
-        crate::set_build_env("TRUCE_LOGIC_PROFILE", logic_profile);
+        // Drop the value into a sidecar file at `<target>/.truce-build-config`
+        // that `truce-build`'s build script reads via
+        // `cargo:rerun-if-changed=`. Replaces an earlier
+        // `set_build_env("TRUCE_LOGIC_PROFILE", …)` env-baking chain
+        // (process-env → `cargo:rerun-if-env-changed` → `option_env!`)
+        // that the audit flagged as fragile because cargo's
+        // env-rerun semantics didn't always invalidate the bake.
+        // The file-based path uses the same `cargo:rustc-env=` emission
+        // afterwards, so the runtime `option_env!("TRUCE_LOGIC_PROFILE")`
+        // lookup in the shell binary keeps working unchanged.
+        crate::write_hot_reload_config(&root, logic_profile)?;
     }
 
     // --- Build ---

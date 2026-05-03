@@ -7,6 +7,11 @@ description = "Hot-reloadable plugin logic for truce (native ABI, dylib loading)
 
 [dependencies]
 log = "0.4"
+# Already in the workspace dep graph via image / png; pulling it as a
+# direct dep so the file-fingerprint path uses the SIMD-accelerated
+# implementation (~30× faster than the manual table-free CRC32 we
+# previously inlined for "no extra dep" reasons).
+crc32fast = "1.5"
 truce-core = { workspace = true }
 truce-gui = { workspace = true }
 truce-params = { workspace = true }

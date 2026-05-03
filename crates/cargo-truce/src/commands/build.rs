@@ -88,11 +88,14 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
         // "profile `shell` is not declared" message.
         crate::verify_shell_profile_declared()?;
         crate::set_build_profile("shell");
-        // Bake the logic profile into the shell binary via truce-build
-        // → `cargo:rustc-env=TRUCE_LOGIC_PROFILE=...`. The shell's
-        // runtime dylib lookup uses option_env! to read it. The
-        // 2024-edition unsafety is documented once on `set_build_env`.
-        crate::set_build_env("TRUCE_LOGIC_PROFILE", logic_profile);
+        // Drop the logic profile into the workspace's
+        // `<target>/.truce-build-config` sidecar instead of process
+        // env. `truce-build`'s build script reads the file (with
+        // `cargo:rerun-if-changed`) and re-emits it as
+        // `cargo:rustc-env=TRUCE_LOGIC_PROFILE=...` so the shell
+        // binary's runtime `option_env!` lookup keeps working.
+        // Replaces the env-chain the audit flagged as fragile.
+        crate::write_hot_reload_config(&crate::project_root(), logic_profile)?;
     } else {
         crate::set_debug_profile(debug);
     }

@@ -6366,6 +6366,7 @@ dependencies = [
 name = "truce-loader"
 version = "0.21.1"
 dependencies = [
+ "crc32fast",
  "libloading 0.9.0",
  "log",
  "parking_lot 0.12.5",
