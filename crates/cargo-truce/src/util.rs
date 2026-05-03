@@ -1201,6 +1201,39 @@ pub(crate) fn which_exe(name: &str) -> Option<PathBuf> {
     None
 }
 
+/// Locate `name` on `$PATH` (or `%PATH%` on Windows) without shelling
+/// out to `which`. Returns the first matching file in the path
+/// directory order, or `None` if not found.
+///
+/// On Windows, falls back to appending `.exe` when the bare name
+/// doesn't hit so callers can pass either `"cl"` or `"cl.exe"` and get
+/// the same answer.
+///
+/// Used by `cargo truce doctor` for tool checks. We can't call
+/// `Command::new("which")` because Windows doesn't ship one (the
+/// closest equivalent is `where.exe`, but it has different output
+/// formatting and isn't on every minimal install — Server Core,
+/// containers, sandboxed CI). Doing the PATH walk ourselves keeps
+/// behavior identical across platforms.
+pub(crate) fn find_on_path(name: &str) -> Option<PathBuf> {
+    let path = env::var_os("PATH")?;
+    let exts: &[&str] = if cfg!(windows) { &["", ".exe"] } else { &[""] };
+    for dir in env::split_paths(&path) {
+        for ext in exts {
+            let mut candidate = dir.join(name);
+            if !ext.is_empty() {
+                let mut s = candidate.into_os_string();
+                s.push(ext);
+                candidate = PathBuf::from(s);
+            }
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
 /// Locate `cmake.exe`. Tries `%PATH%` first, then the CMake that ships with
 /// Visual Studio's "C++ CMake tools" component, then the standalone installer
 /// default. Returns `None` if none are present.

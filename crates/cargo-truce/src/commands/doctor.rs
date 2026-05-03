@@ -12,8 +12,8 @@ use crate::rustup_has_target;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use crate::tag_info;
 use crate::{
-    Res, check_cmd, dirs, load_config, project_root, resolve_aax_sdk_path, tag_fail, tag_ok,
-    tag_warn,
+    Res, check_cmd, dirs, find_on_path, load_config, project_root, resolve_aax_sdk_path, tag_fail,
+    tag_ok, tag_warn,
 };
 #[cfg(target_os = "windows")]
 use crate::{
@@ -472,16 +472,17 @@ fn check_which_with_env(name: &str, env_var: Option<&str>) {
             tag_warn()
         );
     }
-    match Command::new("which").arg(name).output() {
-        Ok(o) if o.status.success() => {
-            let path = String::from_utf8_lossy(&o.stdout).trim().to_string();
-            eprintln!("    {} {name}: {path}", tag_ok());
-        }
-        _ => {
-            let hint = env_var
-                .map(|v| format!(" (or set ${v} in shell or .cargo/config.toml [env])"))
-                .unwrap_or_default();
-            eprintln!("    {} {name}: not found{hint}", tag_warn());
-        }
+    // PATH lookup is done in-process: Windows has no `which` binary
+    // (and `where.exe` isn't on every minimal install), so doing the
+    // walk ourselves keeps doctor's behavior identical across
+    // platforms. `find_on_path` appends `.exe` on Windows so callers
+    // pass a bare tool name.
+    if let Some(path) = find_on_path(name) {
+        eprintln!("    {} {name}: {}", tag_ok(), path.display());
+    } else {
+        let hint = env_var
+            .map(|v| format!(" (or set ${v} in shell or .cargo/config.toml [env])"))
+            .unwrap_or_default();
+        eprintln!("    {} {name}: not found{hint}", tag_warn());
     }
 }
