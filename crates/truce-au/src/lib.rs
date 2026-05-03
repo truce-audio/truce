@@ -511,9 +511,20 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
             let params_for_fmt = params.clone();
             let params_for_ctx = params.clone();
             let transport_slot = inst.transport_slot.clone();
+            let ctx_for_begin = ctx_raw;
+            let ctx_for_end = ctx_raw;
             let context = PluginContext::from_closures(
                 ClosureBridge {
-                    begin_edit: Box::new(|_id| {}),
+                    begin_edit: Box::new(move |id| {
+                        // Broadcasts kAudioUnitEvent_BeginParameterChangeGesture
+                        // via AUEventListenerNotify so hosts (Logic, Live,
+                        // Reaper) group subsequent set_param calls into one
+                        // undo step and one automation gesture.
+                        truce_au_v2_host_begin_param_gesture(
+                            ctx_for_begin.as_ptr() as *mut std::ffi::c_void,
+                            id,
+                        );
+                    }),
                     set_param: Box::new(move |id, value| {
                         params_for_set.set_normalized(id, value);
                         // Notify AU host of the parameter change
@@ -524,7 +535,15 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                             plain,
                         );
                     }),
-                    end_edit: Box::new(|_id| {}),
+                    end_edit: Box::new(move |id| {
+                        // Closes the gesture started by begin_edit so the
+                        // host commits the undo group / stops automation
+                        // recording.
+                        truce_au_v2_host_end_param_gesture(
+                            ctx_for_end.as_ptr() as *mut std::ffi::c_void,
+                            id,
+                        );
+                    }),
                     request_resize: Box::new(|_w, _h| false),
                     get_param: Box::new(move |id| params_for_get.get_normalized(id).unwrap_or(0.0)),
                     get_param_plain: Box::new(move |id| {
@@ -582,6 +601,8 @@ unsafe extern "C" {
     fn malloc(size: usize) -> *mut std::ffi::c_void;
     fn free(ptr: *mut std::ffi::c_void);
     fn truce_au_v2_host_set_param(ctx: *mut std::ffi::c_void, param_id: u32, value: f32);
+    fn truce_au_v2_host_begin_param_gesture(ctx: *mut std::ffi::c_void, param_id: u32);
+    fn truce_au_v2_host_end_param_gesture(ctx: *mut std::ffi::c_void, param_id: u32);
 }
 
 unsafe fn libc_malloc(size: usize) -> *mut std::ffi::c_void {

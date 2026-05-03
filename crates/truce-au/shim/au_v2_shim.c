@@ -126,12 +126,63 @@ static TruceAUv2 *au_ctx_map_lookup(void *ctx) {
     return NULL;
 }
 
-/* Called from Rust GUI callback to notify the AU host of a parameter change. */
+/* Build the AudioUnitEvent the gesture / value-change helpers all share. */
+static void fill_param_event(AudioUnitEvent *event, AudioUnit unit,
+                             uint32_t param_id, AudioUnitEventType type) {
+    memset(event, 0, sizeof(*event));
+    event->mEventType = type;
+    event->mArgument.mParameter.mAudioUnit = unit;
+    event->mArgument.mParameter.mParameterID = param_id;
+    event->mArgument.mParameter.mScope = kAudioUnitScope_Global;
+    event->mArgument.mParameter.mElement = 0;
+}
+
+/* Called from Rust GUI callback to notify the AU host of a parameter change.
+ *
+ * Sets the value via `AudioUnitSetParameter` (which updates the host's
+ * cached value) and broadcasts a `kAudioUnitEvent_ParameterValueChange`
+ * via `AUEventListenerNotify` so any registered AUEventListener sees
+ * the change and records automation. `AudioUnitSetParameter` alone does
+ * not synthesise the listener notification — hosts that thin / record
+ * automation rely on the explicit broadcast. */
 void truce_au_v2_host_set_param(void *ctx, uint32_t param_id, float value) {
     TruceAUv2 *inst = au_ctx_map_lookup(ctx);
     if (!inst || !inst->componentInstance) return;
     AudioUnitSetParameter(inst->componentInstance, param_id,
                           kAudioUnitScope_Global, 0, value, 0);
+    AudioUnitEvent event;
+    fill_param_event(&event, inst->componentInstance, param_id,
+                     kAudioUnitEvent_ParameterValueChange);
+    AUEventListenerNotify(NULL, NULL, &event);
+}
+
+/* Called from Rust GUI callback when the user starts dragging a control.
+ *
+ * Posts `kAudioUnitEvent_BeginParameterChangeGesture` so hosts (Logic,
+ * Live, Reaper) group the subsequent value changes into a single undo
+ * step and start gesture-aware automation recording. Without this, every
+ * sample of a knob drag becomes a separate undo entry. */
+void truce_au_v2_host_begin_param_gesture(void *ctx, uint32_t param_id) {
+    TruceAUv2 *inst = au_ctx_map_lookup(ctx);
+    if (!inst || !inst->componentInstance) return;
+    AudioUnitEvent event;
+    fill_param_event(&event, inst->componentInstance, param_id,
+                     kAudioUnitEvent_BeginParameterChangeGesture);
+    AUEventListenerNotify(NULL, NULL, &event);
+}
+
+/* Called from Rust GUI callback when the user releases a control.
+ *
+ * Posts `kAudioUnitEvent_EndParameterChangeGesture` to close the
+ * gesture started by `..._begin_param_gesture`. Hosts use the End event
+ * to commit the undo group and stop the automation-recording window. */
+void truce_au_v2_host_end_param_gesture(void *ctx, uint32_t param_id) {
+    TruceAUv2 *inst = au_ctx_map_lookup(ctx);
+    if (!inst || !inst->componentInstance) return;
+    AudioUnitEvent event;
+    fill_param_event(&event, inst->componentInstance, param_id,
+                     kAudioUnitEvent_EndParameterChangeGesture);
+    AUEventListenerNotify(NULL, NULL, &event);
 }
 
 static int is_instrument(void) {

@@ -21,11 +21,13 @@
 //!
 //! # Scope
 //!
-//! Milestone 1 supports knob/slider manipulation end-to-end. Meters,
-//! `get_state`/`set_state`, and `begin_edit`/`end_edit` gestures are no-ops.
-//! Widget out-parameter currently returns the host-provided PARENT
-//! (pragmatic for Ardour/Jalv which accept it; stricter X11UI / CocoaUI
-//! hosts may want the actual child window / view — follow-up).
+//! Milestone 1 supports knob/slider manipulation end-to-end.
+//! `begin_edit`/`end_edit` gestures forward to the host's `ui:touch`
+//! feature when present (Ardour, Reaper Linux); hosts without it (jalv)
+//! simply collapse the gestures to no-ops. `get_state`/`set_state` are
+//! still no-ops. Widget out-parameter currently returns the host-supplied
+//! PARENT (pragmatic for Ardour/Jalv which accept it; stricter X11UI /
+//! CocoaUI hosts may want the actual child window / view — follow-up).
 
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::marker::PhantomData;
@@ -87,6 +89,7 @@ unsafe impl Sync for Lv2UiDescriptor {}
 
 pub const LV2_UI__PARENT: &str = "http://lv2plug.in/ns/extensions/ui#parent";
 pub const LV2_UI__RESIZE: &str = "http://lv2plug.in/ns/extensions/ui#resize";
+pub const LV2_UI__TOUCH: &str = "http://lv2plug.in/ns/extensions/ui#touch";
 
 /// Layout of the host-provided `ui:resize` feature. Data pointer in the
 /// `LV2_Feature` is an `&LV2UI_Resize`. The UI calls `ui_resize` with
@@ -97,6 +100,19 @@ pub struct Lv2UiResize {
     pub handle: *mut c_void,
     pub ui_resize:
         Option<unsafe extern "C" fn(handle: *mut c_void, width: i32, height: i32) -> i32>,
+}
+
+/// Layout of the host-provided `ui:touch` feature. Data pointer in the
+/// `LV2_Feature` is an `&LV2UI_Touch`. The UI calls `touch` with
+/// `grabbed = true` when the user starts dragging a control (begin
+/// gesture) and `grabbed = false` when they release (end gesture).
+/// Hosts that record automation use the gesture window to thin samples
+/// and group the changes into a single undo step.
+#[repr(C)]
+pub struct Lv2UiTouch {
+    pub handle: *mut c_void,
+    pub touch:
+        Option<unsafe extern "C" fn(handle: *mut c_void, port_index: u32, grabbed: bool)>,
 }
 
 // ---------------------------------------------------------------------------
@@ -242,6 +258,7 @@ pub unsafe fn instantiate_ui<P: PluginExport>(
             write_function,
             controller,
             transport_slot.clone(),
+            parsed.touch,
         );
 
         // Record the editor's preferred size BEFORE `open()` — hosts that
@@ -501,6 +518,12 @@ struct ParsedFeatures {
     /// `ui:resize` — optional. `None` when the host doesn't expose it
     /// (Reaper Linux does, Carla doesn't, etc.).
     resize: Option<&'static Lv2UiResize>,
+    /// `ui:touch` — optional. `None` when the host doesn't expose it
+    /// (Reaper Linux + Ardour do, jalv doesn't). When present, the
+    /// editor's `begin_edit` / `end_edit` closures forward to
+    /// `touch(handle, port_index, grabbed)` so hosts can group
+    /// automation samples into a single gesture.
+    touch: Option<&'static Lv2UiTouch>,
     /// Host URID:map handle + map function, or `(null, None)` if the
     /// feature is absent. Threaded into `UridMap::from_host` so the
     /// intern step doesn't re-walk the array.
@@ -512,6 +535,7 @@ unsafe fn parse_features(features: *const *const LV2Feature) -> ParsedFeatures {
     let mut out = ParsedFeatures {
         parent: None,
         resize: None,
+        touch: None,
         urid_map_handle: std::ptr::null_mut(),
         urid_map_fn: None,
     };
@@ -521,6 +545,7 @@ unsafe fn parse_features(features: *const *const LV2Feature) -> ParsedFeatures {
         }
         let parent_uri = CString::new(LV2_UI__PARENT).unwrap();
         let resize_uri = CString::new(LV2_UI__RESIZE).unwrap();
+        let touch_uri = CString::new(LV2_UI__TOUCH).unwrap();
         let map_uri = CString::new(crate::types::LV2_URID__MAP).unwrap();
 
         let mut i = 0usize;
@@ -539,6 +564,11 @@ unsafe fn parse_features(features: *const *const LV2Feature) -> ParsedFeatures {
                     && !feat.data.is_null()
                 {
                     out.resize = Some(&*(feat.data as *const Lv2UiResize));
+                } else if out.touch.is_none()
+                    && feat_uri == touch_uri.as_c_str()
+                    && !feat.data.is_null()
+                {
+                    out.touch = Some(&*(feat.data as *const Lv2UiTouch));
                 } else if out.urid_map_fn.is_none() && feat_uri == map_uri.as_c_str() {
                     let map_feat = feat.data as *const UridMapFeature;
                     if !map_feat.is_null() {
@@ -733,12 +763,18 @@ fn build_editor_context<P: PluginExport>(
     write_function: Lv2UiWriteFn,
     controller: Lv2UiController,
     transport_slot: Arc<TransportSlot>,
+    touch: Option<&'static Lv2UiTouch>,
 ) -> PluginContext {
     // Clone slot metadata into each closure — small vec, cheap.
     let slots_for_set: Vec<(u32, u32, truce_params::ParamRange)> = slots
         .iter()
         .map(|s| (s.id, s.port_index, s.range.clone()))
         .collect();
+    // Begin/end_edit only need (id → port_index); a thinner clone keeps
+    // the gesture closures from holding the full ParamRange.
+    let slots_for_begin: Vec<(u32, u32)> =
+        slots.iter().map(|s| (s.id, s.port_index)).collect();
+    let slots_for_end = slots_for_begin.clone();
     let controller_raw = controller as usize;
 
     let params_get = params.clone();
@@ -753,10 +789,39 @@ fn build_editor_context<P: PluginExport>(
     // raw-pointer Send issues.
     let write_set = write_function;
 
+    // Resolve the touch fn pointer + handle once, outside the closures,
+    // so neither closure has to dereference the `&'static Lv2UiTouch`
+    // through the captured `Option<&...>`. `touch_fn = None` collapses
+    // both gesture closures into no-ops without runtime branching.
+    //
+    // `Lv2UiTouch::touch` is a host-supplied extern "C" fn — Send-safe by
+    // ABI. `handle` is a host pointer we never deref ourselves; it's
+    // forwarded back as the first arg to the host callback. Box-as-usize
+    // would lose the function-pointer ABI, so we cast through usize for
+    // `handle` only.
+    let touch_fn = touch.and_then(|t| t.touch);
+    let touch_handle = touch.map(|t| t.handle as usize).unwrap_or(0);
+
     PluginContext::from_closures(
         ClosureBridge {
-            begin_edit: Box::new(|_id: u32| {}),
-            end_edit: Box::new(|_id: u32| {}),
+            begin_edit: Box::new(move |id: u32| {
+                let Some(func) = touch_fn else { return };
+                let Some((_, port_index)) =
+                    slots_for_begin.iter().find(|(pid, _)| *pid == id)
+                else {
+                    return;
+                };
+                unsafe { func(touch_handle as *mut c_void, *port_index, true) };
+            }),
+            end_edit: Box::new(move |id: u32| {
+                let Some(func) = touch_fn else { return };
+                let Some((_, port_index)) =
+                    slots_for_end.iter().find(|(pid, _)| *pid == id)
+                else {
+                    return;
+                };
+                unsafe { func(touch_handle as *mut c_void, *port_index, false) };
+            }),
             request_resize: Box::new(|_w: u32, _h: u32| false),
             set_param: Box::new(move |id: u32, normalized: f64| {
                 let Some((_, port_index, range)) =
