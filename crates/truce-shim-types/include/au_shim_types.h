@@ -80,6 +80,12 @@ typedef struct {
     void (*state_save)(void *ctx, uint8_t **out_data, uint32_t *out_len);
     void (*state_load)(void *ctx, const uint8_t *data, uint32_t len);
     void (*state_free)(uint8_t *data, uint32_t len);
+    /* Plugin → host MIDI output. The Rust side filters its event
+     * queue to events that fit in 3-byte MIDI 1.0 packets so the
+     * shim can iterate `0..count` without checking for skipped
+     * slots. Mirrors the input direction's `AuMidiEvent` shape. */
+    uint32_t (*output_event_count)(void *ctx);
+    void (*output_event_at)(void *ctx, uint32_t index, AuMidiEvent *out);
     /* GUI */
     int32_t (*gui_has_editor)(void *ctx);
     void (*gui_get_size)(void *ctx, uint32_t *w, uint32_t *h);

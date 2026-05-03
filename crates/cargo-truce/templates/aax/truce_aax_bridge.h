@@ -122,6 +122,13 @@ uint32_t truce_aax_save_state(void* ctx, uint8_t** out_data);
 void     truce_aax_load_state(void* ctx, const uint8_t* data, uint32_t len);
 void     truce_aax_free_state(uint8_t* data, uint32_t len);
 
+/* Plugin → host MIDI output. The Rust side filters its event queue
+ * to events that fit in 3-byte MIDI 1.0 packets so the template can
+ * iterate `0..count` without checking for skipped slots. Mirrors
+ * the input direction's `TruceAaxMidiEvent` shape. */
+uint32_t truce_aax_output_event_count(void* ctx);
+void     truce_aax_output_event_at(void* ctx, uint32_t index, TruceAaxMidiEvent* out);
+
 /* GUI editor. */
 void truce_aax_editor_create(void* ctx, TruceAaxEditorInfo* out);
 void truce_aax_editor_open(void* ctx, void* parent_view, int platform,

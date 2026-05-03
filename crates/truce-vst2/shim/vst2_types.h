@@ -53,6 +53,7 @@
 #define audioMasterAutomate 0
 #define audioMasterVersion  1
 #define audioMasterGetTime  7
+#define audioMasterProcessEvents 8 /* plugin → host MIDI output */
 #define audioMasterBeginEdit 43
 #define audioMasterEndEdit   44
 
@@ -245,6 +246,13 @@ typedef struct {
     /* Format the param's *current* plain value for display. */
     uint32_t (*param_format_current)(void* ctx, uint32_t id,
                                       char* out, uint32_t out_len);
+    /* Plugin → host MIDI output. Mirror of the input event flow:
+     * the C shim calls `output_event_count` after each process(),
+     * then `output_event_at(idx)` to fill a 3-byte MIDI packet.
+     * Unsupported event types (MIDI 2.0, ParamChange, etc.) are
+     * filtered out on the Rust side so [0..count) maps cleanly. */
+    uint32_t (*output_event_count)(void* ctx);
+    void (*output_event_at)(void* ctx, uint32_t index, Vst2MidiEventCompact* out);
     void (*state_save)(void* ctx, uint8_t** out_data, uint32_t* out_len);
     void (*state_load)(void* ctx, const uint8_t* data, uint32_t len);
     void (*state_free)(uint8_t* data, uint32_t len);

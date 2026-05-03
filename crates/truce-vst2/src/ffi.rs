@@ -32,6 +32,7 @@ pub struct Vst2ParamDescriptor {
 }
 
 #[repr(C)]
+#[derive(Copy, Clone)]
 pub struct Vst2MidiEvent {
     pub delta_frames: u32,
     pub status: u8,
@@ -73,6 +74,15 @@ pub struct Vst2Callbacks {
         out: *mut c_char,
         out_len: u32,
     ) -> u32,
+    /// Number of *encodable* plugin → host MIDI events queued by the
+    /// last `process()` call. Unsupported event types (MIDI 2.0,
+    /// ParamChange, Transport) are filtered out so the C shim can
+    /// iterate `0..count` without checking for skipped slots.
+    pub output_event_count: unsafe extern "C" fn(ctx: *mut c_void) -> u32,
+    /// Fill `out` with the index-th encodable output event. The
+    /// `Vst2MidiEventCompact` shape mirrors the input direction.
+    pub output_event_at:
+        unsafe extern "C" fn(ctx: *mut c_void, index: u32, out: *mut Vst2MidiEvent),
     pub state_save:
         unsafe extern "C" fn(ctx: *mut c_void, out_data: *mut *mut u8, out_len: *mut u32),
     pub state_load: unsafe extern "C" fn(ctx: *mut c_void, data: *const u8, len: u32),

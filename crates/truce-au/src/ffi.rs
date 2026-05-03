@@ -112,6 +112,15 @@ pub struct AuCallbacks {
     /// Free a buffer returned by state_save.
     pub state_free: unsafe extern "C" fn(data: *mut u8, len: u32),
 
+    /// Number of *encodable* plugin → host MIDI events queued by the
+    /// last process() call. Unsupported event types (MIDI 2.0,
+    /// ParamChange, Transport) are filtered out so the shim can
+    /// iterate `0..count` without checking for skipped slots.
+    pub output_event_count: unsafe extern "C" fn(ctx: *mut c_void) -> u32,
+    /// Fill `out` with the index-th encodable output event.
+    pub output_event_at:
+        unsafe extern "C" fn(ctx: *mut c_void, index: u32, out: *mut AuMidiEvent),
+
     // GUI
     pub gui_has_editor: unsafe extern "C" fn(ctx: *mut c_void) -> i32,
     pub gui_get_size: unsafe extern "C" fn(ctx: *mut c_void, w: *mut u32, h: *mut u32),
@@ -119,8 +128,11 @@ pub struct AuCallbacks {
     pub gui_close: unsafe extern "C" fn(ctx: *mut c_void),
 }
 
-/// A MIDI event passed from the ObjC shim to Rust.
+/// A MIDI event passed across the Rust ↔ ObjC boundary in both
+/// directions (host → plugin via the input event array and plugin →
+/// host via `output_event_at`).
 #[repr(C)]
+#[derive(Copy, Clone)]
 pub struct AuMidiEvent {
     /// Sample offset within the current block.
     pub sample_offset: u32,

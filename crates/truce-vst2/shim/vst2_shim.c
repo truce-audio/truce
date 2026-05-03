@@ -199,7 +199,8 @@ static VstIntPtr dispatcher(AEffect* e, int32_t opcode, int32_t index,
             const char* s = (const char*)ptr;
             if (strcmp(s, "receiveVstMidiEvent") == 0) return 1;
             if (strcmp(s, "receiveVstEvents") == 0) return 1;
-            if (strcmp(s, "sendVstMidiEvent") == 0) return 0;
+            if (strcmp(s, "sendVstMidiEvent") == 0) return 1;
+            if (strcmp(s, "sendVstEvents") == 0) return 1;
             if (strcmp(s, "bypass") == 0) {
                 /* Advertise bypass support only if the plugin actually
                  * has an IS_BYPASS-flagged param wired into the
@@ -391,6 +392,47 @@ static void processReplacing(AEffect* e, float** inputs, float** outputs,
         inst->midi_buf, inst->midi_count);
 
     inst->midi_count = 0;
+
+    /* Drain plugin → host MIDI. The Rust side has already filtered
+     * the queue down to events that fit in 3-byte MIDI 1.0 packets;
+     * we rebuild a `VstEvents` block in stack-local storage and call
+     * `audioMasterProcessEvents`. Cap matches the input direction so
+     * we can't get a runaway event count past the host's expected
+     * per-block budget. */
+    if (inst->master) {
+        uint32_t out_count = g_vst2_callbacks->output_event_count(inst->rust_ctx);
+        if (out_count > 0) {
+            if (out_count > 256) out_count = 256;
+            VstMidiEvent midis[256];
+            /* `VstEvents` declares `events[2]` for alignment; for N
+             * events, lay out `numEvents`, `reserved`, then a
+             * trailing `VstEvent*[N]`. The storage buffer is sized
+             * for the cap so pointer arithmetic stays in-bounds. */
+            char vstEvents_storage[sizeof(int32_t) + sizeof(VstIntPtr)
+                                   + 256 * sizeof(VstEvent*)];
+            VstEvents* vstEvents = (VstEvents*)vstEvents_storage;
+            vstEvents->numEvents = (int32_t)out_count;
+            vstEvents->reserved = 0;
+            VstEvent** events_array = (VstEvent**)((char*)vstEvents
+                                                   + sizeof(int32_t)
+                                                   + sizeof(VstIntPtr));
+            for (uint32_t i = 0; i < out_count; i++) {
+                Vst2MidiEventCompact pkt = {0};
+                g_vst2_callbacks->output_event_at(inst->rust_ctx, i, &pkt);
+                VstMidiEvent* m = &midis[i];
+                memset(m, 0, sizeof(*m));
+                m->type = kVstMidiType;
+                m->byteSize = (int32_t)sizeof(VstMidiEvent);
+                m->deltaFrames = (int32_t)pkt.delta_frames;
+                m->midiData[0] = (char)pkt.status;
+                m->midiData[1] = (char)pkt.data1;
+                m->midiData[2] = (char)pkt.data2;
+                m->midiData[3] = 0;
+                events_array[i] = (VstEvent*)m;
+            }
+            inst->master(e, audioMasterProcessEvents, 0, 0, vstEvents, 0.0f);
+        }
+    }
 }
 
 /* ---------------------------------------------------------------------------

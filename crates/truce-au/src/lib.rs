@@ -378,6 +378,88 @@ unsafe extern "C" fn cb_state_free(_data: *mut u8, _len: u32) {
 }
 
 // ---------------------------------------------------------------------------
+// Output event callbacks (plugin → host MIDI)
+// ---------------------------------------------------------------------------
+
+/// Map a truce `Event` body to a 3-byte AU MIDI packet. Returns
+/// `None` for event types that don't fit (MIDI 2.0, ParamChange,
+/// Transport, etc.). Mirrors the VST2/VST3 encoders.
+fn try_encode_au_midi(event: &Event) -> Option<AuMidiEvent> {
+    let (status, data1, data2) = match &event.body {
+        EventBody::NoteOn {
+            channel,
+            note,
+            velocity,
+        } => (0x90 | (channel & 0x0F), *note, (*velocity * 127.0) as u8),
+        EventBody::NoteOff {
+            channel,
+            note,
+            velocity,
+        } => (0x80 | (channel & 0x0F), *note, (*velocity * 127.0) as u8),
+        EventBody::ControlChange { channel, cc, value } => (
+            0xB0 | (channel & 0x0F),
+            *cc,
+            (value.clamp(0.0, 1.0) * 127.0) as u8,
+        ),
+        EventBody::Aftertouch {
+            channel,
+            note,
+            pressure,
+        } => (
+            0xA0 | (channel & 0x0F),
+            *note,
+            (pressure.clamp(0.0, 1.0) * 127.0) as u8,
+        ),
+        EventBody::ChannelPressure { channel, pressure } => (
+            0xD0 | (channel & 0x0F),
+            (pressure.clamp(0.0, 1.0) * 127.0) as u8,
+            0,
+        ),
+        EventBody::PitchBend { channel, value } => {
+            let n = ((value.clamp(-1.0, 1.0) + 1.0) * 8191.5).round() as u16;
+            (0xE0 | (channel & 0x0F), (n & 0x7F) as u8, ((n >> 7) & 0x7F) as u8)
+        }
+        EventBody::ProgramChange { channel, program } => (0xC0 | (channel & 0x0F), *program, 0),
+        _ => return None,
+    };
+    Some(AuMidiEvent {
+        sample_offset: event.sample_offset,
+        status,
+        data1,
+        data2,
+        _pad: 0,
+    })
+}
+
+unsafe extern "C" fn cb_output_event_count<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
+    unsafe {
+        let inst = &*(ctx as *mut AuInstance<P>);
+        inst.output_events
+            .iter()
+            .filter(|e| try_encode_au_midi(e).is_some())
+            .count() as u32
+    }
+}
+
+unsafe extern "C" fn cb_output_event_at<P: PluginExport>(
+    ctx: *mut std::ffi::c_void,
+    index: u32,
+    out: *mut AuMidiEvent,
+) {
+    unsafe {
+        let inst = &*(ctx as *mut AuInstance<P>);
+        if let Some(packet) = inst
+            .output_events
+            .iter()
+            .filter_map(try_encode_au_midi)
+            .nth(index as usize)
+        {
+            *out = packet;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // GUI callbacks
 // ---------------------------------------------------------------------------
 
@@ -582,6 +664,8 @@ pub fn register_au<P: PluginExport>() {
         state_save: cb_state_save::<P>,
         state_load: cb_state_load::<P>,
         state_free: cb_state_free,
+        output_event_count: cb_output_event_count::<P>,
+        output_event_at: cb_output_event_at::<P>,
         gui_has_editor: cb_gui_has_editor::<P>,
         gui_get_size: cb_gui_get_size::<P>,
         gui_open: cb_gui_open::<P>,

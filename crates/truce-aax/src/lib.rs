@@ -93,6 +93,7 @@ pub struct TruceAaxParamInfo {
 }
 
 #[repr(C)]
+#[derive(Copy, Clone)]
 pub struct TruceAaxMidiEvent {
     pub delta_frames: u32,
     pub status: u8,
@@ -420,6 +421,20 @@ macro_rules! export_aax {
             #[unsafe(no_mangle)]
             pub unsafe extern "C" fn truce_aax_free_state(data: *mut u8, len: u32) {
                 ::truce_aax::_free_state(data, len);
+            }
+            #[unsafe(no_mangle)]
+            pub unsafe extern "C" fn truce_aax_output_event_count(
+                ctx: *mut ::std::ffi::c_void,
+            ) -> u32 {
+                ::truce_aax::_output_event_count::<$plugin_type>(ctx)
+            }
+            #[unsafe(no_mangle)]
+            pub unsafe extern "C" fn truce_aax_output_event_at(
+                ctx: *mut ::std::ffi::c_void,
+                index: u32,
+                out: *mut ::truce_aax::TruceAaxMidiEvent,
+            ) {
+                ::truce_aax::_output_event_at::<$plugin_type>(ctx, index, out);
             }
             #[unsafe(no_mangle)]
             pub unsafe extern "C" fn truce_aax_editor_create(
@@ -963,5 +978,90 @@ pub unsafe fn _editor_get_size<P: PluginExport>(ctx: *mut c_void, w: *mut u32, h
 pub unsafe fn _free_state(data: *mut u8, len: u32) {
     if !data.is_null() && len > 0 {
         unsafe { drop(Vec::from_raw_parts(data, len as usize, len as usize)) };
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Plugin → host MIDI output
+// ---------------------------------------------------------------------------
+
+/// Map a truce `Event` body to a 3-byte AAX MIDI packet. Returns
+/// `None` for event types that don't fit (MIDI 2.0, ParamChange,
+/// Transport, etc.). Mirrors the VST2/VST3/AU encoders.
+fn try_encode_aax_midi(event: &truce_core::events::Event) -> Option<TruceAaxMidiEvent> {
+    use truce_core::events::EventBody;
+    let (status, data1, data2) = match &event.body {
+        EventBody::NoteOn {
+            channel,
+            note,
+            velocity,
+        } => (0x90 | (channel & 0x0F), *note, (*velocity * 127.0) as u8),
+        EventBody::NoteOff {
+            channel,
+            note,
+            velocity,
+        } => (0x80 | (channel & 0x0F), *note, (*velocity * 127.0) as u8),
+        EventBody::ControlChange { channel, cc, value } => (
+            0xB0 | (channel & 0x0F),
+            *cc,
+            (value.clamp(0.0, 1.0) * 127.0) as u8,
+        ),
+        EventBody::Aftertouch {
+            channel,
+            note,
+            pressure,
+        } => (
+            0xA0 | (channel & 0x0F),
+            *note,
+            (pressure.clamp(0.0, 1.0) * 127.0) as u8,
+        ),
+        EventBody::ChannelPressure { channel, pressure } => (
+            0xD0 | (channel & 0x0F),
+            (pressure.clamp(0.0, 1.0) * 127.0) as u8,
+            0,
+        ),
+        EventBody::PitchBend { channel, value } => {
+            let n = ((value.clamp(-1.0, 1.0) + 1.0) * 8191.5).round() as u16;
+            (0xE0 | (channel & 0x0F), (n & 0x7F) as u8, ((n >> 7) & 0x7F) as u8)
+        }
+        EventBody::ProgramChange { channel, program } => (0xC0 | (channel & 0x0F), *program, 0),
+        _ => return None,
+    };
+    Some(TruceAaxMidiEvent {
+        delta_frames: event.sample_offset,
+        status,
+        data1,
+        data2,
+        _pad: 0,
+    })
+}
+
+pub unsafe fn _output_event_count<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
+    if ctx.is_null() {
+        return 0;
+    }
+    let inst = unsafe { &*(ctx as *mut AaxInstance<P>) };
+    inst.output_events
+        .iter()
+        .filter(|e| try_encode_aax_midi(e).is_some())
+        .count() as u32
+}
+
+pub unsafe fn _output_event_at<P: PluginExport>(
+    ctx: *mut std::ffi::c_void,
+    index: u32,
+    out: *mut TruceAaxMidiEvent,
+) {
+    if ctx.is_null() || out.is_null() {
+        return;
+    }
+    let inst = unsafe { &*(ctx as *mut AaxInstance<P>) };
+    if let Some(packet) = inst
+        .output_events
+        .iter()
+        .filter_map(try_encode_aax_midi)
+        .nth(index as usize)
+    {
+        unsafe { *out = packet };
     }
 }

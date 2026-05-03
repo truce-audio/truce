@@ -114,5 +114,6 @@ fn main() {
     println!("cargo:rustc-link-lib=framework=AudioToolbox");
     println!("cargo:rustc-link-lib=framework=AVFAudio");
     println!("cargo:rustc-link-lib=framework=CoreAudio");
+    println!("cargo:rustc-link-lib=framework=CoreMIDI");
     println!("cargo:rustc-link-lib=framework=Foundation");
 }

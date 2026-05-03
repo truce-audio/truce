@@ -8,6 +8,7 @@
 
 #include <AudioToolbox/AudioToolbox.h>
 #include <CoreFoundation/CoreFoundation.h>
+#include <CoreMIDI/CoreMIDI.h>
 #include <string.h>
 #include <stdlib.h>
 #include <dlfcn.h>
@@ -44,6 +45,14 @@ typedef struct {
     // MIDI buffer (for instruments)
     AuMidiEvent midiBuffer[256];
     uint32_t midiCount;
+
+    // Plugin → host MIDI output callback (set via
+    // kAudioUnitProperty_MIDIOutputCallback). Hosts that want to
+    // receive MIDI from instruments register the callback once after
+    // initialization; we drain `output_events` from Rust at the end
+    // of each render block and forward via this callback.
+    AUMIDIOutputCallback midiOutputCallback;
+    void *midiOutputUserData;
 
     // Host callbacks (set via kAudioUnitProperty_HostCallbacks). Used to
     // query tempo / play state / bar position from the host each render.
@@ -249,6 +258,12 @@ static OSStatus au_v2_get_property_info(void *self_, AudioUnitPropertyID prop,
         case kAudioUnitProperty_HostCallbacks:
             if (scope != kAudioUnitScope_Global) return kAudioUnitErr_InvalidScope;
             size = sizeof(HostCallbackInfo); writable = true; break;
+        case kAudioUnitProperty_MIDIOutputCallbackInfo:
+            if (scope != kAudioUnitScope_Global) return kAudioUnitErr_InvalidScope;
+            size = sizeof(CFArrayRef); writable = false; break;
+        case kAudioUnitProperty_MIDIOutputCallback:
+            if (scope != kAudioUnitScope_Global) return kAudioUnitErr_InvalidScope;
+            size = sizeof(AUMIDIOutputCallbackStruct); writable = true; break;
         case kAudioUnitProperty_ClassInfo:
             size = sizeof(CFPropertyListRef); writable = true; break;
         case kAudioUnitProperty_Latency:
@@ -417,6 +432,37 @@ static OSStatus au_v2_get_property(void *self_, AudioUnitPropertyID prop,
         case kAudioUnitProperty_LastRenderError: {
             *(OSStatus *)outData = noErr;
             *ioSize = sizeof(OSStatus);
+            return noErr;
+        }
+
+        case kAudioUnitProperty_MIDIOutputCallbackInfo: {
+            /* Hosts that read this expect a CFArray of CFString port
+             * names — one entry per logical MIDI output port. truce
+             * exposes a single port; "Truce MIDI Out" is the visible
+             * label in the host's MIDI routing UI. The CFArray
+             * ownership transfers to the caller. */
+            if (scope != kAudioUnitScope_Global) return kAudioUnitErr_InvalidScope;
+            if (*ioSize < sizeof(CFArrayRef))
+                return kAudioUnitErr_InvalidPropertyValue;
+            CFStringRef portName = CFSTR("Truce MIDI Out");
+            CFArrayRef arr = CFArrayCreate(kCFAllocatorDefault,
+                                           (const void **)&portName, 1,
+                                           &kCFTypeArrayCallBacks);
+            *(CFArrayRef *)outData = arr;
+            *ioSize = sizeof(CFArrayRef);
+            return noErr;
+        }
+
+        case kAudioUnitProperty_MIDIOutputCallback: {
+            /* Hosts typically only set this property; AU validators
+             * sometimes read it back. Return what we have stored. */
+            if (scope != kAudioUnitScope_Global) return kAudioUnitErr_InvalidScope;
+            if (*ioSize < sizeof(AUMIDIOutputCallbackStruct))
+                return kAudioUnitErr_InvalidPropertyValue;
+            AUMIDIOutputCallbackStruct *cb = (AUMIDIOutputCallbackStruct *)outData;
+            cb->midiOutputCallback = inst->midiOutputCallback;
+            cb->userData = inst->midiOutputUserData;
+            *ioSize = sizeof(AUMIDIOutputCallbackStruct);
             return noErr;
         }
 
@@ -624,6 +670,20 @@ static OSStatus au_v2_set_property(void *self_, AudioUnitPropertyID prop,
                                       inst->hostCallbacks.musicalTimeLocationProc ||
                                       inst->hostCallbacks.transportStateProc ||
                                       inst->hostCallbacks.transportStateProc2);
+            return noErr;
+        }
+
+        case kAudioUnitProperty_MIDIOutputCallback: {
+            /* Host registers its MIDI output callback. We stash it
+             * and call it after each render block with whatever
+             * events the plugin pushed into `output_events`. */
+            if (scope != kAudioUnitScope_Global) return kAudioUnitErr_InvalidScope;
+            if (!inData || inSize < sizeof(AUMIDIOutputCallbackStruct))
+                return kAudioUnitErr_InvalidPropertyValue;
+            const AUMIDIOutputCallbackStruct *cb =
+                (const AUMIDIOutputCallbackStruct *)inData;
+            inst->midiOutputCallback = cb->midiOutputCallback;
+            inst->midiOutputUserData = cb->userData;
             return noErr;
         }
 
@@ -872,6 +932,46 @@ static OSStatus au_v2_render(void *self_,
                          &transport);
     inst->midiCount = 0;
 
+    /* Drain plugin → host MIDI. The Rust side has already filtered
+     * the queue down to events that fit in 3-byte MIDI 1.0 packets.
+     * Build one MIDIPacket per event (variable-length packet list)
+     * and call the host's registered output callback. Events with
+     * `sample_offset >= inFrameCount` (out-of-block) are clamped
+     * rather than dropped; AU hosts schedule these for the boundary
+     * sample. */
+    if (inst->midiOutputCallback) {
+        uint32_t out_count = g_callbacks->output_event_count(inst->rustCtx);
+        if (out_count > 0) {
+            /* Cap matches the input direction; deeper queues are
+             * truncated rather than allocated through. 256 packets
+             * × ~16 bytes each fits in stack comfortably. */
+            if (out_count > 256) out_count = 256;
+            Byte packet_buf[256 * 32]; /* generous; per-packet ≤ 16B */
+            MIDIPacketList *pktList = (MIDIPacketList *)packet_buf;
+            MIDIPacket *pkt = MIDIPacketListInit(pktList);
+            for (uint32_t i = 0; i < out_count; i++) {
+                AuMidiEvent ev = {0};
+                g_callbacks->output_event_at(inst->rustCtx, i, &ev);
+                Byte data[3] = { ev.status, ev.data1, ev.data2 };
+                /* CC / channel pressure / program change are 2-byte
+                 * messages; emit only the bytes that matter. */
+                ByteCount byteCount = 3;
+                if ((ev.status & 0xF0) == 0xC0 || (ev.status & 0xF0) == 0xD0) {
+                    byteCount = 2;
+                }
+                MIDITimeStamp ts = ev.sample_offset;
+                if (ev.sample_offset >= inFrameCount) {
+                    ts = inFrameCount > 0 ? (inFrameCount - 1) : 0;
+                }
+                pkt = MIDIPacketListAdd(pktList, sizeof(packet_buf), pkt,
+                                       ts, byteCount, data);
+                if (!pkt) break; /* list full */
+            }
+            inst->midiOutputCallback(inst->midiOutputUserData,
+                                     inTimeStamp, 0 /* outputIndex */,
+                                     pktList);
+        }
+    }
 
     // Copy our processed audio to the host's original buffers
     for (uint32_t c = 0; c < numOut && c < ioData->mNumberBuffers; c++) {

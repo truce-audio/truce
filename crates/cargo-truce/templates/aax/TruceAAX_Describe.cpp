@@ -113,6 +113,13 @@ AAX_Result GetEffectDescriptions(AAX_ICollection* outCollection) {
         setupInfo.mInputMIDINodeName = g_descriptor.name;
         setupInfo.mInputMIDIChannelMask = 0xFFFF; // all channels
     }
+    // Plugin → host MIDI output. Truce's `output_events` stream is
+    // surfaced as a single AAX_eMIDINodeType_LocalOutput node so
+    // Pro Tools' MIDI router sees the plugin's note/CC output.
+    setupInfo.mNeedsGlobalsNode = false;
+    setupInfo.mNeedsOutputMIDI = true;
+    setupInfo.mOutputMIDINodeName = g_descriptor.name;
+    setupInfo.mOutputMIDIChannelMask = 0xFFFF;
 
     // Register mono configuration
     setupInfo.mInputStemFormat = g_descriptor.num_inputs > 0

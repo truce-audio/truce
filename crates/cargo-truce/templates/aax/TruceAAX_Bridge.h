@@ -22,6 +22,10 @@ typedef uint32_t (*fn_save_state)(void*, uint8_t**);
 typedef void     (*fn_load_state)(void*, const uint8_t*, uint32_t);
 typedef void     (*fn_free_state)(uint8_t*, uint32_t);
 
+// Plugin → host MIDI output
+typedef uint32_t (*fn_output_event_count)(void*);
+typedef void     (*fn_output_event_at)(void*, uint32_t, TruceAaxMidiEvent*);
+
 // GUI
 typedef void     (*fn_editor_create)(void*, TruceAaxEditorInfo*);
 typedef void     (*fn_editor_open)(void*, void*, int, const TruceAaxGuiCallbacks*);
@@ -42,6 +46,8 @@ struct TruceBridge {
     fn_save_state     save_state;
     fn_load_state     load_state;
     fn_free_state     free_state;
+    fn_output_event_count output_event_count;
+    fn_output_event_at    output_event_at;
     fn_editor_create  editor_create;
     fn_editor_open    editor_open;
     fn_editor_close   editor_close;

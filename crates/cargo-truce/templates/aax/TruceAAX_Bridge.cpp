@@ -97,6 +97,8 @@ bool TruceBridge_Load(TruceBridge* bridge, const char* bundle_path) {
     RESOLVE(save_state);
     RESOLVE(load_state);
     RESOLVE(free_state);
+    RESOLVE(output_event_count);
+    RESOLVE(output_event_at);
     RESOLVE(editor_create);
     RESOLVE(editor_open);
     RESOLVE(editor_close);

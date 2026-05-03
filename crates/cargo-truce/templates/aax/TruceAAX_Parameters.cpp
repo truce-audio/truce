@@ -223,6 +223,31 @@ void TruceAAX_Parameters::RenderAudio(
         (uint32_t)bufferSize,
         midiEvents, midiCount,
         transport.valid ? &transport : nullptr);
+
+    // Drain plugin → host MIDI. The Rust side has already filtered
+    // the queue down to events that fit in 3-byte MIDI 1.0 packets.
+    // Pro Tools delivers them via the output MIDI node (one node per
+    // configured MIDI output port). Channel-pressure and program-
+    // change emit 2-byte packets; everything else uses 3.
+    AAX_IMIDINode* outNode = ioRenderInfo->mOutputNode;
+    if (outNode) {
+        uint32_t outCount = g_bridge.output_event_count(mRustCtx);
+        if (outCount > 0) {
+            if (outCount > 256) outCount = 256;
+            for (uint32_t i = 0; i < outCount; i++) {
+                TruceAaxMidiEvent ev = {};
+                g_bridge.output_event_at(mRustCtx, i, &ev);
+                AAX_CMidiPacket pkt = {};
+                pkt.mTimestamp = ev.delta_frames;
+                pkt.mData[0] = ev.status;
+                pkt.mData[1] = ev.data1;
+                pkt.mData[2] = ev.data2;
+                pkt.mLength = ((ev.status & 0xF0) == 0xC0
+                               || (ev.status & 0xF0) == 0xD0) ? 2 : 3;
+                outNode->PostMonoMIDIPacket(pkt);
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
