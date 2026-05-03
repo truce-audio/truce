@@ -88,8 +88,26 @@ pub fn assert_state_round_trip<P: PluginExport>() {
 
     let param_infos = plugin.params().param_infos();
     for pi in &param_infos {
-        let v1 = plugin.params().get_plain(pi.id).unwrap();
-        let v2 = plugin2.params().get_plain(pi.id).unwrap();
+        // `get_plain` returns `None` if the param id was dropped during
+        // round-trip — for example, a plugin update that renumbered
+        // params. We surface that as the assertion failure rather than
+        // an `.unwrap()` panic that would point at the wrong line.
+        let v1 = plugin.params().get_plain(pi.id).unwrap_or_else(|| {
+            panic!(
+                "param {} ({}) missing from source plugin after restore_plugin — \
+                 the param id is no longer registered",
+                pi.id, pi.name
+            )
+        });
+        let v2 = plugin2.params().get_plain(pi.id).unwrap_or_else(|| {
+            panic!(
+                "param {} ({}) was lost during state round-trip — \
+                 saved-state blob references an id that the freshly-built plugin \
+                 doesn't expose. Either the param was renamed/renumbered or \
+                 the deserializer is dropping it.",
+                pi.id, pi.name
+            )
+        });
         assert!(
             (v1 - v2).abs() < 0.0001,
             "Param {} ({}) mismatch: {v1} vs {v2}",
@@ -260,7 +278,13 @@ pub fn assert_param_defaults_match<P: PluginExport>() {
     let plugin = P::create();
     let infos = plugin.params().param_infos();
     for pi in &infos {
-        let current = plugin.params().get_plain(pi.id).unwrap();
+        let current = plugin.params().get_plain(pi.id).unwrap_or_else(|| {
+            panic!(
+                "param {} ({}) has a ParamInfo entry but get_plain returned None — \
+                 derive macro inconsistency",
+                pi.id, pi.name
+            )
+        });
         assert!(
             (current - pi.default_plain).abs() < 0.0001,
             "Param {} ({}) default mismatch: declared={}, actual={}",
@@ -282,7 +306,13 @@ pub fn assert_param_normalized_clamped<P: PluginExport>() {
     for pi in &infos {
         // Set above 1.0
         plugin.params().set_normalized(pi.id, 2.0);
-        let val = plugin.params().get_normalized(pi.id).unwrap();
+        let val = plugin.params().get_normalized(pi.id).unwrap_or_else(|| {
+            panic!(
+                "param {} ({}) get_normalized returned None despite ParamInfo \
+                 entry — derive macro inconsistency",
+                pi.id, pi.name
+            )
+        });
         assert!(
             val <= 1.0001,
             "Param {} ({}) normalized not clamped above 1.0: set 2.0, got {}",
@@ -293,7 +323,13 @@ pub fn assert_param_normalized_clamped<P: PluginExport>() {
 
         // Set below 0.0
         plugin.params().set_normalized(pi.id, -1.0);
-        let val = plugin.params().get_normalized(pi.id).unwrap();
+        let val = plugin.params().get_normalized(pi.id).unwrap_or_else(|| {
+            panic!(
+                "param {} ({}) get_normalized returned None despite ParamInfo \
+                 entry — derive macro inconsistency",
+                pi.id, pi.name
+            )
+        });
         assert!(
             val >= -0.0001,
             "Param {} ({}) normalized not clamped below 0.0: set -1.0, got {}",
@@ -328,7 +364,13 @@ pub fn assert_param_normalized_roundtrip<P: PluginExport>() {
         };
         for &norm in &test_values {
             plugin.params().set_normalized(pi.id, norm);
-            let got = plugin.params().get_normalized(pi.id).unwrap();
+            let got = plugin.params().get_normalized(pi.id).unwrap_or_else(|| {
+                panic!(
+                    "param {} ({}) get_normalized returned None despite ParamInfo \
+                     entry — derive macro inconsistency",
+                    pi.id, pi.name
+                )
+            });
             assert!(
                 (got - norm).abs() <= tolerance,
                 "Param {} ({}) normalized round-trip: set {norm}, got {got} (tol {tolerance})",
@@ -629,7 +671,15 @@ impl<P: PluginExport> ScreenshotTest<P> {
             f(&mut plugin);
         }
         let (pixels, w, h) = truce_core::screenshot::render_pixels_for::<P>(&mut plugin);
-        compare_against_reference(&pixels, w, h, &ref_path, tolerance, pixel_threshold);
+        compare_against_reference(
+            &pixels,
+            w,
+            h,
+            &ref_path,
+            tolerance,
+            pixel_threshold,
+            Some(&self.manifest_dir),
+        );
     }
 }
 
@@ -655,6 +705,13 @@ macro_rules! screenshot {
 /// Render gets saved to `<workspace>/target/screenshots/<basename>`
 /// regardless of where the reference lives, so a failed comparison
 /// always has a sibling artifact to inspect.
+///
+/// `manifest_dir_hint`, when given, is the calling crate's
+/// `CARGO_MANIFEST_DIR` (captured at compile time by the
+/// `screenshot!` macro). Walking up from there to the workspace root
+/// is more reliable than walking up from CWD — the latter is
+/// mis-anchored when tests run from a different directory or when
+/// CWD is inside `target/`.
 fn compare_against_reference(
     pixels: &[u8],
     width: u32,
@@ -662,8 +719,9 @@ fn compare_against_reference(
     ref_path: &std::path::Path,
     max_diff_pixels: usize,
     pixel_threshold: u8,
+    manifest_dir_hint: Option<&std::path::Path>,
 ) {
-    let render_dir = workspace_target_screenshots_dir();
+    let render_dir = workspace_target_screenshots_dir(manifest_dir_hint);
     let render_path = render_dir.join(
         ref_path
             .file_name()
@@ -741,8 +799,15 @@ fn compare_against_reference(
 /// `[workspace]`). Used only for the failing-render artifact path —
 /// committed reference paths come from the builder's
 /// manifest-dir-anchored resolution.
-fn workspace_target_screenshots_dir() -> PathBuf {
-    let start = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+fn workspace_target_screenshots_dir(manifest_dir_hint: Option<&std::path::Path>) -> PathBuf {
+    // Prefer the calling crate's `CARGO_MANIFEST_DIR` (captured at
+    // compile time and threaded through the `screenshot!` macro). It's
+    // a stable anchor regardless of where `cargo test` runs from. Fall
+    // back to CWD only when no hint is available — old code paths or
+    // direct calls into this function.
+    let start = manifest_dir_hint
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
     let mut dir = start.clone();
     let mut topmost_package: Option<PathBuf> = None;
     loop {
