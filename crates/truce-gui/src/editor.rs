@@ -251,21 +251,21 @@ impl<P: Params + 'static> BuiltinEditor<P> {
         let get_param: Box<dyn Fn(u32) -> f32> = match &ctx {
             Some(c) => {
                 let c = c.clone();
-                Box::new(move |id| (c.get_param)(id) as f32)
+                Box::new(move |id| c.get_param(id) as f32)
             }
             None => Box::new(move |id| p_get.get_normalized(id).unwrap_or(0.0) as f32),
         };
         let get_param_plain: Box<dyn Fn(u32) -> f32> = match &ctx {
             Some(c) => {
                 let c = c.clone();
-                Box::new(move |id| (c.get_param_plain)(id) as f32)
+                Box::new(move |id| c.get_param_plain(id) as f32)
             }
             None => Box::new(move |id| p_get_plain.get_plain(id).unwrap_or(0.0) as f32),
         };
         let format_param: Box<dyn Fn(u32) -> String> = match &ctx {
             Some(c) => {
                 let c = c.clone();
-                Box::new(move |id| (c.format_param)(id))
+                Box::new(move |id| c.format_param(id))
             }
             None => Box::new(move |id| {
                 let v = p_fmt.get_plain(id).unwrap_or(0.0);
@@ -277,7 +277,7 @@ impl<P: Params + 'static> BuiltinEditor<P> {
         let get_meter: Box<dyn Fn(u32) -> f32> = match &ctx {
             Some(c) => {
                 let c = c.clone();
-                Box::new(move |id| (c.get_meter)(id))
+                Box::new(move |id| c.get_meter(id))
             }
             None => Box::new(move |_| 0.0),
         };
@@ -353,19 +353,19 @@ impl<P: Params + 'static> BuiltinEditor<P> {
         match edit {
             ParamEdit::Begin { id } => {
                 if let Some(ref ctx) = self.context {
-                    (ctx.begin_edit)(id);
+                    ctx.begin_edit(id);
                 }
             }
             ParamEdit::Set { id, normalized } => {
                 self.params.set_normalized(id, normalized as f64);
                 if let Some(ref ctx) = self.context {
-                    (ctx.set_param)(id, normalized as f64);
+                    ctx.set_param(id, normalized as f64);
                 }
                 self.request_repaint();
             }
             ParamEdit::End { id } => {
                 if let Some(ref ctx) = self.context {
-                    (ctx.end_edit)(id);
+                    ctx.end_edit(id);
                 }
             }
         }
@@ -514,7 +514,7 @@ pub fn update_interaction<P: Params + 'static>(editor: &mut BuiltinEditor<P>) {
     }
     for region in &mut editor.interaction.knob_regions {
         if let Some(ref ctx) = editor.context {
-            region.normalized_value = (ctx.get_param)(region.param_id) as f32;
+            region.normalized_value = ctx.get_param(region.param_id) as f32;
         } else {
             region.normalized_value =
                 editor.params.get_normalized(region.param_id).unwrap_or(0.0) as f32;

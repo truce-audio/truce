@@ -14,7 +14,7 @@ use crate::editor::{IcedPlugin, IcedProgram};
 use crate::editor_handle::EditorHandle;
 use crate::param_message::Message;
 use crate::param_state::ParamState;
-use truce_core::editor::EditorContext;
+use truce_core::editor::{ClosureBridge, EditorContext};
 
 /// Render an iced plugin UI offscreen and return RGBA pixel data.
 ///
@@ -88,31 +88,31 @@ where
     let mut param_state = ParamState::new(params.clone());
     param_state.set_font(default_font);
     let screenshot_transport = truce_core::events::TransportInfo::for_screenshot();
-    let noop_ctx = EditorContext {
-        begin_edit: Arc::new(|_| {}),
-        set_param: Arc::new(|_, _| {}),
-        end_edit: Arc::new(|_| {}),
-        request_resize: Arc::new(|_, _| false),
+    let noop_ctx = EditorContext::from_closures(ClosureBridge {
+        begin_edit: Box::new(|_| {}),
+        set_param: Box::new(|_, _| {}),
+        end_edit: Box::new(|_| {}),
+        request_resize: Box::new(|_, _| false),
         get_param: {
             let p = params.clone();
-            Arc::new(move |id| p.get_normalized(id).unwrap_or(0.0))
+            Box::new(move |id| p.get_normalized(id).unwrap_or(0.0))
         },
         get_param_plain: {
             let p = params.clone();
-            Arc::new(move |id| p.get_plain(id).unwrap_or(0.0))
+            Box::new(move |id| p.get_plain(id).unwrap_or(0.0))
         },
         format_param: {
             let p = params.clone();
-            Arc::new(move |id| {
+            Box::new(move |id| {
                 let v = p.get_plain(id).unwrap_or(0.0);
                 p.format_value(id, v).unwrap_or_default()
             })
         },
-        get_meter: Arc::new(|_| 0.0),
-        get_state: Arc::new(Vec::new),
-        set_state: Arc::new(|_| {}),
-        transport: Arc::new(move || Some(screenshot_transport.clone())),
-    };
+        get_meter: Box::new(|_| 0.0),
+        get_state: Box::new(Vec::new),
+        set_state: Box::new(|_| {}),
+        transport: Box::new(move || Some(screenshot_transport.clone())),
+    });
     let editor_handle = EditorHandle::new(noop_ctx);
 
     let plugin = M::new(params);

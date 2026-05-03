@@ -180,8 +180,22 @@ there:
 ```rust
 driver!(MyEffect)
     .state_file("test_states/evening.pluginstate")
-    .set_param(MyParamId::Gain, 1.0) // override gain only
-    .setup(|p| p.custom_field = 42)  // tweak custom state
+    .set_param(MyParamId::Gain, 1.0)        // override gain only
+    .setup(|p, _ctx| p.custom_field = 42)   // tweak custom state
+    .run();
+```
+
+The second arg is a [`SetupContext`] carrying the resolved channel
+count, sample rate, and block size — useful when the closure needs
+to size per-channel scratch:
+
+```rust
+driver!(MyEffect)
+    .channels(4)
+    .setup(|p, ctx| {
+        p.scratch = vec![0.0; ctx.block_size * ctx.channels];
+        assert_eq!(ctx.channels, 4);
+    })
     .run();
 ```
 

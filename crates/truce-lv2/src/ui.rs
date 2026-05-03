@@ -33,7 +33,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use truce_core::TransportSlot;
-use truce_core::editor::{Editor, EditorContext, RawWindowHandle};
+use truce_core::editor::{ClosureBridge, Editor, EditorContext, RawWindowHandle};
 use truce_core::events::TransportInfo;
 use truce_core::export::PluginExport;
 use truce_params::Params;
@@ -715,11 +715,11 @@ fn build_editor_context<P: PluginExport>(
     // raw-pointer Send issues.
     let write_set = write_function;
 
-    EditorContext {
-        begin_edit: Arc::new(|_id: u32| {}),
-        end_edit: Arc::new(|_id: u32| {}),
-        request_resize: Arc::new(|_w: u32, _h: u32| false),
-        set_param: Arc::new(move |id: u32, normalized: f64| {
+    EditorContext::from_closures(ClosureBridge {
+        begin_edit: Box::new(|_id: u32| {}),
+        end_edit: Box::new(|_id: u32| {}),
+        request_resize: Box::new(|_w: u32, _h: u32| false),
+        set_param: Box::new(move |id: u32, normalized: f64| {
             let Some((_, port_index, range)) = slots_for_set.iter().find(|(pid, _, _)| *pid == id)
             else {
                 return;
@@ -737,26 +737,26 @@ fn build_editor_context<P: PluginExport>(
                 );
             }
         }),
-        get_param: Arc::new(move |id: u32| params_get.get_normalized(id).unwrap_or(0.0)),
-        get_param_plain: Arc::new(move |id: u32| params_get_plain.get_plain(id).unwrap_or(0.0)),
-        format_param: Arc::new(move |id: u32| {
+        get_param: Box::new(move |id: u32| params_get.get_normalized(id).unwrap_or(0.0)),
+        get_param_plain: Box::new(move |id: u32| params_get_plain.get_plain(id).unwrap_or(0.0)),
+        format_param: Box::new(move |id: u32| {
             let v = params_format.get_plain(id).unwrap_or(0.0);
             params_format.format_value(id, v).unwrap_or_default()
         }),
-        get_meter: Arc::new(move |id: u32| {
+        get_meter: Box::new(move |id: u32| {
             meter_slots_for_get
                 .iter()
                 .find(|m| m.id == id)
                 .map(|m| f32::from_bits(m.value.load(Ordering::Relaxed)))
                 .unwrap_or(0.0)
         }),
-        get_state: Arc::new(Vec::new),
-        set_state: Arc::new(|_bytes: Vec<u8>| {}),
+        get_state: Box::new(Vec::new),
+        set_state: Box::new(|_bytes: Vec<u8>| {}),
         // The DSP broadcasts host transport as `time:Position` atoms on
         // the notify-out port. `port_event` decodes them and writes the
         // slot — this closure just reads the latest value.
-        transport: Arc::new(move || transport_slot.read()),
-    }
+        transport: Box::new(move || transport_slot.read()),
+    })
 }
 
 /// Build a static UI descriptor for this plugin type. Monomorphized per P.

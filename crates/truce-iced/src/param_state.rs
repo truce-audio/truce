@@ -88,11 +88,11 @@ impl<P: Params> ParamState<P> {
     pub(crate) fn sync(&mut self, ctx: &EditorContext) -> Vec<u32> {
         let mut changed = Vec::new();
         for info in self.params.param_infos() {
-            let new_val = (ctx.get_param)(info.id);
+            let new_val = ctx.get_param(info.id);
             let old_val = self.values.get(&info.id).copied().unwrap_or(-1.0);
             if (new_val - old_val).abs() > 1e-10 {
                 self.values.insert(info.id, new_val);
-                self.labels.insert(info.id, (ctx.format_param)(info.id));
+                self.labels.insert(info.id, ctx.format_param(info.id));
                 changed.push(info.id);
             }
         }
@@ -102,7 +102,7 @@ impl<P: Params> ParamState<P> {
     /// Poll meter values from the editor context.
     pub(crate) fn sync_meters(&mut self, ctx: &EditorContext, meter_ids: &[u32]) {
         for &id in meter_ids {
-            self.meters.insert(id, (ctx.get_meter)(id));
+            self.meters.insert(id, ctx.get_meter(id));
         }
     }
 }

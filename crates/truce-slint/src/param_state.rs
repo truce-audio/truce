@@ -4,7 +4,7 @@
 //! ergonomic accessors. Clone-able so Slint callbacks can capture it.
 
 use std::sync::Arc;
-use truce_core::editor::EditorContext;
+use truce_core::editor::{ClosureBridge, EditorContext};
 
 /// Bridge between truce's EditorContext and Slint widgets.
 ///
@@ -25,56 +25,56 @@ impl ParamState {
     /// Get a parameter's normalized value (0.0-1.0).
     pub fn get(&self, id: impl Into<u32>) -> f64 {
         let id = id.into();
-        (self.ctx.get_param)(id)
+        self.ctx.get_param(id)
     }
 
     /// Get a parameter's plain value (in its native range).
     pub fn get_plain(&self, id: impl Into<u32>) -> f64 {
         let id = id.into();
-        (self.ctx.get_param_plain)(id)
+        self.ctx.get_param_plain(id)
     }
 
     /// Get a parameter's formatted display string.
     pub fn format(&self, id: impl Into<u32>) -> String {
         let id = id.into();
-        (self.ctx.format_param)(id)
+        self.ctx.format_param(id)
     }
 
     /// Begin + set + end in one shot (for clicks/toggles/sliders).
     pub fn set_immediate(&self, id: impl Into<u32>, normalized: f64) {
         let id = id.into();
-        (self.ctx.begin_edit)(id);
-        (self.ctx.set_param)(id, normalized);
-        (self.ctx.end_edit)(id);
+        self.ctx.begin_edit(id);
+        self.ctx.set_param(id, normalized);
+        self.ctx.end_edit(id);
     }
 
     /// Begin a drag gesture (call once on mouse-down).
     pub fn begin_gesture(&self, id: impl Into<u32>) {
         let id = id.into();
-        (self.ctx.begin_edit)(id);
+        self.ctx.begin_edit(id);
     }
 
     /// Update during a drag gesture.
     pub fn set_value(&self, id: impl Into<u32>, normalized: f64) {
         let id = id.into();
-        (self.ctx.set_param)(id, normalized);
+        self.ctx.set_param(id, normalized);
     }
 
     /// End a drag gesture (call once on mouse-up).
     pub fn end_gesture(&self, id: impl Into<u32>) {
         let id = id.into();
-        (self.ctx.end_edit)(id);
+        self.ctx.end_edit(id);
     }
 
     /// Read a meter value (0.0-1.0) by meter ID.
     pub fn meter(&self, id: impl Into<u32>) -> f32 {
         let id = id.into();
-        (self.ctx.get_meter)(id)
+        self.ctx.get_meter(id)
     }
 
     /// Request a resize from the host. Returns true if accepted.
     pub fn request_resize(&self, width: u32, height: u32) -> bool {
-        (self.ctx.request_resize)(width, height)
+        self.ctx.request_resize(width, height)
     }
 
     /// Access the underlying EditorContext (for `StateBinding::new()`).
@@ -84,12 +84,12 @@ impl ParamState {
 
     /// Read custom plugin state bytes (from `save_state()`).
     pub fn get_state(&self) -> Vec<u8> {
-        (self.ctx.get_state)()
+        self.ctx.get_state()
     }
 
     /// Write custom state back to the plugin (calls `load_state()`).
     pub fn set_state(&self, data: Vec<u8>) {
-        (self.ctx.set_state)(data);
+        self.ctx.set_state(data);
     }
 
     /// Create a ParamState backed by real parameter defaults.
@@ -105,23 +105,23 @@ impl ParamState {
         let p3 = params.clone();
         let transport = truce_core::events::TransportInfo::for_screenshot();
         Self {
-            ctx: EditorContext {
-                begin_edit: Arc::new(|_| {}),
-                set_param: Arc::new(|_, _| {}),
-                end_edit: Arc::new(|_| {}),
-                request_resize: Arc::new(|_, _| false),
-                get_param: Arc::new(move |id| p1.get_normalized(id).unwrap_or(0.5)),
-                get_param_plain: Arc::new(move |id| p2.get_plain(id).unwrap_or(0.0)),
-                format_param: Arc::new(move |id| {
+            ctx: EditorContext::from_closures(ClosureBridge {
+                begin_edit: Box::new(|_| {}),
+                set_param: Box::new(|_, _| {}),
+                end_edit: Box::new(|_| {}),
+                request_resize: Box::new(|_, _| false),
+                get_param: Box::new(move |id| p1.get_normalized(id).unwrap_or(0.5)),
+                get_param_plain: Box::new(move |id| p2.get_plain(id).unwrap_or(0.0)),
+                format_param: Box::new(move |id| {
                     let plain = p3.get_plain(id).unwrap_or(0.0);
                     p3.format_value(id, plain)
                         .unwrap_or_else(|| format!("{plain:.2}"))
                 }),
-                get_meter: Arc::new(|_| 0.0),
-                get_state: Arc::new(Vec::new),
-                set_state: Arc::new(|_| {}),
-                transport: Arc::new(move || Some(transport.clone())),
-            },
+                get_meter: Box::new(|_| 0.0),
+                get_state: Box::new(Vec::new),
+                set_state: Box::new(|_| {}),
+                transport: Box::new(move || Some(transport.clone())),
+            }),
         }
     }
 }

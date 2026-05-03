@@ -224,7 +224,7 @@ fn tremolo_ui(ctx: &egui::Context, state: &ParamState) {
 /// Read the editor's transport closure and render a compact readout
 /// like `▶ 128.0 BPM • 4/4 • ♩ 12.25` (or `■ — BPM` when stopped).
 fn draw_transport_readout(ui: &mut egui::Ui, state: &ParamState) {
-    let transport = (state.context().transport)();
+    let transport = state.context().transport();
     let line = format_transport(transport.as_ref());
 
     ui.horizontal(|ui| {

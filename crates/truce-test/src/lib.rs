@@ -47,7 +47,7 @@ use truce_params::Params;
 
 pub use truce_driver::{
     CaptureSpec, DriverResult, InputSource, MeterCapture, MeterReadings, PluginDriver, Script,
-    TransportSpec,
+    SetupContext, TransportSpec,
 };
 
 pub mod assertions;

@@ -327,7 +327,36 @@ fn io_err(e: hound::Error) -> std::io::Error {
 // PluginDriver builder
 // ---------------------------------------------------------------------------
 
-type SetupFn<P> = Box<dyn FnOnce(&mut P)>;
+type SetupFn<P> = Box<dyn FnOnce(&mut P, &SetupContext)>;
+
+/// Context passed to the [`PluginDriver::setup`] closure. Carries the
+/// driver state that's been *resolved* by the time setup runs — in
+/// particular the auto-detected channel count, which would otherwise
+/// be invisible to the closure (the user's `&mut P` doesn't know).
+///
+/// Test code that needs to size scratch buffers, validate bus layouts,
+/// or branch on stereo-vs-mono before the first process block reads
+/// these fields directly:
+///
+/// ```ignore
+/// PluginDriver::<MyPlugin>::new()
+///     .setup(|plugin, ctx| {
+///         assert_eq!(ctx.channels, 2, "stereo run expected");
+///         plugin.scratch = vec![0.0; ctx.block_size * ctx.channels];
+///     })
+///     .run();
+/// ```
+#[derive(Clone, Copy, Debug)]
+pub struct SetupContext {
+    /// Channels per audio bus that the driver will run with. Either
+    /// the value passed to [`PluginDriver::channels`] or the
+    /// auto-resolved default from `P::bus_layouts()[0]`.
+    pub channels: usize,
+    /// Sample rate the upcoming process loop will use.
+    pub sample_rate: f64,
+    /// Block size the upcoming process loop will use.
+    pub block_size: usize,
+}
 
 enum StateSource {
     Blob(Vec<u8>),
@@ -465,7 +494,13 @@ impl<P: PluginExport> PluginDriver<P> {
     ///
     /// Composes with `state_file` (state loads first) and
     /// `set_param` (shortcuts apply first); the closure runs last.
-    pub fn setup<F: FnOnce(&mut P) + 'static>(mut self, f: F) -> Self {
+    ///
+    /// The closure receives a [`SetupContext`] with the resolved
+    /// channel count, sample rate, and block size — exactly what the
+    /// upcoming process loop will use. Channel resolution happens
+    /// before setup runs, so a closure that allocates per-channel
+    /// scratch can size correctly without re-querying `P::bus_layouts`.
+    pub fn setup<F: FnOnce(&mut P, &SetupContext) + 'static>(mut self, f: F) -> Self {
         self.setup = Some(Box::new(f));
         self
     }
@@ -549,18 +584,30 @@ impl<P: PluginExport> PluginDriver<P> {
         }
         plugin.params().snap_smoothers();
 
-        // 3. Setup closure (most general).
-        if let Some(f) = self.setup.take() {
-            f(&mut plugin);
-        }
-
-        // Resolve channel count.
+        // Resolve channel count *before* the setup closure runs so the
+        // closure's `SetupContext` can expose it. The previous order
+        // (setup first, channels after) meant a setup closure that
+        // wanted to size scratch buffers had to re-query `P::bus_layouts`
+        // by hand, which silently disagreed with the driver's auto-pick
+        // when callers later passed `.channels(...)`.
         let channels = self.channels.unwrap_or_else(|| {
             let layouts = P::bus_layouts();
             let layout = &layouts[0];
             let outs = layout.total_output_channels() as usize;
             if outs > 0 { outs } else { 2 }
         });
+
+        // 3. Setup closure (most general). Receives the resolved
+        // `SetupContext` so it can size per-channel state, branch on
+        // mono/stereo, etc.
+        if let Some(f) = self.setup.take() {
+            let ctx = SetupContext {
+                channels,
+                sample_rate: self.sample_rate,
+                block_size: self.block_size,
+            };
+            f(&mut plugin, &ctx);
+        }
 
         let is_effect = P::info().category == PluginCategory::Effect;
         let total_frames = (self.duration.as_secs_f64() * self.sample_rate) as usize;

@@ -15,7 +15,7 @@ macro_rules! hot_debug {
 
 use baseview::{Event, EventStatus, Window, WindowHandler, WindowOpenOptions, WindowScalePolicy};
 
-use truce_core::editor::{Editor, EditorContext, RawWindowHandle};
+use truce_core::editor::{Editor, EditorBridge, EditorContext, RawWindowHandle};
 use truce_gui::editor::BuiltinEditor;
 use truce_gui::render::RenderBackend;
 use truce_params::Params;
@@ -80,8 +80,9 @@ struct GpuWindowHandler<P: Params> {
     translator: truce_gui::interaction::BaseviewTranslator,
     /// Current logical size — used to detect hot-reload size changes.
     current_size: (u32, u32),
-    /// Host callback to request a window resize.
-    request_resize: Arc<dyn Fn(u32, u32) -> bool + Send + Sync>,
+    /// Bridge handle, retained so we can drive `request_resize` from
+    /// the render loop when hot-reload changes the editor's size.
+    bridge: Arc<dyn EditorBridge>,
 }
 
 impl<P: Params + 'static> WindowHandler for GpuWindowHandler<P> {
@@ -108,7 +109,7 @@ impl<P: Params + 'static> WindowHandler for GpuWindowHandler<P> {
                         new_size.1,
                     );
                     gpu.resize(new_size.0, new_size.1);
-                    (self.request_resize)(new_size.0, new_size.1);
+                    self.bridge.request_resize(new_size.0, new_size.1);
                     self.current_size = new_size;
                 }
 
@@ -157,7 +158,7 @@ impl<P: Params + 'static> Editor for GpuEditor<P> {
 
         hot_debug!("[truce-gpu] open() called, size={}x{}", lw, lh);
 
-        let request_resize = Arc::clone(&context.request_resize);
+        let bridge = Arc::clone(context.bridge());
 
         // Set up the inner editor's context for param access
         if let Ok(mut inner) = self.inner.lock() {
@@ -190,7 +191,7 @@ impl<P: Params + 'static> Editor for GpuEditor<P> {
                     gpu,
                     translator: truce_gui::interaction::BaseviewTranslator::new(),
                     current_size: size,
-                    request_resize,
+                    bridge,
                 }
             },
         );

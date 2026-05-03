@@ -144,35 +144,186 @@ pub trait Editor: Send {
     }
 }
 
-/// Context passed to Editor::open(). Provides communication
-/// with the host and parameter store.
+/// Bridge between the editor and the host / plugin. Format wrappers
+/// (CLAP / VST3 / VST2 / AU / AAX / LV2) implement this trait — or
+/// build a [`ClosureBridge`] from per-method closures — and pass an
+/// `Arc<dyn EditorBridge>` to the editor through [`EditorContext`].
 ///
-/// All fields are `Arc`-wrapped, so cloning is cheap (reference count bump).
-#[derive(Clone)]
-pub struct EditorContext {
-    pub begin_edit: Arc<dyn Fn(u32) + Send + Sync>,
-    pub set_param: Arc<dyn Fn(u32, f64) + Send + Sync>,
-    pub end_edit: Arc<dyn Fn(u32) + Send + Sync>,
-    pub request_resize: Arc<dyn Fn(u32, u32) -> bool + Send + Sync>,
-    /// Read a parameter's normalized value from the plugin (for host→GUI sync).
-    pub get_param: Arc<dyn Fn(u32) -> f64 + Send + Sync>,
-    /// Read a parameter's plain value from the plugin.
-    pub get_param_plain: Arc<dyn Fn(u32) -> f64 + Send + Sync>,
-    /// Format a parameter's current value as a display string.
-    pub format_param: Arc<dyn Fn(u32) -> String + Send + Sync>,
-    /// Read a meter value (0.0–1.0) by meter ID. Used for level meters.
-    /// Returns 0.0 if the meter ID doesn't exist.
-    pub get_meter: Arc<dyn Fn(u32) -> f32 + Send + Sync>,
-    /// Read the plugin's custom state (from `save_state()`).
-    /// Returns empty vec if the plugin has no custom state.
-    pub get_state: Arc<dyn Fn() -> Vec<u8> + Send + Sync>,
+/// Editors call into the bridge for everything they can't do
+/// directly: starting / ending an automation gesture, reading or
+/// writing parameters in normalized or plain form, requesting a
+/// window resize, exchanging custom state, sampling the host's
+/// transport. Implementations carry whatever per-format pointers
+/// the work needs (`clap_host*`, `AEffect*`, an `Arc<P>` for the
+/// param store, etc.).
+///
+/// `Send + Sync` is required so editors can clone the
+/// `Arc<dyn EditorBridge>` and hand it to UI worker threads or
+/// background animation timers without forcing every implementor to
+/// rederive thread-safety bounds.
+pub trait EditorBridge: Send + Sync {
+    /// Start an automation gesture for `id`. Hosts that show "touched"
+    /// state in the automation lane use this to render the
+    /// in-progress edit.
+    fn begin_edit(&self, id: u32);
+    /// Set parameter `id` to `normalized` (clamped to `0.0..=1.0`).
+    /// Format wrappers usually plumb this through both the plugin's
+    /// own param store and the host's automation channel.
+    fn set_param(&self, id: u32, normalized: f64);
+    /// End the automation gesture started by [`Self::begin_edit`].
+    fn end_edit(&self, id: u32);
+    /// Ask the host to resize the editor window to `(w, h)` logical
+    /// points. Returns `true` if the host accepted the request.
+    fn request_resize(&self, w: u32, h: u32) -> bool;
+    /// Read the parameter's current normalized value from the plugin
+    /// (host→GUI sync path).
+    fn get_param(&self, id: u32) -> f64;
+    /// Read the parameter's current plain (denormalized) value.
+    fn get_param_plain(&self, id: u32) -> f64;
+    /// Format the parameter's current value as a display string,
+    /// applying the plugin's `format_value` impl + unit suffix.
+    fn format_param(&self, id: u32) -> String;
+    /// Read a meter value (0.0–1.0) by meter ID. Returns 0.0 if the
+    /// meter ID isn't registered.
+    fn get_meter(&self, id: u32) -> f32;
+    /// Read the plugin's custom state (everything outside the
+    /// parameter system). Returns an empty `Vec` when the plugin has
+    /// no custom state.
+    fn get_state(&self) -> Vec<u8>;
     /// Write custom state back to the plugin (calls `load_state()`).
-    pub set_state: Arc<dyn Fn(Vec<u8>) + Send + Sync>,
+    fn set_state(&self, data: Vec<u8>);
     /// Most-recently-reported host transport state, or `None` if the
     /// host does not expose transport to plugin editors or the plugin
     /// has not yet received a process block.
     ///
     /// Format wrappers populate a shared [`TransportSlot`](crate::TransportSlot)
-    /// from their process callback; this closure reads from it.
-    pub transport: Arc<dyn Fn() -> Option<TransportInfo> + Send + Sync>,
+    /// from their process callback; this method reads from it.
+    fn transport(&self) -> Option<TransportInfo>;
+}
+
+/// Adapter that implements [`EditorBridge`] over per-method closures.
+///
+/// Format wrappers that prefer to compose state inline via closures
+/// (the historical shape, before the trait existed) construct one of
+/// these and wrap it in an `Arc<dyn EditorBridge>`. Wrappers that
+/// already have a typed host-pointer struct should `impl EditorBridge`
+/// for that struct directly and skip this adapter — one less layer of
+/// indirection per call.
+pub struct ClosureBridge {
+    pub begin_edit: Box<dyn Fn(u32) + Send + Sync>,
+    pub set_param: Box<dyn Fn(u32, f64) + Send + Sync>,
+    pub end_edit: Box<dyn Fn(u32) + Send + Sync>,
+    pub request_resize: Box<dyn Fn(u32, u32) -> bool + Send + Sync>,
+    pub get_param: Box<dyn Fn(u32) -> f64 + Send + Sync>,
+    pub get_param_plain: Box<dyn Fn(u32) -> f64 + Send + Sync>,
+    pub format_param: Box<dyn Fn(u32) -> String + Send + Sync>,
+    pub get_meter: Box<dyn Fn(u32) -> f32 + Send + Sync>,
+    pub get_state: Box<dyn Fn() -> Vec<u8> + Send + Sync>,
+    pub set_state: Box<dyn Fn(Vec<u8>) + Send + Sync>,
+    pub transport: Box<dyn Fn() -> Option<TransportInfo> + Send + Sync>,
+}
+
+impl EditorBridge for ClosureBridge {
+    fn begin_edit(&self, id: u32) {
+        (self.begin_edit)(id)
+    }
+    fn set_param(&self, id: u32, normalized: f64) {
+        (self.set_param)(id, normalized)
+    }
+    fn end_edit(&self, id: u32) {
+        (self.end_edit)(id)
+    }
+    fn request_resize(&self, w: u32, h: u32) -> bool {
+        (self.request_resize)(w, h)
+    }
+    fn get_param(&self, id: u32) -> f64 {
+        (self.get_param)(id)
+    }
+    fn get_param_plain(&self, id: u32) -> f64 {
+        (self.get_param_plain)(id)
+    }
+    fn format_param(&self, id: u32) -> String {
+        (self.format_param)(id)
+    }
+    fn get_meter(&self, id: u32) -> f32 {
+        (self.get_meter)(id)
+    }
+    fn get_state(&self) -> Vec<u8> {
+        (self.get_state)()
+    }
+    fn set_state(&self, data: Vec<u8>) {
+        (self.set_state)(data)
+    }
+    fn transport(&self) -> Option<TransportInfo> {
+        (self.transport)()
+    }
+}
+
+/// Context passed to [`Editor::open`]. Carries an `Arc<dyn EditorBridge>`
+/// — one trait-object handle covering all 11 host/plugin operations
+/// the editor needs. Inherent methods delegate to the bridge so call
+/// sites read as `ctx.set_param(id, v)` rather than the older
+/// `(ctx.set_param)(id, v)` closure-deref form.
+///
+/// `Clone` is cheap (Arc refcount bump). Editors that need to hand
+/// the context to UI worker threads or animation timers clone freely.
+#[derive(Clone)]
+pub struct EditorContext {
+    bridge: Arc<dyn EditorBridge>,
+}
+
+impl EditorContext {
+    /// Build a context from any [`EditorBridge`] implementor.
+    pub fn new(bridge: Arc<dyn EditorBridge>) -> Self {
+        Self { bridge }
+    }
+
+    /// Build a context from a [`ClosureBridge`]. Convenience for
+    /// format wrappers that compose state inline via closures.
+    pub fn from_closures(bridge: ClosureBridge) -> Self {
+        Self {
+            bridge: Arc::new(bridge),
+        }
+    }
+
+    /// Access the underlying bridge handle. Editors that want to clone
+    /// the bridge into a worker thread without cloning the surrounding
+    /// `EditorContext` use this.
+    pub fn bridge(&self) -> &Arc<dyn EditorBridge> {
+        &self.bridge
+    }
+
+    pub fn begin_edit(&self, id: u32) {
+        self.bridge.begin_edit(id);
+    }
+    pub fn set_param(&self, id: u32, normalized: f64) {
+        self.bridge.set_param(id, normalized);
+    }
+    pub fn end_edit(&self, id: u32) {
+        self.bridge.end_edit(id);
+    }
+    pub fn request_resize(&self, w: u32, h: u32) -> bool {
+        self.bridge.request_resize(w, h)
+    }
+    pub fn get_param(&self, id: u32) -> f64 {
+        self.bridge.get_param(id)
+    }
+    pub fn get_param_plain(&self, id: u32) -> f64 {
+        self.bridge.get_param_plain(id)
+    }
+    pub fn format_param(&self, id: u32) -> String {
+        self.bridge.format_param(id)
+    }
+    pub fn get_meter(&self, id: u32) -> f32 {
+        self.bridge.get_meter(id)
+    }
+    pub fn get_state(&self) -> Vec<u8> {
+        self.bridge.get_state()
+    }
+    pub fn set_state(&self, data: Vec<u8>) {
+        self.bridge.set_state(data);
+    }
+    pub fn transport(&self) -> Option<TransportInfo> {
+        self.bridge.transport()
+    }
 }

@@ -210,10 +210,12 @@ pub struct StateBinding<T: State> {
 impl<T: State> StateBinding<T> {
     /// Create a new binding from an editor context.
     pub fn new(context: &EditorContext) -> Self {
+        let bridge_for_get = Arc::clone(context.bridge());
+        let bridge_for_set = Arc::clone(context.bridge());
         let mut binding = Self {
             cached: T::default(),
-            get_state: context.get_state.clone(),
-            set_state: context.set_state.clone(),
+            get_state: Arc::new(move || bridge_for_get.get_state()),
+            set_state: Arc::new(move |data| bridge_for_set.set_state(data)),
         };
         binding.sync();
         binding
