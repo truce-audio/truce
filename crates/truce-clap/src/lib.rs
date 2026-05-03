@@ -374,6 +374,60 @@ unsafe extern "C" fn clap_plugin_on_main_thread<P: PluginExport>(plugin: *const 
 // Event conversion: CLAP input events -> EventList
 // ---------------------------------------------------------------------------
 
+/// Build a `TransportInfo` from a CLAP transport event/struct.
+///
+/// Same flag-driven decoding is needed in two places — the
+/// `CLAP_EVENT_TRANSPORT` arm of `convert_input_events` (which sees a
+/// `clap_event_transport` arriving as an input event mid-block) and
+/// the per-process `clap_process::transport` field. Hosts deliver
+/// transport state through whichever channel they prefer; the bit
+/// layout is identical, so the decode is too.
+fn build_transport_info(t: &clap_event_transport) -> TransportInfo {
+    let flags = t.flags;
+    let beats_timeline = flags & CLAP_TRANSPORT_HAS_BEATS_TIMELINE != 0;
+    let has_time_sig = flags & CLAP_TRANSPORT_HAS_TIME_SIGNATURE != 0;
+    TransportInfo {
+        playing: flags & CLAP_TRANSPORT_IS_PLAYING != 0,
+        recording: flags & CLAP_TRANSPORT_IS_RECORDING != 0,
+        tempo: if flags & CLAP_TRANSPORT_HAS_TEMPO != 0 {
+            t.tempo
+        } else {
+            120.0
+        },
+        time_sig_num: if has_time_sig { t.tsig_num as u8 } else { 4 },
+        time_sig_den: if has_time_sig { t.tsig_denom as u8 } else { 4 },
+        // CLAP doesn't expose sample-position in transport — tracked
+        // by the plugin's own block cursor when needed.
+        position_samples: 0,
+        position_seconds: if flags & CLAP_TRANSPORT_HAS_SECONDS_TIMELINE != 0 {
+            t.song_pos_seconds as f64 / CLAP_SECTIME_FACTOR as f64
+        } else {
+            0.0
+        },
+        position_beats: if beats_timeline {
+            t.song_pos_beats as f64 / CLAP_BEATTIME_FACTOR as f64
+        } else {
+            0.0
+        },
+        bar_start_beats: if beats_timeline {
+            t.bar_start as f64 / CLAP_BEATTIME_FACTOR as f64
+        } else {
+            0.0
+        },
+        loop_active: flags & CLAP_TRANSPORT_IS_LOOP_ACTIVE != 0,
+        loop_start_beats: if beats_timeline {
+            t.loop_start_beats as f64 / CLAP_BEATTIME_FACTOR as f64
+        } else {
+            0.0
+        },
+        loop_end_beats: if beats_timeline {
+            t.loop_end_beats as f64 / CLAP_BEATTIME_FACTOR as f64
+        } else {
+            0.0
+        },
+    }
+}
+
 /// `sort` controls whether the resulting `event_list` gets a stable
 /// sort by sample offset. `process` needs sorted events (the plugin
 /// iterates them in time order); `params_flush` discards the events
@@ -466,55 +520,9 @@ unsafe fn convert_input_events<P: PluginExport>(
                 }
                 CLAP_EVENT_TRANSPORT => {
                     let transport = &*(header as *const clap_event_transport);
-                    let flags = transport.flags;
                     data.event_list.push(Event {
                         sample_offset,
-                        body: EventBody::Transport(TransportInfo {
-                            playing: flags & CLAP_TRANSPORT_IS_PLAYING != 0,
-                            recording: flags & CLAP_TRANSPORT_IS_RECORDING != 0,
-                            tempo: if flags & CLAP_TRANSPORT_HAS_TEMPO != 0 {
-                                transport.tempo
-                            } else {
-                                120.0
-                            },
-                            time_sig_num: if flags & CLAP_TRANSPORT_HAS_TIME_SIGNATURE != 0 {
-                                transport.tsig_num as u8
-                            } else {
-                                4
-                            },
-                            time_sig_den: if flags & CLAP_TRANSPORT_HAS_TIME_SIGNATURE != 0 {
-                                transport.tsig_denom as u8
-                            } else {
-                                4
-                            },
-                            position_samples: 0, // CLAP doesn't directly give sample position in transport
-                            position_seconds: if flags & CLAP_TRANSPORT_HAS_SECONDS_TIMELINE != 0 {
-                                transport.song_pos_seconds as f64 / CLAP_SECTIME_FACTOR as f64
-                            } else {
-                                0.0
-                            },
-                            position_beats: if flags & CLAP_TRANSPORT_HAS_BEATS_TIMELINE != 0 {
-                                transport.song_pos_beats as f64 / CLAP_BEATTIME_FACTOR as f64
-                            } else {
-                                0.0
-                            },
-                            bar_start_beats: if flags & CLAP_TRANSPORT_HAS_BEATS_TIMELINE != 0 {
-                                transport.bar_start as f64 / CLAP_BEATTIME_FACTOR as f64
-                            } else {
-                                0.0
-                            },
-                            loop_active: flags & CLAP_TRANSPORT_IS_LOOP_ACTIVE != 0,
-                            loop_start_beats: if flags & CLAP_TRANSPORT_HAS_BEATS_TIMELINE != 0 {
-                                transport.loop_start_beats as f64 / CLAP_BEATTIME_FACTOR as f64
-                            } else {
-                                0.0
-                            },
-                            loop_end_beats: if flags & CLAP_TRANSPORT_HAS_BEATS_TIMELINE != 0 {
-                                transport.loop_end_beats as f64 / CLAP_BEATTIME_FACTOR as f64
-                            } else {
-                                0.0
-                            },
-                        }),
+                        body: EventBody::Transport(build_transport_info(transport)),
                     });
                 }
                 _ => {
@@ -626,56 +634,9 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
         // sample offset so the plugin sees them in time order.
         convert_input_events::<P>(data, proc.in_events, true);
 
-        // Build transport info from the CLAP transport event (or default)
+        // Build transport info from the CLAP transport event (or default).
         let transport = if !proc.transport.is_null() {
-            let t = &*proc.transport;
-            let flags = t.flags;
-            TransportInfo {
-                playing: flags & CLAP_TRANSPORT_IS_PLAYING != 0,
-                recording: flags & CLAP_TRANSPORT_IS_RECORDING != 0,
-                tempo: if flags & CLAP_TRANSPORT_HAS_TEMPO != 0 {
-                    t.tempo
-                } else {
-                    120.0
-                },
-                time_sig_num: if flags & CLAP_TRANSPORT_HAS_TIME_SIGNATURE != 0 {
-                    t.tsig_num as u8
-                } else {
-                    4
-                },
-                time_sig_den: if flags & CLAP_TRANSPORT_HAS_TIME_SIGNATURE != 0 {
-                    t.tsig_denom as u8
-                } else {
-                    4
-                },
-                position_samples: 0,
-                position_seconds: if flags & CLAP_TRANSPORT_HAS_SECONDS_TIMELINE != 0 {
-                    t.song_pos_seconds as f64 / CLAP_SECTIME_FACTOR as f64
-                } else {
-                    0.0
-                },
-                position_beats: if flags & CLAP_TRANSPORT_HAS_BEATS_TIMELINE != 0 {
-                    t.song_pos_beats as f64 / CLAP_BEATTIME_FACTOR as f64
-                } else {
-                    0.0
-                },
-                bar_start_beats: if flags & CLAP_TRANSPORT_HAS_BEATS_TIMELINE != 0 {
-                    t.bar_start as f64 / CLAP_BEATTIME_FACTOR as f64
-                } else {
-                    0.0
-                },
-                loop_active: flags & CLAP_TRANSPORT_IS_LOOP_ACTIVE != 0,
-                loop_start_beats: if flags & CLAP_TRANSPORT_HAS_BEATS_TIMELINE != 0 {
-                    t.loop_start_beats as f64 / CLAP_BEATTIME_FACTOR as f64
-                } else {
-                    0.0
-                },
-                loop_end_beats: if flags & CLAP_TRANSPORT_HAS_BEATS_TIMELINE != 0 {
-                    t.loop_end_beats as f64 / CLAP_BEATTIME_FACTOR as f64
-                } else {
-                    0.0
-                },
-            }
+            build_transport_info(&*proc.transport)
         } else {
             TransportInfo::default()
         };
@@ -1593,41 +1554,28 @@ impl<P: PluginExport> Extensions<P> {
 
     /// Get or initialize the singleton extensions struct.
     ///
-    /// Uses a leaked Box behind an AtomicPtr to provide a `&'static` reference.
-    /// CLAP plugin libraries only export a single plugin type, so there is exactly
-    /// one monomorphization and one AtomicPtr in practice.
+    /// Backed by a function-local `OnceLock` keyed off a leaked
+    /// `Box<Self>`. The `OnceLock` itself stores the pointer as
+    /// `usize` because Rust forbids generic statics — a literal
+    /// `OnceLock<Extensions<P>>` static can't reference the outer
+    /// generic parameter, so we erase to `usize` and re-attach the
+    /// type on read. `OnceLock::get_or_init` runs the constructor at
+    /// most once across all threads, so unlike the previous
+    /// `AtomicPtr<u8>` + manual `compare_exchange` shape we never
+    /// build-and-throw-away a losing `Box` on a race.
+    ///
+    /// CLAP libraries only ship one plugin type per shared object, so
+    /// there's exactly one monomorphization and one `OnceLock` per
+    /// binary in practice.
     fn get() -> &'static Self {
-        use std::sync::atomic::{AtomicPtr, Ordering};
-        static PTR: AtomicPtr<u8> = AtomicPtr::new(ptr::null_mut());
-
-        let existing = PTR.load(Ordering::Acquire);
-        if !existing.is_null() {
-            // SAFETY: The pointer was written by a successful compare_exchange
-            // below, which stored a valid Box::into_raw pointer that is never
-            // freed. The type is correct because only one monomorphization of
-            // Extensions<P> exists per binary.
-            return unsafe { &*(existing as *const Self) };
-        }
-
-        let boxed = Box::new(Self::new());
-        let leaked = Box::into_raw(boxed);
-        match PTR.compare_exchange(
-            ptr::null_mut(),
-            leaked as *mut u8,
-            Ordering::Release,
-            Ordering::Acquire,
-        ) {
-            // SAFETY: We just allocated and leaked this pointer; it is valid.
-            Ok(_) => unsafe { &*leaked },
-            Err(winner) => {
-                // Another thread beat us; drop our allocation and use theirs.
-                // SAFETY: `leaked` was just created by Box::into_raw above
-                // and nobody else has a reference to it.
-                unsafe { drop(Box::from_raw(leaked)) };
-                // SAFETY: Same as the Acquire load path above.
-                unsafe { &*(winner as *const Self) }
-            }
-        }
+        use std::sync::OnceLock;
+        static PTR: OnceLock<usize> = OnceLock::new();
+        let raw = *PTR.get_or_init(|| Box::into_raw(Box::new(Self::new())) as usize);
+        // SAFETY: `raw` was produced by `Box::into_raw(Box::new(Self::new()))`
+        // inside `get_or_init`, runs at most once, and is never freed; the
+        // type matches because only one monomorphization of `Extensions<P>`
+        // exists per binary.
+        unsafe { &*(raw as *const Self) }
     }
 }
 

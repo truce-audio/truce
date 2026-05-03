@@ -785,7 +785,15 @@ pub fn register_vst3<P: PluginExport>() {
         gui_set_content_scale: cb_gui_set_content_scale::<P>,
     }));
 
-    let param_descs = param_descs.leak();
+    // Unify with the `Box::leak(Box::new(...))` shape above so every
+    // descriptor handed to `truce_vst3_register` lives behind the
+    // same kind of leaked allocation. `Vec::leak` produces a
+    // `&'static mut [T]` from a heap reallocation that may differ in
+    // capacity from len; converting through `into_boxed_slice()`
+    // first trims to exact len and lets us route through `Box::leak`
+    // alongside `descriptor` and `callbacks`.
+    let param_descs: &'static [Vst3ParamDescriptor] =
+        Box::leak(param_descs.into_boxed_slice());
 
     unsafe {
         ffi::truce_vst3_register(

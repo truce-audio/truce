@@ -86,14 +86,19 @@ pub fn assert_silence<P: PluginExport>(result: &DriverResult<P>) {
 /// Assert no sample is NaN or infinite. If this fails, the DSP went
 /// divergent.
 pub fn assert_no_nans<P: PluginExport>(result: &DriverResult<P>) {
-    for (ch, data) in result.output.iter().enumerate() {
-        for (i, &s) in data.iter().enumerate() {
-            assert!(
-                s.is_finite(),
-                "NaN/Inf at channel {ch} sample {i} (t = {:.3} ms): {s}",
-                (i as f64 / result.sample_rate) * 1000.0
-            );
-        }
+    let bad = result
+        .output
+        .iter()
+        .enumerate()
+        .flat_map(|(ch, data)| {
+            data.iter().enumerate().map(move |(i, &s)| (ch, i, s))
+        })
+        .find(|&(_, _, s)| !s.is_finite());
+    if let Some((ch, i, s)) = bad {
+        panic!(
+            "NaN/Inf at channel {ch} sample {i} (t = {:.3} ms): {s}",
+            (i as f64 / result.sample_rate) * 1000.0
+        );
     }
 }
 
