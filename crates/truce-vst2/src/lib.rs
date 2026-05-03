@@ -47,6 +47,19 @@ struct Vst2Instance<P: PluginExport> {
     transport_slot: Arc<truce_core::TransportSlot>,
 }
 
+// SAFETY: `Vst2Instance` holds two raw `*mut c_void` host handles
+// (`aeffect_ptr` and the optional `pending_editor_parent`). Neither
+// auto-derives `Send` and `*mut` makes the whole struct `!Send` by
+// default. VST2 hosts call every dispatcher / callback on a single
+// host thread per instance — never concurrently and never from the
+// audio thread for editor-state pointers. The two pointers are read
+// only inside `unsafe extern "C"` callbacks the host invokes
+// sequentially. This impl asserts the single-thread invariant
+// explicitly so a future `Mutex<Box<Vst2Instance<P>>>` (or any other
+// generic store that requires `Send`) compiles instead of failing
+// silently at the bound.
+unsafe impl<P: PluginExport> Send for Vst2Instance<P> {}
+
 unsafe extern "C" {
     fn truce_vst2_host_begin_edit(effect: *mut std::ffi::c_void, param_id: u32);
     fn truce_vst2_host_automate(effect: *mut std::ffi::c_void, param_id: u32, normalized: f32);
@@ -398,45 +411,56 @@ unsafe extern "C" fn cb_state_load<P: PluginExport>(
 ) {
     unsafe {
         let inst = &mut *(ctx as *mut Vst2Instance<P>);
+
         // `slice::from_raw_parts(null, 0)` is sound but `from_raw_parts(null, n)`
         // for `n > 0` is UB. Hosts under stress (or buggy hosts) have
         // been seen to call effSetChunk with `(null, non_zero)`; treat
         // it the same as "host gave us nothing" rather than UB.
-        if data.is_null() || len == 0 {
-            inst.state_loaded = true;
-            if let Some(parent) = inst.pending_editor_parent.take() {
-                open_editor_inner(inst, parent);
+        let restored = if !data.is_null() && len > 0 {
+            let blob = slice::from_raw_parts(data, len as usize);
+            if let Some(deserialized) = state::deserialize_state(blob, inst.plugin_id_hash) {
+                inst.plugin.params().restore_values(&deserialized.params);
+                if let Some(extra) = &deserialized.extra {
+                    inst.plugin.load_state(extra);
+                }
+                true
+            } else {
+                false
             }
-            return;
-        }
-        let blob = slice::from_raw_parts(data, len as usize);
-        let mut state_changed_fired = false;
-        if let Some(deserialized) = state::deserialize_state(blob, inst.plugin_id_hash) {
-            inst.plugin.params().restore_values(&deserialized.params);
-            if let Some(extra) = &deserialized.extra {
-                inst.plugin.load_state(extra);
-            }
-            // Notify an already-open editor that state changed (undo,
-            // preset recall). The pending-parent / editor block below
-            // handles the case where the editor isn't built yet —
-            // every successful state-load fires `state_changed` exactly
-            // once on the open editor, regardless of how many times
-            // the host calls `cb_state_load` on the same instance.
-            if let Some(ref mut editor) = inst.editor {
-                editor.state_changed();
-                state_changed_fired = true;
-            }
-        }
-        inst.state_loaded = true;
+        } else {
+            false
+        };
 
-        // If the host opened the editor before loading state, open it now.
-        if let Some(parent) = inst.pending_editor_parent.take() {
-            open_editor_inner(inst, parent);
-            // The freshly-opened editor reads state at construction;
-            // we don't need to additionally fire `state_changed` if we
-            // didn't above (no open editor existed at the time).
-            let _ = state_changed_fired;
+        // Single ordered block — read once on each side instead of
+        // checking `inst.editor` and `inst.pending_editor_parent` in
+        // separate `if let` arms. The audit caught a structural risk
+        // where a pending-parent open path could land out of order
+        // with the state_changed notification; this collapses both
+        // outcomes into one decision tree.
+        match (
+            restored,
+            inst.editor.is_some(),
+            inst.pending_editor_parent.take(),
+        ) {
+            // Editor already open + valid state: notify in place.
+            (true, true, None) => {
+                if let Some(ref mut editor) = inst.editor {
+                    editor.state_changed();
+                }
+            }
+            // Pending editor + (any restore outcome): open the editor;
+            // construction reads the just-restored params, so a
+            // separate `state_changed` would double-fire.
+            (_, _, Some(parent)) => {
+                inst.state_loaded = true;
+                open_editor_inner(inst, parent);
+                return;
+            }
+            // No editor + restore failed / null buffer: nothing to notify.
+            _ => {}
         }
+
+        inst.state_loaded = true;
     }
 }
 

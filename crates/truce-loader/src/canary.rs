@@ -133,7 +133,28 @@ fn rustc_hash() -> u64 {
 /// The shell creates this via `truce_vtable_probe()`, calls every
 /// method, and checks the results. If any method returns the wrong
 /// value, the vtable is reordered and the dylib is rejected.
-pub struct ProbePlugin;
+///
+/// `last_load_state` is the only mutable cell — `load_state` writes
+/// it, `save_state` reads it back. This lets `verify_probe`
+/// round-trip a sentinel through the load/save pair to confirm the
+/// `load_state` slot isn't swapped with another `&mut self` slot.
+pub struct ProbePlugin {
+    last_load_state: std::cell::RefCell<Vec<u8>>,
+}
+
+impl ProbePlugin {
+    pub fn new() -> Self {
+        Self {
+            last_load_state: std::cell::RefCell::new(Vec::new()),
+        }
+    }
+}
+
+impl Default for ProbePlugin {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl PluginLogic for ProbePlugin {
     fn reset(&mut self, _sr: f64, _bs: usize) {}
@@ -149,6 +170,10 @@ impl PluginLogic for ProbePlugin {
 
     fn render(&self, _backend: &mut dyn RenderBackend) {}
 
+    fn uses_custom_render(&self) -> bool {
+        true
+    }
+
     fn layout(&self) -> GridLayout {
         let mut gl = GridLayout::build(vec![]);
         gl.width = 0xDEAD;
@@ -161,19 +186,44 @@ impl PluginLogic for ProbePlugin {
     }
 
     fn save_state(&self) -> Vec<u8> {
-        vec![0xCA, 0xFE]
+        // If `load_state` wasn't called, return the audit-default
+        // sentinel; otherwise echo what was just loaded so verify can
+        // check the load/save vtable slots aren't crossed.
+        let cached = self.last_load_state.borrow();
+        if cached.is_empty() {
+            vec![0xCA, 0xFE]
+        } else {
+            cached.clone()
+        }
     }
-    fn load_state(&mut self, _data: &[u8]) {}
+    fn load_state(&mut self, data: &[u8]) {
+        *self.last_load_state.borrow_mut() = data.to_vec();
+    }
     fn latency(&self) -> u32 {
         0xAAAA
     }
     fn tail(&self) -> u32 {
         0xBBBB
     }
+    fn custom_editor(&self) -> Option<Box<dyn truce_core::editor::Editor>> {
+        None
+    }
 }
 
 /// Verify a probe plugin returns the expected values.
-pub fn verify_probe(probe: &dyn PluginLogic) -> Result<(), String> {
+///
+/// Coverage notes — methods exercised, in vtable order:
+/// `latency`, `tail`, `layout`, `hit_test`, `save_state` (default
+/// path), `uses_custom_render`, `custom_editor`, then `load_state` +
+/// `save_state` (echo path). 8 of 11 trait methods covered. The three
+/// not exercised — `reset`, `process`, `render` — would require
+/// constructing an `AudioBuffer` / `RenderBackend` mock, which is
+/// heavyweight enough to outweigh the marginal vtable-reorder
+/// detection benefit. The vtable order shipped by rustc puts those
+/// three between methods that *are* checked, so a swap that displaced
+/// them into the checked range would be caught at one of the
+/// neighboring slots.
+pub fn verify_probe(probe: &mut dyn PluginLogic) -> Result<(), String> {
     if probe.latency() != 0xAAAA {
         return Err(format!(
             "latency: expected 0xAAAA, got 0x{:X}",
@@ -194,7 +244,20 @@ pub fn verify_probe(probe: &dyn PluginLogic) -> Result<(), String> {
         return Err("hit_test: expected Some(42)".into());
     }
     if probe.save_state() != vec![0xCA, 0xFE] {
-        return Err("save_state: expected [0xCA, 0xFE]".into());
+        return Err("save_state (default): expected [0xCA, 0xFE]".into());
+    }
+    if !probe.uses_custom_render() {
+        return Err("uses_custom_render: expected true".into());
+    }
+    if probe.custom_editor().is_some() {
+        return Err("custom_editor: expected None".into());
+    }
+    // Round-trip a sentinel through load_state → save_state to confirm
+    // the load slot isn't swapped with another `&mut self` slot.
+    let sentinel = vec![0xDEu8, 0xAD, 0xBE, 0xEF];
+    probe.load_state(&sentinel);
+    if probe.save_state() != sentinel {
+        return Err("load_state/save_state round-trip mismatch".into());
     }
     Ok(())
 }

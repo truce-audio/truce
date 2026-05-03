@@ -167,8 +167,8 @@ impl NativeLoader {
                 return None;
             }
         };
-        let probe = probe_fn();
-        let probe_result = verify_probe(probe.as_ref());
+        let mut probe = probe_fn();
+        let probe_result = verify_probe(probe.as_mut());
         drop(probe);
         if let Err(msg) = probe_result {
             log::error!("vtable probe failed: {msg}");

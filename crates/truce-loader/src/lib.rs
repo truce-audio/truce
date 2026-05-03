@@ -70,7 +70,7 @@ macro_rules! export_plugin {
 
         #[unsafe(no_mangle)]
         pub fn truce_vtable_probe() -> Box<dyn $crate::PluginLogic> {
-            Box::new($crate::ProbePlugin)
+            Box::new($crate::ProbePlugin::new())
         }
     };
 }

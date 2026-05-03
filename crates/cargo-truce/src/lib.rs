@@ -22,10 +22,8 @@ mod windows_manifest;
 // Re-exports needed by `packaging_windows`. Cfg-gated so the imports
 // don't show as dead on macOS / Linux builds.
 #[cfg(target_os = "windows")]
-#[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(crate) use commands::install::aax::build_aax_template;
 #[cfg(target_os = "windows")]
-#[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(crate) use commands::package::PkgFormat;
 pub(crate) use config::*;
 pub(crate) use util::*;

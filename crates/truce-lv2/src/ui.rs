@@ -177,8 +177,11 @@ pub unsafe fn instantiate_ui<P: PluginExport>(
         // should embed in; on macOS it passes an `NSView*` from Cocoa. Both
         // arrive as `feature.data: *mut c_void` and we reinterpret per
         // platform.
-        let parent_ptr = parse_parent_feature(features);
-        let Some(parent_ptr) = parent_ptr else {
+        // Single-pass walk of the host's feature array. Resolves
+        // ui:parent, ui:resize, and urid:map in one O(n) sweep instead
+        // of three. Subsequent code reads from the parsed struct.
+        let parsed = parse_features(features);
+        let Some(parent_ptr) = parsed.parent else {
             return std::ptr::null_mut();
         };
 
@@ -224,7 +227,9 @@ pub unsafe fn instantiate_ui<P: PluginExport>(
         };
 
         // Resolve host URIDs for atom-event decoding on the UI side.
-        let urid_map = UridMap::from_features(features);
+        // The host map handle/fn pair was extracted in `parse_features`
+        // above; only the intern step happens here.
+        let urid_map = UridMap::from_host(parsed.urid_map_handle, parsed.urid_map_fn);
         let atom_event_transfer_urid =
             urid_map.intern("http://lv2plug.in/ns/ext/atom#eventTransfer");
         let transport_slot = TransportSlot::new();
@@ -265,7 +270,7 @@ pub unsafe fn instantiate_ui<P: PluginExport>(
         // extension (optional — not every host provides it, but Reaper
         // honors it, and without it the UI floats inside a default-sized
         // window with large empty margins).
-        if let Some(resize) = parse_resize_feature(features)
+        if let Some(resize) = parsed.resize
             && let Some(func) = resize.ui_resize
         {
             func(resize.handle, pref_w as i32, pref_h as i32);
@@ -472,48 +477,80 @@ pub unsafe fn ui_extension_data(_uri: *const c_char) -> *const c_void {
 // Internals
 // ---------------------------------------------------------------------------
 
-/// Locate the host-supplied `ui:parent` feature. The returned pointer is
-/// semantically an `NSView*` under CocoaUI and an `xcb_window_t` under
-/// X11UI; callers reinterpret it per platform.
-unsafe fn parse_parent_feature(features: *const *const LV2Feature) -> Option<*mut c_void> {
-    unsafe { find_feature(features, LV2_UI__PARENT).map(|f| f.data) }
+/// Layout of the host's `urid:map` feature record — semantically
+/// identical to the private struct in `urid.rs` but expressed inline
+/// here so `parse_features` can read it without exposing the urid
+/// module's internal type.
+#[repr(C)]
+struct UridMapFeature {
+    handle: *mut c_void,
+    map: Option<unsafe extern "C" fn(*mut c_void, *const c_char) -> crate::urid::Urid>,
 }
 
-/// Locate the host-supplied `ui:resize` feature. When present, the UI
-/// may call `ui_resize(handle, w, h)` to ask the host to resize the
-/// embedding container.
-unsafe fn parse_resize_feature(features: *const *const LV2Feature) -> Option<&'static Lv2UiResize> {
-    unsafe {
-        let feat = find_feature(features, LV2_UI__RESIZE)?;
-        if feat.data.is_null() {
-            return None;
-        }
-        Some(&*(feat.data as *const Lv2UiResize))
-    }
+/// One-pass parse of the host's null-terminated feature array.
+///
+/// Replaces three separate walks (`ui:parent`, `ui:resize`,
+/// `urid:map`) with a single sweep. Returns the resolved values in
+/// one struct so callers stop juggling three independent helpers
+/// — and so an early `ui:parent` miss can short-circuit before any
+/// further work.
+struct ParsedFeatures {
+    /// `ui:parent` — `NSView*` (Cocoa) or `xcb_window_t` (X11). `None`
+    /// when the host doesn't supply one (no UI to embed; bail out).
+    parent: Option<*mut c_void>,
+    /// `ui:resize` — optional. `None` when the host doesn't expose it
+    /// (Reaper Linux does, Carla doesn't, etc.).
+    resize: Option<&'static Lv2UiResize>,
+    /// Host URID:map handle + map function, or `(null, None)` if the
+    /// feature is absent. Threaded into `UridMap::from_host` so the
+    /// intern step doesn't re-walk the array.
+    urid_map_handle: *mut c_void,
+    urid_map_fn: Option<unsafe extern "C" fn(*mut c_void, *const c_char) -> crate::urid::Urid>,
 }
 
-unsafe fn find_feature(
-    features: *const *const LV2Feature,
-    uri: &str,
-) -> Option<&'static LV2Feature> {
+unsafe fn parse_features(features: *const *const LV2Feature) -> ParsedFeatures {
+    let mut out = ParsedFeatures {
+        parent: None,
+        resize: None,
+        urid_map_handle: std::ptr::null_mut(),
+        urid_map_fn: None,
+    };
     unsafe {
         if features.is_null() {
-            return None;
+            return out;
         }
-        let target = CString::new(uri).ok()?;
+        let parent_uri = CString::new(LV2_UI__PARENT).unwrap();
+        let resize_uri = CString::new(LV2_UI__RESIZE).unwrap();
+        let map_uri = CString::new(crate::types::LV2_URID__MAP).unwrap();
+
         let mut i = 0usize;
         loop {
             let feat_ptr = *features.add(i);
             if feat_ptr.is_null() {
-                return None;
+                break;
             }
             let feat = &*feat_ptr;
-            if !feat.uri.is_null() && CStr::from_ptr(feat.uri) == target.as_c_str() {
-                return Some(feat);
+            if !feat.uri.is_null() {
+                let feat_uri = CStr::from_ptr(feat.uri);
+                if out.parent.is_none() && feat_uri == parent_uri.as_c_str() {
+                    out.parent = Some(feat.data);
+                } else if out.resize.is_none()
+                    && feat_uri == resize_uri.as_c_str()
+                    && !feat.data.is_null()
+                {
+                    out.resize = Some(&*(feat.data as *const Lv2UiResize));
+                } else if out.urid_map_fn.is_none() && feat_uri == map_uri.as_c_str() {
+                    let map_feat = feat.data as *const UridMapFeature;
+                    if !map_feat.is_null() {
+                        out.urid_map_handle = (*map_feat).handle;
+                        out.urid_map_fn = (*map_feat).map;
+                    }
+                }
             }
             i += 1;
         }
     }
+    out
 }
 
 /// Resize the host-supplied parent HWND so its client area exactly
