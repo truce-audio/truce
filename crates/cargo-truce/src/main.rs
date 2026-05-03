@@ -86,7 +86,7 @@ Scaffold:
         --type:<plugin>=<kind>      Per-plugin type override (effect, instrument, midi)
 
 Build / Install / Package:
-  install [--clap] [--vst3] [--vst2] [--au2] [--au3] [--aax] [--user|--system] [--shell] [--debug] [--no-build] [-p <crate>]
+  install [--clap] [--vst3] [--vst2] [--lv2] [--au2] [--au3] [--aax] [--user|--system] [--shell] [--debug] [--no-build] [-p <crate>]
       Build and install plugins into the host's plug-in directories.
       Defaults to release because installing usually means audio-
       testing in a DAW — release avoids surprise CPU spikes from
@@ -96,8 +96,8 @@ Build / Install / Package:
       and wiring checks).
 
       Defaults to whichever formats are in the plugin's Cargo.toml
-      default features (typically clap + vst3). VST2, AU, and AAX are
-      opt-in and must be enabled explicitly via these flags or by
+      default features (typically clap + vst3). VST2, LV2, AU, and AAX
+      are opt-in and must be enabled explicitly via these flags or by
       adding them to the plugin's default features.
 
       Per-format scope is per-user by default on every platform; pass
@@ -108,6 +108,7 @@ Build / Install / Package:
       --clap         CLAP only (no sudo)
       --vst3         VST3 only
       --vst2         VST2 only (legacy format — see truce/Cargo.toml note)
+      --lv2          LV2 only
       --au2          AU v2 only (.component, macOS only)
       --au3          AU v3 only (.appex, requires Xcode, macOS only)
       --aax          AAX only (requires pre-built template)

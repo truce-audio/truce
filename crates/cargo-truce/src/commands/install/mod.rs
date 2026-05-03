@@ -302,6 +302,7 @@ Options:
   --clap           CLAP only
   --vst3           VST3 only
   --vst2           VST2 only (legacy format)
+  --lv2            LV2 only
   --au2            AU v2 only (.component, macOS only)
   --au3            AU v3 only (.appex, macOS only)
   --aax            AAX only (requires pre-built template)
