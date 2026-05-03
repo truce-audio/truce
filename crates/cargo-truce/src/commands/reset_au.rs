@@ -92,13 +92,17 @@ pub(crate) fn cmd_reset_au(args: &[String]) -> Res {
         eprintln!("  Cleaned Reaper AU cache");
     }
 
-    // Flush pluginkit registrations (AU v3 appex cache)
+    // Flush pluginkit registrations (AU v3 appex cache).
+    // `vendor.id` is conventionally already in `com.<x>` reverse-DNS form,
+    // so the prefix gets trimmed before re-prepending to match what
+    // `install/au_v3.rs` and `commands/remove.rs` actually register.
     eprintln!("Flushing pluginkit registrations...");
     if let Ok(config) = load_config() {
+        let vid = config.vendor.id.trim_start_matches("com.");
         for p in &config.plugin {
             for pattern in [
-                format!("com.{}.{}.v3.ext", config.vendor.id, p.bundle_id),
-                format!("com.{}.{}.au", config.vendor.id, p.bundle_id),
+                format!("com.{}.{}.v3.ext", vid, p.bundle_id),
+                format!("com.{}.{}.au", vid, p.bundle_id),
             ] {
                 let _ = Command::new("pluginkit")
                     .args(["-e", "ignore", "-i", &pattern])

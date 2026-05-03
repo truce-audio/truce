@@ -673,7 +673,7 @@ fn install_vst2(root: &Path, p: &PluginDef, config: &Config, scope: InstallScope
     <key>CFBundleExecutable</key>
     <string>{name}</string>
     <key>CFBundleIdentifier</key>
-    <string>com.truce.{bundle_id}.vst2</string>
+    <string>{vendor_id}.{bundle_id}.vst2</string>
     <key>CFBundleName</key>
     <string>{name}</string>
     <key>CFBundlePackageType</key>
@@ -684,6 +684,7 @@ fn install_vst2(root: &Path, p: &PluginDef, config: &Config, scope: InstallScope
 </plist>"#,
             name = p.name,
             bundle_id = p.bundle_id,
+            vendor_id = config.vendor.id,
         );
         let plist_tmp = tmp_dir()
             .join(format!("{}_vst2.plist", p.bundle_id))

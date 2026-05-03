@@ -661,10 +661,19 @@ fn resolved_plugin_name(info: &truce_core::info::PluginInfo) -> &'static str {
 }
 
 fn vst3_cid(id: &str) -> [u8; 16] {
-    let mut hash: u128 = 0xcbf29ce484222325_u128 | ((0x100000001b3_u128) << 64);
+    // FNV-1a-128, per http://www.isthe.com/chongo/tech/comp/fnv/.
+    // Standard constants — DAWs persist this CID as the plugin's identity in
+    // saved sessions, so the algorithm and constants must stay stable across
+    // releases. (The pre-2026-05-03 implementation used mangled offset/prime
+    // bytes that produced a deterministic but non-FNV hash with long zero
+    // runs in the multiplier; sessions saved against a truce-built plugin
+    // before that fix will see a different CID and need to re-bind.)
+    const FNV_OFFSET_BASIS: u128 = 0x6C62272E07BB014262B821756295C58D;
+    const FNV_PRIME: u128 = 0x0000000001000000000000000000013B;
+    let mut hash = FNV_OFFSET_BASIS;
     for byte in id.bytes() {
         hash ^= byte as u128;
-        hash = hash.wrapping_mul(0x0100_0000_01b3_0000_0000_0000_0001_00b3_u128);
+        hash = hash.wrapping_mul(FNV_PRIME);
     }
     hash.to_le_bytes()
 }
