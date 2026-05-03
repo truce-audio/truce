@@ -44,6 +44,12 @@ struct VendorConfig {
 #[derive(Deserialize)]
 struct PluginDef {
     name: String,
+    // Required, matching `cargo-truce::PluginDef`. Not consumed here, but
+    // making the field mandatory keeps the schema in lockstep — a config
+    // missing `bundle_id` fails at the earliest point (proc-macro
+    // expansion) rather than later (`cargo truce install`).
+    #[allow(dead_code)]
+    bundle_id: String,
     #[serde(rename = "crate")]
     crate_name: String,
     #[serde(default)]
