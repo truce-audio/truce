@@ -10,6 +10,7 @@ use std::sync::Arc;
 use iced::{Color, Event, Point, Size, Task};
 use iced_wgpu::wgpu;
 use truce_core::editor::{Editor, EditorContext};
+use truce_gui::EditorScale;
 use truce_gui::layout::GridLayout;
 use truce_params::Params;
 
@@ -154,7 +155,12 @@ where
 {
     params: Arc<P>,
     size: (u32, u32),
-    scale_factor: f64,
+    /// Live content-scale factor, shared with the runtime via
+    /// [`truce_gui::EditorScale`]. Both `set_scale_factor` (host) and
+    /// the baseview `Resized` handler write here; the runtime's
+    /// `tick()` reads it and reconfigures the surface/viewport when it
+    /// diverges from `last_applied_scale`.
+    scale: EditorScale,
     font: Option<(&'static str, &'static [u8])>,
     runtime: Option<IcedRuntime<P, M>>,
     /// One-shot constructor closure consumed in `open()`. Each
@@ -207,7 +213,7 @@ impl<P: Params + 'static> IcedEditor<P, AutoPlugin> {
         Self {
             params,
             size,
-            scale_factor: truce_gui::backing_scale(),
+            scale: EditorScale::new(truce_gui::backing_scale()),
             font: None,
             runtime: None,
             make_plugin: Some(make_plugin),
@@ -223,7 +229,7 @@ impl<P: Params + 'static, M: IcedPlugin<P> + 'static> IcedEditor<P, M> {
         Self {
             params,
             size,
-            scale_factor: truce_gui::backing_scale(),
+            scale: EditorScale::new(truce_gui::backing_scale()),
             font: None,
             runtime: None,
             make_plugin: Some(Box::new(|p| M::new(p))),
@@ -268,8 +274,14 @@ struct IcedRuntime<P: Params, M: IcedPlugin<P>> {
     program: Option<IcedProgram<P, M>>,
     /// Editor size for viewport.
     size: (u32, u32),
-    /// Scale factor.
-    scale_factor: f64,
+    /// Live scale factor (clone of the editor's). Source of truth for
+    /// every render path; written by `Editor::set_scale_factor` and
+    /// the baseview `Resized` handler, observed each `tick()`.
+    scale: EditorScale,
+    /// Last scale value the surface/viewport were configured for. When
+    /// `scale.get()` diverges from this, `tick()` reconfigures and
+    /// updates this snapshot.
+    last_applied_scale: f64,
     /// Custom font (family name, TrueType data).
     font: Option<(&'static str, &'static [u8])>,
 }
@@ -298,12 +310,13 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
         };
 
         let (lw, lh) = self.size;
-        // Use the scale factor the editor stored at construction (or
-        // last `set_scale_factor`); re-querying `truce_gui::backing_scale()`
-        // here would drop a host-supplied value and on Linux the
-        // process-wide cache may not have been populated yet, so the
-        // first frame would render at 1.0 even on a HiDPI display.
-        let render_scale = self.scale_factor;
+        // Read from the shared cell (clone of the editor's scale). Re-
+        // querying `truce_gui::backing_scale()` would drop a host-
+        // supplied value and on Linux the process-wide cache may not
+        // have been populated yet, so the first frame would render at
+        // 1.0 even on a HiDPI display.
+        let render_scale = self.scale.get();
+        self.last_applied_scale = render_scale;
         let w = (lw as f64 * render_scale) as u32;
         let h = (lh as f64 * render_scale) as u32;
 
@@ -419,6 +432,26 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
             Some(r) => r,
             None => return,
         };
+
+        // Pick up host-driven scale changes (CLAP `set_scale`, VST3
+        // `IPlugViewContentScaleSupport`) that landed in the shared
+        // cell since the last frame. The Resized path applies its own
+        // scale changes inline so this branch only fires when scale
+        // moved without a corresponding window event.
+        let cur_scale = self.scale.get();
+        if cur_scale != self.last_applied_scale {
+            let (lw, lh) = self.size;
+            let pw = (lw as f64 * cur_scale) as u32;
+            let ph = (lh as f64 * cur_scale) as u32;
+            render.surface_config.width = pw.max(1);
+            render.surface_config.height = ph.max(1);
+            render
+                .surface
+                .configure(&render.device, &render.surface_config);
+            render.viewport =
+                iced_graphics::Viewport::with_physical_size(Size::new(pw, ph), cur_scale);
+            self.last_applied_scale = cur_scale;
+        }
 
         // Queue Tick message to sync params/meters
         render.state.queue_message(Message::Tick);
@@ -639,6 +672,13 @@ impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBase
             }
             baseview::Event::Window(baseview::WindowEvent::Resized(info)) => {
                 truce_gui::platform::note_linux_scale_factor(info.scale());
+                // Mirror the OS-reported scale into the shared cell
+                // (so a follow-up `set_scale_factor` from the host
+                // reads a fresh baseline) and bump `last_applied_scale`
+                // so `tick()`'s diff-check stays a no-op — we apply
+                // the reconfigure inline below.
+                runtime.scale.set(info.scale());
+                runtime.last_applied_scale = info.scale();
                 if let Some(ref mut render) = runtime.render {
                     let pw = info.physical_size().width;
                     let ph = info.physical_size().height;
@@ -767,7 +807,10 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
             pending_events: Vec::new(),
             program: Some(program),
             size: (w, h),
-            scale_factor: self.scale_factor.max(1.0),
+            scale: self.scale.clone(),
+            // init_render writes the real value; this placeholder
+            // never reaches a render call.
+            last_applied_scale: 0.0,
             font: self.font,
         });
 
@@ -851,7 +894,7 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
         if let Some(ref mut runtime) = self.runtime {
             runtime.size = (width, height);
             if let Some(ref mut render) = runtime.render {
-                let scale = self.scale_factor;
+                let scale = self.scale.get();
                 let pw = (width as f64 * scale) as u32;
                 let ph = (height as f64 * scale) as u32;
                 render.viewport =
@@ -867,22 +910,10 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
     }
 
     fn set_scale_factor(&mut self, factor: f64) {
-        self.scale_factor = factor;
-        if let Some(ref mut runtime) = self.runtime {
-            runtime.scale_factor = factor.max(1.0);
-            // Reconfigure viewport and surface if rendering is active
-            if let Some(ref mut render) = runtime.render {
-                let (lw, lh) = runtime.size;
-                let pw = (lw as f64 * factor) as u32;
-                let ph = (lh as f64 * factor) as u32;
-                render.viewport =
-                    iced_graphics::Viewport::with_physical_size(Size::new(pw, ph), factor);
-                render.surface_config.width = pw;
-                render.surface_config.height = ph;
-                render
-                    .surface
-                    .configure(&render.device, &render.surface_config);
-            }
-        }
+        // Write to the shared cell; the runtime's `tick()` picks up
+        // the change on its next frame and reconfigures the surface
+        // and viewport. Replaces the previous reach-in-and-mutate
+        // pattern that duplicated the reconfigure logic.
+        self.scale.set(factor);
     }
 }

@@ -24,6 +24,7 @@ pub mod theme;
 pub mod widgets;
 
 pub use editor::BuiltinEditor;
+pub use platform::EditorScale;
 pub use render::{ImageId, RenderBackend};
 pub use snapshot::ParamSnapshot;
 pub use theme::Theme;

@@ -11,8 +11,9 @@ use baseview::{Event, EventStatus, Window, WindowHandler, WindowOpenOptions, Win
 use truce_core::editor::{Editor, EditorContext, RawWindowHandle};
 use truce_params::Params;
 
-use crate::platform::{ParentWindow, query_backing_scale};
+use crate::platform::ParentWindow;
 use crate::renderer::EguiRenderer;
+use truce_gui::EditorScale;
 
 /// Trait for stateful egui UI implementations.
 ///
@@ -83,7 +84,13 @@ pub struct EguiEditor<P: Params + ?Sized> {
     ui: Arc<Mutex<Box<dyn EditorUi<P>>>>,
     visuals: Option<egui::Visuals>,
     font: Option<&'static [u8]>,
-    scale_factor: Option<f64>,
+    /// Live content-scale factor. The editor writes here from
+    /// `set_scale_factor`; the baseview handler holds a clone and
+    /// applies surface/renderer reconfiguration on the next frame
+    /// when the value diverges from its last-applied snapshot. Single
+    /// source of truth shared with iced / slint backends — see
+    /// [`truce_gui::EditorScale`].
+    scale: EditorScale,
     /// Active baseview window handle — exists only while editor is open.
     window: Option<baseview::WindowHandle>,
     /// Typed editor context stored at open() for state_changed forwarding.
@@ -115,7 +122,7 @@ impl<P: Params + 'static> EguiEditor<P> {
             ui: Arc::new(Mutex::new(Box::new(ui_fn))),
             visuals: None,
             font: None,
-            scale_factor: None,
+            scale: EditorScale::new(truce_gui::backing_scale()),
             window: None,
             context: None,
         }
@@ -129,7 +136,7 @@ impl<P: Params + 'static> EguiEditor<P> {
             ui: Arc::new(Mutex::new(Box::new(ui))),
             visuals: None,
             font: None,
-            scale_factor: None,
+            scale: EditorScale::new(truce_gui::backing_scale()),
             window: None,
             context: None,
         }
@@ -194,7 +201,13 @@ struct EguiWindowHandler<P: Params + ?Sized> {
     modifiers: egui::Modifiers,
     start_time: std::time::Instant,
     size: (u32, u32),
-    scale_factor: f32,
+    /// Shared with the parent `EguiEditor`; the editor's
+    /// `set_scale_factor` and the baseview `Resized` handler both write
+    /// here. `run_frame` compares against `last_applied_scale` to
+    /// detect host-driven scale changes that didn't come through a
+    /// `Resized` event (Reaper on Windows is the typical case).
+    scale: EditorScale,
+    last_applied_scale: f32,
     last_cursor_pos: egui::Pos2,
 }
 
@@ -205,7 +218,20 @@ impl<P: Params + ?Sized> EguiWindowHandler<P> {
             None => return,
         };
 
-        let ppp = self.scale_factor;
+        // Pick up host-driven scale changes (CLAP `set_scale`, VST3
+        // `IPlugViewContentScaleSupport`) that arrived via the editor's
+        // `set_scale_factor` since the last frame. The `Resized` path
+        // already applies its own scale changes inline, so this only
+        // fires when scale moved without a corresponding window event.
+        let cur_scale = self.scale.get() as f32;
+        if cur_scale != self.last_applied_scale {
+            let phys_w = (self.size.0 as f32 * cur_scale).round() as u32;
+            let phys_h = (self.size.1 as f32 * cur_scale).round() as u32;
+            renderer.resize(phys_w, phys_h);
+            self.last_applied_scale = cur_scale;
+        }
+
+        let ppp = cur_scale;
         let (lw, lh) = self.size; // logical points
 
         let mut raw_input = egui::RawInput {
@@ -367,7 +393,13 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
                         (pw as f32 / scale).round() as u32,
                         (ph as f32 / scale).round() as u32,
                     );
-                    self.scale_factor = scale;
+                    // Write through to the shared scale so the editor's
+                    // next `set_scale_factor` and any sibling reader
+                    // see the OS-reported value, and update
+                    // last_applied so run_frame's diff-check stays a
+                    // no-op (we already resized inline below).
+                    self.scale.set(info.scale());
+                    self.last_applied_scale = scale;
                     if let Some(renderer) = self.renderer.as_mut() {
                         renderer.resize(pw, ph);
                     }
@@ -500,7 +532,14 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
         egui_ctx.set_visuals(visuals.clone());
         let font = self.font;
 
-        let system_scale = query_backing_scale(&parent);
+        // Refresh the shared scale from the parent window — on macOS
+        // the parent's NSWindow may live on a non-main display whose
+        // `backingScaleFactor` differs from `NSScreen.mainScreen`'s.
+        // On Linux the same call returns the cached baseview scale.
+        // Any `set_scale_factor` the host issues *after* open will
+        // override this on the next frame via the shared state.
+        self.scale.set(crate::platform::query_backing_scale(&parent));
+        let system_scale = self.scale.get();
         let (lw, lh) = self.size; // logical points
 
         // --- baseview + wgpu ---
@@ -518,6 +557,7 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
 
         let parent_wrapper = ParentWindow(parent);
         let handler_ctx = typed_ctx.clone();
+        let scale_handle = self.scale.clone();
 
         let window = baseview::Window::open_parented(
             &parent_wrapper,
@@ -544,7 +584,8 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
                     modifiers: egui::Modifiers::NONE,
                     start_time: std::time::Instant::now(),
                     size,
-                    scale_factor: scale,
+                    scale: scale_handle,
+                    last_applied_scale: scale,
                     last_cursor_pos: egui::Pos2::ZERO,
                 }
             },
@@ -573,7 +614,11 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
     }
 
     fn set_scale_factor(&mut self, factor: f64) {
-        self.scale_factor = Some(factor);
+        // Write to the shared cell; the baseview handler picks up the
+        // change on its next frame and resizes the wgpu surface +
+        // renderer to match. No explicit notification needed —
+        // baseview's frame loop polls.
+        self.scale.set(factor);
     }
 
     fn state_changed(&mut self) {

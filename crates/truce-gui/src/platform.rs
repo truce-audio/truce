@@ -14,7 +14,7 @@ use raw_window_handle::{
 };
 use truce_core::editor::RawWindowHandle;
 
-#[cfg(target_os = "linux")]
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Newtype bridging truce's `RawWindowHandle` to baseview's
@@ -107,6 +107,63 @@ pub fn main_screen_scale() -> f64 {
 #[cfg(target_os = "windows")]
 pub fn main_screen_scale() -> f64 {
     win32_dpi_scale(std::ptr::null_mut())
+}
+
+/// Shared, mutable editor scale factor.
+///
+/// Single source of truth for the live content-scale of an open plugin
+/// window. Each GUI backend (egui / iced / slint) constructs one in
+/// `Editor::open`, stores it on the editor for `set_scale_factor` to
+/// write through, and hands a clone to its baseview `WindowHandler` so
+/// the render thread can pick up changes between frames.
+///
+/// Two writers, one reader-per-frame:
+/// - `Editor::set_scale_factor` (host → editor, e.g. CLAP `set_scale`,
+///   VST3 Windows `IPlugViewContentScaleSupport`).
+/// - `WindowEvent::Resized` (baseview → handler, fired when the OS
+///   reports a new content scale, e.g. dragging the window across
+///   monitors with different DPIs).
+///
+/// Most-recent-write wins. The handler tracks a `last_applied_scale`
+/// alongside its `EditorScale` clone and, when it observes a divergence
+/// at frame start, recomputes physical sizes and reconfigures its
+/// surface / renderer. Replaces the previous mix of per-backend
+/// `Option<f64>` editor fields and dead `set_scale_factor` impls (see
+/// `docs/internal/codebase-audit-2026-05-02/open-issues.md`).
+#[derive(Clone)]
+pub struct EditorScale {
+    inner: Arc<AtomicU64>,
+}
+
+impl EditorScale {
+    /// Construct with an initial scale. Non-finite or non-positive
+    /// values clamp to 1.0 so callers never have to defend against
+    /// `0.0 * size` collapsing the surface.
+    pub fn new(initial: f64) -> Self {
+        let v = if initial.is_finite() && initial > 0.0 {
+            initial
+        } else {
+            1.0
+        };
+        Self {
+            inner: Arc::new(AtomicU64::new(v.to_bits())),
+        }
+    }
+
+    /// Read the current scale.
+    pub fn get(&self) -> f64 {
+        f64::from_bits(self.inner.load(Ordering::Relaxed))
+    }
+
+    /// Update the current scale. Non-finite or non-positive values are
+    /// silently dropped — callers are forwarding numbers from hosts /
+    /// `info.scale()` where a bad value is a host bug, not something
+    /// to propagate into the surface config.
+    pub fn set(&self, scale: f64) {
+        if scale.is_finite() && scale > 0.0 {
+            self.inner.store(scale.to_bits(), Ordering::Relaxed);
+        }
+    }
 }
 
 /// Cached display scale factor on Linux, stored as f64 bits. Zero means unset.

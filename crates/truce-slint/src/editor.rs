@@ -19,6 +19,7 @@ use slint::platform::{PointerEventButton, WindowAdapter, WindowEvent};
 use slint::{LogicalPosition, PhysicalSize};
 
 use truce_core::editor::{Editor, EditorContext, RawWindowHandle};
+use truce_gui::EditorScale;
 use truce_params::Params;
 
 use crate::blit::BlitPipeline;
@@ -88,6 +89,12 @@ pub struct SlintEditor<P: Params + ?Sized> {
     /// the editor window multiple times. See [`SetupFn`] for the
     /// `Send + Sync` rationale.
     setup: SetupFn<P>,
+    /// Live content-scale factor, shared with the baseview handler via
+    /// [`truce_gui::EditorScale`]. Both `set_scale_factor` (host) and
+    /// the `Resized` event handler write here; the handler reads it
+    /// each frame and reconfigures the slint window / wgpu surface /
+    /// blit pipeline when the value diverges from `last_applied_scale`.
+    scale: EditorScale,
     window: Option<baseview::WindowHandle>,
 }
 
@@ -117,6 +124,7 @@ impl<P: Params + 'static> SlintEditor<P> {
             params,
             size,
             setup: Arc::new(setup),
+            scale: EditorScale::new(truce_gui::backing_scale()),
             window: None,
         }
     }
@@ -139,13 +147,45 @@ struct SlintWindowHandler<P: Params + ?Sized> {
     rgba_buf: Vec<u8>,
     width: u32,
     height: u32,
-    scale: f32,
+    /// Shared with the parent `SlintEditor`; both `set_scale_factor`
+    /// (host) and the `Resized` handler write here. `on_frame`
+    /// compares against `last_applied_scale` to pick up host-driven
+    /// changes that didn't come through a `Resized` event.
+    scale: EditorScale,
+    last_applied_scale: f32,
     /// Last known cursor position in logical points.
     last_pos: LogicalPosition,
 }
 
 impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
     fn on_frame(&mut self, _window: &mut Window) {
+        // Pick up host-driven scale changes (CLAP `set_scale`, VST3
+        // `IPlugViewContentScaleSupport`) that landed in the shared
+        // cell since the last frame. The Resized path applies its own
+        // scale changes inline, so this only fires when scale moved
+        // without a corresponding window event.
+        let cur_scale = self.scale.get() as f32;
+        if cur_scale != self.last_applied_scale {
+            let phys_w = (self.width as f32 * cur_scale) as u32;
+            let phys_h = (self.height as f32 * cur_scale) as u32;
+            self.slint_window
+                .window()
+                .dispatch_event(WindowEvent::ScaleFactorChanged {
+                    scale_factor: cur_scale,
+                });
+            self.slint_window
+                .set_size(slint::WindowSize::Physical(PhysicalSize::new(
+                    phys_w, phys_h,
+                )));
+            self.surface_config.width = phys_w.max(1);
+            self.surface_config.height = phys_h.max(1);
+            self.surface.configure(&self.device, &self.surface_config);
+            if let Some(ref mut blit) = self.blit {
+                blit.resize(&self.device, phys_w, phys_h);
+            }
+            self.last_applied_scale = cur_scale;
+        }
+
         // 1. Drive Slint timers/animations
         slint::platform::update_timers_and_animations();
 
@@ -156,8 +196,8 @@ impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
         self.slint_window.request_redraw();
 
         // 4. Render Slint to pixel buffer
-        let phys_w = (self.width as f32 * self.scale) as u32;
-        let phys_h = (self.height as f32 * self.scale) as u32;
+        let phys_w = (self.width as f32 * self.last_applied_scale) as u32;
+        let phys_h = (self.height as f32 * self.last_applied_scale) as u32;
         platform::render_to_rgba(
             &self.slint_window,
             phys_w,
@@ -265,7 +305,13 @@ impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
                     truce_gui::platform::note_linux_scale_factor(scale);
                     self.width = (phys_w as f64 / scale) as u32;
                     self.height = (phys_h as f64 / scale) as u32;
-                    self.scale = scale as f32;
+                    // Mirror the OS-reported scale into the shared
+                    // cell (so a follow-up host `set_scale_factor`
+                    // reads a fresh baseline) and bump `last_applied`
+                    // so `on_frame`'s diff-check stays a no-op — we
+                    // apply the reconfigure inline below.
+                    self.scale.set(scale);
+                    self.last_applied_scale = scale as f32;
 
                     self.slint_window
                         .window()
@@ -305,9 +351,16 @@ impl<P: Params + 'static> Editor for SlintEditor<P> {
         platform::ensure_platform();
 
         let (lw, lh) = self.size;
-        let scale = platform::query_backing_scale(&parent);
+        // Refresh shared scale from the parent window — on macOS the
+        // parent's NSWindow may live on a non-main display whose
+        // `backingScaleFactor` differs from `NSScreen.mainScreen`'s.
+        // Any `set_scale_factor` the host issues *after* open will
+        // override on the next frame via the shared cell.
+        self.scale.set(platform::query_backing_scale(&parent));
+        let scale = self.scale.get();
         let typed_ctx = context.with_params(self.params.clone());
         let setup = Arc::clone(&self.setup);
+        let scale_handle = self.scale.clone();
 
         // --- baseview + wgpu ---
         let options = WindowOpenOptions {
@@ -407,13 +460,22 @@ impl<P: Params + 'static> Editor for SlintEditor<P> {
                     rgba_buf: Vec::new(),
                     width: lw,
                     height: lh,
-                    scale: scale as f32,
+                    scale: scale_handle,
+                    last_applied_scale: scale as f32,
                     last_pos: LogicalPosition::default(),
                 }
             },
         );
 
         self.window = Some(window);
+    }
+
+    fn set_scale_factor(&mut self, factor: f64) {
+        // Write to the shared cell; the baseview handler picks up the
+        // change on its next frame and reconfigures the slint window /
+        // wgpu surface / blit pipeline. Replaces the default no-op
+        // (host scale was previously dropped on the floor for slint).
+        self.scale.set(factor);
     }
 
     fn close(&mut self) {
