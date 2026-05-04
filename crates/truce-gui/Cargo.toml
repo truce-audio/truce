@@ -16,6 +16,7 @@ baseview = { workspace = true }
 raw-window-handle = "0.5"
 wgpu = "24"
 pollster = "0.4"
+log = "0.4"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc = "0.2"

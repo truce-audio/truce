@@ -755,8 +755,11 @@ fn compare_against_reference(
         save_png(&render_path, pixels, width, height);
         panic!(
             "GUI size changed: current {width}x{height}, reference {ref_w}x{ref_h}. \
-             Delete {} to regenerate.",
-            ref_path.display()
+             Just-rendered PNG saved at {rendered}.\n\
+             Regenerate the baseline with: cargo truce screenshot --out {ref}\n\
+             then inspect the rendered PNG and commit it.",
+            rendered = render_path.display(),
+            ref = ref_path.display(),
         );
     }
 

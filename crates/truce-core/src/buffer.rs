@@ -118,11 +118,13 @@ impl<'a> AudioBuffer<'a> {
 
     /// Peak absolute value across an output channel.
     ///
-    /// Returns `f32::NAN` if any sample is NaN, so meters can flag
-    /// runaway plugins instead of silently reporting "peaks within
-    /// range" while NaN poison spreads downstream. `f32::max` treats
-    /// NaN as smaller than every finite value, which used to make NaN
-    /// samples disappear from the peak.
+    /// Short-circuits and returns `f32::NAN` on the **first** NaN
+    /// sample seen, so meters can flag runaway plugins instead of
+    /// silently reporting "peaks within range" while NaN poison
+    /// spreads downstream. (`f32::max` treats NaN as smaller than
+    /// every finite value, which used to make NaN samples disappear
+    /// from the peak — that's why this walks manually instead of
+    /// folding `.max()`.)
     pub fn output_peak(&self, ch: usize) -> f32 {
         let end = self.offset + self.num_samples;
         let mut peak = 0.0f32;

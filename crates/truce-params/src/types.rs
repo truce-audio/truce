@@ -101,7 +101,13 @@ pub struct BoolParam {
 
 impl BoolParam {
     pub fn new(info: ParamInfo) -> Self {
-        let default = info.default_plain != 0.0;
+        // `>= 0.5` matches the midpoint convention used everywhere else
+        // (the derive's `set_plain_arms` uses `value > 0.5`; CLAP /
+        // VST3 hosts' bool→f64 round-trips center on 0.5). Previous
+        // form `!= 0.0` would have read `default_plain = 0.5` as
+        // `true`, which is consistent with the post-load behavior but
+        // a little surprising.
+        let default = info.default_plain >= 0.5;
         Self {
             info,
             value: AtomicBool::new(default),
@@ -297,6 +303,7 @@ impl<E: ParamEnum> EnumParam<E> {
 /// a `pub fn new(id)` constructor that would let user code mint
 /// arbitrary slots and break the auto-assignment contract.
 pub struct MeterSlot {
+    #[doc(hidden)]
     pub id: u32,
 }
 

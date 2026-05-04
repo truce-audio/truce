@@ -1514,8 +1514,12 @@ unsafe extern "C" fn gui_get_size<P: PluginExport>(
             }
             #[cfg(not(target_os = "macos"))]
             {
-                *width = (w as f64 * data.host_scale) as u32;
-                *height = (h as f64 * data.host_scale) as u32;
+                // Round-to-nearest, not truncate — `(w * scale) as u32`
+                // would round 199.9 → 199, drifting one pixel on
+                // fractional scales. Matches VST3 / AAX / the
+                // `to_physical_px` helper used elsewhere.
+                *width = (w as f64 * data.host_scale).round() as u32;
+                *height = (h as f64 * data.host_scale).round() as u32;
             }
             return true;
         }

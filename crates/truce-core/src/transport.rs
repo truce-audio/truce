@@ -66,16 +66,20 @@ impl TransportSlot {
         // to mark "write in progress", do the write, then bump to the
         // next even value to publish.
         let s = self.seq.load(Ordering::Relaxed);
-        // Release on the odd→writing transition makes the data write
-        // visible to a reader that observes the matching even value
-        // after our second store.
-        self.seq.store(s.wrapping_add(1), Ordering::Release);
+        // First store: just signals "write in progress" to readers.
+        // The data write that follows is published by the *second*
+        // store's Release — readers acquire on that one. This first
+        // store's only job is to flip parity, so Relaxed is enough.
+        self.seq.store(s.wrapping_add(1), Ordering::Relaxed);
         // SAFETY: single-writer invariant means no other thread writes
         // `data` concurrently. Readers detect mid-update via the odd
         // seq value.
         unsafe {
             *self.data.get() = info.clone();
         }
+        // Release pairs with `read`'s Acquire load — makes the data
+        // write above visible to any reader that observes this
+        // updated even value.
         self.seq.store(s.wrapping_add(2), Ordering::Release);
     }
 

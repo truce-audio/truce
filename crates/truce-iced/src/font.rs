@@ -11,7 +11,7 @@ pub fn apply_font(family: &'static str, data: &'static [u8]) -> iced::Font {
     let v_before = fs.version();
     fs.load_font(std::borrow::Cow::Borrowed(data));
     let v_after = fs.version();
-    eprintln!(
+    log::debug!(
         "[truce-iced] font loaded: family={family:?}, {} bytes, version {v_before:?}->{v_after:?}",
         data.len()
     );

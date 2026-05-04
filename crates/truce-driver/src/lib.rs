@@ -227,7 +227,16 @@ impl Script {
         } else {
             44_100.0
         };
-        self.cursor_samples += ((sr * ms as f64) / 1000.0) as usize;
+        let samples_f = (sr * ms as f64) / 1000.0;
+        // Saturate on overflow rather than wrap. `as usize` from f64 is
+        // saturating on Rust 1.45+ but this guard documents the intent and
+        // pairs with the `wait_samples` counterpart that takes a usize.
+        let samples = if samples_f.is_finite() && samples_f >= 0.0 {
+            samples_f as usize
+        } else {
+            usize::MAX
+        };
+        self.cursor_samples = self.cursor_samples.saturating_add(samples);
     }
 
     /// Advance the cursor by `n` samples.

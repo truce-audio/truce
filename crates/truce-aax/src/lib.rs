@@ -828,6 +828,14 @@ pub unsafe fn _load_state<P: PluginExport>(ctx: *mut std::ffi::c_void, data: *co
         // next `_save_state` re-captures the restored values.
         inst.state_revision
             .fetch_add(1, std::sync::atomic::Ordering::Release);
+        // Drop the stale `Arc<Vec<u8>>` cached against the previous
+        // revision now, instead of holding it until the next
+        // `_save_state` call replaces it. Cosmetic: the revision-key
+        // mismatch already forces a re-serialize on the next save,
+        // but we'd otherwise pin a multi-KB blob across the gap.
+        if let Ok(mut guard) = inst.state_cache.lock() {
+            *guard = None;
+        }
         if let Some(ref mut editor) = inst.editor {
             editor.state_changed();
         }
@@ -989,6 +997,17 @@ pub unsafe fn _editor_get_size<P: PluginExport>(ctx: *mut c_void, w: *mut u32, h
     }
 }
 
+/// Free a state blob handed out by [`_save_state`].
+///
+/// **Contract:** `data` must point to memory allocated via the Rust
+/// global allocator with `cap == len`. `_save_state` honors this by
+/// going through `Vec::into_boxed_slice` (which trims capacity to len)
+/// then `mem::forget`. Don't change either side to use `libc::malloc`
+/// / `Vec::into_raw_parts` / a different cap-tracking strategy
+/// without updating the other — `Vec::from_raw_parts` requires the
+/// allocator and `cap` to match exactly. AAX never calls
+/// `_free_state` with a non-Rust pointer today; the comment exists to
+/// flag that drift if VST3's `libc_malloc` shape ever migrates here.
 pub unsafe fn _free_state(data: *mut u8, len: u32) {
     if !data.is_null() && len > 0 {
         unsafe { drop(Vec::from_raw_parts(data, len as usize, len as usize)) };

@@ -57,10 +57,10 @@ impl Transport {
     }
 
     pub fn toggle_playing(&self) {
-        // Load, flip, store. Contention only matters if the audio
-        // thread is also toggling — it doesn't.
-        let cur = self.inner.playing.load(Ordering::Relaxed);
-        self.inner.playing.store(!cur, Ordering::Relaxed);
+        // Atomic flip via fetch_xor — equivalent to load+!+store but in
+        // one RMW op, so a parallel toggler can never lose its update.
+        // (The audio thread doesn't toggle, but this future-proofs it.)
+        self.inner.playing.fetch_xor(true, Ordering::Relaxed);
     }
 
     pub fn tempo(&self) -> f64 {
