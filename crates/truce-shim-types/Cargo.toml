@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "Shared C header types for truce AU and AAX shims"
+description = "Shared C header types for the truce AU shim"
 
 [lints]
 workspace = true

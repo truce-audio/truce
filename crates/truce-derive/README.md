@@ -78,17 +78,4 @@ impl Plugin for MyPlugin {
 }
 ```
 
-## History
-
-Until 0.13.x, `#[derive(Params)]` etc. lived in a separate
-`truce-params-derive` crate. The split was originally justified as
-"`truce-loader` consumes one but not the other" + "compile-cost
-partitioning" — both turned out wrong on closer inspection (the
-loader's only `truce-params-derive` use was a `[dev-dependencies]`
-test fixture; every plugin uses both `plugin_info!()` and
-`#[derive(Params)]` so the heavy `toml` + `serde` deps are universal
-either way). Merged into this crate to trim one crate from the
-published surface; the migration cost was a one-line `Cargo.toml`
-rename per plugin.
-
 Part of [truce](https://github.com/truce-audio/truce).
