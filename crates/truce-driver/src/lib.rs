@@ -46,9 +46,9 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use truce_core::buffer::AudioBuffer;
-use truce_core::cast::{len_u32, sample_count_usize};
 #[cfg(feature = "wav")]
 use truce_core::cast::sample_rate_u32;
+use truce_core::cast::{len_u32, sample_count_usize};
 use truce_core::events::{Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
 use truce_core::info::PluginCategory;
