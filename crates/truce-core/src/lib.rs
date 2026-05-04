@@ -23,4 +23,4 @@ pub use info::{PluginCategory, PluginInfo};
 pub use plugin::Plugin;
 pub use process::{ProcessContext, ProcessStatus};
 pub use transport::TransportSlot;
-pub use util::{db_to_linear, freq_to_midi_note, linear_to_db, meter_display, midi_note_to_freq};
+pub use util::{db_to_linear, linear_to_db, meter_display, midi_note_to_freq};

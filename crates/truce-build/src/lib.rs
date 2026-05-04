@@ -45,12 +45,11 @@ pub struct VendorConfig {
 #[derive(Deserialize, Debug)]
 pub struct PluginDef {
     pub name: String,
-    /// Required, matching `cargo-truce::PluginDef`. Not consumed by
-    /// build/derive but making the field mandatory keeps the schema in
-    /// lockstep — a config missing `bundle_id` fails at the earliest
-    /// point (build script / proc-macro expansion) rather than later
-    /// at `cargo truce install` time.
-    #[allow(dead_code)]
+    /// Required, matching `cargo-truce::PluginDef`. Deliberately unread
+    /// after deserialization: presence makes serde fail early on a
+    /// config missing `bundle_id` (at build script / proc-macro
+    /// expansion time) instead of later at `cargo truce install`.
+    #[allow(dead_code, reason = "schema-validity check at deserialize time")]
     pub bundle_id: String,
     #[serde(rename = "crate")]
     pub crate_name: String,

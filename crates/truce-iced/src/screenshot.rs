@@ -21,8 +21,8 @@ use truce_core::editor::for_test_params;
 /// iced program state, renders one frame to an offscreen texture, and
 /// reads back the pixels.
 ///
-/// Used internally by `IcedEditor::screenshot()` — external callers go
-/// through `truce_test::assert_screenshot::<Plugin>(...)`.
+/// Internal entry point for the headless screenshot render. Plugin
+/// tests reach this via [`truce_test::assert_screenshot`].
 ///
 /// Returns `None` when no wgpu adapter is available (CI runners without
 /// a GPU, headless VMs). Mirrors `WgpuBackend::headless` in `truce-gpu`

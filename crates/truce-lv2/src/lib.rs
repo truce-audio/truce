@@ -167,27 +167,13 @@ unsafe impl<P: PluginExport> Send for Lv2Instance<P> {}
 // LV2 lifecycle callbacks
 // ---------------------------------------------------------------------------
 
-/// Build a PortLayout from the plugin's declared bus layout + params.
+/// Build a PortLayout from a plugin instance's declared bus layout + params.
 ///
-/// **Prefer [`derive_port_layout_from`] when you already hold a `&P`.**
-/// This convenience form constructs a fresh `P::create()` only to
-/// extract the static layout, which can allocate plugin-internal
-/// buffers (DSP scratch, etc.) for no payoff. After the
-/// `derive_port_layout_from` extraction, every in-tree caller
-/// (`instantiate`, `emit_bundle`) routes through the `_from` variant;
-/// this entry point exists for external consumers that don't have a
-/// plugin instance handy.
-pub fn derive_port_layout<P: PluginExport>() -> PortLayout {
-    let plugin = P::create();
-    derive_port_layout_from::<P>(&plugin)
-}
-
-/// Same as [`derive_port_layout`], but reuses an already-built plugin
-/// instance to avoid the cost of `P::create()` (which can allocate
-/// internal buffers on plugin-defined defaults). The TTL writer paths
+/// Caller passes in `&P` so the layout extraction reuses the existing
+/// instance rather than constructing a fresh one. The TTL writer paths
 /// build their own plugin and the LV2 `instantiate` callback already
-/// owns one — both call this variant to skip a second build.
-pub fn derive_port_layout_from<P: PluginExport>(plugin: &P) -> PortLayout {
+/// owns one — both call this directly to skip a second `P::create()`.
+pub fn derive_port_layout<P: PluginExport>(plugin: &P) -> PortLayout {
     let layouts = P::bus_layouts();
     let default_layout = layouts
         .first()
@@ -221,7 +207,7 @@ pub unsafe fn instantiate<P: PluginExport>(
 ) -> *mut Lv2Instance<P> {
     unsafe {
         let plugin = P::create();
-        let layout = derive_port_layout_from::<P>(&plugin);
+        let layout = derive_port_layout::<P>(&plugin);
         let info = P::info();
         let param_infos = plugin.params().param_infos();
 

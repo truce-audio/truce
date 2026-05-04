@@ -207,7 +207,7 @@ pub unsafe fn instantiate_ui<P: PluginExport>(
         let params_arc = plugin.params_arc();
         let param_infos = plugin.params().param_infos();
 
-        let layout = crate::derive_port_layout_from::<P>(&plugin);
+        let layout = crate::derive_port_layout::<P>(&plugin);
         let control_start = layout.control_start();
 
         let param_slots: Vec<ParamSlot> = param_infos
