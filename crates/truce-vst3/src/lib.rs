@@ -575,15 +575,11 @@ unsafe extern "C" fn cb_get_output_event<P: PluginExport>(
         // a future shim regression (forgetting to bounds-check
         // against `cb_get_output_event_count`) fail loudly rather
         // than emit stale stack data.
-        match inst
+        if let Some(packet) = inst
             .output_events
             .iter()
             .filter_map(try_encode_vst3_midi)
-            .nth(index as usize)
-        {
-            Some(packet) => *out = packet,
-            None => (),
-        }
+            .nth(index as usize) { *out = packet }
     }
 }
 
