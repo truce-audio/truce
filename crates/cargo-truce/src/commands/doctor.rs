@@ -28,6 +28,10 @@ use std::process::Command;
 // doctor — environment diagnostics
 // ---------------------------------------------------------------------------
 
+// Returns `Res` for uniformity with the rest of the `cmd_*` dispatch
+// table even though every diagnostic only ever prints — the helpers
+// don't surface fallible errors today.
+#[allow(clippy::unnecessary_wraps, clippy::too_many_lines)]
 pub(crate) fn cmd_doctor() -> Res {
     eprintln!("truce doctor");
     eprintln!("─────────────────────────────────────────");

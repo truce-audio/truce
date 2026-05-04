@@ -126,6 +126,10 @@ impl Transport {
         self.info(position, bpm, sr, playing)
     }
 
+    // Kept as a method to read alongside `tick_audio` / `snapshot`
+    // even though no `self` field is touched — the args are pre-loaded
+    // by the callers from `self.inner` atomics.
+    #[allow(clippy::unused_self)]
     fn info(&self, position_beats: f64, bpm: f64, sr: f64, playing: bool) -> TransportInfo {
         TransportInfo {
             playing,

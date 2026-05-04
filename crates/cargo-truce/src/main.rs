@@ -56,6 +56,7 @@ fn main() -> ExitCode {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn print_help() {
     eprintln!(
         "\

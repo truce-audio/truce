@@ -10,6 +10,8 @@ use crate::pace_sign_aax_macos;
 use crate::{Config, PluginDef, Res, codesign_bundle, release_lib};
 #[cfg(target_os = "macos")]
 use crate::{PackagingConfig, copy_dir_recursive};
+#[cfg(target_os = "macos")]
+use std::fmt::Write;
 use std::fs;
 use std::path::Path;
 #[cfg(target_os = "macos")]
@@ -382,18 +384,19 @@ pub(crate) fn generate_distribution_xml(
             ""
         };
 
-        choices_outline.push_str(&format!("        <line choice=\"{id}\"/>\n"));
-        choices.push_str(&format!(
+        let _ = writeln!(choices_outline, "        <line choice=\"{id}\"/>");
+        let _ = write!(
+            choices,
             r#"
     <choice id="{id}" title="{label}" description="{desc}"{enabled_attr}>
         <pkg-ref id="{pkg_id}"/>
     </choice>
 "#
-        ));
-        pkg_refs.push_str(&format!(
-            "    <pkg-ref id=\"{pkg_id}\" version=\"{version}\"\
-             >{component_file}</pkg-ref>\n"
-        ));
+        );
+        let _ = writeln!(
+            pkg_refs,
+            "    <pkg-ref id=\"{pkg_id}\" version=\"{version}\">{component_file}</pkg-ref>"
+        );
     }
 
     let welcome = resources

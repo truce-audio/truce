@@ -634,7 +634,13 @@ impl<P: PluginExport> PluginDriver<P> {
     // The driver loop widens `usize`-counted sample offsets and
     // `i64` transport positions to `f64`. Driver test runs are
     // bounded well below 2^52 frames.
-    #[allow(clippy::cast_precision_loss)]
+    //
+    // Sequential block-driving pipeline: setup → per-block loop →
+    // result assembly. Extracting `prepare_script_events` and
+    // `fill_input_block` already split out the largest reusable seams;
+    // further extraction would force a 20+ field context struct that
+    // hides exactly the linear control flow that makes this readable.
+    #[allow(clippy::cast_precision_loss, clippy::too_many_lines)]
     #[must_use]
     pub fn run(mut self) -> DriverResult<P> {
         // Build + activate.
@@ -715,24 +721,7 @@ impl<P: PluginExport> PluginDriver<P> {
             _ => None,
         };
 
-        // Re-scale event offsets if the sample rate changed between
-        // when the script was built (`.script(...)` wired its
-        // sample_rate from the driver's then-current value) and when
-        // `.run()` actually runs at the current `self.sample_rate`. A
-        // builder order like `.script(...).sample_rate(48000).run()`
-        // would otherwise emit events at the offsets computed against
-        // the old SR — `wait_ms(100)` produced `4410` at 44100 Hz but
-        // the run uses 48000, putting "100ms" at 91.875ms instead.
-        let build_sr = self.script.sample_rate;
-        if build_sr > 0.0 && (build_sr - self.sample_rate).abs() > f64::EPSILON {
-            let scale = self.sample_rate / build_sr;
-            for (off, _) in &mut self.script.events {
-                *off = sample_count_usize(((*off as f64) * scale).round());
-            }
-        }
-        self.script.sample_rate = self.sample_rate;
-        self.script.events.sort_by_key(|(off, _)| *off);
-        let script_events = self.script.events;
+        let script_events = prepare_script_events(&mut self.script, self.sample_rate, total_frames);
 
         // Transport tracker.
         let mut transport_pos_beats = self.transport.position_beats;
@@ -752,29 +741,10 @@ impl<P: PluginExport> PluginDriver<P> {
             );
         }
 
-        // Track how many events fall past `total_frames` so the run
-        // surfaces a warning instead of silently dropping them. Tests
-        // that schedule events past their declared duration almost
-        // always have a cursor-arithmetic bug; surfacing it loudly is
-        // cheap.
-        let dropped_events = script_events
-            .iter()
-            .filter(|(off, _)| *off >= total_frames)
-            .count();
-        if dropped_events > 0 {
-            eprintln!(
-                "[truce-driver] warning: {dropped_events} script event(s) scheduled past \
-                 total_frames ({total_frames}) — they will not be delivered. Check \
-                 `.duration(...)` vs `wait_ms`/`wait_samples` calls in your script."
-            );
-        }
-
-        // Pre-allocate per-block scratch outside the loop. The previous
-        // implementation built fresh `Vec<Vec<f32>>` instances every
-        // block; for long runs (`30s @ 512` ≈ 2800 blocks) that's a
-        // measurable allocator workout. Reusing the buffers keeps the
-        // hot loop allocation-free for `Silence` / `Constant` /
-        // `Buffer` and reduces per-block work for `Generator`.
+        // Pre-allocate per-block scratch outside the loop. Reusing the
+        // buffers keeps the hot loop allocation-free for `Silence` /
+        // `Constant` / `Buffer` and reduces per-block work for
+        // `Generator`.
         let mut out_bufs: Vec<Vec<f32>> = (0..channels)
             .map(|_| vec![0.0f32; self.block_size])
             .collect();
@@ -808,47 +778,15 @@ impl<P: PluginExport> PluginDriver<P> {
                 }
             }
 
-            // Refill input scratch for this block. Constant / Silence
-            // collapse to a memset; Buffer slice-copies; Generator
-            // calls the closure into the existing buffer.
             if is_effect {
-                for b in &mut in_bufs {
-                    b.resize(block_len, 0.0);
-                }
-                match (&mut self.input, constant_value) {
-                    (_, Some(v)) => {
-                        for b in &mut in_bufs {
-                            b.fill(v);
-                        }
-                    }
-                    (InputSource::Buffer(bufs), _) => {
-                        for (dst, src) in in_bufs.iter_mut().zip(bufs.iter()) {
-                            let start = cursor.min(src.len());
-                            let end = (cursor + block_len).min(src.len());
-                            let copied = end - start;
-                            dst[..copied].copy_from_slice(&src[start..end]);
-                            // Pad the tail past `src` with zeros if the
-                            // user-supplied buffer ran short.
-                            for s in &mut dst[copied..] {
-                                *s = 0.0;
-                            }
-                        }
-                    }
-                    (InputSource::Generator(g), _) => {
-                        // Generator is mono-broadcast; compute into the
-                        // first channel, then `clone_from_slice` the
-                        // others. Saves N-1 closure calls per sample.
-                        if let Some((first, rest)) = in_bufs.split_first_mut() {
-                            for (i, slot) in first.iter_mut().enumerate() {
-                                *slot = g(cursor + i, self.sample_rate);
-                            }
-                            for ch in rest {
-                                ch.copy_from_slice(first);
-                            }
-                        }
-                    }
-                    _ => unreachable!(),
-                }
+                fill_input_block(
+                    &mut in_bufs,
+                    &mut self.input,
+                    constant_value,
+                    cursor,
+                    block_len,
+                    self.sample_rate,
+                );
             }
 
             let in_slices: Vec<&[f32]> = in_bufs.iter().map(std::vec::Vec::as_slice).collect();
@@ -950,5 +888,91 @@ impl<P: PluginExport> PluginDriver<P> {
             block_snapshots,
             plugin,
         }
+    }
+}
+
+/// Sort the script's events by sample offset, rescale them if the
+/// driver's sample rate differs from the script's build-time rate, and
+/// warn loudly about events scheduled past `total_frames`.
+///
+/// A builder order like `.script(...).sample_rate(48000).run()` would
+/// otherwise emit events at offsets computed against the old SR —
+/// `wait_ms(100)` produced `4410` at 44100 Hz but the run uses 48000,
+/// putting "100ms" at 91.875ms instead.
+fn prepare_script_events(
+    script: &mut Script,
+    sample_rate: f64,
+    total_frames: usize,
+) -> Vec<(usize, EventBody)> {
+    let build_sr = script.sample_rate;
+    if build_sr > 0.0 && (build_sr - sample_rate).abs() > f64::EPSILON {
+        let scale = sample_rate / build_sr;
+        for (off, _) in &mut script.events {
+            *off = sample_count_usize(((*off as f64) * scale).round());
+        }
+    }
+    script.sample_rate = sample_rate;
+    script.events.sort_by_key(|(off, _)| *off);
+
+    let dropped = script
+        .events
+        .iter()
+        .filter(|(off, _)| *off >= total_frames)
+        .count();
+    if dropped > 0 {
+        eprintln!(
+            "[truce-driver] warning: {dropped} script event(s) scheduled past \
+             total_frames ({total_frames}) — they will not be delivered. Check \
+             `.duration(...)` vs `wait_ms`/`wait_samples` calls in your script."
+        );
+    }
+    std::mem::take(&mut script.events)
+}
+
+/// Refill effect-input scratch for one block. Constant / Silence
+/// collapse to a per-channel memset; Buffer slice-copies; Generator
+/// computes into the first channel then broadcasts to the rest, which
+/// saves `(N-1) × block_len` closure calls per block.
+fn fill_input_block(
+    in_bufs: &mut [Vec<f32>],
+    input: &mut InputSource,
+    constant_value: Option<f32>,
+    cursor: usize,
+    block_len: usize,
+    sample_rate: f64,
+) {
+    for b in in_bufs.iter_mut() {
+        b.resize(block_len, 0.0);
+    }
+    match (input, constant_value) {
+        (_, Some(v)) => {
+            for b in in_bufs {
+                b.fill(v);
+            }
+        }
+        (InputSource::Buffer(bufs), _) => {
+            for (dst, src) in in_bufs.iter_mut().zip(bufs.iter()) {
+                let start = cursor.min(src.len());
+                let end = (cursor + block_len).min(src.len());
+                let copied = end - start;
+                dst[..copied].copy_from_slice(&src[start..end]);
+                // Pad the tail past `src` with zeros if the
+                // user-supplied buffer ran short.
+                for s in &mut dst[copied..] {
+                    *s = 0.0;
+                }
+            }
+        }
+        (InputSource::Generator(g), _) => {
+            if let Some((first, rest)) = in_bufs.split_first_mut() {
+                for (i, slot) in first.iter_mut().enumerate() {
+                    *slot = g(cursor + i, sample_rate);
+                }
+                for ch in rest {
+                    ch.copy_from_slice(first);
+                }
+            }
+        }
+        _ => unreachable!(),
     }
 }

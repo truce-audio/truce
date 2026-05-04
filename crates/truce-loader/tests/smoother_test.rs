@@ -100,8 +100,8 @@ fn smoother_ramps_gradually() {
 
     shell.logic_ref_mut().samples.clear();
 
-    let mut output2 = vec![0.0f32; 64];
-    let mut outputs2: Vec<&mut [f32]> = vec![&mut output2];
+    let mut second_output = vec![0.0f32; 64];
+    let mut outputs2: Vec<&mut [f32]> = vec![&mut second_output];
     let mut buffer2 = unsafe { AudioBuffer::from_slices(&inputs, &mut outputs2, 64) };
     let mut output_events2 = EventList::new();
     let mut ctx2 = ProcessContext::new(&transport, 44100.0, 64, &mut output_events2)

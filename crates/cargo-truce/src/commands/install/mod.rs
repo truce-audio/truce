@@ -28,6 +28,7 @@ use aax::{emit_aax_bundle, install_aax};
 #[cfg(target_os = "macos")]
 use au_v3::build_and_install_au_v3;
 
+#[allow(clippy::too_many_lines)]
 pub(crate) fn cmd_install(args: &[String]) -> Res {
     let config = load_config()?;
 

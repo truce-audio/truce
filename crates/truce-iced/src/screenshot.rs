@@ -30,7 +30,7 @@ use truce_core::editor::for_test_params;
 /// screenshot paths handle adapter-acquisition failures uniformly.
 // `params: Arc<P>` is consumed by the iced program; refs would force
 // the caller to outlive the headless render.
-#[allow(clippy::needless_pass_by_value)]
+#[allow(clippy::needless_pass_by_value, clippy::too_many_lines)]
 pub(crate) fn render_to_pixels<P, M>(
     params: Arc<P>,
     plugin: M,

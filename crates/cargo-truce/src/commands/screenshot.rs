@@ -36,6 +36,7 @@ use std::path::{Path, PathBuf};
 /// a build failure. Update both sides together.
 type ScreenshotFn = unsafe extern "C" fn(*const u8, usize, *const u8, usize) -> u32;
 
+#[allow(clippy::too_many_lines)]
 pub(crate) fn cmd_screenshot(args: &[String]) -> Res {
     let mut plugin_filter: Option<String> = None;
     let mut out_path: Option<PathBuf> = None;

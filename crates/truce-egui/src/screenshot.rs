@@ -19,7 +19,12 @@ use truce_params::Params;
 /// rather than mixing panics with optional returns.
 // Physical-pixel dimensions stay below `u32::MAX` after the
 // `pixels_per_point` multiplication (max ~16384 logical × 4 = 65536).
-#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)]
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss,
+    clippy::too_many_lines
+)]
 pub(crate) fn render_with_state<P: Params + ?Sized>(
     state: &PluginContext<P>,
     size: (u32, u32),

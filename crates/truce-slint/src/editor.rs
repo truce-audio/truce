@@ -235,6 +235,7 @@ impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
         frame.present();
     }
 
+    #[allow(clippy::too_many_lines)]
     fn on_event(&mut self, _window: &mut Window, event: Event) -> EventStatus {
         match event {
             Event::Mouse(mouse) => {

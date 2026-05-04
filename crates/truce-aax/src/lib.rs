@@ -1129,6 +1129,12 @@ pub unsafe fn _editor_get_size<P: PluginExport>(ctx: *mut c_void, w: *mut u32, h
 /// flag that drift if VST3's `libc_malloc` shape ever migrates here.
 pub unsafe fn _free_state(data: *mut u8, len: u32) {
     if !data.is_null() && len > 0 {
+        // The state buffer is constructed via `Vec::with_capacity(len)`
+        // followed by `set_len(len)` — len == cap by construction, so
+        // reconstructing a Vec with both equal to `len` is the symmetric
+        // free. The `Box`-based replacement clippy suggests doesn't fit
+        // because the source allocation is Vec's, not Box's.
+        #[allow(clippy::same_length_and_capacity)]
         unsafe { drop(Vec::from_raw_parts(data, len as usize, len as usize)) };
     }
 }

@@ -170,7 +170,7 @@ pub fn sample_pos_i64(v: f64) -> i64 {
 /// sample_rate`) to `usize`, saturating on overflow / negative /
 /// non-finite inputs.
 ///
-/// Mirrors the "is_finite && >= 0" guard pattern that `truce-driver`
+/// Mirrors the `is_finite && >= 0` guard pattern that `truce-driver`
 /// open-coded across its offline-render path. NaN and negative
 /// inputs collapse to `0`; positive infinity and any value past
 /// `usize::MAX` clamp to `usize::MAX`.

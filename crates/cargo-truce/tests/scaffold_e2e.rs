@@ -24,6 +24,7 @@
 //! cargo test -p cargo-truce --test scaffold_e2e workspace_full_build
 //! ```
 
+use std::fmt::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -417,16 +418,16 @@ fn diagnose_target_layout() -> String {
                     .filter_map(|e| e.ok().map(|e| e.file_name().to_string_lossy().into_owned()))
                     .collect();
                 names.sort();
-                out.push_str(&format!("  {label}/ ({} entries):\n", names.len()));
+                let _ = writeln!(out, "  {label}/ ({} entries):", names.len());
                 for n in names.iter().take(40) {
-                    out.push_str(&format!("    {n}\n"));
+                    let _ = writeln!(out, "    {n}");
                 }
                 if names.len() > 40 {
-                    out.push_str(&format!("    ... and {} more\n", names.len() - 40));
+                    let _ = writeln!(out, "    ... and {} more", names.len() - 40);
                 }
             }
             Err(e) => {
-                out.push_str(&format!("  {label}/: <not readable: {e}>\n"));
+                let _ = writeln!(out, "  {label}/: <not readable: {e}>");
             }
         }
     }

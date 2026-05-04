@@ -596,7 +596,12 @@ unsafe extern "C" fn cb_state_load<P: PluginExport>(
 unsafe extern "C" fn cb_state_free(data: *mut u8, len: u32) {
     unsafe {
         if !data.is_null() && len > 0 {
-            drop(Vec::from_raw_parts(data, len as usize, len as usize));
+            // Mirrors the construction in `cb_state` (Vec with
+            // `len == cap`); `Box::from_raw_parts` doesn't fit
+            // because the source allocator is Vec's, not Box's.
+            #[allow(clippy::same_length_and_capacity)]
+            let v = Vec::from_raw_parts(data, len as usize, len as usize);
+            drop(v);
         }
     }
 }

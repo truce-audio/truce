@@ -312,85 +312,10 @@ pub fn start_audio<P: PluginExport>(
         p
     }));
 
-    let input_ring: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(Vec::new()));
-
-    // Resolve the initial input device name so the menu can show
-    // the currently-active device on first open. Worker re-resolves
-    // on each open against this name (or whatever the user picks).
-    let initial_input_name: Option<String> = if is_effect {
-        let device = match &opts.input_device {
-            Some(name) => find_device(&audio_host, name, false),
-            None => audio_host.default_input_device(),
-        };
-        let name = device.and_then(|d| d.name().ok());
-        if name.is_none() {
-            eprintln!("Note: no input device found — input-enable will be a no-op.");
-        }
-        name
-    } else {
-        None
-    };
-
-    let input_enabled = Arc::new(AtomicBool::new(false));
-    let has_input_device = initial_input_name.is_some();
-    let (input_cmd_tx, input_cmd_rx) = mpsc::channel::<InputCmd>();
-    let input_current_name = Arc::new(Mutex::new(initial_input_name.clone()));
-
-    let input_controller = InputController {
-        enabled: Arc::clone(&input_enabled),
-        has_device: has_input_device,
-        cmd_tx: input_cmd_tx,
-        current_name: Arc::clone(&input_current_name),
-    };
-
-    if is_effect {
-        let device_name = initial_input_name.clone();
-        let ring = Arc::clone(&input_ring);
-        let enabled_flag = Arc::clone(&input_enabled);
-        let current = Arc::clone(&input_current_name);
-        let chans = channels;
-        let sr = sample_rate;
-        std::thread::Builder::new()
-            .name("truce-standalone-input".into())
-            .spawn(move || {
-                input_worker(
-                    input_cmd_rx,
-                    device_name,
-                    chans,
-                    sr,
-                    ring,
-                    enabled_flag,
-                    current,
-                );
-            })
-            .ok();
-    }
-
-    let want_input_enabled = is_effect && opts.input_enabled.unwrap_or(false);
-    if want_input_enabled {
-        input_controller.set_enabled(true);
-    }
-
-    if is_effect {
-        vlog!(
-            "Input:  {} ({})",
-            initial_input_name.as_deref().unwrap_or("(none)"),
-            if want_input_enabled {
-                "enabled"
-            } else {
-                {
-                    #[cfg(target_os = "macos")]
-                    {
-                        "disabled — press Cmd+I in the window or pass --input-enabled on"
-                    }
-                    #[cfg(not(target_os = "macos"))]
-                    {
-                        "disabled — press Ctrl+I in the window or pass --input-enabled on"
-                    }
-                }
-            }
-        );
-    }
+    let input_setup = setup_input_pipeline(&audio_host, opts, is_effect, channels, sample_rate);
+    let input_ring = input_setup.ring;
+    let input_enabled = input_setup.enabled;
+    let input_controller = input_setup.controller;
 
     let transport = Transport::new(opts.bpm.unwrap_or(120.0), sample_rate);
 
@@ -517,6 +442,111 @@ pub fn start_audio<P: PluginExport>(
         #[cfg(feature = "playback")]
         capture,
     })
+}
+
+/// State produced by [`setup_input_pipeline`] that `start_audio`
+/// needs to wire into the output worker (`ring` / `enabled` go into
+/// `OutputResources`) and the public handles (`controller`).
+struct InputSetup {
+    controller: InputController,
+    ring: Arc<Mutex<Vec<f32>>>,
+    enabled: Arc<AtomicBool>,
+}
+
+/// Resolve the initial input device, allocate the input ring + control
+/// channels, and (for effects) spawn the input worker thread. Also
+/// flips `set_enabled(true)` when the user passed
+/// `--input-enabled on`, so the launch state matches the CLI ask.
+fn setup_input_pipeline(
+    audio_host: &cpal::Host,
+    opts: &Options,
+    is_effect: bool,
+    channels: usize,
+    sample_rate: f64,
+) -> InputSetup {
+    let input_ring: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(Vec::new()));
+
+    // Resolve the initial input device name so the menu can show
+    // the currently-active device on first open. Worker re-resolves
+    // on each open against this name (or whatever the user picks).
+    let initial_input_name: Option<String> = if is_effect {
+        let device = match &opts.input_device {
+            Some(name) => find_device(audio_host, name, false),
+            None => audio_host.default_input_device(),
+        };
+        let name = device.and_then(|d| d.name().ok());
+        if name.is_none() {
+            eprintln!("Note: no input device found — input-enable will be a no-op.");
+        }
+        name
+    } else {
+        None
+    };
+
+    let input_enabled = Arc::new(AtomicBool::new(false));
+    let has_input_device = initial_input_name.is_some();
+    let (input_cmd_tx, input_cmd_rx) = mpsc::channel::<InputCmd>();
+    let input_current_name = Arc::new(Mutex::new(initial_input_name.clone()));
+
+    let controller = InputController {
+        enabled: Arc::clone(&input_enabled),
+        has_device: has_input_device,
+        cmd_tx: input_cmd_tx,
+        current_name: Arc::clone(&input_current_name),
+    };
+
+    if is_effect {
+        let device_name = initial_input_name.clone();
+        let ring = Arc::clone(&input_ring);
+        let enabled_flag = Arc::clone(&input_enabled);
+        let current = Arc::clone(&input_current_name);
+        std::thread::Builder::new()
+            .name("truce-standalone-input".into())
+            .spawn(move || {
+                input_worker(
+                    input_cmd_rx,
+                    device_name,
+                    channels,
+                    sample_rate,
+                    ring,
+                    enabled_flag,
+                    current,
+                );
+            })
+            .ok();
+    }
+
+    let want_input_enabled = is_effect && opts.input_enabled.unwrap_or(false);
+    if want_input_enabled {
+        controller.set_enabled(true);
+    }
+
+    if is_effect {
+        vlog!(
+            "Input:  {} ({})",
+            initial_input_name.as_deref().unwrap_or("(none)"),
+            if want_input_enabled {
+                "enabled"
+            } else {
+                {
+                    #[cfg(target_os = "macos")]
+                    {
+                        "disabled — press Cmd+I in the window or pass --input-enabled on"
+                    }
+                    #[cfg(not(target_os = "macos"))]
+                    {
+                        "disabled — press Ctrl+I in the window or pass --input-enabled on"
+                    }
+                }
+            }
+        );
+    }
+
+    InputSetup {
+        controller,
+        ring: input_ring,
+        enabled: input_enabled,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -693,7 +723,7 @@ fn open_output_stream<P: PluginExport>(
 
     *stream_slot = Some(stream);
     if let Ok(mut g) = res.current_name.lock() {
-        *g = resolved_name.clone();
+        g.clone_from(&resolved_name);
     }
 
     vlog!(
@@ -762,7 +792,7 @@ fn input_worker(
                     // Reflect the chosen device immediately even
                     // though we haven't opened a stream — the menu
                     // checkmark should match the user's pick.
-                    *g = device_name.clone();
+                    g.clone_from(&device_name);
                 }
             }
         }

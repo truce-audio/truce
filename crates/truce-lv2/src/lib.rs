@@ -332,6 +332,7 @@ pub unsafe fn activate<P: PluginExport>(handle: *mut Lv2Instance<P>) {
 /// `handle` must be a valid `Lv2Instance<P>` pointer with port connections
 /// established by prior calls to `connect_port()`. Audio and control port
 /// memory must be valid for `n_samples`.
+#[allow(clippy::too_many_lines)]
 pub unsafe fn run<P: PluginExport>(handle: *mut Lv2Instance<P>, n_samples: u32) {
     unsafe {
         let inst = &mut *handle;

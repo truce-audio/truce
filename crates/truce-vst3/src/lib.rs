@@ -125,6 +125,7 @@ unsafe extern "C" fn cb_reset<P: PluginExport>(
     }
 }
 
+#[allow(clippy::too_many_lines)]
 unsafe extern "C" fn cb_process<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     inputs: *const *const f32,
