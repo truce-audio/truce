@@ -238,7 +238,10 @@ mod tests {
             name: "Pan",
             short_name: "Pan",
             group: "",
-            range: ParamRange::Linear { min: -1.0, max: 1.0 },
+            range: ParamRange::Linear {
+                min: -1.0,
+                max: 1.0,
+            },
             default_plain: 0.0,
             flags: ParamFlags::empty(),
             unit: ParamUnit::Pan,

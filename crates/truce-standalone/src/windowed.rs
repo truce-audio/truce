@@ -172,7 +172,7 @@ where
             octave_offset: 0,
             _midi_thread: midi_thread,
             #[cfg(feature = "playback")]
-            capture,
+            _capture: capture,
         }
     });
 
@@ -207,7 +207,7 @@ where
     /// `CaptureSink::Drop` joins the writer thread to flush the WAV
     /// header.
     #[cfg(feature = "playback")]
-    capture: Option<crate::playback::CaptureSink>,
+    _capture: Option<crate::playback::CaptureSink>,
 }
 
 impl<P: PluginExport + 'static> WindowHandler for StandaloneHandler<P>
@@ -240,7 +240,7 @@ where
         if matches!(event, Event::Window(baseview::WindowEvent::WillClose)) {
             vlog!("Goodbye!");
             #[cfg(feature = "playback")]
-            if let Some(capture) = self.capture.take() {
+            if let Some(capture) = self._capture.take() {
                 capture.finalize();
             }
             unsafe extern "C" {

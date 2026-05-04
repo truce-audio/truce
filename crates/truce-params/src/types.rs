@@ -111,8 +111,8 @@ impl BoolParam {
     /// a `BoolParam` from hand-rolled `ParamInfo`.
     pub fn new(info: ParamInfo) -> Self {
         let default = match info.default_plain {
-            v if v == 0.0 => false,
-            v if v == 1.0 => true,
+            0.0 => false,
+            1.0 => true,
             other => panic!(
                 "BoolParam '{}' default {} must be exactly 0.0 (false) \
                  or 1.0 (true) — bool params have no halfway value",

@@ -775,9 +775,10 @@ fn gen_field_constructor(f: &ParamField) -> proc_macro2::TokenStream {
     // plumbing.
     if let Some(d) = a.default {
         let err = match f.kind {
-            ParamKind::Bool if d != 0.0 && d != 1.0 => {
-                Some(format!("BoolParam default {} must be 0 or 1; got {}", name, d))
-            }
+            ParamKind::Bool if d != 0.0 && d != 1.0 => Some(format!(
+                "BoolParam default {} must be 0 or 1; got {}",
+                name, d
+            )),
             ParamKind::Int if !d.is_finite() || (d as i64 as f64) != d => Some(format!(
                 "IntParam '{}' default must be an integer literal; got {}",
                 name, d

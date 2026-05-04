@@ -579,7 +579,10 @@ unsafe extern "C" fn cb_get_output_event<P: PluginExport>(
             .output_events
             .iter()
             .filter_map(try_encode_vst3_midi)
-            .nth(index as usize) { *out = packet }
+            .nth(index as usize)
+        {
+            *out = packet
+        }
     }
 }
 

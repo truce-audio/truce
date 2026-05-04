@@ -1010,8 +1010,7 @@ fn audio_callback<P: PluginExport>(
         AudioBuffer::from_slices_checked(&input_slices, &mut output_slices, num_frames);
 
     let transport_info = transport.tick_audio(num_frames);
-    let mut context =
-        ProcessContext::new(&transport_info, sample_rate, num_frames, output_events);
+    let mut context = ProcessContext::new(&transport_info, sample_rate, num_frames, output_events);
 
     plugin.process(&mut audio_buffer, event_list, &mut context);
 

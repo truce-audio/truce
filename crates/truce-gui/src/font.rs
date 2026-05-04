@@ -171,11 +171,7 @@ pub fn draw_text_fontdue(
                     let px = gx + col as i32;
                     let py = gy + row as i32;
 
-                    if px < 0
-                        || py < 0
-                        || px >= pixmap_width as i32
-                        || py >= pixmap_height as i32
-                    {
+                    if px < 0 || py < 0 || px >= pixmap_width as i32 || py >= pixmap_height as i32 {
                         continue;
                     }
 
