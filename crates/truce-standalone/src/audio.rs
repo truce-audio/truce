@@ -624,12 +624,15 @@ fn open_output_stream<P: PluginExport>(
 
     // Per-stream audio-callback scratch. Owned by the move-closure so
     // it lives across callbacks but never crosses threads — cpal calls
-    // the closure on a single dedicated audio thread per stream. Used
-    // to amortize the `vec![0.0; num_frames]` per-channel allocation
-    // and the `channel_bufs.clone()` for the effect input mirror that
-    // the audit flagged as per-block heap traffic.
+    // the closure on a single dedicated audio thread per stream.
+    // Amortizes the `vec![0.0; num_frames]` per-channel allocation and
+    // the `channel_bufs.clone()` for the effect input mirror, plus the
+    // two `EventList::new()`s per block (input drain + plugin output)
+    // — both `clear()`ed and reused, capacity-preserving.
     let mut channel_bufs: Vec<Vec<f32>> = Vec::new();
     let mut input_bufs: Vec<Vec<f32>> = Vec::new();
+    let mut event_list = EventList::new();
+    let mut output_events = EventList::new();
 
     let stream = match sample_format {
         cpal::SampleFormat::F32 => device
@@ -649,6 +652,8 @@ fn open_output_stream<P: PluginExport>(
                         &transport_a,
                         &mut channel_bufs,
                         &mut input_bufs,
+                        &mut event_list,
+                        &mut output_events,
                         #[cfg(feature = "playback")]
                         playback_a.as_ref(),
                         #[cfg(feature = "playback")]
@@ -917,12 +922,15 @@ fn audio_callback<P: PluginExport>(
     transport: &Transport,
     channel_bufs: &mut Vec<Vec<f32>>,
     input_bufs: &mut Vec<Vec<f32>>,
+    event_list: &mut EventList,
+    output_events: &mut EventList,
     #[cfg(feature = "playback")] playback: Option<&Arc<crate::playback::PlaybackSource>>,
     #[cfg(feature = "playback")] capture: Option<&crate::playback::CapturePusher>,
 ) {
     let num_frames = data.len() / channels;
 
-    let mut event_list = EventList::new();
+    event_list.clear();
+    output_events.clear();
     if let Ok(mut events) = pending.try_lock() {
         for ev in events.drain(..) {
             event_list.push(Event {
@@ -1002,16 +1010,19 @@ fn audio_callback<P: PluginExport>(
         AudioBuffer::from_slices_checked(&input_slices, &mut output_slices, num_frames);
 
     let transport_info = transport.tick_audio(num_frames);
-    let mut output_events = EventList::new();
     let mut context =
-        ProcessContext::new(&transport_info, sample_rate, num_frames, &mut output_events);
+        ProcessContext::new(&transport_info, sample_rate, num_frames, output_events);
 
-    plugin.process(&mut audio_buffer, &event_list, &mut context);
+    plugin.process(&mut audio_buffer, event_list, &mut context);
 
     // `--output-file` capture: hand a copy of the post-process,
     // pre-mute output to the writer thread. Mute is *device*
     // silence (speakers off); the file should still get the
     // real plugin output, matching every DAW's mute-and-bounce.
+    // The capture path transfers Vec ownership to the writer thread
+    // (channel-bounded `mpsc::sync_channel`), so the per-block alloc
+    // here can't be amortized without a free-list pool. Left as-is —
+    // capture is a `--output-file` dev convenience, not a hot path.
     #[cfg(feature = "playback")]
     if let Some(pusher) = capture {
         let mut interleaved = vec![0.0_f32; num_frames * channels];

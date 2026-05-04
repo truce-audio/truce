@@ -510,11 +510,8 @@ impl<P: Params + 'static> Editor for SlintEditor<P> {
         // Match the live editor's content scale; `EditorScale` falls
         // back to `backing_scale()` for pre-open / headless calls.
         let scale = self.scale.get() as f32;
-        Some(crate::screenshot::render_with_state::<P>(
-            &state,
-            self.size,
-            scale,
-            move |s| setup(s.clone()),
-        ))
+        crate::screenshot::render_with_state::<P>(&state, self.size, scale, move |s| {
+            setup(s.clone())
+        })
     }
 }

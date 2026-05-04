@@ -17,12 +17,19 @@ use crate::platform;
 /// Headless render path shared by `SlintEditor::screenshot()` and any
 /// future ad-hoc callers in this crate. Kept `pub(crate)` — external
 /// callers should go through the `Editor::screenshot()` trait.
+///
+/// Returns `None` when the Slint window's `draw_if_needed` reports no
+/// draw happened — without that signal the buffer would contain
+/// zero-alpha pixels and the screenshot diff would surface as a
+/// confusing "blank vs reference" rather than the underlying "renderer
+/// didn't run." Matches the peer pattern in `truce-egui` and `truce-iced`
+/// where the underlying renderer is also `Option`-returning.
 pub(crate) fn render_with_state<P: Params + ?Sized>(
     state: &PluginContext<P>,
     size: (u32, u32),
     scale: f32,
     setup: impl FnOnce(&PluginContext<P>) -> SyncFn<P>,
-) -> (Vec<u8>, u32, u32) {
+) -> Option<(Vec<u8>, u32, u32)> {
     platform::ensure_platform();
 
     let (width, height) = size;
@@ -46,9 +53,12 @@ pub(crate) fn render_with_state<P: Params + ?Sized>(
     let pixel_count = (phys_w * phys_h) as usize;
     let mut px_buf = vec![PremultipliedRgbaColor::default(); pixel_count];
 
-    window.draw_if_needed(|renderer| {
+    let drew = window.draw_if_needed(|renderer| {
         renderer.render(&mut px_buf, phys_w as usize);
     });
+    if !drew {
+        return None;
+    }
 
     // Convert premultiplied RGBA to straight RGBA bytes.
     let mut rgba = Vec::with_capacity(pixel_count * 4);
@@ -72,5 +82,5 @@ pub(crate) fn render_with_state<P: Params + ?Sized>(
         }
     }
 
-    (rgba, phys_w, phys_h)
+    Some((rgba, phys_w, phys_h))
 }

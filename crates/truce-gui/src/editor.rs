@@ -600,12 +600,20 @@ fn create_wgpu_backend(window: &mut baseview::Window, phys_w: u32, phys_h: u32) 
     }
 }
 
+// Field-declaration order doubles as the implicit drop order Rust uses
+// when this struct is dropped through the `Option<BlitBackend>` cell
+// directly (e.g. when the host drops the editor without calling
+// `close`). Children before parent: per-pipeline GPU resources, then
+// the surface (releases swap chain / CAMetalLayer), then queue, then
+// device. `BuiltinEditor::close` does the same thing explicitly via
+// destructure — this declaration order keeps the implicit path safe
+// too.
 struct BlitBackend {
-    device: wgpu::Device,
-    queue: wgpu::Queue,
-    surface: wgpu::Surface<'static>,
-    surface_config: wgpu::SurfaceConfiguration,
     blit: crate::blit::BlitPipeline,
+    surface_config: wgpu::SurfaceConfiguration,
+    surface: wgpu::Surface<'static>,
+    queue: wgpu::Queue,
+    device: wgpu::Device,
 }
 
 impl BlitBackend {
@@ -976,11 +984,30 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
 
         // Drop the wgpu surface (CAMetalLayer, MTLDevice, command
         // queue, etc.) before asking baseview to release the NSView.
-        // Keeps the Metal teardown order deterministic.
+        // Keeps the Metal teardown order deterministic. The destructure
+        // makes the drop order explicit rather than relying on
+        // `BlitPipeline`'s field-declaration order, since the audit
+        // flagged "happens to work" reliance on Rust's drop semantics
+        // as a fragility hazard. Order: per-pipeline GPU resources
+        // first (textures, bind groups, sampler), then the surface
+        // (releases the swap chain / CAMetalLayer), then queue, then
+        // device last — children before parent.
         if let Some(shared) = self.blit_backend.take()
             && let Ok(mut guard) = shared.lock()
+            && let Some(backend) = guard.take()
         {
-            drop(guard.take());
+            let BlitBackend {
+                blit,
+                surface,
+                surface_config,
+                queue,
+                device,
+            } = backend;
+            drop(surface_config);
+            drop(blit);
+            drop(surface);
+            drop(queue);
+            drop(device);
         }
 
         if let Some(mut window) = self.window.take() {

@@ -6,8 +6,9 @@
 //! working. Advanced users can override the bundled font via Cargo's
 //! `[patch]` table on `truce-font` instead of forking `truce-gui`.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::LazyLock;
 
 /// JetBrains Mono Regular TrueType bytes — re-exported from
 /// [`truce_font`] for backwards compatibility. Prefer
@@ -24,26 +25,36 @@ struct CachedGlyph {
     y_offset: f32, // offset from baseline (negative = above baseline)
 }
 
-/// Global glyph cache. Keyed by (character, size_tenths).
-/// size_tenths = (size * 10.0) as u32 to avoid float keys.
-static CACHE: Mutex<Option<GlyphCache>> = Mutex::new(None);
-
 struct GlyphCache {
     font: fontdue::Font,
     glyphs: HashMap<(char, u32), CachedGlyph>,
 }
 
-fn get_or_init_cache() -> std::sync::MutexGuard<'static, Option<GlyphCache>> {
-    let mut guard = CACHE.lock().unwrap();
-    if guard.is_none() {
-        let font = fontdue::Font::from_bytes(JETBRAINS_MONO, fontdue::FontSettings::default())
-            .expect("failed to parse embedded font");
-        *guard = Some(GlyphCache {
-            font,
-            glyphs: HashMap::new(),
-        });
-    }
-    guard
+// Per-thread glyph cache. The previous global `Mutex<Option<GlyphCache>>`
+// took a lock once per draw_text call, which scaled fine for single-host
+// use but added avoidable cross-thread contention under multi-instance
+// hosts that drive multiple plugin UIs from different threads. Each
+// thread now lazy-inits its own cache; the font bytes are `'static`
+// (re-exported from `truce-font`) so the per-thread duplication only
+// covers parsed font tables and rasterized glyphs — small and bounded
+// (one per (char, size) the thread has actually drawn).
+thread_local! {
+    static CACHE: RefCell<Option<GlyphCache>> = const { RefCell::new(None) };
+}
+
+fn with_cache<R>(f: impl FnOnce(&mut GlyphCache) -> R) -> R {
+    CACHE.with(|cell| {
+        let mut guard = cell.borrow_mut();
+        if guard.is_none() {
+            let font = fontdue::Font::from_bytes(JETBRAINS_MONO, fontdue::FontSettings::default())
+                .expect("failed to parse embedded font");
+            *guard = Some(GlyphCache {
+                font,
+                glyphs: HashMap::new(),
+            });
+        }
+        f(guard.as_mut().unwrap())
+    })
 }
 
 fn size_key(size: f32) -> u32 {
@@ -69,11 +80,59 @@ fn get_glyph(cache: &mut GlyphCache, ch: char, size: f32) -> &CachedGlyph {
     cache.glyphs.get(&key).unwrap()
 }
 
-/// Draw text into an RGBA premultiplied pixel buffer.
+/// sRGB-to-linear lookup for byte-encoded color channels. Used by
+/// `draw_text_fontdue` to composite glyphs in linear space — see the
+/// gamma rationale on that function.
+static SRGB_TO_LINEAR: LazyLock<[f32; 256]> = LazyLock::new(|| {
+    let mut table = [0.0f32; 256];
+    for (i, slot) in table.iter_mut().enumerate() {
+        let s = i as f32 / 255.0;
+        *slot = if s <= 0.04045 {
+            s / 12.92
+        } else {
+            ((s + 0.055) / 1.055).powf(2.4)
+        };
+    }
+    table
+});
+
+#[inline]
+fn srgb_f32_to_linear(s: f32) -> f32 {
+    if s <= 0.04045 {
+        s / 12.92
+    } else {
+        ((s + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+#[inline]
+fn linear_to_srgb_u8(lin: f32) -> u8 {
+    let lin = lin.clamp(0.0, 1.0);
+    let s = if lin <= 0.0031308 {
+        12.92 * lin
+    } else {
+        1.055 * lin.powf(1.0 / 2.4) - 0.055
+    };
+    (s * 255.0 + 0.5) as u8
+}
+
+/// Draw text into an RGBA pixel buffer.
 ///
-/// This is the main entry point for font rendering. It handles glyph
-/// caching internally — first call for a given (char, size) pair
-/// rasterizes; subsequent calls blit from cache.
+/// Compositing happens in linear space: destination bytes are decoded
+/// sRGB → linear via [`SRGB_TO_LINEAR`], the source color is decoded
+/// the same way, the Porter-Duff "over" operator runs in linear (so a
+/// half-coverage pixel against opaque white produces a perceptual
+/// midtone, not the gamma-darkened midtone of naive sRGB blending),
+/// and the result is re-encoded to sRGB. Treats the destination as
+/// straight sRGB rather than sRGB-premultiplied — fully correct when
+/// the destination alpha is 1 (the dominant case for text rendering),
+/// approximate when the destination is itself translucent (the audit's
+/// "synthetic test case" — the rest of the CPU backend uses tiny-skia
+/// which is sRGB-naive too, so a fully gamma-correct pipeline would
+/// need matching changes there).
+///
+/// Glyph caching is internal — first call for a given (char, size)
+/// pair rasterizes; subsequent calls blit from the per-thread cache.
 pub fn draw_text_fontdue(
     pixmap_data: &mut [u8],
     pixmap_width: u32,
@@ -87,77 +146,85 @@ pub fn draw_text_fontdue(
     b: f32,
     a: f32,
 ) {
-    let mut guard = get_or_init_cache();
-    let cache = guard.as_mut().unwrap();
+    with_cache(|cache| {
+        let mut cursor_x = x;
 
-    let mut cursor_x = x;
+        let line_metrics = cache.font.horizontal_line_metrics(size);
+        let ascent = line_metrics.map(|m| m.ascent).unwrap_or(size * 0.8);
 
-    // Get line metrics for vertical positioning.
-    let line_metrics = cache.font.horizontal_line_metrics(size);
-    let ascent = line_metrics.map(|m| m.ascent).unwrap_or(size * 0.8);
+        // Pre-compute the source color in linear space; only the
+        // glyph-coverage alpha varies per pixel.
+        let src_lin_r = srgb_f32_to_linear(r.clamp(0.0, 1.0));
+        let src_lin_g = srgb_f32_to_linear(g.clamp(0.0, 1.0));
+        let src_lin_b = srgb_f32_to_linear(b.clamp(0.0, 1.0));
 
-    for ch in text.chars() {
-        let glyph = get_glyph(cache, ch, size);
-        let gw = glyph.width;
-        let gh = glyph.height;
+        for ch in text.chars() {
+            let glyph = get_glyph(cache, ch, size);
+            let gw = glyph.width;
+            let gh = glyph.height;
 
-        // Position: cursor_x for horizontal, baseline + y_offset for vertical
-        let gx = cursor_x as i32;
-        let gy = (y + ascent - glyph.y_offset - gh as f32) as i32;
+            let gx = cursor_x as i32;
+            let gy = (y + ascent - glyph.y_offset - gh as f32) as i32;
 
-        // Blit glyph bitmap (alpha values) into the RGBA pixmap
-        let cr = (r * 255.0) as u8;
-        let cg = (g * 255.0) as u8;
-        let cb = (b * 255.0) as u8;
+            for row in 0..gh {
+                for col in 0..gw {
+                    let px = gx + col as i32;
+                    let py = gy + row as i32;
 
-        for row in 0..gh {
-            for col in 0..gw {
-                let px = gx + col as i32;
-                let py = gy + row as i32;
+                    if px < 0
+                        || py < 0
+                        || px >= pixmap_width as i32
+                        || py >= pixmap_height as i32
+                    {
+                        continue;
+                    }
 
-                if px < 0 || py < 0 || px >= pixmap_width as i32 || py >= pixmap_height as i32 {
-                    continue;
+                    let coverage = glyph.bitmap[(row * gw + col) as usize];
+                    if coverage == 0 {
+                        continue;
+                    }
+
+                    let ga = (coverage as f32 / 255.0) * a;
+                    let idx = ((py as u32 * pixmap_width + px as u32) * 4) as usize;
+                    if idx + 3 >= pixmap_data.len() {
+                        continue;
+                    }
+
+                    // Decode dst sRGB → linear, blend Porter-Duff over
+                    // (premultiplied source), encode back. Alpha stays
+                    // linear by definition (it's a coverage value, not
+                    // a perceptual signal).
+                    let dst_lin_r = SRGB_TO_LINEAR[pixmap_data[idx] as usize];
+                    let dst_lin_g = SRGB_TO_LINEAR[pixmap_data[idx + 1] as usize];
+                    let dst_lin_b = SRGB_TO_LINEAR[pixmap_data[idx + 2] as usize];
+                    let dst_a = pixmap_data[idx + 3] as f32 / 255.0;
+
+                    let inv_sa = 1.0 - ga;
+                    let out_lin_r = src_lin_r * ga + dst_lin_r * inv_sa;
+                    let out_lin_g = src_lin_g * ga + dst_lin_g * inv_sa;
+                    let out_lin_b = src_lin_b * ga + dst_lin_b * inv_sa;
+                    let out_a = ga + dst_a * inv_sa;
+
+                    pixmap_data[idx] = linear_to_srgb_u8(out_lin_r);
+                    pixmap_data[idx + 1] = linear_to_srgb_u8(out_lin_g);
+                    pixmap_data[idx + 2] = linear_to_srgb_u8(out_lin_b);
+                    pixmap_data[idx + 3] = (out_a * 255.0 + 0.5) as u8;
                 }
-
-                let alpha = glyph.bitmap[(row * gw + col) as usize];
-                if alpha == 0 {
-                    continue;
-                }
-
-                let ga = (alpha as f32 / 255.0) * a;
-                let idx = ((py as u32 * pixmap_width + px as u32) * 4) as usize;
-                if idx + 3 >= pixmap_data.len() {
-                    continue;
-                }
-
-                // Alpha blending (premultiplied)
-                let src_r = (cr as f32 * ga) as u8;
-                let src_g = (cg as f32 * ga) as u8;
-                let src_b = (cb as f32 * ga) as u8;
-                let src_a = (ga * 255.0) as u8;
-
-                let inv_sa = 1.0 - ga;
-
-                pixmap_data[idx] = (src_r as f32 + pixmap_data[idx] as f32 * inv_sa) as u8;
-                pixmap_data[idx + 1] = (src_g as f32 + pixmap_data[idx + 1] as f32 * inv_sa) as u8;
-                pixmap_data[idx + 2] = (src_b as f32 + pixmap_data[idx + 2] as f32 * inv_sa) as u8;
-                pixmap_data[idx + 3] = (src_a as f32 + pixmap_data[idx + 3] as f32 * inv_sa) as u8;
             }
-        }
 
-        cursor_x += glyph.advance;
-    }
+            cursor_x += glyph.advance;
+        }
+    });
 }
 
 /// Measure text width in pixels.
 pub fn text_width_fontdue(text: &str, size: f32) -> f32 {
-    let mut guard = get_or_init_cache();
-    let cache = guard.as_mut().unwrap();
-
-    let mut width = 0.0f32;
-    for ch in text.chars() {
-        let glyph = get_glyph(cache, ch, size);
-        width += glyph.advance;
-    }
-    width
+    with_cache(|cache| {
+        let mut width = 0.0f32;
+        for ch in text.chars() {
+            let glyph = get_glyph(cache, ch, size);
+            width += glyph.advance;
+        }
+        width
+    })
 }
