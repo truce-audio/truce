@@ -354,11 +354,9 @@ macro_rules! __plugin_hot_reload {
 
             fn create() -> Self {
                 let params = <$params>::new();
-                let info = <Self as $crate::core::plugin::Plugin>::info();
-                let bus_layouts = <Self as $crate::core::plugin::Plugin>::bus_layouts();
                 let path = Self::dylib_path();
                 Self {
-                    inner: $crate::__reexport::HotShell::new(params, path, info, bus_layouts),
+                    inner: $crate::__reexport::HotShell::new(params, path),
                 }
             }
 

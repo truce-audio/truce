@@ -39,45 +39,25 @@ macro_rules! hot_debug {
 pub struct HotShell<P: Params> {
     pub params: Arc<P>,
     loader: Arc<Mutex<NativeLoader>>,
-    /// Path to the dylib being watched. Owned by `loader` for live
-    /// use; kept on the struct as the construction-time handle so a
-    /// future reload-from-different-path API has somewhere to read
-    /// from. `NativeLoader` already stores its own copy.
-    #[allow(dead_code)]
-    dylib_path: PathBuf,
     /// Meter values written by DSP, read by GUI.
     meters: Arc<[AtomicU32; 256]>,
     sample_rate: f64,
     max_block_size: usize,
-    /// Plugin info (static, kept for potential future use).
-    #[allow(dead_code)]
-    info: PluginInfo,
-    /// Bus layouts (static, kept for potential future use).
-    #[allow(dead_code)]
-    bus_layouts: Vec<BusLayout>,
 }
 
 unsafe impl<P: Params> Send for HotShell<P> {}
 
 impl<P: Params + 'static> HotShell<P> {
-    pub fn new(
-        params: P,
-        dylib_path: PathBuf,
-        info: PluginInfo,
-        bus_layouts: Vec<BusLayout>,
-    ) -> Self {
+    pub fn new(params: P, dylib_path: PathBuf) -> Self {
         let params = Arc::new(params);
         let params_ptr = Arc::as_ptr(&params) as *const ();
-        let loader = NativeLoader::new(dylib_path.clone(), params_ptr);
+        let loader = NativeLoader::new(dylib_path, params_ptr);
         Self {
             params,
             loader: Arc::new(Mutex::new(loader)),
-            dylib_path,
             meters: Arc::new(std::array::from_fn(|_| AtomicU32::new(0))),
             sample_rate: 44100.0,
             max_block_size: 1024,
-            info,
-            bus_layouts,
         }
     }
 

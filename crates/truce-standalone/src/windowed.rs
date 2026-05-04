@@ -448,10 +448,11 @@ fn pick_save_path<P: PluginExport>(plugin_slug: &str) -> Option<std::path::PathB
 
 /// macOS uses Cmd (`meta`); Linux/Windows use Ctrl.
 fn is_mod_pressed(mods: &Modifiers) -> bool {
-    #[cfg(target_os = "macos")]
-    return mods.contains(Modifiers::META);
-    #[cfg(not(target_os = "macos"))]
-    return mods.contains(Modifiers::CONTROL);
+    if cfg!(target_os = "macos") {
+        mods.contains(Modifiers::META)
+    } else {
+        mods.contains(Modifiers::CONTROL)
+    }
 }
 
 /// Build a minimal `PluginContext` that routes parameter reads /

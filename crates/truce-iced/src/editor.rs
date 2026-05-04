@@ -291,8 +291,6 @@ struct IcedRuntime<P: Params, M: IcedPlugin<P>> {
     render: Option<RenderState<P, M>>,
     /// Current cursor position in logical coordinates.
     cursor_position: Point,
-    /// Whether the left mouse button is pressed.
-    mouse_left_pressed: bool,
     /// Pending iced events queued by mouse callbacks.
     pending_events: Vec<Event>,
     /// Plugin creation info (consumed during render init).
@@ -676,7 +674,6 @@ impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBase
                                 window.focus();
                             }
                         }
-                        runtime.mouse_left_pressed = true;
                         runtime.pending_events.push(Event::Mouse(
                             iced::mouse::Event::ButtonPressed(iced::mouse::Button::Left),
                         ));
@@ -685,7 +682,6 @@ impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBase
                         button: baseview::MouseButton::Left,
                         ..
                     } => {
-                        runtime.mouse_left_pressed = false;
                         runtime.pending_events.push(Event::Mouse(
                             iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left),
                         ));
@@ -835,7 +831,6 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
         self.runtime = Some(IcedRuntime {
             render: None,
             cursor_position: Point::ORIGIN,
-            mouse_left_pressed: false,
             pending_events: Vec::new(),
             program: Some(program),
             size: (w, h),

@@ -236,7 +236,8 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
                 }
             }
         }
-        inst.event_list.sort();
+        // Sort happens once below — after the param-change push
+        // section also runs — instead of twice.
 
         // Build AudioBuffer from raw pointers. Uses the per-instance
         // `scratch` so the audio thread doesn't heap-allocate.
@@ -268,8 +269,11 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
                     },
                 });
             }
-            inst.event_list.sort();
         }
+        // Single stable sort across the merged MIDI + param-change
+        // streams. Stable sort preserves the within-group order each
+        // section already pushed in.
+        inst.event_list.sort();
 
         let transport = if !transport_ptr.is_null() {
             let t = &*transport_ptr;

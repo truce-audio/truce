@@ -1163,7 +1163,12 @@ pub(crate) fn cargo_build_for_arch(
 
 /// Recursive copy that preserves symlinks (critical for macOS .framework
 /// bundles) and creates the destination tree.
-#[allow(dead_code)]
+///
+/// All callers (`commands::install::aax`, `commands::package::stage`,
+/// `commands::package::macos`) live behind macOS / Windows cfgs, so
+/// the function is genuinely dead on Linux — gate it the same way
+/// instead of using `#[allow(dead_code)]`.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(crate) fn copy_dir_recursive(src: &Path, dst: &Path) -> crate::Res {
     fs::create_dir_all(dst)?;
     for entry in fs::read_dir(src)? {

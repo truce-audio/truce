@@ -126,9 +126,11 @@ pub struct Lv2Instance<P: PluginExport> {
     midi_out_port: *mut AtomSequence,
     notify_out_port: *mut AtomSequence,
 
-    /// Last observed value on each control port; used to emit ParamChange
-    /// events only when the host actually moved a knob.
-    last_control: Vec<f32>,
+    /// Last observed value on each control port; used to emit
+    /// ParamChange events only when the host actually moved a knob.
+    /// `None` means "never read" — the first poll after instantiation
+    /// always emits, then subsequent polls only emit on diff.
+    last_control: Vec<Option<f32>>,
 
     event_list: EventList,
     output_events: EventList,
@@ -248,7 +250,7 @@ pub unsafe fn instantiate<P: PluginExport>(
             midi_out_port: ptr::null_mut(),
             notify_out_port: ptr::null_mut(),
 
-            last_control: vec![f32::NAN; control_port_count],
+            last_control: vec![None; control_port_count],
 
             event_list: EventList::new(),
             output_events: EventList::new(),
@@ -275,21 +277,33 @@ pub unsafe fn connect_port<P: PluginExport>(
 ) {
     unsafe {
         let inst = &mut *handle;
-        let layout = inst.layout.clone();
+        // Snapshot the port-range boundaries up-front (cheap copies of
+        // u32 start indices) so we can dispatch on `port` without
+        // holding a borrow of `inst.layout` while writing back to a
+        // sibling `inst.<port_array>` field. Avoids the previous
+        // `layout.clone()` allocation per call.
+        let audio_in_start = inst.layout.audio_in_start();
+        let audio_out_start = inst.layout.audio_out_start();
+        let control_start = inst.layout.control_start();
+        let meter_start = inst.layout.meter_start();
+        let num_meters = inst.layout.num_meters;
+        let atom_in_port = inst.layout.atom_in_port();
+        let midi_out_port = inst.layout.midi_out_port();
+        let notify_out_port = inst.layout.notify_out_port();
 
-        if port < layout.audio_out_start() {
-            inst.audio_inputs[(port - layout.audio_in_start()) as usize] = data as *const f32;
-        } else if port < layout.control_start() {
-            inst.audio_outputs[(port - layout.audio_out_start()) as usize] = data as *mut f32;
-        } else if port < layout.meter_start() {
-            inst.control_ports[(port - layout.control_start()) as usize] = data as *const f32;
-        } else if port < layout.meter_start() + layout.num_meters {
-            inst.meter_ports[(port - layout.meter_start()) as usize] = data as *mut f32;
-        } else if port == layout.atom_in_port() {
+        if port < audio_out_start {
+            inst.audio_inputs[(port - audio_in_start) as usize] = data as *const f32;
+        } else if port < control_start {
+            inst.audio_outputs[(port - audio_out_start) as usize] = data as *mut f32;
+        } else if port < meter_start {
+            inst.control_ports[(port - control_start) as usize] = data as *const f32;
+        } else if port < meter_start + num_meters {
+            inst.meter_ports[(port - meter_start) as usize] = data as *mut f32;
+        } else if port == atom_in_port {
             inst.atom_in_port = data as *const AtomSequence;
-        } else if Some(port) == layout.midi_out_port() {
+        } else if Some(port) == midi_out_port {
             inst.midi_out_port = data as *mut AtomSequence;
-        } else if port == layout.notify_out_port() {
+        } else if port == notify_out_port {
             inst.notify_out_port = data as *mut AtomSequence;
         }
     }
@@ -365,9 +379,12 @@ pub unsafe fn run<P: PluginExport>(handle: *mut Lv2Instance<P>, n_samples: u32) 
             if !v.is_finite() {
                 continue;
             }
-            let last = inst.last_control[i];
-            if last.is_nan() || (v - last).abs() > f32::EPSILON {
-                inst.last_control[i] = v;
+            let changed = match inst.last_control[i] {
+                None => true,
+                Some(prev) => (v - prev).abs() > f32::EPSILON,
+            };
+            if changed {
+                inst.last_control[i] = Some(v);
                 let pid = inst.param_infos[i].id;
                 let plain = v as f64;
                 inst.plugin.params().set_plain(pid, plain);

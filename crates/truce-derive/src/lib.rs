@@ -416,12 +416,6 @@ fn is_meter_slot(ty: &Type) -> bool {
     type_last_segment(ty).is_some_and(|s| s == "MeterSlot")
 }
 
-/// Check if a field has `#[param(...)]` attribute.
-#[allow(dead_code)]
-fn has_param_attr(field: &syn::Field) -> bool {
-    field.attrs.iter().any(|a| a.path().is_ident("param"))
-}
-
 /// Coerce a `default = ...` attribute expression into an `f64`.
 ///
 /// `meta.value().parse::<Lit>()` rejects unary-negated literals
@@ -1378,11 +1372,15 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
 /// Handles the awkward edge cases the original `split('_').map(...)` form
 /// would silently produce nonsense for:
 ///
-/// - **Raw idents** (`r#type`, `r#3band`): the `r#` prefix is stripped via
-///   `Ident::to_string`'s `unraw`-aware `Display` impl using `unraw()`,
-///   not by string-prefix matching.
-/// - **Leading digit** (`r#3band` → `"3band"`): variants can't start with
-///   a digit, so we prepend `_` to produce `"_3band"` → `"_3band"`.
+/// - **Raw idents** (`r#type`): the `r#` prefix is stripped via
+///   `Ident::unraw()` rather than string-prefix matching, so callers
+///   don't need to know whether `syn` rendered the ident raw.
+/// - **Leading digit after underscore strip** (`_3band` → `"3band"`):
+///   `split('_')` drops the leading `_`, leaving a fragment that can't
+///   start an enum variant. The guard prepends `_` to produce
+///   `"_3band"`. (Pure `r#3band` is unreachable — `Ident::new_raw`
+///   rejects digit-first idents — but `_3band` is a legal Rust ident
+///   and is the case the test actually exercises.)
 /// - **All-non-alphanumeric** (`__`, `_`): `Ident::new("", span)` would
 ///   panic, so we fall back to `_` as a single-char placeholder. The
 ///   user already wrote a degenerate field name; the variant is still a

@@ -162,6 +162,15 @@ impl EditorScale {
     pub fn set(&self, scale: f64) {
         if scale.is_finite() && scale > 0.0 {
             self.inner.store(scale.to_bits(), Ordering::Relaxed);
+        } else {
+            // Surface the upstream bug at least in debug builds so a
+            // host that's emitting bad scales doesn't get silently
+            // ignored. Production builds drop quietly to keep the
+            // editor running.
+            log::warn!(
+                "EditorScale::set ignored a bad value ({scale}); \
+                 expected finite, positive f64",
+            );
         }
     }
 }

@@ -88,10 +88,16 @@ struct Vst2TransportSnapshot {
 
 impl Vst2TransportSnapshot {
     fn to_transport_info(&self) -> TransportInfo {
+        // Default-init hosts hand us `tempo == 0.0`, which downstream
+        // consumers (LFOs synced to BPM, beat-grid math) divide
+        // through. Fall back to 120 BPM, matching CLAP's
+        // `build_transport_info` default and the snapshot helpers
+        // in `truce-core::TransportInfo::for_screenshot`.
+        let tempo = if self.tempo > 0.0 { self.tempo } else { 120.0 };
         TransportInfo {
             playing: self.playing != 0,
             recording: self.recording != 0,
-            tempo: self.tempo,
+            tempo,
             time_sig_num: self.time_sig_num.clamp(0, u8::MAX as i32) as u8,
             time_sig_den: self.time_sig_den.clamp(0, u8::MAX as i32) as u8,
             position_samples: self.position_samples as i64,
@@ -557,6 +563,14 @@ unsafe extern "C" fn cb_state_load<P: PluginExport>(
     }
 }
 
+/// Free a state blob handed out by [`cb_state_save`].
+///
+/// **Contract:** `data` must point to memory allocated via the Rust
+/// global allocator with `cap == len`. `cb_state_save` upholds this
+/// via `Vec::into_boxed_slice` (which trims `cap` to `len`) then
+/// `mem::forget`. Don't change either side to a different allocator
+/// or cap-tracking strategy without updating the other —
+/// `Vec::from_raw_parts` requires both to match exactly.
 unsafe extern "C" fn cb_state_free(data: *mut u8, len: u32) {
     unsafe {
         if !data.is_null() && len > 0 {

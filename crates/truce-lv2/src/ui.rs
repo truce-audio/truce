@@ -458,7 +458,15 @@ unsafe fn decode_notify_atom<P: PluginExport>(
             event_body: Atom,
         }
         let needed = core::mem::size_of::<OneEvent>() + body_size + 8;
-        let mut scratch = ui.notify_scratch.borrow_mut();
+        // `try_borrow_mut` instead of `borrow_mut` so a re-entrant
+        // `port_event` (which the LV2 spec forbids — UI thread only —
+        // but a buggy host could still trigger via a queued
+        // synthetic event) drops the call rather than panicking.
+        // A panic here would unwind through the FFI boundary into
+        // the host's UI loop, which is worse than a dropped event.
+        let Ok(mut scratch) = ui.notify_scratch.try_borrow_mut() else {
+            return;
+        };
         if scratch.len() < needed {
             scratch.resize(needed, 0);
         }

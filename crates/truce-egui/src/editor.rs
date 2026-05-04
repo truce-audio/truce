@@ -628,8 +628,11 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
                     crate::font::apply_font(&egui_ctx, font_data);
                 }
 
-                // Request continuous repainting (plugin GUIs need it for meters)
-                egui_ctx.request_repaint();
+                // Continuous repainting is driven by baseview's
+                // `on_frame` calling `run_frame` every vblank, not by
+                // egui's own scheduler. `egui_ctx.request_repaint()`
+                // schedules a single frame, which baseview would
+                // immediately paint anyway — the call had no effect.
 
                 EguiWindowHandler::<P> {
                     ui,

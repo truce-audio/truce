@@ -141,9 +141,16 @@ impl<P: Params + 'static> BuiltinEditor<P> {
     /// automation detection. Called after each render.
     fn stash_painted_values(&mut self) {
         let regions = &self.interaction.knob_regions;
-        self.last_painted_values.clear();
-        self.last_painted_values
-            .extend(regions.iter().map(|r| r.normalized_value));
+        // Resize-then-overwrite reuses the existing allocation
+        // unchanged when the region count is steady (the common
+        // case — knob layouts only change on
+        // `interaction.build_regions`). The previous
+        // clear-then-extend form pumped through the iterator path
+        // every frame even when the length didn't change.
+        self.last_painted_values.resize(regions.len(), 0.0);
+        for (slot, region) in self.last_painted_values.iter_mut().zip(regions.iter()) {
+            *slot = region.normalized_value;
+        }
     }
 
     pub fn new(params: Arc<P>, layout: PluginLayout) -> Self {

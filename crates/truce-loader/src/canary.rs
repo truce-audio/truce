@@ -212,17 +212,18 @@ impl PluginLogic for ProbePlugin {
 
 /// Verify a probe plugin returns the expected values.
 ///
-/// Coverage notes — methods exercised, in vtable order:
+/// Coverage notes — methods exercised, in source-declaration order:
 /// `latency`, `tail`, `layout`, `hit_test`, `save_state` (default
 /// path), `uses_custom_render`, `custom_editor`, then `load_state` +
 /// `save_state` (echo path). 8 of 11 trait methods covered. The three
 /// not exercised — `reset`, `process`, `render` — would require
 /// constructing an `AudioBuffer` / `RenderBackend` mock, which is
 /// heavyweight enough to outweigh the marginal vtable-reorder
-/// detection benefit. The vtable order shipped by rustc puts those
-/// three between methods that *are* checked, so a swap that displaced
-/// them into the checked range would be caught at one of the
-/// neighboring slots.
+/// detection benefit. (Trait-object dispatch goes through a vtable
+/// whose slot order is rustc-internal and not stable; we don't depend
+/// on a particular layout — the goal here is just to call enough of
+/// the surface that any ABI-affecting reshuffle is likely to land on
+/// a method we *do* exercise.)
 pub fn verify_probe(probe: &mut dyn PluginLogic) -> Result<(), String> {
     if probe.latency() != 0xAAAA {
         return Err(format!(
