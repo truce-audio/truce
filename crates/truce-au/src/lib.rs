@@ -236,7 +236,7 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
 unsafe extern "C" fn cb_param_count<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
     unsafe {
         let inst = &*ctx.cast::<AuInstance<P>>();
-        inst.plugin.params().count() as u32
+        truce_core::cast::len_u32(inst.plugin.params().count())
     }
 }
 
@@ -390,16 +390,24 @@ fn try_encode_au_midi(event: &Event) -> Option<AuMidiEvent> {
             channel,
             note,
             velocity,
-        } => (0x90 | (channel & 0x0F), *note, (*velocity * 127.0) as u8),
+        } => (
+            0x90 | (channel & 0x0F),
+            *note,
+            truce_core::cast::midi_7bit(*velocity),
+        ),
         EventBody::NoteOff {
             channel,
             note,
             velocity,
-        } => (0x80 | (channel & 0x0F), *note, (*velocity * 127.0) as u8),
+        } => (
+            0x80 | (channel & 0x0F),
+            *note,
+            truce_core::cast::midi_7bit(*velocity),
+        ),
         EventBody::ControlChange { channel, cc, value } => (
             0xB0 | (channel & 0x0F),
             *cc,
-            (value.clamp(0.0, 1.0) * 127.0) as u8,
+            truce_core::cast::midi_7bit(*value),
         ),
         EventBody::Aftertouch {
             channel,
@@ -408,15 +416,15 @@ fn try_encode_au_midi(event: &Event) -> Option<AuMidiEvent> {
         } => (
             0xA0 | (channel & 0x0F),
             *note,
-            (pressure.clamp(0.0, 1.0) * 127.0) as u8,
+            truce_core::cast::midi_7bit(*pressure),
         ),
         EventBody::ChannelPressure { channel, pressure } => (
             0xD0 | (channel & 0x0F),
-            (pressure.clamp(0.0, 1.0) * 127.0) as u8,
+            truce_core::cast::midi_7bit(*pressure),
             0,
         ),
         EventBody::PitchBend { channel, value } => {
-            let n = ((value.clamp(-1.0, 1.0) + 1.0) * 8191.5).round() as u16;
+            let n = truce_core::cast::midi_14bit_pb(*value);
             (
                 0xE0 | (channel & 0x0F),
                 (n & 0x7F) as u8,
@@ -719,7 +727,7 @@ pub fn register_au<P: PluginExport>() {
             std::ptr::from_ref::<AuPluginDescriptor>(descriptor),
             std::ptr::from_ref::<AuCallbacks>(callbacks),
             param_descs.as_ptr(),
-            param_descs.len() as u32,
+            truce_core::cast::len_u32(param_descs.len()),
         );
     }
 }

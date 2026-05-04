@@ -389,7 +389,7 @@ pub unsafe fn write_midi_out_sequence(out: *mut AtomSequence, events: &EventList
                 } => {
                     buf[0] = 0x90 | (channel & 0x0F);
                     buf[1] = note & 0x7F;
-                    buf[2] = ((velocity * 127.0).clamp(0.0, 127.0)) as u8;
+                    buf[2] = truce_core::cast::midi_7bit(*velocity);
                     (3, event.sample_offset)
                 }
                 EventBody::NoteOff {
@@ -399,13 +399,13 @@ pub unsafe fn write_midi_out_sequence(out: *mut AtomSequence, events: &EventList
                 } => {
                     buf[0] = 0x80 | (channel & 0x0F);
                     buf[1] = note & 0x7F;
-                    buf[2] = ((velocity * 127.0).clamp(0.0, 127.0)) as u8;
+                    buf[2] = truce_core::cast::midi_7bit(*velocity);
                     (3, event.sample_offset)
                 }
                 EventBody::ControlChange { channel, cc, value } => {
                     buf[0] = 0xB0 | (channel & 0x0F);
                     buf[1] = cc & 0x7F;
-                    buf[2] = ((value * 127.0).clamp(0.0, 127.0)) as u8;
+                    buf[2] = truce_core::cast::midi_7bit(*value);
                     (3, event.sample_offset)
                 }
                 EventBody::Aftertouch {
@@ -415,17 +415,17 @@ pub unsafe fn write_midi_out_sequence(out: *mut AtomSequence, events: &EventList
                 } => {
                     buf[0] = 0xA0 | (channel & 0x0F);
                     buf[1] = note & 0x7F;
-                    buf[2] = ((pressure * 127.0).clamp(0.0, 127.0)) as u8;
+                    buf[2] = truce_core::cast::midi_7bit(*pressure);
                     (3, event.sample_offset)
                 }
                 EventBody::ChannelPressure { channel, pressure } => {
                     buf[0] = 0xD0 | (channel & 0x0F);
-                    buf[1] = ((pressure * 127.0).clamp(0.0, 127.0)) as u8;
+                    buf[1] = truce_core::cast::midi_7bit(*pressure);
                     // 2-byte channel pressure — emit a 2-byte MIDI msg.
                     (2, event.sample_offset)
                 }
                 EventBody::PitchBend { channel, value } => {
-                    let n = ((value.clamp(-1.0, 1.0) + 1.0) * 8191.5).round() as u16;
+                    let n = truce_core::cast::midi_14bit_pb(*value);
                     buf[0] = 0xE0 | (channel & 0x0F);
                     buf[1] = (n & 0x7F) as u8;
                     buf[2] = ((n >> 7) & 0x7F) as u8;
@@ -663,7 +663,7 @@ mod tests {
         let seq = buf.as_mut_ptr().cast::<AtomSequence>();
         // Caller contract: atom.size = capacity on entry.
         unsafe {
-            (*seq).atom.size = (buf.len() - core::mem::size_of::<Atom>()) as u32;
+            (*seq).atom.size = truce_core::cast::len_u32(buf.len() - core::mem::size_of::<Atom>());
         }
 
         // `bar_start_beats` must align to a whole-bar boundary for the
@@ -719,7 +719,7 @@ mod tests {
         let mut buf = vec![0u8; 4096];
         let seq = buf.as_mut_ptr().cast::<AtomSequence>();
         unsafe {
-            (*seq).atom.size = (buf.len() - core::mem::size_of::<Atom>()) as u32;
+            (*seq).atom.size = truce_core::cast::len_u32(buf.len() - core::mem::size_of::<Atom>());
         }
 
         let mut source = EventList::new();

@@ -228,6 +228,13 @@ impl PluginLogic for ProbePlugin {
 /// on a particular layout — the goal here is just to call enough of
 /// the surface that any ABI-affecting reshuffle is likely to land on
 /// a method we *do* exercise.)
+///
+/// # Errors
+///
+/// Returns `Err(String)` describing the first canary value that
+/// failed to round-trip — distinct messages for `latency`, `tail`,
+/// `layout`, `hit_test`, `save_state` (default and echo paths),
+/// `uses_custom_render`, `custom_editor`, and `load_state`.
 pub fn verify_probe(probe: &mut dyn PluginLogic) -> Result<(), String> {
     if probe.latency() != 0xAAAA {
         return Err(format!(

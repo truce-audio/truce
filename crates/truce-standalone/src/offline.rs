@@ -36,6 +36,13 @@ const DEFAULT_BLOCK_SIZE: usize = 1024;
 /// Drive the plugin against the input file and write the result
 /// to the output file. Caller has already validated that both
 /// `opts.input_file` and `opts.output_file` are `Some`.
+///
+/// # Errors
+///
+/// Returns `Err(String)` if `--input-file` / `--output-file` are
+/// missing, the plugin category is not `Effect`, or any
+/// `hound::WavReader` / `WavWriter` step fails (open, decode,
+/// channel-count negotiation, write, finalize).
 pub fn render<P: PluginExport>(opts: &Options) -> Result<(), String>
 where
     P::Params: 'static,

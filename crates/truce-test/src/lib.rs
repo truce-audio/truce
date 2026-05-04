@@ -84,6 +84,12 @@ macro_rules! driver {
 ///
 /// Saves state, creates a new instance, loads state, and verifies
 /// all parameter values match.
+///
+/// # Panics
+///
+/// Panics if `restore_plugin` fails, any parameter id is missing
+/// after restore (renamed / renumbered between save and load), or
+/// any restored value differs from the source by more than `1e-4`.
 pub fn assert_state_round_trip<P: PluginExport>() {
     let plugin = P::create();
     let blob = state::snapshot_plugin(&plugin);
@@ -123,6 +129,11 @@ pub fn assert_state_round_trip<P: PluginExport>() {
 }
 
 /// Assert the plugin has a working editor with valid dimensions.
+///
+/// # Panics
+///
+/// Panics if `Plugin::editor()` returns `None` or the editor's
+/// reported size has a zero dimension.
 pub fn assert_has_editor<P: PluginExport>() {
     let mut plugin = P::create();
     let editor = plugin.editor();
@@ -133,6 +144,11 @@ pub fn assert_has_editor<P: PluginExport>() {
 }
 
 /// Assert `plugin_info`!() returns valid metadata.
+///
+/// # Panics
+///
+/// Panics if any string field is empty or any FourCC code is all
+/// zeros.
 pub fn assert_valid_info<P: PluginExport>() {
     let info = P::info();
     assert!(!info.name.is_empty(), "Plugin name is empty");
@@ -152,6 +168,11 @@ pub fn assert_valid_info<P: PluginExport>() {
 /// Assert AU type codes are valid 4-char ASCII.
 ///
 /// Catches the `FourCharCode` endianness bug (big-endian on ARM64).
+///
+/// # Panics
+///
+/// Panics if any byte of `au_type`, `fourcc`, or `au_manufacturer`
+/// isn't a printable ASCII glyph.
 pub fn assert_au_type_codes_ascii<P: PluginExport>() {
     let info = P::info();
     for (label, code) in [
@@ -172,6 +193,11 @@ pub fn assert_au_type_codes_ascii<P: PluginExport>() {
 /// Assert AU `FourCharCode` round-trips through big-endian u32.
 ///
 /// This is the encoding used by `AudioComponentDescription` on macOS.
+///
+/// # Panics
+///
+/// Panics if the big-endian pack/unpack of any FourCharCode
+/// doesn't reproduce the original byte sequence.
 pub fn assert_fourcc_roundtrip<P: PluginExport>() {
     let info = P::info();
     for (label, code) in [
@@ -194,6 +220,11 @@ pub fn assert_fourcc_roundtrip<P: PluginExport>() {
 }
 
 /// Assert bus config is correct for an effect (has inputs and outputs).
+///
+/// # Panics
+///
+/// Panics if no bus layouts are defined, or the first layout
+/// reports zero input or output channels.
 pub fn assert_bus_config_effect<P: PluginExport>() {
     let layouts = P::bus_layouts();
     assert!(!layouts.is_empty(), "No bus layouts defined");
@@ -214,6 +245,11 @@ pub fn assert_bus_config_effect<P: PluginExport>() {
 ///
 /// Catches the `GarageBand` `SupportedNumChannels` bug — instruments must
 /// report 0 input channels for AU hosts to show them.
+///
+/// # Panics
+///
+/// Panics if no bus layouts are defined, the first layout reports
+/// any input channels, or it reports zero output channels.
 pub fn assert_bus_config_instrument<P: PluginExport>() {
     let layouts = P::bus_layouts();
     assert!(!layouts.is_empty(), "No bus layouts defined");
@@ -237,6 +273,12 @@ pub fn assert_bus_config_instrument<P: PluginExport>() {
 /// Assert editor can be created multiple times without issues.
 ///
 /// Catches lifecycle bugs where create/drop leaves state dirty.
+///
+/// # Panics
+///
+/// Panics if `editor()` returns `None` on first or second creation,
+/// the first editor reports a zero dimension, or the size differs
+/// between consecutive `editor()` calls.
 pub fn assert_editor_lifecycle<P: PluginExport>() {
     let mut plugin = P::create();
 
@@ -262,6 +304,11 @@ pub fn assert_editor_lifecycle<P: PluginExport>() {
 }
 
 /// Assert editor size is consistent across multiple calls.
+///
+/// # Panics
+///
+/// Panics if `editor()` returns `None` or the reported size differs
+/// across three back-to-back `size()` calls.
 pub fn assert_editor_size_consistent<P: PluginExport>() {
     let mut plugin = P::create();
     let editor = plugin.editor();
@@ -279,6 +326,12 @@ pub fn assert_editor_size_consistent<P: PluginExport>() {
 // ---------------------------------------------------------------------------
 
 /// Assert all parameter default values match their declared defaults.
+///
+/// # Panics
+///
+/// Panics if `get_plain` returns `None` for an id that has a
+/// `ParamInfo` entry (derive-macro inconsistency), or if the current
+/// plain value differs from `default_plain` by more than `1e-4`.
 pub fn assert_param_defaults_match<P: PluginExport>() {
     let plugin = P::create();
     let infos = plugin.params().param_infos();
@@ -305,6 +358,12 @@ pub fn assert_param_defaults_match<P: PluginExport>() {
 ///
 /// `set_plain` stores raw atomics (no clamping) but normalized
 /// values should always round-trip within [0, 1].
+///
+/// # Panics
+///
+/// Panics if `get_normalized` returns `None` for an id that has a
+/// `ParamInfo` entry, or if the read-back value escapes
+/// `[-1e-4, 1+1e-4]` after writing 2.0 / -1.0.
 pub fn assert_param_normalized_clamped<P: PluginExport>() {
     let plugin = P::create();
     let infos = plugin.params().param_infos();
@@ -352,6 +411,13 @@ pub fn assert_param_normalized_clamped<P: PluginExport>() {
 ///
 /// For discrete/bool/enum params, only tests boundary values (0.0, 1.0)
 /// since intermediate values snap to the nearest discrete step.
+///
+/// # Panics
+///
+/// Panics if `get_normalized` returns `None` for an id with a
+/// `ParamInfo` entry, or if the round-trip error exceeds the
+/// per-param tolerance (half a step for discrete params, `1e-6` for
+/// continuous).
 pub fn assert_param_normalized_roundtrip<P: PluginExport>() {
     let plugin = P::create();
     let infos = plugin.params().param_infos();
@@ -389,6 +455,10 @@ pub fn assert_param_normalized_roundtrip<P: PluginExport>() {
 }
 
 /// Assert param count matches `param_infos` length.
+///
+/// # Panics
+///
+/// Panics if `count()` disagrees with `param_infos().len()`.
 pub fn assert_param_count_matches<P: PluginExport>() {
     let plugin = P::create();
     let count = plugin.params().count();
@@ -402,6 +472,11 @@ pub fn assert_param_count_matches<P: PluginExport>() {
 }
 
 /// Assert all parameter IDs are unique.
+///
+/// # Panics
+///
+/// Panics on the first duplicate `id` encountered while iterating
+/// `param_infos`.
 pub fn assert_no_duplicate_param_ids<P: PluginExport>() {
     let plugin = P::create();
     let infos = plugin.params().param_infos();
@@ -428,6 +503,14 @@ pub fn assert_no_duplicate_param_ids<P: PluginExport>() {
 /// `None` for everything (which would happen if the implementation
 /// regressed to "always reject"), so we now also exercise at least one
 /// valid blob to prove the code path under test is reachable.
+///
+/// # Panics
+///
+/// Panics if `deserialize_state` rejects a blob produced by
+/// `snapshot_plugin` (sanity check — without this the test passes
+/// trivially when `deserialize_state` is hard-broken), or if any of
+/// the corruption probes (`deserialize_state` / `restore_values`)
+/// itself panics.
 pub fn assert_corrupt_state_no_crash<P: PluginExport>() {
     let info = P::info();
     let hash = state::hash_plugin_id(info.clap_id);
@@ -463,6 +546,11 @@ pub fn assert_corrupt_state_no_crash<P: PluginExport>() {
 }
 
 /// Assert empty state data doesn't crash.
+///
+/// # Panics
+///
+/// Panics if `deserialize_state` returns `Some` for a zero-byte or
+/// single-byte input (both must be rejected).
 pub fn assert_empty_state_no_crash<P: PluginExport>() {
     let info = P::info();
     let hash = state::hash_plugin_id(info.clap_id);
@@ -608,6 +696,12 @@ impl<P: PluginExport> ScreenshotTest<P> {
     /// after init and before any `set_param` overrides / `setup`
     /// closure. Path is resolved relative to the crate's manifest
     /// dir, or used as-is if absolute.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the file cannot be read (missing path, permission
+    /// error, etc.) — the test failure points at the resolved path so
+    /// it's easy to fix the call site.
     pub fn state_file<S: Into<PathBuf>>(mut self, path: S) -> Self {
         let raw = path.into();
         let resolved = if raw.is_absolute() {

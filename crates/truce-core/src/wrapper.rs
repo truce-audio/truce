@@ -62,7 +62,13 @@ impl ParamCStrings {
 /// stereo passthrough) inside `truce-aax::register_aax` after this
 /// helper returns. Don't push that remap into this helper — only AAX
 /// needs it.
-#[must_use] 
+///
+/// # Panics
+///
+/// Panics if `P::bus_layouts()` returns an empty list — that's a
+/// plugin-author bug; zero-bus plugins (e.g. `aumi`) must return
+/// `vec![BusLayout::new()]` explicitly.
+#[must_use]
 pub fn default_io_channels<P: PluginExport>() -> (u32, u32) {
     P::bus_layouts()
         .first().map_or_else(|| {
@@ -91,7 +97,12 @@ pub fn default_io_channels<P: PluginExport>() -> (u32, u32) {
 /// For `aumi` plugins the returned layout is typically `BusLayout::new()`
 /// (zero in / zero out). AAX synthesizes (2, 2) from that case in
 /// `register_aax`; see [`default_io_channels`] for the rationale.
-#[must_use] 
+///
+/// # Panics
+///
+/// Panics if `P::bus_layouts()` is empty — same plugin-author
+/// contract as [`default_io_channels`].
+#[must_use]
 pub fn first_bus_layout<P: PluginExport>() -> BusLayout {
     P::bus_layouts()
         .into_iter()

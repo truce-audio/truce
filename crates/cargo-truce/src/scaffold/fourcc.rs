@@ -69,6 +69,11 @@ pub fn to_fourcc(s: &str) -> String {
 /// characters) are exhausted. The caller (`scaffold`) should surface
 /// this as a clean error — the user can rename one plugin to break the
 /// prefix collision instead of getting a process panic mid-scaffold.
+///
+/// # Errors
+///
+/// Returns `Err(String)` naming the colliding plugin when the suffix
+/// pool is exhausted (35+ plugins sharing one 3-char prefix).
 pub fn resolve_fourccs(plugins: &[PluginSpec]) -> Result<HashMap<String, String>, String> {
     let mut assignments: HashMap<String, String> = HashMap::new();
     let mut used: HashSet<String> = HashSet::new();

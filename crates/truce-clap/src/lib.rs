@@ -650,7 +650,7 @@ unsafe fn flush_gui_changes<P: PluginExport>(
                 GuiParamChange::GestureBegin(id) => {
                     let event = clap_event_param_gesture {
                         header: clap_event_header {
-                            size: std::mem::size_of::<clap_event_param_gesture>() as u32,
+                            size: truce_core::cast::size_of_u32::<clap_event_param_gesture>(),
                             time: 0,
                             space_id: CLAP_CORE_EVENT_SPACE_ID,
                             type_: CLAP_EVENT_PARAM_GESTURE_BEGIN,
@@ -663,7 +663,7 @@ unsafe fn flush_gui_changes<P: PluginExport>(
                 GuiParamChange::Value(id, plain) => {
                     let event = clap_event_param_value {
                         header: clap_event_header {
-                            size: std::mem::size_of::<clap_event_param_value>() as u32,
+                            size: truce_core::cast::size_of_u32::<clap_event_param_value>(),
                             time: 0,
                             space_id: CLAP_CORE_EVENT_SPACE_ID,
                             type_: CLAP_EVENT_PARAM_VALUE,
@@ -682,7 +682,7 @@ unsafe fn flush_gui_changes<P: PluginExport>(
                 GuiParamChange::GestureEnd(id) => {
                     let event = clap_event_param_gesture {
                         header: clap_event_header {
-                            size: std::mem::size_of::<clap_event_param_gesture>() as u32,
+                            size: truce_core::cast::size_of_u32::<clap_event_param_gesture>(),
                             time: 0,
                             space_id: CLAP_CORE_EVENT_SPACE_ID,
                             type_: CLAP_EVENT_PARAM_GESTURE_END,
@@ -846,7 +846,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                     } => {
                         let ev = clap_event_note {
                             header: clap_event_header {
-                                size: std::mem::size_of::<clap_event_note>() as u32,
+                                size: truce_core::cast::size_of_u32::<clap_event_note>(),
                                 time: event.sample_offset,
                                 space_id: CLAP_CORE_EVENT_SPACE_ID,
                                 type_: CLAP_EVENT_NOTE_ON,
@@ -867,7 +867,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                     } => {
                         let ev = clap_event_note {
                             header: clap_event_header {
-                                size: std::mem::size_of::<clap_event_note>() as u32,
+                                size: truce_core::cast::size_of_u32::<clap_event_note>(),
                                 time: event.sample_offset,
                                 space_id: CLAP_CORE_EVENT_SPACE_ID,
                                 type_: CLAP_EVENT_NOTE_OFF,
@@ -887,10 +887,10 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                     // build the standard MIDI status byte and pass
                     // the data bytes through.
                     EventBody::ControlChange { channel, cc, value } => {
-                        let v = (value.clamp(0.0, 1.0) * 127.0).round() as u8;
+                        let v = truce_core::cast::midi_7bit(*value);
                         let ev = clap_event_midi {
                             header: clap_event_header {
-                                size: std::mem::size_of::<clap_event_midi>() as u32,
+                                size: truce_core::cast::size_of_u32::<clap_event_midi>(),
                                 time: event.sample_offset,
                                 space_id: CLAP_CORE_EVENT_SPACE_ID,
                                 type_: CLAP_EVENT_MIDI,
@@ -906,10 +906,10 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                         note,
                         pressure,
                     } => {
-                        let p = (pressure.clamp(0.0, 1.0) * 127.0).round() as u8;
+                        let p = truce_core::cast::midi_7bit(*pressure);
                         let ev = clap_event_midi {
                             header: clap_event_header {
-                                size: std::mem::size_of::<clap_event_midi>() as u32,
+                                size: truce_core::cast::size_of_u32::<clap_event_midi>(),
                                 time: event.sample_offset,
                                 space_id: CLAP_CORE_EVENT_SPACE_ID,
                                 type_: CLAP_EVENT_MIDI,
@@ -921,10 +921,10 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                         try_push(proc.out_events, &raw const ev.header);
                     }
                     EventBody::ChannelPressure { channel, pressure } => {
-                        let p = (pressure.clamp(0.0, 1.0) * 127.0).round() as u8;
+                        let p = truce_core::cast::midi_7bit(*pressure);
                         let ev = clap_event_midi {
                             header: clap_event_header {
-                                size: std::mem::size_of::<clap_event_midi>() as u32,
+                                size: truce_core::cast::size_of_u32::<clap_event_midi>(),
                                 time: event.sample_offset,
                                 space_id: CLAP_CORE_EVENT_SPACE_ID,
                                 type_: CLAP_EVENT_MIDI,
@@ -938,12 +938,12 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                     EventBody::PitchBend { channel, value } => {
                         // 14-bit signed [-1, 1] → unsigned 0..16383 with
                         // 8192 = center. LSB first per MIDI spec.
-                        let n = ((value.clamp(-1.0, 1.0) + 1.0) * 8191.5).round() as u16;
+                        let n = truce_core::cast::midi_14bit_pb(*value);
                         let lsb = (n & 0x7F) as u8;
                         let msb = ((n >> 7) & 0x7F) as u8;
                         let ev = clap_event_midi {
                             header: clap_event_header {
-                                size: std::mem::size_of::<clap_event_midi>() as u32,
+                                size: truce_core::cast::size_of_u32::<clap_event_midi>(),
                                 time: event.sample_offset,
                                 space_id: CLAP_CORE_EVENT_SPACE_ID,
                                 type_: CLAP_EVENT_MIDI,
@@ -957,7 +957,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                     EventBody::ProgramChange { channel, program } => {
                         let ev = clap_event_midi {
                             header: clap_event_header {
-                                size: std::mem::size_of::<clap_event_midi>() as u32,
+                                size: truce_core::cast::size_of_u32::<clap_event_midi>(),
                                 time: event.sample_offset,
                                 space_id: CLAP_CORE_EVENT_SPACE_ID,
                                 type_: CLAP_EVENT_MIDI,
@@ -971,7 +971,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                     EventBody::ParamChange { id, value } => {
                         let ev = clap_event_param_value {
                             header: clap_event_header {
-                                size: std::mem::size_of::<clap_event_param_value>() as u32,
+                                size: truce_core::cast::size_of_u32::<clap_event_param_value>(),
                                 time: event.sample_offset,
                                 space_id: CLAP_CORE_EVENT_SPACE_ID,
                                 type_: CLAP_EVENT_PARAM_VALUE,
@@ -1013,7 +1013,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
 unsafe extern "C" fn params_count<P: PluginExport>(plugin: *const clap_plugin) -> u32 {
     unsafe {
         let data = data_from_plugin::<P>(plugin);
-        data.param_infos.len() as u32
+        truce_core::cast::len_u32(data.param_infos.len())
     }
 }
 
@@ -1284,9 +1284,9 @@ unsafe extern "C" fn audio_ports_count<P: PluginExport>(
         None => return 0,
     };
     if is_input {
-        layout.inputs.len() as u32
+        truce_core::cast::len_u32(layout.inputs.len())
     } else {
-        layout.outputs.len() as u32
+        truce_core::cast::len_u32(layout.outputs.len())
     }
 }
 

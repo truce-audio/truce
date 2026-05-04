@@ -260,7 +260,7 @@ impl RenderBackend for CpuBackend {
             *slot.1 = Some(pm);
             return ImageId(slot.0 as u32);
         }
-        let id = self.images.len() as u32;
+        let id = truce_core::cast::len_u32(self.images.len());
         self.images.push(Some(pm));
         ImageId(id)
     }

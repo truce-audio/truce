@@ -812,6 +812,12 @@ fn gen_field_constructor(f: &ParamField) -> proc_macro2::TokenStream {
 // Main derive macro
 // ============================================================================
 
+/// # Panics
+///
+/// Panics if `syn` fails to parse the input token stream. That only
+/// happens on syntactically broken input (rustc would already be
+/// rejecting the same file), so the panic surfaces a derive-internal
+/// regression rather than user error.
 #[proc_macro_derive(Params, attributes(param, nested, meter))]
 pub fn derive_params(input: TokenStream) -> TokenStream {
     let ast: DeriveInput = syn::parse(input).expect("Failed to parse input for Params derive");
@@ -1520,6 +1526,10 @@ fn snake_to_pascal(ident: &syn::Ident) -> syn::Ident {
 ///     Random,
 /// }
 /// ```
+/// # Panics
+///
+/// Panics if `syn` fails to parse the input token stream — same
+/// "rustc-already-rejected" condition as [`derive_params`].
 #[proc_macro_derive(ParamEnum, attributes(name))]
 pub fn derive_param_enum(input: TokenStream) -> TokenStream {
     let ast: DeriveInput = syn::parse(input).expect("Failed to parse input for ParamEnum derive");
@@ -1666,6 +1676,10 @@ pub fn derive_param_enum(input: TokenStream) -> TokenStream {
 ///     pub selected_ids: Vec<u32>,
 /// }
 /// ```
+/// # Panics
+///
+/// Panics if `syn` fails to parse the input token stream — same
+/// "rustc-already-rejected" condition as [`derive_params`].
 #[proc_macro_derive(State)]
 pub fn derive_state(input: TokenStream) -> TokenStream {
     let ast: DeriveInput = syn::parse(input).expect("Failed to parse input for State derive");
@@ -1690,6 +1704,13 @@ pub fn derive_state(input: TokenStream) -> TokenStream {
         }
     };
 
+    // `fields` is the syn-parsed field list of a single struct; can't
+    // overflow u32. truce-derive is a proc-macro crate so it can't
+    // pull in `truce_core::cast::len_u32`.
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "struct field count is bounded by syn parser limits"
+    )]
     let field_count = fields.len() as u32;
     let field_idents: Vec<_> = fields.iter().map(|f| f.ident.as_ref().unwrap()).collect();
 

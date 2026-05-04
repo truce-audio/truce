@@ -1,3 +1,4 @@
+use crate::cast;
 use crate::events::EventBody;
 
 /// Upconvert MIDI 1.0 bytes to our event representation.
@@ -76,24 +77,17 @@ pub fn event_to_midi1(event: &EventBody) -> Option<(usize, [u8; 3])> {
             channel,
             note,
             velocity,
-        } => Some((
-            3,
-            [0x90 | channel, *note, (*velocity * 127.0).round() as u8],
-        )),
+        } => Some((3, [0x90 | channel, *note, cast::midi_7bit(*velocity)])),
         EventBody::NoteOff {
             channel,
             note,
             velocity,
-        } => Some((
-            3,
-            [0x80 | channel, *note, (*velocity * 127.0).round() as u8],
-        )),
+        } => Some((3, [0x80 | channel, *note, cast::midi_7bit(*velocity)])),
         EventBody::ControlChange { channel, cc, value } => {
-            Some((3, [0xB0 | channel, *cc, (*value * 127.0).round() as u8]))
+            Some((3, [0xB0 | channel, *cc, cast::midi_7bit(*value)]))
         }
         EventBody::PitchBend { channel, value } => {
-            let raw = ((*value + 1.0) * 8192.0).round() as u16;
-            let raw = raw.min(16383);
+            let raw = cast::midi_14bit_pb(*value);
             Some((
                 3,
                 [
@@ -104,7 +98,7 @@ pub fn event_to_midi1(event: &EventBody) -> Option<(usize, [u8; 3])> {
             ))
         }
         EventBody::ChannelPressure { channel, pressure } => {
-            Some((2, [0xD0 | channel, (*pressure * 127.0).round() as u8, 0]))
+            Some((2, [0xD0 | channel, cast::midi_7bit(*pressure), 0]))
         }
         EventBody::ProgramChange { channel, program } => Some((2, [0xC0 | channel, *program, 0])),
         _ => None,

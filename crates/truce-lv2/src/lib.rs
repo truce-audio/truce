@@ -181,14 +181,20 @@ unsafe impl<P: PluginExport> Send for Lv2Instance<P> {}
 /// instance rather than constructing a fresh one. The TTL writer paths
 /// build their own plugin and the LV2 `instantiate` callback already
 /// owns one — both call this directly to skip a second `P::create()`.
+///
+/// # Panics
+///
+/// Panics if `P::bus_layouts()` is empty — same plugin-author
+/// contract as [`truce_core::wrapper::first_bus_layout`]; zero-bus
+/// plugins must return `vec![BusLayout::new()]` explicitly.
 pub fn derive_port_layout<P: PluginExport>(plugin: &P) -> PortLayout {
     let layouts = P::bus_layouts();
     let default_layout = layouts
         .first()
         .expect("Plugin must declare at least one bus layout");
     let params = plugin.params();
-    let param_count = params.param_infos().len() as u32;
-    let meter_count = params.meter_ids().len() as u32;
+    let param_count = truce_core::cast::len_u32(params.param_infos().len());
+    let meter_count = truce_core::cast::len_u32(params.meter_ids().len());
     let category = P::info().category;
     let accepts_midi_in = matches!(
         category,

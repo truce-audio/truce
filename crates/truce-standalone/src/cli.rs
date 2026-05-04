@@ -129,6 +129,12 @@ fn print_help() {
 /// at the binary boundary (no `process::exit` from library code,
 /// which would short-circuit any test that drives this entry point).
 /// Returns `Err` on parse failure.
+///
+/// # Errors
+///
+/// Returns `Err(String)` if a value-bearing flag is missing its
+/// argument, fails the type-coercion (`f64`, `usize`, etc.), or an
+/// unrecognized positional / leftover token slips through.
 pub fn parse() -> Result<Options, String> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     let mut args = pico_args::Arguments::from_vec(args);

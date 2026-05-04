@@ -18,7 +18,7 @@ pub fn serialize_state(
     data.extend_from_slice(&plugin_id_hash.to_le_bytes());
 
     // Parameter block
-    let count = param_ids.len() as u32;
+    let count = crate::cast::len_u32(param_ids.len());
     data.extend_from_slice(&count.to_le_bytes());
     for (id, value) in param_ids.iter().zip(param_values.iter()) {
         data.extend_from_slice(&id.to_le_bytes());
@@ -159,6 +159,13 @@ pub fn snapshot_plugin<P: PluginExport>(plugin: &P) -> Vec<u8> {
 /// version, and plugin-ID hash; on success restores parameter
 /// values via `Params::restore_values` and forwards the optional
 /// extra payload to `Plugin::load_state`.
+///
+/// # Errors
+///
+/// Returns [`RestoreError::Invalid`] if the magic / version /
+/// plugin-ID hash check fails or the envelope is truncated. A
+/// successful return guarantees the params and (optional) extra
+/// payload were forwarded to the plugin.
 pub fn restore_plugin<P: PluginExport>(plugin: &mut P, bytes: &[u8]) -> Result<(), RestoreError> {
     let id = hash_plugin_id(P::info().clap_id);
     let s = deserialize_state(bytes, id).ok_or(RestoreError::Invalid)?;

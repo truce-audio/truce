@@ -77,6 +77,14 @@ pub struct PluginDef {
 /// - `TRUCE_AU_TYPE` — 4-char AU type (e.g., "aufx")
 /// - `TRUCE_AU_MANUFACTURER` — 4-char AU manufacturer (e.g., "Trce")
 /// - `TRUCE_CATEGORY` — "Effect" or "Instrument" (derived from `au_type`)
+///
+/// # Panics
+///
+/// Panics from `build.rs` if `truce.toml` cannot be located or
+/// parsed, no `[[plugin]]` entry matches `CARGO_PKG_NAME`, or a
+/// matching plugin omits both `fourcc` and `au_subtype`. Each panic
+/// is meant to halt the build with a precise message rather than
+/// emit malformed env vars the macro would silently accept.
 pub fn emit_plugin_env() {
     let toml_path = find_truce_toml_or_exit();
     println!("cargo:rerun-if-changed={}", toml_path.display());
@@ -309,6 +317,11 @@ fn read_cargo_config_target_dir(root: &Path) -> Option<PathBuf> {
 /// proc-macro contexts can route the message into a `compile_error!`
 /// with a span — panicking from a proc macro produces no span and a
 /// noisy multi-line error frame.
+///
+/// # Errors
+///
+/// Returns `Err` if `CARGO_MANIFEST_DIR` is not set, or if no
+/// `truce.toml` is found walking from the manifest dir up to `/`.
 pub fn find_truce_toml() -> Result<PathBuf, String> {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
         .map_err(|_| "CARGO_MANIFEST_DIR not set".to_string())?;
@@ -351,6 +364,11 @@ fn find_truce_toml_or_exit() -> PathBuf {
 /// Returns `Err(message)` on read or parse failure. Like
 /// [`find_truce_toml`], the error form is what makes this safe to call
 /// from a proc-macro context.
+///
+/// # Errors
+///
+/// Returns `Err(String)` if the file cannot be read or fails to
+/// parse as TOML. Both messages include `path` for context.
 pub fn load_config(path: &Path) -> Result<Config, String> {
     let content = std::fs::read_to_string(path)
         .map_err(|e| format!("Failed to read {}: {e}", path.display()))?;

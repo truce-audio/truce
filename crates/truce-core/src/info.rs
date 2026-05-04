@@ -59,7 +59,13 @@ pub const fn category_from_str(s: &str) -> PluginCategory {
 
 /// Helper to convert a 4-char string literal to `[u8; 4]` at compile time.
 /// Panics if the string is not exactly 4 ASCII bytes.
-#[must_use] 
+///
+/// # Panics
+///
+/// Panics at compile time when used in a `const` context (preferred)
+/// or at runtime if `s.len() != 4`. ASCII-ness isn't checked here —
+/// callers that need it should validate separately.
+#[must_use]
 pub const fn fourcc(s: &[u8]) -> [u8; 4] {
     assert!(s.len() == 4, "FourCC must be exactly 4 bytes");
     [s[0], s[1], s[2], s[3]]

@@ -314,6 +314,12 @@ impl<P: PluginExport> DriverResult<P> {
     /// when the `wav` feature is enabled. Convenience shim around
     /// `hound`; if you need a different sample format, drive `hound`
     /// yourself off `result.output` / `result.sample_rate`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `InvalidData` if no audio was captured (the driver
+    /// was run with `CaptureSpec::audio == false`), or any I/O /
+    /// encoder error from `hound` while creating / writing the file.
     pub fn write_wav(&self, path: impl AsRef<std::path::Path>) -> std::io::Result<()> {
         if self.output.is_empty() {
             return Err(std::io::Error::new(
@@ -607,7 +613,14 @@ impl<P: PluginExport> PluginDriver<P> {
     }
 
     /// Drive the plugin and return the captured result.
-    #[must_use] 
+    ///
+    /// # Panics
+    ///
+    /// Panics if a `state_file(...)` path cannot be read. Plugin
+    /// `init` / `reset` / `process` / `restore_values` panics propagate
+    /// unchanged so the underlying failure surfaces with its original
+    /// stack rather than being wrapped.
+    #[must_use]
     pub fn run(mut self) -> DriverResult<P> {
         // Build + activate.
         let mut plugin = P::create();

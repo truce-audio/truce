@@ -162,6 +162,12 @@ impl<P: Params + 'static> EguiEditor<P> {
     /// EguiEditor::new(params, (400, 300), |ctx, state| { /* ui */ })
     ///     .on_state_changed(|state| { /* re-read cached state */ })
     /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if called after `open()` — by then the `Arc<Mutex<_>>`
+    /// holding the UI has been cloned for the running editor and
+    /// can't be unwrapped. Configure callbacks during construction.
     pub fn on_state_changed(mut self, f: impl FnMut(&PluginContext<P>) + Send + 'static) -> Self {
         let old = std::mem::replace(
             &mut self.ui,

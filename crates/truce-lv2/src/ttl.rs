@@ -35,6 +35,11 @@ use truce_params::Params;
 
 /// Emit an LV2 bundle for the plugin. Assumes the `.so` has already been
 /// placed at `bundle_dir.join(&so_name)`.
+///
+/// # Errors
+///
+/// Returns any I/O error from `create_dir_all` / `write` while
+/// emitting the manifest or plugin TTL files under `bundle_dir`.
 pub fn emit_bundle<P: PluginExport>(
     bundle_dir: &Path,
     so_name: &str,

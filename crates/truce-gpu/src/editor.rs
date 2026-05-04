@@ -60,6 +60,12 @@ impl<P: Params + 'static> GpuEditor<P> {
     /// Create from a pre-existing shared reference.
     /// Used by `HotEditor` to share the inner `BuiltinEditor` so it can
     /// swap the layout on hot-reload while GPU rendering continues.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the inner mutex is poisoned (a previous holder
+    /// panicked). In normal operation `BuiltinEditor` never panics
+    /// while holding the lock.
     pub fn new_shared(inner: Arc<Mutex<BuiltinEditor<P>>>) -> Self {
         let size = inner.lock().unwrap().size();
         Self {

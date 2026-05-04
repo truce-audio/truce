@@ -335,6 +335,11 @@ impl WgpuBackend {
     /// `logical_w` and `logical_h` are in logical points. `scale` is the
     /// display scale factor (2.0 on Retina). The surface is configured at
     /// `logical × scale` physical pixels.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the embedded font fails to parse (a bug in the
+    /// bundled font asset, never user input).
     pub fn from_surface(
         instance: &wgpu::Instance,
         surface: wgpu::Surface<'static>,
@@ -693,7 +698,12 @@ impl WgpuBackend {
     /// [`Self::from_window`]: draw calls and event coordinates are logical
     /// points; the backend multiplies by `scale` internally when
     /// rasterizing.
-    #[must_use] 
+    ///
+    /// # Panics
+    ///
+    /// Panics if the embedded font fails to parse (bundled-asset
+    /// bug, never user input).
+    #[must_use]
     pub fn new(
         device: Arc<wgpu::Device>,
         queue: Arc<wgpu::Queue>,
@@ -1023,7 +1033,7 @@ impl WgpuBackend {
             pass.set_vertex_buffer(0, vertex_buffer.slice(..));
             pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint32);
 
-            let total_indices = self.indices.len() as u32;
+            let total_indices = truce_core::cast::len_u32(self.indices.len());
             if self.batches.is_empty() {
                 pass.set_bind_group(1, &self.atlas_bind_group, &[]);
                 pass.draw_indexed(0..total_indices, 0, 0..1);
@@ -1158,7 +1168,7 @@ impl WgpuBackend {
         };
         if needs_new {
             self.batches.push(DrawBatch {
-                index_start: self.indices.len() as u32,
+                index_start: truce_core::cast::len_u32(self.indices.len()),
                 image,
             });
         }
@@ -1166,7 +1176,7 @@ impl WgpuBackend {
 
     fn push_quad(&mut self, v0: Vertex, v1: Vertex, v2: Vertex, v3: Vertex) {
         self.ensure_batch(None);
-        let base = self.vertices.len() as u32;
+        let base = truce_core::cast::len_u32(self.vertices.len());
         self.vertices.extend_from_slice(&[v0, v1, v2, v3]);
         self.indices
             .extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
@@ -1185,7 +1195,7 @@ impl WgpuBackend {
                 Vertex::solid(p.x, p.y, color)
             }),
         );
-        let base = self.vertices.len() as u32;
+        let base = truce_core::cast::len_u32(self.vertices.len());
         self.vertices.extend_from_slice(&buffers.vertices);
         self.indices
             .extend(buffers.indices.iter().map(|i| i + base));
@@ -1204,7 +1214,7 @@ impl WgpuBackend {
                 Vertex::solid(p.x, p.y, color)
             }),
         );
-        let base = self.vertices.len() as u32;
+        let base = truce_core::cast::len_u32(self.vertices.len());
         self.vertices.extend_from_slice(&buffers.vertices);
         self.indices
             .extend(buffers.indices.iter().map(|i| i + base));
@@ -1475,7 +1485,7 @@ impl RenderBackend for WgpuBackend {
             *slot = Some(entry);
             return ImageId(idx as u32);
         }
-        let id = self.images.len() as u32;
+        let id = truce_core::cast::len_u32(self.images.len());
         self.images.push(Some(entry));
         ImageId(id)
     }
@@ -1499,7 +1509,7 @@ impl RenderBackend for WgpuBackend {
 
         let s = self.scale;
         let c = [1.0, 1.0, 1.0, 1.0];
-        let base = self.vertices.len() as u32;
+        let base = truce_core::cast::len_u32(self.vertices.len());
         self.vertices.extend_from_slice(&[
             Vertex::image(x * s, y * s, c, 0.0, 0.0),
             Vertex::image((x + w) * s, y * s, c, 1.0, 0.0),
@@ -1621,7 +1631,7 @@ impl WgpuBackend {
             pass.set_vertex_buffer(0, vertex_buffer.slice(..));
             pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint32);
 
-            let total_indices = self.indices.len() as u32;
+            let total_indices = truce_core::cast::len_u32(self.indices.len());
             if self.batches.is_empty() {
                 // Backwards-compatible path: no batching recorded (e.g. a
                 // caller that bypassed clear()). Draw everything with the
@@ -1659,7 +1669,12 @@ impl WgpuBackend {
 
     /// Create a headless GPU backend (no window or surface).
     /// Used for snapshot testing.
-    #[must_use] 
+    ///
+    /// # Panics
+    ///
+    /// Panics if the embedded font fails to parse (bundled-asset
+    /// bug, never user input).
+    #[must_use]
     pub fn headless(width: u32, height: u32, scale: f32) -> Option<Self> {
         let phys_w = truce_gui::to_physical_px(width, f64::from(scale));
         let phys_h = truce_gui::to_physical_px(height, f64::from(scale));
@@ -1918,6 +1933,13 @@ impl WgpuBackend {
 
     /// Render to an offscreen texture and read back RGBA pixels.
     /// Only works for headless backends (no surface).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `wgpu::Buffer::map_async` reports failure when reading
+    /// back the GPU readback buffer — that indicates an adapter / driver
+    /// fault rather than a recoverable runtime condition, so the
+    /// snapshot path bubbles it up rather than papering over it.
     pub fn read_pixels(&mut self) -> Vec<u8> {
         self.flush_atlas();
 

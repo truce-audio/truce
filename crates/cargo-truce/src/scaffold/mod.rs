@@ -61,6 +61,12 @@ impl Scaffolder {
     }
 
     /// Single-mode scaffold — one plugin crate at `<root>/`.
+    ///
+    /// # Errors
+    ///
+    /// Propagates any I/O error from writing files under `root`,
+    /// fourcc-collision errors from [`resolve_fourccs`], or template
+    /// render failures.
     pub fn single(
         &self,
         root: &Path,
@@ -91,6 +97,12 @@ impl Scaffolder {
 
     /// Workspace-mode scaffold — N plugin crates under
     /// `<root>/plugins/<name>/` plus the workspace root files.
+    ///
+    /// # Errors
+    ///
+    /// Propagates any I/O error from writing files under `root`,
+    /// fourcc-collision errors from [`resolve_fourccs`], or template
+    /// render failures.
     pub fn workspace(
         &self,
         root: &Path,

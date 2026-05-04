@@ -6,6 +6,13 @@ use std::sync::Arc;
 ///
 /// Call on an `egui::Context` before rendering. Used by both the live
 /// editor and the snapshot renderer.
+///
+/// # Panics
+///
+/// Cannot panic in practice — egui's `FontDefinitions::default()`
+/// always populates the `Proportional` and `Monospace` families, so
+/// the `unwrap()`s succeed. A future egui release that drops either
+/// family would surface as a panic here rather than a silent miss.
 pub fn apply_font(ctx: &egui::Context, font_data: &'static [u8]) {
     let mut fonts = egui::FontDefinitions::default();
     fonts.font_data.insert(

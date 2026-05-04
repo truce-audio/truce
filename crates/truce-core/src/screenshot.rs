@@ -45,6 +45,12 @@ pub fn render_with_state<P: PluginExport>(state: Option<&[u8]>) -> (Vec<u8>, u32
 /// editor renders. The `truce-test` `ScreenshotTest::setup` /
 /// `state_file` paths and the `cargo truce screenshot --state` flag
 /// both ride on this entry point.
+///
+/// # Panics
+///
+/// Panics if `Plugin::editor()` returns `None` or the editor's
+/// `screenshot()` method returns `None`. Both panics name the
+/// concrete `P` and point at the trait method to implement.
 pub fn render_pixels_for<P: PluginExport>(plugin: &mut P) -> (Vec<u8>, u32, u32) {
     let mut editor = <P as Plugin>::editor(plugin).unwrap_or_else(|| {
         panic!(
@@ -77,7 +83,13 @@ pub fn render_pixels_for<P: PluginExport>(plugin: &mut P) -> (Vec<u8>, u32, u32)
 /// caller (test or CLI) is expected to surface a meaningful message
 /// in that case, so a crash here is sufficient for callers that
 /// already failed `Path::exists()`.
-#[must_use] 
+///
+/// # Panics
+///
+/// Panics if the file cannot be opened, the PNG header / info block
+/// cannot be parsed, or the frame fails to decode. All panics include
+/// the underlying error string and (where available) the path.
+#[must_use]
 pub fn load_png(path: &Path) -> (Vec<u8>, u32, u32) {
     let file = std::fs::File::open(path)
         .unwrap_or_else(|e| panic!("Failed to open {}: {e}", path.display()));
@@ -103,6 +115,12 @@ pub fn load_png(path: &Path) -> (Vec<u8>, u32, u32) {
 
 /// Write RGBA bytes to a PNG with 144 DPI metadata so the file
 /// renders at half pixel size in viewers and on GitHub.
+///
+/// # Panics
+///
+/// Panics if the file cannot be created, the PNG header cannot be
+/// written, or the encoder rejects `pixels` (typically a length
+/// mismatch versus `w * h * 4`).
 pub fn save_png(path: &Path, pixels: &[u8], w: u32, h: u32) {
     let file = std::fs::File::create(path)
         .unwrap_or_else(|e| panic!("Failed to create {}: {e}", path.display()));

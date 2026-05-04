@@ -14,6 +14,12 @@ pub enum PluginKind {
 }
 
 impl PluginKind {
+    /// Parse a plugin-kind string from CLI input.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` with a hint listing the accepted values when
+    /// `s` is not `"effect"`, `"instrument"`, or `"midi"`.
     pub fn parse(s: &str) -> Result<Self, String> {
         match s {
             "effect" => Ok(Self::Effect),

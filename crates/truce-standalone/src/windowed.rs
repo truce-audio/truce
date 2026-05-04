@@ -29,6 +29,14 @@ use crate::transport::Transport;
 use crate::vlog;
 
 /// Run the plugin with a window. Blocks until the window closes.
+///
+/// # Panics
+///
+/// Panics if the host platform reports a raw-window-handle variant
+/// the editor backends don't support, or if the audio start /
+/// transport / MIDI threads return a fatal error that has no
+/// recovery path. Plugin-side panics propagate through the poisoned
+/// mutex unchanged.
 pub fn run<P: PluginExport>(opts: &Options)
 where
     P::Params: 'static,

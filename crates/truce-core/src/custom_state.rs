@@ -52,6 +52,12 @@ impl<'a> StateCursor<'a> {
 
     /// Skip the next field (reads its encoded size and advances past it).
     /// Returns false if the data is malformed.
+    ///
+    /// # Panics
+    ///
+    /// Does not panic — the `expect` inside is unreachable because
+    /// `read_bytes(4)` only returns `Some` when the slice is exactly
+    /// 4 bytes long.
     pub fn skip_field(&mut self) -> bool {
         // Fields are prefixed with a u32 byte length by the derive macro.
         if let Some(bytes) = self.read_bytes(4) {
@@ -124,7 +130,7 @@ impl StateField for bool {
 impl StateField for String {
     fn write_field(&self, buf: &mut Vec<u8>) {
         let bytes = self.as_bytes();
-        (bytes.len() as u32).write_field(buf);
+        crate::cast::len_u32(bytes.len()).write_field(buf);
         buf.extend_from_slice(bytes);
     }
     fn read_field(cursor: &mut StateCursor) -> Option<Self> {
@@ -136,7 +142,7 @@ impl StateField for String {
 
 impl<T: StateField> StateField for Vec<T> {
     fn write_field(&self, buf: &mut Vec<u8>) {
-        (self.len() as u32).write_field(buf);
+        crate::cast::len_u32(self.len()).write_field(buf);
         for item in self {
             item.write_field(buf);
         }

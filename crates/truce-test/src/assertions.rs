@@ -65,6 +65,10 @@ fn peak_in_range<P: PluginExport>(result: &DriverResult<P>, start: usize, end: u
 
 /// Assert that at least one sample anywhere in the output is above
 /// the audible threshold.
+///
+/// # Panics
+///
+/// Panics if every sample is at or below `AUDIBLE_THRESHOLD` (1e-3).
 pub fn assert_nonzero<P: PluginExport>(result: &DriverResult<P>) {
     let peak = peak_in_range(result, 0, result.total_frames);
     assert!(
@@ -75,6 +79,11 @@ pub fn assert_nonzero<P: PluginExport>(result: &DriverResult<P>) {
 }
 
 /// Assert every sample in the output is below the audible threshold.
+///
+/// # Panics
+///
+/// Panics if any sample's absolute value is at or above
+/// `AUDIBLE_THRESHOLD` (1e-3).
 pub fn assert_silence<P: PluginExport>(result: &DriverResult<P>) {
     let peak = peak_in_range(result, 0, result.total_frames);
     assert!(
@@ -85,6 +94,11 @@ pub fn assert_silence<P: PluginExport>(result: &DriverResult<P>) {
 
 /// Assert no sample is NaN or infinite. If this fails, the DSP went
 /// divergent.
+///
+/// # Panics
+///
+/// Panics on the first non-finite sample, naming the channel,
+/// frame index, and time offset.
 pub fn assert_no_nans<P: PluginExport>(result: &DriverResult<P>) {
     let bad = result
         .output
@@ -102,6 +116,10 @@ pub fn assert_no_nans<P: PluginExport>(result: &DriverResult<P>) {
 
 /// Assert no sample exceeds `threshold` in absolute value. Typical
 /// use: `assert_peak_below(&result, 1.0)` to catch clipping.
+///
+/// # Panics
+///
+/// Panics if any sample's absolute value exceeds `threshold`.
 pub fn assert_peak_below<P: PluginExport>(result: &DriverResult<P>, threshold: f32) {
     let peak = peak_in_range(result, 0, result.total_frames);
     assert!(
@@ -116,6 +134,11 @@ pub fn assert_peak_below<P: PluginExport>(result: &DriverResult<P>, threshold: f
 
 /// Assert every sample after `t` is below the audible threshold.
 /// Use for reverb / delay tail decay tests.
+///
+/// # Panics
+///
+/// Panics if any sample after `t` has absolute value at or above
+/// `AUDIBLE_THRESHOLD`.
 pub fn assert_silence_after<P: PluginExport>(result: &DriverResult<P>, t: Duration) {
     let start = duration_to_frames(result, t);
     let peak = peak_in_range(result, start, result.total_frames);
@@ -130,6 +153,11 @@ pub fn assert_silence_after<P: PluginExport>(result: &DriverResult<P>, t: Durati
 
 /// Assert at least one sample after `t` is above the audible
 /// threshold.
+///
+/// # Panics
+///
+/// Panics if every sample after `t` is at or below
+/// `AUDIBLE_THRESHOLD`.
 pub fn assert_nonzero_after<P: PluginExport>(result: &DriverResult<P>, t: Duration) {
     let start = duration_to_frames(result, t);
     let peak = peak_in_range(result, start, result.total_frames);
@@ -142,6 +170,11 @@ pub fn assert_nonzero_after<P: PluginExport>(result: &DriverResult<P>, t: Durati
 
 /// Assert silence across `[start, end)`. More precise than
 /// `assert_silence_after` when both endpoints matter.
+///
+/// # Panics
+///
+/// Panics if `start >= end`, or if any sample in the half-open
+/// range has absolute value at or above `AUDIBLE_THRESHOLD`.
 pub fn assert_silence_between<P: PluginExport>(
     result: &DriverResult<P>,
     start: Duration,
@@ -160,6 +193,11 @@ pub fn assert_silence_between<P: PluginExport>(
 }
 
 /// Assert non-zero audio somewhere in `[start, end)`.
+///
+/// # Panics
+///
+/// Panics if `start >= end`, or if every sample in the half-open
+/// range is at or below `AUDIBLE_THRESHOLD`.
 pub fn assert_nonzero_between<P: PluginExport>(
     result: &DriverResult<P>,
     start: Duration,
@@ -194,6 +232,13 @@ fn final_meters<P: PluginExport>(result: &DriverResult<P>) -> &[(u32, f32)] {
 
 /// Assert the meter identified by `id` read above `threshold` at
 /// the end of the run.
+///
+/// # Panics
+///
+/// Panics if no meter with `id` is in the result, the meter's
+/// final value is at or below `threshold`, or
+/// `CaptureSpec::meters` was `MeterCapture::None` (call
+/// `.capture_meters(MeterCapture::Final)` on the driver).
 pub fn assert_meter_above<P: PluginExport>(result: &DriverResult<P>, id: u32, threshold: f32) {
     let meters = final_meters(result);
     match meters.iter().find(|(mid, _)| *mid == id) {
@@ -210,6 +255,12 @@ pub fn assert_meter_above<P: PluginExport>(result: &DriverResult<P>, id: u32, th
 
 /// Assert the meter identified by `id` read below `threshold` at
 /// the end of the run.
+///
+/// # Panics
+///
+/// Panics if no meter with `id` is in the result, the meter's
+/// final value is at or above `threshold`, or
+/// `CaptureSpec::meters` was `MeterCapture::None`.
 pub fn assert_meter_below<P: PluginExport>(result: &DriverResult<P>, id: u32, threshold: f32) {
     let meters = final_meters(result);
     match meters.iter().find(|(mid, _)| *mid == id) {
@@ -231,6 +282,10 @@ pub fn assert_meter_below<P: PluginExport>(result: &DriverResult<P>, id: u32, th
 /// Assert exactly `n` output events were emitted by the plugin
 /// across the run. Requires `.capture_output_events(true)` on the
 /// driver.
+///
+/// # Panics
+///
+/// Panics if `result.output_events.len() != n`.
 pub fn assert_output_event_count<P: PluginExport>(result: &DriverResult<P>, n: usize) {
     assert_eq!(
         result.output_events.len(),

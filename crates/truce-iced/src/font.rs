@@ -4,7 +4,13 @@
 /// to use as the renderer default.
 ///
 /// Used by both the live editor and the snapshot renderer.
-#[must_use] 
+///
+/// # Panics
+///
+/// Panics if iced's process-wide font-system `RwLock` is poisoned —
+/// in normal operation no holder panics while writing, so this is a
+/// recovery-impossible condition rather than a runtime contract.
+#[must_use]
 pub fn apply_font(family: &'static str, data: &'static [u8]) -> iced::Font {
     let mut fs = iced_graphics::text::font_system()
         .write()

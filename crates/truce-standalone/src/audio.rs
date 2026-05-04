@@ -258,6 +258,12 @@ fn enumerate_devices(output: bool) -> (Option<String>, Vec<String>) {
 /// Resolve devices, instantiate the plugin, spawn input + output
 /// worker threads, return the handles the caller needs to push MIDI
 /// and reach the workers.
+///
+/// # Errors
+///
+/// Returns an error if the requested input/output device can't be
+/// found (or no default exists), the device's default stream config
+/// can't be queried, or any of the cpal stream-build calls fail.
 pub fn start_audio<P: PluginExport>(
     opts: &Options,
 ) -> Result<AudioHandles<P>, Box<dyn std::error::Error>> {

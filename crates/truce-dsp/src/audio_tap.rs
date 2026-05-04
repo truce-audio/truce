@@ -80,8 +80,11 @@ pub struct AudioTapConsumer {
 /// hold; the underlying storage is `capacity_frames × channels` samples.
 /// `channels` must be non-zero.
 ///
-/// Panics if `channels == 0` or if `capacity_frames == 0`.
-#[must_use] 
+/// # Panics
+///
+/// Panics if `channels == 0` or `capacity_frames == 0`. Both are
+/// programmer errors — a zero-sized ring is never useful.
+#[must_use]
 pub fn audio_tap(capacity_frames: usize, channels: u16) -> (AudioTapProducer, AudioTapConsumer) {
     assert!(channels > 0, "audio_tap: channels must be > 0");
     assert!(

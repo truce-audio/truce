@@ -34,6 +34,13 @@ impl PlaybackSource {
     /// Errors out only on unreadable / unparseable files; channel
     /// and SR mismatches are handled with an `eprintln!` warning
     /// and a documented resolution.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(String)` if `hound::WavReader::open` fails or
+    /// the source's sample format / bit depth is one we don't
+    /// decode. Sample-rate / channel mismatches don't error — they
+    /// trigger a warning and proceed with the documented adaptation.
     pub fn from_wav(path: &Path, target_sr: f64, target_channels: usize) -> Result<Self, String> {
         let mut reader = hound::WavReader::open(path)
             .map_err(|e| format!("could not open '{}': {e}", path.display()))?;
@@ -227,6 +234,12 @@ impl CaptureSink {
     /// drains `chunk_rx` until the shutdown flag is set. Errors
     /// only on filesystem / hound problems (path unwritable,
     /// parent missing, etc).
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(String)` if `hound::WavWriter::create` fails
+    /// (parent dir missing, permission denied, invalid path, etc.).
+    /// Background writer panics surface only at `finish()` time.
     pub fn create(path: &Path, sample_rate: f64, channels: usize) -> Result<Self, String> {
         let spec = hound::WavSpec {
             channels: channels as u16,

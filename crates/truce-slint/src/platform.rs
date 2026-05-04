@@ -98,7 +98,14 @@ pub fn ensure_platform() {
 /// rendering to a different window than the one the handler holds for
 /// blitting. The panic surfaces the failure at editor open time
 /// instead of producing a black or stale frame at runtime.
-#[must_use] 
+///
+/// # Panics
+///
+/// Panics if `ensure_platform` was never called on this thread, or
+/// returned `Err` (another platform was registered first). Both
+/// branches print a precise reason — the panic is preferred over a
+/// black-frame failure mode at runtime.
+#[must_use]
 pub fn create_slint_window() -> Rc<MinimalSoftwareWindow> {
     PLATFORM_STATE.with(|state| match state.get() {
         Some(Ok(())) => {}

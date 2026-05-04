@@ -208,6 +208,12 @@ impl<P: Params + 'static> BuiltinEditor<P> {
     }
 
     /// Render the full UI to the internal CPU pixel buffer.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the lazy `CpuBackend::new` allocation fails (out of
+    /// memory or zero dimensions). The backend is allocated on first
+    /// render — subsequent calls reuse it.
     pub fn render(&mut self) {
         let (w, h) = (self.layout.width(), self.layout.height());
         let scale = self.scale.get() as f32;

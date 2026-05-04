@@ -31,6 +31,13 @@ impl<'a> AudioBuffer<'a> {
     /// # Safety
     /// The caller must ensure the slices are valid for the lifetime `'a`
     /// and that `num_samples` does not exceed any slice's length.
+    ///
+    /// # Panics
+    ///
+    /// In debug builds only, panics if any input channel aliases an
+    /// output channel or `num_samples` exceeds the length of any
+    /// input/output slice. Release builds skip these checks (they're
+    /// safety preconditions, not runtime invariants).
     pub unsafe fn from_slices(
         inputs: &'a [&'a [f32]],
         outputs: &'a mut [&'a mut [f32]],

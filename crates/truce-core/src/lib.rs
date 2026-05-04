@@ -1,5 +1,6 @@
 pub mod buffer;
 pub mod bus;
+pub mod cast;
 pub mod custom_state;
 pub mod editor;
 pub mod events;

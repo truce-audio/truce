@@ -294,7 +294,7 @@ pub fn register_aax<P: PluginExport>() {
 
         let has_editor = P::has_editor_static();
         let mut desc = descriptor;
-        desc.num_params = params.len() as u32;
+        desc.num_params = truce_core::cast::len_u32(params.len());
         desc.has_editor = i32::from(has_editor);
         desc.bypass_param_id = bypass_param_id;
 
@@ -704,12 +704,20 @@ fn try_encode_aax_midi(event: &Event) -> Option<TruceAaxMidiEvent> {
             channel,
             note,
             velocity,
-        } => (0x90 | (channel & 0x0F), *note, (*velocity * 127.0) as u8),
+        } => (
+            0x90 | (channel & 0x0F),
+            *note,
+            truce_core::cast::midi_7bit(*velocity),
+        ),
         EventBody::NoteOff {
             channel,
             note,
             velocity,
-        } => (0x80 | (channel & 0x0F), *note, (*velocity * 127.0) as u8),
+        } => (
+            0x80 | (channel & 0x0F),
+            *note,
+            truce_core::cast::midi_7bit(*velocity),
+        ),
         EventBody::Aftertouch {
             channel,
             note,
@@ -717,20 +725,20 @@ fn try_encode_aax_midi(event: &Event) -> Option<TruceAaxMidiEvent> {
         } => (
             0xA0 | (channel & 0x0F),
             *note,
-            (pressure.clamp(0.0, 1.0) * 127.0) as u8,
+            truce_core::cast::midi_7bit(*pressure),
         ),
         EventBody::ControlChange { channel, cc, value } => (
             0xB0 | (channel & 0x0F),
             *cc,
-            (value.clamp(0.0, 1.0) * 127.0) as u8,
+            truce_core::cast::midi_7bit(*value),
         ),
         EventBody::ChannelPressure { channel, pressure } => (
             0xD0 | (channel & 0x0F),
-            (pressure.clamp(0.0, 1.0) * 127.0) as u8,
+            truce_core::cast::midi_7bit(*pressure),
             0,
         ),
         EventBody::PitchBend { channel, value } => {
-            let n = ((value.clamp(-1.0, 1.0) + 1.0) * 8191.5).round() as u16;
+            let n = truce_core::cast::midi_14bit_pb(*value);
             (
                 0xE0 | (channel & 0x0F),
                 (n & 0x7F) as u8,
@@ -905,7 +913,7 @@ pub unsafe fn _save_state<P: PluginExport>(
 /// shape trades the extra `to_vec` allocation for keeping the C
 /// boundary simple.
 unsafe fn finalize_blob(blob: &[u8], out_data: *mut *mut u8) -> u32 {
-    let len = blob.len() as u32;
+    let len = truce_core::cast::len_u32(blob.len());
     let mut boxed = blob.to_vec().into_boxed_slice();
     let ptr = boxed.as_mut_ptr();
     std::mem::forget(boxed);
