@@ -455,10 +455,17 @@ AEffect* VSTPluginMain(audioMasterCallback audioMaster) {
     TruceVst2* inst = (TruceVst2*)calloc(1, sizeof(TruceVst2));
     if (!inst) return NULL;
 
+    /* `effFlagsIsSynth` is the VST2 signal "host should route MIDI to
+     * me." Both instruments (`aumu`) and MIDI processors (`aumi`,
+     * arpeggiators / chord generators) need it — without it, hosts
+     * default to audio-only routing and the MIDI input never arrives.
+     * VST2 has no separate "MIDI effect" category, so setting the
+     * synth bit is the documented workaround. */
     int is_synth = (g_vst2_descriptor->component_type[0] == 'a' &&
                     g_vst2_descriptor->component_type[1] == 'u' &&
                     g_vst2_descriptor->component_type[2] == 'm' &&
-                    g_vst2_descriptor->component_type[3] == 'u');
+                    (g_vst2_descriptor->component_type[3] == 'u' ||
+                     g_vst2_descriptor->component_type[3] == 'i'));
 
     inst->effect.magic = kVstMagic;
     inst->effect.dispatcher = dispatcher;
