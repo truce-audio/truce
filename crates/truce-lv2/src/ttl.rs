@@ -28,7 +28,7 @@ fn resolved_plugin_name(info: &PluginInfo) -> &'static str {
 use truce_core::info::{PluginCategory, PluginInfo};
 use truce_params::{ParamFlags, ParamInfo, ParamRange, ParamUnit};
 
-use crate::{PortLayout, derive_port_layout_from, plugin_uri, ui_uri};
+use crate::{PortLayout, derive_port_layout, plugin_uri, ui_uri};
 use truce_core::export::PluginExport;
 use truce_params::Params;
 
@@ -41,7 +41,7 @@ pub fn emit_bundle<P: PluginExport>(
     fs::create_dir_all(bundle_dir)?;
     let info = P::info();
     let plugin = P::create();
-    let layout = derive_port_layout_from::<P>(&plugin);
+    let layout = derive_port_layout::<P>(&plugin);
     let params = plugin.params().param_infos();
     let meter_ids = plugin.params().meter_ids();
 

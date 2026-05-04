@@ -18,12 +18,6 @@ pub fn midi_note_to_freq(note: u8) -> f64 {
     440.0 * 2.0f64.powf((note as f64 - 69.0) / 12.0)
 }
 
-/// Convert a frequency in Hz to a MIDI note number (fractional).
-#[inline]
-pub fn freq_to_midi_note(freq: f64) -> f64 {
-    69.0 + 12.0 * (freq / 440.0).log2()
-}
-
 /// Convert a linear peak level to a smoothed 0.0–1.0 display value for meters.
 ///
 /// Maps -60 dB → 0.0, 0 dB → 1.0 (linear scale in dB domain).
@@ -63,12 +57,4 @@ mod tests {
         assert!((freq - 440.0).abs() < 1e-10);
     }
 
-    #[test]
-    fn midi_freq_round_trip() {
-        for note in 0..=127u8 {
-            let freq = midi_note_to_freq(note);
-            let back = freq_to_midi_note(freq);
-            assert!((back - note as f64).abs() < 1e-10);
-        }
-    }
 }
