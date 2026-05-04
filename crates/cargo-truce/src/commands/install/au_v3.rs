@@ -130,14 +130,14 @@ pub(crate) fn emit_au_v3_bundle(
         // Preserve `fw_build` across runs so xcodebuild's link-time
         // framework metadata cache survives; we overwrite the pieces
         // that change (dylib, plist, symlinks) idempotently below.
-        let fw_dir = fw_build.join(format!("{}.framework/Versions/A", fw_name));
+        let fw_dir = fw_build.join(format!("{fw_name}.framework/Versions/A"));
         fs_ctx::create_dir_all(fw_dir.join("Resources"))?;
         fs_ctx::copy(&lipo_dst, fw_dir.join(&fw_name))?;
 
         let status = Command::new("install_name_tool")
             .args([
                 "-id",
-                &format!("@rpath/{}.framework/Versions/A/{}", fw_name, fw_name),
+                &format!("@rpath/{fw_name}.framework/Versions/A/{fw_name}"),
             ])
             .arg(fw_dir.join(&fw_name))
             .status()?;
@@ -145,7 +145,7 @@ pub(crate) fn emit_au_v3_bundle(
             return Err("install_name_tool failed".into());
         }
 
-        let fw_root = fw_build.join(format!("{}.framework", fw_name));
+        let fw_root = fw_build.join(format!("{fw_name}.framework"));
         #[cfg(unix)]
         {
             // Idempotent symlink re-creation: remove any stale link
@@ -158,7 +158,7 @@ pub(crate) fn emit_au_v3_bundle(
             };
             ensure_symlink("A", &fw_root.join("Versions/Current"))?;
             ensure_symlink(
-                &format!("Versions/Current/{}", fw_name),
+                &format!("Versions/Current/{fw_name}"),
                 &fw_root.join(&fw_name),
             )?;
             ensure_symlink("Versions/Current/Resources", &fw_root.join("Resources"))?;
@@ -625,13 +625,13 @@ fn generate_pbxproj(
 		11000011 = {{
 			isa = XCBuildConfiguration;
 			buildSettings = {{
-				PRODUCT_BUNDLE_IDENTIFIER = "com.truce.{app_id}";
+				PRODUCT_BUNDLE_IDENTIFIER = "com.truce.{app_bundle_id}";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				INFOPLIST_FILE = "App/Info.plist";
 				CODE_SIGN_ENTITLEMENTS = "App/App.entitlements";
 				CODE_SIGN_STYLE = Manual;
 				CODE_SIGN_IDENTITY = "Developer ID Application";
-				DEVELOPMENT_TEAM = {team};
+				DEVELOPMENT_TEAM = {team_id};
 				SWIFT_VERSION = 5.0;
 				MACOSX_DEPLOYMENT_TARGET = 13.0;
 			}};
@@ -652,21 +652,21 @@ fn generate_pbxproj(
 		22000011 = {{
 			isa = XCBuildConfiguration;
 			buildSettings = {{
-				PRODUCT_BUNDLE_IDENTIFIER = "com.truce.{appex_id}";
+				PRODUCT_BUNDLE_IDENTIFIER = "com.truce.{appex_bundle_id}";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				INFOPLIST_FILE = "AUExt/Info.plist";
 				CODE_SIGN_ENTITLEMENTS = "AUExt/AUExt.entitlements";
 				CODE_SIGN_STYLE = Manual;
 				CODE_SIGN_IDENTITY = "Developer ID Application";
-				DEVELOPMENT_TEAM = {team};
+				DEVELOPMENT_TEAM = {team_id};
 				SWIFT_VERSION = 5.0;
 				MACOSX_DEPLOYMENT_TARGET = 13.0;
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				SWIFT_OBJC_BRIDGING_HEADER = "AUExt/BridgingHeader.h";
-				HEADER_SEARCH_PATHS = "{shim}";
+				HEADER_SEARCH_PATHS = "{shim_dir}";
 				FRAMEWORK_SEARCH_PATHS = "{fw_search}";
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/../../../../Frameworks";
-				OTHER_LDFLAGS = ("-framework", "{fw}");
+				OTHER_LDFLAGS = ("-framework", "{fw_name}");
 			}};
 			name = Release;
 		}};
@@ -690,11 +690,5 @@ fn generate_pbxproj(
 	}};
 	rootObject = 99000001;
 }}"#,
-        team = team_id,
-        app_id = app_bundle_id,
-        appex_id = appex_bundle_id,
-        shim = shim_dir,
-        fw_search = fw_search,
-        fw = fw_name,
     )
 }

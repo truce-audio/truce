@@ -43,6 +43,7 @@ impl VendorInfo {
     /// Single-mode placeholder — the user is expected to edit
     /// `truce.toml` after scaffolding. Kept identical to the
     /// pre-refactor placeholder so existing test fixtures stand.
+    #[must_use] 
     pub fn placeholder() -> Self {
         Self {
             name: "My Company".into(),
@@ -53,6 +54,7 @@ impl VendorInfo {
     /// Derive a vendor identity from a workspace name when the
     /// user didn't pass `--vendor` / `--vendor-id`. Mirrors the
     /// pre-refactor behavior of `scaffold_workspace`.
+    #[must_use] 
     pub fn derive_from_workspace_name(workspace_name: &str) -> Self {
         Self {
             name: super::case::to_pascal_case(workspace_name),

@@ -81,6 +81,7 @@ pub struct AudioTapConsumer {
 /// `channels` must be non-zero.
 ///
 /// Panics if `channels == 0` or if `capacity_frames == 0`.
+#[must_use] 
 pub fn audio_tap(capacity_frames: usize, channels: u16) -> (AudioTapProducer, AudioTapConsumer) {
     assert!(channels > 0, "audio_tap: channels must be > 0");
     assert!(
@@ -152,11 +153,13 @@ impl AudioTapProducer {
     }
 
     /// Channel count baked into this ring.
+    #[must_use] 
     pub fn channels(&self) -> u16 {
         self.shared.channels
     }
 
     /// Capacity in frames.
+    #[must_use] 
     pub fn capacity_frames(&self) -> usize {
         self.shared.cap / self.shared.channels as usize
     }
@@ -164,11 +167,13 @@ impl AudioTapProducer {
 
 impl AudioTapConsumer {
     /// Channel count baked into this ring.
+    #[must_use] 
     pub fn channels(&self) -> u16 {
         self.shared.channels
     }
 
     /// Capacity in frames.
+    #[must_use] 
     pub fn capacity_frames(&self) -> usize {
         self.shared.cap / self.shared.channels as usize
     }
@@ -177,6 +182,7 @@ impl AudioTapConsumer {
     ///
     /// The result is clamped to the ring's capacity so it remains
     /// meaningful after an overwrite. Returns 0 if the ring is empty.
+    #[must_use] 
     pub fn available(&self) -> usize {
         let w = self.shared.write.load(Ordering::Acquire);
         let r = self.shared.read.load(Ordering::Relaxed);

@@ -91,7 +91,7 @@ struct GlyphAtlas {
     shelf_y: u32,
     shelf_h: u32,
     cursor_x: u32,
-    /// Cached glyph UVs keyed by (char, size_tenths).
+    /// Cached glyph UVs keyed by (char, `size_tenths`).
     glyphs: HashMap<(char, u32), GlyphUV>,
     /// Pending pixel uploads: (x, y, w, h, data).
     pending: Vec<(u32, u32, u32, u32, Vec<u8>)>,
@@ -183,7 +183,7 @@ impl GlyphAtlas {
 // WGSL shader
 // ---------------------------------------------------------------------------
 
-const SHADER_SRC: &str = r#"
+const SHADER_SRC: &str = r"
 struct Viewport {
     transform: mat4x4<f32>,
 };
@@ -232,7 +232,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let alpha = mix(1.0, tex.r, in.tex_mode);
     return vec4<f32>(in.color.rgb * in.color.a * alpha, in.color.a * alpha);
 }
-"#;
+";
 
 // ---------------------------------------------------------------------------
 // WgpuBackend
@@ -276,7 +276,7 @@ pub struct WgpuBackend {
     surface_config: Option<wgpu::SurfaceConfiguration>,
     pipeline: wgpu::RenderPipeline,
     /// Format of the eventual color target. Used to (re)build the MSAA
-    /// texture on resize / begin_frame size changes.
+    /// texture on resize / `begin_frame` size changes.
     target_format: wgpu::TextureFormat,
     msaa_texture: wgpu::TextureView,
     /// Current physical dimensions of the MSAA texture. `begin_frame`
@@ -342,8 +342,8 @@ impl WgpuBackend {
         logical_h: u32,
         scale: f32,
     ) -> Option<Self> {
-        let width = truce_gui::to_physical_px(logical_w, scale as f64);
-        let height = truce_gui::to_physical_px(logical_h, scale as f64);
+        let width = truce_gui::to_physical_px(logical_w, f64::from(scale));
+        let height = truce_gui::to_physical_px(logical_h, f64::from(scale));
 
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
@@ -640,6 +640,7 @@ impl WgpuBackend {
     ///
     /// # Safety
     /// The window must remain valid for the lifetime of the backend.
+    #[must_use] 
     pub unsafe fn from_window(
         window: &baseview::Window,
         logical_w: u32,
@@ -692,6 +693,7 @@ impl WgpuBackend {
     /// [`Self::from_window`]: draw calls and event coordinates are logical
     /// points; the backend multiplies by `scale` internally when
     /// rasterizing.
+    #[must_use] 
     pub fn new(
         device: Arc<wgpu::Device>,
         queue: Arc<wgpu::Queue>,
@@ -701,8 +703,8 @@ impl WgpuBackend {
         scale: f32,
     ) -> Option<Self> {
         let scale = scale.max(0.0);
-        let width = truce_gui::to_physical_px(max_logical_w, scale as f64);
-        let height = truce_gui::to_physical_px(max_logical_h, scale as f64);
+        let width = truce_gui::to_physical_px(max_logical_w, f64::from(scale));
+        let height = truce_gui::to_physical_px(max_logical_h, f64::from(scale));
 
         // Shader
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -917,8 +919,8 @@ impl WgpuBackend {
     /// Only meaningful when the backend was built via [`Self::new`]; the
     /// surface-owning constructors drive their own frame lifecycle.
     pub fn begin_frame(&mut self, logical_w: u32, logical_h: u32) {
-        let phys_w = truce_gui::to_physical_px(logical_w, self.scale as f64);
-        let phys_h = truce_gui::to_physical_px(logical_h, self.scale as f64);
+        let phys_w = truce_gui::to_physical_px(logical_w, f64::from(self.scale));
+        let phys_h = truce_gui::to_physical_px(logical_h, f64::from(self.scale));
         self.vertices.clear();
         self.indices.clear();
         self.batches.clear();
@@ -952,7 +954,7 @@ impl WgpuBackend {
     /// [`Self::begin_frame`] in headless mode) recomputes physical
     /// dimensions and reconfigures the surface / MSAA target. Callers
     /// driving a windowed surface should follow with a `resize` so the
-    /// surface_config picks up the new size on the same frame; the
+    /// `surface_config` picks up the new size on the same frame; the
     /// short-circuit in `resize` doesn't trigger because the scale
     /// change makes the new physical dims differ from the old.
     pub fn set_scale(&mut self, scale: f32) {
@@ -1031,8 +1033,7 @@ impl WgpuBackend {
                     let end = self
                         .batches
                         .get(i + 1)
-                        .map(|n| n.index_start)
-                        .unwrap_or(total_indices);
+                        .map_or(total_indices, |n| n.index_start);
                     if end <= b.index_start {
                         continue;
                     }
@@ -1117,8 +1118,8 @@ impl WgpuBackend {
     /// space as `BuiltinEditor::size()`). Returns `true` if the surface
     /// was actually reconfigured.
     pub fn resize(&mut self, logical_w: u32, logical_h: u32) -> bool {
-        let new_w = truce_gui::to_physical_px(logical_w, self.scale as f64);
-        let new_h = truce_gui::to_physical_px(logical_h, self.scale as f64);
+        let new_w = truce_gui::to_physical_px(logical_w, f64::from(self.scale));
+        let new_h = truce_gui::to_physical_px(logical_h, f64::from(self.scale));
         if new_w == self.width && new_h == self.height {
             return false;
         }
@@ -1242,16 +1243,16 @@ impl WgpuBackend {
 // RenderBackend implementation
 // ---------------------------------------------------------------------------
 
-/// All RenderBackend methods accept coordinates in **logical points**.
+/// All `RenderBackend` methods accept coordinates in **logical points**.
 /// The backend multiplies by `self.scale` to get physical pixel positions.
 /// Font glyphs are rasterized at physical resolution for sharp text.
 impl RenderBackend for WgpuBackend {
     fn clear(&mut self, color: Color) {
         self.clear_color = Some(wgpu::Color {
-            r: color.r as f64,
-            g: color.g as f64,
-            b: color.b as f64,
-            a: color.a as f64,
+            r: f64::from(color.r),
+            g: f64::from(color.g),
+            b: f64::from(color.b),
+            a: f64::from(color.a),
         });
         self.vertices.clear();
         self.indices.clear();
@@ -1360,7 +1361,7 @@ impl RenderBackend for WgpuBackend {
         let phys_size = size * s;
         let c = Self::color_arr(color);
         let line_metrics = self.font.horizontal_line_metrics(phys_size);
-        let ascent = line_metrics.map(|m| m.ascent).unwrap_or(phys_size * 0.8);
+        let ascent = line_metrics.map_or(phys_size * 0.8, |m| m.ascent);
 
         let mut cursor_x = x * s;
 
@@ -1633,8 +1634,7 @@ impl WgpuBackend {
                     let end = self
                         .batches
                         .get(i + 1)
-                        .map(|n| n.index_start)
-                        .unwrap_or(total_indices);
+                        .map_or(total_indices, |n| n.index_start);
                     if end <= b.index_start {
                         continue;
                     }
@@ -1659,9 +1659,10 @@ impl WgpuBackend {
 
     /// Create a headless GPU backend (no window or surface).
     /// Used for snapshot testing.
+    #[must_use] 
     pub fn headless(width: u32, height: u32, scale: f32) -> Option<Self> {
-        let phys_w = truce_gui::to_physical_px(width, scale as f64);
-        let phys_h = truce_gui::to_physical_px(height, scale as f64);
+        let phys_w = truce_gui::to_physical_px(width, f64::from(scale));
+        let phys_h = truce_gui::to_physical_px(height, f64::from(scale));
 
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::PRIMARY,
@@ -1950,7 +1951,7 @@ impl WgpuBackend {
         let bytes_per_row = (w * 4 + 255) & !255; // 256-byte aligned
         let readback_buf = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("readback"),
-            size: (bytes_per_row * h) as u64,
+            size: u64::from(bytes_per_row * h),
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
@@ -2013,11 +2014,11 @@ impl WgpuBackend {
             if a == 0 || a == 255 {
                 continue;
             }
-            let a16 = a as u16;
+            let a16 = u16::from(a);
             // Round to nearest: (c * 255 + a/2) / a.
-            px[0] = (((px[0] as u16) * 255 + a16 / 2) / a16).min(255) as u8;
-            px[1] = (((px[1] as u16) * 255 + a16 / 2) / a16).min(255) as u8;
-            px[2] = (((px[2] as u16) * 255 + a16 / 2) / a16).min(255) as u8;
+            px[0] = ((u16::from(px[0]) * 255 + a16 / 2) / a16).min(255) as u8;
+            px[1] = ((u16::from(px[1]) * 255 + a16 / 2) / a16).min(255) as u8;
+            px[2] = ((u16::from(px[2]) * 255 + a16 / 2) / a16).min(255) as u8;
         }
 
         pixels
@@ -2179,7 +2180,7 @@ mod tests {
         let bytes_per_row = (w * 4 + 255) & !255;
         let readback = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("readback"),
-            size: (bytes_per_row * h) as u64,
+            size: u64::from(bytes_per_row * h),
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });

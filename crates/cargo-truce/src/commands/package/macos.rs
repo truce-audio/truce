@@ -508,7 +508,7 @@ pub(crate) fn cmd_package_macos(args: &[String]) -> Res {
                 "--identifier".to_string(),
                 pkg_id,
                 "--version".to_string(),
-                version.to_string(),
+                version.clone(),
             ]);
 
             // AU2 gets a postinstall script to clear caches
@@ -519,7 +519,7 @@ pub(crate) fn cmd_package_macos(args: &[String]) -> Res {
 
             pkgbuild_args.push(component_pkg.to_str().unwrap().to_string());
 
-            let pkgbuild_refs: Vec<&str> = pkgbuild_args.iter().map(|s| s.as_str()).collect();
+            let pkgbuild_refs: Vec<&str> = pkgbuild_args.iter().map(std::string::String::as_str).collect();
             eprintln!("  pkgbuild {}...", fmt.label());
             let status = Command::new("pkgbuild").args(&pkgbuild_refs).status()?;
             if !status.success() {
@@ -755,7 +755,7 @@ fn fetch_notarization_log(output: &str, keychain_profile: &str) {
         .map(|s| s.trim().to_string());
 
     if let Some(id) = id {
-        eprintln!("  Fetching notarization log for {}...", id);
+        eprintln!("  Fetching notarization log for {id}...");
         let log_output = Command::new("xcrun")
             .args([
                 "notarytool",

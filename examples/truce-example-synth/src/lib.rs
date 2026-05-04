@@ -110,10 +110,10 @@ impl Synth {
 
     fn note_on(&mut self, note: u8, velocity: f32) {
         let freq = midi_note_to_freq(note);
-        let attack = self.params.attack.value() as f64;
-        let decay = self.params.decay.value() as f64;
-        let sustain = self.params.sustain.value() as f64;
-        let release = self.params.release.value() as f64;
+        let attack = f64::from(self.params.attack.value());
+        let decay = f64::from(self.params.decay.value());
+        let sustain = f64::from(self.params.sustain.value());
+        let release = f64::from(self.params.release.value());
 
         self.voices.push(Voice::new(
             note,
@@ -169,9 +169,9 @@ impl PluginLogic for Synth {
             }
 
             let waveform_idx = self.params.waveform.index();
-            let cutoff = self.params.cutoff.smoothed_next() as f64;
-            let resonance = self.params.resonance.smoothed_next() as f64;
-            let volume = db_to_linear(self.params.volume.smoothed_next() as f64);
+            let cutoff = f64::from(self.params.cutoff.smoothed_next());
+            let resonance = f64::from(self.params.resonance.smoothed_next());
+            let volume = db_to_linear(f64::from(self.params.volume.smoothed_next()));
 
             let mut sample = 0.0f64;
             for voice in &mut self.voices {

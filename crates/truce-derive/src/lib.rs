@@ -151,10 +151,7 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
     };
     let au_manufacturer = &config.vendor.au_manufacturer;
 
-    let aax_category = match &plugin.aax_category {
-        Some(cat) => quote! { Some(#cat) },
-        None => quote! { None },
-    };
+    let aax_category = if let Some(cat) = &plugin.aax_category { quote! { Some(#cat) } } else { quote! { None } };
 
     let expanded = quote! {
         ::truce::core::PluginInfo {
@@ -190,7 +187,7 @@ struct ParamField {
     ident: syn::Ident,
     kind: ParamKind,
     attrs: ParamAttrs,
-    /// For EnumParam<T>, the inner type T.
+    /// For `EnumParam`<T>, the inner type T.
     enum_type: Option<syn::Type>,
 }
 
@@ -316,7 +313,7 @@ fn parse_param_attrs(field: &syn::Field) -> ParamAttrs {
             let key = meta
                 .path
                 .get_ident()
-                .map(|i| i.to_string())
+                .map(std::string::ToString::to_string)
                 .unwrap_or_default();
             // Two-step pattern for the string-typed keys: parse the
             // literal first, then either assign or stash a
@@ -359,7 +356,7 @@ fn parse_param_attrs(field: &syn::Field) -> ParamAttrs {
                 }
                 "name" => take_str_into(&mut attrs.name, &mut attrs.errors, "name")?,
                 "short_name" => {
-                    take_str_into(&mut attrs.short_name, &mut attrs.errors, "short_name")?
+                    take_str_into(&mut attrs.short_name, &mut attrs.errors, "short_name")?;
                 }
                 "group" => take_str_into(&mut attrs.group, &mut attrs.errors, "group")?,
                 "range" => take_str_into(&mut attrs.range, &mut attrs.errors, "range")?,
@@ -508,7 +505,7 @@ fn parse_range_tokens(range: &str) -> proc_macro2::TokenStream {
         .strip_prefix("linear(")
         .and_then(|s| s.strip_suffix(')'))
     {
-        let parts: Vec<&str> = inner.split(',').map(|s| s.trim()).collect();
+        let parts: Vec<&str> = inner.split(',').map(str::trim).collect();
         if parts.len() != 2 {
             return bad(format!(
                 "linear range needs two arguments `linear(min, max)`, got `linear({inner})`"
@@ -528,7 +525,7 @@ fn parse_range_tokens(range: &str) -> proc_macro2::TokenStream {
         return quote! { ::truce::params::ParamRange::Linear { min: #min, max: #max } };
     }
     if let Some(inner) = range.strip_prefix("log(").and_then(|s| s.strip_suffix(')')) {
-        let parts: Vec<&str> = inner.split(',').map(|s| s.trim()).collect();
+        let parts: Vec<&str> = inner.split(',').map(str::trim).collect();
         if parts.len() != 2 {
             return bad(format!(
                 "log range needs two arguments `log(min, max)`, got `log({inner})`"
@@ -556,7 +553,7 @@ fn parse_range_tokens(range: &str) -> proc_macro2::TokenStream {
         .strip_prefix("discrete(")
         .and_then(|s| s.strip_suffix(')'))
     {
-        let parts: Vec<&str> = inner.split(',').map(|s| s.trim()).collect();
+        let parts: Vec<&str> = inner.split(',').map(str::trim).collect();
         if parts.len() != 2 {
             return bad(format!(
                 "discrete range needs two arguments `discrete(min, max)`, got `discrete({inner})`"
@@ -603,7 +600,7 @@ fn parse_range_tokens(range: &str) -> proc_macro2::TokenStream {
     ))
 }
 
-/// Parse a unit string into ParamUnit tokens.
+/// Parse a unit string into `ParamUnit` tokens.
 fn parse_unit_tokens(unit: &str) -> proc_macro2::TokenStream {
     match unit {
         "dB" | "Db" | "db" => quote! { ::truce::params::ParamUnit::Db },
@@ -627,7 +624,7 @@ fn parse_unit_tokens(unit: &str) -> proc_macro2::TokenStream {
     }
 }
 
-/// Parse a flags string into ParamFlags tokens.
+/// Parse a flags string into `ParamFlags` tokens.
 fn parse_flags_tokens(flags: &str) -> proc_macro2::TokenStream {
     let mut parts = Vec::new();
     for flag in flags.split('|').map(|s| s.trim().to_lowercase()) {
@@ -646,7 +643,7 @@ fn parse_flags_tokens(flags: &str) -> proc_macro2::TokenStream {
     }
 }
 
-/// Parse a smoothing string into SmoothingStyle tokens. Same
+/// Parse a smoothing string into `SmoothingStyle` tokens. Same
 /// loud-on-malformed contract as `parse_unit_tokens` /
 /// `parse_range_tokens`: every typo emits a `compile_error!` instead
 /// of silently swallowing the bad value.
@@ -707,7 +704,7 @@ fn gen_param_info_literal(f: &ParamField) -> Option<proc_macro2::TokenStream> {
         let invalid = match f.kind {
             ParamKind::Bool => d != 0.0 && d != 1.0,
             ParamKind::Int => !d.is_finite() || (d as i64 as f64) != d,
-            ParamKind::Enum => !d.is_finite() || d < 0.0 || (d as u32 as f64) != d,
+            ParamKind::Enum => !d.is_finite() || d < 0.0 || f64::from(d as u32) != d,
             ParamKind::Float => !d.is_finite(),
         };
         if invalid {
@@ -730,15 +727,9 @@ fn gen_param_info_literal(f: &ParamField) -> Option<proc_macro2::TokenStream> {
         },
     };
 
-    let unit = match &a.unit {
-        Some(u) => parse_unit_tokens(u),
-        None => quote! { ::truce::params::ParamUnit::None },
-    };
+    let unit = if let Some(u) = &a.unit { parse_unit_tokens(u) } else { quote! { ::truce::params::ParamUnit::None } };
 
-    let flags = match &a.flags {
-        Some(fl) => parse_flags_tokens(fl),
-        None => quote! { ::truce::params::ParamFlags::AUTOMATABLE },
-    };
+    let flags = if let Some(fl) = &a.flags { parse_flags_tokens(fl) } else { quote! { ::truce::params::ParamFlags::AUTOMATABLE } };
 
     Some(quote! {
         ::truce::params::ParamInfo {
@@ -776,22 +767,18 @@ fn gen_field_constructor(f: &ParamField) -> proc_macro2::TokenStream {
     if let Some(d) = a.default {
         let err = match f.kind {
             ParamKind::Bool if d != 0.0 && d != 1.0 => Some(format!(
-                "BoolParam default {} must be 0 or 1; got {}",
-                name, d
+                "BoolParam default {name} must be 0 or 1; got {d}"
             )),
             ParamKind::Int if !d.is_finite() || (d as i64 as f64) != d => Some(format!(
-                "IntParam '{}' default must be an integer literal; got {}",
-                name, d
+                "IntParam '{name}' default must be an integer literal; got {d}"
             )),
-            ParamKind::Enum if !d.is_finite() || d < 0.0 || (d as u32 as f64) != d => {
+            ParamKind::Enum if !d.is_finite() || d < 0.0 || f64::from(d as u32) != d => {
                 Some(format!(
-                    "EnumParam '{}' default must be a non-negative integer (variant index); got {}",
-                    name, d
+                    "EnumParam '{name}' default must be a non-negative integer (variant index); got {d}"
                 ))
             }
             ParamKind::Float if !d.is_finite() => Some(format!(
-                "FloatParam '{}' default must be finite; got {}",
-                name, d
+                "FloatParam '{name}' default must be finite; got {d}"
             )),
             _ => None,
         };
@@ -800,25 +787,19 @@ fn gen_field_constructor(f: &ParamField) -> proc_macro2::TokenStream {
         }
     }
 
-    let info = match gen_param_info_literal(f) {
-        Some(tokens) => tokens,
-        None => {
-            // Validation block above already returned a `compile_error!`
-            // for every shape that `gen_param_info_literal` rejects.
-            // Surface a fallback diagnostic so a future divergence
-            // between the two checks fails loudly instead of silently
-            // emitting bad code.
-            let msg = format!("invalid `#[param]` attributes on field `{}`", name);
-            return quote! { compile_error!(#msg); };
-        }
+    let info = if let Some(tokens) = gen_param_info_literal(f) { tokens } else {
+        // Validation block above already returned a `compile_error!`
+        // for every shape that `gen_param_info_literal` rejects.
+        // Surface a fallback diagnostic so a future divergence
+        // between the two checks fails loudly instead of silently
+        // emitting bad code.
+        let msg = format!("invalid `#[param]` attributes on field `{name}`");
+        return quote! { compile_error!(#msg); };
     };
 
     match f.kind {
         ParamKind::Float => {
-            let smooth = match &a.smooth {
-                Some(s) => parse_smooth_tokens(s),
-                None => quote! { ::truce::params::SmoothingStyle::None },
-            };
+            let smooth = if let Some(s) = &a.smooth { parse_smooth_tokens(s) } else { quote! { ::truce::params::SmoothingStyle::None } };
             quote! { ::truce::params::FloatParam::new(#info, #smooth) }
         }
         ParamKind::Bool => quote! { ::truce::params::BoolParam::new(#info) },
@@ -1302,7 +1283,7 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
 
     // --- Generate ParamId enum (includes both params and meters) ---
     let param_id_enum = if !param_fields.is_empty() || !meter_fields.is_empty() {
-        let enum_name = syn::Ident::new(&format!("{}ParamId", struct_name), struct_name.span());
+        let enum_name = syn::Ident::new(&format!("{struct_name}ParamId"), struct_name.span());
 
         let param_variants: Vec<_> = param_fields
             .iter()
@@ -1477,7 +1458,7 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
     expanded.into()
 }
 
-/// Convert a snake_case field name to a PascalCase enum variant ident.
+/// Convert a `snake_case` field name to a `PascalCase` enum variant ident.
 ///
 /// Handles the awkward edge cases the original `split('_').map(...)` form
 /// would silently produce nonsense for:
@@ -1618,7 +1599,7 @@ pub fn derive_param_enum(input: TokenStream) -> TokenStream {
         })
         .collect();
 
-    let name_strs: Vec<_> = variant_names.iter().map(|n| n.as_str()).collect();
+    let name_strs: Vec<_> = variant_names.iter().map(std::string::String::as_str).collect();
 
     let expanded = quote! {
         impl Clone for #enum_name {

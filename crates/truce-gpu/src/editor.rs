@@ -46,6 +46,7 @@ pub struct GpuEditor<P: Params> {
 unsafe impl<P: Params> Send for GpuEditor<P> {}
 
 impl<P: Params + 'static> GpuEditor<P> {
+    #[must_use] 
     pub fn new(inner: BuiltinEditor<P>) -> Self {
         let size = inner.size();
         Self {
@@ -182,7 +183,7 @@ impl<P: Params + 'static> Editor for GpuEditor<P> {
     fn size(&self) -> (u32, u32) {
         // Read live size from the inner editor so hot-reload changes
         // are reflected when the host queries our size.
-        self.inner.lock().map(|g| g.size()).unwrap_or(self.size)
+        self.inner.lock().map_or(self.size, |g| g.size())
     }
 
     fn open(&mut self, parent: RawWindowHandle, context: PluginContext) {
@@ -214,7 +215,7 @@ impl<P: Params + 'static> Editor for GpuEditor<P> {
 
         let options = WindowOpenOptions {
             title: String::from("truce-gpu"),
-            size: baseview::Size::new(lw as f64, lh as f64),
+            size: baseview::Size::new(f64::from(lw), f64::from(lh)),
             scale: WindowScalePolicy::SystemScaleFactor,
         };
 

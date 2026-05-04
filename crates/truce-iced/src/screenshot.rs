@@ -178,7 +178,7 @@ where
 
     let readback_buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("truce-iced-screenshot-buf"),
-        size: (padded_bytes_per_row * h) as u64,
+        size: u64::from(padded_bytes_per_row * h),
         usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });

@@ -17,7 +17,7 @@
 //! We implement this by keeping a shadow `Params` instance that mirrors the
 //! plugin's state from the UI side. The existing `Editor` trait expects a
 //! `PluginContext` of closures over a live plugin; we satisfy it by giving
-//! those closures access to the shadow params + write_function.
+//! those closures access to the shadow params + `write_function`.
 //!
 //! # Scope
 //!
@@ -27,7 +27,7 @@
 //! simply collapse the gestures to no-ops. `get_state`/`set_state` are
 //! still no-ops. Widget out-parameter currently returns the host-supplied
 //! PARENT (pragmatic for Ardour/Jalv which accept it; stricter X11UI /
-//! CocoaUI hosts may want the actual child window / view — follow-up).
+//! `CocoaUI` hosts may want the actual child window / view — follow-up).
 
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::marker::PhantomData;
@@ -122,9 +122,9 @@ pub struct Lv2UiTouch {
 /// `LV2UI_Handle`.
 pub struct Lv2UiInstance<P: PluginExport> {
     /// Shadow plugin kept alive so the editor's internal refs stay valid.
-    /// Not dropped until cleanup_ui().
+    /// Not dropped until `cleanup_ui()`.
     _plugin: Box<P>,
-    /// Arc into `_plugin`'s params — used by PluginContext closures.
+    /// Arc into `_plugin`'s params — used by `PluginContext` closures.
     params: Arc<P::Params>,
     /// Param metadata (id → port index, range for denormalization).
     param_slots: Vec<ParamSlot>,
@@ -136,7 +136,7 @@ pub struct Lv2UiInstance<P: PluginExport> {
     /// `write_function` + controller are captured by `PluginContext`'s
     /// closures and don't need to live on the struct itself.
     editor: Option<Box<dyn Editor>>,
-    /// Set once open() has run so cleanup can be idempotent.
+    /// Set once `open()` has run so cleanup can be idempotent.
     opened: AtomicBool,
     /// Host-interned URIDs. Needed to recognize the notify-out atom
     /// event format and decode its `time:Position` object.
@@ -351,7 +351,7 @@ pub unsafe fn cleanup_ui<P: PluginExport>(handle: Lv2UiHandle) {
         if handle.is_null() {
             return;
         }
-        let mut ui = Box::from_raw(handle as *mut Lv2UiInstance<P>);
+        let mut ui = Box::from_raw(handle.cast::<Lv2UiInstance<P>>());
         if ui.opened.swap(false, Ordering::AcqRel)
             && let Some(mut ed) = ui.editor.take()
         {
@@ -391,12 +391,12 @@ pub unsafe fn port_event<P: PluginExport>(
             if buffer_size < core::mem::size_of::<f32>() as u32 {
                 return;
             }
-            let value = *(buffer as *const f32);
+            let value = *buffer.cast::<f32>();
             if !value.is_finite() {
                 return;
             }
             if let Some(slot) = ui.param_slots.iter().find(|s| s.port_index == port_index) {
-                ui.params.set_plain(slot.id, value as f64);
+                ui.params.set_plain(slot.id, f64::from(value));
                 return;
             }
             // Meter output: shadow the latest reading so the editor's
@@ -436,11 +436,11 @@ unsafe fn decode_notify_atom<P: PluginExport>(
         if (buffer_size as usize) < header_size {
             return;
         }
-        let atom_hdr = *(buffer as *const Atom);
+        let atom_hdr = *buffer.cast::<Atom>();
         if atom_hdr.type_ != ui.urid_map.atom_object && atom_hdr.type_ != ui.urid_map.atom_blank {
             return;
         }
-        let body_ptr = (buffer as *const u8).add(header_size);
+        let body_ptr = buffer.cast::<u8>().add(header_size);
         let body_size = atom_hdr.size as usize;
         if header_size + body_size > buffer_size as usize {
             return;
@@ -469,7 +469,7 @@ unsafe fn decode_notify_atom<P: PluginExport>(
         if scratch.len() < needed {
             scratch.resize(needed, 0);
         }
-        let one = scratch.as_mut_ptr() as *mut OneEvent;
+        let one = scratch.as_mut_ptr().cast::<OneEvent>();
         (*one).seq_header.atom.type_ = ui.urid_map.atom_sequence;
         (*one).seq_header.atom.size = (core::mem::size_of::<AtomSequenceBody>()
             + core::mem::size_of::<i64>()
@@ -483,7 +483,7 @@ unsafe fn decode_notify_atom<P: PluginExport>(
         core::ptr::copy_nonoverlapping(body_ptr, ev_body_dest, body_size);
 
         let mut info = TransportInfo::default();
-        let reader = AtomSequenceReader::new(scratch.as_ptr() as *const AtomSequence, &ui.urid_map);
+        let reader = AtomSequenceReader::new(scratch.as_ptr().cast::<AtomSequence>(), &ui.urid_map);
         if reader.apply_time_position(&mut info) {
             ui.transport_slot.write(&info);
         }
@@ -689,23 +689,23 @@ unsafe fn resize_ns_view(view: *mut c_void, width: u32, height: u32) {
         height: f64,
     }
     let size = NSSize {
-        width: width as f64,
-        height: height as f64,
+        width: f64::from(width),
+        height: f64::from(height),
     };
-    let _: () = msg_send![view as *mut objc::runtime::Object, setFrameSize: size];
+    let _: () = msg_send![view.cast::<objc::runtime::Object>(), setFrameSize: size];
     // Tell AppKit the view's intrinsic content size has changed so any
     // surrounding layout is invalidated.
     let _: () = msg_send![
-        view as *mut objc::runtime::Object,
+        view.cast::<objc::runtime::Object>(),
         invalidateIntrinsicContentSize
     ];
     let _ = class!(NSView); // touch the class symbol so the linker keeps it
 }
 
-/// Patch baseview's child NSView so macOS resets the cursor to arrow
+/// Patch baseview's child `NSView` so macOS resets the cursor to arrow
 /// whenever the mouse enters our editor area.
 ///
-/// baseview creates an NSView with a tracking area that has the
+/// baseview creates an `NSView` with a tracking area that has the
 /// `NSTrackingCursorUpdate` option set, but it does not implement
 /// `-[NSView cursorUpdate:]`. Without that handler the system falls
 /// back to whatever cursor the containing window last set — in Reaper
@@ -732,7 +732,7 @@ unsafe fn install_child_cursor_update(parent: *mut c_void) {
         }
     }
 
-    let subviews: *mut Object = msg_send![parent as *mut Object, subviews];
+    let subviews: *mut Object = msg_send![parent.cast::<Object>(), subviews];
     if subviews.is_null() {
         return;
     }
@@ -818,7 +818,7 @@ fn build_editor_context<P: PluginExport>(
     // would lose the function-pointer ABI, so we cast through usize for
     // `handle` only.
     let touch_fn = touch.and_then(|t| t.touch);
-    let touch_handle = touch.map(|t| t.handle as usize).unwrap_or(0);
+    let touch_handle = touch.map_or(0, |t| t.handle as usize);
 
     PluginContext::from_closures(
         ClosureBridge {
@@ -849,11 +849,11 @@ fn build_editor_context<P: PluginExport>(
                 unsafe {
                     let value = plain;
                     write_set(
-                        controller_ptr.as_ptr() as Lv2UiController,
+                        controller_ptr.as_ptr().cast_mut(),
                         *port_index,
                         core::mem::size_of::<f32>() as u32,
                         0, // LV2_UI_FLOAT_PROTOCOL = 0 (control ports)
-                        &value as *const f32 as *const c_void,
+                        (&raw const value).cast::<c_void>(),
                     );
                 }
             }),
@@ -867,8 +867,7 @@ fn build_editor_context<P: PluginExport>(
                 meter_slots_for_get
                     .iter()
                     .find(|m| m.id == id)
-                    .map(|m| f32::from_bits(m.value.load(Ordering::Relaxed)))
-                    .unwrap_or(0.0)
+                    .map_or(0.0, |m| f32::from_bits(m.value.load(Ordering::Relaxed)))
             }),
             get_state: Box::new(Vec::new),
             set_state: Box::new(|_bytes: Vec<u8>| {}),
@@ -882,6 +881,7 @@ fn build_editor_context<P: PluginExport>(
 }
 
 /// Build a static UI descriptor for this plugin type. Monomorphized per P.
+#[must_use] 
 pub fn ui_descriptor<P: PluginExport>(uri: &'static CStr) -> Lv2UiDescriptor {
     Lv2UiDescriptor {
         uri: uri.as_ptr(),

@@ -3,10 +3,11 @@ use crate::events::EventBody;
 /// Upconvert MIDI 1.0 bytes to our event representation.
 ///
 /// Handles channel-voice messages (status `0x80..=0xEF`). System
-/// messages — SysEx (`0xF0`), MIDI Time Code, Song Position, system
+/// messages — `SysEx` (`0xF0`), MIDI Time Code, Song Position, system
 /// realtime — return `None`; the framework's `EventBody` enum doesn't
-/// model them yet, so callers that care about SysEx must inspect the
+/// model them yet, so callers that care about `SysEx` must inspect the
 /// raw bytes themselves rather than relying on this conversion.
+#[must_use] 
 pub fn parse_midi1(bytes: &[u8]) -> Option<EventBody> {
     if bytes.is_empty() {
         return None;
@@ -19,7 +20,7 @@ pub fn parse_midi1(bytes: &[u8]) -> Option<EventBody> {
         0x90 if bytes.len() >= 3 && bytes[2] > 0 => Some(EventBody::NoteOn {
             channel,
             note: bytes[1],
-            velocity: bytes[2] as f32 / 127.0,
+            velocity: f32::from(bytes[2]) / 127.0,
         }),
         0x90 if bytes.len() >= 3 => Some(EventBody::NoteOff {
             channel,
@@ -29,25 +30,25 @@ pub fn parse_midi1(bytes: &[u8]) -> Option<EventBody> {
         0x80 if bytes.len() >= 3 => Some(EventBody::NoteOff {
             channel,
             note: bytes[1],
-            velocity: bytes[2] as f32 / 127.0,
+            velocity: f32::from(bytes[2]) / 127.0,
         }),
         0xA0 if bytes.len() >= 3 => Some(EventBody::Aftertouch {
             channel,
             note: bytes[1],
-            pressure: bytes[2] as f32 / 127.0,
+            pressure: f32::from(bytes[2]) / 127.0,
         }),
         0xB0 if bytes.len() >= 3 => Some(EventBody::ControlChange {
             channel,
             cc: bytes[1],
-            value: bytes[2] as f32 / 127.0,
+            value: f32::from(bytes[2]) / 127.0,
         }),
         0xD0 if bytes.len() >= 2 => Some(EventBody::ChannelPressure {
             channel,
-            pressure: bytes[1] as f32 / 127.0,
+            pressure: f32::from(bytes[1]) / 127.0,
         }),
         0xE0 if bytes.len() >= 3 => {
-            let raw = ((bytes[2] as u16) << 7) | (bytes[1] as u16);
-            let normalized = (raw as f32 - 8192.0) / 8192.0;
+            let raw = (u16::from(bytes[2]) << 7) | u16::from(bytes[1]);
+            let normalized = (f32::from(raw) - 8192.0) / 8192.0;
             Some(EventBody::PitchBend {
                 channel,
                 value: normalized,
@@ -68,6 +69,7 @@ pub fn parse_midi1(bytes: &[u8]) -> Option<EventBody> {
 /// length — emitting all 3 bytes for a 2-byte status produces a
 /// spurious trailing 0 that downstream parsers interpret as a Note Off
 /// (running-status confusion).
+#[must_use] 
 pub fn event_to_midi1(event: &EventBody) -> Option<(usize, [u8; 3])> {
     match event {
         EventBody::NoteOn {

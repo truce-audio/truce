@@ -130,7 +130,8 @@ impl KnobDef {
         }
     }
 
-    /// Level meter with one or more channels (display-only, reads from Plugin::get_meter()).
+    /// Level meter with one or more channels (display-only, reads from `Plugin::get_meter()`).
+    #[must_use] 
     pub fn meter(ids: &[u32], label: &'static str) -> Self {
         Self {
             param_id: ids.first().copied().unwrap_or(0),
@@ -155,6 +156,7 @@ impl KnobDef {
     }
 
     /// Set the column span for this widget (default 1).
+    #[must_use] 
     pub fn with_span(mut self, span: u32) -> Self {
         self.span = span;
         self
@@ -181,6 +183,7 @@ pub struct PluginLayout {
 
 impl PluginLayout {
     /// Calculate default window size based on the layout.
+    #[must_use] 
     pub fn compute_size(rows: &[KnobRow], knob_size: f32) -> (u32, u32) {
         let header_h = 21.0;
         let row_h = knob_size + 19.0;
@@ -210,7 +213,8 @@ impl PluginLayout {
         (w as u32, h as u32)
     }
 
-    /// Calculate default window size and return a PluginLayout.
+    /// Calculate default window size and return a `PluginLayout`.
+    #[must_use] 
     pub fn build(
         title: &'static str,
         version: &'static str,
@@ -338,6 +342,7 @@ impl GridWidget {
         }
     }
 
+    #[must_use] 
     pub fn meter(ids: &[u32], label: &'static str) -> Self {
         Self {
             col: AUTO,
@@ -367,18 +372,21 @@ impl GridWidget {
     }
 
     /// Set the column span.
+    #[must_use] 
     pub fn cols(mut self, n: u32) -> Self {
         self.col_span = n;
         self
     }
 
     /// Set the row span.
+    #[must_use] 
     pub fn rows(mut self, n: u32) -> Self {
         self.row_span = n;
         self
     }
 
     /// Set explicit grid position (overrides auto-flow for this widget).
+    #[must_use] 
     pub fn at(mut self, col: u32, row: u32) -> Self {
         self.col = col;
         self.row = row;
@@ -397,6 +405,7 @@ pub struct Section {
 }
 
 /// Create a labeled section of widgets for `GridLayout::build()`.
+#[must_use] 
 pub fn section(label: &'static str, widgets: Vec<GridWidget>) -> Section {
     Section {
         label: Some(label),
@@ -405,6 +414,7 @@ pub fn section(label: &'static str, widgets: Vec<GridWidget>) -> Section {
 }
 
 /// Wrap bare widgets into an unlabeled section (no section header).
+#[must_use] 
 pub fn widgets(widgets: Vec<GridWidget>) -> Section {
     Section {
         label: None,
@@ -476,7 +486,7 @@ pub struct GridLayout {
     pub header: Option<GridHeader>,
     /// Number of columns in the grid.
     pub cols: u32,
-    /// Section labels positioned above specific rows: (row_index, label).
+    /// Section labels positioned above specific rows: (`row_index`, label).
     pub sections: Vec<(u32, &'static str)>,
     /// All widgets placed in the grid.
     pub widgets: Vec<GridWidget>,
@@ -524,6 +534,7 @@ impl GridLayout {
     ///     GridWidget::knob(P::Output, "Output").into(),
     /// ])
     /// ```
+    #[must_use] 
     pub fn build(entries: Vec<Section>) -> Self {
         let mut widgets = Vec::new();
         let mut breaks = Vec::new();
@@ -568,6 +579,7 @@ impl GridLayout {
     /// require — whichever is larger). Use to force wrapping:
     /// `.with_cols(2)` on a 4-widget section produces a 2×2 grid.
     /// Recomputes auto-flow placement and window size.
+    #[must_use] 
     pub fn with_cols(mut self, cols: u32) -> Self {
         self.cols = cols.max(1);
         self.flow_and_size();
@@ -577,6 +589,7 @@ impl GridLayout {
     /// Override the default cell size ([`GRID_DEFAULT_CELL_SIZE`]).
     /// The cell is square — this is both the width and height of
     /// one grid cell in logical points.
+    #[must_use] 
     pub fn with_cell_size(mut self, cell_size: f32) -> Self {
         self.cell_size = cell_size;
         let (w, h) = self.compute_size();
@@ -588,6 +601,7 @@ impl GridLayout {
     /// Like [`Self::with_cols`] but accepts the cell size in the
     /// same call — useful when both are non-default. Equivalent to
     /// `.with_cell_size(s).with_cols(c)`.
+    #[must_use] 
     pub fn with_grid(self, cols: u32, cell_size: f32) -> Self {
         self.with_cell_size(cell_size).with_cols(cols)
     }
@@ -599,6 +613,7 @@ impl GridLayout {
     /// ```ignore
     /// GridLayout::build(sections).with_header("EQ", "v0.1")
     /// ```
+    #[must_use] 
     pub fn with_header(mut self, title: &'static str, version: &'static str) -> Self {
         self.header = Some(GridHeader { title, version });
         let (w, h) = self.compute_size();
@@ -634,6 +649,7 @@ impl GridLayout {
     }
 
     /// Compute the window size from the grid.
+    #[must_use] 
     pub fn compute_size(&self) -> (u32, u32) {
         let max_col = self
             .widgets
@@ -740,6 +756,7 @@ impl GridLayout {
 /// Compute cumulative section-label pixel offsets per row.
 ///
 /// `offsets[r]` is the total vertical shift (from section labels) for row `r`.
+#[must_use] 
 pub fn compute_section_offsets(layout: &GridLayout) -> Vec<f32> {
     let max_row = layout
         .widgets
@@ -829,12 +846,14 @@ pub enum Layout {
 }
 
 impl Layout {
+    #[must_use] 
     pub fn width(&self) -> u32 {
         match self {
             Layout::Rows(l) => l.width,
             Layout::Grid(g) => g.width,
         }
     }
+    #[must_use] 
     pub fn height(&self) -> u32 {
         match self {
             Layout::Rows(l) => l.height,
@@ -844,6 +863,7 @@ impl Layout {
     /// Title shown in the editor's header band, if any. `Rows`
     /// layouts always have one (legacy `PluginLayout`); `Grid`
     /// layouts only when the builder called `.with_header(...)`.
+    #[must_use] 
     pub fn title(&self) -> Option<&str> {
         match self {
             Layout::Rows(l) => Some(l.title),
@@ -852,6 +872,7 @@ impl Layout {
     }
     /// Version shown in the editor's header band, if any. Pairs
     /// with [`Self::title`] — both come from the same header.
+    #[must_use] 
     pub fn version(&self) -> Option<&str> {
         match self {
             Layout::Rows(l) => Some(l.version),

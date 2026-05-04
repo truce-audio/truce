@@ -1,6 +1,6 @@
 //! Headless Slint screenshot rendering.
 //!
-//! Renders a Slint UI to an RGBA pixel buffer using the SoftwareRenderer.
+//! Renders a Slint UI to an RGBA pixel buffer using the `SoftwareRenderer`.
 //! No GPU or window needed — runs entirely in-process. Driven by
 //! `SlintEditor::screenshot()` (`Editor` trait impl in `editor.rs`),
 //! which is itself called from `truce_test::assert_screenshot::<Plugin>(...)`.
@@ -33,8 +33,8 @@ pub(crate) fn render_with_state<P: Params + ?Sized>(
     platform::ensure_platform();
 
     let (width, height) = size;
-    let phys_w = truce_gui::to_physical_px(width, scale as f64);
-    let phys_h = truce_gui::to_physical_px(height, scale as f64);
+    let phys_w = truce_gui::to_physical_px(width, f64::from(scale));
+    let phys_h = truce_gui::to_physical_px(height, f64::from(scale));
 
     let window = platform::create_slint_window();
     window.set_size(slint::WindowSize::Physical(PhysicalSize::new(
@@ -73,11 +73,11 @@ pub(crate) fn render_with_state<P: Params + ?Sized>(
             // 1-bit darker than `truce-gpu::WgpuBackend::read_pixels`,
             // which rounds — producing reference-PNG drift between
             // the two render paths.
-            let a = px.alpha as u16;
+            let a = u16::from(px.alpha);
             let half = a / 2;
-            rgba.push(((px.red as u16 * 255 + half) / a).min(255) as u8);
-            rgba.push(((px.green as u16 * 255 + half) / a).min(255) as u8);
-            rgba.push(((px.blue as u16 * 255 + half) / a).min(255) as u8);
+            rgba.push(((u16::from(px.red) * 255 + half) / a).min(255) as u8);
+            rgba.push(((u16::from(px.green) * 255 + half) / a).min(255) as u8);
+            rgba.push(((u16::from(px.blue) * 255 + half) / a).min(255) as u8);
             rgba.push(px.alpha);
         }
     }

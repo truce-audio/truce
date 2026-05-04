@@ -112,13 +112,13 @@ impl Arpeggio {
         }
 
         let mut base_notes = self.held_notes.clone();
-        base_notes.sort();
+        base_notes.sort_unstable();
 
         let octaves = self.params.octaves.value() as usize;
         let mut seq = Vec::new();
         for oct in 0..octaves {
             for &note in &base_notes {
-                let n = note as u16 + (oct as u16 * 12);
+                let n = u16::from(note) + (oct as u16 * 12);
                 if n <= 127 {
                     seq.push(n as u8);
                 }
@@ -206,7 +206,7 @@ impl PluginLogic for Arpeggio {
         }
 
         let beats_per_step = self.params.rate.value().beats_per_step();
-        let gate_frac = self.params.gate.value() as f64;
+        let gate_frac = f64::from(self.params.gate.value());
 
         // Phase-lock to the host beat grid whenever the host reports
         // transport with a real tempo. Otherwise fall back to a

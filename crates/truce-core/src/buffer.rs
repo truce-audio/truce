@@ -76,18 +76,22 @@ impl<'a> AudioBuffer<'a> {
         }
     }
 
+    #[must_use] 
     pub fn num_samples(&self) -> usize {
         self.num_samples
     }
 
+    #[must_use] 
     pub fn num_input_channels(&self) -> usize {
         self.inputs.len()
     }
 
+    #[must_use] 
     pub fn num_output_channels(&self) -> usize {
         self.outputs.len()
     }
 
+    #[must_use] 
     pub fn input(&self, channel: usize) -> &[f32] {
         let end = self.offset + self.num_samples;
         &self.inputs[channel][self.offset..end]
@@ -99,6 +103,7 @@ impl<'a> AudioBuffer<'a> {
     }
 
     /// Number of channels (min of input and output).
+    #[must_use] 
     pub fn channels(&self) -> usize {
         self.inputs.len().min(self.outputs.len())
     }
@@ -125,6 +130,7 @@ impl<'a> AudioBuffer<'a> {
     /// every finite value, which used to make NaN samples disappear
     /// from the peak — that's why this walks manually instead of
     /// folding `.max()`.)
+    #[must_use] 
     pub fn output_peak(&self, ch: usize) -> f32 {
         let end = self.offset + self.num_samples;
         let mut peak = 0.0f32;

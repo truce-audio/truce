@@ -43,10 +43,10 @@ impl PlaybackSource {
         let raw: Vec<f32> = match (spec.sample_format, spec.bits_per_sample) {
             (hound::SampleFormat::Int, 16) => reader
                 .samples::<i16>()
-                .map(|s| s.map(|v| v as f32 / (i16::MAX as f32 + 1.0)))
+                .map(|s| s.map(|v| f32::from(v) / (f32::from(i16::MAX) + 1.0)))
                 .collect::<Result<_, _>>()
                 .map_err(|e| format!("WAV decode error: {e}"))?,
-            (hound::SampleFormat::Int, 24) | (hound::SampleFormat::Int, 32) => {
+            (hound::SampleFormat::Int, 24 | 32) => {
                 let bits = spec.bits_per_sample;
                 // Hound returns 24-bit samples sign-extended in i32.
                 let scale = (1u64 << (bits - 1)) as f32;
@@ -69,7 +69,7 @@ impl PlaybackSource {
         };
 
         let src_channels = spec.channels as usize;
-        let src_sr = spec.sample_rate as f64;
+        let src_sr = f64::from(spec.sample_rate);
         if src_channels == 0 {
             return Err("WAV has zero channels".into());
         }
@@ -188,7 +188,7 @@ impl PlaybackSource {
 /// same channel + flags.
 ///
 /// Shutdown isn't driven by sender drop because cpal on macOS may
-/// keep the closure (and therefore the SyncSender clone) alive
+/// keep the closure (and therefore the `SyncSender` clone) alive
 /// for some time after the cpal Stream is dropped — a
 /// `CapturePusher` left holding a sender would block the writer
 /// thread's `recv` indefinitely. Instead, an `Arc<AtomicBool>`
@@ -297,6 +297,7 @@ impl CaptureSink {
     /// Get a cheap-clone handle suitable for the audio
     /// callback. Multiple pushers can coexist; the writer thread
     /// shuts down via the shared flag, not channel close.
+    #[must_use] 
     pub fn pusher(&self) -> CapturePusher {
         CapturePusher {
             chunk_tx: self.chunk_tx.clone(),

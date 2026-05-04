@@ -67,7 +67,7 @@ pub(crate) enum PkgScope {
 impl PkgScope {
     /// `cargo truce package` default when no flag and no
     /// `[packaging] preferred_scope` is set: ask the end user.
-    /// Matches indie-installer convention (u-he, Valhalla, FabFilter).
+    /// Matches indie-installer convention (u-he, Valhalla, `FabFilter`).
     pub(crate) fn os_default() -> Self {
         Self::Ask
     }

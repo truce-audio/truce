@@ -8,7 +8,7 @@
 //!   - `0..num_in` — audio input (one port per channel)
 //!   - `num_in..num_in+num_out` — audio output (one port per channel)
 //!   - next N — control input (one port per parameter, float)
-//!   - `atom_in_port` — single AtomPort for MIDI input (if plugin accepts MIDI)
+//!   - `atom_in_port` — single `AtomPort` for MIDI input (if plugin accepts MIDI)
 //!
 //! MIDI, State, and UI support live in sibling modules.
 
@@ -63,24 +63,30 @@ pub struct PortLayout {
 }
 
 impl PortLayout {
+    #[must_use] 
     pub fn audio_in_start(&self) -> u32 {
         0
     }
+    #[must_use] 
     pub fn audio_out_start(&self) -> u32 {
         self.num_audio_in
     }
+    #[must_use] 
     pub fn control_start(&self) -> u32 {
         self.num_audio_in + self.num_audio_out
     }
+    #[must_use] 
     pub fn meter_start(&self) -> u32 {
         self.control_start() + self.num_params
     }
     /// Index of the DSP input atom port. Always present: carries
     /// `time:Position` (transport) for every plugin type and
     /// additionally `midi:MidiEvent` for instruments / note effects.
+    #[must_use] 
     pub fn atom_in_port(&self) -> u32 {
         self.meter_start() + self.num_meters
     }
+    #[must_use] 
     pub fn midi_out_port(&self) -> Option<u32> {
         if self.has_midi_out {
             Some(self.atom_in_port() + 1)
@@ -91,9 +97,11 @@ impl PortLayout {
     /// Index of the DSP→UI notification atom port. Always present: the
     /// DSP writes host transport (and any future plugin-defined notify
     /// messages) here, and the UI listens via `ui:portNotification`.
+    #[must_use] 
     pub fn notify_out_port(&self) -> u32 {
-        self.atom_in_port() + 1 + if self.has_midi_out { 1 } else { 0 }
+        self.atom_in_port() + 1 + u32::from(self.has_midi_out)
     }
+    #[must_use] 
     pub fn total(&self) -> u32 {
         self.notify_out_port() + 1
     }
@@ -127,7 +135,7 @@ pub struct Lv2Instance<P: PluginExport> {
     notify_out_port: *mut AtomSequence,
 
     /// Last observed value on each control port; used to emit
-    /// ParamChange events only when the host actually moved a knob.
+    /// `ParamChange` events only when the host actually moved a knob.
     /// `None` means "never read" — the first poll after instantiation
     /// always emits, then subsequent polls only emit on diff.
     last_control: Vec<Option<f32>>,
@@ -167,7 +175,7 @@ unsafe impl<P: PluginExport> Send for Lv2Instance<P> {}
 // LV2 lifecycle callbacks
 // ---------------------------------------------------------------------------
 
-/// Build a PortLayout from a plugin instance's declared bus layout + params.
+/// Build a `PortLayout` from a plugin instance's declared bus layout + params.
 ///
 /// Caller passes in `&P` so the layout extraction reuses the existing
 /// instance rather than constructing a fresh one. The TTL writer paths
@@ -200,6 +208,7 @@ pub fn derive_port_layout<P: PluginExport>(plugin: &P) -> PortLayout {
 /// # Safety
 /// Called by the LV2 host during plugin instantiation. `features` must be
 /// a null-terminated array of `LV2_Feature` pointers (or null if none).
+#[must_use] 
 pub unsafe fn instantiate<P: PluginExport>(
     sample_rate: f64,
     _bundle_path: *const c_char,
@@ -280,17 +289,17 @@ pub unsafe fn connect_port<P: PluginExport>(
         if port < audio_out_start {
             inst.audio_inputs[(port - audio_in_start) as usize] = data as *const f32;
         } else if port < control_start {
-            inst.audio_outputs[(port - audio_out_start) as usize] = data as *mut f32;
+            inst.audio_outputs[(port - audio_out_start) as usize] = data.cast::<f32>();
         } else if port < meter_start {
             inst.control_ports[(port - control_start) as usize] = data as *const f32;
         } else if port < meter_start + num_meters {
-            inst.meter_ports[(port - meter_start) as usize] = data as *mut f32;
+            inst.meter_ports[(port - meter_start) as usize] = data.cast::<f32>();
         } else if port == atom_in_port {
             inst.atom_in_port = data as *const AtomSequence;
         } else if Some(port) == midi_out_port {
-            inst.midi_out_port = data as *mut AtomSequence;
+            inst.midi_out_port = data.cast::<AtomSequence>();
         } else if port == notify_out_port {
-            inst.notify_out_port = data as *mut AtomSequence;
+            inst.notify_out_port = data.cast::<AtomSequence>();
         }
     }
 }
@@ -372,7 +381,7 @@ pub unsafe fn run<P: PluginExport>(handle: *mut Lv2Instance<P>, n_samples: u32) 
             if changed {
                 inst.last_control[i] = Some(v);
                 let pid = inst.param_infos[i].id;
-                let plain = v as f64;
+                let plain = f64::from(v);
                 inst.plugin.params().set_plain(pid, plain);
                 inst.event_list.push(Event {
                     sample_offset: 0,
@@ -524,6 +533,7 @@ pub unsafe fn cleanup<P: PluginExport>(handle: *mut Lv2Instance<P>) {
 
 /// # Safety
 /// `uri` must be a valid null-terminated C string or null.
+#[must_use] 
 pub unsafe fn extension_data<P: PluginExport>(uri: *const c_char) -> *const c_void {
     unsafe {
         if uri.is_null() {
@@ -534,7 +544,7 @@ pub unsafe fn extension_data<P: PluginExport>(uri: *const c_char) -> *const c_vo
             Err(_) => return ptr::null(),
         };
         if uri == state::LV2_STATE__INTERFACE_URI {
-            return state::state_interface::<P>() as *const _ as *const c_void;
+            return std::ptr::from_ref(state::state_interface::<P>()).cast::<c_void>();
         }
         ptr::null()
     }
@@ -548,6 +558,7 @@ pub unsafe fn extension_data<P: PluginExport>(uri: *const c_char) -> *const c_vo
 /// URI under the vendor's URL so that LV2 hosts that expect well-formed
 /// web URIs (notably the lilv reference loader used by Ardour/Reaper) are
 /// happy. Falls back to `urn:truce:{id}` if the vendor URL is empty.
+#[must_use] 
 pub fn plugin_uri(info: &PluginInfo) -> String {
     if info.url.is_empty() {
         return format!("urn:truce:{}", info.clap_id);
@@ -749,6 +760,7 @@ pub use atom::AtomSequence;
 pub use ui::{Lv2UiDescriptor, ui_descriptor};
 
 /// Derive the plugin's LV2 UI URI (plugin URI + "#ui").
+#[must_use] 
 pub fn ui_uri(info: &PluginInfo) -> String {
     format!("{}#ui", plugin_uri(info))
 }

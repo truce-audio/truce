@@ -2,7 +2,7 @@
 //!
 //! Exports C ABI functions that the pre-built AAX template binary
 //! loads via dlopen. No AAX SDK dependency — the Rust side only
-//! knows about the C bridge types defined in truce_aax_bridge.h.
+//! knows about the C bridge types defined in `truce_aax_bridge.h`.
 
 // The `pub unsafe fn _*` block below is a single FFI surface whose
 // shared safety contract is documented in the block-header comment
@@ -102,7 +102,7 @@ pub struct TruceAaxMidiEvent {
     pub _pad: u8,
 }
 
-/// Transport snapshot filled by the AAX template's RenderAudio from
+/// Transport snapshot filled by the AAX template's `RenderAudio` from
 /// `AAX_ITransport` and passed to the Rust process callback.
 ///
 /// Layout must match `TruceAaxTransportSnapshot` in `truce_aax_bridge.h`.
@@ -255,7 +255,7 @@ pub fn register_aax<P: PluginExport>() {
             product_id: fourcc(&info.fourcc),
             // plugin_id must differ from product_id — XOR with a salt
             plugin_id: fourcc(&info.fourcc) ^ 0x01010101,
-            is_instrument: is_instrument as i32,
+            is_instrument: i32::from(is_instrument),
             category,
             has_editor: 0,             // filled below
             bypass_param_id: u32::MAX, // filled below
@@ -272,8 +272,7 @@ pub fn register_aax<P: PluginExport>() {
         let bypass_param_id = param_infos
             .iter()
             .find(|pi| pi.flags.contains(ParamFlags::IS_BYPASS))
-            .map(|pi| pi.id)
-            .unwrap_or(u32::MAX);
+            .map_or(u32::MAX, |pi| pi.id);
         let mut params = Vec::with_capacity(param_infos.len());
         for pi in &param_infos {
             let cs = truce_core::wrapper::ParamCStrings::from_info(pi);
@@ -283,7 +282,7 @@ pub fn register_aax<P: PluginExport>() {
                 min: pi.range.min(),
                 max: pi.range.max(),
                 default_value: pi.default_plain,
-                step_count: pi.range.step_count().map_or(0, |n| n.get()),
+                step_count: pi.range.step_count().map_or(0, std::num::NonZero::get),
                 unit: cs.unit.as_ptr(),
             };
             params.push(StaticParamInfo {
@@ -296,7 +295,7 @@ pub fn register_aax<P: PluginExport>() {
         let has_editor = P::has_editor_static();
         let mut desc = descriptor;
         desc.num_params = params.len() as u32;
-        desc.has_editor = has_editor as i32;
+        desc.has_editor = i32::from(has_editor);
         desc.bypass_param_id = bypass_param_id;
 
         StaticInfo {
@@ -307,10 +306,10 @@ pub fn register_aax<P: PluginExport>() {
 }
 
 fn fourcc(bytes: &[u8; 4]) -> i32 {
-    ((bytes[0] as i32) << 24)
-        | ((bytes[1] as i32) << 16)
-        | ((bytes[2] as i32) << 8)
-        | (bytes[3] as i32)
+    (i32::from(bytes[0]) << 24)
+        | (i32::from(bytes[1]) << 16)
+        | (i32::from(bytes[2]) << 8)
+        | i32::from(bytes[3])
 }
 
 // ---------------------------------------------------------------------------
@@ -539,6 +538,7 @@ pub unsafe fn _get_param_info(index: u32, out: *mut TruceAaxParamInfo) {
     }
 }
 
+#[must_use] 
 pub unsafe fn _create<P: PluginExport>() -> *mut std::ffi::c_void {
     let mut plugin = P::create();
     plugin.init();
@@ -558,12 +558,12 @@ pub unsafe fn _create<P: PluginExport>() -> *mut std::ffi::c_void {
         // matches and we always serialize on the first save_state call.
         state_revision: std::sync::atomic::AtomicU64::new(1),
     });
-    Box::into_raw(instance) as *mut std::ffi::c_void
+    Box::into_raw(instance).cast::<std::ffi::c_void>()
 }
 
 pub unsafe fn _destroy<P: PluginExport>(ctx: *mut std::ffi::c_void) {
     if !ctx.is_null() {
-        unsafe { drop(Box::from_raw(ctx as *mut AaxInstance<P>)) };
+        unsafe { drop(Box::from_raw(ctx.cast::<AaxInstance<P>>())) };
     }
 }
 
@@ -572,7 +572,7 @@ pub unsafe fn _reset<P: PluginExport>(
     sample_rate: f64,
     max_frames: u32,
 ) {
-    let inst = unsafe { &mut *(ctx as *mut AaxInstance<P>) };
+    let inst = unsafe { &mut *ctx.cast::<AaxInstance<P>>() };
     inst.sample_rate = sample_rate;
     inst.max_block_size = max_frames as usize;
     inst.plugin.reset(sample_rate, max_frames as usize);
@@ -592,7 +592,7 @@ pub unsafe fn _process<P: PluginExport>(
     num_events: u32,
     transport_ptr: *const TruceAaxTransportSnapshot,
 ) {
-    let inst = unsafe { &mut *(ctx as *mut AaxInstance<P>) };
+    let inst = unsafe { &mut *ctx.cast::<AaxInstance<P>>() };
     let num_frames = num_frames as usize;
 
     // Convert MIDI
@@ -606,7 +606,7 @@ pub unsafe fn _process<P: PluginExport>(
                 0x90 if ev.data2 > 0 => Some(EventBody::NoteOn {
                     channel,
                     note: ev.data1,
-                    velocity: ev.data2 as f32 / 127.0,
+                    velocity: f32::from(ev.data2) / 127.0,
                 }),
                 0x90 => Some(EventBody::NoteOff {
                     channel,
@@ -616,23 +616,23 @@ pub unsafe fn _process<P: PluginExport>(
                 0x80 => Some(EventBody::NoteOff {
                     channel,
                     note: ev.data1,
-                    velocity: ev.data2 as f32 / 127.0,
+                    velocity: f32::from(ev.data2) / 127.0,
                 }),
                 0xA0 => Some(EventBody::Aftertouch {
                     channel,
                     note: ev.data1,
-                    pressure: ev.data2 as f32 / 127.0,
+                    pressure: f32::from(ev.data2) / 127.0,
                 }),
                 0xB0 => Some(EventBody::ControlChange {
                     channel,
                     cc: ev.data1,
-                    value: ev.data2 as f32 / 127.0,
+                    value: f32::from(ev.data2) / 127.0,
                 }),
                 0xE0 => {
-                    let raw = ((ev.data2 as u16) << 7) | (ev.data1 as u16);
+                    let raw = (u16::from(ev.data2) << 7) | u16::from(ev.data1);
                     Some(EventBody::PitchBend {
                         channel,
-                        value: (raw as f32 - 8192.0) / 8192.0,
+                        value: (f32::from(raw) - 8192.0) / 8192.0,
                     })
                 }
                 _ => None,
@@ -664,8 +664,8 @@ pub unsafe fn _process<P: PluginExport>(
                 playing: t.playing != 0,
                 recording: t.recording != 0,
                 tempo: t.tempo,
-                time_sig_num: t.time_sig_num.clamp(0, u8::MAX as i32) as u8,
-                time_sig_den: t.time_sig_den.clamp(0, u8::MAX as i32) as u8,
+                time_sig_num: t.time_sig_num.clamp(0, i32::from(u8::MAX)) as u8,
+                time_sig_den: t.time_sig_den.clamp(0, i32::from(u8::MAX)) as u8,
                 position_samples: t.position_samples as i64,
                 position_seconds: 0.0,
                 position_beats: t.position_beats,
@@ -693,9 +693,9 @@ pub unsafe fn _process<P: PluginExport>(
 
 /// Map a truce `Event` body to a 3-byte AAX-shaped MIDI packet. Returns
 /// `None` for event types Pro Tools doesn't accept from plug-ins
-/// (MIDI 2.0, ParamChange, Transport, etc.). The AAX SDK's
+/// (MIDI 2.0, `ParamChange`, Transport, etc.). The AAX SDK's
 /// `AAX_IMIDINode::PostMIDIPacket` doc enumerates the supported set:
-/// NoteOn / NoteOff, Pitch bend, Polyphonic key pressure, Program
+/// `NoteOn` / `NoteOff`, Pitch bend, Polyphonic key pressure, Program
 /// change, Channel pressure, Bank-select-CC#0. Mirrors
 /// `truce_vst2::try_encode_vst2_midi` so the two formats stay in sync.
 fn try_encode_aax_midi(event: &Event) -> Option<TruceAaxMidiEvent> {
@@ -755,7 +755,7 @@ fn try_encode_aax_midi(event: &Event) -> Option<TruceAaxMidiEvent> {
 /// per-call filter mirrors the iterator path in `_at` so the count and
 /// the indexable view agree.
 pub unsafe fn _output_event_count<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
-    let inst = unsafe { &*(ctx as *mut AaxInstance<P>) };
+    let inst = unsafe { &*ctx.cast::<AaxInstance<P>>() };
     inst.output_events
         .iter()
         .filter(|e| try_encode_aax_midi(e).is_some())
@@ -770,7 +770,7 @@ pub unsafe fn _output_event_at<P: PluginExport>(
     index: u32,
     out: *mut TruceAaxMidiEvent,
 ) {
-    let inst = unsafe { &*(ctx as *mut AaxInstance<P>) };
+    let inst = unsafe { &*ctx.cast::<AaxInstance<P>>() };
     if let Some(packet) = inst
         .output_events
         .iter()
@@ -782,12 +782,12 @@ pub unsafe fn _output_event_at<P: PluginExport>(
 }
 
 pub unsafe fn _get_param<P: PluginExport>(ctx: *mut std::ffi::c_void, id: u32) -> f64 {
-    let inst = unsafe { &*(ctx as *mut AaxInstance<P>) };
+    let inst = unsafe { &*ctx.cast::<AaxInstance<P>>() };
     inst.plugin.params().get_plain(id).unwrap_or(0.0)
 }
 
 pub unsafe fn _set_param<P: PluginExport>(ctx: *mut std::ffi::c_void, id: u32, value: f64) {
-    let inst = unsafe { &*(ctx as *mut AaxInstance<P>) };
+    let inst = unsafe { &*ctx.cast::<AaxInstance<P>>() };
     inst.plugin.params().set_plain(id, value);
     // Bump the revision counter so the next `_save_state` notices the
     // change. `Release` synchronizes with the `Acquire` load in
@@ -809,12 +809,12 @@ pub unsafe fn _format_param<P: PluginExport>(
     if out_len == 0 || out.is_null() {
         return;
     }
-    let inst = unsafe { &*(ctx as *mut AaxInstance<P>) };
+    let inst = unsafe { &*ctx.cast::<AaxInstance<P>>() };
     if let Some(text) = inst.plugin.params().format_value(id, value) {
         let bytes = text.as_bytes();
         let len = bytes.len().min((out_len as usize) - 1);
         unsafe {
-            std::ptr::copy_nonoverlapping(bytes.as_ptr() as *const c_char, out, len);
+            std::ptr::copy_nonoverlapping(bytes.as_ptr().cast::<c_char>(), out, len);
             *out.add(len) = 0;
         }
     }
@@ -824,7 +824,7 @@ pub unsafe fn _save_state<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     out_data: *mut *mut u8,
 ) -> u32 {
-    let inst = unsafe { &*(ctx as *mut AaxInstance<P>) };
+    let inst = unsafe { &*ctx.cast::<AaxInstance<P>>() };
     // Hot-path optimization for Pro Tools undo/snapshot flows,
     // which call the `GetChunkSize` + `GetChunk` pair repeatedly.
     // We use a seqlock-style protocol against the audio thread:
@@ -865,7 +865,7 @@ pub unsafe fn _save_state<P: PluginExport>(
         // be effectively gone. The cache content is just an
         // `Option<(u64, Arc<Vec<u8>>)>`, with no invariants a panic
         // could break, so `into_inner()` is sound.
-        let mut guard = inst.state_cache.lock().unwrap_or_else(|e| e.into_inner());
+        let mut guard = inst.state_cache.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         match guard.as_ref() {
             // `Arc::clone` on a hit — refcount bump, no Vec copy.
             Some((rev, blob)) if *rev == revision_before => std::sync::Arc::clone(blob),
@@ -914,7 +914,7 @@ unsafe fn finalize_blob(blob: &[u8], out_data: *mut *mut u8) -> u32 {
 }
 
 pub unsafe fn _load_state<P: PluginExport>(ctx: *mut std::ffi::c_void, data: *const u8, len: u32) {
-    let inst = unsafe { &mut *(ctx as *mut AaxInstance<P>) };
+    let inst = unsafe { &mut *ctx.cast::<AaxInstance<P>>() };
     // `slice::from_raw_parts(null, n)` for `n > 0` is UB. Treat
     // `(null, *)` and `(_, 0)` the same as "host gave us nothing".
     if data.is_null() || len == 0 {
@@ -951,7 +951,7 @@ pub unsafe fn _load_state<P: PluginExport>(ctx: *mut std::ffi::c_void, data: *co
 
 pub unsafe fn _editor_create<P: PluginExport>(ctx: *mut c_void, out: *mut TruceAaxEditorInfo) {
     unsafe {
-        let inst = &mut *(ctx as *mut AaxInstance<P>);
+        let inst = &mut *ctx.cast::<AaxInstance<P>>();
         inst.editor = inst.plugin.editor();
         let info = match &inst.editor {
             Some(editor) => {
@@ -992,7 +992,7 @@ pub unsafe fn _editor_open<P: PluginExport>(
         if ctx.is_null() || callbacks.is_null() || parent_view.is_null() {
             return;
         }
-        let inst = &mut *(ctx as *mut AaxInstance<P>);
+        let inst = &mut *ctx.cast::<AaxInstance<P>>();
         let editor = match inst.editor.as_mut() {
             Some(e) => e,
             None => return,
@@ -1006,7 +1006,7 @@ pub unsafe fn _editor_open<P: PluginExport>(
         let release_fn = cb.release_param;
         let resize_fn = cb.request_resize;
         let params = inst.plugin.params_arc();
-        let plugin_ptr = SendPtr::new(&inst.plugin as *const P);
+        let plugin_ptr = SendPtr::new(&raw const inst.plugin);
         let params_for_set = params.clone();
         let params_for_get = params.clone();
         let params_for_plain = params.clone();
@@ -1017,17 +1017,17 @@ pub unsafe fn _editor_open<P: PluginExport>(
         let context = PluginContext::from_closures(
             ClosureBridge {
                 begin_edit: Box::new(move |id| {
-                    touch_fn(aax_ctx.as_ptr() as *mut c_void, id);
+                    touch_fn(aax_ctx.as_ptr().cast_mut(), id);
                 }),
                 set_param: Box::new(move |id, value| {
                     let normalized = params_for_set.set_normalized_returning_normalized(id, value);
-                    set_fn(aax_ctx.as_ptr() as *mut c_void, id, normalized);
+                    set_fn(aax_ctx.as_ptr().cast_mut(), id, normalized);
                 }),
                 end_edit: Box::new(move |id| {
-                    release_fn(aax_ctx.as_ptr() as *mut c_void, id);
+                    release_fn(aax_ctx.as_ptr().cast_mut(), id);
                 }),
                 request_resize: Box::new(move |w, h| {
-                    resize_fn(aax_ctx.as_ptr() as *mut c_void, w, h) != 0
+                    resize_fn(aax_ctx.as_ptr().cast_mut(), w, h) != 0
                 }),
                 get_param: Box::new(move |id| params_for_get.get_normalized(id).unwrap_or(0.0)),
                 get_param_plain: Box::new(move |id| params_for_plain.get_plain(id).unwrap_or(0.0)),
@@ -1035,7 +1035,7 @@ pub unsafe fn _editor_open<P: PluginExport>(
                     let val = params_for_fmt.get_plain(id).unwrap_or(0.0);
                     params_for_fmt
                         .format_value(id, val)
-                        .unwrap_or_else(|| format!("{:.1}", val))
+                        .unwrap_or_else(|| format!("{val:.1}"))
                 }),
                 get_meter: Box::new(move |id| {
                     let plugin = plugin_ptr.get();
@@ -1046,7 +1046,7 @@ pub unsafe fn _editor_open<P: PluginExport>(
                     plugin.save_state().unwrap_or_default()
                 }),
                 set_state: Box::new(move |data| {
-                    let plugin = &mut *(plugin_ptr.as_ptr() as *mut P);
+                    let plugin = &mut *plugin_ptr.as_ptr().cast_mut();
                     plugin.load_state(&data);
                 }),
                 transport: Box::new(move || transport_slot.read()),
@@ -1066,7 +1066,7 @@ pub unsafe fn _editor_open<P: PluginExport>(
 
 pub unsafe fn _editor_close<P: PluginExport>(ctx: *mut c_void) {
     unsafe {
-        let inst = &mut *(ctx as *mut AaxInstance<P>);
+        let inst = &mut *ctx.cast::<AaxInstance<P>>();
         if let Some(ref mut editor) = inst.editor {
             editor.close();
         }
@@ -1075,7 +1075,7 @@ pub unsafe fn _editor_close<P: PluginExport>(ctx: *mut c_void) {
 
 pub unsafe fn _editor_idle<P: PluginExport>(ctx: *mut c_void) {
     unsafe {
-        let inst = &mut *(ctx as *mut AaxInstance<P>);
+        let inst = &mut *ctx.cast::<AaxInstance<P>>();
         if let Some(ref mut editor) = inst.editor {
             editor.idle();
         }
@@ -1084,7 +1084,7 @@ pub unsafe fn _editor_idle<P: PluginExport>(ctx: *mut c_void) {
 
 pub unsafe fn _editor_get_size<P: PluginExport>(ctx: *mut c_void, w: *mut u32, h: *mut u32) -> i32 {
     unsafe {
-        let inst = &*(ctx as *mut AaxInstance<P>);
+        let inst = &*ctx.cast::<AaxInstance<P>>();
         match &inst.editor {
             Some(editor) => {
                 // Logical size. The patched baseview CGLayer path handles

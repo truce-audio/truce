@@ -53,7 +53,7 @@ impl PluginLogic for Gain {
         for i in 0..buffer.num_samples() {
             let gain_db = self.params.gain.smoothed_next();
             let pan = self.params.pan.smoothed_next();
-            let gain_linear = db_to_linear(gain_db as f64) as f32;
+            let gain_linear = db_to_linear(f64::from(gain_db)) as f32;
 
             let gain_l = gain_linear * (1.0 - pan.max(0.0));
             let gain_r = gain_linear * (1.0 + pan.min(0.0));
@@ -208,7 +208,7 @@ mod tests {
 
     /// End-to-end check of [`truce_test::PluginDriver`] on an
     /// effect: feed a block of non-zero input, assert the output is
-    /// non-silent and not clipping or NaNing. The canonical smoke
+    /// non-silent and not clipping or `NaNing`. The canonical smoke
     /// test for the driver pipeline.
     #[test]
     fn driver_passthrough() {

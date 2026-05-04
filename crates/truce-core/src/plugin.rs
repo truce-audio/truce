@@ -16,6 +16,7 @@ pub trait Plugin: Send + 'static {
         Self: Sized;
 
     /// Supported bus layouts. The host picks one.
+    #[must_use] 
     fn bus_layouts() -> Vec<BusLayout>
     where
         Self: Sized,
@@ -57,7 +58,7 @@ pub trait Plugin: Send + 'static {
         0
     }
 
-    /// Tail time in samples. Return u32::MAX for infinite tail.
+    /// Tail time in samples. Return `u32::MAX` for infinite tail.
     /// Return 0 for no tail (default).
     fn tail(&self) -> u32 {
         0

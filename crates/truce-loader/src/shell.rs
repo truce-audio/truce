@@ -50,7 +50,7 @@ unsafe impl<P: Params> Send for HotShell<P> {}
 impl<P: Params + 'static> HotShell<P> {
     pub fn new(params: P, dylib_path: PathBuf) -> Self {
         let params = Arc::new(params);
-        let params_ptr = Arc::as_ptr(&params) as *const ();
+        let params_ptr = Arc::as_ptr(&params).cast::<()>();
         let loader = NativeLoader::new(dylib_path, params_ptr);
         Self {
             params,
@@ -62,6 +62,7 @@ impl<P: Params + 'static> HotShell<P> {
     }
 
     /// Try to get a custom editor from the loaded plugin.
+    #[must_use] 
     pub fn try_custom_editor(&self) -> Option<Box<dyn Editor>> {
         let loader = self.loader.lock();
         let plugin = loader.plugin()?;
@@ -70,6 +71,7 @@ impl<P: Params + 'static> HotShell<P> {
 
     /// Try to create a `BuiltinEditor` from the loaded plugin's layout.
     /// Returns `None` if no plugin is loaded or the layout has zero size.
+    #[must_use] 
     pub fn try_builtin_editor(&self) -> Option<truce_gui::editor::BuiltinEditor<P>> {
         let loader = self.loader.lock();
         let plugin = loader.plugin()?;
@@ -177,7 +179,7 @@ impl<P: Params + 'static> Plugin for HotShell<P> {
         let loader = self.loader.lock();
         loader
             .plugin()
-            .map(|p| p.save_state())
+            .map(super::traits::PluginLogic::save_state)
             .filter(|s| !s.is_empty())
     }
 
@@ -219,20 +221,19 @@ impl<P: Params + 'static> Plugin for HotShell<P> {
 
     fn latency(&self) -> u32 {
         let loader = self.loader.lock();
-        loader.plugin().map(|p| p.latency()).unwrap_or(0)
+        loader.plugin().map_or(0, super::traits::PluginLogic::latency)
     }
 
     fn tail(&self) -> u32 {
         let loader = self.loader.lock();
-        loader.plugin().map(|p| p.tail()).unwrap_or(0)
+        loader.plugin().map_or(0, super::traits::PluginLogic::tail)
     }
 
     fn get_meter(&self, meter_id: u32) -> f32 {
         let idx = meter_id.wrapping_sub(truce_params::METER_ID_BASE) as usize;
         self.meters
             .get(idx)
-            .map(|v| f32::from_bits(v.load(Ordering::Relaxed)))
-            .unwrap_or(0.0)
+            .map_or(0.0, |v| f32::from_bits(v.load(Ordering::Relaxed)))
     }
 }
 
@@ -241,7 +242,7 @@ impl<P: Params + 'static> Plugin for HotShell<P> {
 // ---------------------------------------------------------------------------
 
 enum HotEditorInner<P: Params> {
-    /// Built-in GUI: swap BuiltinEditor inside shared mutex on reload.
+    /// Built-in GUI: swap `BuiltinEditor` inside shared mutex on reload.
     /// GPU rendering continues seamlessly. The shared mutex is owned
     /// by `gpu` and the watcher thread; `HotEditor` itself doesn't
     /// need a third clone.

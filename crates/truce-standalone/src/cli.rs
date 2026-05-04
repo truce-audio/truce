@@ -220,8 +220,7 @@ pub fn parse() -> Result<Options, String> {
         state_path: state_path.or_else(|| env("STATE").map(PathBuf::from)),
         verbose: verbose
             || env("VERBOSE")
-                .map(|s| matches!(s.trim(), "1" | "true" | "on" | "yes"))
-                .unwrap_or(false),
+                .is_some_and(|s| matches!(s.trim(), "1" | "true" | "on" | "yes")),
         #[cfg(feature = "playback")]
         input_file: input_file.or_else(|| env("INPUT_FILE").map(PathBuf::from)),
         #[cfg(feature = "playback")]

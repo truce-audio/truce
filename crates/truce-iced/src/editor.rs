@@ -1,4 +1,4 @@
-//! IcedEditor — implements `truce_core::Editor` using iced for rendering.
+//! `IcedEditor` — implements `truce_core::Editor` using iced for rendering.
 //!
 //! Uses `iced_runtime::program::State` for manual iced runtime driving
 //! and `iced_wgpu` for GPU-accelerated rendering, embedded as a child
@@ -69,7 +69,7 @@ pub trait IcedPlugin<P: Params>: Sized + 'static {
 // AutoPlugin — built-in plugin for GridLayout auto mode
 // ---------------------------------------------------------------------------
 
-/// Built-in IcedPlugin that generates a view from a GridLayout.
+/// Built-in `IcedPlugin` that generates a view from a `GridLayout`.
 pub struct AutoPlugin {
     layout: GridLayout,
 }
@@ -184,7 +184,7 @@ where
     /// AutoPlugin as *const M) }` reinterpret guarded only by a
     /// `debug_assert_eq` on size — release builds skipped the
     /// check, alignment / Drop / repr layout weren't validated, and
-    /// the "M is constrained to AutoPlugin" invariant lived in a
+    /// the "M is constrained to `AutoPlugin`" invariant lived in a
     /// comment instead of the type system.
     make_plugin: Box<dyn Fn(Arc<P>) -> M + Send + Sync>,
     meter_ids: Vec<u32>,
@@ -276,7 +276,7 @@ impl<P: Params + 'static, M: IcedPlugin<P> + 'static> IcedEditor<P, M> {
 
     /// Set meter IDs to poll each tick.
     pub fn with_meter_ids(mut self, ids: Vec<impl Into<u32>>) -> Self {
-        self.meter_ids = ids.into_iter().map(|id| id.into()).collect();
+        self.meter_ids = ids.into_iter().map(std::convert::Into::into).collect();
         self
     }
 }
@@ -344,17 +344,14 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
         let h = truce_gui::to_physical_px(lh, render_scale);
 
         let adapter =
-            match pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            if let Some(a) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
                 compatible_surface: Some(&surface),
                 force_fallback_adapter: false,
-            })) {
-                Some(a) => a,
-                None => {
-                    log::warn!("no suitable GPU adapter found");
-                    self.program = Some(program);
-                    return false;
-                }
+            })) { a } else {
+                log::warn!("no suitable GPU adapter found");
+                self.program = Some(program);
+                return false;
             };
 
         let (device, queue) = match pollster::block_on(adapter.request_device(
@@ -513,7 +510,7 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
         // Present: get surface texture, render, submit
         let frame = match render.surface.get_current_texture() {
             Ok(f) => f,
-            Err(wgpu::SurfaceError::Timeout) | Err(wgpu::SurfaceError::Outdated) => {
+            Err(wgpu::SurfaceError::Timeout | wgpu::SurfaceError::Outdated) => {
                 render
                     .surface
                     .configure(&render.device, &render.surface_config);
@@ -779,11 +776,11 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
         let parent_wrapper = crate::platform::ParentWindow(parent);
         let options = baseview::WindowOpenOptions {
             title: String::from("truce-iced"),
-            size: baseview::Size::new(w as f64, h as f64),
+            size: baseview::Size::new(f64::from(w), f64::from(h)),
             scale: baseview::WindowScalePolicy::SystemScaleFactor,
         };
 
-        let editor_addr = self as *mut IcedEditor<P, M> as usize;
+        let editor_addr = std::ptr::from_mut::<IcedEditor<P, M>>(self) as usize;
 
         let window = baseview::Window::open_parented(
             &parent_wrapper,

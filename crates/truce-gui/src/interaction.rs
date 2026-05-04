@@ -12,7 +12,7 @@ use crate::widgets::WidgetType;
 /// Lower an explicit `WidgetKind` from a layout helper into the
 /// runtime `WidgetType` the interaction code dispatches on. `None`
 /// (meaning "infer from param range") stays as Knob — callers that
-/// need inference overwrite widget_type after calling
+/// need inference overwrite `widget_type` after calling
 /// `build_regions_*`.
 fn widget_kind_to_type(kind: Option<WidgetKind>) -> WidgetType {
     match kind {
@@ -126,6 +126,7 @@ impl Default for BaseviewTranslator {
 }
 
 impl BaseviewTranslator {
+    #[must_use] 
     pub fn new() -> Self {
         Self {
             last_cursor: (0.0, 0.0),
@@ -137,6 +138,7 @@ impl BaseviewTranslator {
     /// The last cursor position we saw from a `CursorMoved`, in logical
     /// points. Useful when a caller needs to query cursor state outside
     /// the event stream (e.g. for its own overlays).
+    #[must_use] 
     pub fn last_cursor(&self) -> (f32, f32) {
         self.last_cursor
     }
@@ -251,7 +253,7 @@ pub struct DropdownState {
     pub hover_option: Option<usize>,
     /// First visible option index (for scrollable popups).
     pub scroll_offset: usize,
-    /// Number of visible options (may be less than options.len() if clamped).
+    /// Number of visible options (may be less than `options.len()` if clamped).
     pub visible_count: usize,
 }
 
@@ -290,6 +292,7 @@ impl Default for InteractionState {
 }
 
 impl InteractionState {
+    #[must_use] 
     pub fn new() -> Self {
         Self {
             knob_regions: Vec::new(),
@@ -323,7 +326,7 @@ impl InteractionState {
             let start_x = (layout.width as f32 - total_w) / 2.0;
 
             let mut col = 0u32;
-            for knob_def in row.knobs.iter() {
+            for knob_def in &row.knobs {
                 let span = knob_def.span.max(1);
                 let x = start_x + col as f32 * pitch;
                 let widget_w = span as f32 * pitch - ROWS_COLUMN_GAP;
@@ -352,6 +355,7 @@ impl InteractionState {
     }
 
     /// Check if a mouse position hits a widget. Returns the region index if so.
+    #[must_use] 
     pub fn hit_test(&self, mx: f32, my: f32) -> Option<usize> {
         for (idx, region) in self.knob_regions.iter().enumerate() {
             match region.widget_type {
@@ -382,11 +386,13 @@ impl InteractionState {
     }
 
     /// Get the widget type by region index.
+    #[must_use] 
     pub fn widget_type_at(&self, idx: usize) -> Option<WidgetType> {
         self.knob_regions.get(idx).map(|r| r.widget_type)
     }
 
     /// Get the region by index.
+    #[must_use] 
     pub fn region_at(&self, idx: usize) -> Option<&WidgetRegion> {
         self.knob_regions.get(idx)
     }
@@ -412,21 +418,23 @@ impl InteractionState {
         });
     }
 
-    /// Update during a drag. Returns (param_id, new_normalized_value) if dragging.
+    /// Update during a drag. Returns (`param_id`, `new_normalized_value`) if dragging.
+    #[must_use] 
     pub fn update_drag(&self, mouse_y: f32) -> Option<(u32, f64)> {
         let drag = self.dragging.as_ref()?;
         let dy = drag.start_y - mouse_y;
-        let delta = dy as f64 / KNOB_PIXELS_PER_UNIT as f64;
+        let delta = f64::from(dy) / f64::from(KNOB_PIXELS_PER_UNIT);
         let new_value = (drag.start_value + delta).clamp(0.0, 1.0);
         Some((drag.param_id, new_value))
     }
 
-    /// Update during a horizontal slider drag. Returns (param_id, new_value).
+    /// Update during a horizontal slider drag. Returns (`param_id`, `new_value`).
+    #[must_use] 
     pub fn update_slider_drag(&self, mouse_x: f32) -> Option<(u32, f64)> {
         let drag = self.dragging.as_ref()?;
         let margin = 4.0;
         let rel = (mouse_x - drag.region_x - margin) / (drag.region_w - margin * 2.0);
-        let new_value = (rel as f64).clamp(0.0, 1.0);
+        let new_value = f64::from(rel).clamp(0.0, 1.0);
         Some((drag.param_id, new_value))
     }
 
@@ -437,6 +445,7 @@ impl InteractionState {
 
     /// Test if a point is inside the open dropdown popup.
     /// Returns the absolute option index (accounting for scroll) if hit, or None.
+    #[must_use] 
     pub fn dropdown_popup_hit(&self, mx: f32, my: f32) -> Option<usize> {
         let dd = self.dropdown.as_ref()?;
         let (px, py, pw, ph) = dd.popup_rect;
@@ -475,6 +484,7 @@ impl InteractionState {
     }
 
     /// Whether a dropdown popup is currently open.
+    #[must_use] 
     pub fn dropdown_is_open(&self) -> bool {
         self.dropdown.is_some()
     }
@@ -795,7 +805,7 @@ fn handle_mouse_down(
         }
         _ => {
             // Knob / Slider / XYPad / Meter: begin a drag.
-            let norm = (snapshot.get_param)(param_id) as f64;
+            let norm = f64::from((snapshot.get_param)(param_id));
             state.begin_drag(idx, norm, y);
             edits.push(ParamEdit::Begin { id: param_id });
             if wtype == Some(WidgetType::XYPad)

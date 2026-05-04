@@ -1,7 +1,7 @@
-//! The `plugin!` macro — one macro to export a PluginLogic plugin
+//! The `plugin!` macro — one macro to export a `PluginLogic` plugin
 //! to all formats with zero boilerplate.
 
-/// Export a PluginLogic plugin to all active format targets.
+/// Export a `PluginLogic` plugin to all active format targets.
 ///
 /// This is the only macro a developer needs. It generates all format
 /// exports (CLAP, VST3, etc.) based on Cargo features.

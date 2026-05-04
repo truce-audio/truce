@@ -44,21 +44,25 @@ impl<'a, M: Clone + Debug + 'static> XYPadWidget<'a, M> {
         }
     }
 
+    #[must_use] 
     pub fn label(mut self, label: &'a str) -> Self {
         self.label = Some(label);
         self
     }
 
+    #[must_use] 
     pub fn size(mut self, size: f32) -> Self {
         self.size = size;
         self
     }
 
+    #[must_use] 
     pub fn font(mut self, font: iced::Font) -> Self {
         self.font = font;
         self
     }
 
+    #[must_use] 
     pub fn into_element(self) -> Element<'a, Message<M>> {
         let total_h = self.size + if self.label.is_some() { 16.0 } else { 0.0 };
         let program = XYPadProgram {
@@ -193,8 +197,8 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for XYPadProgram {
                 // window-space position and clamp into the pad rect
                 // ourselves (mirrors `KnobProgram::update`).
                 if let Some(pos) = cursor.position() {
-                    let x_norm = ((pos.x - bounds.x) / s).clamp(0.0, 1.0) as f64;
-                    let y_norm = (1.0 - (pos.y - bounds.y) / s).clamp(0.0, 1.0) as f64;
+                    let x_norm = f64::from(((pos.x - bounds.x) / s).clamp(0.0, 1.0));
+                    let y_norm = f64::from((1.0 - (pos.y - bounds.y) / s).clamp(0.0, 1.0));
                     return (
                         canvas::event::Status::Captured,
                         Some(Message::Param(ParamMessage::Batch(vec![

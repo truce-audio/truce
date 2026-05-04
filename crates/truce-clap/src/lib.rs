@@ -103,12 +103,12 @@ impl GuiChangeQueue {
     fn push(&self, change: GuiParamChange) {
         self.pending
             .lock()
-            .unwrap_or_else(|e| e.into_inner())
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .push(change);
     }
 
     fn drain_to(&self, out: &mut Vec<GuiParamChange>) {
-        let mut pending = self.pending.lock().unwrap_or_else(|e| e.into_inner());
+        let mut pending = self.pending.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         out.append(&mut pending);
     }
 }
@@ -134,13 +134,13 @@ struct ClapPluginData<P: PluginExport> {
     _info: PluginInfo,
     /// Pre-hashed plugin ID for state serialization.
     plugin_id_hash: u64,
-    /// GUI editor (created by the plugin, if it implements editor()).
+    /// GUI editor (created by the plugin, if it implements `editor()`).
     editor: Option<Box<dyn Editor>>,
     /// Whether the GUI has been created via the gui extension.
     gui_created: bool,
     /// Host pointer (for querying host extensions).
     host: *const clap_host,
-    /// Host params extension (for request_flush).
+    /// Host params extension (for `request_flush`).
     host_params: *const clap_host_params,
     /// Queue of GUI-initiated parameter changes to emit as output events.
     gui_changes: Arc<GuiChangeQueue>,
@@ -152,8 +152,8 @@ struct ClapPluginData<P: PluginExport> {
     transport_slot: Arc<truce_core::TransportSlot>,
     /// Host-reported GUI scale (via `clap_plugin_gui::set_scale`).
     /// Sources of truth, by platform:
-    /// - **macOS**: ignored at `gui_get_size` (AppKit handles backing
-    ///   scale through the parent NSView; we report logical points
+    /// - **macOS**: ignored at `gui_get_size` (`AppKit` handles backing
+    ///   scale through the parent `NSView`; we report logical points
     ///   and let the OS scale). Stored only for editors that consume
     ///   it directly via `set_scale_factor`.
     /// - **Windows / Linux**: used at `gui_get_size` to convert
@@ -205,6 +205,7 @@ fn resolved_name(info: &PluginInfo) -> &'static str {
 }
 
 impl DescriptorHolder {
+    #[must_use] 
     pub fn new(info: &PluginInfo) -> Self {
         let id = CString::new(info.clap_id).unwrap_or_default();
         let name = CString::new(resolved_name(info)).unwrap_or_default();
@@ -275,7 +276,7 @@ fn copy_str_to_buf(dst: &mut [c_char], src: &str) {
 unsafe fn data_from_plugin<P: PluginExport>(
     plugin: *const clap_plugin,
 ) -> &'static mut ClapPluginData<P> {
-    unsafe { &mut *((*plugin).plugin_data as *mut ClapPluginData<P>) }
+    unsafe { &mut *(*plugin).plugin_data.cast::<ClapPluginData<P>>() }
 }
 
 // ---------------------------------------------------------------------------
@@ -309,7 +310,7 @@ unsafe extern "C" fn clap_plugin_init<P: PluginExport>(plugin: *const clap_plugi
         {
             let ext = get_ext(data.host, CLAP_EXT_PARAMS.as_ptr());
             if !ext.is_null() {
-                data.host_params = ext as *const clap_host_params;
+                data.host_params = ext.cast::<clap_host_params>();
             }
         }
         true
@@ -319,10 +320,10 @@ unsafe extern "C" fn clap_plugin_init<P: PluginExport>(plugin: *const clap_plugi
 unsafe extern "C" fn clap_plugin_destroy<P: PluginExport>(plugin: *const clap_plugin) {
     unsafe {
         // Drop the ClapPluginData
-        let ptr = (*plugin).plugin_data as *mut ClapPluginData<P>;
+        let ptr = (*plugin).plugin_data.cast::<ClapPluginData<P>>();
         drop(Box::from_raw(ptr));
         // Drop the clap_plugin itself (we boxed it in create_plugin)
-        drop(Box::from_raw(plugin as *mut clap_plugin));
+        drop(Box::from_raw(plugin.cast_mut()));
     }
 }
 
@@ -480,7 +481,7 @@ unsafe fn convert_input_events<P: PluginExport>(
 
             match (*header).type_ {
                 CLAP_EVENT_NOTE_ON => {
-                    let note_event = &*(header as *const clap_event_note);
+                    let note_event = &*header.cast::<clap_event_note>();
                     data.event_list.push(Event {
                         sample_offset,
                         body: EventBody::NoteOn {
@@ -491,7 +492,7 @@ unsafe fn convert_input_events<P: PluginExport>(
                     });
                 }
                 CLAP_EVENT_NOTE_OFF => {
-                    let note_event = &*(header as *const clap_event_note);
+                    let note_event = &*header.cast::<clap_event_note>();
                     data.event_list.push(Event {
                         sample_offset,
                         body: EventBody::NoteOff {
@@ -502,7 +503,7 @@ unsafe fn convert_input_events<P: PluginExport>(
                     });
                 }
                 CLAP_EVENT_PARAM_VALUE => {
-                    let param_event = &*(header as *const clap_event_param_value);
+                    let param_event = &*header.cast::<clap_event_param_value>();
                     // CLAP param values are plain values.
                     // Apply to the params immediately AND push a ParamChange event
                     // so the plugin's process() can react to it.
@@ -518,7 +519,7 @@ unsafe fn convert_input_events<P: PluginExport>(
                     });
                 }
                 CLAP_EVENT_PARAM_MOD => {
-                    let mod_event = &*(header as *const clap_event_param_value);
+                    let mod_event = &*header.cast::<clap_event_param_value>();
                     data.event_list.push(Event {
                         sample_offset,
                         body: EventBody::ParamMod {
@@ -529,7 +530,7 @@ unsafe fn convert_input_events<P: PluginExport>(
                     });
                 }
                 CLAP_EVENT_TRANSPORT => {
-                    let transport = &*(header as *const clap_event_transport);
+                    let transport = &*header.cast::<clap_event_transport>();
                     data.event_list.push(Event {
                         sample_offset,
                         body: EventBody::Transport(build_transport_info(transport)),
@@ -545,7 +546,7 @@ unsafe fn convert_input_events<P: PluginExport>(
                     // (`CLAP_NOTE_DIALECT_MIDI` ports) silently drop
                     // CC / PitchBend / Aftertouch / ChannelPressure /
                     // ProgramChange at the wrapper.
-                    let midi = &*(header as *const clap_event_midi);
+                    let midi = &*header.cast::<clap_event_midi>();
                     let status = midi.data[0];
                     let channel = status & 0x0F;
                     let d1 = midi.data[1];
@@ -554,7 +555,7 @@ unsafe fn convert_input_events<P: PluginExport>(
                         0x80 => Some(EventBody::NoteOff {
                             channel,
                             note: d1,
-                            velocity: (d2 as f32) / 127.0,
+                            velocity: f32::from(d2) / 127.0,
                         }),
                         0x90 => {
                             // MIDI 1.0 quirk: NoteOn with velocity 0 = NoteOff.
@@ -568,19 +569,19 @@ unsafe fn convert_input_events<P: PluginExport>(
                                 Some(EventBody::NoteOn {
                                     channel,
                                     note: d1,
-                                    velocity: (d2 as f32) / 127.0,
+                                    velocity: f32::from(d2) / 127.0,
                                 })
                             }
                         }
                         0xA0 => Some(EventBody::Aftertouch {
                             channel,
                             note: d1,
-                            pressure: (d2 as f32) / 127.0,
+                            pressure: f32::from(d2) / 127.0,
                         }),
                         0xB0 => Some(EventBody::ControlChange {
                             channel,
                             cc: d1,
-                            value: (d2 as f32) / 127.0,
+                            value: f32::from(d2) / 127.0,
                         }),
                         0xC0 => Some(EventBody::ProgramChange {
                             channel,
@@ -588,13 +589,13 @@ unsafe fn convert_input_events<P: PluginExport>(
                         }),
                         0xD0 => Some(EventBody::ChannelPressure {
                             channel,
-                            pressure: (d1 as f32) / 127.0,
+                            pressure: f32::from(d1) / 127.0,
                         }),
                         0xE0 => {
                             // 14-bit unsigned 0..16383 → signed [-1, 1]
                             // with 8192 = center. Mirrors the encoder.
-                            let n = ((d2 as u16) << 7) | (d1 as u16);
-                            let v = ((n as f32) - 8192.0) / 8192.0;
+                            let n = (u16::from(d2) << 7) | u16::from(d1);
+                            let v = (f32::from(n) - 8192.0) / 8192.0;
                             Some(EventBody::PitchBend {
                                 channel,
                                 value: v.clamp(-1.0, 1.0),
@@ -657,7 +658,7 @@ unsafe fn flush_gui_changes<P: PluginExport>(
                         },
                         param_id: id,
                     };
-                    try_push(out_events, &event.header);
+                    try_push(out_events, &raw const event.header);
                 }
                 GuiParamChange::Value(id, plain) => {
                     let event = clap_event_param_value {
@@ -676,7 +677,7 @@ unsafe fn flush_gui_changes<P: PluginExport>(
                         key: -1,
                         value: plain,
                     };
-                    try_push(out_events, &event.header);
+                    try_push(out_events, &raw const event.header);
                 }
                 GuiParamChange::GestureEnd(id) => {
                     let event = clap_event_param_gesture {
@@ -689,7 +690,7 @@ unsafe fn flush_gui_changes<P: PluginExport>(
                         },
                         param_id: id,
                     };
-                    try_push(out_events, &event.header);
+                    try_push(out_events, &raw const event.header);
                 }
             }
         }
@@ -729,10 +730,10 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
         convert_input_events::<P>(data, proc.in_events, true);
 
         // Build transport info from the CLAP transport event (or default).
-        let transport = if !proc.transport.is_null() {
-            build_transport_info(&*proc.transport)
-        } else {
+        let transport = if proc.transport.is_null() {
             TransportInfo::default()
+        } else {
+            build_transport_info(&*proc.transport)
         };
 
         // Build AudioBuffer from CLAP audio buffers.
@@ -853,11 +854,11 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                             },
                             note_id: -1,
                             port_index: 0,
-                            channel: *channel as i16,
-                            key: *note as i16,
-                            velocity: *velocity as f64,
+                            channel: i16::from(*channel),
+                            key: i16::from(*note),
+                            velocity: f64::from(*velocity),
                         };
-                        try_push(proc.out_events, &ev.header);
+                        try_push(proc.out_events, &raw const ev.header);
                     }
                     EventBody::NoteOff {
                         channel,
@@ -874,11 +875,11 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                             },
                             note_id: -1,
                             port_index: 0,
-                            channel: *channel as i16,
-                            key: *note as i16,
-                            velocity: *velocity as f64,
+                            channel: i16::from(*channel),
+                            key: i16::from(*note),
+                            velocity: f64::from(*velocity),
                         };
-                        try_push(proc.out_events, &ev.header);
+                        try_push(proc.out_events, &raw const ev.header);
                     }
                     // CLAP carries MIDI 1.0 control / channel events as
                     // `CLAP_EVENT_MIDI` 3-byte packets. The host
@@ -898,7 +899,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                             port_index: 0,
                             data: [0xB0 | (channel & 0x0F), *cc, v],
                         };
-                        try_push(proc.out_events, &ev.header);
+                        try_push(proc.out_events, &raw const ev.header);
                     }
                     EventBody::Aftertouch {
                         channel,
@@ -917,7 +918,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                             port_index: 0,
                             data: [0xA0 | (channel & 0x0F), *note, p],
                         };
-                        try_push(proc.out_events, &ev.header);
+                        try_push(proc.out_events, &raw const ev.header);
                     }
                     EventBody::ChannelPressure { channel, pressure } => {
                         let p = (pressure.clamp(0.0, 1.0) * 127.0).round() as u8;
@@ -932,7 +933,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                             port_index: 0,
                             data: [0xD0 | (channel & 0x0F), p, 0],
                         };
-                        try_push(proc.out_events, &ev.header);
+                        try_push(proc.out_events, &raw const ev.header);
                     }
                     EventBody::PitchBend { channel, value } => {
                         // 14-bit signed [-1, 1] → unsigned 0..16383 with
@@ -951,7 +952,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                             port_index: 0,
                             data: [0xE0 | (channel & 0x0F), lsb, msb],
                         };
-                        try_push(proc.out_events, &ev.header);
+                        try_push(proc.out_events, &raw const ev.header);
                     }
                     EventBody::ProgramChange { channel, program } => {
                         let ev = clap_event_midi {
@@ -965,7 +966,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                             port_index: 0,
                             data: [0xC0 | (channel & 0x0F), *program, 0],
                         };
-                        try_push(proc.out_events, &ev.header);
+                        try_push(proc.out_events, &raw const ev.header);
                     }
                     EventBody::ParamChange { id, value } => {
                         let ev = clap_event_param_value {
@@ -984,7 +985,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                             key: -1,
                             value: *value,
                         };
-                        try_push(proc.out_events, &ev.header);
+                        try_push(proc.out_events, &raw const ev.header);
                     }
                     // MIDI 2.0, ParamMod, Transport, and per-note
                     // events: the plugin-output direction isn't
@@ -1118,7 +1119,7 @@ unsafe extern "C" fn params_value_to_text<P: PluginExport>(
                 let bytes = text.as_bytes();
                 let cap = out_buffer_capacity as usize;
                 let len = bytes.len().min(cap - 1);
-                ptr::copy_nonoverlapping(bytes.as_ptr() as *const c_char, out_buffer, len);
+                ptr::copy_nonoverlapping(bytes.as_ptr().cast::<c_char>(), out_buffer, len);
                 *out_buffer.add(len) = 0;
                 true
             }
@@ -1202,7 +1203,7 @@ unsafe extern "C" fn state_save<P: PluginExport>(
         while offset < blob.len() {
             let written = write_fn(
                 stream,
-                blob[offset..].as_ptr() as *const c_void,
+                blob[offset..].as_ptr().cast::<c_void>(),
                 (blob.len() - offset) as u64,
             );
             if written <= 0 {
@@ -1231,7 +1232,7 @@ unsafe extern "C" fn state_load<P: PluginExport>(
         let mut blob = Vec::new();
         let mut buf = [0u8; 4096];
         loop {
-            let read = read_fn(stream, buf.as_mut_ptr() as *mut c_void, buf.len() as u64);
+            let read = read_fn(stream, buf.as_mut_ptr().cast::<c_void>(), buf.len() as u64);
             if read <= 0 {
                 break;
             }
@@ -1366,7 +1367,7 @@ unsafe extern "C" fn note_ports_get<P: PluginExport>(
         }
 
         let out = &mut *info;
-        out.id = if is_input { 0 } else { 1 };
+        out.id = u32::from(!is_input);
         out.supported_dialects = CLAP_NOTE_DIALECT_CLAP;
         out.preferred_dialect = CLAP_NOTE_DIALECT_CLAP;
         out.name = [0; CLAP_NAME_SIZE];
@@ -1598,7 +1599,7 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
         // atomic; cross-thread reads from the GUI thread are sound. The host
         // pointers are valid for the plugin's lifetime; closures capturing
         // them run on the main thread only.
-        let plugin_ptr = SendPtr::new(&data.plugin as *const P);
+        let plugin_ptr = SendPtr::new(&raw const data.plugin);
         let gui_changes = data.gui_changes.clone();
         let gui_changes2 = data.gui_changes.clone();
         let gui_changes3 = data.gui_changes.clone();
@@ -1667,7 +1668,7 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
                     let plain = params_for_fmt.get_plain(id).unwrap_or(0.0);
                     params_for_fmt
                         .format_value(id, plain)
-                        .unwrap_or_else(|| format!("{:.1}", plain))
+                        .unwrap_or_else(|| format!("{plain:.1}"))
                 }),
                 get_meter: Box::new(move |id| {
                     let plugin = plugin_ptr.get();
@@ -1678,7 +1679,7 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
                     plugin.save_state().unwrap_or_default()
                 }),
                 set_state: Box::new(move |data| {
-                    let plugin = &mut *(plugin_ptr.as_ptr() as *mut P);
+                    let plugin = &mut *plugin_ptr.as_ptr().cast_mut();
                     plugin.load_state(&data);
                 }),
                 transport: Box::new(move || transport_slot.read()),
@@ -1815,25 +1816,25 @@ unsafe extern "C" fn clap_plugin_get_extension<P: PluginExport>(
         let extensions = Extensions::<P>::get();
 
         if ext_id == CLAP_EXT_PARAMS {
-            return &extensions.params as *const clap_plugin_params as *const c_void;
+            return (&raw const extensions.params).cast::<c_void>();
         }
         if ext_id == CLAP_EXT_STATE {
-            return &extensions.state as *const clap_plugin_state as *const c_void;
+            return (&raw const extensions.state).cast::<c_void>();
         }
         if ext_id == CLAP_EXT_AUDIO_PORTS {
-            return &extensions.audio_ports as *const clap_plugin_audio_ports as *const c_void;
+            return (&raw const extensions.audio_ports).cast::<c_void>();
         }
         if ext_id == CLAP_EXT_NOTE_PORTS {
-            return &extensions.note_ports as *const clap_plugin_note_ports as *const c_void;
+            return (&raw const extensions.note_ports).cast::<c_void>();
         }
         if ext_id == CLAP_EXT_GUI {
-            return &extensions.gui as *const clap_plugin_gui as *const c_void;
+            return (&raw const extensions.gui).cast::<c_void>();
         }
         if ext_id == CLAP_EXT_LATENCY {
-            return &extensions.latency as *const clap_plugin_latency as *const c_void;
+            return (&raw const extensions.latency).cast::<c_void>();
         }
         if ext_id == CLAP_EXT_TAIL {
-            return &extensions.tail as *const clap_plugin_tail as *const c_void;
+            return (&raw const extensions.tail).cast::<c_void>();
         }
 
         ptr::null()
@@ -1883,7 +1884,7 @@ pub unsafe fn create_plugin_instance<P: PluginExport>(
 
     let clap = Box::new(clap_plugin {
         desc: descriptor,
-        plugin_data: Box::into_raw(data) as *mut c_void,
+        plugin_data: Box::into_raw(data).cast::<c_void>(),
         init: Some(clap_plugin_init::<P>),
         destroy: Some(clap_plugin_destroy::<P>),
         activate: Some(clap_plugin_activate::<P>),
@@ -1896,7 +1897,7 @@ pub unsafe fn create_plugin_instance<P: PluginExport>(
         on_main_thread: Some(clap_plugin_on_main_thread::<P>),
     });
 
-    Box::into_raw(clap) as *const clap_plugin
+    Box::into_raw(clap).cast_const()
 }
 
 // ---------------------------------------------------------------------------

@@ -88,7 +88,7 @@ unsafe extern "C" fn save_cb<P: PluginExport>(
         if instance.is_null() {
             return 0;
         }
-        let inst = &mut *(instance as *mut Lv2Instance<P>);
+        let inst = &mut *instance.cast::<Lv2Instance<P>>();
         let (ids, values) = inst.plugin.params().collect_values();
         let extra = inst.plugin.save_state();
         let blob = serialize_state(inst.plugin_id_hash, &ids, &values, extra.as_deref());
@@ -102,7 +102,7 @@ unsafe extern "C" fn save_cb<P: PluginExport>(
         let _ = store(
             handle,
             key,
-            blob.as_ptr() as *const c_void,
+            blob.as_ptr().cast::<c_void>(),
             blob.len(),
             chunk_urid,
             flags,
@@ -122,7 +122,7 @@ unsafe extern "C" fn restore_cb<P: PluginExport>(
         if instance.is_null() {
             return 0;
         }
-        let inst = &mut *(instance as *mut Lv2Instance<P>);
+        let inst = &mut *instance.cast::<Lv2Instance<P>>();
         let key = inst.urid_map.intern(TRUCE_STATE_KEY_URI);
         if key == 0 {
             return 0;
@@ -130,11 +130,11 @@ unsafe extern "C" fn restore_cb<P: PluginExport>(
         let mut size = 0usize;
         let mut type_: Urid = 0;
         let mut state_flags: u32 = 0;
-        let data = retrieve(handle, key, &mut size, &mut type_, &mut state_flags);
+        let data = retrieve(handle, key, &raw mut size, &raw mut type_, &raw mut state_flags);
         if data.is_null() || size == 0 {
             return 0;
         }
-        let slice = core::slice::from_raw_parts(data as *const u8, size);
+        let slice = core::slice::from_raw_parts(data.cast::<u8>(), size);
         if let Some(state) = deserialize_state(slice, inst.plugin_id_hash) {
             inst.plugin.params().restore_values(&state.params);
             inst.plugin.params().snap_smoothers();

@@ -2,7 +2,7 @@
 //!
 //! Hosts provide a `map` function that interns strings. We fetch and
 //! cache the IDs we need at `instantiate()` time so the audio-thread
-//! code (run(), atom decoding) never has to call back into the host.
+//! code (`run()`, atom decoding) never has to call back into the host.
 
 use std::ffi::{CStr, CString, c_char, c_void};
 
@@ -16,7 +16,7 @@ struct Lv2UridMapFeature {
     map: Option<unsafe extern "C" fn(handle: *mut c_void, uri: *const c_char) -> Urid>,
 }
 
-/// Cached URIDs we need during run() and state save/restore. Pre-fetched
+/// Cached URIDs we need during `run()` and state save/restore. Pre-fetched
 /// at instantiation so the audio thread doesn't call back into the host.
 #[derive(Default)]
 pub struct UridMap {

@@ -1,7 +1,7 @@
-//! SlintEditor: implements truce_core::Editor using Slint + baseview + wgpu.
+//! `SlintEditor`: implements `truce_core::Editor` using Slint + baseview + wgpu.
 //!
 //! On `open()`, creates a baseview child window with a wgpu surface.
-//! Each frame, renders the Slint UI to a pixel buffer via SoftwareRenderer,
+//! Each frame, renders the Slint UI to a pixel buffer via `SoftwareRenderer`,
 //! uploads it to a wgpu texture, and blits to the surface.
 //!
 //! Runs the same code path on every macOS host, AAX included — the
@@ -84,7 +84,7 @@ pub type SetupFn<P> = Arc<dyn Fn(PluginContext<P>) -> SyncFn<P> + Send + Sync>;
 pub struct SlintEditor<P: Params + ?Sized> {
     params: Arc<P>,
     size: (u32, u32),
-    /// Called on each open() to create the Slint component and param bindings.
+    /// Called on each `open()` to create the Slint component and param bindings.
     /// Must be `Fn` (not `FnOnce`) because the host may close and re-open
     /// the editor window multiple times. See [`SetupFn`] for the
     /// `Send + Sync` rationale.
@@ -172,8 +172,8 @@ impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
         // without a corresponding window event.
         let cur_scale = self.scale.get() as f32;
         if cur_scale != self.last_applied_scale {
-            let phys_w = truce_gui::to_physical_px(self.width, cur_scale as f64);
-            let phys_h = truce_gui::to_physical_px(self.height, cur_scale as f64);
+            let phys_w = truce_gui::to_physical_px(self.width, f64::from(cur_scale));
+            let phys_h = truce_gui::to_physical_px(self.height, f64::from(cur_scale));
             self.slint_window
                 .window()
                 .dispatch_event(WindowEvent::ScaleFactorChanged {
@@ -241,7 +241,7 @@ impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
     fn on_event(&mut self, _window: &mut Window, event: Event) -> EventStatus {
         match event {
             Event::Mouse(mouse) => {
-                use baseview::MouseEvent::*;
+                use baseview::MouseEvent::{CursorMoved, ButtonPressed, ButtonReleased, WheelScrolled, CursorLeft};
                 match mouse {
                     CursorMoved { position, .. } => {
                         self.last_pos = LogicalPosition::new(position.x as f32, position.y as f32);
@@ -313,8 +313,8 @@ impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
                     let phys_h = info.physical_size().height;
                     let scale = info.scale();
                     truce_gui::platform::note_linux_scale_factor(scale);
-                    self.width = (phys_w as f64 / scale) as u32;
-                    self.height = (phys_h as f64 / scale) as u32;
+                    self.width = (f64::from(phys_w) / scale) as u32;
+                    self.height = (f64::from(phys_h) / scale) as u32;
                     // Mirror the OS-reported scale into the shared
                     // cell (so a follow-up host `set_scale_factor`
                     // reads a fresh baseline) and bump `last_applied`
@@ -375,7 +375,7 @@ impl<P: Params + 'static> Editor for SlintEditor<P> {
         // --- baseview + wgpu ---
         let options = WindowOpenOptions {
             title: String::from("truce-slint"),
-            size: baseview::Size::new(lw as f64, lh as f64),
+            size: baseview::Size::new(f64::from(lw), f64::from(lh)),
             scale: WindowScalePolicy::SystemScaleFactor,
         };
 

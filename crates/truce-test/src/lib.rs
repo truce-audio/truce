@@ -9,7 +9,7 @@
 //!   `CARGO_MANIFEST_DIR`, so `state_file` paths resolve correctly).
 //!   Assertions live in [`assertions`].
 //! - **Static plugin checks** — `assert_state_round_trip`,
-//!   `assert_has_editor`, AU FourCC, bus config, param defaults, GUI
+//!   `assert_has_editor`, AU `FourCC`, bus config, param defaults, GUI
 //!   lifecycle, etc. These don't render audio, just instantiate the
 //!   plugin and inspect.
 //!
@@ -132,7 +132,7 @@ pub fn assert_has_editor<P: PluginExport>() {
     assert!(w > 0 && h > 0, "Editor size is zero: {w}x{h}");
 }
 
-/// Assert plugin_info!() returns valid metadata.
+/// Assert `plugin_info`!() returns valid metadata.
 pub fn assert_valid_info<P: PluginExport>() {
     let info = P::info();
     assert!(!info.name.is_empty(), "Plugin name is empty");
@@ -151,7 +151,7 @@ pub fn assert_valid_info<P: PluginExport>() {
 
 /// Assert AU type codes are valid 4-char ASCII.
 ///
-/// Catches the FourCharCode endianness bug (big-endian on ARM64).
+/// Catches the `FourCharCode` endianness bug (big-endian on ARM64).
 pub fn assert_au_type_codes_ascii<P: PluginExport>() {
     let info = P::info();
     for (label, code) in [
@@ -169,9 +169,9 @@ pub fn assert_au_type_codes_ascii<P: PluginExport>() {
     }
 }
 
-/// Assert AU FourCharCode round-trips through big-endian u32.
+/// Assert AU `FourCharCode` round-trips through big-endian u32.
 ///
-/// This is the encoding used by AudioComponentDescription on macOS.
+/// This is the encoding used by `AudioComponentDescription` on macOS.
 pub fn assert_fourcc_roundtrip<P: PluginExport>() {
     let info = P::info();
     for (label, code) in [
@@ -179,10 +179,10 @@ pub fn assert_fourcc_roundtrip<P: PluginExport>() {
         ("fourcc", info.fourcc),
         ("au_manufacturer", info.au_manufacturer),
     ] {
-        let packed = ((code[0] as u32) << 24)
-            | ((code[1] as u32) << 16)
-            | ((code[2] as u32) << 8)
-            | (code[3] as u32);
+        let packed = (u32::from(code[0]) << 24)
+            | (u32::from(code[1]) << 16)
+            | (u32::from(code[2]) << 8)
+            | u32::from(code[3]);
         let unpacked = [
             (packed >> 24) as u8,
             (packed >> 16) as u8,
@@ -212,7 +212,7 @@ pub fn assert_bus_config_effect<P: PluginExport>() {
 
 /// Assert bus config is correct for an instrument (no inputs, has outputs).
 ///
-/// Catches the GarageBand SupportedNumChannels bug — instruments must
+/// Catches the `GarageBand` `SupportedNumChannels` bug — instruments must
 /// report 0 input channels for AU hosts to show them.
 pub fn assert_bus_config_instrument<P: PluginExport>() {
     let layouts = P::bus_layouts();
@@ -303,7 +303,7 @@ pub fn assert_param_defaults_match<P: PluginExport>() {
 
 /// Assert normalized param values are clamped to [0, 1].
 ///
-/// set_plain stores raw atomics (no clamping) but normalized
+/// `set_plain` stores raw atomics (no clamping) but normalized
 /// values should always round-trip within [0, 1].
 pub fn assert_param_normalized_clamped<P: PluginExport>() {
     let plugin = P::create();
@@ -348,7 +348,7 @@ pub fn assert_param_normalized_clamped<P: PluginExport>() {
     }
 }
 
-/// Assert set_normalized → get_normalized round-trips for all params.
+/// Assert `set_normalized` → `get_normalized` round-trips for all params.
 ///
 /// For discrete/bool/enum params, only tests boundary values (0.0, 1.0)
 /// since intermediate values snap to the nearest discrete step.
@@ -360,8 +360,8 @@ pub fn assert_param_normalized_roundtrip<P: PluginExport>() {
             // Discrete param: test exact step positions. Tolerance
             // sized for one-step quantization (half a step).
             let steps = steps.get();
-            let v: Vec<f64> = (0..=steps).map(|i| i as f64 / steps as f64).collect();
-            (v, (0.5 / steps as f64).max(1e-6))
+            let v: Vec<f64> = (0..=steps).map(|i| f64::from(i) / f64::from(steps)).collect();
+            (v, (0.5 / f64::from(steps)).max(1e-6))
         } else {
             // Continuous param: tighter tolerance — round-trip should
             // be exact modulo `clamp(0, 1)` and float rounding.
@@ -388,7 +388,7 @@ pub fn assert_param_normalized_roundtrip<P: PluginExport>() {
     }
 }
 
-/// Assert param count matches param_infos length.
+/// Assert param count matches `param_infos` length.
 pub fn assert_param_count_matches<P: PluginExport>() {
     let plugin = P::create();
     let count = plugin.params().count();
@@ -628,6 +628,7 @@ impl<P: PluginExport> ScreenshotTest<P> {
     /// toward this budget if its max channel delta exceeds the
     /// threshold, so sub-perceptual AA wobble doesn't have to inflate
     /// `tolerance` to numbers that would also hide real regressions.
+    #[must_use] 
     pub fn tolerance(mut self, t: usize) -> Self {
         self.tolerance = t;
         self
@@ -641,6 +642,7 @@ impl<P: PluginExport> ScreenshotTest<P> {
     /// Practical values: `1`–`3` ignore tiny rasterizer / filter
     /// drift between machines without masking real visual changes;
     /// `8`+ starts to hide things a human would notice.
+    #[must_use] 
     pub fn pixel_threshold(mut self, d: u8) -> Self {
         self.pixel_threshold = d;
         self
@@ -730,9 +732,7 @@ fn compare_against_reference(
     let render_path = render_dir.join(
         ref_path
             .file_name()
-            .map(std::path::Path::new)
-            .map(|p| p.to_path_buf())
-            .unwrap_or_else(|| PathBuf::from("screenshot.png")),
+            .map(std::path::Path::new).map_or_else(|| PathBuf::from("screenshot.png"), std::path::Path::to_path_buf),
     );
 
     if !ref_path.exists() {
@@ -815,9 +815,7 @@ fn workspace_target_screenshots_dir(manifest_dir_hint: Option<&std::path::Path>)
     // a stable anchor regardless of where `cargo test` runs from. Fall
     // back to CWD only when no hint is available — old code paths or
     // direct calls into this function.
-    let start = manifest_dir_hint
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+    let start = manifest_dir_hint.map_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")), std::path::Path::to_path_buf);
     let mut dir = start.clone();
     let mut topmost_package: Option<PathBuf> = None;
     loop {

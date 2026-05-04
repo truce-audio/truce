@@ -1,5 +1,5 @@
 //! Regression test: param sync must NOT snap smoothers.
-//! Bug: calling snap_smoothers() every block killed gradual smoothing,
+//! Bug: calling `snap_smoothers()` every block killed gradual smoothing,
 //! causing zipper noise on param changes.
 
 use std::sync::Arc;

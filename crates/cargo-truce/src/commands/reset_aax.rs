@@ -61,7 +61,7 @@ pub(crate) fn cmd_reset_aax(args: &[String]) -> Res {
             let name = name.to_string_lossy();
             if name.contains(&config.vendor.name) {
                 let _ = fs::remove_file(entry.path());
-                eprintln!("  Removed AAX cache: {}", name);
+                eprintln!("  Removed AAX cache: {name}");
                 removed += 1;
             }
         }

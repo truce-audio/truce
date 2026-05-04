@@ -175,7 +175,7 @@ pub(crate) fn render_with_state<P: Params + ?Sized>(
     let bytes_per_row = (phys_w * 4 + 255) & !255; // align to 256
     let readback_buf = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("screenshot-readback"),
-        size: (bytes_per_row * phys_h) as u64,
+        size: u64::from(bytes_per_row * phys_h),
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });

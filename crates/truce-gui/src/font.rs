@@ -1,6 +1,6 @@
 //! Font rendering using fontdue (TrueType rasterization).
 //!
-//! The bundled JetBrains Mono ships in the dedicated `truce-font`
+//! The bundled `JetBrains` Mono ships in the dedicated `truce-font`
 //! crate; this module re-exports it at the historical
 //! `truce_gui::font::JETBRAINS_MONO` path so existing callers keep
 //! working. Advanced users can override the bundled font via Cargo's
@@ -10,7 +10,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
-/// JetBrains Mono Regular TrueType bytes — re-exported from
+/// `JetBrains` Mono Regular TrueType bytes — re-exported from
 /// [`truce_font`] for backwards compatibility. Prefer
 /// `truce_font::JETBRAINS_MONO` in new code; both refer to the same
 /// `&'static [u8]`.
@@ -150,7 +150,7 @@ pub fn draw_text_fontdue(
         let mut cursor_x = x;
 
         let line_metrics = cache.font.horizontal_line_metrics(size);
-        let ascent = line_metrics.map(|m| m.ascent).unwrap_or(size * 0.8);
+        let ascent = line_metrics.map_or(size * 0.8, |m| m.ascent);
 
         // Pre-compute the source color in linear space; only the
         // glyph-coverage alpha varies per pixel.
@@ -180,7 +180,7 @@ pub fn draw_text_fontdue(
                         continue;
                     }
 
-                    let ga = (coverage as f32 / 255.0) * a;
+                    let ga = (f32::from(coverage) / 255.0) * a;
                     let idx = ((py as u32 * pixmap_width + px as u32) * 4) as usize;
                     if idx + 3 >= pixmap_data.len() {
                         continue;
@@ -193,7 +193,7 @@ pub fn draw_text_fontdue(
                     let dst_lin_r = SRGB_TO_LINEAR[pixmap_data[idx] as usize];
                     let dst_lin_g = SRGB_TO_LINEAR[pixmap_data[idx + 1] as usize];
                     let dst_lin_b = SRGB_TO_LINEAR[pixmap_data[idx + 2] as usize];
-                    let dst_a = pixmap_data[idx + 3] as f32 / 255.0;
+                    let dst_a = f32::from(pixmap_data[idx + 3]) / 255.0;
 
                     let inv_sa = 1.0 - ga;
                     let out_lin_r = src_lin_r * ga + dst_lin_r * inv_sa;
@@ -214,6 +214,7 @@ pub fn draw_text_fontdue(
 }
 
 /// Measure text width in pixels.
+#[must_use] 
 pub fn text_width_fontdue(text: &str, size: f32) -> f32 {
     with_cache(|cache| {
         let mut width = 0.0f32;

@@ -3,7 +3,7 @@
 //! Uploads an RGBA pixel buffer to a GPU texture, then draws a fullscreen
 //! textured triangle to present it.
 
-const BLIT_SHADER: &str = r#"
+const BLIT_SHADER: &str = r"
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
     @location(0) uv: vec2<f32>,
@@ -43,7 +43,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let c = textureSample(tex, samp, in.uv);
     return vec4(c.rgb * c.a, c.a);
 }
-"#;
+";
 
 /// Simple wgpu pipeline that blits an RGBA pixel buffer to the screen.
 pub struct BlitPipeline {
@@ -57,6 +57,7 @@ pub struct BlitPipeline {
 }
 
 impl BlitPipeline {
+    #[must_use] 
     pub fn new(
         device: &wgpu::Device,
         surface_format: wgpu::TextureFormat,

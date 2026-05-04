@@ -17,6 +17,7 @@ impl ParamRange {
     /// stable: the result always converges to the bottom of the
     /// (degenerate) range rather than producing NaN or wrapping into
     /// nonsense.
+    #[must_use] 
     pub fn normalize(&self, plain: f64) -> f64 {
         match self {
             Self::Linear { min, max } => {
@@ -53,6 +54,7 @@ impl ParamRange {
     /// Degenerate bounds collapse to `min` (or `0.0` for `Enum` with
     /// `count <= 1`). See [`Self::normalize`] for the round-trip
     /// semantics.
+    #[must_use] 
     pub fn denormalize(&self, normalized: f64) -> f64 {
         let n = normalized.clamp(0.0, 1.0);
         match self {
@@ -81,6 +83,7 @@ impl ParamRange {
     }
 
     /// Plain-value minimum.
+    #[must_use] 
     pub fn min(&self) -> f64 {
         match self {
             Self::Linear { min, .. } | Self::Logarithmic { min, .. } => *min,
@@ -90,6 +93,7 @@ impl ParamRange {
     }
 
     /// Plain-value maximum.
+    #[must_use] 
     pub fn max(&self) -> f64 {
         match self {
             Self::Linear { max, .. } | Self::Logarithmic { max, .. } => *max,
@@ -109,6 +113,7 @@ impl ParamRange {
     /// Discrete / Enum variants with degenerate bounds (`min > max`,
     /// or `count <= 1`) return `None` — semantically continuous,
     /// because there's nothing to step through.
+    #[must_use] 
     pub fn step_count(&self) -> Option<std::num::NonZeroU32> {
         let raw: u32 = match self {
             Self::Linear { .. } | Self::Logarithmic { .. } => 0,
@@ -117,7 +122,7 @@ impl ParamRange {
             // mis-specified `Discrete` range can't produce a bogus
             // step count that callers might index with.
             Self::Discrete { min, max } => {
-                (max.saturating_sub(*min)).max(0).min(u32::MAX as i64) as u32
+                (max.saturating_sub(*min)).max(0).min(i64::from(u32::MAX)) as u32
             }
             Self::Enum { count } => (*count as u32).saturating_sub(1),
         };

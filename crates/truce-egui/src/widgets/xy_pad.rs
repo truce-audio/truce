@@ -38,8 +38,8 @@ pub fn param_xy_pad<P: ?Sized>(
     {
         vx = ((pos.x - pad_rect.left()) / pad_rect.width()).clamp(0.0, 1.0);
         vy = 1.0 - ((pos.y - pad_rect.top()) / pad_rect.height()).clamp(0.0, 1.0);
-        state.set_param(id_x, vx as f64);
-        state.set_param(id_y, vy as f64);
+        state.set_param(id_x, f64::from(vx));
+        state.set_param(id_y, f64::from(vy));
     }
     if response.drag_stopped() {
         state.end_edit(id_x);

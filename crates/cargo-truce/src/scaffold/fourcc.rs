@@ -20,6 +20,7 @@ use super::PluginSpec;
 ///
 /// Always returns a 4-character ASCII string; on inputs with no
 /// alphanumeric content (`""`, `"---"`) it falls through to all-`'X'`.
+#[must_use] 
 pub fn to_fourcc(s: &str) -> String {
     // `filter_map` keeps the iterator chain total — no `unwrap` after
     // the `!seg.is_empty()` guard, no defensive panic on empty input.
@@ -33,7 +34,7 @@ pub fn to_fourcc(s: &str) -> String {
     let mut code: Vec<char> = segments
         .iter()
         .filter_map(|seg| seg.chars().next())
-        .flat_map(|c| c.to_uppercase())
+        .flat_map(char::to_uppercase)
         .collect();
 
     if code.len() >= 4 {

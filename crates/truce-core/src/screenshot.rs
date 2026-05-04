@@ -17,6 +17,7 @@ use crate::plugin::Plugin;
 
 /// Drive a fresh plugin through `Editor::screenshot()` and return raw
 /// RGBA pixels + physical dimensions. No PNG save.
+#[must_use] 
 pub fn render_pixels<P: PluginExport>() -> (Vec<u8>, u32, u32) {
     let mut plugin = P::create();
     plugin.init();
@@ -27,6 +28,7 @@ pub fn render_pixels<P: PluginExport>() -> (Vec<u8>, u32, u32) {
 /// bytes), then render. Used by the `__truce_screenshot` FFI so
 /// `cargo truce screenshot --state` can capture the editor under
 /// arbitrary pre-saved state without needing a test harness.
+#[must_use] 
 pub fn render_with_state<P: PluginExport>(state: Option<&[u8]>) -> (Vec<u8>, u32, u32) {
     let mut plugin = P::create();
     plugin.init();
@@ -75,6 +77,7 @@ pub fn render_pixels_for<P: PluginExport>(plugin: &mut P) -> (Vec<u8>, u32, u32)
 /// caller (test or CLI) is expected to surface a meaningful message
 /// in that case, so a crash here is sufficient for callers that
 /// already failed `Path::exists()`.
+#[must_use] 
 pub fn load_png(path: &Path) -> (Vec<u8>, u32, u32) {
     let file = std::fs::File::open(path)
         .unwrap_or_else(|e| panic!("Failed to open {}: {e}", path.display()));

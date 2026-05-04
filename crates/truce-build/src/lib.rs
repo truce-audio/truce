@@ -73,10 +73,10 @@ pub struct PluginDef {
 /// Sets:
 /// - `TRUCE_PLUGIN_NAME` — display name
 /// - `TRUCE_PLUGIN_ID` — `{vendor.id}.{suffix}` (used as CLAP + VST3 ID)
-/// - `TRUCE_FOURCC` — 4-char plugin identifier (e.g., "TGan")
+/// - `TRUCE_FOURCC` — 4-char plugin identifier (e.g., "`TGan`")
 /// - `TRUCE_AU_TYPE` — 4-char AU type (e.g., "aufx")
 /// - `TRUCE_AU_MANUFACTURER` — 4-char AU manufacturer (e.g., "Trce")
-/// - `TRUCE_CATEGORY` — "Effect" or "Instrument" (derived from au_type)
+/// - `TRUCE_CATEGORY` — "Effect" or "Instrument" (derived from `au_type`)
 pub fn emit_plugin_env() {
     let toml_path = find_truce_toml_or_exit();
     println!("cargo:rerun-if-changed={}", toml_path.display());
@@ -270,6 +270,7 @@ fn resolve_target_dir() -> Option<PathBuf> {
 /// `OUT_DIR` should keep using the private `resolve_target_dir()`
 /// fallback chain — it can detect the dir from `OUT_DIR` itself
 /// without needing a workspace-root anchor.
+#[must_use] 
 pub fn target_dir(root: &Path) -> PathBuf {
     if let Ok(d) = std::env::var("CARGO_TARGET_DIR")
         && !d.is_empty()

@@ -1,5 +1,6 @@
 //! `to_pascal_case` helper, used to derive struct names from crate names.
 
+#[must_use] 
 pub fn to_pascal_case(s: &str) -> String {
     s.split(|c: char| !c.is_alphanumeric())
         .filter(|part| !part.is_empty())

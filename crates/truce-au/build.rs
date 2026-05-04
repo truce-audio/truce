@@ -33,8 +33,8 @@ fn main() {
             })
             .collect()
     };
-    let class_name = format!("TruceAU_{}", sanitized);
-    let factory_name = format!("TruceAUFactory_{}", sanitized);
+    let class_name = format!("TruceAU_{sanitized}");
+    let factory_name = format!("TruceAUFactory_{sanitized}");
 
     // TRUCE_AU_VERSION=2 builds only the v2 C shim (for .component)
     // TRUCE_AU_VERSION=3 builds both v3 ObjC shim AND v2 C shim (for .appex).
@@ -61,8 +61,8 @@ fn main() {
         build.file("shim/au_shim.m");
     }
 
-    let factory_class_name = format!("TruceAUFactory_{}", sanitized);
-    let view_factory_name = format!("TruceAUView_{}", sanitized);
+    let factory_class_name = format!("TruceAUFactory_{sanitized}");
+    let view_factory_name = format!("TruceAUView_{sanitized}");
 
     build
         .include(&shim_include)

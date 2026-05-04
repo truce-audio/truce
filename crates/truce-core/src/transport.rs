@@ -48,6 +48,7 @@ unsafe impl Sync for TransportSlot {}
 unsafe impl Send for TransportSlot {}
 
 impl TransportSlot {
+    #[must_use] 
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
             seq: AtomicU64::new(0),

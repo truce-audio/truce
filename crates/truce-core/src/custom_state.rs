@@ -31,10 +31,12 @@ pub struct StateCursor<'a> {
 }
 
 impl<'a> StateCursor<'a> {
+    #[must_use] 
     pub fn new(data: &'a [u8]) -> Self {
         Self { data, pos: 0 }
     }
 
+    #[must_use] 
     pub fn remaining(&self) -> usize {
         self.data.len().saturating_sub(self.pos)
     }
@@ -111,7 +113,7 @@ impl_state_field_int!(u8, u16, u32, u64, i8, i16, i32, i64, f32, f64);
 
 impl StateField for bool {
     fn write_field(&self, buf: &mut Vec<u8>) {
-        buf.push(if *self { 1 } else { 0 });
+        buf.push(u8::from(*self));
     }
     fn read_field(cursor: &mut StateCursor) -> Option<Self> {
         let b = cursor.read_bytes(1)?;
@@ -212,6 +214,7 @@ impl<T: State> StateBinding<T> {
     /// context's `<P>` since `StateBinding` cares only about the
     /// `get_state` / `set_state` channel on the underlying
     /// `EditorBridge`, never about parameter typing.
+    #[must_use] 
     pub fn new<P: ?Sized>(context: &PluginContext<P>) -> Self {
         let bridge_for_get = Arc::clone(context.bridge());
         let bridge_for_set = Arc::clone(context.bridge());

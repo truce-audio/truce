@@ -137,7 +137,7 @@ unsafe extern "C" {
         num_params: u32,
     );
 
-    /// Get the VST3 factory COM object. Called by GetPluginFactory.
+    /// Get the VST3 factory COM object. Called by `GetPluginFactory`.
     pub fn truce_vst3_get_factory() -> *mut std::ffi::c_void;
 
     /// Notify host: begin editing a parameter (mouse-down).

@@ -54,7 +54,7 @@ impl PluginLogic for GainSlint {
         for i in 0..buffer.num_samples() {
             let gain_db = self.params.gain.smoothed_next();
             let pan = self.params.pan.smoothed_next();
-            let gain_linear = db_to_linear(gain_db as f64) as f32;
+            let gain_linear = db_to_linear(f64::from(gain_db)) as f32;
 
             let gain_l = gain_linear * (1.0 - pan.max(0.0));
             let gain_r = gain_linear * (1.0 + pan.min(0.0));
@@ -85,9 +85,9 @@ impl PluginLogic for GainSlint {
 
                 // UI → host
                 let s = state.clone();
-                ui.on_gain_changed(move |v| s.automate(P::Gain, v as f64));
+                ui.on_gain_changed(move |v| s.automate(P::Gain, f64::from(v)));
                 let s = state.clone();
-                ui.on_pan_changed(move |v| s.automate(P::Pan, v as f64));
+                ui.on_pan_changed(move |v| s.automate(P::Pan, f64::from(v)));
 
                 // host → UI (params + meters)
                 Box::new(move |state: &PluginContext<GainParams>| {

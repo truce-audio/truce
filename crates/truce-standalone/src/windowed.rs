@@ -70,23 +70,20 @@ where
         let mut plugin = audio_handles
             .plugin
             .lock()
-            .unwrap_or_else(|e| e.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         plugin.editor()
     };
-    let mut editor = match editor {
-        Some(e) => e,
-        None => {
-            eprintln!("Plugin returned no editor — falling back to headless mode.");
-            drop(audio_handles);
-            crate::headless::run::<P>(opts);
-            return;
-        }
+    let mut editor = if let Some(e) = editor { e } else {
+        eprintln!("Plugin returned no editor — falling back to headless mode.");
+        drop(audio_handles);
+        crate::headless::run::<P>(opts);
+        return;
     };
     let (lw, lh) = editor.size();
 
     let window_opts = WindowOpenOptions {
         title: format!("{} — standalone", P::info().name),
-        size: baseview::Size::new(lw as f64, lh as f64),
+        size: baseview::Size::new(f64::from(lw), f64::from(lh)),
         scale: WindowScalePolicy::SystemScaleFactor,
     };
 
@@ -202,7 +199,7 @@ where
     /// window; dropped when the window closes.
     _midi_thread: Option<MidiInputThread>,
     /// `--output-file` capture sink, owned by the handler so the
-    /// Linux WillClose path can finalize it before `_exit(0)`. On
+    /// Linux `WillClose` path can finalize it before `_exit(0)`. On
     /// non-Linux the handler's Drop runs naturally and
     /// `CaptureSink::Drop` joins the writer thread to flush the WAV
     /// header.
@@ -463,7 +460,7 @@ where
     // Arc<P::Params> — it doesn't read mutable state.
     let params: Arc<P::Params> = plugin
         .lock()
-        .unwrap_or_else(|e| e.into_inner())
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
         .params_arc();
     let transport_read = transport.clone();
 
@@ -493,8 +490,7 @@ where
             get_meter: Box::new(move |id| {
                 plugin_meter
                     .try_lock()
-                    .map(|p| p.get_meter(id))
-                    .unwrap_or(0.0)
+                    .map_or(0.0, |p| p.get_meter(id))
             }),
             get_state: Box::new(move || {
                 plugin_save

@@ -84,7 +84,7 @@ impl<'a> AtomSequenceReader<'a> {
     /// object encountered. Returns `true` if at least one such event was
     /// found.
     ///
-    /// LV2 hosts typically emit one `time:Position` per run() block when
+    /// LV2 hosts typically emit one `time:Position` per `run()` block when
     /// the transport changes (play / seek / tempo edit); a host like
     /// Ardour sends one at the start of each block while playing.
     ///
@@ -123,10 +123,10 @@ impl<'a> AtomSequenceReader<'a> {
                 return;
             }
             let data_size = body_size - core::mem::size_of::<AtomSequenceBody>();
-            let data_start = (self.seq as *const u8).add(core::mem::size_of::<AtomSequence>());
+            let data_start = self.seq.cast::<u8>().add(core::mem::size_of::<AtomSequence>());
             let mut offset = 0usize;
             while offset + core::mem::size_of::<AtomEventHeader>() <= data_size {
-                let ev_ptr = data_start.add(offset) as *const AtomEventHeader;
+                let ev_ptr = data_start.add(offset).cast::<AtomEventHeader>();
                 let ev = *ev_ptr;
                 let body_bytes = ev.body.size as usize;
                 let total = core::mem::size_of::<AtomEventHeader>() + body_bytes;
@@ -162,7 +162,7 @@ impl<'a> AtomSequenceReader<'a> {
             if body_bytes < header_size {
                 return false;
             }
-            let otype = *(body_ptr.add(core::mem::size_of::<Urid>()) as *const Urid);
+            let otype = *body_ptr.add(core::mem::size_of::<Urid>()).cast::<Urid>();
             if otype != self.urid.time_position {
                 return false;
             }
@@ -183,10 +183,10 @@ impl<'a> AtomSequenceReader<'a> {
                 <= body_bytes
             {
                 // Property = { key: Urid, context: Urid, value: Atom + data }
-                let key = *(body_ptr.add(offset) as *const Urid);
+                let key = *body_ptr.add(offset).cast::<Urid>();
                 // `context` is unused by time:Position writers in practice.
                 let value_header = body_ptr.add(offset + core::mem::size_of::<Urid>() * 2);
-                let value_atom = *(value_header as *const Atom);
+                let value_atom = *value_header.cast::<Atom>();
                 let value_data = value_header.add(core::mem::size_of::<Atom>());
                 let value_size = value_atom.size as usize;
                 let entry_total =
@@ -202,7 +202,7 @@ impl<'a> AtomSequenceReader<'a> {
                         bar_beat = Some(v);
                     } else if key == self.urid.time_beats_per_bar {
                         beats_per_bar = Some(v);
-                        info.time_sig_num = v.round().clamp(0.0, u8::MAX as f64) as u8;
+                        info.time_sig_num = v.round().clamp(0.0, f64::from(u8::MAX)) as u8;
                     } else if key == self.urid.time_beat {
                         // Non-standard but some hosts still emit it — treat
                         // it as the absolute beat position directly. Stash
@@ -213,7 +213,7 @@ impl<'a> AtomSequenceReader<'a> {
                     } else if key == self.urid.time_speed {
                         info.playing = v.abs() > 1e-9;
                     } else if key == self.urid.time_beat_unit {
-                        info.time_sig_den = v.round().clamp(0.0, u8::MAX as f64) as u8;
+                        info.time_sig_den = v.round().clamp(0.0, f64::from(u8::MAX)) as u8;
                     }
                 }
 
@@ -230,7 +230,7 @@ impl<'a> AtomSequenceReader<'a> {
             let bpb = beats_per_bar
                 .or({
                     if info.time_sig_num > 0 {
-                        Some(info.time_sig_num as f64)
+                        Some(f64::from(info.time_sig_num))
                     } else {
                         None
                     }
@@ -271,15 +271,15 @@ impl<'a> AtomSequenceReader<'a> {
     ) -> Option<f64> {
         unsafe {
             if atom_type == self.urid.atom_float && size >= core::mem::size_of::<f32>() {
-                Some(*(data as *const f32) as f64)
+                Some(f64::from(*data.cast::<f32>()))
             } else if atom_type == self.urid.atom_double && size >= core::mem::size_of::<f64>() {
-                Some(*(data as *const f64))
+                Some(*data.cast::<f64>())
             } else if atom_type == self.urid.atom_int && size >= core::mem::size_of::<i32>() {
-                Some(*(data as *const i32) as f64)
+                Some(f64::from(*data.cast::<i32>()))
             } else if atom_type == self.urid.atom_long && size >= core::mem::size_of::<i64>() {
-                Some(*(data as *const i64) as f64)
+                Some(*data.cast::<i64>() as f64)
             } else if atom_type == self.urid.atom_bool && size >= core::mem::size_of::<i32>() {
-                Some(if *(data as *const i32) != 0 { 1.0 } else { 0.0 })
+                Some(if *data.cast::<i32>() != 0 { 1.0 } else { 0.0 })
             } else {
                 None
             }
@@ -301,7 +301,7 @@ pub fn midi_bytes_to_event(sample_offset: u32, bytes: &[u8]) -> Option<Event> {
         0x80 if bytes.len() >= 3 => EventBody::NoteOff {
             channel,
             note: bytes[1] & 0x7F,
-            velocity: (bytes[2] & 0x7F) as f32 / 127.0,
+            velocity: f32::from(bytes[2] & 0x7F) / 127.0,
         },
         0x90 if bytes.len() >= 3 => {
             let vel = bytes[2] & 0x7F;
@@ -315,19 +315,19 @@ pub fn midi_bytes_to_event(sample_offset: u32, bytes: &[u8]) -> Option<Event> {
                 EventBody::NoteOn {
                     channel,
                     note: bytes[1] & 0x7F,
-                    velocity: vel as f32 / 127.0,
+                    velocity: f32::from(vel) / 127.0,
                 }
             }
         }
         0xA0 if bytes.len() >= 3 => EventBody::Aftertouch {
             channel,
             note: bytes[1] & 0x7F,
-            pressure: (bytes[2] & 0x7F) as f32 / 127.0,
+            pressure: f32::from(bytes[2] & 0x7F) / 127.0,
         },
         0xB0 if bytes.len() >= 3 => EventBody::ControlChange {
             channel,
             cc: bytes[1] & 0x7F,
-            value: (bytes[2] & 0x7F) as f32 / 127.0,
+            value: f32::from(bytes[2] & 0x7F) / 127.0,
         },
         0xC0 if bytes.len() >= 2 => EventBody::ProgramChange {
             channel,
@@ -335,14 +335,14 @@ pub fn midi_bytes_to_event(sample_offset: u32, bytes: &[u8]) -> Option<Event> {
         },
         0xD0 if bytes.len() >= 2 => EventBody::ChannelPressure {
             channel,
-            pressure: (bytes[1] & 0x7F) as f32 / 127.0,
+            pressure: f32::from(bytes[1] & 0x7F) / 127.0,
         },
         0xE0 if bytes.len() >= 3 => {
-            let raw = ((bytes[2] as u16 & 0x7F) << 7) | (bytes[1] as u16 & 0x7F);
+            let raw = ((u16::from(bytes[2]) & 0x7F) << 7) | (u16::from(bytes[1]) & 0x7F);
             EventBody::PitchBend {
                 channel,
                 // Normalize to [-1, 1] with 0x2000 as center.
-                value: (raw as f32 - 8192.0) / 8192.0,
+                value: (f32::from(raw) - 8192.0) / 8192.0,
             }
         }
         _ => return None,
@@ -373,7 +373,7 @@ pub unsafe fn write_midi_out_sequence(out: *mut AtomSequence, events: &EventList
         let capacity = (*out).atom.size as usize;
         let atom_size = core::mem::size_of::<Atom>();
         let header_size = core::mem::size_of::<AtomSequenceBody>();
-        let body_start = (out as *mut u8).add(atom_size + header_size);
+        let body_start = out.cast::<u8>().add(atom_size + header_size);
         let mut offset = 0usize;
         // Reset sequence metadata.
         (*out).atom.type_ = urid.atom_sequence;
@@ -446,8 +446,8 @@ pub unsafe fn write_midi_out_sequence(out: *mut AtomSequence, events: &EventList
             if offset + padded > capacity {
                 break; // out of buffer space; drop remaining events
             }
-            let ev_ptr = body_start.add(offset) as *mut AtomEventHeader;
-            (*ev_ptr).time_frames = frame as i64;
+            let ev_ptr = body_start.add(offset).cast::<AtomEventHeader>();
+            (*ev_ptr).time_frames = i64::from(frame);
             (*ev_ptr).body.size = n as u32;
             (*ev_ptr).body.type_ = urid.midi_event;
             let body_ptr = body_start.add(offset + core::mem::size_of::<AtomEventHeader>());
@@ -463,7 +463,7 @@ pub unsafe fn write_midi_out_sequence(out: *mut AtomSequence, events: &EventList
 }
 
 /// Write a single `time:Position` atom object into a notify-out sequence.
-/// Called each run() block so the UI's `port_event` receives the latest
+/// Called each `run()` block so the UI's `port_event` receives the latest
 /// transport info.
 ///
 /// If `extra_atom` is non-null (caller-supplied `atom:eventTransfer` URID
@@ -485,7 +485,7 @@ pub unsafe fn write_time_position_sequence(
         let capacity = (*out).atom.size as usize;
         let atom_size = core::mem::size_of::<Atom>();
         let body_header = core::mem::size_of::<AtomSequenceBody>();
-        let body_start = (out as *mut u8).add(atom_size + body_header);
+        let body_start = out.cast::<u8>().add(atom_size + body_header);
 
         (*out).atom.type_ = urid.atom_sequence;
         (*out).body.unit = 0;
@@ -504,7 +504,7 @@ pub unsafe fn write_time_position_sequence(
         let obj_header_size = core::mem::size_of::<Urid>() * 2; // id + otype
 
         // Reserve the whole event in-place so property writers can align.
-        let ev_ptr = body_start as *mut AtomEventHeader;
+        let ev_ptr = body_start.cast::<AtomEventHeader>();
         if ev_header_size + obj_header_size > capacity {
             (*out).atom.size = body_header as u32;
             return;
@@ -513,8 +513,8 @@ pub unsafe fn write_time_position_sequence(
         (*ev_ptr).body.type_ = urid.atom_object;
         let obj_body_start = body_start.add(ev_header_size);
         // Per lv2/atom/atom.h: `id` first, then `otype`.
-        *(obj_body_start as *mut Urid) = 0; // id = blank
-        *(obj_body_start.add(core::mem::size_of::<Urid>()) as *mut Urid) = urid.time_position;
+        *obj_body_start.cast::<Urid>() = 0; // id = blank
+        *obj_body_start.add(core::mem::size_of::<Urid>()).cast::<Urid>() = urid.time_position;
 
         let mut prop_offset = obj_header_size;
         let prop_header_size = core::mem::size_of::<Urid>() * 2 + core::mem::size_of::<Atom>();
@@ -537,9 +537,9 @@ pub unsafe fn write_time_position_sequence(
                 return false;
             }
             let entry = obj_body_start.add(prop_offset);
-            *(entry as *mut Urid) = key;
-            *(entry.add(core::mem::size_of::<Urid>()) as *mut Urid) = 0; // context
-            let atom_hdr = entry.add(core::mem::size_of::<Urid>() * 2) as *mut Atom;
+            *entry.cast::<Urid>() = key;
+            *entry.add(core::mem::size_of::<Urid>()).cast::<Urid>() = 0; // context
+            let atom_hdr = entry.add(core::mem::size_of::<Urid>() * 2).cast::<Atom>();
             (*atom_hdr).size = value_size as u32;
             (*atom_hdr).type_ = atom_type;
             let value_ptr = entry.add(prop_header_size);
@@ -555,7 +555,7 @@ pub unsafe fn write_time_position_sequence(
         // `bar_start_beats / beatsPerBar`. Writers never emit a raw global
         // beat count — the reader reconstructs it on the other side.
         let bpb = if info.time_sig_num > 0 {
-            info.time_sig_num as f64
+            f64::from(info.time_sig_num)
         } else {
             4.0
         };
@@ -569,15 +569,15 @@ pub unsafe fn write_time_position_sequence(
         let mut ok = true;
         ok = ok
             && write_typed(urid.time_speed, urid.atom_double, 8, &|p| {
-                *(p as *mut f64) = if info.playing { 1.0 } else { 0.0 };
+                *p.cast::<f64>() = if info.playing { 1.0 } else { 0.0 };
             });
         ok = ok
             && write_typed(urid.time_beats_per_minute, urid.atom_double, 8, &|p| {
-                *(p as *mut f64) = info.tempo;
+                *p.cast::<f64>() = info.tempo;
             });
         ok = ok
             && write_typed(urid.time_bar_beat, urid.atom_float, 4, &|p| {
-                *(p as *mut f32) = bar_beat as f32;
+                *p.cast::<f32>() = bar_beat as f32;
             });
         // LV2 spec types: `time:bar` is `xsd:long`, `time:frame` is
         // `xsd:long`, `time:beatsPerBar` is `xsd:int`, `time:beatUnit`
@@ -587,19 +587,19 @@ pub unsafe fn write_time_position_sequence(
         // accepts any numeric type, but cross-host interop suffers.
         ok = ok
             && write_typed(urid.time_bar, urid.atom_long, 8, &|p| {
-                *(p as *mut i64) = bar_index;
+                *p.cast::<i64>() = bar_index;
             });
         ok = ok
             && write_typed(urid.time_frame, urid.atom_long, 8, &|p| {
-                *(p as *mut i64) = info.position_samples;
+                *p.cast::<i64>() = info.position_samples;
             });
         ok = ok
             && write_typed(urid.time_beats_per_bar, urid.atom_int, 4, &|p| {
-                *(p as *mut i32) = info.time_sig_num as i32;
+                *p.cast::<i32>() = i32::from(info.time_sig_num);
             });
         ok = ok
             && write_typed(urid.time_beat_unit, urid.atom_int, 4, &|p| {
-                *(p as *mut i32) = info.time_sig_den as i32;
+                *p.cast::<i32>() = i32::from(info.time_sig_den);
             });
         if !ok {
             // Drop the whole notify event if any property didn't fit.
@@ -629,7 +629,7 @@ mod tests {
     use super::*;
     use crate::urid::UridMap;
 
-    /// Build a UridMap by hand so tests don't need a real LV2 host.
+    /// Build a `UridMap` by hand so tests don't need a real LV2 host.
     /// Every URI gets a unique deterministic id.
     fn test_urid_map() -> UridMap {
         let mut u = UridMap::default();
@@ -660,7 +660,7 @@ mod tests {
     fn time_position_roundtrip() {
         let urid = test_urid_map();
         let mut buf = vec![0u8; 4096];
-        let seq = buf.as_mut_ptr() as *mut AtomSequence;
+        let seq = buf.as_mut_ptr().cast::<AtomSequence>();
         // Caller contract: atom.size = capacity on entry.
         unsafe {
             (*seq).atom.size = (buf.len() - core::mem::size_of::<Atom>()) as u32;
@@ -690,7 +690,7 @@ mod tests {
         }
 
         let mut decoded = TransportInfo::default();
-        let reader = AtomSequenceReader::new(seq as *const AtomSequence, &urid);
+        let reader = AtomSequenceReader::new(seq.cast_const(), &urid);
         assert!(reader.apply_time_position(&mut decoded));
 
         assert!(decoded.playing, "playing flag round-tripped");
@@ -717,7 +717,7 @@ mod tests {
 
         let urid = test_urid_map();
         let mut buf = vec![0u8; 4096];
-        let seq = buf.as_mut_ptr() as *mut AtomSequence;
+        let seq = buf.as_mut_ptr().cast::<AtomSequence>();
         unsafe {
             (*seq).atom.size = (buf.len() - core::mem::size_of::<Atom>()) as u32;
         }
@@ -752,7 +752,7 @@ mod tests {
             write_midi_out_sequence(seq, &source, &urid);
         }
 
-        let reader = AtomSequenceReader::new(seq as *const AtomSequence, &urid);
+        let reader = AtomSequenceReader::new(seq.cast_const(), &urid);
         let mut decoded = Vec::new();
         reader.for_each_midi(|sample_offset, bytes| {
             if let Some(event) = midi_bytes_to_event(sample_offset, bytes) {

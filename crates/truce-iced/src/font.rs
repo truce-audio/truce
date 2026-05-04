@@ -4,6 +4,7 @@
 /// to use as the renderer default.
 ///
 /// Used by both the live editor and the snapshot renderer.
+#[must_use] 
 pub fn apply_font(family: &'static str, data: &'static [u8]) -> iced::Font {
     let mut fs = iced_graphics::text::font_system()
         .write()

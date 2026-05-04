@@ -15,6 +15,7 @@ pub const KNOB_FILL: Color32 = Color32::from_rgb(77, 153, 242);
 pub const METER_CLIP: Color32 = Color32::from_rgb(224, 69, 69);
 
 /// Create egui `Visuals` matching truce-gui's default dark theme.
+#[must_use] 
 pub fn dark() -> egui::Visuals {
     let mut visuals = egui::Visuals::dark();
 

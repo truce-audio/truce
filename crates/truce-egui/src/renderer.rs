@@ -20,6 +20,7 @@ impl EguiRenderer {
     ///
     /// # Safety
     /// The window must remain valid for the lifetime of the renderer.
+    #[must_use] 
     pub unsafe fn from_window(window: &baseview::Window, width: u32, height: u32) -> Option<Self> {
         // Zero-sized configure panics inside wgpu. Some hosts (notably
         // VST3 in iZotope's RX shell) hand the editor a zero-extent
@@ -85,7 +86,7 @@ impl EguiRenderer {
         })
     }
 
-    /// Create from a raw CAMetalLayer pointer (AAX native view path).
+    /// Create from a raw `CAMetalLayer` pointer (AAX native view path).
     ///
     /// # Safety
     /// `metal_layer` must be a valid `CAMetalLayer*` that remains alive for

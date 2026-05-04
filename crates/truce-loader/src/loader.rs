@@ -1,7 +1,7 @@
-//! NativeLoader — loads and hot-reloads a PluginLogic dylib.
+//! `NativeLoader` — loads and hot-reloads a `PluginLogic` dylib.
 //!
 //! Uses native Rust ABI (no C translation layer). Verifies
-//! compatibility via AbiCanary + vtable probe before use.
+//! compatibility via `AbiCanary` + vtable probe before use.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -14,8 +14,8 @@ use std::time::SystemTime;
 /// path (multi-instance / dual-bus session) can't collide on a
 /// `<stem>-truce<id>.so` filename.
 ///
-/// A truly per-instance counter wouldn't help: each NativeLoader
-/// needs an ID *unique among other NativeLoaders in the same
+/// A truly per-instance counter wouldn't help: each `NativeLoader`
+/// needs an ID *unique among other `NativeLoaders` in the same
 /// process*, and only a process-scoped atomic can guarantee that.
 /// `Relaxed` ordering is sufficient — the only consumer is the
 /// owning `NativeLoader`, which reads the value back from its own
@@ -296,14 +296,16 @@ impl NativeLoader {
         true
     }
 
+    #[must_use] 
     pub fn plugin(&self) -> Option<&dyn PluginLogic> {
-        self.plugin.as_ref().map(|p| p.as_ref())
+        self.plugin.as_ref().map(std::convert::AsRef::as_ref)
     }
 
     pub fn plugin_mut(&mut self) -> Option<&mut dyn PluginLogic> {
-        self.plugin.as_mut().map(|p| p.as_mut())
+        self.plugin.as_mut().map(std::convert::AsMut::as_mut)
     }
 
+    #[must_use] 
     pub fn is_reload_pending(&self) -> bool {
         self.reload_pending.load(Ordering::Relaxed)
     }
@@ -314,6 +316,7 @@ impl NativeLoader {
     /// share the same `NativeLoader` use this to detect "the other
     /// side already reloaded" without having to drive reload
     /// themselves.
+    #[must_use] 
     pub fn load_counter(&self) -> u64 {
         self.load_counter
     }

@@ -1,4 +1,4 @@
-//! EguiEditor: implements truce_core::Editor using egui + baseview + wgpu.
+//! `EguiEditor`: implements `truce_core::Editor` using egui + baseview + wgpu.
 //!
 //! On `open()`, creates a baseview child window and a wgpu surface.
 //! Each `on_frame()` tick, runs the egui frame, tessellates, and renders.
@@ -23,7 +23,7 @@ use truce_gui::EditorScale;
 pub trait EditorUi<P: Params + ?Sized>: Send {
     fn ui(&mut self, ctx: &egui::Context, state: &PluginContext<P>);
 
-    /// Called once when the editor window opens. Use to create StateBindings.
+    /// Called once when the editor window opens. Use to create `StateBindings`.
     fn opened(&mut self, _state: &PluginContext<P>) {}
 
     /// Plugin state was restored (preset recall, undo, session load).
@@ -47,7 +47,7 @@ impl<P: Params + ?Sized> EditorUi<P> for NopUi<P> {
 /// clippy's complexity budget without losing the `Send` bound.
 type StateChangedFn<P> = Box<dyn FnMut(&PluginContext<P>) + Send>;
 
-/// Wraps an EditorUi with an additional state_changed callback.
+/// Wraps an `EditorUi` with an additional `state_changed` callback.
 struct WithStateChanged<P: Params + ?Sized> {
     inner: Box<dyn EditorUi<P>>,
     on_changed: StateChangedFn<P>,
@@ -89,7 +89,7 @@ pub struct EguiEditor<P: Params + ?Sized> {
     /// the diff-on-frame pattern is the only thing that catches a
     /// host-driven resize before the next paint.
     pending_size: Arc<AtomicU64>,
-    /// Shared with the baseview WindowHandler so it survives open/close cycles.
+    /// Shared with the baseview `WindowHandler` so it survives open/close cycles.
     ui: Arc<Mutex<Box<dyn EditorUi<P>>>>,
     visuals: Option<egui::Visuals>,
     font: Option<&'static [u8]>,
@@ -102,7 +102,7 @@ pub struct EguiEditor<P: Params + ?Sized> {
     scale: EditorScale,
     /// Active baseview window handle — exists only while editor is open.
     window: Option<baseview::WindowHandle>,
-    /// Typed editor context stored at open() for state_changed forwarding.
+    /// Typed editor context stored at `open()` for `state_changed` forwarding.
     context: Option<PluginContext<P>>,
 }
 
@@ -182,6 +182,7 @@ impl<P: Params + 'static> EguiEditor<P> {
 
     /// Set custom visuals (theme). Use `truce_egui::theme::dark()` for
     /// the default dark theme matching truce-gui.
+    #[must_use] 
     pub fn with_visuals(mut self, visuals: egui::Visuals) -> Self {
         self.visuals = Some(visuals);
         self
@@ -193,6 +194,7 @@ impl<P: Params + 'static> EguiEditor<P> {
     /// EguiEditor::new(params, (400, 300), my_ui)
     ///     .with_font(truce_gui::font::JETBRAINS_MONO)
     /// ```
+    #[must_use] 
     pub fn with_font(mut self, font_data: &'static [u8]) -> Self {
         self.font = Some(font_data);
         self
@@ -201,7 +203,7 @@ impl<P: Params + 'static> EguiEditor<P> {
 
 #[inline]
 fn pack_size(size: (u32, u32)) -> u64 {
-    ((size.0 as u64) << 32) | size.1 as u64
+    (u64::from(size.0) << 32) | u64::from(size.1)
 }
 
 #[inline]
@@ -250,8 +252,8 @@ impl<P: Params + ?Sized> EguiWindowHandler<P> {
         // fires when scale moved without a corresponding window event.
         let cur_scale = self.scale.get() as f32;
         if cur_scale != self.last_applied_scale {
-            let phys_w = truce_gui::to_physical_px(self.size.0, cur_scale as f64);
-            let phys_h = truce_gui::to_physical_px(self.size.1, cur_scale as f64);
+            let phys_w = truce_gui::to_physical_px(self.size.0, f64::from(cur_scale));
+            let phys_h = truce_gui::to_physical_px(self.size.1, f64::from(cur_scale));
             renderer.resize(phys_w, phys_h);
             self.last_applied_scale = cur_scale;
         }
@@ -309,7 +311,7 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
             let scale = self.scale.get();
             let phys_w = truce_gui::to_physical_px(pending.0, scale);
             let phys_h = truce_gui::to_physical_px(pending.1, scale);
-            _window.resize(baseview::Size::new(pending.0 as f64, pending.1 as f64));
+            _window.resize(baseview::Size::new(f64::from(pending.0), f64::from(pending.1)));
             if let Some(renderer) = self.renderer.as_mut() {
                 renderer.resize(phys_w, phys_h);
             }
@@ -321,7 +323,7 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
     fn on_event(&mut self, _window: &mut Window, event: Event) -> EventStatus {
         match event {
             Event::Mouse(mouse) => {
-                use baseview::MouseEvent::*;
+                use baseview::MouseEvent::{CursorMoved, ButtonPressed, ButtonReleased, WheelScrolled, CursorEntered, CursorLeft};
                 match mouse {
                     CursorMoved {
                         position,
@@ -505,7 +507,7 @@ fn convert_kb_modifiers(mods: &keyboard_types::Modifiers) -> egui::Modifiers {
 }
 
 fn convert_key(key: &keyboard_types::Key) -> Option<egui::Key> {
-    use keyboard_types::Key::*;
+    use keyboard_types::Key::{Character, Enter, Tab, Backspace, Escape, Delete, ArrowLeft, ArrowRight, ArrowUp, ArrowDown, Home, End, PageUp, PageDown};
     Some(match key {
         Character(s) => match s.as_str() {
             "a" | "A" => egui::Key::A,
@@ -602,7 +604,7 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
 
         let options = WindowOpenOptions {
             title: String::from("truce-egui"),
-            size: baseview::Size::new(lw as f64, lh as f64),
+            size: baseview::Size::new(f64::from(lw), f64::from(lh)),
             scale: WindowScalePolicy::SystemScaleFactor,
         };
 

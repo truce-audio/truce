@@ -327,8 +327,7 @@ pub(crate) fn cmd_remove(args: &[String]) -> Res {
             targets.retain(|t| {
                 t.path
                     .file_name()
-                    .map(|f| f.to_string_lossy().to_lowercase().contains(&filter_lower))
-                    .unwrap_or(false)
+                    .is_some_and(|f| f.to_string_lossy().to_lowercase().contains(&filter_lower))
             });
         } else if let Some(ref filter) = name_filter {
             let filter_lower = filter.to_lowercase();
@@ -537,7 +536,7 @@ pub(crate) fn cmd_remove(args: &[String]) -> Res {
         } else {
             fs::remove_dir_all(&t.path)
                 .or_else(|_| fs::remove_file(&t.path))
-                .map_err(|e| e.into())
+                .map_err(std::convert::Into::into)
         };
 
         let name = t.path.file_name().unwrap_or_default().to_string_lossy();

@@ -32,10 +32,11 @@ impl CpuBackend {
     /// `logical_w` / `logical_h` are in logical points; `scale` is the
     /// display scale factor (2.0 on Retina, 1.0 otherwise). The
     /// internal pixmap is sized at `logical × scale` physical pixels.
+    #[must_use] 
     pub fn new(logical_w: u32, logical_h: u32, scale: f32) -> Option<Self> {
         let scale = scale.max(0.0);
-        let phys_w = crate::platform::to_physical_px(logical_w, scale as f64);
-        let phys_h = crate::platform::to_physical_px(logical_h, scale as f64);
+        let phys_w = crate::platform::to_physical_px(logical_w, f64::from(scale));
+        let phys_h = crate::platform::to_physical_px(logical_h, f64::from(scale));
         Pixmap::new(phys_w, phys_h).map(|pixmap| Self {
             pixmap,
             scale,
@@ -49,8 +50,8 @@ impl CpuBackend {
     /// the current pixmap.
     pub fn resize(&mut self, logical_w: u32, logical_h: u32, scale: f32) -> bool {
         let scale = scale.max(0.0);
-        let phys_w = crate::platform::to_physical_px(logical_w, scale as f64);
-        let phys_h = crate::platform::to_physical_px(logical_h, scale as f64);
+        let phys_w = crate::platform::to_physical_px(logical_w, f64::from(scale));
+        let phys_h = crate::platform::to_physical_px(logical_h, f64::from(scale));
         if phys_w == self.pixmap.width() && phys_h == self.pixmap.height() {
             self.scale = scale;
             return false;
@@ -66,21 +67,25 @@ impl CpuBackend {
     }
 
     /// Raw pixel data (RGBA premultiplied, row-major, physical pixels).
+    #[must_use] 
     pub fn data(&self) -> &[u8] {
         self.pixmap.data()
     }
 
     /// Pixel buffer width (physical pixels).
+    #[must_use] 
     pub fn width(&self) -> u32 {
         self.pixmap.width()
     }
 
     /// Pixel buffer height (physical pixels).
+    #[must_use] 
     pub fn height(&self) -> u32 {
         self.pixmap.height()
     }
 
     /// Display scale factor baked at construction.
+    #[must_use] 
     pub fn scale(&self) -> f32 {
         self.scale
     }

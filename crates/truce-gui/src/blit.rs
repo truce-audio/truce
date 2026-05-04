@@ -3,7 +3,7 @@
 //! Uploads an RGBA pixel buffer to a GPU texture, then draws a fullscreen
 //! textured triangle to present it. Copied from truce-slint.
 
-const BLIT_SHADER: &str = r#"
+const BLIT_SHADER: &str = r"
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
     @location(0) uv: vec2<f32>,
@@ -34,7 +34,7 @@ fn vs_main(@builtin(vertex_index) idx: u32) -> VertexOutput {
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     return textureSample(tex, samp, in.uv);
 }
-"#;
+";
 
 /// Simple wgpu pipeline that blits an RGBA pixel buffer to the screen.
 pub struct BlitPipeline {
@@ -48,6 +48,7 @@ pub struct BlitPipeline {
 }
 
 impl BlitPipeline {
+    #[must_use] 
     pub fn new(
         device: &wgpu::Device,
         surface_format: wgpu::TextureFormat,

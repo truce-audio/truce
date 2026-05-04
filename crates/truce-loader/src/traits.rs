@@ -1,4 +1,4 @@
-//! The PluginLogic trait — the single trait plugin developers implement.
+//! The `PluginLogic` trait — the single trait plugin developers implement.
 //!
 //! Construction (`new()`) is an inherent method on each plugin struct,
 //! not part of this trait. The `plugin!` macro calls it with
@@ -35,14 +35,14 @@ pub trait PluginLogic: Send + 'static {
 
     /// Render the GUI into the backend.
     ///
-    /// Default: no-op. The shell uses BuiltinEditor with the layout
+    /// Default: no-op. The shell uses `BuiltinEditor` with the layout
     /// from `layout()` to draw standard widgets automatically.
     /// Override only for custom visuals.
     fn render(&self, _backend: &mut dyn RenderBackend) {}
 
-    /// Whether this plugin uses a custom render() implementation.
-    /// If false (default), the shell uses BuiltinEditor with
-    /// standard widget drawing from layout().
+    /// Whether this plugin uses a custom `render()` implementation.
+    /// If false (default), the shell uses `BuiltinEditor` with
+    /// standard widget drawing from `layout()`.
     fn uses_custom_render(&self) -> bool {
         false
     }
@@ -91,6 +91,7 @@ pub trait PluginLogic: Send + 'static {
 
 /// Default hit test: circular for knobs, rectangular for others,
 /// skip meters.
+#[must_use] 
 pub fn default_hit_test(widgets: &[WidgetRegion], x: f32, y: f32) -> Option<usize> {
     for (i, w) in widgets.iter().enumerate() {
         if w.widget_type == WidgetType::Meter {

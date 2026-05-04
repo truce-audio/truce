@@ -25,6 +25,7 @@ pub struct MeterWidget<'a, M> {
 }
 
 impl<'a, M: Clone + Debug + 'static> MeterWidget<'a, M> {
+    #[must_use] 
     pub fn new(ids: &[u32], params: &'a ParamCache<impl Params>) -> Self {
         let values: Vec<f32> = ids.iter().map(|&id| params.meter(id)).collect();
         Self {
@@ -37,22 +38,26 @@ impl<'a, M: Clone + Debug + 'static> MeterWidget<'a, M> {
         }
     }
 
+    #[must_use] 
     pub fn label(mut self, label: &'a str) -> Self {
         self.label = Some(label);
         self
     }
 
+    #[must_use] 
     pub fn size(mut self, width: f32, height: f32) -> Self {
         self.width = width;
         self.height = height;
         self
     }
 
+    #[must_use] 
     pub fn font(mut self, font: iced::Font) -> Self {
         self.font = font;
         self
     }
 
+    #[must_use] 
     pub fn into_element(self) -> Element<'a, Message<M>> {
         let total_h = self.height;
         // `label` and `font` are accepted on the builder for API symmetry

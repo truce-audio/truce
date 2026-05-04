@@ -19,7 +19,7 @@ use cargo_truce::scaffold::{FeatureSet, PluginKind, PluginSpec, Scaffolder, Vend
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).filter(|a| a != "truce").collect();
 
-    let cmd = args.first().map(|s| s.as_str()).unwrap_or("help");
+    let cmd = args.first().map_or("help", std::string::String::as_str);
 
     match cmd {
         // Scaffold commands — handled here
@@ -482,8 +482,7 @@ fn scaffold_workspace(scaffolder: &Scaffolder, parsed: NewArgs, features: Featur
                 .type_overrides
                 .iter()
                 .find(|(n, _)| n == pn)
-                .map(|(_, k)| *k)
-                .unwrap_or(parsed.default_kind);
+                .map_or(parsed.default_kind, |(_, k)| *k);
             PluginSpec {
                 name: pn.clone(),
                 kind,

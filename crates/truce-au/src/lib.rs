@@ -92,13 +92,13 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
         editor: None,
         transport_slot: truce_core::TransportSlot::new(),
     });
-    Box::into_raw(instance) as *mut std::ffi::c_void
+    Box::into_raw(instance).cast::<std::ffi::c_void>()
 }
 
 unsafe extern "C" fn cb_destroy<P: PluginExport>(ctx: *mut std::ffi::c_void) {
     unsafe {
         if !ctx.is_null() {
-            drop(Box::from_raw(ctx as *mut AuInstance<P>));
+            drop(Box::from_raw(ctx.cast::<AuInstance<P>>()));
         }
     }
 }
@@ -109,7 +109,7 @@ unsafe extern "C" fn cb_reset<P: PluginExport>(
     max_frames: u32,
 ) {
     unsafe {
-        let inst = &mut *(ctx as *mut AuInstance<P>);
+        let inst = &mut *ctx.cast::<AuInstance<P>>();
         inst.sample_rate = sample_rate;
         inst.max_block_size = max_frames as usize;
         inst.plugin.reset(sample_rate, max_frames as usize);
@@ -130,7 +130,7 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
     transport_ptr: *const AuTransportSnapshot,
 ) {
     unsafe {
-        let inst = &mut *(ctx as *mut AuInstance<P>);
+        let inst = &mut *ctx.cast::<AuInstance<P>>();
         let num_frames = num_frames as usize;
 
         // Convert MIDI events
@@ -144,7 +144,7 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
                     0x90 if ev.data2 > 0 => Some(EventBody::NoteOn {
                         channel,
                         note: ev.data1,
-                        velocity: ev.data2 as f32 / 127.0,
+                        velocity: f32::from(ev.data2) / 127.0,
                     }),
                     0x90 => Some(EventBody::NoteOff {
                         channel,
@@ -154,23 +154,23 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
                     0x80 => Some(EventBody::NoteOff {
                         channel,
                         note: ev.data1,
-                        velocity: ev.data2 as f32 / 127.0,
+                        velocity: f32::from(ev.data2) / 127.0,
                     }),
                     0xA0 => Some(EventBody::Aftertouch {
                         channel,
                         note: ev.data1,
-                        pressure: ev.data2 as f32 / 127.0,
+                        pressure: f32::from(ev.data2) / 127.0,
                     }),
                     0xB0 => Some(EventBody::ControlChange {
                         channel,
                         cc: ev.data1,
-                        value: ev.data2 as f32 / 127.0,
+                        value: f32::from(ev.data2) / 127.0,
                     }),
                     0xE0 => {
-                        let raw = ((ev.data2 as u16) << 7) | (ev.data1 as u16);
+                        let raw = (u16::from(ev.data2) << 7) | u16::from(ev.data1);
                         Some(EventBody::PitchBend {
                             channel,
-                            value: (raw as f32 - 8192.0) / 8192.0,
+                            value: (f32::from(raw) - 8192.0) / 8192.0,
                         })
                     }
                     _ => None,
@@ -206,8 +206,8 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
                 playing: t.playing != 0,
                 recording: t.recording != 0,
                 tempo: t.tempo,
-                time_sig_num: t.time_sig_num.clamp(0, u8::MAX as i32) as u8,
-                time_sig_den: t.time_sig_den.clamp(0, u8::MAX as i32) as u8,
+                time_sig_num: t.time_sig_num.clamp(0, i32::from(u8::MAX)) as u8,
+                time_sig_den: t.time_sig_den.clamp(0, i32::from(u8::MAX)) as u8,
                 position_samples: t.position_samples as i64,
                 position_seconds: 0.0,
                 position_beats: t.position_beats,
@@ -235,7 +235,7 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
 
 unsafe extern "C" fn cb_param_count<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
     unsafe {
-        let inst = &*(ctx as *mut AuInstance<P>);
+        let inst = &*ctx.cast::<AuInstance<P>>();
         inst.plugin.params().count() as u32
     }
 }
@@ -246,7 +246,7 @@ unsafe extern "C" fn cb_param_get_descriptor<P: PluginExport>(
     out: *mut AuParamDescriptor,
 ) {
     unsafe {
-        let inst = &*(ctx as *mut AuInstance<P>);
+        let inst = &*ctx.cast::<AuInstance<P>>();
         let infos = inst.plugin.params().param_infos();
         if let Some(info) = infos.get(index as usize) {
             // Store strings in leaked CStrings (they live for the process lifetime)
@@ -260,7 +260,7 @@ unsafe extern "C" fn cb_param_get_descriptor<P: PluginExport>(
             desc.min = info.range.min();
             desc.max = info.range.max();
             desc.default_value = info.default_plain;
-            desc.step_count = info.range.step_count().map_or(0, |n| n.get());
+            desc.step_count = info.range.step_count().map_or(0, std::num::NonZero::get);
             desc.unit = unit.into_raw();
             desc.group = group.into_raw();
         }
@@ -272,7 +272,7 @@ unsafe extern "C" fn cb_param_get_value<P: PluginExport>(
     id: u32,
 ) -> f64 {
     unsafe {
-        let inst = &*(ctx as *mut AuInstance<P>);
+        let inst = &*ctx.cast::<AuInstance<P>>();
         inst.plugin.params().get_plain(id).unwrap_or(0.0)
     }
 }
@@ -283,7 +283,7 @@ unsafe extern "C" fn cb_param_set_value<P: PluginExport>(
     value: f64,
 ) {
     unsafe {
-        let inst = &*(ctx as *mut AuInstance<P>);
+        let inst = &*ctx.cast::<AuInstance<P>>();
         inst.plugin.params().set_plain(id, value);
     }
 }
@@ -302,12 +302,12 @@ unsafe extern "C" fn cb_param_format_value<P: PluginExport>(
         if out_len == 0 || out.is_null() {
             return 0;
         }
-        let inst = &*(ctx as *mut AuInstance<P>);
+        let inst = &*ctx.cast::<AuInstance<P>>();
         match inst.plugin.params().format_value(id, value) {
             Some(text) => {
                 let bytes = text.as_bytes();
                 let len = bytes.len().min((out_len as usize) - 1);
-                std::ptr::copy_nonoverlapping(bytes.as_ptr() as *const c_char, out, len);
+                std::ptr::copy_nonoverlapping(bytes.as_ptr().cast::<c_char>(), out, len);
                 *out.add(len) = 0;
                 len as u32
             }
@@ -322,13 +322,13 @@ unsafe extern "C" fn cb_state_save<P: PluginExport>(
     out_len: *mut u32,
 ) {
     unsafe {
-        let inst = &*(ctx as *mut AuInstance<P>);
+        let inst = &*ctx.cast::<AuInstance<P>>();
         let (ids, values) = inst.plugin.params().collect_values();
         let extra = inst.plugin.save_state();
         let blob = state::serialize_state(inst.plugin_id_hash, &ids, &values, extra.as_deref());
 
         let len = blob.len();
-        let ptr = malloc(len) as *mut u8;
+        let ptr = malloc(len).cast::<u8>();
         if ptr.is_null() {
             // malloc failed — tell the host we wrote nothing rather
             // than leaving `*out_data` as a stale value while
@@ -349,7 +349,7 @@ unsafe extern "C" fn cb_state_load<P: PluginExport>(
     len: u32,
 ) {
     unsafe {
-        let inst = &mut *(ctx as *mut AuInstance<P>);
+        let inst = &mut *ctx.cast::<AuInstance<P>>();
         // `slice::from_raw_parts(null, n)` for `n > 0` is UB. Treat
         // `(null, *)` and `(_, 0)` the same as "host gave us nothing".
         if data.is_null() || len == 0 {
@@ -372,7 +372,7 @@ unsafe extern "C" fn cb_state_load<P: PluginExport>(
 unsafe extern "C" fn cb_state_free(_data: *mut u8, _len: u32) {
     unsafe {
         if !_data.is_null() {
-            free(_data as *mut std::ffi::c_void);
+            free(_data.cast::<std::ffi::c_void>());
         }
     }
 }
@@ -382,7 +382,7 @@ unsafe extern "C" fn cb_state_free(_data: *mut u8, _len: u32) {
 // ---------------------------------------------------------------------------
 
 /// Map a truce `Event` body to a 3-byte AU MIDI packet. Returns
-/// `None` for event types that don't fit (MIDI 2.0, ParamChange,
+/// `None` for event types that don't fit (MIDI 2.0, `ParamChange`,
 /// Transport, etc.). Mirrors the VST2/VST3 encoders.
 fn try_encode_au_midi(event: &Event) -> Option<AuMidiEvent> {
     let (status, data1, data2) = match &event.body {
@@ -437,7 +437,7 @@ fn try_encode_au_midi(event: &Event) -> Option<AuMidiEvent> {
 
 unsafe extern "C" fn cb_output_event_count<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
     unsafe {
-        let inst = &*(ctx as *mut AuInstance<P>);
+        let inst = &*ctx.cast::<AuInstance<P>>();
         inst.output_events
             .iter()
             .filter(|e| try_encode_au_midi(e).is_some())
@@ -451,7 +451,7 @@ unsafe extern "C" fn cb_output_event_at<P: PluginExport>(
     out: *mut AuMidiEvent,
 ) {
     unsafe {
-        let inst = &*(ctx as *mut AuInstance<P>);
+        let inst = &*ctx.cast::<AuInstance<P>>();
         if let Some(packet) = inst
             .output_events
             .iter()
@@ -472,11 +472,11 @@ unsafe extern "C" fn cb_gui_has_editor<P: PluginExport>(ctx: *mut std::ffi::c_vo
         if ctx.is_null() {
             return 0;
         }
-        let inst = &mut *(ctx as *mut AuInstance<P>);
+        let inst = &mut *ctx.cast::<AuInstance<P>>();
         if inst.editor.is_none() {
             inst.editor = inst.plugin.editor();
         }
-        if inst.editor.is_some() { 1 } else { 0 }
+        i32::from(inst.editor.is_some())
     }
 }
 
@@ -496,7 +496,7 @@ unsafe extern "C" fn cb_gui_get_size<P: PluginExport>(
         // None` and silently received a 0×0 view, which shows up as
         // "plugin reports invalid size" in their reports. Mirrors
         // `cb_gui_has_editor`'s `&mut *` install.
-        let inst = &mut *(ctx as *mut AuInstance<P>);
+        let inst = &mut *ctx.cast::<AuInstance<P>>();
         if inst.editor.is_none() {
             inst.editor = inst.plugin.editor();
         }
@@ -517,10 +517,10 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
     parent: *mut std::ffi::c_void,
 ) {
     unsafe {
-        let inst = &mut *(ctx as *mut AuInstance<P>);
+        let inst = &mut *ctx.cast::<AuInstance<P>>();
         if let Some(ref mut editor) = inst.editor {
             let params = inst.plugin.params_arc();
-            let plugin_ptr = SendPtr::new(&inst.plugin as *const P);
+            let plugin_ptr = SendPtr::new(&raw const inst.plugin);
             let ctx_raw = SendPtr::new(ctx);
             let params_for_set = params.clone();
             let params_for_get = params.clone();
@@ -538,7 +538,7 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                         // Reaper) group subsequent set_param calls into one
                         // undo step and one automation gesture.
                         truce_au_v2_host_begin_param_gesture(
-                            ctx_for_begin.as_ptr() as *mut std::ffi::c_void,
+                            ctx_for_begin.as_ptr().cast_mut(),
                             id,
                         );
                     }),
@@ -549,7 +549,7 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                         // a single match-arm walk.
                         let plain = params_for_set.set_normalized_returning_plain(id, value) as f32;
                         truce_au_v2_host_set_param(
-                            ctx_raw.as_ptr() as *mut std::ffi::c_void,
+                            ctx_raw.as_ptr().cast_mut(),
                             id,
                             plain,
                         );
@@ -559,7 +559,7 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                         // host commits the undo group / stops automation
                         // recording.
                         truce_au_v2_host_end_param_gesture(
-                            ctx_for_end.as_ptr() as *mut std::ffi::c_void,
+                            ctx_for_end.as_ptr().cast_mut(),
                             id,
                         );
                     }),
@@ -572,7 +572,7 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                         let plain = params_for_fmt.get_plain(id).unwrap_or(0.0);
                         params_for_fmt
                             .format_value(id, plain)
-                            .unwrap_or_else(|| format!("{:.1}", plain))
+                            .unwrap_or_else(|| format!("{plain:.1}"))
                     }),
                     get_meter: Box::new(move |id| {
                         let plugin = plugin_ptr.get();
@@ -583,7 +583,7 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                         plugin.save_state().unwrap_or_default()
                     }),
                     set_state: Box::new(move |data| {
-                        let plugin = &mut *(plugin_ptr.as_ptr() as *mut P);
+                        let plugin = &mut *plugin_ptr.as_ptr().cast_mut();
                         plugin.load_state(&data);
                     }),
                     transport: Box::new(move || transport_slot.read()),
@@ -598,7 +598,7 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
 
 unsafe extern "C" fn cb_gui_close<P: PluginExport>(ctx: *mut std::ffi::c_void) {
     unsafe {
-        let inst = &mut *(ctx as *mut AuInstance<P>);
+        let inst = &mut *ctx.cast::<AuInstance<P>>();
         if let Some(ref mut editor) = inst.editor {
             editor.close();
         }
@@ -665,7 +665,7 @@ pub fn register_au<P: PluginExport>() {
             min: pi.range.min(),
             max: pi.range.max(),
             default_value: pi.default_plain,
-            step_count: pi.range.step_count().map_or(0, |n| n.get()),
+            step_count: pi.range.step_count().map_or(0, std::num::NonZero::get),
             unit: cs.unit.into_raw(),
             group: cs.group.into_raw(),
         });
@@ -677,8 +677,7 @@ pub fn register_au<P: PluginExport>() {
     let bypass_param_id = param_infos
         .iter()
         .find(|pi| pi.flags.contains(ParamFlags::IS_BYPASS))
-        .map(|pi| pi.id)
-        .unwrap_or(u32::MAX);
+        .map_or(u32::MAX, |pi| pi.id);
 
     let descriptor = Box::leak(Box::new(AuPluginDescriptor {
         component_type: info.au_type,
@@ -717,8 +716,8 @@ pub fn register_au<P: PluginExport>() {
 
     unsafe {
         ffi::truce_au_register(
-            descriptor as *const AuPluginDescriptor,
-            callbacks as *const AuCallbacks,
+            std::ptr::from_ref::<AuPluginDescriptor>(descriptor),
+            std::ptr::from_ref::<AuCallbacks>(callbacks),
             param_descs.as_ptr(),
             param_descs.len() as u32,
         );

@@ -12,7 +12,7 @@
 //! scaffolding at install-time and cannot reach into `truce-au`'s
 //! source tree; `truce-au` is a runtime/build-time library that
 //! cannot pull in the cargo-truce tool. Both need the *same* header
-//! string, in two different forms (a filesystem path for cc::Build
+//! string, in two different forms (a filesystem path for `cc::Build`
 //! vs. an embedded `&str` for templating). Splitting that into a tiny
 //! standalone crate is the workspace-idiomatic way to share it.
 //!
@@ -29,6 +29,7 @@ pub const AU_SHIM_TYPES_H: &str = include_str!("../include/au_shim_types.h");
 /// Returns the path to the `include/` directory within this crate.
 ///
 /// Useful for `truce-au`'s build.rs to set as a C include path.
+#[must_use] 
 pub fn include_dir() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("include")
 }

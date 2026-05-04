@@ -1,6 +1,6 @@
-//! StaticShell — embeds PluginLogic directly into the plugin binary.
+//! `StaticShell` — embeds `PluginLogic` directly into the plugin binary.
 //!
-//! No dlopen, no file watcher, no Mutex. Same types as HotShell
+//! No dlopen, no file watcher, no Mutex. Same types as `HotShell`
 //! but zero runtime overhead. Use via `export_static!`.
 
 use std::sync::Arc;

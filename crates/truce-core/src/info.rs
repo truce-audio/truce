@@ -15,7 +15,7 @@ pub struct PluginInfo {
     pub au_manufacturer: [u8; 4],
     pub aax_id: Option<&'static str>,
     /// AAX plugin category string (e.g. "EQ", "Dynamics", "Reverb").
-    /// Maps to AAX_ePlugInCategory constants.
+    /// Maps to `AAX_ePlugInCategory` constants.
     pub aax_category: Option<&'static str>,
 }
 
@@ -23,6 +23,7 @@ pub struct PluginInfo {
 /// reads its own `TRUCE_{FORMAT}_NAME_OVERRIDE` via `option_env!` and
 /// passes the result here along with the `PluginInfo::name` fallback.
 /// Empty overrides (unset or set to `""`) fall through to `fallback`.
+#[must_use] 
 pub fn resolve_name_override(
     override_value: Option<&'static str>,
     fallback: &'static str,
@@ -45,6 +46,7 @@ pub enum PluginCategory {
 
 /// Convert a category string to [`PluginCategory`] at compile time.
 /// Used by the `plugin_info!()` macro.
+#[must_use] 
 pub const fn category_from_str(s: &str) -> PluginCategory {
     match s.as_bytes() {
         b"Instrument" => PluginCategory::Instrument,
@@ -57,6 +59,7 @@ pub const fn category_from_str(s: &str) -> PluginCategory {
 
 /// Helper to convert a 4-char string literal to `[u8; 4]` at compile time.
 /// Panics if the string is not exactly 4 ASCII bytes.
+#[must_use] 
 pub const fn fourcc(s: &[u8]) -> [u8; 4] {
     assert!(s.len() == 4, "FourCC must be exactly 4 bytes");
     [s[0], s[1], s[2], s[3]]

@@ -18,7 +18,7 @@ pub fn param_slider<P: ?Sized>(
         state.begin_edit(id);
     }
     if response.changed() {
-        state.set_param(id, value as f64);
+        state.set_param(id, f64::from(value));
     }
     if response.drag_stopped() {
         state.end_edit(id);

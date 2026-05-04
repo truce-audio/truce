@@ -50,7 +50,7 @@ pub(crate) fn build_aax_template(_root: &Path, sdk_path: &Path, universal_mac: b
         use std::sync::{Mutex, OnceLock};
         static MEMO: OnceLock<Mutex<std::collections::HashSet<String>>> = OnceLock::new();
         let set = MEMO.get_or_init(|| Mutex::new(Default::default()));
-        if set.lock().map(|s| s.contains(&memo_key)).unwrap_or(false) {
+        if set.lock().is_ok_and(|s| s.contains(&memo_key)) {
             return Ok(());
         }
         // Record *before* we finish so a subsequent call on failure
@@ -420,25 +420,22 @@ pub(crate) fn emit_aax_bundle(
     config: &Config,
     universal_mac: bool,
 ) -> Res {
-    let template = match ensure_template(root, config, universal_mac)? {
-        Some(t) => t,
-        None => {
-            // SDK missing — log per-plugin so the user sees one Skipped
-            // entry per (AAX, plugin) target. Both `cargo truce build`
-            // and `cargo truce install` flow through this point so the
-            // log fires from either entry.
-            let hint = if cfg!(target_os = "windows") {
-                "[windows].aax_sdk_path"
-            } else {
-                "[macos].aax_sdk_path"
-            };
-            crate::log_skip(format!(
-                "AAX: skipped {} — SDK not configured. \
-                 Set {hint} in truce.toml or the AAX_SDK_PATH env var.",
-                p.name
-            ));
-            return Ok(());
-        }
+    let template = if let Some(t) = ensure_template(root, config, universal_mac)? { t } else {
+        // SDK missing — log per-plugin so the user sees one Skipped
+        // entry per (AAX, plugin) target. Both `cargo truce build`
+        // and `cargo truce install` flow through this point so the
+        // log fires from either entry.
+        let hint = if cfg!(target_os = "windows") {
+            "[windows].aax_sdk_path"
+        } else {
+            "[macos].aax_sdk_path"
+        };
+        crate::log_skip(format!(
+            "AAX: skipped {} — SDK not configured. \
+             Set {hint} in truce.toml or the AAX_SDK_PATH env var.",
+            p.name
+        ));
+        return Ok(());
     };
 
     let dylib = release_lib(root, &format!("{}_aax", p.dylib_stem()));

@@ -401,19 +401,19 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
 
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                let combined = format!("{}{}", stdout, stderr);
+                let combined = format!("{stdout}{stderr}");
 
                 if output.status.success() && !combined.contains("FAILED") {
                     // Count passed/failed from output
                     let passed = combined.matches("passed").count();
-                    eprintln!("PASS ({} tests)", passed);
+                    eprintln!("PASS ({passed} tests)");
                 } else {
                     eprintln!("FAIL");
                     if !stdout.is_empty() {
-                        eprintln!("{}", stdout);
+                        eprintln!("{stdout}");
                     }
                     if !stderr.is_empty() {
-                        eprintln!("{}", stderr);
+                        eprintln!("{stderr}");
                     }
                     failures += 1;
                 }

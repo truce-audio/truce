@@ -117,7 +117,7 @@ impl Scaffold {
         let run_dir = fresh_tempdir(label);
         let generated = run_dir.join(ws);
         let mut args = vec!["new".into(), ws.into(), "--workspace".into()];
-        args.extend(plugins.iter().map(|s| s.to_string()));
+        args.extend(plugins.iter().map(std::string::ToString::to_string));
         Self {
             label: label.into(),
             run_dir,
@@ -206,7 +206,7 @@ impl Scaffold {
     /// emit lint-noisy boilerplate that would surface in every user's
     /// project.
     fn cargo_clippy(&self) -> Result<(), String> {
-        let _guard = build_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = build_lock().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let out = Command::new("cargo")
             .args([
                 "clippy",
@@ -244,7 +244,7 @@ impl Scaffold {
         bin: &str,
         features: &[&str],
     ) -> Result<PathBuf, String> {
-        let _guard = build_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = build_lock().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut cmd = Command::new("cargo");
         cmd.arg("build").args(["--package", package, "--bin", bin]);
         if !features.is_empty() {
@@ -283,7 +283,7 @@ impl Scaffold {
     /// Shared body for `cargo check` / `cargo build` / `cargo test`.
     /// All hold `build_lock` (cache safety) and share the target dir.
     fn run_cargo(&self, subcommand: &str) -> Result<(), String> {
-        let _guard = build_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = build_lock().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let out = Command::new("cargo")
             .arg(subcommand)
             .arg("--workspace")
@@ -308,7 +308,7 @@ impl Scaffold {
     /// Run a `cargo truce <subcommand>` invocation against the
     /// scaffolded project. Exercises the actual `cargo-truce` binary
     /// (not just bare `cargo build`), so xtask-side regressions —
-    /// bundle staging, per-format feature gating, project_root
+    /// bundle staging, per-format feature gating, `project_root`
     /// resolution from a child cwd — surface here.
     ///
     /// Sets `CARGO_TARGET_DIR` to the shared cache so artifacts
@@ -316,7 +316,7 @@ impl Scaffold {
     /// outputs. xtask honors this env var for both inner cargo
     /// invocations and its own staging-path resolution.
     fn truce_subcommand(&self, args: &[&str]) -> Result<(), String> {
-        let _guard = build_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = build_lock().lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         // Wipe the staged-bundles dir so this test's assertions don't
         // pick up artifacts from earlier `truce_subcommand` runs.
         // Cargo build artifacts under `release/` survive — that's the
@@ -503,7 +503,7 @@ fn walk_cargo_toml(dir: &Path, out: &mut Vec<PathBuf>) {
             let p = e.path();
             if p.is_dir() {
                 walk_cargo_toml(&p, out);
-            } else if p.file_name().map(|n| n == "Cargo.toml").unwrap_or(false) {
+            } else if p.file_name().is_some_and(|n| n == "Cargo.toml") {
                 out.push(p);
             }
         }
@@ -539,13 +539,10 @@ fn rewrite_git_refs(content: &str, crates_dir: &str) -> String {
             continue;
         }
         // Extract the key (the `truce-foo` in `truce-foo = { git = ... }`).
-        let eq_idx = match line.find('=') {
-            Some(i) => i,
-            None => {
-                out.push_str(line);
-                out.push('\n');
-                continue;
-            }
+        let eq_idx = if let Some(i) = line.find('=') { i } else {
+            out.push_str(line);
+            out.push('\n');
+            continue;
         };
         let key = line[..eq_idx].trim();
         let replacement = format!(r#"{{ path = "{crates_dir}/{key}""#);
@@ -557,7 +554,7 @@ fn rewrite_git_refs(content: &str, crates_dir: &str) -> String {
             if let Some(start) = rewritten.find(needle) {
                 let after = start + needle.len();
                 if let Some(end_quote) = rewritten[after..].find('"') {
-                    rewritten.replace_range(start..after + end_quote + 1, "");
+                    rewritten.replace_range(start..=(after + end_quote), "");
                 }
                 break; // at most one applies per line
             }
@@ -921,7 +918,7 @@ fn write_sweep_wav(path: &Path) {
     let duration_secs = 1.0_f64;
     let f0 = 20.0_f64;
     let f1 = 20_000.0_f64;
-    let n = (sr as f64 * duration_secs) as usize;
+    let n = (f64::from(sr) * duration_secs) as usize;
     let spec = hound::WavSpec {
         channels: 2,
         sample_rate: sr,
@@ -932,11 +929,11 @@ fn write_sweep_wav(path: &Path) {
         .unwrap_or_else(|e| panic!("create sweep at {}: {e}", path.display()));
     let k = duration_secs / (f1 / f0).ln();
     for i in 0..n {
-        let t = i as f64 / sr as f64;
+        let t = i as f64 / f64::from(sr);
         // Phase for an exp sweep: ∫₀ᵗ 2π f₀ (f₁/f₀)^(τ/T) dτ
         //                       = 2π f₀ K (e^(t/K) − 1)   where K = T / ln(f₁/f₀).
         let phase = 2.0 * std::f64::consts::PI * f0 * k * ((t / k).exp() - 1.0);
-        let s = (0.5 * phase.sin() * i16::MAX as f64) as i16;
+        let s = (0.5 * phase.sin() * f64::from(i16::MAX)) as i16;
         w.write_sample(s).unwrap();
         w.write_sample(s).unwrap();
     }
@@ -954,7 +951,7 @@ fn decode_to_f32(path: &Path) -> Vec<f32> {
     match (spec.sample_format, spec.bits_per_sample) {
         (hound::SampleFormat::Int, 16) => r
             .samples::<i16>()
-            .map(|s| s.unwrap() as f32 / 32768.0)
+            .map(|s| f32::from(s.unwrap()) / 32768.0)
             .collect(),
         (hound::SampleFormat::Float, 32) => r.samples::<f32>().map(|s| s.unwrap()).collect(),
         (fmt, bits) => panic!(

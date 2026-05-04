@@ -1,5 +1,5 @@
 //! Generic helpers shared across commands: paths, sub-process invocation,
-//! signing, and Visual Studio / CMake / Ninja location.
+//! signing, and Visual Studio / `CMake` / Ninja location.
 //!
 //! Functions here have no per-command flavor — anything that's specific
 //! to install, package, or doctor lives next to the command that uses it.
@@ -274,7 +274,7 @@ pub(crate) fn read_workspace_version(root: &Path) -> Option<String> {
     doc.get("package")?
         .get("version")?
         .as_str()
-        .map(|s| s.to_string())
+        .map(std::string::ToString::to_string)
 }
 
 /// Resolve a plugin crate's `Cargo.toml` path via `cargo metadata`.
@@ -336,7 +336,7 @@ pub(crate) fn detect_default_features() -> std::collections::HashSet<String> {
     {
         return defaults
             .iter()
-            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+            .filter_map(|v| v.as_str().map(std::string::ToString::to_string))
             .collect();
     }
 
@@ -367,7 +367,7 @@ pub(crate) fn detect_default_features() -> std::collections::HashSet<String> {
     // so projects without truce.toml don't break).
     ["clap", "vst3", "vst2", "lv2", "au", "aax"]
         .iter()
-        .map(|s| s.to_string())
+        .map(std::string::ToString::to_string)
         .collect()
 }
 
@@ -517,9 +517,7 @@ pub(crate) fn run_codesign(args: &[&str], use_sudo: bool) -> crate::Res {
     use std::process::Stdio;
     let target = args.last().copied().unwrap_or("?");
     let target_label = std::path::Path::new(target)
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| target.to_string());
+        .file_name().map_or_else(|| target.to_string(), |n| n.to_string_lossy().into_owned());
     let is_verify = args.contains(&"--verify");
     let (verb_present, verb_past) = if is_verify {
         ("verify", "verified")
@@ -624,7 +622,7 @@ pub(crate) fn write_entitlements_plist() -> PathBuf {
 /// every Mach-O in the bundle is enumerated and signed explicitly
 /// before the bundle's outer seal is applied. This bypasses Apple's
 /// `codesign --deep` traversal — which doesn't recurse into
-/// `Contents/Resources/` for AAX (TDMw) and other non-app bundle
+/// `Contents/Resources/` for AAX (`TDMw`) and other non-app bundle
 /// types, leaving inner dylibs with their linker-applied ad-hoc
 /// signature and breaking notarization. Apple has been deprecating
 /// `--deep` for years anyway; enumerate ourselves to be sure.
@@ -1167,7 +1165,7 @@ pub(crate) fn cargo_build_for_arch(
     for a in base_args {
         args.push((*a).into());
     }
-    let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    let arg_refs: Vec<&str> = args.iter().map(std::string::String::as_str).collect();
     cargo_build(env_vars, &arg_refs, dt)
 }
 

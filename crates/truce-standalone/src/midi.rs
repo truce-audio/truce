@@ -85,18 +85,14 @@ fn midi_thread(requested: String, pending: Arc<Mutex<Vec<MidiEvent>>>, stop: Arc
         // Already connected? Verify the device is still present.
         if let Some(_conn) = &connection {
             let still_present = {
-                let midi_in = match MidiInput::new("truce-standalone-probe") {
-                    Ok(m) => m,
-                    Err(_) => {
-                        std::thread::sleep(HOTPLUG_POLL);
-                        continue;
-                    }
+                let midi_in = if let Ok(m) = MidiInput::new("truce-standalone-probe") { m } else {
+                    std::thread::sleep(HOTPLUG_POLL);
+                    continue;
                 };
                 midi_in.ports().iter().any(|p| {
                     midi_in
                         .port_name(p)
-                        .map(|n| n == current_name)
-                        .unwrap_or(false)
+                        .is_ok_and(|n| n == current_name)
                 })
             };
             if !still_present {
@@ -123,8 +119,7 @@ fn midi_thread(requested: String, pending: Arc<Mutex<Vec<MidiEvent>>>, stop: Arc
             let matched = ports.iter().find(|p| {
                 midi_in
                     .port_name(p)
-                    .map(|n| n.to_lowercase().contains(&requested.to_lowercase()))
-                    .unwrap_or(false)
+                    .is_ok_and(|n| n.to_lowercase().contains(&requested.to_lowercase()))
             });
             if let Some(port) = matched {
                 let name = midi_in
@@ -134,7 +129,7 @@ fn midi_thread(requested: String, pending: Arc<Mutex<Vec<MidiEvent>>>, stop: Arc
                 match midi_in.connect(
                     port,
                     "truce-standalone-in",
-                    move |_t, bytes, _| {
+                    move |_t, bytes, ()| {
                         if let Some(body) = decode_midi(bytes)
                             && let Ok(mut q) = pending.lock()
                         {
@@ -173,7 +168,7 @@ fn decode_midi(bytes: &[u8]) -> Option<EventBody> {
         0x90 if bytes.len() >= 3 && bytes[2] > 0 => Some(EventBody::NoteOn {
             channel,
             note: bytes[1],
-            velocity: bytes[2] as f32 / 127.0,
+            velocity: f32::from(bytes[2]) / 127.0,
         }),
         // NoteOn with velocity 0 is NoteOff per MIDI spec.
         0x90 if bytes.len() >= 3 => Some(EventBody::NoteOff {
@@ -184,21 +179,21 @@ fn decode_midi(bytes: &[u8]) -> Option<EventBody> {
         0x80 if bytes.len() >= 3 => Some(EventBody::NoteOff {
             channel,
             note: bytes[1],
-            velocity: bytes[2] as f32 / 127.0,
+            velocity: f32::from(bytes[2]) / 127.0,
         }),
         0xA0 if bytes.len() >= 3 => Some(EventBody::Aftertouch {
             channel,
             note: bytes[1],
-            pressure: bytes[2] as f32 / 127.0,
+            pressure: f32::from(bytes[2]) / 127.0,
         }),
         0xB0 if bytes.len() >= 3 => Some(EventBody::ControlChange {
             channel,
             cc: bytes[1],
-            value: bytes[2] as f32 / 127.0,
+            value: f32::from(bytes[2]) / 127.0,
         }),
         0xE0 if bytes.len() >= 3 => {
-            let raw = (bytes[1] as u16) | ((bytes[2] as u16) << 7);
-            let normalized = (raw as f32 - 8192.0) / 8192.0;
+            let raw = u16::from(bytes[1]) | (u16::from(bytes[2]) << 7);
+            let normalized = (f32::from(raw) - 8192.0) / 8192.0;
             Some(EventBody::PitchBend {
                 channel,
                 value: normalized,
@@ -206,7 +201,7 @@ fn decode_midi(bytes: &[u8]) -> Option<EventBody> {
         }
         0xD0 if bytes.len() >= 2 => Some(EventBody::ChannelPressure {
             channel,
-            pressure: bytes[1] as f32 / 127.0,
+            pressure: f32::from(bytes[1]) / 127.0,
         }),
         _ => None,
     }

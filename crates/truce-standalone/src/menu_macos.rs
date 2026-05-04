@@ -243,9 +243,9 @@ unsafe fn populate_device_menu(
             keyEquivalent: empty
         ];
         let _: () = msg_send![item, setTarget: target];
-        let is_current = current.map(|c| c == name.as_str()).unwrap_or(false);
+        let is_current = current.is_some_and(|c| c == name.as_str());
         let mark: BOOL = if is_current { YES } else { NO };
-        let _: () = msg_send![item, setState: mark as i64];
+        let _: () = msg_send![item, setState: i64::from(mark)];
         let _: () = msg_send![menu, addItem: item];
     }
 }
@@ -256,14 +256,14 @@ unsafe fn ns_string(s: &str) -> *mut Object {
     let nsstr: *mut Object = msg_send![cls, alloc];
     let nsstr: *mut Object = msg_send![
         nsstr,
-        initWithBytes: bytes.as_ptr() as *const c_void
+        initWithBytes: bytes.as_ptr().cast::<c_void>()
         length: bytes.len()
         encoding: 4_usize // NSUTF8StringEncoding
     ];
     nsstr
 }
 
-/// Read an NSMenuItem's title back as a Rust String.
+/// Read an `NSMenuItem`'s title back as a Rust String.
 unsafe fn item_title(item: *mut Object) -> Option<String> {
     if item.is_null() {
         return None;
@@ -314,7 +314,7 @@ fn ensure_class() -> &'static Class {
                     if want { "ON" } else { "OFF" }
                 );
                 let new_state: BOOL = if want { YES } else { NO };
-                let _: () = msg_send![_sender, setState: new_state as i64];
+                let _: () = msg_send![_sender, setState: i64::from(new_state)];
             }
         }
         decl.add_method(
@@ -335,7 +335,7 @@ fn ensure_class() -> &'static Class {
                     if want { "ON" } else { "OFF" }
                 );
                 let new_state: BOOL = if want { YES } else { NO };
-                let _: () = msg_send![_sender, setState: new_state as i64];
+                let _: () = msg_send![_sender, setState: i64::from(new_state)];
             }
         }
         decl.add_method(
@@ -418,12 +418,12 @@ fn ensure_class() -> &'static Class {
                 if !state.mic_item.is_null() {
                     let on = state.input.is_enabled();
                     let new_state: BOOL = if on { YES } else { NO };
-                    let _: () = msg_send![state.mic_item, setState: new_state as i64];
+                    let _: () = msg_send![state.mic_item, setState: i64::from(new_state)];
                 }
                 if !state.output_item.is_null() {
                     let on = state.output.is_enabled();
                     let new_state: BOOL = if on { YES } else { NO };
-                    let _: () = msg_send![state.output_item, setState: new_state as i64];
+                    let _: () = msg_send![state.output_item, setState: i64::from(new_state)];
                 }
             }
         }
@@ -471,7 +471,7 @@ unsafe fn make_menu_target(input: InputController, output: OutputController) -> 
     }));
     // SAFETY: `target` was just `alloc`+`init`'d above; it's a valid
     // TruceMenuTarget instance whose ivar layout we declared.
-    unsafe { (*target).set_ivar::<*mut c_void>(STATE_IVAR, state as *mut c_void) };
+    unsafe { (*target).set_ivar::<*mut c_void>(STATE_IVAR, state.cast::<c_void>()) };
     target
 }
 
@@ -488,7 +488,7 @@ unsafe fn update_menu_state(
         if state_ptr.is_null() {
             return;
         }
-        let state = &mut *(state_ptr as *mut MenuState);
+        let state = &mut *state_ptr.cast::<MenuState>();
         state.mic_item = mic_item;
         state.output_item = output_item;
         state.input_device_menu = input_device_menu;

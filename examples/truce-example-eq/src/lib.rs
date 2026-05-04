@@ -163,16 +163,16 @@ impl PluginLogic for Eq {
 
         for i in 0..buffer.num_samples() {
             // Read smoothed parameters
-            let low_freq = self.params.low_freq.smoothed_next() as f64;
-            let low_gain = self.params.low_gain.smoothed_next() as f64;
-            let low_q = self.params.low_q.smoothed_next() as f64;
-            let mid_freq = self.params.mid_freq.smoothed_next() as f64;
-            let mid_gain = self.params.mid_gain.smoothed_next() as f64;
-            let mid_q = self.params.mid_q.smoothed_next() as f64;
-            let high_freq = self.params.high_freq.smoothed_next() as f64;
-            let high_gain = self.params.high_gain.smoothed_next() as f64;
-            let high_q = self.params.high_q.smoothed_next() as f64;
-            let output = db_to_linear(self.params.output.smoothed_next() as f64);
+            let low_freq = f64::from(self.params.low_freq.smoothed_next());
+            let low_gain = f64::from(self.params.low_gain.smoothed_next());
+            let low_q = f64::from(self.params.low_q.smoothed_next());
+            let mid_freq = f64::from(self.params.mid_freq.smoothed_next());
+            let mid_gain = f64::from(self.params.mid_gain.smoothed_next());
+            let mid_q = f64::from(self.params.mid_q.smoothed_next());
+            let high_freq = f64::from(self.params.high_freq.smoothed_next());
+            let high_gain = f64::from(self.params.high_gain.smoothed_next());
+            let high_q = f64::from(self.params.high_q.smoothed_next());
+            let output = db_to_linear(f64::from(self.params.output.smoothed_next()));
 
             for ch in 0..num_ch {
                 // Update filter coefficients per-sample (smoothed params change each sample)
@@ -181,7 +181,7 @@ impl PluginLogic for Eq {
                 self.filters[ch][2].set_high_shelf(high_freq, high_gain, high_q, sr);
 
                 let (inp, out) = buffer.io(ch);
-                let mut sample = inp[i] as f64;
+                let mut sample = f64::from(inp[i]);
                 for band in &mut self.filters[ch] {
                     sample = band.process(sample);
                 }

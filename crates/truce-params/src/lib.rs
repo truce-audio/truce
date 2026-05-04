@@ -19,26 +19,27 @@ pub const METER_ID_BASE: u32 = 1 << 24;
 ///
 /// Used by the `#[derive(Params)]` macro for default `format_value` implementations
 /// on `FloatParam` and `IntParam` fields.
+#[must_use] 
 pub fn format_param_value(info: &ParamInfo, value: f64) -> String {
     match info.unit {
-        ParamUnit::Db => format!("{:.1} dB", value),
+        ParamUnit::Db => format!("{value:.1} dB"),
         ParamUnit::Hz => {
             if value >= 1000.0 {
                 format!("{:.1} kHz", value / 1000.0)
             } else {
-                format!("{:.0} Hz", value)
+                format!("{value:.0} Hz")
             }
         }
-        ParamUnit::Milliseconds => format!("{:.1} ms", value),
+        ParamUnit::Milliseconds => format!("{value:.1} ms"),
         ParamUnit::Seconds => {
             if value >= 1.0 {
-                format!("{:.2} s", value)
+                format!("{value:.2} s")
             } else {
                 format!("{:.0} ms", value * 1000.0)
             }
         }
         ParamUnit::Percent => format!("{:.0}%", value * 100.0),
-        ParamUnit::Semitones => format!("{:.1} st", value),
+        ParamUnit::Semitones => format!("{value:.1} st"),
         ParamUnit::Pan => {
             // Convention: pan params are normalized to [-1.0, 1.0]. Round
             // to nearest integer percent first so the dead-zone test and
@@ -47,10 +48,10 @@ pub fn format_param_value(info: &ParamInfo, value: f64) -> String {
             match pct.cmp(&0) {
                 std::cmp::Ordering::Equal => "C".to_string(),
                 std::cmp::Ordering::Less => format!("{}L", -pct),
-                std::cmp::Ordering::Greater => format!("{}R", pct),
+                std::cmp::Ordering::Greater => format!("{pct}R"),
             }
         }
-        ParamUnit::None => format!("{:.2}", value),
+        ParamUnit::None => format!("{value:.2}"),
     }
 }
 
@@ -94,6 +95,7 @@ pub trait Params: Send + Sync + 'static {
     /// `PluginExport::param_infos_static`. Gated by `Self: Sized` so
     /// adding the method preserves dyn-compatibility for the existing
     /// `&self`-method shape (`&dyn Params` skips this slot).
+    #[must_use] 
     fn param_infos_static() -> Vec<ParamInfo>
     where
         Self: Sized,
@@ -203,25 +205,20 @@ pub trait Params: Send + Sync + 'static {
         let mut seen: Vec<(u32, &'static str)> = Vec::with_capacity(all.len());
         for info in all.drain(..) {
             for (prev_id, prev_name) in &seen {
-                if *prev_id == info.id {
-                    panic!(
-                        "duplicate parameter ID {}: '{}' and '{}' (likely a \
-                         parent / nested-struct collision; the per-struct \
-                         compile-time check can't see across nested types)",
-                        info.id, prev_name, info.name,
-                    );
-                }
+                assert!(*prev_id != info.id, 
+                    "duplicate parameter ID {}: '{}' and '{}' (likely a \
+                     parent / nested-struct collision; the per-struct \
+                     compile-time check can't see across nested types)",
+                    info.id, prev_name, info.name,
+                );
             }
             seen.push((info.id, info.name));
         }
         for meter_id in self.meter_ids() {
             for (prev_id, prev_name) in &seen {
-                if *prev_id == meter_id {
-                    panic!(
-                        "meter ID {} collides with parameter ID for '{}'",
-                        meter_id, prev_name,
-                    );
-                }
+                assert!(*prev_id != meter_id, 
+                    "meter ID {meter_id} collides with parameter ID for '{prev_name}'",
+                );
             }
         }
     }

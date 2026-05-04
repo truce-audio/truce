@@ -760,7 +760,7 @@ fn draw_rows(
         let start_x = (w as f32 - total_w) / 2.0;
 
         let mut col = 0u32;
-        for kd in row.knobs.iter() {
+        for kd in &row.knobs {
             let span = kd.span.max(1);
             let x = start_x + col as f32 * pitch;
             let widget_w = span as f32 * pitch - ROWS_COLUMN_GAP;

@@ -30,6 +30,7 @@ pub use snapshot::ParamSnapshot;
 pub use theme::Theme;
 
 /// Get the platform's display scale factor (Retina = 2.0, normal = 1.0).
+#[must_use] 
 pub fn backing_scale() -> f64 {
     platform::main_screen_scale()
 }

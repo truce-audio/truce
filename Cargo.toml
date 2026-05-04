@@ -56,6 +56,9 @@ readme = "README.md"
 [workspace.lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("cargo-clippy"))'] }
 
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+
 # Workspace deps. `version =` is intentionally only set on path deps
 # whose crate is published to crates.io and consumed by another
 # published crate via `workspace = true` (cargo strips `path` at

@@ -1,5 +1,5 @@
-//! Regression test: ParamChange events carry PLAIN values.
-//! StaticShell must use set_plain(), not set_normalized().
+//! Regression test: `ParamChange` events carry PLAIN values.
+//! `StaticShell` must use `set_plain()`, not `set_normalized()`.
 //! Bug: double-denormalization caused gain to slam to extremes in VST3.
 
 use std::sync::Arc;
@@ -44,7 +44,7 @@ impl truce_loader::PluginLogic for TestPlugin {
         _ctx: &mut ProcessContext,
     ) -> ProcessStatus {
         // Record what the plugin sees as the gain value.
-        self.last_gain_plain = self.params.gain.value() as f64;
+        self.last_gain_plain = f64::from(self.params.gain.value());
         ProcessStatus::Normal
     }
 

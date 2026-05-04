@@ -3,14 +3,14 @@
 use std::ffi::c_void;
 use std::os::raw::c_char;
 
-/// Plugin descriptor passed from Rust to the ObjC shim at registration time.
+/// Plugin descriptor passed from Rust to the `ObjC` shim at registration time.
 #[repr(C)]
 pub struct AuPluginDescriptor {
     /// AU component type: "aufx" (effect), "aumu" (instrument), "aumf" (MIDI effect)
     pub component_type: [u8; 4],
     /// AU component subtype (4 bytes, e.g., "Gain")
     pub component_subtype: [u8; 4],
-    /// AU component manufacturer (4 bytes, e.g., "OAPl")
+    /// AU component manufacturer (4 bytes, e.g., "`OAPl`")
     pub component_manufacturer: [u8; 4],
     /// Display name
     pub name: *const c_char,
@@ -29,7 +29,7 @@ pub struct AuPluginDescriptor {
     pub bypass_param_id: u32,
 }
 
-/// Parameter descriptor for the ObjC shim.
+/// Parameter descriptor for the `ObjC` shim.
 #[repr(C)]
 pub struct AuParamDescriptor {
     pub id: u32,
@@ -45,7 +45,7 @@ pub struct AuParamDescriptor {
     pub group: *const c_char,
 }
 
-/// Callbacks from the ObjC shim into Rust.
+/// Callbacks from the `ObjC` shim into Rust.
 #[repr(C)]
 pub struct AuCallbacks {
     /// Create a new plugin instance. Returns an opaque context pointer.
@@ -62,7 +62,7 @@ pub struct AuCallbacks {
     /// - `inputs`: array of `num_input_channels` float pointers
     /// - `outputs`: array of `num_output_channels` float pointers
     /// - `num_frames`: number of samples to process
-    /// - `events`: pointer to packed MIDI event buffer (see AuMidiEvent)
+    /// - `events`: pointer to packed MIDI event buffer (see `AuMidiEvent`)
     /// - `num_events`: number of MIDI events
     /// - `transport`: may be null when the host did not provide transport
     ///   info for this block (or is not capable of doing so).
@@ -102,19 +102,19 @@ pub struct AuCallbacks {
     ) -> u32,
 
     /// Save state. Returns a malloc'd buffer and its length.
-    /// Caller (ObjC shim) is responsible for freeing via `state_free`.
+    /// Caller (`ObjC` shim) is responsible for freeing via `state_free`.
     pub state_save:
         unsafe extern "C" fn(ctx: *mut c_void, out_data: *mut *mut u8, out_len: *mut u32),
 
     /// Load state from a buffer.
     pub state_load: unsafe extern "C" fn(ctx: *mut c_void, data: *const u8, len: u32),
 
-    /// Free a buffer returned by state_save.
+    /// Free a buffer returned by `state_save`.
     pub state_free: unsafe extern "C" fn(data: *mut u8, len: u32),
 
     /// Number of *encodable* plugin → host MIDI events queued by the
-    /// last process() call. Unsupported event types (MIDI 2.0,
-    /// ParamChange, Transport) are filtered out so the shim can
+    /// last `process()` call. Unsupported event types (MIDI 2.0,
+    /// `ParamChange`, Transport) are filtered out so the shim can
     /// iterate `0..count` without checking for skipped slots.
     pub output_event_count: unsafe extern "C" fn(ctx: *mut c_void) -> u32,
     /// Fill `out` with the index-th encodable output event.
@@ -127,7 +127,7 @@ pub struct AuCallbacks {
     pub gui_close: unsafe extern "C" fn(ctx: *mut c_void),
 }
 
-/// A MIDI event passed across the Rust ↔ ObjC boundary in both
+/// A MIDI event passed across the Rust ↔ `ObjC` boundary in both
 /// directions (host → plugin via the input event array and plugin →
 /// host via `output_event_at`).
 #[repr(C)]
@@ -144,7 +144,7 @@ pub struct AuMidiEvent {
     pub _pad: u8,
 }
 
-/// Transport snapshot filled by the shim from HostCallbackInfo (AU v2)
+/// Transport snapshot filled by the shim from `HostCallbackInfo` (AU v2)
 /// or `AUAudioUnit.musicalContextBlock` / `transportStateBlock` (AU v3).
 ///
 /// Layout must match `AuTransportSnapshot` in `au_shim_types.h`.

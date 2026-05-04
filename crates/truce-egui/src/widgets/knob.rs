@@ -34,7 +34,7 @@ pub fn param_knob<P: ?Sized>(
     if response.dragged() {
         let delta = -response.drag_delta().y / 150.0;
         value = (value + delta).clamp(0.0, 1.0);
-        state.set_param(id, value as f64);
+        state.set_param(id, f64::from(value));
     }
     if response.drag_stopped() {
         state.end_edit(id);

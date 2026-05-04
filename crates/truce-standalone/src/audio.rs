@@ -118,6 +118,7 @@ impl InputController {
 
     /// Read the current state. Source of truth for the audio
     /// callback's zero-fill decision.
+    #[must_use] 
     pub fn is_enabled(&self) -> bool {
         self.enabled.load(Ordering::Relaxed)
     }
@@ -133,6 +134,7 @@ impl InputController {
     /// Currently-resolved input device name, or `None` if no
     /// device has been opened (or the worker resolved to the
     /// system default with no nameable device).
+    #[must_use] 
     pub fn current_name(&self) -> Option<String> {
         self.current_name.lock().ok().and_then(|g| g.clone())
     }
@@ -169,6 +171,7 @@ impl OutputController {
 
     /// Read the current mute state. Source of truth for the audio
     /// callback's zero-fill decision.
+    #[must_use] 
     pub fn is_enabled(&self) -> bool {
         self.enabled.load(Ordering::Relaxed)
     }
@@ -182,6 +185,7 @@ impl OutputController {
 
     /// Currently-resolved output device name, or `None` if not
     /// resolvable.
+    #[must_use] 
     pub fn current_name(&self) -> Option<String> {
         self.current_name.lock().ok().and_then(|g| g.clone())
     }
@@ -217,11 +221,13 @@ pub fn list_devices() {
 }
 
 /// Snapshot of available output devices (`(default_name, all_names)`).
+#[must_use] 
 pub fn list_output_devices() -> (Option<String>, Vec<String>) {
     enumerate_devices(true)
 }
 
 /// Snapshot of available input devices (`(default_name, all_names)`).
+#[must_use] 
 pub fn list_input_devices() -> (Option<String>, Vec<String>) {
     enumerate_devices(false)
 }
@@ -279,7 +285,7 @@ pub fn start_audio<P: PluginExport>(
 
     let config: cpal::StreamConfig = resolve_config(&initial_output, &default_config, opts);
     let sample_format = default_config.sample_format();
-    let sample_rate = config.sample_rate.0 as f64;
+    let sample_rate = f64::from(config.sample_rate.0);
     let channels = config.channels as usize;
     let is_effect = P::info().category == PluginCategory::Effect;
 
@@ -453,7 +459,7 @@ pub fn start_audio<P: PluginExport>(
         #[cfg(feature = "playback")]
         playback: playback.clone(),
         #[cfg(feature = "playback")]
-        capture: capture.as_ref().map(|s| s.pusher()),
+        capture: capture.as_ref().map(super::playback::CaptureSink::pusher),
     };
 
     let initial_output_name_for_worker = initial_output_name.clone();
@@ -773,27 +779,24 @@ fn apply_input_state(
             Some(name) => find_device(&host, name, false),
             None => host.default_input_device(),
         };
-        match device {
-            Some(dev) => {
-                let resolved = dev.name().ok();
-                match build_and_play_input_stream(&dev, channels, sample_rate, Arc::clone(ring)) {
-                    Ok(s) => {
-                        *stream = Some(s);
-                        enabled_flag.store(true, Ordering::Relaxed);
-                        if let Ok(mut g) = current_name.lock() {
-                            *g = resolved;
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("mic enable failed: {e}");
-                        enabled_flag.store(false, Ordering::Relaxed);
+        if let Some(dev) = device {
+            let resolved = dev.name().ok();
+            match build_and_play_input_stream(&dev, channels, sample_rate, Arc::clone(ring)) {
+                Ok(s) => {
+                    *stream = Some(s);
+                    enabled_flag.store(true, Ordering::Relaxed);
+                    if let Ok(mut g) = current_name.lock() {
+                        *g = resolved;
                     }
                 }
+                Err(e) => {
+                    eprintln!("mic enable failed: {e}");
+                    enabled_flag.store(false, Ordering::Relaxed);
+                }
             }
-            None => {
-                eprintln!("mic enable failed: no input device available");
-                enabled_flag.store(false, Ordering::Relaxed);
-            }
+        } else {
+            eprintln!("mic enable failed: no input device available");
+            enabled_flag.store(false, Ordering::Relaxed);
         }
     } else {
         *stream = None;
@@ -850,12 +853,11 @@ fn find_device(host: &cpal::Host, name: &str, output: bool) -> Option<cpal::Devi
     };
     devices.into_iter().find(|d| {
         d.name()
-            .map(|n| n.to_lowercase().contains(&name.to_lowercase()))
-            .unwrap_or(false)
+            .is_ok_and(|n| n.to_lowercase().contains(&name.to_lowercase()))
     })
 }
 
-/// Build the cpal StreamConfig honoring opts where possible. Falls
+/// Build the cpal `StreamConfig` honoring opts where possible. Falls
 /// back to the device's default config for any unspecified or
 /// unsupported choice.
 fn resolve_config(
@@ -999,9 +1001,9 @@ fn audio_callback<P: PluginExport>(
     } else {
         input_bufs.clear();
     }
-    let input_slices: Vec<&[f32]> = input_bufs.iter().map(|b| b.as_slice()).collect();
+    let input_slices: Vec<&[f32]> = input_bufs.iter().map(std::vec::Vec::as_slice).collect();
     let mut output_slices: Vec<&mut [f32]> =
-        channel_bufs.iter_mut().map(|b| b.as_mut_slice()).collect();
+        channel_bufs.iter_mut().map(std::vec::Vec::as_mut_slice).collect();
 
     // The slices we pass here all live within this stack frame, so
     // the safe wrapper's borrow-checker proof of `'a` is enough —

@@ -25,6 +25,7 @@ impl PluginKind {
         }
     }
 
+    #[must_use] 
     pub fn category(self) -> &'static str {
         match self {
             Self::Instrument => "instrument",
@@ -33,6 +34,7 @@ impl PluginKind {
         }
     }
 
+    #[must_use] 
     pub fn au_tag(self) -> &'static str {
         match self {
             Self::Instrument => "Synthesizer",
@@ -41,6 +43,7 @@ impl PluginKind {
         }
     }
 
+    #[must_use] 
     pub fn bus_layouts(self) -> &'static str {
         match self {
             Self::Instrument => "BusLayout::new().with_output(\"Main\", ChannelConfig::Stereo)",
@@ -49,6 +52,7 @@ impl PluginKind {
     }
 
     /// Per-kind `Params` struct, with `{struct_name}` substituted.
+    #[must_use] 
     pub fn params_struct(self, struct_name: &str) -> String {
         let tpl = match self {
             Self::Midi => MIDI_PARAMS_STRUCT,
@@ -57,6 +61,7 @@ impl PluginKind {
         tpl.replace("{struct_name}", struct_name)
     }
 
+    #[must_use] 
     pub fn layout_knob(self) -> &'static str {
         match self {
             Self::Midi => "knob(P::Semitones, \"Semitones\")",
@@ -64,6 +69,7 @@ impl PluginKind {
         }
     }
 
+    #[must_use] 
     pub fn process_body(self) -> &'static str {
         match self {
             Self::Instrument => INSTRUMENT_PROCESS_BODY,
@@ -74,6 +80,7 @@ impl PluginKind {
 
     /// `truce::plugin!` invocation. Instrument adds a custom
     /// `bus_layouts:` line; effect / midi default to stereo.
+    #[must_use] 
     pub fn plugin_macro(self, struct_name: &str) -> String {
         match self {
             Self::Instrument => format!(
@@ -111,7 +118,7 @@ pub struct {struct_name}Params {
     pub semitones: FloatParam,
 }"#;
 
-const EFFECT_PROCESS_BODY: &str = r#"    fn process(&mut self, buffer: &mut AudioBuffer, _events: &EventList,
+const EFFECT_PROCESS_BODY: &str = r"    fn process(&mut self, buffer: &mut AudioBuffer, _events: &EventList,
                _context: &mut ProcessContext) -> ProcessStatus {
         for i in 0..buffer.num_samples() {
             let gain = db_to_linear(self.params.gain.smoothed_next() as f64) as f32;
@@ -121,9 +128,9 @@ const EFFECT_PROCESS_BODY: &str = r#"    fn process(&mut self, buffer: &mut Audi
             }
         }
         ProcessStatus::Normal
-    }"#;
+    }";
 
-const INSTRUMENT_PROCESS_BODY: &str = r#"    fn process(&mut self, buffer: &mut AudioBuffer, events: &EventList,
+const INSTRUMENT_PROCESS_BODY: &str = r"    fn process(&mut self, buffer: &mut AudioBuffer, events: &EventList,
                _context: &mut ProcessContext) -> ProcessStatus {
         for event in events.iter() {
             match &event.body {
@@ -145,9 +152,9 @@ const INSTRUMENT_PROCESS_BODY: &str = r#"    fn process(&mut self, buffer: &mut 
             }
         }
         ProcessStatus::Normal
-    }"#;
+    }";
 
-const MIDI_PROCESS_BODY: &str = r#"    fn process(&mut self, _buffer: &mut AudioBuffer, events: &EventList,
+const MIDI_PROCESS_BODY: &str = r"    fn process(&mut self, _buffer: &mut AudioBuffer, events: &EventList,
                context: &mut ProcessContext) -> ProcessStatus {
         for event in events.iter() {
             match &event.body {
@@ -175,4 +182,4 @@ const MIDI_PROCESS_BODY: &str = r#"    fn process(&mut self, _buffer: &mut Audio
             }
         }
         ProcessStatus::Normal
-    }"#;
+    }";

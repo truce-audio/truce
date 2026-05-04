@@ -25,34 +25,34 @@ pub use toggle::ToggleWidget;
 pub use xy_pad::XYPadWidget;
 
 /// Create a rotary knob bound to a parameter.
-pub fn knob<'a, M: Clone + Debug + 'static>(
+pub fn knob<M: Clone + Debug + 'static>(
     id: impl Into<u32>,
-    params: &'a ParamCache<impl Params>,
-) -> KnobWidget<'a, M> {
+    params: &ParamCache<impl Params>,
+) -> KnobWidget<'_, M> {
     KnobWidget::new(id.into(), params)
 }
 
 /// Create a horizontal slider bound to a parameter.
-pub fn param_slider<'a, M: Clone + Debug + 'static>(
+pub fn param_slider<M: Clone + Debug + 'static>(
     id: impl Into<u32>,
-    params: &'a ParamCache<impl Params>,
-) -> SliderWidget<'a, M> {
+    params: &ParamCache<impl Params>,
+) -> SliderWidget<'_, M> {
     SliderWidget::new(id.into(), params)
 }
 
 /// Create a toggle switch bound to a parameter.
-pub fn param_toggle<'a, M: Clone + Debug + 'static>(
+pub fn param_toggle<M: Clone + Debug + 'static>(
     id: impl Into<u32>,
-    params: &'a ParamCache<impl Params>,
-) -> ToggleWidget<'a, M> {
+    params: &ParamCache<impl Params>,
+) -> ToggleWidget<'_, M> {
     ToggleWidget::new(id.into(), params)
 }
 
 /// Create a selector (pick list) bound to an enum parameter.
-pub fn param_selector<'a, M: Clone + Debug + 'static>(
+pub fn param_selector<M: Clone + Debug + 'static>(
     id: impl Into<u32>,
-    params: &'a ParamCache<impl Params>,
-) -> SelectorWidget<'a, M> {
+    params: &ParamCache<impl Params>,
+) -> SelectorWidget<'_, M> {
     SelectorWidget::new(id.into(), params)
 }
 
@@ -66,10 +66,10 @@ pub fn meter<'a, M: Clone + Debug + 'static>(
 }
 
 /// Create an XY pad controlling two parameters.
-pub fn xy_pad<'a, M: Clone + Debug + 'static>(
+pub fn xy_pad<M: Clone + Debug + 'static>(
     x_id: impl Into<u32>,
     y_id: impl Into<u32>,
-    params: &'a ParamCache<impl Params>,
-) -> XYPadWidget<'a, M> {
+    params: &ParamCache<impl Params>,
+) -> XYPadWidget<'_, M> {
     XYPadWidget::new(x_id.into(), y_id.into(), params)
 }

@@ -27,6 +27,7 @@ pub use truce_gui::platform::{ParentWindow, note_linux_scale_factor, query_backi
 /// # Safety
 /// The window handle must be valid for the lifetime of the returned
 /// surface.
+#[must_use] 
 pub unsafe fn create_wgpu_surface(
     instance: &wgpu::Instance,
     window: &baseview::Window,

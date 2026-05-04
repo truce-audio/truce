@@ -2,7 +2,7 @@
 //!
 //! Each wrapper still owns its format-specific descriptor types and
 //! callback tables — those don't unify cleanly. What unifies is the
-//! "boring" boundary glue: building CStrings from `ParamInfo` fields,
+//! "boring" boundary glue: building `CStrings` from `ParamInfo` fields,
 //! picking the default bus layout, and resolving install-time name
 //! overrides (see also [`crate::info::resolve_name_override`]).
 //!
@@ -22,7 +22,7 @@ use truce_params::ParamInfo;
 use crate::bus::BusLayout;
 use crate::export::PluginExport;
 
-/// CStrings derived from a single `ParamInfo`. All four conversions
+/// `CStrings` derived from a single `ParamInfo`. All four conversions
 /// follow the same pattern (`unwrap_or_default()` so a `\0` in metadata
 /// degrades to an empty C string instead of panicking the host); pulling
 /// them into one struct keeps the per-format vtable loops uniform.
@@ -34,7 +34,8 @@ pub struct ParamCStrings {
 }
 
 impl ParamCStrings {
-    /// Build all four CStrings for one parameter.
+    /// Build all four `CStrings` for one parameter.
+    #[must_use] 
     pub fn from_info(info: &ParamInfo) -> Self {
         Self {
             name: CString::new(info.name).unwrap_or_default(),
@@ -61,11 +62,10 @@ impl ParamCStrings {
 /// stereo passthrough) inside `truce-aax::register_aax` after this
 /// helper returns. Don't push that remap into this helper — only AAX
 /// needs it.
+#[must_use] 
 pub fn default_io_channels<P: PluginExport>() -> (u32, u32) {
     P::bus_layouts()
-        .first()
-        .map(|l| (l.total_input_channels(), l.total_output_channels()))
-        .unwrap_or_else(|| {
+        .first().map_or_else(|| {
             // `bus_layouts() == vec![]` means the plugin author returned
             // an empty layout list. `aumi` and other zero-bus plugins
             // are supposed to return `[BusLayout::new()]` (with zero
@@ -79,7 +79,7 @@ pub fn default_io_channels<P: PluginExport>() -> (u32, u32) {
                  vec![BusLayout::new()] explicitly.",
                 std::any::type_name::<P>()
             )
-        })
+        }, |l| (l.total_input_channels(), l.total_output_channels()))
 }
 
 /// Pick the plugin's first bus layout, or panic with a clear message.
@@ -91,6 +91,7 @@ pub fn default_io_channels<P: PluginExport>() -> (u32, u32) {
 /// For `aumi` plugins the returned layout is typically `BusLayout::new()`
 /// (zero in / zero out). AAX synthesizes (2, 2) from that case in
 /// `register_aax`; see [`default_io_channels`] for the rationale.
+#[must_use] 
 pub fn first_bus_layout<P: PluginExport>() -> BusLayout {
     P::bus_layouts()
         .into_iter()

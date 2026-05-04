@@ -52,6 +52,7 @@ impl Scaffolder {
     /// Build a fresh scaffolder. The pinned tag is derived from
     /// cargo-truce's own version (`CARGO_PKG_VERSION`) — when the
     /// workspace version bumps, scaffolds automatically follow.
+    #[must_use] 
     pub fn new() -> Self {
         Self {
             renderer: Renderer::new(),

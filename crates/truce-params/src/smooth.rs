@@ -32,6 +32,7 @@ pub struct Smoother {
 }
 
 impl Smoother {
+    #[must_use] 
     pub fn new(style: SmoothingStyle) -> Self {
         let s = Self {
             style,

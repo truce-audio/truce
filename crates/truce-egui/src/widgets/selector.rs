@@ -27,7 +27,7 @@ pub fn param_selector<P: ?Sized>(
         let value = state.get_param(id);
         let new_value = if step_count > 1 {
             // Cycle through discrete steps
-            let step = 1.0 / (step_count - 1) as f64;
+            let step = 1.0 / f64::from(step_count - 1);
             let next = value + step;
             if next > 1.0 + step * 0.5 {
                 0.0

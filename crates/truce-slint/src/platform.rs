@@ -73,18 +73,15 @@ pub fn ensure_platform() {
         if state.get().is_some() {
             return;
         }
-        match slint::platform::set_platform(Box::new(TrucePlatform)) {
-            Ok(()) => state.set(Some(Ok(()))),
-            Err(_) => {
-                state.set(Some(Err(())));
-                log::warn!(
-                    "[truce-slint] slint::platform::set_platform returned Err — \
-                     another platform is already registered on this thread; the \
-                     pre-attached MinimalSoftwareWindow handed off via NEXT_WINDOW \
-                     won't be picked up by Component::new(), so the editor will \
-                     render to a different window than the one we hold for blitting"
-                );
-            }
+        if let Ok(()) = slint::platform::set_platform(Box::new(TrucePlatform)) { state.set(Some(Ok(()))) } else {
+            state.set(Some(Err(())));
+            log::warn!(
+                "[truce-slint] slint::platform::set_platform returned Err — \
+                 another platform is already registered on this thread; the \
+                 pre-attached MinimalSoftwareWindow handed off via NEXT_WINDOW \
+                 won't be picked up by Component::new(), so the editor will \
+                 render to a different window than the one we hold for blitting"
+            );
         }
     });
 }
@@ -101,6 +98,7 @@ pub fn ensure_platform() {
 /// rendering to a different window than the one the handler holds for
 /// blitting. The panic surfaces the failure at editor open time
 /// instead of producing a black or stale frame at runtime.
+#[must_use] 
 pub fn create_slint_window() -> Rc<MinimalSoftwareWindow> {
     PLATFORM_STATE.with(|state| match state.get() {
         Some(Ok(())) => {}
@@ -200,9 +198,9 @@ pub fn render_to_rgba(
         } else {
             let inv_a = UNPREMUL_LUT[px.alpha as usize];
             [
-                ((px.red as u32 * inv_a) >> 16) as u8,
-                ((px.green as u32 * inv_a) >> 16) as u8,
-                ((px.blue as u32 * inv_a) >> 16) as u8,
+                ((u32::from(px.red) * inv_a) >> 16) as u8,
+                ((u32::from(px.green) * inv_a) >> 16) as u8,
+                ((u32::from(px.blue) * inv_a) >> 16) as u8,
                 px.alpha,
             ]
         };

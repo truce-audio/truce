@@ -1,4 +1,4 @@
-//! Selector widget wrapping iced's pick_list for enum parameters.
+//! Selector widget wrapping iced's `pick_list` for enum parameters.
 
 use std::fmt::Debug;
 use std::marker::PhantomData;
@@ -40,7 +40,7 @@ impl<'a, M: Clone + Debug + 'static> SelectorWidget<'a, M> {
                     params
                         .params()
                         .format_value(id, plain)
-                        .unwrap_or_else(|| format!("{:.0}", plain))
+                        .unwrap_or_else(|| format!("{plain:.0}"))
                 })
                 .collect();
             let sel_idx = (value * (count - 1).max(1) as f64).round() as usize;
@@ -59,11 +59,13 @@ impl<'a, M: Clone + Debug + 'static> SelectorWidget<'a, M> {
         }
     }
 
+    #[must_use] 
     pub fn label(mut self, label: &'a str) -> Self {
         self.label = Some(label);
         self
     }
 
+    #[must_use] 
     pub fn into_element(self) -> Element<'a, Message<M>> {
         let id = self.id;
         let count = self.options.len();

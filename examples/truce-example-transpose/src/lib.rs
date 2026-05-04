@@ -27,7 +27,7 @@ pub struct TransposeParams {
 pub struct Transpose {
     pub params: Arc<TransposeParams>,
     /// Maps input note -> output note that was actually sent.
-    /// Used to send correct NoteOff even if shift changes mid-hold.
+    /// Used to send correct `NoteOff` even if shift changes mid-hold.
     active_notes: [Option<u8>; 128],
 }
 
@@ -63,7 +63,7 @@ impl PluginLogic for Transpose {
                     note,
                     velocity,
                 } => {
-                    let transposed = (*note as i16 + shift).clamp(0, 127) as u8;
+                    let transposed = (i16::from(*note) + shift).clamp(0, 127) as u8;
                     self.active_notes[*note as usize] = Some(transposed);
                     context.output_events.push(Event {
                         sample_offset: event.sample_offset,
@@ -82,7 +82,7 @@ impl PluginLogic for Transpose {
                     // Use the pitch that was actually sent, not current shift
                     let output_note = self.active_notes[*note as usize]
                         .take()
-                        .unwrap_or((*note as i16 + shift).clamp(0, 127) as u8);
+                        .unwrap_or((i16::from(*note) + shift).clamp(0, 127) as u8);
                     context.output_events.push(Event {
                         sample_offset: event.sample_offset,
                         body: EventBody::NoteOff {
@@ -132,10 +132,10 @@ mod tests {
         plugin.reset(44100.0, 512);
 
         let input = vec![vec![0.0f32; 512]; 2];
-        let input_refs: Vec<&[f32]> = input.iter().map(|v| v.as_slice()).collect();
+        let input_refs: Vec<&[f32]> = input.iter().map(std::vec::Vec::as_slice).collect();
         let mut output = vec![vec![0.0f32; 512]; 2];
         let mut output_refs: Vec<&mut [f32]> =
-            output.iter_mut().map(|v| v.as_mut_slice()).collect();
+            output.iter_mut().map(std::vec::Vec::as_mut_slice).collect();
 
         let mut buffer = unsafe { AudioBuffer::from_slices(&input_refs, &mut output_refs, 512) };
 

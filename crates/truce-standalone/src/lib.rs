@@ -131,7 +131,7 @@ pub fn run<P: PluginExport>()
 where
     P::Params: 'static,
 {
-    run_with::<P>(Defaults::default())
+    run_with::<P>(Defaults::default());
 }
 
 /// Run the plugin standalone with the supplied launch defaults.

@@ -44,7 +44,7 @@ impl Biquad {
 
     /// Set coefficients for a peaking EQ band.
     /// freq: center frequency in Hz
-    /// gain_db: boost/cut in dB
+    /// `gain_db`: boost/cut in dB
     /// q: quality factor
     /// sr: sample rate in Hz
     pub fn set_peaking(&mut self, freq: f64, gain_db: f64, q: f64, sr: f64) {
@@ -82,7 +82,7 @@ impl Biquad {
 
     /// Set coefficients for a low shelf filter.
     /// freq: transition frequency in Hz
-    /// gain_db: boost/cut in dB
+    /// `gain_db`: boost/cut in dB
     /// q: slope steepness (0.707 = Butterworth)
     /// sr: sample rate in Hz
     pub fn set_low_shelf(&mut self, freq: f64, gain_db: f64, q: f64, sr: f64) {
@@ -119,7 +119,7 @@ impl Biquad {
 
     /// Set coefficients for a high shelf filter.
     /// freq: transition frequency in Hz
-    /// gain_db: boost/cut in dB
+    /// `gain_db`: boost/cut in dB
     /// q: slope steepness (0.707 = Butterworth)
     /// sr: sample rate in Hz
     pub fn set_high_shelf(&mut self, freq: f64, gain_db: f64, q: f64, sr: f64) {

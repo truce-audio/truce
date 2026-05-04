@@ -35,7 +35,7 @@ pub struct ParamCache<P: Params + ?Sized> {
 }
 
 impl<P: Params + ?Sized> ParamCache<P> {
-    /// Create a new ParamCache, populating initial values from the params.
+    /// Create a new `ParamCache`, populating initial values from the params.
     pub fn new(params: Arc<P>) -> Self {
         let infos = params.param_infos();
         let ids: Vec<u32> = infos.iter().map(|i| i.id).collect();
@@ -74,8 +74,7 @@ impl<P: Params + ?Sized> ParamCache<P> {
     pub fn label(&self, id: impl Into<u32>) -> &str {
         self.labels
             .get(&id.into())
-            .map(|s| s.as_str())
-            .unwrap_or("")
+            .map_or("", std::string::String::as_str)
     }
 
     /// Read a meter value (0.0–1.0).
@@ -84,6 +83,7 @@ impl<P: Params + ?Sized> ParamCache<P> {
     }
 
     /// The font set via the editor's `with_font()`, or `Font::DEFAULT`.
+    #[must_use] 
     pub fn font(&self) -> iced::Font {
         self.font
     }
@@ -94,6 +94,7 @@ impl<P: Params + ?Sized> ParamCache<P> {
     }
 
     /// Access the underlying params (for info lookups).
+    #[must_use] 
     pub fn params(&self) -> &P {
         &self.params
     }

@@ -3,6 +3,7 @@
 use iced::Color;
 
 /// Create the default truce dark theme for iced.
+#[must_use] 
 pub fn truce_dark_theme() -> iced::Theme {
     iced::Theme::custom(
         "Truce Dark".to_string(),

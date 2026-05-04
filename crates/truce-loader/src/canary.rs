@@ -39,6 +39,7 @@ pub struct AbiCanary {
 }
 
 impl AbiCanary {
+    #[must_use] 
     pub fn current() -> Self {
         Self {
             trait_object_size: std::mem::size_of::<*const dyn PluginLogic>() * 2,
@@ -63,10 +64,12 @@ impl AbiCanary {
         }
     }
 
+    #[must_use] 
     pub fn matches(&self, other: &Self) -> bool {
         self.field_diffs(other).is_empty()
     }
 
+    #[must_use] 
     pub fn diff_report(&self, other: &Self) -> String {
         let diffs = self.field_diffs(other);
         if diffs.is_empty() {
@@ -117,7 +120,7 @@ impl AbiCanary {
 }
 
 fn discriminant_byte<T>(value: &T) -> u8 {
-    unsafe { *(value as *const T as *const u8) }
+    unsafe { *std::ptr::from_ref::<T>(value).cast::<u8>() }
 }
 
 fn rustc_hash() -> u64 {
@@ -143,6 +146,7 @@ pub struct ProbePlugin {
 }
 
 impl ProbePlugin {
+    #[must_use] 
     pub fn new() -> Self {
         Self {
             last_load_state: std::cell::RefCell::new(Vec::new()),

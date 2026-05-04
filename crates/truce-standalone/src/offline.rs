@@ -57,16 +57,13 @@ where
 
     let (file_sr, file_channels) = peek_wav_spec(input_path)?;
     let sample_rate = opts
-        .sample_rate
-        .map(|s| s as f64)
-        .unwrap_or_else(|| file_sr as f64);
+        .sample_rate.map_or_else(|| f64::from(file_sr), f64::from);
     // Cap to 2 channels for v1 — most plugins are stereo;
     // surround / mono workflows can wait for an explicit flag.
     let channels = file_channels.clamp(1, 2);
     let block_size = opts
         .buffer_size
-        .map(|b| b as usize)
-        .unwrap_or(DEFAULT_BLOCK_SIZE);
+        .map_or(DEFAULT_BLOCK_SIZE, |b| b as usize);
 
     eprintln!(
         "Offline render: {} → {} ({} Hz, {} ch, block {} frames)",
@@ -78,7 +75,7 @@ where
     );
 
     let input_buf = decode_wav_channel_major(input_path, sample_rate, channels)?;
-    let total_frames = input_buf.first().map(|c| c.len()).unwrap_or(0);
+    let total_frames = input_buf.first().map_or(0, std::vec::Vec::len);
     let duration = Duration::from_secs_f64(total_frames as f64 / sample_rate);
 
     let started = Instant::now();

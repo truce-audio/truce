@@ -1,7 +1,7 @@
 //! `cargo truce reset-au` — flush macOS Audio Unit caches and restart
 //! `pkd` / `AudioComponentRegistrar`.
 //!
-//! macOS-only. Clears `~/Library/Caches/AudioUnitCache`, the GarageBand
+//! macOS-only. Clears `~/Library/Caches/AudioUnitCache`, the `GarageBand`
 //! / Logic container caches, the Reaper AU plist, pluginkit
 //! registrations, and the AU v3 build scratch under `target/tmp/au_v3_*`.
 //! Does **not** touch Pro Tools AAX caches — see `cargo truce reset-aax`

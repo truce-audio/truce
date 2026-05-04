@@ -8,19 +8,23 @@ pub struct Color {
 }
 
 impl Color {
+    #[must_use] 
     pub const fn rgba(r: f32, g: f32, b: f32, a: f32) -> Self {
         Self { r, g, b, a }
     }
 
+    #[must_use] 
     pub const fn rgb(r: f32, g: f32, b: f32) -> Self {
         Self { r, g, b, a: 1.0 }
     }
 
+    #[must_use] 
     pub fn to_skia(&self) -> tiny_skia::Color {
         tiny_skia::Color::from_rgba(self.r, self.g, self.b, self.a)
             .unwrap_or(tiny_skia::Color::BLACK)
     }
 
+    #[must_use] 
     pub fn to_premultiplied(&self) -> tiny_skia::PremultipliedColorU8 {
         self.to_skia().premultiply().to_color_u8()
     }
@@ -43,6 +47,7 @@ pub struct Theme {
 }
 
 impl Theme {
+    #[must_use] 
     pub fn dark() -> Self {
         Self {
             background: Color::rgb(0.12, 0.12, 0.14),

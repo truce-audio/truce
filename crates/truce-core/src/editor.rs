@@ -8,7 +8,7 @@ use crate::events::TransportInfo;
 /// A raw pointer wrapper that is `Send + Sync`.
 ///
 /// Used to capture `*const Params` / host-handle pointers in
-/// PluginContext closures without the `ptr as usize` hack. The
+/// `PluginContext` closures without the `ptr as usize` hack. The
 /// `Send`/`Sync` impls are unconditional in `T` — they have to be,
 /// because the wrapped types are typically `#[repr(C)]` host structs
 /// that are themselves `!Send + !Sync` by default. Construction is
@@ -46,11 +46,13 @@ impl<T> SendPtr<T> {
     ///
     /// # Safety
     /// The pointed-to data must still be alive.
+    #[must_use] 
     pub unsafe fn get(&self) -> &T {
         unsafe { &*self.0 }
     }
 
     /// Get the raw pointer.
+    #[must_use] 
     pub fn as_ptr(&self) -> *const T {
         self.0
     }
@@ -107,7 +109,7 @@ pub trait Editor: Send {
     ///
     /// DPI/scale is a host→plugin concept: on VST3 Windows the host
     /// delivers it via `IPlugViewContentScaleSupport`; on CLAP via
-    /// `clap_plugin_gui::set_scale`; on macOS/Cocoa AppKit handles
+    /// `clap_plugin_gui::set_scale`; on macOS/Cocoa `AppKit` handles
     /// Retina backing automatically and hosts typically never call
     /// this at all. Editors that need to size off-screen buffers in
     /// physical pixels should react here, not by exposing a pull-style
@@ -242,13 +244,13 @@ pub struct ClosureBridge {
 
 impl EditorBridge for ClosureBridge {
     fn begin_edit(&self, id: u32) {
-        (self.begin_edit)(id)
+        (self.begin_edit)(id);
     }
     fn set_param(&self, id: u32, normalized: f64) {
-        (self.set_param)(id, normalized)
+        (self.set_param)(id, normalized);
     }
     fn end_edit(&self, id: u32) {
-        (self.end_edit)(id)
+        (self.end_edit)(id);
     }
     fn request_resize(&self, w: u32, h: u32) -> bool {
         (self.request_resize)(w, h)
@@ -269,7 +271,7 @@ impl EditorBridge for ClosureBridge {
         (self.get_state)()
     }
     fn set_state(&self, data: Vec<u8>) {
-        (self.set_state)(data)
+        (self.set_state)(data);
     }
     fn transport(&self) -> Option<TransportInfo> {
         (self.transport)()
@@ -279,7 +281,7 @@ impl EditorBridge for ClosureBridge {
 /// Context passed to [`Editor::open`]. Carries:
 ///
 /// - An `Arc<dyn EditorBridge>` — the host-plugin protocol surface
-///   (begin/set/end edit, request_resize, get_state, transport, …).
+///   (begin/set/end edit, `request_resize`, `get_state`, transport, …).
 /// - An `Arc<P>` typed parameter store — plugin authors `Deref` to
 ///   `&P` and read fields directly: `state.gain.smoothed_next()`.
 ///
@@ -317,6 +319,7 @@ impl<P: ?Sized> PluginContext<P> {
     /// Access the underlying bridge handle. Editors that want to clone
     /// the bridge into a worker thread without cloning the surrounding
     /// `PluginContext` use this.
+    #[must_use] 
     pub fn bridge(&self) -> &Arc<dyn EditorBridge> {
         &self.bridge
     }
@@ -324,6 +327,7 @@ impl<P: ?Sized> PluginContext<P> {
     /// Access the typed param store as an `Arc`. Use this when you
     /// need to capture the params in a `'static` closure (e.g. an iced
     /// `Subscription` or a worker thread).
+    #[must_use] 
     pub fn params(&self) -> &Arc<P> {
         &self.params
     }
@@ -357,6 +361,7 @@ impl<P: ?Sized> PluginContext<P> {
         self.bridge.set_param(id, normalized);
         self.bridge.end_edit(id);
     }
+    #[must_use] 
     pub fn request_resize(&self, w: u32, h: u32) -> bool {
         self.bridge.request_resize(w, h)
     }
@@ -379,12 +384,14 @@ impl<P: ?Sized> PluginContext<P> {
     pub fn get_meter(&self, id: impl Into<u32>) -> f32 {
         self.bridge.get_meter(id.into())
     }
+    #[must_use] 
     pub fn get_state(&self) -> Vec<u8> {
         self.bridge.get_state()
     }
     pub fn set_state(&self, data: Vec<u8>) {
         self.bridge.set_state(data);
     }
+    #[must_use] 
     pub fn transport(&self) -> Option<TransportInfo> {
         self.bridge.transport()
     }
@@ -404,6 +411,7 @@ impl PluginContext<dyn Params> {
 impl<P: Params + 'static> PluginContext<P> {
     /// Drop the typed `<P>` and return the dyn-erased context that
     /// crosses the `Editor::open` trait-object boundary.
+    #[must_use] 
     pub fn dyn_erase(self) -> PluginContext<dyn Params> {
         PluginContext {
             bridge: self.bridge,

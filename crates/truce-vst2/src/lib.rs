@@ -1,6 +1,6 @@
 //! VST2 format wrapper for truce.
 //!
-//! Uses a C shim that implements the AEffect interface. The shim calls
+//! Uses a C shim that implements the `AEffect` interface. The shim calls
 //! back into Rust for all plugin logic via C FFI. Clean-room
 //! implementation — no Steinberg SDK headers.
 
@@ -37,7 +37,7 @@ struct Vst2Instance<P: PluginExport> {
     /// on the instance so the audio thread doesn't heap-allocate.
     scratch: truce_core::buffer::RawBufferScratch,
     editor: Option<Box<dyn Editor>>,
-    /// AEffect pointer, set by the C shim after creation. Used for host callbacks.
+    /// `AEffect` pointer, set by the C shim after creation. Used for host callbacks.
     aeffect_ptr: *mut std::ffi::c_void,
     /// Whether state has been loaded at least once (via effSetChunk).
     state_loaded: bool,
@@ -98,8 +98,8 @@ impl Vst2TransportSnapshot {
             playing: self.playing != 0,
             recording: self.recording != 0,
             tempo,
-            time_sig_num: self.time_sig_num.clamp(0, u8::MAX as i32) as u8,
-            time_sig_den: self.time_sig_den.clamp(0, u8::MAX as i32) as u8,
+            time_sig_num: self.time_sig_num.clamp(0, i32::from(u8::MAX)) as u8,
+            time_sig_den: self.time_sig_den.clamp(0, i32::from(u8::MAX)) as u8,
             position_samples: self.position_samples as i64,
             position_seconds: 0.0,
             position_beats: self.position_beats,
@@ -162,13 +162,13 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
         pending_editor_parent: None,
         transport_slot: truce_core::TransportSlot::new(),
     });
-    Box::into_raw(instance) as *mut std::ffi::c_void
+    Box::into_raw(instance).cast::<std::ffi::c_void>()
 }
 
 unsafe extern "C" fn cb_destroy<P: PluginExport>(ctx: *mut std::ffi::c_void) {
     unsafe {
         if !ctx.is_null() {
-            drop(Box::from_raw(ctx as *mut Vst2Instance<P>));
+            drop(Box::from_raw(ctx.cast::<Vst2Instance<P>>()));
         }
     }
 }
@@ -179,7 +179,7 @@ unsafe extern "C" fn cb_reset<P: PluginExport>(
     max_frames: u32,
 ) {
     unsafe {
-        let inst = &mut *(ctx as *mut Vst2Instance<P>);
+        let inst = &mut *ctx.cast::<Vst2Instance<P>>();
         inst.sample_rate = sample_rate;
         inst.max_block_size = max_frames as usize;
         inst.plugin.reset(sample_rate, max_frames as usize);
@@ -212,7 +212,7 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
     num_events: u32,
 ) {
     unsafe {
-        let inst = &mut *(ctx as *mut Vst2Instance<P>);
+        let inst = &mut *ctx.cast::<Vst2Instance<P>>();
         let num_frames = num_frames as usize;
 
         // Convert MIDI events
@@ -226,7 +226,7 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
                     0x90 if ev.data2 > 0 => Some(EventBody::NoteOn {
                         channel,
                         note: ev.data1,
-                        velocity: ev.data2 as f32 / 127.0,
+                        velocity: f32::from(ev.data2) / 127.0,
                     }),
                     0x90 => Some(EventBody::NoteOff {
                         channel,
@@ -236,23 +236,23 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
                     0x80 => Some(EventBody::NoteOff {
                         channel,
                         note: ev.data1,
-                        velocity: ev.data2 as f32 / 127.0,
+                        velocity: f32::from(ev.data2) / 127.0,
                     }),
                     0xA0 => Some(EventBody::Aftertouch {
                         channel,
                         note: ev.data1,
-                        pressure: ev.data2 as f32 / 127.0,
+                        pressure: f32::from(ev.data2) / 127.0,
                     }),
                     0xB0 => Some(EventBody::ControlChange {
                         channel,
                         cc: ev.data1,
-                        value: ev.data2 as f32 / 127.0,
+                        value: f32::from(ev.data2) / 127.0,
                     }),
                     0xE0 => {
-                        let raw = ((ev.data2 as u16) << 7) | (ev.data1 as u16);
+                        let raw = (u16::from(ev.data2) << 7) | u16::from(ev.data1);
                         Some(EventBody::PitchBend {
                             channel,
-                            value: (raw as f32 - 8192.0) / 8192.0,
+                            value: (f32::from(raw) - 8192.0) / 8192.0,
                         })
                     }
                     _ => None,
@@ -282,16 +282,16 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
             num_frames as u32,
         );
 
-        let transport = if !inst.aeffect_ptr.is_null() {
+        let transport = if inst.aeffect_ptr.is_null() {
+            TransportInfo::default()
+        } else {
             let mut snap = Vst2TransportSnapshot::default();
-            truce_vst2_host_get_time(inst.aeffect_ptr, &mut snap);
+            truce_vst2_host_get_time(inst.aeffect_ptr, &raw mut snap);
             if snap.valid != 0 {
                 snap.to_transport_info()
             } else {
                 TransportInfo::default()
             }
-        } else {
-            TransportInfo::default()
         };
         inst.output_events.clear();
         inst.transport_slot.write(&transport);
@@ -308,7 +308,7 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
 }
 
 /// Map a truce `Event` body to a 3-byte VST2 MIDI packet. Returns
-/// `None` for event types that don't fit (MIDI 2.0, ParamChange,
+/// `None` for event types that don't fit (MIDI 2.0, `ParamChange`,
 /// Transport, etc.). Mirrors `truce_vst3::try_encode_vst3_midi` so
 /// the two formats stay in sync.
 fn try_encode_vst2_midi(event: &Event) -> Option<Vst2MidiEvent> {
@@ -364,7 +364,7 @@ fn try_encode_vst2_midi(event: &Event) -> Option<Vst2MidiEvent> {
 
 unsafe extern "C" fn cb_output_event_count<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
     unsafe {
-        let inst = &*(ctx as *mut Vst2Instance<P>);
+        let inst = &*ctx.cast::<Vst2Instance<P>>();
         inst.output_events
             .iter()
             .filter(|e| try_encode_vst2_midi(e).is_some())
@@ -378,7 +378,7 @@ unsafe extern "C" fn cb_output_event_at<P: PluginExport>(
     out: *mut Vst2MidiEvent,
 ) {
     unsafe {
-        let inst = &*(ctx as *mut Vst2Instance<P>);
+        let inst = &*ctx.cast::<Vst2Instance<P>>();
         if let Some(packet) = inst
             .output_events
             .iter()
@@ -392,7 +392,7 @@ unsafe extern "C" fn cb_output_event_at<P: PluginExport>(
 
 unsafe extern "C" fn cb_param_count<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
     unsafe {
-        let inst = &*(ctx as *mut Vst2Instance<P>);
+        let inst = &*ctx.cast::<Vst2Instance<P>>();
         inst.plugin.params().count() as u32
     }
 }
@@ -403,7 +403,7 @@ unsafe extern "C" fn cb_param_get_descriptor<P: PluginExport>(
     out: *mut Vst2ParamDescriptor,
 ) {
     unsafe {
-        let inst = &*(ctx as *mut Vst2Instance<P>);
+        let inst = &*ctx.cast::<Vst2Instance<P>>();
         let infos = inst.plugin.params().param_infos();
         if let Some(info) = infos.get(index as usize) {
             let name = CString::new(info.name).unwrap_or_default();
@@ -416,7 +416,7 @@ unsafe extern "C" fn cb_param_get_descriptor<P: PluginExport>(
             desc.min = info.range.min();
             desc.max = info.range.max();
             desc.default_value = info.default_plain;
-            desc.step_count = info.range.step_count().map_or(0, |n| n.get());
+            desc.step_count = info.range.step_count().map_or(0, std::num::NonZero::get);
             desc.unit = unit.into_raw();
             desc.group = group.into_raw();
         }
@@ -428,7 +428,7 @@ unsafe extern "C" fn cb_param_get_normalized<P: PluginExport>(
     id: u32,
 ) -> f64 {
     unsafe {
-        let inst = &*(ctx as *mut Vst2Instance<P>);
+        let inst = &*ctx.cast::<Vst2Instance<P>>();
         inst.plugin.params().get_normalized(id).unwrap_or(0.0)
     }
 }
@@ -439,7 +439,7 @@ unsafe extern "C" fn cb_param_set_normalized<P: PluginExport>(
     value: f64,
 ) {
     unsafe {
-        let inst = &*(ctx as *mut Vst2Instance<P>);
+        let inst = &*ctx.cast::<Vst2Instance<P>>();
         inst.plugin.params().set_normalized(id, value);
     }
 }
@@ -457,7 +457,7 @@ unsafe extern "C" fn cb_param_format_current<P: PluginExport>(
         if out_len == 0 || out.is_null() {
             return 0;
         }
-        let inst = &*(ctx as *mut Vst2Instance<P>);
+        let inst = &*ctx.cast::<Vst2Instance<P>>();
         let plain = match inst.plugin.params().get_plain(id) {
             Some(v) => v,
             None => return 0,
@@ -466,7 +466,7 @@ unsafe extern "C" fn cb_param_format_current<P: PluginExport>(
             Some(text) => {
                 let bytes = text.as_bytes();
                 let len = bytes.len().min((out_len as usize) - 1);
-                std::ptr::copy_nonoverlapping(bytes.as_ptr() as *const c_char, out, len);
+                std::ptr::copy_nonoverlapping(bytes.as_ptr().cast::<c_char>(), out, len);
                 *out.add(len) = 0;
                 len as u32
             }
@@ -481,7 +481,7 @@ unsafe extern "C" fn cb_state_save<P: PluginExport>(
     out_len: *mut u32,
 ) {
     unsafe {
-        let inst = &*(ctx as *mut Vst2Instance<P>);
+        let inst = &*ctx.cast::<Vst2Instance<P>>();
         let (ids, values) = inst.plugin.params().collect_values();
         let extra = inst.plugin.save_state();
         let blob = state::serialize_state(inst.plugin_id_hash, &ids, &values, extra.as_deref());
@@ -512,7 +512,7 @@ unsafe extern "C" fn cb_state_load<P: PluginExport>(
     len: u32,
 ) {
     unsafe {
-        let inst = &mut *(ctx as *mut Vst2Instance<P>);
+        let inst = &mut *ctx.cast::<Vst2Instance<P>>();
 
         // `slice::from_raw_parts(null, 0)` is sound but `from_raw_parts(null, n)`
         // for `n > 0` is UB. Hosts under stress (or buggy hosts) have
@@ -589,14 +589,14 @@ unsafe extern "C" fn cb_state_free(data: *mut u8, len: u32) {
 
 unsafe extern "C" fn cb_get_latency<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
     unsafe {
-        let inst = &*(ctx as *mut Vst2Instance<P>);
+        let inst = &*ctx.cast::<Vst2Instance<P>>();
         inst.plugin.latency()
     }
 }
 
 unsafe extern "C" fn cb_get_tail<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
     unsafe {
-        let inst = &*(ctx as *mut Vst2Instance<P>);
+        let inst = &*ctx.cast::<Vst2Instance<P>>();
         inst.plugin.tail()
     }
 }
@@ -610,11 +610,11 @@ unsafe extern "C" fn cb_gui_has_editor<P: PluginExport>(ctx: *mut std::ffi::c_vo
         if ctx.is_null() {
             return 0;
         }
-        let inst = &mut *(ctx as *mut Vst2Instance<P>);
+        let inst = &mut *ctx.cast::<Vst2Instance<P>>();
         if inst.editor.is_none() {
             inst.editor = inst.plugin.editor();
         }
-        if inst.editor.is_some() { 1 } else { 0 }
+        i32::from(inst.editor.is_some())
     }
 }
 
@@ -624,7 +624,7 @@ unsafe extern "C" fn cb_gui_get_size<P: PluginExport>(
     h: *mut u32,
 ) {
     unsafe {
-        let inst = &*(ctx as *mut Vst2Instance<P>);
+        let inst = &*ctx.cast::<Vst2Instance<P>>();
         if let Some(ref editor) = inst.editor {
             // VST2 has no standardised DPI channel — hosts read back
             // whatever `effEditGetRect` returns and embed the NSView /
@@ -643,7 +643,7 @@ unsafe extern "C" fn cb_set_effect_ptr<P: PluginExport>(
     effect: *mut std::ffi::c_void,
 ) {
     unsafe {
-        let inst = &mut *(ctx as *mut Vst2Instance<P>);
+        let inst = &mut *ctx.cast::<Vst2Instance<P>>();
         inst.aeffect_ptr = effect;
     }
 }
@@ -656,7 +656,7 @@ unsafe fn open_editor_inner<P: PluginExport>(
     unsafe {
         if let Some(ref mut editor) = inst.editor {
             let params = inst.plugin.params_arc();
-            let plugin_ptr = SendPtr::new(&inst.plugin as *const P);
+            let plugin_ptr = SendPtr::new(&raw const inst.plugin);
             let effect_ptr = SendPtr::new(inst.aeffect_ptr);
             let params_for_set = params.clone();
             let params_for_get = params.clone();
@@ -669,7 +669,7 @@ unsafe fn open_editor_inner<P: PluginExport>(
                     begin_edit: Box::new(move |id| {
                         if !effect_ptr.as_ptr().is_null() {
                             truce_vst2_host_begin_edit(
-                                effect_ptr.as_ptr() as *mut std::ffi::c_void,
+                                effect_ptr.as_ptr().cast_mut(),
                                 id,
                             );
                         }
@@ -679,7 +679,7 @@ unsafe fn open_editor_inner<P: PluginExport>(
                             params_for_set.set_normalized_returning_normalized(id, value) as f32;
                         if !effect_ptr.as_ptr().is_null() {
                             truce_vst2_host_automate(
-                                effect_ptr.as_ptr() as *mut std::ffi::c_void,
+                                effect_ptr.as_ptr().cast_mut(),
                                 id,
                                 norm,
                             );
@@ -688,7 +688,7 @@ unsafe fn open_editor_inner<P: PluginExport>(
                     end_edit: Box::new(move |id| {
                         if !effect_ptr.as_ptr().is_null() {
                             truce_vst2_host_end_edit(
-                                effect_ptr.as_ptr() as *mut std::ffi::c_void,
+                                effect_ptr.as_ptr().cast_mut(),
                                 id,
                             );
                         }
@@ -702,7 +702,7 @@ unsafe fn open_editor_inner<P: PluginExport>(
                         let plain = params_for_fmt.get_plain(id).unwrap_or(0.0);
                         params_for_fmt
                             .format_value(id, plain)
-                            .unwrap_or_else(|| format!("{:.1}", plain))
+                            .unwrap_or_else(|| format!("{plain:.1}"))
                     }),
                     get_meter: Box::new(move |id| {
                         let plugin = plugin_ptr.get();
@@ -713,7 +713,7 @@ unsafe fn open_editor_inner<P: PluginExport>(
                         plugin.save_state().unwrap_or_default()
                     }),
                     set_state: Box::new(move |data| {
-                        let plugin = &mut *(plugin_ptr.as_ptr() as *mut P);
+                        let plugin = &mut *plugin_ptr.as_ptr().cast_mut();
                         plugin.load_state(&data);
                     }),
                     transport: Box::new(move || transport_slot.read()),
@@ -750,7 +750,7 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
     // either side is ever extracted, this comment names the contract
     // to keep.
     unsafe {
-        let inst = &mut *(ctx as *mut Vst2Instance<P>);
+        let inst = &mut *ctx.cast::<Vst2Instance<P>>();
         if inst.state_loaded {
             open_editor_inner(inst, parent);
         } else {
@@ -761,7 +761,7 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
 
 unsafe extern "C" fn cb_gui_close<P: PluginExport>(ctx: *mut std::ffi::c_void) {
     unsafe {
-        let inst = &mut *(ctx as *mut Vst2Instance<P>);
+        let inst = &mut *ctx.cast::<Vst2Instance<P>>();
         if let Some(ref mut editor) = inst.editor {
             editor.close();
         }
@@ -799,8 +799,7 @@ pub fn register_vst2<P: PluginExport>() {
     let bypass_param_id = infos
         .iter()
         .find(|pi| pi.flags.contains(ParamFlags::IS_BYPASS))
-        .map(|pi| pi.id)
-        .unwrap_or(u32::MAX);
+        .map_or(u32::MAX, |pi| pi.id);
 
     let descriptor = Box::leak(Box::new(Vst2PluginDescriptor {
         component_type: info.au_type,
@@ -848,7 +847,7 @@ pub fn register_vst2<P: PluginExport>() {
             min: pi.range.min(),
             max: pi.range.max(),
             default_value: pi.default_plain,
-            step_count: pi.range.step_count().map_or(0, |n| n.get()),
+            step_count: pi.range.step_count().map_or(0, std::num::NonZero::get),
             unit: cs.unit.into_raw(),
             group: cs.group.into_raw(),
         });

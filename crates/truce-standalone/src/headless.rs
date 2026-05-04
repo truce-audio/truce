@@ -65,7 +65,7 @@ pub fn run<P: PluginExport>(opts: &Options) {
         // so the final block makes it through cpal + the capture
         // channel.
         #[cfg(feature = "playback")]
-        if let Some(src) = handles.playback.as_ref().cloned() {
+        if let Some(src) = handles.playback.clone() {
             while !src.is_eof() {
                 std::thread::sleep(std::time::Duration::from_millis(50));
             }

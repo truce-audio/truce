@@ -33,7 +33,7 @@ pub(crate) struct Config {
 #[derive(Deserialize, Default)]
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 pub(crate) struct WindowsConfig {
-    /// Path to the AAX SDK root directory. Falls back to the AAX_SDK_PATH env var.
+    /// Path to the AAX SDK root directory. Falls back to the `AAX_SDK_PATH` env var.
     pub(crate) aax_sdk_path: Option<String>,
     #[serde(default)]
     pub(crate) signing: WindowsSigningConfig,
@@ -56,9 +56,9 @@ pub(crate) struct WindowsSigningConfig {
     pub(crate) sha1: Option<String>,
     /// Cert store name. Defaults to "My".
     pub(crate) cert_store: Option<String>,
-    /// Path to a .pfx file. Password via TRUCE_PFX_PASSWORD env var.
+    /// Path to a .pfx file. Password via `TRUCE_PFX_PASSWORD` env var.
     pub(crate) pfx_path: Option<String>,
-    /// RFC 3161 timestamp URL. Defaults to DigiCert.
+    /// RFC 3161 timestamp URL. Defaults to `DigiCert`.
     pub(crate) timestamp_url: Option<String>,
 }
 
@@ -98,7 +98,7 @@ pub(crate) struct WindowsPackagingConfig {
 
 #[derive(Deserialize, Default)]
 pub(crate) struct MacosConfig {
-    /// Path to the AAX SDK root directory. Falls back to the AAX_SDK_PATH env var.
+    /// Path to the AAX SDK root directory. Falls back to the `AAX_SDK_PATH` env var.
     pub(crate) aax_sdk_path: Option<String>,
     #[serde(default)]
     pub(crate) signing: MacosSigningConfig,
@@ -269,7 +269,7 @@ impl PluginDef {
             self.bundle_id[..1].to_uppercase(),
             &self.bundle_id[1..]
         );
-        format!("Truce{}AU", cap)
+        format!("Truce{cap}AU")
     }
     /// Dylib filename stem derived from the crate name (hyphens → underscores).
     pub(crate) fn dylib_stem(&self) -> String {
@@ -315,7 +315,7 @@ pub(crate) fn read_cargo_config_env(key: &str) -> Option<String> {
     // Supports both `KEY = "value"` and `KEY = { value = "...", force = true }`
     match env.get(key)? {
         toml::Value::String(s) => Some(s.clone()),
-        toml::Value::Table(t) => t.get("value")?.as_str().map(|s| s.to_string()),
+        toml::Value::Table(t) => t.get("value")?.as_str().map(std::string::ToString::to_string),
         _ => None,
     }
 }
@@ -340,7 +340,7 @@ fn resolve_installer_identity(config: &Config) -> Option<String> {
     None
 }
 
-/// Read MACOSX_DEPLOYMENT_TARGET from the environment, defaulting to "11.0".
+/// Read `MACOSX_DEPLOYMENT_TARGET` from the environment, defaulting to "11.0".
 pub(crate) fn deployment_target() -> String {
     std::env::var("MACOSX_DEPLOYMENT_TARGET").unwrap_or_else(|_| "11.0".to_string())
 }

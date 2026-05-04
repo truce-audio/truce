@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, Ordering};
 use crate::info::ParamInfo;
 use crate::smooth::{Smoother, SmoothingStyle};
 
-/// Atomic f64 — wraps AtomicU64 with f64 load/store.
+/// Atomic f64 — wraps `AtomicU64` with f64 load/store.
 pub struct AtomicF64 {
     bits: std::sync::atomic::AtomicU64,
 }
@@ -34,6 +34,7 @@ pub struct FloatParam {
 }
 
 impl FloatParam {
+    #[must_use] 
     pub fn new(info: ParamInfo, smoothing: SmoothingStyle) -> Self {
         let default = info.default_plain;
         let smoother = Smoother::new(smoothing);
@@ -74,7 +75,7 @@ impl FloatParam {
         self.value.store(v);
     }
 
-    /// Next smoothed value. Call once per sample in process().
+    /// Next smoothed value. Call once per sample in `process()`.
     #[inline]
     pub fn smoothed_next(&self) -> f32 {
         let target = self.value.load();
@@ -109,6 +110,7 @@ impl BoolParam {
     /// `false` literals for bool params (which it emits as `0.0` /
     /// `1.0`), so this assertion fires only when a user constructs
     /// a `BoolParam` from hand-rolled `ParamInfo`.
+    #[must_use] 
     pub fn new(info: ParamInfo) -> Self {
         let default = match info.default_plain {
             0.0 => false,
@@ -155,6 +157,7 @@ impl IntParam {
     /// `#[param(default = ...)]`; a user-supplied float there is a
     /// programmer error, not a runtime condition we should
     /// silently absorb.
+    #[must_use] 
     pub fn new(info: ParamInfo) -> Self {
         let default = info.default_plain;
         assert!(
@@ -224,6 +227,7 @@ impl<E: ParamEnum> EnumParam<E> {
     /// land on variant 0 without any signal that the default was
     /// invalid. Validate up front so the bug surfaces at plugin
     /// construction time.
+    #[must_use] 
     pub fn new(info: ParamInfo) -> Self {
         let default = info.default_plain;
         let count = E::variant_count();
@@ -242,7 +246,7 @@ impl<E: ParamEnum> EnumParam<E> {
         );
         let idx = default as u32;
         assert!(
-            (idx as f64) == default,
+            f64::from(idx) == default,
             "EnumParam '{}' default {} is non-integer; supply a 0-indexed \
              variant index",
             info.name,
@@ -289,6 +293,7 @@ impl<E: ParamEnum> EnumParam<E> {
     /// state is read. The `#[derive(Params)]` macro calls it as
     /// `<EnumParam<E>>::format_by_index(value)` so the field type
     /// supplies `E`.
+    #[must_use] 
     pub fn format_by_index(value: f64) -> String {
         E::from_index(value.round() as usize).name().to_string()
     }
@@ -319,6 +324,7 @@ pub struct MeterSlot {
 }
 
 impl MeterSlot {
+    #[must_use] 
     pub fn id(&self) -> u32 {
         self.id
     }

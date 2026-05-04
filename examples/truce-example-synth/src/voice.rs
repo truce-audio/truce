@@ -25,7 +25,7 @@ impl Voice {
         Self {
             note,
             releasing: false,
-            velocity: velocity as f64,
+            velocity: f64::from(velocity),
             phase: 0.0,
             phase_inc: freq / sample_rate,
             envelope: Envelope::new(attack, decay, sustain, release, sample_rate),

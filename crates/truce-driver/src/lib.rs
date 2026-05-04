@@ -419,6 +419,7 @@ impl<P: PluginExport> Default for PluginDriver<P> {
 }
 
 impl<P: PluginExport> PluginDriver<P> {
+    #[must_use] 
     pub fn new() -> Self {
         Self {
             sample_rate: 44_100.0,
@@ -436,36 +437,44 @@ impl<P: PluginExport> PluginDriver<P> {
         }
     }
 
+    #[must_use] 
     pub fn sample_rate(mut self, sr: f64) -> Self {
         self.sample_rate = sr;
         self
     }
+    #[must_use] 
     pub fn channels(mut self, n: usize) -> Self {
         self.channels = Some(n);
         self
     }
+    #[must_use] 
     pub fn block_size(mut self, n: usize) -> Self {
         self.block_size = n;
         self
     }
+    #[must_use] 
     pub fn duration(mut self, d: Duration) -> Self {
         self.duration = d;
         self
     }
 
+    #[must_use] 
     pub fn transport(mut self, t: TransportSpec) -> Self {
         self.transport = t;
         self
     }
+    #[must_use] 
     pub fn bpm(mut self, bpm: f64) -> Self {
         self.transport.bpm = bpm;
         self
     }
+    #[must_use] 
     pub fn playing(mut self, playing: bool) -> Self {
         self.transport.playing = playing;
         self
     }
 
+    #[must_use] 
     pub fn input(mut self, source: InputSource) -> Self {
         self.input = source;
         self
@@ -494,7 +503,7 @@ impl<P: PluginExport> PluginDriver<P> {
             let scale = new_sr / old_sr;
             self.script.cursor_samples =
                 ((self.script.cursor_samples as f64) * scale).round() as usize;
-            for (off, _) in self.script.events.iter_mut() {
+            for (off, _) in &mut self.script.events {
                 *off = ((*off as f64) * scale).round() as usize;
             }
         }
@@ -549,6 +558,7 @@ impl<P: PluginExport> PluginDriver<P> {
     /// [`Self::state_file`] (after init/reset, before `set_param`
     /// shortcuts and `setup`). Use when the test already has the
     /// bytes in hand and doesn't want a temp file round-trip.
+    #[must_use] 
     pub fn state_blob(mut self, bytes: Vec<u8>) -> Self {
         self.state_source = Some(StateSource::Blob(bytes));
         self
@@ -575,24 +585,29 @@ impl<P: PluginExport> PluginDriver<P> {
         self
     }
 
+    #[must_use] 
     pub fn capture_audio(mut self, on: bool) -> Self {
         self.capture.audio = on;
         self
     }
+    #[must_use] 
     pub fn capture_meters(mut self, m: MeterCapture) -> Self {
         self.capture.meters = m;
         self
     }
+    #[must_use] 
     pub fn capture_output_events(mut self, on: bool) -> Self {
         self.capture.output_events = on;
         self
     }
+    #[must_use] 
     pub fn capture_block_snapshots(mut self, on: bool) -> Self {
         self.capture.block_snapshots = on;
         self
     }
 
     /// Drive the plugin and return the captured result.
+    #[must_use] 
     pub fn run(mut self) -> DriverResult<P> {
         // Build + activate.
         let mut plugin = P::create();
@@ -683,7 +698,7 @@ impl<P: PluginExport> PluginDriver<P> {
         let build_sr = self.script.sample_rate;
         if build_sr > 0.0 && (build_sr - self.sample_rate).abs() > f64::EPSILON {
             let scale = self.sample_rate / build_sr;
-            for (off, _) in self.script.events.iter_mut() {
+            for (off, _) in &mut self.script.events {
                 *off = ((*off as f64) * scale).round() as usize;
             }
         }
@@ -808,9 +823,9 @@ impl<P: PluginExport> PluginDriver<P> {
                 }
             }
 
-            let in_slices: Vec<&[f32]> = in_bufs.iter().map(|b| b.as_slice()).collect();
+            let in_slices: Vec<&[f32]> = in_bufs.iter().map(std::vec::Vec::as_slice).collect();
             let mut out_slices: Vec<&mut [f32]> =
-                out_bufs.iter_mut().map(|b| b.as_mut_slice()).collect();
+                out_bufs.iter_mut().map(std::vec::Vec::as_mut_slice).collect();
             let mut audio =
                 AudioBuffer::from_slices_checked(&in_slices, &mut out_slices, block_len);
 

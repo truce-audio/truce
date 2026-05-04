@@ -47,6 +47,7 @@ impl<'a> ProcessContext<'a> {
     /// silently masked test-harness misconfiguration as "this param
     /// happens to be at zero", which is indistinguishable from the
     /// host actually setting it to zero.
+    #[must_use] 
     pub fn param(&self, id: u32) -> Option<f64> {
         self.params_fn.map(|f| f(id))
     }

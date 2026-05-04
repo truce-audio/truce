@@ -185,19 +185,16 @@ pub(crate) fn cmd_doctor() -> Res {
     eprintln!();
     eprintln!("  SDKs");
     let aax_sdk = config.as_ref().and_then(resolve_aax_sdk_path);
-    match aax_sdk {
-        Some(p) => eprintln!("    {} AAX SDK at {}", tag_ok(), p.display()),
-        None => {
-            let hint = if cfg!(target_os = "windows") {
-                "[windows].aax_sdk_path"
-            } else {
-                "[macos].aax_sdk_path"
-            };
-            eprintln!(
-                "    {} AAX SDK not configured (set {hint} in truce.toml or AAX_SDK_PATH env var)",
-                tag_warn()
-            );
-        }
+    if let Some(p) = aax_sdk { eprintln!("    {} AAX SDK at {}", tag_ok(), p.display()) } else {
+        let hint = if cfg!(target_os = "windows") {
+            "[windows].aax_sdk_path"
+        } else {
+            "[macos].aax_sdk_path"
+        };
+        eprintln!(
+            "    {} AAX SDK not configured (set {hint} in truce.toml or AAX_SDK_PATH env var)",
+            tag_warn()
+        );
     }
 
     // Plugin install paths — both scopes side-by-side per format.
@@ -356,7 +353,7 @@ fn report_scope_line(f: &PathFormat, scope_label: &str, scope: InstallScope, pat
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 fn report_fixed(format_label: &str, scope_label: &str, needs_sudo: bool, path: &Path, ext: &str) {
-    let label = format!("{} {}:", format_label, scope_label);
+    let label = format!("{format_label} {scope_label}:");
     report_path_line(&label, needs_sudo, path, ext);
 }
 

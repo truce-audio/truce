@@ -397,12 +397,10 @@ pub(crate) fn generate_distribution_xml(
 
     let welcome = resources
         .and_then(|r| r.welcome_html.as_deref())
-        .map(|_| "    <welcome file=\"welcome.html\"/>\n")
-        .unwrap_or("");
+        .map_or("", |_| "    <welcome file=\"welcome.html\"/>\n");
     let license = resources
         .and_then(|r| r.license_html.as_deref())
-        .map(|_| "    <license file=\"license.html\"/>\n")
-        .unwrap_or("");
+        .map_or("", |_| "    <license file=\"license.html\"/>\n");
 
     // Per-scope <domains> drives Installer.app's "Destination Select"
     // page. `--ask` enables both — Installer.app shows the radio

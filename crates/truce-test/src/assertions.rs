@@ -184,7 +184,7 @@ pub fn assert_nonzero_between<P: PluginExport>(
 fn final_meters<P: PluginExport>(result: &DriverResult<P>) -> &[(u32, f32)] {
     match &result.meters {
         MeterReadings::Final(v) => v.as_slice(),
-        MeterReadings::PerBlock(blocks) => blocks.last().map(|v| v.as_slice()).unwrap_or(&[]),
+        MeterReadings::PerBlock(blocks) => blocks.last().map(std::vec::Vec::as_slice).unwrap_or(&[]),
         MeterReadings::None => panic!(
             "meter assertion called but CaptureSpec::meters was MeterCapture::None — \
              call .capture_meters(MeterCapture::Final) on the driver"

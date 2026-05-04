@@ -67,7 +67,7 @@ pub struct BuiltinEditor<P: Params> {
     /// materializes. The editor keeps the canonical `Arc` and the
     /// handler gets a clone. On close we take the `Option` out of
     /// the inner mutex — dropping the wgpu Surface synchronously —
-    /// before asking baseview to tear the NSView down.
+    /// before asking baseview to tear the `NSView` down.
     blit_backend: Option<SharedBackend>,
     /// Set whenever something visible changes (param edited via the
     /// UI, host-driven state reload, explicit `request_repaint` by
@@ -201,6 +201,7 @@ impl<P: Params + 'static> BuiltinEditor<P> {
         }
     }
 
+    #[must_use] 
     pub fn with_theme(mut self, theme: Theme) -> Self {
         self.theme = theme;
         self
@@ -280,7 +281,7 @@ impl<P: Params + 'static> BuiltinEditor<P> {
                 let v = p_fmt.get_plain(id).unwrap_or(0.0);
                 p_fmt
                     .format_value(id, v)
-                    .unwrap_or_else(|| format!("{:.1}", v))
+                    .unwrap_or_else(|| format!("{v:.1}"))
             }),
         };
         let get_meter: Box<dyn Fn(u32) -> f32> = match &ctx {
@@ -306,7 +307,7 @@ impl<P: Params + 'static> BuiltinEditor<P> {
                     let plain = info.range.denormalize(norm);
                     p_opts
                         .format_value(id, plain)
-                        .unwrap_or_else(|| format!("{:.0}", plain))
+                        .unwrap_or_else(|| format!("{plain:.0}"))
                 })
                 .collect()
         });
@@ -366,9 +367,9 @@ impl<P: Params + 'static> BuiltinEditor<P> {
                 }
             }
             ParamEdit::Set { id, normalized } => {
-                self.params.set_normalized(id, normalized as f64);
+                self.params.set_normalized(id, f64::from(normalized));
                 if let Some(ref ctx) = self.context {
-                    ctx.set_param(id, normalized as f64);
+                    ctx.set_param(id, f64::from(normalized));
                 }
                 self.request_repaint();
             }
@@ -413,13 +414,15 @@ impl<P: Params + 'static> BuiltinEditor<P> {
     }
 
     /// Get the raw pixel data after rendering (RGBA premultiplied).
+    #[must_use] 
     pub fn pixel_data(&self) -> Option<&[u8]> {
-        self.backend.as_ref().map(|b| b.data())
+        self.backend.as_ref().map(super::backend_cpu::CpuBackend::data)
     }
 
     // --- Public API for external backends (truce-gpu) ---
 
     /// Whether the editor has an active context.
+    #[must_use] 
     pub fn has_context(&self) -> bool {
         self.context.is_some()
     }
@@ -592,11 +595,11 @@ fn create_wgpu_backend(window: &mut baseview::Window, phys_w: u32, phys_h: u32) 
     let blit = crate::blit::BlitPipeline::new(&device, format, phys_w, phys_h);
 
     BlitBackend {
-        device,
-        queue,
-        surface,
-        surface_config,
         blit,
+        surface_config,
+        surface,
+        queue,
+        device,
     }
 }
 
@@ -631,14 +634,14 @@ impl BlitBackend {
 
 /// Shared ownership of the blit backend between `BuiltinEditor` and the
 /// `BuiltinWindowHandler` baseview hands us. Sharing lets the editor
-/// drop the wgpu surface *before* it asks baseview to close the NSView
+/// drop the wgpu surface *before* it asks baseview to close the `NSView`
 /// — important on AAX where interleaving Metal teardown with baseview's
 /// close sequence inside Pro Tools' outer autorelease pool has been
 /// seen to leave stale refs in DFW container views.
 type SharedBackend = Arc<std::sync::Mutex<Option<BlitBackend>>>;
 
 struct BuiltinWindowHandler<P: Params> {
-    /// Raw pointer to the BuiltinEditor owned by the host. Valid only
+    /// Raw pointer to the `BuiltinEditor` owned by the host. Valid only
     /// while `backend.lock()` returns `Some(_)`. `BuiltinEditor::close`
     /// takes the inner `Option<BlitBackend>` (atomically through this
     /// mutex) before returning, and the host can only drop the editor
@@ -699,8 +702,8 @@ impl<P: Params + 'static> baseview::WindowHandler for BuiltinWindowHandler<P> {
         let cur_scale = editor.scale.get() as f32;
         if cur_scale != self.last_applied_scale {
             let (lw, lh) = editor.size();
-            let phys_w = crate::platform::to_physical_px(lw, cur_scale as f64);
-            let phys_h = crate::platform::to_physical_px(lh, cur_scale as f64);
+            let phys_w = crate::platform::to_physical_px(lw, f64::from(cur_scale));
+            let phys_h = crate::platform::to_physical_px(lh, f64::from(cur_scale));
             editor.backend = CpuBackend::new(lw, lh, cur_scale);
             if let Some(backend) = guard.as_mut() {
                 backend.resize(phys_w, phys_h);
@@ -879,7 +882,7 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
         self.render();
         self.request_repaint();
 
-        let (lw, lh) = (w as f64, h as f64);
+        let (lw, lh) = (f64::from(w), f64::from(h));
         let phys_w = crate::platform::to_physical_px(w, scale);
         let phys_h = crate::platform::to_physical_px(h, scale);
 
@@ -890,7 +893,7 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
         };
 
         let parent_wrapper = crate::platform::ParentWindow(parent);
-        let editor_addr = self as *mut BuiltinEditor<P> as usize;
+        let editor_addr = std::ptr::from_mut::<BuiltinEditor<P>>(self) as usize;
 
         // Shared backend cell: the editor keeps one Arc and baseview's
         // window handler gets the other. At close time the editor
@@ -1116,7 +1119,7 @@ mod tests {
         }
 
         fn format_value(&self, _id: u32, value: f64) -> Option<String> {
-            Some(format!("{:.0}", value))
+            Some(format!("{value:.0}"))
         }
 
         fn parse_value(&self, _id: u32, _text: &str) -> Option<f64> {
@@ -1149,7 +1152,7 @@ mod tests {
 
     // -- Helpers --
 
-    /// Build a BuiltinEditor with a dropdown at position 0 and a knob at position 1.
+    /// Build a `BuiltinEditor` with a dropdown at position 0 and a knob at position 1.
     fn make_editor() -> BuiltinEditor<TestParams> {
         let params = Arc::new(TestParams::new());
         let layout = GridLayout::build(vec![widgets(vec![
@@ -1426,7 +1429,7 @@ mod tests {
         }
 
         fn format_value(&self, _id: u32, value: f64) -> Option<String> {
-            Some(format!("{:.0}", value))
+            Some(format!("{value:.0}"))
         }
 
         fn parse_value(&self, _id: u32, _text: &str) -> Option<f64> {

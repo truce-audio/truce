@@ -72,7 +72,7 @@ pub struct Vst2Callbacks {
         unsafe extern "C" fn(ctx: *mut c_void, id: u32, out: *mut c_char, out_len: u32) -> u32,
     /// Number of *encodable* plugin → host MIDI events queued by the
     /// last `process()` call. Unsupported event types (MIDI 2.0,
-    /// ParamChange, Transport) are filtered out so the C shim can
+    /// `ParamChange`, Transport) are filtered out so the C shim can
     /// iterate `0..count` without checking for skipped slots.
     pub output_event_count: unsafe extern "C" fn(ctx: *mut c_void) -> u32,
     /// Fill `out` with the index-th encodable output event. The

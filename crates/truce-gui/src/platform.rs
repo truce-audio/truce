@@ -44,8 +44,9 @@ unsafe impl HasRawWindowHandle for ParentWindow {
     }
 }
 
-/// Query the backing scale factor from the parent NSView's window.
+/// Query the backing scale factor from the parent `NSView`'s window.
 #[cfg(target_os = "macos")]
+#[must_use] 
 pub fn query_backing_scale(parent: &RawWindowHandle) -> f64 {
     use objc::{msg_send, sel, sel_impl};
 
@@ -59,17 +60,17 @@ pub fn query_backing_scale(parent: &RawWindowHandle) -> f64 {
     }
 
     unsafe {
-        let ns_view = ns_view_ptr as *mut objc::runtime::Object;
+        let ns_view = ns_view_ptr.cast::<objc::runtime::Object>();
         let window: *mut objc::runtime::Object = msg_send![ns_view, window];
-        let scale: f64 = if !window.is_null() {
-            msg_send![window, backingScaleFactor]
-        } else {
+        let scale: f64 = if window.is_null() {
             let screen: *mut objc::runtime::Object = msg_send![objc::class!(NSScreen), mainScreen];
-            if !screen.is_null() {
-                msg_send![screen, backingScaleFactor]
-            } else {
+            if screen.is_null() {
                 2.0
+            } else {
+                msg_send![screen, backingScaleFactor]
             }
+        } else {
+            msg_send![window, backingScaleFactor]
         };
         if scale < 1.0 { 1.0 } else { scale }
     }
@@ -91,15 +92,16 @@ pub fn query_backing_scale(_parent: &RawWindowHandle) -> f64 {
 
 /// Query the main screen's backing scale factor (no parent window needed).
 #[cfg(target_os = "macos")]
+#[must_use] 
 pub fn main_screen_scale() -> f64 {
     use objc::{msg_send, sel, sel_impl};
     unsafe {
         let screen: *mut objc::runtime::Object = msg_send![objc::class!(NSScreen), mainScreen];
-        if !screen.is_null() {
+        if screen.is_null() {
+            1.0
+        } else {
             let scale: f64 = msg_send![screen, backingScaleFactor];
             if scale < 1.0 { 1.0 } else { scale }
-        } else {
-            1.0
         }
     }
 }
@@ -139,6 +141,7 @@ impl EditorScale {
     /// Construct with an initial scale. Non-finite or non-positive
     /// values clamp to 1.0 so callers never have to defend against
     /// `0.0 * size` collapsing the surface.
+    #[must_use] 
     pub fn new(initial: f64) -> Self {
         let v = if initial.is_finite() && initial > 0.0 {
             initial
@@ -151,6 +154,7 @@ impl EditorScale {
     }
 
     /// Read the current scale.
+    #[must_use] 
     pub fn get(&self) -> f64 {
         f64::from_bits(self.inner.load(Ordering::Relaxed))
     }
@@ -190,8 +194,9 @@ impl EditorScale {
 /// `truce-gui::backend_cpu` first. One helper, every site, identical
 /// pixel maths.
 #[inline]
+#[must_use] 
 pub fn to_physical_px(logical: u32, scale: f64) -> u32 {
-    ((logical.max(1) as f64) * scale).round().max(1.0) as u32
+    (f64::from(logical.max(1)) * scale).round().max(1.0) as u32
 }
 
 /// Cached display scale factor on Linux, stored as f64 bits. Zero means unset.
@@ -273,6 +278,7 @@ fn win32_dpi_scale(hwnd: *mut std::ffi::c_void) -> f64 {
 ///
 /// # Safety
 /// The window handle must be valid for the lifetime of the returned surface.
+#[must_use] 
 pub unsafe fn create_wgpu_surface(
     instance: &wgpu::Instance,
     window: &baseview::Window,

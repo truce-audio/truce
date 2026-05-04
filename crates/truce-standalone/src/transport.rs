@@ -31,6 +31,7 @@ struct Inner {
 }
 
 impl Transport {
+    #[must_use] 
     pub fn new(bpm: f64, sample_rate: f64) -> Self {
         Self {
             inner: Arc::new(Inner {
@@ -52,6 +53,7 @@ impl Transport {
             .store((bpm * 1000.0) as u64, Ordering::Relaxed);
     }
 
+    #[must_use] 
     pub fn is_playing(&self) -> bool {
         self.inner.playing.load(Ordering::Relaxed)
     }
@@ -63,6 +65,7 @@ impl Transport {
         self.inner.playing.fetch_xor(true, Ordering::Relaxed);
     }
 
+    #[must_use] 
     pub fn tempo(&self) -> f64 {
         self.inner.tempo_milli.load(Ordering::Relaxed) as f64 / 1000.0
     }
@@ -70,6 +73,7 @@ impl Transport {
     /// Called from the audio callback. Advances `position_beats` by
     /// `num_frames` at the current tempo (iff playing) and returns
     /// a snapshot `TransportInfo` for the plugin.
+    #[must_use] 
     pub fn tick_audio(&self, num_frames: usize) -> TransportInfo {
         let sr = self.inner.sample_rate.load(Ordering::Relaxed) as f64;
         let bpm = self.tempo();
@@ -91,6 +95,7 @@ impl Transport {
 
     /// Called from the UI thread (via `PluginContext::transport`).
     /// Non-mutating — just reads the current position.
+    #[must_use] 
     pub fn snapshot(&self) -> TransportInfo {
         let sr = self.inner.sample_rate.load(Ordering::Relaxed) as f64;
         let bpm = self.tempo();
