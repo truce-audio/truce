@@ -55,7 +55,7 @@ pub(crate) fn emit_au_v3_bundle(
 ) -> Res {
     let sign_id = config.macos.application_identity();
     let team_id = extract_team_id(sign_id);
-    let dt = &deployment_target();
+    let dt = deployment_target();
 
     if team_id.is_empty() {
         // `build_and_install_au_v3` filters this out as a soft skip;
@@ -78,100 +78,148 @@ pub(crate) fn emit_au_v3_bundle(
     fs_ctx::create_dir_all(&bundles_dir)?;
 
     for p in plugins {
-        let fw_name = p.fw_name();
-        let au_v3_sub = p.au3_sub();
-        let build_dir = tmp_dir().join(format!("au_v3_build_{}", p.bundle_id));
-        let fw_build = tmp_dir().join(format!("au_v3_fw_{}", p.bundle_id));
-        let final_app = bundles_dir.join(format!("{}.app", p.au3_app_name()));
+        build_au_v3_for_plugin(root, config, p, archs, sign_id, &team_id, &dt, &bundles_dir)?;
+    }
+    Ok(())
+}
 
-        crate::vprintln!("Building AU v3 ({})...", p.name);
+/// Drive the full per-plugin AU v3 build pipeline: framework dylib →
+/// `.framework` bundle → Xcode scratch → xcodebuild → embed +
+/// inside-out sign. Each step is its own helper so the orchestration
+/// stays readable.
+#[allow(clippy::too_many_arguments)]
+fn build_au_v3_for_plugin(
+    root: &Path,
+    config: &Config,
+    p: &PluginDef,
+    archs: &[MacArch],
+    sign_id: &str,
+    team_id: &str,
+    dt: &str,
+    bundles_dir: &Path,
+) -> Res {
+    let fw_name = p.fw_name();
+    let build_dir = tmp_dir().join(format!("au_v3_build_{}", p.bundle_id));
+    let fw_build = tmp_dir().join(format!("au_v3_fw_{}", p.bundle_id));
+    let final_app = bundles_dir.join(format!("{}.app", p.au3_app_name()));
 
-        // --- Step 1: Rust framework dylib (per-arch + lipo) -----------------
-        for &arch in archs {
-            crate::vprintln!("  Building Rust framework ({})...", arch.triple());
-            let mut env_pairs: Vec<(&str, &str)> = vec![
-                ("TRUCE_AU_VERSION", "3"),
-                ("TRUCE_AU_PLUGIN_ID", &p.bundle_id),
-            ];
-            if let Some(n) = p.au3_name.as_deref() {
-                env_pairs.push(("TRUCE_AU_NAME_OVERRIDE", n));
-            }
-            cargo_build_for_arch(
-                &env_pairs,
-                &[
-                    "-p",
-                    &p.crate_name,
-                    "--no-default-features",
-                    "--features",
-                    "au",
-                ],
-                arch,
-                dt,
-            )?;
-            let src = release_lib_for_target(root, &p.dylib_stem(), Some(arch.triple()));
-            let saved = release_lib_for_target(
-                root,
-                &format!("{}_v3", p.dylib_stem()),
-                Some(arch.triple()),
-            );
-            fs_ctx::copy(&src, &saved)?;
+    crate::vprintln!("Building AU v3 ({})...", p.name);
+
+    let lipo_dst = build_rust_framework_dylib(root, p, archs, dt)?;
+    assemble_framework_bundle(&fw_build, &fw_name, &lipo_dst, p, config, sign_id)?;
+    write_xcode_project_files(&build_dir, &fw_build, p, config, team_id, &fw_name)?;
+    let xcodebuild_app = run_xcodebuild_for_plugin(&build_dir, archs, p)?;
+    embed_framework_into_app(&xcodebuild_app, &final_app, &fw_build, &fw_name)?;
+    sign_au_v3_inside_out(&final_app, &build_dir, &fw_name, sign_id)?;
+
+    crate::vprintln!("  AU v3: {}", final_app.display());
+    Ok(())
+}
+
+/// Build the Rust framework dylib once per arch, then `lipo -create`
+/// into the canonical `target/release/lib{stem}_v3.dylib` path.
+/// Returns the lipo output path.
+fn build_rust_framework_dylib(
+    root: &Path,
+    p: &PluginDef,
+    archs: &[MacArch],
+    dt: &str,
+) -> Result<PathBuf, crate::BoxErr> {
+    for &arch in archs {
+        crate::vprintln!("  Building Rust framework ({})...", arch.triple());
+        let mut env_pairs: Vec<(&str, &str)> = vec![
+            ("TRUCE_AU_VERSION", "3"),
+            ("TRUCE_AU_PLUGIN_ID", &p.bundle_id),
+        ];
+        if let Some(n) = p.au3_name.as_deref() {
+            env_pairs.push(("TRUCE_AU_NAME_OVERRIDE", n));
         }
-        let fw_inputs: Vec<PathBuf> = archs
-            .iter()
-            .map(|a| {
-                release_lib_for_target(root, &format!("{}_v3", p.dylib_stem()), Some(a.triple()))
-            })
-            .collect();
-        let lipo_dst =
-            crate::target_dir(root).join(format!("release/lib{}_v3.dylib", p.dylib_stem()));
-        lipo_into(&fw_inputs, &lipo_dst)?;
+        cargo_build_for_arch(
+            &env_pairs,
+            &[
+                "-p",
+                &p.crate_name,
+                "--no-default-features",
+                "--features",
+                "au",
+            ],
+            arch,
+            dt,
+        )?;
+        let src = release_lib_for_target(root, &p.dylib_stem(), Some(arch.triple()));
+        let saved = release_lib_for_target(
+            root,
+            &format!("{}_v3", p.dylib_stem()),
+            Some(arch.triple()),
+        );
+        fs_ctx::copy(&src, &saved)?;
+    }
+    let fw_inputs: Vec<PathBuf> = archs
+        .iter()
+        .map(|a| release_lib_for_target(root, &format!("{}_v3", p.dylib_stem()), Some(a.triple())))
+        .collect();
+    let lipo_dst =
+        crate::target_dir(root).join(format!("release/lib{}_v3.dylib", p.dylib_stem()));
+    lipo_into(&fw_inputs, &lipo_dst)?;
+    Ok(lipo_dst)
+}
 
-        // --- Step 2: .framework bundle in tmp -------------------------------
-        // Preserve `fw_build` across runs so xcodebuild's link-time
-        // framework metadata cache survives; we overwrite the pieces
-        // that change (dylib, plist, symlinks) idempotently below.
-        let fw_dir = fw_build.join(format!("{fw_name}.framework/Versions/A"));
-        fs_ctx::create_dir_all(fw_dir.join("Resources"))?;
-        fs_ctx::copy(&lipo_dst, fw_dir.join(&fw_name))?;
+/// Assemble the `.framework` bundle in `tmp_dir()`: install-name
+/// fixup, Versions/Current symlinks, Info.plist, initial sign.
+///
+/// Preserves `fw_build` across runs so xcodebuild's link-time
+/// framework metadata cache survives — we overwrite the pieces that
+/// change (dylib, plist, symlinks) idempotently.
+fn assemble_framework_bundle(
+    fw_build: &Path,
+    fw_name: &str,
+    lipo_dst: &Path,
+    p: &PluginDef,
+    config: &Config,
+    sign_id: &str,
+) -> Res {
+    let fw_dir = fw_build.join(format!("{fw_name}.framework/Versions/A"));
+    fs_ctx::create_dir_all(fw_dir.join("Resources"))?;
+    fs_ctx::copy(lipo_dst, fw_dir.join(fw_name))?;
 
-        let status = Command::new("install_name_tool")
-            .args([
-                "-id",
-                &format!("@rpath/{fw_name}.framework/Versions/A/{fw_name}"),
-            ])
-            .arg(fw_dir.join(&fw_name))
-            .status()?;
-        if !status.success() {
-            return Err("install_name_tool failed".into());
-        }
+    let status = Command::new("install_name_tool")
+        .args([
+            "-id",
+            &format!("@rpath/{fw_name}.framework/Versions/A/{fw_name}"),
+        ])
+        .arg(fw_dir.join(fw_name))
+        .status()?;
+    if !status.success() {
+        return Err("install_name_tool failed".into());
+    }
 
-        let fw_root = fw_build.join(format!("{fw_name}.framework"));
-        #[cfg(unix)]
-        {
-            // Idempotent symlink re-creation: remove any stale link
-            // first, then create fresh. Needed because we no longer
-            // wipe `fw_build` between runs.
-            let ensure_symlink = |target: &str, link: &Path| -> Res {
-                let _ = fs::remove_file(link);
-                std::os::unix::fs::symlink(target, link)?;
-                Ok(())
-            };
-            ensure_symlink("A", &fw_root.join("Versions/Current"))?;
-            ensure_symlink(
-                &format!("Versions/Current/{fw_name}"),
-                &fw_root.join(&fw_name),
-            )?;
-            ensure_symlink("Versions/Current/Resources", &fw_root.join("Resources"))?;
-        }
-        #[cfg(not(unix))]
-        {
-            return Err("AU v3 framework builds are only supported on macOS".into());
-        }
+    let fw_root = fw_build.join(format!("{fw_name}.framework"));
+    #[cfg(unix)]
+    {
+        // Idempotent symlink re-creation: remove any stale link
+        // first, then create fresh. Needed because we no longer
+        // wipe `fw_build` between runs.
+        let ensure_symlink = |target: &str, link: &Path| -> Res {
+            let _ = fs::remove_file(link);
+            std::os::unix::fs::symlink(target, link)?;
+            Ok(())
+        };
+        ensure_symlink("A", &fw_root.join("Versions/Current"))?;
+        ensure_symlink(
+            &format!("Versions/Current/{fw_name}"),
+            &fw_root.join(fw_name),
+        )?;
+        ensure_symlink("Versions/Current/Resources", &fw_root.join("Resources"))?;
+    }
+    #[cfg(not(unix))]
+    {
+        return Err("AU v3 framework builds are only supported on macOS".into());
+    }
 
-        fs_ctx::write_if_changed(
-            fw_dir.join("Resources/Info.plist"),
-            format!(
-                r#"<?xml version="1.0" encoding="UTF-8"?>
+    fs_ctx::write_if_changed(
+        fw_dir.join("Resources/Info.plist"),
+        format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
 <key>CFBundleExecutable</key><string>{fw}</string>
@@ -179,233 +227,259 @@ pub(crate) fn emit_au_v3_bundle(
 <key>CFBundlePackageType</key><string>FMWK</string>
 <key>CFBundleVersion</key><string>1</string>
 </dict></plist>"#,
-                fw = fw_name,
-                vid = config.vendor.id.trim_start_matches("com."),
-                suf = p.bundle_id,
-            ),
-        )?;
+            fw = fw_name,
+            vid = config.vendor.id.trim_start_matches("com."),
+            suf = p.bundle_id,
+        ),
+    )?;
 
-        // Initial framework sign. Not strictly required (we re-sign
-        // inside-out after embedding into the .app), but xcodebuild
-        // reads the framework to resolve symbols and rejects unsigned
-        // frameworks under `CODE_SIGN_STYLE = Manual`.
-        {
-            let mut cs_args = vec!["--force", "--sign", sign_id];
-            if is_production_identity(sign_id) {
-                cs_args.extend_from_slice(&["--options", "runtime", "--timestamp"]);
-            }
-            cs_args.push(fw_root.to_str().unwrap());
-            crate::run_codesign(&cs_args, false)?;
-        }
-
-        // --- Step 3: Xcode project scratch ---------------------------------
-        // Preserve `build_dir` across runs so xcodebuild's DerivedData /
-        // SYMROOT build cache survives. `write_if_changed` for every
-        // source file means mtimes only bump when the embedded template
-        // bytes actually shifted — xcodebuild then incrementally rebuilds
-        // only the TUs that changed.
-        fs_ctx::create_dir_all(build_dir.join("AUExt"))?;
-        fs_ctx::create_dir_all(build_dir.join("App"))?;
-        fs_ctx::create_dir_all(build_dir.join("XcodeAUv3.xcodeproj"))?;
-
-        fs_ctx::write_if_changed(
-            build_dir.join("AUExt/AudioUnitFactory.swift"),
-            templates::au3::SWIFT_SOURCE,
-        )?;
-        fs_ctx::write_if_changed(
-            build_dir.join("AUExt/BridgingHeader.h"),
-            templates::au3::BRIDGING_HEADER,
-        )?;
-        fs_ctx::write_if_changed(
-            build_dir.join("AUExt/au_shim_types.h"),
-            templates::au3::SHIM_TYPES_H,
-        )?;
-        fs_ctx::write_if_changed(
-            build_dir.join("AUExt/AUExt.entitlements"),
-            templates::au3::APPEX_ENTITLEMENTS,
-        )?;
-        fs_ctx::write_if_changed(build_dir.join("App/main.m"), templates::au3::APP_MAIN_M)?;
-        fs_ctx::write_if_changed(
-            build_dir.join("App/App.entitlements"),
-            templates::au3::APP_ENTITLEMENTS,
-        )?;
-
-        let plist_path = build_dir.join("AUExt/Info.plist");
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap();
-        let ver = format!("{}.{}", now.as_secs(), now.subsec_millis());
-
-        let plist = templates::au3::APPEX_INFO_PLIST
-            .replace("AUVER", &ver)
-            .replace("AUTYPE", p.resolved_au_type())
-            .replace("AUSUB", au_v3_sub)
-            .replace("AUMFR", &config.vendor.au_manufacturer)
-            .replace(
-                "AUNAME",
-                &format!(
-                    "{}: {}",
-                    config.vendor.name,
-                    p.au3_name.as_deref().unwrap_or(p.name.as_str()),
-                ),
-            )
-            .replace("AUTAG", &p.au_tag);
-        // AUVER regenerates every call (CFBundleVersion cache-bust for
-        // hosts), so this plist's bytes shift run-to-run regardless.
-        // xcodebuild still bundles the new plist but skips Swift / ObjC
-        // recompilation because those sources stayed stable.
-        fs_ctx::write_if_changed(&plist_path, plist)?;
-
-        let pbx_path = build_dir.join("XcodeAUv3.xcodeproj/project.pbxproj");
-        fs_ctx::write_if_changed(
-            &pbx_path,
-            generate_pbxproj(
-                &team_id,
-                &format!("{}.v3", p.bundle_id),
-                &format!("{}.v3.ext", p.bundle_id),
-                build_dir.join("AUExt").to_str().unwrap(),
-                fw_build.to_str().unwrap(),
-                &fw_name,
-            ),
-        )?;
-
-        fs_ctx::write_if_changed(
-            build_dir.join("App/Info.plist"),
-            templates::au3::APP_INFO_PLIST,
-        )?;
-
-        // --- Step 4: xcodebuild --------------------------------------------
-        crate::vprintln!("  Building with xcodebuild...");
-        let archs_flag = format!(
-            "ARCHS={}",
-            archs
-                .iter()
-                .map(|a| match a {
-                    MacArch::X86_64 => "x86_64",
-                    MacArch::Arm64 => "arm64",
-                })
-                .collect::<Vec<_>>()
-                .join(" ")
-        );
-        let output = Command::new("xcodebuild")
-            .current_dir(&build_dir)
-            .args([
-                "-project",
-                "XcodeAUv3.xcodeproj",
-                "-target",
-                "TruceAUv3",
-                "-configuration",
-                "Release",
-            ])
-            .arg(&archs_flag)
-            .arg("ONLY_ACTIVE_ARCH=NO")
-            .arg(format!("SYMROOT={}/build", build_dir.display()))
-            .output()?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            for line in stdout.lines().chain(stderr.lines()) {
-                if line.contains("error:") || line.contains("BUILD FAILED") {
-                    eprintln!("  {line}");
-                }
-            }
-            return Err(format!("xcodebuild failed for {}", p.name).into());
-        }
-
-        let xcodebuild_app = build_dir.join("build/Release/TruceAUv3.app");
-        if !xcodebuild_app.exists() {
-            return Err(format!(
-                "xcodebuild reported success but app not found at {}",
-                xcodebuild_app.display()
-            )
-            .into());
-        }
-
-        // --- Step 5: Assemble final bundle in target/bundles ---------------
-        // `ditto` preserves xattrs/ACLs/resource forks better than `cp -R`;
-        // macOS code signatures survive the copy cleanly.
-        let _ = fs::remove_dir_all(&final_app);
-        let ditto_status = Command::new("ditto")
-            .arg(&xcodebuild_app)
-            .arg(&final_app)
-            .status()?;
-        if !ditto_status.success() {
-            return Err(format!(
-                "ditto failed copying {} → {}",
-                xcodebuild_app.display(),
-                final_app.display()
-            )
-            .into());
-        }
-
-        let frameworks_dir = final_app.join("Contents/Frameworks");
-        fs_ctx::create_dir_all(&frameworks_dir)?;
-        let embedded_fw = frameworks_dir.join(format!("{fw_name}.framework"));
-        let _ = fs::remove_dir_all(&embedded_fw);
-        let fw_src = fw_build.join(format!("{fw_name}.framework"));
-        let ditto_status = Command::new("ditto")
-            .arg(&fw_src)
-            .arg(&embedded_fw)
-            .status()?;
-        if !ditto_status.success() {
-            return Err("ditto failed copying framework into .app".into());
-        }
-
-        // --- Step 6: Sign inside-out against target/bundles ----------------
-        // Order matters: framework first (parent bundle references its
-        // signature), then appex (embeds its entitlements), then app (wraps
-        // everything). Re-signing an inner bundle invalidates the outer,
-        // so signing in the wrong order leaves the whole thing broken.
-        let production = is_production_identity(sign_id);
-        let runtime_flags: &[&str] = if production {
-            &["--options", "runtime", "--timestamp"]
-        } else {
-            &[]
-        };
-
-        {
-            let fw_path = embedded_fw.to_str().unwrap();
-            let mut args = vec!["--force", "--sign", sign_id];
-            args.extend_from_slice(runtime_flags);
-            args.push(fw_path);
-            crate::run_codesign(&args, false)?;
-        }
-        let entitlements_appex = build_dir.join("AUExt/AUExt.entitlements");
-        let entitlements_app = build_dir.join("App/App.entitlements");
-        {
-            let appex_path = final_app.join("Contents/PlugIns/AUExt.appex");
-            let appex_str = appex_path.to_str().unwrap();
-            let ent = entitlements_appex.to_str().unwrap();
-            let mut args = vec![
-                "--force",
-                "--sign",
-                sign_id,
-                "--entitlements",
-                ent,
-                "--generate-entitlement-der",
-            ];
-            args.extend_from_slice(runtime_flags);
-            args.push(appex_str);
-            crate::run_codesign(&args, false)?;
-        }
-        {
-            let ent = entitlements_app.to_str().unwrap();
-            let app_str = final_app.to_str().unwrap();
-            let mut args = vec![
-                "--force",
-                "--sign",
-                sign_id,
-                "--entitlements",
-                ent,
-                "--generate-entitlement-der",
-            ];
-            args.extend_from_slice(runtime_flags);
-            args.push(app_str);
-            crate::run_codesign(&args, false)?;
-        }
-
-        crate::vprintln!("  AU v3: {}", final_app.display());
+    // Initial framework sign. Not strictly required (we re-sign
+    // inside-out after embedding into the .app), but xcodebuild
+    // reads the framework to resolve symbols and rejects unsigned
+    // frameworks under `CODE_SIGN_STYLE = Manual`.
+    let mut cs_args = vec!["--force", "--sign", sign_id];
+    if is_production_identity(sign_id) {
+        cs_args.extend_from_slice(&["--options", "runtime", "--timestamp"]);
     }
+    cs_args.push(fw_root.to_str().unwrap());
+    crate::run_codesign(&cs_args, false)?;
+    Ok(())
+}
+
+/// Materialize the Xcode project scratch from embedded templates.
+///
+/// Preserves `build_dir` across runs so xcodebuild's `DerivedData` /
+/// `SYMROOT` build cache survives. `write_if_changed` for every source
+/// file means mtimes only bump when the embedded template bytes
+/// actually shifted — xcodebuild then incrementally rebuilds only the
+/// TUs that changed.
+fn write_xcode_project_files(
+    build_dir: &Path,
+    fw_build: &Path,
+    p: &PluginDef,
+    config: &Config,
+    team_id: &str,
+    fw_name: &str,
+) -> Res {
+    fs_ctx::create_dir_all(build_dir.join("AUExt"))?;
+    fs_ctx::create_dir_all(build_dir.join("App"))?;
+    fs_ctx::create_dir_all(build_dir.join("XcodeAUv3.xcodeproj"))?;
+
+    fs_ctx::write_if_changed(
+        build_dir.join("AUExt/AudioUnitFactory.swift"),
+        templates::au3::SWIFT_SOURCE,
+    )?;
+    fs_ctx::write_if_changed(
+        build_dir.join("AUExt/BridgingHeader.h"),
+        templates::au3::BRIDGING_HEADER,
+    )?;
+    fs_ctx::write_if_changed(
+        build_dir.join("AUExt/au_shim_types.h"),
+        templates::au3::SHIM_TYPES_H,
+    )?;
+    fs_ctx::write_if_changed(
+        build_dir.join("AUExt/AUExt.entitlements"),
+        templates::au3::APPEX_ENTITLEMENTS,
+    )?;
+    fs_ctx::write_if_changed(build_dir.join("App/main.m"), templates::au3::APP_MAIN_M)?;
+    fs_ctx::write_if_changed(
+        build_dir.join("App/App.entitlements"),
+        templates::au3::APP_ENTITLEMENTS,
+    )?;
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap();
+    let ver = format!("{}.{}", now.as_secs(), now.subsec_millis());
+
+    let plist = templates::au3::APPEX_INFO_PLIST
+        .replace("AUVER", &ver)
+        .replace("AUTYPE", p.resolved_au_type())
+        .replace("AUSUB", p.au3_sub())
+        .replace("AUMFR", &config.vendor.au_manufacturer)
+        .replace(
+            "AUNAME",
+            &format!(
+                "{}: {}",
+                config.vendor.name,
+                p.au3_name.as_deref().unwrap_or(p.name.as_str()),
+            ),
+        )
+        .replace("AUTAG", &p.au_tag);
+    // AUVER regenerates every call (CFBundleVersion cache-bust for
+    // hosts), so this plist's bytes shift run-to-run regardless.
+    // xcodebuild still bundles the new plist but skips Swift / ObjC
+    // recompilation because those sources stayed stable.
+    fs_ctx::write_if_changed(build_dir.join("AUExt/Info.plist"), plist)?;
+
+    fs_ctx::write_if_changed(
+        build_dir.join("XcodeAUv3.xcodeproj/project.pbxproj"),
+        generate_pbxproj(
+            team_id,
+            &format!("{}.v3", p.bundle_id),
+            &format!("{}.v3.ext", p.bundle_id),
+            build_dir.join("AUExt").to_str().unwrap(),
+            fw_build.to_str().unwrap(),
+            fw_name,
+        ),
+    )?;
+
+    fs_ctx::write_if_changed(
+        build_dir.join("App/Info.plist"),
+        templates::au3::APP_INFO_PLIST,
+    )?;
+    Ok(())
+}
+
+/// Run xcodebuild against the materialized project. Returns the path
+/// of the produced `TruceAUv3.app`.
+fn run_xcodebuild_for_plugin(
+    build_dir: &Path,
+    archs: &[MacArch],
+    p: &PluginDef,
+) -> Result<PathBuf, crate::BoxErr> {
+    crate::vprintln!("  Building with xcodebuild...");
+    let archs_flag = format!(
+        "ARCHS={}",
+        archs
+            .iter()
+            .map(|a| match a {
+                MacArch::X86_64 => "x86_64",
+                MacArch::Arm64 => "arm64",
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    );
+    let output = Command::new("xcodebuild")
+        .current_dir(build_dir)
+        .args([
+            "-project",
+            "XcodeAUv3.xcodeproj",
+            "-target",
+            "TruceAUv3",
+            "-configuration",
+            "Release",
+        ])
+        .arg(&archs_flag)
+        .arg("ONLY_ACTIVE_ARCH=NO")
+        .arg(format!("SYMROOT={}/build", build_dir.display()))
+        .output()?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        for line in stdout.lines().chain(stderr.lines()) {
+            if line.contains("error:") || line.contains("BUILD FAILED") {
+                eprintln!("  {line}");
+            }
+        }
+        return Err(format!("xcodebuild failed for {}", p.name).into());
+    }
+
+    let xcodebuild_app = build_dir.join("build/Release/TruceAUv3.app");
+    if !xcodebuild_app.exists() {
+        return Err(format!(
+            "xcodebuild reported success but app not found at {}",
+            xcodebuild_app.display()
+        )
+        .into());
+    }
+    Ok(xcodebuild_app)
+}
+
+/// `ditto` the xcodebuild output into `target/bundles/` and embed
+/// the Rust framework at `Contents/Frameworks/`. `ditto` preserves
+/// xattrs/ACLs/resource forks better than `cp -R`; macOS code
+/// signatures survive the copy cleanly.
+fn embed_framework_into_app(
+    xcodebuild_app: &Path,
+    final_app: &Path,
+    fw_build: &Path,
+    fw_name: &str,
+) -> Res {
+    let _ = fs::remove_dir_all(final_app);
+    let ditto_status = Command::new("ditto")
+        .arg(xcodebuild_app)
+        .arg(final_app)
+        .status()?;
+    if !ditto_status.success() {
+        return Err(format!(
+            "ditto failed copying {} → {}",
+            xcodebuild_app.display(),
+            final_app.display()
+        )
+        .into());
+    }
+
+    let frameworks_dir = final_app.join("Contents/Frameworks");
+    fs_ctx::create_dir_all(&frameworks_dir)?;
+    let embedded_fw = frameworks_dir.join(format!("{fw_name}.framework"));
+    let _ = fs::remove_dir_all(&embedded_fw);
+    let fw_src = fw_build.join(format!("{fw_name}.framework"));
+    let ditto_status = Command::new("ditto")
+        .arg(&fw_src)
+        .arg(&embedded_fw)
+        .status()?;
+    if !ditto_status.success() {
+        return Err("ditto failed copying framework into .app".into());
+    }
+    Ok(())
+}
+
+/// Sign the assembled bundle inside-out: framework → appex → app.
+///
+/// Order matters: framework first (parent bundle references its
+/// signature), then appex (embeds its entitlements), then app (wraps
+/// everything). Re-signing an inner bundle invalidates the outer, so
+/// signing in the wrong order leaves the whole thing broken.
+fn sign_au_v3_inside_out(
+    final_app: &Path,
+    build_dir: &Path,
+    fw_name: &str,
+    sign_id: &str,
+) -> Res {
+    let runtime_flags: &[&str] = if is_production_identity(sign_id) {
+        &["--options", "runtime", "--timestamp"]
+    } else {
+        &[]
+    };
+
+    let embedded_fw = final_app.join(format!("Contents/Frameworks/{fw_name}.framework"));
+    let fw_path = embedded_fw.to_str().unwrap();
+    let mut args = vec!["--force", "--sign", sign_id];
+    args.extend_from_slice(runtime_flags);
+    args.push(fw_path);
+    crate::run_codesign(&args, false)?;
+
+    let appex_path = final_app.join("Contents/PlugIns/AUExt.appex");
+    let appex_str = appex_path.to_str().unwrap();
+    let entitlements_appex = build_dir.join("AUExt/AUExt.entitlements");
+    let ent = entitlements_appex.to_str().unwrap();
+    let mut args = vec![
+        "--force",
+        "--sign",
+        sign_id,
+        "--entitlements",
+        ent,
+        "--generate-entitlement-der",
+    ];
+    args.extend_from_slice(runtime_flags);
+    args.push(appex_str);
+    crate::run_codesign(&args, false)?;
+
+    let entitlements_app = build_dir.join("App/App.entitlements");
+    let ent = entitlements_app.to_str().unwrap();
+    let app_str = final_app.to_str().unwrap();
+    let mut args = vec![
+        "--force",
+        "--sign",
+        sign_id,
+        "--entitlements",
+        ent,
+        "--generate-entitlement-der",
+    ];
+    args.extend_from_slice(runtime_flags);
+    args.push(app_str);
+    crate::run_codesign(&args, false)?;
     Ok(())
 }
 
@@ -567,6 +641,8 @@ pub(crate) fn build_and_install_au_v3(
     install_au_v3(root, config, plugins)
 }
 
+// Single embedded template; splitting it would just hide the literal.
+#[allow(clippy::too_many_lines)]
 fn generate_pbxproj(
     team_id: &str,
     app_bundle_id: &str,

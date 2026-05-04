@@ -152,6 +152,7 @@ fn warn_on_au_collision(au_type: &str, subtype: &str, manufacturer: &str, expect
     eprintln!("        macOS will pick one at load time; the rest are shadowed.");
 }
 
+#[allow(clippy::too_many_lines)]
 pub(crate) fn cmd_validate(args: &[String]) -> Res {
     let config = load_config()?;
 

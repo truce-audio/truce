@@ -23,6 +23,7 @@ pub(crate) fn cmd_reset_au(_args: &[String]) -> Res {
 }
 
 #[cfg(target_os = "macos")]
+#[allow(clippy::too_many_lines)]
 pub(crate) fn cmd_reset_au(args: &[String]) -> Res {
     use crate::{confirm_prompt, dirs, load_config, run_silent, tmp_dir};
     use std::fs;

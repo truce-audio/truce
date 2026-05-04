@@ -121,6 +121,10 @@ const KNOB_PIXELS_PER_UNIT: f32 = 200.0;
 /// baseview. The rendering backend (e.g. `WgpuBackend`) handles the
 /// logical→physical conversion at raster time; callers must not
 /// pre-multiply by `scale`.
+// All fields share a `last_` prefix because the struct's whole purpose
+// is to remember the previous cursor / click — the prefix is meaningful,
+// not redundant.
+#[allow(clippy::struct_field_names)]
 pub struct BaseviewTranslator {
     last_cursor: (f32, f32),
     last_click_time: Option<std::time::Instant>,
@@ -382,7 +386,7 @@ impl InteractionState {
                         return Some(idx);
                     }
                 }
-                WidgetType::Meter => continue,
+                WidgetType::Meter => {}
                 WidgetType::Slider
                 | WidgetType::Toggle
                 | WidgetType::Selector

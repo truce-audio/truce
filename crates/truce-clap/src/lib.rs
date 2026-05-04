@@ -458,6 +458,7 @@ fn build_transport_info(t: &clap_event_transport) -> TransportInfo {
 /// iterates them in time order); `params_flush` discards the events
 /// after extracting param/GUI updates and doesn't care about order, so
 /// it passes `false` to skip the sort.
+#[allow(clippy::too_many_lines)]
 unsafe fn convert_input_events<P: PluginExport>(
     data: &mut ClapPluginData<P>,
     in_events: *const clap_input_events,
@@ -725,6 +726,7 @@ unsafe fn flush_gui_changes<P: PluginExport>(
 // Process callback
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::too_many_lines)]
 unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
     plugin: *const clap_plugin,
     process: *const clap_process,

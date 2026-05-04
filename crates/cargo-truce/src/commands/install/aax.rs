@@ -32,6 +32,7 @@ use std::process::Command;
 // at all; the `pub(crate) use ...build_aax_template;` re-export in
 // `lib.rs` is matched by the same gate.
 #[cfg(any(target_os = "macos", target_os = "windows"))]
+#[allow(clippy::too_many_lines)]
 pub(crate) fn build_aax_template(_root: &Path, sdk_path: &Path, universal_mac: bool) -> Res {
     // Referenced only by the macOS cmake branch below; touch it on Windows so
     // the parameter doesn't trip the unused-variable lint.

@@ -13,6 +13,7 @@ use crate::util::fs_ctx;
 use crate::{Res, deployment_target, detect_default_features, load_config, project_root};
 use super::build_dylibs::{BuildFormat, build_format_dylibs, build_logic_dylibs};
 
+#[allow(clippy::too_many_lines)]
 pub(crate) fn cmd_build(args: &[String]) -> Res {
     let config = load_config()?;
 

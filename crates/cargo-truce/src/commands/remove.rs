@@ -65,6 +65,7 @@ fn clear_au_caches() {
         .output();
 }
 
+#[allow(clippy::too_many_lines)]
 pub(crate) fn cmd_remove(args: &[String]) -> Res {
     let config = load_config()?;
 

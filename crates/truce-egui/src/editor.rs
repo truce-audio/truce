@@ -330,6 +330,7 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
         self.run_frame();
     }
 
+    #[allow(clippy::too_many_lines)]
     fn on_event(&mut self, _window: &mut Window, event: Event) -> EventStatus {
         match event {
             Event::Mouse(mouse) => {

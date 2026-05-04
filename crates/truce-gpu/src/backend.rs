@@ -346,7 +346,7 @@ impl WgpuBackend {
     /// Panics if the embedded font fails to parse (a bug in the
     /// bundled font asset, never user input).
     // Surface dimensions in pixels stay below 2^23, well within f32.
-    #[allow(clippy::cast_precision_loss)]
+    #[allow(clippy::cast_precision_loss, clippy::too_many_lines)]
     pub fn from_surface(
         instance: &wgpu::Instance,
         surface: wgpu::Surface<'static>,
@@ -711,7 +711,7 @@ impl WgpuBackend {
     /// Panics if the embedded font fails to parse (bundled-asset
     /// bug, never user input).
     // Surface dimensions in pixels stay below 2^23, well within f32.
-    #[allow(clippy::cast_precision_loss)]
+    #[allow(clippy::cast_precision_loss, clippy::too_many_lines)]
     #[must_use]
     pub fn new(
         device: Arc<wgpu::Device>,
@@ -1688,7 +1688,7 @@ impl WgpuBackend {
     /// Panics if the embedded font fails to parse (bundled-asset
     /// bug, never user input).
     // Surface dimensions in pixels stay below 2^23, well within f32.
-    #[allow(clippy::cast_precision_loss)]
+    #[allow(clippy::cast_precision_loss, clippy::too_many_lines)]
     #[must_use]
     pub fn headless(width: u32, height: u32, scale: f32) -> Option<Self> {
         let phys_w = truce_gui::to_physical_px(width, f64::from(scale));
@@ -2151,6 +2151,7 @@ mod tests {
     /// record some primitives + text, render into an offscreen texture,
     /// and verify we wrote non-background pixels.
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn standalone_pipeline_renders() {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::PRIMARY,

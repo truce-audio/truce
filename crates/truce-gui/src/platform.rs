@@ -205,11 +205,11 @@ impl EditorScale {
     )]
     pub fn take_change(&self, last: &mut f32) -> Option<f32> {
         let cur = self.get() as f32;
-        if cur != *last {
+        if cur == *last {
+            None
+        } else {
             *last = cur;
             Some(cur)
-        } else {
-            None
         }
     }
 }

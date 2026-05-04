@@ -839,6 +839,7 @@ fn gen_field_constructor(f: &ParamField) -> proc_macro2::TokenStream {
 /// rejecting the same file), so the panic surfaces a derive-internal
 /// regression rather than user error.
 #[proc_macro_derive(Params, attributes(param, nested, meter))]
+#[allow(clippy::too_many_lines)]
 pub fn derive_params(input: TokenStream) -> TokenStream {
     let ast: DeriveInput = syn::parse(input).expect("Failed to parse input for Params derive");
     let struct_name = &ast.ident;
@@ -1549,6 +1550,7 @@ fn snake_to_pascal(ident: &syn::Ident) -> syn::Ident {
 /// Panics if `syn` fails to parse the input token stream — same
 /// "rustc-already-rejected" condition as [`derive_params`].
 #[proc_macro_derive(ParamEnum, attributes(name))]
+#[allow(clippy::too_many_lines)]
 pub fn derive_param_enum(input: TokenStream) -> TokenStream {
     let ast: DeriveInput = syn::parse(input).expect("Failed to parse input for ParamEnum derive");
     let enum_name = &ast.ident;
