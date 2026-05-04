@@ -168,6 +168,7 @@ impl<P: Params + 'static> EguiEditor<P> {
     /// Panics if called after `open()` — by then the `Arc<Mutex<_>>`
     /// holding the UI has been cloned for the running editor and
     /// can't be unwrapped. Configure callbacks during construction.
+    #[must_use]
     pub fn on_state_changed(mut self, f: impl FnMut(&PluginContext<P>) + Send + 'static) -> Self {
         let old = std::mem::replace(
             &mut self.ui,

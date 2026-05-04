@@ -269,12 +269,14 @@ impl<P: Params + 'static, M: IcedPlugin<P> + 'static> IcedEditor<P, M> {
     /// IcedEditor::new(params, (250, 330))
     ///     .with_font("JetBrains Mono", truce_gui::font::JETBRAINS_MONO)
     /// ```
+    #[must_use]
     pub fn with_font(mut self, family: &'static str, data: &'static [u8]) -> Self {
         self.font = Some((family, data));
         self
     }
 
     /// Set meter IDs to poll each tick.
+    #[must_use]
     pub fn with_meter_ids(mut self, ids: Vec<impl Into<u32>>) -> Self {
         self.meter_ids = ids.into_iter().map(std::convert::Into::into).collect();
         self

@@ -27,12 +27,14 @@ impl<'a> ProcessContext<'a> {
     }
 
     /// Set the parameter lookup callback.
+    #[must_use]
     pub fn with_params(mut self, f: &'a dyn Fn(u32) -> f64) -> Self {
         self.params_fn = Some(f);
         self
     }
 
     /// Set the meter reporting callback.
+    #[must_use]
     pub fn with_meters(mut self, f: &'a dyn Fn(u32, f32)) -> Self {
         self.meters_fn = Some(f);
         self

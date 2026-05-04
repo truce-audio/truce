@@ -679,6 +679,7 @@ impl<P: PluginExport> ScreenshotTest<P> {
     /// Composes with [`Self::state_file`] (state loads first) and
     /// [`Self::set_param`] (shortcuts apply first); the closure runs
     /// last.
+    #[must_use]
     pub fn setup<F: FnOnce(&mut P) + 'static>(mut self, f: F) -> Self {
         self.setup = Some(Box::new(f));
         self
@@ -689,6 +690,7 @@ impl<P: PluginExport> ScreenshotTest<P> {
     /// closure but written as one builder call. Multiple `.set_param`
     /// calls compose; they apply after `.state_file` (if any) and
     /// before `.setup`.
+    #[must_use]
     pub fn set_param(mut self, id: impl Into<u32>, normalized: f64) -> Self {
         self.param_overrides.push((id.into(), normalized));
         self
@@ -705,6 +707,7 @@ impl<P: PluginExport> ScreenshotTest<P> {
     /// Panics if the file cannot be read (missing path, permission
     /// error, etc.) — the test failure points at the resolved path so
     /// it's easy to fix the call site.
+    #[must_use]
     pub fn state_file<S: Into<PathBuf>>(mut self, path: S) -> Self {
         let raw = path.into();
         let resolved = if raw.is_absolute() {

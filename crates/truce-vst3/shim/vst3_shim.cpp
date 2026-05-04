@@ -140,7 +140,11 @@ struct Vst3MidiEvent {
     uint8_t status;
     uint8_t data1;
     uint8_t data2;
-    uint8_t _pad;
+    // Carries the 8-bit VST3 noteId for note-expression events
+    // (status 0xF0); zero on regular MIDI events where the byte just
+    // pads the struct to 4-byte alignment. Mirrors `note_id` in
+    // `truce-vst3/src/ffi.rs`.
+    uint8_t note_id;
 };
 
 struct Vst3Transport {
@@ -715,7 +719,7 @@ public:
                         midiEvents[numMidi].status = 0x90 | (ev.noteOn.channel & 0x0F);
                         midiEvents[numMidi].data1 = ev.noteOn.pitch & 0x7F;
                         midiEvents[numMidi].data2 = (uint8_t)(ev.noteOn.velocity * 127.0f);
-                        midiEvents[numMidi]._pad = 0;
+                        midiEvents[numMidi].note_id = 0;
                         numMidi++;
                         break;
                     case 1: // kNoteOffEvent
@@ -723,7 +727,7 @@ public:
                         midiEvents[numMidi].status = 0x80 | (ev.noteOff.channel & 0x0F);
                         midiEvents[numMidi].data1 = ev.noteOff.pitch & 0x7F;
                         midiEvents[numMidi].data2 = (uint8_t)(ev.noteOff.velocity * 127.0f);
-                        midiEvents[numMidi]._pad = 0;
+                        midiEvents[numMidi].note_id = 0;
                         numMidi++;
                         break;
                     case 4: // kPolyPressureEvent
@@ -731,7 +735,7 @@ public:
                         midiEvents[numMidi].status = 0xA0 | (ev.polyPressure.channel & 0x0F);
                         midiEvents[numMidi].data1 = ev.polyPressure.pitch & 0x7F;
                         midiEvents[numMidi].data2 = (uint8_t)(ev.polyPressure.pressure * 127.0f);
-                        midiEvents[numMidi]._pad = 0;
+                        midiEvents[numMidi].note_id = 0;
                         numMidi++;
                         break;
                     case 6: // kNoteExpressionValueEvent
@@ -742,7 +746,7 @@ public:
                         midiEvents[numMidi].status = 0xF0; // marker for note expression
                         midiEvents[numMidi].data1 = (uint8_t)ev.noteExpressionValue.typeId;
                         midiEvents[numMidi].data2 = (uint8_t)(ev.noteExpressionValue.value * 127.0);
-                        midiEvents[numMidi]._pad = (uint8_t)(ev.noteExpressionValue.noteId & 0xFF);
+                        midiEvents[numMidi].note_id = (uint8_t)(ev.noteExpressionValue.noteId & 0xFF);
                         numMidi++;
                         break;
                 }

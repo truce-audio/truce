@@ -494,6 +494,7 @@ impl<P: PluginExport> PluginDriver<P> {
     // `usize as f64` for the sample-offset rescale. Test runs hold
     // counts well below 2^52.
     #[allow(clippy::cast_precision_loss)]
+    #[must_use]
     pub fn script(mut self, f: impl FnOnce(&mut Script)) -> Self {
         // If a previous `.script` call already populated events at a
         // different SR (because `.sample_rate(...)` was called in
@@ -532,6 +533,7 @@ impl<P: PluginExport> PluginDriver<P> {
     /// For automation *during* a run, use `.script(|s| s.set_param(...))`
     /// — that emits a sample-accurate `ParamChange` event the plugin
     /// processes inline.
+    #[must_use]
     pub fn set_param(mut self, id: impl Into<u32>, normalized: f64) -> Self {
         self.param_overrides.push((id.into(), normalized));
         self
@@ -541,6 +543,7 @@ impl<P: PluginExport> PluginDriver<P> {
     /// process CWD; callers from `truce-test` override it with the
     /// test crate's `CARGO_MANIFEST_DIR` via the `screenshot!`-style
     /// macro pattern (see `truce-test`'s wrapping macro).
+    #[must_use]
     pub fn manifest_dir(mut self, dir: impl Into<PathBuf>) -> Self {
         self.manifest_dir = dir.into();
         self
@@ -559,6 +562,7 @@ impl<P: PluginExport> PluginDriver<P> {
     /// upcoming process loop will use. Channel resolution happens
     /// before setup runs, so a closure that allocates per-channel
     /// scratch can size correctly without re-querying `P::bus_layouts`.
+    #[must_use]
     pub fn setup<F: FnOnce(&mut P, &SetupContext) + 'static>(mut self, f: F) -> Self {
         self.setup = Some(Box::new(f));
         self
@@ -585,6 +589,7 @@ impl<P: PluginExport> PluginDriver<P> {
     /// missing or unreadable file panics at run time with the resolved
     /// path in the message, alongside other run-time failures, rather
     /// than from inside this method.
+    #[must_use]
     pub fn state_file(mut self, path: impl Into<PathBuf>) -> Self {
         let raw = path.into();
         let resolved = if raw.is_absolute() {

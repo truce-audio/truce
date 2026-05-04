@@ -176,7 +176,7 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
                         pressure: f32::from(ev.data2) / 127.0,
                     }),
                     0xF0 => {
-                        // Note expression: data1=typeId, data2=value*127, _pad=noteId.
+                        // Note expression: data1=typeId, data2=value*127, note_id=noteId.
                         // Spec says data2 ∈ 0..=127, but the C++ shim isn't required
                         // to clamp — values 128..=255 are ABI-legal. Clamp first
                         // and scale through u64 so the multiplication can't wrap
@@ -190,7 +190,7 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
                         // in u32 by construction.
                         #[allow(clippy::cast_possible_truncation)]
                         let value = (data2_clamped * u64::from(u32::MAX) / 127) as u32;
-                        let note = ev._pad;
+                        let note = ev.note_id;
                         match type_id {
                             0 => Some(EventBody::PerNoteCC {
                                 channel: 0,
@@ -566,7 +566,7 @@ fn try_encode_vst3_midi(event: &Event) -> Option<Vst3MidiEvent> {
         status,
         data1,
         data2,
-        _pad: 0,
+        note_id: 0,
     })
 }
 
