@@ -31,11 +31,7 @@ impl<'a, M: Clone + Debug + 'static> SelectorWidget<'a, M> {
             let count = info.range.step_count().map_or(1, |n| n.get() as usize);
             let opts: Vec<String> = (0..count)
                 .map(|i| {
-                    let norm = if count <= 1 {
-                        0.0
-                    } else {
-                        i as f64 / (count - 1) as f64
-                    };
+                    let norm = truce_core::cast::discrete_norm(i, count);
                     let plain = info.range.denormalize(norm);
                     params
                         .params()
@@ -43,7 +39,7 @@ impl<'a, M: Clone + Debug + 'static> SelectorWidget<'a, M> {
                         .unwrap_or_else(|| format!("{plain:.0}"))
                 })
                 .collect();
-            let sel_idx = (value * (count - 1).max(1) as f64).round() as usize;
+            let sel_idx = truce_core::cast::discrete_index(value, count);
             let selected = opts.get(sel_idx).cloned();
             (opts, selected)
         } else {
@@ -73,11 +69,7 @@ impl<'a, M: Clone + Debug + 'static> SelectorWidget<'a, M> {
 
         let pl = pick_list(self.options, self.selected, move |selected: String| {
             let idx = options.iter().position(|o| *o == selected).unwrap_or(0);
-            let norm = if count <= 1 {
-                0.0
-            } else {
-                idx as f64 / (count - 1) as f64
-            };
+            let norm = truce_core::cast::discrete_norm(idx, count);
             Message::Param(ParamMessage::SetNormalized(id, norm))
         });
 

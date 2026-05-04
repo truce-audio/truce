@@ -39,6 +39,10 @@ pub use slint;
 #[doc(hidden)]
 pub use paste::paste;
 
+// Re-export truce_core (used by the bind! macro for cast helpers).
+#[doc(hidden)]
+pub use truce_core;
+
 /// Bind Slint properties to truce parameters.
 ///
 /// Generates both the `on_<name>_changed` callback wiring (UI → host) and
@@ -134,8 +138,8 @@ macro_rules! bind {
             let count: u32 = $count;
             $crate::paste! {
                 $ui.[<on_ $name _changed>](move |v: i32| {
-                    let norm = if count <= 1 { 0.0 } else { v as f64 / (count - 1) as f64 };
-                    s.automate(id, norm.clamp(0.0, 1.0));
+                    let norm = $crate::truce_core::cast::discrete_norm(v.max(0) as usize, count as usize);
+                    s.automate(id, norm);
                 });
             }
         }
@@ -144,7 +148,7 @@ macro_rules! bind {
         {
             let count: u32 = $count;
             let norm = $state.get_param($id.into());
-            let idx = if count <= 1 { 0 } else { (norm * (count - 1) as f64).round() as i32 };
+            let idx = $crate::truce_core::cast::discrete_index(norm, count as usize) as i32;
             $crate::paste! {
                 $ui.[<set_ $name>](idx);
             }

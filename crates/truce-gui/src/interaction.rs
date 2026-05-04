@@ -746,11 +746,7 @@ fn handle_mouse_down(
             let dd = state.dropdown.as_ref().unwrap();
             let param_id = dd.param_id;
             let count = dd.options.len();
-            let new_norm = if count <= 1 {
-                0.0
-            } else {
-                option_idx as f32 / (count - 1) as f32
-            };
+            let new_norm = truce_core::cast::discrete_norm(option_idx, count) as f32;
             edits.push(ParamEdit::Begin { id: param_id });
             edits.push(ParamEdit::Set {
                 id: param_id,
@@ -829,7 +825,7 @@ fn open_dropdown(
     }
     let count = options.len();
     let current_norm = (snapshot.get_param)(param_id);
-    let selected = (current_norm * (count - 1).max(1) as f32).round() as usize;
+    let selected = truce_core::cast::discrete_index(f64::from(current_norm), count);
     let region = &state.knob_regions[region_idx];
 
     let item_h = 18.0f32;

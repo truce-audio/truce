@@ -304,11 +304,7 @@ impl<P: Params + 'static> BuiltinEditor<P> {
             let count = info.range.step_count().map_or(1, |n| n.get() as usize) + 1;
             (0..count)
                 .map(|i| {
-                    let norm = if count <= 1 {
-                        0.0
-                    } else {
-                        i as f64 / (count - 1) as f64
-                    };
+                    let norm = truce_core::cast::discrete_norm(i, count);
                     let plain = info.range.denormalize(norm);
                     p_opts
                         .format_value(id, plain)

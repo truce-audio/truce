@@ -1,6 +1,6 @@
 //! Numeric-cast helpers for the audio-plugin → host FFI boundary.
 //!
-//! Audio-plugin code routinely casts at three points where Rust's
+//! Audio-plugin code routinely casts at four points where Rust's
 //! type system can't help:
 //!
 //! - **MIDI 7-bit normalize:** velocity / CC / pressure stored as
@@ -9,6 +9,10 @@
 //!   `u14` packed into the low 7 bits of two MIDI bytes.
 //! - **FFI struct sizes / element counts:** `usize` (Rust) vs `u32`
 //!   (every C ABI we ship to).
+//! - **Discrete-index ↔ normalized:** GUI selector / dropdown
+//!   widgets bridge an integer "which option" to a normalized
+//!   `f64 ∈ [0.0, 1.0]` parameter value. The full audit lives in
+//!   `internal/float-misuse-audit.md`.
 //!
 //! Each helper is `#[inline]`, debug-asserts the input range so a
 //! NaN-bearing or overflowing caller fails loud in tests, and is
@@ -18,7 +22,7 @@
 //! `cast_precision_loss` are allowed at the module level so the
 //! helpers can do their job without per-site annotations.
 //!
-//! Adding new helpers: target shapes that show up at ≥ 10 sites
+//! Adding new helpers: target shapes that show up at ≥ 5 sites
 //! and have a uniform body. Single-site casts belong with a
 //! per-site `#[allow]` and a sentence of `reason` text, not in
 //! this module.
@@ -116,6 +120,54 @@ pub const fn size_of_u32<T>() -> u32 {
     n as u32
 }
 
+/// Map a discrete index in `[0, count - 1]` to a normalized value
+/// in `[0.0, 1.0]`. Returns `0.0` when `count <= 1` — there's only
+/// one valid index, so any input collapses to the bottom of the
+/// range.
+///
+/// `idx` is clamped to `count - 1` before scaling so an off-by-one
+/// caller can't produce a normalized value above `1.0`. The output
+/// is `f64` because the host-facing param surface
+/// (`Params::set_normalized`) is `f64`; widget code that needs
+/// `f32` should cast at the call site.
+///
+/// Inverse of [`discrete_index`]. Together they are the canonical
+/// place selector / dropdown widgets bridge integer option indices
+/// to normalized parameter values.
+#[inline]
+#[must_use]
+pub fn discrete_norm(idx: usize, count: usize) -> f64 {
+    if count <= 1 {
+        return 0.0;
+    }
+    let max_idx = count - 1;
+    idx.min(max_idx) as f64 / max_idx as f64
+}
+
+/// Map a normalized value in `[0.0, 1.0]` to a discrete index in
+/// `[0, count - 1]`. Returns `0` when `count <= 1` — the index is
+/// pinned to the only valid slot.
+///
+/// `norm` is clamped to `[0.0, 1.0]` before scaling so an
+/// out-of-range host (e.g. a VST3 host that sends `1.0001`) can't
+/// produce an out-of-range index. Rounding is half-to-even via
+/// `f64::round`, the same rule applied across the param taper code
+/// in `truce_params::range`.
+///
+/// Inverse of [`discrete_norm`]; round-trips for every `idx ∈
+/// [0, count - 1]` whenever `count - 1` is exactly representable
+/// in `f64` (i.e. always, for any sane widget).
+#[inline]
+#[must_use]
+pub fn discrete_index(norm: f64, count: usize) -> usize {
+    if count <= 1 {
+        return 0;
+    }
+    let n = norm.clamp(0.0, 1.0);
+    let max_idx = count - 1;
+    (n * max_idx as f64).round() as usize
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -173,5 +225,60 @@ mod tests {
             _b: u64,
         }
         assert_eq!(size_of_u32::<AbiStruct>(), 16);
+    }
+
+    #[test]
+    fn discrete_norm_endpoints() {
+        // 4-option selector: indices 0..=3 map to 0, 1/3, 2/3, 1.
+        assert_eq!(discrete_norm(0, 4), 0.0);
+        assert!((discrete_norm(1, 4) - 1.0 / 3.0).abs() < 1e-12);
+        assert!((discrete_norm(2, 4) - 2.0 / 3.0).abs() < 1e-12);
+        assert_eq!(discrete_norm(3, 4), 1.0);
+    }
+
+    #[test]
+    fn discrete_norm_degenerate_collapses_to_zero() {
+        assert_eq!(discrete_norm(0, 0), 0.0);
+        assert_eq!(discrete_norm(0, 1), 0.0);
+        assert_eq!(discrete_norm(99, 1), 0.0);
+    }
+
+    #[test]
+    fn discrete_norm_clamps_oob_idx() {
+        // idx past count-1 must not produce a normalized > 1.0
+        assert_eq!(discrete_norm(99, 4), 1.0);
+    }
+
+    #[test]
+    fn discrete_index_endpoints() {
+        assert_eq!(discrete_index(0.0, 4), 0);
+        assert_eq!(discrete_index(1.0, 4), 3);
+        // Quarter of the way → first non-zero step.
+        assert_eq!(discrete_index(1.0 / 3.0, 4), 1);
+        assert_eq!(discrete_index(2.0 / 3.0, 4), 2);
+    }
+
+    #[test]
+    fn discrete_index_degenerate_returns_zero() {
+        assert_eq!(discrete_index(0.5, 0), 0);
+        assert_eq!(discrete_index(0.5, 1), 0);
+        assert_eq!(discrete_index(1.0, 1), 0);
+    }
+
+    #[test]
+    fn discrete_index_clamps_oob_norm() {
+        assert_eq!(discrete_index(-0.5, 4), 0);
+        assert_eq!(discrete_index(2.0, 4), 3);
+    }
+
+    #[test]
+    fn discrete_norm_index_round_trip() {
+        for count in [2usize, 3, 4, 7, 16, 128] {
+            for idx in 0..count {
+                let norm = discrete_norm(idx, count);
+                let back = discrete_index(norm, count);
+                assert_eq!(back, idx, "count={count}, idx={idx}, norm={norm}");
+            }
+        }
     }
 }
