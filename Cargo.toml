@@ -38,7 +38,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.22.2"
+version = "0.32.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.88"
@@ -90,9 +90,9 @@ truce-iced = { path = "crates/truce-iced" }
 truce-slint = { path = "crates/truce-slint" }
 truce-dsp = { path = "crates/truce-dsp" }
 truce-font = { path = "crates/truce-font" }
-truce-build = { version = "0.22.2", path = "crates/truce-build" }
-truce-shim-types = { version = "0.22.2", path = "crates/truce-shim-types" }
-truce-utils = { version = "0.22.2", path = "crates/truce-utils" }
+truce-build = { version = "0.32.0", path = "crates/truce-build" }
+truce-shim-types = { version = "0.32.0", path = "crates/truce-shim-types" }
+truce-utils = { version = "0.32.0", path = "crates/truce-utils" }
 
 # The truce-audio fork carries the AAX / Pro Tools close-path fix
 # (responder / tracking-area / layer-contents cleanup — see the fork's
