@@ -38,17 +38,31 @@ pub(crate) use util::{
 // Linux ships plugins via distro tooling rather than the bundled
 // `package` flow, so these symbols are absent there.
 #[cfg(any(target_os = "macos", target_os = "windows"))]
-pub(crate) use config::PackagingConfig;
-#[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(crate) use util::{
-    copy_dir_recursive, read_workspace_version, release_lib_for_target, rustup_has_target, tag_info,
+    read_workspace_version, release_lib_for_target, rustup_has_target, tag_info,
 };
 
-// macOS-only: codesign / lipo / notary / AAX PACE-sign pipeline.
+// macOS-only: codesign / lipo / notary / AAX PACE-sign pipeline. The
+// `PackagingConfig` / `copy_dir_recursive` re-exports land here too —
+// only `commands::package::{macos, stage}` consume them, and both are
+// macOS-gated.
+#[cfg(target_os = "macos")]
+pub(crate) use config::PackagingConfig;
 #[cfg(target_os = "macos")]
 pub(crate) use util::{
-    MacArch, cargo_build_for_arch, extract_team_id, is_production_identity, lipo_into,
-    locate_wraptool_macos, pace_sign_aax_macos, run_codesign, run_quiet, run_silent,
+    MacArch, cargo_build_for_arch, copy_dir_recursive, extract_team_id, is_production_identity,
+    lipo_into, locate_wraptool_macos, pace_sign_aax_macos, run_codesign, run_quiet, run_silent,
+};
+
+// Windows-only: VS / MSVC / cmake / ninja discovery + Program Files
+// path helpers, used by `commands::{doctor, install, install::aax}`
+// and `packaging_windows`.
+#[cfg(target_os = "windows")]
+pub(crate) use config::WindowsSigningConfig;
+#[cfg(target_os = "windows")]
+pub(crate) use util::{
+    common_program_files, locate_cmake, locate_msvc_cl, locate_ninja, locate_vcvars64,
+    program_files, vs_install_paths, which_exe,
 };
 
 use std::process::ExitCode;

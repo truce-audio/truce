@@ -71,7 +71,7 @@ pub(crate) fn embed_dpi_manifest(exe: &Path) -> Res {
                 exe.display()
             ),
             Err(e) => {
-                eprintln!("  warning: failed to invoke mt.exe ({e}) — falling back to sidecar")
+                eprintln!("  warning: failed to invoke mt.exe ({e}) — falling back to sidecar");
             }
         }
     } else {

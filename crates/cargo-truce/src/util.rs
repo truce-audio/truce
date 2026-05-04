@@ -1267,8 +1267,8 @@ pub(crate) fn find_on_path(name: &str) -> Option<PathBuf> {
     None
 }
 
-/// Locate `cmake.exe`. Tries `%PATH%` first, then the CMake that ships with
-/// Visual Studio's "C++ CMake tools" component, then the standalone installer
+/// Locate `cmake.exe`. Tries `%PATH%` first, then the `CMake` that ships with
+/// Visual Studio's "C++ `CMake` tools" component, then the standalone installer
 /// default. Returns `None` if none are present.
 #[cfg(target_os = "windows")]
 pub(crate) fn locate_cmake() -> Option<PathBuf> {
@@ -1294,9 +1294,9 @@ pub(crate) fn locate_cmake() -> Option<PathBuf> {
     None
 }
 
-/// Locate `ninja.exe`. Same strategy as cmake — the VS CMake component bundles
+/// Locate `ninja.exe`. Same strategy as cmake — the VS `CMake` component bundles
 /// Ninja next to it, so that's the most common path on machines that have VS
-/// with "C++ CMake tools" installed.
+/// with "C++ `CMake` tools" installed.
 #[cfg(target_os = "windows")]
 pub(crate) fn locate_ninja() -> Option<PathBuf> {
     if let Some(p) = which_exe("ninja.exe") {
@@ -1362,7 +1362,7 @@ pub(crate) fn vs_install_paths() -> Vec<PathBuf> {
     match out {
         Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout)
             .lines()
-            .map(|l| l.trim())
+            .map(str::trim)
             .filter(|l| !l.is_empty())
             .map(PathBuf::from)
             .collect(),

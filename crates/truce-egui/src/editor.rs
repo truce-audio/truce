@@ -333,7 +333,12 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
         self.run_frame();
     }
 
-    #[allow(clippy::too_many_lines)]
+    // `_window` is unused on macOS / Linux — only the Windows
+    // ButtonPressed branch reads it (to SetFocus on the child HWND so
+    // text widgets see WM_KEYDOWN). Underscore-prefix keeps that signal
+    // intact; the allow lets the Windows branch use the binding without
+    // renaming.
+    #[allow(clippy::too_many_lines, clippy::used_underscore_binding)]
     fn on_event(&mut self, _window: &mut Window, event: Event) -> EventStatus {
         match event {
             Event::Mouse(mouse) => {

@@ -14,6 +14,7 @@
 //! for faster dev iteration (or use `--universal` explicitly as a no-op).
 
 use std::collections::HashSet;
+use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -242,6 +243,9 @@ fn archs_label(archs: &[TargetArch]) -> String {
 // Argument parsing
 // ---------------------------------------------------------------------------
 
+// Sparse independent CLI flags — bitflags would just add ceremony
+// (mirrors `commands::package::macos::Opts`).
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Default)]
 struct Opts {
     plugin_filter: Option<String>,
@@ -318,6 +322,9 @@ fn parse_args(args: &[String]) -> std::result::Result<Opts, crate::BoxErr> {
             "--ask" => set_cli_scope(&mut opts.cli_scope, PkgScope::Ask)?,
             // Universal is the default; accepted explicitly as a no-op so
             // existing CI scripts (and cross-platform invocations) keep working.
+            // Bodies match `--no-notarize` — kept as separate arms so each
+            // flag's rationale stays adjacent to its name.
+            #[allow(clippy::match_same_arms)]
             "--universal" => {}
             "--host-only" => opts.host_only = true,
             // --no-notarize is a macOS concept; accept and ignore on Windows so
@@ -381,7 +388,7 @@ fn resolve_plugins<'a>(
 // Build
 // ---------------------------------------------------------------------------
 
-/// Run the cargo builds for each selected format × arch. Mirrors cmd_package
+/// Run the cargo builds for each selected format × arch. Mirrors `cmd_package`
 /// on macOS: one `cargo build` per format with distinct `--features` so the
 /// format-specific code paths can't cross-contaminate, plus an outer loop
 /// over architectures.
@@ -420,7 +427,7 @@ fn build_all_formats(
                 "--features".into(),
                 "clap".into(),
             ]);
-            let arg_refs: Vec<&str> = build_args.iter().map(|s| s.as_str()).collect();
+            let arg_refs: Vec<&str> = build_args.iter().map(std::string::String::as_str).collect();
             cargo_build(&[], &arg_refs, dt)?;
             for p in plugins {
                 let src = release_lib_for_target(root, &p.dylib_stem(), Some(triple));
@@ -444,7 +451,7 @@ fn build_all_formats(
                 "--features".into(),
                 "vst3".into(),
             ]);
-            let arg_refs: Vec<&str> = build_args.iter().map(|s| s.as_str()).collect();
+            let arg_refs: Vec<&str> = build_args.iter().map(std::string::String::as_str).collect();
             cargo_build(&[], &arg_refs, dt)?;
             for p in plugins {
                 let src = release_lib_for_target(root, &p.dylib_stem(), Some(triple));
@@ -468,7 +475,7 @@ fn build_all_formats(
                 "--features".into(),
                 "vst2".into(),
             ]);
-            let arg_refs: Vec<&str> = build_args.iter().map(|s| s.as_str()).collect();
+            let arg_refs: Vec<&str> = build_args.iter().map(std::string::String::as_str).collect();
             cargo_build(&[], &arg_refs, dt)?;
             for p in plugins {
                 let src = release_lib_for_target(root, &p.dylib_stem(), Some(triple));
@@ -494,7 +501,7 @@ fn build_all_formats(
                 "--features".into(),
                 "aax".into(),
             ]);
-            let arg_refs: Vec<&str> = build_args.iter().map(|s| s.as_str()).collect();
+            let arg_refs: Vec<&str> = build_args.iter().map(std::string::String::as_str).collect();
             cargo_build(&[], &arg_refs, dt)?;
             for p in plugins {
                 let src = release_lib_for_target(root, &p.dylib_stem(), Some(triple));
@@ -541,16 +548,15 @@ fn stage_plugin(
             PkgFormat::Vst2 => {
                 signable.push(stage_vst2(root, p, staging, arch)?);
             }
-            PkgFormat::Aax => match stage_aax(root, p, config, staging, arch)? {
-                Some((wrapper, dylib)) => {
+            PkgFormat::Aax => {
+                if let Some((wrapper, dylib)) = stage_aax(root, p, config, staging, arch)? {
                     signable.push(dylib);
                     signable.push(wrapper);
-                }
-                None => {
+                } else {
                     eprintln!("skipped (AAX template is built for host arch only)");
                     continue;
                 }
-            },
+            }
             PkgFormat::Au2 | PkgFormat::Au3 => {
                 return Err("AU is macOS-only; should have been filtered".into());
             }
@@ -753,8 +759,6 @@ fn sign_files(files: &[PathBuf], config: &WindowsSigningConfig) -> Res {
   "CodeSigningAccountName": "{account}",
   "CertificateProfileName": "{profile}"
 }}"#,
-            account = account,
-            profile = profile,
         );
         fs::write(&metadata_path, metadata)?;
         args.extend_from_slice(&[
@@ -876,22 +880,16 @@ fn pace_sign_aax(bundle: &Path) -> Res {
         );
         return Ok(());
     };
-    let pace_account = match std::env::var("PACE_ACCOUNT") {
-        Ok(v) => v,
-        Err(_) => {
-            eprintln!(
-                "  PACE_ACCOUNT env var not set — skipping PACE signing. \
-                 Pro Tools Developer will still load the bundle."
-            );
-            return Ok(());
-        }
+    let Ok(pace_account) = std::env::var("PACE_ACCOUNT") else {
+        eprintln!(
+            "  PACE_ACCOUNT env var not set — skipping PACE signing. \
+             Pro Tools Developer will still load the bundle."
+        );
+        return Ok(());
     };
-    let pace_signid = match std::env::var("PACE_SIGN_ID") {
-        Ok(v) => v,
-        Err(_) => {
-            eprintln!("  PACE_SIGN_ID env var not set — skipping PACE signing.");
-            return Ok(());
-        }
+    let Ok(pace_signid) = std::env::var("PACE_SIGN_ID") else {
+        eprintln!("  PACE_SIGN_ID env var not set — skipping PACE signing.");
+        return Ok(());
     };
 
     eprintln!("  wraptool: PACE-signing {}", bundle.display());
@@ -979,15 +977,12 @@ fn render_iss(
 
     let mut setup = String::new();
     setup.push_str("[Setup]\r\n");
-    setup.push_str(&format!("AppId={{{{{}}}}}\r\n", iss_escape(&app_id)));
-    setup.push_str(&format!("AppName={}\r\n", iss_escape(&p.name)));
-    setup.push_str(&format!("AppVersion={}\r\n", iss_escape(version)));
-    setup.push_str(&format!("AppPublisher={}\r\n", iss_escape(publisher)));
+    let _ = write!(setup, "AppId={{{{{}}}}}\r\n", iss_escape(&app_id));
+    let _ = write!(setup, "AppName={}\r\n", iss_escape(&p.name));
+    let _ = write!(setup, "AppVersion={}\r\n", iss_escape(version));
+    let _ = write!(setup, "AppPublisher={}\r\n", iss_escape(publisher));
     if !publisher_url.is_empty() {
-        setup.push_str(&format!(
-            "AppPublisherURL={}\r\n",
-            iss_escape(&publisher_url)
-        ));
+        let _ = write!(setup, "AppPublisherURL={}\r\n", iss_escape(&publisher_url));
     }
     // `{autopf}` resolves to `{commonpf}` in admin install mode and
     // `{userpf}` (`%LOCALAPPDATA%\Programs`) in non-admin mode, so the
@@ -998,19 +993,21 @@ fn render_iss(
         PkgScope::System => "{commonpf}",
         PkgScope::User | PkgScope::Ask => "{autopf}",
     };
-    setup.push_str(&format!(
+    let _ = write!(
+        setup,
         "DefaultDirName={}\\{}\\{}\r\n",
         pf_const,
         iss_escape(publisher),
         iss_escape(&p.name),
-    ));
+    );
     setup.push_str("DisableDirPage=yes\r\n");
-    setup.push_str(&format!("OutputDir={}\r\n", iss_escape_path(dist_dir)));
-    setup.push_str(&format!(
+    let _ = write!(setup, "OutputDir={}\r\n", iss_escape_path(dist_dir));
+    let _ = write!(
+        setup,
         "OutputBaseFilename={}-{}-windows\r\n",
         iss_escape(&p.name),
         iss_escape(version),
-    ));
+    );
     setup.push_str("Compression=lzma2\r\n");
     setup.push_str("SolidCompression=yes\r\n");
     if universal {
@@ -1069,13 +1066,13 @@ fn render_iss(
     setup.push_str(&iss_escape(&p.name));
     setup.push_str("\r\n");
     if let Some(icon) = &installer_icon {
-        setup.push_str(&format!("SetupIconFile={}\r\n", iss_escape_path(icon)));
+        let _ = write!(setup, "SetupIconFile={}\r\n", iss_escape_path(icon));
     }
     if let Some(bmp) = &welcome_bmp {
-        setup.push_str(&format!("WizardImageFile={}\r\n", iss_escape_path(bmp)));
+        let _ = write!(setup, "WizardImageFile={}\r\n", iss_escape_path(bmp));
     }
     if let Some(rtf) = &license_rtf {
-        setup.push_str(&format!("LicenseFile={}\r\n", iss_escape_path(rtf)));
+        let _ = write!(setup, "LicenseFile={}\r\n", iss_escape_path(rtf));
     }
     setup.push_str("\r\n");
 
@@ -1095,10 +1092,10 @@ fn render_iss(
     for fmt in formats {
         let (name, desc, types) = iss_component_spec(fmt);
         let size = component_install_size(fmt, p, staging, archs, universal, scope);
-        setup.push_str(&format!(
-            "Name: \"{}\"; Description: \"{}\"; Types: {}; ExtraDiskSpaceRequired: {}\r\n",
-            name, desc, types, size
-        ));
+        let _ = write!(
+            setup,
+            "Name: \"{name}\"; Description: \"{desc}\"; Types: {types}; ExtraDiskSpaceRequired: {size}\r\n"
+        );
     }
     setup.push_str("\r\n");
 
@@ -1199,6 +1196,9 @@ fn component_install_size(
 ///
 /// Mirror of the `iss_files_block` / `iss_admin_only` logic — keep these in
 /// sync if the gating policy changes.
+// CLAP / VST3 share `=> universal` but the arms are kept split so each
+// format's gating rationale stays adjacent to its variant.
+#[allow(clippy::match_same_arms)]
 fn files_all_check_gated(fmt: &PkgFormat, universal: bool, scope: PkgScope) -> bool {
     match fmt {
         // Single-file: arch-gated (`Check: not IsArm64` etc.) only when universal.
@@ -1568,7 +1568,7 @@ pub(crate) fn doctor() {
 /// Look for an `arm64` lib directory under any VS MSVC toolchain version.
 /// Presence of the lib dir is a reliable signal that the "ARM64 build tools"
 /// component was installed. We don't require the cross-compiler binary to
-/// live in a specific path — cc/build will locate it via vcvars_arm64.bat
+/// live in a specific path — cc/build will locate it via `vcvars_arm64.bat`
 /// when the Rust target triple requests it.
 fn has_arm64_msvc_toolchain() -> bool {
     for vs_root in crate::vs_install_paths() {

@@ -31,7 +31,7 @@
 //!   in the message loop, which baseview doesn't expose. The menu
 //!   text shows `Ctrl+I` as a hint; the actual key is dispatched
 //!   by the keyboard handler in `windowed.rs`.
-//! - WM_COMMAND only carries the command ID, not the item's
+//! - `WM_COMMAND` only carries the command ID, not the item's
 //!   string. We use `GetMenuStringW` to look up the device name
 //!   for the clicked ID rather than maintaining a parallel map.
 
@@ -208,7 +208,7 @@ unsafe fn grow_window_for_menu(hwnd: HWND) {
             return;
         }
         let mut rect: RECT = std::mem::zeroed();
-        if GetWindowRect(hwnd, &mut rect) == 0 {
+        if GetWindowRect(hwnd, &raw mut rect) == 0 {
             return;
         }
         let w = rect.right - rect.left;
@@ -225,10 +225,14 @@ unsafe fn grow_window_for_menu(hwnd: HWND) {
     }
 }
 
-/// Subclassed window procedure. Handles WM_COMMAND for our menu
+/// Subclassed window procedure. Handles `WM_COMMAND` for our menu
 /// item (mic toggle + dynamic device items), refreshes the
-/// checkmark / repopulates submenus on WM_INITMENUPOPUP, and
-/// tears down the boxed state on WM_NCDESTROY.
+/// checkmark / repopulates submenus on `WM_INITMENUPOPUP`, and
+/// tears down the boxed state on `WM_NCDESTROY`.
+// Why: `(wparam & 0xFFFF) as u16` is the canonical Win32 LOWORD shape —
+// the high bits of WPARAM are reserved/zero on WM_COMMAND, so the
+// truncation is the contract.
+#[allow(clippy::cast_possible_truncation)]
 unsafe extern "system" fn subclass_proc(
     hwnd: HWND,
     msg: u32,
@@ -256,7 +260,11 @@ unsafe extern "system" fn subclass_proc(
                         if want { "ON" } else { "OFF" }
                     );
                     let flag = if want { MF_CHECKED } else { MF_UNCHECKED };
-                    CheckMenuItem(state.hmenu_plugin, MENU_CMD_MIC as u32, MF_BYCOMMAND | flag);
+                    CheckMenuItem(
+                        state.hmenu_plugin,
+                        u32::from(MENU_CMD_MIC),
+                        MF_BYCOMMAND | flag,
+                    );
                     return 0;
                 }
 
@@ -270,7 +278,7 @@ unsafe extern "system" fn subclass_proc(
                     let flag = if want { MF_CHECKED } else { MF_UNCHECKED };
                     CheckMenuItem(
                         state.hmenu_plugin,
-                        MENU_CMD_OUTPUT as u32,
+                        u32::from(MENU_CMD_OUTPUT),
                         MF_BYCOMMAND | flag,
                     );
                     return 0;
@@ -279,7 +287,9 @@ unsafe extern "system" fn subclass_proc(
                 if !state.hmenu_input_devices.is_null()
                     && (MENU_CMD_INPUT_DEVICE_BASE..=MENU_CMD_INPUT_DEVICE_END).contains(&cmd_id)
                 {
-                    if let Some(name) = get_menu_string(state.hmenu_input_devices, cmd_id as u32) {
+                    if let Some(name) =
+                        get_menu_string(state.hmenu_input_devices, u32::from(cmd_id))
+                    {
                         vlog!("input device: {name}");
                         state.input.set_device(Some(name));
                     }
@@ -287,7 +297,9 @@ unsafe extern "system" fn subclass_proc(
                 }
 
                 if (MENU_CMD_OUTPUT_DEVICE_BASE..=MENU_CMD_OUTPUT_DEVICE_END).contains(&cmd_id) {
-                    if let Some(name) = get_menu_string(state.hmenu_output_devices, cmd_id as u32) {
+                    if let Some(name) =
+                        get_menu_string(state.hmenu_output_devices, u32::from(cmd_id))
+                    {
                         vlog!("output device: {name}");
                         state.output.set_device(Some(name));
                     }
@@ -323,13 +335,17 @@ unsafe extern "system" fn subclass_proc(
                     if state.has_mic_item {
                         let on = state.input.is_enabled();
                         let flag = if on { MF_CHECKED } else { MF_UNCHECKED };
-                        CheckMenuItem(state.hmenu_plugin, MENU_CMD_MIC as u32, MF_BYCOMMAND | flag);
+                        CheckMenuItem(
+                            state.hmenu_plugin,
+                            u32::from(MENU_CMD_MIC),
+                            MF_BYCOMMAND | flag,
+                        );
                     }
                     let out_on = state.output.is_enabled();
                     let out_flag = if out_on { MF_CHECKED } else { MF_UNCHECKED };
                     CheckMenuItem(
                         state.hmenu_plugin,
-                        MENU_CMD_OUTPUT as u32,
+                        u32::from(MENU_CMD_OUTPUT),
                         MF_BYCOMMAND | out_flag,
                     );
                 }
@@ -350,6 +366,9 @@ unsafe extern "system" fn subclass_proc(
 /// Replace all items in `popup` with one entry per device. Items
 /// fire command IDs in `[cmd_base .. cmd_base + devices.len())`;
 /// the matching device gets `MF_CHECKED`.
+// Why: `i as u16` for the menu command ID — the loop body breaks at
+// `i >= 256` so the cast is bounded well below `u16::MAX`.
+#[allow(clippy::cast_possible_truncation)]
 unsafe fn repopulate_device_menu(
     popup: HMENU,
     devices: &[String],
@@ -379,7 +398,7 @@ unsafe fn repopulate_device_menu(
             let text = wide(name);
             let cmd_id = cmd_base + i as u16;
             let mut flags = MF_STRING;
-            if current.map(|c| c == name.as_str()).unwrap_or(false) {
+            if current.is_some_and(|c| c == name.as_str()) {
                 flags |= MF_CHECKED;
             }
             AppendMenuW(popup, flags, cmd_id as usize, text.as_ptr());
@@ -389,6 +408,15 @@ unsafe fn repopulate_device_menu(
 
 /// Look up a menu item's display string by command ID. Returns
 /// `None` if the ID isn't in the menu (or `GetMenuStringW` fails).
+// Why: `GetMenuStringW` returns the char count as `int` (always
+// non-negative on success — we early-return on `len <= 0`); the buffer
+// is sized from that count and stays well below `i32::MAX`. Casts here
+// are FFI-bounded by Win32's own API contract.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss
+)]
 unsafe fn get_menu_string(hmenu: HMENU, cmd_id: u32) -> Option<String> {
     unsafe {
         // First call with a null buffer to get the required length.
