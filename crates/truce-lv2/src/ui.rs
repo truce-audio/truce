@@ -766,6 +766,10 @@ unsafe fn install_child_cursor_update(parent: *mut c_void) {
     }
 }
 
+// `params` and `meter_slots` get cloned into per-callback closures
+// below — owned-arg avoids forcing the caller to lend them across
+// the closure-building scope.
+#[allow(clippy::needless_pass_by_value)]
 fn build_editor_context<P: PluginExport>(
     params: Arc<P::Params>,
     slots: &[ParamSlot],

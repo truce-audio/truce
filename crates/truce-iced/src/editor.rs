@@ -326,6 +326,10 @@ struct RenderState<P: Params, M: IcedPlugin<P>> {
 
 impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
     /// Initialize the wgpu + iced rendering pipeline from a pre-created surface.
+    //
+    // `instance` and `surface` are threaded into the iced renderer; the
+    // owned-arg shape avoids a clone at the call site.
+    #[allow(clippy::needless_pass_by_value)]
     fn init_render(&mut self, instance: wgpu::Instance, surface: wgpu::Surface<'static>) -> bool {
         let Some(program) = self.program.take() else {
             return false;

@@ -549,7 +549,9 @@ struct OutputResources<P: PluginExport> {
     capture: Option<crate::playback::CapturePusher>,
 }
 
-#[allow(clippy::too_many_arguments)]
+// Spawned-thread body — owns its state across the worker's lifetime.
+// Switching to refs would force the caller to outlive the thread.
+#[allow(clippy::too_many_arguments, clippy::needless_pass_by_value)]
 fn output_worker<P: PluginExport>(
     cmd_rx: mpsc::Receiver<OutputCmd>,
     open_result: mpsc::Sender<Result<(), String>>,
@@ -707,6 +709,9 @@ fn open_output_stream<P: PluginExport>(
 // Input worker
 // ---------------------------------------------------------------------------
 
+// Spawned-thread body — owns its state across the worker's lifetime.
+// Switching to refs would force the caller to outlive the thread.
+#[allow(clippy::needless_pass_by_value)]
 fn input_worker(
     cmd_rx: mpsc::Receiver<InputCmd>,
     initial_device_name: Option<String>,

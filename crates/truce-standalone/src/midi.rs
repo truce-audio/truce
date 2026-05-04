@@ -77,6 +77,9 @@ impl Drop for MidiInputThread {
     }
 }
 
+// Spawned-thread body — owns its state across the worker's lifetime.
+// Switching to refs would force the caller to outlive the thread.
+#[allow(clippy::needless_pass_by_value)]
 fn midi_thread(requested: String, pending: Arc<Mutex<Vec<MidiEvent>>>, stop: Arc<AtomicBool>) {
     let mut connection: Option<MidiInputConnection<()>> = None;
     let mut current_name = String::new();
