@@ -9,7 +9,7 @@ rust-version.workspace = true
 crate-type = ["cdylib", "rlib"]
 
 [[bin]]
-name = "eq-standalone"
+name = "truce-example-eq-standalone"
 path = "src/main.rs"
 required-features = ["standalone"]
 

@@ -10,7 +10,7 @@ description = "Example gain plugin with Slint GUI"
 crate-type = ["cdylib", "rlib"]
 
 [[bin]]
-name = "gain-slint-standalone"
+name = "truce-example-gain-slint-standalone"
 path = "src/main.rs"
 required-features = ["standalone"]
 

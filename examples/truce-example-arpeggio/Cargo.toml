@@ -9,7 +9,7 @@ rust-version.workspace = true
 crate-type = ["cdylib", "rlib"]
 
 [[bin]]
-name = "arpeggio-standalone"
+name = "truce-example-arpeggio-standalone"
 path = "src/main.rs"
 required-features = ["standalone"]
 

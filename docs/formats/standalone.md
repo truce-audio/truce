@@ -29,7 +29,7 @@ additions below. No `lib.rs` edits.
 
 ```toml
 [[bin]]
-name = "<bundle_id>-standalone"
+name = "<crate_name>-standalone"
 path = "src/main.rs"
 required-features = ["standalone"]
 
@@ -40,8 +40,10 @@ standalone = ["dep:truce-standalone"]
 truce-standalone = { workspace = true, features = ["gui"], optional = true }
 ```
 
-`<bundle_id>` here is your plugin's `bundle_id` field from `truce.toml`
-(e.g. `gain-standalone`).
+`<crate_name>` is your crate's `[package].name` (e.g. `truce-example-gain`,
+yielding `truce-example-gain-standalone`). `cargo truce run` looks for the
+binary at `target/<profile>/<crate_name>-standalone(.exe)`, so the
+`[[bin]] name` must match this convention.
 
 **`src/main.rs`:**
 
@@ -124,11 +126,11 @@ Common shapes:
 
 ```sh
 # Real-time capture: hear it while it records.
-gain-standalone --input-file in.wav --output-file out.wav
+truce-example-gain-standalone --input-file in.wav --output-file out.wav
 
 # Offline render — sub-real-time, no audio device touched.
 # This is the CI / batch recipe.
-gain-standalone --no-playback --input-file in.wav --output-file out.wav
+truce-example-gain-standalone --no-playback --input-file in.wav --output-file out.wav
 ```
 
 In offline mode the runner inherits the input WAV's sample rate
