@@ -614,7 +614,12 @@ unsafe fn parse_features(features: *const *const LV2Feature) -> ParsedFeatures {
 /// has already configured its wgpu/GL surface at the child's current
 /// extent, and a `SetWindowPos` on the child after the fact makes the
 /// rendered content stretch rather than re-layout.
+// Win32 constants and FFI declarations live alongside the only
+// caller; hoisting them out would split the early-`return` guard
+// from the API names it talks about. Hence the function-level
+// `items_after_statements` allow.
 #[cfg(target_os = "windows")]
+#[allow(clippy::items_after_statements)]
 unsafe fn fit_win32_parent_to_child(parent: *mut c_void) {
     unsafe {
         if parent.is_null() {
@@ -662,7 +667,7 @@ unsafe fn fit_win32_parent_to_child(parent: *mut c_void) {
             right: 0,
             bottom: 0,
         };
-        if GetClientRect(child, &mut rect) == 0 {
+        if GetClientRect(child, &raw mut rect) == 0 {
             return;
         }
         let w = rect.right - rect.left;

@@ -752,9 +752,14 @@ impl<P: Params + 'static> baseview::WindowHandler for BuiltinWindowHandler<P> {
 
     fn on_event(
         &mut self,
-        _window: &mut baseview::Window,
+        window: &mut baseview::Window,
         event: baseview::Event,
     ) -> baseview::EventStatus {
+        // `window` is only read on Windows (focus-on-click below);
+        // discard explicitly on other platforms so the lint stays quiet.
+        #[cfg(not(target_os = "windows"))]
+        let _ = &window;
+
         if let baseview::Event::Mouse(baseview::MouseEvent::ButtonPressed {
             button: baseview::MouseButton::Left,
             ..
@@ -765,8 +770,8 @@ impl<P: Params + 'static> baseview::WindowHandler for BuiltinWindowHandler<P> {
             // so we do it here. See truce-egui editor.rs.
             #[cfg(target_os = "windows")]
             {
-                if !_window.has_focus() {
-                    _window.focus();
+                if !window.has_focus() {
+                    window.focus();
                 }
             }
         }

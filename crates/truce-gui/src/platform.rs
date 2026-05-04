@@ -37,7 +37,11 @@ unsafe impl HasRawWindowHandle for ParentWindow {
             RawWindowHandle::X11(window_id) => {
                 let mut handle = raw_window_handle::XlibWindowHandle::empty();
                 // rwh 0.5 field type is c_ulong: u64 on Linux/macOS, u32 on Windows.
-                handle.window = window_id as _;
+                // The Windows narrowing is the lossy edge — `XID` is 32-bit there.
+                #[allow(clippy::cast_possible_truncation)]
+                {
+                    handle.window = window_id as _;
+                }
                 RwhRawWindowHandle::Xlib(handle)
             }
         }
@@ -77,6 +81,7 @@ pub fn query_backing_scale(parent: &RawWindowHandle) -> f64 {
 }
 
 #[cfg(target_os = "windows")]
+#[must_use]
 pub fn query_backing_scale(parent: &RawWindowHandle) -> f64 {
     let hwnd = match parent {
         RawWindowHandle::Win32(ptr) => *ptr,
@@ -86,6 +91,7 @@ pub fn query_backing_scale(parent: &RawWindowHandle) -> f64 {
 }
 
 #[cfg(target_os = "linux")]
+#[must_use]
 pub fn query_backing_scale(_parent: &RawWindowHandle) -> f64 {
     main_screen_scale()
 }
@@ -107,6 +113,7 @@ pub fn main_screen_scale() -> f64 {
 }
 
 #[cfg(target_os = "windows")]
+#[must_use]
 pub fn main_screen_scale() -> f64 {
     win32_dpi_scale(std::ptr::null_mut())
 }
@@ -248,12 +255,16 @@ static LINUX_SCALE_BITS: AtomicU64 = AtomicU64::new(0);
 /// Record the display scale factor observed from baseview on Linux. Editors
 /// should call this from their `WindowEvent::Resized` handlers so subsequent
 /// pre-window queries match what baseview is delivering. No-op on non-Linux.
-pub fn note_linux_scale_factor(_scale: f64) {
+pub fn note_linux_scale_factor(scale: f64) {
     #[cfg(target_os = "linux")]
     {
-        if _scale.is_finite() && _scale > 0.0 {
-            LINUX_SCALE_BITS.store(_scale.to_bits(), Ordering::Relaxed);
+        if scale.is_finite() && scale > 0.0 {
+            LINUX_SCALE_BITS.store(scale.to_bits(), Ordering::Relaxed);
         }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = scale;
     }
 }
 
@@ -290,21 +301,21 @@ fn win32_dpi_scale(hwnd: *mut std::ffi::c_void) -> f64 {
         fn GetDpiForSystem() -> u32;
     }
 
-    let dpi = if !hwnd.is_null() {
+    let dpi = if hwnd.is_null() {
+        unsafe { GetDpiForSystem() }
+    } else {
         let d = unsafe { GetDpiForWindow(hwnd) };
         if d == 0 {
             unsafe { GetDpiForSystem() }
         } else {
             d
         }
-    } else {
-        unsafe { GetDpiForSystem() }
     };
 
     if dpi == 0 {
         1.0
     } else {
-        dpi as f64 / DEFAULT_DPI as f64
+        f64::from(dpi) / f64::from(DEFAULT_DPI)
     }
 }
 
@@ -355,9 +366,8 @@ pub unsafe fn create_wgpu_surface(
             }
             #[cfg(target_os = "linux")]
             RwhRawWindowHandle::Xlib(handle) => {
-                let display_handle = match window.raw_display_handle() {
-                    RwhRawDisplayHandle::Xlib(d) => d,
-                    _ => return None,
+                let RwhRawDisplayHandle::Xlib(display_handle) = window.raw_display_handle() else {
+                    return None;
                 };
                 let display_ptr = std::ptr::NonNull::new(display_handle.display);
                 let rwh6_window = wgpu::rwh::RawWindowHandle::Xlib(
