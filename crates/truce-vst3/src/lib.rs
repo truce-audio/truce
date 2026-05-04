@@ -582,7 +582,7 @@ unsafe extern "C" fn cb_get_output_event<P: PluginExport>(
             .nth(index as usize)
         {
             Some(packet) => *out = packet,
-            None => return,
+            None => (),
         }
     }
 }
