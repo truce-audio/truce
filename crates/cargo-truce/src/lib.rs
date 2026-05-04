@@ -25,18 +25,31 @@ mod windows_manifest;
 pub(crate) use commands::install::aax::build_aax_template;
 #[cfg(target_os = "windows")]
 pub(crate) use commands::package::PkgFormat;
-pub(crate) use config::{
-    Config, PackagingConfig, PluginDef, deployment_target, load_config, resolve_aax_sdk_path,
-};
+pub(crate) use config::{Config, PluginDef, deployment_target, load_config, resolve_aax_sdk_path};
 pub(crate) use util::{
-    MacArch, cargo_build, cargo_build_debug, cargo_build_for_arch, check_cmd, codesign_bundle,
-    confirm_prompt, copy_dir_recursive, detect_default_features, extract_team_id, find_on_path,
-    is_debug_profile, is_production_identity, lipo_into, locate_wraptool_macos, log_output,
-    log_skip, pace_sign_aax_macos, project_root, read_workspace_version, release_lib,
-    release_lib_for_target, run_codesign, run_quiet, run_silent, run_sudo, rustup_has_target,
-    set_build_profile, set_debug_profile, tag_fail, tag_info, tag_ok, tag_warn, take_outputs,
-    take_skipped, target_dir, tmp_dir, verify_shell_profile_declared, vprintln,
+    cargo_build, cargo_build_debug, check_cmd, codesign_bundle, confirm_prompt,
+    detect_default_features, find_on_path, is_debug_profile, log_output, log_skip, project_root,
+    release_lib, run_sudo, set_build_profile, set_debug_profile, tag_fail, tag_ok, tag_warn,
+    take_outputs, take_skipped, target_dir, tmp_dir, verify_shell_profile_declared, vprintln,
     write_hot_reload_config,
+};
+
+// Re-exports used only by the macOS / Windows installer pipelines.
+// Linux ships plugins via distro tooling rather than the bundled
+// `package` flow, so these symbols are absent there.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+pub(crate) use config::PackagingConfig;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+pub(crate) use util::{
+    copy_dir_recursive, read_workspace_version, release_lib_for_target, rustup_has_target,
+    tag_info,
+};
+
+// macOS-only: codesign / lipo / notary / AAX PACE-sign pipeline.
+#[cfg(target_os = "macos")]
+pub(crate) use util::{
+    MacArch, cargo_build_for_arch, extract_team_id, is_production_identity, lipo_into,
+    locate_wraptool_macos, pace_sign_aax_macos, run_codesign, run_quiet, run_silent,
 };
 
 use std::process::ExitCode;
