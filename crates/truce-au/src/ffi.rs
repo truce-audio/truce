@@ -146,6 +146,10 @@ pub struct AuMidiEvent {
     pub data1: u8,
     /// MIDI data byte 2 (velocity for note on/off)
     pub data2: u8,
+    // Trailing 1-byte pad keeping the struct's 8-byte alignment to
+    // match `AuMidiEvent` in `au_shim_types.h`. Public so the C
+    // shim's offset calculations agree.
+    #[allow(clippy::pub_underscore_fields)]
     pub _pad: u8,
 }
 

@@ -1632,6 +1632,7 @@ pub fn derive_param_enum(input: TokenStream) -> TokenStream {
     let name_strs: Vec<_> = variant_names.iter().map(std::string::String::as_str).collect();
 
     let expanded = quote! {
+        #[allow(clippy::expl_impl_clone_on_copy)]
         impl Clone for #enum_name {
             fn clone(&self) -> Self { *self }
         }

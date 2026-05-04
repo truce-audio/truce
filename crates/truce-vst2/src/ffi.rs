@@ -38,6 +38,11 @@ pub struct Vst2MidiEvent {
     pub status: u8,
     pub data1: u8,
     pub data2: u8,
+    // Trailing 1-byte pad; preserves the 8-byte struct layout the C
+    // shim writes into. Public so it stays addressable in the same
+    // crate's `mem::offset_of!` callers; the leading `_` reserves
+    // it from external use.
+    #[allow(clippy::pub_underscore_fields)]
     pub _pad: u8,
 }
 

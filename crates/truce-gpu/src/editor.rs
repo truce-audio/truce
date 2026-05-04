@@ -174,7 +174,7 @@ impl<P: Params + 'static> WindowHandler for GpuWindowHandler<P> {
                 }
                 EventStatus::Ignored
             }
-            _ => EventStatus::Ignored,
+            Event::Keyboard(_) => EventStatus::Ignored,
         }
     }
 }

@@ -9,6 +9,12 @@
 //! We hand-write the decoder because the pure-C layout is simple and we
 //! need zero allocations on the audio thread.
 
+// LV2 atoms are 8-byte aligned by spec (pad fields enforce it at every
+// nested header), so the host hands us byte buffers whose interior
+// pointers are always at least as aligned as the typed struct we're
+// reading into. Per-cast site allows would just be noise.
+#![allow(clippy::cast_ptr_alignment)]
+
 use std::ffi::c_void;
 
 use truce_core::cast::{len_u32, sample_pos_i64};

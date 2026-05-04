@@ -345,7 +345,7 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
                         position,
                         modifiers,
                     } => {
-                        self.modifiers = convert_kb_modifiers(&modifiers);
+                        self.modifiers = convert_kb_modifiers(modifiers);
                         // baseview reports cursor in f64 logical points;
                         // egui uses f32. Window dimensions never reach
                         // 2^23 — the narrowing is invisible.
@@ -367,8 +367,8 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
                                 _window.focus();
                             }
                         }
-                        self.modifiers = convert_kb_modifiers(&modifiers);
-                        if let Some(btn) = convert_mouse_button(&button) {
+                        self.modifiers = convert_kb_modifiers(modifiers);
+                        if let Some(btn) = convert_mouse_button(button) {
                             self.pending_events.push(egui::Event::PointerButton {
                                 pos: self.last_cursor_pos,
                                 button: btn,
@@ -379,8 +379,8 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
                         EventStatus::Captured
                     }
                     ButtonReleased { button, modifiers } => {
-                        self.modifiers = convert_kb_modifiers(&modifiers);
-                        if let Some(btn) = convert_mouse_button(&button) {
+                        self.modifiers = convert_kb_modifiers(modifiers);
+                        if let Some(btn) = convert_mouse_button(button) {
                             self.pending_events.push(egui::Event::PointerButton {
                                 pos: self.last_cursor_pos,
                                 button: btn,
@@ -391,7 +391,7 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
                         EventStatus::Captured
                     }
                     WheelScrolled { delta, modifiers } => {
-                        self.modifiers = convert_kb_modifiers(&modifiers);
+                        self.modifiers = convert_kb_modifiers(modifiers);
                         let (dx, dy) = match delta {
                             baseview::ScrollDelta::Lines { x, y } => (x * 20.0, y * 20.0),
                             baseview::ScrollDelta::Pixels { x, y } => (x, y),
@@ -413,7 +413,7 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
             }
             Event::Keyboard(kb) => {
                 use keyboard_types::KeyState;
-                self.modifiers = convert_kb_modifiers(&kb.modifiers);
+                self.modifiers = convert_kb_modifiers(kb.modifiers);
 
                 // Text input. Suppress Text events when Ctrl/Cmd is
                 // held — otherwise Ctrl+A/Ctrl+C/etc. would also insert
@@ -483,7 +483,7 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
 // Event conversion helpers
 // ---------------------------------------------------------------------------
 
-fn convert_mouse_button(btn: &baseview::MouseButton) -> Option<egui::PointerButton> {
+fn convert_mouse_button(btn: baseview::MouseButton) -> Option<egui::PointerButton> {
     match btn {
         baseview::MouseButton::Left => Some(egui::PointerButton::Primary),
         baseview::MouseButton::Right => Some(egui::PointerButton::Secondary),
@@ -500,7 +500,7 @@ fn convert_mouse_button(btn: &baseview::MouseButton) -> Option<egui::PointerButt
     }
 }
 
-fn convert_kb_modifiers(mods: &keyboard_types::Modifiers) -> egui::Modifiers {
+fn convert_kb_modifiers(mods: keyboard_types::Modifiers) -> egui::Modifiers {
     let alt = mods.contains(keyboard_types::Modifiers::ALT);
     let ctrl = mods.contains(keyboard_types::Modifiers::CONTROL);
     let shift = mods.contains(keyboard_types::Modifiers::SHIFT);

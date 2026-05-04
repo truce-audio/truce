@@ -596,7 +596,7 @@ fn output_worker<P: PluginExport>(
     let mut stream: Option<cpal::Stream> = None;
 
     let initial = open_output_stream::<P>(
-        &initial_device_name,
+        initial_device_name.as_deref(),
         &config,
         sample_format,
         sample_rate,
@@ -615,7 +615,7 @@ fn output_worker<P: PluginExport>(
                 // stream against the same device.
                 stream = None;
                 if let Err(e) = open_output_stream::<P>(
-                    &name,
+                    name.as_deref(),
                     &config,
                     sample_format,
                     sample_rate,
@@ -634,7 +634,7 @@ fn output_worker<P: PluginExport>(
 
 #[allow(clippy::too_many_arguments)]
 fn open_output_stream<P: PluginExport>(
-    name: &Option<String>,
+    name: Option<&str>,
     config: &cpal::StreamConfig,
     sample_format: cpal::SampleFormat,
     sample_rate: f64,
@@ -762,7 +762,7 @@ fn input_worker(
                 apply_input_state(
                     &mut stream,
                     want_enabled,
-                    &device_name,
+                    device_name.as_deref(),
                     channels,
                     sample_rate,
                     &ring,
@@ -781,7 +781,7 @@ fn input_worker(
                     apply_input_state(
                         &mut stream,
                         true,
-                        &device_name,
+                        device_name.as_deref(),
                         channels,
                         sample_rate,
                         &ring,
@@ -804,7 +804,7 @@ fn input_worker(
 fn apply_input_state(
     stream: &mut Option<cpal::Stream>,
     want: bool,
-    device_name: &Option<String>,
+    device_name: Option<&str>,
     channels: usize,
     sample_rate: f64,
     ring: &Arc<Mutex<Vec<f32>>>,

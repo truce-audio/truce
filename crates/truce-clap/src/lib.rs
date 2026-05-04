@@ -9,6 +9,12 @@
 // the macro; removing `P` from individual entries would make the macro
 // branch on which functions are generic.
 #![allow(clippy::extra_unused_type_parameters)]
+// CLAP event headers are 4-byte aligned but the extended event types
+// (note, param_value, transport, …) require 8-byte alignment. The
+// host guarantees the underlying buffer is allocated with the
+// extended event's alignment; the `header.cast::<…>()` is reading
+// through that promise.
+#![allow(clippy::cast_ptr_alignment)]
 
 #[doc(hidden)]
 pub mod __macro_deps {

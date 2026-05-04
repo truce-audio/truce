@@ -899,6 +899,9 @@ impl<P: PluginExport> PluginDriver<P> {
 /// otherwise emit events at offsets computed against the old SR —
 /// `wait_ms(100)` produced `4410` at 44100 Hz but the run uses 48000,
 /// putting "100ms" at 91.875ms instead.
+// usize → f64 widening on sample offsets — driver test runs are
+// bounded well below 2^52 frames.
+#[allow(clippy::cast_precision_loss)]
 fn prepare_script_events(
     script: &mut Script,
     sample_rate: f64,

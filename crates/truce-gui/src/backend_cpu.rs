@@ -96,6 +96,9 @@ impl CpuBackend {
 /// points**. The backend multiplies by `self.scale` before handing
 /// off to tiny-skia, so the pixmap is rasterized at physical-pixel
 /// density.
+// Rasterizer math uses standard short names (`x`, `y`, `w`, `h`,
+// `s` = scale, etc.).
+#[allow(clippy::many_single_char_names)]
 impl RenderBackend for CpuBackend {
     fn clear(&mut self, color: Color) {
         self.pixmap.fill(color.to_skia());

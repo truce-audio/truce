@@ -29,6 +29,10 @@
 //! PARENT (pragmatic for Ardour/Jalv which accept it; stricter X11UI /
 //! `CocoaUI` hosts may want the actual child window / view — follow-up).
 
+// LV2 atoms / sequences are 8-byte aligned by spec — see the same
+// allow on `crate::atom`.
+#![allow(clippy::cast_ptr_alignment)]
+
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::marker::PhantomData;
 use std::sync::Arc;

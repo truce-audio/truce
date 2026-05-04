@@ -313,7 +313,7 @@ fn emit_control_port(
     writeln!(f, "        lv2:minimum {} ;", p.range.min())?;
     writeln!(f, "        lv2:maximum {} ;", p.range.max())?;
     writeln!(f, "        lv2:default {} ;", p.default_plain)?;
-    if let Some(unit) = lv2_unit(&p.unit) {
+    if let Some(unit) = lv2_unit(p.unit) {
         writeln!(f, "        units:unit units:{unit} ;")?;
     }
     match p.range {
@@ -326,7 +326,7 @@ fn emit_control_port(
         ParamRange::Logarithmic { .. } => {
             writeln!(f, "        lv2:portProperty pprop:logarithmic ;")?;
         }
-        _ => {}
+        ParamRange::Linear { .. } => {}
     }
     if p.flags.contains(ParamFlags::IS_BYPASS) {
         // LV2's `lv2:enabled` designation has inverted semantics:
@@ -416,7 +416,7 @@ fn category_as_lv2(cat: PluginCategory) -> &'static str {
     }
 }
 
-fn lv2_unit(u: &ParamUnit) -> Option<&'static str> {
+fn lv2_unit(u: ParamUnit) -> Option<&'static str> {
     Some(match u {
         ParamUnit::Db => "db",
         ParamUnit::Hz => "hz",

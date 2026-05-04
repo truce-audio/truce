@@ -100,6 +100,9 @@ pub struct TruceAaxMidiEvent {
     pub status: u8,
     pub data1: u8,
     pub data2: u8,
+    // Trailing 1-byte pad keeping the struct's 8-byte alignment to
+    // match `TruceAaxMidiEvent` in `truce_aax_bridge.h`.
+    #[allow(clippy::pub_underscore_fields)]
     pub _pad: u8,
 }
 
@@ -257,10 +260,10 @@ pub fn register_aax<P: PluginExport>() {
             num_inputs: aax_inputs,
             num_outputs: aax_outputs,
             num_params: 0, // filled below
-            manufacturer_id: fourcc(&info.au_manufacturer),
-            product_id: fourcc(&info.fourcc),
+            manufacturer_id: fourcc(info.au_manufacturer),
+            product_id: fourcc(info.fourcc),
             // plugin_id must differ from product_id — XOR with a salt
-            plugin_id: fourcc(&info.fourcc) ^ 0x0101_0101,
+            plugin_id: fourcc(info.fourcc) ^ 0x0101_0101,
             is_instrument: i32::from(is_instrument),
             category,
             has_editor: 0,             // filled below
@@ -311,7 +314,7 @@ pub fn register_aax<P: PluginExport>() {
     });
 }
 
-fn fourcc(bytes: &[u8; 4]) -> i32 {
+fn fourcc(bytes: [u8; 4]) -> i32 {
     (i32::from(bytes[0]) << 24)
         | (i32::from(bytes[1]) << 16)
         | (i32::from(bytes[2]) << 8)

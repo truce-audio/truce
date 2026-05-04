@@ -354,7 +354,7 @@ impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
                 }
                 EventStatus::Ignored
             }
-            _ => EventStatus::Ignored,
+            Event::Keyboard(_) => EventStatus::Ignored,
         }
     }
 }

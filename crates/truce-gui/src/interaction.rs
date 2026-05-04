@@ -48,6 +48,8 @@ pub enum MouseButton {
 }
 
 /// Keyboard modifier state at event time.
+// Standard four modifier flags — bitflags would just add ceremony.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Modifiers {
     pub shift: bool,

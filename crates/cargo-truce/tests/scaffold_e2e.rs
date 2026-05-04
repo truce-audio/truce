@@ -924,7 +924,7 @@ fn scaffold_standalone_offline_render() {
 //
 // `i as f64` for the sample-index/time relation; n = 48_000
 // is well below 2^52, so no precision is actually lost.
-#[allow(clippy::cast_precision_loss)]
+#[allow(clippy::cast_precision_loss, clippy::many_single_char_names)]
 fn write_sweep_wav(path: &Path) {
     let sr: u32 = 48_000;
     let duration_secs = 1.0_f64;

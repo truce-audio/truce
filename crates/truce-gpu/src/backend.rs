@@ -1267,6 +1267,9 @@ impl WgpuBackend {
 /// All `RenderBackend` methods accept coordinates in **logical points**.
 /// The backend multiplies by `self.scale` to get physical pixel positions.
 /// Font glyphs are rasterized at physical resolution for sharp text.
+// Rasterizer math uses standard short names (`x`, `y`, `w`, `h`,
+// `r`, `g`, `b`, `s` = scale, etc.).
+#[allow(clippy::many_single_char_names)]
 impl RenderBackend for WgpuBackend {
     fn clear(&mut self, color: Color) {
         self.clear_color = Some(wgpu::Color {
@@ -2151,7 +2154,7 @@ mod tests {
     /// record some primitives + text, render into an offscreen texture,
     /// and verify we wrote non-background pixels.
     #[test]
-    #[allow(clippy::too_many_lines)]
+    #[allow(clippy::too_many_lines, clippy::many_single_char_names)]
     fn standalone_pipeline_renders() {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::PRIMARY,

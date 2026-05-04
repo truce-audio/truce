@@ -13,6 +13,8 @@
 use std::path::PathBuf;
 
 /// Resolved CLI + env + project-baked + runtime defaults.
+// Sparse independent CLI flags — bitflags would just add ceremony.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Clone, Debug, Default)]
 pub struct Options {
     pub headless: bool,
