@@ -148,9 +148,13 @@ fn linear_to_srgb_u8(lin: f32) -> u8 {
 /// pair rasterizes; subsequent calls blit from the per-thread cache.
 //
 // Glyph dimensions widen `u32 as f32`. Glyph bitmaps are tens of
-// pixels wide — far below 2^23. The bounds-checked `i32 -> u32`
-// indexing already guards against negative values.
-#[allow(clippy::cast_precision_loss, clippy::cast_sign_loss)]
+// pixels wide — far below 2^23 / 2^31. The bounds-checked
+// `i32 -> u32` indexing already guards against negative values.
+#[allow(
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+)]
 pub fn draw_text_fontdue(
     pixmap_data: &mut [u8],
     pixmap_width: u32,

@@ -825,6 +825,9 @@ pub fn register_vst3<P: PluginExport>() {
             min: pi.range.min(),
             max: pi.range.max(),
             default_normalized: pi.range.normalize(pi.default_plain),
+            // Param step counts come from `IntParam`/`EnumParam` ranges,
+            // bounded well below i32::MAX in practice.
+            #[allow(clippy::cast_possible_wrap)]
             step_count: step_count.map_or(0, |n| n.get() as i32),
             flags,
             group: cs.group.into_raw(),

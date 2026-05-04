@@ -290,7 +290,11 @@ pub unsafe fn instantiate_ui<P: PluginExport>(
         if let Some(resize) = parsed.resize
             && let Some(func) = resize.ui_resize
         {
-            func(resize.handle, pref_w as i32, pref_h as i32);
+            // LV2 ui:resize takes int32_t; editor dimensions in u32
+            // are bounded by display size, well below i32::MAX.
+            #[allow(clippy::cast_possible_wrap)]
+            let (w, h) = (pref_w as i32, pref_h as i32);
+            func(resize.handle, w, h);
         }
 
         // On macOS we also resize the host-supplied parent NSView directly,

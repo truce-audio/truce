@@ -265,7 +265,11 @@ fn copy_str_to_buf(dst: &mut [c_char], src: &str) {
     let bytes = src.as_bytes();
     let len = bytes.len().min(dst.len() - 1);
     for (i, &b) in bytes[..len].iter().enumerate() {
-        dst[i] = b as c_char;
+        // `c_char` is signed on most platforms; bytes ≥ 128 wrap to
+        // negative values and round-trip correctly through the FFI.
+        #[allow(clippy::cast_possible_wrap)]
+        let c = b as c_char;
+        dst[i] = c;
     }
     dst[len] = 0;
 }

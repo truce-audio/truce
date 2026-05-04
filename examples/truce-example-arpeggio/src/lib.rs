@@ -238,6 +238,9 @@ impl PluginLogic for Arpeggio {
 
         let block_size = buffer.num_samples();
         let pattern = self.params.pattern.value();
+        // `seq` holds at most the held-notes count — bounded by
+        // polyphony, far below i64::MAX.
+        #[allow(clippy::cast_possible_wrap)]
         let seq_len = seq.len() as i64;
 
         for i in 0..block_size {
