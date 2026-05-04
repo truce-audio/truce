@@ -53,6 +53,11 @@ pub struct Vst3MidiEvent {
     pub status: u8,
     pub data1: u8,
     pub data2: u8,
+    // Originally a layout pad; the note-expression decoder repurposes
+    // it as the 8-bit noteId. Name kept to mirror the C++ shim
+    // (`vst3_shim.cpp`) so the ABI correspondence is greppable across
+    // languages.
+    #[allow(clippy::used_underscore_binding)]
     pub _pad: u8,
 }
 

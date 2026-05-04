@@ -374,10 +374,10 @@ unsafe extern "C" fn cb_state_load<P: PluginExport>(
     }
 }
 
-unsafe extern "C" fn cb_state_free(_data: *mut u8, _len: u32) {
+unsafe extern "C" fn cb_state_free(data: *mut u8, _len: u32) {
     unsafe {
-        if !_data.is_null() {
-            free(_data.cast::<std::ffi::c_void>());
+        if !data.is_null() {
+            free(data.cast::<std::ffi::c_void>());
         }
     }
 }

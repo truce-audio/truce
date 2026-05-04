@@ -122,14 +122,21 @@ impl PkgFormat {
     }
 }
 
-pub(crate) fn cmd_package(_args: &[String]) -> Res {
+// `args` is unused on platforms where the body falls through to the
+// "not supported" Err branch — silence the unused-variable warning
+// only on those targets.
+#[cfg_attr(
+    not(any(target_os = "macos", target_os = "windows")),
+    allow(unused_variables)
+)]
+pub(crate) fn cmd_package(args: &[String]) -> Res {
     #[cfg(target_os = "windows")]
     {
-        crate::packaging_windows::cmd_package(_args)
+        crate::packaging_windows::cmd_package(args)
     }
     #[cfg(target_os = "macos")]
     {
-        macos::cmd_package_macos(_args)
+        macos::cmd_package_macos(args)
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     Err("`cargo truce package` is not supported on this platform. \

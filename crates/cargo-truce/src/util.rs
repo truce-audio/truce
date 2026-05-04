@@ -626,25 +626,28 @@ pub(crate) fn write_entitlements_plist() -> PathBuf {
 /// types, leaving inner dylibs with their linker-applied ad-hoc
 /// signature and breaking notarization. Apple has been deprecating
 /// `--deep` for years anyway; enumerate ourselves to be sure.
-pub(crate) fn codesign_bundle(_bundle: &str, _identity: &str, _use_sudo: bool) -> crate::Res {
+// On non-macOS targets the body is a no-op `Ok(())` so all three
+// args are unused — silence the warning only on those targets.
+#[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
+pub(crate) fn codesign_bundle(bundle: &str, identity: &str, use_sudo: bool) -> crate::Res {
     // macOS-only: `codesign` is an Apple tool, and the entitlements plist
     // we write is consumed only by it. On Linux / Windows this is a no-op
     // so the cross-platform `stage_*` helpers can call us unconditionally.
     #[cfg(target_os = "macos")]
     {
-        let production = is_production_identity(_identity);
+        let production = is_production_identity(identity);
         let entitlements = write_entitlements_plist();
         let ent_path = entitlements.to_str().unwrap();
-        let bundle_path = Path::new(_bundle);
+        let bundle_path = Path::new(bundle);
 
         let sign_one = |target: &str| -> crate::Res {
-            let mut args: Vec<&str> = vec!["--force", "--sign", _identity];
+            let mut args: Vec<&str> = vec!["--force", "--sign", identity];
             if production {
                 args.extend_from_slice(&["--options", "runtime", "--timestamp"]);
                 args.extend_from_slice(&["--entitlements", ent_path]);
             }
             args.push(target);
-            run_codesign(&args, _use_sudo)
+            run_codesign(&args, use_sudo)
         };
 
         // Inside-out: sign each Mach-O in the bundle's tree before
@@ -663,10 +666,10 @@ pub(crate) fn codesign_bundle(_bundle: &str, _identity: &str, _use_sudo: bool) -
         // already signed inside-out, we don't need `--deep` here —
         // codesign will validate the inner signatures and stamp the
         // outer Info.plist seal.
-        sign_one(_bundle)?;
+        sign_one(bundle)?;
 
         if production {
-            run_codesign(&["--verify", "--strict", _bundle], _use_sudo)?;
+            run_codesign(&["--verify", "--strict", bundle], use_sudo)?;
         }
     }
     Ok(())

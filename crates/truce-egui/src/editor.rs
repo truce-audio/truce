@@ -308,19 +308,19 @@ impl<P: Params + ?Sized> EguiWindowHandler<P> {
 }
 
 impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
-    fn on_frame(&mut self, _window: &mut Window) {
+    fn on_frame(&mut self, window: &mut Window) {
         // Pick up host-driven `set_size` requests since the last frame.
         // baseview's macOS `Window::resize` doesn't synthesise a
         // `Resized` event, so the wgpu surface has to be reconfigured
         // here even though the OS-level resize happens via
-        // `_window.resize`. Linux/Win32 backends *do* fire `Resized`,
+        // `window.resize`. Linux/Win32 backends *do* fire `Resized`,
         // but reapplying the surface config is idempotent.
         let pending = unpack_size(self.pending_size.load(Ordering::Relaxed));
         if pending != self.size && pending.0 > 0 && pending.1 > 0 {
             let scale = self.scale.get();
             let phys_w = truce_gui::to_physical_px(pending.0, scale);
             let phys_h = truce_gui::to_physical_px(pending.1, scale);
-            _window.resize(baseview::Size::new(f64::from(pending.0), f64::from(pending.1)));
+            window.resize(baseview::Size::new(f64::from(pending.0), f64::from(pending.1)));
             if let Some(renderer) = self.renderer.as_mut() {
                 renderer.resize(phys_w, phys_h);
             }
