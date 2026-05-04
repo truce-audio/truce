@@ -17,7 +17,10 @@ impl ParamRange {
     /// stable: the result always converges to the bottom of the
     /// (degenerate) range rather than producing NaN or wrapping into
     /// nonsense.
-    #[must_use] 
+    // `min == max` detects mathematically zero-width ranges; an epsilon
+    // would mis-route a user-defined `Linear { 1.0, 1.0 + EPSILON }`.
+    #[allow(clippy::float_cmp)]
+    #[must_use]
     pub fn normalize(&self, plain: f64) -> f64 {
         match self {
             Self::Linear { min, max } => {
@@ -54,7 +57,10 @@ impl ParamRange {
     /// Degenerate bounds collapse to `min` (or `0.0` for `Enum` with
     /// `count <= 1`). See [`Self::normalize`] for the round-trip
     /// semantics.
-    #[must_use] 
+    // `min == max` detects mathematically zero-width ranges; matches
+    // `normalize`'s asymmetric handling so the pair stays stable.
+    #[allow(clippy::float_cmp)]
+    #[must_use]
     pub fn denormalize(&self, normalized: f64) -> f64 {
         let n = normalized.clamp(0.0, 1.0);
         match self {
@@ -132,6 +138,11 @@ impl ParamRange {
 
 #[cfg(test)]
 mod tests {
+    // Round-trip and degenerate-bounds tests assert exact float
+    // results (0.0, midpoints, fixed points) — equality is the
+    // contract being verified.
+    #![allow(clippy::float_cmp)]
+
     use super::*;
 
     #[test]

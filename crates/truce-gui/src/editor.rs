@@ -698,8 +698,7 @@ impl<P: Params + 'static> baseview::WindowHandler for BuiltinWindowHandler<P> {
         // intentionally stays a no-op (resize is disallowed per
         // `Editor::can_resize`'s `false` default), so this branch is
         // the only way scale changes propagate.
-        let cur_scale = editor.scale.get() as f32;
-        if cur_scale != self.last_applied_scale {
+        if let Some(cur_scale) = editor.scale.take_change(&mut self.last_applied_scale) {
             let (lw, lh) = editor.size();
             let phys_w = crate::platform::to_physical_px(lw, f64::from(cur_scale));
             let phys_h = crate::platform::to_physical_px(lh, f64::from(cur_scale));
@@ -707,7 +706,6 @@ impl<P: Params + 'static> baseview::WindowHandler for BuiltinWindowHandler<P> {
             if let Some(backend) = guard.as_mut() {
                 backend.resize(phys_w, phys_h);
             }
-            self.last_applied_scale = cur_scale;
             editor.request_repaint();
         }
 
@@ -1037,6 +1035,10 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
 
 #[cfg(test)]
 mod tests {
+    // Layout-coordinate assertions compare stored anchor values for
+    // bit-exact equality (no arithmetic between them).
+    #![allow(clippy::float_cmp)]
+
     use super::*;
     use crate::layout::{GridLayout, GridWidget, Layout, section, widgets};
     use crate::widgets::WidgetType;

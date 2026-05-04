@@ -899,13 +899,18 @@ fn scaffold_standalone_offline_render() {
     // and `mix_into` saturates after the file is consumed).
     let tail = &out_samples[cmp_len..];
     let tail_peak = tail.iter().fold(0.0_f32, |a, &b| a.max(b.abs()));
-    assert_eq!(
-        tail_peak,
-        0.0,
-        "[offline-render] post-EOF tail not silent: peak = {tail_peak:.3e} \
-         over {} samples",
-        tail.len(),
-    );
+    // Bit-exact zero is the contract — `mix_into` saturates by
+    // returning early, never touching the buffer past EOF.
+    #[allow(clippy::float_cmp)]
+    {
+        assert_eq!(
+            tail_peak,
+            0.0,
+            "[offline-render] post-EOF tail not silent: peak = {tail_peak:.3e} \
+             over {} samples",
+            tail.len(),
+        );
+    }
 }
 
 /// Generate a 1-second 20 Hz → 20 kHz exponential sweep as

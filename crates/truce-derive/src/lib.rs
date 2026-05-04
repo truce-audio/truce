@@ -696,6 +696,10 @@ fn gen_param_info_literal(f: &ParamField) -> Option<proc_macro2::TokenStream> {
     let default_plain = a.default.unwrap_or(0.0);
 
     if let Some(d) = a.default {
+        // Integer round-trip exactness checks — an epsilon-based
+        // comparison would silently accept fractional defaults like
+        // `2.5` for an `Int` / `Enum` param.
+        #[allow(clippy::float_cmp)]
         let invalid = match f.kind {
             ParamKind::Bool => d != 0.0 && d != 1.0,
             ParamKind::Int => !d.is_finite() || (d as i64 as f64) != d,
@@ -760,6 +764,10 @@ fn gen_field_constructor(f: &ParamField) -> proc_macro2::TokenStream {
     // `variant_count()` at expansion time without per-call const-eval
     // plumbing.
     if let Some(d) = a.default {
+        // Integer round-trip exactness checks — an epsilon-based
+        // comparison would silently accept fractional defaults like
+        // `2.5` for an `Int` / `Enum` param.
+        #[allow(clippy::float_cmp)]
         let err = match f.kind {
             ParamKind::Bool if d != 0.0 && d != 1.0 => Some(format!(
                 "BoolParam default {name} must be 0 or 1; got {d}"

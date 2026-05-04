@@ -177,6 +177,32 @@ impl EditorScale {
             );
         }
     }
+
+    /// Pick up a host-driven scale change since the last frame.
+    ///
+    /// Reads the current scale (narrowed to `f32`) and compares it
+    /// bit-identically against `last`. When the value moved, updates
+    /// `last` and returns `Some(cur)`; otherwise returns `None`.
+    ///
+    /// Used by every editor backend's per-frame loop to gate surface /
+    /// renderer reconfiguration on actual host scale events. Bit-equality
+    /// is the correct semantics — the cell is written verbatim from
+    /// host callbacks, never through accumulating arithmetic, so an
+    /// epsilon-based check would either thrash on noise (there is
+    /// none) or miss a legitimate `1.0 → 1.0001` host signal.
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::float_cmp,
+    )]
+    pub fn take_change(&self, last: &mut f32) -> Option<f32> {
+        let cur = self.get() as f32;
+        if cur != *last {
+            *last = cur;
+            Some(cur)
+        } else {
+            None
+        }
+    }
 }
 
 /// Convert a logical extent (in points) to physical pixels.

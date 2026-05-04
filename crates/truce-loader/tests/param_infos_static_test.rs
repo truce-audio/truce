@@ -9,6 +9,11 @@
 //! instance — this test asserts the two paths produce identical
 //! results and that the `LazyLock` returns the same Vec twice.
 
+// `ParamInfo` static-vs-instance equality is the *point* of this test —
+// any drift between the two paths is a real bug, so float fields must
+// compare bit-exact.
+#![allow(clippy::float_cmp)]
+
 use truce_derive::Params;
 use truce_params::Params;
 

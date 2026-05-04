@@ -170,6 +170,10 @@ pub fn discrete_index(norm: f64, count: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
+    // Tests compare exactly-representable float results (0.0, 1.0,
+    // 1/3, etc.) where bit-equality is the contract.
+    #![allow(clippy::float_cmp)]
+
     use super::*;
 
     #[test]

@@ -415,6 +415,10 @@ fn linear_resample(
 
 #[cfg(test)]
 mod tests {
+    // Silence + mono-broadcast assertions check bit-exact zeros and
+    // bit-equal channel samples — equality is the contract.
+    #![allow(clippy::float_cmp)]
+
     use super::*;
 
     fn write_wav(path: &Path, sr: u32, channels: u16, samples: &[i16]) {

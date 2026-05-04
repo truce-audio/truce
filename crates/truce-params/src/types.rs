@@ -157,7 +157,10 @@ impl IntParam {
     /// `#[param(default = ...)]`; a user-supplied float there is a
     /// programmer error, not a runtime condition we should
     /// silently absorb.
-    #[must_use] 
+    // `truncated as f64 == default` is the integer round-trip
+    // exactness check — epsilon would defeat its purpose.
+    #[allow(clippy::float_cmp)]
+    #[must_use]
     pub fn new(info: ParamInfo) -> Self {
         let default = info.default_plain;
         assert!(
@@ -227,7 +230,10 @@ impl<E: ParamEnum> EnumParam<E> {
     /// land on variant 0 without any signal that the default was
     /// invalid. Validate up front so the bug surfaces at plugin
     /// construction time.
-    #[must_use] 
+    // `f64::from(idx) == default` is the integer round-trip
+    // exactness check — epsilon would defeat its purpose.
+    #[allow(clippy::float_cmp)]
+    #[must_use]
     pub fn new(info: ParamInfo) -> Self {
         let default = info.default_plain;
         let count = E::variant_count();

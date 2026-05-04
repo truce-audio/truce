@@ -170,8 +170,7 @@ impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
         // cell since the last frame. The Resized path applies its own
         // scale changes inline, so this only fires when scale moved
         // without a corresponding window event.
-        let cur_scale = self.scale.get() as f32;
-        if cur_scale != self.last_applied_scale {
+        if let Some(cur_scale) = self.scale.take_change(&mut self.last_applied_scale) {
             let phys_w = truce_gui::to_physical_px(self.width, f64::from(cur_scale));
             let phys_h = truce_gui::to_physical_px(self.height, f64::from(cur_scale));
             self.slint_window
@@ -189,7 +188,6 @@ impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
             if let Some(ref mut blit) = self.blit {
                 blit.resize(&self.device, phys_w, phys_h);
             }
-            self.last_applied_scale = cur_scale;
             self.last_phys_w = phys_w;
             self.last_phys_h = phys_h;
         }

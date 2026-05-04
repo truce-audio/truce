@@ -255,15 +255,13 @@ impl<P: Params + ?Sized> EguiWindowHandler<P> {
         // `set_scale_factor` since the last frame. The `Resized` path
         // already applies its own scale changes inline, so this only
         // fires when scale moved without a corresponding window event.
-        let cur_scale = self.scale.get() as f32;
-        if cur_scale != self.last_applied_scale {
+        if let Some(cur_scale) = self.scale.take_change(&mut self.last_applied_scale) {
             let phys_w = truce_gui::to_physical_px(self.size.0, f64::from(cur_scale));
             let phys_h = truce_gui::to_physical_px(self.size.1, f64::from(cur_scale));
             renderer.resize(phys_w, phys_h);
-            self.last_applied_scale = cur_scale;
         }
 
-        let ppp = cur_scale;
+        let ppp = self.last_applied_scale;
         let (lw, lh) = self.size; // logical points
 
         let mut raw_input = egui::RawInput {

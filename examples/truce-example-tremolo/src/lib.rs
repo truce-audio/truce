@@ -268,6 +268,10 @@ truce::plugin! {
 
 #[cfg(test)]
 mod tests {
+    // Beats-per-cycle values are powers of two (0.125, 0.5, 1.0, 4.0)
+    // — bit-exact equality is the contract.
+    #![allow(clippy::float_cmp)]
+
     use super::*;
     use truce_core::events::TransportInfo;
 

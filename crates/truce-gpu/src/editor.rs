@@ -109,11 +109,9 @@ impl<P: Params + 'static> WindowHandler for GpuWindowHandler<P> {
             // cell since the last frame. There is no Resized fallback
             // here because the GPU path disallows host-driven resize
             // (see on_event), so the shared cell is the only writer.
-            let cur_scale = self.scale.get() as f32;
-            if cur_scale != self.last_applied_scale {
+            if let Some(cur_scale) = self.scale.take_change(&mut self.last_applied_scale) {
                 gpu.set_scale(cur_scale);
                 gpu.resize(self.current_size.0, self.current_size.1);
-                self.last_applied_scale = cur_scale;
             }
 
             if let Ok(mut inner) = self.inner.lock() {

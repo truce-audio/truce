@@ -232,6 +232,10 @@ impl AudioTapConsumer {
 
 #[cfg(test)]
 mod tests {
+    // Audio samples pushed through the ring are bit-identical on the
+    // way out — `assert_eq!(dest[0], s)` is the right shape.
+    #![allow(clippy::float_cmp)]
+
     use super::*;
 
     #[test]
