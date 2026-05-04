@@ -15,6 +15,8 @@ typedef void  (*fn_reset)(void*, double, uint32_t);
 typedef void  (*fn_process)(void*, const float**, float**, uint32_t, uint32_t, uint32_t,
                             const TruceAaxMidiEvent*, uint32_t,
                             const TruceAaxTransportSnapshot*);
+typedef uint32_t (*fn_output_event_count)(void*);
+typedef void     (*fn_output_event_at)(void*, uint32_t, TruceAaxMidiEvent*);
 typedef double (*fn_get_param)(void*, uint32_t);
 typedef void   (*fn_set_param)(void*, uint32_t, double);
 typedef void   (*fn_format_param)(void*, uint32_t, double, char*, uint32_t);
@@ -30,24 +32,26 @@ typedef void     (*fn_editor_idle)(void*);
 typedef int      (*fn_editor_get_size)(void*, uint32_t*, uint32_t*);
 
 struct TruceBridge {
-    fn_get_descriptor get_descriptor;
-    fn_get_param_info get_param_info;
-    fn_create         create;
-    fn_destroy        destroy;
-    fn_reset          reset;
-    fn_process        process;
-    fn_get_param      get_param;
-    fn_set_param      set_param;
-    fn_format_param   format_param;
-    fn_save_state     save_state;
-    fn_load_state     load_state;
-    fn_free_state     free_state;
-    fn_editor_create  editor_create;
-    fn_editor_open    editor_open;
-    fn_editor_close   editor_close;
-    fn_editor_idle    editor_idle;
-    fn_editor_get_size editor_get_size;
-    void*             lib_handle;
+    fn_get_descriptor      get_descriptor;
+    fn_get_param_info      get_param_info;
+    fn_create              create;
+    fn_destroy             destroy;
+    fn_reset               reset;
+    fn_process             process;
+    fn_output_event_count  output_event_count;
+    fn_output_event_at     output_event_at;
+    fn_get_param           get_param;
+    fn_set_param           set_param;
+    fn_format_param        format_param;
+    fn_save_state          save_state;
+    fn_load_state          load_state;
+    fn_free_state          free_state;
+    fn_editor_create       editor_create;
+    fn_editor_open         editor_open;
+    fn_editor_close        editor_close;
+    fn_editor_idle         editor_idle;
+    fn_editor_get_size     editor_get_size;
+    void*                  lib_handle;
 };
 
 // Load the Rust cdylib from the bundle's Resources directory.

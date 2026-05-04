@@ -224,10 +224,33 @@ void TruceAAX_Parameters::RenderAudio(
         midiEvents, midiCount,
         transport.valid ? &transport : nullptr);
 
-    // Plugin → host MIDI is not wired on AAX — see the matching note
-    // in `TruceAAX_Describe.cpp`. The Rust-side `output_events` queue
-    // still drains internally (so it doesn't grow unbounded), but the
-    // events are dropped here rather than forwarded to Pro Tools.
+    // Drain plugin-emitted MIDI to the host. The component descriptor
+    // built in `TruceAAX_Describe.cpp` registered an extra `LocalOutput`
+    // MIDI node past the end of `AAX_SInstrumentRenderInfo`; recover it
+    // by casting `ioRenderInfo` back to the extended struct that the
+    // runtime actually populates (the cast is sound — same offsets for
+    // the inherited fields, plus one extra slot for `mOutputNode`).
+    auto* extendedInfo = reinterpret_cast<TruceAaxExtendedRenderInfo*>(ioRenderInfo);
+    AAX_IMIDINode* outputNode = extendedInfo->mOutputNode;
+    if (outputNode) {
+        uint32_t outCount = g_bridge.output_event_count(mRustCtx);
+        for (uint32_t i = 0; i < outCount; i++) {
+            TruceAaxMidiEvent ev = {};
+            g_bridge.output_event_at(mRustCtx, i, &ev);
+            AAX_CMidiPacket pkt = {};
+            pkt.mTimestamp = ev.delta_frames;
+            pkt.mLength = 3;
+            pkt.mData[0] = ev.status;
+            pkt.mData[1] = ev.data1;
+            pkt.mData[2] = ev.data2;
+            // Two-byte messages (Program Change, Channel Pressure)
+            // ignore mData[2]; the SDK packet carries up to 4 bytes
+            // and Pro Tools reads only mLength bytes regardless.
+            const uint8_t st = ev.status & 0xF0;
+            if (st == 0xC0 || st == 0xD0) pkt.mLength = 2;
+            outputNode->PostMIDIPacket(&pkt);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

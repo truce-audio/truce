@@ -384,6 +384,20 @@ macro_rules! export_aax {
                 );
             }
             #[unsafe(no_mangle)]
+            pub unsafe extern "C" fn truce_aax_output_event_count(
+                ctx: *mut ::std::ffi::c_void,
+            ) -> u32 {
+                ::truce_aax::_output_event_count::<$plugin_type>(ctx)
+            }
+            #[unsafe(no_mangle)]
+            pub unsafe extern "C" fn truce_aax_output_event_at(
+                ctx: *mut ::std::ffi::c_void,
+                index: u32,
+                out: *mut ::truce_aax::TruceAaxMidiEvent,
+            ) {
+                ::truce_aax::_output_event_at::<$plugin_type>(ctx, index, out);
+            }
+            #[unsafe(no_mangle)]
             pub unsafe extern "C" fn truce_aax_get_param(
                 ctx: *mut ::std::ffi::c_void,
                 id: u32,
@@ -674,6 +688,96 @@ pub unsafe fn _process<P: PluginExport>(
 
         inst.plugin
             .process(&mut buffer, &inst.event_list, &mut context);
+    }
+}
+
+/// Map a truce `Event` body to a 3-byte AAX-shaped MIDI packet. Returns
+/// `None` for event types Pro Tools doesn't accept from plug-ins
+/// (MIDI 2.0, ParamChange, Transport, etc.). The AAX SDK's
+/// `AAX_IMIDINode::PostMIDIPacket` doc enumerates the supported set:
+/// NoteOn / NoteOff, Pitch bend, Polyphonic key pressure, Program
+/// change, Channel pressure, Bank-select-CC#0. Mirrors
+/// `truce_vst2::try_encode_vst2_midi` so the two formats stay in sync.
+fn try_encode_aax_midi(event: &Event) -> Option<TruceAaxMidiEvent> {
+    let (status, data1, data2) = match &event.body {
+        EventBody::NoteOn {
+            channel,
+            note,
+            velocity,
+        } => (0x90 | (channel & 0x0F), *note, (*velocity * 127.0) as u8),
+        EventBody::NoteOff {
+            channel,
+            note,
+            velocity,
+        } => (0x80 | (channel & 0x0F), *note, (*velocity * 127.0) as u8),
+        EventBody::Aftertouch {
+            channel,
+            note,
+            pressure,
+        } => (
+            0xA0 | (channel & 0x0F),
+            *note,
+            (pressure.clamp(0.0, 1.0) * 127.0) as u8,
+        ),
+        EventBody::ControlChange { channel, cc, value } => (
+            0xB0 | (channel & 0x0F),
+            *cc,
+            (value.clamp(0.0, 1.0) * 127.0) as u8,
+        ),
+        EventBody::ChannelPressure { channel, pressure } => (
+            0xD0 | (channel & 0x0F),
+            (pressure.clamp(0.0, 1.0) * 127.0) as u8,
+            0,
+        ),
+        EventBody::PitchBend { channel, value } => {
+            let n = ((value.clamp(-1.0, 1.0) + 1.0) * 8191.5).round() as u16;
+            (
+                0xE0 | (channel & 0x0F),
+                (n & 0x7F) as u8,
+                ((n >> 7) & 0x7F) as u8,
+            )
+        }
+        EventBody::ProgramChange { channel, program } => (0xC0 | (channel & 0x0F), *program, 0),
+        _ => return None,
+    };
+    Some(TruceAaxMidiEvent {
+        delta_frames: event.sample_offset,
+        status,
+        data1,
+        data2,
+        _pad: 0,
+    })
+}
+
+/// Number of plugin-emitted MIDI events the C++ template can drain
+/// from this block. The C++ side calls this immediately after
+/// `truce_aax_process` and follows with `_at` for each index. The
+/// per-call filter mirrors the iterator path in `_at` so the count and
+/// the indexable view agree.
+pub unsafe fn _output_event_count<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
+    let inst = unsafe { &*(ctx as *mut AaxInstance<P>) };
+    inst.output_events
+        .iter()
+        .filter(|e| try_encode_aax_midi(e).is_some())
+        .count() as u32
+}
+
+/// Read the i-th encodable output MIDI event into `out`. Indices are
+/// stable within a single block (the queue isn't modified between
+/// `process()` and the `_count` / `_at` drain).
+pub unsafe fn _output_event_at<P: PluginExport>(
+    ctx: *mut std::ffi::c_void,
+    index: u32,
+    out: *mut TruceAaxMidiEvent,
+) {
+    let inst = unsafe { &*(ctx as *mut AaxInstance<P>) };
+    if let Some(packet) = inst
+        .output_events
+        .iter()
+        .filter_map(try_encode_aax_midi)
+        .nth(index as usize)
+    {
+        unsafe { *out = packet };
     }
 }
 
@@ -1012,18 +1116,12 @@ pub unsafe fn _free_state(data: *mut u8, len: u32) {
     }
 }
 
-// Plugin → host MIDI is intentionally not wired on AAX. The C++
-// monolithic-parameters template the codegen relies on
-// (`AAX_CMonolithicParameters::StaticDescribe`) only registers
-// `AAX_eMIDINodeType_LocalInput` / `Global` / `Transport` nodes, and
-// `AAX_SInstrumentRenderInfo` (the per-render struct passed to
-// `RenderAudio`) has no `mOutputNode` field — the SDK simply doesn't
-// expose plugin → host MIDI through the helper. Adding it requires
-// dropping down to building the component descriptor by hand and
-// calling `AddMIDINode(..., AAX_eMIDINodeType_LocalOutput, ...)` on
-// the inner descriptor — a structural change tracked as a follow-up.
-//
-// CLAP / VST3 / VST2 / AU / LV2 each carry a `try_encode_<format>_midi`
-// helper plus a paired `cb_output_event_count` / `_at` pair; AAX skips
-// both for now. The Rust-side `output_events` queue is still drained
-// internally each `process()` so it doesn't grow unbounded.
+// Plugin → host MIDI is wired through `truce_aax_output_event_count`
+// / `truce_aax_output_event_at` (defined as `_output_event_*` above).
+// The C++ template's `RenderAudio` reads them after `truce_aax_process`
+// and posts each packet via `AAX_IMIDINode::PostMIDIPacket` on the
+// `LocalOutput` node it registered in its hand-built component
+// descriptor — replacing the old `AAX_CMonolithicParameters::StaticDescribe`
+// path, which only knew how to register `LocalInput` / `Global` /
+// `Transport` nodes. See `cargo-truce/templates/aax/TruceAAX_Describe.cpp`
+// for the descriptor build.

@@ -111,6 +111,17 @@ void truce_aax_process(void* ctx,
     const TruceAaxMidiEvent* midi_events, uint32_t num_midi_events,
     const TruceAaxTransportSnapshot* transport);
 
+/* Drain plugin-emitted MIDI events from the most recent process() call.
+ * Call _count first; iterate _at(0..count) to read each packet. The
+ * C++ template forwards each to AAX_IMIDINode::PostMIDIPacket on the
+ * LocalOutput node it registered in its hand-built component
+ * descriptor. Only encodable events (NoteOn/Off, CC, channel/poly
+ * pressure, pitch bend, program change) are surfaced — see
+ * `try_encode_aax_midi` in truce-aax/src/lib.rs for the predicate. */
+uint32_t truce_aax_output_event_count(void* ctx);
+void     truce_aax_output_event_at(void* ctx, uint32_t index,
+                                    TruceAaxMidiEvent* out);
+
 /* Parameters (plain values, not normalized). */
 double truce_aax_get_param(void* ctx, uint32_t id);
 void   truce_aax_set_param(void* ctx, uint32_t id, double value);
