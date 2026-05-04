@@ -11,6 +11,7 @@
 
 use std::ffi::c_void;
 
+use truce_core::cast::{len_u32, sample_pos_i64};
 use truce_core::events::{Event, EventBody, EventList, TransportInfo};
 
 use crate::urid::{Urid, UridMap};
@@ -74,7 +75,11 @@ impl<'a> AtomSequenceReader<'a> {
             self.walk(|frame, ev_type, body_ptr, body_bytes| {
                 if ev_type == self.urid.midi_event {
                     let slice = core::slice::from_raw_parts(body_ptr, body_bytes);
-                    f(frame.max(0) as u32, slice);
+                    // Frame offsets within a process block are
+                    // bounded by `block_size <= u32::MAX`.
+                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                    let frame_u32 = frame.max(0) as u32;
+                    f(frame_u32, slice);
                 }
             });
         }
@@ -202,18 +207,25 @@ impl<'a> AtomSequenceReader<'a> {
                         bar_beat = Some(v);
                     } else if key == self.urid.time_beats_per_bar {
                         beats_per_bar = Some(v);
-                        info.time_sig_num = v.round().clamp(0.0, f64::from(u8::MAX)) as u8;
+                        // Post-clamp f64 in `0..=255`; the lint can't
+                        // see through `clamp` and `round`.
+                        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                        let v_u8 = v.round().clamp(0.0, f64::from(u8::MAX)) as u8;
+                        info.time_sig_num = v_u8;
                     } else if key == self.urid.time_beat {
                         // Non-standard but some hosts still emit it — treat
                         // it as the absolute beat position directly. Stash
                         // here and only apply if bar/barBeat aren't given.
                         beat_direct = Some(v);
                     } else if key == self.urid.time_frame {
-                        info.position_samples = v as i64;
+                        info.position_samples = sample_pos_i64(v);
                     } else if key == self.urid.time_speed {
                         info.playing = v.abs() > 1e-9;
                     } else if key == self.urid.time_beat_unit {
-                        info.time_sig_den = v.round().clamp(0.0, f64::from(u8::MAX)) as u8;
+                        // Post-clamp f64 in `0..=255`.
+                        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                        let v_u8 = v.round().clamp(0.0, f64::from(u8::MAX)) as u8;
+                        info.time_sig_den = v_u8;
                     }
                 }
 
@@ -263,6 +275,10 @@ impl<'a> AtomSequenceReader<'a> {
 
     /// Read a numeric atom value as f64, handling the common number types
     /// LV2 hosts use for time:Position fields.
+    //
+    // The atom_long branch widens `i64 as f64`; sample-frame counts in
+    // host-delivered transport messages stay well below 2^52 in practice.
+    #[allow(clippy::cast_precision_loss)]
     unsafe fn read_atom_number(
         &self,
         atom_type: Urid,
@@ -448,7 +464,7 @@ pub unsafe fn write_midi_out_sequence(out: *mut AtomSequence, events: &EventList
             }
             let ev_ptr = body_start.add(offset).cast::<AtomEventHeader>();
             (*ev_ptr).time_frames = i64::from(frame);
-            (*ev_ptr).body.size = n as u32;
+            (*ev_ptr).body.size = len_u32(n);
             (*ev_ptr).body.type_ = urid.midi_event;
             let body_ptr = body_start.add(offset + core::mem::size_of::<AtomEventHeader>());
             core::ptr::copy_nonoverlapping(buf.as_ptr(), body_ptr, n);
@@ -458,7 +474,7 @@ pub unsafe fn write_midi_out_sequence(out: *mut AtomSequence, events: &EventList
             }
             offset += padded;
         }
-        (*out).atom.size = (header_size + offset) as u32;
+        (*out).atom.size = len_u32(header_size + offset);
     }
 }
 
@@ -506,7 +522,7 @@ pub unsafe fn write_time_position_sequence(
         // Reserve the whole event in-place so property writers can align.
         let ev_ptr = body_start.cast::<AtomEventHeader>();
         if ev_header_size + obj_header_size > capacity {
-            (*out).atom.size = body_header as u32;
+            (*out).atom.size = len_u32(body_header);
             return;
         }
         (*ev_ptr).time_frames = 0;
@@ -540,7 +556,7 @@ pub unsafe fn write_time_position_sequence(
             *entry.cast::<Urid>() = key;
             *entry.add(core::mem::size_of::<Urid>()).cast::<Urid>() = 0; // context
             let atom_hdr = entry.add(core::mem::size_of::<Urid>() * 2).cast::<Atom>();
-            (*atom_hdr).size = value_size as u32;
+            (*atom_hdr).size = len_u32(value_size);
             (*atom_hdr).type_ = atom_type;
             let value_ptr = entry.add(prop_header_size);
             write_value(value_ptr);
@@ -559,6 +575,9 @@ pub unsafe fn write_time_position_sequence(
         } else {
             4.0
         };
+        // `bar_start_beats / bpb` is a small bar count (rarely > 10⁵
+        // for a normal session); the cast is provably lossless here.
+        #[allow(clippy::cast_possible_truncation)]
         let bar_index = (info.bar_start_beats / bpb).round() as i64;
         let bar_beat = info.position_beats - info.bar_start_beats;
         // Bail at the first overflow so the partial atom-object we'd
@@ -577,7 +596,11 @@ pub unsafe fn write_time_position_sequence(
             });
         ok = ok
             && write_typed(urid.time_bar_beat, urid.atom_float, 4, &|p| {
-                *p.cast::<f32>() = bar_beat as f32;
+                // bar_beat is bounded by `time_sig_num` (typically 4-12);
+                // f32 has 7 decimals of precision, far more than needed.
+                #[allow(clippy::cast_possible_truncation)]
+                let v = bar_beat as f32;
+                *p.cast::<f32>() = v;
             });
         // LV2 spec types: `time:bar` is `xsd:long`, `time:frame` is
         // `xsd:long`, `time:beatsPerBar` is `xsd:int`, `time:beatUnit`
@@ -613,10 +636,10 @@ pub unsafe fn write_time_position_sequence(
 
         // `prop_offset` already includes `obj_header_size` — it started at
         // that value and advanced for each property written.
-        (*ev_ptr).body.size = prop_offset as u32;
+        (*ev_ptr).body.size = len_u32(prop_offset);
         // Sequence size = body header + event header + event body size.
         let event_total = ev_header_size + prop_offset;
-        (*out).atom.size = (body_header + event_total) as u32;
+        (*out).atom.size = len_u32(body_header + event_total);
     }
 }
 
@@ -663,7 +686,7 @@ mod tests {
         let seq = buf.as_mut_ptr().cast::<AtomSequence>();
         // Caller contract: atom.size = capacity on entry.
         unsafe {
-            (*seq).atom.size = truce_core::cast::len_u32(buf.len() - core::mem::size_of::<Atom>());
+            (*seq).atom.size = len_u32(buf.len() - core::mem::size_of::<Atom>());
         }
 
         // `bar_start_beats` must align to a whole-bar boundary for the
@@ -719,7 +742,7 @@ mod tests {
         let mut buf = vec![0u8; 4096];
         let seq = buf.as_mut_ptr().cast::<AtomSequence>();
         unsafe {
-            (*seq).atom.size = truce_core::cast::len_u32(buf.len() - core::mem::size_of::<Atom>());
+            (*seq).atom.size = len_u32(buf.len() - core::mem::size_of::<Atom>());
         }
 
         let mut source = EventList::new();

@@ -1,5 +1,6 @@
 //! Rotary knob control bound to a truce parameter.
 
+use truce_core::cast::param_f32;
 use truce_core::editor::PluginContext;
 
 const KNOB_SIZE: f32 = 60.0;
@@ -25,7 +26,7 @@ pub fn param_knob<P: ?Sized>(
     let desired = egui::vec2(KNOB_SIZE, KNOB_TOTAL_H);
     let (rect, response) = ui.allocate_exact_size(desired, egui::Sense::drag());
 
-    let mut value = state.get_param(id) as f32;
+    let mut value = param_f32(state.get_param(id));
 
     // Handle vertical drag
     if response.drag_started() {
@@ -72,6 +73,9 @@ pub fn param_knob<P: ?Sized>(
         // Value arc (filled portion)
         if value > 0.001 {
             let value_sweep = SWEEP * value;
+            // `value` is in `(0, 1]` so `value * 64.0` ≤ 64; the
+            // truncation to usize is bounded.
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
             let n = ((value * 64.0) as usize).max(2);
             let value_points = arc_points(center, KNOB_RADIUS, START_ANGLE, value_sweep, n);
             painter.add(egui::Shape::line(
@@ -111,6 +115,10 @@ pub fn param_knob<P: ?Sized>(
 }
 
 /// Generate points along a circular arc.
+//
+// `i / segments` arc parameterization; segments is small (knob arc
+// resolution, typically <= 64), so the f32 widening is exact.
+#[allow(clippy::cast_precision_loss)]
 fn arc_points(
     center: egui::Pos2,
     radius: f32,

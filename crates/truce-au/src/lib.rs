@@ -10,6 +10,7 @@ use std::ffi::CString;
 use std::os::raw::c_char;
 use std::slice;
 
+use truce_core::cast::{len_u32, param_f32, sample_pos_i64};
 use truce_core::editor::{ClosureBridge, Editor, PluginContext, RawWindowHandle, SendPtr};
 use truce_core::events::{Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
@@ -198,7 +199,7 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
             outputs,
             num_input_channels,
             num_output_channels,
-            num_frames as u32,
+            len_u32(num_frames),
         );
 
         let transport = if !transport_ptr.is_null() && (*transport_ptr).valid != 0 {
@@ -207,9 +208,12 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
                 playing: t.playing != 0,
                 recording: t.recording != 0,
                 tempo: t.tempo,
+                // The two `as u8` casts are post-clamped to `0..=255`.
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                 time_sig_num: t.time_sig_num.clamp(0, i32::from(u8::MAX)) as u8,
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                 time_sig_den: t.time_sig_den.clamp(0, i32::from(u8::MAX)) as u8,
-                position_samples: t.position_samples as i64,
+                position_samples: sample_pos_i64(t.position_samples),
                 position_seconds: 0.0,
                 position_beats: t.position_beats,
                 bar_start_beats: t.bar_start_beats,
@@ -237,7 +241,7 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
 unsafe extern "C" fn cb_param_count<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
     unsafe {
         let inst = &*ctx.cast::<AuInstance<P>>();
-        truce_core::cast::len_u32(inst.plugin.params().count())
+        len_u32(inst.plugin.params().count())
     }
 }
 
@@ -310,7 +314,7 @@ unsafe extern "C" fn cb_param_format_value<P: PluginExport>(
                 let len = bytes.len().min((out_len as usize) - 1);
                 std::ptr::copy_nonoverlapping(bytes.as_ptr().cast::<c_char>(), out, len);
                 *out.add(len) = 0;
-                len as u32
+                len_u32(len)
             }
             None => 0,
         }
@@ -340,7 +344,7 @@ unsafe extern "C" fn cb_state_save<P: PluginExport>(
         }
         std::ptr::copy_nonoverlapping(blob.as_ptr(), ptr, len);
         *out_data = ptr;
-        *out_len = len as u32;
+        *out_len = len_u32(len);
     }
 }
 
@@ -447,10 +451,11 @@ fn try_encode_au_midi(event: &Event) -> Option<AuMidiEvent> {
 unsafe extern "C" fn cb_output_event_count<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
     unsafe {
         let inst = &*ctx.cast::<AuInstance<P>>();
-        inst.output_events
+        let n = inst.output_events
             .iter()
             .filter(|e| try_encode_au_midi(e).is_some())
-            .count() as u32
+            .count();
+        len_u32(n)
     }
 }
 
@@ -556,7 +561,7 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                         // + get_plain) instead of two — the
                         // `#[derive(Params)]` impl can compute both in
                         // a single match-arm walk.
-                        let plain = params_for_set.set_normalized_returning_plain(id, value) as f32;
+                        let plain = param_f32(params_for_set.set_normalized_returning_plain(id, value));
                         truce_au_v2_host_set_param(
                             ctx_raw.as_ptr().cast_mut(),
                             id,
@@ -735,7 +740,7 @@ pub fn register_au<P: PluginExport>() {
             std::ptr::from_ref::<AuPluginDescriptor>(descriptor),
             std::ptr::from_ref::<AuCallbacks>(callbacks),
             param_descs.as_ptr(),
-            truce_core::cast::len_u32(param_descs.len()),
+            len_u32(param_descs.len()),
         );
     }
 }

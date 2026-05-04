@@ -8,6 +8,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use truce_core::cast::param_f32;
 use truce_core::editor::{Editor, PluginContext, RawWindowHandle};
 use truce_params::Params;
 
@@ -216,7 +217,7 @@ impl<P: Params + 'static> BuiltinEditor<P> {
     /// render — subsequent calls reuse it.
     pub fn render(&mut self) {
         let (w, h) = (self.layout.width(), self.layout.height());
-        let scale = self.scale.get() as f32;
+        let scale = self.scale.get_f32();
         let owned = self.build_snapshot_closures();
         let snapshot = owned.as_snapshot();
         let backend = self
@@ -267,16 +268,16 @@ impl<P: Params + 'static> BuiltinEditor<P> {
         let get_param: Box<dyn Fn(u32) -> f32> = match &ctx {
             Some(c) => {
                 let c = c.clone();
-                Box::new(move |id| c.get_param(id) as f32)
+                Box::new(move |id| param_f32(c.get_param(id)))
             }
-            None => Box::new(move |id| p_get.get_normalized(id).unwrap_or(0.0) as f32),
+            None => Box::new(move |id| param_f32(p_get.get_normalized(id).unwrap_or(0.0))),
         };
         let get_param_plain: Box<dyn Fn(u32) -> f32> = match &ctx {
             Some(c) => {
                 let c = c.clone();
-                Box::new(move |id| c.get_param_plain(id) as f32)
+                Box::new(move |id| param_f32(c.get_param_plain(id)))
             }
-            None => Box::new(move |id| p_get_plain.get_plain(id).unwrap_or(0.0) as f32),
+            None => Box::new(move |id| param_f32(p_get_plain.get_plain(id).unwrap_or(0.0))),
         };
         let format_param: Box<dyn Fn(u32) -> String> = match &ctx {
             Some(c) => {
@@ -315,7 +316,7 @@ impl<P: Params + 'static> BuiltinEditor<P> {
         let default_normalized: Box<dyn Fn(u32) -> f32> =
             Box::new(
                 move |id| match p_default.param_infos().iter().find(|i| i.id == id) {
-                    Some(info) => info.range.normalize(info.default_plain) as f32,
+                    Some(info) => param_f32(info.range.normalize(info.default_plain)),
                     None => 0.0,
                 },
             );
@@ -326,7 +327,7 @@ impl<P: Params + 'static> BuiltinEditor<P> {
             let plain = p_next.get_plain(id).unwrap_or(0.0);
             let max = info.range.max();
             let next = if plain >= max { 0.0 } else { plain + 1.0 };
-            info.range.normalize(next) as f32
+            param_f32(info.range.normalize(next))
         });
         let param_name: Box<dyn Fn(u32) -> String> = Box::new(move |id| {
             p_name
@@ -525,10 +526,10 @@ pub fn update_interaction<P: Params + 'static>(editor: &mut BuiltinEditor<P>) {
     }
     for region in &mut editor.interaction.knob_regions {
         if let Some(ref ctx) = editor.context {
-            region.normalized_value = ctx.get_param(region.param_id) as f32;
+            region.normalized_value = param_f32(ctx.get_param(region.param_id));
         } else {
             region.normalized_value =
-                editor.params.get_normalized(region.param_id).unwrap_or(0.0) as f32;
+                param_f32(editor.params.get_normalized(region.param_id).unwrap_or(0.0));
         }
     }
 }
@@ -861,7 +862,7 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
         self.scale
             .set(crate::platform::query_backing_scale(&parent));
         let scale = self.scale.get();
-        let scale_f32 = scale as f32;
+        let scale_f32 = self.scale.get_f32();
         self.backend = CpuBackend::new(w, h, scale_f32);
         self.context = Some(context);
 
@@ -1037,7 +1038,7 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
 mod tests {
     // Layout-coordinate assertions compare stored anchor values for
     // bit-exact equality (no arithmetic between them).
-    #![allow(clippy::float_cmp)]
+    #![allow(clippy::float_cmp, clippy::cast_precision_loss)]
 
     use super::*;
     use crate::layout::{GridLayout, GridWidget, Layout, section, widgets};

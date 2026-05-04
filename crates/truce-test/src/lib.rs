@@ -209,6 +209,9 @@ pub fn assert_fourcc_roundtrip<P: PluginExport>() {
             | (u32::from(code[1]) << 16)
             | (u32::from(code[2]) << 8)
             | u32::from(code[3]);
+        // Bit-extraction: each byte is a deliberate truncation of the
+        // packed `u32` into one of its four bytes.
+        #[allow(clippy::cast_possible_truncation)]
         let unpacked = [
             (packed >> 24) as u8,
             (packed >> 16) as u8,

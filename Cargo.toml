@@ -58,31 +58,6 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("cargo-cli
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
-# Mechanical / idiomatic lints that catch genuine non-Rust-isms.
-# Listed explicitly so they stay enforced even if `pedantic` is
-# later relaxed to `allow` or selectively masked. Each has a clean
-# `cargo clippy --fix` for newly-introduced violations.
-manual_let_else = "warn"
-uninlined_format_args = "warn"
-map_unwrap_or = "warn"
-redundant_closure_for_method_calls = "warn"
-cast_lossless = "warn"
-ptr_as_ptr = "warn"
-ptr_cast_constness = "warn"
-single_match_else = "warn"
-ref_as_ptr = "warn"
-borrow_as_ptr = "warn"
-items_after_statements = "warn"
-unnested_or_patterns = "warn"
-explicit_iter_loop = "warn"
-stable_sort_primitive = "warn"
-option_as_ref_cloned = "warn"
-manual_assert = "warn"
-needless_continue = "warn"
-implicit_clone = "warn"
-ignored_unit_patterns = "warn"
-elidable_lifetime_names = "warn"
-assigning_clones = "warn"
 
 # Workspace deps. `version =` is intentionally only set on path deps
 # whose crate is published to crates.io and consumed by another

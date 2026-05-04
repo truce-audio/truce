@@ -19,7 +19,9 @@ impl ParamRange {
     /// nonsense.
     // `min == max` detects mathematically zero-width ranges; an epsilon
     // would mis-route a user-defined `Linear { 1.0, 1.0 + EPSILON }`.
-    #[allow(clippy::float_cmp)]
+    // `i64 → f64` casts on `Discrete` bounds are lossless in practice
+    // (no sane param has > 2^52 steps).
+    #[allow(clippy::float_cmp, clippy::cast_precision_loss)]
     #[must_use]
     pub fn normalize(&self, plain: f64) -> f64 {
         match self {
@@ -59,7 +61,9 @@ impl ParamRange {
     /// semantics.
     // `min == max` detects mathematically zero-width ranges; matches
     // `normalize`'s asymmetric handling so the pair stays stable.
-    #[allow(clippy::float_cmp)]
+    // `i64 → f64` and `usize → f64` casts on `Discrete` / `Enum`
+    // bounds are lossless in practice (no sane param has > 2^52 steps).
+    #[allow(clippy::float_cmp, clippy::cast_precision_loss)]
     #[must_use]
     pub fn denormalize(&self, normalized: f64) -> f64 {
         let n = normalized.clamp(0.0, 1.0);
@@ -89,7 +93,10 @@ impl ParamRange {
     }
 
     /// Plain-value minimum.
-    #[must_use] 
+    // `i64 → f64` is lossless for the bounds in practice (no sane
+    // param has > 2^52 steps).
+    #[allow(clippy::cast_precision_loss)]
+    #[must_use]
     pub fn min(&self) -> f64 {
         match self {
             Self::Linear { min, .. } | Self::Logarithmic { min, .. } => *min,
@@ -99,7 +106,10 @@ impl ParamRange {
     }
 
     /// Plain-value maximum.
-    #[must_use] 
+    // `i64 → f64` and `usize → f64` are lossless for the bounds in
+    // practice.
+    #[allow(clippy::cast_precision_loss)]
+    #[must_use]
     pub fn max(&self) -> f64 {
         match self {
             Self::Linear { max, .. } | Self::Logarithmic { max, .. } => *max,
@@ -128,8 +138,14 @@ impl ParamRange {
             // mis-specified `Discrete` range can't produce a bogus
             // step count that callers might index with.
             Self::Discrete { min, max } => {
-                (max.saturating_sub(*min)).max(0).min(i64::from(u32::MAX)) as u32
+                // Result is `min`-clamped to `0..=u32::MAX`.
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                let n = (max.saturating_sub(*min)).max(0).min(i64::from(u32::MAX)) as u32;
+                n
             }
+            // Enum variant counts are well below `u32::MAX` in practice
+            // (typical < 100); the saturating_sub keeps `count = 0` honest.
+            #[allow(clippy::cast_possible_truncation)]
             Self::Enum { count } => (*count as u32).saturating_sub(1),
         };
         std::num::NonZeroU32::new(raw)
@@ -140,8 +156,14 @@ impl ParamRange {
 mod tests {
     // Round-trip and degenerate-bounds tests assert exact float
     // results (0.0, midpoints, fixed points) — equality is the
-    // contract being verified.
-    #![allow(clippy::float_cmp)]
+    // contract being verified. Cast truncations in this module are
+    // bounded by the literal `count: 4` test fixtures.
+    #![allow(
+        clippy::float_cmp,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_precision_loss,
+    )]
 
     use super::*;
 

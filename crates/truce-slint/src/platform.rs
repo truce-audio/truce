@@ -159,6 +159,9 @@ const fn build_unpremul_lut() -> [u32; 256] {
 ///
 /// Uses `PremultipliedRgbaColor` as the native pixel type. The returned
 /// buffer is reused across frames, sized to `width * height * 4`.
+// `(u32::from(channel) * inv_a) >> 16` is bounded in `[0, 255]` by the
+// LUT shape; the `as u8` truncations are lossless.
+#[allow(clippy::cast_possible_truncation)]
 pub fn render_to_rgba(
     window: &MinimalSoftwareWindow,
     width: u32,

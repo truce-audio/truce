@@ -120,6 +120,72 @@ pub const fn size_of_u32<T>() -> u32 {
     n as u32
 }
 
+/// Narrow a host-facing `f64` parameter / scale value to the `f32`
+/// the DSP loop and renderer expect.
+///
+/// The host parameter API surface is `f64` (CLAP, VST3, AU all
+/// deliver `double`); per-sample DSP and tiny-skia rendering work in
+/// `f32`. This helper hides that bridge so call sites don't repeat
+/// `as f32` with a `#[allow]`.
+///
+/// Truncation is invisible in practice — parameter values stay in
+/// `[-1e10, 1e10]` and `f32` carries 7 decimals of precision. NaN
+/// debug-asserts; in release it round-trips through `as f32` (which
+/// preserves NaN). Inf passes through unchanged.
+#[inline]
+#[must_use]
+pub fn param_f32(v: f64) -> f32 {
+    debug_assert!(
+        !v.is_nan(),
+        "param_f32: NaN input — caller's f64 parameter value is uninitialized?",
+    );
+    v as f32
+}
+
+/// Convert a host-supplied sample-position `f64` to the `i64` truce's
+/// `TransportInfo::position_samples` carries.
+///
+/// Hosts deliver play-cursor position as `double samplePosition`
+/// (CLAP / VST3 / AU all do). Truce stores it as `i64`, large enough
+/// for ~3000 years at 48 kHz. Non-finite inputs saturate at
+/// `i64::MIN` / `i64::MAX` rather than producing the unspecified
+/// integer the bare cast historically did.
+#[inline]
+#[must_use]
+pub fn sample_pos_i64(v: f64) -> i64 {
+    if v.is_nan() {
+        debug_assert!(false, "sample_pos_i64: NaN host sample position");
+        return 0;
+    }
+    if v >= i64::MAX as f64 {
+        return i64::MAX;
+    }
+    if v <= i64::MIN as f64 {
+        return i64::MIN;
+    }
+    v as i64
+}
+
+/// Convert a sample-count expressed as `f64` (e.g. `seconds *
+/// sample_rate`) to `usize`, saturating on overflow / negative /
+/// non-finite inputs.
+///
+/// Mirrors the "is_finite && >= 0" guard pattern that `truce-driver`
+/// open-coded across its offline-render path. NaN and negative
+/// inputs collapse to `0`; positive infinity and any value past
+/// `usize::MAX` clamp to `usize::MAX`.
+#[inline]
+#[must_use]
+pub fn sample_count_usize(v: f64) -> usize {
+    if v.is_nan() || v <= 0.0 {
+        return 0;
+    }
+    if v >= usize::MAX as f64 {
+        return usize::MAX;
+    }
+    v as usize
+}
+
 /// Map a discrete index in `[0, count - 1]` to a normalized value
 /// in `[0.0, 1.0]`. Returns `0.0` when `count <= 1` — there's only
 /// one valid index, so any input collapses to the bottom of the
@@ -273,6 +339,43 @@ mod tests {
     fn discrete_index_clamps_oob_norm() {
         assert_eq!(discrete_index(-0.5, 4), 0);
         assert_eq!(discrete_index(2.0, 4), 3);
+    }
+
+    #[test]
+    fn param_f32_basic() {
+        assert_eq!(param_f32(0.0), 0.0_f32);
+        assert_eq!(param_f32(1.0), 1.0_f32);
+        assert_eq!(param_f32(-1.0), -1.0_f32);
+        assert_eq!(param_f32(0.5), 0.5_f32);
+        assert!(param_f32(f64::INFINITY).is_infinite());
+        assert!(param_f32(f64::NEG_INFINITY).is_infinite());
+    }
+
+    #[test]
+    fn sample_pos_i64_basic() {
+        assert_eq!(sample_pos_i64(0.0), 0);
+        assert_eq!(sample_pos_i64(48_000.0), 48_000);
+        assert_eq!(sample_pos_i64(-1.0), -1);
+    }
+
+    #[test]
+    fn sample_pos_i64_saturates_on_non_finite() {
+        assert_eq!(sample_pos_i64(f64::INFINITY), i64::MAX);
+        assert_eq!(sample_pos_i64(f64::NEG_INFINITY), i64::MIN);
+    }
+
+    #[test]
+    fn sample_count_usize_basic() {
+        assert_eq!(sample_count_usize(0.0), 0);
+        assert_eq!(sample_count_usize(48_000.0), 48_000);
+    }
+
+    #[test]
+    fn sample_count_usize_collapses_invalid() {
+        assert_eq!(sample_count_usize(-1.0), 0);
+        assert_eq!(sample_count_usize(f64::NAN), 0);
+        assert_eq!(sample_count_usize(f64::INFINITY), usize::MAX);
+        assert_eq!(sample_count_usize(f64::NEG_INFINITY), 0);
     }
 
     #[test]

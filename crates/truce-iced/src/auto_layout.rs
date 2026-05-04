@@ -20,7 +20,11 @@ use crate::widgets;
 ///
 /// This is the zero-custom-code path: the plugin defines a layout and
 /// truce-iced generates the full UI automatically.
-#[must_use] 
+//
+// Grid spans widen `u32 as f32`; cell counts fit in editor pixel
+// dimensions, well below 2^23.
+#[allow(clippy::cast_precision_loss)]
+#[must_use]
 pub fn auto_view<'a, M: Clone + Debug + 'static, P: Params>(
     layout: &GridLayout,
     params: &'a ParamCache<P>,

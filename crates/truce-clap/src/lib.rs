@@ -64,6 +64,7 @@ use clap_sys::version::CLAP_VERSION;
 
 use truce_core::buffer::AudioBuffer;
 use truce_core::bus::ChannelConfig;
+use truce_core::cast::param_f32;
 use truce_core::editor::{ClosureBridge, Editor, PluginContext, RawWindowHandle, SendPtr};
 use truce_core::events::{Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
@@ -393,6 +394,11 @@ unsafe extern "C" fn clap_plugin_on_main_thread<P: PluginExport>(plugin: *const 
 /// the per-process `clap_process::transport` field. Hosts deliver
 /// transport state through whichever channel they prefer; the bit
 /// layout is identical, so the decode is too.
+//
+// CLAP transport positions arrive as `i64` fixed-point counts that
+// must be divided into `f64` seconds/beats; the `i64 as f64`
+// narrowing is bounded in practice by song-length (well below 2^52).
+#[allow(clippy::cast_precision_loss)]
 fn build_transport_info(t: &clap_event_transport) -> TransportInfo {
     let flags = t.flags;
     let beats_timeline = flags & CLAP_TRANSPORT_HAS_BEATS_TIMELINE != 0;
@@ -405,7 +411,11 @@ fn build_transport_info(t: &clap_event_transport) -> TransportInfo {
         } else {
             120.0
         },
+        // CLAP delivers `tsig_num` / `tsig_denom` as `i16`; the
+        // narrowing is bounded by the MIDI domain (≤ 255).
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         time_sig_num: if has_time_sig { t.tsig_num as u8 } else { 4 },
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         time_sig_den: if has_time_sig { t.tsig_denom as u8 } else { 4 },
         // CLAP doesn't expose sample-position in transport — tracked
         // by the plugin's own block cursor when needed.
@@ -480,23 +490,29 @@ unsafe fn convert_input_events<P: PluginExport>(
             match (*header).type_ {
                 CLAP_EVENT_NOTE_ON => {
                     let note_event = &*header.cast::<clap_event_note>();
+                    // CLAP delivers `channel`/`key` as `i16` but the
+                    // valid MIDI domain is `0..=15` / `0..=127`.
+                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                    let (channel, note) = (note_event.channel as u8, note_event.key as u8);
                     data.event_list.push(Event {
                         sample_offset,
                         body: EventBody::NoteOn {
-                            channel: note_event.channel as u8,
-                            note: note_event.key as u8,
-                            velocity: note_event.velocity as f32,
+                            channel,
+                            note,
+                            velocity: param_f32(note_event.velocity),
                         },
                     });
                 }
                 CLAP_EVENT_NOTE_OFF => {
                     let note_event = &*header.cast::<clap_event_note>();
+                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                    let (channel, note) = (note_event.channel as u8, note_event.key as u8);
                     data.event_list.push(Event {
                         sample_offset,
                         body: EventBody::NoteOff {
-                            channel: note_event.channel as u8,
-                            note: note_event.key as u8,
-                            velocity: note_event.velocity as f32,
+                            channel,
+                            note,
+                            velocity: param_f32(note_event.velocity),
                         },
                     });
                 }
@@ -933,7 +949,11 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                         // 14-bit signed [-1, 1] → unsigned 0..16383 with
                         // 8192 = center. LSB first per MIDI spec.
                         let n = truce_core::cast::midi_14bit_pb(*value);
+                        // Bit-extraction: `& 0x7F` already constrains
+                        // each result to the low 7 bits.
+                        #[allow(clippy::cast_possible_truncation)]
                         let lsb = (n & 0x7F) as u8;
+                        #[allow(clippy::cast_possible_truncation)]
                         let msb = ((n >> 7) & 0x7F) as u8;
                         let ev = clap_event_midi {
                             header: clap_event_header {
@@ -1201,7 +1221,11 @@ unsafe extern "C" fn state_save<P: PluginExport>(
             if written <= 0 {
                 return false;
             }
-            offset += written as usize;
+            // `written > 0` checked above; on 32-bit targets the cast
+            // narrows but blob.len() also fits in usize.
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let n = written as usize;
+            offset += n;
         }
 
         true
@@ -1227,7 +1251,11 @@ unsafe extern "C" fn state_load<P: PluginExport>(
             if read <= 0 {
                 break;
             }
-            blob.extend_from_slice(&buf[..read as usize]);
+            // `read > 0` checked above; CLAP plugin state blob fits
+            // in usize on every supported target.
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let n = read as usize;
+            blob.extend_from_slice(&buf[..n]);
         }
 
         if blob.is_empty() {

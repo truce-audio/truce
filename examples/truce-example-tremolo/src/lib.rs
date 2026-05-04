@@ -9,6 +9,7 @@
 //! ("—") for unknown fields in the readout.
 
 use truce::prelude::*;
+use truce_core::cast::len_u32;
 use truce_core::editor::PluginContext;
 use truce_egui::EguiEditor;
 use truce_egui::theme::{HEADER_BG, HEADER_TEXT};
@@ -133,15 +134,21 @@ impl PluginLogic for Tremolo {
         let transport = context.transport;
         let shape = self.params.shape.value();
         let rate = self.params.rate.value();
+        // Tempo, sample rate, beats-per-cycle, beat position — all
+        // host-supplied f64 values that stay in `f32`-safe ranges
+        // (tempo: ≤ 1000 BPM, sample rate: ≤ 192 kHz, beats: ≤ 1e6).
+        #[allow(clippy::cast_possible_truncation)]
         let beats_per_cycle = rate.beats_per_cycle() as f32;
 
         // Use host transport when it reports playing + a positive tempo.
         // Otherwise fall back to the free-running LFO.
         let host_sync = transport.playing && transport.tempo > 0.0;
+        #[allow(clippy::cast_possible_truncation)]
         let sample_rate = self.sample_rate as f32;
 
         // Per-sample phase increments. With host sync the increment is
         // derived from tempo; without it, from a fixed free-LFO rate.
+        #[allow(clippy::cast_possible_truncation)]
         let host_phase_inc = if host_sync {
             (transport.tempo as f32 / 60.0) / (beats_per_cycle * sample_rate)
         } else {
@@ -151,6 +158,7 @@ impl PluginLogic for Tremolo {
 
         // Host phase at block start: convert `position_beats` into the
         // normalized LFO phase by dividing by beats-per-cycle.
+        #[allow(clippy::cast_possible_truncation)]
         let mut host_phase = if host_sync {
             let beat = transport.position_beats as f32;
             (beat / beats_per_cycle).rem_euclid(1.0)
@@ -212,8 +220,8 @@ fn tremolo_ui(ctx: &egui::Context, state: &PluginContext<TremoloParams>) {
             ui.spacing_mut().item_spacing = egui::vec2(16.0, 0.0);
             ui.horizontal(|ui| {
                 param_knob(ui, state, P::Depth, "Depth");
-                param_selector(ui, state, P::Rate, "Rate", Rate::variant_count() as u32);
-                param_selector(ui, state, P::Shape, "Shape", Shape::variant_count() as u32);
+                param_selector(ui, state, P::Rate, "Rate", len_u32(Rate::variant_count()));
+                param_selector(ui, state, P::Shape, "Shape", len_u32(Shape::variant_count()));
             });
 
             // Keep the UI animating so the beat position readout updates
@@ -270,7 +278,7 @@ truce::plugin! {
 mod tests {
     // Beats-per-cycle values are powers of two (0.125, 0.5, 1.0, 4.0)
     // — bit-exact equality is the contract.
-    #![allow(clippy::float_cmp)]
+    #![allow(clippy::float_cmp, clippy::cast_precision_loss)]
 
     use super::*;
     use truce_core::events::TransportInfo;

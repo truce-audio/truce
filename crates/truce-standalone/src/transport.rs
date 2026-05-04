@@ -12,6 +12,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
+use truce_core::cast::sample_pos_i64;
 use truce_core::events::TransportInfo;
 
 /// Shared transport state. Cheap to `Arc::clone` between UI and
@@ -31,7 +32,10 @@ struct Inner {
 }
 
 impl Transport {
-    #[must_use] 
+    #[must_use]
+    // BPM and sample rate are positive, finite, and well below
+    // u64::MAX after the milli/micro scaling (max ~10^15).
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     pub fn new(bpm: f64, sample_rate: f64) -> Self {
         Self {
             inner: Arc::new(Inner {
@@ -43,10 +47,12 @@ impl Transport {
         }
     }
 
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     pub fn set_sample_rate(&self, sr: f64) {
         self.inner.sample_rate.store(sr as u64, Ordering::Relaxed);
     }
 
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     pub fn set_tempo(&self, bpm: f64) {
         self.inner
             .tempo_milli
@@ -65,7 +71,10 @@ impl Transport {
         self.inner.playing.fetch_xor(true, Ordering::Relaxed);
     }
 
-    #[must_use] 
+    // `u64 as f64` for milli-tempo decode; tempo values are bounded
+    // to musical BPM ranges, far below 2^52.
+    #[allow(clippy::cast_precision_loss)]
+    #[must_use]
     pub fn tempo(&self) -> f64 {
         self.inner.tempo_milli.load(Ordering::Relaxed) as f64 / 1000.0
     }
@@ -73,7 +82,16 @@ impl Transport {
     /// Called from the audio callback. Advances `position_beats` by
     /// `num_frames` at the current tempo (iff playing) and returns
     /// a snapshot `TransportInfo` for the plugin.
-    #[must_use] 
+    // Position deltas are bounded; the f64 → u64 casts saturate
+    // gracefully for the rare overflow case (~10^14 micro-beats).
+    // `u64 / usize as f64` for sample-rate / frame-count math is
+    // bounded by audio block sizes, well below 2^52.
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_precision_loss,
+    )]
+    #[must_use]
     pub fn tick_audio(&self, num_frames: usize) -> TransportInfo {
         let sr = self.inner.sample_rate.load(Ordering::Relaxed) as f64;
         let bpm = self.tempo();
@@ -95,7 +113,11 @@ impl Transport {
 
     /// Called from the UI thread (via `PluginContext::transport`).
     /// Non-mutating — just reads the current position.
-    #[must_use] 
+    //
+    // `u64 as f64` for sample-rate / micro-beats decode; both are
+    // bounded by musical/audio ranges, well below 2^52.
+    #[allow(clippy::cast_precision_loss)]
+    #[must_use]
     pub fn snapshot(&self) -> TransportInfo {
         let sr = self.inner.sample_rate.load(Ordering::Relaxed) as f64;
         let bpm = self.tempo();
@@ -112,7 +134,7 @@ impl Transport {
             time_sig_num: 4,
             time_sig_den: 4,
             position_samples: if bpm > 0.0 {
-                (position_beats * 60.0 / bpm * sr) as i64
+                sample_pos_i64(position_beats * 60.0 / bpm * sr)
             } else {
                 0
             },

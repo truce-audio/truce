@@ -46,6 +46,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use truce_core::buffer::AudioBuffer;
+use truce_core::cast::{len_u32, sample_count_usize};
 use truce_core::events::{Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
 use truce_core::info::PluginCategory;
@@ -228,6 +229,10 @@ impl Script {
     /// for clarity (e.g. mirroring a user-supplied delay variable
     /// that *can* be zero), use `wait_samples(0)` which doesn't
     /// trip the assertion.
+    //
+    // `ms as f64` for sample-rate math; ms in script wait calls is
+    // bounded by test runtime, far below 2^52.
+    #[allow(clippy::cast_precision_loss)]
     pub fn wait_ms(&mut self, ms: u64) {
         debug_assert!(
             ms != 0,
@@ -239,14 +244,7 @@ impl Script {
             44_100.0
         };
         let samples_f = (sr * ms as f64) / 1000.0;
-        // Saturate on overflow rather than wrap. `as usize` from f64 is
-        // saturating on Rust 1.45+ but this guard documents the intent and
-        // pairs with the `wait_samples` counterpart that takes a usize.
-        let samples = if samples_f.is_finite() && samples_f >= 0.0 {
-            samples_f as usize
-        } else {
-            usize::MAX
-        };
+        let samples = sample_count_usize(samples_f);
         self.cursor_samples = self.cursor_samples.saturating_add(samples);
     }
 
@@ -327,6 +325,9 @@ impl<P: PluginExport> DriverResult<P> {
                 "no audio captured (CaptureSpec::audio was false)",
             ));
         }
+        // Channel counts are < u16::MAX in practice (typical: 1-8);
+        // sample rate is < u32::MAX (typical: ≤ 192000).
+        #[allow(clippy::cast_possible_truncation)]
         let spec = hound::WavSpec {
             channels: self.output.len() as u16,
             sample_rate: self.sample_rate as u32,
@@ -489,6 +490,10 @@ impl<P: PluginExport> PluginDriver<P> {
     /// Build a script via a closure. Each `set_param` / `note_on`
     /// / etc. lands at the cursor's current sample offset; `wait_ms`
     /// advances the cursor.
+    //
+    // `usize as f64` for the sample-offset rescale. Test runs hold
+    // counts well below 2^52.
+    #[allow(clippy::cast_precision_loss)]
     pub fn script(mut self, f: impl FnOnce(&mut Script)) -> Self {
         // If a previous `.script` call already populated events at a
         // different SR (because `.sample_rate(...)` was called in
@@ -508,9 +513,9 @@ impl<P: PluginExport> PluginDriver<P> {
         if old_sr > 0.0 && (old_sr - new_sr).abs() > f64::EPSILON {
             let scale = new_sr / old_sr;
             self.script.cursor_samples =
-                ((self.script.cursor_samples as f64) * scale).round() as usize;
+                sample_count_usize(((self.script.cursor_samples as f64) * scale).round());
             for (off, _) in &mut self.script.events {
-                *off = ((*off as f64) * scale).round() as usize;
+                *off = sample_count_usize(((*off as f64) * scale).round());
             }
         }
         self.script.sample_rate = new_sr;
@@ -620,6 +625,11 @@ impl<P: PluginExport> PluginDriver<P> {
     /// `init` / `reset` / `process` / `restore_values` panics propagate
     /// unchanged so the underlying failure surfaces with its original
     /// stack rather than being wrapped.
+    //
+    // The driver loop widens `usize`-counted sample offsets and
+    // `i64` transport positions to `f64`. Driver test runs are
+    // bounded well below 2^52 frames.
+    #[allow(clippy::cast_precision_loss)]
     #[must_use]
     pub fn run(mut self) -> DriverResult<P> {
         // Build + activate.
@@ -677,7 +687,7 @@ impl<P: PluginExport> PluginDriver<P> {
         }
 
         let is_effect = P::info().category == PluginCategory::Effect;
-        let total_frames = (self.duration.as_secs_f64() * self.sample_rate) as usize;
+        let total_frames = sample_count_usize(self.duration.as_secs_f64() * self.sample_rate);
 
         // Capture buffers.
         let mut output: Vec<Vec<f32>> = if self.capture.audio {
@@ -712,7 +722,7 @@ impl<P: PluginExport> PluginDriver<P> {
         if build_sr > 0.0 && (build_sr - self.sample_rate).abs() > f64::EPSILON {
             let scale = self.sample_rate / build_sr;
             for (off, _) in &mut self.script.events {
-                *off = ((*off as f64) * scale).round() as usize;
+                *off = sample_count_usize(((*off as f64) * scale).round());
             }
         }
         self.script.sample_rate = self.sample_rate;
@@ -787,7 +797,7 @@ impl<P: PluginExport> PluginDriver<P> {
             for (off, body) in &script_events {
                 if *off >= cursor && *off < cursor + block_len {
                     event_list.push(Event {
-                        sample_offset: (*off - cursor) as u32,
+                        sample_offset: len_u32(*off - cursor),
                         body: body.clone(),
                     });
                 }

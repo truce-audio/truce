@@ -15,6 +15,8 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, mpsc};
 use std::thread;
 
+use truce_core::cast::sample_count_usize;
+
 /// Pre-decoded WAV at the device's sample rate and channel count.
 /// `Send + Sync` (just owns a `Vec<f32>` and an atomic) so it can
 /// be cloned-by-`Arc` into the audio worker.
@@ -241,6 +243,8 @@ impl CaptureSink {
     /// (parent dir missing, permission denied, invalid path, etc.).
     /// Background writer panics surface only at `finish()` time.
     pub fn create(path: &Path, sample_rate: f64, channels: usize) -> Result<Self, String> {
+        // Channel count < u16::MAX; sample rate < u32::MAX.
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let spec = hound::WavSpec {
             channels: channels as u16,
             sample_rate: sample_rate as u32,
@@ -396,13 +400,15 @@ fn linear_resample(
     target_sr: f64,
 ) -> Vec<f32> {
     let ratio = target_sr / src_sr;
-    let target_frames = ((src_frames as f64) * ratio).round() as usize;
+    let target_frames = sample_count_usize(((src_frames as f64) * ratio).round());
     let mut out = vec![0.0_f32; target_frames * channels];
     let inv_ratio = src_sr / target_sr;
     for f in 0..target_frames {
         let src_pos = f as f64 * inv_ratio;
-        let lo = src_pos.floor() as usize;
+        let lo = sample_count_usize(src_pos.floor());
         let hi = (lo + 1).min(src_frames - 1);
+        // `t` is the fractional part of `src_pos`, always in `[0, 1)`.
+        #[allow(clippy::cast_possible_truncation)]
         let t = (src_pos - lo as f64) as f32;
         for ch in 0..channels {
             let a = src[lo * channels + ch];

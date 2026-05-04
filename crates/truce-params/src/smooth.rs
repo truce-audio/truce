@@ -60,6 +60,9 @@ impl Smoother {
     }
 
     /// Get next smoothed value, advancing one sample.
+    // Smoothed param values stay in `[-1e10, 1e10]`; f32 precision
+    // is enough for the per-sample DSP path.
+    #[allow(clippy::cast_possible_truncation)]
     #[inline]
     pub fn next(&self, target: f64) -> f32 {
         let current = self.current.load();
@@ -94,6 +97,8 @@ impl Smoother {
     }
 
     /// Current smoothed value without advancing.
+    // See `next` for why narrowing to f32 here is invisible.
+    #[allow(clippy::cast_possible_truncation)]
     #[inline]
     pub fn current(&self) -> f32 {
         self.current.load() as f32

@@ -22,6 +22,7 @@ use std::sync::{Arc, Mutex, mpsc};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
 use truce_core::buffer::AudioBuffer;
+use truce_core::cast::sample_count_usize;
 use truce_core::events::{Event, EventBody, EventList};
 use truce_core::export::PluginExport;
 use truce_core::info::PluginCategory;
@@ -821,6 +822,9 @@ fn build_and_play_input_stream(
     sample_rate: f64,
     ring: Arc<Mutex<Vec<f32>>>,
 ) -> Result<cpal::Stream, Box<dyn std::error::Error>> {
+    // Channel count < u16::MAX (typical: 1-8); sample rate <
+    // u32::MAX (typical: ≤ 192000).
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let input_config = cpal::StreamConfig {
         channels: channels as u16,
         sample_rate: cpal::SampleRate(sample_rate as u32),
@@ -831,7 +835,7 @@ fn build_and_play_input_stream(
             &input_config,
             move |data: &[f32], _: &cpal::InputCallbackInfo| {
                 if let Ok(mut buf) = ring.lock() {
-                    let max_size = (sample_rate as usize) * channels / 10;
+                    let max_size = sample_count_usize(sample_rate) * channels / 10;
                     buf.extend_from_slice(data);
                     if buf.len() > max_size {
                         let drain = buf.len() - max_size;

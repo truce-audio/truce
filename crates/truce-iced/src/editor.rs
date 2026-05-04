@@ -650,7 +650,11 @@ impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBase
                         // baseview reports logical points; iced widgets
                         // hit-test in logical units against
                         // `viewport.logical_size()`, so forward as-is.
-                        runtime.queue_cursor_move(position.x as f32, position.y as f32);
+                        // Window dimensions stay well below 2^23 — the
+                        // f64 → f32 narrowing is invisible.
+                        #[allow(clippy::cast_possible_truncation)]
+                        let pos = (position.x as f32, position.y as f32);
+                        runtime.queue_cursor_move(pos.0, pos.1);
                     }
                     baseview::MouseEvent::CursorLeft => {
                         runtime

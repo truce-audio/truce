@@ -316,6 +316,9 @@ impl<P: Params + 'static> HotEditor<P> {
                 const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
                 const STOP_CHECK: std::time::Duration = std::time::Duration::from_millis(50);
                 const LOCK_WAIT: std::time::Duration = std::time::Duration::from_millis(50);
+                // Both constants are sub-second; the u128 → u32 cast
+                // is bounded.
+                #[allow(clippy::cast_possible_truncation)]
                 let chunks = (POLL_INTERVAL.as_millis() / STOP_CHECK.as_millis()) as u32;
 
                 let mut last_seen_counter: u64 = 0;

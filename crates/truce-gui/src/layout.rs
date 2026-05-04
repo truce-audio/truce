@@ -39,6 +39,8 @@ pub const ROWS_ROW_GAP: f32 = 19.0;
 /// `interaction::open_dropdown` (popup-anchor math) need to agree.
 pub const DROPDOWN_BOX_HEIGHT: f32 = 20.0;
 
+use truce_core::cast::len_u32;
+
 /// A widget definition for the layout — either explicit type or auto-detected.
 #[derive(Clone, Debug)]
 pub struct KnobDef {
@@ -183,7 +185,10 @@ pub struct PluginLayout {
 
 impl PluginLayout {
     /// Calculate default window size based on the layout.
-    #[must_use] 
+    // Window dimensions in logical pixels stay well below 2^23, so the
+    // f32 ↔ u32 narrowings are invisible in practice.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)]
+    #[must_use]
     pub fn compute_size(rows: &[KnobRow], knob_size: f32) -> (u32, u32) {
         let header_h = 21.0;
         let row_h = knob_size + 19.0;
@@ -555,7 +560,7 @@ impl GridLayout {
             .map(|w| w.col + w.col_span)
             .max()
             .unwrap_or(0);
-        let cols = (max_widgets_per_section as u32)
+        let cols = len_u32(max_widgets_per_section)
             .max(max_explicit_col)
             .max(1);
 
@@ -649,7 +654,9 @@ impl GridLayout {
     }
 
     /// Compute the window size from the grid.
-    #[must_use] 
+    // Window dimensions in logical pixels stay well below 2^23.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)]
+    #[must_use]
     pub fn compute_size(&self) -> (u32, u32) {
         let max_col = self
             .widgets
@@ -791,7 +798,7 @@ impl From<PluginLayout> for GridLayout {
         let mut sections = Vec::new();
 
         for (grid_row, row) in pl.rows.iter().enumerate() {
-            let grid_row = grid_row as u32;
+            let grid_row = len_u32(grid_row);
             if let Some(label) = row.label {
                 sections.push((grid_row, label));
             }

@@ -44,6 +44,8 @@ pub fn format_param_value(info: &ParamInfo, value: f64) -> String {
             // Convention: pan params are normalized to [-1.0, 1.0]. Round
             // to nearest integer percent first so the dead-zone test and
             // L/R label agree (e.g. -0.004 → 0% → "C", -0.006 → -1% → "1L").
+            // Result is bounded by `[-100, 100]` after clamp to `[-1, 1]`.
+            #[allow(clippy::cast_possible_truncation)]
             let pct = (value * 100.0).round() as i32;
             match pct.cmp(&0) {
                 std::cmp::Ordering::Equal => "C".to_string(),

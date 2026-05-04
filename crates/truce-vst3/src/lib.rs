@@ -10,6 +10,7 @@ use std::ffi::CString;
 use std::os::raw::c_char;
 use std::slice;
 
+use truce_core::cast::{len_u32, sample_pos_i64};
 use truce_core::editor::{ClosureBridge, Editor, PluginContext, RawWindowHandle, SendPtr};
 use truce_core::events::{Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
@@ -185,6 +186,9 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
                         // of u32::MAX). Now data2 == 127 maps to exactly u32::MAX.
                         let type_id = ev.data1;
                         let data2_clamped = u64::from(ev.data2.min(127));
+                        // `data2_clamped <= 127`, so the product fits
+                        // in u32 by construction.
+                        #[allow(clippy::cast_possible_truncation)]
                         let value = (data2_clamped * u64::from(u32::MAX) / 127) as u32;
                         let note = ev._pad;
                         match type_id {
@@ -252,7 +256,7 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
             outputs,
             num_input_channels,
             num_output_channels,
-            num_frames as u32,
+            len_u32(num_frames),
         );
 
         // Apply sample-accurate parameter changes.
@@ -262,6 +266,9 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
             for pc in changes {
                 inst.plugin.params().set_plain(pc.id, pc.value);
                 inst.event_list.push(Event {
+                    // VST3 delivers sampleOffset as int32; per-block
+                    // offsets are non-negative and bounded by block size.
+                    #[allow(clippy::cast_sign_loss)]
                     sample_offset: pc.sample_offset as u32,
                     body: EventBody::ParamChange {
                         id: pc.id,
@@ -283,9 +290,13 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
                 playing: t.playing != 0,
                 recording: t.recording != 0,
                 tempo: t.tempo,
+                // VST3 hosts deliver `i32` time-signature fields; the
+                // u8 narrowing is bounded by the MIDI domain (≤ 255).
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                 time_sig_num: t.time_sig_num as u8,
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                 time_sig_den: t.time_sig_den as u8,
-                position_samples: t.position_samples as i64,
+                position_samples: sample_pos_i64(t.position_samples),
                 position_seconds: 0.0,
                 position_beats: t.position_beats,
                 bar_start_beats: t.bar_start_beats,
@@ -317,7 +328,7 @@ unsafe extern "C" fn cb_param_count<P: PluginExport>(ctx: *mut std::ffi::c_void)
         // free per-call but consistent with the cache-first pattern
         // the rest of the file uses.
         let inst = &*ctx.cast::<Vst3Instance<P>>();
-        truce_core::cast::len_u32(inst.param_ranges.len())
+        len_u32(inst.param_ranges.len())
     }
 }
 
@@ -392,7 +403,7 @@ unsafe extern "C" fn cb_param_format<P: PluginExport>(
                 let len = bytes.len().min((out_len as usize) - 1);
                 std::ptr::copy_nonoverlapping(bytes.as_ptr().cast::<c_char>(), out, len);
                 *out.add(len) = 0;
-                len as u32
+                len_u32(len)
             }
             None => 0,
         }
@@ -422,7 +433,7 @@ unsafe extern "C" fn cb_state_save<P: PluginExport>(
         }
         std::ptr::copy_nonoverlapping(blob.as_ptr(), ptr, len);
         *out_data = ptr;
-        *out_len = len as u32;
+        *out_len = len_u32(len);
     }
 }
 
@@ -562,7 +573,7 @@ fn try_encode_vst3_midi(event: &Event) -> Option<Vst3MidiEvent> {
 unsafe extern "C" fn cb_get_output_event_count<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
     unsafe {
         let inst = &*ctx.cast::<Vst3Instance<P>>();
-        truce_core::cast::len_u32(
+        len_u32(
             inst.output_events
                 .iter()
                 .filter(|e| try_encode_vst3_midi(e).is_some())
@@ -893,7 +904,7 @@ pub fn register_vst3<P: PluginExport>() {
             std::ptr::from_ref::<Vst3PluginDescriptor>(descriptor),
             std::ptr::from_ref::<Vst3Callbacks>(callbacks),
             param_descs.as_ptr(),
-            truce_core::cast::len_u32(param_descs.len()),
+            len_u32(param_descs.len()),
         );
     }
 }

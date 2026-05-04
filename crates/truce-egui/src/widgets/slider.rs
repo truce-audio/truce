@@ -1,5 +1,6 @@
 //! Parameter slider bound to truce's gesture protocol.
 
+use truce_core::cast::param_f32;
 use truce_core::editor::PluginContext;
 
 /// Show a horizontal slider bound to a truce parameter.
@@ -12,7 +13,7 @@ pub fn param_slider<P: ?Sized>(
     id: impl Into<u32>,
 ) -> egui::Response {
     let id = id.into();
-    let mut value = state.get_param(id) as f32;
+    let mut value = param_f32(state.get_param(id));
     let response = ui.add(egui::Slider::new(&mut value, 0.0..=1.0));
     if response.drag_started() {
         state.begin_edit(id);

@@ -2,6 +2,8 @@
 //!
 //! Tracks widget hit regions and maps mouse drags to parameter value changes.
 
+use truce_core::cast::{discrete_index, discrete_norm, param_f32};
+
 use crate::layout::{
     DROPDOWN_BOX_HEIGHT, GRID_GAP, GRID_PADDING, GridLayout, Layout, PluginLayout, ROWS_COLUMN_GAP,
     ROWS_LAYOUT_TOP, ROWS_ROW_GAP, ROWS_SECTION_LABEL_HEIGHT, WidgetKind, compute_section_offsets,
@@ -152,7 +154,12 @@ impl BaseviewTranslator {
         };
         match m {
             baseview::MouseEvent::CursorMoved { position, .. } => {
+                // baseview reports cursor in f64 logical points; the
+                // hit-test math is f32. Window dimensions never reach
+                // 2^23, so the narrowing is invisible.
+                #[allow(clippy::cast_possible_truncation)]
                 let x = position.x as f32;
+                #[allow(clippy::cast_possible_truncation)]
                 let y = position.y as f32;
                 self.last_cursor = (x, y);
                 Some(InputEvent::MouseMove { x, y })
@@ -309,6 +316,9 @@ impl InteractionState {
     }
 
     /// Rebuild hit regions from the layout. Call after render.
+    // Layout col counts widen `u32 as f32`; column counts are
+    // bounded by the editor's row width.
+    #[allow(clippy::cast_precision_loss)]
     pub fn build_regions(&mut self, layout: &PluginLayout) {
         self.knob_regions.clear();
 
@@ -445,6 +455,10 @@ impl InteractionState {
     /// Test if a point is inside the open dropdown popup.
     /// Returns the absolute option index (accounting for scroll) if hit, or None.
     #[must_use] 
+    // Hit-test math operates on f32 logical pixels bounded by the
+    // window size; `(my - py - padding) / item_h` lands in
+    // `[0, visible_count]`.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     pub fn dropdown_popup_hit(&self, mx: f32, my: f32) -> Option<usize> {
         let dd = self.dropdown.as_ref()?;
         let (px, py, pw, ph) = dd.popup_rect;
@@ -463,6 +477,7 @@ impl InteractionState {
     }
 
     /// Update the hovered option in the open dropdown popup.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     pub fn dropdown_update_hover(&mut self, mx: f32, my: f32) {
         if let Some(ref mut dd) = self.dropdown {
             let (px, py, pw, ph) = dd.popup_rect;
@@ -497,6 +512,9 @@ impl InteractionState {
     }
 
     /// Scroll the dropdown popup by `delta` items (positive = down, negative = up).
+    // Dropdown option counts stay below i32::MAX in practice (UI lists
+    // never reach 2 billion).
+    #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap, clippy::cast_sign_loss)]
     pub fn dropdown_scroll(&mut self, delta: i32) {
         if let Some(ref mut dd) = self.dropdown {
             let max_offset = dd.options.len().saturating_sub(dd.visible_count);
@@ -514,6 +532,10 @@ impl InteractionState {
     }
 
     /// Rebuild hit regions from a grid layout.
+    //
+    // Grid cell coordinates widen `u32 as f32`; cells indices fit in
+    // an editor's logical pixel range.
+    #[allow(clippy::cast_precision_loss)]
     pub fn build_regions_grid(&mut self, layout: &GridLayout) {
         self.knob_regions.clear();
 
@@ -592,6 +614,9 @@ pub fn dispatch(
 /// window rather than being clipped to the layout's bounding box —
 /// otherwise a popup that wouldn't fit below the button flips above
 /// it even when there's room below in the outer window.
+// Window dimensions widen `u32 as f32`; window sizes are bounded by
+// display dimensions, well below 2^23.
+#[allow(clippy::cast_precision_loss)]
 pub fn dispatch_in(
     events: &[InputEvent],
     layout: &Layout,
@@ -746,7 +771,7 @@ fn handle_mouse_down(
             let dd = state.dropdown.as_ref().unwrap();
             let param_id = dd.param_id;
             let count = dd.options.len();
-            let new_norm = truce_core::cast::discrete_norm(option_idx, count) as f32;
+            let new_norm = param_f32(discrete_norm(option_idx, count));
             edits.push(ParamEdit::Begin { id: param_id });
             edits.push(ParamEdit::Set {
                 id: param_id,
@@ -811,6 +836,9 @@ fn handle_mouse_down(
     }
 }
 
+// Layout / hit-test math is f32 logical pixels bounded by window size;
+// `((avail_h - padding * 2.0) / item_h)` lands in `[0, options.len()]`.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)]
 fn open_dropdown(
     region_idx: usize,
     param_id: u32,
@@ -825,7 +853,7 @@ fn open_dropdown(
     }
     let count = options.len();
     let current_norm = (snapshot.get_param)(param_id);
-    let selected = truce_core::cast::discrete_index(f64::from(current_norm), count);
+    let selected = discrete_index(f64::from(current_norm), count);
     let region = &state.knob_regions[region_idx];
 
     let item_h = 18.0f32;
@@ -911,7 +939,7 @@ fn apply_drag(
             if let Some((pid, new_norm)) = state.update_slider_drag(x) {
                 edits.push(ParamEdit::Set {
                     id: pid,
-                    normalized: new_norm as f32,
+                    normalized: param_f32(new_norm),
                 });
             }
         }
@@ -919,7 +947,7 @@ fn apply_drag(
             if let Some((pid, new_norm)) = state.update_drag(y) {
                 edits.push(ParamEdit::Set {
                     id: pid,
-                    normalized: new_norm as f32,
+                    normalized: param_f32(new_norm),
                 });
             }
         }

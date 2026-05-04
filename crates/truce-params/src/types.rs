@@ -55,6 +55,9 @@ impl FloatParam {
     /// per-sample DSP loop that runs in `f32`. If you need full host
     /// precision (parameter export, state serialization, the format
     /// wrappers' read-back paths), call [`Self::value_f64`] instead.
+    // Param values stay in `[-1e10, 1e10]` in practice; f32 has enough
+    // precision for the per-sample DSP read.
+    #[allow(clippy::cast_possible_truncation)]
     #[inline]
     pub fn value(&self) -> f32 {
         self.value.load() as f32
@@ -158,8 +161,13 @@ impl IntParam {
     /// programmer error, not a runtime condition we should
     /// silently absorb.
     // `truncated as f64 == default` is the integer round-trip
-    // exactness check — epsilon would defeat its purpose.
-    #[allow(clippy::float_cmp)]
+    // exactness check — epsilon would defeat its purpose. The
+    // `as i64` truncation is the round-trip's whole point.
+    #[allow(
+        clippy::float_cmp,
+        clippy::cast_possible_truncation,
+        clippy::cast_precision_loss,
+    )]
     #[must_use]
     pub fn new(info: ParamInfo) -> Self {
         let default = info.default_plain;
@@ -231,8 +239,13 @@ impl<E: ParamEnum> EnumParam<E> {
     /// invalid. Validate up front so the bug surfaces at plugin
     /// construction time.
     // `f64::from(idx) == default` is the integer round-trip
-    // exactness check — epsilon would defeat its purpose.
-    #[allow(clippy::float_cmp)]
+    // exactness check — epsilon would defeat its purpose. The
+    // `as u32` truncation is the round-trip's whole point.
+    #[allow(
+        clippy::float_cmp,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+    )]
     #[must_use]
     pub fn new(info: ParamInfo) -> Self {
         let default = info.default_plain;
@@ -274,11 +287,20 @@ impl<E: ParamEnum> EnumParam<E> {
     }
 
     pub fn value(&self) -> E {
-        E::from_index(self.value.load(Ordering::Relaxed) as usize)
+        // u32 → usize widens on 64-bit, narrows nowhere we ship to;
+        // the lint trips because `usize` is target-dependent.
+        #[allow(clippy::cast_possible_truncation)]
+        let idx = self.value.load(Ordering::Relaxed) as usize;
+        E::from_index(idx)
     }
 
     pub fn set_value(&self, v: E) {
-        self.value.store(v.to_index() as u32, Ordering::Relaxed);
+        // Enum variant indices come from `ParamEnum::to_index`, whose
+        // valid range is `0..variant_count()`; truncation past `u32::MAX`
+        // would mean a > 4-billion-variant enum.
+        #[allow(clippy::cast_possible_truncation)]
+        let idx = v.to_index() as u32;
+        self.value.store(idx, Ordering::Relaxed);
     }
 
     pub fn set_index(&self, idx: u32) {
@@ -299,9 +321,13 @@ impl<E: ParamEnum> EnumParam<E> {
     /// state is read. The `#[derive(Params)]` macro calls it as
     /// `<EnumParam<E>>::format_by_index(value)` so the field type
     /// supplies `E`.
-    #[must_use] 
+    #[must_use]
     pub fn format_by_index(value: f64) -> String {
-        E::from_index(value.round() as usize).name().to_string()
+        // `value` is a normalized f64 in `[0, count - 1]`; the round
+        // → usize cast is bounded by the variant count.
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let idx = value.round() as usize;
+        E::from_index(idx).name().to_string()
     }
 }
 

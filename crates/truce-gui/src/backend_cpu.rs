@@ -8,6 +8,7 @@
 //! and primitives stay sharp on Retina displays.
 
 use tiny_skia::{Paint, PathBuilder, Pixmap, PixmapPaint, Stroke, Transform};
+use truce_core::cast::len_u32;
 
 use crate::render::{ImageId, RenderBackend};
 use crate::theme::Color;
@@ -149,6 +150,7 @@ impl RenderBackend for CpuBackend {
             .stroke_path(&path, &paint, &stroke, Transform::identity(), None);
     }
 
+    #[allow(clippy::cast_precision_loss)]
     fn stroke_arc(
         &mut self,
         cx: f32,
@@ -252,9 +254,9 @@ impl RenderBackend for CpuBackend {
             .find(|(_, s)| s.is_none())
         {
             *slot.1 = Some(pm);
-            return ImageId(slot.0 as u32);
+            return ImageId(len_u32(slot.0));
         }
-        let id = truce_core::cast::len_u32(self.images.len());
+        let id = len_u32(self.images.len());
         self.images.push(Some(pm));
         ImageId(id)
     }
@@ -265,6 +267,9 @@ impl RenderBackend for CpuBackend {
         }
     }
 
+    // `u32 as f32` for image dimensions; image sizes are bounded by
+    // editor pixel dimensions, well below 2^23.
+    #[allow(clippy::cast_precision_loss)]
     fn draw_image(&mut self, id: ImageId, x: f32, y: f32, w: f32, h: f32) {
         let s = self.scale;
         let Some(pm) = self.images.get(id.0 as usize).and_then(|s| s.as_ref()) else {

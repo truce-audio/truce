@@ -234,7 +234,9 @@ impl AudioTapConsumer {
 mod tests {
     // Audio samples pushed through the ring are bit-identical on the
     // way out — `assert_eq!(dest[0], s)` is the right shape.
-    #![allow(clippy::float_cmp)]
+    // Test indices `i as f32` lose precision past 2^24 but our loops
+    // are bounded by tiny ring capacities.
+    #![allow(clippy::float_cmp, clippy::cast_precision_loss)]
 
     use super::*;
 

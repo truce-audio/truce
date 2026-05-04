@@ -241,7 +241,11 @@ impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
                 use baseview::MouseEvent::{CursorMoved, ButtonPressed, ButtonReleased, WheelScrolled, CursorLeft};
                 match mouse {
                     CursorMoved { position, .. } => {
-                        self.last_pos = LogicalPosition::new(position.x as f32, position.y as f32);
+                        // Window dimensions stay below 2^23; the f64
+                        // → f32 narrowing is invisible.
+                        #[allow(clippy::cast_possible_truncation)]
+                        let pos = LogicalPosition::new(position.x as f32, position.y as f32);
+                        self.last_pos = pos;
                         self.slint_window
                             .window()
                             .dispatch_event(WindowEvent::PointerMoved {
@@ -310,20 +314,29 @@ impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
                     let phys_h = info.physical_size().height;
                     let scale = info.scale();
                     truce_gui::platform::note_linux_scale_factor(scale);
-                    self.width = (f64::from(phys_w) / scale) as u32;
-                    self.height = (f64::from(phys_h) / scale) as u32;
+                    // Logical dimensions stay below `u32::MAX` and
+                    // display scale never exceeds 4.0.
+                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                    let (lw, lh) = (
+                        (f64::from(phys_w) / scale) as u32,
+                        (f64::from(phys_h) / scale) as u32,
+                    );
+                    self.width = lw;
+                    self.height = lh;
                     // Mirror the OS-reported scale into the shared
                     // cell (so a follow-up host `set_scale_factor`
                     // reads a fresh baseline) and bump `last_applied`
                     // so `on_frame`'s diff-check stays a no-op — we
                     // apply the reconfigure inline below.
                     self.scale.set(scale);
-                    self.last_applied_scale = scale as f32;
+                    #[allow(clippy::cast_possible_truncation)]
+                    let scale_f32 = scale as f32;
+                    self.last_applied_scale = scale_f32;
 
                     self.slint_window
                         .window()
                         .dispatch_event(WindowEvent::ScaleFactorChanged {
-                            scale_factor: scale as f32,
+                            scale_factor: scale_f32,
                         });
                     self.slint_window
                         .set_size(slint::WindowSize::Physical(PhysicalSize::new(
@@ -444,10 +457,13 @@ impl<P: Params + 'static> Editor for SlintEditor<P> {
                 slint_window.set_size(slint::WindowSize::Physical(PhysicalSize::new(
                     phys_w, phys_h,
                 )));
+                // Display scale never exceeds 4.0.
+                #[allow(clippy::cast_possible_truncation)]
+                let scale_f32 = scale as f32;
                 slint_window
                     .window()
                     .dispatch_event(WindowEvent::ScaleFactorChanged {
-                        scale_factor: scale as f32,
+                        scale_factor: scale_f32,
                     });
 
                 // Developer creates the Slint component here — it attaches
@@ -468,7 +484,7 @@ impl<P: Params + 'static> Editor for SlintEditor<P> {
                     width: lw,
                     height: lh,
                     scale: scale_handle,
-                    last_applied_scale: scale as f32,
+                    last_applied_scale: scale_f32,
                     last_phys_w: phys_w,
                     last_phys_h: phys_h,
                     last_pos: LogicalPosition::default(),
@@ -506,7 +522,7 @@ impl<P: Params + 'static> Editor for SlintEditor<P> {
         let setup = Arc::clone(&self.setup);
         // Match the live editor's content scale; `EditorScale` falls
         // back to `backing_scale()` for pre-open / headless calls.
-        let scale = self.scale.get() as f32;
+        let scale = self.scale.get_f32();
         crate::screenshot::render_with_state::<P>(&state, self.size, scale, move |s| {
             setup(s.clone())
         })

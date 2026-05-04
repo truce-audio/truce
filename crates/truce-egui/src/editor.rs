@@ -212,6 +212,9 @@ fn pack_size(size: (u32, u32)) -> u64 {
     (u64::from(size.0) << 32) | u64::from(size.1)
 }
 
+// Bit-extraction: each `as u32` deliberately truncates the packed
+// `u64` to the low 32 bits.
+#[allow(clippy::cast_possible_truncation)]
 #[inline]
 fn unpack_size(packed: u64) -> (u32, u32) {
     ((packed >> 32) as u32, packed as u32)
@@ -245,6 +248,9 @@ struct EguiWindowHandler<P: Params + ?Sized> {
 }
 
 impl<P: Params + ?Sized> EguiWindowHandler<P> {
+    // `(u32, u32)` editor sizes widen to `f32` for egui's screen rect.
+    // Editor sizes are bounded by display dimensions, well below 2^23.
+    #[allow(clippy::cast_precision_loss)]
     fn run_frame(&mut self) {
         let Some(renderer) = self.renderer.as_mut() else {
             return;
@@ -333,6 +339,10 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
                         modifiers,
                     } => {
                         self.modifiers = convert_kb_modifiers(&modifiers);
+                        // baseview reports cursor in f64 logical points;
+                        // egui uses f32. Window dimensions never reach
+                        // 2^23 — the narrowing is invisible.
+                        #[allow(clippy::cast_possible_truncation)]
                         let pos = egui::pos2(position.x as f32, position.y as f32);
                         self.last_cursor_pos = pos;
                         self.pending_events.push(egui::Event::PointerMoved(pos));
@@ -431,15 +441,20 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
                 if let baseview::WindowEvent::Resized(info) = win {
                     let pw = info.physical_size().width;
                     let ph = info.physical_size().height;
+                    // Display scale never exceeds 4.0 in practice.
+                    #[allow(clippy::cast_possible_truncation)]
                     let scale = info.scale() as f32;
                     truce_gui::platform::note_linux_scale_factor(info.scale());
                     // Store logical size — egui screen_rect uses logical
                     // points. Round so a physical 800px@2× reports as 400
-                    // logical, not 399 (truncating cast).
-                    self.size = (
+                    // logical, not 399 (truncating cast). Window
+                    // dimensions stay well below u32::MAX.
+                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)]
+                    let logical_size = (
                         (pw as f32 / scale).round() as u32,
                         (ph as f32 / scale).round() as u32,
                     );
+                    self.size = logical_size;
                     // Write through to the shared scale so the editor's
                     // next `set_scale_factor` and any sibling reader
                     // see the OS-reported value, and update
@@ -625,6 +640,8 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
             &parent_wrapper,
             options,
             move |window: &mut Window| {
+                // Display scale never exceeds 4.0 in practice.
+                #[allow(clippy::cast_possible_truncation)]
                 let scale = system_scale as f32;
                 let phys_w = truce_gui::to_physical_px(size.0, system_scale);
                 let phys_h = truce_gui::to_physical_px(size.1, system_scale);
@@ -722,7 +739,7 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
         // override via the `--scale` CLI flag in
         // `cargo truce screenshot` (which threads through to
         // `set_scale_factor` before this method runs).
-        let pixels_per_point = self.scale.get() as f32;
+        let pixels_per_point = self.scale.get_f32();
         let ui = Arc::clone(&self.ui);
         crate::screenshot::render_with_state::<P>(
             &context,

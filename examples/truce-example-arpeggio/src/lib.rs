@@ -1,4 +1,5 @@
 use truce::prelude::*;
+use truce_core::cast::len_u32;
 use truce_gui::layout::{GridLayout, dropdown, knob, widgets};
 
 // --- Arp pattern enum ---
@@ -114,13 +115,19 @@ impl Arpeggio {
         let mut base_notes = self.held_notes.clone();
         base_notes.sort_unstable();
 
+        // `octaves` is constrained to 1..=4 by the param range; the
+        // running `n` is bounded by 127 by the if-check.
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let octaves = self.params.octaves.value() as usize;
         let mut seq = Vec::new();
         for oct in 0..octaves {
             for &note in &base_notes {
+                #[allow(clippy::cast_possible_truncation)]
                 let n = u16::from(note) + (oct as u16 * 12);
                 if n <= 127 {
-                    seq.push(n as u8);
+                    #[allow(clippy::cast_possible_truncation)]
+                    let note = n as u8;
+                    seq.push(note);
                 }
             }
         }
@@ -160,6 +167,9 @@ impl PluginLogic for Arpeggio {
         self.free_beat = 0.0;
     }
 
+    // `usize as f64` for sample-index → beat math; block sizes
+    // bounded by audio block, well below 2^52.
+    #[allow(clippy::cast_precision_loss)]
     fn process(
         &mut self,
         buffer: &mut AudioBuffer,
@@ -232,6 +242,10 @@ impl PluginLogic for Arpeggio {
 
         for i in 0..block_size {
             let beat = block_start_beat + (i as f64) * beats_per_sample;
+            // Step index from a host beat position; the audio thread
+            // never sees a beat past ~10^9 in practice, well below
+            // i64::MAX.
+            #[allow(clippy::cast_possible_truncation)]
             let step_num = (beat / beats_per_step).floor() as i64;
 
             if Some(step_num) != self.last_step {
@@ -240,7 +254,7 @@ impl PluginLogic for Arpeggio {
                 // the next step.
                 if let Some(cn) = self.active_note.take() {
                     context.output_events.push(Event {
-                        sample_offset: i as u32,
+                        sample_offset: len_u32(i),
                         body: EventBody::NoteOff {
                             channel: 0,
                             note: cn,
@@ -254,10 +268,14 @@ impl PluginLogic for Arpeggio {
                 } else {
                     // `rem_euclid` gives a non-negative index even if
                     // `step_num` is negative (host seeking before 0).
-                    seq[step_num.rem_euclid(seq_len) as usize]
+                    // Result is bounded by `seq_len` (a usize-bounded
+                    // sequence length).
+                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                    let idx = step_num.rem_euclid(seq_len) as usize;
+                    seq[idx]
                 };
                 context.output_events.push(Event {
-                    sample_offset: i as u32,
+                    sample_offset: len_u32(i),
                     body: EventBody::NoteOn {
                         channel: 0,
                         note,
@@ -274,7 +292,7 @@ impl PluginLogic for Arpeggio {
                     && let Some(cn) = self.active_note.take()
                 {
                     context.output_events.push(Event {
-                        sample_offset: i as u32,
+                        sample_offset: len_u32(i),
                         body: EventBody::NoteOff {
                             channel: 0,
                             note: cn,

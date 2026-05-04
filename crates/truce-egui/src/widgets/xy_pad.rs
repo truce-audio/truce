@@ -1,5 +1,6 @@
 //! XY pad control bound to two truce parameters.
 
+use truce_core::cast::param_f32;
 use truce_core::editor::PluginContext;
 
 const LABEL_H: f32 = 16.0;
@@ -26,8 +27,8 @@ pub fn param_xy_pad<P: ?Sized>(
 
     let pad_rect = egui::Rect::from_min_size(rect.min, egui::vec2(width, height));
 
-    let mut vx = state.get_param(id_x) as f32;
-    let mut vy = state.get_param(id_y) as f32;
+    let mut vx = param_f32(state.get_param(id_x));
+    let mut vy = param_f32(state.get_param(id_y));
 
     if response.drag_started() {
         state.begin_edit(id_x);

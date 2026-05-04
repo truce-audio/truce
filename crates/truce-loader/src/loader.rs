@@ -369,6 +369,8 @@ impl Drop for NativeLoader {
 fn watch_loop(path: &std::path::Path, flag: &AtomicBool, stop: &AtomicBool) {
     const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
     const STOP_CHECK: std::time::Duration = std::time::Duration::from_millis(50);
+    // Both constants are sub-second; the u128 → u32 cast is bounded.
+    #[allow(clippy::cast_possible_truncation)]
     let chunks = (POLL_INTERVAL.as_millis() / STOP_CHECK.as_millis()) as u32;
 
     let mut last_mtime = file_mtime(path);
@@ -384,7 +386,9 @@ fn watch_loop(path: &std::path::Path, flag: &AtomicBool, stop: &AtomicBool) {
             // Wait for compiler to finish writing — also broken into
             // STOP_CHECK chunks so a Drop during the settle window
             // doesn't have to wait the full 200ms.
-            for _ in 0..(200 / STOP_CHECK.as_millis() as u32) {
+            #[allow(clippy::cast_possible_truncation)]
+            let settle_chunks = 200 / STOP_CHECK.as_millis() as u32;
+            for _ in 0..settle_chunks {
                 std::thread::sleep(STOP_CHECK);
                 if stop.load(Ordering::Relaxed) {
                     return;

@@ -424,6 +424,11 @@ fn is_meter_slot(ty: &Type) -> bool {
 /// shapes: bare int/float literals (positive) and `-int` / `-float`
 /// (negative). Anything more elaborate (`1 + 2`, `f()`) returns
 /// `None` so the caller can emit a `compile_error!`.
+//
+// `i64 as f64` is an at-compile-time literal default whose magnitude
+// is bounded by IntParam ranges; large enough to lose mantissa bits
+// but well-defined for the validation round-trip.
+#[allow(clippy::cast_precision_loss)]
 fn parse_default_expr(expr: &Expr) -> Option<f64> {
     match expr {
         Expr::Lit(syn::ExprLit { lit, .. }) => match lit {
@@ -698,8 +703,14 @@ fn gen_param_info_literal(f: &ParamField) -> Option<proc_macro2::TokenStream> {
     if let Some(d) = a.default {
         // Integer round-trip exactness checks — an epsilon-based
         // comparison would silently accept fractional defaults like
-        // `2.5` for an `Int` / `Enum` param.
-        #[allow(clippy::float_cmp)]
+        // `2.5` for an `Int` / `Enum` param. The `as i64` / `as u32`
+        // truncations are the round-trip's whole point.
+        #[allow(
+            clippy::float_cmp,
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            clippy::cast_precision_loss,
+        )]
         let invalid = match f.kind {
             ParamKind::Bool => d != 0.0 && d != 1.0,
             ParamKind::Int => !d.is_finite() || (d as i64 as f64) != d,
@@ -766,8 +777,14 @@ fn gen_field_constructor(f: &ParamField) -> proc_macro2::TokenStream {
     if let Some(d) = a.default {
         // Integer round-trip exactness checks — an epsilon-based
         // comparison would silently accept fractional defaults like
-        // `2.5` for an `Int` / `Enum` param.
-        #[allow(clippy::float_cmp)]
+        // `2.5` for an `Int` / `Enum` param. The `as i64` / `as u32`
+        // truncations are the round-trip's whole point.
+        #[allow(
+            clippy::float_cmp,
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            clippy::cast_precision_loss,
+        )]
         let err = match f.kind {
             ParamKind::Bool if d != 0.0 && d != 1.0 => Some(format!(
                 "BoolParam default {name} must be 0 or 1; got {d}"

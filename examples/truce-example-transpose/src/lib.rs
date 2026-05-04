@@ -52,7 +52,11 @@ impl PluginLogic for Transpose {
         events: &EventList,
         context: &mut ProcessContext,
     ) -> ProcessStatus {
+        // Both params are int-typed, range-bounded to ≤ 12 semitones
+        // / ≤ 4 octaves; the f32 → i16 narrowing is invisible.
+        #[allow(clippy::cast_possible_truncation)]
         let semitones = self.params.semitones.value() as i16;
+        #[allow(clippy::cast_possible_truncation)]
         let octave = self.params.octave.value() as i16;
         let shift = semitones + octave * 12;
 
@@ -63,6 +67,10 @@ impl PluginLogic for Transpose {
                     note,
                     velocity,
                 } => {
+                    // The clamp(0, 127) above already guarantees the
+                    // value fits in `u8` — sign loss is the cast's
+                    // whole point.
+                    #[allow(clippy::cast_sign_loss)]
                     let transposed = (i16::from(*note) + shift).clamp(0, 127) as u8;
                     self.active_notes[*note as usize] = Some(transposed);
                     context.output_events.push(Event {
@@ -80,6 +88,8 @@ impl PluginLogic for Transpose {
                     velocity,
                 } => {
                     // Use the pitch that was actually sent, not current shift
+                    // See the on-note arm — clamp keeps us in `0..=127`.
+                    #[allow(clippy::cast_sign_loss)]
                     let output_note = self.active_notes[*note as usize]
                         .take()
                         .unwrap_or((i16::from(*note) + shift).clamp(0, 127) as u8);

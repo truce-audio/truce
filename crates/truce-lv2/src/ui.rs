@@ -35,6 +35,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use truce_core::TransportSlot;
+use truce_core::cast::{len_u32, param_f32};
 use truce_core::editor::{ClosureBridge, Editor, PluginContext, RawWindowHandle, SendPtr};
 use truce_core::events::TransportInfo;
 use truce_core::export::PluginExport;
@@ -215,7 +216,7 @@ pub unsafe fn instantiate_ui<P: PluginExport>(
             .enumerate()
             .map(|(i, pi)| ParamSlot {
                 id: pi.id,
-                port_index: control_start + i as u32,
+                port_index: control_start + len_u32(i),
                 range: pi.range.clone(),
             })
             .collect();
@@ -231,7 +232,7 @@ pub unsafe fn instantiate_ui<P: PluginExport>(
                 .enumerate()
                 .map(|(i, &id)| MeterSlot {
                     id,
-                    port_index: meter_start + i as u32,
+                    port_index: meter_start + len_u32(i),
                     value: AtomicU32::new(0),
                 })
                 .collect(),
@@ -471,10 +472,12 @@ unsafe fn decode_notify_atom<P: PluginExport>(
         }
         let one = scratch.as_mut_ptr().cast::<OneEvent>();
         (*one).seq_header.atom.type_ = ui.urid_map.atom_sequence;
-        (*one).seq_header.atom.size = (core::mem::size_of::<AtomSequenceBody>()
+        (*one).seq_header.atom.size = len_u32(
+            core::mem::size_of::<AtomSequenceBody>()
             + core::mem::size_of::<i64>()
             + core::mem::size_of::<Atom>()
-            + body_size) as u32;
+            + body_size,
+        );
         (*one).seq_header.body.unit = 0;
         (*one).seq_header.body.pad = 0;
         (*one).event_time = 0;
@@ -844,7 +847,7 @@ fn build_editor_context<P: PluginExport>(
                 else {
                     return;
                 };
-                let plain = range.denormalize(normalized) as f32;
+                let plain = param_f32(range.denormalize(normalized));
                 params_set.set_normalized(id, normalized);
                 unsafe {
                     let value = plain;

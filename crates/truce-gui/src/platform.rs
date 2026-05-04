@@ -154,9 +154,18 @@ impl EditorScale {
     }
 
     /// Read the current scale.
-    #[must_use] 
+    #[must_use]
     pub fn get(&self) -> f64 {
         f64::from_bits(self.inner.load(Ordering::Relaxed))
+    }
+
+    /// Read the current scale, narrowed to `f32` for renderer / DSP
+    /// use. Display scales never exceed 4.0 in practice, so the f64
+    /// → f32 narrowing is invisible.
+    #[allow(clippy::cast_possible_truncation)]
+    #[must_use]
+    pub fn get_f32(&self) -> f32 {
+        self.get() as f32
     }
 
     /// Update the current scale. Non-finite or non-positive values are
@@ -219,8 +228,11 @@ impl EditorScale {
 /// `.round().max(1.0) as u32` form that landed in
 /// `truce-gui::backend_cpu` first. One helper, every site, identical
 /// pixel maths.
+// Logical pixel sizes are bounded by `u32::MAX / scale`; in practice
+// no editor exceeds 16384 logical pixels.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 #[inline]
-#[must_use] 
+#[must_use]
 pub fn to_physical_px(logical: u32, scale: f64) -> u32 {
     (f64::from(logical.max(1)) * scale).round().max(1.0) as u32
 }

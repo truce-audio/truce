@@ -18,6 +18,7 @@ use lyon_tessellation::{
 };
 use wgpu::util::DeviceExt;
 
+use truce_core::cast::len_u32;
 use truce_gui::render::{ImageId, RenderBackend};
 use truce_gui::theme::Color;
 
@@ -126,14 +127,18 @@ impl GlyphAtlas {
     /// `overflow_pending` and returns without inserting; caller must
     /// tolerate a missing entry for the rest of this frame. Subsequent
     /// frames clear the atlas at frame start and re-rasterize.
+    // Quantized cache key — `(size * 10.0) as u32` deliberately
+    // truncates to one decimal place for HashMap stability. Atlas
+    // dimensions and glyph metrics fit comfortably in f32.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)]
     fn ensure_glyph(&mut self, font: &fontdue::Font, ch: char, size: f32) {
         let key = (ch, (size * 10.0) as u32);
         if self.glyphs.contains_key(&key) {
             return;
         }
         let (metrics, bitmap) = font.rasterize(ch, size);
-        let gw = metrics.width as u32;
-        let gh = metrics.height as u32;
+        let gw = len_u32(metrics.width);
+        let gh = len_u32(metrics.height);
 
         // Shelf-pack: does it fit on the current shelf?
         if self.cursor_x + gw > ATLAS_SIZE {
@@ -340,6 +345,8 @@ impl WgpuBackend {
     ///
     /// Panics if the embedded font fails to parse (a bug in the
     /// bundled font asset, never user input).
+    // Surface dimensions in pixels stay below 2^23, well within f32.
+    #[allow(clippy::cast_precision_loss)]
     pub fn from_surface(
         instance: &wgpu::Instance,
         surface: wgpu::Surface<'static>,
@@ -703,6 +710,8 @@ impl WgpuBackend {
     ///
     /// Panics if the embedded font fails to parse (bundled-asset
     /// bug, never user input).
+    // Surface dimensions in pixels stay below 2^23, well within f32.
+    #[allow(clippy::cast_precision_loss)]
     #[must_use]
     pub fn new(
         device: Arc<wgpu::Device>,
@@ -928,6 +937,7 @@ impl WgpuBackend {
     ///
     /// Only meaningful when the backend was built via [`Self::new`]; the
     /// surface-owning constructors drive their own frame lifecycle.
+    #[allow(clippy::cast_precision_loss)]
     pub fn begin_frame(&mut self, logical_w: u32, logical_h: u32) {
         let phys_w = truce_gui::to_physical_px(logical_w, f64::from(self.scale));
         let phys_h = truce_gui::to_physical_px(logical_h, f64::from(self.scale));
@@ -1033,7 +1043,7 @@ impl WgpuBackend {
             pass.set_vertex_buffer(0, vertex_buffer.slice(..));
             pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint32);
 
-            let total_indices = truce_core::cast::len_u32(self.indices.len());
+            let total_indices = len_u32(self.indices.len());
             if self.batches.is_empty() {
                 pass.set_bind_group(1, &self.atlas_bind_group, &[]);
                 pass.draw_indexed(0..total_indices, 0, 0..1);
@@ -1127,6 +1137,7 @@ impl WgpuBackend {
     /// `logical_w` and `logical_h` are in logical points (same coordinate
     /// space as `BuiltinEditor::size()`). Returns `true` if the surface
     /// was actually reconfigured.
+    #[allow(clippy::cast_precision_loss)]
     pub fn resize(&mut self, logical_w: u32, logical_h: u32) -> bool {
         let new_w = truce_gui::to_physical_px(logical_w, f64::from(self.scale));
         let new_h = truce_gui::to_physical_px(logical_h, f64::from(self.scale));
@@ -1168,7 +1179,7 @@ impl WgpuBackend {
         };
         if needs_new {
             self.batches.push(DrawBatch {
-                index_start: truce_core::cast::len_u32(self.indices.len()),
+                index_start: len_u32(self.indices.len()),
                 image,
             });
         }
@@ -1176,7 +1187,7 @@ impl WgpuBackend {
 
     fn push_quad(&mut self, v0: Vertex, v1: Vertex, v2: Vertex, v3: Vertex) {
         self.ensure_batch(None);
-        let base = truce_core::cast::len_u32(self.vertices.len());
+        let base = len_u32(self.vertices.len());
         self.vertices.extend_from_slice(&[v0, v1, v2, v3]);
         self.indices
             .extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
@@ -1195,7 +1206,7 @@ impl WgpuBackend {
                 Vertex::solid(p.x, p.y, color)
             }),
         );
-        let base = truce_core::cast::len_u32(self.vertices.len());
+        let base = len_u32(self.vertices.len());
         self.vertices.extend_from_slice(&buffers.vertices);
         self.indices
             .extend(buffers.indices.iter().map(|i| i + base));
@@ -1214,7 +1225,7 @@ impl WgpuBackend {
                 Vertex::solid(p.x, p.y, color)
             }),
         );
-        let base = truce_core::cast::len_u32(self.vertices.len());
+        let base = len_u32(self.vertices.len());
         self.vertices.extend_from_slice(&buffers.vertices);
         self.indices
             .extend(buffers.indices.iter().map(|i| i + base));
@@ -1314,6 +1325,7 @@ impl RenderBackend for WgpuBackend {
         self.stroke_path(&path, c, &opts);
     }
 
+    #[allow(clippy::cast_precision_loss)]
     fn stroke_arc(
         &mut self,
         cx: f32,
@@ -1366,6 +1378,9 @@ impl RenderBackend for WgpuBackend {
         self.stroke_path(&path, c, &opts);
     }
 
+    // Glyph cache key uses `(phys_size * 10.0) as u32` quantization,
+    // matching `ensure_glyph`. Window-bounded coordinates fit in u32.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     fn draw_text(&mut self, text: &str, x: f32, y: f32, size: f32, color: Color) {
         let s = self.scale;
         let phys_size = size * s;
@@ -1483,9 +1498,9 @@ impl RenderBackend for WgpuBackend {
             .find(|(_, s)| s.is_none())
         {
             *slot = Some(entry);
-            return ImageId(idx as u32);
+            return ImageId(len_u32(idx));
         }
-        let id = truce_core::cast::len_u32(self.images.len());
+        let id = len_u32(self.images.len());
         self.images.push(Some(entry));
         ImageId(id)
     }
@@ -1509,7 +1524,7 @@ impl RenderBackend for WgpuBackend {
 
         let s = self.scale;
         let c = [1.0, 1.0, 1.0, 1.0];
-        let base = truce_core::cast::len_u32(self.vertices.len());
+        let base = len_u32(self.vertices.len());
         self.vertices.extend_from_slice(&[
             Vertex::image(x * s, y * s, c, 0.0, 0.0),
             Vertex::image((x + w) * s, y * s, c, 1.0, 0.0),
@@ -1629,7 +1644,7 @@ impl WgpuBackend {
             pass.set_vertex_buffer(0, vertex_buffer.slice(..));
             pass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint32);
 
-            let total_indices = truce_core::cast::len_u32(self.indices.len());
+            let total_indices = len_u32(self.indices.len());
             if self.batches.is_empty() {
                 // Backwards-compatible path: no batching recorded (e.g. a
                 // caller that bypassed clear()). Draw everything with the
@@ -1672,6 +1687,8 @@ impl WgpuBackend {
     ///
     /// Panics if the embedded font fails to parse (bundled-asset
     /// bug, never user input).
+    // Surface dimensions in pixels stay below 2^23, well within f32.
+    #[allow(clippy::cast_precision_loss)]
     #[must_use]
     pub fn headless(width: u32, height: u32, scale: f32) -> Option<Self> {
         let phys_w = truce_gui::to_physical_px(width, f64::from(scale));

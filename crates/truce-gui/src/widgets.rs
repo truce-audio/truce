@@ -421,6 +421,9 @@ pub fn draw_dropdown(
 ///
 /// `scroll_offset` is the index of the first visible option.
 /// `visible_count` is how many options to draw (may be less than total).
+// Visible-count and option-index → f32 for geometry; both are
+// bounded by the popup item count (typically < 100).
+#[allow(clippy::cast_precision_loss)]
 pub fn draw_dropdown_popup(
     ctx: &mut dyn RenderBackend,
     x: f32,
@@ -525,6 +528,9 @@ pub fn draw_dropdown_popup(
 /// Draw a vertical level meter with one or more channels.
 ///
 /// Each level is 0.0–1.0 (linear, not dB).
+// Channel counts and indices → f32 for geometry; both are bounded
+// by `num_channels` (typically ≤ 8).
+#[allow(clippy::cast_precision_loss)]
 pub fn draw_meter(
     ctx: &mut dyn RenderBackend,
     x: f32,
@@ -725,6 +731,9 @@ fn resolve_wkind_to_type(
     }
 }
 
+// Window dimensions and widget indices → f32 for geometry; bounded
+// by widget count (< 1000) and pixel dimensions (< 16384).
+#[allow(clippy::cast_precision_loss)]
 fn draw_rows(
     backend: &mut dyn RenderBackend,
     pl: &PluginLayout,
@@ -792,6 +801,9 @@ fn draw_rows(
     }
 }
 
+// Window dimensions and grid indices → f32 for geometry; bounded
+// by grid size (< 1000 cells) and pixel dimensions (< 16384).
+#[allow(clippy::cast_precision_loss)]
 fn draw_grid(
     backend: &mut dyn RenderBackend,
     grid: &GridLayout,

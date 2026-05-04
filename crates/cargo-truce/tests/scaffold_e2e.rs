@@ -29,6 +29,8 @@ use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
+use truce_core::cast::sample_count_usize;
+
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
@@ -918,12 +920,16 @@ fn scaffold_standalone_offline_render() {
 /// rather than linear so the test signal exercises the full
 /// audible band evenly on a log frequency axis — same shape
 /// most measurement tools use.
+//
+// `i as f64` for the sample-index/time relation; n = 48_000
+// is well below 2^52, so no precision is actually lost.
+#[allow(clippy::cast_precision_loss)]
 fn write_sweep_wav(path: &Path) {
     let sr: u32 = 48_000;
     let duration_secs = 1.0_f64;
     let f0 = 20.0_f64;
     let f1 = 20_000.0_f64;
-    let n = (f64::from(sr) * duration_secs) as usize;
+    let n = sample_count_usize(f64::from(sr) * duration_secs);
     let spec = hound::WavSpec {
         channels: 2,
         sample_rate: sr,
@@ -938,6 +944,9 @@ fn write_sweep_wav(path: &Path) {
         // Phase for an exp sweep: ∫₀ᵗ 2π f₀ (f₁/f₀)^(τ/T) dτ
         //                       = 2π f₀ K (e^(t/K) − 1)   where K = T / ln(f₁/f₀).
         let phase = 2.0 * std::f64::consts::PI * f0 * k * ((t / k).exp() - 1.0);
+        // `phase.sin() ∈ [-1, 1]`; multiplied by `i16::MAX` and 0.5,
+        // result is bounded in `[-16383, 16383]`, well within i16.
+        #[allow(clippy::cast_possible_truncation)]
         let s = (0.5 * phase.sin() * f64::from(i16::MAX)) as i16;
         w.write_sample(s).unwrap();
         w.write_sample(s).unwrap();

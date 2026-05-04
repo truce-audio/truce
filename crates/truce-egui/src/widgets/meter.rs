@@ -14,6 +14,9 @@ const BAR_GAP: f32 = 2.0;
 const BAR_PAD: f32 = 0.0;
 const TRACK_BG: egui::Color32 = egui::Color32::from_rgb(42, 42, 48);
 
+// Channel count `usize as f32` to compute per-bar widths; channel
+// counts are tiny (<= 64 in any practical audio config).
+#[allow(clippy::cast_precision_loss)]
 pub fn level_meter<P: ?Sized>(
     ui: &mut egui::Ui,
     state: &PluginContext<P>,

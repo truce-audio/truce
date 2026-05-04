@@ -94,6 +94,9 @@ struct MeterProgram {
 impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for MeterProgram {
     type State = ();
 
+    // `usize as f32` for channel-count layout; channel counts are
+    // tiny (typically <= 64).
+    #[allow(clippy::cast_precision_loss)]
     fn draw(
         &self,
         _state: &Self::State,

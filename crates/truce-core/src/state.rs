@@ -98,6 +98,10 @@ pub fn deserialize_state(data: &[u8], expected_plugin_id: u64) -> Option<Deseria
     if offset + 8 > data.len() {
         return None;
     }
+    // The wire format encodes `extra_len` as `u64`; on 32-bit
+    // targets the cast may truncate, but the next branch validates
+    // `offset.checked_add(extra_len)` against the buffer length.
+    #[allow(clippy::cast_possible_truncation)]
     let extra_len = u64::from_le_bytes(data[offset..offset + 8].try_into().ok()?) as usize;
     offset += 8;
 

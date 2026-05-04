@@ -10,6 +10,8 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
+use truce_core::cast::len_u32;
+
 /// `JetBrains` Mono Regular TrueType bytes — re-exported from
 /// [`truce_font`] for backwards compatibility. Prefer
 /// `truce_font::JETBRAINS_MONO` in new code; both refer to the same
@@ -57,11 +59,18 @@ fn with_cache<R>(f: impl FnOnce(&mut GlyphCache) -> R) -> R {
     })
 }
 
+// Quantized cache key (one decimal place). The truncation is the
+// quantization's whole point — `12.34` and `12.36` both → `123`.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 fn size_key(size: f32) -> u32 {
     (size * 10.0) as u32
 }
 
 /// Rasterize and cache a glyph, returning its cached data.
+//
+// Glyph metrics widen i32 metric values to f32 — bitmap heights and
+// pixel offsets are tiny (a glyph fits in screen-space pixels).
+#[allow(clippy::cast_precision_loss)]
 fn get_glyph(cache: &mut GlyphCache, ch: char, size: f32) -> &CachedGlyph {
     let key = (ch, size_key(size));
     if !cache.glyphs.contains_key(&key) {
@@ -70,8 +79,8 @@ fn get_glyph(cache: &mut GlyphCache, ch: char, size: f32) -> &CachedGlyph {
             key,
             CachedGlyph {
                 bitmap,
-                width: metrics.width as u32,
-                height: metrics.height as u32,
+                width: len_u32(metrics.width),
+                height: len_u32(metrics.height),
                 advance: metrics.advance_width,
                 y_offset: metrics.ymin as f32,
             },
@@ -83,6 +92,7 @@ fn get_glyph(cache: &mut GlyphCache, ch: char, size: f32) -> &CachedGlyph {
 /// sRGB-to-linear lookup for byte-encoded color channels. Used by
 /// `draw_text_fontdue` to composite glyphs in linear space — see the
 /// gamma rationale on that function.
+#[allow(clippy::cast_precision_loss)]
 static SRGB_TO_LINEAR: LazyLock<[f32; 256]> = LazyLock::new(|| {
     let mut table = [0.0f32; 256];
     for (i, slot) in table.iter_mut().enumerate() {
@@ -106,6 +116,9 @@ fn srgb_f32_to_linear(s: f32) -> f32 {
 }
 
 #[inline]
+// `lin` is clamped to `[0, 1]`; the sRGB curve produces ≤ 1.0 for
+// every clamped input, so `s * 255.0 + 0.5` lands in `[0, 255.5]`.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 fn linear_to_srgb_u8(lin: f32) -> u8 {
     let lin = lin.clamp(0.0, 1.0);
     let s = if lin <= 0.0031308 {
@@ -133,6 +146,11 @@ fn linear_to_srgb_u8(lin: f32) -> u8 {
 ///
 /// Glyph caching is internal — first call for a given (char, size)
 /// pair rasterizes; subsequent calls blit from the per-thread cache.
+//
+// Glyph dimensions widen `u32 as f32`. Glyph bitmaps are tens of
+// pixels wide — far below 2^23. The bounds-checked `i32 -> u32`
+// indexing already guards against negative values.
+#[allow(clippy::cast_precision_loss, clippy::cast_sign_loss)]
 pub fn draw_text_fontdue(
     pixmap_data: &mut [u8],
     pixmap_width: u32,
@@ -163,7 +181,10 @@ pub fn draw_text_fontdue(
             let gw = glyph.width;
             let gh = glyph.height;
 
+            // Glyph coordinates fit in i32 (window is < 32k px).
+            #[allow(clippy::cast_possible_truncation)]
             let gx = cursor_x as i32;
+            #[allow(clippy::cast_possible_truncation)]
             let gy = (y + ascent - glyph.y_offset - gh as f32) as i32;
 
             for row in 0..gh {
@@ -204,7 +225,10 @@ pub fn draw_text_fontdue(
                     pixmap_data[idx] = linear_to_srgb_u8(out_lin_r);
                     pixmap_data[idx + 1] = linear_to_srgb_u8(out_lin_g);
                     pixmap_data[idx + 2] = linear_to_srgb_u8(out_lin_b);
-                    pixmap_data[idx + 3] = (out_a * 255.0 + 0.5) as u8;
+                    // `out_a` is bounded in `[0, 1]` (alpha-blended).
+                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                    let out_a_u8 = (out_a * 255.0 + 0.5) as u8;
+                    pixmap_data[idx + 3] = out_a_u8;
                 }
             }
 

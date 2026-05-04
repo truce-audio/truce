@@ -1,4 +1,5 @@
 use truce::prelude::*;
+use truce_core::cast::param_f32;
 use truce_slint::{PluginContext, SlintEditor, SyncFn};
 
 slint::include_modules!();
@@ -54,7 +55,7 @@ impl PluginLogic for GainSlint {
         for i in 0..buffer.num_samples() {
             let gain_db = self.params.gain.smoothed_next();
             let pan = self.params.pan.smoothed_next();
-            let gain_linear = db_to_linear(f64::from(gain_db)) as f32;
+            let gain_linear = param_f32(db_to_linear(f64::from(gain_db)));
 
             let gain_l = gain_linear * (1.0 - pan.max(0.0));
             let gain_r = gain_linear * (1.0 + pan.min(0.0));
@@ -91,8 +92,8 @@ impl PluginLogic for GainSlint {
 
                 // host → UI (params + meters)
                 Box::new(move |state: &PluginContext<GainParams>| {
-                    ui.set_gain(state.get_param(P::Gain) as f32);
-                    ui.set_pan(state.get_param(P::Pan) as f32);
+                    ui.set_gain(param_f32(state.get_param(P::Gain)));
+                    ui.set_pan(param_f32(state.get_param(P::Pan)));
                     ui.set_gain_text(slint::SharedString::from(state.format_param(P::Gain)));
                     ui.set_pan_text(slint::SharedString::from(state.format_param(P::Pan)));
                     ui.set_meter_left(meter_display(state.get_meter(P::MeterLeft)));

@@ -229,6 +229,8 @@ impl<P: Params + 'static> Editor for GpuEditor<P> {
             &parent_wrapper,
             options,
             move |window: &mut Window| {
+                // Display scale never exceeds 4.0 in practice.
+                #[allow(clippy::cast_possible_truncation)]
                 let scale = system_scale as f32;
                 let gpu = unsafe { WgpuBackend::from_window(window, size.0, size.1, scale) };
 
@@ -292,15 +294,19 @@ impl<P: Params + 'static> Editor for GpuEditor<P> {
         // hosts where reference PNGs were originally baked.
         let mut inner = self.inner.lock().ok()?;
         let (lw, lh) = inner.size();
-        let scale = self.scale.get() as f32;
+        let scale = self.scale.get_f32();
         let mut backend = WgpuBackend::headless(lw, lh, scale)?;
         inner.render_to(&mut backend);
         let pixels = backend.read_pixels();
         // Round (rather than truncate) so non-integer DPI scales produce
         // the same physical resolution the WgpuBackend internally
         // computed when sizing the headless target.
-        let phys_w = (lw as f32 * scale).round() as u32;
-        let phys_h = (lh as f32 * scale).round() as u32;
+        // Window dimensions stay below u32::MAX after scaling.
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)]
+        let (phys_w, phys_h) = (
+            (lw as f32 * scale).round() as u32,
+            (lh as f32 * scale).round() as u32,
+        );
         Some((pixels, phys_w, phys_h))
     }
 }

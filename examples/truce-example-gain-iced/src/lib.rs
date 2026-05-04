@@ -11,6 +11,7 @@ const WINDOW_W: u32 = 176;
 const WINDOW_H: u32 = 290;
 
 use truce::prelude::*;
+use truce_core::cast::param_f32;
 use truce_gui::font;
 use truce_iced::{IcedEditor, IcedPlugin, IntoElement, Message, ParamCache, knob, meter, xy_pad};
 
@@ -132,7 +133,7 @@ impl PluginLogic for GainIced {
         for i in 0..buffer.num_samples() {
             let gain_db = self.params.gain.smoothed_next();
             let pan = self.params.pan.smoothed_next();
-            let gain_linear = db_to_linear(f64::from(gain_db)) as f32;
+            let gain_linear = param_f32(db_to_linear(f64::from(gain_db)));
 
             let gain_l = gain_linear * (1.0 - pan.max(0.0));
             let gain_r = gain_linear * (1.0 + pan.min(0.0));

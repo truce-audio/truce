@@ -51,7 +51,10 @@ pub fn code_to_midi_note(code: Code, octave_offset: i8) -> Option<u8> {
 
     let note = base + offset;
     if (0..=127).contains(&note) {
-        Some(note as u8)
+        // `note` is in `0..=127` per the if-check.
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let n = note as u8;
+        Some(n)
     } else {
         None
     }

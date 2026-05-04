@@ -29,13 +29,14 @@
 
 use std::time::Duration;
 
+use truce_core::cast::sample_count_usize;
 use truce_core::export::PluginExport;
 use truce_driver::{DriverResult, MeterReadings};
 
 const AUDIBLE_THRESHOLD: f32 = 0.001;
 
 fn duration_to_frames<P: PluginExport>(result: &DriverResult<P>, d: Duration) -> usize {
-    let frames = (d.as_secs_f64() * result.sample_rate) as usize;
+    let frames = sample_count_usize(d.as_secs_f64() * result.sample_rate);
     frames.min(result.total_frames)
 }
 
@@ -69,6 +70,10 @@ fn peak_in_range<P: PluginExport>(result: &DriverResult<P>, start: usize, end: u
 /// # Panics
 ///
 /// Panics if every sample is at or below `AUDIBLE_THRESHOLD` (1e-3).
+//
+// `usize as f64` for sample-count → seconds in the panic message;
+// total_frames is bounded by test duration, well below 2^52.
+#[allow(clippy::cast_precision_loss)]
 pub fn assert_nonzero<P: PluginExport>(result: &DriverResult<P>) {
     let peak = peak_in_range(result, 0, result.total_frames);
     assert!(
@@ -99,6 +104,10 @@ pub fn assert_silence<P: PluginExport>(result: &DriverResult<P>) {
 ///
 /// Panics on the first non-finite sample, naming the channel,
 /// frame index, and time offset.
+//
+// `usize as f64` for sample-index → milliseconds in the panic
+// message; sample indices are bounded by test duration.
+#[allow(clippy::cast_precision_loss)]
 pub fn assert_no_nans<P: PluginExport>(result: &DriverResult<P>) {
     let bad = result
         .output

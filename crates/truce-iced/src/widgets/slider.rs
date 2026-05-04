@@ -10,6 +10,7 @@ use iced::{Color, Element, Length, Point, Rectangle, Renderer, Theme, alignment,
 use crate::param_cache::ParamCache;
 use crate::param_message::{Message, ParamMessage};
 use crate::theme;
+use truce_core::cast::param_f32;
 use truce_params::Params;
 
 const TRACK_HEIGHT: f32 = 4.0;
@@ -63,7 +64,7 @@ impl<'a, M: Clone + Debug + 'static> SliderWidget<'a, M> {
         let total_h = THUMB_RADIUS * 2.0 + 30.0;
         let program = SliderProgram {
             id: self.id,
-            value: self.value as f32,
+            value: param_f32(self.value),
             display: self.display,
             label: self.label.unwrap_or("").to_string(),
             font: self.font,

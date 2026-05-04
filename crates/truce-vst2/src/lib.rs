@@ -10,6 +10,7 @@ use std::ffi::CString;
 use std::os::raw::c_char;
 use std::slice;
 
+use truce_core::cast::{len_u32, param_f32, sample_pos_i64};
 use truce_core::editor::{ClosureBridge, Editor, PluginContext, RawWindowHandle, SendPtr};
 use truce_core::events::{Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
@@ -94,13 +95,21 @@ impl Vst2TransportSnapshot {
         // `build_transport_info` default and the snapshot helpers
         // in `truce-core::TransportInfo::for_screenshot`.
         let tempo = if self.tempo > 0.0 { self.tempo } else { 120.0 };
+        // The two `as u8` casts are post-clamped to `0..=255`; the
+        // truncation lint is impossible to trip but the lint can't
+        // see the `clamp`.
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let (time_sig_num, time_sig_den) = (
+            self.time_sig_num.clamp(0, i32::from(u8::MAX)) as u8,
+            self.time_sig_den.clamp(0, i32::from(u8::MAX)) as u8,
+        );
         TransportInfo {
             playing: self.playing != 0,
             recording: self.recording != 0,
             tempo,
-            time_sig_num: self.time_sig_num.clamp(0, i32::from(u8::MAX)) as u8,
-            time_sig_den: self.time_sig_den.clamp(0, i32::from(u8::MAX)) as u8,
-            position_samples: self.position_samples as i64,
+            time_sig_num,
+            time_sig_den,
+            position_samples: sample_pos_i64(self.position_samples),
             position_seconds: 0.0,
             position_beats: self.position_beats,
             bar_start_beats: self.bar_start_beats,
@@ -279,7 +288,7 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
             outputs,
             num_input_channels,
             num_output_channels,
-            num_frames as u32,
+            len_u32(num_frames),
         );
 
         let transport = if inst.aeffect_ptr.is_null() {
@@ -373,7 +382,7 @@ fn try_encode_vst2_midi(event: &Event) -> Option<Vst2MidiEvent> {
 unsafe extern "C" fn cb_output_event_count<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
     unsafe {
         let inst = &*ctx.cast::<Vst2Instance<P>>();
-        truce_core::cast::len_u32(
+        len_u32(
             inst.output_events
                 .iter()
                 .filter(|e| try_encode_vst2_midi(e).is_some())
@@ -403,7 +412,7 @@ unsafe extern "C" fn cb_output_event_at<P: PluginExport>(
 unsafe extern "C" fn cb_param_count<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
     unsafe {
         let inst = &*ctx.cast::<Vst2Instance<P>>();
-        truce_core::cast::len_u32(inst.plugin.params().count())
+        len_u32(inst.plugin.params().count())
     }
 }
 
@@ -477,7 +486,7 @@ unsafe extern "C" fn cb_param_format_current<P: PluginExport>(
                 let len = bytes.len().min((out_len as usize) - 1);
                 std::ptr::copy_nonoverlapping(bytes.as_ptr().cast::<c_char>(), out, len);
                 *out.add(len) = 0;
-                len as u32
+                len_u32(len)
             }
             None => 0,
         }
@@ -511,7 +520,7 @@ unsafe extern "C" fn cb_state_save<P: PluginExport>(
         let ptr = boxed.as_mut_ptr();
         std::mem::forget(boxed);
         *out_data = ptr;
-        *out_len = len as u32;
+        *out_len = len_u32(len);
     }
 }
 
@@ -685,7 +694,7 @@ unsafe fn open_editor_inner<P: PluginExport>(
                     }),
                     set_param: Box::new(move |id, value| {
                         let norm =
-                            params_for_set.set_normalized_returning_normalized(id, value) as f32;
+                            param_f32(params_for_set.set_normalized_returning_normalized(id, value));
                         if !effect_ptr.as_ptr().is_null() {
                             truce_vst2_host_automate(
                                 effect_ptr.as_ptr().cast_mut(),
@@ -861,7 +870,7 @@ pub fn register_vst2<P: PluginExport>() {
             group: cs.group.into_raw(),
         });
     }
-    let num_params = truce_core::cast::len_u32(param_descs.len());
+    let num_params = len_u32(param_descs.len());
     let params_ptr = Box::leak(param_descs.into_boxed_slice()).as_ptr();
 
     unsafe {

@@ -15,6 +15,7 @@ use std::os::raw::c_char;
 use std::slice;
 use std::sync::{Arc, OnceLock};
 
+use truce_core::cast::{len_u32, sample_pos_i64};
 use truce_core::editor::{ClosureBridge, Editor, PluginContext, RawWindowHandle, SendPtr};
 use truce_core::events::{Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
@@ -294,7 +295,7 @@ pub fn register_aax<P: PluginExport>() {
 
         let has_editor = P::has_editor_static();
         let mut desc = descriptor;
-        desc.num_params = truce_core::cast::len_u32(params.len());
+        desc.num_params = len_u32(params.len());
         desc.has_editor = i32::from(has_editor);
         desc.bypass_param_id = bypass_param_id;
 
@@ -657,16 +658,19 @@ pub unsafe fn _process<P: PluginExport>(
     unsafe {
         let mut buffer = inst
             .scratch
-            .build(inputs, outputs, num_in, num_out, num_frames as u32);
+            .build(inputs, outputs, num_in, num_out, len_u32(num_frames));
         let transport = if !transport_ptr.is_null() && (*transport_ptr).valid != 0 {
             let t = &*transport_ptr;
             TransportInfo {
                 playing: t.playing != 0,
                 recording: t.recording != 0,
                 tempo: t.tempo,
+                // The two `as u8` casts are post-clamped to `0..=255`.
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                 time_sig_num: t.time_sig_num.clamp(0, i32::from(u8::MAX)) as u8,
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                 time_sig_den: t.time_sig_den.clamp(0, i32::from(u8::MAX)) as u8,
-                position_samples: t.position_samples as i64,
+                position_samples: sample_pos_i64(t.position_samples),
                 position_seconds: 0.0,
                 position_beats: t.position_beats,
                 bar_start_beats: t.bar_start_beats,
@@ -764,10 +768,11 @@ fn try_encode_aax_midi(event: &Event) -> Option<TruceAaxMidiEvent> {
 /// the indexable view agree.
 pub unsafe fn _output_event_count<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
     let inst = unsafe { &*ctx.cast::<AaxInstance<P>>() };
-    inst.output_events
+    let n = inst.output_events
         .iter()
         .filter(|e| try_encode_aax_midi(e).is_some())
-        .count() as u32
+        .count();
+    len_u32(n)
 }
 
 /// Read the i-th encodable output MIDI event into `out`. Indices are
@@ -913,7 +918,7 @@ pub unsafe fn _save_state<P: PluginExport>(
 /// shape trades the extra `to_vec` allocation for keeping the C
 /// boundary simple.
 unsafe fn finalize_blob(blob: &[u8], out_data: *mut *mut u8) -> u32 {
-    let len = truce_core::cast::len_u32(blob.len());
+    let len = len_u32(blob.len());
     let mut boxed = blob.to_vec().into_boxed_slice();
     let ptr = boxed.as_mut_ptr();
     std::mem::forget(boxed);
