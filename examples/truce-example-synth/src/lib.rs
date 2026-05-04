@@ -170,9 +170,9 @@ impl PluginLogic for Synth {
             }
 
             let waveform_idx = self.params.waveform.index();
-            let cutoff = f64::from(self.params.cutoff.smoothed_next());
-            let resonance = f64::from(self.params.resonance.smoothed_next());
-            let volume = db_to_linear(f64::from(self.params.volume.smoothed_next()));
+            let cutoff = self.params.cutoff.smoothed_next_f64();
+            let resonance = self.params.resonance.smoothed_next_f64();
+            let volume = db_to_linear(self.params.volume.smoothed_next_f64());
 
             let mut sample = 0.0f64;
             for voice in &mut self.voices {

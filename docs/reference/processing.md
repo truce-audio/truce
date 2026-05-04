@@ -35,7 +35,7 @@ The most common shape — one multiplication per sample per channel:
 fn process(&mut self, buffer: &mut AudioBuffer, _: &EventList,
            _: &mut ProcessContext) -> ProcessStatus {
     for i in 0..buffer.num_samples() {
-        let gain = db_to_linear(self.params.gain.smoothed_next() as f64) as f32;
+        let gain = db_to_linear(self.params.gain.smoothed_next());
         for ch in 0..buffer.channels() {
             let (inp, out) = buffer.io(ch);
             out[i] = inp[i] * gain;
@@ -212,9 +212,9 @@ impl PluginLogic for Synth {
 
             // 2. Read per-sample smoothed params.
             let wave    = self.params.waveform.index();
-            let cutoff  = self.params.cutoff.smoothed_next() as f64;
-            let reso    = self.params.resonance.smoothed_next() as f64;
-            let volume  = db_to_linear(self.params.volume.smoothed_next() as f64);
+            let cutoff  = self.params.cutoff.smoothed_next_f64();
+            let reso    = self.params.resonance.smoothed_next_f64();
+            let volume  = db_to_linear(self.params.volume.smoothed_next_f64());
 
             // 3. Sum the voices.
             let mut sample = 0.0f64;

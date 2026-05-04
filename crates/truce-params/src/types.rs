@@ -79,10 +79,29 @@ impl FloatParam {
     }
 
     /// Next smoothed value. Call once per sample in `process()`.
+    ///
+    /// Returns `f32` because the typical caller is the per-sample DSP
+    /// loop, which works in `f32`. For loops that already run in
+    /// `f64` (filter biquads, MIDI-frequency math, host-side display),
+    /// use [`Self::smoothed_next_f64`] instead of widening the result
+    /// at every call site.
     #[inline]
     pub fn smoothed_next(&self) -> f32 {
         let target = self.value.load();
         self.smoother.next(target)
+    }
+
+    /// Next smoothed value, widened to `f64`.
+    ///
+    /// Convenience wrapper over [`Self::smoothed_next`] for callers
+    /// whose surrounding math is `f64` (filter coefficients, decibel
+    /// utilities, anything from `truce_core::util` reaching for the
+    /// `f64` specialization). The smoother itself runs in `f32` —
+    /// this method just hides the widening cast that callers used to
+    /// open-code as `f64::from(param.smoothed_next())`.
+    #[inline]
+    pub fn smoothed_next_f64(&self) -> f64 {
+        f64::from(self.smoothed_next())
     }
 
     /// Current smoothed value without advancing.
