@@ -223,9 +223,8 @@ impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
 
         blit.update(&self.queue, &self.rgba_buf);
 
-        let frame = match self.surface.get_current_texture() {
-            Ok(f) => f,
-            Err(_) => return,
+        let Ok(frame) = self.surface.get_current_texture() else {
+            return;
         };
         let view = frame
             .texture

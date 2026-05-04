@@ -130,9 +130,8 @@ impl UridMap {
         let Some(map_fn) = self.map_fn else {
             return 0;
         };
-        let c = match CString::new(uri) {
-            Ok(c) => c,
-            Err(_) => return 0,
+        let Ok(c) = CString::new(uri) else {
+            return 0;
         };
         unsafe { map_fn(self.handle, c.as_ptr()) }
     }

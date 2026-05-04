@@ -456,13 +456,11 @@ unsafe fn convert_input_events<P: PluginExport>(
             return;
         }
 
-        let size_fn = match (*in_events).size {
-            Some(f) => f,
-            None => return,
+        let Some(size_fn) = (*in_events).size else {
+            return;
         };
-        let get_fn = match (*in_events).get {
-            Some(f) => f,
-            None => return,
+        let Some(get_fn) = (*in_events).get else {
+            return;
         };
 
         let count = size_fn(in_events);
@@ -637,9 +635,8 @@ unsafe fn flush_gui_changes<P: PluginExport>(
         if out_events.is_null() {
             return;
         }
-        let try_push = match (*out_events).try_push {
-            Some(f) => f,
-            None => return,
+        let Some(try_push) = (*out_events).try_push else {
+            return;
         };
 
         data.gui_drain_buf.clear();
@@ -831,11 +828,8 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
 
         // Forward plugin output events (MIDI output from instruments/effects)
         if !proc.out_events.is_null() && !data.output_events.is_empty() {
-            let try_push = match (*proc.out_events).try_push {
-                Some(f) => f,
-                None => {
-                    return CLAP_PROCESS_CONTINUE;
-                }
+            let Some(try_push) = (*proc.out_events).try_push else {
+                return CLAP_PROCESS_CONTINUE;
             };
             for event in data.output_events.iter() {
                 match &event.body {
@@ -1139,9 +1133,8 @@ unsafe extern "C" fn params_text_to_value<P: PluginExport>(
             return false;
         }
         let data = data_from_plugin::<P>(plugin);
-        let text = match CStr::from_ptr(param_value_text).to_str() {
-            Ok(s) => s,
-            Err(_) => return false,
+        let Ok(text) = CStr::from_ptr(param_value_text).to_str() else {
+            return false;
         };
         match data.plugin.params().parse_value(param_id, text) {
             Some(v) => {
@@ -1194,9 +1187,8 @@ unsafe extern "C" fn state_save<P: PluginExport>(
         let blob = state::serialize_state(data.plugin_id_hash, &ids, &values, extra.as_deref());
 
         // Write to the CLAP output stream
-        let write_fn = match (*stream).write {
-            Some(f) => f,
-            None => return false,
+        let Some(write_fn) = (*stream).write else {
+            return false;
         };
 
         let mut offset = 0usize;
@@ -1223,9 +1215,8 @@ unsafe extern "C" fn state_load<P: PluginExport>(
     unsafe {
         let data = data_from_plugin::<P>(plugin);
 
-        let read_fn = match (*stream).read {
-            Some(f) => f,
-            None => return false,
+        let Some(read_fn) = (*stream).read else {
+            return false;
         };
 
         // Read all data from stream
@@ -1243,9 +1234,8 @@ unsafe extern "C" fn state_load<P: PluginExport>(
             return false;
         }
 
-        let deserialized = match state::deserialize_state(&blob, data.plugin_id_hash) {
-            Some(s) => s,
-            None => return false,
+        let Some(deserialized) = state::deserialize_state(&blob, data.plugin_id_hash) else {
+            return false;
         };
 
         data.plugin.params().restore_values(&deserialized.params);
@@ -1279,9 +1269,8 @@ unsafe extern "C" fn audio_ports_count<P: PluginExport>(
     is_input: bool,
 ) -> u32 {
     let layouts = P::bus_layouts();
-    let layout = match layouts.first() {
-        Some(l) => l,
-        None => return 0,
+    let Some(layout) = layouts.first() else {
+        return 0;
     };
     if is_input {
         truce_core::cast::len_u32(layout.inputs.len())
@@ -1298,9 +1287,8 @@ unsafe extern "C" fn audio_ports_get<P: PluginExport>(
 ) -> bool {
     unsafe {
         let layouts = P::bus_layouts();
-        let layout = match layouts.first() {
-            Some(l) => l,
-            None => return false,
+        let Some(layout) = layouts.first() else {
+            return false;
         };
 
         let buses = if is_input {
@@ -1309,9 +1297,8 @@ unsafe extern "C" fn audio_ports_get<P: PluginExport>(
             &layout.outputs
         };
 
-        let bus = match buses.get(index as usize) {
-            Some(b) => b,
-            None => return false,
+        let Some(bus) = buses.get(index as usize) else {
+            return false;
         };
 
         let out = &mut *info;
@@ -1577,9 +1564,8 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
 ) -> bool {
     unsafe {
         let data = data_from_plugin::<P>(plugin);
-        let editor = match data.editor.as_mut() {
-            Some(e) => e,
-            None => return false,
+        let Some(editor) = data.editor.as_mut() else {
+            return false;
         };
 
         #[cfg(target_os = "macos")]

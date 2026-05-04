@@ -545,9 +545,8 @@ pub unsafe fn extension_data<P: PluginExport>(uri: *const c_char) -> *const c_vo
         if uri.is_null() {
             return ptr::null();
         }
-        let uri = match CStr::from_ptr(uri).to_str() {
-            Ok(s) => s,
-            Err(_) => return ptr::null(),
+        let Ok(uri) = CStr::from_ptr(uri).to_str() else {
+            return ptr::null();
         };
         if uri == state::LV2_STATE__INTERFACE_URI {
             return std::ptr::from_ref(state::state_interface::<P>()).cast::<c_void>();

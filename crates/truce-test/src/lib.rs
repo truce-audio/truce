@@ -147,7 +147,7 @@ pub fn assert_has_editor<P: PluginExport>() {
 ///
 /// # Panics
 ///
-/// Panics if any string field is empty or any FourCC code is all
+/// Panics if any string field is empty or any `FourCC` code is all
 /// zeros.
 pub fn assert_valid_info<P: PluginExport>() {
     let info = P::info();
@@ -196,7 +196,7 @@ pub fn assert_au_type_codes_ascii<P: PluginExport>() {
 ///
 /// # Panics
 ///
-/// Panics if the big-endian pack/unpack of any FourCharCode
+/// Panics if the big-endian pack/unpack of any `FourCharCode`
 /// doesn't reproduce the original byte sequence.
 pub fn assert_fourcc_roundtrip<P: PluginExport>() {
     let info = P::info();

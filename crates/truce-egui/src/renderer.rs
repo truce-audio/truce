@@ -195,9 +195,8 @@ impl EguiRenderer {
             &screen_desc,
         );
 
-        let frame = match self.surface.get_current_texture() {
-            Ok(f) => f,
-            Err(_) => return,
+        let Ok(frame) = self.surface.get_current_texture() else {
+            return;
         };
         let frame_view = frame
             .texture

@@ -81,7 +81,7 @@ where
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         plugin.editor()
     };
-    let mut editor = if let Some(e) = editor { e } else {
+    let Some(mut editor) = editor else {
         eprintln!("Plugin returned no editor — falling back to headless mode.");
         drop(audio_handles);
         crate::headless::run::<P>(opts);

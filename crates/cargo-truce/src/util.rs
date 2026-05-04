@@ -967,17 +967,14 @@ fn installed_rustup_targets() -> Option<&'static std::collections::HashSet<Strin
 /// rationale as [`installed_rustup_targets`].
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(crate) fn ensure_rustup_target(triple: &str) -> crate::Res {
-    let installed = match installed_rustup_targets() {
-        Some(s) => s,
-        None => {
-            return Err(format!(
-                "rustup not available — can't verify target `{triple}` is installed. \
-                 Either `rustup` isn't on PATH, or `cargo` is resolving to a non-rustup \
-                 toolchain (e.g. Homebrew's). Install rustup from https://rustup.rs and \
-                 make sure `which cargo` points at `~/.cargo/bin/cargo`."
-            )
-            .into());
-        }
+    let Some(installed) = installed_rustup_targets() else {
+        return Err(format!(
+            "rustup not available — can't verify target `{triple}` is installed. \
+             Either `rustup` isn't on PATH, or `cargo` is resolving to a non-rustup \
+             toolchain (e.g. Homebrew's). Install rustup from https://rustup.rs and \
+             make sure `which cargo` points at `~/.cargo/bin/cargo`."
+        )
+        .into());
     };
     if installed.contains(triple) {
         return Ok(());

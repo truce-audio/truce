@@ -102,9 +102,8 @@ impl RenderBackend for CpuBackend {
 
     fn fill_rect(&mut self, x: f32, y: f32, w: f32, h: f32, color: Color) {
         let s = self.scale;
-        let rect = match tiny_skia::Rect::from_xywh(x * s, y * s, w * s, h * s) {
-            Some(r) => r,
-            None => return,
+        let Some(rect) = tiny_skia::Rect::from_xywh(x * s, y * s, w * s, h * s) else {
+            return;
         };
         let mut paint = Paint::default();
         paint.set_color(color.to_skia());
@@ -117,9 +116,8 @@ impl RenderBackend for CpuBackend {
         let s = self.scale;
         let mut pb = PathBuilder::new();
         pb.push_circle(cx * s, cy * s, radius * s);
-        let path = match pb.finish() {
-            Some(p) => p,
-            None => return,
+        let Some(path) = pb.finish() else {
+            return;
         };
         let mut paint = Paint::default();
         paint.set_color(color.to_skia());
@@ -137,9 +135,8 @@ impl RenderBackend for CpuBackend {
         let s = self.scale;
         let mut pb = PathBuilder::new();
         pb.push_circle(cx * s, cy * s, radius * s);
-        let path = match pb.finish() {
-            Some(p) => p,
-            None => return,
+        let Some(path) = pb.finish() else {
+            return;
         };
         let mut paint = Paint::default();
         paint.set_color(color.to_skia());
@@ -179,9 +176,8 @@ impl RenderBackend for CpuBackend {
             }
         }
 
-        let path = match pb.finish() {
-            Some(p) => p,
-            None => return,
+        let Some(path) = pb.finish() else {
+            return;
         };
         let mut paint = Paint::default();
         paint.set_color(color.to_skia());
@@ -200,9 +196,8 @@ impl RenderBackend for CpuBackend {
         let mut pb = PathBuilder::new();
         pb.move_to(x1 * s, y1 * s);
         pb.line_to(x2 * s, y2 * s);
-        let path = match pb.finish() {
-            Some(p) => p,
-            None => return,
+        let Some(path) = pb.finish() else {
+            return;
         };
         let mut paint = Paint::default();
         paint.set_color(color.to_skia());
@@ -241,9 +236,8 @@ impl RenderBackend for CpuBackend {
     }
 
     fn register_image(&mut self, rgba: &[u8], width: u32, height: u32) -> ImageId {
-        let mut pm = match Pixmap::new(width, height) {
-            Some(p) => p,
-            None => return ImageId::INVALID,
+        let Some(mut pm) = Pixmap::new(width, height) else {
+            return ImageId::INVALID;
         };
         let expected = (width as usize) * (height as usize) * 4;
         if rgba.len() < expected {
@@ -273,9 +267,8 @@ impl RenderBackend for CpuBackend {
 
     fn draw_image(&mut self, id: ImageId, x: f32, y: f32, w: f32, h: f32) {
         let s = self.scale;
-        let pm = match self.images.get(id.0 as usize).and_then(|s| s.as_ref()) {
-            Some(p) => p,
-            None => return,
+        let Some(pm) = self.images.get(id.0 as usize).and_then(|s| s.as_ref()) else {
+            return;
         };
         let sx = (w * s) / pm.width() as f32;
         let sy = (h * s) / pm.height() as f32;

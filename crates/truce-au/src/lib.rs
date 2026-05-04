@@ -13,6 +13,7 @@ use std::slice;
 use truce_core::editor::{ClosureBridge, Editor, PluginContext, RawWindowHandle, SendPtr};
 use truce_core::events::{Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
+use truce_core::info::PluginCategory;
 use truce_core::process::ProcessContext;
 use truce_core::state;
 use truce_params::{ParamFlags, Params};
@@ -687,6 +688,12 @@ pub fn register_au<P: PluginExport>() {
         .find(|pi| pi.flags.contains(ParamFlags::IS_BYPASS))
         .map_or(u32::MAX, |pi| pi.id);
 
+    // NoteEffect plugins (arpeggiators, chord generators) emit MIDI
+    // back to the host. Instruments could in theory too but it's rare
+    // and we don't want to advertise a "MIDI Out" port in every synth's
+    // host UI without an explicit opt-in. Effects and analyzers never do.
+    let has_midi_output = i32::from(matches!(info.category, PluginCategory::NoteEffect));
+
     let descriptor = Box::leak(Box::new(AuPluginDescriptor {
         component_type: info.au_type,
         component_subtype: info.fourcc,
@@ -697,6 +704,7 @@ pub fn register_au<P: PluginExport>() {
         num_inputs: truce_core::wrapper::default_io_channels::<P>().0,
         num_outputs: truce_core::wrapper::default_io_channels::<P>().1,
         bypass_param_id,
+        has_midi_output,
     }));
 
     let callbacks = Box::leak(Box::new(AuCallbacks {

@@ -420,7 +420,7 @@ pub(crate) fn emit_aax_bundle(
     config: &Config,
     universal_mac: bool,
 ) -> Res {
-    let template = if let Some(t) = ensure_template(root, config, universal_mac)? { t } else {
+    let Some(template) = ensure_template(root, config, universal_mac)? else {
         // SDK missing — log per-plugin so the user sees one Skipped
         // entry per (AAX, plugin) target. Both `cargo truce build`
         // and `cargo truce install` flow through this point so the

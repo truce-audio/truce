@@ -135,19 +135,16 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
         plugin.name.to_lowercase().replace(' ', "")
     );
 
-    let resolved_fourcc = match plugin.fourcc.as_ref().or(plugin.au_subtype.as_ref()) {
-        Some(s) => s,
-        None => {
-            return syn::Error::new(
-                proc_macro2::Span::call_site(),
-                format!(
-                    "truce.toml: [[plugin]] entry `{}` requires `fourcc` or `au_subtype`",
-                    plugin.crate_name
-                ),
-            )
-            .to_compile_error()
-            .into();
-        }
+    let Some(resolved_fourcc) = plugin.fourcc.as_ref().or(plugin.au_subtype.as_ref()) else {
+        return syn::Error::new(
+            proc_macro2::Span::call_site(),
+            format!(
+                "truce.toml: [[plugin]] entry `{}` requires `fourcc` or `au_subtype`",
+                plugin.crate_name
+            ),
+        )
+        .to_compile_error()
+        .into();
     };
     let au_manufacturer = &config.vendor.au_manufacturer;
 
@@ -450,9 +447,8 @@ fn parse_default_expr(expr: &Expr) -> Option<f64> {
 
 /// Collect parameter fields, nested fields, and meter fields from a struct.
 fn collect_fields(fields: &Fields) -> (Vec<ParamField>, Vec<NestedField>, Vec<MeterField>) {
-    let named = match fields {
-        Fields::Named(named) => named,
-        _ => return (Vec::new(), Vec::new(), Vec::new()),
+    let Fields::Named(named) = fields else {
+        return (Vec::new(), Vec::new(), Vec::new());
     };
 
     let mut params = Vec::new();
@@ -460,9 +456,8 @@ fn collect_fields(fields: &Fields) -> (Vec<ParamField>, Vec<NestedField>, Vec<Me
     let mut meters = Vec::new();
 
     for f in &named.named {
-        let ident = match f.ident.clone() {
-            Some(i) => i,
-            None => continue,
+        let Some(ident) = f.ident.clone() else {
+            continue;
         };
 
         if has_nested_attr(f) {
@@ -787,7 +782,7 @@ fn gen_field_constructor(f: &ParamField) -> proc_macro2::TokenStream {
         }
     }
 
-    let info = if let Some(tokens) = gen_param_info_literal(f) { tokens } else {
+    let Some(info) = gen_param_info_literal(f) else {
         // Validation block above already returned a `compile_error!`
         // for every shape that `gen_param_info_literal` rejects.
         // Surface a fallback diagnostic so a future divergence

@@ -198,12 +198,20 @@
     const AuCallbacks *callbacks = g_callbacks;
     uint32_t numIn = g_descriptor ? g_descriptor->num_inputs : 0;
     uint32_t numOut = g_descriptor ? g_descriptor->num_outputs : 2;
+    int32_t hasMidiOut = g_descriptor ? g_descriptor->has_midi_output : 0;
 
     // Snapshot the host-provided musical context / transport blocks at
     // render-graph compile time. The host may replace them later, but AU v3
     // guarantees these blocks are realtime-safe to call.
     AUHostMusicalContextBlock __block musicalContext = self.musicalContextBlock;
     AUHostTransportStateBlock __block transportState = self.transportStateBlock;
+    // Plugin → host MIDI sink. The host writes this via the
+    // `MIDIOutputEventBlock` setter before allocateRenderResources;
+    // we capture by value so the render block doesn't have to touch
+    // `self` from the realtime context. Stays nil for plugins whose
+    // category doesn't advertise MIDI output (`MIDIOutputNames` returns
+    // an empty list in that case, so well-behaved hosts skip the wire).
+    AUMIDIOutputEventBlock __block midiOutputBlock = self.MIDIOutputEventBlock;
 
     return ^AUAudioUnitStatus(
         AudioUnitRenderActionFlags *flags,
@@ -294,6 +302,32 @@
         callbacks->process(ctx, inPtrs, outPtrs, numIn, numOut,
                           (uint32_t)frameCount, midiEvents, numMidi,
                           &transport);
+
+        // Drain plugin → host MIDI. The Rust side has already filtered
+        // its output queue down to events that fit in 3-byte MIDI 1.0
+        // packets, so we can iterate `0..count` and forward each one
+        // to the host's registered output block. Skipped when the host
+        // didn't wire a block (e.g., effects whose `MIDIOutputNames`
+        // returned empty, or hosts that only set the MIDI 2.0 list
+        // block — UMP isn't supported here yet).
+        if (hasMidiOut && midiOutputBlock) {
+            uint32_t outCount = callbacks->output_event_count(ctx);
+            for (uint32_t i = 0; i < outCount; i++) {
+                AuMidiEvent ev = {0};
+                callbacks->output_event_at(ctx, i, &ev);
+                // Two-byte messages: program change (0xC0) and channel
+                // pressure (0xD0). Everything else is three bytes.
+                NSInteger length = 3;
+                uint8_t hi = ev.status & 0xF0;
+                if (hi == 0xC0 || hi == 0xD0) length = 2;
+                uint8_t bytes[3] = { ev.status, ev.data1, ev.data2 };
+                AUEventSampleTime when = (AUEventSampleTime)ev.sample_offset;
+                if (timestamp && (timestamp->mFlags & kAudioTimeStampSampleTimeValid)) {
+                    when += (AUEventSampleTime)timestamp->mSampleTime;
+                }
+                midiOutputBlock(when, 0 /* cable */, length, bytes);
+            }
+        }
         return noErr;
     };
 }
@@ -337,6 +371,20 @@
 // For instruments: support MIDI input
 - (BOOL)isMusicDeviceOrEffect {
     return YES;
+}
+
+// Advertise a single plugin → host MIDI output port for plugins that
+// emit MIDI back (note effects, arpeggiators). Hosts query this BEFORE
+// they wire `MIDIOutputEventBlock`, so an empty list here keeps pure
+// audio effects from showing a phantom MIDI output in the routing UI.
+// Returning nil rather than `@[]` is what AUAudioUnit's documented
+// "no output" sentinel is, but `@[]` is what hosts actually inspect
+// (-count > 0); both behave the same in practice.
+- (NSArray<NSString *> *)MIDIOutputNames {
+    if (g_descriptor && g_descriptor->has_midi_output) {
+        return @[@"MIDI Out"];
+    }
+    return @[];
 }
 
 @end

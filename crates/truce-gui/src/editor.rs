@@ -298,9 +298,8 @@ impl<P: Params + 'static> BuiltinEditor<P> {
             None => Box::new(move |_| 0.0),
         };
         let get_options: Box<dyn Fn(u32) -> Vec<String>> = Box::new(move |id| {
-            let info = match p_opts.param_infos().into_iter().find(|i| i.id == id) {
-                Some(i) => i,
-                None => return Vec::new(),
+            let Some(info) = p_opts.param_infos().into_iter().find(|i| i.id == id) else {
+                return Vec::new();
             };
             let count = info.range.step_count().map_or(1, |n| n.get() as usize) + 1;
             (0..count)
@@ -325,9 +324,8 @@ impl<P: Params + 'static> BuiltinEditor<P> {
                 },
             );
         let next_discrete_normalized: Box<dyn Fn(u32) -> f32> = Box::new(move |id| {
-            let info = match p_next.param_infos().into_iter().find(|i| i.id == id) {
-                Some(i) => i,
-                None => return 0.0,
+            let Some(info) = p_next.param_infos().into_iter().find(|i| i.id == id) else {
+                return 0.0;
             };
             let plain = p_next.get_plain(id).unwrap_or(0.0);
             let max = info.range.max();
@@ -687,9 +685,8 @@ impl<P: Params + 'static> baseview::WindowHandler for BuiltinWindowHandler<P> {
         // either we observe `Some(_)` here (close hasn't taken it yet,
         // editor still alive) or we observe `None` and return without
         // touching `self.editor`. Either way the deref below is sound.
-        let mut guard = match self.backend.lock() {
-            Ok(g) => g,
-            Err(_) => return,
+        let Ok(mut guard) = self.backend.lock() else {
+            return;
         };
         if guard.is_none() {
             // Editor already dropped the backend in its close path.
@@ -742,9 +739,8 @@ impl<P: Params + 'static> baseview::WindowHandler for BuiltinWindowHandler<P> {
                 ..
             } = backend;
             blit.update(queue, pixels);
-            let frame = match surface.get_current_texture() {
-                Ok(f) => f,
-                Err(_) => return,
+            let Ok(frame) = surface.get_current_texture() else {
+                return;
             };
             let view = frame
                 .texture
@@ -782,9 +778,8 @@ impl<P: Params + 'static> baseview::WindowHandler for BuiltinWindowHandler<P> {
         // the backend cell is the synchronization point with
         // `BuiltinEditor::close`. If the cell is `None`, the editor
         // pointer is no longer guaranteed valid and we must not deref.
-        let guard = match self.backend.lock() {
-            Ok(g) => g,
-            Err(_) => return baseview::EventStatus::Ignored,
+        let Ok(guard) = self.backend.lock() else {
+            return baseview::EventStatus::Ignored;
         };
         if guard.is_none() {
             return baseview::EventStatus::Ignored;

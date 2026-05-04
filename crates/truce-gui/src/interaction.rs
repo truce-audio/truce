@@ -399,9 +399,8 @@ impl InteractionState {
 
     /// Begin a drag on a widget by region index.
     pub fn begin_drag(&mut self, idx: usize, current_normalized: f64, mouse_y: f32) {
-        let region = match self.knob_regions.get(idx) {
-            Some(r) => r,
-            None => return,
+        let Some(region) = self.knob_regions.get(idx) else {
+            return;
         };
         let param_id = region.param_id;
         let wtype = region.widget_type;
@@ -773,9 +772,8 @@ fn handle_mouse_down(
         // Fall through to normal widget hit-test.
     }
 
-    let idx = match state.hit_test(x, y) {
-        Some(i) => i,
-        None => return,
+    let Some(idx) = state.hit_test(x, y) else {
+        return;
     };
     let param_id = state.knob_regions[idx].param_id;
     let wtype = state.widget_type_at(idx);
@@ -887,9 +885,8 @@ fn apply_drag(
     state: &InteractionState,
     edits: &mut Vec<ParamEdit>,
 ) {
-    let drag = match state.dragging.as_ref() {
-        Some(d) => d,
-        None => return,
+    let Some(drag) = state.dragging.as_ref() else {
+        return;
     };
     match drag.widget_type {
         WidgetType::XYPad => {

@@ -1001,9 +1001,8 @@ pub unsafe fn _editor_open<P: PluginExport>(
             return;
         }
         let inst = &mut *ctx.cast::<AaxInstance<P>>();
-        let editor = match inst.editor.as_mut() {
-            Some(e) => e,
-            None => return,
+        let Some(editor) = inst.editor.as_mut() else {
+            return;
         };
 
         let cb = &*callbacks;

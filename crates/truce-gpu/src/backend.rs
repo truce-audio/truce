@@ -1524,14 +1524,12 @@ impl RenderBackend for WgpuBackend {
         // Upload any pending glyph atlas writes (before borrowing surface)
         self.flush_atlas();
 
-        let surface = match &self.surface {
-            Some(s) => s,
-            None => return, // headless — no surface to present to
+        let Some(surface) = &self.surface else {
+            return; // headless — no surface to present to
         };
 
-        let frame = match surface.get_current_texture() {
-            Ok(f) => f,
-            Err(_) => return,
+        let Ok(frame) = surface.get_current_texture() else {
+            return;
         };
         let frame_view = frame
             .texture
@@ -2141,15 +2139,15 @@ mod tests {
             backends: wgpu::Backends::PRIMARY,
             ..Default::default()
         });
-        let adapter =
-            match pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        let Some(adapter) =
+            pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
                 compatible_surface: None,
                 force_fallback_adapter: false,
-            })) {
-                Some(a) => a,
-                None => return, // no GPU in this environment
-            };
+            }))
+        else {
+            return; // no GPU in this environment
+        };
         let (device, queue) = pollster::block_on(adapter.request_device(
             &wgpu::DeviceDescriptor {
                 label: Some("standalone-test"),

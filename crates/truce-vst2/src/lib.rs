@@ -468,9 +468,8 @@ unsafe extern "C" fn cb_param_format_current<P: PluginExport>(
             return 0;
         }
         let inst = &*ctx.cast::<Vst2Instance<P>>();
-        let plain = match inst.plugin.params().get_plain(id) {
-            Some(v) => v,
-            None => return 0,
+        let Some(plain) = inst.plugin.params().get_plain(id) else {
+            return 0;
         };
         match inst.plugin.params().format_value(id, plain) {
             Some(text) => {

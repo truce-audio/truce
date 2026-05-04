@@ -246,9 +246,8 @@ struct EguiWindowHandler<P: Params + ?Sized> {
 
 impl<P: Params + ?Sized> EguiWindowHandler<P> {
     fn run_frame(&mut self) {
-        let renderer = match self.renderer.as_mut() {
-            Some(r) => r,
-            None => return,
+        let Some(renderer) = self.renderer.as_mut() else {
+            return;
         };
 
         // Pick up host-driven scale changes (CLAP `set_scale`, VST3

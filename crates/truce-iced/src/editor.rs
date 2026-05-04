@@ -327,9 +327,8 @@ struct RenderState<P: Params, M: IcedPlugin<P>> {
 impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
     /// Initialize the wgpu + iced rendering pipeline from a pre-created surface.
     fn init_render(&mut self, instance: wgpu::Instance, surface: wgpu::Surface<'static>) -> bool {
-        let program = match self.program.take() {
-            Some(p) => p,
-            None => return false,
+        let Some(program) = self.program.take() else {
+            return false;
         };
 
         let (lw, lh) = self.size;
@@ -343,16 +342,17 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
         let w = truce_gui::to_physical_px(lw, render_scale);
         let h = truce_gui::to_physical_px(lh, render_scale);
 
-        let adapter =
-            if let Some(a) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        let Some(adapter) =
+            pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
                 compatible_surface: Some(&surface),
                 force_fallback_adapter: false,
-            })) { a } else {
-                log::warn!("no suitable GPU adapter found");
-                self.program = Some(program);
-                return false;
-            };
+            }))
+        else {
+            log::warn!("no suitable GPU adapter found");
+            self.program = Some(program);
+            return false;
+        };
 
         let (device, queue) = match pollster::block_on(adapter.request_device(
             &wgpu::DeviceDescriptor {
@@ -448,9 +448,8 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
 
     /// Drive one frame: update iced state + present to surface.
     fn tick(&mut self) {
-        let render = match self.render.as_mut() {
-            Some(r) => r,
-            None => return,
+        let Some(render) = self.render.as_mut() else {
+            return;
         };
 
         // Pick up host-driven scale changes (CLAP `set_scale`, VST3
@@ -640,9 +639,8 @@ impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBase
         event: baseview::Event,
     ) -> baseview::EventStatus {
         let editor = unsafe { &mut *self.editor };
-        let runtime = match editor.runtime.as_mut() {
-            Some(r) => r,
-            None => return baseview::EventStatus::Ignored,
+        let Some(runtime) = editor.runtime.as_mut() else {
+            return baseview::EventStatus::Ignored;
         };
 
         match event {

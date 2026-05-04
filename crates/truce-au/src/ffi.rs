@@ -27,6 +27,11 @@ pub struct AuPluginDescriptor {
     /// `kAudioUnitProperty_BypassEffect` get/set through this ID so the
     /// host's master-bypass UI tracks the param's value.
     pub bypass_param_id: u32,
+    /// `1` if the plugin emits MIDI back to the host (note effects /
+    /// arpeggiators / chord generators). The AU v3 shim gates
+    /// `MIDIOutputNames` on this flag so a pure audio effect doesn't
+    /// surface a phantom "MIDI Out" port in the host UI.
+    pub has_midi_output: i32,
 }
 
 /// Parameter descriptor for the `ObjC` shim.

@@ -87,7 +87,7 @@ pub fn midi_14bit_pb(v: f32) -> u16 {
 #[must_use]
 pub fn len_u32(n: usize) -> u32 {
     debug_assert!(
-        n <= u32::MAX as usize,
+        u32::try_from(n).is_ok(),
         "len_u32: count {n} overflows u32; FFI field would silently truncate",
     );
     n as u32

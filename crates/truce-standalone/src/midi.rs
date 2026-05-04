@@ -85,7 +85,7 @@ fn midi_thread(requested: String, pending: Arc<Mutex<Vec<MidiEvent>>>, stop: Arc
         // Already connected? Verify the device is still present.
         if let Some(_conn) = &connection {
             let still_present = {
-                let midi_in = if let Ok(m) = MidiInput::new("truce-standalone-probe") { m } else {
+                let Ok(midi_in) = MidiInput::new("truce-standalone-probe") else {
                     std::thread::sleep(HOTPLUG_POLL);
                     continue;
                 };

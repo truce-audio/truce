@@ -539,7 +539,7 @@ fn rewrite_git_refs(content: &str, crates_dir: &str) -> String {
             continue;
         }
         // Extract the key (the `truce-foo` in `truce-foo = { git = ... }`).
-        let eq_idx = if let Some(i) = line.find('=') { i } else {
+        let Some(eq_idx) = line.find('=') else {
             out.push_str(line);
             out.push('\n');
             continue;
