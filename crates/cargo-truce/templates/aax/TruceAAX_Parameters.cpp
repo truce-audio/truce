@@ -49,10 +49,18 @@ AAX_Result TruceAAX_Parameters::EffectInit() {
     mRustCtx = g_bridge.create();
     if (!mRustCtx) return AAX_ERROR_NULL_OBJECT;
 
-    // Initialize plugin with sample rate
+    // Initialize plugin with sample rate. Pre-size for the
+    // worst-case Pro Tools H/W buffer (8192 samples — the cap
+    // exposed in the session settings, also used for offline
+    // bounce). The plugin allocates internal scratch up to this
+    // bound; per-block work in RenderAudio uses the actual
+    // `*ioRenderInfo->mNumSamples`. If a host ever delivers a
+    // larger block we re-reset there as a defensive fallback.
     AAX_CSampleRate sr = 44100.0;
     Controller()->GetSampleRate(&sr);
-    g_bridge.reset(mRustCtx, (double)sr, 1024);
+    mMaxBlockSize = 8192;
+    g_bridge.reset(mRustCtx, (double)sr, mMaxBlockSize);
+    mSampleRate = (double)sr;
 
     // Register parameters with AAX
     for (uint32_t i = 0; i < g_descriptor.num_params; i++) {
@@ -121,6 +129,16 @@ void TruceAAX_Parameters::RenderAudio(
     // Get audio buffers
     int32_t bufferSize = *ioRenderInfo->mNumSamples;
 
+    // Defensive: if the host violates the 8192-sample cap declared
+    // in EffectInit, re-reset the plugin so its internal scratch
+    // can fit the new block. This will glitch the audio — but a
+    // glitch is recoverable; reading past the end of an allocated
+    // buffer is not.
+    if (bufferSize > 0 && (uint32_t)bufferSize > mMaxBlockSize) {
+        mMaxBlockSize = (uint32_t)bufferSize;
+        g_bridge.reset(mRustCtx, mSampleRate, mMaxBlockSize);
+    }
+
     // Build channel pointers
     const float* inputs[2] = { nullptr, nullptr };
     float* outputs[2] = { nullptr, nullptr };
@@ -135,8 +153,13 @@ void TruceAAX_Parameters::RenderAudio(
     }
 
     // Collect MIDI events for instruments and note effects (anything
-    // that registered a LocalInput MIDI node in Describe).
-    TruceAaxMidiEvent midiEvents[256];
+    // that registered a LocalInput MIDI node in Describe). The cap
+    // at 4096 packets per render block is far above any realistic
+    // density (Pro Tools typically delivers tens to low hundreds
+    // even for dense polyphonic recordings) and is stack-allocated
+    // (4096 × 8 B = 32 KB) so the audio thread never heap-allocates.
+    constexpr uint32_t kMidiBufferCap = 4096;
+    TruceAaxMidiEvent midiEvents[kMidiBufferCap];
     uint32_t midiCount = 0;
 
     if (g_descriptor.wants_input_midi && ioRenderInfo->mInputNode) {
@@ -144,7 +167,7 @@ void TruceAAX_Parameters::RenderAudio(
         if (midiNode) {
             AAX_CMidiStream* stream = midiNode->GetNodeBuffer();
             if (stream && stream->mBufferSize > 0) {
-                for (uint32_t i = 0; i < stream->mBufferSize && midiCount < 256; i++) {
+                for (uint32_t i = 0; i < stream->mBufferSize && midiCount < kMidiBufferCap; i++) {
                     const AAX_CMidiPacket& pkt = stream->mBuffer[i];
                     if (pkt.mLength >= 1) {
                         midiEvents[midiCount].delta_frames = pkt.mTimestamp;

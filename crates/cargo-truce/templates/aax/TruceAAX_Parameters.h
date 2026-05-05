@@ -57,4 +57,9 @@ private:
     // cache we'd serialize the full state blob twice per save.
     // `mutable` because both methods are const per the AAX SDK.
     mutable std::vector<uint8_t> mPendingChunk;
+    // Sample rate captured at EffectInit; used by RenderAudio's
+    // defensive re-reset path when a host delivers a block larger
+    // than `mMaxBlockSize`.
+    double mSampleRate = 44100.0;
+    uint32_t mMaxBlockSize = 0;
 };

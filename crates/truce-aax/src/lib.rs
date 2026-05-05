@@ -40,12 +40,9 @@ pub struct TruceAaxDescriptor {
     pub manufacturer_id: i32,
     pub product_id: i32,
     pub plugin_id: i32,
-    pub is_instrument: i32,
-    /// True for instruments AND note effects (`aumi`). Gates the
+    /// True for instruments and note effects (`aumi`). Gates the
     /// `LocalInput` MIDI node registration in `Describe` and the
-    /// MIDI-event collection in `RenderAudio`. Distinct from
-    /// `is_instrument` because note effects also need MIDI input but
-    /// must not be exposed as instruments to the host.
+    /// MIDI-event collection in `RenderAudio`.
     pub wants_input_midi: i32,
     pub category: u32,
     pub has_editor: i32,
@@ -279,7 +276,6 @@ pub fn register_aax<P: PluginExport>() {
             product_id: fourcc(info.fourcc),
             // plugin_id must differ from product_id — XOR with a salt
             plugin_id: fourcc(info.fourcc) ^ 0x0101_0101,
-            is_instrument: i32::from(is_instrument),
             wants_input_midi: i32::from(is_instrument || is_note_effect),
             category,
             has_editor: 0,             // filled below

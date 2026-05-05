@@ -150,13 +150,19 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
         }
     }
 
+    // Captured before the default-fill below so the post-loop sidecar
+    // cleanup can tell "user passed no format flag → uninstall
+    // everything for these plugins" apart from "user picked specific
+    // formats → leave shell sidecars alone for the others".
+    let all_formats_default = !clap && !vst3 && !vst2 && !lv2 && !au2 && !au3 && !aax;
+
     // Default: all formats if none specified.
     // `au3 = true` lands in a flag that's read only inside macOS-gated
     // blocks; the assignment-never-read warning on Linux/Windows is
     // intentional — keeping the flag uniform across platforms is more
     // readable than a per-platform `if`.
     #[allow(unused_assignments)]
-    if !clap && !vst3 && !vst2 && !lv2 && !au2 && !au3 && !aax {
+    if all_formats_default {
         clap = true;
         vst3 = true;
         vst2 = true;
@@ -170,6 +176,12 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
     let known_names: Vec<&str> = config.plugin.iter().map(|p| p.name.as_str()).collect();
 
     let mut targets: Vec<RemoveTarget> = Vec::new();
+    // Collected in the non-stale branch below; used after the
+    // bundle-removal loop to clean up `~/.truce/shell/<crate>.path`
+    // sidecars when the user is uninstalling all formats for a
+    // plugin. Empty for `--stale` (we only have display names there,
+    // not crate names — sidecars stay).
+    let mut crate_names_for_sidecar_cleanup: Vec<String> = Vec::new();
 
     if stale {
         // --stale: find vendor-matching bundles NOT in the current project
@@ -390,6 +402,10 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
             config.plugin.iter().collect()
         };
 
+        if all_formats_default {
+            crate_names_for_sidecar_cleanup.extend(plugins.iter().map(|p| p.crate_name.clone()));
+        }
+
         let scan_system = scopes_to_scan.contains(&InstallScope::System);
         let push_if_exists =
             |format: &'static str, path: PathBuf, needs_sudo: bool, targets: &mut Vec<_>| {
@@ -554,6 +570,24 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
     if removed_au {
         clear_au_caches();
         eprintln!("\nCleared AU caches.");
+    }
+
+    // Clean up `~/.truce/shell/<crate>.path` sidecars for plugins
+    // whose entire format set is being uninstalled. Skipped on
+    // partial uninstalls (`--clap`, `-p` etc. without all formats)
+    // since the sidecar is shared across format wrappers and
+    // removing it would break shell-mode for any still-installed
+    // formats. Skipped on `--stale` because we don't have crate
+    // names there.
+    for crate_name in &crate_names_for_sidecar_cleanup {
+        if let Some(path) = truce_utils::shell_sidecar::sidecar_path(crate_name)
+            && path.exists()
+        {
+            match fs::remove_file(&path) {
+                Ok(()) => eprintln!("  \u{2713} sidecar {}", path.display()),
+                Err(e) => eprintln!("  \u{2717} sidecar {} ({})", path.display(), e),
+            }
+        }
     }
 
     if errors > 0 {

@@ -295,14 +295,16 @@ pub(crate) fn build_logic_dylibs(
 
 /// Resolve and write `~/.truce/shell/<crate>.path` so the installed
 /// shell binary (loaded by the DAW) can find the logic dylib at
-/// runtime without compile-time `option_env!` baking. Replaces the
-/// old `TRUCE_TARGET_DIR` / `TRUCE_LOGIC_PROFILE` build-script bake
-/// path — `cargo truce install --shell` knows the canonical paths
-/// already, so writing them at install time is direct.
+/// runtime. Writes the absolute, canonicalized path of the logic
+/// dylib so the runtime read site doesn't have to re-resolve
+/// `CARGO_TARGET_DIR` / `[build].target-dir` from a context that
+/// lacks those signals.
 ///
-/// Writes the absolute path of the logic dylib (canonicalized) so the
-/// runtime read site doesn't have to re-resolve `CARGO_TARGET_DIR` /
-/// `[build].target-dir` from a context that lacks those signals.
+/// Atomic write: lands the contents at a `<sidecar>.tmp.<pid>`
+/// sibling and renames it into place. A `^C` or power loss between
+/// the temp write and the rename leaves the prior sidecar intact;
+/// the half-written temp file is harmless and gets overwritten on
+/// the next build.
 fn write_shell_sidecar(root: &std::path::Path, crate_name: &str, logic_profile: &str) -> Res {
     use std::fs;
 
@@ -324,8 +326,21 @@ fn write_shell_sidecar(root: &std::path::Path, crate_name: &str, logic_profile: 
             format!("failed to create {}: {e}", parent.display()).into()
         })?;
     }
-    fs::write(&sidecar, format!("{}\n", canonical.display())).map_err(|e| -> crate::BoxErr {
-        format!("failed to write shell sidecar {}: {e}", sidecar.display()).into()
+    let tmp = sidecar.with_extension(format!("path.tmp.{}", std::process::id()));
+    fs::write(&tmp, format!("{}\n", canonical.display())).map_err(|e| -> crate::BoxErr {
+        format!("failed to write shell sidecar {}: {e}", tmp.display()).into()
+    })?;
+    // `fs::rename` is atomic on POSIX (rename(2)) and on Windows
+    // (`MoveFileExW` with `MOVEFILE_REPLACE_EXISTING`). Same parent
+    // directory guarantees same filesystem.
+    fs::rename(&tmp, &sidecar).map_err(|e| -> crate::BoxErr {
+        let _ = fs::remove_file(&tmp);
+        format!(
+            "failed to rename {} -> {}: {e}",
+            tmp.display(),
+            sidecar.display()
+        )
+        .into()
     })?;
     crate::vprintln!(
         "Wrote shell sidecar {} -> {}",

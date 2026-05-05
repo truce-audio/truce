@@ -250,9 +250,12 @@ AAX_Result GetEffectDescriptions(AAX_ICollection* outCollection) {
         setupInfo.mInputMIDIChannelMask = 0xFFFF; // all channels
     }
 
-    // Register mono configuration
-    setupInfo.mInputStemFormat = g_descriptor.num_inputs > 0
-        ? AAX_eStemFormat_Mono : AAX_eStemFormat_Mono;
+    // Register mono configuration. The Rust wrapper synthesizes
+    // dummy stereo I/O for plugins that declare no audio buses
+    // (pure MIDI effects, instruments) — see the layout match in
+    // `truce-aax/src/lib.rs::register_aax` — so `num_inputs > 0`
+    // always holds at this point and `Mono` is the right choice.
+    setupInfo.mInputStemFormat = AAX_eStemFormat_Mono;
     setupInfo.mOutputStemFormat = AAX_eStemFormat_Mono;
     setupInfo.mPluginID = g_descriptor.plugin_id;
     AAX_Result err = TruceDescribeOneConfig(desc, setupInfo,
