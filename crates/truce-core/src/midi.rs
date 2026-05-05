@@ -4,7 +4,7 @@
 //! status `0x80..=0xEF`) into an [`EventBody`]; `event_to_midi1`
 //! does the inverse. Both work on wire-native integers — see
 //! [`crate::events`] for the value-domain rationale, and the
-//! [`midi`](crate::midi_helpers) module's helpers for normalize /
+//! re-exported [`truce_utils::midi`] helpers (below) for normalize /
 //! denormalize when plugin code wants `f32`.
 //!
 //! System common (`0xF1..=0xF7`), system real-time (`0xF8..=0xFF`),

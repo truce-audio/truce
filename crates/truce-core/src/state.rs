@@ -45,7 +45,7 @@ pub struct DeserializedState {
 
 /// Apply a deserialized state to a plugin: write parameter values,
 /// snap smoothers, then hand the optional extra blob to
-/// [`Plugin::load_state`].
+/// [`crate::plugin::Plugin::load_state`].
 ///
 /// Format wrappers call this from the audio thread after popping a
 /// pending load off their per-instance handoff queue. The reason it
