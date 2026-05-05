@@ -255,38 +255,44 @@ macro_rules! __plugin_hot_reload {
                     return std::path::PathBuf::from(p);
                 }
 
-                // Compile-time bake: `truce-build`'s `emit_plugin_env()`
-                // emits `TRUCE_TARGET_DIR` (resolved from `OUT_DIR`,
-                // honors `CARGO_TARGET_DIR`) and `TRUCE_LOGIC_PROFILE`
-                // (set by `cargo truce install --shell`, defaults to
-                // "release"). Captured into the shell binary so the
-                // DAW process doesn't need any env at runtime.
-                let crate_name = env!("CARGO_PKG_NAME").replace('-', "_");
+                // Sidecar written by `cargo truce install --shell` at
+                // install time: a single line containing the absolute
+                // path to the logic dylib. Replaces an older
+                // build-script bake of `TRUCE_TARGET_DIR` /
+                // `TRUCE_LOGIC_PROFILE` env vars, so plugin crates no
+                // longer need a `build.rs`.
+                let crate_name = env!("CARGO_PKG_NAME");
+                if let Some(sidecar) =
+                    $crate::__reexport::shell_sidecar_path(crate_name)
+                {
+                    if let Ok(contents) = std::fs::read_to_string(&sidecar) {
+                        let trimmed = contents.trim();
+                        if !trimmed.is_empty() {
+                            return std::path::PathBuf::from(trimmed);
+                        }
+                    }
+                }
+
+                // Fallback: walk up from `CARGO_MANIFEST_DIR` (baked at
+                // compile time) looking for `target/`, then assume the
+                // default `release` subdir. Works for the in-tree dev
+                // workflow when no sidecar has been written; out-of-tree
+                // installs always go through the sidecar above.
+                let lib_crate = env!("CARGO_PKG_NAME").replace('-', "_");
                 // Single `if cfg!()` chain, not separate `#[cfg]` arms —
                 // the latter pattern looks like `lib_name` is reassigned
                 // (warning: `unused_assignments`) and silently leaves it
                 // uninitialized on a future target_os we forgot to add.
                 let lib_name: String = if cfg!(target_os = "macos") {
-                    format!("lib{crate_name}.dylib")
+                    format!("lib{lib_crate}.dylib")
                 } else if cfg!(target_os = "linux") {
-                    format!("lib{crate_name}.so")
+                    format!("lib{lib_crate}.so")
                 } else if cfg!(target_os = "windows") {
-                    format!("{crate_name}.dll")
+                    format!("{lib_crate}.dll")
                 } else {
                     panic!("truce hot-reload: unsupported target_os");
                 };
 
-                let profile = option_env!("TRUCE_LOGIC_PROFILE").unwrap_or("release");
-
-                if let Some(target_dir) = option_env!("TRUCE_TARGET_DIR") {
-                    return std::path::PathBuf::from(target_dir)
-                        .join(profile)
-                        .join(&lib_name);
-                }
-
-                // Fallback for shells built without truce-build (or
-                // pre-0.13 truce-build versions): walk up from
-                // CARGO_MANIFEST_DIR looking for `target/`.
                 let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
                 let mut root = manifest_dir.clone();
                 let workspace_root = loop {
@@ -298,25 +304,20 @@ macro_rules! __plugin_hot_reload {
                     }
                 };
                 let Some(mut root) = workspace_root else {
-                    // No `target/` in any ancestor — silently falling
-                    // back to `CARGO_MANIFEST_DIR/target/` would have
-                    // produced a path that never exists in workspace
-                    // layouts, surfacing as a confusing runtime "dylib
-                    // not found". Crash with a clear message instead;
-                    // the plugin author needs to either set
-                    // `TRUCE_LOGIC_PATH`, run via `truce-build`, or fix
-                    // their workspace layout.
                     panic!(
-                        "truce hot-reload: no `target/` found in any \
-                         ancestor of CARGO_MANIFEST_DIR ({}). Set \
-                         TRUCE_LOGIC_PATH to the dylib explicitly, or \
-                         build via truce-build so TRUCE_TARGET_DIR is baked \
-                         in at compile time.",
+                        "truce hot-reload: no logic dylib path resolved. \
+                         The shell sidecar at $HOME/.truce/shell/{}.path \
+                         is missing or empty, no `target/` was found in \
+                         any ancestor of CARGO_MANIFEST_DIR ({}), and \
+                         TRUCE_LOGIC_PATH is unset. Run \
+                         `cargo truce install --shell` to write the \
+                         sidecar, or set TRUCE_LOGIC_PATH explicitly.",
+                        crate_name,
                         manifest_dir.display()
                     );
                 };
                 root.push("target");
-                root.push(profile);
+                root.push("release");
                 root.push(lib_name);
                 root
             }

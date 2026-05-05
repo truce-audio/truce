@@ -2,12 +2,16 @@
 
 //! Dependency-free utilities shared across the truce workspace.
 //!
-//! Two unrelated families of helpers live here so neither has to pull in
-//! a heavier crate's transitive chain:
+//! Three unrelated families of helpers live here so neither has to pull
+//! in a heavier crate's transitive chain:
 //!
 //! - [`cast`] — numeric-cast helpers for the audio-plugin → host FFI
 //!   boundary (MIDI byte encodes, `usize` ↔ `u32` length casts, host
 //!   `f64` ↔ DSP `f32`, discrete-index ↔ normalized).
+//! - [`shell_sidecar`] — sidecar-file path resolution shared by
+//!   `cargo-truce` (writes the sidecar at install-time) and the
+//!   `truce::plugin!` macro (reads it at runtime to locate the logic
+//!   dylib for hot-reload).
 //! - [`slugify`] — ASCII-safe filesystem / IRI slug used by the LV2
 //!   staging path and runtime bundle-name derivation.
 //!
@@ -18,6 +22,7 @@
 //! `cargo-truce`) depend on `truce-utils` directly.
 
 pub mod cast;
+pub mod shell_sidecar;
 
 /// Slug a plugin's display name into a lowercase, hyphenated,
 /// ASCII-safe identifier suitable for filesystem paths, LV2 bundle

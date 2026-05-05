@@ -71,67 +71,12 @@ pub const fn fourcc(s: &[u8]) -> [u8; 4] {
     [s[0], s[1], s[2], s[3]]
 }
 
-/// Construct a [`PluginInfo`] from build-time metadata.
-///
-/// # Zero-arg form (recommended)
-///
-/// All metadata derived from `truce.toml` + `Cargo.toml`.
-/// Requires `truce-build` in `[build-dependencies]` and a `build.rs`:
-///
-/// ```ignore
-/// // build.rs
-/// fn main() { truce_build::emit_plugin_env(); }
-///
-/// // lib.rs
-/// fn info() -> PluginInfo { plugin_info!() }
-/// ```
-///
-/// # 6-arg form (explicit)
-///
-/// ```ignore
-/// plugin_info!("My Gain", Effect, "com.myco.gain", "aufx", "MyGn", "MyCo")
-/// ```
-#[macro_export]
-macro_rules! plugin_info {
-    // Zero-arg form: everything from env vars set by truce-build + cargo
-    () => {
-        $crate::PluginInfo {
-            name: env!("TRUCE_PLUGIN_NAME"),
-            vendor: env!("TRUCE_VENDOR_NAME"),
-            url: env!("TRUCE_VENDOR_URL"),
-            version: $crate::plugin_info!(@version),
-            category: $crate::info::category_from_str(env!("TRUCE_CATEGORY")),
-            vst3_id: env!("TRUCE_PLUGIN_ID"),
-            clap_id: env!("TRUCE_PLUGIN_ID"),
-            fourcc: $crate::info::fourcc(env!("TRUCE_FOURCC").as_bytes()),
-            au_type: $crate::info::fourcc(env!("TRUCE_AU_TYPE").as_bytes()),
-            au_manufacturer: $crate::info::fourcc(env!("TRUCE_AU_MANUFACTURER").as_bytes()),
-            aax_id: None,
-            aax_category: option_env!("TRUCE_AAX_CATEGORY"),
-        }
-    };
-    // Version: prefer TRUCE_PLUGIN_VERSION from truce.toml, fall back to CARGO_PKG_VERSION
-    (@version) => {
-        match option_env!("TRUCE_PLUGIN_VERSION") {
-            Some(v) => v,
-            None => env!("CARGO_PKG_VERSION"),
-        }
-    };
-    // 6-arg form: explicit, vendor/url/version still from config
-    ($name:expr, $cat:ident, $id:expr, $au_type:expr, $au_sub:expr, $au_mfr:expr) => {
-        $crate::PluginInfo {
-            name: $name,
-            vendor: env!("TRUCE_VENDOR_NAME"),
-            url: env!("TRUCE_VENDOR_URL"),
-            version: $crate::plugin_info!(@version),
-            category: $crate::PluginCategory::$cat,
-            vst3_id: $id,
-            clap_id: $id,
-            fourcc: $crate::info::fourcc($au_sub.as_bytes()),
-            au_type: $crate::info::fourcc($au_type.as_bytes()),
-            au_manufacturer: $crate::info::fourcc($au_mfr.as_bytes()),
-            aax_id: None,
-            aax_category: option_env!("TRUCE_AAX_CATEGORY"),
-        }
-    };
-}
+// The historical `truce_core::plugin_info!` macro_rules form lived
+// here and was driven by `TRUCE_*` env vars emitted by
+// `truce-build::emit_plugin_env()`. The proc-macro version
+// (`truce_derive::plugin_info`, re-exported through the prelude as
+// `truce::plugin_info!`) reads `truce.toml` directly at compile time
+// — no build.rs, no env-var hop — and is what every plugin and every
+// in-tree example uses. The macro_rules form had no remaining
+// callers and its env-var schema was about to be deleted by the
+// "drop build.rs from the scaffold" change, so it's gone.

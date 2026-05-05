@@ -66,201 +66,25 @@ pub struct PluginDef {
     pub aax_category: Option<String>,
 }
 
-/// Reads `truce.toml` from the workspace root, finds the `[[plugin]]`
-/// entry matching the current crate (via `CARGO_PKG_NAME`), and emits
-/// `cargo:rustc-env` directives for the `plugin_info!()` macro.
+/// Compatibility shim for plugin crates that still ship a `build.rs`
+/// from a pre-0.33 scaffold. The current scaffold doesn't generate
+/// `build.rs` — `truce::plugin_info!()` reads `truce.toml` directly
+/// (and uses `include_bytes!` to register it as a build dep) and
+/// `cargo truce install --shell` writes a sidecar at install time
+/// instead of baking env vars at compile time.
 ///
-/// Sets:
-/// - `TRUCE_PLUGIN_NAME` — display name
-/// - `TRUCE_PLUGIN_ID` — `{vendor.id}.{suffix}` (used as CLAP + VST3 ID)
-/// - `TRUCE_FOURCC` — 4-char plugin identifier (e.g., "`TGan`")
-/// - `TRUCE_AU_TYPE` — 4-char AU type (e.g., "aufx")
-/// - `TRUCE_AU_MANUFACTURER` — 4-char AU manufacturer (e.g., "Trce")
-/// - `TRUCE_CATEGORY` — "Effect" or "Instrument" (derived from `au_type`)
+/// What this function does today: emit `cargo:rerun-if-changed=truce.toml`
+/// as belt-and-braces alongside the proc-macro's `include_bytes!`
+/// tracking. Nothing else — the historical `TRUCE_*` env vars had no
+/// remaining consumers in the workspace.
 ///
-/// # Panics
-///
-/// Panics from `build.rs` if `truce.toml` cannot be located or
-/// parsed, no `[[plugin]]` entry matches `CARGO_PKG_NAME`, or a
-/// matching plugin omits both `fourcc` and `au_subtype`. Each panic
-/// is meant to halt the build with a precise message rather than
-/// emit malformed env vars the macro would silently accept.
+/// Will be marked `#[deprecated]` in a future release once any
+/// out-of-tree plugins still on a pre-0.33 scaffold have had time to
+/// drop their `build.rs`.
 pub fn emit_plugin_env() {
-    let toml_path = find_truce_toml_or_exit();
-    println!("cargo:rerun-if-changed={}", toml_path.display());
-
-    // Register every feature name the `truce::plugin!` macro expands into,
-    // so plugin crates don't get `unexpected_cfgs` warnings for formats
-    // they haven't opted in to. Cargo's auto-allow-list only covers
-    // features the crate *declares* — but the macro emits one
-    // `#[cfg(feature = "…")]` arm per supported format whether the
-    // consumer declared it or not.
-    println!(
-        "cargo:rustc-check-cfg=cfg(feature, values(\"clap\", \"vst3\", \"vst2\", \"lv2\", \"aax\", \"au\", \"shell\"))"
-    );
-
-    let config: Config = load_config(&toml_path).unwrap_or_else(|msg| {
-        eprintln!("truce-build: {msg}");
-        std::process::exit(1);
-    });
-
-    let pkg_name = std::env::var("CARGO_PKG_NAME").unwrap();
-    let plugin = config
-        .plugin
-        .iter()
-        .find(|p| p.crate_name == pkg_name)
-        .unwrap_or_else(|| {
-            panic!(
-                "No [[plugin]] entry with crate = \"{pkg_name}\" in {}",
-                toml_path.display()
-            );
-        });
-
-    let category = match plugin.category.as_str() {
-        "instrument" => "Instrument",
-        "midi" | "note_effect" => "NoteEffect",
-        _ => "Effect",
-    };
-    // Keep in sync with `truce-derive::plugin_info` +
-    // `cargo-truce/src/config.rs::resolved_au_type`.
-    let au_type = plugin
-        .au_type
-        .as_deref()
-        .unwrap_or(match plugin.category.as_str() {
-            "instrument" => "aumu",
-            "midi" | "note_effect" => "aumi",
-            _ => "aufx",
-        });
-    let plugin_id = format!(
-        "{}.{}",
-        config.vendor.id,
-        plugin.name.to_lowercase().replace(' ', "")
-    );
-
-    // Plugin version: from truce.toml if set, otherwise falls back to CARGO_PKG_VERSION
-    if let Some(ref ver) = plugin.version {
-        println!("cargo:rustc-env=TRUCE_PLUGIN_VERSION={ver}");
+    if let Ok(path) = find_truce_toml() {
+        println!("cargo:rerun-if-changed={}", path.display());
     }
-
-    println!("cargo:rustc-env=TRUCE_PLUGIN_NAME={}", plugin.name);
-    println!("cargo:rustc-env=TRUCE_PLUGIN_ID={plugin_id}");
-    println!("cargo:rustc-env=TRUCE_VENDOR_NAME={}", config.vendor.name);
-    println!("cargo:rustc-env=TRUCE_VENDOR_URL={}", config.vendor.url);
-    let resolved_fourcc = plugin
-        .fourcc
-        .as_ref()
-        .or(plugin.au_subtype.as_ref())
-        .expect("truce.toml: each [[plugin]] requires `fourcc` or `au_subtype`");
-    println!("cargo:rustc-env=TRUCE_FOURCC={resolved_fourcc}");
-    println!("cargo:rustc-env=TRUCE_AU_TYPE={au_type}");
-    println!(
-        "cargo:rustc-env=TRUCE_AU_MANUFACTURER={}",
-        config.vendor.au_manufacturer
-    );
-    println!("cargo:rustc-env=TRUCE_CATEGORY={category}");
-    if let Some(ref cat) = plugin.aax_category {
-        println!("cargo:rustc-env=TRUCE_AAX_CATEGORY={cat}");
-    }
-
-    // Bake the resolved cargo target dir + the logic profile into
-    // the binary so the `truce::plugin!` shell-mode arm can find the
-    // logic dylib at runtime without reading env in the DAW process
-    // (DAWs launched from Finder / Spotlight / Start don't inherit
-    // shell env; AU v3 sandboxing strips most env vars). The logic
-    // profile defaults to "release" — `cargo truce install --shell
-    // --debug` overrides it to "debug" by setting the env var
-    // `TRUCE_LOGIC_PROFILE` before the cargo build runs.
-    let target_dir = resolve_target_dir();
-    if let Some(td) = target_dir.as_deref() {
-        println!("cargo:rustc-env=TRUCE_TARGET_DIR={}", td.display());
-    }
-    let logic_profile =
-        read_hot_reload_config(target_dir.as_deref()).unwrap_or_else(|| "release".to_string());
-    println!("cargo:rustc-env=TRUCE_LOGIC_PROFILE={logic_profile}");
-    // Flipping `CARGO_TARGET_DIR` between runs would otherwise leave the
-    // baked `TRUCE_TARGET_DIR` stale (cargo rebuilds the proc-macro /
-    // build-script crate but not its consumers), so any change in the
-    // target-dir env should re-run this script too.
-    println!("cargo:rerun-if-env-changed=CARGO_TARGET_DIR");
-}
-
-/// Sidecar that `cargo-truce` writes into the workspace target dir
-/// before invoking `cargo build`. Today carries the logic profile;
-/// future keys deserialize cleanly because the file is plain TOML.
-#[derive(Deserialize, Debug, Default)]
-struct HotReloadConfig {
-    #[serde(default)]
-    logic_profile: Option<String>,
-}
-
-/// Read the logic-profile sidecar that `cargo-truce` writes into
-/// `<target>/.truce-build-config` before invoking `cargo build`.
-///
-/// Replaces an earlier process-env → `cargo:rerun-if-env-changed`
-/// chain — cargo's env-rerun semantics didn't always invalidate the
-/// bake (audit 2026-05-02), but `cargo:rerun-if-changed=<file>` is
-/// reliable, and the file is the single source of truth for the
-/// build.
-///
-/// Returns `None` when the sidecar isn't present or omits the key —
-/// the consumer crate falls back to the default profile (`release`).
-/// Plugin authors who don't use `cargo truce install --shell` never
-/// see this file at all.
-fn read_hot_reload_config(target_dir: Option<&std::path::Path>) -> Option<String> {
-    let target_dir = target_dir?;
-    let path = target_dir.join(".truce-build-config");
-    // Tell cargo to rebuild this script's consumer when the sidecar
-    // changes — even if it doesn't exist yet, so a later
-    // `cargo truce install --shell --debug` invalidates a
-    // previously-released bake.
-    println!("cargo:rerun-if-changed={}", path.display());
-    let contents = std::fs::read_to_string(&path).ok()?;
-    let config: HotReloadConfig = toml::from_str(&contents).ok()?;
-    config.logic_profile
-}
-
-/// Resolve the cargo target directory in a layout-agnostic way.
-///
-/// Cargo's documented contract for `OUT_DIR` is "a directory under
-/// `<target>/<profile>/build/<crate-hash>/`", which the previous
-/// `ancestors().nth(4)` walk hard-coded. That breaks under
-/// `[unstable.target-dir-per-package]`, custom `[profile.<name>]`
-/// names, and Bazel-style split target directories where the relative
-/// nesting differs.
-///
-/// The robust strategy is two-step:
-/// 1. Prefer `CARGO_TARGET_DIR` if set — when the user explicitly
-///    routed cargo to a custom target dir, that env var is the
-///    authoritative answer regardless of how `OUT_DIR` looks.
-/// 2. Otherwise, walk up `OUT_DIR`'s ancestors looking for an entry
-///    literally named `target`. Falls back to `None` (so we skip
-///    emitting the env var) rather than baking a wrong path.
-fn resolve_target_dir() -> Option<PathBuf> {
-    if let Ok(d) = std::env::var("CARGO_TARGET_DIR") {
-        let p = PathBuf::from(d);
-        if !p.as_os_str().is_empty() {
-            return Some(p);
-        }
-    }
-    let out_dir = std::env::var("OUT_DIR").ok()?;
-    let out_path = std::path::Path::new(&out_dir);
-    // Cargo writes a `CACHEDIR.TAG` at the root of every target
-    // directory it manages — the canonical marker that survives
-    // `[build].target-dir` overrides, `[unstable.target-dir-per-package]`,
-    // and Bazel-style splits where the conventional layout shifts.
-    if let Some(p) = out_path
-        .ancestors()
-        .find(|a| a.join("CACHEDIR.TAG").is_file())
-    {
-        return Some(p.to_path_buf());
-    }
-    // Fallback: the literal name. Covers cases where the marker
-    // hasn't been written yet (a fresh checkout's first build) but
-    // the directory is still conventionally named.
-    out_path
-        .ancestors()
-        .find(|a| a.file_name().is_some_and(|n| n == "target"))
-        .map(PathBuf::from)
 }
 
 /// Resolve cargo's effective target directory for a given workspace root.
@@ -343,20 +167,6 @@ pub fn find_truce_toml() -> Result<PathBuf, String> {
             }
         }
     }
-}
-
-/// Build-script convenience wrapper around [`find_truce_toml`].
-///
-/// On miss we exit cleanly with a one-line message instead of
-/// `panic!`-ing — panicking from a build script dumps a multi-line
-/// `RUST_BACKTRACE` stack trace through cargo's "warning:" framing and
-/// buries the actually-useful "copy truce.toml.example" hint at the
-/// bottom.
-fn find_truce_toml_or_exit() -> PathBuf {
-    find_truce_toml().unwrap_or_else(|msg| {
-        eprintln!("truce-build: {msg}");
-        std::process::exit(1);
-    })
 }
 
 /// Read a `truce.toml` from `path` and parse it.

@@ -15,11 +15,8 @@ Two macro families live here:
   name, IDs, vendor, category, AU type / subtype / manufacturer
   codes, and version. Removes the need for hand-written metadata
   constants. Pulls in `toml` + `serde` at proc-macro compile time.
-  (Plugin crates still need a small `build.rs` calling
-  `truce_build::emit_plugin_env()` — that handles format-feature
-  `check-cfg` declarations and the `TRUCE_TARGET_DIR` /
-  `TRUCE_LOGIC_PROFILE` shell-mode env vars; see the `truce-build`
-  crate.)
+  Tracks `truce.toml` for rebuilds via `include_bytes!`, so plugin
+  crates don't need a `build.rs`.
 
 Plugin authors don't depend on this crate directly — everything is
 re-exported through `truce::prelude` (or `truce::plugin_info!()` /

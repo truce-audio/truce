@@ -168,10 +168,6 @@ impl Scaffolder {
             self.renderer.render(tpl::PLUGIN_CARGO_TOML, &ctx),
         )?;
         write(
-            &layout.build_rs(),
-            self.renderer.render(tpl::PLUGIN_BUILD_RS, &ctx),
-        )?;
-        write(
             &layout.lib_rs(),
             self.renderer.render(tpl::PLUGIN_LIB_RS, &ctx),
         )?;

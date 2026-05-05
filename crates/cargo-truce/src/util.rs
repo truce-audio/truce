@@ -111,46 +111,6 @@ pub(crate) fn set_debug_profile(debug: bool) {
     set_build_profile(if debug { "debug" } else { "release" });
 }
 
-/// Filename of the build-config sidecar `cargo-truce` writes into the
-/// workspace's target directory before invoking `cargo build`.
-/// `truce-build`'s build script reads this file directly via
-/// `cargo:rerun-if-changed=<path>` — replaces the older
-/// `set_build_env` → process-env → `cargo:rerun-if-env-changed` chain
-/// the audit flagged as fragile (see open-issues.md).
-pub(crate) const HOT_RELOAD_CONFIG_FILE: &str = ".truce-build-config";
-
-/// Write the build-config sidecar that `truce-build`'s build.rs reads
-/// to decide which target subdir (`debug` / `release` / custom) the
-/// installed shell binary should look up its hot-reload logic dylib in.
-///
-/// File format is plain TOML — `truce-build` already pulls the `toml`
-/// crate to parse `truce.toml`, so reusing it here keeps both ends
-/// using one parser instead of an ad-hoc `key=value` reader. Today
-/// there is one key (`logic_profile`); new keys append cleanly.
-///
-/// The file lives in `<target_dir>/.truce-build-config`. Cargo cleans
-/// it via `cargo clean`; `truce-build` rebuilds the consumer crate
-/// when the file changes via `cargo:rerun-if-changed=`.
-pub(crate) fn write_hot_reload_config(root: &Path, logic_profile: &str) -> Result<(), BoxErr> {
-    let dir = target_dir(root);
-    fs::create_dir_all(&dir)
-        .map_err(|e| -> BoxErr { format!("failed to create {}: {e}", dir.display()).into() })?;
-    let path = dir.join(HOT_RELOAD_CONFIG_FILE);
-    let config = HotReloadConfig {
-        logic_profile: logic_profile.to_string(),
-    };
-    let body = toml::to_string(&config)
-        .map_err(|e| -> BoxErr { format!("failed to serialize hot-reload config: {e}").into() })?;
-    fs::write(&path, body)
-        .map_err(|e| -> BoxErr { format!("failed to write {}: {e}", path.display()).into() })?;
-    Ok(())
-}
-
-#[derive(serde::Serialize)]
-struct HotReloadConfig {
-    logic_profile: String,
-}
-
 /// Preflight check for `cargo truce install --shell` / `build --shell`:
 /// the project's `Cargo.toml` (single-crate plugin or workspace root)
 /// must declare a `[profile.shell]` table so `cargo build --profile

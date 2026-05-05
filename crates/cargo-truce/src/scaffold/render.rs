@@ -10,7 +10,6 @@ use tinytemplate::TinyTemplate;
 /// catches typos at compile time.
 pub mod tpl {
     pub const PLUGIN_CARGO_TOML: &str = "plugin/Cargo.toml";
-    pub const PLUGIN_BUILD_RS: &str = "plugin/build.rs";
     pub const PLUGIN_LIB_RS: &str = "plugin/src/lib.rs";
     pub const PLUGIN_MAIN_RS: &str = "plugin/src/main.rs";
     pub const PLUGIN_GITIGNORE: &str = "plugin/.gitignore";
@@ -40,11 +39,6 @@ impl Renderer {
             include_str!("../../templates/scaffold/plugin/Cargo.toml.tpl"),
         )
         .expect("scaffold template parse: plugin/Cargo.toml");
-        tt.add_template(
-            tpl::PLUGIN_BUILD_RS,
-            include_str!("../../templates/scaffold/plugin/build.rs.tpl"),
-        )
-        .expect("scaffold template parse: plugin/build.rs");
         tt.add_template(
             tpl::PLUGIN_LIB_RS,
             include_str!("../../templates/scaffold/plugin/src/lib.rs.tpl"),

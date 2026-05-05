@@ -37,9 +37,6 @@ impl ProjectLayout {
     pub fn cargo_toml(&self) -> PathBuf {
         self.plugin_root.join("Cargo.toml")
     }
-    pub fn build_rs(&self) -> PathBuf {
-        self.plugin_root.join("build.rs")
-    }
     pub fn lib_rs(&self) -> PathBuf {
         self.plugin_root.join("src/lib.rs")
     }

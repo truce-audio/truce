@@ -19,6 +19,17 @@ pub mod __reexport {
 
     #[cfg(feature = "shell")]
     pub use truce_loader::shell::HotShell;
+
+    /// Hot-reload sidecar path resolver. Wraps `truce_utils` so the
+    /// `truce::plugin!` macro doesn't have to take a direct dep on
+    /// `truce-utils` from every plugin crate that expands the macro
+    /// in non-shell builds (the `#[cfg(feature = "shell")]` arm reads
+    /// this at runtime).
+    #[cfg(feature = "shell")]
+    #[must_use]
+    pub fn shell_sidecar_path(crate_name: &str) -> Option<std::path::PathBuf> {
+        truce_core::shell_sidecar::sidecar_path(crate_name)
+    }
 }
 
 /// Prelude — import everything a plugin author needs.

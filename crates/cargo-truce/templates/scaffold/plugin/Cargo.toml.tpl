@@ -49,14 +49,6 @@ truce-vst3 = \{ {dep_args | unescaped}, optional = true }
 truce-standalone = \{ {dep_args | unescaped}, features = ["gui"], optional = true }
 {{ endif -}}
 clap-sys = \{ version = "0.5", optional = true }
-
-# `truce-build` emits `TRUCE_PLUGIN_*` env vars (consumed by
-# `plugin_info!()`) + a `rustc-check-cfg` declaration covering every
-# format feature the `truce::plugin!` macro references. Without it,
-# rustc fires `unexpected_cfgs` warnings for every format this
-# crate doesn't declare.
-[build-dependencies]
-truce-build = \{ {dep_args | unescaped} }
 {{ if is_workspace }}{{ else }}
 # Custom profile for `cargo truce install --shell`. The shell-mode
 # build (`cargo build --profile shell --features ...,shell`) lands the

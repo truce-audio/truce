@@ -252,6 +252,10 @@ pub(crate) fn build_format_dylibs(
 /// flips it to cargo's debug profile; custom profiles fall through to
 /// `cargo build --profile <name>`. Scoped per-plugin so a fresh
 /// checkout doesn't rebuild every framework crate.
+///
+/// After every successful build, writes the sidecar that the shell
+/// binary reads at runtime to find this dylib — see
+/// [`write_shell_sidecar`].
 pub(crate) fn build_logic_dylibs(
     plugins: &[&PluginDef],
     logic_profile: &str,
@@ -259,6 +263,7 @@ pub(crate) fn build_logic_dylibs(
 ) -> Res {
     use std::process::Command;
 
+    let root = crate::project_root();
     for p in plugins {
         crate::vprintln!(
             "Building {} logic dylib for {}...",
@@ -282,6 +287,50 @@ pub(crate) fn build_logic_dylibs(
         if !status.success() {
             return Err(format!("{logic_profile} build of {} failed", p.crate_name).into());
         }
+
+        write_shell_sidecar(&root, &p.crate_name, logic_profile)?;
     }
+    Ok(())
+}
+
+/// Resolve and write `~/.truce/shell/<crate>.path` so the installed
+/// shell binary (loaded by the DAW) can find the logic dylib at
+/// runtime without compile-time `option_env!` baking. Replaces the
+/// old `TRUCE_TARGET_DIR` / `TRUCE_LOGIC_PROFILE` build-script bake
+/// path — `cargo truce install --shell` knows the canonical paths
+/// already, so writing them at install time is direct.
+///
+/// Writes the absolute path of the logic dylib (canonicalized) so the
+/// runtime read site doesn't have to re-resolve `CARGO_TARGET_DIR` /
+/// `[build].target-dir` from a context that lacks those signals.
+fn write_shell_sidecar(root: &std::path::Path, crate_name: &str, logic_profile: &str) -> Res {
+    use std::fs;
+
+    let stem = crate_name.replace('-', "_");
+    let dylib_path = crate::target_dir(root)
+        .join(logic_profile)
+        .join(crate::util::shared_lib_name(&stem));
+    let canonical = dylib_path.canonicalize().unwrap_or(dylib_path);
+
+    let sidecar =
+        truce_utils::shell_sidecar::sidecar_path(crate_name).ok_or_else(|| -> crate::BoxErr {
+            "could not resolve $HOME (or %USERPROFILE% on Windows) for the \
+         shell sidecar — the runtime needs $HOME to locate the logic \
+         dylib without it"
+                .into()
+        })?;
+    if let Some(parent) = sidecar.parent() {
+        fs::create_dir_all(parent).map_err(|e| -> crate::BoxErr {
+            format!("failed to create {}: {e}", parent.display()).into()
+        })?;
+    }
+    fs::write(&sidecar, format!("{}\n", canonical.display())).map_err(|e| -> crate::BoxErr {
+        format!("failed to write shell sidecar {}: {e}", sidecar.display()).into()
+    })?;
+    crate::vprintln!(
+        "Wrote shell sidecar {} -> {}",
+        sidecar.display(),
+        canonical.display(),
+    );
     Ok(())
 }

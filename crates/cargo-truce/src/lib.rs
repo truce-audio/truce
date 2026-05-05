@@ -31,7 +31,7 @@ pub(crate) use util::{
     detect_default_features, find_on_path, is_debug_profile, log_output, log_skip, project_root,
     read_standalone_bin_name, release_lib, run_sudo, set_build_profile, set_debug_profile,
     tag_fail, tag_ok, tag_warn, take_outputs, take_skipped, target_dir, tmp_dir,
-    verify_shell_profile_declared, vprintln, write_hot_reload_config,
+    verify_shell_profile_declared, vprintln,
 };
 
 // Re-exports used only by the macOS / Windows installer pipelines.

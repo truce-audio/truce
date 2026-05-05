@@ -1,36 +1,29 @@
 # truce-build
 
-Build-time helper for truce plugins.
+Build-time helpers for truce plugins.
 
 ## Overview
 
-Reads `truce.toml` and emits `cargo:rustc-env` directives so that the
-`plugin_info!()` macro can derive all plugin metadata at compile time. If your
-plugin uses `plugin_info!()` via the `truce` crate, include this in your
-`build.rs` to make the environment variables available.
+Plugin crates no longer need a `build.rs` — the `truce::plugin_info!()`
+proc macro reads `truce.toml` directly at compile time and tracks it
+via `include_bytes!`. This crate exists for two remaining roles:
 
-## Usage
+- **`Config` / `PluginDef` / `VendorConfig`** — the shared deserializer
+  for `truce.toml`, used by both `truce-derive` (proc macros) and
+  `cargo-truce` (install / build pipeline).
+- **`target_dir(root)`** — resolves cargo's effective target directory
+  for a workspace root, honouring `CARGO_TARGET_DIR` and
+  `[build].target-dir` in `.cargo/config.toml`. Used by runtime callers
+  (cargo-truce, truce-test) that need to anchor artifact paths.
 
-Add to your plugin crate's `build.rs`:
+## Compatibility shim
 
-```rust
-fn main() {
-    truce_build::emit_plugin_env();
-}
-```
-
-## Emitted environment variables
-
-| Variable | Source |
-|----------|--------|
-| `TRUCE_PLUGIN_NAME` | Display name |
-| `TRUCE_PLUGIN_ID` | Combined vendor + plugin ID (CLAP / VST3) |
-| `TRUCE_VENDOR_NAME` | Vendor name |
-| `TRUCE_VENDOR_URL` | Vendor website URL |
-| `TRUCE_CATEGORY` | `"Effect"` or `"Instrument"` |
-| `TRUCE_AU_TYPE` | AU component type code |
-| `TRUCE_AU_SUBTYPE` | AU component subtype code |
-| `TRUCE_AU_MANUFACTURER` | AU manufacturer code |
-| `TRUCE_PLUGIN_VERSION` | Optional version override from `truce.toml` |
+`emit_plugin_env()` is preserved for plugin crates still on a pre-0.33
+scaffold that ship a `build.rs`. It now only emits
+`cargo:rerun-if-changed=truce.toml` (belt-and-braces alongside the
+proc-macro's `include_bytes!` tracking) — the historical `TRUCE_*`
+env-var bake is gone, since nothing in the workspace consumed it any
+more. Will be marked `#[deprecated]` once any out-of-tree pre-0.33
+plugins have had time to drop their `build.rs`.
 
 Part of [truce](https://github.com/truce-audio/truce).

@@ -32,7 +32,7 @@ use truce_params::METER_ID_BASE;
 /// span — `panic!`-ing from a proc macro produces a span-less,
 /// multi-line error frame instead of the clean compiler diagnostic the
 /// caller actually wants.
-fn try_resolve_plugin() -> Result<(Config, String), String> {
+fn try_resolve_plugin() -> Result<(Config, String, std::path::PathBuf), String> {
     let path = truce_build::find_truce_toml()?;
     let config = truce_build::load_config(&path)?;
 
@@ -51,7 +51,13 @@ fn try_resolve_plugin() -> Result<(Config, String), String> {
             available.join(", ")
         ));
     }
-    Ok((config, pkg_name))
+    // Canonicalize so the embedded `include_bytes!` reference is stable
+    // across `cargo check` / `cargo build` invocations (both resolve
+    // CARGO_MANIFEST_DIR identically, but a future caller might run the
+    // proc-macro from a symlinked path — canonicalizing pins the literal
+    // to the realpath).
+    let canonical = path.canonicalize().unwrap_or(path);
+    Ok((config, pkg_name, canonical))
 }
 
 fn find_plugin<'a>(config: &'a Config, pkg_name: &str) -> &'a PluginDef {
@@ -75,7 +81,7 @@ fn find_plugin<'a>(config: &'a Config, pkg_name: &str) -> &'a PluginDef {
 /// ```
 #[proc_macro]
 pub fn plugin_info(_input: TokenStream) -> TokenStream {
-    let (config, pkg_name) = match try_resolve_plugin() {
+    let (config, pkg_name, truce_toml_path) = match try_resolve_plugin() {
         Ok(v) => v,
         Err(msg) => {
             // Surface the problem as a compile_error with a span at
@@ -154,20 +160,30 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
         quote! { None }
     };
 
+    // `include_bytes!` registers `truce.toml` as a build-time dependency
+    // through the compiler's normal dep-info tracking. Without it, edits
+    // to truce.toml don't trigger a rebuild — proc macros on stable Rust
+    // have no other way to declare external file dependencies.
+    // Path is canonicalized in `try_resolve_plugin` so the literal is
+    // stable across invocations.
+    let truce_toml_lit = truce_toml_path.to_string_lossy().into_owned();
     let expanded = quote! {
-        ::truce::core::PluginInfo {
-            name: #name,
-            vendor: #vendor,
-            url: #url,
-            version: #version,
-            category: #category,
-            vst3_id: #plugin_id,
-            clap_id: #plugin_id,
-            fourcc: ::truce::core::info::fourcc(#resolved_fourcc.as_bytes()),
-            au_type: ::truce::core::info::fourcc(#au_type.as_bytes()),
-            au_manufacturer: ::truce::core::info::fourcc(#au_manufacturer.as_bytes()),
-            aax_id: None,
-            aax_category: #aax_category,
+        {
+            const _TRUCE_TOML_DEP: &[u8] = include_bytes!(#truce_toml_lit);
+            ::truce::core::PluginInfo {
+                name: #name,
+                vendor: #vendor,
+                url: #url,
+                version: #version,
+                category: #category,
+                vst3_id: #plugin_id,
+                clap_id: #plugin_id,
+                fourcc: ::truce::core::info::fourcc(#resolved_fourcc.as_bytes()),
+                au_type: ::truce::core::info::fourcc(#au_type.as_bytes()),
+                au_manufacturer: ::truce::core::info::fourcc(#au_manufacturer.as_bytes()),
+                aax_id: None,
+                aax_category: #aax_category,
+            }
         }
     };
 
