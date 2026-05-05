@@ -203,6 +203,7 @@ impl Scaffolder {
 /// the rest of cargo-truce uses, with the path threaded into the
 /// error so failures are diagnosable.
 fn write(path: &Path, content: String) -> Res {
-    fs::write(path, content).map_err(|e| -> BoxErr { format!("write {}: {}", path.display(), e).into() })?;
+    fs::write(path, content)
+        .map_err(|e| -> BoxErr { format!("write {}: {}", path.display(), e).into() })?;
     Ok(())
 }

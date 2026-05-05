@@ -282,7 +282,8 @@ fn build_and_lipo_au2(root: &Path, p: &PluginDef, archs: &[MacArch], dt: &str) -
         .iter()
         .map(|a| release_lib_for_target(root, &format!("{}_au", p.dylib_stem()), Some(a.triple())))
         .collect();
-    let output = truce_build::target_dir(root).join(format!("release/lib{}_au.dylib", p.dylib_stem()));
+    let output =
+        truce_build::target_dir(root).join(format!("release/lib{}_au.dylib", p.dylib_stem()));
     lipo_into(&inputs, &output)?;
     Ok(())
 }
@@ -312,7 +313,9 @@ struct PackageOpts<'a> {
 fn package_one_plugin(root: &Path, p: &PluginDef, dist_dir: &Path, o: &PackageOpts) -> Res {
     eprintln!("\n=== Packaging: {} ===", p.name);
 
-    let staging = truce_build::target_dir(root).join("package").join(&p.bundle_id);
+    let staging = truce_build::target_dir(root)
+        .join("package")
+        .join(&p.bundle_id);
     let _ = fs::remove_dir_all(&staging);
     fs::create_dir_all(&staging)?;
 
@@ -589,8 +592,8 @@ fn build_and_lipo_format(
                 )
             })
             .collect();
-        let output =
-            truce_build::target_dir(root).join(format!("release/lib{}{suffix}.dylib", p.dylib_stem()));
+        let output = truce_build::target_dir(root)
+            .join(format!("release/lib{}{suffix}.dylib", p.dylib_stem()));
         lipo_into(&inputs, &output)?;
     }
     Ok(())

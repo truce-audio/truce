@@ -550,7 +550,8 @@ fn validate_vst2_macos(plugins: &[&PluginDef]) -> usize {
             continue;
         }
 
-        let dylib = truce_build::target_dir(&root).join(format!("release/lib{}.dylib", p.dylib_stem()));
+        let dylib =
+            truce_build::target_dir(&root).join(format!("release/lib{}.dylib", p.dylib_stem()));
         // AU type tag is the same code path that drives plugin-kind
         // detection elsewhere: `aumu` → synth, `aumi` → MIDI/note
         // effect, anything else → audio effect.

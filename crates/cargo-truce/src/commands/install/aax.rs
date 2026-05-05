@@ -552,7 +552,9 @@ pub(crate) fn install_aax(_root: &Path, _p: &PluginDef, _config: &Config) -> Res
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(crate) fn install_aax(root: &Path, p: &PluginDef, config: &Config) -> Res {
     let bundle_name = format!("{}.aaxplugin", p.name);
-    let built = truce_build::target_dir(root).join("bundles").join(&bundle_name);
+    let built = truce_build::target_dir(root)
+        .join("bundles")
+        .join(&bundle_name);
     if !built.exists() {
         // No SDK → emit_aax_bundle (build phase) already logged a per-plugin
         // skip; just no-op here so we don't double-log. SDK present → genuine

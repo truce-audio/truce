@@ -96,7 +96,7 @@ pub fn parse_midi1(group: u8, bytes: &[u8]) -> Option<EventBody> {
 /// and `ProgramChange`, `3` for everything else. Sinks must respect
 /// the length: emitting all 3 bytes for a 2-byte status produces a
 /// spurious trailing zero that a downstream parser interprets as a
-/// running-status NoteOff.
+/// running-status `NoteOff`.
 ///
 /// Returns `None` for events that don't fit MIDI 1.0 (every MIDI
 /// 2.0 variant, `ParamChange`, `ParamMod`, `Transport`). Callers

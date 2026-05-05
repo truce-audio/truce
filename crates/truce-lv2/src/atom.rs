@@ -18,8 +18,8 @@
 use std::ffi::c_void;
 
 use truce_core::cast::{len_u32, sample_pos_i64};
-use truce_core::midi::{pitch_bend_from_bytes, pitch_bend_to_bytes};
 use truce_core::events::{Event, EventBody, EventList, TransportInfo};
+use truce_core::midi::{pitch_bend_from_bytes, pitch_bend_to_bytes};
 
 use crate::urid::{Urid, UridMap};
 

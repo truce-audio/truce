@@ -28,8 +28,8 @@ pub struct Event {
 #[derive(Clone, Copy, Debug)]
 pub enum EventBody {
     // -- MIDI 1.0 channel voice (wire-native 7-bit / 14-bit) --
-    /// Note on. MIDI 1.0 quirk: a NoteOn with `velocity == 0` is
-    /// a NoteOff. Format wrappers normalize that at parse time so
+    /// Note on. MIDI 1.0 quirk: a `NoteOn` with `velocity == 0` is
+    /// a `NoteOff`. Format wrappers normalize that at parse time so
     /// plugin code can match `NoteOn` without checking velocity.
     NoteOn {
         group: u8,
@@ -76,8 +76,8 @@ pub enum EventBody {
     },
 
     // -- MIDI 2.0 channel voice (wire-native 16/32-bit) --
-    /// MIDI 2.0 NoteOn. `velocity` is `0..=65535`; unlike MIDI 1.0,
-    /// a zero velocity is a genuine zero (NoteOff is its own
+    /// MIDI 2.0 `NoteOn`. `velocity` is `0..=65535`; unlike MIDI 1.0,
+    /// a zero velocity is a genuine zero (`NoteOff` is its own
     /// dedicated message). `attribute_type` indicates how
     /// `attribute` should be interpreted: 0 = no attribute, 1 =
     /// manufacturer-specific, 2 = profile-specific, 3 = Pitch 7.9.

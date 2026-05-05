@@ -292,7 +292,6 @@ pub struct DragState {
 }
 
 impl InteractionState {
-
     /// Read and clear the explicit repaint flag set by event handlers.
     pub fn take_repaint_request(&mut self) -> bool {
         std::mem::replace(&mut self.needs_repaint, false)

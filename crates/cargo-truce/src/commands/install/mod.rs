@@ -589,7 +589,8 @@ fn install_lv2(root: &Path, p: &PluginDef, _config: &Config, scope: InstallScope
 
 #[cfg(target_os = "macos")]
 fn install_au(root: &Path, p: &PluginDef, config: &Config, scope: InstallScope) -> Res {
-    let dylib = truce_build::target_dir(root).join(format!("release/lib{}_au.dylib", p.dylib_stem()));
+    let dylib =
+        truce_build::target_dir(root).join(format!("release/lib{}_au.dylib", p.dylib_stem()));
     if !dylib.exists() {
         return Err(format!("Missing: {}", dylib.display()).into());
     }

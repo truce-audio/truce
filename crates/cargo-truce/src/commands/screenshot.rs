@@ -19,9 +19,7 @@
 //!   baselines on whichever host you gate from.
 //! - `--debug` — cargo dev profile (faster compile).
 
-use crate::{
-    Res, cargo_build, cargo_build_debug, deployment_target, load_config, project_root,
-};
+use crate::{Res, cargo_build, cargo_build_debug, deployment_target, load_config, project_root};
 use std::path::{Path, PathBuf};
 
 /// FFI signature emitted by `truce::plugin!`'s `__truce_screenshot`.

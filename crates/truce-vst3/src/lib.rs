@@ -733,10 +733,9 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                         plugin.save_state().unwrap_or_default()
                     }),
                     set_state: Box::new(move |bytes| {
-                        if let Some(deserialized) = state::deserialize_state(
-                            &bytes,
-                            plugin_id_hash_for_set,
-                        ) {
+                        if let Some(deserialized) =
+                            state::deserialize_state(&bytes, plugin_id_hash_for_set)
+                        {
                             let _ = pending_state_for_set.force_push(deserialized);
                         }
                     }),

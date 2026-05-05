@@ -11,11 +11,11 @@ use std::os::raw::c_char;
 use std::slice;
 
 use truce_core::cast::{len_u32, param_f32, sample_pos_i64};
-use truce_core::midi::{pitch_bend_from_bytes, pitch_bend_to_bytes};
 use truce_core::editor::{ClosureBridge, Editor, PluginContext, RawWindowHandle, SendPtr};
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
 use truce_core::info::PluginCategory;
+use truce_core::midi::{pitch_bend_from_bytes, pitch_bend_to_bytes};
 use truce_core::process::ProcessContext;
 use truce_core::state;
 use truce_core::wrapper::{default_io_channels, log_missing_bus_layout, run_register};
@@ -576,10 +576,9 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                         plugin.save_state().unwrap_or_default()
                     }),
                     set_state: Box::new(move |bytes| {
-                        if let Some(deserialized) = state::deserialize_state(
-                            &bytes,
-                            plugin_id_hash_for_set,
-                        ) {
+                        if let Some(deserialized) =
+                            state::deserialize_state(&bytes, plugin_id_hash_for_set)
+                        {
                             let _ = pending_state_for_set.force_push(deserialized);
                         }
                     }),

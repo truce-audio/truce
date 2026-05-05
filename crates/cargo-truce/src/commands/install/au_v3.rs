@@ -155,7 +155,8 @@ fn build_rust_framework_dylib(
         .iter()
         .map(|a| release_lib_for_target(root, &format!("{}_v3", p.dylib_stem()), Some(a.triple())))
         .collect();
-    let lipo_dst = truce_build::target_dir(root).join(format!("release/lib{}_v3.dylib", p.dylib_stem()));
+    let lipo_dst =
+        truce_build::target_dir(root).join(format!("release/lib{}_v3.dylib", p.dylib_stem()));
     lipo_into(&fw_inputs, &lipo_dst)?;
     Ok(lipo_dst)
 }

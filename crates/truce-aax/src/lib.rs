@@ -18,16 +18,16 @@ use std::slice;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
+use truce_core::bus::BusLayout;
 use truce_core::cast::{len_u32, sample_pos_i64};
-use truce_core::midi::{pitch_bend_from_bytes, pitch_bend_to_bytes};
 use truce_core::editor::{ClosureBridge, Editor, PluginContext, RawWindowHandle, SendPtr};
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
-use truce_core::bus::BusLayout;
 use truce_core::export::PluginExport;
 use truce_core::info::PluginCategory;
-use truce_core::wrapper::{first_bus_layout, log_missing_bus_layout, run_register};
+use truce_core::midi::{pitch_bend_from_bytes, pitch_bend_to_bytes};
 use truce_core::process::ProcessContext;
 use truce_core::state;
+use truce_core::wrapper::{first_bus_layout, log_missing_bus_layout, run_register};
 use truce_params::{ParamFlags, Params};
 
 // ---------------------------------------------------------------------------
@@ -670,8 +670,7 @@ pub unsafe fn _process<P: PluginExport>(
     // stale cache.
     if let Some(state) = inst.pending_state.pop() {
         state::apply_state(&mut inst.plugin, &state);
-        inst.state_revision
-            .fetch_add(1, Ordering::Release);
+        inst.state_revision.fetch_add(1, Ordering::Release);
     }
 
     // Convert MIDI
@@ -873,8 +872,7 @@ pub unsafe fn _set_param<P: PluginExport>(ctx: *mut std::ffi::c_void, id: u32, v
     // change. `Release` synchronizes with the `Acquire` load in
     // `_save_state` — anyone seeing the bumped revision also sees the
     // param store.
-    inst.state_revision
-        .fetch_add(1, Ordering::Release);
+    inst.state_revision.fetch_add(1, Ordering::Release);
 }
 
 pub unsafe fn _format_param<P: PluginExport>(
@@ -925,9 +923,7 @@ pub unsafe fn _save_state<P: PluginExport>(
     // where the audio thread could re-set the flag between the
     // swap and the read, then have its update overwritten when we
     // wrote the cache; this counter scheme detects that case.
-    let revision_before = inst
-        .state_revision
-        .load(Ordering::Acquire);
+    let revision_before = inst.state_revision.load(Ordering::Acquire);
 
     let serialize_now = |inst: &AaxInstance<P>| -> Vec<u8> {
         let (ids, values) = inst.plugin.params().collect_values();
@@ -954,9 +950,7 @@ pub unsafe fn _save_state<P: PluginExport>(
             Some((rev, blob)) if *rev == revision_before => Arc::clone(blob),
             _ => {
                 let fresh: Arc<[u8]> = Arc::from(serialize_now(inst));
-                let revision_after = inst
-                    .state_revision
-                    .load(Ordering::Acquire);
+                let revision_after = inst.state_revision.load(Ordering::Acquire);
                 if revision_after == revision_before {
                     // No audio update during serialization — safe to cache.
                     *guard = Some((revision_before, Arc::clone(&fresh)));
@@ -1125,10 +1119,9 @@ pub unsafe fn _editor_open<P: PluginExport>(
                     plugin.save_state().unwrap_or_default()
                 }),
                 set_state: Box::new(move |bytes| {
-                    if let Some(deserialized) = state::deserialize_state(
-                        &bytes,
-                        plugin_id_hash_for_set,
-                    ) {
+                    if let Some(deserialized) =
+                        state::deserialize_state(&bytes, plugin_id_hash_for_set)
+                    {
                         let _ = pending_state_for_set.force_push(deserialized);
                     }
                 }),
