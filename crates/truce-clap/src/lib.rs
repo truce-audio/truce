@@ -71,7 +71,7 @@ use clap_sys::version::CLAP_VERSION;
 
 use truce_core::buffer::AudioBuffer;
 use truce_core::bus::ChannelConfig;
-use truce_core::cast::param_f32;
+use truce_core::cast::{midi_14bit_pb_decode, param_f32};
 use truce_core::editor::{ClosureBridge, Editor, PluginContext, RawWindowHandle, SendPtr};
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
@@ -619,13 +619,10 @@ unsafe fn convert_input_events<P: PluginExport>(
                             pressure: f32::from(d1) / 127.0,
                         }),
                         0xE0 => {
-                            // 14-bit unsigned 0..16383 → signed [-1, 1]
-                            // with 8192 = center. Mirrors the encoder.
                             let n = (u16::from(d2) << 7) | u16::from(d1);
-                            let v = (f32::from(n) - 8192.0) / 8192.0;
                             Some(EventBody::PitchBend {
                                 channel,
-                                value: v.clamp(-1.0, 1.0),
+                                value: midi_14bit_pb_decode(n),
                             })
                         }
                         _ => None,
@@ -962,7 +959,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                     EventBody::PitchBend { channel, value } => {
                         // 14-bit signed [-1, 1] → unsigned 0..16383 with
                         // 8192 = center. LSB first per MIDI spec.
-                        let n = truce_core::cast::midi_14bit_pb(*value);
+                        let n = truce_core::cast::midi_14bit_pb_encode(*value);
                         // Bit-extraction: `& 0x7F` already constrains
                         // each result to the low 7 bits.
                         #[allow(clippy::cast_possible_truncation)]

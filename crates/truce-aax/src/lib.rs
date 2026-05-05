@@ -18,7 +18,7 @@ use std::slice;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
-use truce_core::cast::{len_u32, sample_pos_i64};
+use truce_core::cast::{len_u32, midi_14bit_pb_decode, sample_pos_i64};
 use truce_core::editor::{ClosureBridge, Editor, PluginContext, RawWindowHandle, SendPtr};
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
 use truce_core::bus::BusLayout;
@@ -711,7 +711,7 @@ pub unsafe fn _process<P: PluginExport>(
                     let raw = (u16::from(ev.data2) << 7) | u16::from(ev.data1);
                     Some(EventBody::PitchBend {
                         channel,
-                        value: (f32::from(raw) - 8192.0) / 8192.0,
+                        value: midi_14bit_pb_decode(raw),
                     })
                 }
                 _ => None,
@@ -820,7 +820,7 @@ fn try_encode_aax_midi(event: &Event) -> Option<TruceAaxMidiEvent> {
             0,
         ),
         EventBody::PitchBend { channel, value } => {
-            let n = truce_core::cast::midi_14bit_pb(*value);
+            let n = truce_core::cast::midi_14bit_pb_encode(*value);
             (
                 0xE0 | (channel & 0x0F),
                 (n & 0x7F) as u8,

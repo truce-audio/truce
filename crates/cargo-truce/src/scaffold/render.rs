@@ -23,6 +23,9 @@ pub struct Renderer {
 }
 
 impl Renderer {
+    // No `Default` impl: the workspace never constructs a `Renderer`
+    // through `Default::default`, so the trait would be dead code.
+    #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         let mut tt = TinyTemplate::new();
         // We're emitting Rust / TOML / shell-style text. Default

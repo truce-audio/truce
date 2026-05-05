@@ -16,6 +16,7 @@ use std::time::Duration;
 
 use midir::{MidiInput, MidiInputConnection};
 
+use truce_core::cast::midi_14bit_pb_decode;
 use truce_core::events::EventBody;
 
 use crate::audio::MidiEvent;
@@ -195,10 +196,9 @@ fn decode_midi(bytes: &[u8]) -> Option<EventBody> {
         }),
         0xE0 if bytes.len() >= 3 => {
             let raw = u16::from(bytes[1]) | (u16::from(bytes[2]) << 7);
-            let normalized = (f32::from(raw) - 8192.0) / 8192.0;
             Some(EventBody::PitchBend {
                 channel,
-                value: normalized,
+                value: midi_14bit_pb_decode(raw),
             })
         }
         0xD0 if bytes.len() >= 2 => Some(EventBody::ChannelPressure {

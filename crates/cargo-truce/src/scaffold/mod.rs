@@ -52,6 +52,10 @@ impl Scaffolder {
     /// Build a fresh scaffolder. The pinned tag is derived from
     /// cargo-truce's own version (`CARGO_PKG_VERSION`) — when the
     /// workspace version bumps, scaffolds automatically follow.
+    // No `Default` impl: the workspace never constructs a
+    // `Scaffolder` through `Default::default`, so the trait would be
+    // dead code.
+    #[allow(clippy::new_without_default)]
     #[must_use]
     pub fn new() -> Self {
         Self {

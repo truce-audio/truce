@@ -62,22 +62,51 @@ pub fn midi_7bit(v: f32) -> u8 {
 /// MSB bytes of the pitch-bend message:
 ///
 /// ```ignore
-/// let n = midi_14bit_pb(value);
+/// let n = midi_14bit_pb_encode(value);
 /// let lsb = (n & 0x7F) as u8;
 /// let msb = ((n >> 7) & 0x7F) as u8;
 /// ```
 ///
 /// `0` encodes the maximum-negative bend, `8192` is center,
-/// `16383` is the maximum-positive bend. Inputs outside `[-1, 1]`
-/// clamp to the endpoints. NaN debug-asserts.
+/// `16383` is the maximum-positive bend. The mapping is
+/// asymmetric (8192 negative-side codes, 8191 positive-side codes)
+/// because that is the MIDI 1.0 convention: center is 8192, the
+/// negative endpoint reaches exactly `-1.0` on decode but the
+/// positive endpoint stops at `8191/8192 ≈ 0.99987`. Inputs
+/// outside `[-1, 1]` clamp to the endpoints. NaN debug-asserts.
+///
+/// Round-trips with [`midi_14bit_pb_decode`] for every
+/// `raw ∈ [0, 16383]`.
 #[inline]
 #[must_use]
-pub fn midi_14bit_pb(v: f32) -> u16 {
+pub fn midi_14bit_pb_encode(v: f32) -> u16 {
     debug_assert!(
         !v.is_nan(),
-        "midi_14bit_pb: NaN input — caller's normalized value is uninitialized?",
+        "midi_14bit_pb_encode: NaN input — caller's normalized value is uninitialized?",
     );
-    ((v.clamp(-1.0, 1.0) + 1.0) * 8191.5).round() as u16
+    let raw = (v.clamp(-1.0, 1.0) * 8192.0 + 8192.0).round();
+    (raw as u16).min(16383)
+}
+
+/// Decode a 14-bit MIDI pitch-bend value (in `[0, 16383]`) to a
+/// bipolar `f32` (in `[-1.0, 1.0]`).
+///
+/// `0` is maximum-negative bend (`-1.0`), `8192` is center
+/// (`0.0`), `16383` is maximum-positive bend (`8191/8192 ≈
+/// 0.99987` — see [`midi_14bit_pb_encode`] for the asymmetry
+/// rationale).
+///
+/// Inverse of [`midi_14bit_pb_encode`]. Lives here so the four
+/// hosts that demux pitch-bend (CLAP / VST2 / VST3 / AU / AAX)
+/// don't repeat the magic constants and can't drift apart.
+#[inline]
+#[must_use]
+pub fn midi_14bit_pb_decode(raw: u16) -> f32 {
+    debug_assert!(
+        raw <= 16383,
+        "midi_14bit_pb_decode: raw {raw} > 16383 — caller didn't mask LSB|MSB<<7?",
+    );
+    (f32::from(raw) - 8192.0) / 8192.0
 }
 
 /// Cast a `usize` element count (`Vec::len()`, iterator count) to
@@ -325,16 +354,38 @@ mod tests {
     }
 
     #[test]
-    fn midi_14bit_pb_endpoints() {
-        assert_eq!(midi_14bit_pb(-1.0), 0);
-        assert_eq!(midi_14bit_pb(0.0), 8192);
-        assert_eq!(midi_14bit_pb(1.0), 16383);
+    fn midi_14bit_pb_encode_endpoints() {
+        assert_eq!(midi_14bit_pb_encode(-1.0), 0);
+        assert_eq!(midi_14bit_pb_encode(0.0), 8192);
+        assert_eq!(midi_14bit_pb_encode(1.0), 16383);
     }
 
     #[test]
-    fn midi_14bit_pb_clamps() {
-        assert_eq!(midi_14bit_pb(-2.0), 0);
-        assert_eq!(midi_14bit_pb(2.0), 16383);
+    fn midi_14bit_pb_encode_clamps() {
+        assert_eq!(midi_14bit_pb_encode(-2.0), 0);
+        assert_eq!(midi_14bit_pb_encode(2.0), 16383);
+    }
+
+    #[test]
+    fn midi_14bit_pb_decode_endpoints() {
+        assert_eq!(midi_14bit_pb_decode(0), -1.0);
+        assert_eq!(midi_14bit_pb_decode(8192), 0.0);
+        // Asymmetric positive endpoint: 8191/8192 ≈ 0.99987.
+        let max_pos = midi_14bit_pb_decode(16383);
+        assert!((max_pos - 8191.0_f32 / 8192.0_f32).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn midi_14bit_pb_round_trip_all_codes() {
+        // Decoded then re-encoded value lands on the same raw code
+        // for every representable input — the contract that
+        // `midi_14bit_pb_encode` and `midi_14bit_pb_decode` together
+        // promise. Catches any silent drift in either direction.
+        for raw in 0u16..=16383 {
+            let v = midi_14bit_pb_decode(raw);
+            let back = midi_14bit_pb_encode(v);
+            assert_eq!(back, raw, "raw={raw}, v={v}");
+        }
     }
 
     #[test]

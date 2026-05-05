@@ -17,7 +17,7 @@
 
 use std::ffi::c_void;
 
-use truce_core::cast::{len_u32, sample_pos_i64};
+use truce_core::cast::{len_u32, midi_14bit_pb_decode, sample_pos_i64};
 use truce_core::events::{Event, EventBody, EventList, TransportInfo};
 
 use crate::urid::{Urid, UridMap};
@@ -366,8 +366,7 @@ pub fn midi_bytes_to_event(sample_offset: u32, bytes: &[u8]) -> Option<Event> {
             let raw = ((u16::from(bytes[2]) & 0x7F) << 7) | (u16::from(bytes[1]) & 0x7F);
             EventBody::PitchBend {
                 channel,
-                // Normalize to [-1, 1] with 0x2000 as center.
-                value: (f32::from(raw) - 8192.0) / 8192.0,
+                value: midi_14bit_pb_decode(raw),
             }
         }
         _ => return None,
@@ -450,7 +449,7 @@ pub unsafe fn write_midi_out_sequence(out: *mut AtomSequence, events: &EventList
                     (2, event.sample_offset)
                 }
                 EventBody::PitchBend { channel, value } => {
-                    let n = truce_core::cast::midi_14bit_pb(*value);
+                    let n = truce_core::cast::midi_14bit_pb_encode(*value);
                     buf[0] = 0xE0 | (channel & 0x0F);
                     buf[1] = (n & 0x7F) as u8;
                     buf[2] = ((n >> 7) & 0x7F) as u8;

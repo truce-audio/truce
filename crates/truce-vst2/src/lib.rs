@@ -10,7 +10,7 @@ use std::ffi::CString;
 use std::os::raw::c_char;
 use std::slice;
 
-use truce_core::cast::{len_u32, param_f32, sample_pos_i64};
+use truce_core::cast::{len_u32, midi_14bit_pb_decode, param_f32, sample_pos_i64};
 use truce_core::editor::{ClosureBridge, Editor, PluginContext, RawWindowHandle, SendPtr};
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
@@ -285,7 +285,7 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
                         let raw = (u16::from(ev.data2) << 7) | u16::from(ev.data1);
                         Some(EventBody::PitchBend {
                             channel,
-                            value: (f32::from(raw) - 8192.0) / 8192.0,
+                            value: midi_14bit_pb_decode(raw),
                         })
                     }
                     _ => None,
@@ -384,7 +384,7 @@ fn try_encode_vst2_midi(event: &Event) -> Option<Vst2MidiEvent> {
             0,
         ),
         EventBody::PitchBend { channel, value } => {
-            let n = truce_core::cast::midi_14bit_pb(*value);
+            let n = truce_core::cast::midi_14bit_pb_encode(*value);
             (
                 0xE0 | (channel & 0x0F),
                 (n & 0x7F) as u8,

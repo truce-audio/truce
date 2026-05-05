@@ -575,7 +575,7 @@ fn try_encode_vst3_midi(event: &Event) -> Option<Vst3MidiEvent> {
         ),
         EventBody::PitchBend { channel, value } => {
             // 14-bit signed [-1, 1] → unsigned 0..16383, 8192 = center.
-            let n = truce_core::cast::midi_14bit_pb(*value);
+            let n = truce_core::cast::midi_14bit_pb_encode(*value);
             (
                 0xE0 | (channel & 0x0F),
                 (n & 0x7F) as u8,

@@ -49,10 +49,9 @@ pub fn parse_midi1(bytes: &[u8]) -> Option<EventBody> {
         }),
         0xE0 if bytes.len() >= 3 => {
             let raw = (u16::from(bytes[2]) << 7) | u16::from(bytes[1]);
-            let normalized = (f32::from(raw) - 8192.0) / 8192.0;
             Some(EventBody::PitchBend {
                 channel,
-                value: normalized,
+                value: cast::midi_14bit_pb_decode(raw),
             })
         }
         0xC0 if bytes.len() >= 2 => Some(EventBody::ProgramChange {
@@ -87,7 +86,7 @@ pub fn event_to_midi1(event: &EventBody) -> Option<(usize, [u8; 3])> {
             Some((3, [0xB0 | channel, *cc, cast::midi_7bit(*value)]))
         }
         EventBody::PitchBend { channel, value } => {
-            let raw = cast::midi_14bit_pb(*value);
+            let raw = cast::midi_14bit_pb_encode(*value);
             Some((
                 3,
                 [
