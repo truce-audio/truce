@@ -147,7 +147,7 @@ fourcc = "MyG1"
 across every format. The `truce::plugin_info!()` macro reads it at
 compile time so `truce::plugin!` doesn't need any of this in code.
 Full schema in
-[chapter 8 → shipping.md#truce-toml-reference](shipping.md#truce-toml-reference).
+[chapter 9 → shipping.md#truce-toml-reference](shipping.md#truce-toml-reference).
 
 Per-developer secrets (signing identity, AAX SDK path, notary
 credentials) go in `.cargo/config.toml` (gitignored), **not** here.
@@ -312,18 +312,20 @@ release build:
 cargo truce install              # no --shell = static, zero overhead
 ```
 
-Full story in [chapter 7 → hot-reload.md](hot-reload.md).
+Full story in [chapter 8 → hot-reload.md](hot-reload.md).
 
 ## What's next
 
 - **Other parameter kinds** — boolean, int, enum, groups, meters,
   custom formatting → [chapter 4 → parameters.md](parameters.md).
-- **Non-trivial processing** — MIDI, transport, sample-accurate
-  events, instruments → [chapter 5 → processing.md](processing.md).
+- **Non-trivial processing** — transport, sample-accurate events,
+  instruments → [chapter 5 → processing.md](processing.md).
+- **MIDI** — reading and emitting MIDI events, note effects →
+  [chapter 6 → midi.md](midi.md).
 - **A richer UI** — more widgets, `section()`, switching to
-  egui/iced/Slint → [chapter 6 → gui.md](gui.md).
+  egui/iced/Slint → [chapter 7 → gui.md](gui.md).
 - **Shipping to users** — signed `.pkg` / `.exe` installers →
-  [chapter 8 → shipping.md](shipping.md).
+  [chapter 9 → shipping.md](shipping.md).
 - **Real examples** — `examples/truce-example-gain`,
   `examples/truce-example-eq`, `examples/truce-example-synth`,
   `examples/truce-example-transpose`,

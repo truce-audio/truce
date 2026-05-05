@@ -88,6 +88,9 @@ for event in events.iter() {
 with a per-voice `note_id`). The `_ => {}` arm means the compiler
 can still warn if you forgot a variant that mattered.
 
+For MIDI input *and* output (arpeggiators, transposers, chord
+generators), see **[midi.md](midi.md)**.
+
 ## Sample-accurate event splitting
 
 If your synth or transient shaper needs events applied at the
@@ -253,9 +256,11 @@ truce::plugin! {
 
 ## What's next
 
-- **[Chapter 6 → gui.md](gui.md)** — widgets, layout, meters in
+- **[Chapter 6 → midi.md](midi.md)** — emitting MIDI, wire-format
+  helpers, MIDI 2.0 surface.
+- **[Chapter 7 → gui.md](gui.md)** — widgets, layout, meters in
   the UI.
-- **[Chapter 7 → hot-reload.md](hot-reload.md)** — keep your DAW
+- **[Chapter 8 → hot-reload.md](hot-reload.md)** — keep your DAW
   open while you iterate on this code.
 - **`examples/truce-example-tremolo`** in the repo — host transport
   + egui UI in a small, real plugin.

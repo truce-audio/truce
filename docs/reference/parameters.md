@@ -279,5 +279,5 @@ impl SynthParams {
 
 - **[Chapter 5 → processing.md](processing.md)** — put these
   parameters to work in `process()`.
-- **[Chapter 6 → gui.md](gui.md)** — wire parameters into widgets
+- **[Chapter 7 → gui.md](gui.md)** — wire parameters into widgets
   via typed `ParamId`s.

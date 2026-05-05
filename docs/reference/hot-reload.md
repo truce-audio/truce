@@ -1,4 +1,4 @@
-# 7. Hot reload
+# 8. Hot reload
 
 Edit DSP or layout code, rebuild, hear the change in ~2 seconds.
 No DAW restart. No plugin window close. Same source file, same
@@ -158,5 +158,5 @@ The plugin falls back to defaults.
 
 ## What's next
 
-- **[Chapter 8 → shipping.md](shipping.md)** — when you're done
+- **[Chapter 9 → shipping.md](shipping.md)** — when you're done
   iterating, package a signed installer.

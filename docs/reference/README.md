@@ -13,9 +13,10 @@
 | 3 | [plugin-anatomy.md](plugin-anatomy.md) | `PluginLogic` trait, bus layouts, state persistence |
 | 4 | [parameters.md](parameters.md) | `#[derive(Params)]`, `#[param(...)]` attributes, smoothing, meters |
 | 5 | [processing.md](processing.md) | `process()` patterns for effects, MIDI, sample-accurate events, synths |
-| 6 | [gui.md](gui.md) | Built-in GUI widgets + the alternative backends |
-| 7 | [hot-reload.md](hot-reload.md) | ~2 second edit → hear loop with `--features shell` |
-| 8 | [shipping.md](shipping.md) | `cargo truce install / build / validate / package`, signing, installers |
+| 6 | [midi.md](midi.md) | Reading and emitting MIDI events; per-format support; testing MIDI plugins |
+| 7 | [gui.md](gui.md) | Built-in GUI widgets + the alternative backends |
+| 8 | [hot-reload.md](hot-reload.md) | ~2 second edit → hear loop with `--features shell` |
+| 9 | [shipping.md](shipping.md) | `cargo truce install / build / validate / package`, signing, installers |
 
 ## See also
 

@@ -1,4 +1,4 @@
-# 6. GUI
+# 7. GUI
 
 truce ships a built-in GUI designed for audio plugins. You
 declare a layout — rows of widgets — and the framework draws it,
@@ -185,7 +185,7 @@ CLI for renders that don't need a `#[test]`.
 
 ## What's next
 
-- **[Chapter 7 → hot-reload.md](hot-reload.md)** — edit the
+- **[Chapter 8 → hot-reload.md](hot-reload.md)** — edit the
   layout, save, see the change in the running plugin without
   closing the DAW.
 - **[Built-in GUI reference](gui/built-in.md)** — every widget
