@@ -764,6 +764,10 @@ impl<P: PluginExport> PluginDriver<P> {
 
         let mut cursor = 0usize;
         let mut event_list = EventList::with_capacity(script_events.len().min(256));
+        // Hoisted out of the loop and reused — `EventList::default()`
+        // does the `EVENT_LIST_PREALLOC` reservation, so re-constructing
+        // it per block re-allocates on the first push.
+        let mut output_events_block = EventList::default();
         while cursor < total_frames {
             let block_len = self.block_size.min(total_frames - cursor);
 
@@ -817,7 +821,7 @@ impl<P: PluginExport> PluginDriver<P> {
                 bar_start_beats: 0.0,
                 ..Default::default()
             };
-            let mut output_events_block = EventList::default();
+            output_events_block.clear();
             let mut ctx = ProcessContext::new(
                 &transport_info,
                 self.sample_rate,
