@@ -1,0 +1,23 @@
+[package]
+name = "truce-slint-build"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Build-script helper for truce plugins with Slint GUIs. Bundles the truce widget library and JetBrains Mono so authors get a one-line build.rs."
+
+# Ship the bundled assets so the published crate works out-of-tree.
+# Anything not listed here is dropped from the registry tarball.
+include = [
+    "src/**",
+    "ui/*.slint",
+    "fonts/JetBrainsMono-Regular.ttf",
+    "fonts/OFL.txt",
+    "README.md",
+]
+
+[dependencies]
+slint-build = "=1.15.1"
+
+[lints]
+workspace = true

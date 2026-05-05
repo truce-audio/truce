@@ -11,20 +11,27 @@ Add the dependencies:
 
 ```toml
 [dependencies]
-truce-slint = { workspace = true }
+truce-slint = "0.34"
 slint = { version = "=1.15.1", default-features = false, features = ["compat-1-2", "renderer-software", "std"] }
 
 [build-dependencies]
-slint-build = "=1.15.1"
+truce-slint-build = "0.34"
 ```
 
 Create `build.rs`:
 
 ```rust
 fn main() {
-    slint_build::compile("ui/main.slint").expect("failed to compile .slint UI");
+    truce_slint_build::compile("ui/main.slint").unwrap();
 }
 ```
+
+`truce_slint_build::compile` wraps `slint-build` with the truce
+widget library and the bundled JetBrains Mono font already wired
+in, so `import { ... } from "@truce";` and `import
+"JetBrainsMono-Regular.ttf";` in your `.slint` files just work —
+no need to point the Slint compiler at any truce source paths
+yourself.
 
 ## A simple plugin UI
 

@@ -44,7 +44,7 @@ slint = { version = "=1.15.1", default-features = false, features = ["compat-1-2
 truce-lv2 = { workspace = true, optional = true }
 
 [build-dependencies]
-slint-build = "=1.15.1"
+truce-slint-build = { workspace = true }
 
 [dev-dependencies]
 truce-test = { workspace = true }

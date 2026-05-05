@@ -6242,7 +6242,6 @@ version = "0.34.0"
 dependencies = [
  "clap-sys",
  "slint",
- "slint-build",
  "truce",
  "truce-aax",
  "truce-au",
@@ -6253,6 +6252,7 @@ dependencies = [
  "truce-lv2",
  "truce-params",
  "truce-slint",
+ "truce-slint-build",
  "truce-standalone",
  "truce-test",
  "truce-vst2",
@@ -6429,6 +6429,13 @@ dependencies = [
  "truce-gui",
  "truce-params",
  "wgpu 24.0.5",
+]
+
+[[package]]
+name = "truce-slint-build"
+version = "0.34.0"
+dependencies = [
+ "slint-build",
 ]
 
 [[package]]

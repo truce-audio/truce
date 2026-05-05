@@ -30,6 +30,7 @@ members = [
     "crates/truce-iced",
     "examples/truce-example-gain-iced",
     "crates/truce-slint",
+    "crates/truce-slint-build",
     "examples/truce-example-gain-slint",
     "crates/truce-shim-types",
     "crates/truce-dsp",
@@ -88,6 +89,7 @@ truce-gpu = { path = "crates/truce-gpu" }
 truce-egui = { path = "crates/truce-egui" }
 truce-iced = { path = "crates/truce-iced" }
 truce-slint = { path = "crates/truce-slint" }
+truce-slint-build = { path = "crates/truce-slint-build" }
 truce-dsp = { path = "crates/truce-dsp" }
 truce-font = { path = "crates/truce-font" }
 truce-build = { version = "0.34.0", path = "crates/truce-build" }

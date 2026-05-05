@@ -37,4 +37,31 @@ SlintEditor::new(params, (400, 300), |context: PluginContext<P>| {
 })
 ```
 
+## Build setup
+
+Add the build-script helper as a build-dependency:
+
+```toml
+[build-dependencies]
+truce-slint-build = "0.34"
+```
+
+`build.rs`:
+
+```rust
+fn main() {
+    truce_slint_build::compile("ui/main.slint").unwrap();
+}
+```
+
+The helper bundles the truce widget library (so `import { Knob,
+Meter, ... } from "@truce";` works) and JetBrains Mono (so
+`import "JetBrainsMono-Regular.ttf";` works) — your plugin crate
+doesn't need a local truce checkout.
+
+See the [Slint reference doc][slint-doc] for the full plugin
+walkthrough.
+
+[slint-doc]: https://github.com/truce-audio/truce/blob/main/docs/reference/gui/slint.md
+
 Part of [truce](https://github.com/truce-audio/truce).
