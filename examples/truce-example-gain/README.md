@@ -21,9 +21,9 @@ Stereo gain and pan utility with level metering. Uses the built-in GUI.
 The same gain plugin is implemented with four different GUI backends:
 
 - **gain** (this one) — built-in grid layout
-- **[gain-egui](../gain-egui/)** — egui immediate-mode widgets
-- **[gain-iced](../gain-iced/)** — iced retained-mode widgets
-- **[gain-slint](../gain-slint/)** — declarative `.slint` markup
+- **[gain-egui](../truce-example-gain-egui/)** — egui immediate-mode widgets
+- **[gain-iced](../truce-example-gain-iced/)** — iced retained-mode widgets
+- **[gain-slint](../truce-example-gain-slint/)** — declarative `.slint` markup
 
 Compare them to see how each framework handles the same layout.
 

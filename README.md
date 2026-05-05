@@ -32,7 +32,7 @@ cargo truce install --vst3
 # Open your DAW, scan for plugins, load "MyPlugin"
 ```
 
-> Every `cargo truce` command builds in **release** mode by default (DAWs hate debug-build DSP); pass `--debug` for fast-compile iteration.
+> Every `cargo truce` command builds in **release** mode by default; pass `--debug` for fast-compile iteration.
 
 Other formats:
 
