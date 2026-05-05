@@ -760,6 +760,7 @@ impl<P: PluginExport> PluginDriver<P> {
         };
 
         let mut cursor = 0usize;
+        let mut event_list = EventList::with_capacity(script_events.len().min(256));
         while cursor < total_frames {
             let block_len = self.block_size.min(total_frames - cursor);
 
@@ -771,7 +772,9 @@ impl<P: PluginExport> PluginDriver<P> {
             }
 
             // Pull events that fall inside [cursor, cursor+block_len).
-            let mut event_list = EventList::new();
+            // Reuses the same `EventList` across the offline-render
+            // loop instead of constructing a fresh one each block.
+            event_list.clear();
             for (off, body) in &script_events {
                 if *off >= cursor && *off < cursor + block_len {
                     event_list.push(Event {

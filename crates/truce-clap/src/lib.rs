@@ -72,7 +72,7 @@ use truce_core::buffer::AudioBuffer;
 use truce_core::bus::ChannelConfig;
 use truce_core::cast::param_f32;
 use truce_core::editor::{ClosureBridge, Editor, PluginContext, RawWindowHandle, SendPtr};
-use truce_core::events::{Event, EventBody, EventList, TransportInfo};
+use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
 use truce_core::info::{PluginCategory, PluginInfo};
 use truce_core::process::{ProcessContext, ProcessStatus};
@@ -1902,10 +1902,27 @@ pub unsafe fn create_plugin_instance<P: PluginExport>(
     let plugin_id_hash = state::hash_plugin_id(info.clap_id);
     let param_infos = instance.params().param_infos();
 
+    // Pre-size the per-block channel-slice scratch from the worst-case
+    // bus layout the plugin advertises. Without this, the first
+    // `clap_plugin_process` call after activate hits the global
+    // allocator on the audio thread for every channel push; this
+    // amortizes the cost into instance creation, where it belongs.
+    let layouts = P::bus_layouts();
+    let max_in = layouts
+        .iter()
+        .map(|l| l.total_input_channels() as usize)
+        .max()
+        .unwrap_or(0);
+    let max_out = layouts
+        .iter()
+        .map(|l| l.total_output_channels() as usize)
+        .max()
+        .unwrap_or(0);
+
     let data = Box::new(ClapPluginData::<P> {
         plugin: instance,
-        event_list: EventList::new(),
-        output_events: EventList::new(),
+        event_list: EventList::with_capacity(EVENT_LIST_PREALLOC),
+        output_events: EventList::with_capacity(EVENT_LIST_PREALLOC),
         param_infos,
         sample_rate: 44100.0,
         max_block_size: 1024,
@@ -1921,8 +1938,8 @@ pub unsafe fn create_plugin_instance<P: PluginExport>(
         transport_slot: truce_core::TransportSlot::new(),
         host_scale: 1.0,
         host_scale_set_by_host: false,
-        input_slices: Vec::new(),
-        output_slices: Vec::new(),
+        input_slices: Vec::with_capacity(max_in),
+        output_slices: Vec::with_capacity(max_out),
     });
 
     let clap = Box::new(clap_plugin {

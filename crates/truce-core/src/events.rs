@@ -138,6 +138,17 @@ impl TransportInfo {
     }
 }
 
+/// Default reserved capacity for per-instance `EventList`s held by
+/// format wrappers. Sized to cover a heavy MIDI block (note bursts +
+/// per-block automation changes) without growing past steady state.
+/// Each `Event` is roughly 40 bytes, so this reservation is ~10 KB
+/// per list — two lists (input + output) per plugin instance.
+///
+/// Plugins can construct a smaller or larger list explicitly via
+/// [`EventList::with_capacity`]; this const exists so the format
+/// wrappers don't each pick their own magic number.
+pub const EVENT_LIST_PREALLOC: usize = 256;
+
 /// Ordered list of events within a process block.
 #[derive(Clone, Debug, Default)]
 pub struct EventList {
@@ -148,6 +159,21 @@ impl EventList {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Construct an `EventList` with backing capacity already reserved.
+    ///
+    /// Format wrappers build their per-instance event lists at
+    /// construction time and reuse them across blocks via `clear()`.
+    /// Without this, the first `push` after `EventList::new()` hits
+    /// the global allocator on the audio thread; pre-allocating with
+    /// the max event count an audio block is likely to carry keeps
+    /// the first block alloc-free.
+    #[must_use]
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            events: Vec::with_capacity(capacity),
+        }
     }
 
     /// Append an event. Note: `sample_offset` is **not** bounds-checked

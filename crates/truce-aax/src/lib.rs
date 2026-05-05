@@ -17,7 +17,7 @@ use std::sync::{Arc, OnceLock};
 
 use truce_core::cast::{len_u32, sample_pos_i64};
 use truce_core::editor::{ClosureBridge, Editor, PluginContext, RawWindowHandle, SendPtr};
-use truce_core::events::{Event, EventBody, EventList, TransportInfo};
+use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
 use truce_core::info::PluginCategory;
 use truce_core::process::ProcessContext;
@@ -592,8 +592,8 @@ pub unsafe fn _create<P: PluginExport>() -> *mut std::ffi::c_void {
     let info = P::info();
     let instance = Box::new(AaxInstance::<P> {
         plugin,
-        event_list: EventList::new(),
-        output_events: EventList::new(),
+        event_list: EventList::with_capacity(EVENT_LIST_PREALLOC),
+        output_events: EventList::with_capacity(EVENT_LIST_PREALLOC),
         plugin_id_hash: state::shared_plugin_state_hash(&info),
         sample_rate: 44100.0,
         max_block_size: 0,

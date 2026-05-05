@@ -23,7 +23,7 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
 use truce_core::buffer::AudioBuffer;
 use truce_core::cast::{sample_count_usize, sample_rate_u32};
-use truce_core::events::{Event, EventBody, EventList};
+use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList};
 use truce_core::export::PluginExport;
 use truce_core::info::PluginCategory;
 use truce_core::process::ProcessContext;
@@ -674,10 +674,17 @@ fn open_output_stream<P: PluginExport>(
     // the `channel_bufs.clone()` for the effect input mirror, plus the
     // two `EventList::new()`s per block (input drain + plugin output)
     // — both `clear()`ed and reused, capacity-preserving.
-    let mut channel_bufs: Vec<Vec<f32>> = Vec::new();
-    let mut input_bufs: Vec<Vec<f32>> = Vec::new();
-    let mut event_list = EventList::new();
-    let mut output_events = EventList::new();
+    let mut channel_bufs: Vec<Vec<f32>> = Vec::with_capacity(channels);
+    let mut input_bufs: Vec<Vec<f32>> = Vec::with_capacity(channels);
+    let mut event_list = EventList::with_capacity(EVENT_LIST_PREALLOC);
+    let mut output_events = EventList::with_capacity(EVENT_LIST_PREALLOC);
+    // Slice scratch reused across audio_callback invocations: each
+    // block clears and re-extends rather than allocating a fresh Vec.
+    // Lifetimes are laundered to `'static` via transmute inside the
+    // callback; the scratches are read-then-cleared within each
+    // callback invocation, so the false `'static` never escapes.
+    let mut input_slices_scratch: Vec<&'static [f32]> = Vec::with_capacity(channels);
+    let mut output_slices_scratch: Vec<&'static mut [f32]> = Vec::with_capacity(channels);
 
     let stream = match sample_format {
         cpal::SampleFormat::F32 => device
@@ -699,6 +706,8 @@ fn open_output_stream<P: PluginExport>(
                         &mut input_bufs,
                         &mut event_list,
                         &mut output_events,
+                        &mut input_slices_scratch,
+                        &mut output_slices_scratch,
                         #[cfg(feature = "playback")]
                         playback_a.as_ref(),
                         #[cfg(feature = "playback")]
@@ -972,6 +981,8 @@ fn audio_callback<P: PluginExport>(
     input_bufs: &mut Vec<Vec<f32>>,
     event_list: &mut EventList,
     output_events: &mut EventList,
+    input_slices: &mut Vec<&'static [f32]>,
+    output_slices: &mut Vec<&'static mut [f32]>,
     #[cfg(feature = "playback")] playback: Option<&Arc<crate::playback::PlaybackSource>>,
     #[cfg(feature = "playback")] capture: Option<&crate::playback::CapturePusher>,
 ) {
@@ -1047,17 +1058,48 @@ fn audio_callback<P: PluginExport>(
     } else {
         input_bufs.clear();
     }
-    let input_slices: Vec<&[f32]> = input_bufs.iter().map(std::vec::Vec::as_slice).collect();
-    let mut output_slices: Vec<&mut [f32]> = channel_bufs
-        .iter_mut()
-        .map(std::vec::Vec::as_mut_slice)
-        .collect();
+    // Reuse the caller's slice scratches: each block clears and
+    // re-extends, so allocation only happens when the scratch grows
+    // past its initial capacity (channels-many slots reserved at
+    // setup). The caller stores the scratch as `Vec<&'static [f32]>`
+    // because cpal's stream closure must be `'static`; the slices
+    // here borrow from `input_bufs` / `channel_bufs` on the same
+    // stack frame, so the laundered lifetime never escapes this
+    // call.
+    input_slices.clear();
+    output_slices.clear();
+    for buf in input_bufs.iter() {
+        let slice: &[f32] = buf.as_slice();
+        // SAFETY: lifetime laundered to 'static for storage; the
+        // slice is read only inside this `audio_callback` and the
+        // scratch is `clear()`ed at the top of the next block before
+        // anyone could observe a dangling element.
+        input_slices.push(unsafe { std::mem::transmute::<&[f32], &'static [f32]>(slice) });
+    }
+    for buf in channel_bufs.iter_mut() {
+        let slice: &mut [f32] = buf.as_mut_slice();
+        // SAFETY: same reasoning as the input slice push above.
+        output_slices.push(unsafe {
+            std::mem::transmute::<&mut [f32], &'static mut [f32]>(slice)
+        });
+    }
 
-    // The slices we pass here all live within this stack frame, so
-    // the safe wrapper's borrow-checker proof of `'a` is enough —
-    // no need for the unsafe constructor.
-    let mut audio_buffer =
-        AudioBuffer::from_slices_checked(&input_slices, &mut output_slices, num_frames);
+    // SAFETY: The slices stored in `input_slices` / `output_slices`
+    // were just transmuted *up* to `'static` from this stack frame's
+    // `input_bufs` / `channel_bufs`. To call `from_slices` we need
+    // matching outer-borrow lifetimes; reborrow through a raw pointer
+    // to escape the `&'2 mut Vec<&'static mut [f32]>` invariance, then
+    // transmute the resulting `AudioBuffer<'static>` back down to a
+    // borrow tied to this call so the buffer can't outlive
+    // `audio_callback`. Same transmute pattern as
+    // `truce-clap::clap_plugin_process` and `RawBufferScratch::build`.
+    let mut audio_buffer = unsafe {
+        let in_ptr: *mut Vec<&'static [f32]> = input_slices;
+        let out_ptr: *mut Vec<&'static mut [f32]> = output_slices;
+        std::mem::transmute::<AudioBuffer<'static>, AudioBuffer<'_>>(
+            AudioBuffer::from_slices(&*in_ptr, &mut *out_ptr, num_frames),
+        )
+    };
 
     let transport_info = transport.tick_audio(num_frames);
     let mut context = ProcessContext::new(&transport_info, sample_rate, num_frames, output_events);
