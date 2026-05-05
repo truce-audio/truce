@@ -25,6 +25,13 @@ use std::sync::Arc;
 // Instance wrapper
 // ---------------------------------------------------------------------------
 
+/// Bounded handoff slot for state loads. Capacity 1: presets don't
+/// arrive faster than the audio thread completes a block, and on
+/// overflow we want most-recent-wins (`force_push`) so a rapid
+/// double-recall doesn't get the audio thread to apply a stale state
+/// after the host already moved on.
+type StateLoadQueue = crossbeam_queue::ArrayQueue<truce_core::state::DeserializedState>;
+
 struct Vst2Instance<P: PluginExport> {
     plugin: P,
     event_list: EventList,
@@ -46,6 +53,12 @@ struct Vst2Instance<P: PluginExport> {
     pending_editor_parent: Option<*mut std::ffi::c_void>,
     /// Shared transport slot: audio thread writes each block, editor reads.
     transport_slot: Arc<truce_core::TransportSlot>,
+    /// Bounded SPSC handoff for state loads. Host (`cb_state_load`)
+    /// and editor (`set_state` callback) deserialize on their thread
+    /// and push the result; the audio thread pops at the top of
+    /// `cb_process` and calls [`truce_core::state::apply_state`]
+    /// under its exclusive `&mut plugin`.
+    pending_state: Arc<StateLoadQueue>,
 }
 
 // SAFETY: `Vst2Instance` holds two raw `*mut c_void` host handles
@@ -170,6 +183,7 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
         state_loaded: false,
         pending_editor_parent: None,
         transport_slot: truce_core::TransportSlot::new(),
+        pending_state: Arc::new(StateLoadQueue::new(1)),
     });
     Box::into_raw(instance).cast::<std::ffi::c_void>()
 }
@@ -223,6 +237,14 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
     unsafe {
         let inst = &mut *ctx.cast::<Vst2Instance<P>>();
         let num_frames = num_frames as usize;
+
+        // Apply any pending state-load before per-block work so the
+        // plugin sees consistent params and extra state for the
+        // entire block. See `pending_state` field comment for the
+        // queue-overflow policy.
+        if let Some(state) = inst.pending_state.pop() {
+            truce_core::state::apply_state(&mut inst.plugin, &state);
+        }
 
         // Convert MIDI events
         inst.event_list.clear();
@@ -510,14 +532,16 @@ unsafe extern "C" fn cb_state_load<P: PluginExport>(
         // for `n > 0` is UB. Hosts under stress (or buggy hosts) have
         // been seen to call effSetChunk with `(null, non_zero)`; treat
         // it the same as "host gave us nothing" rather than UB.
+        // Deserialize on the host's main thread, hand the result to
+        // the audio thread for application via `pending_state`. The
+        // `restored` flag below tracks deserialize success (host-side
+        // data integrity) and drives the editor-open state machine
+        // exactly as before — the audio thread will catch up on its
+        // next process block.
         let restored = if !data.is_null() && len > 0 {
             let blob = slice::from_raw_parts(data, len as usize);
             if let Some(deserialized) = state::deserialize_state(blob, inst.plugin_id_hash) {
-                inst.plugin.params().restore_values(&deserialized.params);
-                inst.plugin.params().snap_smoothers();
-                if let Some(extra) = &deserialized.extra {
-                    inst.plugin.load_state(extra);
-                }
+                let _ = inst.pending_state.force_push(deserialized);
                 true
             } else {
                 false
@@ -660,6 +684,8 @@ unsafe fn open_editor_inner<P: PluginExport>(
             let params_for_plain = params.clone();
             let params_for_fmt = params.clone();
             let params_for_ctx = params.clone();
+            let pending_state_for_set = inst.pending_state.clone();
+            let plugin_id_hash_for_set = inst.plugin_id_hash;
             let transport_slot = inst.transport_slot.clone();
             let context = PluginContext::from_closures(
                 ClosureBridge {
@@ -700,9 +726,13 @@ unsafe fn open_editor_inner<P: PluginExport>(
                         let plugin = plugin_ptr.get();
                         plugin.save_state().unwrap_or_default()
                     }),
-                    set_state: Box::new(move |data| {
-                        let plugin = &mut *plugin_ptr.as_ptr().cast_mut();
-                        plugin.load_state(&data);
+                    set_state: Box::new(move |bytes| {
+                        if let Some(deserialized) = state::deserialize_state(
+                            &bytes,
+                            plugin_id_hash_for_set,
+                        ) {
+                            let _ = pending_state_for_set.force_push(deserialized);
+                        }
                     }),
                     transport: Box::new(move || transport_slot.read()),
                 },

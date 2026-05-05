@@ -18,6 +18,10 @@ crate-type = ["rlib", "cdylib"]
 [dependencies]
 truce-core = { workspace = true }
 truce-params = { workspace = true }
+# Wait-free bounded queue for the host/editor → audio state-load
+# handoff so the audio thread is the only one that ever holds
+# `&mut Plugin`.
+crossbeam-queue = "0.3"
 
 [build-dependencies]
 cc = "1"

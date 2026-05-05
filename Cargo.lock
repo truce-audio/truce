@@ -6046,6 +6046,7 @@ dependencies = [
 name = "truce-aax"
 version = "0.35.1"
 dependencies = [
+ "crossbeam-queue",
  "truce-core",
  "truce-gui",
  "truce-params",
@@ -6056,6 +6057,7 @@ name = "truce-au"
 version = "0.35.1"
 dependencies = [
  "cc",
+ "crossbeam-queue",
  "truce-core",
  "truce-params",
  "truce-shim-types",
@@ -6476,6 +6478,7 @@ name = "truce-vst2"
 version = "0.35.1"
 dependencies = [
  "cc",
+ "crossbeam-queue",
  "truce-core",
  "truce-params",
 ]
@@ -6485,6 +6488,7 @@ name = "truce-vst3"
 version = "0.35.1"
 dependencies = [
  "cc",
+ "crossbeam-queue",
  "truce-core",
  "truce-params",
 ]

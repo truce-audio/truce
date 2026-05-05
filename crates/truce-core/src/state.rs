@@ -43,6 +43,33 @@ pub struct DeserializedState {
     pub extra: Option<Vec<u8>>,
 }
 
+/// Apply a deserialized state to a plugin: write parameter values,
+/// snap smoothers, then hand the optional extra blob to
+/// [`Plugin::load_state`].
+///
+/// Format wrappers call this from the audio thread after popping a
+/// pending load off their per-instance handoff queue. The reason it
+/// must run on the audio thread (and not on the host's main thread,
+/// where state-load callbacks are typically invoked): `load_state`
+/// takes `&mut P`, which would alias the audio thread's `&mut P`
+/// inside `process()` and produce a data race. The audio thread is
+/// the single thread that already owns `&mut P` between blocks, so
+/// running the load there sidesteps the race entirely.
+///
+/// `restore_values` and `snap_smoothers` go through the param
+/// struct's interior atomics, so they don't strictly need to run on
+/// the audio thread — but applying the whole state in one place keeps
+/// the param values and the user's extra-state blob coherent for any
+/// observer reading after this returns.
+pub fn apply_state<P: crate::export::PluginExport>(plugin: &mut P, state: &DeserializedState) {
+    use truce_params::Params;
+    plugin.params().restore_values(&state.params);
+    plugin.params().snap_smoothers();
+    if let Some(extra) = &state.extra {
+        plugin.load_state(extra);
+    }
+}
+
 /// Deserialize plugin state.
 #[must_use]
 pub fn deserialize_state(data: &[u8], expected_plugin_id: u64) -> Option<DeserializedState> {

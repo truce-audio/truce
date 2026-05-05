@@ -108,6 +108,13 @@ enum GuiParamChange {
 const GUI_QUEUE_CAPACITY: usize = 1024;
 type GuiChangeQueue = crossbeam_queue::ArrayQueue<GuiParamChange>;
 
+/// Bounded handoff slot for state loads. Capacity 1: presets don't
+/// arrive faster than the audio thread completes a block, and on
+/// overflow we want most-recent-wins (`force_push`) so a rapid
+/// double-recall doesn't get the audio thread to apply a stale state
+/// after the host already moved on.
+type StateLoadQueue = crossbeam_queue::ArrayQueue<truce_core::state::DeserializedState>;
+
 // ---------------------------------------------------------------------------
 // Internal wrapper struct held as plugin_data
 // ---------------------------------------------------------------------------
@@ -139,6 +146,14 @@ struct ClapPluginData<P: PluginExport> {
     host_params: *const clap_host_params,
     /// Queue of GUI-initiated parameter changes to emit as output events.
     gui_changes: Arc<GuiChangeQueue>,
+    /// Bounded SPSC handoff for state loads. Host (`state_load`) and
+    /// editor (`set_state` callback) deserialize on their thread and
+    /// push the result; the audio thread pops at the top of
+    /// `clap_plugin_process` and calls
+    /// [`truce_core::state::apply_state`] under its exclusive
+    /// `&mut plugin`. Sidesteps the data race that the previous
+    /// "cast to `&mut` from the GUI thread" pattern produced.
+    pending_state: Arc<StateLoadQueue>,
     /// Flag: GUI changed params, need rescan on main thread.
     needs_rescan: Arc<std::sync::atomic::AtomicBool>,
     /// Shared transport slot: audio thread writes each block, editor reads.
@@ -726,6 +741,16 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
             return CLAP_PROCESS_CONTINUE;
         }
 
+        // Apply any state-load that the host or editor handed us
+        // since the last block. Runs before per-block work so the
+        // plugin sees consistent params for the entire block. The
+        // single-slot queue means a rapid double-recall lands the
+        // newest blob and the older one is dropped — preferred to
+        // the audio thread chasing stale state across blocks.
+        if let Some(state) = data.pending_state.pop() {
+            truce_core::state::apply_state(&mut data.plugin, &state);
+        }
+
         // Convert CLAP input events to our EventList — sort by
         // sample offset so the plugin sees them in time order.
         convert_input_events::<P>(data, proc.in_events, true);
@@ -1254,12 +1279,11 @@ unsafe extern "C" fn state_load<P: PluginExport>(
             return false;
         };
 
-        data.plugin.params().restore_values(&deserialized.params);
-        data.plugin.params().snap_smoothers();
-
-        if let Some(extra) = &deserialized.extra {
-            data.plugin.load_state(extra);
-        }
+        // Hand the deserialized state to the audio thread for
+        // application. `force_push` overwrites any older pending blob
+        // — see the `pending_state` field comment for why "newest
+        // wins" is the right policy here.
+        let _ = data.pending_state.force_push(deserialized);
 
         if let Some(ref mut editor) = data.editor {
             editor.state_changed();
@@ -1639,6 +1663,8 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
         let params_for_plain = params.clone();
         let params_for_fmt = params.clone();
         let params_for_ctx = params.clone();
+        let pending_state_for_set = data.pending_state.clone();
+        let plugin_id_hash_for_set = data.plugin_id_hash;
         let transport_slot = data.transport_slot.clone();
         let context = PluginContext::from_closures(
             ClosureBridge {
@@ -1692,9 +1718,12 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
                     let plugin = plugin_ptr.get();
                     plugin.save_state().unwrap_or_default()
                 }),
-                set_state: Box::new(move |data| {
-                    let plugin = &mut *plugin_ptr.as_ptr().cast_mut();
-                    plugin.load_state(&data);
+                set_state: Box::new(move |bytes| {
+                    if let Some(deserialized) =
+                        truce_core::state::deserialize_state(&bytes, plugin_id_hash_for_set)
+                    {
+                        let _ = pending_state_for_set.force_push(deserialized);
+                    }
                 }),
                 transport: Box::new(move || transport_slot.read()),
             },
@@ -1887,6 +1916,7 @@ pub unsafe fn create_plugin_instance<P: PluginExport>(
         host,
         host_params: ptr::null(),
         gui_changes: Arc::new(GuiChangeQueue::new(GUI_QUEUE_CAPACITY)),
+        pending_state: Arc::new(StateLoadQueue::new(1)),
         needs_rescan: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         transport_slot: truce_core::TransportSlot::new(),
         host_scale: 1.0,

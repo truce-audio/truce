@@ -143,6 +143,13 @@ pub struct TruceAaxTransportSnapshot {
 // Instance wrapper
 // ---------------------------------------------------------------------------
 
+/// Bounded handoff slot for state loads. Capacity 1: presets don't
+/// arrive faster than the audio thread completes a block, and on
+/// overflow we want most-recent-wins (`force_push`) so a rapid
+/// double-recall doesn't get the audio thread to apply a stale state
+/// after the host already moved on.
+type StateLoadQueue = crossbeam_queue::ArrayQueue<truce_core::state::DeserializedState>;
+
 struct AaxInstance<P: PluginExport> {
     plugin: P,
     event_list: EventList,
@@ -175,6 +182,12 @@ struct AaxInstance<P: PluginExport> {
     /// `swap(false)` could clear a bit that the audio thread had just
     /// re-set, leaving the cache one update behind.
     state_revision: std::sync::atomic::AtomicU64,
+    /// Bounded SPSC handoff for state loads. Host (`_load_state`)
+    /// and editor (`set_state` callback) deserialize on their thread
+    /// and push the result; the audio thread pops at the top of
+    /// `_process` and calls [`truce_core::state::apply_state`] under
+    /// its exclusive `&mut plugin`.
+    pending_state: Arc<StateLoadQueue>,
 }
 
 // ---------------------------------------------------------------------------
@@ -591,6 +604,7 @@ pub unsafe fn _create<P: PluginExport>() -> *mut std::ffi::c_void {
         // Start at 1 so the first cached entry (revision 0) never
         // matches and we always serialize on the first save_state call.
         state_revision: std::sync::atomic::AtomicU64::new(1),
+        pending_state: Arc::new(StateLoadQueue::new(1)),
     });
     Box::into_raw(instance).cast::<std::ffi::c_void>()
 }
@@ -628,6 +642,18 @@ pub unsafe fn _process<P: PluginExport>(
 ) {
     let inst = unsafe { &mut *ctx.cast::<AaxInstance<P>>() };
     let num_frames = num_frames as usize;
+
+    // Apply any pending state-load before per-block work so the
+    // plugin sees consistent params and extra state for the entire
+    // block. See `pending_state` field comment for the queue-overflow
+    // policy. Bumps `state_revision` so the next `_save_state` call
+    // re-captures the restored values rather than handing back the
+    // stale cache.
+    if let Some(state) = inst.pending_state.pop() {
+        truce_core::state::apply_state(&mut inst.plugin, &state);
+        inst.state_revision
+            .fetch_add(1, std::sync::atomic::Ordering::Release);
+    }
 
     // Convert MIDI
     inst.event_list.clear();
@@ -972,20 +998,15 @@ pub unsafe fn _load_state<P: PluginExport>(ctx: *mut std::ffi::c_void, data: *co
     }
     let blob = unsafe { slice::from_raw_parts(data, len as usize) };
     if let Some(deserialized) = state::deserialize_state(blob, inst.plugin_id_hash) {
-        inst.plugin.params().restore_values(&deserialized.params);
-        inst.plugin.params().snap_smoothers();
-        if let Some(extra) = &deserialized.extra {
-            inst.plugin.load_state(extra);
-        }
-        // State changed wholesale — bump the revision counter so the
-        // next `_save_state` re-captures the restored values.
-        inst.state_revision
-            .fetch_add(1, std::sync::atomic::Ordering::Release);
-        // Drop the stale `Arc<Vec<u8>>` cached against the previous
-        // revision now, instead of holding it until the next
-        // `_save_state` call replaces it. Cosmetic: the revision-key
-        // mismatch already forces a re-serialize on the next save,
-        // but we'd otherwise pin a multi-KB blob across the gap.
+        // Hand the deserialized state to the audio thread for
+        // application. `force_push` overwrites any older pending blob
+        // — see the `pending_state` field comment for why
+        // newest-wins is the right policy. The audio thread's drain
+        // bumps `state_revision`, so the cache invalidation is
+        // covered there; we still drop the cached `Arc<Vec<u8>>` here
+        // so the multi-KB blob isn't pinned across the gap before
+        // the next `_save_state` would replace it.
+        let _ = inst.pending_state.force_push(deserialized);
         if let Ok(mut guard) = inst.state_cache.lock() {
             *guard = None;
         }
@@ -1061,6 +1082,8 @@ pub unsafe fn _editor_open<P: PluginExport>(
         let params_for_plain = params.clone();
         let params_for_fmt = params.clone();
         let params_for_ctx = params.clone();
+        let pending_state_for_set = inst.pending_state.clone();
+        let plugin_id_hash_for_set = inst.plugin_id_hash;
         let transport_slot = inst.transport_slot.clone();
 
         let context = PluginContext::from_closures(
@@ -1094,9 +1117,13 @@ pub unsafe fn _editor_open<P: PluginExport>(
                     let plugin = plugin_ptr.get();
                     plugin.save_state().unwrap_or_default()
                 }),
-                set_state: Box::new(move |data| {
-                    let plugin = &mut *plugin_ptr.as_ptr().cast_mut();
-                    plugin.load_state(&data);
+                set_state: Box::new(move |bytes| {
+                    if let Some(deserialized) = state::deserialize_state(
+                        &bytes,
+                        plugin_id_hash_for_set,
+                    ) {
+                        let _ = pending_state_for_set.force_push(deserialized);
+                    }
                 }),
                 transport: Box::new(move || transport_slot.read()),
             },

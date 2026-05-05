@@ -26,6 +26,13 @@ use std::sync::Arc;
 // Instance wrapper
 // ---------------------------------------------------------------------------
 
+/// Bounded handoff slot for state loads. Capacity 1: presets don't
+/// arrive faster than the audio thread completes a block, and on
+/// overflow we want most-recent-wins (`force_push`) so a rapid
+/// double-recall doesn't get the audio thread to apply a stale state
+/// after the host already moved on.
+type StateLoadQueue = crossbeam_queue::ArrayQueue<truce_core::state::DeserializedState>;
+
 struct Vst3Instance<P: PluginExport> {
     plugin: P,
     event_list: EventList,
@@ -57,6 +64,12 @@ struct Vst3Instance<P: PluginExport> {
     /// the editor's logical size to physical pixels when reporting
     /// `getSize` on Windows/Linux.
     host_scale: f64,
+    /// Bounded SPSC handoff for state loads. Host (`cb_state_load`)
+    /// and editor (`set_state` callback) deserialize on their thread
+    /// and push the result; the audio thread pops at the top of
+    /// `cb_process` and calls [`truce_core::state::apply_state`]
+    /// under its exclusive `&mut plugin`.
+    pending_state: Arc<StateLoadQueue>,
 }
 
 // ---------------------------------------------------------------------------
@@ -98,6 +111,7 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
         editor: None,
         transport_slot: truce_core::TransportSlot::new(),
         host_scale: 1.0,
+        pending_state: Arc::new(StateLoadQueue::new(1)),
     });
     Box::into_raw(instance).cast::<std::ffi::c_void>()
 }
@@ -142,6 +156,14 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
     unsafe {
         let inst = &mut *ctx.cast::<Vst3Instance<P>>();
         let num_frames = num_frames as usize;
+
+        // Apply any pending state-load before per-block work so the
+        // plugin sees consistent params and extra state for the
+        // entire block. See `pending_state` field comment for the
+        // queue-overflow policy.
+        if let Some(state) = inst.pending_state.pop() {
+            truce_core::state::apply_state(&mut inst.plugin, &state);
+        }
 
         // Convert MIDI events
         inst.event_list.clear();
@@ -452,11 +474,11 @@ unsafe extern "C" fn cb_state_load<P: PluginExport>(
         }
         let blob = slice::from_raw_parts(data, len as usize);
         if let Some(deserialized) = state::deserialize_state(blob, inst.plugin_id_hash) {
-            inst.plugin.params().restore_values(&deserialized.params);
-            inst.plugin.params().snap_smoothers();
-            if let Some(extra) = &deserialized.extra {
-                inst.plugin.load_state(extra);
-            }
+            // Hand the deserialized state to the audio thread for
+            // application. `force_push` overwrites any older pending
+            // blob — see the `pending_state` field comment for why
+            // newest-wins is the right policy.
+            let _ = inst.pending_state.force_push(deserialized);
             if let Some(ref mut editor) = inst.editor {
                 editor.state_changed();
             }
@@ -700,6 +722,8 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
             let params_for_plain = params.clone();
             let params_for_fmt = params.clone();
             let params_for_ctx = params.clone();
+            let pending_state_for_set = inst.pending_state.clone();
+            let plugin_id_hash_for_set = inst.plugin_id_hash;
             let transport_slot = inst.transport_slot.clone();
             let context = PluginContext::from_closures(
                 ClosureBridge {
@@ -736,9 +760,13 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                         let plugin = plugin_ptr.get();
                         plugin.save_state().unwrap_or_default()
                     }),
-                    set_state: Box::new(move |data| {
-                        let plugin = &mut *plugin_ptr.as_ptr().cast_mut();
-                        plugin.load_state(&data);
+                    set_state: Box::new(move |bytes| {
+                        if let Some(deserialized) = state::deserialize_state(
+                            &bytes,
+                            plugin_id_hash_for_set,
+                        ) {
+                            let _ = pending_state_for_set.force_push(deserialized);
+                        }
                     }),
                     transport: Box::new(move || transport_slot.read()),
                 },
