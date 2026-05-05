@@ -21,9 +21,13 @@
 /// ```
 #[macro_export]
 macro_rules! layout {
-    ($title:expr, $version:expr, $knob_size:expr, { $($body:tt)* }) => {{
+    ($title:expr, $subtitle:expr, $knob_size:expr, { $($body:tt)* }) => {{
         let rows = $crate::__layout_rows!( [] $($body)* );
-        $crate::layout::PluginLayout::build($title, $version, rows, $knob_size)
+        $crate::layout::PluginLayout::build(
+            $crate::layout::HeaderTitles::pair($title, $subtitle),
+            rows,
+            $knob_size,
+        )
     }};
 }
 
@@ -114,8 +118,9 @@ macro_rules! __layout_widgets {
 ///
 /// Defaults: no header, `cols` = max widgets per section,
 /// `cell_size` = `GRID_DEFAULT_CELL_SIZE`. Override any of those
-/// via the `cols:` / `cell:` keyword args, or prepend
-/// `"title", "version",` to opt in to a header band.
+/// via the `cols:` / `cell:` keyword args, or set the header band
+/// with `title: "..."` and / or `subtitle: "..."` (each is
+/// independently optional).
 ///
 /// # Example
 /// ```ignore
@@ -139,11 +144,15 @@ macro_rules! __layout_widgets {
 ///     })
 /// }
 ///
-/// // Header opt-in.
+/// // Header — title + subtitle, or either one alone.
 /// fn with_header() -> truce_gui::layout::GridLayout {
-///     grid!("MY PLUGIN", "V1.0", cols: 4, cell: 50.0, {
+///     grid!(title: "MY PLUGIN", subtitle: "V1.0", cols: 4, cell: 50.0, {
 ///         knob(ID_GAIN, "Gain")
 ///     })
+/// }
+///
+/// fn title_only() -> truce_gui::layout::GridLayout {
+///     grid!(title: "MY PLUGIN", { knob(ID_GAIN, "Gain") })
 /// }
 /// ```
 #[macro_export]
@@ -167,28 +176,97 @@ macro_rules! grid {
         $crate::layout::GridLayout::build($crate::__grid_sections!($($body)*))
             .with_grid($cols, $cell)
     }};
-    // header + body.
-    ($title:expr, $version:expr, { $($body:tt)* }) => {{
+
+    // --- Header arms — title and subtitle both optional ---
+
+    // title + subtitle + body.
+    (title: $title:expr, subtitle: $subtitle:expr, { $($body:tt)* }) => {{
         $crate::layout::GridLayout::build($crate::__grid_sections!($($body)*))
-            .with_header($title, $version)
+            .with_titles($crate::layout::HeaderTitles::pair($title, $subtitle))
     }};
-    // header + cols.
-    ($title:expr, $version:expr, cols: $cols:expr, { $($body:tt)* }) => {{
+    // title + subtitle + cols.
+    (title: $title:expr, subtitle: $subtitle:expr, cols: $cols:expr, { $($body:tt)* }) => {{
         $crate::layout::GridLayout::build($crate::__grid_sections!($($body)*))
             .with_cols($cols)
-            .with_header($title, $version)
+            .with_titles($crate::layout::HeaderTitles::pair($title, $subtitle))
     }};
-    // header + cell.
-    ($title:expr, $version:expr, cell: $cell:expr, { $($body:tt)* }) => {{
+    // title + subtitle + cell.
+    (title: $title:expr, subtitle: $subtitle:expr, cell: $cell:expr, { $($body:tt)* }) => {{
         $crate::layout::GridLayout::build($crate::__grid_sections!($($body)*))
             .with_cell_size($cell)
-            .with_header($title, $version)
+            .with_titles($crate::layout::HeaderTitles::pair($title, $subtitle))
     }};
-    // header + cols + cell — full form.
-    ($title:expr, $version:expr, cols: $cols:expr, cell: $cell:expr, { $($body:tt)* }) => {{
+    // title + subtitle + cols + cell — full form.
+    (title: $title:expr, subtitle: $subtitle:expr, cols: $cols:expr, cell: $cell:expr, { $($body:tt)* }) => {{
         $crate::layout::GridLayout::build($crate::__grid_sections!($($body)*))
             .with_grid($cols, $cell)
-            .with_header($title, $version)
+            .with_titles($crate::layout::HeaderTitles::pair($title, $subtitle))
+    }};
+
+    // title only — any combination of cols / cell, body required.
+    (title: $title:expr, { $($body:tt)* }) => {{
+        $crate::layout::GridLayout::build($crate::__grid_sections!($($body)*))
+            .with_title($title)
+    }};
+    (title: $title:expr, cols: $cols:expr, { $($body:tt)* }) => {{
+        $crate::layout::GridLayout::build($crate::__grid_sections!($($body)*))
+            .with_cols($cols)
+            .with_title($title)
+    }};
+    (title: $title:expr, cell: $cell:expr, { $($body:tt)* }) => {{
+        $crate::layout::GridLayout::build($crate::__grid_sections!($($body)*))
+            .with_cell_size($cell)
+            .with_title($title)
+    }};
+    (title: $title:expr, cols: $cols:expr, cell: $cell:expr, { $($body:tt)* }) => {{
+        $crate::layout::GridLayout::build($crate::__grid_sections!($($body)*))
+            .with_grid($cols, $cell)
+            .with_title($title)
+    }};
+
+    // subtitle only — same shape.
+    (subtitle: $subtitle:expr, { $($body:tt)* }) => {{
+        $crate::layout::GridLayout::build($crate::__grid_sections!($($body)*))
+            .with_subtitle($subtitle)
+    }};
+    (subtitle: $subtitle:expr, cols: $cols:expr, { $($body:tt)* }) => {{
+        $crate::layout::GridLayout::build($crate::__grid_sections!($($body)*))
+            .with_cols($cols)
+            .with_subtitle($subtitle)
+    }};
+    (subtitle: $subtitle:expr, cell: $cell:expr, { $($body:tt)* }) => {{
+        $crate::layout::GridLayout::build($crate::__grid_sections!($($body)*))
+            .with_cell_size($cell)
+            .with_subtitle($subtitle)
+    }};
+    (subtitle: $subtitle:expr, cols: $cols:expr, cell: $cell:expr, { $($body:tt)* }) => {{
+        $crate::layout::GridLayout::build($crate::__grid_sections!($($body)*))
+            .with_grid($cols, $cell)
+            .with_subtitle($subtitle)
+    }};
+
+    // --- Legacy positional form: `grid!("TITLE", "SUBTITLE", ...)`.
+    // Kept so out-of-tree plugins built against 0.32.x keep
+    // compiling. New code should use the `title:` / `subtitle:`
+    // kwarg arms above. ---
+    ($title:expr, $subtitle:expr, { $($body:tt)* }) => {{
+        $crate::layout::GridLayout::build($crate::__grid_sections!($($body)*))
+            .with_titles($crate::layout::HeaderTitles::pair($title, $subtitle))
+    }};
+    ($title:expr, $subtitle:expr, cols: $cols:expr, { $($body:tt)* }) => {{
+        $crate::layout::GridLayout::build($crate::__grid_sections!($($body)*))
+            .with_cols($cols)
+            .with_titles($crate::layout::HeaderTitles::pair($title, $subtitle))
+    }};
+    ($title:expr, $subtitle:expr, cell: $cell:expr, { $($body:tt)* }) => {{
+        $crate::layout::GridLayout::build($crate::__grid_sections!($($body)*))
+            .with_cell_size($cell)
+            .with_titles($crate::layout::HeaderTitles::pair($title, $subtitle))
+    }};
+    ($title:expr, $subtitle:expr, cols: $cols:expr, cell: $cell:expr, { $($body:tt)* }) => {{
+        $crate::layout::GridLayout::build($crate::__grid_sections!($($body)*))
+            .with_grid($cols, $cell)
+            .with_titles($crate::layout::HeaderTitles::pair($title, $subtitle))
     }};
 }
 

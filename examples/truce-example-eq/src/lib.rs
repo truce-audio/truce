@@ -221,7 +221,7 @@ impl PluginLogic for Eq {
             ),
             widgets(vec![knob(P::Output, "Output")]),
         ])
-        .with_header("EQ", "V0.1")
+        .with_title("EQ")
     }
 }
 

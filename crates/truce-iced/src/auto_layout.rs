@@ -38,23 +38,22 @@ pub fn auto_view<'a, M: Clone + Debug + 'static, P: Params>(
 
     let mut main_col: Column<'a, Message<M>> = Column::new().spacing(8).padding(15);
 
-    // Optional title / version header band — drawn only when the
-    // layout opted in via `.with_header(...)`.
-    if let Some(h) = &layout.header {
-        let header = container(
-            row![
-                text(h.title).size(16),
-                text(h.version).size(10).color(theme::TEXT_DIM),
-            ]
-            .spacing(8)
-            .align_y(alignment::Vertical::Center),
-        )
-        .padding(8)
-        .style(|_theme: &iced::Theme| container::Style {
-            background: Some(theme::HEADER_BG.into()),
-            ..Default::default()
-        })
-        .width(Length::Fill);
+    // Header band — drawn whenever either title slot is set.
+    if !layout.titles.is_empty() {
+        let mut header_row = row![].spacing(8).align_y(alignment::Vertical::Center);
+        if let Some(t) = layout.titles.title {
+            header_row = header_row.push(text(t).size(16));
+        }
+        if let Some(s) = layout.titles.subtitle {
+            header_row = header_row.push(text(s).size(10).color(theme::TEXT_DIM));
+        }
+        let header = container(header_row)
+            .padding(8)
+            .style(|_theme: &iced::Theme| container::Style {
+                background: Some(theme::HEADER_BG.into()),
+                ..Default::default()
+            })
+            .width(Length::Fill);
         main_col = main_col.push(header);
     }
 

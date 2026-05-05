@@ -213,7 +213,7 @@ impl PluginLogic for Synth {
                 ],
             ),
         ])
-        .with_header("TRUCE SYNTH", "V0.1")
+        .with_title("TRUCE SYNTH")
     }
 }
 

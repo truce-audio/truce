@@ -84,7 +84,7 @@ impl PluginLogic for Gain {
                 .rows(3),
             xy_pad(P::Pan, P::Gain, "XY"),
         ])])
-        .with_header("GAIN", "V0.1")
+        .with_title("GAIN")
     }
 }
 

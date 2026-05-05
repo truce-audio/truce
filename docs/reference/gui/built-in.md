@@ -31,7 +31,10 @@ GridLayout::build(sections: Vec<Section>) -> GridLayout
 
 Defaults:
 
-- **No header band**. Add one with `.with_header("title", "v1.0")`.
+- **No header band**. Add a title with `.with_title("MY PLUGIN")`,
+  a right-aligned subtitle with `.with_subtitle("v1.0")`, or both
+  with `.with_titles(HeaderTitles::pair("MY PLUGIN", "v1.0"))`.
+  Each slot is independently optional.
 - **`cols`** = the widest section's widget count (extended to fit
   any explicitly-positioned widget). Override with `.with_cols(n)`
   to force wrapping — e.g. `.with_cols(2)` on a 4-widget section
@@ -42,7 +45,7 @@ Defaults:
 
 ```rust
 GridLayout::build(sections)                       // 95% case
-GridLayout::build(sections).with_header("EQ", "v0.1")
+GridLayout::build(sections).with_title("EQ")      // title only
 GridLayout::build(sections).with_cols(2)          // force 2-col wrapping
 GridLayout::build(sections).with_grid(4, 60.0)    // both at once
 ```
@@ -87,7 +90,7 @@ GridLayout::build(vec![
     ]),
     widgets(vec![knob(P::Output, "Output")]),
 ])
-.with_header("EQ", "V0.1")
+.with_title("EQ")
 ```
 
 `cols` auto-resolves to 3 here (the widest section has 3 widgets),
@@ -151,13 +154,13 @@ themes or override individual colours:
 use truce_gui::theme::{Theme, Color};
 
 GridLayout::build(sections)
-    .with_header("MY PLUGIN", "V0.1")
+    .with_title("MY PLUGIN")
     .theme(Theme::light())
 ```
 
 ```rust
 GridLayout::build(sections)
-    .with_header("MY PLUGIN", "V0.1")
+    .with_title("MY PLUGIN")
     .theme(Theme {
         primary: Color::rgb(0x00, 0xd2, 0xff),
         ..Theme::dark()
@@ -199,7 +202,7 @@ fn layout(&self) -> GridLayout {
         xy_pad(P::Pan, P::Gain, "XY"),
         meter(&[P::MeterLeft, P::MeterRight], "Level").rows(2),
     ])])
-    .with_header("GAIN", "V0.1")
+    .with_title("GAIN")
 }
 ```
 

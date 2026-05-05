@@ -114,7 +114,7 @@ impl PluginLogic for Transpose {
             knob(P::Semitones, "Semitones"),
             knob(P::Octave, "Octave"),
         ])])
-        .with_header("TRANSPOSE", "V0.1")
+        .with_title("TRANSPOSE")
     }
 }
 

@@ -95,37 +95,43 @@ pub fn draw_knob(
     );
 }
 
-/// Draw a header bar.
+/// Draw a header bar. Each slot is independently optional — passing
+/// `None` for both should be avoided (the caller is expected to skip
+/// `draw_header` entirely when the layout has no header).
 pub fn draw_header(
     ctx: &mut dyn RenderBackend,
     x: f32,
     y: f32,
     w: f32,
     h: f32,
-    title: &str,
-    version: &str,
+    title: Option<&str>,
+    subtitle: Option<&str>,
     theme: &Theme,
 ) {
     ctx.fill_rect(x, y, w, h, theme.header_bg);
 
-    let title_size = 12.0;
-    ctx.draw_text(
-        title,
-        x + 10.0,
-        y + (h - title_size) / 2.0 - 1.0,
-        title_size,
-        theme.header_text,
-    );
+    if let Some(title) = title {
+        let title_size = 12.0;
+        ctx.draw_text(
+            title,
+            x + 10.0,
+            y + (h - title_size) / 2.0 - 1.0,
+            title_size,
+            theme.header_text,
+        );
+    }
 
-    let ver_size = 9.0;
-    let ver_w = ctx.text_width(version, ver_size);
-    ctx.draw_text(
-        version,
-        x + w - ver_w - 10.0,
-        y + (h - ver_size) / 2.0 - 1.0,
-        ver_size,
-        theme.text_dim,
-    );
+    if let Some(subtitle) = subtitle {
+        let sub_size = 9.0;
+        let sub_w = ctx.text_width(subtitle, sub_size);
+        ctx.draw_text(
+            subtitle,
+            x + w - sub_w - 10.0,
+            y + (h - sub_size) / 2.0 - 1.0,
+            sub_size,
+            theme.text_dim,
+        );
+    }
 }
 
 /// Draw a horizontal slider.
@@ -744,16 +750,18 @@ fn draw_rows(
     let w = pl.width;
     let knob_size = pl.knob_size;
     let pitch = knob_size + ROWS_COLUMN_GAP;
-    draw_header(
-        backend,
-        0.0,
-        0.0,
-        w as f32,
-        HEADER_HEIGHT,
-        pl.title,
-        pl.version,
-        theme,
-    );
+    if !pl.titles.is_empty() {
+        draw_header(
+            backend,
+            0.0,
+            0.0,
+            w as f32,
+            HEADER_HEIGHT,
+            pl.titles.title,
+            pl.titles.subtitle,
+            theme,
+        );
+    }
 
     let mut y = ROWS_LAYOUT_TOP;
     let mut region_idx = 0usize;
@@ -812,15 +820,15 @@ fn draw_grid(
     state: &mut InteractionState,
 ) {
     let w = grid.width;
-    if let Some(header) = &grid.header {
+    if !grid.titles.is_empty() {
         draw_header(
             backend,
             0.0,
             0.0,
             w as f32,
             HEADER_HEIGHT,
-            header.title,
-            header.version,
+            grid.titles.title,
+            grid.titles.subtitle,
             theme,
         );
     }

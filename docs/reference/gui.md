@@ -44,7 +44,12 @@ span cells. By default there's no header, `cols` resolves to the
 widest section's widget count, and the cell size is 50 logical
 points. Override any of those:
 
-- `.with_header("title", "v0.1")` — adds the title/version header band.
+- `.with_title("MY PLUGIN")` — adds a header band with a title only.
+- `.with_subtitle("v0.1")` — header band with the right-aligned
+  subtitle slot only.
+- `.with_titles(HeaderTitles::pair("MY PLUGIN", "v0.1"))` — both
+  slots at once. `HeaderTitles::title(...)` / `::subtitle(...)` /
+  `::pair(...)` / `::none()` cover every combination.
 - `.with_cols(n)` — force a specific column count (useful to wrap a
   long row into a grid).
 - `.with_cell_size(s)` — bigger / smaller cells.
@@ -113,7 +118,7 @@ a custom palette:
 
 ```rust
 GridLayout::build(sections)
-    .with_header("MY PLUGIN", "V0.1")
+    .with_title("MY PLUGIN")
     .theme(truce_gui::theme::Theme::light())
 ```
 

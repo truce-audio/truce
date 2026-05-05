@@ -175,8 +175,7 @@ pub struct KnobRow {
 /// Layout configuration for a plugin UI.
 #[derive(Clone, Debug)]
 pub struct PluginLayout {
-    pub title: &'static str,
-    pub version: &'static str,
+    pub titles: HeaderTitles,
     pub rows: Vec<KnobRow>,
     pub width: u32,
     pub height: u32,
@@ -193,8 +192,8 @@ impl PluginLayout {
         clippy::cast_precision_loss
     )]
     #[must_use]
-    pub fn compute_size(rows: &[KnobRow], knob_size: f32) -> (u32, u32) {
-        let header_h = 21.0;
+    pub fn compute_size(rows: &[KnobRow], knob_size: f32, titles: &HeaderTitles) -> (u32, u32) {
+        let header_h = if titles.is_empty() { 0.0 } else { 21.0 };
         let row_h = knob_size + 19.0;
         let section_label_h = 14.0;
         let padding = 7.0;
@@ -222,18 +221,14 @@ impl PluginLayout {
         (w as u32, h as u32)
     }
 
-    /// Calculate default window size and return a `PluginLayout`.
+    /// Build a Rows-style layout with the given header titles.
+    /// Either or both [`HeaderTitles`] slots can be empty (use
+    /// [`HeaderTitles::none`] for a layout with no header band).
     #[must_use]
-    pub fn build(
-        title: &'static str,
-        version: &'static str,
-        rows: Vec<KnobRow>,
-        knob_size: f32,
-    ) -> Self {
-        let (w, h) = Self::compute_size(&rows, knob_size);
+    pub fn build(titles: HeaderTitles, rows: Vec<KnobRow>, knob_size: f32) -> Self {
+        let (w, h) = Self::compute_size(&rows, knob_size, &titles);
         Self {
-            title,
-            version,
+            titles,
             rows,
             width: w,
             height: h,
@@ -478,21 +473,73 @@ impl From<GridWidget> for Section {
     }
 }
 
-/// Optional header drawn above a [`GridLayout`] — title on the
-/// left, version on the right. Plugins that don't set one render
-/// straight from the top edge.
-#[derive(Clone, Debug)]
-pub struct GridHeader {
-    pub title: &'static str,
-    pub version: &'static str,
+/// Title band drawn above a layout. The `title` slot renders
+/// larger / brighter on the left of the band; the `subtitle` slot
+/// renders smaller / dimmer on the right. Each slot is independently
+/// optional — set either, both, or neither.
+///
+/// Use [`HeaderTitles::title`] / [`HeaderTitles::subtitle`] /
+/// [`HeaderTitles::pair`] for the common cases; build the struct
+/// directly only when you want to set a non-default combination
+/// (e.g. via `..` syntax over an existing instance).
+#[derive(Clone, Debug, Default)]
+pub struct HeaderTitles {
+    pub title: Option<&'static str>,
+    pub subtitle: Option<&'static str>,
+}
+
+impl HeaderTitles {
+    /// Both slots empty — no header band is drawn.
+    #[must_use]
+    pub const fn none() -> Self {
+        Self {
+            title: None,
+            subtitle: None,
+        }
+    }
+
+    /// Title only; subtitle slot stays empty.
+    #[must_use]
+    pub const fn title(s: &'static str) -> Self {
+        Self {
+            title: Some(s),
+            subtitle: None,
+        }
+    }
+
+    /// Subtitle only; title slot stays empty.
+    #[must_use]
+    pub const fn subtitle(s: &'static str) -> Self {
+        Self {
+            title: None,
+            subtitle: Some(s),
+        }
+    }
+
+    /// Both slots set.
+    #[must_use]
+    pub const fn pair(title: &'static str, subtitle: &'static str) -> Self {
+        Self {
+            title: Some(title),
+            subtitle: Some(subtitle),
+        }
+    }
+
+    /// `true` when neither slot is set — caller should skip the
+    /// header band entirely.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.title.is_none() && self.subtitle.is_none()
+    }
 }
 
 /// Grid-based layout for a plugin UI.
 #[derive(Clone, Debug)]
 pub struct GridLayout {
-    /// Optional header band above the grid. `None` means no header
-    /// is drawn and the grid starts at `y = 0` (plus padding).
-    pub header: Option<GridHeader>,
+    /// Header band titles. Both slots default to `None`, in which
+    /// case no header is drawn and the grid starts at `y = 0`
+    /// (plus padding).
+    pub titles: HeaderTitles,
     /// Number of columns in the grid.
     pub cols: u32,
     /// Section labels positioned above specific rows: (`row_index`, label).
@@ -569,7 +616,7 @@ impl GridLayout {
             .max(1);
 
         let mut layout = Self {
-            header: None,
+            titles: HeaderTitles::none(),
             cols,
             sections: Vec::new(),
             widgets: widgets.clone(),
@@ -615,31 +662,73 @@ impl GridLayout {
         self.with_cell_size(cell_size).with_cols(cols)
     }
 
-    /// Add a title / version header band above the grid. Recomputes
-    /// the height to account for the extra band — width stays the
-    /// same since the header spans the full grid width.
+    /// Set both header slots at once. Replaces any previously
+    /// configured titles. Recomputes the height to account for the
+    /// extra band — width stays the same since the header spans the
+    /// full grid width.
     ///
     /// ```ignore
-    /// GridLayout::build(sections).with_header("EQ", "v0.1")
+    /// use truce_gui::layout::{GridLayout, HeaderTitles};
+    /// GridLayout::build(sections).with_titles(HeaderTitles::pair("EQ", "v0.1"))
     /// ```
     #[must_use]
-    pub fn with_header(mut self, title: &'static str, version: &'static str) -> Self {
-        self.header = Some(GridHeader { title, version });
+    pub fn with_titles(mut self, titles: HeaderTitles) -> Self {
+        self.titles = titles;
         let (w, h) = self.compute_size();
         self.width = w;
         self.height = h;
         self
     }
 
-    /// Pixel height of the header band, or `0.0` when no header is
-    /// configured. Internal helper used by `compute_size`,
+    /// Set the title slot (left, larger / brighter), preserving any
+    /// previously configured subtitle.
+    ///
+    /// ```ignore
+    /// GridLayout::build(sections).with_title("EQ")
+    /// ```
+    #[must_use]
+    pub fn with_title(mut self, title: &'static str) -> Self {
+        self.titles.title = Some(title);
+        let (w, h) = self.compute_size();
+        self.width = w;
+        self.height = h;
+        self
+    }
+
+    /// Set the subtitle slot (right, smaller / dimmer), preserving
+    /// any previously configured title.
+    ///
+    /// ```ignore
+    /// GridLayout::build(sections).with_subtitle("v0.1")
+    /// ```
+    #[must_use]
+    pub fn with_subtitle(mut self, subtitle: &'static str) -> Self {
+        self.titles.subtitle = Some(subtitle);
+        let (w, h) = self.compute_size();
+        self.width = w;
+        self.height = h;
+        self
+    }
+
+    /// Add a title / version header band above the grid.
+    #[must_use]
+    #[deprecated(
+        since = "0.33.0",
+        note = "use .with_titles(HeaderTitles::pair(title, subtitle)), or .with_title(...) / .with_subtitle(...) for one slot at a time"
+    )]
+    pub fn with_header(self, title: &'static str, version: &'static str) -> Self {
+        self.with_titles(HeaderTitles::pair(title, version))
+    }
+
+    /// Pixel height of the header band, or `0.0` when neither
+    /// title slot is set. Internal helper used by `compute_size`,
     /// `widgets::draw_grid`, and `interaction::build_regions_grid`
     /// to keep the "is there a header?" check in one place.
     pub(crate) fn header_height(&self) -> f32 {
-        if self.header.is_some() {
-            GRID_HEADER_H
-        } else {
+        if self.titles.is_empty() {
             0.0
+        } else {
+            GRID_HEADER_H
         }
     }
 
@@ -828,10 +917,7 @@ impl From<PluginLayout> for GridLayout {
         }
 
         let mut gl = GridLayout {
-            header: Some(GridHeader {
-                title: pl.title,
-                version: pl.version,
-            }),
+            titles: pl.titles.clone(),
             cols,
             sections,
             widgets: widgets.clone(),
@@ -875,23 +961,22 @@ impl Layout {
             Layout::Grid(g) => g.height,
         }
     }
-    /// Title shown in the editor's header band, if any. `Rows`
-    /// layouts always have one (legacy `PluginLayout`); `Grid`
-    /// layouts only when the builder called `.with_header(...)`.
+    /// Title slot of the editor's header band — left, larger /
+    /// brighter — or `None` when the layout doesn't set one.
     #[must_use]
     pub fn title(&self) -> Option<&str> {
         match self {
-            Layout::Rows(l) => Some(l.title),
-            Layout::Grid(g) => g.header.as_ref().map(|h| h.title),
+            Layout::Rows(l) => l.titles.title,
+            Layout::Grid(g) => g.titles.title,
         }
     }
-    /// Version shown in the editor's header band, if any. Pairs
-    /// with [`Self::title`] — both come from the same header.
+    /// Subtitle slot of the editor's header band — right, smaller /
+    /// dimmer — or `None` when the layout doesn't set one.
     #[must_use]
-    pub fn version(&self) -> Option<&str> {
+    pub fn subtitle(&self) -> Option<&str> {
         match self {
-            Layout::Rows(l) => Some(l.version),
-            Layout::Grid(g) => g.header.as_ref().map(|h| h.version),
+            Layout::Rows(l) => l.titles.subtitle,
+            Layout::Grid(g) => g.titles.subtitle,
         }
     }
 }

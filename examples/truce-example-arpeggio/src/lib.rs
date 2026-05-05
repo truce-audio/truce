@@ -322,7 +322,7 @@ impl PluginLogic for Arpeggio {
             dropdown(P::Pattern, "Pattern"),
         ])])
         .with_cols(2)
-        .with_header("ARPEGGIO", "V0.1")
+        .with_title("ARPEGGIO")
     }
 }
 
