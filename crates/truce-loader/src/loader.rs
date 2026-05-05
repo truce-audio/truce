@@ -73,7 +73,7 @@ pub struct NativeLoader {
     instance_id: u64,
 }
 
-// Safety: NativeLoader is only accessed from one thread at a time.
+// SAFETY: NativeLoader is only accessed from one thread at a time.
 // The audio thread calls process/reload, the main thread calls render.
 // The shell wraps access in a parking_lot::Mutex.
 unsafe impl Send for NativeLoader {}
