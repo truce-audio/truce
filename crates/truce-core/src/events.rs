@@ -5,8 +5,8 @@
 //! `u16`, 16-bit `u16`, 32-bit `u32`) so the framework's
 //! representation round-trips exactly with the host's wire format.
 //! Plugin code that wants float values reaches for the helpers in
-//! [`truce_utils::midi`] (`norm_7bit`, `norm_pitch_bend`,
-//! `norm_16bit`, `norm_32bit`, `norm_pitch_bend_32`, etc.).
+//! [`truce_utils::midi`] (`norm_7bit`, `denorm_7bit`,
+//! `norm_pitch_bend`, `denorm_pitch_bend`).
 //!
 //! Every MIDI variant carries a `group: u8` field (0..=15) that
 //! UMP (Universal MIDI Packet) hosts use to address one of 16

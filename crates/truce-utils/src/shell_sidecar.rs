@@ -30,23 +30,20 @@
 
 use std::path::PathBuf;
 
-/// Resolve `$HOME/.truce/shell/` (the directory the per-crate sidecar
-/// files live in). Returns `None` when neither `HOME` (Unix) nor
-/// `USERPROFILE` (Windows) is set — the caller should fail loud
-/// rather than guess a path.
-#[must_use]
-pub fn shell_dir() -> Option<PathBuf> {
-    let home = home_dir()?;
-    Some(home.join(".truce").join("shell"))
-}
-
 /// Resolve `$HOME/.truce/shell/<crate_name>.path` for a given crate.
 /// `crate_name` is the consuming crate's `CARGO_PKG_NAME` — the
 /// reader passes `env!("CARGO_PKG_NAME")` and the writer passes the
-/// resolved plugin's `crate_name` from `truce.toml`.
+/// resolved plugin's `crate_name` from `truce.toml`. Returns `None`
+/// when neither `HOME` (Unix) nor `USERPROFILE` (Windows) is set —
+/// the caller should fail loud rather than guess a path.
 #[must_use]
 pub fn sidecar_path(crate_name: &str) -> Option<PathBuf> {
-    Some(shell_dir()?.join(format!("{crate_name}.path")))
+    Some(
+        home_dir()?
+            .join(".truce")
+            .join("shell")
+            .join(format!("{crate_name}.path")),
+    )
 }
 
 fn home_dir() -> Option<PathBuf> {
