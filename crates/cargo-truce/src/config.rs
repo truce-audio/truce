@@ -230,9 +230,8 @@ impl PluginDef {
             .expect("truce.toml: each [[plugin]] requires `fourcc` or `au_subtype`")
     }
     pub(crate) fn resolved_au_type(&self) -> &str {
-        // Keep in sync with `truce-derive::plugin_info` +
-        // `truce-build::emit_plugin_env`. NoteEffect → `aumi`
-        // (Apple's MIDI Processor). `aumi` plugins declare no
+        // Keep in sync with `truce-derive::plugin_info`. NoteEffect →
+        // `aumi` (Apple's MIDI Processor). `aumi` plugins declare no
         // audio buses per Apple spec — wrappers that can't express
         // that (AAX) synthesize dummy audio I/O internally.
         self.au_type

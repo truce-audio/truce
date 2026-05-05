@@ -35,6 +35,6 @@ package` picks the right `TRUCE_AU_VERSION` and bundle shape per format.
   same Rust-side callback table.
 
 AU type codes (`aufx` / `aumu` / `aumi`) are derived from the plugin's
-`category` in `truce.toml` and emitted by `truce-build` at compile time.
+`category` in `truce.toml` by `truce::plugin_info!()` at compile time.
 
 Part of [truce](https://github.com/truce-audio/truce).

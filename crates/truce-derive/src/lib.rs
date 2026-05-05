@@ -105,7 +105,7 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
         .unwrap_or(&pkg_version)
         .to_string();
 
-    // Keep these mappings in sync with `truce-build::emit_plugin_env` and
+    // Keep these mappings in sync with
     // `truce_core::info::category_from_str`. Historically this match only
     // knew about "instrument" and fell everything else through to
     // `Effect` — which silently broke LV2 MIDI for every note-effect
@@ -123,9 +123,9 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
     // plugins must not expose audio I/O. Logic routes `aumi` to the
     // MIDI FX slot, which is where arpeggiators / transposers /
     // note-shapers belong. Must stay in sync with
-    // `cargo-truce/src/config.rs::resolved_au_type` and
-    // `truce-build::emit_plugin_env` — a mismatch causes auval
-    // "Class Data fields … do not match component description".
+    // `cargo-truce/src/config.rs::resolved_au_type` — a mismatch
+    // causes auval "Class Data fields … do not match component
+    // description".
     let au_type = plugin
         .au_type
         .as_deref()

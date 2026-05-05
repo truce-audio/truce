@@ -1,32 +1,23 @@
 #![forbid(unsafe_code)]
 
-//! Build-time helper for truce plugins.
+//! Build-time schema + target-dir helpers shared by `truce-derive`
+//! (proc macros) and `cargo-truce` (install / build pipeline).
 //!
-//! Reads `truce.toml` and sets `cargo:rustc-env` variables so the
-//! `plugin_info!()` macro can derive all metadata at compile time.
-//!
-//! # Usage in build.rs
-//!
-//! ```ignore
-//! fn main() {
-//!     truce_build::emit_plugin_env();
-//! }
-//! ```
+//! Plugin crates do not need a `build.rs` — `truce::plugin_info!()`
+//! reads `truce.toml` directly at compile time and tracks it via
+//! `include_bytes!`.
 
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
-/// Build/derive-time view of `truce.toml`.
+/// Derive-time view of `truce.toml`.
 ///
-/// This is the **shared schema** between `truce-build` (build scripts)
-/// and `truce-derive` (proc macros) — both crates read the same TOML
-/// to emit metadata, so they consume the same struct definition.
-/// `cargo-truce` has its own [richer
-/// PluginDef](https://github.com/) that adds install-time fields
-/// (per-format display names, AU3 subtype, packaging, …); the install
-/// path needs that detail, but build/derive don't, so cargo-truce's
-/// shape is intentionally a superset rather than a duplicate of this
-/// one.
+/// `truce-derive` (proc macros) reads this to expand
+/// `plugin_info!()` at compile time. `cargo-truce` has its own richer
+/// `PluginDef` that adds install-time fields (per-format display
+/// names, AU3 subtype, packaging, …); the install path needs that
+/// detail, but derive doesn't, so cargo-truce's shape is intentionally
+/// a superset rather than a duplicate of this one.
 #[derive(Deserialize, Debug)]
 pub struct Config {
     pub vendor: VendorConfig,
@@ -47,8 +38,8 @@ pub struct PluginDef {
     pub name: String,
     /// Required, matching `cargo-truce::PluginDef`. Deliberately unread
     /// after deserialization: presence makes serde fail early on a
-    /// config missing `bundle_id` (at build script / proc-macro
-    /// expansion time) instead of later at `cargo truce install`.
+    /// config missing `bundle_id` (at proc-macro expansion time)
+    /// instead of later at `cargo truce install`.
     #[allow(dead_code, reason = "schema-validity check at deserialize time")]
     pub bundle_id: String,
     #[serde(rename = "crate")]
@@ -66,27 +57,6 @@ pub struct PluginDef {
     pub aax_category: Option<String>,
 }
 
-/// Compatibility shim for plugin crates that still ship a `build.rs`
-/// from a pre-0.33 scaffold. The current scaffold doesn't generate
-/// `build.rs` — `truce::plugin_info!()` reads `truce.toml` directly
-/// (and uses `include_bytes!` to register it as a build dep) and
-/// `cargo truce install --shell` writes a sidecar at install time
-/// instead of baking env vars at compile time.
-///
-/// What this function does today: emit `cargo:rerun-if-changed=truce.toml`
-/// as belt-and-braces alongside the proc-macro's `include_bytes!`
-/// tracking. Nothing else — the historical `TRUCE_*` env vars had no
-/// remaining consumers in the workspace.
-///
-/// Will be marked `#[deprecated]` in a future release once any
-/// out-of-tree plugins still on a pre-0.33 scaffold have had time to
-/// drop their `build.rs`.
-pub fn emit_plugin_env() {
-    if let Ok(path) = find_truce_toml() {
-        println!("cargo:rerun-if-changed={}", path.display());
-    }
-}
-
 /// Resolve cargo's effective target directory for a given workspace root.
 ///
 /// Honoured in priority order:
@@ -98,10 +68,7 @@ pub fn emit_plugin_env() {
 ///
 /// Used by runtime callers (cargo-truce, truce-test) to anchor
 /// artifact paths against cargo's actual target dir instead of a
-/// hardcoded `target/`. Build-script callers that already have
-/// `OUT_DIR` should keep using the private `resolve_target_dir()`
-/// fallback chain — it can detect the dir from `OUT_DIR` itself
-/// without needing a workspace-root anchor.
+/// hardcoded `target/`.
 #[must_use]
 pub fn target_dir(root: &Path) -> PathBuf {
     if let Ok(d) = std::env::var("CARGO_TARGET_DIR")

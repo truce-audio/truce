@@ -144,8 +144,9 @@ fourcc = "MyG1"
 ```
 
 `truce.toml` is the single source of truth for plugin identity
-across every format. `truce-build` reads it at compile time so
-`truce::plugin!` doesn't need any of this in code. Full schema in
+across every format. The `truce::plugin_info!()` macro reads it at
+compile time so `truce::plugin!` doesn't need any of this in code.
+Full schema in
 [chapter 8 → shipping.md#truce-toml-reference](shipping.md#truce-toml-reference).
 
 Per-developer secrets (signing identity, AAX SDK path, notary

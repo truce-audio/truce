@@ -117,7 +117,7 @@ into GUI closures. One source of truth, no synchronization.
 Host loads plugin binary
     │
     │   truce::plugin! has already:
-    │     - read truce.toml via truce-build
+    │     - read truce.toml via plugin_info!()
     │     - emitted format entry points
     │     - wrapped MyPlugin into a format-specific shell
     │

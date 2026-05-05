@@ -18,7 +18,6 @@ truce-vst3 = \{ git = "https://github.com/truce-audio/truce", tag = "{tag}" }
 {{ if has_standalone -}}
 truce-standalone = \{ git = "https://github.com/truce-audio/truce", tag = "{tag}" }
 {{ endif -}}
-truce-build = \{ git = "https://github.com/truce-audio/truce", tag = "{tag}" }
 clap-sys = "0.5"
 
 # Uncomment to opt in. After uncommenting here, add the matching

@@ -10,7 +10,7 @@ pub trait Plugin: Send + 'static {
     /// Static metadata about the plugin.
     ///
     /// Use `plugin_info!()` for zero-boilerplate (reads from truce.toml
-    /// + Cargo.toml). Requires `truce-build` in `[build-dependencies]`.
+    /// + Cargo.toml at compile time — no `build.rs` required).
     fn info() -> PluginInfo
     where
         Self: Sized;

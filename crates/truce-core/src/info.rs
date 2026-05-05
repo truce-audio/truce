@@ -72,11 +72,8 @@ pub const fn fourcc(s: &[u8]) -> [u8; 4] {
 }
 
 // The historical `truce_core::plugin_info!` macro_rules form lived
-// here and was driven by `TRUCE_*` env vars emitted by
-// `truce-build::emit_plugin_env()`. The proc-macro version
-// (`truce_derive::plugin_info`, re-exported through the prelude as
-// `truce::plugin_info!`) reads `truce.toml` directly at compile time
-// — no build.rs, no env-var hop — and is what every plugin and every
-// in-tree example uses. The macro_rules form had no remaining
-// callers and its env-var schema was about to be deleted by the
-// "drop build.rs from the scaffold" change, so it's gone.
+// here and was driven by `TRUCE_*` env vars emitted by a build
+// script. The proc-macro version (`truce_derive::plugin_info`,
+// re-exported through the prelude as `truce::plugin_info!`) reads
+// `truce.toml` directly at compile time — no build.rs, no env-var
+// hop — and is what every plugin and every in-tree example uses.
