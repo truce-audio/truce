@@ -240,7 +240,11 @@ AAX_Result GetEffectDescriptions(AAX_ICollection* outCollection) {
     setupInfo.mCanBypass = true;
     setupInfo.mUseHostGeneratedGUI = !g_descriptor.has_editor;
 
-    if (g_descriptor.is_instrument) {
+    // Instruments AND note effects (MIDI processors) need a LocalInput
+    // MIDI node so Pro Tools delivers note events into the plugin.
+    // Without this, transpose/arpeggio would never see input notes and
+    // produce nothing on their MIDI output.
+    if (g_descriptor.wants_input_midi) {
         setupInfo.mNeedsInputMIDI = true;
         setupInfo.mInputMIDINodeName = g_descriptor.name;
         setupInfo.mInputMIDIChannelMask = 0xFFFF; // all channels

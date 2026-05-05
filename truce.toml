@@ -80,7 +80,9 @@ category = "midi"
 fourcc = "TTrn"
 au3_subtype = "TTr3"
 au_tag = "MIDI"
-aax_category = "EQ"
+# `aax_category` is unset: NoteEffect plugins are pinned to
+# AAX_ePlugInCategory_MIDIEffect by truce-aax so they show up in Pro
+# Tools' MIDI plug-ins menu regardless of this field.
 au3_name = "Truce Transpose (AUv3)"
 
 [[plugin]]
@@ -102,7 +104,7 @@ category = "midi"
 fourcc = "TArp"
 au3_subtype = "TAr3"
 au_tag = "MIDI"
-aax_category = "EQ"
+# See note on transpose above re: AAX MIDI category override.
 au3_name = "Truce Arpeggio (AUv3)"
 
 [[plugin]]

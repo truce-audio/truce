@@ -41,6 +41,12 @@ pub struct TruceAaxDescriptor {
     pub product_id: i32,
     pub plugin_id: i32,
     pub is_instrument: i32,
+    /// True for instruments AND note effects (`aumi`). Gates the
+    /// `LocalInput` MIDI node registration in `Describe` and the
+    /// MIDI-event collection in `RenderAudio`. Distinct from
+    /// `is_instrument` because note effects also need MIDI input but
+    /// must not be exposed as instruments to the host.
+    pub wants_input_midi: i32,
     pub category: u32,
     pub has_editor: i32,
     /// Param ID flagged as `IS_BYPASS`, or `u32::MAX` for "no bypass
@@ -80,6 +86,7 @@ pub const AAX_CAT_DITHER: u32 = 0x0000_0100;
 pub const AAX_CAT_SOUND_FIELD: u32 = 0x0000_0200;
 pub const AAX_CAT_SW_GENERATORS: u32 = 0x0000_0800;
 pub const AAX_CAT_EFFECT: u32 = 0x0000_2000;
+pub const AAX_CAT_MIDI_EFFECT: u32 = 0x0001_0000;
 
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -212,8 +219,16 @@ pub fn register_aax<P: PluginExport>() {
         let vendor = CString::new(info.vendor).unwrap_or_default().into_raw();
 
         let is_instrument = info.au_type == *b"aumu";
+        let is_note_effect = info.category == PluginCategory::NoteEffect;
+        // Note effects need MIDI input *and* a category that lands them
+        // in Pro Tools' MIDI plug-ins menu — without
+        // `AAX_ePlugInCategory_MIDIEffect` they show up under audio
+        // effects, and inserting one before an instrument routes only
+        // the wrapper's stereo passthrough (no notes reach the synth).
         let category = if info.category == PluginCategory::Instrument {
             AAX_CAT_SW_GENERATORS
+        } else if is_note_effect {
+            AAX_CAT_MIDI_EFFECT
         } else {
             // Explicit `Some("EQ")` arm keeps the supported-strings table
             // complete next to Dynamics/Reverb/etc.; the wildcard default
@@ -265,6 +280,7 @@ pub fn register_aax<P: PluginExport>() {
             // plugin_id must differ from product_id — XOR with a salt
             plugin_id: fourcc(info.fourcc) ^ 0x0101_0101,
             is_instrument: i32::from(is_instrument),
+            wants_input_midi: i32::from(is_instrument || is_note_effect),
             category,
             has_editor: 0,             // filled below
             bypass_param_id: u32::MAX, // filled below

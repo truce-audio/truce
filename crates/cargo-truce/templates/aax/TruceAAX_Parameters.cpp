@@ -134,11 +134,12 @@ void TruceAAX_Parameters::RenderAudio(
             outputs[ch] = ioRenderInfo->mAudioOutputs[ch];
     }
 
-    // Collect MIDI events (for instruments)
+    // Collect MIDI events for instruments and note effects (anything
+    // that registered a LocalInput MIDI node in Describe).
     TruceAaxMidiEvent midiEvents[256];
     uint32_t midiCount = 0;
 
-    if (g_descriptor.is_instrument && ioRenderInfo->mInputNode) {
+    if (g_descriptor.wants_input_midi && ioRenderInfo->mInputNode) {
         AAX_IMIDINode* midiNode = ioRenderInfo->mInputNode;
         if (midiNode) {
             AAX_CMidiStream* stream = midiNode->GetNodeBuffer();
