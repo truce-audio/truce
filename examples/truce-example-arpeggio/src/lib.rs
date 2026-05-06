@@ -73,6 +73,37 @@ pub struct ArpParams {
     pub gate: FloatParam,
 }
 
+// --- Numeric helpers ---
+
+/// `i64 → f64` for step-count → beat math. Step counts stay well
+/// below 2^53 in practice (a 24 h session at 1/64 notes is ~10^7).
+#[inline]
+#[allow(clippy::cast_precision_loss)]
+fn step_as_f64(s: i64) -> f64 {
+    s as f64
+}
+
+/// Floor-divide a beat position by beats-per-step to get the step
+/// index. The cast saturates for absurd inputs; real arps never
+/// approach that range.
+#[inline]
+#[allow(clippy::cast_possible_truncation)]
+fn beat_to_step(beat: f64, beats_per_step: f64) -> i64 {
+    (beat / beats_per_step).floor() as i64
+}
+
+/// Wrap a (possibly negative) step index into `0..seq_len`.
+/// `seq_len` is bounded by held-note polyphony.
+#[inline]
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss
+)]
+fn step_to_seq_idx(step: i64, seq_len: usize) -> usize {
+    step.rem_euclid(seq_len as i64) as usize
+}
+
 // --- Plugin ---
 
 pub struct Arpeggio {
@@ -162,9 +193,6 @@ impl PluginLogic for Arpeggio {
         self.free_beat = 0.0;
     }
 
-    // `usize as f64` for sample-index → beat math; block sizes
-    // bounded by audio block, well below 2^52.
-    #[allow(clippy::cast_precision_loss)]
     fn process(
         &mut self,
         buffer: &mut AudioBuffer,
@@ -212,7 +240,7 @@ impl PluginLogic for Arpeggio {
         }
 
         let beats_per_step = self.params.rate.value().beats_per_step();
-        let gate_frac = f64::from(self.params.gate.value());
+        let gate_frac = self.params.gate.value_f64();
 
         // Phase-lock to the host beat grid whenever the host reports
         // transport with a real tempo. Otherwise fall back to a
@@ -232,20 +260,11 @@ impl PluginLogic for Arpeggio {
             self.free_beat
         };
 
-        let block_size = buffer.num_samples();
         let pattern = self.params.pattern.value();
-        // `seq` holds at most the held-notes count — bounded by
-        // polyphony, far below i64::MAX.
-        #[allow(clippy::cast_possible_wrap)]
-        let seq_len = seq.len() as i64;
+        let mut beat = block_start_beat;
 
-        for i in 0..block_size {
-            let beat = block_start_beat + (i as f64) * beats_per_sample;
-            // Step index from a host beat position; the audio thread
-            // never sees a beat past ~10^9 in practice, well below
-            // i64::MAX.
-            #[allow(clippy::cast_possible_truncation)]
-            let step_num = (beat / beats_per_step).floor() as i64;
+        for i in 0..buffer.num_samples() {
+            let step_num = beat_to_step(beat, beats_per_step);
 
             if Some(step_num) != self.last_step {
                 // Step boundary: release the previous note (if still
@@ -266,13 +285,7 @@ impl PluginLogic for Arpeggio {
                     let idx = self.next_random() as usize % seq.len();
                     seq[idx]
                 } else {
-                    // `rem_euclid` gives a non-negative index even if
-                    // `step_num` is negative (host seeking before 0).
-                    // Result is bounded by `seq_len` (a usize-bounded
-                    // sequence length).
-                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                    let idx = step_num.rem_euclid(seq_len) as usize;
-                    seq[idx]
+                    seq[step_to_seq_idx(step_num, seq.len())]
                 };
                 context.output_events.push(Event {
                     sample_offset: len_u32(i),
@@ -288,7 +301,7 @@ impl PluginLogic for Arpeggio {
             } else if let Some(step) = self.last_step {
                 // Same step — check whether we've crossed the gate-off
                 // boundary within it.
-                let gate_off_beat = (step as f64 + gate_frac) * beats_per_step;
+                let gate_off_beat = (step_as_f64(step) + gate_frac) * beats_per_step;
                 if beat >= gate_off_beat
                     && let Some(cn) = self.active_note.take()
                 {
@@ -303,12 +316,13 @@ impl PluginLogic for Arpeggio {
                     });
                 }
             }
+
+            beat += beats_per_sample;
         }
 
         // Keep the free-running counter aligned so dropping out of host
         // mode mid-session doesn't cause a phase jump.
-        let end_beat = block_start_beat + (block_size as f64) * beats_per_sample;
-        self.free_beat = end_beat;
+        self.free_beat = beat;
 
         ProcessStatus::Normal
     }
