@@ -110,6 +110,39 @@ impl FloatParam {
         self.smoother.current()
     }
 
+    /// Read the value rounded to the nearest non-negative `usize`.
+    /// Use this for discrete-range params consumed as array indices.
+    /// Negatives, NaN, and infinities saturate at `0` / `usize::MAX`.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    #[inline]
+    pub fn value_usize(&self) -> usize {
+        let v = self.value.load().round();
+        if v <= 0.0 { 0 } else { v as usize }
+    }
+
+    /// Read the value rounded to the nearest `i32`. Out-of-range
+    /// values saturate at `i32::MIN` / `i32::MAX`; NaN → 0.
+    #[allow(clippy::cast_possible_truncation)]
+    #[inline]
+    pub fn value_i32(&self) -> i32 {
+        self.value.load().round() as i32
+    }
+
+    /// Read the value rounded to the nearest `u8`. Negatives clamp to
+    /// `0`; values above `255` saturate at `u8::MAX`; NaN → 0.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    #[inline]
+    pub fn value_u8(&self) -> u8 {
+        let v = self.value.load().round();
+        if v <= 0.0 {
+            0
+        } else if v >= 255.0 {
+            255
+        } else {
+            v as u8
+        }
+    }
+
     /// Parameter ID.
     pub fn id(&self) -> u32 {
         self.info.id
@@ -218,6 +251,46 @@ impl IntParam {
 
     pub fn value(&self) -> i64 {
         self.value.load(Ordering::Relaxed)
+    }
+
+    /// Read the value widened to `f32`. Useful when an int param feeds
+    /// a per-sample DSP loop that runs in `f32`.
+    #[allow(clippy::cast_precision_loss)]
+    #[inline]
+    pub fn value_f32(&self) -> f32 {
+        self.value.load(Ordering::Relaxed) as f32
+    }
+
+    /// Read the value widened to `f64`.
+    #[allow(clippy::cast_precision_loss)]
+    #[inline]
+    pub fn value_f64(&self) -> f64 {
+        self.value.load(Ordering::Relaxed) as f64
+    }
+
+    /// Read the value as a non-negative `usize`. Negatives clamp to 0;
+    /// values above `usize::MAX` saturate.
+    #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+    #[inline]
+    pub fn value_usize(&self) -> usize {
+        let v = self.value.load(Ordering::Relaxed);
+        if v <= 0 { 0 } else { v as usize }
+    }
+
+    /// Read the value clamped to `i32` range.
+    #[allow(clippy::cast_possible_truncation)]
+    #[inline]
+    pub fn value_i32(&self) -> i32 {
+        self.value
+            .load(Ordering::Relaxed)
+            .clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32
+    }
+
+    /// Read the value clamped to `u8` range (`0..=255`).
+    #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+    #[inline]
+    pub fn value_u8(&self) -> u8 {
+        self.value.load(Ordering::Relaxed).clamp(0, 255) as u8
     }
 
     pub fn set_value(&self, v: i64) {

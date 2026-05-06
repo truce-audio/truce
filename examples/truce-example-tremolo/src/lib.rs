@@ -59,9 +59,9 @@ pub enum Shape {
 
 impl Shape {
     /// Evaluate the LFO shape at `phase` in [0, 1). Result is in [0, 1].
-    fn at(self, phase: f32) -> f32 {
+    fn at(self, phase: f64) -> f64 {
         match self {
-            Shape::Sine => 0.5 - 0.5 * (phase * std::f32::consts::TAU).cos(),
+            Shape::Sine => 0.5 - 0.5 * (phase * std::f64::consts::TAU).cos(),
             Shape::Triangle => {
                 // 0 → 1 over [0, 0.5), 1 → 0 over [0.5, 1).
                 if phase < 0.5 {
@@ -100,7 +100,7 @@ pub struct Tremolo {
     /// Free-running phase used when the host provides no tempo (e.g.
     /// standalone running, or a host that does not report transport).
     /// Advances at 2 Hz so the effect stays visibly active offline.
-    free_phase: f32,
+    free_phase: f64,
     sample_rate: f64,
 }
 
@@ -115,7 +115,7 @@ impl Tremolo {
 }
 
 /// Rate at which `free_phase` advances when no host tempo is available.
-const FREE_LFO_HZ: f32 = 2.0;
+const FREE_LFO_HZ: f64 = 2.0;
 
 impl PluginLogic for Tremolo {
     fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {
@@ -134,34 +134,19 @@ impl PluginLogic for Tremolo {
         let transport = context.transport;
         let shape = self.params.shape.value();
         let rate = self.params.rate.value();
-        // Tempo, sample rate, beats-per-cycle, beat position — all
-        // host-supplied f64 values that stay in `f32`-safe ranges
-        // (tempo: ≤ 1000 BPM, sample rate: ≤ 192 kHz, beats: ≤ 1e6).
-        #[allow(clippy::cast_possible_truncation)]
-        let beats_per_cycle = rate.beats_per_cycle() as f32;
-
-        // Use host transport when it reports playing + a positive tempo.
-        // Otherwise fall back to the free-running LFO.
+        let beats_per_cycle = rate.beats_per_cycle();
+        let sr = self.sample_rate;
         let host_sync = transport.playing && transport.tempo > 0.0;
-        #[allow(clippy::cast_possible_truncation)]
-        let sample_rate = self.sample_rate as f32;
 
-        // Per-sample phase increments. With host sync the increment is
-        // derived from tempo; without it, from a fixed free-LFO rate.
-        #[allow(clippy::cast_possible_truncation)]
         let host_phase_inc = if host_sync {
-            (transport.tempo as f32 / 60.0) / (beats_per_cycle * sample_rate)
+            transport.tempo / 60.0 / (beats_per_cycle * sr)
         } else {
             0.0
         };
-        let free_phase_inc = FREE_LFO_HZ / sample_rate;
+        let free_phase_inc = FREE_LFO_HZ / sr;
 
-        // Host phase at block start: convert `position_beats` into the
-        // normalized LFO phase by dividing by beats-per-cycle.
-        #[allow(clippy::cast_possible_truncation)]
         let mut host_phase = if host_sync {
-            let beat = transport.position_beats as f32;
-            (beat / beats_per_cycle).rem_euclid(1.0)
+            (transport.position_beats / beats_per_cycle).rem_euclid(1.0)
         } else {
             0.0
         };
@@ -171,7 +156,9 @@ impl PluginLogic for Tremolo {
             let depth = self.params.depth.smoothed_next();
             let phase = if host_sync { host_phase } else { free_phase };
             let lfo = shape.at(phase); // in [0, 1]
-            let gain = 1.0 - depth * (1.0 - lfo);
+            // `lfo` is in [0, 1]; the f32 cast is exact for that range.
+            #[allow(clippy::cast_possible_truncation)]
+            let gain = 1.0 - depth * (1.0 - lfo as f32);
 
             for ch in 0..buffer.channels() {
                 let (inp, out) = buffer.io(ch);
@@ -354,7 +341,7 @@ mod tests {
     fn shape_bounds() {
         for s in [Shape::Sine, Shape::Triangle, Shape::Square] {
             for i in 0..100 {
-                let p = i as f32 / 100.0;
+                let p = f64::from(i) / 100.0;
                 let v = s.at(p);
                 assert!(
                     (0.0..=1.0).contains(&v),

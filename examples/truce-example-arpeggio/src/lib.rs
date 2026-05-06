@@ -115,19 +115,14 @@ impl Arpeggio {
         let mut base_notes = self.held_notes.clone();
         base_notes.sort_unstable();
 
-        // `octaves` is constrained to 1..=4 by the param range; the
-        // running `n` is bounded by 127 by the if-check.
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        let octaves = self.params.octaves.value() as usize;
+        let octaves = self.params.octaves.value_u8();
         let mut seq = Vec::new();
         for oct in 0..octaves {
             for &note in &base_notes {
-                #[allow(clippy::cast_possible_truncation)]
-                let n = u16::from(note) + (oct as u16 * 12);
-                if n <= 127 {
-                    #[allow(clippy::cast_possible_truncation)]
-                    let note = n as u8;
-                    seq.push(note);
+                if let Some(n) = note.checked_add(oct.saturating_mul(12))
+                    && n <= 127
+                {
+                    seq.push(n);
                 }
             }
         }

@@ -40,6 +40,14 @@ impl Transpose {
     }
 }
 
+/// Apply `shift` to a MIDI `note` and clamp the result to `0..=127`.
+/// Centralizes the widening (`u8 → i32` for the signed math) and the
+/// final narrow back to `u8`.
+#[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+fn shift_midi(note: u8, shift: i32) -> u8 {
+    (i32::from(note) + shift).clamp(0, 127) as u8
+}
+
 impl PluginLogic for Transpose {
     fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {
         self.params.set_sample_rate(sample_rate);
@@ -52,12 +60,8 @@ impl PluginLogic for Transpose {
         events: &EventList,
         context: &mut ProcessContext,
     ) -> ProcessStatus {
-        // Both params are int-typed, range-bounded to ≤ 12 semitones
-        // / ≤ 4 octaves; the f32 → i16 narrowing is invisible.
-        #[allow(clippy::cast_possible_truncation)]
-        let semitones = self.params.semitones.value() as i16;
-        #[allow(clippy::cast_possible_truncation)]
-        let octave = self.params.octave.value() as i16;
+        let semitones = self.params.semitones.value_i32();
+        let octave = self.params.octave.value_i32();
         let shift = semitones + octave * 12;
 
         for event in events.iter() {
@@ -68,11 +72,7 @@ impl PluginLogic for Transpose {
                     note,
                     velocity,
                 } => {
-                    // The clamp(0, 127) above already guarantees the
-                    // value fits in `u8` — sign loss is the cast's
-                    // whole point.
-                    #[allow(clippy::cast_sign_loss)]
-                    let transposed = (i16::from(*note) + shift).clamp(0, 127) as u8;
+                    let transposed = shift_midi(*note, shift);
                     self.active_notes[*note as usize] = Some(transposed);
                     context.output_events.push(Event {
                         sample_offset: event.sample_offset,
@@ -90,12 +90,12 @@ impl PluginLogic for Transpose {
                     note,
                     velocity,
                 } => {
-                    // Use the pitch that was actually sent, not current shift
-                    // See the on-note arm — clamp keeps us in `0..=127`.
-                    #[allow(clippy::cast_sign_loss)]
+                    // Use the pitch that was actually sent, not the
+                    // current shift — held notes get a matching off
+                    // even after the user re-transposes mid-hold.
                     let output_note = self.active_notes[*note as usize]
                         .take()
-                        .unwrap_or((i16::from(*note) + shift).clamp(0, 127) as u8);
+                        .unwrap_or_else(|| shift_midi(*note, shift));
                     context.output_events.push(Event {
                         sample_offset: event.sample_offset,
                         body: EventBody::NoteOff {
