@@ -101,12 +101,12 @@ pub fn run(args: &[String]) -> ExitCode {
         "uninstall" => commands::uninstall::cmd_uninstall(&args[1..]),
         "run" => commands::run::cmd_run(&args[1..]),
         "screenshot" => commands::screenshot::cmd_screenshot(&args[1..]),
-        "status" => commands::status::cmd_status(),
+        "status" => commands::status::cmd_status(&args[1..]),
         "reset-au" => commands::reset_au::cmd_reset_au(&args[1..]),
         "reset-aax" => commands::reset_aax::cmd_reset_aax(&args[1..]),
         "validate" => commands::validate::cmd_validate(&args[1..]),
-        "doctor" => commands::doctor::cmd_doctor(),
-        "log-stream-au" => commands::log_stream_au::cmd_log_stream_au(),
+        "doctor" => commands::doctor::cmd_doctor(&args[1..]),
+        "log-stream-au" => commands::log_stream_au::cmd_log_stream_au(&args[1..]),
         other => Err(format!("unknown command: {other:?}").into()),
     };
 

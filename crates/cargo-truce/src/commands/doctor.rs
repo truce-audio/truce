@@ -25,11 +25,33 @@ use std::path::{Path, PathBuf};
 // doctor — environment diagnostics
 // ---------------------------------------------------------------------------
 
+fn print_help() {
+    eprintln!(
+        "\
+Usage: cargo truce doctor
+
+Run environment diagnostics: Rust toolchain, code-signing identities,
+AAX SDK detection, installed-plugin scan. Prints a summary report and
+exits 0; investigates rather than fixes. Run when something feels
+broken about your machine setup before reaching for a build.
+
+Options:
+  -h, --help       Show this message."
+    );
+}
+
 // Returns `Res` for uniformity with the rest of the `cmd_*` dispatch
 // table even though every diagnostic only ever prints — the helpers
 // don't surface fallible errors today.
 #[allow(clippy::unnecessary_wraps, clippy::too_many_lines)]
-pub(crate) fn cmd_doctor() -> Res {
+pub(crate) fn cmd_doctor(args: &[String]) -> Res {
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        print_help();
+        return Ok(());
+    }
+    if let Some(unknown) = args.iter().find(|a| !a.is_empty()) {
+        return Err(format!("unknown flag: {unknown}").into());
+    }
     eprintln!("truce doctor");
     eprintln!("─────────────────────────────────────────");
     eprintln!();

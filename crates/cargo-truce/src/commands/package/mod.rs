@@ -139,6 +139,10 @@ impl PkgFormat {
     allow(unused_variables)
 )]
 pub(crate) fn cmd_package(args: &[String]) -> Res {
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        print_help();
+        return Ok(());
+    }
     #[cfg(target_os = "windows")]
     {
         crate::packaging_windows::cmd_package(args)
@@ -153,4 +157,45 @@ pub(crate) fn cmd_package(args: &[String]) -> Res {
          For Linux distribution, use `cargo truce build` and ship the bundles from \
          `target/bundles/` via your distro's native packaging (.deb / .rpm / AppImage / Flatpak)."
         .into())
+}
+
+fn print_help() {
+    eprintln!(
+        "\
+Usage: cargo truce package [-p <crate>] [--formats <list>] \
+[--user|--system|--ask] [--no-notarize] [--no-sign|--no-pace-sign] \
+[--host-only|--universal]
+
+Build, sign, and package plugins into a signed installer:
+  - macOS:   `target/dist/<Plugin>-<version>-<platform>.pkg` (productbuild)
+  - Windows: `target/dist/<Plugin>-<version>-<platform>.exe` (Inno Setup)
+  - Linux:   not supported. Use `cargo truce build` and ship the bundles
+             from `target/bundles/` via .deb / .rpm / AppImage / Flatpak.
+
+Selection:
+  -p <crate>           Package only this plugin crate.
+  --formats <list>     Comma-separated subset (clap,vst3,vst2,au2,au3,aax).
+                       Default: every format in the plugin's `[features].default`.
+
+Install scope (where the resulting installer puts files at the end user's machine):
+  --ask                End user picks at install time. Default.
+  --user               User-scope. CLAP/VST3 land in user paths with no
+                       admin prompt. System-only formats (AAX, AU v3, Windows
+                       VST2) stay system-scope; the user sees one admin prompt.
+  --system             Hard-lock to system paths.
+  Override the default project-wide via `[packaging] preferred_scope` in truce.toml.
+
+Signing / notarization:
+  --no-notarize        Skip macOS notarization (still codesigns).
+  --no-pace-sign       Skip PACE (AAX) signing — useful for non-Pro Tools
+                       sanity checks. Apple codesign always runs on macOS.
+  --no-sign            Synonym for --no-pace-sign on macOS.
+
+Build target (macOS):
+  --host-only          Single-arch build of the host. Default is universal.
+  --universal          Explicit universal (no-op; same as default).
+
+Misc:
+  -h, --help           Show this message."
+    );
 }

@@ -7,8 +7,27 @@
 
 use crate::Res;
 
+fn print_help() {
+    eprintln!(
+        "\
+Usage: cargo truce status
+
+Show installed plugin bundles for this project's vendor and the AU
+registration state. macOS-only — every path scanned
+(/Library/Audio/Plug-Ins/..., ~/Library/Audio/Plug-Ins/..., auval -a)
+is Apple-specific.
+
+Options:
+  -h, --help       Show this message."
+    );
+}
+
 #[cfg(not(target_os = "macos"))]
-pub(crate) fn cmd_status() -> Res {
+pub(crate) fn cmd_status(args: &[String]) -> Res {
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        print_help();
+        return Ok(());
+    }
     Err(
         "`cargo truce status` is macOS-only — every directory it scans \
          (`/Library/Audio/Plug-Ins/...`, `auval -a`) is Apple-specific. \
@@ -19,10 +38,18 @@ pub(crate) fn cmd_status() -> Res {
 }
 
 #[cfg(target_os = "macos")]
-pub(crate) fn cmd_status() -> Res {
+pub(crate) fn cmd_status(args: &[String]) -> Res {
     use crate::{dirs, load_config, run_quiet};
     use std::fs;
     use std::path::Path;
+
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        print_help();
+        return Ok(());
+    }
+    if let Some(unknown) = args.iter().find(|a| !a.is_empty()) {
+        return Err(format!("unknown flag: {unknown}").into());
+    }
 
     let config = load_config()?;
     let vendor = &config.vendor.name;
