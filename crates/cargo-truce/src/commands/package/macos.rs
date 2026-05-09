@@ -306,6 +306,11 @@ fn generate_suite_distribution_xml(
     let mut choices = String::new();
     let mut pkg_refs = String::new();
 
+    // Apple's distribution.xml schema does NOT allow <choice> nesting.
+    // The visual tree comes purely from <choices-outline>'s <line>
+    // hierarchy; <choice> elements themselves must be flat siblings at
+    // the top level. Nesting them silently drops the inner pkg-refs and
+    // productbuild produces an empty (~2 KB) installer with no payload.
     for plugin in &suite.plugins {
         let outer_id = sanitize_id(&plugin.bundle_id);
         let _ = writeln!(outline, "        <line choice=\"{outer_id}\">");
@@ -315,13 +320,15 @@ fn generate_suite_distribution_xml(
         }
         let _ = writeln!(outline, "        </line>");
 
-        let _ = write!(
+        // Per-plugin parent: empty choice that only exists so the
+        // outline can reference it as the visual group header. No
+        // pkg-ref of its own.
+        let _ = writeln!(
             choices,
-            r#"
-    <choice id="{outer_id}" title="{plugin_name}" description="All formats for {plugin_name}.">
-"#,
+            "    <choice id=\"{outer_id}\" title=\"{plugin_name}\" description=\"All formats for {plugin_name}.\"/>",
             plugin_name = plugin.name,
         );
+
         for fmt in formats {
             let inner_id = format!("{outer_id}-{}", fmt.pkg_id_suffix());
             let pkg_id = format!("{vendor_id}.{}.{}", plugin.bundle_id, fmt.pkg_id_suffix());
@@ -335,9 +342,9 @@ fn generate_suite_distribution_xml(
             };
             let _ = write!(
                 choices,
-                r#"        <choice id="{inner_id}" title="{label}" description="{desc}"{enabled_attr}>
-            <pkg-ref id="{pkg_id}"/>
-        </choice>
+                r#"    <choice id="{inner_id}" title="{label}" description="{desc}"{enabled_attr}>
+        <pkg-ref id="{pkg_id}"/>
+    </choice>
 "#
             );
             let _ = writeln!(
@@ -345,7 +352,6 @@ fn generate_suite_distribution_xml(
                 "    <pkg-ref id=\"{pkg_id}\" version=\"{version}\">{component_file}</pkg-ref>"
             );
         }
-        choices.push_str("    </choice>\n");
     }
 
     let welcome = resources
