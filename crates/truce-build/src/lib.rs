@@ -10,6 +10,7 @@
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
+pub mod lv2;
 pub mod manifest;
 pub use manifest::{BundleEntry, BundleManifest, host_triple};
 

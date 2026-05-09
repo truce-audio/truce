@@ -31,21 +31,28 @@ const INSTALL_SH_TEMPLATE: &str = include_str!("install.sh.tmpl");
 
 pub(crate) fn cmd_package_linux(args: &[String], selection: &SuiteSelection) -> Res {
     let mut no_build = false;
+    let mut targets: Vec<String> = Vec::new();
+    let mut i = 0;
     let mut leftover: Vec<&str> = Vec::new();
-    for a in args {
-        match a.as_str() {
+    while i < args.len() {
+        match args[i].as_str() {
             "" => {}
             "--no-build" => no_build = true,
+            "--target" => {
+                i += 1;
+                let v = args.get(i).ok_or("--target requires a value")?;
+                targets.push(v.clone());
+            }
             other => leftover.push(other),
         }
+        i += 1;
     }
     if let Some(unknown) = leftover.first() {
         return Err(format!(
             "unknown flag: {unknown}\n\
-             Linux `cargo truce package` accepts only the suite-selection \
-             flags (--suite, --no-suite, --no-per-plugin) plus --no-build \
-             in phase 1. Format selection (--formats) and signing flags \
-             will land in a later phase."
+             Linux `cargo truce package` accepts the suite-selection flags \
+             (--suite, --no-suite, --no-per-plugin), --target <triple> \
+             (repeatable), and --no-build."
         )
         .into());
     }
@@ -60,45 +67,47 @@ pub(crate) fn cmd_package_linux(args: &[String], selection: &SuiteSelection) -> 
 
     // Run `cargo truce build` first unless the caller opted out via
     // `--no-build`. Cargo's incremental build makes a fresh `package`
-    // after a recent `build` essentially free; re-invoking unifies the
-    // user-facing flow with macOS (which always builds inside its
-    // package pipeline) and means the manifest is always up-to-date.
+    // after a recent `build` essentially free. With `--target` flags,
+    // we pass them through so each requested target gets built /
+    // staged before we consume its manifest.
     if !no_build {
         eprintln!("Building bundles...");
-        super::super::build::cmd_build(&[])?;
+        let mut build_args: Vec<String> = Vec::new();
+        for t in &targets {
+            build_args.push("--target".into());
+            build_args.push(t.clone());
+        }
+        super::super::build::cmd_build(&build_args)?;
         eprintln!();
     }
 
     let dist_dir = truce_build::target_dir(&root).join("dist");
     fs::create_dir_all(&dist_dir)?;
 
-    // Load the build manifest written by `cargo truce build`. Missing
-    // manifest = clear "run cargo truce build first" error; mismatched
-    // host triple = clear "you built on a different host" error. Both
-    // failure modes used to manifest as silent empty-tarball output
-    // because staging just probed the filesystem and skipped on miss.
-    let bundles_dir = truce_build::target_dir(&root).join("bundles");
-    let manifest = BundleManifest::load(&bundles_dir).map_err(BoxErr::from)?;
-    let expected_host = truce_build::host_triple();
-    if manifest.host_triple != expected_host {
-        return Err(format!(
-            "build manifest at {} is for host {} but you're packaging on {}. \
-             Re-run `cargo truce build` on this host.",
-            BundleManifest::manifest_path(&bundles_dir).display(),
-            manifest.host_triple,
-            expected_host,
-        )
-        .into());
-    }
-
-    if selection.want_per_plugin() {
-        eprintln!("Per-plugin tarballs");
-        for plugin in &config.plugin {
-            build_per_plugin_tarball(&root, &config, plugin, &dist_dir, &version, &manifest)?;
-        }
+    // Build a list of (target_triple, bundles_dir, manifest) tuples to
+    // package. With no `--target`, we read the flat
+    // `target/bundles/manifest.toml` (matches the historical layout);
+    // with one or more `--target`, we read each
+    // `target/bundles/<triple>/manifest.toml`.
+    let bundles_root = truce_build::target_dir(&root).join("bundles");
+    let plans: Vec<(String, PathBuf, BundleManifest)> = if targets.is_empty() {
+        let manifest = BundleManifest::load(&bundles_root).map_err(BoxErr::from)?;
+        validate_manifest_triple(&manifest, &bundles_root, truce_build::host_triple())?;
+        vec![(
+            manifest.target_triple.clone(),
+            bundles_root.clone(),
+            manifest,
+        )]
     } else {
-        eprintln!("Skipping per-plugin tarballs (--no-per-plugin).");
-    }
+        let mut out = Vec::new();
+        for t in &targets {
+            let dir = bundles_root.join(t);
+            let manifest = BundleManifest::load(&dir).map_err(BoxErr::from)?;
+            validate_manifest_triple(&manifest, &dir, t)?;
+            out.push((t.clone(), dir, manifest));
+        }
+        out
+    };
 
     let suites: Vec<ResolvedSuite<'_>> = config
         .suites
@@ -107,15 +116,78 @@ pub(crate) fn cmd_package_linux(args: &[String], selection: &SuiteSelection) -> 
         .map(|s| s.resolve(&config.plugin))
         .collect::<Result<_, _>>()?;
 
-    if !suites.is_empty() {
-        eprintln!("\nSuite tarballs");
-        for suite in &suites {
-            build_suite_tarball(&root, &config, suite, &dist_dir, &version, &manifest)?;
+    for (triple, bundles_dir, manifest) in &plans {
+        let arch = arch_from_triple(triple);
+        if plans.len() > 1 {
+            eprintln!("Target: {triple}");
+        }
+
+        if selection.want_per_plugin() {
+            eprintln!("Per-plugin tarballs");
+            for plugin in &config.plugin {
+                build_per_plugin_tarball(
+                    &root,
+                    &config,
+                    plugin,
+                    &dist_dir,
+                    &version,
+                    bundles_dir,
+                    manifest,
+                    arch,
+                )?;
+            }
+        } else {
+            eprintln!("Skipping per-plugin tarballs (--no-per-plugin).");
+        }
+
+        if !suites.is_empty() {
+            eprintln!("\nSuite tarballs");
+            for suite in &suites {
+                build_suite_tarball(
+                    &root,
+                    &config,
+                    suite,
+                    &dist_dir,
+                    &version,
+                    bundles_dir,
+                    manifest,
+                    arch,
+                )?;
+            }
+        }
+        if plans.len() > 1 {
+            eprintln!();
         }
     }
 
     eprintln!("\nDone. Tarballs in {}", dist_dir.display());
     Ok(())
+}
+
+/// Validate that a loaded manifest's target_triple matches what we
+/// expected from its containing directory (or the host fallback for
+/// the flat layout). Catches the case where someone manually edits
+/// the manifest or copies a target/ tree across hosts.
+fn validate_manifest_triple(manifest: &BundleManifest, bundles_dir: &Path, expected: &str) -> Res {
+    if manifest.target_triple != expected {
+        return Err(format!(
+            "build manifest at {} is for target {} but expected {}. \
+             Re-run `cargo truce build` for the matching target.",
+            BundleManifest::manifest_path(bundles_dir).display(),
+            manifest.target_triple,
+            expected,
+        )
+        .into());
+    }
+    Ok(())
+}
+
+/// Map a cargo target triple to the short arch label embedded in the
+/// tarball stem (`aarch64`, `x86_64`). Falls back to the first dash-
+/// separated segment for triples we don't recognise — same shape as
+/// `uname -m` on Linux.
+fn arch_from_triple(triple: &str) -> &str {
+    triple.split('-').next().unwrap_or("unknown")
 }
 
 /// One tarball per plugin: `{bundle_id}-{version}-linux-{arch}.tar.gz`.
@@ -125,13 +197,14 @@ fn build_per_plugin_tarball(
     plugin: &PluginDef,
     dist_dir: &Path,
     version: &str,
+    bundles_dir: &Path,
     manifest: &BundleManifest,
+    arch: &str,
 ) -> Res {
-    let arch = host_linux_arch();
     let stem = format!("{}-{}-linux-{}", plugin.bundle_id, version, arch);
-    let staging = plugin_stage_dir(root, &plugin.bundle_id)?;
+    let staging = plugin_stage_dir(root, &plugin.bundle_id, arch)?;
 
-    let plugin_summary = stage_plugin_payload(root, plugin, &staging, manifest)?;
+    let plugin_summary = stage_plugin_payload(plugin, &staging, bundles_dir, manifest)?;
     let install_paths = expected_tarball_paths(&stem, &[&plugin_summary]);
     write_install_sh(&staging, config, &[plugin_summary], None)?;
     write_readme(&staging, config, version, &[plugin], None)?;
@@ -161,16 +234,22 @@ fn build_suite_tarball(
     suite: &ResolvedSuite<'_>,
     dist_dir: &Path,
     version: &str,
+    bundles_dir: &Path,
     manifest: &BundleManifest,
+    arch: &str,
 ) -> Res {
-    let arch = host_linux_arch();
     let suite_version = suite.def.version.as_deref().unwrap_or(version);
     let stem = format!("{}-{}-linux-{}", suite.def.bundle_id, suite_version, arch);
-    let staging = suite_stage_dir(root, &suite.def.bundle_id)?;
+    let staging = suite_stage_dir(root, &suite.def.bundle_id, arch)?;
 
     let mut summaries = Vec::with_capacity(suite.plugins.len());
     for plugin in &suite.plugins {
-        summaries.push(stage_plugin_payload(root, plugin, &staging, manifest)?);
+        summaries.push(stage_plugin_payload(
+            plugin,
+            &staging,
+            bundles_dir,
+            manifest,
+        )?);
     }
     let summary_refs: Vec<&PluginSummary> = summaries.iter().collect();
     let install_paths = expected_tarball_paths(&stem, &summary_refs);
@@ -246,13 +325,11 @@ struct BundleEntry {
 /// error rather than a silent skip — empty plugin payloads ship
 /// broken tarballs.
 fn stage_plugin_payload(
-    root: &Path,
     plugin: &PluginDef,
     staging: &Path,
+    bundles_dir: &Path,
     manifest: &BundleManifest,
 ) -> Result<PluginSummary, BoxErr> {
-    let bundles_dir = truce_build::target_dir(root).join("bundles");
-
     let mut bundles = Vec::new();
 
     // Tarball layout mirrors the Linux install destinations: bundles
@@ -298,7 +375,7 @@ fn stage_plugin_payload(
     // its default features, `cargo truce run` stages a binary or
     // .app under `target/bundles/<Plugin>.standalone[.app]`. On
     // Linux it's a bare ELF; pick that up if present.
-    let standalone = stage_standalone_payload(root, plugin, staging)?;
+    let standalone = stage_standalone_payload(plugin, staging, bundles_dir)?;
 
     if bundles.is_empty() && standalone.is_none() {
         return Err(format!(
@@ -335,11 +412,10 @@ fn linux_install_slug(format: &str) -> Option<&'static str> {
 }
 
 fn stage_standalone_payload(
-    root: &Path,
     plugin: &PluginDef,
     staging: &Path,
+    bundles_dir: &Path,
 ) -> Result<Option<String>, BoxErr> {
-    let bundles_dir = truce_build::target_dir(root).join("bundles");
     // On Linux, `cargo truce run` stages a bare binary at
     // `target/bundles/<Plugin>.standalone`. macOS uses `.app`,
     // Windows uses `.exe`. We're producing a Linux tarball, so the
@@ -475,34 +551,24 @@ fn write_readme(
 // helpers
 // ---------------------------------------------------------------------------
 
-fn host_linux_arch() -> &'static str {
-    // For now: report the host arch. Cross-compile awareness lands
-    // when --target is added. `cargo truce package` running on
-    // macOS produces a tarball labelled with the host arch; that's
-    // a developer error to catch via CI, not silent correction.
-    if cfg!(target_arch = "aarch64") {
-        "aarch64"
-    } else {
-        "x86_64"
-    }
+/// Per-plugin Linux staging dir, namespaced by arch so dual-target
+/// packaging in one invocation doesn't have the second target wipe the
+/// first. The in-archive layout uses the version-tagged stem via
+/// `create_tarball`'s `--transform`, so the on-disk path stays
+/// internal-only.
+fn plugin_stage_dir(root: &Path, bundle_id: &str, arch: &str) -> Result<PathBuf, BoxErr> {
+    stage_dir(root, "plugin", bundle_id, arch)
 }
 
-/// Per-plugin Linux staging dir: `target/package/linux/plugin/<bundle_id>/`.
-/// The on-disk dir name is the plain `bundle_id` (version + arch live in
-/// the produced tarball's filename, not the path). The in-archive layout
-/// uses the version-tagged stem via `create_tarball`'s `--transform`.
-fn plugin_stage_dir(root: &Path, bundle_id: &str) -> Result<PathBuf, BoxErr> {
-    stage_dir(root, "plugin", bundle_id)
+/// Per-suite Linux staging dir, also arch-namespaced.
+fn suite_stage_dir(root: &Path, suite_bundle_id: &str, arch: &str) -> Result<PathBuf, BoxErr> {
+    stage_dir(root, "suite", suite_bundle_id, arch)
 }
 
-/// Per-suite Linux staging dir: `target/package/linux/suite/<bundle_id>/`.
-fn suite_stage_dir(root: &Path, suite_bundle_id: &str) -> Result<PathBuf, BoxErr> {
-    stage_dir(root, "suite", suite_bundle_id)
-}
-
-fn stage_dir(root: &Path, kind: &str, bundle_id: &str) -> Result<PathBuf, BoxErr> {
+fn stage_dir(root: &Path, kind: &str, bundle_id: &str, arch: &str) -> Result<PathBuf, BoxErr> {
     let staging = truce_build::target_dir(root)
         .join("package/linux")
+        .join(arch)
         .join(kind)
         .join(bundle_id);
     let _ = fs::remove_dir_all(&staging);

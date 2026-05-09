@@ -19,13 +19,15 @@ use syn::{Data, DeriveInput, Expr, Fields, Lit, Type, TypePath, UnOp};
 use truce_build::{Config, PluginDef};
 use truce_params::METER_ID_BASE;
 
+mod lv2_emit;
+
 /// Resolve `truce.toml` and pull out the `[[plugin]]` entry for the
 /// current crate. Routes every failure mode through `Result<…, String>`
 /// so callers can convert errors into `compile_error!` tokens with a
 /// span — `panic!`-ing from a proc macro produces a span-less,
 /// multi-line error frame instead of the clean compiler diagnostic the
 /// caller actually wants.
-fn try_resolve_plugin() -> Result<(Config, String, std::path::PathBuf), String> {
+pub(crate) fn try_resolve_plugin() -> Result<(Config, String, std::path::PathBuf), String> {
     let path = truce_build::find_truce_toml()?;
     let config = truce_build::load_config(&path)?;
 
@@ -183,9 +185,21 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
     expanded.into()
 }
 
+/// Emit `manifest.ttl` + `plugin.ttl` for the plugin whose root params
+/// type is `<input>`. Invoked by `truce::plugin!`'s expansion. See
+/// [`lv2_emit::emit_root_impl`] for the gory details.
+///
+/// Doc-hidden because plugin authors never call it directly — it's
+/// part of the `truce::plugin!` machinery.
+#[doc(hidden)]
+#[proc_macro]
+pub fn __truce_lv2_emit_root(input: TokenStream) -> TokenStream {
+    lv2_emit::emit_root_impl(input)
+}
+
 /// Recognized parameter field types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ParamKind {
+pub(crate) enum ParamKind {
     Float,
     Bool,
     Int,
@@ -193,10 +207,10 @@ enum ParamKind {
 }
 
 /// A parsed parameter field from the input struct.
-struct ParamField {
-    ident: syn::Ident,
-    kind: ParamKind,
-    attrs: ParamAttrs,
+pub(crate) struct ParamField {
+    pub(crate) ident: syn::Ident,
+    pub(crate) kind: ParamKind,
+    pub(crate) attrs: ParamAttrs,
     /// For `EnumParam`<T>, the inner type T.
     enum_type: Option<syn::Type>,
 }
@@ -207,7 +221,7 @@ impl ParamField {
     /// loop runs is a logic error — the `expect` message names the
     /// invariant rather than just panicking with `unwrap`'s opaque
     /// `called Option::unwrap on a None`.
-    fn id(&self) -> u32 {
+    pub(crate) fn id(&self) -> u32 {
         self.attrs.id.expect(
             "ParamField::id called before the auto-assignment block ran; \
              see `Auto-assign parameter IDs` near the top of derive_params",
@@ -216,19 +230,19 @@ impl ParamField {
 }
 
 /// A nested Params field (delegates to inner struct).
-struct NestedField {
-    ident: syn::Ident,
+pub(crate) struct NestedField {
+    pub(crate) ident: syn::Ident,
     /// Field type, retained so the derive can call associated
     /// functions on it without an instance — specifically
     /// [`Params::param_infos_static`] for the registration-time
     /// "no temp plugin" path.
-    ty: syn::Type,
+    pub(crate) ty: syn::Type,
 }
 
 /// A meter slot field.
-struct MeterField {
+pub(crate) struct MeterField {
     ident: syn::Ident,
-    id: Option<u32>,
+    pub(crate) id: Option<u32>,
 }
 
 impl MeterField {
@@ -245,15 +259,15 @@ impl MeterField {
 
 /// Parsed `#[param(...)]` attributes.
 #[derive(Default)]
-struct ParamAttrs {
-    id: Option<u32>,
-    name: Option<String>,
+pub(crate) struct ParamAttrs {
+    pub(crate) id: Option<u32>,
+    pub(crate) name: Option<String>,
     short_name: Option<String>,
     group: Option<String>,
-    range: Option<String>,
-    default: Option<f64>,
-    unit: Option<String>,
-    flags: Option<String>,
+    pub(crate) range: Option<String>,
+    pub(crate) default: Option<f64>,
+    pub(crate) unit: Option<String>,
+    pub(crate) flags: Option<String>,
     smooth: Option<String>,
     format_fn: Option<String>,
     parse_fn: Option<String>,
@@ -947,6 +961,27 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
             }
         }
     }
+
+    // --- Compile-time LV2 metadata sidecar ---
+    //
+    // Each Params struct (root or nested, plugin crate or helper)
+    // writes `<target>/lv2-meta/<crate>/<struct>.params.toml` with its
+    // own params, meters, and #[nested] child type names. The final
+    // TTL render happens later via `__truce_lv2_emit_root!`, which
+    // `truce::plugin!` invokes with the root params type and which
+    // walks the sidecar tree to aggregate. Failures here are silent —
+    // they surface at TTL-emit time when the aggregator can't find
+    // the data it needs.
+    let nested_for_sidecar: Vec<(syn::Ident, syn::Type)> = nested_fields
+        .iter()
+        .map(|n| (n.ident.clone(), n.ty.clone()))
+        .collect();
+    lv2_emit::write_struct_sidecar(
+        struct_name,
+        &param_fields,
+        &meter_fields,
+        &nested_for_sidecar,
+    );
 
     // --- Always generate new() ---
     let generate_new = !param_fields.is_empty() || !meter_fields.is_empty();

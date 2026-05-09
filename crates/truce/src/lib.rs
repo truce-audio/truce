@@ -15,6 +15,7 @@ mod plugin_macro;
 /// Re-exports used by the plugin! macro internals.
 #[doc(hidden)]
 pub mod __reexport {
+    pub use truce_derive::__truce_lv2_emit_root;
     pub use truce_loader::{export_plugin, export_static};
 
     #[cfg(feature = "shell")]

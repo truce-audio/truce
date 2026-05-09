@@ -23,7 +23,7 @@
 //! enum.
 
 use crate::util::fs_ctx;
-use crate::{Config, PluginDef, Res, cargo_build, release_lib};
+use crate::{Config, PluginDef, Res, cargo_build, release_lib_for_target};
 use std::path::Path;
 
 /// One of the per-format cdylib targets the build / install pipelines
@@ -153,6 +153,11 @@ fn aax_skip_reason(config: &Config) -> Option<String> {
 ///
 /// `extra_features` are appended to the format's own feature (used by
 /// shell-mode builds to add `"shell"`); empty otherwise.
+///
+/// `target` selects the cargo `--target <triple>`; `None` means "build
+/// for the host" and outputs land at `target/release/`. With a target
+/// set, outputs land at `target/<triple>/release/` and downstream
+/// stagers must read from there too.
 pub(crate) fn build_format_dylibs(
     format: BuildFormat,
     plugins: &[&PluginDef],
@@ -160,6 +165,7 @@ pub(crate) fn build_format_dylibs(
     config: &Config,
     root: &Path,
     deployment_target: &str,
+    target: Option<&str>,
 ) -> Res {
     // Platform / SDK gates first — every gate emits a single skip line
     // and exits cleanly, so the caller's "if format_selected { build }"
@@ -209,22 +215,28 @@ pub(crate) fn build_format_dylibs(
             env_pairs.push((format.name_override_env(), n));
         }
 
-        cargo_build(
-            &env_pairs,
-            &[
-                "-p",
-                &p.crate_name,
-                "--no-default-features",
-                "--features",
-                &combined,
-            ],
-            deployment_target,
-        )?;
+        // Build the cargo args, including `--target <triple>` when set.
+        // `cargo_build` handles `ensure_rustup_target` if it spots a
+        // target flag in the args.
+        let mut cargo_args: Vec<String> = vec![
+            "-p".into(),
+            p.crate_name.clone(),
+            "--no-default-features".into(),
+            "--features".into(),
+            combined.clone(),
+        ];
+        if let Some(t) = target {
+            cargo_args.push("--target".into());
+            cargo_args.push(t.into());
+        }
+        let cargo_arg_refs: Vec<&str> = cargo_args.iter().map(String::as_str).collect();
+        cargo_build(&env_pairs, &cargo_arg_refs, deployment_target)?;
 
-        let src = release_lib(root, &p.dylib_stem());
-        let dst = release_lib(
+        let src = release_lib_for_target(root, &p.dylib_stem(), target);
+        let dst = release_lib_for_target(
             root,
             &format!("{}{}", p.dylib_stem(), format.dylib_suffix()),
+            target,
         );
         // CLAP / VST3 historically guarded the copy with `if src.exists()`
         // because a feature-flagged plugin can legitimately produce no

@@ -7,7 +7,7 @@ use super::PkgFormat;
 use crate::install_scope::PkgScope;
 #[cfg(target_os = "macos")]
 use crate::pace_sign_aax_macos;
-use crate::{Config, PluginDef, Res, codesign_bundle, release_lib};
+use crate::{Config, PluginDef, Res, codesign_bundle};
 #[cfg(target_os = "macos")]
 use crate::{PackagingConfig, copy_dir_recursive};
 #[cfg(target_os = "macos")]
@@ -26,16 +26,35 @@ pub(crate) fn lv2_slug(name: &str) -> String {
 }
 
 /// Stage an LV2 bundle into `staging/{slug}.lv2/`. Copies the built
-/// `lib{stem}_lv2.{ext}` shared library into the bundle, then `dlopen`s
-/// it and calls `__truce_lv2_emit_bundle` to emit `manifest.ttl` +
-/// `plugin.ttl`.
-pub(crate) fn stage_lv2(root: &Path, p: &PluginDef, staging: &Path) -> Res {
-    use std::ffi::{CString, c_char};
-    type EmitFn = unsafe extern "C" fn(*const c_char, *const c_char) -> i32;
-
-    let built = release_lib(root, &format!("{}_lv2", p.dylib_stem()));
+/// shared library plus the proc-macro-emitted `manifest.ttl` /
+/// `plugin.ttl` sidecars (written by truce-derive's `derive(Params)`
+/// during the cdylib's compile). No dlopen — the binary doesn't have
+/// to load on this host, so cross-arch builds Just Work.
+///
+/// `target` selects which `target/<triple>/release/` directory to
+/// read the built dylib from. `None` reads from the default
+/// `target/release/` (host build).
+pub(crate) fn stage_lv2(root: &Path, p: &PluginDef, staging: &Path, target: Option<&str>) -> Res {
+    let built = crate::release_lib_for_target(root, &format!("{}_lv2", p.dylib_stem()), target);
     if !built.exists() {
         return Err(format!("Missing: {}", built.display()).into());
+    }
+
+    let target_dir = truce_build::target_dir(root);
+    let sidecar_dir = target_dir.join("lv2-meta").join(&p.crate_name);
+    let manifest_ttl = sidecar_dir.join("manifest.ttl");
+    let plugin_ttl = sidecar_dir.join("plugin.ttl");
+    if !manifest_ttl.exists() || !plugin_ttl.exists() {
+        return Err(format!(
+            "no LV2 metadata sidecar at {} for {}. \
+             `derive(Params)` writes this during the cdylib's compile; \
+             missing it means either the params struct uses `#[nested]` \
+             (unsupported for the compile-time TTL path) or the plugin \
+             crate isn't listed under `[[plugin]]` in truce.toml.",
+            sidecar_dir.display(),
+            p.name,
+        )
+        .into());
     }
 
     let slug = lv2_slug(&p.name);
@@ -49,34 +68,23 @@ pub(crate) fn stage_lv2(root: &Path, p: &PluginDef, staging: &Path) -> Res {
         "so"
     };
     let bin_name = format!("{slug}.{bin_ext}");
-    let bin_path = bundle.join(&bin_name);
-    fs::copy(&built, &bin_path)?;
-
-    // Load the staged binary so LV2_PATH resolution lines up with what
-    // the host sees.
-    let bundle_cstr = CString::new(bundle.to_string_lossy().as_bytes())?;
-    let bin_cstr = CString::new(bin_name.clone())?;
-    unsafe {
-        let lib = libloading::Library::new(&bin_path)
-            .map_err(|e| format!("load {} failed: {e}", bin_path.display()))?;
-        let emit: libloading::Symbol<EmitFn> =
-            lib.get(b"__truce_lv2_emit_bundle\0").map_err(|e| {
-                format!(
-                    "{} missing __truce_lv2_emit_bundle: {e}",
-                    bin_path.display()
-                )
-            })?;
-        let rc = emit(bundle_cstr.as_ptr(), bin_cstr.as_ptr());
-        if rc != 0 {
-            return Err(format!("LV2 TTL emission failed (rc={rc})").into());
-        }
-    }
+    fs::copy(&built, bundle.join(&bin_name))?;
+    fs::copy(&manifest_ttl, bundle.join("manifest.ttl"))?;
+    fs::copy(&plugin_ttl, bundle.join("plugin.ttl"))?;
     Ok(())
 }
 
-/// Stage a CLAP bundle into the staging directory.
-pub(crate) fn stage_clap(root: &Path, p: &PluginDef, staging: &Path, identity: &str) -> Res {
-    let dylib = release_lib(root, &format!("{}_clap", p.dylib_stem()));
+/// Stage a CLAP bundle into the staging directory. `target` selects
+/// which `target/<triple>/release/` to read from (`None` = host's
+/// `target/release/`).
+pub(crate) fn stage_clap(
+    root: &Path,
+    p: &PluginDef,
+    staging: &Path,
+    identity: &str,
+    target: Option<&str>,
+) -> Res {
+    let dylib = crate::release_lib_for_target(root, &format!("{}_clap", p.dylib_stem()), target);
     if !dylib.exists() {
         return Err(format!("Missing: {}", dylib.display()).into());
     }
@@ -86,9 +94,18 @@ pub(crate) fn stage_clap(root: &Path, p: &PluginDef, staging: &Path, identity: &
     Ok(())
 }
 
-/// Stage a VST3 bundle into the staging directory.
-pub(crate) fn stage_vst3(root: &Path, p: &PluginDef, config: &Config, staging: &Path) -> Res {
-    let dylib = release_lib(root, &format!("{}_vst3", p.dylib_stem()));
+/// Stage a VST3 bundle into the staging directory. `target` selects
+/// which `target/<triple>/release/` to read from (`None` = host's
+/// `target/release/`) and also drives the VST3 inner-arch subdir
+/// (`Contents/x86_64-linux/`, `Contents/aarch64-linux/`, etc.).
+pub(crate) fn stage_vst3(
+    root: &Path,
+    p: &PluginDef,
+    config: &Config,
+    staging: &Path,
+    target: Option<&str>,
+) -> Res {
+    let dylib = crate::release_lib_for_target(root, &format!("{}_vst3", p.dylib_stem()), target);
     if !dylib.exists() {
         return Err(format!("Missing: {}", dylib.display()).into());
     }
@@ -139,42 +156,47 @@ pub(crate) fn stage_vst3(root: &Path, p: &PluginDef, config: &Config, staging: &
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     {
         let _ = config; // unused on these platforms
-        let arch_dir = bundle.join("Contents").join(vst3_arch_subdir());
+        let triple: &str = match target {
+            Some(t) => t,
+            None => truce_build::host_triple(),
+        };
+        let arch_dir = bundle.join("Contents").join(vst3_arch_subdir(triple));
         fs::create_dir_all(&arch_dir)?;
-        let inner_filename = format!("{}.{}", p.name, vst3_inner_extension());
+        let inner_filename = format!("{}.{}", p.name, vst3_inner_extension(triple));
         fs::copy(&dylib, arch_dir.join(inner_filename))?;
     }
+    #[cfg(target_os = "macos")]
+    let _ = target; // macOS uses Contents/MacOS regardless of arch (lipo'd later).
     Ok(())
 }
 
-/// VST3 bundle inner-directory name (e.g. `x86_64-linux`, `x86_64-win`)
-/// per the VST3 SDK "Bundle Locations" spec. Linux/Windows only;
-/// macOS uses the special `MacOS` directory and is handled inline.
+/// VST3 bundle inner-directory name per the VST3 SDK "Bundle Locations"
+/// spec. Maps a cargo target triple to the bundle's `Contents/<dir>/`.
+/// macOS callers don't reach this — they use the special `MacOS` dir.
 #[cfg(any(target_os = "linux", target_os = "windows"))]
-fn vst3_arch_subdir() -> &'static str {
-    if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
-        "x86_64-linux"
-    } else if cfg!(all(target_os = "linux", target_arch = "aarch64")) {
-        "aarch64-linux"
-    } else if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
-        "x86_64-win"
-    } else if cfg!(all(target_os = "windows", target_arch = "aarch64")) {
-        "aarch64-win"
-    } else {
-        // Fall back to the host triple's first segment plus an OS hint.
-        // Hitting this means Linux/Windows on a non-mainstream arch;
-        // VST3 hosts on the unusual arch wouldn't load it anyway.
-        "unknown"
+fn vst3_arch_subdir(triple: &str) -> &'static str {
+    match triple {
+        "x86_64-unknown-linux-gnu" | "x86_64-unknown-linux-musl" => "x86_64-linux",
+        "aarch64-unknown-linux-gnu" | "aarch64-unknown-linux-musl" => "aarch64-linux",
+        "x86_64-pc-windows-msvc" | "x86_64-pc-windows-gnu" => "x86_64-win",
+        "aarch64-pc-windows-msvc" => "aarch64-win",
+        // Linux/Windows on a non-mainstream arch — VST3 hosts on those
+        // arches wouldn't load it anyway. Emit something deterministic
+        // so the bundle structure stays parseable.
+        _ => "unknown",
     }
 }
 
-/// VST3 inner-binary extension per platform.
+/// VST3 inner-binary extension per the VST3 SDK spec. Linux uses
+/// `.so`; Windows uses `.vst3`.
 #[cfg(any(target_os = "linux", target_os = "windows"))]
-fn vst3_inner_extension() -> &'static str {
-    if cfg!(target_os = "linux") {
+fn vst3_inner_extension(triple: &str) -> &'static str {
+    if triple.contains("linux") {
         "so"
-    } else {
+    } else if triple.contains("windows") {
         "vst3"
+    } else {
+        "so"
     }
 }
 
@@ -183,14 +205,18 @@ fn vst3_inner_extension() -> &'static str {
 /// `Contents/MacOS/X` + Info.plist + codesign); Linux / Windows just
 /// copy the bare `.so` / `.dll` since neither platform uses a bundle
 /// layout for VST2.
+///
+/// `target` selects which `target/<triple>/release/` to read the
+/// dylib from; `None` reads from `target/release/` (host build).
 pub(crate) fn stage_vst2(
     root: &Path,
     p: &PluginDef,
     config: &Config,
     staging: &Path,
+    target: Option<&str>,
 ) -> Result<std::path::PathBuf, crate::BoxErr> {
     let _ = config; // only used on macOS
-    let dylib = release_lib(root, &format!("{}_vst2", p.dylib_stem()));
+    let dylib = crate::release_lib_for_target(root, &format!("{}_vst2", p.dylib_stem()), target);
     if !dylib.exists() {
         return Err(format!("Missing: {}", dylib.display()).into());
     }

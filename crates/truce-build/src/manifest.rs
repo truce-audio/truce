@@ -19,18 +19,23 @@ use std::path::{Path, PathBuf};
 
 /// Bumped on any incompatible schema change. Consumers reject manifests
 /// whose `schema_version` doesn't match this constant.
-pub const SCHEMA_VERSION: u32 = 1;
+///
+/// v2 (current): `host_triple` renamed to `target_triple`; the manifest
+///              now lives at `target/bundles/<triple>/manifest.toml`
+///              instead of `target/bundles/manifest.toml`, so
+///              cross-target builds can coexist on disk.
+/// v1: top-level `host_triple` + flat `target/bundles/manifest.toml`.
+pub const SCHEMA_VERSION: u32 = 2;
 
 const FILENAME: &str = "manifest.toml";
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct BundleManifest {
     pub schema_version: u32,
-    /// Cargo triple the bundles were compiled for. Single value because
-    /// `cargo truce build` only emits host-triple bundles today; macOS
-    /// universal builds happen inside `cargo truce package` and don't
-    /// flow through this manifest.
-    pub host_triple: String,
+    /// Cargo target triple the bundles were compiled for. The
+    /// containing directory's name should match this — the field is
+    /// authoritative; the path is convention.
+    pub target_triple: String,
     /// Cargo profile name: `"release"`, `"debug"`, or `"shell"`.
     pub profile: String,
     #[serde(default, rename = "bundle")]
@@ -53,15 +58,18 @@ pub struct BundleEntry {
 
 impl BundleManifest {
     #[must_use]
-    pub fn new(host_triple: impl Into<String>, profile: impl Into<String>) -> Self {
+    pub fn new(target_triple: impl Into<String>, profile: impl Into<String>) -> Self {
         Self {
             schema_version: SCHEMA_VERSION,
-            host_triple: host_triple.into(),
+            target_triple: target_triple.into(),
             profile: profile.into(),
             bundles: Vec::new(),
         }
     }
 
+    /// Path to a manifest within a per-target bundles directory.
+    /// Callers pass the directory that already names the target triple
+    /// (e.g. `target/bundles/x86_64-unknown-linux-gnu/`).
     #[must_use]
     pub fn manifest_path(bundles_dir: &Path) -> PathBuf {
         bundles_dir.join(FILENAME)
@@ -118,13 +126,13 @@ impl BundleManifest {
             .map_err(|e| format!("failed to write build manifest at {}: {e}", path.display()))
     }
 
-    /// Merge `incoming` into `self`. If host_triple or profile differs,
-    /// `incoming` replaces `self` wholesale — bundles built under a
-    /// different host/profile aren't usable alongside the new ones.
-    /// Otherwise, entries with matching `(plugin_crate, format)` are
-    /// replaced and new entries are appended.
+    /// Merge `incoming` into `self`. If target_triple or profile
+    /// differs, `incoming` replaces `self` wholesale — bundles built
+    /// for a different target/profile aren't usable alongside the new
+    /// ones. Otherwise, entries with matching `(plugin_crate, format)`
+    /// are replaced and new entries are appended.
     pub fn merge(&mut self, incoming: BundleManifest) {
-        if self.host_triple != incoming.host_triple || self.profile != incoming.profile {
+        if self.target_triple != incoming.target_triple || self.profile != incoming.profile {
             *self = incoming;
             return;
         }
@@ -199,7 +207,7 @@ mod tests {
     }
 
     #[test]
-    fn merge_wipes_when_host_or_profile_differs() {
+    fn merge_wipes_when_target_or_profile_differs() {
         let mut m = BundleManifest::new("x86_64-apple-darwin", "release");
         m.bundles.push(entry("a", "clap", "A.clap"));
 
@@ -208,7 +216,7 @@ mod tests {
 
         m.merge(incoming);
 
-        assert_eq!(m.host_triple, "x86_64-unknown-linux-gnu");
+        assert_eq!(m.target_triple, "x86_64-unknown-linux-gnu");
         assert_eq!(m.bundles.len(), 1);
         assert_eq!(m.bundles[0].filename, "B.vst3");
     }
@@ -238,7 +246,7 @@ mod tests {
 
         let s = toml::to_string_pretty(&m).unwrap();
         let parsed: BundleManifest = toml::from_str(&s).unwrap();
-        assert_eq!(parsed.host_triple, m.host_triple);
+        assert_eq!(parsed.target_triple, m.target_triple);
         assert_eq!(parsed.bundles, m.bundles);
     }
 }

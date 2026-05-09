@@ -76,6 +76,12 @@ macro_rules! plugin {
 #[macro_export]
 macro_rules! __plugin_impl {
     ($logic:ty, $params:ty, [$($layout:expr),*]) => {
+        // Compile-time LV2 TTL emission. Walks the params type's
+        // sidecar tree (written by `derive(Params)`) and produces
+        // `manifest.ttl` / `plugin.ttl` next to it. cargo-truce's
+        // stage_lv2 reads those files at package time — no dlopen.
+        $crate::__reexport::__truce_lv2_emit_root!($params);
+
         // Always export the PluginLogic for dylib use (shell-mode or
         // testing). Static-mode shells ignore these exports.
         $crate::__reexport::export_plugin!($logic, $params);

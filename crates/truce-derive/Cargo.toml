@@ -12,6 +12,7 @@ proc-macro = true
 proc-macro2 = "1"
 quote = "1"
 syn = { version = "2", features = ["full"] }
+toml = "1"
 truce-build = { workspace = true }
 truce-params = { workspace = true }
 

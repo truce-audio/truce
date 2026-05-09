@@ -146,10 +146,19 @@ fn stage_components_only(root: &Path, p: &PluginDef, o: &PackageOpts) -> Res {
 
     for fmt in o.formats {
         eprint!("  Staging {}... ", fmt.label());
+        // macOS package staging reads from `target/release/` after lipo
+        // has produced a universal Mach-O at the canonical path; pass
+        // None so `release_lib_for_target` resolves there.
         let result = match fmt {
-            PkgFormat::Clap => stage_clap(root, p, &staging, o.config.macos.application_identity()),
-            PkgFormat::Vst3 => stage_vst3(root, p, o.config, &staging),
-            PkgFormat::Vst2 => stage_vst2(root, p, o.config, &staging).map(|_| ()),
+            PkgFormat::Clap => stage_clap(
+                root,
+                p,
+                &staging,
+                o.config.macos.application_identity(),
+                None,
+            ),
+            PkgFormat::Vst3 => stage_vst3(root, p, o.config, &staging, None),
+            PkgFormat::Vst2 => stage_vst2(root, p, o.config, &staging, None).map(|_| ()),
             PkgFormat::Au2 => stage_au2(root, p, o.config, &staging),
             PkgFormat::Au3 => stage_au3(root, p, o.config, &staging),
             PkgFormat::Aax => stage_aax(root, p, o.config, &staging, o.universal, o.no_pace_sign),
@@ -730,10 +739,19 @@ fn package_one_plugin(root: &Path, p: &PluginDef, dist_dir: &Path, o: &PackageOp
     // Step 2: Stage signed bundles
     for fmt in o.formats {
         eprint!("  Staging {}... ", fmt.label());
+        // macOS package staging reads from `target/release/` after lipo
+        // has produced a universal Mach-O at the canonical path; pass
+        // None so `release_lib_for_target` resolves there.
         let result = match fmt {
-            PkgFormat::Clap => stage_clap(root, p, &staging, o.config.macos.application_identity()),
-            PkgFormat::Vst3 => stage_vst3(root, p, o.config, &staging),
-            PkgFormat::Vst2 => stage_vst2(root, p, o.config, &staging).map(|_| ()),
+            PkgFormat::Clap => stage_clap(
+                root,
+                p,
+                &staging,
+                o.config.macos.application_identity(),
+                None,
+            ),
+            PkgFormat::Vst3 => stage_vst3(root, p, o.config, &staging, None),
+            PkgFormat::Vst2 => stage_vst2(root, p, o.config, &staging, None).map(|_| ()),
             PkgFormat::Au2 => stage_au2(root, p, o.config, &staging),
             PkgFormat::Au3 => stage_au3(root, p, o.config, &staging),
             PkgFormat::Aax => stage_aax(root, p, o.config, &staging, o.universal, o.no_pace_sign),

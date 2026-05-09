@@ -188,10 +188,9 @@ pub(crate) fn release_lib(root: &Path, stem: &str) -> PathBuf {
         .join(shared_lib_name(stem))
 }
 
-/// Per-arch sibling of [`release_lib`]. `target` selects the triple
-/// subdir cargo writes to (macOS universal, Windows x64+arm64); the
-/// profile subdir tracks `release_lib`.
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+/// Per-target sibling of [`release_lib`]. `target` selects the triple
+/// subdir cargo writes to (macOS universal, Windows x64+arm64, Linux
+/// dual-arch); the profile subdir tracks `release_lib`.
 pub(crate) fn release_lib_for_target(root: &Path, stem: &str, target: Option<&str>) -> PathBuf {
     match target {
         Some(t) => truce_build::target_dir(root)
@@ -999,10 +998,9 @@ pub(crate) fn rustup_has_target(triple: &str) -> bool {
 /// Query `rustup target list --installed` once per process and cache
 /// the result. Returns `None` when rustup itself isn't on PATH —
 /// callers decide how to handle that (usually: surface a clear error
-/// before invoking cargo with `--target`). Only used by the cross-arch
-/// build paths (macOS universal Mach-O, Windows x64+arm64 installer);
-/// no Linux caller today.
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+/// before invoking cargo with `--target`). Used by every cross-arch
+/// build path (macOS universal Mach-O, Windows x64+arm64 installer,
+/// Linux `--target` flag).
 fn installed_rustup_targets() -> Option<&'static std::collections::HashSet<String>> {
     static CACHE: OnceLock<Option<std::collections::HashSet<String>>> = OnceLock::new();
     CACHE
@@ -1030,7 +1028,6 @@ fn installed_rustup_targets() -> Option<&'static std::collections::HashSet<Strin
 /// case is a Homebrew `cargo` shadowing rustup's shim; see the
 /// `build-install-split.md` doc for the recovery steps). Same gating
 /// rationale as [`installed_rustup_targets`].
-#[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(crate) fn ensure_rustup_target(triple: &str) -> crate::Res {
     let Some(installed) = installed_rustup_targets() else {
         return Err(format!(
@@ -1107,7 +1104,6 @@ fn cargo_build_inner(
     // If the caller passed `--target <triple>`, make sure rustup has
     // it installed before firing cargo. Catches the common "cross-arch
     // build fails with E0463 can't find crate for core" failure mode.
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
     {
         let mut it = extra_args.iter();
         while let Some(a) = it.next() {

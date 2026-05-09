@@ -12,7 +12,8 @@ use crate::commands::package::stage::stage_au2;
 use crate::commands::package::stage::{lv2_slug, stage_clap, stage_lv2, stage_vst2, stage_vst3};
 use crate::util::fs_ctx;
 use crate::{Res, deployment_target, detect_default_features, load_config, project_root};
-use truce_build::{BundleEntry, BundleManifest, host_triple};
+use std::path::PathBuf;
+use truce_build::{BundleEntry, BundleManifest};
 
 #[allow(clippy::too_many_lines)]
 pub(crate) fn cmd_build(args: &[String]) -> Res {
@@ -28,6 +29,7 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
     let mut shell_mode = false;
     let mut debug = false;
     let mut plugin_filter: Option<String> = None;
+    let mut targets: Vec<String> = Vec::new();
 
     let mut i = 0;
     while i < args.len() {
@@ -42,6 +44,9 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
             "--shell" => shell_mode = true,
             "--debug" => debug = true,
             "-p" => plugin_filter = Some(crate::util::arg_value(args, &mut i, "-p")?.to_string()),
+            "--target" => {
+                targets.push(crate::util::arg_value(args, &mut i, "--target")?.to_string());
+            }
             "--help" | "-h" => {
                 print_help();
                 return Ok(());
@@ -105,10 +110,38 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
 
     let extra_features: Vec<&str> = if shell_mode { vec!["shell"] } else { vec![] };
 
+    // Per-target staging plan. When the user passes one or more
+    // `--target <triple>` flags, each target builds + stages into
+    // `target/bundles/<triple>/`. With no `--target`, we keep the
+    // historical flat layout (`target/bundles/<filename>`) so existing
+    // macOS / Windows workflows that inspect that directory don't
+    // change shape.
+    struct TargetPlan<'a> {
+        target: Option<&'a str>,
+        stage_dir: PathBuf,
+        triple: String,
+    }
+    let target_plans: Vec<TargetPlan<'_>> = if targets.is_empty() {
+        vec![TargetPlan {
+            target: None,
+            stage_dir: bundles_dir.clone(),
+            triple: truce_build::host_triple().to_string(),
+        }]
+    } else {
+        targets
+            .iter()
+            .map(|t| TargetPlan {
+                target: Some(t.as_str()),
+                stage_dir: bundles_dir.join(t),
+                triple: t.clone(),
+            })
+            .collect()
+    };
+
     // --- Build dylibs per format ---
     //
     // Each format gets its own cargo build with `--features {format}`.
-    // Because every build overwrites `target/release/lib{stem}.dylib`,
+    // Because every build overwrites `target/<triple>/release/lib{stem}.dylib`,
     // the helper immediately copies the output to a format-suffixed
     // path (`_clap`, `_vst3`, `_vst2`, ...) that the stage/install
     // steps read from. Platform gates (AU is macOS-only, AAX is
@@ -121,26 +154,8 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
         (au2, BuildFormat::Au2),
         (aax, BuildFormat::Aax),
     ];
-    for &(selected, format) in format_selection {
-        if selected {
-            build_format_dylibs(format, &plugins, &extra_features, &config, &root, dt)?;
-        }
-    }
 
-    // Shell mode: also build the per-plugin logic dylibs the shells
-    // dlopen at runtime. Scoped per-plugin — `--workspace` would
-    // rebuild every example + framework crate.
-    if shell_mode {
-        build_logic_dylibs(&plugins, logic_profile, dt)?;
-    }
-
-    // --- Stage each format's bundle into target/bundles/ ---
-    //
-    // Each successful stage_* call appends a BundleEntry to `produced`;
-    // we serialize the lot into `manifest.toml` at the end so
-    // `cargo truce package` has an explicit list of what to ship.
     let identity = config.macos.application_identity();
-    let mut produced: Vec<BundleEntry> = Vec::new();
     let entry = |p: &crate::PluginDef, format: &str, filename: String| BundleEntry {
         plugin_crate: p.crate_name.clone(),
         plugin_name: p.name.clone(),
@@ -148,99 +163,159 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
         format: format.to_string(),
         filename,
     };
-    for p in &plugins {
-        if clap {
-            stage_clap(&root, p, &bundles_dir, identity)?;
-            let filename = format!("{}.clap", p.name);
-            crate::log_output(format!("CLAP: {}", bundles_dir.join(&filename).display()));
-            produced.push(entry(p, "clap", filename));
-        }
-        if vst3 {
-            stage_vst3(&root, p, &config, &bundles_dir)?;
-            let filename = format!("{}.vst3", p.name);
-            crate::log_output(format!("VST3: {}", bundles_dir.join(&filename).display()));
-            produced.push(entry(p, "vst3", filename));
-        }
-        if vst2 {
-            // macOS produces a `.vst` directory bundle; Linux/Windows
-            // get a bare `.so` / `.dll` since neither uses a bundle.
-            // `stage_vst2` returns the actual staged path so we record
-            // exactly what landed on disk rather than re-deriving the
-            // platform-specific extension here.
-            let staged = stage_vst2(&root, p, &config, &bundles_dir)?;
-            crate::log_output(format!("VST2: {}", staged.display()));
-            let filename = staged
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_else(|| format!("{}.vst", p.name));
-            produced.push(entry(p, "vst2", filename));
-        }
-        if lv2 {
-            stage_lv2(&root, p, &bundles_dir)?;
-            let slug = lv2_slug(&p.name);
-            let filename = format!("{slug}.lv2");
-            crate::log_output(format!("LV2:  {}", bundles_dir.join(&filename).display()));
-            produced.push(entry(p, "lv2", filename));
-        }
-        if au2 {
-            #[cfg(target_os = "macos")]
-            {
-                stage_au2(&root, p, &config, &bundles_dir)?;
-                let filename = format!("{}.component", p.name);
-                crate::log_output(format!("AU:   {}", bundles_dir.join(&filename).display()));
-                produced.push(entry(p, "au2", filename));
-            }
-            // AU is macOS-only; the build phase already log_skip'd above
-            // for non-macOS, so nothing to do here.
-        }
-    }
 
-    // AU v3 has its own driver that builds Rust-framework + xcodebuild
-    // + codesign inside-out and writes directly to target/bundles/.
-    // Host arch only; universal builds are reserved for `package`.
-    // macOS-only; the function returns a clear error on other platforms.
-    if au3 {
-        #[cfg(target_os = "macos")]
-        {
-            use crate::{MacArch, extract_team_id};
-            // Same gate as install: ad-hoc / no-team-id makes AU v3
-            // unbuildable. The "no team id" case is project-wide
-            // (signing identity isn't per-plugin), so emit one skip
-            // line and bypass the per-plugin loop.
-            let sign_id = config.macos.application_identity();
-            if extract_team_id(sign_id).is_empty() {
-                crate::log_skip(
-                    "AU v3: needs a Developer ID with team ID. \
-                     Set [macos.signing].application_identity in truce.toml \
-                     (e.g., \"Developer ID Application: Your Name (TEAMID)\"); \
-                     ad-hoc signing (\"-\") is not supported for AU v3 appex bundles."
-                        .to_string(),
-                );
-            } else {
-                crate::commands::install::au_v3::emit_au_v3_bundle(
-                    &root,
-                    &config,
+    for plan in &target_plans {
+        fs_ctx::create_dir_all(&plan.stage_dir)?;
+
+        for &(selected, format) in format_selection {
+            if selected {
+                build_format_dylibs(
+                    format,
                     &plugins,
-                    &[MacArch::host()],
+                    &extra_features,
+                    &config,
+                    &root,
+                    dt,
+                    plan.target,
                 )?;
-                for p in &plugins {
-                    let filename = format!("{}.app", p.au3_app_name());
-                    crate::log_output(format!("AU3:  {}", bundles_dir.join(&filename).display()));
-                    produced.push(entry(p, "au3", filename));
-                }
             }
         }
-        #[cfg(not(target_os = "macos"))]
-        crate::log_skip(
-            "AU v3: not supported on this platform. Audio Unit is macOS-only.".to_string(),
-        );
-    }
 
-    // Persist the manifest before printing summaries so a
-    // post-build `cargo truce package` always sees the latest entries.
-    // Merge with any existing manifest so partial builds (e.g.
-    // `--clap`, then `--vst3` later) accumulate rather than overwrite.
-    write_bundle_manifest(&bundles_dir, shell_mode, debug, &produced)?;
+        // Shell mode: also build the per-plugin logic dylibs the shells
+        // dlopen at runtime. Host-only — shell relies on dlopen of a
+        // freshly built binary, same constraint as LV2.
+        if shell_mode && plan.target.is_none() {
+            build_logic_dylibs(&plugins, logic_profile, dt)?;
+        }
+
+        // --- Stage each format's bundle into the per-target dir ---
+        //
+        // Each successful stage_* call appends a BundleEntry to
+        // `produced`; we serialize the lot into `manifest.toml` at
+        // the end so `cargo truce package` has an explicit list of
+        // what to ship.
+        let mut produced: Vec<BundleEntry> = Vec::new();
+        for p in &plugins {
+            if clap {
+                stage_clap(&root, p, &plan.stage_dir, identity, plan.target)?;
+                let filename = format!("{}.clap", p.name);
+                crate::log_output(format!(
+                    "CLAP: {}",
+                    plan.stage_dir.join(&filename).display()
+                ));
+                produced.push(entry(p, "clap", filename));
+            }
+            if vst3 {
+                stage_vst3(&root, p, &config, &plan.stage_dir, plan.target)?;
+                let filename = format!("{}.vst3", p.name);
+                crate::log_output(format!(
+                    "VST3: {}",
+                    plan.stage_dir.join(&filename).display()
+                ));
+                produced.push(entry(p, "vst3", filename));
+            }
+            if vst2 {
+                // macOS produces a `.vst` directory bundle; Linux/Windows
+                // get a bare `.so` / `.dll` since neither uses a bundle.
+                let staged = stage_vst2(&root, p, &config, &plan.stage_dir, plan.target)?;
+                crate::log_output(format!("VST2: {}", staged.display()));
+                let filename = staged
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| format!("{}.vst", p.name));
+                produced.push(entry(p, "vst2", filename));
+            }
+            if lv2 {
+                stage_lv2(&root, p, &plan.stage_dir, plan.target)?;
+                let slug = lv2_slug(&p.name);
+                let filename = format!("{slug}.lv2");
+                crate::log_output(format!(
+                    "LV2:  {}",
+                    plan.stage_dir.join(&filename).display()
+                ));
+                produced.push(entry(p, "lv2", filename));
+            }
+            if au2 {
+                #[cfg(target_os = "macos")]
+                {
+                    // AU2 is macOS-only and only fires for host targets;
+                    // cross-target macOS builds (e.g. x86_64 from arm64)
+                    // are still macOS-host so the existing helper works.
+                    let _ = plan; // referenced via stage_dir below
+                    stage_au2(&root, p, &config, &plan.stage_dir)?;
+                    let filename = format!("{}.component", p.name);
+                    crate::log_output(format!(
+                        "AU:   {}",
+                        plan.stage_dir.join(&filename).display()
+                    ));
+                    produced.push(entry(p, "au2", filename));
+                }
+                // AU is macOS-only; the build phase already log_skip'd
+                // above for non-macOS, so nothing to do here.
+            }
+        }
+
+        // AU v3 has its own driver that builds Rust-framework +
+        // xcodebuild + codesign inside-out. Host arch only; the
+        // universal flow lives in `cargo truce package`. AU v3 only
+        // makes sense when this plan is the host build (no --target),
+        // so we gate on `plan.target.is_none()`. Cross-target users
+        // get a clear log_skip line per target.
+        if au3 {
+            if plan.target.is_some() {
+                crate::log_skip(format!(
+                    "AU v3 ({}): cross-target builds are unsupported (AU v3 wraps a \
+                     macOS host xcodebuild step).",
+                    plan.triple,
+                ));
+            } else {
+                #[cfg(target_os = "macos")]
+                {
+                    use crate::{MacArch, extract_team_id};
+                    // Same gate as install: ad-hoc / no-team-id makes
+                    // AU v3 unbuildable. The "no team id" case is
+                    // project-wide (signing identity isn't per-plugin),
+                    // so emit one skip line and bypass the per-plugin
+                    // loop.
+                    let sign_id = config.macos.application_identity();
+                    if extract_team_id(sign_id).is_empty() {
+                        crate::log_skip(
+                            "AU v3: needs a Developer ID with team ID. \
+                             Set [macos.signing].application_identity in truce.toml \
+                             (e.g., \"Developer ID Application: Your Name (TEAMID)\"); \
+                             ad-hoc signing (\"-\") is not supported for AU v3 appex bundles."
+                                .to_string(),
+                        );
+                    } else {
+                        crate::commands::install::au_v3::emit_au_v3_bundle(
+                            &root,
+                            &config,
+                            &plugins,
+                            &[MacArch::host()],
+                        )?;
+                        for p in &plugins {
+                            let filename = format!("{}.app", p.au3_app_name());
+                            crate::log_output(format!(
+                                "AU3:  {}",
+                                plan.stage_dir.join(&filename).display()
+                            ));
+                            produced.push(entry(p, "au3", filename));
+                        }
+                    }
+                }
+                #[cfg(not(target_os = "macos"))]
+                crate::log_skip(
+                    "AU v3: not supported on this platform. Audio Unit is macOS-only.".to_string(),
+                );
+            }
+        }
+
+        // Persist the manifest for this target before printing
+        // summaries so a post-build `cargo truce package` always sees
+        // the latest entries. Merge with any existing manifest in the
+        // same dir so partial builds (`--clap` then `--vst3`) accumulate.
+        write_bundle_manifest(&plan.stage_dir, &plan.triple, shell_mode, debug, &produced)?;
+    }
 
     let outputs = crate::take_outputs();
     if !outputs.is_empty() {
@@ -262,6 +337,7 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
 
 fn write_bundle_manifest(
     bundles_dir: &std::path::Path,
+    target_triple: &str,
     shell_mode: bool,
     debug: bool,
     produced: &[BundleEntry],
@@ -273,16 +349,16 @@ fn write_bundle_manifest(
     } else {
         "release"
     };
-    let mut next = BundleManifest::new(host_triple(), profile);
+    let mut next = BundleManifest::new(target_triple, profile);
     next.bundles = produced.to_vec();
 
     let mut manifest = match BundleManifest::load_if_present(bundles_dir) {
         Ok(Some(existing)) => existing,
         // Missing manifest is the common case (first build); start empty.
-        Ok(None) => BundleManifest::new(host_triple(), profile),
+        Ok(None) => BundleManifest::new(target_triple, profile),
         // Corrupt/incompatible — replace rather than fail the build.
         // The manifest is a derived artifact, not user data.
-        Err(_) => BundleManifest::new(host_triple(), profile),
+        Err(_) => BundleManifest::new(target_triple, profile),
     };
     manifest.merge(next);
     manifest.save(bundles_dir)?;
@@ -293,12 +369,17 @@ fn print_help() {
     eprintln!(
         "\
 Usage: cargo truce build [--clap] [--vst3] [--vst2] [--lv2] [--au2] [--au3] [--aax]
-                         [-p <crate>] [--shell] [--debug]
+                         [-p <crate>] [--target <triple>]... [--shell] [--debug]
 
 Build per-format bundles into target/bundles/ without installing.
 Defaults to release; pass --debug for the cargo dev profile.
 Defaults match `install`: when no format flags are passed, every
 format in the project's default Cargo features is built.
+
+Pass --target <triple> (repeatable) to cross-build for a specific
+cargo target; bundles land in target/bundles/<triple>/. Without
+--target, the host build lands in target/bundles/ (flat layout, as
+before).
 
 Options:
   --clap           CLAP only
@@ -309,6 +390,11 @@ Options:
   --au3            AU v3 only (.appex inside .app, macOS only)
   --aax            AAX only (requires pre-built SDK + template)
   -p <crate>       Build only the plugin with this cargo crate name
+  --target <triple>
+                   Cargo target triple (e.g. aarch64-unknown-linux-gnu).
+                   Repeatable. Outputs land at target/bundles/<triple>/.
+                   Shell-mode is host-only; cross-target invocations
+                   log_skip it.
   --shell          Build dynamic shells + per-plugin logic dylibs
   --debug          Cargo dev profile (faster compile, slower DSP)
   -h, --help       Show this message"
