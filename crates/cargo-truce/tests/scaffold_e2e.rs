@@ -412,7 +412,7 @@ impl Scaffold {
 /// staging step skipped, or cargo silently produced no output.
 fn diagnose_target_layout() -> String {
     let target = shared_target();
-    let mut out = format!("--- shared target dir: {} ---\n", target.display());
+    let mut out = format!("shared target dir: {}\n", target.display());
     for sub in ["", "release", "debug", "bundles"] {
         let dir = if sub.is_empty() {
             target.to_path_buf()

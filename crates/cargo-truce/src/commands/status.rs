@@ -55,7 +55,7 @@ pub(crate) fn cmd_status(args: &[String]) -> Res {
     let vendor = &config.vendor.name;
     let home = dirs::require_home_dir()?;
 
-    eprintln!("=== AU v2 Components ===");
+    eprintln!("AU v2 Components");
     let comp_dir = Path::new("/Library/Audio/Plug-Ins/Components");
     if comp_dir.exists() {
         for entry in fs::read_dir(comp_dir)? {
@@ -67,7 +67,7 @@ pub(crate) fn cmd_status(args: &[String]) -> Res {
         }
     }
 
-    eprintln!("\n=== CLAP ===");
+    eprintln!("\nCLAP");
     let clap_dir = home.join("Library/Audio/Plug-Ins/CLAP");
     if clap_dir.exists() {
         for entry in fs::read_dir(&clap_dir)? {
@@ -79,7 +79,7 @@ pub(crate) fn cmd_status(args: &[String]) -> Res {
         }
     }
 
-    eprintln!("\n=== VST2 ===");
+    eprintln!("\nVST2");
     let vst2_dir = home.join("Library/Audio/Plug-Ins/VST");
     if vst2_dir.exists() {
         for entry in fs::read_dir(&vst2_dir)? {
@@ -91,7 +91,7 @@ pub(crate) fn cmd_status(args: &[String]) -> Res {
         }
     }
 
-    eprintln!("\n=== VST3 ===");
+    eprintln!("\nVST3");
     let vst3_dir = Path::new("/Library/Audio/Plug-Ins/VST3");
     if vst3_dir.exists() {
         for entry in fs::read_dir(vst3_dir)? {
@@ -103,7 +103,7 @@ pub(crate) fn cmd_status(args: &[String]) -> Res {
         }
     }
 
-    eprintln!("\n=== auval ===");
+    eprintln!("\nauval");
     if let Ok(output) = run_quiet("auval", &["-a"]) {
         let vendor_lower = vendor.to_lowercase();
         for line in output.lines() {

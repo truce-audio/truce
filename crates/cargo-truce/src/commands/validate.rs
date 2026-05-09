@@ -206,9 +206,9 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
 
     let mut failures = 0;
 
-    // --- auval (macOS only, AU v2) ---
+    // auval (macOS only, AU v2)
     if run_auval {
-        eprintln!("=== auval (AU v2) ===\n");
+        eprintln!("auval (AU v2)\n");
         if Command::new("auval").arg("-h").output().is_ok() {
             for p in &plugins {
                 #[cfg(target_os = "macos")]
@@ -262,9 +262,9 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
         }
     }
 
-    // --- auval (AU v3 appex) ---
+    // auval (AU v3 appex)
     if run_auval_v3 {
-        eprintln!("\n=== auval (AU v3) ===\n");
+        eprintln!("\nauval (AU v3)\n");
         if Command::new("auval").arg("-h").output().is_ok() {
             for p in &plugins {
                 let sub = p.au3_sub();
@@ -309,9 +309,9 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
         }
     }
 
-    // --- pluginval (VST3) ---
+    // pluginval (VST3)
     if run_pluginval {
-        eprintln!("\n=== pluginval (VST3) ===\n");
+        eprintln!("\npluginval (VST3)\n");
         let pluginval = find_pluginval();
         if let Some(pv) = pluginval {
             for p in &plugins {
@@ -354,9 +354,9 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
         }
     }
 
-    // --- clap-validator (CLAP) ---
+    // clap-validator (CLAP)
     if run_clap {
-        eprintln!("\n=== clap-validator (CLAP) ===\n");
+        eprintln!("\nclap-validator (CLAP)\n");
         let clap_validator = find_clap_validator();
         if let Some(cv) = clap_validator {
             // Project-local scratch. `cargo clean` sweeps it, and it
@@ -431,9 +431,9 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
         }
     }
 
-    // --- VST2 binary smoke (no industry validator; this is ours) ---
+    // VST2 binary smoke (no industry validator; this is ours)
     if run_vst2 {
-        eprintln!("=== VST2 binary smoke ===\n");
+        eprintln!("VST2 binary smoke\n");
         #[cfg(target_os = "macos")]
         {
             failures += validate_vst2_macos(&plugins);

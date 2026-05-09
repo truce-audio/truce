@@ -151,3 +151,13 @@ au_tag = "Effects"
 aax_category = "Other"
 au3_name = "Truce State (AUv3)"
 
+# Suite installer wrapping every example above. `cargo truce package`
+# (no flags) produces both per-plugin installers and this suite installer.
+# Pass `--no-per-plugin` for suite-only output, `--no-suite` to drop it.
+# Omitting `plugins` / `exclude_plugins` includes every `[[plugin]]`
+# defined above; omitting `formats` falls back to each plugin's declared
+# default features.
+[[suite]]
+name = "Truce Examples"
+bundle_id = "truce-examples"
+

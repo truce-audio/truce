@@ -52,7 +52,7 @@ pub(crate) fn cmd_package_linux(args: &[String], selection: &SuiteSelection) -> 
     fs::create_dir_all(&dist_dir)?;
 
     if selection.want_per_plugin() {
-        eprintln!("=== Per-plugin tarballs ===");
+        eprintln!("Per-plugin tarballs");
         for plugin in &config.plugin {
             build_per_plugin_tarball(&root, &config, plugin, &dist_dir, &version)?;
         }
@@ -68,7 +68,7 @@ pub(crate) fn cmd_package_linux(args: &[String], selection: &SuiteSelection) -> 
         .collect::<Result<_, _>>()?;
 
     if !suites.is_empty() {
-        eprintln!("\n=== Suite tarballs ===");
+        eprintln!("\nSuite tarballs");
         for suite in &suites {
             build_suite_tarball(&root, &config, suite, &dist_dir, &version)?;
         }
@@ -453,10 +453,12 @@ fn set_executable(path: &Path) -> std::io::Result<()> {
 }
 
 #[cfg(not(unix))]
+#[allow(clippy::unnecessary_wraps)]
 fn set_executable(_path: &Path) -> std::io::Result<()> {
     // Windows: no chmod. The tarball preserves the mode from the
     // archive metadata (set explicitly in the archive entry by
     // `tar`'s default behaviour on Unix); on Windows there's nothing
-    // meaningful to do.
+    // meaningful to do. Result-typed so the cfg(unix) caller path
+    // doesn't need a parallel branch.
     Ok(())
 }
