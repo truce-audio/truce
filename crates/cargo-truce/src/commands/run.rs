@@ -145,9 +145,9 @@ fn stage_macos_app_bundle(
     bin_stem: &str,
     vendor: &crate::config::VendorConfig,
 ) -> Res {
-    // staged is `<bundles>/<Plugin>.standalone.app/`. Ensure a
-    // clean re-stage on each run so stale bundle contents don't
-    // linger between iterations.
+    // staged is `<bundles>/<Plugin>.app/`. Ensure a clean re-stage
+    // on each run so stale bundle contents don't linger between
+    // iterations.
     let _ = std::fs::remove_dir_all(staged);
     let macos = staged.join("Contents").join("MacOS");
     fs_ctx::create_dir_all(&macos)?;
@@ -158,9 +158,9 @@ fn stage_macos_app_bundle(
     crate::commands::package::stage::write_standalone_info_plist(staged, plugin, &exe_name, vendor)
 }
 
-/// On macOS the staged path is `<Plugin>.standalone.app/`; the
-/// real binary lives at `Contents/MacOS/<exe>`. Other platforms,
-/// staged IS the binary.
+/// On macOS the staged path is `<Plugin>.app/`; the real binary
+/// lives at `Contents/MacOS/<exe>`. Other platforms, staged IS
+/// the binary.
 fn exec_path_inside_stage(
     staged: &std::path::Path,
     #[cfg_attr(not(target_os = "macos"), allow(unused_variables))] bin_stem: &str,
@@ -224,13 +224,16 @@ Options:
     );
 }
 
-/// Staged name inside `target/bundles/` — keeps the standalone
-/// distinct from plugin bundles like `{Plugin Name}.clap` /
-/// `.vst3`. On macOS the `.app` suffix triggers Finder + the OS
-/// to recognize the directory as a proper application bundle.
+/// Staged name inside `target/bundles/`. Kept in sync with the
+/// install layout (`/Applications/{Plugin}.app` on macOS,
+/// `<Vendor>\<Plugin>\<bin>.exe` on Windows) so dev iteration mirrors
+/// what an end user gets. On macOS the `.app` suffix triggers Finder
+/// and Launch Services to treat the directory as a proper application
+/// (the historical `<Plugin>.standalone.app` name was confusing
+/// Spotlight indexing).
 fn standalone_bundle_name(plugin_name: &str) -> String {
     if cfg!(target_os = "macos") {
-        format!("{plugin_name}.standalone.app")
+        format!("{plugin_name}.app")
     } else if cfg!(windows) {
         format!("{plugin_name}.standalone.exe")
     } else {

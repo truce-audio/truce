@@ -257,6 +257,11 @@ pub(crate) fn cmd_package(
             .into());
         }
 
+        // Inno Setup's bootstrap is ~700 KB on its own; any installer
+        // with actual payload should be well above the 50 KB floor.
+        // Catches `.iss` regressions that compress to nothing.
+        crate::commands::package::verify::assert_min_size(&installer)?;
+
         if !opts.no_sign {
             sign_files(std::slice::from_ref(&installer), &config.windows.signing)?;
         }
@@ -1325,6 +1330,8 @@ fn package_one_suite(
         )
         .into());
     }
+
+    crate::commands::package::verify::assert_min_size(&installer)?;
 
     if !no_sign {
         sign_files(std::slice::from_ref(&installer), &config.windows.signing)?;

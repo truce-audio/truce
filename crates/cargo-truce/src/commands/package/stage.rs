@@ -363,9 +363,9 @@ pub(crate) fn stage_au3(root: &Path, p: &PluginDef, _config: &Config, staging: &
 /// Stage the standalone host as a `.app` bundle inside the packaging
 /// staging tree. Reads the per-arch standalone binaries built by
 /// `build_and_lipo_standalone`, lipo-merges (or copies, single-arch)
-/// into `<staging>/<Plugin>.standalone.app/Contents/MacOS/<bin>`,
-/// writes the Info.plist, and codesigns. The pkgbuild step downstream
-/// installs the resulting `.app` to `/Applications/`.
+/// into `<staging>/<Plugin>.app/Contents/MacOS/<bin>`, writes the
+/// Info.plist, and codesigns. The pkgbuild step downstream installs
+/// the resulting `.app` to `/Applications/`.
 #[cfg(target_os = "macos")]
 pub(crate) fn stage_standalone(root: &Path, p: &PluginDef, config: &Config, staging: &Path) -> Res {
     use std::os::unix::fs::PermissionsExt;
@@ -390,7 +390,7 @@ pub(crate) fn stage_standalone(root: &Path, p: &PluginDef, config: &Config, stag
         .into());
     }
 
-    let staged_app = staging.join(format!("{}.standalone.app", p.name));
+    let staged_app = staging.join(format!("{}.app", p.name));
     let _ = fs::remove_dir_all(&staged_app);
     let macos_dir = staged_app.join("Contents/MacOS");
     fs::create_dir_all(&macos_dir)?;

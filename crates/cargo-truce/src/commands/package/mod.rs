@@ -10,6 +10,7 @@ use crate::PluginDef;
 use crate::Res;
 
 pub(crate) mod stage;
+pub(crate) mod verify;
 
 #[cfg(target_os = "macos")]
 pub(crate) mod macos;
@@ -206,9 +207,14 @@ impl PkgFormat {
     pub(crate) fn bundle_name(&self, plugin: &PluginDef) -> String {
         match self {
             PkgFormat::Au3 => format!("{}.app", plugin.au3_app_name()),
-            // `cargo truce run` already emits `<Plugin>.standalone.app`;
-            // packaging reuses that staged bundle directly.
-            PkgFormat::Standalone => format!("{}.standalone.app", plugin.name),
+            // Plain `<Plugin>.app` so Spotlight / Launch Services
+            // index it as a regular application. The historical
+            // `<Plugin>.standalone.app` extension confused some
+            // indexing paths and the bundle would not appear in
+            // Spotlight search. AU3 stays distinct via its `v3`
+            // suffix (or the user's `au3_name` override), so there's
+            // no `/Applications/` collision.
+            PkgFormat::Standalone => format!("{}.app", plugin.name),
             _ => format!("{}.{}", plugin.name, self.extension()),
         }
     }

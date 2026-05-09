@@ -96,6 +96,17 @@ fn build_per_plugin_tarball(
 
     let out = dist_dir.join(format!("{stem}.tar.gz"));
     create_tarball(&staging, &out, &stem)?;
+
+    // Sanity-check the tarball: must contain install.sh and the plugin's
+    // payload directory. Catches the case where create_tarball reports
+    // success but staging silently produced no files.
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        let bundle_id_path = format!("{}/plugins/{}/", stem, plugin.bundle_id);
+        let install_sh_path = format!("{stem}/install.sh");
+        super::verify::assert_tarball_contains(&out, &[&install_sh_path, &bundle_id_path])?;
+    }
+
     eprintln!("  {} → {}", plugin.name, out.display());
     Ok(())
 }
@@ -122,6 +133,21 @@ fn build_suite_tarball(
 
     let out = dist_dir.join(format!("{stem}.tar.gz"));
     create_tarball(&staging, &out, &stem)?;
+
+    // Suite tarball must contain install.sh + every member plugin's
+    // payload directory. Mirrors the macOS productbuild check —
+    // catches a staging silent-skip that would ship a partial suite
+    // archive.
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        let mut expected: Vec<String> = vec![format!("{stem}/install.sh")];
+        for plugin in &suite.plugins {
+            expected.push(format!("{}/plugins/{}/", stem, plugin.bundle_id));
+        }
+        let expected_refs: Vec<&str> = expected.iter().map(String::as_str).collect();
+        super::verify::assert_tarball_contains(&out, &expected_refs)?;
+    }
+
     eprintln!("  {} → {}", suite.def.name, out.display());
     Ok(())
 }

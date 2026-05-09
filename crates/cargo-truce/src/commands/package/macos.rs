@@ -280,6 +280,23 @@ fn package_one_suite(
         return Err(format!("productbuild failed for suite '{suite_name}'").into());
     }
 
+    // Verify the suite .pkg actually embeds every member plugin's
+    // component .pkg. The exact bug this guards against shipped once
+    // already: a malformed Distribution.xml (nested <choice> elements)
+    // dropped every <pkg-ref> and productbuild emitted a 2 KB metadata-
+    // only .pkg that opens in Installer.app and reports "can't find the
+    // data needed for installation".
+    let expected: Vec<String> = suite
+        .plugins
+        .iter()
+        .flat_map(|plugin| {
+            o.formats
+                .iter()
+                .map(move |fmt| format!("{}-{}.pkg", plugin.name, fmt.label()))
+        })
+        .collect();
+    super::verify::assert_pkg_contains_components(&pkg_path, &expected)?;
+
     if o.config.macos.packaging.notarize && !o.no_notarize {
         notarize_and_staple(&pkg_path, o.config)?;
     }
@@ -801,6 +818,18 @@ fn package_one_plugin(root: &Path, p: &PluginDef, dist_dir: &Path, o: &PackageOp
         &resources_dir,
         o,
     )?;
+
+    // Step 6.5: Verify the produced .pkg actually embeds every
+    // component we just fed productbuild. Catches the malformed-
+    // distribution.xml class of bug where productbuild reports
+    // success but drops the payload (e.g. nested <choice> elements
+    // ignore their pkg-refs and produce a 2 KB metadata-only .pkg).
+    let expected: Vec<String> = o
+        .formats
+        .iter()
+        .map(|fmt| format!("{}-{}.pkg", p.name, fmt.label()))
+        .collect();
+    super::verify::assert_pkg_contains_components(&pkg_path, &expected)?;
 
     // Step 7: Notarize + staple
     if o.config.macos.packaging.notarize && !o.no_notarize {
