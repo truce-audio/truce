@@ -88,7 +88,7 @@ fn build_per_plugin_tarball(
 ) -> Res {
     let arch = host_linux_arch();
     let stem = format!("{}-{}-linux-{}", plugin.bundle_id, version, arch);
-    let staging = stage_dir(root, &stem)?;
+    let staging = plugin_stage_dir(root, &plugin.bundle_id)?;
 
     let plugin_summary = stage_plugin_payload(root, plugin, &staging)?;
     write_install_sh(&staging, config, &[plugin_summary], None)?;
@@ -122,7 +122,7 @@ fn build_suite_tarball(
     let arch = host_linux_arch();
     let suite_version = suite.def.version.as_deref().unwrap_or(version);
     let stem = format!("{}-{}-linux-{}", suite.def.bundle_id, suite_version, arch);
-    let staging = stage_dir(root, &stem)?;
+    let staging = suite_stage_dir(root, &suite.def.bundle_id)?;
 
     let mut summaries = Vec::with_capacity(suite.plugins.len());
     for plugin in &suite.plugins {
@@ -392,8 +392,24 @@ fn host_linux_arch() -> &'static str {
     }
 }
 
-fn stage_dir(root: &Path, stem: &str) -> Result<PathBuf, BoxErr> {
-    let staging = truce_build::target_dir(root).join("package").join(stem);
+/// Per-plugin Linux staging dir: `target/package/linux/plugin/<bundle_id>/`.
+/// The on-disk dir name is the plain `bundle_id` (version + arch live in
+/// the produced tarball's filename, not the path). The in-archive layout
+/// uses the version-tagged stem via `create_tarball`'s `--transform`.
+fn plugin_stage_dir(root: &Path, bundle_id: &str) -> Result<PathBuf, BoxErr> {
+    stage_dir(root, "plugin", bundle_id)
+}
+
+/// Per-suite Linux staging dir: `target/package/linux/suite/<bundle_id>/`.
+fn suite_stage_dir(root: &Path, suite_bundle_id: &str) -> Result<PathBuf, BoxErr> {
+    stage_dir(root, "suite", suite_bundle_id)
+}
+
+fn stage_dir(root: &Path, kind: &str, bundle_id: &str) -> Result<PathBuf, BoxErr> {
+    let staging = truce_build::target_dir(root)
+        .join("package/linux")
+        .join(kind)
+        .join(bundle_id);
     let _ = fs::remove_dir_all(&staging);
     fs::create_dir_all(&staging)?;
     Ok(staging)

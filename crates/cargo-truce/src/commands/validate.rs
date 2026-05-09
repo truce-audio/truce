@@ -4,7 +4,7 @@
 
 use crate::format::Format;
 use crate::install_scope::InstallScope;
-use crate::{PluginDef, Res, dirs, load_config, tag_warn, tmp_dir};
+use crate::{PluginDef, Res, dirs, load_config, tag_warn, tmp_verify};
 #[cfg(target_os = "macos")]
 use crate::{deployment_target, project_root};
 use std::fs;
@@ -362,7 +362,7 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
             // Project-local scratch. `cargo clean` sweeps it, and it
             // stays off the system `/tmp` so nothing outside the repo
             // gets touched.
-            let scratch = tmp_dir().join("clap-validate");
+            let scratch = tmp_verify().join("clap-validate");
             let _ = fs::create_dir_all(&scratch);
 
             for p in &plugins {

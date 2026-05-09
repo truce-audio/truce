@@ -139,7 +139,7 @@ fn stage_components_only(root: &Path, p: &PluginDef, o: &PackageOpts) -> Res {
     eprintln!("\nComponents for: {}", p.name);
 
     let staging = truce_build::target_dir(root)
-        .join("package")
+        .join("package/macos/plugin")
         .join(&p.bundle_id);
     let _ = fs::remove_dir_all(&staging);
     fs::create_dir_all(&staging)?;
@@ -191,8 +191,8 @@ fn package_one_suite(
     // Collect every member plugin's component .pkgs into a single
     // directory that productbuild reads with `--package-path`.
     let suite_staging = truce_build::target_dir(root)
-        .join("package")
-        .join(format!("suite-{}", suite.def.bundle_id));
+        .join("package/macos/suite")
+        .join(&suite.def.bundle_id);
     let _ = fs::remove_dir_all(&suite_staging);
     fs::create_dir_all(&suite_staging)?;
     let components_dir = suite_staging.join("components");
@@ -200,7 +200,7 @@ fn package_one_suite(
 
     for plugin in &suite.plugins {
         let plugin_components = truce_build::target_dir(root)
-            .join("package")
+            .join("package/macos/plugin")
             .join(&plugin.bundle_id)
             .join("components");
         if !plugin_components.exists() {
@@ -722,7 +722,7 @@ fn package_one_plugin(root: &Path, p: &PluginDef, dist_dir: &Path, o: &PackageOp
     eprintln!("\nPackaging: {}", p.name);
 
     let staging = truce_build::target_dir(root)
-        .join("package")
+        .join("package/macos/plugin")
         .join(&p.bundle_id);
     let _ = fs::remove_dir_all(&staging);
     fs::create_dir_all(&staging)?;

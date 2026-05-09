@@ -23,7 +23,7 @@ use crate::util::fs_ctx;
 use crate::{
     Config, MacArch, PluginDef, Res, cargo_build_for_arch, deployment_target, dirs,
     extract_team_id, is_production_identity, lipo_into, release_lib_for_target, run_silent,
-    run_sudo, tmp_dir,
+    run_sudo, tmp_au_v3,
 };
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -99,8 +99,9 @@ fn build_au_v3_for_plugin(
     bundles_dir: &Path,
 ) -> Res {
     let fw_name = p.fw_name();
-    let build_dir = tmp_dir().join(format!("au_v3_build_{}", p.bundle_id));
-    let fw_build = tmp_dir().join(format!("au_v3_fw_{}", p.bundle_id));
+    let au_v3_root = tmp_au_v3(&p.bundle_id);
+    let build_dir = au_v3_root.join("build");
+    let fw_build = au_v3_root.join("fw");
     let final_app = bundles_dir.join(format!("{}.app", p.au3_app_name()));
 
     crate::vprintln!("Building AU v3 ({})...", p.name);

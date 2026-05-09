@@ -6,8 +6,12 @@ use crate::install_scope::{InstallScope, effective_scope, note_once, set_cli_ins
 use crate::util::fs_ctx;
 use crate::{
     Config, PluginDef, Res, deployment_target, detect_default_features, load_config, project_root,
-    release_lib, run_sudo, tmp_dir,
+    release_lib, run_sudo, tmp_lv2,
 };
+// Plist scratch (VST3 / VST2 / AU) only happens on macOS — gate the
+// import so Windows / Linux builds don't see it as unused.
+#[cfg(target_os = "macos")]
+use crate::tmp_manifests;
 #[cfg(target_os = "macos")]
 use crate::{codesign_bundle, dirs};
 use std::fs;
@@ -368,7 +372,7 @@ fn install_vst3(root: &Path, p: &PluginDef, config: &Config, scope: InstallScope
             bundle_id = p.bundle_id,
             vendor_id = config.vendor.id,
         );
-        let plist_tmp = tmp_dir()
+        let plist_tmp = tmp_manifests()
             .join(format!("{}_vst3.plist", p.bundle_id))
             .to_string_lossy()
             .to_string();
@@ -456,7 +460,7 @@ fn install_vst2(root: &Path, p: &PluginDef, config: &Config, scope: InstallScope
             bundle_id = p.bundle_id,
             vendor_id = config.vendor.id,
         );
-        let plist_tmp = tmp_dir()
+        let plist_tmp = tmp_manifests()
             .join(format!("{}_vst2.plist", p.bundle_id))
             .to_string_lossy()
             .to_string();
@@ -481,7 +485,7 @@ fn install_vst2(root: &Path, p: &PluginDef, config: &Config, scope: InstallScope
             )?;
             // PkgInfo is small enough that re-emitting via run_sudo
             // (rather than tee) keeps the helper surface minimal.
-            let pkginfo_tmp = tmp_dir().join(format!("{}_vst2.pkginfo", p.bundle_id));
+            let pkginfo_tmp = tmp_manifests().join(format!("{}_vst2.pkginfo", p.bundle_id));
             fs_ctx::write(&pkginfo_tmp, "BNDL????")?;
             run_sudo(
                 "cp",
@@ -559,7 +563,7 @@ fn install_lv2(root: &Path, p: &PluginDef, _config: &Config, scope: InstallScope
     // Stage to a temp directory first, then move into place via
     // `run_sudo` for the system path.
     if scope.needs_sudo() {
-        let staging = tmp_dir().join(format!("{}_lv2_stage", p.bundle_id));
+        let staging = tmp_lv2(&p.bundle_id);
         let _ = fs::remove_dir_all(&staging);
         fs_ctx::create_dir_all(&staging)?;
         crate::commands::package::stage::stage_lv2(root, p, &staging)?;
@@ -666,7 +670,7 @@ fn install_au(root: &Path, p: &PluginDef, config: &Config, scope: InstallScope) 
         au_mfr = config.vendor.au_manufacturer,
         au_tag = p.au_tag,
     );
-    let plist_tmp = tmp_dir()
+    let plist_tmp = tmp_manifests()
         .join(format!("{}_au.plist", p.bundle_id))
         .to_string_lossy()
         .to_string();

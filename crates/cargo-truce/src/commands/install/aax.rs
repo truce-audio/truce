@@ -15,8 +15,10 @@
 //!   to the system AAX plug-ins directory.
 
 use crate::templates;
+#[cfg(target_os = "windows")]
+use crate::tmp_scripts;
 use crate::util::fs_ctx;
-use crate::{Config, PluginDef, Res, release_lib, resolve_aax_sdk_path, tmp_dir};
+use crate::{Config, PluginDef, Res, release_lib, resolve_aax_sdk_path, tmp_aax_template};
 #[cfg(target_os = "macos")]
 use crate::{codesign_bundle, run_sudo};
 #[cfg(target_os = "windows")]
@@ -84,7 +86,7 @@ pub(crate) fn build_aax_template(_root: &Path, sdk_path: &Path, universal_mac: b
     // embedded template bytes haven't shifted since last run.
     // Previously we wiped `src/` on every invocation, which forced
     // cmake to rebuild every TU on every plugin.
-    let template_dir = tmp_dir().join("aax_template");
+    let template_dir = tmp_aax_template();
     let src_dir = template_dir.join("src");
     let cmake_lists = template_dir.join("CMakeLists.txt");
     fs_ctx::create_dir_all(&src_dir)?;
@@ -169,7 +171,7 @@ pub(crate) fn build_aax_template(_root: &Path, sdk_path: &Path, universal_mac: b
         // Convert all paths we pass to cmake to forward slashes.
         let to_fwd = |p: &Path| p.display().to_string().replace('\\', "/");
 
-        let bat_path = tmp_dir().join("truce_aax_build.bat");
+        let bat_path = tmp_scripts().join("truce_aax_build.bat");
         let bat = format!(
             "@echo off\r\n\
              call \"{vcvars}\" >nul || exit /b 1\r\n\
@@ -298,7 +300,7 @@ fn ensure_aax_sdk_library(sdk_path: &Path) -> Result<PathBuf, crate::BoxErr> {
     let ninja_dir = ninja.parent().unwrap().display().to_string();
     let to_fwd = |p: &Path| p.display().to_string().replace('\\', "/");
 
-    let bat_path = tmp_dir().join("truce_aax_sdk_build.bat");
+    let bat_path = tmp_scripts().join("truce_aax_sdk_build.bat");
     let bat = format!(
         "@echo off\r\n\
          call \"{vcvars}\" >nul || exit /b 1\r\n\
@@ -339,13 +341,13 @@ fn lipo_has_archs(lib: &Path, required: &[&str]) -> bool {
 /// Template binary path inside the cmake build directory.
 #[cfg(target_os = "macos")]
 fn template_binary() -> PathBuf {
-    tmp_dir().join("aax_template/build/TruceAAXTemplate.aaxplugin/Contents/MacOS/TruceAAXTemplate")
+    tmp_aax_template().join("build/TruceAAXTemplate.aaxplugin/Contents/MacOS/TruceAAXTemplate")
 }
 #[cfg(target_os = "windows")]
 fn template_binary() -> PathBuf {
     // Ninja is single-config — target lands directly in the build dir.
     // CMakeLists.txt sets SUFFIX=.aaxplugin, PREFIX="".
-    tmp_dir().join("aax_template/build/TruceAAXTemplate.aaxplugin")
+    tmp_aax_template().join("build/TruceAAXTemplate.aaxplugin")
 }
 
 /// Ensure the shared AAX cmake template has been built and return its

@@ -24,7 +24,7 @@ use crate::{
     Config, PkgFormat, PluginDef, Res, WindowsSigningConfig, build_aax_template, cargo_build,
     detect_default_features, load_config, project_root, read_workspace_version,
     release_lib_for_target, resolve_aax_sdk_path, rustup_has_target, tag_info, tag_ok, tag_warn,
-    tmp_dir,
+    tmp_aax_template, tmp_manifests,
 };
 
 // ---------------------------------------------------------------------------
@@ -187,7 +187,7 @@ pub(crate) fn cmd_package(
         eprintln!("\nPackaging: {} ({})", p.name, archs_label(&archs));
 
         let staging = truce_build::target_dir(&root)
-            .join("package/windows")
+            .join("package/windows/plugin")
             .join(&p.bundle_id);
         let _ = fs::remove_dir_all(&staging);
         fs::create_dir_all(&staging)?;
@@ -270,14 +270,16 @@ pub(crate) fn cmd_package(
 
     if !suites.is_empty() {
         eprintln!("\nSuite installers");
-        let staging_root = truce_build::target_dir(&root).join("package/windows");
+        let plugins_root = truce_build::target_dir(&root).join("package/windows/plugin");
+        let suite_root = truce_build::target_dir(&root).join("package/windows/suite");
         for suite in &suites {
             package_one_suite(
                 &config,
                 suite,
                 &formats,
                 &archs,
-                &staging_root,
+                &plugins_root,
+                &suite_root,
                 &version,
                 &dist_dir,
                 scope,
@@ -783,7 +785,7 @@ fn stage_aax(
     }
 
     // Build the template .aaxplugin wrapper if it isn't there yet.
-    let template = tmp_dir().join("aax_template/build/TruceAAXTemplate.aaxplugin");
+    let template = tmp_aax_template().join("build/TruceAAXTemplate.aaxplugin");
     if !template.exists() {
         if let Some(sdk_path) = resolve_aax_sdk_path(config) {
             eprintln!("AAX: building template with SDK at {}", sdk_path.display());
@@ -866,7 +868,7 @@ fn sign_files(files: &[PathBuf], config: &WindowsSigningConfig) -> Res {
     // Credential source — Azure wins, then thumbprint, then pfx.
     if let (Some(account), Some(profile)) = (&config.azure_account, &config.azure_profile) {
         let dlib = config.azure_dlib.clone().unwrap_or_else(default_azure_dlib);
-        let metadata_path = tmp_dir().join("truce_azure_signing_metadata.json");
+        let metadata_path = tmp_manifests().join("truce_azure_signing_metadata.json");
         let metadata = format!(
             r#"{{
   "Endpoint": "https://eus.codesigning.azure.net/",
@@ -1260,13 +1262,19 @@ fn write_icons_section(setup: &mut String, plugin_name: &str, bin_stem: &str, co
 /// children, then run ISCC to produce a single `.exe` covering every
 /// member's bundles. Member plugins must already be staged on disk
 /// (per-plugin loop or `--no-per-plugin` staging path).
+///
+/// Reads from `<plugins_root>/<bundle_id>/` for each member's staging,
+/// and writes the `.iss` to `<suite_root>/<suite.bundle_id>/`. The two
+/// roots are sibling directories under `target/package/windows/` so
+/// suites and per-plugin installers don't collide on disk.
 #[allow(clippy::too_many_arguments)]
 fn package_one_suite(
     config: &Config,
     suite: &crate::config::ResolvedSuite<'_>,
     formats: &[PkgFormat],
     archs: &[TargetArch],
-    staging_root: &Path,
+    plugins_root: &Path,
+    suite_root: &Path,
     workspace_version: &str,
     dist_dir: &Path,
     scope: PkgScope,
@@ -1284,7 +1292,7 @@ fn package_one_suite(
     // hand ISCC a Source path that doesn't exist and get a less-clear
     // error far from the cause.
     for plugin in &suite.plugins {
-        let plugin_staging = staging_root.join(&plugin.bundle_id);
+        let plugin_staging = plugins_root.join(&plugin.bundle_id);
         if !plugin_staging.exists() {
             return Err(format!(
                 "suite '{}': missing staging for {} at {}. \
@@ -1299,7 +1307,7 @@ fn package_one_suite(
     }
 
     let suite_version = suite.def.version.as_deref().unwrap_or(workspace_version);
-    let suite_staging = staging_root.join(format!("suite-{}", suite.def.bundle_id));
+    let suite_staging = suite_root.join(&suite.def.bundle_id);
     let _ = fs::remove_dir_all(&suite_staging);
     fs::create_dir_all(&suite_staging)?;
 
@@ -1308,7 +1316,7 @@ fn package_one_suite(
         suite,
         formats,
         archs,
-        staging_root,
+        plugins_root,
         suite_version,
         dist_dir,
         scope,

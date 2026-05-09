@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::util::fs_ctx;
-use crate::{Res, tmp_dir};
+use crate::{Res, tmp_manifests};
 
 /// Per-monitor v2 with v1 fallback for older Win10 builds. The
 /// `supportedOS` Windows 10 GUID opts in to non-virtualized DPI APIs.
@@ -48,7 +48,7 @@ const MANIFEST_XML: &str = r#"<?xml version="1.0" encoding="UTF-8" standalone="y
 /// `<exe>.manifest` if `mt.exe` isn't available. Best-effort: warnings
 /// are printed but the function doesn't fail the build.
 pub(crate) fn embed_dpi_manifest(exe: &Path) -> Res {
-    let manifest_path = tmp_dir().join("truce-standalone.manifest");
+    let manifest_path = tmp_manifests().join("truce-standalone.manifest");
     fs_ctx::write(&manifest_path, MANIFEST_XML)?;
 
     if let Some(mt) = locate_mt_exe() {

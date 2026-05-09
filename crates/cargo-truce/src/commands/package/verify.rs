@@ -64,8 +64,8 @@ pub(crate) fn assert_pkg_contains_components(pkg: &Path, expected_components: &[
 
     assert_min_size(pkg)?;
 
-    let scratch = crate::tmp_dir().join(format!(
-        "verify-pkg-{}",
+    let scratch = crate::tmp_verify().join(format!(
+        "pkg-{}",
         pkg.file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("artifact")
@@ -73,11 +73,7 @@ pub(crate) fn assert_pkg_contains_components(pkg: &Path, expected_components: &[
     let _ = fs::remove_dir_all(&scratch);
 
     let status = Command::new("pkgutil")
-        .args([
-            "--expand",
-            pkg.to_str().unwrap(),
-            scratch.to_str().unwrap(),
-        ])
+        .args(["--expand", pkg.to_str().unwrap(), scratch.to_str().unwrap()])
         .status()?;
     if !status.success() {
         return Err(format!("pkgutil --expand failed on {}", pkg.display()).into());
@@ -159,7 +155,7 @@ mod tests {
     /// Writes a fixed-size junk file under the project's tmp dir so the
     /// test cleans up under `cargo clean` and never touches `/tmp`.
     fn write_dummy(name: &str, bytes: usize) -> std::path::PathBuf {
-        let dir = crate::tmp_dir().join("verify-tests");
+        let dir = crate::tmp_verify().join("tests");
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join(name);
         let mut f = std::fs::File::create(&path).unwrap();
@@ -188,9 +184,7 @@ mod tests {
 
     #[test]
     fn min_size_reports_missing_artifact() {
-        let path = crate::tmp_dir()
-            .join("verify-tests")
-            .join("does-not-exist.bin");
+        let path = crate::tmp_verify().join("tests").join("does-not-exist.bin");
         let err = assert_min_size(&path).expect_err("nonexistent path should error");
         assert!(
             err.to_string().contains("missing produced artifact"),

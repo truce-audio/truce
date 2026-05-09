@@ -131,17 +131,13 @@ pub(crate) fn cmd_reset_au(args: &[String]) -> Res {
         }
     }
 
-    // Clean AU v3 build temp dirs
+    // Clean AU v3 build temp dirs (one subdir per plugin under tmp/au-v3/).
     eprintln!("Cleaning AU v3 temp dirs...");
-    let tmp = tmp_dir();
-    if let Ok(entries) = fs::read_dir(&tmp) {
+    let au_v3_root = tmp_dir().join("au-v3");
+    if let Ok(entries) = fs::read_dir(&au_v3_root) {
         for entry in entries.flatten() {
-            let name = entry.file_name();
-            let name = name.to_string_lossy();
-            if name.starts_with("au_v3_build_") || name.starts_with("au_v3_fw_") {
-                let _ = fs::remove_dir_all(entry.path());
-                eprintln!("  Removed: {}", entry.path().display());
-            }
+            let _ = fs::remove_dir_all(entry.path());
+            eprintln!("  Removed: {}", entry.path().display());
         }
     }
 

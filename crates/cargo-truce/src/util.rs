@@ -594,11 +594,65 @@ pub(crate) fn tmp_dir() -> PathBuf {
     dir
 }
 
+// Per-purpose subdirs under `tmp/`. Keeping `tmp/` from becoming a flat
+// junk drawer of `aax_template/`, `entitlements.plist`, `*.bat`,
+// `<id>_lv2_stage/`, `<id>_vst3.plist`, `verify-pkg-*/` … each shape
+// gets its own subdir below. Helpers always create the dir lazily.
+
+/// `tmp/manifests/` — short-lived plist / `.manifest` / `.json` config
+/// files handed to platform tools (codesign, signtool, pkgbuild, etc).
+pub(crate) fn tmp_manifests() -> PathBuf {
+    let dir = tmp_dir().join("manifests");
+    let _ = fs::create_dir_all(&dir);
+    dir
+}
+
+/// `tmp/scripts/` — generated `.bat` / shell driver scripts. Only the
+/// Windows AAX builder shells out to `.bat` files today; if macOS ever
+/// grows a similar driver this gate can widen.
+#[cfg(target_os = "windows")]
+pub(crate) fn tmp_scripts() -> PathBuf {
+    let dir = tmp_dir().join("scripts");
+    let _ = fs::create_dir_all(&dir);
+    dir
+}
+
+/// `tmp/verify/` — scratch dirs for post-build artifact verification
+/// (pkgutil --expand targets, validator inputs).
+pub(crate) fn tmp_verify() -> PathBuf {
+    let dir = tmp_dir().join("verify");
+    let _ = fs::create_dir_all(&dir);
+    dir
+}
+
+/// `tmp/aax-template/` — Avid AAX C++ wrapper build directory.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+pub(crate) fn tmp_aax_template() -> PathBuf {
+    let dir = tmp_dir().join("aax-template");
+    let _ = fs::create_dir_all(&dir);
+    dir
+}
+
+/// `tmp/au-v3/<bundle_id>/` — per-plugin AU v3 framework + appex build root.
+#[cfg(target_os = "macos")]
+pub(crate) fn tmp_au_v3(bundle_id: &str) -> PathBuf {
+    let dir = tmp_dir().join("au-v3").join(bundle_id);
+    let _ = fs::create_dir_all(&dir);
+    dir
+}
+
+/// `tmp/lv2/<bundle_id>/` — LV2 bundle staging directory.
+pub(crate) fn tmp_lv2(bundle_id: &str) -> PathBuf {
+    let dir = tmp_dir().join("lv2").join(bundle_id);
+    let _ = fs::create_dir_all(&dir);
+    dir
+}
+
 /// Write entitlements.plist to a temp file and return its path.
 /// Only consumed by `codesign_bundle` on macOS.
 #[cfg(target_os = "macos")]
 pub(crate) fn write_entitlements_plist() -> PathBuf {
-    let path = tmp_dir().join("entitlements.plist");
+    let path = tmp_manifests().join("entitlements.plist");
     let content = r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

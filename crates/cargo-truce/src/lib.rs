@@ -31,16 +31,29 @@ pub(crate) use util::{
     cargo_build, cargo_build_debug, check_cmd, codesign_bundle, confirm_prompt,
     detect_default_features, find_on_path, is_debug_profile, log_output, log_skip, project_root,
     read_standalone_bin_name, release_lib, run_sudo, set_build_profile, set_debug_profile,
-    tag_fail, tag_ok, tag_warn, take_outputs, take_skipped, tmp_dir, verify_shell_profile_declared,
-    vprintln,
+    tag_fail, tag_ok, tag_warn, take_outputs, take_skipped, tmp_verify,
+    verify_shell_profile_declared, vprintln,
 };
+// `tmp_dir` is the raw escape hatch — used by `reset_au` (macOS only)
+// to walk every subdir under `tmp/`. Most callers pick the typed
+// helper that matches their purpose (`tmp_manifests`, `tmp_lv2`, …).
+#[cfg(target_os = "macos")]
+pub(crate) use util::tmp_dir;
+// `tmp_manifests` is used on both macOS (codesign / AU / VST plist
+// scratch) and Windows (Azure signing metadata). Not used on Linux
+// since the tarball pipeline doesn't shell out to platform tools.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+pub(crate) use util::tmp_manifests;
+// `tmp_lv2` is consumed by the cross-platform LV2 installer in
+// `commands::install::mod`, so it stays unconditionally re-exported.
+pub(crate) use util::tmp_lv2;
 
 // Re-exports used only by the macOS / Windows installer pipelines.
 // Linux ships plugins via distro tooling rather than the bundled
 // `package` flow, so these symbols are absent there.
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(crate) use util::{
-    read_workspace_version, release_lib_for_target, rustup_has_target, tag_info,
+    read_workspace_version, release_lib_for_target, rustup_has_target, tag_info, tmp_aax_template,
 };
 
 // macOS-only: codesign / lipo / notary / AAX PACE-sign pipeline. The
@@ -53,6 +66,7 @@ pub(crate) use config::PackagingConfig;
 pub(crate) use util::{
     MacArch, cargo_build_for_arch, copy_dir_recursive, extract_team_id, is_production_identity,
     lipo_into, locate_wraptool_macos, pace_sign_aax_macos, run_codesign, run_quiet, run_silent,
+    tmp_au_v3,
 };
 
 // Windows-only: VS / MSVC / cmake / ninja discovery + Program Files
@@ -63,7 +77,7 @@ pub(crate) use config::WindowsSigningConfig;
 #[cfg(target_os = "windows")]
 pub(crate) use util::{
     common_program_files, locate_cmake, locate_msvc_cl, locate_ninja, locate_vcvars64,
-    program_files, vs_install_paths, which_exe,
+    program_files, tmp_scripts, vs_install_paths, which_exe,
 };
 
 use std::process::ExitCode;
