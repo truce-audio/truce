@@ -53,6 +53,7 @@ env:
     truce-example-gain-iced
     truce-example-gain-slint
     truce-example-tremolo
+    truce-example-state
 
 jobs:
   linux:
