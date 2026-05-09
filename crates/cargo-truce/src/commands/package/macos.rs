@@ -18,7 +18,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-pub(crate) fn cmd_package_macos(args: &[String]) -> Res {
+pub(crate) fn cmd_package_macos(args: &[String], selection: &super::SuiteSelection) -> Res {
     let config = load_config()?;
     let root = project_root();
     let dt = &deployment_target();
@@ -77,12 +77,310 @@ pub(crate) fn cmd_package_macos(args: &[String]) -> Res {
         universal,
         has_au2: formats.contains(&PkgFormat::Au2),
     };
+    // Per-plugin installers always run pkgbuild to produce the
+    // component packages; whether we *also* run productbuild +
+    // notarize for the per-plugin .pkg is the --no-per-plugin gate.
+    // The component .pkgs are needed by the suite wrapper below.
+    let suites: Vec<crate::config::ResolvedSuite<'_>> = config
+        .suites
+        .iter()
+        .filter(|s| selection.want_suite(&s.name))
+        .map(|s| s.resolve(&config.plugin))
+        .collect::<Result<_, _>>()?;
+    let need_components_only = !selection.want_per_plugin() && !suites.is_empty();
+
     for p in &plugins {
-        package_one_plugin(&root, p, &dist_dir, &opts)?;
+        if selection.want_per_plugin() {
+            package_one_plugin(&root, p, &dist_dir, &opts)?;
+        } else if need_components_only {
+            // Suite wrapping needs per-plugin components on disk.
+            // Build them without running productbuild + notarize for
+            // the per-plugin output.
+            stage_components_only(&root, p, &opts)?;
+        }
+    }
+    if !selection.want_per_plugin() {
+        eprintln!("Skipping per-plugin .pkg installers (--no-per-plugin).");
+    }
+
+    if !suites.is_empty() {
+        eprintln!("\n=== Suite installers ===");
+        for suite in &suites {
+            package_one_suite(&root, suite, &dist_dir, &opts)?;
+        }
     }
 
     eprintln!("\nDone. Installers in {}", dist_dir.display());
     Ok(())
+}
+
+/// Run only the staging + per-format pkgbuild steps of the
+/// per-plugin pipeline. Used by suite-wrapping when the user has
+/// `--no-per-plugin` set: we still need the component .pkgs as
+/// productbuild input, but skip the final per-plugin productbuild
+/// + notarization round-trip.
+///
+/// The component .pkgs land at
+/// `<staging>/components/<Plugin>-<format>.pkg`, which is the same
+/// path the full per-plugin pipeline writes them to.
+fn stage_components_only(root: &Path, p: &PluginDef, o: &PackageOpts) -> Res {
+    eprintln!("\n=== Components for: {} ===", p.name);
+
+    let staging = truce_build::target_dir(root)
+        .join("package")
+        .join(&p.bundle_id);
+    let _ = fs::remove_dir_all(&staging);
+    fs::create_dir_all(&staging)?;
+
+    for fmt in o.formats {
+        eprint!("  Staging {}... ", fmt.label());
+        let result = match fmt {
+            PkgFormat::Clap => stage_clap(root, p, &staging, o.config.macos.application_identity()),
+            PkgFormat::Vst3 => stage_vst3(root, p, o.config, &staging),
+            PkgFormat::Vst2 => stage_vst2(root, p, o.config, &staging).map(|_| ()),
+            PkgFormat::Au2 => stage_au2(root, p, o.config, &staging),
+            PkgFormat::Au3 => stage_au3(root, p, o.config, &staging),
+            PkgFormat::Aax => stage_aax(root, p, o.config, &staging, o.universal, o.no_pace_sign),
+            PkgFormat::Standalone => Err(
+                "Standalone packaging on macOS is not wired into `cargo truce package` yet.".into(),
+            ),
+        };
+        match result {
+            Ok(()) => eprintln!("ok"),
+            Err(e) => {
+                eprintln!("FAILED: {e}");
+                return Err(e);
+            }
+        }
+    }
+
+    let components_dir = staging.join("components");
+    fs::create_dir_all(&components_dir)?;
+    let scripts_dir = staging.join("au_scripts");
+    if o.has_au2 {
+        write_postinstall_script(&scripts_dir)?;
+    }
+    for fmt in o.formats {
+        run_pkgbuild_for_format(p, fmt, &staging, &components_dir, &scripts_dir, o)?;
+    }
+    Ok(())
+}
+
+/// Build one suite installer: wrap each member plugin's component
+/// .pkgs in a single productbuild Distribution.xml that exposes
+/// each plugin as a top-level choice.
+fn package_one_suite(
+    root: &Path,
+    suite: &crate::config::ResolvedSuite<'_>,
+    dist_dir: &Path,
+    o: &PackageOpts,
+) -> Res {
+    let suite_name = &suite.def.name;
+    eprintln!("\n  → {} ({} plugins)", suite_name, suite.plugins.len());
+
+    // Collect every member plugin's component .pkgs into a single
+    // directory that productbuild reads with `--package-path`.
+    let suite_staging = truce_build::target_dir(root)
+        .join("package")
+        .join(format!("suite-{}", suite.def.bundle_id));
+    let _ = fs::remove_dir_all(&suite_staging);
+    fs::create_dir_all(&suite_staging)?;
+    let components_dir = suite_staging.join("components");
+    fs::create_dir_all(&components_dir)?;
+
+    for plugin in &suite.plugins {
+        let plugin_components = truce_build::target_dir(root)
+            .join("package")
+            .join(&plugin.bundle_id)
+            .join("components");
+        if !plugin_components.exists() {
+            return Err(format!(
+                "suite '{}': missing component .pkgs for {} at {}. \
+                 Run `cargo truce package` without --no-per-plugin first, \
+                 or omit --no-per-plugin to let the suite flow build them.",
+                suite_name,
+                plugin.name,
+                plugin_components.display(),
+            )
+            .into());
+        }
+        for entry in fs::read_dir(&plugin_components)? {
+            let entry = entry?;
+            if entry.path().extension().is_some_and(|e| e == "pkg") {
+                fs::copy(entry.path(), components_dir.join(entry.file_name()))?;
+            }
+        }
+    }
+
+    // Suite-level Distribution.xml: one outer choice per plugin,
+    // one inner per-format choice underneath. Reuses the
+    // per-format pkg-ref names (`{plugin_name}-{format}.pkg`) the
+    // existing per-plugin pipeline emits.
+    let suite_version = suite.def.version.as_deref().unwrap_or(o.version);
+    let dist_xml = generate_suite_distribution_xml(
+        suite,
+        &o.config.vendor.id,
+        o.formats,
+        suite_version,
+        Some(&o.config.packaging),
+        o.effective_scope,
+    );
+    let dist_xml_path = suite_staging.join("distribution.xml");
+    fs::write(&dist_xml_path, &dist_xml)?;
+
+    let resources_dir = suite_staging.join("resources");
+    fs::create_dir_all(&resources_dir)?;
+    for (key, dst_name) in [
+        (o.config.packaging.welcome_html.as_deref(), "welcome.html"),
+        (o.config.packaging.license_html.as_deref(), "license.html"),
+    ] {
+        if let Some(html) = key {
+            let src = root.join(html);
+            if src.exists() {
+                fs::copy(&src, resources_dir.join(dst_name))?;
+            }
+        }
+    }
+
+    // productbuild → final suite .pkg.
+    let pkg_name = format!(
+        "{}-{}-macos{}.pkg",
+        suite.def.bundle_id,
+        suite_version,
+        o.scope.dist_suffix(),
+    );
+    let pkg_path = dist_dir.join(&pkg_name);
+    let mut pb_args = vec![
+        "--distribution".to_string(),
+        dist_xml_path.to_string_lossy().into_owned(),
+        "--package-path".to_string(),
+        components_dir.to_string_lossy().into_owned(),
+        "--resources".to_string(),
+        resources_dir.to_string_lossy().into_owned(),
+    ];
+    if let Some(id) = o.config.macos.installer_identity() {
+        pb_args.push("--sign".to_string());
+        pb_args.push(id.to_string());
+    }
+    pb_args.push(pkg_path.to_string_lossy().into_owned());
+
+    eprintln!("    productbuild...");
+    let status = Command::new("productbuild").args(&pb_args).status()?;
+    if !status.success() {
+        return Err(format!("productbuild failed for suite '{suite_name}'").into());
+    }
+
+    if o.config.macos.packaging.notarize && !o.no_notarize {
+        notarize_and_staple(&pkg_path, o.config)?;
+    }
+
+    eprintln!("    Suite ready: {}", pkg_path.display());
+    Ok(())
+}
+
+/// Distribution.xml for a suite installer: one outer `<choice>` per
+/// plugin (a parent), with inner per-format `<choice>`s as children.
+/// End-user UX in Apple Installer.app: the "Customize" button opens
+/// a tree where each plugin is collapsible and lists its formats.
+fn generate_suite_distribution_xml(
+    suite: &crate::config::ResolvedSuite<'_>,
+    vendor_id: &str,
+    formats: &[PkgFormat],
+    version: &str,
+    resources: Option<&crate::config::PackagingConfig>,
+    scope: crate::install_scope::PkgScope,
+) -> String {
+    use std::fmt::Write as _;
+
+    let mut outline = String::new();
+    let mut choices = String::new();
+    let mut pkg_refs = String::new();
+
+    for plugin in &suite.plugins {
+        let outer_id = sanitize_id(&plugin.bundle_id);
+        let _ = writeln!(outline, "        <line choice=\"{outer_id}\">");
+        for fmt in formats {
+            let inner_id = format!("{outer_id}-{}", fmt.pkg_id_suffix());
+            let _ = writeln!(outline, "            <line choice=\"{inner_id}\"/>");
+        }
+        let _ = writeln!(outline, "        </line>");
+
+        let _ = write!(
+            choices,
+            r#"
+    <choice id="{outer_id}" title="{plugin_name}" description="All formats for {plugin_name}.">
+"#,
+            plugin_name = plugin.name,
+        );
+        for fmt in formats {
+            let inner_id = format!("{outer_id}-{}", fmt.pkg_id_suffix());
+            let pkg_id = format!("{vendor_id}.{}.{}", plugin.bundle_id, fmt.pkg_id_suffix());
+            let component_file = format!("{}-{}.pkg", plugin.name, fmt.label());
+            let label = fmt.label();
+            let desc = fmt.choice_description();
+            let enabled_attr = if *fmt == PkgFormat::Aax {
+                "\n            selected=\"false\""
+            } else {
+                ""
+            };
+            let _ = write!(
+                choices,
+                r#"        <choice id="{inner_id}" title="{label}" description="{desc}"{enabled_attr}>
+            <pkg-ref id="{pkg_id}"/>
+        </choice>
+"#
+            );
+            let _ = writeln!(
+                pkg_refs,
+                "    <pkg-ref id=\"{pkg_id}\" version=\"{version}\">{component_file}</pkg-ref>"
+            );
+        }
+        choices.push_str("    </choice>\n");
+    }
+
+    let welcome = resources
+        .and_then(|r| r.welcome_html.as_deref())
+        .map_or("", |_| "    <welcome file=\"welcome.html\"/>\n");
+    let license = resources
+        .and_then(|r| r.license_html.as_deref())
+        .map_or("", |_| "    <license file=\"license.html\"/>\n");
+
+    let domains = match scope {
+        crate::install_scope::PkgScope::User => {
+            "    <domains enable_anywhere=\"false\" enable_currentUserHome=\"true\" enable_localSystem=\"false\"/>\n"
+        }
+        crate::install_scope::PkgScope::System => {
+            "    <domains enable_anywhere=\"false\" enable_currentUserHome=\"false\" enable_localSystem=\"true\"/>\n"
+        }
+        crate::install_scope::PkgScope::Ask => {
+            "    <domains enable_anywhere=\"false\" enable_currentUserHome=\"true\" enable_localSystem=\"true\"/>\n"
+        }
+    };
+
+    let title = &suite.def.name;
+    format!(
+        r#"<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="2">
+    <title>{title}</title>
+{welcome}{license}{domains}    <options customize="always" require-scripts="false"/>
+
+    <choices-outline>
+{outline}    </choices-outline>
+{choices}
+{pkg_refs}</installer-gui-script>
+"#,
+    )
+}
+
+/// XML-attribute-safe identifier from a `bundle_id` that may contain
+/// dots / dashes / etc. Distribution.xml choice ids must be
+/// non-empty, ASCII, and unique across the file; collapsing
+/// non-alphanumerics to `_` covers every realistic `bundle_id` we
+/// produce.
+fn sanitize_id(s: &str) -> String {
+    s.chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect()
 }
 
 /// Parsed CLI flags for `cargo truce package` on macOS.
@@ -329,6 +627,20 @@ fn package_one_plugin(root: &Path, p: &PluginDef, dist_dir: &Path, o: &PackageOp
             PkgFormat::Au2 => stage_au2(root, p, o.config, &staging),
             PkgFormat::Au3 => stage_au3(root, p, o.config, &staging),
             PkgFormat::Aax => stage_aax(root, p, o.config, &staging, o.universal, o.no_pace_sign),
+            // Standalone packaging on macOS is staged through the
+            // existing `cargo truce run` `.app` bundle pipeline; the
+            // pkgbuild step writes the staged `.app` to `/Applications/`.
+            // Full integration (cross-arch lipo, hardened-runtime
+            // entitlements review, notarization smoke-test) lands in a
+            // follow-up — for now emit a clear "not wired" error so the
+            // user knows the slot is recognised but not yet shippable.
+            PkgFormat::Standalone => Err(
+                "Standalone packaging on macOS is not wired into `cargo truce package` yet. \
+                 Use `cargo truce run -p <crate>` to build the standalone .app for now; \
+                 the package-pipeline integration is tracked alongside the multi-plugin \
+                 installer rollout."
+                    .into(),
+            ),
         };
         match result {
             Ok(()) => eprintln!("ok"),

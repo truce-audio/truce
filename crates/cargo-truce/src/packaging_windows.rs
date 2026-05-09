@@ -98,8 +98,24 @@ impl TargetArch {
 // Entry point
 // ---------------------------------------------------------------------------
 
-pub(crate) fn cmd_package(args: &[String]) -> Res {
+pub(crate) fn cmd_package(
+    args: &[String],
+    selection: &crate::commands::package::SuiteSelection,
+) -> Res {
     let opts = parse_args(args)?;
+
+    // Suite installers on Windows = per-suite Inno `[Components]`
+    // tree wrapping every member plugin's bundles + [Files] block.
+    // Not implemented in this slice; surface a clear error so the
+    // flag isn't silently no-op'd.
+    if !selection.only_suites.is_empty() || selection.no_suite {
+        eprintln!(
+            "NOTE: --suite / --no-suite are accepted on Windows but suite \
+             installer generation is not yet implemented (per-plugin \
+             installers will still ship). The Inno Setup [Components] \
+             multi-plugin tree is tracked as a follow-up."
+        );
+    }
 
     let config = load_config()?;
     let root = project_root();
@@ -160,6 +176,14 @@ pub(crate) fn cmd_package(args: &[String]) -> Res {
 
     let dist_dir = truce_build::target_dir(&root).join("dist");
     fs::create_dir_all(&dist_dir)?;
+
+    if !selection.want_per_plugin() {
+        eprintln!(
+            "Skipping per-plugin .exe installers (--no-per-plugin). \
+             Suite-only output on Windows is not yet implemented; nothing to do."
+        );
+        return Ok(());
+    }
 
     for p in &plugins {
         eprintln!("\n=== Packaging: {} ({}) ===", p.name, archs_label(&archs));

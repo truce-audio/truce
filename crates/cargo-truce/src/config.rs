@@ -24,6 +24,11 @@ pub(crate) struct Config {
     #[serde(default)]
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub(crate) packaging: PackagingConfig,
+    /// Suite installers — repeatable. Each entry produces one
+    /// installer per platform that bundles the listed plugins.
+    /// Empty = per-plugin output only (today's behaviour).
+    #[serde(default, rename = "suite")]
+    pub(crate) suites: Vec<SuiteDef>,
 }
 
 // Windows-only config fields. Consumed by `packaging_windows.rs`, which
@@ -280,6 +285,125 @@ fn default_au_tag() -> String {
     "Effects".to_string()
 }
 
+/// One `[[suite]]` entry from `truce.toml`. Bundles a subset of the
+/// workspace's plugins into a single installer per platform.
+///
+/// Defaults: `plugins` omitted → all workspace plugins; `formats`
+/// omitted → union of every included plugin's enabled formats;
+/// `version` omitted → workspace version. `plugins` and
+/// `exclude_plugins` are mutually exclusive — supplying both is a
+/// hard error caught at validation time.
+#[derive(Deserialize, Debug)]
+pub(crate) struct SuiteDef {
+    pub(crate) name: String,
+    pub(crate) bundle_id: String,
+    /// Explicit plugin list. Names match `[[plugin]].crate` (or
+    /// `[[plugin]].bundle_id` — both accepted). Omit for "all".
+    #[serde(default)]
+    pub(crate) plugins: Option<Vec<String>>,
+    /// Plugins to exclude from the otherwise-implicit "all". Mutually
+    /// exclusive with `plugins`.
+    #[serde(default)]
+    pub(crate) exclude_plugins: Option<Vec<String>>,
+    /// Per-suite format restriction. Intersected with each included
+    /// plugin's enabled formats. Omit for the union.
+    #[serde(default)]
+    pub(crate) formats: Option<Vec<String>>,
+    /// Suite-level version. Falls back to `[workspace.package].version`.
+    #[serde(default)]
+    pub(crate) version: Option<String>,
+    /// Display blurb in the installer welcome page (where supported).
+    #[serde(default)]
+    #[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
+    pub(crate) description: Option<String>,
+}
+
+impl SuiteDef {
+    /// Validate the suite against the workspace config. Returns the
+    /// resolved plugin set + format set the suite should ship.
+    ///
+    /// `workspace_plugins` is the full `Config::plugin` slice. Plugin
+    /// names in the suite's `plugins` / `exclude_plugins` fields can
+    /// be either the cargo crate name (`[[plugin]].crate`) or the
+    /// `bundle_id`; both forms resolve here.
+    pub(crate) fn resolve<'a>(
+        &'a self,
+        workspace_plugins: &'a [PluginDef],
+    ) -> Result<ResolvedSuite<'a>, BoxErr> {
+        if self.plugins.is_some() && self.exclude_plugins.is_some() {
+            return Err(format!(
+                "[[suite]] '{}' sets both `plugins` and `exclude_plugins` — \
+                 these are mutually exclusive",
+                self.name,
+            )
+            .into());
+        }
+
+        let resolve_one = |needle: &str| -> Result<&'a PluginDef, BoxErr> {
+            workspace_plugins
+                .iter()
+                .find(|p| p.crate_name == needle || p.bundle_id == needle)
+                .ok_or_else(|| {
+                    format!(
+                        "[[suite]] '{}': plugin '{}' is not in the workspace. \
+                         Available: {}",
+                        self.name,
+                        needle,
+                        workspace_plugins
+                            .iter()
+                            .map(|p| p.crate_name.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                    )
+                    .into()
+                })
+        };
+
+        let plugins: Vec<&PluginDef> = if let Some(list) = &self.plugins {
+            list.iter()
+                .map(|s| resolve_one(s))
+                .collect::<Result<Vec<_>, _>>()?
+        } else if let Some(excl) = &self.exclude_plugins {
+            let exclude_set: Vec<&PluginDef> = excl
+                .iter()
+                .map(|s| resolve_one(s))
+                .collect::<Result<Vec<_>, _>>()?;
+            workspace_plugins
+                .iter()
+                .filter(|p| !exclude_set.iter().any(|e| std::ptr::eq(*e, *p)))
+                .collect()
+        } else {
+            workspace_plugins.iter().collect()
+        };
+
+        if plugins.is_empty() {
+            return Err(format!(
+                "[[suite]] '{}' resolves to zero plugins after \
+                 plugins/exclude_plugins resolution",
+                self.name,
+            )
+            .into());
+        }
+
+        Ok(ResolvedSuite {
+            def: self,
+            plugins,
+            formats: self.formats.as_deref(),
+        })
+    }
+}
+
+/// Result of [`SuiteDef::resolve`]. Borrows from the original
+/// workspace config so we don't clone every plugin per suite.
+pub(crate) struct ResolvedSuite<'a> {
+    pub(crate) def: &'a SuiteDef,
+    pub(crate) plugins: Vec<&'a PluginDef>,
+    /// Caller intersects this with each plugin's enabled formats.
+    /// `None` = no per-suite restriction (use union of plugin defaults).
+    #[allow(dead_code)]
+    pub(crate) formats: Option<&'a [String]>,
+}
+
 /// Resolve the application signing identity:
 /// `[macos.signing].application_identity` → `TRUCE_SIGNING_IDENTITY` env →
 /// `.cargo/config.toml` `[env].TRUCE_SIGNING_IDENTITY` → ad-hoc.
@@ -405,4 +529,131 @@ pub(crate) fn load_config() -> std::result::Result<Config, BoxErr> {
         config.macos.signing.installer_identity = resolve_installer_identity(&config);
     }
     Ok(config)
+}
+
+#[cfg(test)]
+mod suite_tests {
+    use super::*;
+
+    fn plugin(crate_name: &str, bundle_id: &str) -> PluginDef {
+        PluginDef {
+            name: crate_name.into(),
+            bundle_id: bundle_id.into(),
+            crate_name: crate_name.into(),
+            fourcc: None,
+            category: "effect".into(),
+            au_type: None,
+            au_subtype: None,
+            au3_subtype: None,
+            au_tag: default_au_tag(),
+            clap_name: None,
+            vst3_name: None,
+            vst2_name: None,
+            au_name: None,
+            au3_name: None,
+            aax_name: None,
+            lv2_name: None,
+        }
+    }
+
+    fn suite(name: &str) -> SuiteDef {
+        SuiteDef {
+            name: name.into(),
+            bundle_id: name.to_lowercase(),
+            plugins: None,
+            exclude_plugins: None,
+            formats: None,
+            version: None,
+            description: None,
+        }
+    }
+
+    #[test]
+    fn default_resolves_to_all_workspace_plugins() {
+        let plugins = vec![plugin("a", "a"), plugin("b", "b"), plugin("c", "c")];
+        let s = suite("Studio");
+        let r = match s.resolve(&plugins) {
+            Ok(r) => r,
+            Err(e) => panic!("resolve failed: {e}"),
+        };
+        assert_eq!(r.plugins.len(), 3);
+    }
+
+    #[test]
+    fn explicit_plugin_list_narrows() {
+        let plugins = vec![plugin("a", "a"), plugin("b", "b"), plugin("c", "c")];
+        let mut s = suite("Studio");
+        s.plugins = Some(vec!["a".into(), "c".into()]);
+        let r = match s.resolve(&plugins) {
+            Ok(r) => r,
+            Err(e) => panic!("resolve failed: {e}"),
+        };
+        let names: Vec<_> = r.plugins.iter().map(|p| p.crate_name.as_str()).collect();
+        assert_eq!(names, vec!["a", "c"]);
+    }
+
+    #[test]
+    fn exclude_plugins_inverts() {
+        let plugins = vec![plugin("a", "a"), plugin("b", "b"), plugin("c", "c")];
+        let mut s = suite("Studio");
+        s.exclude_plugins = Some(vec!["b".into()]);
+        let r = match s.resolve(&plugins) {
+            Ok(r) => r,
+            Err(e) => panic!("resolve failed: {e}"),
+        };
+        let names: Vec<_> = r.plugins.iter().map(|p| p.crate_name.as_str()).collect();
+        assert_eq!(names, vec!["a", "c"]);
+    }
+
+    #[test]
+    fn bundle_id_resolves_alongside_crate_name() {
+        let plugins = vec![plugin("acme-gain", "gain")];
+        let mut s = suite("Studio");
+        // Reference by bundle_id rather than crate name.
+        s.plugins = Some(vec!["gain".into()]);
+        let r = match s.resolve(&plugins) {
+            Ok(r) => r,
+            Err(e) => panic!("resolve failed: {e}"),
+        };
+        assert_eq!(r.plugins.len(), 1);
+    }
+
+    #[test]
+    fn unknown_plugin_errors() {
+        let plugins = vec![plugin("a", "a")];
+        let mut s = suite("Studio");
+        s.plugins = Some(vec!["does-not-exist".into()]);
+        let err = match s.resolve(&plugins) {
+            Err(e) => e.to_string(),
+            Ok(_) => panic!("expected resolve to error"),
+        };
+        assert!(err.contains("does-not-exist"), "got: {err}");
+        assert!(err.contains("Studio"), "got: {err}");
+    }
+
+    #[test]
+    fn plugins_and_exclude_plugins_both_set_errors() {
+        let plugins = vec![plugin("a", "a")];
+        let mut s = suite("Studio");
+        s.plugins = Some(vec!["a".into()]);
+        s.exclude_plugins = Some(vec!["a".into()]);
+        let err = match s.resolve(&plugins) {
+            Err(e) => e.to_string(),
+            Ok(_) => panic!("expected resolve to error"),
+        };
+        assert!(err.contains("mutually exclusive"));
+    }
+
+    #[test]
+    fn empty_resolution_errors() {
+        // Three plugins, exclude all three → zero remaining.
+        let plugins = vec![plugin("a", "a"), plugin("b", "b")];
+        let mut s = suite("Studio");
+        s.exclude_plugins = Some(vec!["a".into(), "b".into()]);
+        let err = match s.resolve(&plugins) {
+            Err(e) => e.to_string(),
+            Ok(_) => panic!("expected resolve to error"),
+        };
+        assert!(err.contains("zero plugins"), "got: {err}");
+    }
 }

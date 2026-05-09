@@ -1,0 +1,223 @@
+#!/bin/sh
+# {{PROJECT}} — install script
+# Vendor: {{VENDOR}}
+#
+# Usage:
+#   ./install.sh                    # interactive
+#   ./install.sh --user             # user scope (default)
+#   ./install.sh --system           # system scope (uses sudo)
+#   ./install.sh --plugin <name>    # repeatable; subset of plugins
+#   ./install.sh --all              # every plugin
+#   ./install.sh --formats clap,vst3   # subset of formats
+#   ./install.sh --dry-run          # print actions without copying
+#   ./install.sh --help
+
+set -eu
+
+PLUGINS_AVAILABLE="{{PLUGIN_NAMES}}"
+
+print_help() {
+    cat <<EOF
+{{PROJECT}} installer
+
+Usage: ./install.sh [options]
+
+  --user             Install to per-user paths (default).
+  --system           Install to system paths (uses sudo).
+  --plugin <name>    Install only this plugin (repeatable).
+                     Available: ${PLUGINS_AVAILABLE}
+  --all              Install every plugin without prompting.
+  --formats <list>   Comma-separated subset
+                     (clap, vst3, lv2, vst, standalone).
+                     Default: every format present in this archive.
+  --dry-run          Print what would be copied; copy nothing.
+  -h, --help         Show this message.
+EOF
+}
+
+# Resolve install paths up front. User scope expands ~; system
+# uses /usr/lib (Debian-ish) which Reaper, Bitwig, and Ardour all
+# scan. /usr/local/lib is the Debian-policy alternative for
+# locally-installed software but DAWs need to be configured to
+# look there.
+USER_BASE_HOME="${HOME}"
+USER_CLAP_DIR="${USER_BASE_HOME}/.clap"
+USER_VST3_DIR="${USER_BASE_HOME}/.vst3"
+USER_LV2_DIR="${USER_BASE_HOME}/.lv2"
+USER_VST_DIR="${USER_BASE_HOME}/.vst"
+USER_BIN_DIR="${USER_BASE_HOME}/.local/bin"
+USER_DESKTOP_DIR="${USER_BASE_HOME}/.local/share/applications"
+
+SYSTEM_CLAP_DIR="/usr/lib/clap"
+SYSTEM_VST3_DIR="/usr/lib/vst3"
+SYSTEM_LV2_DIR="/usr/lib/lv2"
+SYSTEM_VST_DIR="/usr/lib/vst"
+SYSTEM_BIN_DIR="/usr/bin"
+SYSTEM_DESKTOP_DIR="/usr/share/applications"
+
+SCOPE="user"
+DRY_RUN=0
+SUDO=""
+SELECTED_PLUGINS=""
+SELECTED_FORMATS=""
+INSTALL_ALL=0
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --user)   SCOPE="user" ;;
+        --system) SCOPE="system" ;;
+        --plugin)
+            shift
+            [ $# -gt 0 ] || { echo "--plugin requires a name" >&2; exit 2; }
+            SELECTED_PLUGINS="${SELECTED_PLUGINS} $1"
+            ;;
+        --all)    INSTALL_ALL=1 ;;
+        --formats)
+            shift
+            [ $# -gt 0 ] || { echo "--formats requires a list" >&2; exit 2; }
+            SELECTED_FORMATS="$1"
+            ;;
+        --dry-run) DRY_RUN=1 ;;
+        -h|--help) print_help; exit 0 ;;
+        *) echo "Unknown option: $1" >&2; print_help; exit 2 ;;
+    esac
+    shift
+done
+
+if [ "$SCOPE" = "system" ]; then
+    if [ "$(id -u)" -ne 0 ]; then
+        SUDO="sudo"
+    fi
+fi
+
+# Format inclusion check. Empty SELECTED_FORMATS = include all.
+format_selected() {
+    if [ -z "$SELECTED_FORMATS" ]; then return 0; fi
+    case ",${SELECTED_FORMATS}," in
+        *,$1,*) return 0 ;;
+        *)      return 1 ;;
+    esac
+}
+
+# Resolve install dir for a format slug ("clap"/"vst3"/"lv2"/"vst").
+dest_dir() {
+    case "$1" in
+        clap)
+            [ "$SCOPE" = "system" ] && echo "$SYSTEM_CLAP_DIR" || echo "$USER_CLAP_DIR"
+            ;;
+        vst3)
+            [ "$SCOPE" = "system" ] && echo "$SYSTEM_VST3_DIR" || echo "$USER_VST3_DIR"
+            ;;
+        lv2)
+            [ "$SCOPE" = "system" ] && echo "$SYSTEM_LV2_DIR" || echo "$USER_LV2_DIR"
+            ;;
+        vst)
+            [ "$SCOPE" = "system" ] && echo "$SYSTEM_VST_DIR" || echo "$USER_VST_DIR"
+            ;;
+        *) echo "" ;;
+    esac
+}
+
+# Run a copy step. Honours dry-run; uses sudo when system-scope and
+# the user isn't already root.
+do_copy() {
+    src="$1"
+    dst="$2"
+    if [ "$DRY_RUN" -eq 1 ]; then
+        echo "    (dry-run) cp -r $src $dst"
+        return
+    fi
+    parent="$(dirname "$dst")"
+    $SUDO mkdir -p "$parent"
+    if [ -e "$dst" ]; then $SUDO rm -rf "$dst"; fi
+    $SUDO cp -r "$src" "$dst"
+}
+
+install_bundle() {
+    fmt="$1"
+    src="$2"   # path inside the tarball
+    if ! format_selected "$fmt"; then
+        return 0
+    fi
+    if [ ! -e "$src" ]; then
+        echo "    skip: $src not in archive"
+        return 0
+    fi
+    base="$(basename "$src")"
+    dst_root="$(dest_dir "$fmt")"
+    [ -n "$dst_root" ] || { echo "    unknown format $fmt"; return 1; }
+    dst="${dst_root}/${base}"
+    echo "    -> ${fmt}: $dst"
+    do_copy "$src" "$dst"
+}
+
+install_standalone() {
+    src="$1"     # path inside the tarball
+    bin_name="$2"
+    if ! format_selected "standalone"; then
+        return 0
+    fi
+    if [ ! -e "$src" ]; then return 0; fi
+    if [ "$SCOPE" = "system" ]; then
+        bin_dst="$SYSTEM_BIN_DIR/$bin_name"
+        desktop_dst="$SYSTEM_DESKTOP_DIR/$bin_name.desktop"
+    else
+        bin_dst="$USER_BIN_DIR/$bin_name"
+        desktop_dst="$USER_DESKTOP_DIR/$bin_name.desktop"
+    fi
+    echo "    -> standalone: $bin_dst"
+    do_copy "$src" "$bin_dst"
+    if [ "$DRY_RUN" -eq 0 ]; then
+        $SUDO mkdir -p "$(dirname "$desktop_dst")"
+        $SUDO sh -c "cat > '$desktop_dst' <<EOF
+[Desktop Entry]
+Type=Application
+Name=$bin_name
+Exec=$bin_dst
+Categories=Audio;Music;
+EOF"
+        # Refresh the desktop-entry cache where available; not fatal
+        # if the tool is absent.
+        if command -v update-desktop-database >/dev/null 2>&1; then
+            $SUDO update-desktop-database "$(dirname "$desktop_dst")" 2>/dev/null || true
+        fi
+    fi
+}
+
+# Decide which plugins to install. Interactive when no --plugin / --all;
+# silent when the user specified.
+if [ "$INSTALL_ALL" -eq 1 ]; then
+    PLUGINS_TO_INSTALL="$PLUGINS_AVAILABLE"
+elif [ -n "$SELECTED_PLUGINS" ]; then
+    PLUGINS_TO_INSTALL="$SELECTED_PLUGINS"
+else
+    PLUGINS_TO_INSTALL=""
+    for p in $PLUGINS_AVAILABLE; do
+        printf "Install %s? [Y/n] " "$p"
+        IFS= read -r reply </dev/tty || reply=""
+        case "$reply" in
+            n|N|no|NO) ;;
+            *) PLUGINS_TO_INSTALL="$PLUGINS_TO_INSTALL $p" ;;
+        esac
+    done
+fi
+
+if [ -z "$(echo "$PLUGINS_TO_INSTALL" | tr -d '[:space:]')" ]; then
+    echo "Nothing selected. Bye."
+    exit 0
+fi
+
+echo
+echo "Scope: $SCOPE"
+[ "$DRY_RUN" -eq 1 ] && echo "Mode:  dry-run (no files will be written)"
+echo
+
+for plugin in $PLUGINS_TO_INSTALL; do
+    case "$plugin" in
+{{PLUGIN_CASES}}
+        *) echo "  unknown plugin: $plugin (available: $PLUGINS_AVAILABLE)"; exit 2 ;;
+    esac
+done
+
+echo
+echo "Done."
