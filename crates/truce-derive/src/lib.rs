@@ -1816,7 +1816,7 @@ pub fn derive_state(input: TokenStream) -> TokenStream {
                 // multi-GB synthetic count from forcing a long loop
                 // before the buffer underrun is detected.
                 let stored_count = (u32::from_le_bytes(count_bytes.try_into().ok()?) as usize)
-                    .min(cursor.remaining() / 4 + #field_count);
+                    .min(cursor.remaining() / 4 + #field_count as usize);
                 let mut result = Self::default();
                 let mut field_idx: usize = 0;
                 #(#read_fields)*
