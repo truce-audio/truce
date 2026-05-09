@@ -106,6 +106,11 @@ pub(crate) struct TruceTomlContext {
     pub vendor_id: String,
     pub vendor_fourcc: String,
     pub plugins: Vec<TruceTomlPlugin>,
+    /// Suite-installer block emitted only for multi-plugin workspace
+    /// scaffolds. `None` collapses the `{{ if suite }}` template guard
+    /// so single-plugin scaffolds get a clean `truce.toml` without
+    /// boilerplate they don't need.
+    pub suite: Option<TruceTomlSuite>,
 }
 
 #[derive(Serialize)]
@@ -116,6 +121,12 @@ pub(crate) struct TruceTomlPlugin {
     pub category: &'static str,
     pub fourcc: String,
     pub au_tag: &'static str,
+}
+
+#[derive(Serialize)]
+pub(crate) struct TruceTomlSuite {
+    pub name: String,
+    pub bundle_id: String,
 }
 
 impl TruceTomlContext {
@@ -145,11 +156,20 @@ impl TruceTomlContext {
                 }
             })
             .collect();
+        // Suite installers wrap multiple plugins. A single-plugin
+        // scaffold has nothing to wrap, so don't emit a `[[suite]]`
+        // block — the per-plugin installer is exactly what the user
+        // wants.
+        let suite = (is_workspace && plugins.len() >= 2).then(|| TruceTomlSuite {
+            name: to_pascal_case(workspace_name),
+            bundle_id: format!("{workspace_name}-suite"),
+        });
         Self {
             vendor_name: vendor.name.clone(),
             vendor_id: vendor.id.clone(),
             vendor_fourcc: super::fourcc::to_fourcc(&vendor.name),
             plugins: entries,
+            suite,
         }
     }
 }

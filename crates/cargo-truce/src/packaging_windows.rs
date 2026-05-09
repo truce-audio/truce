@@ -104,19 +104,6 @@ pub(crate) fn cmd_package(
 ) -> Res {
     let opts = parse_args(args)?;
 
-    // Suite installers on Windows = per-suite Inno `[Components]`
-    // tree wrapping every member plugin's bundles + [Files] block.
-    // Not implemented in this slice; surface a clear error so the
-    // flag isn't silently no-op'd.
-    if !selection.only_suites.is_empty() || selection.no_suite {
-        eprintln!(
-            "NOTE: --suite / --no-suite are accepted on Windows but suite \
-             installer generation is not yet implemented (per-plugin \
-             installers will still ship). The Inno Setup [Components] \
-             multi-plugin tree is tracked as a follow-up."
-        );
-    }
-
     let config = load_config()?;
     let root = project_root();
     let version = read_workspace_version(&root).unwrap_or_else(|| "0.0.0".to_string());
@@ -125,6 +112,27 @@ pub(crate) fn cmd_package(
     let plugins = resolve_plugins(&config, opts.plugin_filter.as_deref())?;
     let archs = opts.archs();
     let universal = archs.len() > 1;
+
+    // `-p <crate>` narrows the per-plugin loop to one plugin; that
+    // can't satisfy a multi-member suite. Skip suite installers when
+    // -p is active so the run doesn't fail looking for unstaged
+    // siblings at the suite step.
+    let suites: Vec<crate::config::ResolvedSuite<'_>> = if opts.plugin_filter.is_some() {
+        if !config.suites.is_empty() {
+            eprintln!(
+                "(-p set; skipping suite installers — they need every member plugin staged)"
+            );
+        }
+        Vec::new()
+    } else {
+        config
+            .suites
+            .iter()
+            .filter(|s| selection.want_suite(&s.name))
+            .map(|s| s.resolve(&config.plugin))
+            .collect::<std::result::Result<_, _>>()?
+    };
+    let need_staging_for_suites = !selection.want_per_plugin() && !suites.is_empty();
 
     // Scope resolution: CLI > truce.toml [packaging] preferred_scope >
     // OS default (`--ask`).
@@ -177,16 +185,8 @@ pub(crate) fn cmd_package(
     let dist_dir = truce_build::target_dir(&root).join("dist");
     fs::create_dir_all(&dist_dir)?;
 
-    if !selection.want_per_plugin() {
-        eprintln!(
-            "Skipping per-plugin .exe installers (--no-per-plugin). \
-             Suite-only output on Windows is not yet implemented; nothing to do."
-        );
-        return Ok(());
-    }
-
     for p in &plugins {
-        eprintln!("\n=== Packaging: {} ({}) ===", p.name, archs_label(&archs));
+        eprintln!("\nPackaging: {} ({})", p.name, archs_label(&archs));
 
         let staging = truce_build::target_dir(&root)
             .join("package/windows")
@@ -228,6 +228,16 @@ pub(crate) fn cmd_package(
             continue;
         }
 
+        if !selection.want_per_plugin() {
+            // Suite-only output: keep the staging dir on disk so the
+            // suite step below can reference it; skip per-plugin .iss /
+            // ISCC / signtool.
+            if need_staging_for_suites {
+                eprintln!("  (--no-per-plugin) Skipping per-plugin .exe; staging kept for suite.");
+            }
+            continue;
+        }
+
         let iss = render_iss(
             &config, p, &formats, &archs, &staging, &version, &dist_dir, scope,
         );
@@ -253,6 +263,24 @@ pub(crate) fn cmd_package(
             sign_files(std::slice::from_ref(&installer), &config.windows.signing)?;
         }
         eprintln!("  Installer: {}", installer.display());
+    }
+
+    if !suites.is_empty() {
+        eprintln!("\nSuite installers");
+        let staging_root = truce_build::target_dir(&root).join("package/windows");
+        for suite in &suites {
+            package_one_suite(
+                &config,
+                suite,
+                &formats,
+                &archs,
+                &staging_root,
+                &version,
+                &dist_dir,
+                scope,
+                opts.no_sign,
+            )?;
+        }
     }
 
     eprintln!("\nDone. Installers in {}", dist_dir.display());
@@ -379,6 +407,9 @@ fn resolve_formats(
         if available.contains("aax") {
             fmts.push(PkgFormat::Aax);
         }
+        if available.contains("standalone") {
+            fmts.push(PkgFormat::Standalone);
+        }
         fmts
     };
 
@@ -429,9 +460,10 @@ fn build_all_formats(
     let has_vst3 = formats.iter().any(|f| matches!(f, PkgFormat::Vst3));
     let has_vst2 = formats.iter().any(|f| matches!(f, PkgFormat::Vst2));
     let has_aax = formats.iter().any(|f| matches!(f, PkgFormat::Aax));
+    let has_standalone = formats.iter().any(|f| matches!(f, PkgFormat::Standalone));
 
     for &arch in archs {
-        eprintln!("--- Building for {} ---", arch.tag());
+        eprintln!("Building for {}", arch.tag());
         let triple = arch.triple();
 
         if has_clap {
@@ -502,6 +534,27 @@ fn build_all_formats(
                     release_lib_for_target(root, &format!("{}_vst2", p.dylib_stem()), Some(triple));
                 fs::copy(&src, &dst)?;
             }
+        }
+
+        if has_standalone {
+            // Standalone is a `[[bin]]` not a cdylib, so the build
+            // outputs land at `target/{triple}/release/{bin_stem}.exe`
+            // — no per-format suffix to manage. We just leave the
+            // per-arch outputs in place; `stage_standalone` reads
+            // them directly.
+            eprintln!("Building Standalone ({})...", arch.tag());
+            let mut build_args: Vec<String> = vec!["--target".into(), triple.into()];
+            for p in plugins {
+                build_args.push("-p".into());
+                build_args.push(p.crate_name.clone());
+            }
+            build_args.extend_from_slice(&[
+                "--no-default-features".into(),
+                "--features".into(),
+                "standalone".into(),
+            ]);
+            let arg_refs: Vec<&str> = build_args.iter().map(std::string::String::as_str).collect();
+            cargo_build(&[], &arg_refs, dt)?;
         }
 
         // AAX staging is host-arch-only (see stage_aax), so only build the
@@ -579,6 +632,9 @@ fn stage_plugin(
             PkgFormat::Au2 | PkgFormat::Au3 => {
                 return Err("AU is macOS-only; should have been filtered".into());
             }
+            PkgFormat::Standalone => {
+                signable.push(stage_standalone(root, p, staging, arch)?);
+            }
         }
         eprintln!("ok");
     }
@@ -603,6 +659,42 @@ fn stage_clap(
     fs::create_dir_all(&dst_dir)?;
     let dst = dst_dir.join(format!("{}.clap", p.name));
     fs::copy(&dll, &dst)?;
+    Ok(dst)
+}
+
+/// Stage the standalone host `.exe` for one architecture. Build step
+/// upstream produced `target/{triple}/release/{bin_stem}.exe`; we copy
+/// it to `<staging>/standalone/<arch>/{bin_stem}.exe` and embed the
+/// per-monitor v2 DPI manifest so the editor renders crisp on
+/// non-100% Windows displays. Returned path is fed to signtool.
+fn stage_standalone(
+    root: &Path,
+    p: &PluginDef,
+    staging: &Path,
+    arch: TargetArch,
+) -> std::result::Result<PathBuf, crate::BoxErr> {
+    let bin_stem = crate::read_standalone_bin_name(&p.crate_name)
+        .unwrap_or_else(|| format!("{}-standalone", p.crate_name));
+    let exe_name = format!("{bin_stem}.exe");
+
+    let built = truce_build::target_dir(root)
+        .join(arch.triple())
+        .join("release")
+        .join(&exe_name);
+    if !built.exists() {
+        return Err(format!(
+            "Standalone build produced no binary at {}. \
+             Make sure the plugin's Cargo.toml declares a [[bin]] target named '{bin_stem}'.",
+            built.display()
+        )
+        .into());
+    }
+
+    let dst_dir = staging.join("standalone").join(arch.tag());
+    fs::create_dir_all(&dst_dir)?;
+    let dst = dst_dir.join(&exe_name);
+    fs::copy(&built, &dst)?;
+    crate::windows_manifest::embed_dpi_manifest(&dst)?;
     Ok(dst)
 }
 
@@ -1030,45 +1122,7 @@ fn render_iss(
         setup.push_str("ArchitecturesInstallIn64BitMode=x64compatible\r\n");
         setup.push_str("ArchitecturesAllowed=x64compatible and not arm64\r\n");
     }
-    // PrivilegesRequired drives whether the installer relaunches
-    // itself elevated before the wizard even appears.
-    //   --user   → `lowest` if no system-only payloads (AAX, VST2);
-    //              `admin` otherwise — AAX / VST2 still need to write
-    //              under %COMMONPROGRAMFILES%/%PROGRAMFILES% so the
-    //              whole installer escalates once for them while
-    //              CLAP / VST3 still target user paths.
-    //   --system → `admin`. UAC on launch, lands under system paths.
-    //   --ask    → `admin` + `PrivilegesRequiredOverridesAllowed=...`
-    //              shows the "Choose installation mode" page and
-    //              relaunches elevated only if the user picks all-users.
-    let has_system_only_format = formats
-        .iter()
-        .any(|f| matches!(f, PkgFormat::Aax | PkgFormat::Vst2));
-    match scope {
-        PkgScope::User if has_system_only_format => {
-            setup.push_str("PrivilegesRequired=admin\r\n");
-            // Mixing admin elevation with `{usercf}` (per-user CLAP/VST3
-            // dest) is intentional here — the elevation exists to host
-            // the AAX/VST2 payloads, not to upgrade CLAP/VST3 to common
-            // areas. Suppress ISCC's UsedUserAreasWarning so the
-            // intentional mix doesn't read as a script bug.
-            setup.push_str("UsedUserAreasWarning=no\r\n");
-        }
-        PkgScope::User => {
-            setup.push_str("PrivilegesRequired=lowest\r\n");
-        }
-        PkgScope::System => {
-            setup.push_str("PrivilegesRequired=admin\r\n");
-        }
-        PkgScope::Ask => {
-            setup.push_str("PrivilegesRequired=admin\r\n");
-            setup.push_str("PrivilegesRequiredOverridesAllowed=commandline dialog\r\n");
-            // `{auto*}` constants resolve per the runtime install mode,
-            // but ISCC's static check still flags the admin-default +
-            // user-area combination. The override is what makes this safe.
-            setup.push_str("UsedUserAreasWarning=no\r\n");
-        }
-    }
+    write_privileges_required(&mut setup, scope, formats);
     setup.push_str("WizardStyle=modern\r\n");
     setup.push_str("UninstallDisplayName=");
     setup.push_str(&iss_escape(&p.name));
@@ -1111,22 +1165,419 @@ fn render_iss(
     setup.push_str("[Files]\r\n");
     for fmt in formats {
         for &arch in archs {
-            let block = iss_files_block(fmt, p, staging, arch, universal, scope);
+            let block = iss_files_block(
+                fmt, p, staging, arch, universal, scope, /* component_prefix = */ None,
+            );
             setup.push_str(&block);
         }
     }
     setup.push_str("\r\n");
 
+    // [Icons] — Start Menu shortcut for the standalone host. Other
+    // formats install into DAW plug-in directories with no `.exe` to
+    // launch directly, so they don't get an icon. Skip when the
+    // component isn't selected — Inno honours the `Components:` clause
+    // and won't write the shortcut on a custom install that drops it.
+    if formats.contains(&PkgFormat::Standalone) {
+        let bin_stem = crate::read_standalone_bin_name(&p.crate_name)
+            .unwrap_or_else(|| format!("{}-standalone", p.crate_name));
+        write_icons_section(&mut setup, &iss_escape(&p.name), &bin_stem, "standalone");
+    }
+
     // [UninstallDelete] — per-format (bundle dirs get wholesale cleanup).
     setup.push_str("[UninstallDelete]\r\n");
     for fmt in formats {
-        for line in iss_uninstall_lines(fmt, &p.name, scope) {
+        for line in iss_uninstall_lines(fmt, &p.name, scope, /* component_prefix = */ None) {
             setup.push_str(&line);
             setup.push_str("\r\n");
         }
     }
 
     setup
+}
+
+/// Emit the `PrivilegesRequired=…` line(s) for an Inno `[Setup]`
+/// section. Centralises the scope/admin matrix so the per-plugin and
+/// per-suite renderers stay in sync.
+///
+///   --user   → `lowest` if no system-only payloads (AAX, VST2);
+///              `admin` otherwise — AAX / VST2 still need to write
+///              under %COMMONPROGRAMFILES%/%PROGRAMFILES% so the
+///              whole installer escalates once for them while
+///              CLAP / VST3 still target user paths.
+///   --system → `admin`. UAC on launch, lands under system paths.
+///   --ask    → `admin` + `PrivilegesRequiredOverridesAllowed=...`
+///              shows the "Choose installation mode" page and
+///              relaunches elevated only if the user picks all-users.
+///
+/// Mixing admin elevation with `{usercf}` (per-user CLAP/VST3 dest)
+/// is intentional under `--user` with system-only payloads — the
+/// elevation hosts the AAX/VST2 install; CLAP/VST3 still go to
+/// user paths. Suppress ISCC's `UsedUserAreasWarning` when that mix
+/// or the `--ask` admin-default + user-area combination occurs.
+fn write_privileges_required(setup: &mut String, scope: PkgScope, formats: &[PkgFormat]) {
+    let has_system_only_format = formats
+        .iter()
+        .any(|f| matches!(f, PkgFormat::Aax | PkgFormat::Vst2));
+    match scope {
+        PkgScope::User if has_system_only_format => {
+            setup.push_str("PrivilegesRequired=admin\r\n");
+            setup.push_str("UsedUserAreasWarning=no\r\n");
+        }
+        PkgScope::User => setup.push_str("PrivilegesRequired=lowest\r\n"),
+        PkgScope::System => setup.push_str("PrivilegesRequired=admin\r\n"),
+        PkgScope::Ask => {
+            setup.push_str("PrivilegesRequired=admin\r\n");
+            setup.push_str("PrivilegesRequiredOverridesAllowed=commandline dialog\r\n");
+            setup.push_str("UsedUserAreasWarning=no\r\n");
+        }
+    }
+}
+
+/// Emit an `[Icons]` section with one Start Menu shortcut for the
+/// plugin's standalone host. `component` is the qualified Inno
+/// component name (`"standalone"` per-plugin, `"<plugin>\standalone"`
+/// inside a suite installer) so the shortcut is gated to the same
+/// custom-install slot as the `.exe`.
+fn write_icons_section(setup: &mut String, plugin_name: &str, bin_stem: &str, component: &str) {
+    setup.push_str("[Icons]\r\n");
+    let _ = write!(
+        setup,
+        "Name: \"{{autoprograms}}\\{plugin_name}\"; Filename: \"{{app}}\\{bin_stem}.exe\"; \
+         Components: {component}\r\n\r\n"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Suite installer (Inno [Components] tree wrapping multiple plugins)
+// ---------------------------------------------------------------------------
+
+/// Build one suite installer: render an Inno `.iss` whose `[Components]`
+/// tree exposes each member plugin as a parent group with per-format
+/// children, then run ISCC to produce a single `.exe` covering every
+/// member's bundles. Member plugins must already be staged on disk
+/// (per-plugin loop or `--no-per-plugin` staging path).
+#[allow(clippy::too_many_arguments)]
+fn package_one_suite(
+    config: &Config,
+    suite: &crate::config::ResolvedSuite<'_>,
+    formats: &[PkgFormat],
+    archs: &[TargetArch],
+    staging_root: &Path,
+    workspace_version: &str,
+    dist_dir: &Path,
+    scope: PkgScope,
+    no_sign: bool,
+) -> Res {
+    let suite_name = &suite.def.name;
+    eprintln!(
+        "\n  → {} ({} plugins, {})",
+        suite_name,
+        suite.plugins.len(),
+        archs_label(archs)
+    );
+
+    // Check every member plugin's staging dir exists. Without this we'd
+    // hand ISCC a Source path that doesn't exist and get a less-clear
+    // error far from the cause.
+    for plugin in &suite.plugins {
+        let plugin_staging = staging_root.join(&plugin.bundle_id);
+        if !plugin_staging.exists() {
+            return Err(format!(
+                "suite '{}': missing staging for {} at {}. \
+                 Run `cargo truce package` without --no-per-plugin first, \
+                 or omit --no-per-plugin so the suite flow stages it.",
+                suite_name,
+                plugin.name,
+                plugin_staging.display()
+            )
+            .into());
+        }
+    }
+
+    let suite_version = suite.def.version.as_deref().unwrap_or(workspace_version);
+    let suite_staging = staging_root.join(format!("suite-{}", suite.def.bundle_id));
+    let _ = fs::remove_dir_all(&suite_staging);
+    fs::create_dir_all(&suite_staging)?;
+
+    let iss = render_suite_iss(
+        config,
+        suite,
+        formats,
+        archs,
+        staging_root,
+        suite_version,
+        dist_dir,
+        scope,
+    );
+    let iss_path = suite_staging.join("installer.iss");
+    fs::write(&iss_path, &iss)?;
+    run_iscc(&iss_path)?;
+
+    let installer = dist_dir.join(format!(
+        "{}-{}-windows{}.exe",
+        suite.def.bundle_id,
+        suite_version,
+        scope.dist_suffix()
+    ));
+    if !installer.exists() {
+        return Err(format!(
+            "ISCC reported success but suite installer is missing: {}",
+            installer.display()
+        )
+        .into());
+    }
+
+    if !no_sign {
+        sign_files(std::slice::from_ref(&installer), &config.windows.signing)?;
+    }
+    eprintln!("    Suite installer: {}", installer.display());
+    Ok(())
+}
+
+/// Render an `.iss` for a multi-plugin suite installer. Layout mirrors
+/// the per-plugin `render_iss` but the `[Components]` tree is hierarchical
+/// (`Name: "<plugin>"; ...` parent + `Name: "<plugin>\<fmt>"; ...`
+/// children) and `[Files]` / `[UninstallDelete]` aggregate every member.
+#[allow(clippy::too_many_arguments)]
+fn render_suite_iss(
+    config: &Config,
+    suite: &crate::config::ResolvedSuite<'_>,
+    formats: &[PkgFormat],
+    archs: &[TargetArch],
+    staging_root: &Path,
+    version: &str,
+    dist_dir: &Path,
+    scope: PkgScope,
+) -> String {
+    let universal = archs.len() > 1;
+
+    let mut setup = String::new();
+    write_suite_setup_section(&mut setup, config, suite, formats, version, dist_dir, scope);
+    setup.push_str("\r\n");
+
+    setup.push_str("[Types]\r\n");
+    setup.push_str("Name: \"full\"; Description: \"Full installation\"\r\n");
+    setup.push_str(
+        "Name: \"custom\"; Description: \"Custom installation\"; Flags: iscustom\r\n\r\n",
+    );
+
+    write_suite_components_section(&mut setup, suite, formats, archs, staging_root, scope);
+    setup.push_str("\r\n");
+
+    // [Files] — aggregate every plugin × format × arch under its
+    // `<plugin>\<fmt>` component name.
+    setup.push_str("[Files]\r\n");
+    for plugin in &suite.plugins {
+        let prefix = sanitize_component_name(&plugin.name);
+        let plugin_staging = staging_root.join(&plugin.bundle_id);
+        for fmt in formats {
+            for &arch in archs {
+                let block = iss_files_block(
+                    fmt,
+                    plugin,
+                    &plugin_staging,
+                    arch,
+                    universal,
+                    scope,
+                    Some(&prefix),
+                );
+                setup.push_str(&block);
+            }
+        }
+    }
+    setup.push_str("\r\n");
+
+    // [Icons] — one Start Menu shortcut per member plugin's standalone
+    // host. The component clause keeps each shortcut tied to its
+    // `<plugin>\standalone` component, so a partial install only emits
+    // shortcuts for the plugins the user actually picked.
+    if formats.contains(&PkgFormat::Standalone) {
+        let prefixed_components: Vec<(String, String, String)> = suite
+            .plugins
+            .iter()
+            .map(|plugin| {
+                let prefix = sanitize_component_name(&plugin.name);
+                let bin_stem = crate::read_standalone_bin_name(&plugin.crate_name)
+                    .unwrap_or_else(|| format!("{}-standalone", plugin.crate_name));
+                (iss_escape(&plugin.name), bin_stem, format!("{prefix}\\standalone"))
+            })
+            .collect();
+        setup.push_str("[Icons]\r\n");
+        for (plugin_name, bin_stem, component) in &prefixed_components {
+            let _ = write!(
+                setup,
+                "Name: \"{{autoprograms}}\\{plugin_name}\"; Filename: \"{{app}}\\{bin_stem}.exe\"; \
+                 Components: {component}\r\n"
+            );
+        }
+        setup.push_str("\r\n");
+    }
+
+    // [UninstallDelete] — same iteration; per-format helpers pick up
+    // the qualified component name so an uninstall with one plugin
+    // deselected leaves the others alone.
+    setup.push_str("[UninstallDelete]\r\n");
+    for plugin in &suite.plugins {
+        let prefix = sanitize_component_name(&plugin.name);
+        for fmt in formats {
+            for line in iss_uninstall_lines(fmt, &plugin.name, scope, Some(&prefix)) {
+                setup.push_str(&line);
+                setup.push_str("\r\n");
+            }
+        }
+    }
+
+    setup
+}
+
+/// Render the `[Setup]` section of a suite installer. Same scope/admin
+/// matrix as per-plugin (`render_iss`), but with a suite-specific
+/// `AppId` / `OutputBaseFilename` / `DefaultDirName` so the suite's
+/// upgrade lineage is independent of any per-plugin installer the
+/// developer also ships.
+fn write_suite_setup_section(
+    setup: &mut String,
+    config: &Config,
+    suite: &crate::config::ResolvedSuite<'_>,
+    formats: &[PkgFormat],
+    version: &str,
+    dist_dir: &Path,
+    scope: PkgScope,
+) {
+    let publisher = config
+        .windows
+        .packaging
+        .publisher
+        .as_deref()
+        .unwrap_or(&config.vendor.name);
+    let publisher_url = config
+        .windows
+        .packaging
+        .publisher_url
+        .clone()
+        .or_else(|| config.vendor.url.clone())
+        .unwrap_or_default();
+    let suite_app_id = format!("{}.{}", config.vendor.id, suite.def.bundle_id);
+    let root = project_root();
+    let installer_icon = config
+        .windows
+        .packaging
+        .installer_icon
+        .as_ref()
+        .map(|s| root.join(s))
+        .filter(|p| p.exists());
+    let welcome_bmp = config
+        .windows
+        .packaging
+        .welcome_bmp
+        .as_ref()
+        .map(|s| root.join(s))
+        .filter(|p| p.exists());
+    let license_rtf = config
+        .windows
+        .packaging
+        .license_rtf
+        .as_ref()
+        .map(|s| root.join(s))
+        .filter(|p| p.exists());
+
+    setup.push_str("[Setup]\r\n");
+    let _ = write!(setup, "AppId={{{{{}}}}}\r\n", iss_escape(&suite_app_id));
+    let _ = write!(setup, "AppName={}\r\n", iss_escape(&suite.def.name));
+    let _ = write!(setup, "AppVersion={}\r\n", iss_escape(version));
+    let _ = write!(setup, "AppPublisher={}\r\n", iss_escape(publisher));
+    if !publisher_url.is_empty() {
+        let _ = write!(setup, "AppPublisherURL={}\r\n", iss_escape(&publisher_url));
+    }
+    let pf_const = match scope {
+        PkgScope::System => "{commonpf}",
+        PkgScope::User | PkgScope::Ask => "{autopf}",
+    };
+    let _ = write!(
+        setup,
+        "DefaultDirName={}\\{}\\{}\r\n",
+        pf_const,
+        iss_escape(publisher),
+        iss_escape(&suite.def.name),
+    );
+    setup.push_str("DisableDirPage=yes\r\n");
+    let _ = write!(setup, "OutputDir={}\r\n", iss_escape_path(dist_dir));
+    let _ = write!(
+        setup,
+        "OutputBaseFilename={}-{}-windows\r\n",
+        iss_escape(&suite.def.bundle_id),
+        iss_escape(version),
+    );
+    setup.push_str("Compression=lzma2\r\n");
+    setup.push_str("SolidCompression=yes\r\n");
+    setup.push_str("ArchitecturesInstallIn64BitMode=x64compatible\r\n");
+    setup.push_str("ArchitecturesAllowed=x64compatible\r\n");
+    write_privileges_required(setup, scope, formats);
+    setup.push_str("WizardStyle=modern\r\n");
+    let _ = write!(
+        setup,
+        "UninstallDisplayName={}\r\n",
+        iss_escape(&suite.def.name)
+    );
+    if let Some(icon) = &installer_icon {
+        let _ = write!(setup, "SetupIconFile={}\r\n", iss_escape_path(icon));
+    }
+    if let Some(bmp) = &welcome_bmp {
+        let _ = write!(setup, "WizardImageFile={}\r\n", iss_escape_path(bmp));
+    }
+    if let Some(rtf) = &license_rtf {
+        let _ = write!(setup, "LicenseFile={}\r\n", iss_escape_path(rtf));
+    }
+}
+
+/// Render the `[Components]` section of a suite installer: one parent
+/// per member plugin and a child per format underneath, so the wizard's
+/// component picker exposes a `Tremolo > CLAP` / `Tremolo > VST3` tree.
+fn write_suite_components_section(
+    setup: &mut String,
+    suite: &crate::config::ResolvedSuite<'_>,
+    formats: &[PkgFormat],
+    archs: &[TargetArch],
+    staging_root: &Path,
+    scope: PkgScope,
+) {
+    let universal = archs.len() > 1;
+    setup.push_str("[Components]\r\n");
+    for plugin in &suite.plugins {
+        let prefix = sanitize_component_name(&plugin.name);
+        let _ = write!(
+            setup,
+            "Name: \"{prefix}\"; Description: \"{}\"; Types: full custom\r\n",
+            iss_escape(&plugin.name)
+        );
+        let plugin_staging = staging_root.join(&plugin.bundle_id);
+        for fmt in formats {
+            let (suffix, desc, types) = iss_component_spec(fmt);
+            let size =
+                component_install_size(fmt, plugin, &plugin_staging, archs, universal, scope);
+            let _ = write!(
+                setup,
+                "Name: \"{prefix}\\{suffix}\"; Description: \"{desc}\"; Types: {types}; ExtraDiskSpaceRequired: {size}\r\n"
+            );
+        }
+    }
+}
+
+/// Inno Setup component names (the `Name:` field) accept ASCII letters,
+/// digits, `_`, `\` (path separator) and a few others. Plugin display
+/// names can contain spaces / Unicode / punctuation, so collapse to a
+/// safe form before using as a component identifier. The `\` in
+/// `<plugin>\<fmt>` paths is added by callers, not produced here.
+fn sanitize_component_name(s: &str) -> String {
+    let mut out: String = s
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect();
+    if out.is_empty() {
+        out.push('_');
+    }
+    out
 }
 
 /// Bytes to add via `ExtraDiskSpaceRequired` so the wizard's per-component
@@ -1192,6 +1643,21 @@ fn component_install_size(
         PkgFormat::Aax => {
             dir_size_recursive(&staging.join("aax").join(format!("{}.aaxplugin", p.name)))
         }
+        PkgFormat::Standalone => {
+            let bin_stem = crate::read_standalone_bin_name(&p.crate_name)
+                .unwrap_or_else(|| format!("{}-standalone", p.crate_name));
+            archs
+                .iter()
+                .filter_map(|a| {
+                    let f = staging
+                        .join("standalone")
+                        .join(a.tag())
+                        .join(format!("{bin_stem}.exe"));
+                    fs::metadata(&f).ok().map(|m| m.len())
+                })
+                .max()
+                .unwrap_or(0)
+        }
         PkgFormat::Au2 | PkgFormat::Au3 => 0,
     }
 }
@@ -1221,6 +1687,8 @@ fn files_all_check_gated(fmt: &PkgFormat, universal: bool, scope: PkgScope) -> b
         // Host-arch only (single arch dir staged), so no per-arch Check.
         // Only gated in `--ask` (on IsAdminInstallMode).
         PkgFormat::Aax => matches!(scope, PkgScope::Ask),
+        // Standalone is single-file like CLAP — universal mode arch-gates.
+        PkgFormat::Standalone => universal,
         PkgFormat::Au2 | PkgFormat::Au3 => false,
     }
 }
@@ -1247,6 +1715,7 @@ fn iss_component_spec(fmt: &PkgFormat) -> (&'static str, &'static str, &'static 
         PkgFormat::Vst3 => ("vst3", "VST3", "full"),
         PkgFormat::Vst2 => ("vst2", "VST2 (legacy)", "custom"),
         PkgFormat::Aax => ("aax", "AAX", "full"),
+        PkgFormat::Standalone => ("standalone", "Standalone app", "custom"),
         PkgFormat::Au2 | PkgFormat::Au3 => unreachable!("AU is filtered out on Windows"),
     }
 }
@@ -1271,6 +1740,7 @@ fn iss_files_block(
     arch: TargetArch,
     universal: bool,
     scope: PkgScope,
+    component_prefix: Option<&str>,
 ) -> String {
     // For single-arch installers the Check: directive is unnecessary — drop it
     // so the output .iss stays simple.
@@ -1278,6 +1748,13 @@ fn iss_files_block(
         Some(arch.iss_check())
     } else {
         None
+    };
+
+    let comp = |suffix: &str| -> String {
+        match component_prefix {
+            Some(prefix) => format!("{prefix}\\{suffix}"),
+            None => suffix.to_string(),
+        }
     };
 
     match fmt {
@@ -1291,7 +1768,7 @@ fn iss_files_block(
             iss_dual_dest(
                 &src_quoted,
                 &dest,
-                "clap",
+                &comp("clap"),
                 arch_check,
                 /* is_dir= */ false,
             )
@@ -1318,7 +1795,7 @@ fn iss_files_block(
             iss_dual_dest(
                 &src_quoted,
                 &dest,
-                "vst3",
+                &comp("vst3"),
                 arch_check,
                 /* is_dir = */ true,
             )
@@ -1337,7 +1814,7 @@ fn iss_files_block(
                 scope,
                 &src_quoted,
                 "{commonpf}\\Steinberg\\VstPlugins",
-                "vst2",
+                &comp("vst2"),
                 arch_check,
                 /* is_dir = */ false,
             )
@@ -1370,7 +1847,7 @@ fn iss_files_block(
                 scope,
                 &iss_escape_path(&src_arch_glob),
                 &format!("{bundle_root}\\Contents\\{subdir}"),
-                "aax",
+                &comp("aax"),
                 /* arch_check = */ None,
                 /* is_dir = */ true,
             ));
@@ -1378,11 +1855,35 @@ fn iss_files_block(
                 scope,
                 &iss_escape_path(&resource_dll),
                 &format!("{bundle_root}\\Contents\\Resources"),
-                "aax",
+                &comp("aax"),
                 /* arch_check = */ None,
                 /* is_dir = */ false,
             ));
             out
+        }
+        PkgFormat::Standalone => {
+            // Single .exe installed under DefaultDirName ({autopf}\<Vendor>\<Plugin>).
+            // Like CLAP/VST2 it's a single-file format, so universal mode
+            // arch-gates with `Check: not IsArm64` / `Check: IsArm64` to
+            // pick the right binary at install time. The {app} constant
+            // resolves to the Inno-Setup-managed install dir, which is
+            // also where the uninstaller lives — keeping the .exe there
+            // means the user can right-click → "Open file location" and
+            // see the standalone alongside the uninstaller.
+            let bin_stem = crate::read_standalone_bin_name(&p.crate_name)
+                .unwrap_or_else(|| format!("{}-standalone", p.crate_name));
+            let src = staging
+                .join("standalone")
+                .join(arch.tag())
+                .join(format!("{bin_stem}.exe"));
+            let src_quoted = iss_escape_path(&src);
+            iss_dual_dest(
+                &src_quoted,
+                "{app}",
+                &comp("standalone"),
+                arch_check,
+                /* is_dir = */ false,
+            )
         }
         PkgFormat::Au2 | PkgFormat::Au3 => unreachable!(),
     }
@@ -1466,16 +1967,28 @@ fn iss_admin_only(
     }
 }
 
-fn iss_uninstall_lines(fmt: &PkgFormat, plugin_name: &str, scope: PkgScope) -> Vec<String> {
+fn iss_uninstall_lines(
+    fmt: &PkgFormat,
+    plugin_name: &str,
+    scope: PkgScope,
+    component_prefix: Option<&str>,
+) -> Vec<String> {
     let name = iss_escape(plugin_name);
+    let comp = |suffix: &str| -> String {
+        match component_prefix {
+            Some(prefix) => format!("{prefix}\\{suffix}"),
+            None => suffix.to_string(),
+        }
+    };
     match fmt {
         PkgFormat::Vst3 => {
             // Mirror the install destination: `{autocf}` under `--ask`
             // matches whichever mode the user picked at install time, so
             // the uninstall hits the same path the bundle was written to.
             let path = format!("{}\\VST3\\{name}.vst3", scoped_cf(scope));
+            let component = comp("vst3");
             vec![format!(
-                "Type: filesandordirs; Name: \"{path}\"; Components: vst3"
+                "Type: filesandordirs; Name: \"{path}\"; Components: {component}"
             )]
         }
         PkgFormat::Aax => {
@@ -1483,8 +1996,9 @@ fn iss_uninstall_lines(fmt: &PkgFormat, plugin_name: &str, scope: PkgScope) -> V
             // installs to `{commoncf}\Avid\…` for both `--system` and
             // `--user`, and gates on `IsAdminInstallMode` under `--ask`).
             // One line covers every case the file actually lands.
+            let component = comp("aax");
             vec![format!(
-                "Type: filesandordirs; Name: \"{{commoncf}}\\Avid\\Audio\\Plug-Ins\\{name}.aaxplugin\"; Components: aax"
+                "Type: filesandordirs; Name: \"{{commoncf}}\\Avid\\Audio\\Plug-Ins\\{name}.aaxplugin\"; Components: {component}"
             )]
         }
         _ => Vec::new(),

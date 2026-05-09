@@ -201,7 +201,7 @@ impl OutputController {
 
 /// Print available audio devices and return. Used by `--list-devices`.
 pub fn list_devices() {
-    println!("=== Audio devices ===");
+    println!("Audio devices");
     println!("Output:");
     let (default_out, outs) = enumerate_devices(true);
     for name in outs {

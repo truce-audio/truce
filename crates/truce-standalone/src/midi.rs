@@ -30,7 +30,7 @@ pub fn list_midi() {
     match MidiInput::new("truce-standalone-list") {
         Ok(midi_in) => {
             let ports = midi_in.ports();
-            println!("=== MIDI inputs ===");
+            println!("MIDI inputs");
             if ports.is_empty() {
                 println!("  (none)");
             } else {

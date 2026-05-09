@@ -360,6 +360,119 @@ pub(crate) fn stage_au3(root: &Path, p: &PluginDef, _config: &Config, staging: &
     Ok(())
 }
 
+/// Stage the standalone host as a `.app` bundle inside the packaging
+/// staging tree. Reads the per-arch standalone binaries built by
+/// `build_and_lipo_standalone`, lipo-merges (or copies, single-arch)
+/// into `<staging>/<Plugin>.standalone.app/Contents/MacOS/<bin>`,
+/// writes the Info.plist, and codesigns. The pkgbuild step downstream
+/// installs the resulting `.app` to `/Applications/`.
+#[cfg(target_os = "macos")]
+pub(crate) fn stage_standalone(
+    root: &Path,
+    p: &PluginDef,
+    config: &Config,
+    staging: &Path,
+) -> Res {
+    use std::os::unix::fs::PermissionsExt;
+
+    let bin_stem = crate::read_standalone_bin_name(&p.crate_name)
+        .unwrap_or_else(|| format!("{}-standalone", p.crate_name));
+
+    // Universal output written by `build_and_lipo_standalone` to
+    // `target/release/<bin_stem>` (single-arch falls through to the
+    // same path via `cp`).
+    let built = truce_build::target_dir(root)
+        .join("release")
+        .join(&bin_stem);
+    if !built.exists() {
+        return Err(format!(
+            "Standalone binary missing at {}. \
+             The build step should have produced it — make sure the \
+             plugin's Cargo.toml declares a [[bin]] target named '{}'.",
+            built.display(),
+            bin_stem,
+        )
+        .into());
+    }
+
+    let staged_app = staging.join(format!("{}.standalone.app", p.name));
+    let _ = fs::remove_dir_all(&staged_app);
+    let macos_dir = staged_app.join("Contents/MacOS");
+    fs::create_dir_all(&macos_dir)?;
+    let exe_dst = macos_dir.join(&bin_stem);
+    fs::copy(&built, &exe_dst)?;
+
+    // Mark the binary executable. `pkgbuild` preserves the staged
+    // mode bits; without this the installed app refuses to launch
+    // ("permission denied") on the end user's machine.
+    let mut perms = fs::metadata(&exe_dst)?.permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&exe_dst, perms)?;
+
+    write_standalone_info_plist(&staged_app, p, &bin_stem, &config.vendor)?;
+
+    codesign_bundle(
+        staged_app.to_str().unwrap(),
+        config.macos.application_identity(),
+        false,
+    )?;
+
+    Ok(())
+}
+
+/// Write a `.app/Contents/Info.plist` for a standalone host bundle.
+/// Shared between `commands::run` (dev iteration) and the packaging
+/// pipeline so the live-run app and the installed app present
+/// identically to the OS — same Dock name, same mic-permission prompt,
+/// same hi-DPI flag.
+#[cfg(target_os = "macos")]
+pub(crate) fn write_standalone_info_plist(
+    bundle_root: &Path,
+    plugin: &PluginDef,
+    bin_stem: &str,
+    vendor: &crate::config::VendorConfig,
+) -> Res {
+    let mic_usage = format!(
+        "{} would like to use the microphone for plugin audio input.",
+        plugin.name
+    );
+    let plist = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>{name}</string>
+    <key>CFBundleDisplayName</key>
+    <string>{name}</string>
+    <key>CFBundleIdentifier</key>
+    <string>{vendor_id}.{bundle_id}.standalone</string>
+    <key>CFBundleExecutable</key>
+    <string>{exe}</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>{mic_usage}</string>
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.music</string>
+</dict>
+</plist>
+"#,
+        name = plugin.name,
+        vendor_id = vendor.id,
+        bundle_id = plugin.bundle_id,
+        exe = bin_stem,
+    );
+    fs::write(bundle_root.join("Contents/Info.plist"), plist)?;
+    Ok(())
+}
+
 /// Generate the distribution.xml for the macOS .pkg installer.
 #[cfg(target_os = "macos")]
 pub(crate) fn generate_distribution_xml(

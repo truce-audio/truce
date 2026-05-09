@@ -5,8 +5,8 @@
 
 use super::PkgFormat;
 use super::stage::{
-    generate_distribution_xml, stage_aax, stage_au2, stage_au3, stage_clap, stage_vst2, stage_vst3,
-    write_postinstall_script,
+    generate_distribution_xml, stage_aax, stage_au2, stage_au3, stage_clap, stage_standalone,
+    stage_vst2, stage_vst3, write_postinstall_script,
 };
 use crate::install_scope::{PkgScope, note_once};
 use crate::{
@@ -81,12 +81,26 @@ pub(crate) fn cmd_package_macos(args: &[String], selection: &super::SuiteSelecti
     // component packages; whether we *also* run productbuild +
     // notarize for the per-plugin .pkg is the --no-per-plugin gate.
     // The component .pkgs are needed by the suite wrapper below.
-    let suites: Vec<crate::config::ResolvedSuite<'_>> = config
-        .suites
-        .iter()
-        .filter(|s| selection.want_suite(&s.name))
-        .map(|s| s.resolve(&config.plugin))
-        .collect::<Result<_, _>>()?;
+    //
+    // `-p <crate>` narrows to a single plugin, which can't satisfy a
+    // multi-member suite. Skip suite installers in that mode so the
+    // single-plugin run doesn't fail at the suite step looking for
+    // unstaged siblings.
+    let suites: Vec<crate::config::ResolvedSuite<'_>> = if parsed.plugin_filter.is_some() {
+        if !config.suites.is_empty() {
+            eprintln!(
+                "(-p set; skipping suite installers — they need every member plugin staged)"
+            );
+        }
+        Vec::new()
+    } else {
+        config
+            .suites
+            .iter()
+            .filter(|s| selection.want_suite(&s.name))
+            .map(|s| s.resolve(&config.plugin))
+            .collect::<Result<_, _>>()?
+    };
     let need_components_only = !selection.want_per_plugin() && !suites.is_empty();
 
     for p in &plugins {
@@ -104,7 +118,7 @@ pub(crate) fn cmd_package_macos(args: &[String], selection: &super::SuiteSelecti
     }
 
     if !suites.is_empty() {
-        eprintln!("\n=== Suite installers ===");
+        eprintln!("\nSuite installers");
         for suite in &suites {
             package_one_suite(&root, suite, &dist_dir, &opts)?;
         }
@@ -124,7 +138,7 @@ pub(crate) fn cmd_package_macos(args: &[String], selection: &super::SuiteSelecti
 /// `<staging>/components/<Plugin>-<format>.pkg`, which is the same
 /// path the full per-plugin pipeline writes them to.
 fn stage_components_only(root: &Path, p: &PluginDef, o: &PackageOpts) -> Res {
-    eprintln!("\n=== Components for: {} ===", p.name);
+    eprintln!("\nComponents for: {}", p.name);
 
     let staging = truce_build::target_dir(root)
         .join("package")
@@ -141,9 +155,7 @@ fn stage_components_only(root: &Path, p: &PluginDef, o: &PackageOpts) -> Res {
             PkgFormat::Au2 => stage_au2(root, p, o.config, &staging),
             PkgFormat::Au3 => stage_au3(root, p, o.config, &staging),
             PkgFormat::Aax => stage_aax(root, p, o.config, &staging, o.universal, o.no_pace_sign),
-            PkgFormat::Standalone => Err(
-                "Standalone packaging on macOS is not wired into `cargo truce package` yet.".into(),
-            ),
+            PkgFormat::Standalone => stage_standalone(root, p, o.config, &staging),
         };
         match result {
             Ok(()) => eprintln!("ok"),
@@ -467,6 +479,9 @@ fn resolve_formats(
         if available.contains("aax") {
             fmts.push(PkgFormat::Aax);
         }
+        if available.contains("standalone") {
+            fmts.push(PkgFormat::Standalone);
+        }
         Ok(fmts)
     }
 }
@@ -547,6 +562,79 @@ fn build_all_formats(
         // copies from there into the packaging staging tree.
         crate::commands::install::au_v3::emit_au_v3_bundle(root, config, plugins, archs)?;
     }
+    if formats.contains(&PkgFormat::Standalone) {
+        // Standalone is a `[[bin]]`, not a cdylib — the per-arch
+        // outputs land at `target/<triple>/release/<bin>` rather than
+        // `lib<stem>_<feature>.dylib`, so it doesn't fit the shared
+        // `build_and_lipo_format` shape.
+        for p in plugins {
+            build_and_lipo_standalone(root, p, archs, dt)?;
+        }
+    }
+    Ok(())
+}
+
+/// Build the standalone host binary (`--features standalone`) for each
+/// requested arch and lipo the per-arch outputs into the canonical
+/// `target/release/<bin>` path that `stage_standalone` reads.
+///
+/// `bin_stem` resolves through `read_standalone_bin_name`, which
+/// inspects the plugin's `Cargo.toml` so hand-edited `[[bin]] name`
+/// values still work — falls back to the scaffold convention
+/// (`{crate_name}-standalone`) when the manifest can't be parsed.
+fn build_and_lipo_standalone(
+    root: &Path,
+    plugin: &PluginDef,
+    archs: &[MacArch],
+    dt: &str,
+) -> Res {
+    let bin_stem = crate::read_standalone_bin_name(&plugin.crate_name)
+        .unwrap_or_else(|| format!("{}-standalone", plugin.crate_name));
+
+    for &arch in archs {
+        eprintln!("Building Standalone ({}, {})...", plugin.name, arch.triple());
+        cargo_build_for_arch(
+            &[],
+            &[
+                "-p",
+                &plugin.crate_name,
+                "--no-default-features",
+                "--features",
+                "standalone",
+            ],
+            arch,
+            dt,
+        )?;
+    }
+
+    let inputs: Vec<PathBuf> = archs
+        .iter()
+        .map(|a| {
+            truce_build::target_dir(root)
+                .join(a.triple())
+                .join("release")
+                .join(&bin_stem)
+        })
+        .collect();
+    for src in &inputs {
+        if !src.exists() {
+            return Err(format!(
+                "Standalone build produced no binary at {}. \
+                 Make sure the plugin's Cargo.toml declares a [[bin]] target named '{bin_stem}'.",
+                src.display()
+            )
+            .into());
+        }
+    }
+    let output = truce_build::target_dir(root).join("release").join(&bin_stem);
+    if inputs.len() == 1 {
+        // Single-arch (`--host-only`): nothing to lipo, just copy
+        // into the canonical universal output path so `stage_standalone`
+        // reads from one place regardless of arch count.
+        fs::copy(&inputs[0], &output)?;
+    } else {
+        lipo_into(&inputs, &output)?;
+    }
     Ok(())
 }
 
@@ -609,7 +697,7 @@ struct PackageOpts<'a> {
 /// the boilerplate without surfacing any reuse, since `cmd_package_macos`
 /// is the only caller.
 fn package_one_plugin(root: &Path, p: &PluginDef, dist_dir: &Path, o: &PackageOpts) -> Res {
-    eprintln!("\n=== Packaging: {} ===", p.name);
+    eprintln!("\nPackaging: {}", p.name);
 
     let staging = truce_build::target_dir(root)
         .join("package")
@@ -627,20 +715,7 @@ fn package_one_plugin(root: &Path, p: &PluginDef, dist_dir: &Path, o: &PackageOp
             PkgFormat::Au2 => stage_au2(root, p, o.config, &staging),
             PkgFormat::Au3 => stage_au3(root, p, o.config, &staging),
             PkgFormat::Aax => stage_aax(root, p, o.config, &staging, o.universal, o.no_pace_sign),
-            // Standalone packaging on macOS is staged through the
-            // existing `cargo truce run` `.app` bundle pipeline; the
-            // pkgbuild step writes the staged `.app` to `/Applications/`.
-            // Full integration (cross-arch lipo, hardened-runtime
-            // entitlements review, notarization smoke-test) lands in a
-            // follow-up — for now emit a clear "not wired" error so the
-            // user knows the slot is recognised but not yet shippable.
-            PkgFormat::Standalone => Err(
-                "Standalone packaging on macOS is not wired into `cargo truce package` yet. \
-                 Use `cargo truce run -p <crate>` to build the standalone .app for now; \
-                 the package-pipeline integration is tracked alongside the multi-plugin \
-                 installer rollout."
-                    .into(),
-            ),
+            PkgFormat::Standalone => stage_standalone(root, p, o.config, &staging),
         };
         match result {
             Ok(()) => eprintln!("ok"),
@@ -1076,9 +1151,8 @@ fn fetch_notarization_log(output: &str, keychain_profile: &str) {
         if let Ok(o) = log_output {
             let log = String::from_utf8_lossy(&o.stdout);
             if !log.is_empty() {
-                eprintln!("\n--- Notarization Log ---");
+                eprintln!("\nNotarization log:");
                 eprintln!("{log}");
-                eprintln!("--- End Log ---\n");
             }
         }
     }

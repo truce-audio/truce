@@ -149,58 +149,15 @@ fn stage_macos_app_bundle(
     // clean re-stage on each run so stale bundle contents don't
     // linger between iterations.
     let _ = std::fs::remove_dir_all(staged);
-    let contents = staged.join("Contents");
-    let macos = contents.join("MacOS");
+    let macos = staged.join("Contents").join("MacOS");
     fs_ctx::create_dir_all(&macos)?;
 
     let exe_name = bin_filename(bin_stem);
     fs_ctx::copy(built, macos.join(&exe_name))?;
 
-    // Microphone usage description is plugin-specific so the
-    // permission dialog reads "<Plugin> wants to use the
-    // microphone" instead of a generic system message.
-    let mic_usage = format!(
-        "{} would like to use the microphone for plugin audio input.",
-        plugin.name
-    );
-
-    let plist = format!(
-        r#"<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>CFBundleName</key>
-    <string>{name}</string>
-    <key>CFBundleDisplayName</key>
-    <string>{name}</string>
-    <key>CFBundleIdentifier</key>
-    <string>{vendor_id}.{bundle_id}.standalone</string>
-    <key>CFBundleExecutable</key>
-    <string>{exe}</string>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
-    <key>CFBundleVersion</key>
-    <string>1</string>
-    <key>CFBundleShortVersionString</key>
-    <string>1.0</string>
-    <key>NSHighResolutionCapable</key>
-    <true/>
-    <key>NSMicrophoneUsageDescription</key>
-    <string>{mic_usage}</string>
-    <key>LSApplicationCategoryType</key>
-    <string>public.app-category.music</string>
-</dict>
-</plist>
-"#,
-        name = plugin.name,
-        vendor_id = vendor.id,
-        bundle_id = plugin.bundle_id,
-        exe = exe_name,
-        mic_usage = mic_usage,
-    );
-    fs_ctx::write(contents.join("Info.plist"), plist)?;
-
-    Ok(())
+    crate::commands::package::stage::write_standalone_info_plist(
+        staged, plugin, &exe_name, vendor,
+    )
 }
 
 /// On macOS the staged path is `<Plugin>.standalone.app/`; the
