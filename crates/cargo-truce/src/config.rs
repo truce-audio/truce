@@ -177,6 +177,12 @@ pub(crate) struct PackagingConfig {
 #[derive(Deserialize)]
 pub(crate) struct VendorConfig {
     pub(crate) name: String,
+    /// Reverse-DNS vendor identifier (e.g. `com.acme`). Used by macOS
+    /// `CFBundleIdentifier` plists and Windows Inno Setup paths;
+    /// Linux VST3 bundles don't include a plist, so the field looks
+    /// dead there. Keep cfg-gated to silence the lint without changing
+    /// the schema.
+    #[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
     pub(crate) id: String,
     /// Vendor website URL. Used by the Windows Inno Setup installer's
     /// "Publisher URL" field; unused on macOS.

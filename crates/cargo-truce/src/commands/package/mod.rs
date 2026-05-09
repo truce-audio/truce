@@ -319,6 +319,11 @@ Build target (macOS):
   --host-only          Single-arch build of the host. Default is universal.
   --universal          Explicit universal (no-op; same as default).
 
+Build invocation (Linux):
+  --no-build           Skip the implicit `cargo truce build` and use the
+                       existing `target/bundles/` manifest as-is. Errors
+                       if no manifest is present.
+
 Misc:
   -h, --help           Show this message."
     );

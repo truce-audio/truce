@@ -25,17 +25,27 @@ use std::process::Command;
 use super::SuiteSelection;
 use crate::config::{Config, PluginDef, ResolvedSuite};
 use crate::{BoxErr, Res, load_config, project_root, read_workspace_version};
+use truce_build::BundleManifest;
 
 const INSTALL_SH_TEMPLATE: &str = include_str!("install.sh.tmpl");
 
 pub(crate) fn cmd_package_linux(args: &[String], selection: &SuiteSelection) -> Res {
-    if let Some(unknown) = args.iter().find(|a| !a.is_empty()) {
+    let mut no_build = false;
+    let mut leftover: Vec<&str> = Vec::new();
+    for a in args {
+        match a.as_str() {
+            "" => {}
+            "--no-build" => no_build = true,
+            other => leftover.push(other),
+        }
+    }
+    if let Some(unknown) = leftover.first() {
         return Err(format!(
             "unknown flag: {unknown}\n\
              Linux `cargo truce package` accepts only the suite-selection \
-             flags (--suite, --no-suite, --no-per-plugin) in phase 1. \
-             Format selection (--formats) and signing flags will land in \
-             a later phase."
+             flags (--suite, --no-suite, --no-per-plugin) plus --no-build \
+             in phase 1. Format selection (--formats) and signing flags \
+             will land in a later phase."
         )
         .into());
     }
@@ -48,13 +58,43 @@ pub(crate) fn cmd_package_linux(args: &[String], selection: &SuiteSelection) -> 
         return Err("no [[plugin]] entries in truce.toml".into());
     }
 
+    // Run `cargo truce build` first unless the caller opted out via
+    // `--no-build`. Cargo's incremental build makes a fresh `package`
+    // after a recent `build` essentially free; re-invoking unifies the
+    // user-facing flow with macOS (which always builds inside its
+    // package pipeline) and means the manifest is always up-to-date.
+    if !no_build {
+        eprintln!("Building bundles...");
+        super::super::build::cmd_build(&[])?;
+        eprintln!();
+    }
+
     let dist_dir = truce_build::target_dir(&root).join("dist");
     fs::create_dir_all(&dist_dir)?;
+
+    // Load the build manifest written by `cargo truce build`. Missing
+    // manifest = clear "run cargo truce build first" error; mismatched
+    // host triple = clear "you built on a different host" error. Both
+    // failure modes used to manifest as silent empty-tarball output
+    // because staging just probed the filesystem and skipped on miss.
+    let bundles_dir = truce_build::target_dir(&root).join("bundles");
+    let manifest = BundleManifest::load(&bundles_dir).map_err(BoxErr::from)?;
+    let expected_host = truce_build::host_triple();
+    if manifest.host_triple != expected_host {
+        return Err(format!(
+            "build manifest at {} is for host {} but you're packaging on {}. \
+             Re-run `cargo truce build` on this host.",
+            BundleManifest::manifest_path(&bundles_dir).display(),
+            manifest.host_triple,
+            expected_host,
+        )
+        .into());
+    }
 
     if selection.want_per_plugin() {
         eprintln!("Per-plugin tarballs");
         for plugin in &config.plugin {
-            build_per_plugin_tarball(&root, &config, plugin, &dist_dir, &version)?;
+            build_per_plugin_tarball(&root, &config, plugin, &dist_dir, &version, &manifest)?;
         }
     } else {
         eprintln!("Skipping per-plugin tarballs (--no-per-plugin).");
@@ -70,7 +110,7 @@ pub(crate) fn cmd_package_linux(args: &[String], selection: &SuiteSelection) -> 
     if !suites.is_empty() {
         eprintln!("\nSuite tarballs");
         for suite in &suites {
-            build_suite_tarball(&root, &config, suite, &dist_dir, &version)?;
+            build_suite_tarball(&root, &config, suite, &dist_dir, &version, &manifest)?;
         }
     }
 
@@ -85,27 +125,30 @@ fn build_per_plugin_tarball(
     plugin: &PluginDef,
     dist_dir: &Path,
     version: &str,
+    manifest: &BundleManifest,
 ) -> Res {
     let arch = host_linux_arch();
     let stem = format!("{}-{}-linux-{}", plugin.bundle_id, version, arch);
     let staging = plugin_stage_dir(root, &plugin.bundle_id)?;
 
-    let plugin_summary = stage_plugin_payload(root, plugin, &staging)?;
+    let plugin_summary = stage_plugin_payload(root, plugin, &staging, manifest)?;
+    let install_paths = expected_tarball_paths(&stem, &[&plugin_summary]);
     write_install_sh(&staging, config, &[plugin_summary], None)?;
     write_readme(&staging, config, version, &[plugin], None)?;
 
     let out = dist_dir.join(format!("{stem}.tar.gz"));
     create_tarball(&staging, &out, &stem)?;
 
-    // Sanity-check the tarball: must contain install.sh and the plugin's
-    // payload directory. Catches the case where create_tarball reports
-    // success but staging silently produced no files.
+    // Sanity-check the tarball: must contain install.sh and every
+    // bundle filename listed by the manifest under its format dir.
+    // Catches the case where `tar` reports success but staging
+    // silently produced no files.
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
-        let bundle_id_path = format!("{}/plugins/{}/", stem, plugin.bundle_id);
-        let install_sh_path = format!("{stem}/install.sh");
-        super::verify::assert_tarball_contains(&out, &[&install_sh_path, &bundle_id_path])?;
+        let expected: Vec<&str> = install_paths.iter().map(String::as_str).collect();
+        super::verify::assert_tarball_contains(&out, &expected)?;
     }
+    let _ = install_paths; // unused on macOS/Windows verify-skip path
 
     eprintln!("  {} → {}", plugin.name, out.display());
     Ok(())
@@ -118,6 +161,7 @@ fn build_suite_tarball(
     suite: &ResolvedSuite<'_>,
     dist_dir: &Path,
     version: &str,
+    manifest: &BundleManifest,
 ) -> Res {
     let arch = host_linux_arch();
     let suite_version = suite.def.version.as_deref().unwrap_or(version);
@@ -126,30 +170,46 @@ fn build_suite_tarball(
 
     let mut summaries = Vec::with_capacity(suite.plugins.len());
     for plugin in &suite.plugins {
-        summaries.push(stage_plugin_payload(root, plugin, &staging)?);
+        summaries.push(stage_plugin_payload(root, plugin, &staging, manifest)?);
     }
+    let summary_refs: Vec<&PluginSummary> = summaries.iter().collect();
+    let install_paths = expected_tarball_paths(&stem, &summary_refs);
     write_install_sh(&staging, config, &summaries, Some(suite))?;
     write_readme(&staging, config, suite_version, &suite.plugins, Some(suite))?;
 
     let out = dist_dir.join(format!("{stem}.tar.gz"));
     create_tarball(&staging, &out, &stem)?;
 
-    // Suite tarball must contain install.sh + every member plugin's
-    // payload directory. Mirrors the macOS productbuild check —
-    // catches a staging silent-skip that would ship a partial suite
-    // archive.
+    // Suite tarball must contain install.sh + every bundle the manifest
+    // listed for any member plugin, under its format-grouped path.
+    // Mirrors the macOS productbuild check — catches a staging
+    // silent-skip that would ship a partial suite archive.
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
-        let mut expected: Vec<String> = vec![format!("{stem}/install.sh")];
-        for plugin in &suite.plugins {
-            expected.push(format!("{}/plugins/{}/", stem, plugin.bundle_id));
-        }
-        let expected_refs: Vec<&str> = expected.iter().map(String::as_str).collect();
-        super::verify::assert_tarball_contains(&out, &expected_refs)?;
+        let expected: Vec<&str> = install_paths.iter().map(String::as_str).collect();
+        super::verify::assert_tarball_contains(&out, &expected)?;
     }
+    let _ = install_paths;
 
     eprintln!("  {} → {}", suite.def.name, out.display());
     Ok(())
+}
+
+/// Compute the substrings the verify step expects to find in the
+/// produced `.tar.gz`: `install.sh` plus every staged bundle path
+/// under its format-grouped directory. Standalone binaries appear
+/// under the top-level `standalone/` dir.
+fn expected_tarball_paths(stem: &str, summaries: &[&PluginSummary]) -> Vec<String> {
+    let mut paths = vec![format!("{stem}/install.sh")];
+    for s in summaries {
+        for b in &s.bundles {
+            paths.push(format!("{stem}/{}/{}", b.format, b.name));
+        }
+        if let Some(bin) = &s.standalone {
+            paths.push(format!("{stem}/standalone/{bin}"));
+        }
+    }
+    paths
 }
 
 /// Per-plugin payload — what the install.sh sees. Captures per-plugin
@@ -159,81 +219,98 @@ struct PluginSummary {
     bundle_id: String,
     /// Display name from `[[plugin]].name`.
     display_name: String,
-    /// Bundle directory names that the script needs to know about, e.g.
-    /// `["My Gain.clap", "My Gain.vst3"]`. The strings are relative to
-    /// the tarball root's `plugins/` subdirectory.
+    /// Bundle directory/file names that the script needs to know about,
+    /// e.g. `["My Gain.clap", "My Gain.vst3"]`. Each entry's `format`
+    /// names the format-grouped directory in the tarball
+    /// (`clap/`, `vst3/`, `lv2/`, `vst/`).
     bundles: Vec<BundleEntry>,
-    /// Standalone executable name relative to `standalone/`, if any.
+    /// Standalone executable name relative to the tarball's
+    /// `standalone/` directory, if any.
     standalone: Option<String>,
 }
 
 struct BundleEntry {
-    /// Format slug for install path: "clap" / "vst3" / "lv2" / "vst".
+    /// Format slug for install path AND for the format-grouped
+    /// directory in the tarball: `"clap"`, `"vst3"`, `"lv2"`, `"vst"`.
     format: &'static str,
-    /// Filename within the tarball's `plugins/<bundle_id>/` directory.
+    /// Filename inside the tarball's `<format>/` directory.
     name: String,
 }
 
 /// Stage one plugin's bundles + standalone into `<staging>/` and
 /// return a summary for install.sh generation.
 ///
-/// Looks for already-built bundles under `target/bundles/` (the
-/// output of `cargo truce build`) and copies them into the tarball
-/// staging tree. Missing bundles get a warning, not an error — a
-/// suite that includes plugin A's CLAP and plugin B's VST3 only is
-/// a legitimate shape, not a build error.
+/// Reads the build manifest written by `cargo truce build` to find
+/// what bundles to copy; if the manifest lists nothing for this
+/// plugin and the plugin has no standalone either, that's a hard
+/// error rather than a silent skip — empty plugin payloads ship
+/// broken tarballs.
 fn stage_plugin_payload(
     root: &Path,
     plugin: &PluginDef,
     staging: &Path,
+    manifest: &BundleManifest,
 ) -> Result<PluginSummary, BoxErr> {
     let bundles_dir = truce_build::target_dir(root).join("bundles");
-    let plugin_staging = staging.join("plugins").join(&plugin.bundle_id);
-    fs::create_dir_all(&plugin_staging)?;
 
     let mut bundles = Vec::new();
 
-    // Each pair: (bundle filename pattern in `target/bundles/`,
-    // format slug for install path). Matches the per-format bundle
-    // names produced by the macOS / Windows / Linux build paths.
-    let candidates: &[(String, &str)] = &[
-        (format!("{}.clap", plugin.name), "clap"),
-        (format!("{}.vst3", plugin.name), "vst3"),
-        (format!("{}.lv2", plugin.name), "lv2"),
-        // VST2 on Linux is a single .so, not a bundle directory.
-        (format!("{}.so", plugin.name), "vst"),
-    ];
-
-    for (name, format) in candidates {
-        let src = bundles_dir.join(name);
-        if !src.exists() {
+    // Tarball layout mirrors the Linux install destinations: bundles
+    // get grouped by format (`clap/`, `vst3/`, `lv2/`, `vst/`) at the
+    // tarball root rather than nested under `plugins/<bundle_id>/`.
+    // This makes `tar xf … -C ~/.config/...` viable as a manual
+    // alternative to `install.sh` and keeps install.sh's per-plugin
+    // case bodies short (one path component to copy from).
+    for entry in manifest.bundles_for_plugin(&plugin.crate_name) {
+        let Some(slug) = linux_install_slug(&entry.format) else {
+            // AU2/AU3/AAX would never appear in a host-Linux manifest
+            // because they're macOS-only; if one slips in via a copied
+            // target/ from another host, the host_triple check above
+            // already rejected it. Skip defensively here.
             continue;
+        };
+        let src = bundles_dir.join(&entry.filename);
+        if !src.exists() {
+            return Err(format!(
+                "build manifest lists {} for {} but {} is missing on disk. \
+                 Re-run `cargo truce build`.",
+                entry.filename,
+                plugin.name,
+                src.display(),
+            )
+            .into());
         }
-        let dst = plugin_staging.join(name);
+        let format_dir = staging.join(slug);
+        fs::create_dir_all(&format_dir)?;
+        let dst = format_dir.join(&entry.filename);
         if src.is_dir() {
             copy_dir_all(&src, &dst)?;
         } else {
             fs::copy(&src, &dst)?;
         }
         bundles.push(BundleEntry {
-            format,
-            name: name.clone(),
+            format: slug,
+            name: entry.filename.clone(),
         });
-    }
-
-    if bundles.is_empty() {
-        eprintln!(
-            "  warning: no bundles for {} under {}. Run `cargo truce build` first.",
-            plugin.name,
-            bundles_dir.display(),
-        );
     }
 
     // Standalone — when the plugin has the `standalone` feature in
     // its default features, `cargo truce run` stages a binary or
     // .app under `target/bundles/<Plugin>.standalone[.app]`. On
     // Linux it's a bare ELF; pick that up if present.
-    let standalone = stage_standalone_payload(root, plugin, &plugin_staging)?;
+    let standalone = stage_standalone_payload(root, plugin, staging)?;
+
+    if bundles.is_empty() && standalone.is_none() {
+        return Err(format!(
+            "no bundles or standalone for {} in {}. \
+             The build manifest doesn't list this plugin's formats — \
+             re-run `cargo truce build` (optionally with `-p {}`).",
+            plugin.name,
+            bundles_dir.display(),
+            plugin.crate_name,
+        )
+        .into());
+    }
 
     Ok(PluginSummary {
         bundle_id: plugin.bundle_id.clone(),
@@ -243,10 +320,24 @@ fn stage_plugin_payload(
     })
 }
 
+/// Map a manifest format slug (`"vst2"`, `"clap"`, …) to the install
+/// path slug used by `install.sh`'s `dest_dir()` (`"vst"`, `"clap"`,
+/// …). Returns `None` for formats that don't have a Linux install
+/// path (AU, AAX).
+fn linux_install_slug(format: &str) -> Option<&'static str> {
+    match format {
+        "clap" => Some("clap"),
+        "vst3" => Some("vst3"),
+        "vst2" => Some("vst"),
+        "lv2" => Some("lv2"),
+        _ => None,
+    }
+}
+
 fn stage_standalone_payload(
     root: &Path,
     plugin: &PluginDef,
-    plugin_staging: &Path,
+    staging: &Path,
 ) -> Result<Option<String>, BoxErr> {
     let bundles_dir = truce_build::target_dir(root).join("bundles");
     // On Linux, `cargo truce run` stages a bare binary at
@@ -258,7 +349,11 @@ fn stage_standalone_payload(
         return Ok(None);
     }
     let bin_name = standalone_binary_name(plugin);
-    let dst_dir = plugin_staging.join("standalone");
+    // All standalones in a suite tarball share the top-level
+    // `standalone/` directory. Crate-derived names keep filenames
+    // unique across plugins; an explicit `[[plugin]].standalone_bin`
+    // override is the user's responsibility to keep distinct.
+    let dst_dir = staging.join("standalone");
     fs::create_dir_all(&dst_dir)?;
     fs::copy(&candidate, dst_dir.join(&bin_name))?;
     // Mark executable. Tar will preserve the mode through the
@@ -313,7 +408,9 @@ fn write_install_sh(
 }
 
 /// One case-block per plugin in the install.sh's main loop.
-/// Format-to-path mapping lives in the template's `dest_dir()` helper.
+/// Source paths reference the format-grouped tarball layout
+/// (`clap/<filename>` etc.); destination paths come from the
+/// template's `dest_dir()` helper.
 fn format_plugin_case(p: &PluginSummary) -> String {
     let mut s = String::new();
     let _ = writeln!(s, "    {})", p.bundle_id);
@@ -321,17 +418,15 @@ fn format_plugin_case(p: &PluginSummary) -> String {
     for b in &p.bundles {
         let _ = writeln!(
             s,
-            "        install_bundle \"{format}\" \"plugins/{bundle_id}/{name}\"",
+            "        install_bundle \"{format}\" \"{format}/{name}\"",
             format = b.format,
-            bundle_id = p.bundle_id,
             name = b.name,
         );
     }
     if let Some(bin) = &p.standalone {
         let _ = writeln!(
             s,
-            "        install_standalone \"plugins/{bundle_id}/standalone/{bin}\" \"{bin}\"",
-            bundle_id = p.bundle_id,
+            "        install_standalone \"standalone/{bin}\" \"{bin}\""
         );
     }
     s.push_str("        ;;");

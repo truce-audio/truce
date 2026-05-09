@@ -93,12 +93,23 @@ pub(crate) fn stage_vst3(root: &Path, p: &PluginDef, config: &Config, staging: &
         return Err(format!("Missing: {}", dylib.display()).into());
     }
     let bundle = staging.join(format!("{}.vst3", p.name));
-    let macos_dir = bundle.join("Contents/MacOS");
-    fs::create_dir_all(&macos_dir)?;
-    fs::copy(&dylib, macos_dir.join(&p.name))?;
 
-    let plist = format!(
-        r#"<?xml version="1.0" encoding="UTF-8"?>
+    // VST3 bundle layout is platform-specific (Steinberg "Bundle Locations"
+    // section of the SDK docs):
+    //   macOS:   Contents/MacOS/<name>             (Mach-O, no extension)
+    //   Linux:   Contents/<arch>-linux/<name>.so   (ELF, .so)
+    //   Windows: Contents/<arch>-win/<name>.vst3   (PE, .vst3)
+    // The earlier "always Contents/MacOS/<name>" layout produced bundles
+    // that hosts on Linux refused to load — VST3 hosts pick the inner
+    // binary from the arch-specific subdir and fall back to nothing.
+    #[cfg(target_os = "macos")]
+    {
+        let macos_dir = bundle.join("Contents/MacOS");
+        fs::create_dir_all(&macos_dir)?;
+        fs::copy(&dylib, macos_dir.join(&p.name))?;
+
+        let plist = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
@@ -114,17 +125,57 @@ pub(crate) fn stage_vst3(root: &Path, p: &PluginDef, config: &Config, staging: &
     <string>1</string>
 </dict>
 </plist>"#,
-        name = p.name,
-        bundle_id = p.bundle_id,
-        vendor_id = config.vendor.id,
-    );
-    fs::write(bundle.join("Contents/Info.plist"), &plist)?;
-    codesign_bundle(
-        bundle.to_str().unwrap(),
-        config.macos.application_identity(),
-        false,
-    )?;
+            name = p.name,
+            bundle_id = p.bundle_id,
+            vendor_id = config.vendor.id,
+        );
+        fs::write(bundle.join("Contents/Info.plist"), &plist)?;
+        codesign_bundle(
+            bundle.to_str().unwrap(),
+            config.macos.application_identity(),
+            false,
+        )?;
+    }
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    {
+        let _ = config; // unused on these platforms
+        let arch_dir = bundle.join("Contents").join(vst3_arch_subdir());
+        fs::create_dir_all(&arch_dir)?;
+        let inner_filename = format!("{}.{}", p.name, vst3_inner_extension());
+        fs::copy(&dylib, arch_dir.join(inner_filename))?;
+    }
     Ok(())
+}
+
+/// VST3 bundle inner-directory name (e.g. `x86_64-linux`, `x86_64-win`)
+/// per the VST3 SDK "Bundle Locations" spec. Linux/Windows only;
+/// macOS uses the special `MacOS` directory and is handled inline.
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+fn vst3_arch_subdir() -> &'static str {
+    if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+        "x86_64-linux"
+    } else if cfg!(all(target_os = "linux", target_arch = "aarch64")) {
+        "aarch64-linux"
+    } else if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
+        "x86_64-win"
+    } else if cfg!(all(target_os = "windows", target_arch = "aarch64")) {
+        "aarch64-win"
+    } else {
+        // Fall back to the host triple's first segment plus an OS hint.
+        // Hitting this means Linux/Windows on a non-mainstream arch;
+        // VST3 hosts on the unusual arch wouldn't load it anyway.
+        "unknown"
+    }
+}
+
+/// VST3 inner-binary extension per platform.
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+fn vst3_inner_extension() -> &'static str {
+    if cfg!(target_os = "linux") {
+        "so"
+    } else {
+        "vst3"
+    }
 }
 
 /// Stage a VST2 build artifact into the staging directory and return

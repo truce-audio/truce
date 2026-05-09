@@ -10,6 +10,9 @@
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
+pub mod manifest;
+pub use manifest::{BundleEntry, BundleManifest, host_triple};
+
 /// Derive-time view of `truce.toml`.
 ///
 /// `truce-derive` (proc macros) reads this to expand

@@ -12,6 +12,7 @@ use crate::commands::package::stage::stage_au2;
 use crate::commands::package::stage::{lv2_slug, stage_clap, stage_lv2, stage_vst2, stage_vst3};
 use crate::util::fs_ctx;
 use crate::{Res, deployment_target, detect_default_features, load_config, project_root};
+use truce_build::{BundleEntry, BundleManifest, host_triple};
 
 #[allow(clippy::too_many_lines)]
 pub(crate) fn cmd_build(args: &[String]) -> Res {
@@ -134,44 +135,60 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
     }
 
     // --- Stage each format's bundle into target/bundles/ ---
+    //
+    // Each successful stage_* call appends a BundleEntry to `produced`;
+    // we serialize the lot into `manifest.toml` at the end so
+    // `cargo truce package` has an explicit list of what to ship.
     let identity = config.macos.application_identity();
+    let mut produced: Vec<BundleEntry> = Vec::new();
+    let entry = |p: &crate::PluginDef, format: &str, filename: String| BundleEntry {
+        plugin_crate: p.crate_name.clone(),
+        plugin_name: p.name.clone(),
+        plugin_bundle_id: p.bundle_id.clone(),
+        format: format.to_string(),
+        filename,
+    };
     for p in &plugins {
         if clap {
             stage_clap(&root, p, &bundles_dir, identity)?;
-            crate::log_output(format!(
-                "CLAP: {}",
-                bundles_dir.join(format!("{}.clap", p.name)).display()
-            ));
+            let filename = format!("{}.clap", p.name);
+            crate::log_output(format!("CLAP: {}", bundles_dir.join(&filename).display()));
+            produced.push(entry(p, "clap", filename));
         }
         if vst3 {
             stage_vst3(&root, p, &config, &bundles_dir)?;
-            crate::log_output(format!(
-                "VST3: {}",
-                bundles_dir.join(format!("{}.vst3", p.name)).display()
-            ));
+            let filename = format!("{}.vst3", p.name);
+            crate::log_output(format!("VST3: {}", bundles_dir.join(&filename).display()));
+            produced.push(entry(p, "vst3", filename));
         }
         if vst2 {
             // macOS produces a `.vst` directory bundle; Linux/Windows
             // get a bare `.so` / `.dll` since neither uses a bundle.
+            // `stage_vst2` returns the actual staged path so we record
+            // exactly what landed on disk rather than re-deriving the
+            // platform-specific extension here.
             let staged = stage_vst2(&root, p, &config, &bundles_dir)?;
             crate::log_output(format!("VST2: {}", staged.display()));
+            let filename = staged
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| format!("{}.vst", p.name));
+            produced.push(entry(p, "vst2", filename));
         }
         if lv2 {
             stage_lv2(&root, p, &bundles_dir)?;
             let slug = lv2_slug(&p.name);
-            crate::log_output(format!(
-                "LV2:  {}",
-                bundles_dir.join(format!("{slug}.lv2")).display()
-            ));
+            let filename = format!("{slug}.lv2");
+            crate::log_output(format!("LV2:  {}", bundles_dir.join(&filename).display()));
+            produced.push(entry(p, "lv2", filename));
         }
         if au2 {
             #[cfg(target_os = "macos")]
             {
                 stage_au2(&root, p, &config, &bundles_dir)?;
-                crate::log_output(format!(
-                    "AU:   {}",
-                    bundles_dir.join(format!("{}.component", p.name)).display()
-                ));
+                let filename = format!("{}.component", p.name);
+                crate::log_output(format!("AU:   {}", bundles_dir.join(&filename).display()));
+                produced.push(entry(p, "au2", filename));
             }
             // AU is macOS-only; the build phase already log_skip'd above
             // for non-macOS, so nothing to do here.
@@ -207,12 +224,9 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
                     &[MacArch::host()],
                 )?;
                 for p in &plugins {
-                    crate::log_output(format!(
-                        "AU3:  {}",
-                        bundles_dir
-                            .join(format!("{}.app", p.au3_app_name()))
-                            .display()
-                    ));
+                    let filename = format!("{}.app", p.au3_app_name());
+                    crate::log_output(format!("AU3:  {}", bundles_dir.join(&filename).display()));
+                    produced.push(entry(p, "au3", filename));
                 }
             }
         }
@@ -221,6 +235,12 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
             "AU v3: not supported on this platform. Audio Unit is macOS-only.".to_string(),
         );
     }
+
+    // Persist the manifest before printing summaries so a
+    // post-build `cargo truce package` always sees the latest entries.
+    // Merge with any existing manifest so partial builds (e.g.
+    // `--clap`, then `--vst3` later) accumulate rather than overwrite.
+    write_bundle_manifest(&bundles_dir, shell_mode, debug, &produced)?;
 
     let outputs = crate::take_outputs();
     if !outputs.is_empty() {
@@ -237,6 +257,35 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
         }
     }
     eprintln!("\nBundles in {}", bundles_dir.display());
+    Ok(())
+}
+
+fn write_bundle_manifest(
+    bundles_dir: &std::path::Path,
+    shell_mode: bool,
+    debug: bool,
+    produced: &[BundleEntry],
+) -> Res {
+    let profile = if shell_mode {
+        "shell"
+    } else if debug {
+        "debug"
+    } else {
+        "release"
+    };
+    let mut next = BundleManifest::new(host_triple(), profile);
+    next.bundles = produced.to_vec();
+
+    let mut manifest = match BundleManifest::load_if_present(bundles_dir) {
+        Ok(Some(existing)) => existing,
+        // Missing manifest is the common case (first build); start empty.
+        Ok(None) => BundleManifest::new(host_triple(), profile),
+        // Corrupt/incompatible — replace rather than fail the build.
+        // The manifest is a derived artifact, not user data.
+        Err(_) => BundleManifest::new(host_triple(), profile),
+    };
+    manifest.merge(next);
+    manifest.save(bundles_dir)?;
     Ok(())
 }
 
