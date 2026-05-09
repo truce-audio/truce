@@ -1,13 +1,12 @@
 //! Regression test: `#[derive(State)]` must compile and round-trip.
 //!
-//! The generated `deserialize` body computes `cursor.remaining() / 4
-//! + field_count` to bound the forward-compat skip loop.
-//! `cursor.remaining()` is `usize` and `field_count` was previously
-//! interpolated as a `u32` literal, so the addition failed to compile
-//! with "cannot add `u32` to `usize`" for any struct annotated
-//! `#[derive(State)]`. The bug went unnoticed because nothing in-tree
-//! used the derive — fixed by casting `field_count as usize` at the
-//! arithmetic site.
+//! The generated `deserialize` bounded the forward-compat skip loop
+//! by adding the cursor's remaining `usize` byte count to a `u32`
+//! field count interpolated as a literal. The addition failed to
+//! compile (no `Add<u32> for usize`) for any struct annotated with
+//! the derive. The bug went unnoticed because nothing in-tree used
+//! the derive — fixed by casting the field count at the arithmetic
+//! site.
 
 use truce_core::custom_state::State;
 use truce_derive::State;

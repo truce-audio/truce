@@ -140,3 +140,14 @@ au_tag = "Effects"
 aax_category = "Modulation"
 au3_name = "Truce Tremolo (AUv3)"
 
+[[plugin]]
+name = "Truce State"
+bundle_id = "state"
+crate = "truce-example-state"
+category = "effect"
+fourcc = "TStt"
+au3_subtype = "TSt3"
+au_tag = "Effects"
+aax_category = "Other"
+au3_name = "Truce State (AUv3)"
+
