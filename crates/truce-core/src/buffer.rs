@@ -400,6 +400,35 @@ impl RawBufferScratch {
     }
 }
 
+impl RawBufferScratch {
+    /// Pre-allocate the per-channel scratch vectors so `build` runs
+    /// allocation-free for buses up to `num_in` × `num_out` channels
+    /// and blocks up to `max_frames`. Idempotent and growth-only:
+    /// safe to call from both `cb_create` (with the default layout's
+    /// counts) and `cb_reset` (with the host's negotiated max). Without
+    /// this hook, the first audio block at >2 channels would heap-
+    /// allocate on the audio thread because the `Default` impl only
+    /// sizes for stereo.
+    pub fn ensure_capacity(&mut self, num_in: usize, num_out: usize, max_frames: usize) {
+        if self.input_slices.capacity() < num_in {
+            self.input_slices
+                .reserve_exact(num_in - self.input_slices.capacity());
+        }
+        if self.output_slices.capacity() < num_out {
+            self.output_slices
+                .reserve_exact(num_out - self.output_slices.capacity());
+        }
+        while self.input_copies.len() < num_in {
+            self.input_copies.push(Vec::with_capacity(max_frames));
+        }
+        for buf in &mut self.input_copies {
+            if buf.capacity() < max_frames {
+                buf.reserve_exact(max_frames - buf.capacity());
+            }
+        }
+    }
+}
+
 impl Default for RawBufferScratch {
     fn default() -> Self {
         Self {

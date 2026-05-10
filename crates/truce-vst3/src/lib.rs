@@ -17,7 +17,7 @@ use truce_core::export::PluginExport;
 use truce_core::info::PluginCategory;
 use truce_core::process::ProcessContext;
 use truce_core::state;
-use truce_core::wrapper::{default_io_channels, log_missing_bus_layout, run_register};
+use truce_core::wrapper::{default_io_channels, log_missing_bus_layout, run_audio_block, run_register};
 use truce_params::Params;
 
 use ffi::{Vst3Callbacks, Vst3MidiEvent, Vst3ParamDescriptor, Vst3PluginDescriptor};
@@ -174,6 +174,12 @@ unsafe extern "C" fn cb_reset<P: PluginExport>(
         let max_frames = (max_frames as usize).max(1024);
         inst.sample_rate = sample_rate;
         inst.max_block_size = max_frames;
+        // Grow per-block scratch to cover this layout's channel count
+        // and block size before the first process() call so the audio
+        // thread stays alloc-free.
+        let (num_in, num_out) = default_io_channels::<P>().unwrap_or((2, 2));
+        inst.scratch
+            .ensure_capacity(num_in as usize, num_out as usize, max_frames);
         inst.plugin.reset(sample_rate, max_frames);
         inst.plugin.params().set_sample_rate(sample_rate);
         inst.plugin.params().snap_smoothers();
@@ -198,9 +204,10 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
     param_changes: *const ffi::Vst3ParamChange,
     num_param_changes: u32,
 ) {
-    unsafe {
+    let nf = num_frames as usize;
+    let ok = run_audio_block::<P>("VST3", || unsafe {
         let inst = &mut *ctx.cast::<Vst3Instance<P>>();
-        let num_frames = num_frames as usize;
+        let num_frames = nf;
 
         // Host called process() before setActive(true) — the plugin
         // hasn't been told its sample rate / max block size yet, so
@@ -392,6 +399,19 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
         inst.latency_cache
             .store(inst.plugin.latency(), Ordering::Relaxed);
         inst.tail_cache.store(inst.plugin.tail(), Ordering::Relaxed);
+    });
+    if !ok {
+        // Panic in plugin.process() — zero outputs so the host
+        // doesn't keep playing whatever stale samples were in the
+        // buffer when DSP died.
+        unsafe {
+            for ch in 0..num_output_channels as usize {
+                let ptr = *outputs.add(ch);
+                if !ptr.is_null() {
+                    std::ptr::write_bytes(ptr, 0, nf);
+                }
+            }
+        }
     }
 }
 

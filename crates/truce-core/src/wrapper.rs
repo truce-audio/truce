@@ -126,16 +126,64 @@ pub fn log_missing_bus_layout<P: PluginExport>(format: &str) {
 pub fn run_register<P>(format: &str, body: impl FnOnce()) {
     let result = catch_unwind(AssertUnwindSafe(body));
     if let Err(payload) = result {
-        let msg = if let Some(s) = payload.downcast_ref::<&'static str>() {
-            *s
-        } else if let Some(s) = payload.downcast_ref::<String>() {
-            s.as_str()
-        } else {
-            "<non-string panic payload>"
-        };
         eprintln!(
-            "[truce {format}] panic during register for {}: {msg}",
+            "[truce {format}] panic during register for {}: {}",
             type_name::<P>(),
+            extract_panic_msg(&payload),
         );
+    }
+}
+
+/// Run a per-block audio-thread `body` under
+/// [`std::panic::catch_unwind`].
+///
+/// Format wrappers call this around the `cb_process` body so a panic
+/// from user `process()` can't unwind across the `extern "C"` FFI
+/// boundary into the host (UB on most toolchains; abort on others).
+/// Returns `true` on clean exit, `false` if the body panicked — the
+/// caller should zero output buffers on `false` so the host doesn't
+/// keep playing whatever happened to be in those slots.
+///
+/// Panic logging is one short `eprintln!` per occurrence; the audio
+/// thread should never panic, so the I/O is rare and acceptable.
+#[must_use]
+pub fn run_audio_block<P>(format: &str, body: impl FnOnce()) -> bool {
+    let result = catch_unwind(AssertUnwindSafe(body));
+    if let Err(payload) = result {
+        eprintln!(
+            "[truce {format}] panic in process() for {}: {}",
+            type_name::<P>(),
+            extract_panic_msg(&payload),
+        );
+        return false;
+    }
+    true
+}
+
+/// Like [`run_audio_block`] but for callbacks that return a status
+/// code. Returns `body`'s value on a clean exit, `fallback` if the
+/// body panicked. Used by the CLAP wrapper, whose process callback
+/// returns a `clap_process_status` `i32`.
+pub fn run_audio_block_with<P, R>(format: &str, fallback: R, body: impl FnOnce() -> R) -> R {
+    match catch_unwind(AssertUnwindSafe(body)) {
+        Ok(r) => r,
+        Err(payload) => {
+            eprintln!(
+                "[truce {format}] panic in process() for {}: {}",
+                type_name::<P>(),
+                extract_panic_msg(&payload),
+            );
+            fallback
+        }
+    }
+}
+
+fn extract_panic_msg(payload: &Box<dyn std::any::Any + Send>) -> &str {
+    if let Some(s) = payload.downcast_ref::<&'static str>() {
+        s
+    } else if let Some(s) = payload.downcast_ref::<String>() {
+        s.as_str()
+    } else {
+        "<non-string panic payload>"
     }
 }

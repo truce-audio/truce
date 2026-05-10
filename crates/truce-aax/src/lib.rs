@@ -27,7 +27,9 @@ use truce_core::info::PluginCategory;
 use truce_core::midi::{pitch_bend_from_bytes, pitch_bend_to_bytes};
 use truce_core::process::ProcessContext;
 use truce_core::state;
-use truce_core::wrapper::{first_bus_layout, log_missing_bus_layout, run_register};
+use truce_core::wrapper::{
+    default_io_channels, first_bus_layout, log_missing_bus_layout, run_audio_block, run_register,
+};
 use truce_params::{ParamFlags, Params};
 
 // ---------------------------------------------------------------------------
@@ -172,8 +174,14 @@ struct AaxInstance<P: PluginExport> {
     plugin_id_hash: u64,
     sample_rate: f64,
     /// Max block size declared by AAX in `EffectInit` (delivered
-    /// through `_reset`'s `max_frames`).
+    /// through `_reset`'s `max_frames`). A generous default keeps
+    /// the contract assert in `_process` from tripping for hosts
+    /// that send process before declaring a max.
     max_block_size: usize,
+    /// `true` once `_reset` has run. `_process` early-returns and
+    /// zeros outputs while false so DSP doesn't run with un-snapped
+    /// smoothers / unset sample rate.
+    prepared: bool,
     /// Reused per-block scratch for `RawBufferScratch::build`. Lives
     /// on the instance so the audio thread doesn't heap-allocate.
     scratch: truce_core::buffer::RawBufferScratch,
@@ -629,7 +637,8 @@ pub unsafe fn _create<P: PluginExport>() -> *mut std::ffi::c_void {
         output_events: EventList::with_capacity(EVENT_LIST_PREALLOC),
         plugin_id_hash: state::shared_plugin_state_hash(&info),
         sample_rate: 44100.0,
-        max_block_size: 0,
+        max_block_size: 8192,
+        prepared: false,
         scratch: truce_core::buffer::RawBufferScratch::default(),
         editor: None,
         transport_slot: truce_core::TransportSlot::new(),
@@ -654,14 +663,20 @@ pub unsafe fn _reset<P: PluginExport>(
     max_frames: u32,
 ) {
     let inst = unsafe { &mut *ctx.cast::<AaxInstance<P>>() };
+    // Clamp host-supplied max_frames to a sane minimum.
+    let max_frames = (max_frames as usize).max(1024);
     inst.sample_rate = sample_rate;
-    inst.max_block_size = max_frames as usize;
-    inst.plugin.reset(sample_rate, max_frames as usize);
+    inst.max_block_size = max_frames;
+    let (num_in, num_out) = default_io_channels::<P>().unwrap_or((2, 2));
+    inst.scratch
+        .ensure_capacity(num_in as usize, num_out as usize, max_frames);
+    inst.plugin.reset(sample_rate, max_frames);
     inst.plugin.params().set_sample_rate(sample_rate);
     inst.plugin.params().snap_smoothers();
     inst.latency_cache
         .store(inst.plugin.latency(), Ordering::Relaxed);
     inst.tail_cache.store(inst.plugin.tail(), Ordering::Relaxed);
+    inst.prepared = true;
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -676,8 +691,23 @@ pub unsafe fn _process<P: PluginExport>(
     num_events: u32,
     transport_ptr: *const TruceAaxTransportSnapshot,
 ) {
+    let nf = num_frames as usize;
+    let ok = run_audio_block::<P>("AAX", || {
     let inst = unsafe { &mut *ctx.cast::<AaxInstance<P>>() };
-    let num_frames = num_frames as usize;
+    let num_frames = nf;
+
+    // Host called render before EffectInit primed sample rate /
+    // smoothers. Zero outputs and bail so DSP doesn't run with
+    // uninitialized state.
+    if !inst.prepared {
+        for ch in 0..num_out as usize {
+            let ptr = unsafe { *outputs.add(ch) };
+            if !ptr.is_null() {
+                unsafe { std::ptr::write_bytes(ptr, 0, num_frames) };
+            }
+        }
+        return;
+    }
 
     // Apply any pending state-load before per-block work so the
     // plugin sees consistent params and extra state for the entire
@@ -800,6 +830,17 @@ pub unsafe fn _process<P: PluginExport>(
         inst.latency_cache
             .store(inst.plugin.latency(), Ordering::Relaxed);
         inst.tail_cache.store(inst.plugin.tail(), Ordering::Relaxed);
+    }
+    });
+    if !ok {
+        unsafe {
+            for ch in 0..num_out as usize {
+                let ptr = *outputs.add(ch);
+                if !ptr.is_null() {
+                    std::ptr::write_bytes(ptr, 0, nf);
+                }
+            }
+        }
     }
 }
 

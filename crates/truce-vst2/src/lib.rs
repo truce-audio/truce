@@ -18,7 +18,9 @@ use truce_core::export::PluginExport;
 use truce_core::midi::pitch_bend_from_bytes;
 use truce_core::process::ProcessContext;
 use truce_core::state;
-use truce_core::wrapper::{first_bus_layout, log_missing_bus_layout, run_register};
+use truce_core::wrapper::{
+    default_io_channels, first_bus_layout, log_missing_bus_layout, run_audio_block, run_register,
+};
 use truce_params::{ParamFlags, Params};
 
 use ffi::{Vst2Callbacks, Vst2MidiEvent, Vst2ParamDescriptor, Vst2PluginDescriptor};
@@ -52,8 +54,15 @@ struct Vst2Instance<P: PluginExport> {
     plugin_id_hash: u64,
     sample_rate: f64,
     /// Max block size declared by the host via `effSetBlockSize` /
-    /// `effOpen` (delivered through `cb_reset`'s `max_frames`).
+    /// `effOpen` (delivered through `cb_reset`'s `max_frames`). A
+    /// generous default keeps the contract assert in `cb_process`
+    /// from tripping for hosts that send process before declaring a
+    /// max.
     max_block_size: usize,
+    /// `true` once `cb_reset` has run. `cb_process` early-returns and
+    /// zeros outputs while false so DSP doesn't run with un-snapped
+    /// smoothers / unset sample rate.
+    prepared: bool,
     /// Reused per-block scratch for `RawBufferScratch::build`. Lives
     /// on the instance so the audio thread doesn't heap-allocate.
     scratch: truce_core::buffer::RawBufferScratch,
@@ -195,7 +204,11 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
         output_events: EventList::with_capacity(EVENT_LIST_PREALLOC),
         plugin_id_hash: state::shared_plugin_state_hash(&info),
         sample_rate: 44100.0,
-        max_block_size: 0,
+        // 8192 covers the largest block sizes mainstream DAWs use; a
+        // non-zero default keeps the process-before-prepared path
+        // from tripping the contract assert.
+        max_block_size: 8192,
+        prepared: false,
         scratch: truce_core::buffer::RawBufferScratch::default(),
         editor: None,
         aeffect_ptr: std::ptr::null_mut(),
@@ -222,14 +235,23 @@ unsafe extern "C" fn cb_reset<P: PluginExport>(
 ) {
     unsafe {
         let inst = &mut *ctx.cast::<Vst2Instance<P>>();
+        // Clamp host-supplied max_frames to a sane minimum: hosts
+        // that ignore their own setBlockSize contract can pass 0
+        // here, which would size plugin-internal delay lines to zero
+        // and blow up on the first non-zero process() call.
+        let max_frames = (max_frames as usize).max(1024);
         inst.sample_rate = sample_rate;
-        inst.max_block_size = max_frames as usize;
-        inst.plugin.reset(sample_rate, max_frames as usize);
+        inst.max_block_size = max_frames;
+        let (num_in, num_out) = default_io_channels::<P>().unwrap_or((2, 2));
+        inst.scratch
+            .ensure_capacity(num_in as usize, num_out as usize, max_frames);
+        inst.plugin.reset(sample_rate, max_frames);
         inst.plugin.params().set_sample_rate(sample_rate);
         inst.plugin.params().snap_smoothers();
         inst.latency_cache
             .store(inst.plugin.latency(), Ordering::Relaxed);
         inst.tail_cache.store(inst.plugin.tail(), Ordering::Relaxed);
+        inst.prepared = true;
 
         // Mark the instance as "fully initialized" so any subsequent
         // `cb_gui_open` calls open the editor immediately rather than
@@ -256,9 +278,23 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
     events: *const Vst2MidiEvent,
     num_events: u32,
 ) {
-    unsafe {
+    let nf = num_frames as usize;
+    let ok = run_audio_block::<P>("VST2", || unsafe {
         let inst = &mut *ctx.cast::<Vst2Instance<P>>();
         let num_frames = num_frames as usize;
+
+        // Host called process() before effMainsChanged(true) — sample
+        // rate and smoothers haven't been primed yet. Zero outputs
+        // and bail rather than running DSP through uninitialized state.
+        if !inst.prepared {
+            for ch in 0..num_output_channels as usize {
+                let ptr = *outputs.add(ch);
+                if !ptr.is_null() {
+                    std::ptr::write_bytes(ptr, 0, num_frames);
+                }
+            }
+            return;
+        }
 
         // Apply any pending state-load before per-block work so the
         // plugin sees consistent params and extra state for the
@@ -367,6 +403,16 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
         inst.latency_cache
             .store(inst.plugin.latency(), Ordering::Relaxed);
         inst.tail_cache.store(inst.plugin.tail(), Ordering::Relaxed);
+    });
+    if !ok {
+        unsafe {
+            for ch in 0..num_output_channels as usize {
+                let ptr = *outputs.add(ch);
+                if !ptr.is_null() {
+                    std::ptr::write_bytes(ptr, 0, nf);
+                }
+            }
+        }
     }
 }
 

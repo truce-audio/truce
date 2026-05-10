@@ -36,6 +36,7 @@ use truce_core::export::PluginExport;
 use truce_core::info::{PluginCategory, PluginInfo};
 use truce_core::process::ProcessContext;
 use truce_core::state::shared_plugin_state_hash;
+use truce_core::wrapper::run_audio_block;
 use truce_params::{ParamInfo, Params};
 
 use crate::atom::AtomSequenceReader;
@@ -339,9 +340,9 @@ pub unsafe fn activate<P: PluginExport>(handle: *mut Lv2Instance<P>) {
 /// memory must be valid for `n_samples`.
 #[allow(clippy::too_many_lines)]
 pub unsafe fn run<P: PluginExport>(handle: *mut Lv2Instance<P>, n_samples: u32) {
-    unsafe {
+    let n = n_samples as usize;
+    let ok = run_audio_block::<P>("LV2", || unsafe {
         let inst = &mut *handle;
-        let n = n_samples as usize;
         if n == 0 {
             return;
         }
@@ -538,6 +539,19 @@ pub unsafe fn run<P: PluginExport>(handle: *mut Lv2Instance<P>, n_samples: u32) 
         // capacity so the next block doesn't allocate.
         inst.input_slices.clear();
         inst.output_slices.clear();
+    });
+    if !ok {
+        // Panic in plugin.process() — zero output port buffers so
+        // the host doesn't keep playing whatever stale samples were
+        // there when DSP died.
+        unsafe {
+            let inst = &mut *handle;
+            for &ptr in &inst.audio_outputs {
+                if !ptr.is_null() {
+                    std::ptr::write_bytes(ptr, 0, n);
+                }
+            }
+        }
     }
 }
 

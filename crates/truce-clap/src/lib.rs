@@ -80,6 +80,7 @@ use truce_core::info::{PluginCategory, PluginInfo};
 use truce_core::midi::{denorm_7bit, pitch_bend_from_bytes, pitch_bend_to_bytes};
 use truce_core::process::{ProcessContext, ProcessStatus};
 use truce_core::state;
+use truce_core::wrapper::run_audio_block_with;
 use truce_params::Params;
 use truce_params::{ParamFlags, ParamInfo, ParamRange};
 
@@ -745,7 +746,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
     plugin: *const clap_plugin,
     process: *const clap_process,
 ) -> i32 {
-    unsafe {
+    run_audio_block_with::<P, i32>("CLAP", CLAP_PROCESS_ERROR, || unsafe {
         if process.is_null() {
             return CLAP_PROCESS_ERROR;
         }
@@ -803,18 +804,25 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
             data.max_block_size
         );
 
+        // Build per-channel slices preserving channel index across
+        // every bus. A null bus (`buf.data32 == null`) emits empty
+        // slices for each of its declared channels rather than being
+        // skipped — skipping would shift downstream buses' channel
+        // indices and silently re-route audio onto the wrong bus for
+        // multi-bus plugins.
         data.input_slices.clear();
         for bus_idx in 0..proc.audio_inputs_count {
             let buf = &*proc.audio_inputs.add(bus_idx as usize);
-            if buf.data32.is_null() {
-                continue;
-            }
             for ch in 0..buf.channel_count {
-                let ptr = *buf.data32.add(ch as usize);
-                let slice: &[f32] = if ptr.is_null() {
+                let slice: &[f32] = if buf.data32.is_null() {
                     &[]
                 } else {
-                    std::slice::from_raw_parts(ptr, num_frames)
+                    let ptr = *buf.data32.add(ch as usize);
+                    if ptr.is_null() {
+                        &[]
+                    } else {
+                        std::slice::from_raw_parts(ptr, num_frames)
+                    }
                 };
                 data.input_slices
                     .push(transmute::<&[f32], &'static [f32]>(slice));
@@ -824,15 +832,16 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
         data.output_slices.clear();
         for bus_idx in 0..proc.audio_outputs_count {
             let buf = &mut *proc.audio_outputs.add(bus_idx as usize);
-            if buf.data32.is_null() {
-                continue;
-            }
             for ch in 0..buf.channel_count {
-                let ptr = *buf.data32.add(ch as usize);
-                let slice: &mut [f32] = if ptr.is_null() {
+                let slice: &mut [f32] = if buf.data32.is_null() {
                     &mut []
                 } else {
-                    std::slice::from_raw_parts_mut(ptr, num_frames)
+                    let ptr = *buf.data32.add(ch as usize);
+                    if ptr.is_null() {
+                        &mut []
+                    } else {
+                        std::slice::from_raw_parts_mut(ptr, num_frames)
+                    }
                 };
                 data.output_slices
                     .push(transmute::<&mut [f32], &'static mut [f32]>(slice));
@@ -1059,7 +1068,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
             ProcessStatus::Tail(_) => CLAP_PROCESS_TAIL,
             ProcessStatus::KeepAlive => CLAP_PROCESS_CONTINUE_IF_NOT_QUIET,
         }
-    }
+    })
 }
 
 // ---------------------------------------------------------------------------
