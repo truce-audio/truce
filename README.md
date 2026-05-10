@@ -1,18 +1,26 @@
-# truce
+<p align="center">
+  <a href="https://truce.audio/"><img src="https://truce.audio/branding/logo-banner.svg" alt="truce" width="480" /></a>
+</p>
 
-Build audio plugins in Rust. CLAP, VST3, LV2, AU v2, AU v3,
-AAX, and standalone from a single Rust codebase. Dead simple
-developer experience--install and load your plugin in a DAW 
-in 5 minutes. 
+<p align="center">
+  Build audio plugins in Rust. CLAP, VST3, LV2, AU v2, AU v3,
+  AAX, and standalone from a single Rust codebase. Dead simple
+  developer experience—install and load your plugin in a DAW
+  in 5 minutes.
+</p>
 
-[![Status](https://img.shields.io/badge/status-preview-orange)](docs/README.md)
-[![Latest](https://img.shields.io/github/v/tag/truce-audio/truce?label=latest&logo=git&logoColor=white&sort=semver)](https://github.com/truce-audio/truce/releases/latest)
-[![crates.io](https://img.shields.io/crates/v/cargo-truce?logo=rust&logoColor=white)](https://crates.io/crates/cargo-truce)
+<p align="center">
+  <a href="https://truce.audio/"><img src="https://img.shields.io/badge/status-preview-orange" alt="Status"></a>
+  <a href="https://github.com/truce-audio/truce/releases/latest"><img src="https://img.shields.io/github/v/tag/truce-audio/truce?label=latest&logo=git&logoColor=white&sort=semver" alt="Latest"></a>
+  <a href="https://crates.io/crates/cargo-truce"><img src="https://img.shields.io/crates/v/cargo-truce?logo=rust&logoColor=white" alt="crates.io"></a>
+</p>
+
+<p align="center">
+  <a href="https://truce.audio/docs/guide/install/"><img src="https://img.shields.io/badge/getting_started-guide-purple?logo=readthedocs&logoColor=white" alt="Getting Started"></a>
+  <a href="https://truce-audio.github.io/truce/"><img src="https://img.shields.io/badge/docs-rustdoc-purple?logo=rust&logoColor=white" alt="Docs"></a>
+</p>
 
 ## Quick Start
-
-[![Getting Started](https://img.shields.io/badge/getting_started-guide-purple?logo=readthedocs&logoColor=white)](docs/reference/install.md)
-[![Docs](https://img.shields.io/badge/docs-rustdoc-purple?logo=rust&logoColor=white)](https://truce-audio.github.io/truce/)
 
 ```sh
 # Install the CLI (one-time)
@@ -52,7 +60,7 @@ Build without installing:
 ```sh
 cargo truce build                # bundle all formats into target/bundles/ without installing
 cargo truce build --clap --vst3  # subset of formats
-cargo truce build --shell        # hot-reload shell build (see docs/reference/hot-reload.md)
+cargo truce build --shell        # hot-reload shell build
 
 cargo truce run                  # launch the plugin standalone (no DAW)
 cargo truce run -p my-plugin     # standalone for a specific crate
@@ -156,7 +164,7 @@ builds on macOS and Windows — supports audio, MIDI, state, and UI
 (X11UI on Linux, CocoaUI on macOS, WindowsUI on Windows). AAX
 requires the Avid AAX SDK and PACE/iLok signing
 for retail Pro Tools releases. VST2 is opt-in on all platforms — see
-note below. See [Status](docs/README.md) for host coverage.
+note below. See [truce.audio](https://truce.audio/) for host coverage.
 
 ## Features
 
@@ -174,9 +182,10 @@ note below. See [Status](docs/README.md) for host coverage.
 
 ## Documentation
 
-- [Reference](docs/reference/) — install, first plugin, params, processing, GUI, hot reload, shipping
-- [Formats](docs/formats/) — per-format reference (CLAP, VST3, VST2, LV2, AU, AAX) with env vars, signing, install paths, gotchas
-- [Status](docs/README.md) — what's built, what's next
+Full docs live at **[truce.audio](https://truce.audio/)** — install
+guide, first-plugin walkthrough, params / processing / GUI / hot
+reload / shipping reference, per-format gotchas (CLAP, VST3, VST2,
+LV2, AU, AAX), and current status.
 
 ## Requirements
 
@@ -191,7 +200,7 @@ note below. See [Status](docs/README.md) for host coverage.
 
 ## Acknowledgements
 
-truce stands on the shoulders of [**nih-plug**](https://github.com/robbert-vdh/nih-plug)
+truce drew inspiration from [**nih-plug**](https://github.com/robbert-vdh/nih-plug)
 by Robbert van der Helm — the trailblazing Rust audio plugin framework
 whose API design, thread-safe parameter model, and overall shape
 informed countless decisions here.
