@@ -18,6 +18,12 @@ use std::process::Command;
 /// host picks one at scan time and shadows the other, which is a
 /// frequent cause of "DAW loads my old build" support questions.
 fn warn_on_scope_collision(format: Format, user_path: &Path, system_path: &Path) {
+    // On platforms with no distinct system-scope plug-in dir (Linux,
+    // Windows for some formats), `InstallScope::User` and `::System`
+    // resolve to the same path — a single install can't shadow itself.
+    if user_path == system_path {
+        return;
+    }
     if user_path.exists() && system_path.exists() {
         eprintln!(
             "    {} {} installed in both scopes:",
@@ -395,11 +401,17 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
         eprintln!("\nclap-validator (CLAP)\n");
         let clap_validator = find_clap_validator();
         if let Some(cv) = clap_validator {
-            // Project-local scratch. `cargo clean` sweeps it, and it
-            // stays off the system `/tmp` so nothing outside the repo
-            // gets touched.
-            let scratch = tmp_verify().join("clap-validate");
-            let _ = fs::create_dir_all(&scratch);
+            // Project-local scratch for the macOS bundle-wrap fallback.
+            // `cargo clean` sweeps it, and it stays off the system
+            // `/tmp` so nothing outside the repo gets touched. On
+            // Linux/Windows we hand clap-validator the installed file
+            // directly, so the scratch dir is never created there.
+            #[cfg(target_os = "macos")]
+            let scratch = {
+                let s = tmp_verify().join("clap-validate");
+                let _ = fs::create_dir_all(&s);
+                s
+            };
 
             for p in &plugins {
                 let clap_name = format!("{}.clap", p.name);
@@ -418,8 +430,18 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
                     continue;
                 }
 
-                // clap-validator requires bundle format (Plugin.clap/Contents/MacOS/Plugin).
-                // If the installed file is a bare dylib, create a temporary bundle.
+                // CLAP plugin shape is per-platform:
+                //   macOS: a `.clap` *bundle* directory with a binary
+                //          at `Contents/MacOS/<name>`. `cargo truce
+                //          install` writes a bare dylib renamed
+                //          `.clap` (still loadable by hosts), so we
+                //          wrap it in a scratch bundle for
+                //          clap-validator.
+                //   Linux:   a `.so` renamed `.clap`. dlopen-loadable
+                //          directly — no bundle.
+                //   Windows: a `.dll` renamed `.clap`. LoadLibrary-
+                //          loadable directly — no bundle.
+                #[cfg(target_os = "macos")]
                 let validate_path = if installed.join("Contents/MacOS").is_dir() {
                     installed.clone()
                 } else {
@@ -430,6 +452,8 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
                     let _ = fs::copy(&installed, macos.join(bin_name));
                     bundle
                 };
+                #[cfg(not(target_os = "macos"))]
+                let validate_path = installed.clone();
 
                 eprint!("  {} ... ", p.name);
                 let output = Command::new(&cv)
@@ -455,6 +479,7 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
                 warn_on_scope_collision(Format::Clap, &user_path, &system_path);
             }
 
+            #[cfg(target_os = "macos")]
             let _ = fs::remove_dir_all(&scratch);
         } else {
             eprintln!("  clap-validator not found.");
