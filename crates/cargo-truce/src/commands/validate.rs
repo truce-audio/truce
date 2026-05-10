@@ -4,9 +4,10 @@
 
 use crate::format::Format;
 use crate::install_scope::InstallScope;
-use crate::{PluginDef, Res, dirs, load_config, tag_warn, tmp_verify};
+use crate::{PluginDef, Res, dirs, load_config, tag_warn};
 #[cfg(target_os = "macos")]
-use crate::{deployment_target, project_root};
+use crate::{deployment_target, project_root, tmp_verify};
+#[cfg(target_os = "macos")]
 use std::fs;
 use std::path::Path;
 #[cfg(target_os = "macos")]

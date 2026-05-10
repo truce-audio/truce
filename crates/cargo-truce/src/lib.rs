@@ -27,12 +27,14 @@ pub(crate) use commands::install::aax::build_aax_template;
 #[cfg(target_os = "windows")]
 pub(crate) use commands::package::PkgFormat;
 pub(crate) use config::{Config, PluginDef, deployment_target, load_config, resolve_aax_sdk_path};
+#[cfg(any(target_os = "macos", test))]
+pub(crate) use util::tmp_verify;
 pub(crate) use util::{
     cargo_build, cargo_build_debug, check_cmd, codesign_bundle, confirm_prompt,
     detect_default_features, find_on_path, is_debug_profile, log_output, log_skip, project_root,
     read_standalone_bin_name, release_lib, run_sudo, set_build_profile, set_debug_profile,
-    tag_fail, tag_ok, tag_warn, take_outputs, take_skipped, tmp_verify,
-    verify_shell_profile_declared, vprintln,
+    tag_fail, tag_ok, tag_warn, take_outputs, take_skipped, verify_shell_profile_declared,
+    vprintln,
 };
 // `tmp_dir` is the raw escape hatch — used by `reset_au` (macOS only)
 // to walk every subdir under `tmp/`. Most callers pick the typed
