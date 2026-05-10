@@ -597,74 +597,105 @@ fn build_all_formats(
         // outputs land at `target/<triple>/release/<bin>` rather than
         // `lib<stem>_<feature>.dylib`, so it doesn't fit the shared
         // `build_and_lipo_format` shape.
-        for p in plugins {
-            build_and_lipo_standalone(root, p, archs, dt)?;
-        }
+        build_and_lipo_standalone(root, plugins, archs, dt)?;
     }
     Ok(())
 }
 
-/// Build the standalone host binary (`--features standalone`) for each
-/// requested arch and lipo the per-arch outputs into the canonical
-/// `target/release/<bin>` path that `stage_standalone` reads.
+/// Build the standalone host binaries (`--features standalone`) for
+/// every plugin in `plugins` and lipo each plugin's per-arch outputs
+/// into the canonical `target/release/<bin>` path that
+/// `stage_standalone` reads.
+///
+/// Cargo invocations are batched across plugins: one
+/// `cargo build -p a -p b -p c … --features standalone` per arch
+/// instead of one per (plugin, arch). The `[[bin]] required-features
+/// = ["standalone"]` gate on each plugin's `Cargo.toml` keeps cargo
+/// from producing bin output for plugins that don't enable the
+/// feature, so a plugin without a standalone bin in the batch is
+/// silently skipped at the cargo layer.
 ///
 /// `bin_stem` resolves through `read_standalone_bin_name`, which
-/// inspects the plugin's `Cargo.toml` so hand-edited `[[bin]] name`
+/// inspects each plugin's `Cargo.toml` so hand-edited `[[bin]] name`
 /// values still work — falls back to the scaffold convention
 /// (`{crate_name}-standalone`) when the manifest can't be parsed.
-fn build_and_lipo_standalone(root: &Path, plugin: &PluginDef, archs: &[MacArch], dt: &str) -> Res {
-    let bin_stem = crate::read_standalone_bin_name(&plugin.crate_name)
-        .unwrap_or_else(|| format!("{}-standalone", plugin.crate_name));
-
-    for &arch in archs {
-        eprintln!(
-            "Building Standalone ({}, {})...",
-            plugin.name,
-            arch.triple()
-        );
-        cargo_build_for_arch(
-            &[],
-            &[
-                "-p",
-                &plugin.crate_name,
-                "--no-default-features",
-                "--features",
-                "standalone",
-            ],
-            arch,
-            dt,
-        )?;
+fn build_and_lipo_standalone(
+    root: &Path,
+    plugins: &[&PluginDef],
+    archs: &[MacArch],
+    dt: &str,
+) -> Res {
+    if plugins.is_empty() {
+        return Ok(());
     }
 
-    let inputs: Vec<PathBuf> = archs
+    // Resolve every plugin's bin stem upfront so the per-arch staging
+    // loop has them in hand.
+    let bin_stems: Vec<String> = plugins
         .iter()
-        .map(|a| {
-            truce_build::target_dir(root)
-                .join(a.triple())
-                .join("release")
-                .join(&bin_stem)
+        .map(|p| {
+            crate::read_standalone_bin_name(&p.crate_name)
+                .unwrap_or_else(|| format!("{}-standalone", p.crate_name))
         })
         .collect();
-    for src in &inputs {
-        if !src.exists() {
-            return Err(format!(
-                "Standalone build produced no binary at {}. \
-                 Make sure the plugin's Cargo.toml declares a [[bin]] target named '{bin_stem}'.",
-                src.display()
-            )
-            .into());
+
+    // One cargo build per arch covering every plugin in the batch.
+    // Cargo pays the dep-graph-resolve / process-startup cost once per
+    // arch and codegens the leaf example crates' bin targets in
+    // parallel.
+    for &arch in archs {
+        eprintln!(
+            "Building Standalone for {} ({} plugin{})...",
+            arch.triple(),
+            plugins.len(),
+            if plugins.len() == 1 { "" } else { "s" },
+        );
+        let mut args: Vec<&str> = Vec::with_capacity(plugins.len() * 2 + 4);
+        for p in plugins {
+            args.push("-p");
+            args.push(&p.crate_name);
         }
+        args.push("--no-default-features");
+        args.push("--features");
+        args.push("standalone");
+        cargo_build_for_arch(&[], &args, arch, dt)?;
     }
-    let output = truce_build::target_dir(root)
-        .join("release")
-        .join(&bin_stem);
-    if inputs.len() == 1 {
-        // Single-arch (`--host-only`): nothing to lipo, just copy
-        // into the canonical universal output path so `stage_standalone`
-        // reads from one place regardless of arch count.
-        fs::copy(&inputs[0], &output)?;
-    } else {
-        lipo_into(&inputs, &output)?;
+
+    // Per-plugin lipo: each plugin's per-arch bins land at
+    // `target/<triple>/release/<bin_stem>` and need to be combined
+    // into the universal `target/release/<bin_stem>` that
+    // `stage_standalone` reads.
+    for (p, bin_stem) in plugins.iter().zip(bin_stems.iter()) {
+        let inputs: Vec<PathBuf> = archs
+            .iter()
+            .map(|a| {
+                truce_build::target_dir(root)
+                    .join(a.triple())
+                    .join("release")
+                    .join(bin_stem)
+            })
+            .collect();
+        for src in &inputs {
+            if !src.exists() {
+                return Err(format!(
+                    "Standalone build produced no binary for `{}` at {}. \
+                     Make sure the plugin's Cargo.toml declares a [[bin]] target named '{bin_stem}'.",
+                    p.name,
+                    src.display()
+                )
+                .into());
+            }
+        }
+        let output = truce_build::target_dir(root).join("release").join(bin_stem);
+        if inputs.len() == 1 {
+            // Single-arch (`--host-only`): nothing to lipo, just copy
+            // into the canonical universal output path so
+            // `stage_standalone` reads from one place regardless of
+            // arch count.
+            fs::copy(&inputs[0], &output)?;
+        } else {
+            lipo_into(&inputs, &output)?;
+        }
     }
     Ok(())
 }
