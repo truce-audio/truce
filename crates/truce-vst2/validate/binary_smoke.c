@@ -90,7 +90,11 @@ int main(int argc, char** argv) {
     } else if (is_midi_effect) {
         CHECK(effect->numInputs == 0, "midi effect: numInputs == 0");
         CHECK(effect->numOutputs == 0, "midi effect: numOutputs == 0");
-        CHECK(!(effect->flags & effFlagsIsSynth), "midi effect: effFlagsIsSynth not set");
+        /* VST2 has no separate "MIDI effect" category — the wrapper
+         * sets effFlagsIsSynth so hosts route MIDI input to a
+         * 0-in/0-out plugin. Test matches the wrapper's documented
+         * behavior (see vst2_shim.c is_synth derivation). */
+        CHECK(effect->flags & effFlagsIsSynth, "midi effect: effFlagsIsSynth set (VST2 MIDI routing)");
     } else {
         CHECK(effect->numInputs == 2, "effect: numInputs == 2");
         CHECK(effect->numOutputs == 2, "effect: numOutputs == 2");
@@ -118,13 +122,18 @@ int main(int argc, char** argv) {
     effect->dispatcher(effect, effSetBlockSize, 0, 512, NULL, 0);
     effect->dispatcher(effect, effMainsChanged, 0, 1, NULL, 0);
 
-    /* Parameter get/set round-trip */
+    /* Parameter get/set round-trip. Pick a target on the opposite
+     * extreme from `orig` so the test works for both continuous params
+     * (FloatParam) and discrete params that snap to ends (BoolParam,
+     * EnumParam) — setting 0.75 fails on a default-true BoolParam
+     * because 0.75 still rounds back to 1.0. */
     if (effect->numParams > 0) {
         float orig = effect->getParameter(effect, 0);
-        effect->setParameter(effect, 0, 0.75f);
+        float target = (orig <= 0.5f) ? 1.0f : 0.0f;
+        effect->setParameter(effect, 0, target);
         float after = effect->getParameter(effect, 0);
-        CHECK(after != orig || orig == 0.75f, "setParameter/getParameter round-trip");
-        printf("    param[0]: before=%.3f, set=0.75, after=%.3f\n", orig, after);
+        CHECK(after != orig, "setParameter/getParameter round-trip");
+        printf("    param[0]: before=%.3f, set=%.3f, after=%.3f\n", orig, target, after);
     }
 
     /* Product string */
