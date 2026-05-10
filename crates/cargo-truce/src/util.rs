@@ -1153,6 +1153,71 @@ fn cargo_build_inner(
     Ok(())
 }
 
+/// Like `cargo_build`, but invokes `cargo rustc --bin <name>` for one
+/// target and forwards `link_args` after `--`. Use this when linker
+/// flags must be scoped to a single bin: the trailing args only reach
+/// the chosen target's final rustc invocation, not its dependencies.
+///
+/// `RUSTFLAGS` is the wrong tool here — it leaks onto every rustc
+/// spawn cargo does for the build, including transitively-required
+/// cdylib link steps that reject exe-only flags like `/SUBSYSTEM:WINDOWS`
+/// (the cdylib has no `main`, so `link.exe` errors with `LNK2019`).
+#[cfg(target_os = "windows")]
+pub(crate) fn cargo_rustc_bin(
+    env_vars: &[(&str, &str)],
+    base_args: &[&str],
+    package: &str,
+    bin_name: &str,
+    link_args: &[&str],
+) -> crate::Res {
+    {
+        let mut it = base_args.iter();
+        while let Some(a) = it.next() {
+            if *a == "--target" {
+                if let Some(triple) = it.next() {
+                    ensure_rustup_target(triple)?;
+                }
+            } else if let Some(triple) = a.strip_prefix("--target=") {
+                ensure_rustup_target(triple)?;
+            }
+        }
+    }
+
+    let mut cmd = Command::new("cargo");
+    cmd.arg("rustc");
+    match build_profile_name().as_str() {
+        "debug" => {}
+        "release" => {
+            cmd.arg("--release");
+        }
+        custom => {
+            cmd.arg("--profile").arg(custom);
+        }
+    }
+    cmd.arg("-p").arg(package);
+    cmd.arg("--bin").arg(bin_name);
+    if let Some(wrapper) = sccache_wrapper() {
+        cmd.env("RUSTC_WRAPPER", wrapper);
+    }
+    for (k, v) in env_vars {
+        cmd.env(k, v);
+    }
+    for arg in base_args {
+        cmd.arg(arg);
+    }
+    if !link_args.is_empty() {
+        cmd.arg("--");
+        for a in link_args {
+            cmd.arg(a);
+        }
+    }
+    let status = cmd.status()?;
+    if !status.success() {
+        return Err("cargo rustc failed".into());
+    }
+    Ok(())
+}
+
 /// Resolve a path to `sccache` if it's available and the user hasn't
 /// pinned `RUSTC_WRAPPER` themselves. Returns `None` when sccache is
 /// off the path (silent passthrough — no error, no log) or when the

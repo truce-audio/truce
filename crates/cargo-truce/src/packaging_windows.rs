@@ -21,10 +21,10 @@ use std::process::Command;
 
 use crate::install_scope::{PkgScope, note_once};
 use crate::{
-    Config, PkgFormat, PluginDef, Res, WindowsSigningConfig, build_aax_template, cargo_build,
-    detect_default_features, load_config, project_root, read_workspace_version,
-    release_lib_for_target, resolve_aax_sdk_path, rustup_has_target, tag_info, tag_ok, tag_warn,
-    tmp_aax_template, tmp_manifests,
+    Config, PkgFormat, PluginDef, Res, build_aax_template, cargo_build, detect_default_features,
+    load_config, project_root, read_workspace_version, release_lib_for_target,
+    resolve_aax_sdk_path, rustup_has_target, tag_info, tag_ok, tag_warn, tmp_aax_template,
+    tmp_manifests,
 };
 
 // ---------------------------------------------------------------------------
@@ -196,7 +196,7 @@ pub(crate) fn cmd_package(
 
         let mut all_signable: Vec<PathBuf> = Vec::new();
         for &arch in &archs {
-            let staged = stage_plugin(&root, p, &config, &formats, &staging, arch)?;
+            let staged = stage_plugin(&root, p, &formats, &staging, arch)?;
             all_signable.extend(staged.signable);
         }
 
@@ -549,19 +549,58 @@ fn build_all_formats(
             // — no per-format suffix to manage. We just leave the
             // per-arch outputs in place; `stage_standalone` reads
             // them directly.
+            //
+            // Suppress the stray console window the packaged `.exe`
+            // would otherwise pop next to the plugin GUI when launched
+            // from Start Menu / Explorer. Done at the build level (not
+            // a `#![windows_subsystem = "windows"]` attribute on every
+            // plugin's `main.rs`) so plugin authors get this for free.
+            // `/ENTRY:mainCRTStartup` keeps the standard Rust entry
+            // point — without it, `link.exe` defaults to `WinMainCRTStartup`
+            // under `/SUBSYSTEM:WINDOWS` and fails because Rust didn't
+            // emit a `WinMain`. `truce_standalone::run` re-attaches to
+            // the parent console at startup, so `--help`, `--list-devices`,
+            // and error diagnostics still print when the same `.exe` is
+            // run from cmd or PowerShell. Override with
+            // `TRUCE_STANDALONE_KEEP_CONSOLE=1` (or in `.cargo/config.toml`
+            // `[env]`) when you want the console subsystem back —
+            // useful for debugging a release build's startup output.
+            //
+            // Per-bin via `cargo rustc --bin` rather than `RUSTFLAGS`
+            // on a multi-target `cargo build`: RUSTFLAGS is process-
+            // global, so it would also be applied to the plugin's own
+            // cdylib link step (which happens because the bin depends
+            // on the lib). `/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup`
+            // on a DLL link tells `link.exe` to look for `main`, and
+            // it fails with `LNK2019: unresolved external symbol main`.
+            // `cargo rustc -- <flags>` only forwards the flags to the
+            // chosen target's final rustc invocation.
             eprintln!("Building Standalone ({})...", arch.tag());
-            let mut build_args: Vec<String> = vec!["--target".into(), triple.into()];
-            for p in plugins {
-                build_args.push("-p".into());
-                build_args.push(p.crate_name.clone());
-            }
-            build_args.extend_from_slice(&[
+            let keep_console = crate::read_build_env("TRUCE_STANDALONE_KEEP_CONSOLE")
+                .is_some_and(|v| v != "0" && !v.is_empty());
+            let link_args: &[&str] = if keep_console {
+                &[]
+            } else {
+                &[
+                    "-C",
+                    "link-arg=/SUBSYSTEM:WINDOWS",
+                    "-C",
+                    "link-arg=/ENTRY:mainCRTStartup",
+                ]
+            };
+            let base_args: Vec<String> = vec![
+                "--target".into(),
+                triple.into(),
                 "--no-default-features".into(),
                 "--features".into(),
                 "standalone".into(),
-            ]);
-            let arg_refs: Vec<&str> = build_args.iter().map(std::string::String::as_str).collect();
-            cargo_build(&[], &arg_refs, dt)?;
+            ];
+            let base_refs: Vec<&str> = base_args.iter().map(std::string::String::as_str).collect();
+            for p in plugins {
+                let bin_name = crate::read_standalone_bin_name(&p.crate_name)
+                    .unwrap_or_else(|| format!("{}-standalone", p.crate_name));
+                crate::cargo_rustc_bin(&[], &base_refs, &p.crate_name, &bin_name, link_args)?;
+            }
         }
 
         // AAX staging is host-arch-only (see stage_aax), so only build the
@@ -609,7 +648,6 @@ struct StagedPlugin {
 fn stage_plugin(
     root: &Path,
     p: &PluginDef,
-    config: &Config,
     formats: &[PkgFormat],
     staging: &Path,
     arch: TargetArch,
@@ -628,7 +666,7 @@ fn stage_plugin(
                 signable.push(stage_vst2(root, p, staging, arch)?);
             }
             PkgFormat::Aax => {
-                if let Some((wrapper, dylib)) = stage_aax(root, p, config, staging, arch)? {
+                if let Some((wrapper, dylib)) = stage_aax(root, p, staging, arch)? {
                     signable.push(dylib);
                     signable.push(wrapper);
                 } else {
@@ -778,7 +816,6 @@ fn stage_vst2(
 fn stage_aax(
     root: &Path,
     p: &PluginDef,
-    config: &Config,
     staging: &Path,
     arch: TargetArch,
 ) -> std::result::Result<Option<(PathBuf, PathBuf)>, crate::BoxErr> {

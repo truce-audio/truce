@@ -91,11 +91,9 @@ pub(crate) use util::{
 // path helpers, used by `commands::{doctor, install, install::aax}`
 // and `packaging_windows`.
 #[cfg(target_os = "windows")]
-pub(crate) use config::WindowsSigningConfig;
-#[cfg(target_os = "windows")]
 pub(crate) use util::{
-    common_program_files, locate_cmake, locate_msvc_cl, locate_ninja, locate_vcvars64,
-    program_files, tmp_scripts, vs_install_paths, which_exe,
+    cargo_rustc_bin, common_program_files, locate_cmake, locate_msvc_cl, locate_ninja,
+    locate_vcvars64, program_files, tmp_scripts, vs_install_paths, which_exe,
 };
 
 use std::process::ExitCode;

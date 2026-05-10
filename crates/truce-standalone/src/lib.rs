@@ -131,6 +131,31 @@ where
     run_with::<P>(Defaults::default());
 }
 
+/// `cargo truce package` on Windows links the standalone `.exe` with
+/// `/SUBSYSTEM:WINDOWS` so the packaged installer doesn't pop a stray
+/// console next to the plugin window when the user launches from the
+/// Start Menu / Explorer. The downside is that the same `.exe`
+/// invoked from `cmd.exe` / PowerShell starts with no console, so
+/// `eprintln!` lands on a null handle. `AttachConsole(ATTACH_PARENT_PROCESS)`
+/// rebinds the standard handles to whatever terminal launched us, so
+/// `--help`, `--list-devices`, and error diagnostics print where the
+/// user expects. Failure means there was no parent console (Start
+/// Menu / Explorer launch) — silently move on; that's the case the
+/// subsystem flag exists to handle. No-op on non-Windows or in
+/// console-subsystem builds (`AttachConsole` returns failure when a
+/// console is already attached, which we ignore).
+#[cfg(target_os = "windows")]
+fn attach_parent_console() {
+    use windows_sys::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
+    // SAFETY: trivial FFI — no aliasing or lifetime concerns.
+    unsafe {
+        let _ = AttachConsole(ATTACH_PARENT_PROCESS);
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn attach_parent_console() {}
+
 /// Run the plugin standalone with the supplied launch defaults.
 /// Argv and env still take precedence — `defaults` only fills in
 /// values neither layer set. Same dispatch as [`run`].
@@ -138,6 +163,12 @@ pub fn run_with<P: PluginExport>(defaults: Defaults)
 where
     P::Params: 'static,
 {
+    // Must run before any stdout/stderr output: Rust caches the
+    // standard handles on first use, so attaching after the first
+    // `eprintln!` would leave the cached null handles in place and
+    // any later prints would still vanish.
+    attach_parent_console();
+
     let mut opts = match cli::parse() {
         Ok(o) => o,
         Err(e) => {
