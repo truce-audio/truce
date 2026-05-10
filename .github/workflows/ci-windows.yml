@@ -40,6 +40,66 @@ jobs:
       - name: test
         run: cargo test --workspace
 
+      # ─────────────────────────────────────────────────────────────────
+      # CLAP + VST3 validation against industry validators.
+      # `validate --clap --pluginval` exits non-zero on any FAIL; the
+      # tail grep also fails the step if any plugin was SKIP'd
+      # (validator binary missing or bundle not installed).
+      # ─────────────────────────────────────────────────────────────────
+      - name: Cache pluginval
+        id: cache-pluginval
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.bin/pluginval
+          key: pluginval-windows-1.0.4
+
+      - name: Download pluginval
+        if: steps.cache-pluginval.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          mkdir -p .bin/pluginval
+          curl -fsSL -o pluginval.zip \
+            https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_Windows.zip
+          unzip -oq pluginval.zip -d .bin/pluginval
+
+      - name: Cache clap-validator
+        id: cache-clap-validator
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/clap-validator.exe
+          key: clap-validator-windows-2026-05-09
+
+      - name: Install clap-validator
+        if: steps.cache-clap-validator.outputs.cache-hit != 'true'
+        run: cargo install --locked --git https://github.com/free-audio/clap-validator clap-validator
+
+      - name: Validators on PATH
+        shell: bash
+        run: echo "$GITHUB_WORKSPACE/.bin/pluginval" >> "$GITHUB_PATH"
+
+      - name: Pre-flight — validators present
+        shell: bash
+        run: |
+          command -v clap-validator
+          command -v pluginval
+
+      - name: Install plugin (CLAP + VST3)
+        # Release profile: pluginval's process-without-setActive paths trip
+        # a debug_assert in `truce-vst3::cb_process` (separate bug); release
+        # also matches what users actually ship.
+        shell: bash
+        run: ./target/debug/cargo-truce.exe install --user --clap --vst3 -p truce-example-gain
+
+      - name: Validate CLAP + VST3
+        shell: bash
+        run: |
+          set -e -o pipefail
+          ./target/debug/cargo-truce.exe validate --clap --pluginval -p truce-example-gain 2>&1 | tee validate.log
+          if grep -E "SKIP|not found" validate.log >/dev/null; then
+            echo "::error::validate skipped a step — failing"
+            exit 1
+          fi
+
       - name: upload failing screenshots
         if: failure()
         uses: actions/upload-artifact@v4

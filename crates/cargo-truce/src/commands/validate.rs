@@ -157,6 +157,9 @@ fn warn_on_au_collision(au_type: &str, subtype: &str, manufacturer: &str, expect
     eprintln!("        macOS will pick one at load time; the rest are shadowed.");
 }
 
+// `vst2_explicit` is only consulted on non-macOS (the smoke validator
+// always runs on macOS), so the assignments are dead on the macOS build.
+#[cfg_attr(target_os = "macos", allow(unused_variables, unused_assignments))]
 #[allow(clippy::too_many_lines)]
 pub(crate) fn cmd_validate(args: &[String]) -> Res {
     let config = load_config()?;
@@ -166,16 +169,40 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
     let mut run_pluginval = false;
     let mut run_clap = false;
     let mut run_vst2 = false;
+    // Track explicit per-format flags so a missing validator counts as a
+    // failure for CI (`--clap`, `--pluginval`, …) but stays a warning for
+    // a casual `cargo truce validate` run on a host that's missing some
+    // tools. `--all` keeps the casual semantics.
+    let mut auval_explicit = false;
+    let mut auval_v3_explicit = false;
+    let mut pluginval_explicit = false;
+    let mut clap_explicit = false;
+    let mut vst2_explicit = false;
     let mut plugin_filter: Option<String> = None;
 
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
-            "--auval" => run_auval = true,
-            "--auval3" => run_auval_v3 = true,
-            "--pluginval" => run_pluginval = true,
-            "--clap" => run_clap = true,
-            "--vst2" => run_vst2 = true,
+            "--auval" => {
+                run_auval = true;
+                auval_explicit = true;
+            }
+            "--auval3" => {
+                run_auval_v3 = true;
+                auval_v3_explicit = true;
+            }
+            "--pluginval" => {
+                run_pluginval = true;
+                pluginval_explicit = true;
+            }
+            "--clap" => {
+                run_clap = true;
+                clap_explicit = true;
+            }
+            "--vst2" => {
+                run_vst2 = true;
+                vst2_explicit = true;
+            }
             "--all" => {
                 run_auval = true;
                 run_auval_v3 = true;
@@ -259,6 +286,9 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
             }
         } else {
             eprintln!("  auval not found (macOS only)");
+            if auval_explicit {
+                failures += 1;
+            }
         }
     }
 
@@ -306,6 +336,9 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
             }
         } else {
             eprintln!("  auval not found (macOS only)");
+            if auval_v3_explicit {
+                failures += 1;
+            }
         }
     }
 
@@ -351,6 +384,9 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
             }
         } else {
             eprintln!("  pluginval not found. Install from https://github.com/Tracktion/pluginval");
+            if pluginval_explicit {
+                failures += 1;
+            }
         }
     }
 
@@ -405,9 +441,7 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
                 let combined = format!("{stdout}{stderr}");
 
                 if output.status.success() && !combined.contains("FAILED") {
-                    // Count passed/failed from output
-                    let passed = combined.matches("passed").count();
-                    eprintln!("PASS ({passed} tests)");
+                    eprintln!("PASS{}", parse_clap_summary(&combined));
                 } else {
                     eprintln!("FAIL");
                     if !stdout.is_empty() {
@@ -428,6 +462,9 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
                 "  Install: cargo install --git https://github.com/free-audio/clap-validator"
             );
             eprintln!("  Or set CLAP_VALIDATOR=/path/to/clap-validator");
+            if clap_explicit {
+                failures += 1;
+            }
         }
     }
 
@@ -442,6 +479,9 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
         {
             eprintln!("  Skipping: VST2 binary smoke is currently macOS-only.");
             let _ = &plugins;
+            if vst2_explicit {
+                failures += 1;
+            }
         }
     }
 
@@ -587,6 +627,30 @@ fn validate_vst2_macos(plugins: &[&PluginDef]) -> usize {
         }
     }
     failures
+}
+
+/// Pull the test counts out of clap-validator's summary line, e.g.
+/// `"20 tests run, 16 passed, 0 failed, 4 skipped, 1 warnings"`. Returns
+/// `" (16/20, 4 skipped)"` or an empty string if the summary isn't found.
+fn parse_clap_summary(output: &str) -> String {
+    let Some(summary) = output.lines().find(|l| l.contains("tests run")) else {
+        return String::new();
+    };
+    let pick = |key: &str| -> Option<u32> {
+        let idx = summary.find(key)?;
+        summary[..idx]
+            .split(|c: char| !c.is_ascii_digit())
+            .rfind(|s| !s.is_empty())?
+            .parse()
+            .ok()
+    };
+    match (pick("tests run"), pick("passed"), pick("skipped")) {
+        (Some(total), Some(passed), Some(skipped)) if skipped > 0 => {
+            format!(" ({passed}/{total}, {skipped} skipped)")
+        }
+        (Some(total), Some(passed), _) => format!(" ({passed}/{total})"),
+        _ => String::new(),
+    }
 }
 
 fn find_pluginval() -> Option<String> {

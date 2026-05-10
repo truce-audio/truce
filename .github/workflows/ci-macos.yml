@@ -40,6 +40,57 @@ jobs:
       - name: test
         run: cargo test --workspace
 
+      # ─────────────────────────────────────────────────────────────────
+      # CLAP + VST3 validation against industry validators.
+      # `validate --clap --pluginval` exits non-zero on any FAIL; the
+      # tail grep also fails the step if any plugin was SKIP'd
+      # (validator binary missing or bundle not installed).
+      # ─────────────────────────────────────────────────────────────────
+      - name: Cache pluginval
+        id: cache-pluginval
+        uses: actions/cache@v4
+        with:
+          path: /Applications/pluginval.app
+          key: pluginval-macos-1.0.4
+
+      - name: Download pluginval
+        if: steps.cache-pluginval.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL -o /tmp/pluginval.zip \
+            https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_macOS.zip
+          unzip -oq /tmp/pluginval.zip -d /Applications/
+
+      - name: Cache clap-validator
+        id: cache-clap-validator
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/clap-validator
+          key: clap-validator-macos-2026-05-09
+
+      - name: Install clap-validator
+        if: steps.cache-clap-validator.outputs.cache-hit != 'true'
+        run: cargo install --locked --git https://github.com/free-audio/clap-validator clap-validator
+
+      - name: Pre-flight — validators present
+        run: |
+          command -v clap-validator
+          test -x /Applications/pluginval.app/Contents/MacOS/pluginval
+
+      - name: Install plugin (CLAP + VST3)
+        # Release profile: pluginval's process-without-setActive paths trip
+        # a debug_assert in `truce-vst3::cb_process` (separate bug); release
+        # also matches what users actually ship.
+        run: ./target/debug/cargo-truce install --user --clap --vst3 -p truce-example-gain
+
+      - name: Validate CLAP + VST3
+        run: |
+          set -e -o pipefail
+          ./target/debug/cargo-truce validate --clap --pluginval -p truce-example-gain 2>&1 | tee validate.log
+          if grep -E "SKIP|not found" validate.log >/dev/null; then
+            echo "::error::validate skipped a step — failing"
+            exit 1
+          fi
+
       - name: upload failing screenshots
         if: failure()
         uses: actions/upload-artifact@v4
