@@ -370,7 +370,7 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
                         "--validate",
                         validate_path.to_str().unwrap(),
                         "--strictness-level",
-                        "5",
+                        "10",
                     ])
                     .output()?;
                 let stdout = String::from_utf8_lossy(&output.stdout);
