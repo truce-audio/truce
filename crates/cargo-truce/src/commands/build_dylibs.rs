@@ -8,9 +8,13 @@
 //! 2. For AAX, gate on a configured SDK path (project-wide check, not
 //!    per-plugin — emit one skip line and bypass the cargo build loop
 //!    when missing).
-//! 3. `cargo build` each plugin with the format's feature set, picking
-//!    up the per-plugin `TRUCE_*_NAME_OVERRIDE` env vars and (for AU2)
-//!    `TRUCE_AU_VERSION` / `TRUCE_AU_PLUGIN_ID`.
+//! 3. One `cargo build -p a -p b -p c …` per format batch with the
+//!    format's feature set. Display-name overrides used to flow as
+//!    per-plugin `TRUCE_*_NAME_OVERRIDE` env vars (and AU2 carried
+//!    `TRUCE_AU_VERSION` / `TRUCE_AU_PLUGIN_ID`); they all moved into
+//!    `PluginInfo` (baked by `truce::plugin_info!`) or runtime
+//!    `ObjC` class registration, so no env vars need to flip
+//!    between batches.
 //! 4. Copy the produced `lib<stem>.<dylib-ext>` to a format-suffixed
 //!    path (`<stem>_clap`, `<stem>_vst3`, …) so the next format build
 //!    doesn't overwrite the previous one (every plugin's cdylib lands
@@ -184,16 +188,13 @@ pub(crate) fn build_format_dylibs(
     format_features.extend_from_slice(extra_features);
     let combined = format_features.join(",");
 
-    // AU2 needs `TRUCE_AU_VERSION=2` so truce-au's Rust side flips
-    // `cfg(truce_au_v3_only)` correctly. Display-name overrides
-    // used to be per-plugin env vars too but now travel through
-    // `PluginInfo` (baked in by `truce::plugin_info!`), so the env
-    // is identical for every plugin in this batch — meaning all
-    // plugins can share one cargo invocation.
-    let mut env_pairs: Vec<(&str, &str)> = Vec::new();
-    if format == BuildFormat::Au2 {
-        env_pairs.push(("TRUCE_AU_VERSION", "2"));
-    }
+    // No per-plugin or per-format env vars left — display-name
+    // overrides moved into `PluginInfo` (`truce::plugin_info!`), and
+    // the v2/v3 distinction in `truce-au`'s name resolution went
+    // away once the v3 host's display name was traced to the appex
+    // plist rather than the framework dylib. Every plugin in the
+    // batch can share one cargo invocation with empty env.
+    let env_pairs: &[(&str, &str)] = &[];
 
     // Single `cargo build -p a -p b -p c …` for every plugin in this
     // format batch. Two wins: cargo pays the dep-graph-resolve and
@@ -213,7 +214,7 @@ pub(crate) fn build_format_dylibs(
         cargo_args.push(t.into());
     }
     let cargo_arg_refs: Vec<&str> = cargo_args.iter().map(String::as_str).collect();
-    cargo_build(&env_pairs, &cargo_arg_refs, deployment_target)?;
+    cargo_build(env_pairs, &cargo_arg_refs, deployment_target)?;
 
     // Post-build per-plugin staging: copy the produced `.dylib` to
     // its format-suffixed name and (for AAX) assemble the

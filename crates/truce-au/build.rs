@@ -5,12 +5,6 @@ fn main() {
 
     let out_dir = std::env::var("OUT_DIR").unwrap();
 
-    // Tell cargo to whitelist the `truce_au_v3_only` cfg so the
-    // `cfg!(truce_au_v3_only)` calls below don't trip the
-    // `unexpected_cfgs` lint.
-    println!("cargo:rustc-check-cfg=cfg(truce_au_v3_only)");
-
-    println!("cargo:rerun-if-env-changed=TRUCE_AU_VERSION");
     println!("cargo:rerun-if-changed=shim/au_v2_shim.c");
     println!("cargo:rerun-if-changed=shim/au_shim_common.c");
     let shim_include = truce_shim_types::include_dir();
@@ -19,8 +13,8 @@ fn main() {
         shim_include.join("au_shim_types.h").display()
     );
 
-    // The C/ObjC shim is plugin-id agnostic — both production AU
-    // paths now keep their per-plugin uniqueness in Rust:
+    // The C/ObjC shim is plugin-id agnostic and version-agnostic —
+    // both production AU paths share the same compiled framework dylib:
     //
     // - AU v2 (.component): the cocoa view factory class is allocated
     //   at runtime with a unique name in `cocoa_view::register`. The
@@ -33,13 +27,10 @@ fn main() {
     //   exported `g_callbacks` / `g_descriptor` / `g_param_descriptors`
     //   / `g_num_params` symbols out of the framework dylib, so this
     //   shim's only job for v3 is to populate those globals at load
-    //   time.
-    //
-    // `TRUCE_AU_VERSION` no longer gates which sources are compiled —
-    // the shim is the same in both cases. The env var still flips
-    // `cfg(truce_au_v3_only)` for a few Rust-side branches and is
-    // kept for that.
-    let au_version = std::env::var("TRUCE_AU_VERSION").unwrap_or_default();
+    //   time. The v3 host's display name comes from the appex
+    //   Info.plist's `AUNAME`, not from `g_descriptor->name`, so
+    //   v2 and v3 can share the same `au_name`-based resolution
+    //   without a `cfg(truce_au_v3_only)` gate.
 
     let mut build = cc::Build::new();
     build.file("shim/au_shim_common.c");
@@ -69,11 +60,6 @@ fn main() {
     println!("cargo:rustc-link-arg-cdylib=-Wl,-exported_symbol,_g_callbacks");
     println!("cargo:rustc-link-arg-cdylib=-Wl,-exported_symbol,_g_param_descriptors");
     println!("cargo:rustc-link-arg-cdylib=-Wl,-exported_symbol,_g_num_params");
-
-    // Tell Rust code which AU version we're building.
-    if au_version == "3" {
-        println!("cargo:rustc-cfg=truce_au_v3_only");
-    }
 
     // Always export the v2 factory symbol — hosts use the v2 API to
     // instantiate, including the v3→v2 bridge that GarageBand /

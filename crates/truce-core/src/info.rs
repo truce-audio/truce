@@ -25,6 +25,13 @@ pub struct PluginInfo {
     /// `TRUCE_<FORMAT>_NAME_OVERRIDE` env vars (which used to
     /// invalidate the format wrapper's fingerprint between back-to-back
     /// plugin builds with different overrides).
+    ///
+    /// `au3_name` is exposed for parity with the other formats and
+    /// for user introspection, but `truce-au`'s `resolved_plugin_name`
+    /// reads `au_name` for both v2 and v3 builds — the v3 host's
+    /// displayed label comes from the appex `Info.plist`'s `AUNAME`
+    /// (which `cargo truce install --au3` populates from `au3_name`),
+    /// not from `g_descriptor->name`.
     pub vst3_name: Option<&'static str>,
     pub clap_name: Option<&'static str>,
     pub vst2_name: Option<&'static str>,

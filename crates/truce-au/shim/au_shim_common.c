@@ -1,6 +1,10 @@
 /**
  * Shared globals and registration for AU v2 and v3 shims.
- * Always compiled regardless of TRUCE_AU_VERSION.
+ *
+ * The same compiled framework dylib serves both v2 (.component) and
+ * v3 (.appex) — the appex compiles its Swift AUAudioUnit subclass
+ * separately and reads g_callbacks/g_descriptor/etc. out of this
+ * dylib at runtime via dynamic symbol lookup.
  */
 
 #include "au_shim_types.h"

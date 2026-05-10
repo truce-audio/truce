@@ -5,16 +5,15 @@ Audio Unit v2 + v3 format wrapper for the truce audio plugin framework.
 ## Overview
 
 Bridges a truce `PluginExport` implementation to Apple's Audio Unit API.
-One Rust crate produces both AU v2 (`.component`, in-process) and AU v3
-(`.appex` inside a container `.app`, sandboxed) — which one gets built
-is selected by the `TRUCE_AU_VERSION` env var that `cargo truce` sets
-per-invocation. The Rust dylib is identical across versions; only the
-C / Swift shim and the bundle shape differ.
+The same Rust dylib serves both AU v2 (`.component`, in-process) and AU
+v3 (`.appex` inside a container `.app`, sandboxed) — only the bundle
+shape and the surrounding shim differ. The framework dylib is the
+identical artifact in either case; cargo-truce's install / package
+commands wrap it in the right bundle layout.
 
 This crate only builds on macOS. User plugins opt into AU by adding
 `truce-au = { workspace = true, optional = true }` and gating it behind
-an `au` Cargo feature; `cargo truce build --au2 / --au3 / install /
-package` picks the right `TRUCE_AU_VERSION` and bundle shape per format.
+an `au` Cargo feature.
 
 ## What it handles
 
