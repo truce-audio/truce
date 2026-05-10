@@ -1,13 +1,18 @@
-# truce plugin project configuration 
+# truce plugin project configuration
 #
-# Per-developer build environment (signing, SDK paths) lives in the local
-# `.cargo/config.toml` (gitignored), not here — this file is tracked.
+# This file is tracked. It carries project-level facts only: vendor info,
+# plugin definitions, suite definitions, packaging metadata.
 #
+# Per-developer build environment (signing identities, AAX SDK path,
+# notarization Apple ID / team ID, Authenticode certs) lives in the
+# local `.cargo/config.toml` (gitignored), not here. See
+# `docs/reference/cargo-config.md` for the complete list of env vars
+# truce reads.
+#
+#   # .cargo/config.toml
 #   [env]
 #   TRUCE_SIGNING_IDENTITY = "Developer ID Application: Name (TEAMID)"
 #   AAX_SDK_PATH           = "/path/to/aax-sdk-2-9-0"
-#
-# Either env var also works if set in your shell.
 [vendor]
 name = "Truce"
 id = "com.truce"

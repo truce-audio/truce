@@ -156,7 +156,7 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
         (aax, BuildFormat::Aax),
     ];
 
-    let identity = config.macos.application_identity();
+    let identity = crate::application_identity();
     let entry = |p: &crate::PluginDef, format: &str, filename: String| BundleEntry {
         plugin_crate: p.crate_name.clone(),
         plugin_name: p.name.clone(),
@@ -198,7 +198,7 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
         let mut produced: Vec<BundleEntry> = Vec::new();
         for p in &plugins {
             if clap {
-                stage_clap(&root, p, &plan.stage_dir, identity, plan.target)?;
+                stage_clap(&root, p, &plan.stage_dir, &identity, plan.target)?;
                 let filename = format!("{}.clap", p.name);
                 crate::log_output(format!(
                     "CLAP: {}",
@@ -278,12 +278,12 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
                     // project-wide (signing identity isn't per-plugin),
                     // so emit one skip line and bypass the per-plugin
                     // loop.
-                    let sign_id = config.macos.application_identity();
-                    if extract_team_id(sign_id).is_empty() {
+                    let sign_id = crate::application_identity();
+                    if extract_team_id(&sign_id).is_empty() {
                         crate::log_skip(
                             "AU v3: needs a Developer ID with team ID. \
-                             Set [macos.signing].application_identity in truce.toml \
-                             (e.g., \"Developer ID Application: Your Name (TEAMID)\"); \
+                             Set TRUCE_SIGNING_IDENTITY in .cargo/config.toml \
+                             [env] (e.g., \"Developer ID Application: Your Name (TEAMID)\"); \
                              ad-hoc signing (\"-\") is not supported for AU v3 appex bundles."
                                 .to_string(),
                         );

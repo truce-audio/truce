@@ -78,8 +78,9 @@ impl BuildFormat {
 
 /// Returns a skip-reason string if AAX cannot be built on this host —
 /// either the platform isn't supported (Linux) or the SDK isn't
-/// configured (mac/Windows without `[macos|windows].aax_sdk_path`).
-/// `None` means AAX is buildable.
+/// configured (mac/Windows without `AAX_SDK_PATH` set in
+/// `.cargo/config.toml`'s `[env]` table or the shell env). `None`
+/// means AAX is buildable.
 // On Linux this always returns `Some(...)` (AAX isn't supported), but
 // callers consume an `Option<String>` so they can render "skipped"
 // uniformly across platforms.
@@ -87,25 +88,20 @@ impl BuildFormat {
     not(any(target_os = "macos", target_os = "windows")),
     allow(clippy::unnecessary_wraps)
 )]
-fn aax_skip_reason(config: &Config) -> Option<String> {
+fn aax_skip_reason(_config: &Config) -> Option<String> {
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
-        let _ = config;
         Some("AAX: not supported on this platform. Use macOS or Windows to build AAX.".to_string())
     }
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     {
-        if crate::resolve_aax_sdk_path(config).is_some() {
+        if crate::resolve_aax_sdk_path().is_some() {
             return None;
         }
-        let hint = if cfg!(target_os = "windows") {
-            "[windows].aax_sdk_path"
-        } else {
-            "[macos].aax_sdk_path"
-        };
-        Some(format!(
-            "AAX: SDK not configured. Set {hint} in truce.toml or the AAX_SDK_PATH env var."
-        ))
+        Some(
+            "AAX: SDK not configured. Set AAX_SDK_PATH in .cargo/config.toml [env]."
+                .to_string(),
+        )
     }
 }
 

@@ -154,7 +154,7 @@ fn stage_components_only(root: &Path, p: &PluginDef, o: &PackageOpts) -> Res {
                 root,
                 p,
                 &staging,
-                o.config.macos.application_identity(),
+                &crate::application_identity(),
                 None,
             ),
             PkgFormat::Vst3 => stage_vst3(root, p, o.config, &staging, None),
@@ -277,9 +277,9 @@ fn package_one_suite(
         "--resources".to_string(),
         resources_dir.to_string_lossy().into_owned(),
     ];
-    if let Some(id) = o.config.macos.installer_identity() {
+    if let Some(id) = crate::installer_identity() {
         pb_args.push("--sign".to_string());
-        pb_args.push(id.to_string());
+        pb_args.push(id);
     }
     pb_args.push(pkg_path.to_string_lossy().into_owned());
 
@@ -738,7 +738,7 @@ fn package_one_plugin(root: &Path, p: &PluginDef, dist_dir: &Path, o: &PackageOp
                 root,
                 p,
                 &staging,
-                o.config.macos.application_identity(),
+                &crate::application_identity(),
                 None,
             ),
             PkgFormat::Vst3 => stage_vst3(root, p, o.config, &staging, None),
@@ -768,7 +768,7 @@ fn package_one_plugin(root: &Path, p: &PluginDef, dist_dir: &Path, o: &PackageOp
     eprint!("  Verifying signing readiness... ");
     match crate::util::verify_signed_for_notarization(
         &staging,
-        o.config.macos.application_identity(),
+        &crate::application_identity(),
     ) {
         Ok(()) => eprintln!("ok"),
         Err(e) => {
@@ -874,6 +874,7 @@ fn run_productbuild(
     );
     let pkg_path = dist_dir.join(&pkg_name);
 
+    let installer_id = crate::installer_identity();
     let mut pb_args = vec![
         "--distribution",
         dist_xml_path.to_str().unwrap(),
@@ -883,7 +884,7 @@ fn run_productbuild(
         resources_dir.to_str().unwrap(),
     ];
 
-    if let Some(id) = o.config.macos.installer_identity() {
+    if let Some(id) = &installer_id {
         pb_args.push("--sign");
         pb_args.push(id);
     }
@@ -1050,28 +1051,18 @@ fn resolve_pkg_scope(cli: Option<PkgScope>, config: &Config) -> Result<PkgScope,
 
 /// Notarize a .pkg and staple the ticket. (Phase 3)
 #[allow(clippy::too_many_lines)]
-fn notarize_and_staple(pkg_path: &Path, config: &Config) -> Res {
+fn notarize_and_staple(pkg_path: &Path, _config: &Config) -> Res {
     let pkg = pkg_path.to_str().unwrap();
 
-    // Determine credential source: env vars or truce.toml
-    let apple_id_env = std::env::var("APPLE_ID").unwrap_or_default();
-    let team_id_env = std::env::var("TEAM_ID").unwrap_or_default();
-    let apple_id = config
-        .macos
-        .packaging
-        .apple_id
-        .as_deref()
-        .unwrap_or(&apple_id_env);
-    let team_id = config
-        .macos
-        .packaging
-        .team_id
-        .as_deref()
-        .unwrap_or(&team_id_env);
+    // Notarization credentials are per-developer — read from the
+    // build env (`.cargo/config.toml [env]` or shell). The keychain
+    // profile is preferred; explicit Apple ID + team ID are the
+    // fallback path when no keychain profile is set up.
+    let apple_id = crate::read_build_env("APPLE_ID").unwrap_or_default();
+    let team_id = crate::read_build_env("TEAM_ID").unwrap_or_default();
 
-    // First try keychain profile, then fall back to explicit credentials
     let keychain_profile =
-        std::env::var("TRUCE_NOTARY_PROFILE").unwrap_or_else(|_| "TRUCE_NOTARY".to_string());
+        crate::read_build_env("TRUCE_NOTARY_PROFILE").unwrap_or_else(|| "TRUCE_NOTARY".to_string());
 
     eprintln!(
         "  Notarizing {}...",
@@ -1119,9 +1110,9 @@ fn notarize_and_staple(pkg_path: &Path, config: &Config) -> Res {
                     "submit",
                     pkg,
                     "--apple-id",
-                    apple_id,
+                    &apple_id,
                     "--team-id",
-                    team_id,
+                    &team_id,
                     "--password",
                     &password,
                     "--wait",
@@ -1152,7 +1143,8 @@ fn notarize_and_staple(pkg_path: &Path, config: &Config) -> Res {
             }
             return Err("notarization failed. Set up credentials via:\n  \
                  xcrun notarytool store-credentials TRUCE_NOTARY\n  \
-                 or set apple_id/team_id in [macos.packaging] + APP_SPECIFIC_PASSWORD env var"
+                 or set APPLE_ID + TEAM_ID + APP_SPECIFIC_PASSWORD in \
+                 .cargo/config.toml [env]"
                 .into());
         }
     }

@@ -307,11 +307,10 @@ fn scope_for(format: Format, requested: InstallScope) -> InstallScope {
     effective
 }
 
-#[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
 pub(crate) fn install_clap(
     root: &Path,
     p: &PluginDef,
-    config: &Config,
+    _config: &Config,
     scope: InstallScope,
 ) -> Res {
     let dylib = release_lib(root, &format!("{}_clap", p.dylib_stem()));
@@ -332,7 +331,7 @@ pub(crate) fn install_clap(
     #[cfg(target_os = "macos")]
     codesign_bundle(
         dst.to_str().unwrap(),
-        config.macos.application_identity(),
+        &crate::application_identity(),
         scope.needs_sudo(),
     )?;
     crate::log_output(format!("CLAP: {}", dst.display()));
@@ -399,7 +398,7 @@ fn install_vst3(root: &Path, p: &PluginDef, config: &Config, scope: InstallScope
 
         codesign_bundle(
             bundle.to_str().unwrap(),
-            config.macos.application_identity(),
+            &crate::application_identity(),
             scope.needs_sudo(),
         )?;
         crate::log_output(format!("VST3: {}", bundle.display()));
@@ -504,7 +503,7 @@ fn install_vst2(root: &Path, p: &PluginDef, config: &Config, scope: InstallScope
 
         codesign_bundle(
             bundle.to_str().unwrap(),
-            config.macos.application_identity(),
+            &crate::application_identity(),
             scope.needs_sudo(),
         )?;
         crate::log_output(format!("VST2: {}", bundle.display()));
@@ -681,7 +680,7 @@ fn install_au(root: &Path, p: &PluginDef, config: &Config, scope: InstallScope) 
     }
     codesign_bundle(
         &bundle_str,
-        config.macos.application_identity(),
+        &crate::application_identity(),
         scope.needs_sudo(),
     )?;
     crate::log_output(format!("AU:   {}", bundle.display()));

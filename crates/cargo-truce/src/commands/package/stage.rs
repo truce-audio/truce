@@ -149,7 +149,7 @@ pub(crate) fn stage_vst3(
         fs::write(bundle.join("Contents/Info.plist"), &plist)?;
         codesign_bundle(
             bundle.to_str().unwrap(),
-            config.macos.application_identity(),
+            &crate::application_identity(),
             false,
         )?;
     }
@@ -266,7 +266,7 @@ pub(crate) fn stage_vst2(
         fs::write(bundle.join("Contents/PkgInfo"), "BNDL????")?;
         codesign_bundle(
             bundle.to_str().unwrap(),
-            config.macos.application_identity(),
+            &crate::application_identity(),
             false,
         )?;
         Ok(bundle)
@@ -341,7 +341,7 @@ pub(crate) fn stage_au2(root: &Path, p: &PluginDef, config: &Config, staging: &P
     fs::write(bundle.join("Contents/Info.plist"), &plist)?;
     codesign_bundle(
         bundle.to_str().unwrap(),
-        config.macos.application_identity(),
+        &crate::application_identity(),
         false,
     )?;
     Ok(())
@@ -485,7 +485,7 @@ pub(crate) fn stage_standalone(root: &Path, p: &PluginDef, config: &Config, stag
 
     codesign_bundle(
         staged_app.to_str().unwrap(),
-        config.macos.application_identity(),
+        &crate::application_identity(),
         false,
     )?;
 

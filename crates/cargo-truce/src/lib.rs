@@ -26,7 +26,12 @@ mod windows_manifest;
 pub(crate) use commands::install::aax::build_aax_template;
 #[cfg(target_os = "windows")]
 pub(crate) use commands::package::PkgFormat;
-pub(crate) use config::{Config, PluginDef, deployment_target, load_config, resolve_aax_sdk_path};
+#[cfg(target_os = "macos")]
+pub(crate) use config::installer_identity;
+pub(crate) use config::{
+    Config, PluginDef, application_identity, deployment_target, load_config, read_build_env,
+    resolve_aax_sdk_path,
+};
 #[cfg(any(target_os = "macos", test))]
 pub(crate) use util::tmp_verify;
 pub(crate) use util::{

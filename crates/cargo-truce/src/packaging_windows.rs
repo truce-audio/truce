@@ -170,11 +170,13 @@ pub(crate) fn cmd_package(
     }
 
     // Warn about missing signing credentials unless --no-sign was passed.
-    if !opts.no_sign && !config.windows.signing.is_configured() {
+    if !opts.no_sign && !WindowsSigningEnv::from_env().is_configured() {
         eprintln!(
-            "WARNING: [windows.signing] has no credentials configured. Binaries and \
+            "WARNING: no Windows signing credentials configured. Binaries and \
              installer will be unsigned. Pass --no-sign to silence this warning, or \
-             set azure_account / sha1 / pfx_path under [windows.signing] in truce.toml."
+             set TRUCE_AZURE_ACCOUNT (+ TRUCE_AZURE_PROFILE), TRUCE_CERT_SHA1, or \
+             TRUCE_PFX_PATH in .cargo/config.toml [env]. See \
+             docs/reference/cargo-config.md for the full list."
         );
     }
 
@@ -215,7 +217,7 @@ pub(crate) fn cmd_package(
                     }
                 }
             }
-            sign_files(&all_signable, &config.windows.signing)?;
+            sign_files(&all_signable)?;
         }
 
         if opts.no_installer {
@@ -263,7 +265,7 @@ pub(crate) fn cmd_package(
         crate::commands::package::verify::assert_min_size(&installer)?;
 
         if !opts.no_sign {
-            sign_files(std::slice::from_ref(&installer), &config.windows.signing)?;
+            sign_files(std::slice::from_ref(&installer))?;
         }
         eprintln!("  Installer: {}", installer.display());
     }
@@ -787,15 +789,15 @@ fn stage_aax(
     // Build the template .aaxplugin wrapper if it isn't there yet.
     let template = tmp_aax_template().join("build/TruceAAXTemplate.aaxplugin");
     if !template.exists() {
-        if let Some(sdk_path) = resolve_aax_sdk_path(config) {
+        if let Some(sdk_path) = resolve_aax_sdk_path() {
             eprintln!("AAX: building template with SDK at {}", sdk_path.display());
             // On Windows, AAX stays host-arch regardless (SDK 2.9 ships x64
             // libs only — see stage_aax comments). `universal_mac` is a no-op.
             build_aax_template(root, &sdk_path, false)?;
         } else {
             return Err(
-                "AAX SDK not configured. Set [windows].aax_sdk_path in truce.toml or \
-                 AAX_SDK_PATH env var."
+                "AAX SDK not configured. Set AAX_SDK_PATH in .cargo/config.toml [env] \
+                 (or as a shell env var)."
                     .into(),
             );
         }
@@ -843,11 +845,48 @@ fn stage_aax(
 // Authenticode signing (signtool.exe)
 // ---------------------------------------------------------------------------
 
-fn sign_files(files: &[PathBuf], config: &WindowsSigningConfig) -> Res {
+/// Authenticode signing credentials, read from per-developer build
+/// env (`.cargo/config.toml [env]` or shell). One of three credential
+/// sources must be set: Azure Trusted Signing, a cert thumbprint
+/// already in the store, or a `.pfx` file. See
+/// `docs/reference/cargo-config.md` for the full env-var list.
+struct WindowsSigningEnv {
+    azure_account: Option<String>,
+    azure_profile: Option<String>,
+    azure_dlib: Option<String>,
+    cert_sha1: Option<String>,
+    cert_store: Option<String>,
+    pfx_path: Option<String>,
+    pfx_password: Option<String>,
+    timestamp_url: String,
+}
+
+impl WindowsSigningEnv {
+    fn from_env() -> Self {
+        Self {
+            azure_account: crate::read_build_env("TRUCE_AZURE_ACCOUNT"),
+            azure_profile: crate::read_build_env("TRUCE_AZURE_PROFILE"),
+            azure_dlib: crate::read_build_env("TRUCE_AZURE_DLIB"),
+            cert_sha1: crate::read_build_env("TRUCE_CERT_SHA1"),
+            cert_store: crate::read_build_env("TRUCE_CERT_STORE"),
+            pfx_path: crate::read_build_env("TRUCE_PFX_PATH"),
+            pfx_password: crate::read_build_env("TRUCE_PFX_PASSWORD"),
+            timestamp_url: crate::read_build_env("TRUCE_TIMESTAMP_URL")
+                .unwrap_or_else(|| "http://timestamp.digicert.com".to_string()),
+        }
+    }
+
+    fn is_configured(&self) -> bool {
+        self.azure_account.is_some() || self.cert_sha1.is_some() || self.pfx_path.is_some()
+    }
+}
+
+fn sign_files(files: &[PathBuf]) -> Res {
     if files.is_empty() {
         return Ok(());
     }
-    if !config.is_configured() {
+    let env = WindowsSigningEnv::from_env();
+    if !env.is_configured() {
         // No creds — emit a single notice and carry on. The warning at the top
         // of cmd_package already covered the "why."
         return Ok(());
@@ -860,14 +899,14 @@ fn sign_files(files: &[PathBuf], config: &WindowsSigningConfig) -> Res {
         "/fd".into(),
         "SHA256".into(),
         "/tr".into(),
-        config.resolved_timestamp_url().to_string(),
+        env.timestamp_url.clone(),
         "/td".into(),
         "SHA256".into(),
     ];
 
     // Credential source — Azure wins, then thumbprint, then pfx.
-    if let (Some(account), Some(profile)) = (&config.azure_account, &config.azure_profile) {
-        let dlib = config.azure_dlib.clone().unwrap_or_else(default_azure_dlib);
+    if let (Some(account), Some(profile)) = (&env.azure_account, &env.azure_profile) {
+        let dlib = env.azure_dlib.clone().unwrap_or_else(default_azure_dlib);
         let metadata_path = tmp_manifests().join("truce_azure_signing_metadata.json");
         let metadata = format!(
             r#"{{
@@ -883,15 +922,15 @@ fn sign_files(files: &[PathBuf], config: &WindowsSigningConfig) -> Res {
             "/dmdf".into(),
             metadata_path.display().to_string(),
         ]);
-    } else if let Some(sha1) = &config.sha1 {
+    } else if let Some(sha1) = &env.cert_sha1 {
         args.extend_from_slice(&["/sha1".into(), sha1.clone()]);
-        if let Some(store) = &config.cert_store {
+        if let Some(store) = &env.cert_store {
             args.extend_from_slice(&["/s".into(), store.clone()]);
         }
-    } else if let Some(pfx) = &config.pfx_path {
+    } else if let Some(pfx) = &env.pfx_path {
         args.extend_from_slice(&["/f".into(), pfx.clone()]);
-        if let Ok(pw) = std::env::var("TRUCE_PFX_PASSWORD") {
-            args.extend_from_slice(&["/p".into(), pw]);
+        if let Some(pw) = &env.pfx_password {
+            args.extend_from_slice(&["/p".into(), pw.clone()]);
         }
     }
 
@@ -1342,7 +1381,7 @@ fn package_one_suite(
     crate::commands::package::verify::assert_min_size(&installer)?;
 
     if !no_sign {
-        sign_files(std::slice::from_ref(&installer), &config.windows.signing)?;
+        sign_files(std::slice::from_ref(&installer))?;
     }
     eprintln!("    Suite installer: {}", installer.display());
     Ok(())

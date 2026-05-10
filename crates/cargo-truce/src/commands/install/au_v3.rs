@@ -53,8 +53,8 @@ pub(crate) fn emit_au_v3_bundle(
     plugins: &[&PluginDef],
     archs: &[MacArch],
 ) -> Res {
-    let sign_id = config.macos.application_identity();
-    let team_id = extract_team_id(sign_id);
+    let sign_id = crate::application_identity();
+    let team_id = extract_team_id(&sign_id);
     let dt = deployment_target();
 
     if team_id.is_empty() {
@@ -63,7 +63,7 @@ pub(crate) fn emit_au_v3_bundle(
         // should fail loudly with a resolution hint.
         return Err(
             "AU v3: requires a Developer ID signing identity with a team ID. \
-             Set [macos.signing].application_identity in truce.toml \
+             Set TRUCE_SIGNING_IDENTITY in .cargo/config.toml [env] \
              (e.g., \"Developer ID Application: Your Name (TEAMID)\"). \
              Ad-hoc signing (\"-\") is not supported for AU v3 appex bundles."
                 .into(),
@@ -78,7 +78,7 @@ pub(crate) fn emit_au_v3_bundle(
     fs_ctx::create_dir_all(&bundles_dir)?;
 
     for p in plugins {
-        build_au_v3_for_plugin(root, config, p, archs, sign_id, &team_id, &dt, &bundles_dir)?;
+        build_au_v3_for_plugin(root, config, p, archs, &sign_id, &team_id, &dt, &bundles_dir)?;
     }
     Ok(())
 }
@@ -617,11 +617,11 @@ pub(crate) fn build_and_install_au_v3(
     // build *or* install — otherwise install_au_v3 would happily copy
     // a stale signed bundle from a previous run and produce a misleading
     // "succeeded" line in the install summary.
-    let sign_id = config.macos.application_identity();
-    if extract_team_id(sign_id).is_empty() {
+    let sign_id = crate::application_identity();
+    if extract_team_id(&sign_id).is_empty() {
         crate::log_skip(
             "AU v3: needs a Developer ID with team ID. \
-             Set [macos.signing].application_identity in truce.toml \
+             Set TRUCE_SIGNING_IDENTITY in .cargo/config.toml [env] \
              (e.g., \"Developer ID Application: Your Name (TEAMID)\"); \
              ad-hoc signing (\"-\") is not supported for AU v3 appex bundles."
                 .to_string(),

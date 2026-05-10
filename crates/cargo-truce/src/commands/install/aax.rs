@@ -360,11 +360,10 @@ fn template_binary() -> PathBuf {
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 fn ensure_template(
     root: &Path,
-    config: &Config,
     universal_mac: bool,
 ) -> Result<Option<PathBuf>, crate::BoxErr> {
     let template = template_binary();
-    if let Some(sdk_path) = resolve_aax_sdk_path(config) {
+    if let Some(sdk_path) = resolve_aax_sdk_path() {
         if !template.exists() {
             crate::vprintln!("AAX: building template with SDK at {}", sdk_path.display());
         }
@@ -418,22 +417,17 @@ pub(crate) fn emit_aax_bundle(
 pub(crate) fn emit_aax_bundle(
     root: &Path,
     p: &PluginDef,
-    config: &Config,
+    _config: &Config,
     universal_mac: bool,
 ) -> Res {
-    let Some(template) = ensure_template(root, config, universal_mac)? else {
+    let Some(template) = ensure_template(root, universal_mac)? else {
         // SDK missing — log per-plugin so the user sees one Skipped
         // entry per (AAX, plugin) target. Both `cargo truce build`
         // and `cargo truce install` flow through this point so the
         // log fires from either entry.
-        let hint = if cfg!(target_os = "windows") {
-            "[windows].aax_sdk_path"
-        } else {
-            "[macos].aax_sdk_path"
-        };
         crate::log_skip(format!(
             "AAX: skipped {} — SDK not configured. \
-             Set {hint} in truce.toml or the AAX_SDK_PATH env var.",
+             Set AAX_SDK_PATH in .cargo/config.toml [env].",
             p.name
         ));
         return Ok(());
@@ -503,7 +497,7 @@ pub(crate) fn emit_aax_bundle(
         // TDMw-type bundles; we don't rely on --deep.)
         codesign_bundle(
             bundle.to_str().unwrap(),
-            config.macos.application_identity(),
+            &crate::application_identity(),
             false,
         )?;
         crate::vprintln!("  AAX:  {}", bundle.display());
@@ -552,7 +546,7 @@ pub(crate) fn install_aax(_root: &Path, _p: &PluginDef, _config: &Config) -> Res
 /// system plug-ins directory. Expects [`emit_aax_bundle`] to have
 /// been called first.
 #[cfg(any(target_os = "macos", target_os = "windows"))]
-pub(crate) fn install_aax(root: &Path, p: &PluginDef, config: &Config) -> Res {
+pub(crate) fn install_aax(root: &Path, p: &PluginDef, _config: &Config) -> Res {
     let bundle_name = format!("{}.aaxplugin", p.name);
     let built = truce_build::target_dir(root)
         .join("bundles")
@@ -561,7 +555,7 @@ pub(crate) fn install_aax(root: &Path, p: &PluginDef, config: &Config) -> Res {
         // No SDK → emit_aax_bundle (build phase) already logged a per-plugin
         // skip; just no-op here so we don't double-log. SDK present → genuine
         // state mismatch, point the user at the build command.
-        if resolve_aax_sdk_path(config).is_none() {
+        if resolve_aax_sdk_path().is_none() {
             return Ok(());
         }
         return Err(format!(

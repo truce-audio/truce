@@ -1,9 +1,20 @@
 //! Project configuration (read from `truce.toml`).
 //!
-//! All on-disk types and the resolution logic for signing identities
-//! and SDK paths. Identity resolution falls back through env vars and
-//! `.cargo/config.toml` so per-developer credentials stay out of the
-//! tracked `truce.toml`.
+//! `truce.toml` carries **project-level** facts only: vendor info,
+//! plugin definitions, suite definitions, and packaging metadata
+//! (publisher name, license file, installer icon).
+//!
+//! **Per-developer credentials and machine-specific paths
+//! (signing identities, AAX SDK location, notarization Apple ID /
+//! team ID, Authenticode certs) live in `.cargo/config.toml`'s
+//! `[env]` table.** Cargo injects those into the environment before
+//! invoking `cargo truce`, so the resolvers below just read
+//! `std::env::var`. A direct-read fallback (`read_cargo_config_env`)
+//! covers the rare case where `cargo-truce` runs outside cargo.
+//!
+//! There is no truce.toml-side option for any of these — by design.
+//! The split keeps secrets out of the tracked file and removes the
+//! "which copy wins?" question every time a developer onboards.
 
 use crate::{BoxErr, project_root};
 use serde::Deserialize;
@@ -15,6 +26,7 @@ pub(crate) struct Config {
     #[serde(default)]
     pub(crate) macos: MacosConfig,
     #[serde(default)]
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
     pub(crate) windows: WindowsConfig,
     pub(crate) vendor: VendorConfig,
     pub(crate) plugin: Vec<PluginDef>,
@@ -31,54 +43,11 @@ pub(crate) struct Config {
     pub(crate) suites: Vec<SuiteDef>,
 }
 
-// Windows-only config fields. Consumed by `packaging_windows.rs`, which
-// is `#[cfg(target_os = "windows")] mod packaging_windows`, so on macOS
-// and Linux the dead_code lint sees these as unused. The allow keeps
-// the structs single-source-of-truth across platforms.
 #[derive(Deserialize, Default)]
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 pub(crate) struct WindowsConfig {
-    /// Path to the AAX SDK root directory. Falls back to the `AAX_SDK_PATH` env var.
-    pub(crate) aax_sdk_path: Option<String>,
-    #[serde(default)]
-    pub(crate) signing: WindowsSigningConfig,
     #[serde(default)]
     pub(crate) packaging: WindowsPackagingConfig,
-}
-
-/// Authenticode signing credentials for signtool. First non-empty option wins,
-/// in the order Azure → thumbprint → pfx file.
-#[derive(Deserialize, Default)]
-#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
-pub(crate) struct WindowsSigningConfig {
-    /// Azure Trusted Signing account name.
-    pub(crate) azure_account: Option<String>,
-    /// Azure Trusted Signing certificate profile.
-    pub(crate) azure_profile: Option<String>,
-    /// Azure Code Signing Dlib.dll path (defaults to standard install location).
-    pub(crate) azure_dlib: Option<String>,
-    /// Cert SHA1 thumbprint for a cert already in the current user's cert store.
-    pub(crate) sha1: Option<String>,
-    /// Cert store name. Defaults to "My".
-    pub(crate) cert_store: Option<String>,
-    /// Path to a .pfx file. Password via `TRUCE_PFX_PASSWORD` env var.
-    pub(crate) pfx_path: Option<String>,
-    /// RFC 3161 timestamp URL. Defaults to `DigiCert`.
-    pub(crate) timestamp_url: Option<String>,
-}
-
-#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
-impl WindowsSigningConfig {
-    /// True when any credential source is configured.
-    pub(crate) fn is_configured(&self) -> bool {
-        self.azure_account.is_some() || self.sha1.is_some() || self.pfx_path.is_some()
-    }
-
-    pub(crate) fn resolved_timestamp_url(&self) -> &str {
-        self.timestamp_url
-            .as_deref()
-            .unwrap_or("http://timestamp.digicert.com")
-    }
 }
 
 #[derive(Deserialize, Default)]
@@ -103,10 +72,6 @@ pub(crate) struct WindowsPackagingConfig {
 
 #[derive(Deserialize, Default)]
 pub(crate) struct MacosConfig {
-    /// Path to the AAX SDK root directory. Falls back to the `AAX_SDK_PATH` env var.
-    pub(crate) aax_sdk_path: Option<String>,
-    #[serde(default)]
-    pub(crate) signing: MacosSigningConfig,
     /// Notarization config — only the `cmd_package_macos` path reads
     /// these fields, so on Windows / Linux they're parsed-and-ignored.
     #[serde(default)]
@@ -114,45 +79,16 @@ pub(crate) struct MacosConfig {
     pub(crate) packaging: MacosPackagingConfig,
 }
 
-/// macOS code-signing identities. Parallels `[windows.signing]`: credentials
-/// live here, installer appearance lives in `[macos.packaging]`.
-#[derive(Deserialize, Default)]
-pub(crate) struct MacosSigningConfig {
-    /// `codesign -s` identity for bundles. Typically
-    /// "Developer ID Application: Name (TEAMID)" or `-` for ad-hoc.
-    /// Falls back to `TRUCE_SIGNING_IDENTITY` env var.
-    pub(crate) application_identity: Option<String>,
-    /// `productbuild --sign` identity for `.pkg` installers. Typically
-    /// "Developer ID Installer: Name (TEAMID)".
-    /// Falls back to `TRUCE_INSTALLER_SIGNING_IDENTITY` env var.
-    pub(crate) installer_identity: Option<String>,
-}
-
-impl MacosConfig {
-    /// Resolved application signing identity. `"-"` means ad-hoc / unsigned.
-    /// Populated by `load_config` from `[macos.signing].application_identity`
-    /// or the `TRUCE_SIGNING_IDENTITY` env var.
-    pub(crate) fn application_identity(&self) -> &str {
-        self.signing.application_identity.as_deref().unwrap_or("-")
-    }
-
-    /// Resolved installer signing identity. `None` means the installer won't
-    /// be signed. Populated from `[macos.signing].installer_identity` or the
-    /// `TRUCE_INSTALLER_SIGNING_IDENTITY` env var. macOS-only — only the
-    /// `productbuild` step in `cmd_package_macos` consumes this.
-    #[cfg(target_os = "macos")]
-    pub(crate) fn installer_identity(&self) -> Option<&str> {
-        self.signing.installer_identity.as_deref()
-    }
-}
-
 #[derive(Deserialize, Default)]
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) struct MacosPackagingConfig {
+    /// Whether to run `xcrun notarytool submit` on the produced
+    /// `.pkg`. Project-level decision (release vs. dev build);
+    /// the credentials it uses come from env vars
+    /// (`TRUCE_NOTARY_PROFILE` keychain profile, or
+    /// `APPLE_ID` + `TEAM_ID` + `APP_SPECIFIC_PASSWORD`).
     #[serde(default)]
     pub(crate) notarize: bool,
-    pub(crate) apple_id: Option<String>,
-    pub(crate) team_id: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -397,105 +333,75 @@ pub(crate) struct ResolvedSuite<'a> {
     pub(crate) formats: Option<&'a [String]>,
 }
 
-/// Resolve the application signing identity:
-/// `[macos.signing].application_identity` → `TRUCE_SIGNING_IDENTITY` env →
-/// `.cargo/config.toml` `[env].TRUCE_SIGNING_IDENTITY` → ad-hoc.
-fn resolve_signing_identity(config: &Config) -> String {
-    // 1. truce.toml explicit value
-    if let Some(id) = &config.macos.signing.application_identity
-        && !id.is_empty()
-        && id != "-"
+/// Read a per-developer build env var. Cargo injects values from
+/// `.cargo/config.toml`'s `[env]` table into the environment of any
+/// subcommand it spawns, so `std::env::var(key)` is the normal path.
+/// As a fallback for the rare `cargo-truce` invocation that doesn't
+/// go through cargo (e.g. running `target/release/cargo-truce`
+/// directly), parse `.cargo/config.toml` ourselves.
+///
+/// Returns `None` for missing or empty values (an empty string from
+/// either source is treated as unset). Cargo's `force = true`
+/// override on a `[env]` entry is handled transparently because
+/// cargo has already applied it to the process environment by the
+/// time we read.
+pub(crate) fn read_build_env(key: &str) -> Option<String> {
+    if let Ok(v) = std::env::var(key)
+        && !v.is_empty()
     {
-        return id.clone();
+        return Some(v);
     }
-    // 2. Environment variable
-    if let Ok(id) = std::env::var("TRUCE_SIGNING_IDENTITY")
-        && !id.is_empty()
-    {
-        return id;
-    }
-    // 3. .cargo/config.toml [env] section
-    if let Some(id) = read_cargo_config_env("TRUCE_SIGNING_IDENTITY") {
-        return id;
-    }
-    "-".to_string()
-}
-
-/// Read an env var from .cargo/config.toml's [env] section.
-pub(crate) fn read_cargo_config_env(key: &str) -> Option<String> {
     let root = project_root();
     let path = root.join(".cargo/config.toml");
     let content = fs::read_to_string(&path).ok()?;
     let doc: toml::Table = content.parse().ok()?;
     let env = doc.get("env")?.as_table()?;
-    // Supports both `KEY = "value"` and `KEY = { value = "...", force = true }`
-    match env.get(key)? {
-        toml::Value::String(s) => Some(s.clone()),
-        toml::Value::Table(t) => t
-            .get("value")?
-            .as_str()
-            .map(std::string::ToString::to_string),
-        _ => None,
-    }
-}
-
-/// Resolve the installer signing identity:
-/// `[macos.signing].installer_identity` → `TRUCE_INSTALLER_SIGNING_IDENTITY`
-/// env → `.cargo/config.toml` → None.
-fn resolve_installer_identity(config: &Config) -> Option<String> {
-    if let Some(ref id) = config.macos.signing.installer_identity
-        && !id.is_empty()
-    {
-        return Some(id.clone());
-    }
-    if let Ok(id) = std::env::var("TRUCE_INSTALLER_SIGNING_IDENTITY")
-        && !id.is_empty()
-    {
-        return Some(id);
-    }
-    if let Some(id) = read_cargo_config_env("TRUCE_INSTALLER_SIGNING_IDENTITY") {
-        return Some(id);
-    }
-    None
-}
-
-/// Read `MACOSX_DEPLOYMENT_TARGET` from the environment, defaulting to "11.0".
-pub(crate) fn deployment_target() -> String {
-    std::env::var("MACOSX_DEPLOYMENT_TARGET").unwrap_or_else(|_| "11.0".to_string())
-}
-
-/// Resolve the AAX SDK path: platform-specific section in truce.toml
-/// → `AAX_SDK_PATH` env var → `.cargo/config.toml` → None.
-pub(crate) fn resolve_aax_sdk_path(config: &Config) -> Option<PathBuf> {
-    let toml_path = if cfg!(target_os = "windows") {
-        (&config.windows.aax_sdk_path, "[windows].aax_sdk_path")
-    } else {
-        (&config.macos.aax_sdk_path, "[macos].aax_sdk_path")
+    // Supports both `KEY = "value"` and `KEY = { value = "...", force = true }`.
+    let raw = match env.get(key)? {
+        toml::Value::String(s) => s.clone(),
+        toml::Value::Table(t) => t.get("value")?.as_str()?.to_string(),
+        _ => return None,
     };
-    if let Some(p) = toml_path.0 {
-        let path = PathBuf::from(p);
-        if path.exists() {
-            return Some(path);
-        }
-        eprintln!(
-            "warning: {} = {:?} in truce.toml but directory not found",
-            toml_path.1, p
-        );
+    if raw.is_empty() { None } else { Some(raw) }
+}
+
+/// Resolved application signing identity. `"-"` means ad-hoc /
+/// unsigned (the default). Read from the `TRUCE_SIGNING_IDENTITY`
+/// build env. The accessor stays in this module so all callers have
+/// one path to follow when they need to know "where does this come
+/// from?"
+pub(crate) fn application_identity() -> String {
+    read_build_env("TRUCE_SIGNING_IDENTITY").unwrap_or_else(|| "-".to_string())
+}
+
+/// Resolved installer signing identity. `None` means the installer
+/// won't be signed. Read from the `TRUCE_INSTALLER_SIGNING_IDENTITY`
+/// build env. macOS-only — only the `productbuild` step in
+/// `cmd_package_macos` consumes this.
+#[cfg(target_os = "macos")]
+pub(crate) fn installer_identity() -> Option<String> {
+    read_build_env("TRUCE_INSTALLER_SIGNING_IDENTITY")
+}
+
+/// Read `MACOSX_DEPLOYMENT_TARGET` from the build env, defaulting
+/// to "11.0".
+pub(crate) fn deployment_target() -> String {
+    read_build_env("MACOSX_DEPLOYMENT_TARGET").unwrap_or_else(|| "11.0".to_string())
+}
+
+/// Resolve the AAX SDK path from the `AAX_SDK_PATH` build env. The
+/// path must point at an extant directory; a stale value emits a
+/// warning and resolves to `None` so callers can degrade gracefully.
+pub(crate) fn resolve_aax_sdk_path() -> Option<PathBuf> {
+    let raw = read_build_env("AAX_SDK_PATH")?;
+    let path = PathBuf::from(&raw);
+    if path.exists() {
+        return Some(path);
     }
-    if let Ok(p) = std::env::var("AAX_SDK_PATH") {
-        let path = PathBuf::from(&p);
-        if path.exists() {
-            return Some(path);
-        }
-        eprintln!("warning: AAX_SDK_PATH={p} but directory not found");
-    }
-    if let Some(p) = read_cargo_config_env("AAX_SDK_PATH") {
-        let path = PathBuf::from(&p);
-        if path.exists() {
-            return Some(path);
-        }
-        eprintln!("warning: AAX_SDK_PATH={p} in .cargo/config.toml but directory not found");
-    }
+    eprintln!(
+        "warning: AAX_SDK_PATH={raw} (from .cargo/config.toml [env] or shell env) but \
+         directory does not exist"
+    );
     None
 }
 
@@ -510,16 +416,9 @@ pub(crate) fn load_config() -> std::result::Result<Config, BoxErr> {
         .into());
     }
     let content = fs::read_to_string(&path)?;
-    let mut config: Config = toml::from_str(&content)?;
+    let config: Config = toml::from_str(&content)?;
     if config.plugin.is_empty() {
         return Err("No [[plugin]] entries in truce.toml".into());
-    }
-    // Resolve both signing identities against truce.toml + env vars + .cargo/config.toml.
-    // Accessor methods on MacosConfig read these resolved values.
-    let resolved_app = resolve_signing_identity(&config);
-    config.macos.signing.application_identity = Some(resolved_app);
-    if config.macos.signing.installer_identity.is_none() {
-        config.macos.signing.installer_identity = resolve_installer_identity(&config);
     }
     Ok(config)
 }

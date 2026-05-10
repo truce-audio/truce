@@ -1,7 +1,7 @@
 //! `cargo truce doctor` — environment diagnostics: Rust toolchain, code
 //! signing tools, AAX SDK, installed plugins.
 
-use crate::config::read_cargo_config_env;
+use crate::read_build_env;
 use crate::format::Format;
 use crate::install_scope::InstallScope;
 #[cfg(target_os = "macos")]
@@ -203,30 +203,23 @@ pub(crate) fn cmd_doctor(args: &[String]) -> Res {
     // Configuration
     eprintln!();
     eprintln!("  Configuration");
-    let config = if root.join("truce.toml").exists() {
+    if root.join("truce.toml").exists() {
         match load_config() {
-            Ok(c) => {
-                eprintln!(
-                    "    {} truce.toml: {} plugins configured",
-                    tag_ok(),
-                    c.plugin.len()
-                );
-                Some(c)
-            }
-            Err(e) => {
-                eprintln!("    {} truce.toml parse error: {e}", tag_fail());
-                None
-            }
+            Ok(c) => eprintln!(
+                "    {} truce.toml: {} plugins configured",
+                tag_ok(),
+                c.plugin.len(),
+            ),
+            Err(e) => eprintln!("    {} truce.toml parse error: {e}", tag_fail()),
         }
     } else {
         eprintln!("    {} truce.toml not found", tag_fail());
-        None
-    };
+    }
 
     // AAX SDK
     eprintln!();
     eprintln!("  SDKs");
-    let aax_sdk = config.as_ref().and_then(resolve_aax_sdk_path);
+    let aax_sdk = resolve_aax_sdk_path();
     if let Some(p) = aax_sdk {
         eprintln!("    {} AAX SDK at {}", tag_ok(), p.display());
     } else {
@@ -486,9 +479,7 @@ fn path_is_writable(dir: &Path) -> bool {
 /// binaries (pluginval) or sibling source checkouts (clap-validator).
 fn check_which_with_env(name: &str, env_var: Option<&str>) {
     if let Some(var) = env_var
-        && let Some(path) = std::env::var(var)
-            .ok()
-            .or_else(|| read_cargo_config_env(var))
+        && let Some(path) = read_build_env(var)
     {
         let p = PathBuf::from(&path);
         if p.is_file() {
