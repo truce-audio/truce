@@ -23,6 +23,7 @@ use crate::{Config, PluginDef, Res, release_lib, resolve_aax_sdk_path, tmp_aax_t
 use crate::{codesign_bundle, run_sudo};
 #[cfg(target_os = "windows")]
 use crate::{common_program_files, locate_cmake, locate_ninja, locate_vcvars64};
+#[cfg(target_os = "macos")]
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};

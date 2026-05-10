@@ -11,8 +11,7 @@ use std::fs;
 #[cfg(target_os = "macos")]
 use std::io::Read;
 #[cfg(target_os = "macos")]
-use std::path::Path;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 #[cfg(target_os = "macos")]
 use std::process::Command;
 
