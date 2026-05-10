@@ -244,7 +244,13 @@ fn build_suite_tarball(ctx: &TarballCtx<'_>, suite: &ResolvedSuite<'_>) -> Res {
     let summary_refs: Vec<&PluginSummary> = summaries.iter().collect();
     let install_paths = expected_tarball_paths(&stem, &summary_refs);
     write_install_sh(&staging, ctx.config, &summaries, Some(suite))?;
-    write_readme(&staging, ctx.config, suite_version, &suite.plugins, Some(suite))?;
+    write_readme(
+        &staging,
+        ctx.config,
+        suite_version,
+        &suite.plugins,
+        Some(suite),
+    )?;
 
     let out = ctx.dist_dir.join(format!("{stem}.tar.gz"));
     create_tarball(&staging, &out, &stem)?;
