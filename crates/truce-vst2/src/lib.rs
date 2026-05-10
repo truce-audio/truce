@@ -821,13 +821,11 @@ unsafe extern "C" fn cb_gui_close<P: PluginExport>(ctx: *mut std::ffi::c_void) {
 // Registration
 // ---------------------------------------------------------------------------
 
-/// Install-time override for the host-facing plugin name
-/// (returned from `effGetEffectName`). Populated by `cargo truce
-/// install` via the `vst2_name` field in `truce.toml`.
-const VST2_NAME_OVERRIDE: Option<&'static str> = option_env!("TRUCE_VST2_NAME_OVERRIDE");
-
+/// Plugin display-name returned from `effGetEffectName`. Reads
+/// `truce.toml`'s `vst2_name` (baked into `PluginInfo` by
+/// `truce::plugin_info!`), falling back to `PluginInfo::name`.
 fn resolved_plugin_name(info: &truce_core::info::PluginInfo) -> &'static str {
-    truce_core::info::resolve_name_override(VST2_NAME_OVERRIDE, info.name)
+    truce_core::info::resolve_name_override(info.vst2_name, info.name)
 }
 
 pub fn register_vst2<P: PluginExport>() {

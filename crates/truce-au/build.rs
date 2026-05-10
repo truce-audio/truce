@@ -5,6 +5,11 @@ fn main() {
 
     let out_dir = std::env::var("OUT_DIR").unwrap();
 
+    // Tell cargo to whitelist the `truce_au_v3_only` cfg so the
+    // `cfg!(truce_au_v3_only)` calls below don't trip the
+    // `unexpected_cfgs` lint.
+    println!("cargo:rustc-check-cfg=cfg(truce_au_v3_only)");
+
     println!("cargo:rerun-if-env-changed=TRUCE_AU_VERSION");
     println!("cargo:rerun-if-changed=shim/au_v2_shim.c");
     println!("cargo:rerun-if-changed=shim/au_shim_common.c");

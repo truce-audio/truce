@@ -20,13 +20,11 @@ use truce_params::{ParamFlags, ParamInfo, ParamRange, ParamUnit, Params};
 
 use crate::{PortLayout, derive_port_layout, plugin_uri, ui_uri};
 
-/// Install-time override for `doap:name` in the generated LV2 TTL.
-/// Populated by `cargo truce install` from the `lv2_name` field in
-/// `truce.toml`.
-const LV2_NAME_OVERRIDE: Option<&'static str> = option_env!("TRUCE_LV2_NAME_OVERRIDE");
-
+/// `doap:name` in the generated LV2 TTL. Reads `truce.toml`'s
+/// `lv2_name` (baked into `PluginInfo` by `truce::plugin_info!`),
+/// falling back to `PluginInfo::name`.
 fn resolved_plugin_name(info: &PluginInfo) -> &'static str {
-    resolve_name_override(LV2_NAME_OVERRIDE, info.name)
+    resolve_name_override(info.lv2_name, info.name)
 }
 
 /// Emit an LV2 bundle for the plugin. Assumes the `.so` has already been

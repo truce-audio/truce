@@ -17,6 +17,21 @@ pub struct PluginInfo {
     /// AAX plugin category string (e.g. "EQ", "Dynamics", "Reverb").
     /// Maps to `AAX_ePlugInCategory` constants.
     pub aax_category: Option<&'static str>,
+
+    /// Per-format display-name overrides — populated by
+    /// `truce::plugin_info!()` from the matching `truce.toml` keys.
+    /// Format wrappers fall back to `name` when the override is `None`.
+    /// Baked at compile time so cargo-truce no longer needs to pass
+    /// `TRUCE_<FORMAT>_NAME_OVERRIDE` env vars (which used to
+    /// invalidate the format wrapper's fingerprint between back-to-back
+    /// plugin builds with different overrides).
+    pub vst3_name: Option<&'static str>,
+    pub clap_name: Option<&'static str>,
+    pub vst2_name: Option<&'static str>,
+    pub au_name: Option<&'static str>,
+    pub au3_name: Option<&'static str>,
+    pub aax_name: Option<&'static str>,
+    pub lv2_name: Option<&'static str>,
 }
 
 /// Resolve a format's install-time display-name override. Each wrapper

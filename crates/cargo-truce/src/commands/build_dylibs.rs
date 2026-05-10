@@ -78,32 +78,13 @@ impl BuildFormat {
         }
     }
 
-    /// Per-plugin `TRUCE_*_NAME_OVERRIDE` env var the format wrapper
-    /// reads at build time to override the bundle's display name. Each
-    /// format wires its own override in the corresponding macro
-    /// (`truce-clap`, `truce-vst3`, …).
-    fn name_override_env(self) -> &'static str {
-        match self {
-            BuildFormat::Clap => "TRUCE_CLAP_NAME_OVERRIDE",
-            BuildFormat::Vst3 => "TRUCE_VST3_NAME_OVERRIDE",
-            BuildFormat::Vst2 => "TRUCE_VST2_NAME_OVERRIDE",
-            BuildFormat::Lv2 => "TRUCE_LV2_NAME_OVERRIDE",
-            BuildFormat::Au2 => "TRUCE_AU_NAME_OVERRIDE",
-            BuildFormat::Aax => "TRUCE_AAX_NAME_OVERRIDE",
-        }
-    }
-
-    /// Plugin's per-format display-name override, if any.
-    fn name_override(self, p: &PluginDef) -> Option<&str> {
-        match self {
-            BuildFormat::Clap => p.clap_name.as_deref(),
-            BuildFormat::Vst3 => p.vst3_name.as_deref(),
-            BuildFormat::Vst2 => p.vst2_name.as_deref(),
-            BuildFormat::Lv2 => p.lv2_name.as_deref(),
-            BuildFormat::Au2 => p.au_name.as_deref(),
-            BuildFormat::Aax => p.aax_name.as_deref(),
-        }
-    }
+    // Per-format display-name overrides used to flow through
+    // `TRUCE_<FORMAT>_NAME_OVERRIDE` env vars set at cargo invocation
+    // time. They now travel with `PluginInfo` (read out of
+    // `truce.toml` by `truce::plugin_info!`), so cargo-truce no
+    // longer has to flip env vars between plugin builds — the
+    // workspace-wide env churn was invalidating each format wrapper's
+    // fingerprint between back-to-back `cargo build` calls.
 }
 
 /// Returns a skip-reason string if AAX cannot be built on this host —
@@ -203,37 +184,42 @@ pub(crate) fn build_format_dylibs(
     format_features.extend_from_slice(extra_features);
     let combined = format_features.join(",");
 
+    // AU2 needs `TRUCE_AU_VERSION=2` so truce-au's Rust side flips
+    // `cfg(truce_au_v3_only)` correctly. Display-name overrides
+    // used to be per-plugin env vars too but now travel through
+    // `PluginInfo` (baked in by `truce::plugin_info!`), so the env
+    // is identical for every plugin in this batch — meaning all
+    // plugins can share one cargo invocation.
+    let mut env_pairs: Vec<(&str, &str)> = Vec::new();
+    if format == BuildFormat::Au2 {
+        env_pairs.push(("TRUCE_AU_VERSION", "2"));
+    }
+
+    // Single `cargo build -p a -p b -p c …` for every plugin in this
+    // format batch. Two wins: cargo pays the dep-graph-resolve and
+    // process-startup cost once instead of N times, and codegen for
+    // the leaf example crates parallelises across the plugins (cargo
+    // can't parallelise across separate invocations).
+    let mut cargo_args: Vec<String> = Vec::with_capacity(plugins.len() * 2 + 5);
     for p in plugins {
-        // AU2 needs `TRUCE_AU_VERSION=2` so truce-au's Rust side
-        // sets `cfg(truce_au_v3_only)` correctly. Every format
-        // optionally overrides its display name. (The cocoa view
-        // class name moved to runtime ObjC registration in
-        // truce-au, so plugin-id is no longer baked at build time.)
-        let mut env_pairs: Vec<(&str, &str)> = Vec::new();
-        if format == BuildFormat::Au2 {
-            env_pairs.push(("TRUCE_AU_VERSION", "2"));
-        }
-        if let Some(n) = format.name_override(p) {
-            env_pairs.push((format.name_override_env(), n));
-        }
+        cargo_args.push("-p".into());
+        cargo_args.push(p.crate_name.clone());
+    }
+    cargo_args.push("--no-default-features".into());
+    cargo_args.push("--features".into());
+    cargo_args.push(combined.clone());
+    if let Some(t) = target {
+        cargo_args.push("--target".into());
+        cargo_args.push(t.into());
+    }
+    let cargo_arg_refs: Vec<&str> = cargo_args.iter().map(String::as_str).collect();
+    cargo_build(&env_pairs, &cargo_arg_refs, deployment_target)?;
 
-        // Build the cargo args, including `--target <triple>` when set.
-        // `cargo_build` handles `ensure_rustup_target` if it spots a
-        // target flag in the args.
-        let mut cargo_args: Vec<String> = vec![
-            "-p".into(),
-            p.crate_name.clone(),
-            "--no-default-features".into(),
-            "--features".into(),
-            combined.clone(),
-        ];
-        if let Some(t) = target {
-            cargo_args.push("--target".into());
-            cargo_args.push(t.into());
-        }
-        let cargo_arg_refs: Vec<&str> = cargo_args.iter().map(String::as_str).collect();
-        cargo_build(&env_pairs, &cargo_arg_refs, deployment_target)?;
-
+    // Post-build per-plugin staging: copy the produced `.dylib` to
+    // its format-suffixed name and (for AAX) assemble the
+    // `.aaxplugin` bundle. Cheap I/O, kept as a separate pass so
+    // the cargo invocation above doesn't have to know about it.
+    for p in plugins {
         let src = release_lib_for_target(root, &p.dylib_stem(), target);
         let dst = release_lib_for_target(
             root,
@@ -297,6 +283,9 @@ pub(crate) fn build_logic_dylibs(
         }
         #[cfg(target_os = "macos")]
         cmd.env("MACOSX_DEPLOYMENT_TARGET", deployment_target);
+        if let Some(wrapper) = crate::util::sccache_wrapper() {
+            cmd.env("RUSTC_WRAPPER", wrapper);
+        }
         let status = cmd.status()?;
         if !status.success() {
             return Err(format!("{logic_profile} build of {} failed", p.crate_name).into());

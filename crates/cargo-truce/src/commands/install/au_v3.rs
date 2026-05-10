@@ -132,10 +132,10 @@ fn build_rust_framework_dylib(
         // `TruceAUAudioUnit` separately via xcodebuild — those classes
         // are scoped to the appex bundle, not the framework dylib, so
         // the framework no longer needs a per-plugin id baked in.
-        let mut env_pairs: Vec<(&str, &str)> = vec![("TRUCE_AU_VERSION", "3")];
-        if let Some(n) = p.au3_name.as_deref() {
-            env_pairs.push(("TRUCE_AU_NAME_OVERRIDE", n));
-        }
+        // Display-name overrides (`au3_name` / `au_name`) travel via
+        // `PluginInfo` (baked by `truce::plugin_info!`) instead of
+        // env vars.
+        let env_pairs: Vec<(&str, &str)> = vec![("TRUCE_AU_VERSION", "3")];
         cargo_build_for_arch(
             &env_pairs,
             &[

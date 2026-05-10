@@ -231,13 +231,11 @@ static INFO: OnceLock<StaticInfo> = OnceLock::new();
 // Registration
 // ---------------------------------------------------------------------------
 
-/// Install-time override for the host-facing plugin name shown in
-/// Pro Tools' plug-in menus. Populated by `cargo truce install` via
-/// the `aax_name` field in `truce.toml`.
-const AAX_NAME_OVERRIDE: Option<&'static str> = option_env!("TRUCE_AAX_NAME_OVERRIDE");
-
+/// Plugin display-name shown in Pro Tools' plug-in menus. Reads
+/// `truce.toml`'s `aax_name` (baked into `PluginInfo` by
+/// `truce::plugin_info!`), falling back to `PluginInfo::name`.
 fn resolved_plugin_name(info: &truce_core::info::PluginInfo) -> &'static str {
-    truce_core::info::resolve_name_override(AAX_NAME_OVERRIDE, info.name)
+    truce_core::info::resolve_name_override(info.aax_name, info.name)
 }
 
 pub fn register_aax<P: PluginExport>() {

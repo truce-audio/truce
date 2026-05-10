@@ -210,27 +210,17 @@ pub(crate) struct PluginDef {
     #[serde(default = "default_au_tag")]
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub(crate) au_tag: String,
-    // Per-format display-name overrides. When set, replace
-    // `PluginInfo::name` in the host-facing spot of that format
-    // (visible in plugin browsers, param-editor title, etc.).
-    // Install-time only; the default (`None`) keeps `name`.
-    #[serde(default)]
-    pub(crate) clap_name: Option<String>,
-    #[serde(default)]
-    pub(crate) vst3_name: Option<String>,
-    #[serde(default)]
-    pub(crate) vst2_name: Option<String>,
-    #[serde(default)]
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-    pub(crate) au_name: Option<String>,
+    // Per-format display-name overrides — `clap_name`, `vst3_name`,
+    // `vst2_name`, `au_name`, `aax_name`, `lv2_name` — used to live
+    // here so cargo-truce could pass them as `TRUCE_<FORMAT>_NAME_OVERRIDE`
+    // env vars to each cargo build. They now flow through `PluginInfo`
+    // (read out of the same `truce.toml` keys by `truce::plugin_info!`),
+    // so cargo-truce no longer needs to inspect them. `au3_name` is
+    // the lone holdout because it also names the AU v3 `.app` bundle
+    // directory, which is install-time logic in this crate.
     #[serde(default)]
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub(crate) au3_name: Option<String>,
-    #[serde(default)]
-    #[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
-    pub(crate) aax_name: Option<String>,
-    #[serde(default)]
-    pub(crate) lv2_name: Option<String>,
 }
 
 impl PluginDef {
@@ -552,13 +542,7 @@ mod suite_tests {
             au_subtype: None,
             au3_subtype: None,
             au_tag: default_au_tag(),
-            clap_name: None,
-            vst3_name: None,
-            vst2_name: None,
-            au_name: None,
             au3_name: None,
-            aax_name: None,
-            lv2_name: None,
         }
     }
 

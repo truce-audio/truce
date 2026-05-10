@@ -18,6 +18,7 @@ use crate::{
 use crate::{
     common_program_files, locate_cmake, locate_msvc_cl, locate_ninja, packaging_windows, which_exe,
 };
+use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -64,6 +65,26 @@ pub(crate) fn cmd_doctor(args: &[String]) -> Res {
     check_cmd("cargo", &["--version"], "cargo");
     if root.join("rust-toolchain.toml").exists() {
         eprintln!("    {} rust-toolchain.toml present", tag_ok());
+    }
+    match crate::util::sccache_wrapper() {
+        Some(p) => eprintln!(
+            "    {} sccache active at {} — caches rustc invocations across builds",
+            tag_ok(),
+            p.to_string_lossy()
+        ),
+        None if env::var_os("RUSTC_WRAPPER").is_some()
+            || env::var_os("RUSTC_WORKSPACE_WRAPPER").is_some() =>
+        {
+            eprintln!(
+                "    {} RUSTC_WRAPPER already set — skipping sccache auto-detect",
+                tag_info()
+            );
+        }
+        None => eprintln!(
+            "    {} sccache not on PATH — optional. `brew install sccache` (or cargo install) caches rustc \
+             invocations at the input-hash level and speeds up env-flipping rebuilds",
+            tag_info()
+        ),
     }
 
     // Platform tools

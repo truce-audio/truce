@@ -814,14 +814,11 @@ unsafe extern "C" fn cb_gui_close<P: PluginExport>(ctx: *mut std::ffi::c_void) {
 // Registration
 // ---------------------------------------------------------------------------
 
-/// Compute a 16-byte CID from the VST3 ID string (FNV-1a hash).
-/// Install-time override for the host-facing plugin name
-/// (`PClassInfo::name`). Populated by `cargo truce install` via the
-/// `vst3_name` field in `truce.toml`.
-const VST3_NAME_OVERRIDE: Option<&'static str> = option_env!("TRUCE_VST3_NAME_OVERRIDE");
-
+/// Plugin display-name surfaced as `PClassInfo::name`. Reads
+/// `truce.toml`'s `vst3_name` (baked into `PluginInfo` by
+/// `truce::plugin_info!`), falling back to `PluginInfo::name`.
 fn resolved_plugin_name(info: &truce_core::info::PluginInfo) -> &'static str {
-    truce_core::info::resolve_name_override(VST3_NAME_OVERRIDE, info.name)
+    truce_core::info::resolve_name_override(info.vst3_name, info.name)
 }
 
 fn vst3_cid(id: &str) -> [u8; 16] {

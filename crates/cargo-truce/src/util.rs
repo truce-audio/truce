@@ -6,6 +6,7 @@
 
 use crate::BoxErr;
 use std::env;
+use std::ffi::OsString;
 use std::fs;
 #[cfg(target_os = "macos")]
 use std::io::Read;
@@ -1130,6 +1131,14 @@ fn cargo_build_inner(
     }
     #[cfg(target_os = "macos")]
     cmd.env("MACOSX_DEPLOYMENT_TARGET", deployment_target);
+    if let Some(wrapper) = sccache_wrapper() {
+        // Cache rustc invocations at the input-hash level. Wins
+        // every time cargo's fingerprint flips but the rustc inputs
+        // (source + flags + env reachable via `env!`/`option_env!`)
+        // are byte-identical — common on cross-arch / cross-feature
+        // batches that touch leaf crates back to back.
+        cmd.env("RUSTC_WRAPPER", wrapper);
+    }
     for (k, v) in env_vars {
         cmd.env(k, v);
     }
@@ -1141,6 +1150,38 @@ fn cargo_build_inner(
         return Err("cargo build failed".into());
     }
     Ok(())
+}
+
+/// Resolve a path to `sccache` if it's available and the user hasn't
+/// pinned `RUSTC_WRAPPER` themselves. Returns `None` when sccache is
+/// off the path (silent passthrough — no error, no log) or when the
+/// user has already configured a wrapper they presumably prefer.
+pub(crate) fn sccache_wrapper() -> Option<OsString> {
+    // Respect any user-set wrapper — don't override their choice.
+    // `TRUCE_DISABLE_SCCACHE=1` is the escape hatch when the user
+    // wants cargo-truce to skip auto-wrapping for one invocation.
+    if env::var_os("RUSTC_WRAPPER").is_some()
+        || env::var_os("RUSTC_WORKSPACE_WRAPPER").is_some()
+        || env::var_os("TRUCE_DISABLE_SCCACHE").is_some()
+    {
+        return None;
+    }
+    which("sccache")
+}
+
+/// Minimal `which`: walk `PATH` looking for an executable file with
+/// `name`. Avoids pulling in the `which` crate just for this one use.
+fn which(name: &str) -> Option<OsString> {
+    let path = env::var_os("PATH")?;
+    for dir in env::split_paths(&path) {
+        let candidate = dir.join(name);
+        if let Ok(meta) = fs::metadata(&candidate)
+            && meta.is_file()
+        {
+            return Some(candidate.into_os_string());
+        }
+    }
+    None
 }
 
 /// Apple architecture. Used by both AU v3 install and `cargo truce package`

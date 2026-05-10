@@ -74,6 +74,10 @@ fn find_plugin<'a>(config: &'a Config, pkg_name: &str) -> &'a PluginDef {
 ///     truce::plugin_info!()
 /// }
 /// ```
+// `au_name` / `au3_name` (and similar `vst2_name` / `vst3_name`)
+// mirror the user-facing truce.toml keys; renaming would break the
+// 1:1 with the TOML schema.
+#[allow(clippy::similar_names)]
 #[proc_macro]
 pub fn plugin_info(_input: TokenStream) -> TokenStream {
     let (config, pkg_name, truce_toml_path) = match try_resolve_plugin() {
@@ -155,6 +159,23 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
         quote! { None }
     };
 
+    // Per-format display-name overrides. Empty strings are normalized
+    // to `None` here so format wrappers don't need to repeat the
+    // empty-vs-unset distinction at every call site.
+    let opt_str = |s: &Option<String>| -> proc_macro2::TokenStream {
+        match s.as_deref() {
+            Some(v) if !v.is_empty() => quote! { Some(#v) },
+            _ => quote! { None },
+        }
+    };
+    let vst3_name = opt_str(&plugin.vst3_name);
+    let clap_name = opt_str(&plugin.clap_name);
+    let vst2_name = opt_str(&plugin.vst2_name);
+    let au_name = opt_str(&plugin.au_name);
+    let au3_name = opt_str(&plugin.au3_name);
+    let aax_name = opt_str(&plugin.aax_name);
+    let lv2_name = opt_str(&plugin.lv2_name);
+
     // `include_bytes!` registers `truce.toml` as a build-time dependency
     // through the compiler's normal dep-info tracking. Without it, edits
     // to truce.toml don't trigger a rebuild — proc macros on stable Rust
@@ -178,6 +199,13 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
                 au_manufacturer: ::truce::core::info::fourcc(#au_manufacturer.as_bytes()),
                 aax_id: None,
                 aax_category: #aax_category,
+                vst3_name: #vst3_name,
+                clap_name: #clap_name,
+                vst2_name: #vst2_name,
+                au_name: #au_name,
+                au3_name: #au3_name,
+                aax_name: #aax_name,
+                lv2_name: #lv2_name,
             }
         }
     };

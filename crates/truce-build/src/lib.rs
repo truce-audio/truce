@@ -59,6 +59,28 @@ pub struct PluginDef {
     pub au_subtype: Option<String>,
     #[serde(default)]
     pub aax_category: Option<String>,
+    // Per-format display-name overrides. Used to surface a different
+    // plugin name in a specific host's plugin browser without
+    // changing `name` (which other formats and the bundle path
+    // continue to use). Embedded into `PluginInfo` at proc-macro
+    // expansion time so the value is part of the rlib — no
+    // `TRUCE_<FORMAT>_NAME_OVERRIDE` env-var hop, which used to
+    // invalidate the format wrapper's fingerprint between two
+    // back-to-back plugin builds with different overrides.
+    #[serde(default)]
+    pub vst3_name: Option<String>,
+    #[serde(default)]
+    pub clap_name: Option<String>,
+    #[serde(default)]
+    pub vst2_name: Option<String>,
+    #[serde(default)]
+    pub au_name: Option<String>,
+    #[serde(default)]
+    pub au3_name: Option<String>,
+    #[serde(default)]
+    pub aax_name: Option<String>,
+    #[serde(default)]
+    pub lv2_name: Option<String>,
 }
 
 /// Resolve cargo's effective target directory for a given workspace root.
