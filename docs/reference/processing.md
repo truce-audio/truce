@@ -37,12 +37,13 @@ disjoint slices. The cost is one memcpy per aliased channel per block
 you go looking. **Most plugins should ignore this section.**
 
 If you profile and the wrapper memcpy is meaningful for your DSP,
-set `SUPPORTS_IN_PLACE = true` on your `PluginLogic` impl. The wrapper
-then skips the copy and you read+write the shared buffer directly:
+override `supports_in_place()` on your `PluginLogic` impl to
+return `true`. The wrapper then skips the copy and you
+read+write the shared buffer directly:
 
 ```rust
 impl PluginLogic for MyEffect {
-    const SUPPORTS_IN_PLACE: bool = true;
+    fn supports_in_place() -> bool { true }
     // ...
     fn process(&mut self, buffer: &mut AudioBuffer, _: &EventList,
                _: &mut ProcessContext) -> ProcessStatus {
@@ -65,7 +66,7 @@ impl PluginLogic for MyEffect {
 
 The contract:
 
-- With `SUPPORTS_IN_PLACE = true`, `buffer.input(ch)` returns an empty
+- With `supports_in_place() = true`, `buffer.input(ch)` returns an empty
   slice for in-place channels — the data only exists in the shared
   buffer. You **must** check `buffer.is_in_place(ch)` and use
   `buffer.in_out_mut(ch)` for those channels.
@@ -237,6 +238,11 @@ roughly this shape:
 
 ```rust
 impl PluginLogic for Synth {
+    fn bus_layouts() -> Vec<BusLayout> {
+        // Instrument: output only, no audio input.
+        vec![BusLayout::new().with_output("Main", ChannelConfig::Stereo)]
+    }
+
     fn reset(&mut self, sample_rate: f64, _: usize) {
         self.sample_rate = sample_rate;
         self.voices.clear();
@@ -282,7 +288,9 @@ impl PluginLogic for Synth {
         self.voices.retain(|v| !v.is_done());
         if self.voices.is_empty() { ProcessStatus::Tail(0) } else { ProcessStatus::Normal }
     }
+}
 
+impl PluginEditor for Synth {
     fn layout(&self) -> truce_gui::layout::GridLayout { /* ... */ }
 }
 ```
@@ -291,13 +299,12 @@ Voice allocation, ADSR, and filter state live in the `Voice` struct
 — plain Rust, no framework involvement. Parameters flow in through
 `Arc<Params>`; nothing else is shared across threads.
 
-The instrument tells the macro it has no audio inputs:
+The macro is the same for every plugin shape:
 
 ```rust
 truce::plugin! {
     logic: Synth,
     params: SynthParams,
-    bus_layouts: [BusLayout::new().with_output("Main", ChannelConfig::Stereo)],
 }
 ```
 

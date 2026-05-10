@@ -53,11 +53,18 @@ impl PluginKind {
         }
     }
 
+    /// `PluginLogic::bus_layouts()` method body for non-stereo
+    /// kinds. Empty string for stereo (the trait default), so
+    /// the scaffold doesn't emit a redundant override.
     #[must_use]
-    pub fn bus_layouts(self) -> &'static str {
+    pub fn bus_layouts_method(self) -> &'static str {
         match self {
-            Self::Instrument => "BusLayout::new().with_output(\"Main\", ChannelConfig::Stereo)",
-            _ => "BusLayout::stereo()",
+            Self::Instrument => {
+                "    fn bus_layouts() -> Vec<BusLayout> {\n        \
+                 vec![BusLayout::new().with_output(\"Main\", ChannelConfig::Stereo)]\n    \
+                 }\n\n"
+            }
+            _ => "",
         }
     }
 
@@ -88,26 +95,18 @@ impl PluginKind {
         }
     }
 
-    /// `truce::plugin!` invocation. Instrument adds a custom
-    /// `bus_layouts:` line; effect / midi default to stereo.
+    /// `truce::plugin!` invocation. Same shape across kinds; bus
+    /// layouts come from `PluginLogic::bus_layouts()` (see
+    /// [`Self::bus_layouts_method`]).
     #[must_use]
     pub fn plugin_macro(self, struct_name: &str) -> String {
-        match self {
-            Self::Instrument => format!(
-                "truce::plugin! {{\n    \
-                 logic: {struct_name},\n    \
-                 params: {struct_name}Params,\n    \
-                 bus_layouts: [{bus}],\n\
-                 }}",
-                bus = self.bus_layouts(),
-            ),
-            _ => format!(
-                "truce::plugin! {{\n    \
-                 logic: {struct_name},\n    \
-                 params: {struct_name}Params,\n\
-                 }}"
-            ),
-        }
+        let _ = self;
+        format!(
+            "truce::plugin! {{\n    \
+             logic: {struct_name},\n    \
+             params: {struct_name}Params,\n\
+             }}"
+        )
     }
 }
 

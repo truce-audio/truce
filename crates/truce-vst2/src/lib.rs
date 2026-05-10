@@ -372,7 +372,7 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
             num_input_channels,
             num_output_channels,
             len_u32(num_frames),
-            P::SUPPORTS_IN_PLACE,
+            P::supports_in_place(),
         );
 
         let transport = if inst.aeffect_ptr.is_null() {

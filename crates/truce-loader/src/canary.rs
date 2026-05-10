@@ -5,15 +5,17 @@ use std::cell::RefCell;
 use std::mem::{align_of, size_of};
 use std::ptr;
 
+use truce_core::PluginLogic;
 use truce_core::buffer::AudioBuffer;
 use truce_core::events::{Event, EventBody, EventList, TransportInfo as Transport};
 use truce_core::process::{ProcessContext, ProcessStatus};
+use truce_gui::PluginEditor;
 use truce_gui::interaction::WidgetRegion;
 use truce_gui::layout::GridLayout;
 use truce_gui::render::RenderBackend;
 use truce_gui::theme::{Color, Theme};
 
-use crate::traits::PluginLogic;
+use crate::traits::LoaderPlugin;
 
 /// ABI fingerprint. Compared between shell and dylib before loading.
 ///
@@ -46,7 +48,7 @@ impl AbiCanary {
     #[must_use]
     pub fn current() -> Self {
         Self {
-            trait_object_size: size_of::<*const dyn PluginLogic>() * 2,
+            trait_object_size: size_of::<*const dyn LoaderPlugin>() * 2,
             audio_buffer_size: size_of::<AudioBuffer>(),
             process_context_size: size_of::<ProcessContext>(),
             process_status_size: size_of::<ProcessStatus>(),
@@ -162,23 +164,6 @@ impl PluginLogic for ProbePlugin {
         ProcessStatus::Normal
     }
 
-    fn render(&self, _backend: &mut dyn RenderBackend) {}
-
-    fn uses_custom_render(&self) -> bool {
-        true
-    }
-
-    fn layout(&self) -> GridLayout {
-        let mut gl = GridLayout::build(vec![]);
-        gl.width = 0xDEAD;
-        gl.height = 0xBEEF;
-        gl
-    }
-
-    fn hit_test(&self, _w: &[WidgetRegion], _x: f32, _y: f32) -> Option<usize> {
-        Some(42)
-    }
-
     fn save_state(&self) -> Vec<u8> {
         // If `load_state` wasn't called, return the default sentinel;
         // otherwise echo what was just loaded so verify can check the
@@ -199,6 +184,26 @@ impl PluginLogic for ProbePlugin {
     fn tail(&self) -> u32 {
         0xBBBB
     }
+}
+
+impl PluginEditor for ProbePlugin {
+    fn render(&self, _backend: &mut dyn RenderBackend) {}
+
+    fn uses_custom_render(&self) -> bool {
+        true
+    }
+
+    fn layout(&self) -> GridLayout {
+        let mut gl = GridLayout::build(vec![]);
+        gl.width = 0xDEAD;
+        gl.height = 0xBEEF;
+        gl
+    }
+
+    fn hit_test(&self, _w: &[WidgetRegion], _x: f32, _y: f32) -> Option<usize> {
+        Some(42)
+    }
+
     fn custom_editor(&self) -> Option<Box<dyn truce_core::editor::Editor>> {
         None
     }
@@ -225,7 +230,7 @@ impl PluginLogic for ProbePlugin {
 /// failed to round-trip — distinct messages for `latency`, `tail`,
 /// `layout`, `hit_test`, `save_state` (default and echo paths),
 /// `uses_custom_render`, `custom_editor`, and `load_state`.
-pub fn verify_probe(probe: &mut dyn PluginLogic) -> Result<(), String> {
+pub fn verify_probe(probe: &mut dyn LoaderPlugin) -> Result<(), String> {
     if probe.latency() != 0xAAAA {
         return Err(format!(
             "latency: expected 0xAAAA, got 0x{:X}",

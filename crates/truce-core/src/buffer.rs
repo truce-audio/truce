@@ -6,7 +6,7 @@
 /// the wrapper copies the aliased inputs into per-channel scratch so
 /// `input(ch)` and `output(ch)` are disjoint `&[f32]` / `&mut [f32]`
 /// — no plugin code change required. Plugins that opt into
-/// `Plugin::SUPPORTS_IN_PLACE = true` skip the copy and must use
+/// `Plugin::supports_in_place() = true` skip the copy and must use
 /// [`Self::in_out_mut`] for channels where [`Self::is_in_place`]
 /// returns `true`. See `docs/reference/processing.md` for the
 /// full contract.

@@ -142,6 +142,10 @@ impl Synth {
 }
 
 impl PluginLogic for Synth {
+    fn bus_layouts() -> Vec<BusLayout> {
+        vec![BusLayout::new().with_output("Main", ChannelConfig::Stereo)]
+    }
+
     fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {
         self.sample_rate = sample_rate;
         self.voices.clear();
@@ -196,6 +200,9 @@ impl PluginLogic for Synth {
         }
     }
 
+}
+
+impl PluginEditor for Synth {
     fn layout(&self) -> GridLayout {
         GridLayout::build(vec![
             widgets(vec![
@@ -223,7 +230,6 @@ impl PluginLogic for Synth {
 truce::plugin! {
     logic: Synth,
     params: SynthParams,
-    bus_layouts: [BusLayout::new().with_output("Main", ChannelConfig::Stereo)],
 }
 
 #[cfg(test)]

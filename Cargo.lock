@@ -6036,6 +6036,7 @@ dependencies = [
  "truce-clap",
  "truce-core",
  "truce-derive",
+ "truce-gui",
  "truce-loader",
  "truce-lv2",
  "truce-params",

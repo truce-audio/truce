@@ -1,4 +1,4 @@
-//! `NativeLoader` — loads and hot-reloads a `PluginLogic` dylib.
+//! `NativeLoader` — loads and hot-reloads a plugin dylib.
 //!
 //! Uses native Rust ABI (no C translation layer). Verifies
 //! compatibility via `AbiCanary` + vtable probe before use.
@@ -27,15 +27,15 @@ static LOADER_ID: AtomicU64 = AtomicU64::new(0);
 use libloading::{Library, Symbol};
 
 use crate::canary::{AbiCanary, verify_probe};
-use crate::traits::PluginLogic;
+use crate::traits::LoaderPlugin;
 
-type ProbeFn = fn() -> Box<dyn PluginLogic>;
-type CreateFn = fn(*const ()) -> Box<dyn PluginLogic>;
+type ProbeFn = fn() -> Box<dyn LoaderPlugin>;
+type CreateFn = fn(*const ()) -> Box<dyn LoaderPlugin>;
 
 /// Verified candidate dylib + instance, ready to swap in.
 struct Candidate {
     library: Library,
-    plugin: Box<dyn PluginLogic>,
+    plugin: Box<dyn LoaderPlugin>,
     hash: u32,
     mtime: SystemTime,
     /// Path of the versioned copy in the system temp dir. Tracked so
@@ -48,7 +48,7 @@ struct Candidate {
 pub struct NativeLoader {
     dylib_path: PathBuf,
     library: Option<Library>,
-    plugin: Option<Box<dyn PluginLogic>>,
+    plugin: Option<Box<dyn LoaderPlugin>>,
     /// Raw pointer to the shell's `Arc<Params>` (type-erased).
     /// Passed to `truce_create()` so the plugin shares the same params.
     params_ptr: *const (),
@@ -312,11 +312,11 @@ impl NativeLoader {
     }
 
     #[must_use]
-    pub fn plugin(&self) -> Option<&dyn PluginLogic> {
+    pub fn plugin(&self) -> Option<&dyn LoaderPlugin> {
         self.plugin.as_ref().map(std::convert::AsRef::as_ref)
     }
 
-    pub fn plugin_mut(&mut self) -> Option<&mut dyn PluginLogic> {
+    pub fn plugin_mut(&mut self) -> Option<&mut dyn LoaderPlugin> {
         self.plugin.as_mut().map(std::convert::AsMut::as_mut)
     }
 

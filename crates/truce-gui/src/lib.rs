@@ -18,6 +18,7 @@ pub mod layout;
 #[macro_use]
 pub mod macros;
 pub mod platform;
+pub mod plugin_editor;
 pub mod render;
 pub mod snapshot;
 pub mod theme;
@@ -25,6 +26,7 @@ pub mod widgets;
 
 pub use editor::BuiltinEditor;
 pub use platform::{EditorScale, to_physical_px};
+pub use plugin_editor::{PluginEditor, default_hit_test};
 pub use render::{ImageId, RenderBackend};
 pub use snapshot::ParamSnapshot;
 pub use theme::Theme;

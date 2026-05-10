@@ -789,7 +789,7 @@ pub unsafe fn _process<P: PluginExport>(
                 num_in,
                 num_out,
                 len_u32(num_frames),
-                P::SUPPORTS_IN_PLACE,
+                P::supports_in_place(),
             );
             let transport = if !transport_ptr.is_null() && (*transport_ptr).valid != 0 {
                 let t = &*transport_ptr;

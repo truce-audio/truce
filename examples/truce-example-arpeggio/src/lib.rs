@@ -183,6 +183,14 @@ impl Arpeggio {
 }
 
 impl PluginLogic for Arpeggio {
+    /// MIDI effect: no audio I/O. CLAP/VST3/AU(aumi)/LV2 honor this;
+    /// AAX (which has no audio-less plugin category) auto-adds a
+    /// stereo passthrough inside `truce-aax` so the DAW's track
+    /// audio flows through unchanged.
+    fn bus_layouts() -> Vec<BusLayout> {
+        vec![BusLayout::new()]
+    }
+
     fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {
         self.sample_rate = sample_rate;
         self.params.set_sample_rate(sample_rate);
@@ -327,6 +335,9 @@ impl PluginLogic for Arpeggio {
         ProcessStatus::Normal
     }
 
+}
+
+impl PluginEditor for Arpeggio {
     fn layout(&self) -> GridLayout {
         GridLayout::build(vec![widgets(vec![
             dropdown(P::Rate, "Rate"),
@@ -342,11 +353,6 @@ impl PluginLogic for Arpeggio {
 truce::plugin! {
     logic: Arpeggio,
     params: ArpParams,
-    // MIDI effect: no audio I/O. CLAP/VST3/AU(aumi)/LV2 honor this;
-    // AAX (which has no audio-less plugin category) auto-adds a
-    // stereo passthrough inside `truce-aax` so the DAW's track
-    // audio flows through unchanged.
-    bus_layouts: [BusLayout::new()],
 }
 
 #[cfg(test)]

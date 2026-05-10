@@ -8,6 +8,7 @@ description = "Audio plugin framework — write once, build VST3, CLAP, AU, AAX"
 
 [dependencies]
 truce-core = { workspace = true }
+truce-gui = { workspace = true }
 truce-params = { workspace = true }
 truce-loader = { workspace = true }
 truce-derive = { workspace = true }

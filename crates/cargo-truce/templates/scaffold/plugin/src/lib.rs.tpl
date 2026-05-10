@@ -16,13 +16,15 @@ impl {struct_name} \{
 }
 
 impl PluginLogic for {struct_name} \{
-    fn reset(&mut self, sr: f64, _bs: usize) \{
+{bus_layouts_method | unescaped}    fn reset(&mut self, sr: f64, _bs: usize) \{
         self.params.set_sample_rate(sr);
         self.params.snap_smoothers();
     }
 
 {process_body | unescaped}
+}
 
+impl PluginEditor for {struct_name} \{
     fn layout(&self) -> truce_gui::layout::GridLayout \{
         GridLayout::build(vec![widgets(vec![
             {layout_knob | unescaped},

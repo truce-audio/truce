@@ -81,7 +81,9 @@ impl PluginLogic for GainEgui {
 
         ProcessStatus::Normal
     }
+}
 
+impl PluginEditor for GainEgui {
     fn custom_editor(&self) -> Option<Box<dyn Editor>> {
         Some(Box::new(
             EguiEditor::new(self.params.clone(), (WINDOW_W, WINDOW_H), gain_ui)

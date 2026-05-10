@@ -49,6 +49,14 @@ fn shift_midi(note: u8, shift: i32) -> u8 {
 }
 
 impl PluginLogic for Transpose {
+    /// MIDI effect: no audio I/O. CLAP/VST3/AU(aumi)/LV2 honor this;
+    /// AAX (which has no audio-less plugin category) auto-adds a
+    /// stereo passthrough inside `truce-aax` so the DAW's track
+    /// audio flows through unchanged.
+    fn bus_layouts() -> Vec<BusLayout> {
+        vec![BusLayout::new()]
+    }
+
     fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {
         self.params.set_sample_rate(sample_rate);
         self.params.snap_smoothers();
@@ -113,6 +121,9 @@ impl PluginLogic for Transpose {
         ProcessStatus::Normal
     }
 
+}
+
+impl PluginEditor for Transpose {
     fn layout(&self) -> GridLayout {
         GridLayout::build(vec![widgets(vec![
             knob(P::Semitones, "Semitones"),
@@ -125,11 +136,6 @@ impl PluginLogic for Transpose {
 truce::plugin! {
     logic: Transpose,
     params: TransposeParams,
-    // MIDI effect: no audio I/O. CLAP/VST3/AU(aumi)/LV2 honor this;
-    // AAX (which has no audio-less plugin category) auto-adds a
-    // stereo passthrough inside `truce-aax` so the DAW's track
-    // audio flows through unchanged.
-    bus_layouts: [BusLayout::new()],
 }
 
 // --- Tests ---

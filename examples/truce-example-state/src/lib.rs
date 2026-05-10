@@ -57,6 +57,12 @@ pub struct InstanceMemo {
 pub struct StateExample {
     params: Arc<StateExampleParams>,
     memo: InstanceMemo,
+    /// Runtime counter — how many times the host has restored
+    /// state on this instance (preset recall, undo, session
+    /// load). Lives on the plugin struct, *not* in `InstanceMemo`,
+    /// because it's diagnostic and shouldn't persist across
+    /// sessions. See `PluginEditor::state_changed` below.
+    state_load_count: u32,
 }
 
 impl StateExample {
@@ -64,6 +70,7 @@ impl StateExample {
         Self {
             params,
             memo: InstanceMemo::default(),
+            state_load_count: 0,
         }
     }
 }
@@ -96,7 +103,9 @@ impl PluginLogic for StateExample {
             self.memo = m;
         }
     }
+}
 
+impl PluginEditor for StateExample {
     fn custom_editor(&self) -> Option<Box<dyn Editor>> {
         Some(Box::new(
             EguiEditor::with_ui(
@@ -110,6 +119,21 @@ impl PluginLogic for StateExample {
             .with_visuals(truce_egui::theme::dark())
             .with_font(font::JETBRAINS_MONO),
         ))
+    }
+
+    /// Called on the audio thread immediately after `load_state`.
+    /// The standard place for plugin-side cache invalidation that
+    /// the next `process()` block reads — decoded IRs, sample
+    /// thumbnails, computed pad layouts, etc.
+    ///
+    /// This example has no DSP-side derived data, so the body is
+    /// just a diagnostic counter. The companion editor-side hook
+    /// (`StateExampleUi::state_changed` below, on
+    /// [`truce_core::Editor`]) is what refreshes the GUI cache —
+    /// the two hooks split plugin-thread invalidation from
+    /// GUI-thread repaint.
+    fn state_changed(&mut self) {
+        self.state_load_count = self.state_load_count.saturating_add(1);
     }
 }
 

@@ -76,7 +76,9 @@ impl PluginLogic for GainSlint {
 
         ProcessStatus::Normal
     }
+}
 
+impl PluginEditor for GainSlint {
     fn custom_editor(&self) -> Option<Box<dyn Editor>> {
         Some(Box::new(SlintEditor::new(
             self.params.clone(),

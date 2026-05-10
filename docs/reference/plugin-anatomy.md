@@ -19,30 +19,43 @@ it is.
                                 ↓
   YourParams ◄──Arc───── Shell (one of CLAP / VST3 / AU / …)
   (atomic params)         │
-                          ├─ calls YourPlugin::new(params)    (inherent)
-                          ├─ calls PluginLogic::reset(sr, bs) (your code)
-                          ├─ calls PluginLogic::process(…)    (audio thread)
-                          ├─ calls PluginLogic::layout(…)     (main thread)
-                          ├─ calls PluginLogic::save_state(…) (main thread)
+                          ├─ calls YourPlugin::new(params)       (inherent)
+                          ├─ calls PluginLogic::reset(sr, bs)    (your DSP)
+                          ├─ calls PluginLogic::process(…)       (audio thread)
+                          ├─ calls PluginEditor::layout(…)       (main thread)
+                          ├─ calls PluginLogic::save_state(…)    (main thread)
+                          ├─ calls PluginLogic::load_state(…)    (audio thread)
+                          ├─ calls PluginEditor::state_changed() (audio thread)
                           └─ drops when unloaded
 ```
 
-Three things you write:
+Four things you write:
 
 1. A **params struct** with `#[derive(Params)]`.
-2. A **plugin struct** with an inherent `new(params: Arc<P>)` and
-   an `impl Plugin`.
-3. A **single `truce::plugin!` macro call** that wires those into
+2. A **plugin struct** with an inherent `new(params: Arc<P>)`.
+3. **Two trait impls** on the plugin struct:
+   - `impl PluginLogic for ...` — DSP (`reset`, `process`,
+     `save_state`, `load_state`, `latency`, `tail`,
+     `bus_layouts`).
+   - `impl PluginEditor for ...` — GUI (`layout`, `render`,
+     `custom_editor`, `state_changed`, …). Headless plugins
+     write `impl PluginEditor for X {}` — one trivial line.
+4. A **single `truce::plugin!` macro call** that wires those into
    every plugin format.
 
 Everything else — parameter hosting, GUI event dispatch, state
 envelope, format-specific lifecycle, hot-reload shell — is
 generated.
 
-## The `PluginLogic` trait
+The split tracks the threading model: `PluginLogic` is the audio
+thread's hat, `PluginEditor` is the main thread's. They live in
+different crates (`truce-core` and `truce-gui`) so headless
+plugins don't pull GUI types into compile errors or rustdoc.
 
-Only `reset` and `process` are required. Everything else has a
-default. Override what you need.
+## The `PluginLogic` trait — DSP surface
+
+In `truce_core`. Only `reset` and `process` are required.
+Everything else has a default. Override what you need.
 
 ```rust
 pub trait PluginLogic: Send + 'static {
@@ -55,32 +68,49 @@ pub trait PluginLogic: Send + 'static {
         context: &mut ProcessContext,
     ) -> ProcessStatus;
 
-    fn layout(&self) -> truce_gui::layout::GridLayout { ... }
-    fn render(&self, backend: &mut dyn RenderBackend) {}   // custom visuals
-    fn uses_custom_render(&self) -> bool { false }
-    fn hit_test(&self, widgets: &[WidgetRegion], x: f32, y: f32) -> Option<usize> { ... }
+    fn bus_layouts() -> Vec<BusLayout> { vec![BusLayout::stereo()] }
 
     fn save_state(&self) -> Vec<u8> { Vec::new() }
     fn load_state(&mut self, data: &[u8]) {}
 
     fn latency(&self) -> u32 { 0 }
     fn tail(&self) -> u32 { 0 }
-
-    fn custom_editor(&self) -> Option<Box<dyn Editor>> { None }
 }
 ```
-
-### What each method is for
 
 | Method | When called | Real-time? | Notes |
 |--------|-------------|------------|-------|
 | `reset` | Sample rate or block size changes; before the first `process` | no | Clear delay lines, reset filter state, call `params.set_sample_rate` + `snap_smoothers`. |
 | `process` | Every audio block | **yes** — no alloc / lock / I/O | The audio thread. See [processing.md](processing.md). |
-| `layout` | Built-in GUI rebuild | no | Returns a `GridLayout` description of widgets. See [gui.md](gui.md). |
+| `bus_layouts` | Plugin discovery / port enumeration | no | Supported audio bus configurations. Default is stereo in/out; instruments / sidechain / MIDI plugins override. See [Bus layouts](#bus-layouts) below. |
 | `save_state` / `load_state` | Host saves/loads a session, recalls a preset, or copies the plugin | no | **Extra** state only — params are serialized automatically. |
 | `latency` | Host bus reconfiguration | no | Samples of processing delay, for PDC. |
 | `tail` | Host transport stop | no | Samples of audio produced after input stops (reverb, delay). |
-| `render`, `uses_custom_render`, `hit_test`, `custom_editor` | Built-in GUI, when overridden | no | Escape hatches for custom visuals / editors. See [gui.md](gui.md). |
+
+## The `PluginEditor` trait — GUI surface
+
+In `truce_gui`. Every method has a default; headless plugins
+write the empty `impl PluginEditor for X {}`.
+
+```rust
+pub trait PluginEditor {
+    fn layout(&self) -> truce_gui::layout::GridLayout { ... }
+    fn render(&self, backend: &mut dyn RenderBackend) {}   // custom visuals
+    fn uses_custom_render(&self) -> bool { false }
+    fn hit_test(&self, widgets: &[WidgetRegion], x: f32, y: f32) -> Option<usize> { ... }
+
+    fn custom_editor(&self) -> Option<Box<dyn Editor>> { None }
+
+    fn state_changed(&mut self) {}
+}
+```
+
+| Method | When called | Real-time? | Notes |
+|--------|-------------|------------|-------|
+| `layout` | Built-in GUI rebuild | no | Returns a `GridLayout` description of widgets. See [gui.md](gui.md). |
+| `render`, `uses_custom_render`, `hit_test` | Built-in GUI, when overridden | no | Escape hatches for custom visuals. See [gui.md](gui.md). |
+| `custom_editor` | Editor open | no | Return `Some(...)` to use egui / iced / Slint / raw window handle instead of the built-in widget set. See [gui.md](gui.md). |
+| `state_changed` | After `PluginLogic::load_state` returns | yes (audio thread, but only between blocks) | Plugin-side cache invalidation — re-decode an IR, re-build a sample-pad map, anything derived from extra state that the next `process()` block reads. The companion `Editor::state_changed` (on `truce_core::Editor`) handles the GUI-thread repaint. |
 
 ### Construction is not on the trait
 
@@ -174,62 +204,64 @@ for the full list of `[[plugin]]` keys.
 
 ## Bus layouts
 
-Supported audio bus configurations go on the `truce::plugin!`
-macro, not on the `PluginLogic` trait. The host picks one; the
-others are rejected at bus-config time before `process` is ever
-called.
+Supported audio bus configurations live on
+`PluginLogic::bus_layouts()`. The host picks one; the others are
+rejected at bus-config time before `process` is ever called.
 
 ### Default (stereo in, stereo out)
 
-If you don't pass `bus_layouts:`, the macro defaults to stereo
-effect routing:
+The trait method's default is stereo effect routing — leave it
+alone for a stereo effect:
 
 ```rust
-truce::plugin! {
-    logic: MyGain,
-    params: MyGainParams,
+impl PluginLogic for MyGain {
     // bus_layouts omitted → [BusLayout::stereo()]
+    fn reset(/* … */) { /* … */ }
+    fn process(/* … */) -> ProcessStatus { /* … */ }
 }
 ```
 
 ### Instrument (no audio input)
 
 ```rust
-truce::plugin! {
-    logic: MySynth,
-    params: MySynthParams,
-    bus_layouts: [BusLayout::new().with_output("Main", ChannelConfig::Stereo)],
+impl PluginLogic for MySynth {
+    fn bus_layouts() -> Vec<BusLayout> {
+        vec![BusLayout::new().with_output("Main", ChannelConfig::Stereo)]
+    }
+    /* reset, process … */
 }
 ```
 
 ### Multiple layouts (host picks)
 
 ```rust
-truce::plugin! {
-    logic: Widener,
-    params: WidenerParams,
-    bus_layouts: [
-        BusLayout::new()
-            .with_input("Main",  ChannelConfig::Mono)
-            .with_output("Main", ChannelConfig::Stereo),
-        BusLayout::stereo(),
-    ],
+impl PluginLogic for Widener {
+    fn bus_layouts() -> Vec<BusLayout> {
+        vec![
+            BusLayout::new()
+                .with_input("Main",  ChannelConfig::Mono)
+                .with_output("Main", ChannelConfig::Stereo),
+            BusLayout::stereo(),
+        ]
+    }
+    /* reset, process … */
 }
 ```
 
 ### Sidechain
 
 ```rust
-truce::plugin! {
-    logic: SidechainComp,
-    params: CompParams,
-    bus_layouts: [
-        BusLayout::new()
-            .with_input("Main",      ChannelConfig::Stereo)
-            .with_input("Sidechain", ChannelConfig::Stereo)
-            .with_output("Main",     ChannelConfig::Stereo),
-        BusLayout::stereo(),                  // fallback when no sidechain
-    ],
+impl PluginLogic for SidechainComp {
+    fn bus_layouts() -> Vec<BusLayout> {
+        vec![
+            BusLayout::new()
+                .with_input("Main",      ChannelConfig::Stereo)
+                .with_input("Sidechain", ChannelConfig::Stereo)
+                .with_output("Main",     ChannelConfig::Stereo),
+            BusLayout::stereo(),              // fallback when no sidechain
+        ]
+    }
+    /* reset, process … */
 }
 ```
 
@@ -272,7 +304,19 @@ impl PluginLogic for MyPlugin {
             self.extra = s;
         }
     }
-    // ... reset, process, layout ...
+    // ... reset, process ...
+}
+
+impl PluginEditor for MyPlugin {
+    // Re-derive caches that depend on extra state (decoded IR,
+    // sample thumbnails, computed pad layouts). Runs on the
+    // audio thread under the same `&mut self` borrow as
+    // `load_state`, so the next `process()` block sees the
+    // refreshed caches.
+    fn state_changed(&mut self) {
+        self.extra_decoded_ir = decode_ir(&self.extra.ir_file_path);
+    }
+    // ... layout, custom_editor ...
 }
 ```
 

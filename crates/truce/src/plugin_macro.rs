@@ -1,7 +1,7 @@
-//! The `plugin!` macro — one macro to export a `PluginLogic` plugin
-//! to all formats with zero boilerplate.
+//! The `plugin!` macro — one macro to export a plugin (`PluginLogic`
+//! + `PluginEditor`) to all formats with zero boilerplate.
 
-/// Export a `PluginLogic` plugin to all active format targets.
+/// Export a plugin to all active format targets.
 ///
 /// This is the only macro a developer needs. It generates all format
 /// exports (CLAP, VST3, etc.) based on Cargo features.
@@ -55,27 +55,18 @@
 /// Zero code changes. Same `truce::plugin!` macro.
 #[macro_export]
 macro_rules! plugin {
-    // Full form with bus_layouts
-    (
-        logic: $logic:ty,
-        params: $params:ty,
-        bus_layouts: [$($layout:expr),* $(,)?],
-    ) => {
-        $crate::__plugin_impl!($logic, $params, [$($layout),*]);
-    };
-    // Short form — defaults to stereo
     (
         logic: $logic:ty,
         params: $params:ty $(,)?
     ) => {
-        $crate::__plugin_impl!($logic, $params, [$crate::prelude::BusLayout::stereo()]);
+        $crate::__plugin_impl!($logic, $params);
     };
 }
 
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __plugin_impl {
-    ($logic:ty, $params:ty, [$($layout:expr),*]) => {
+    ($logic:ty, $params:ty) => {
         // Compile-time LV2 TTL emission. Walks the params type's
         // sidecar tree (written by `derive(Params)`) and produces
         // `manifest.ttl` / `plugin.ttl` next to it. cargo-truce's
@@ -114,14 +105,13 @@ macro_rules! __plugin_impl {
             $crate::__reexport::export_static! {
                 params: $params,
                 info: $crate::prelude::plugin_info!(),
-                bus_layouts: [$($layout),*],
                 logic: $logic,
             }
 
             // --- Shell mode (hot-reload) ---
             // Load the logic from a dylib. Same crate, debug build.
             #[cfg(all(feature = "shell", not(test)))]
-            $crate::__plugin_hot_reload!($params, [$($layout),*]);
+            $crate::__plugin_hot_reload!($logic, $params);
         }
 
         // Re-export the wrapper so `pub type Plugin`, the screenshot
@@ -253,7 +243,7 @@ macro_rules! __plugin_impl {
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __plugin_hot_reload {
-    ($params:ty, [$($layout:expr),*]) => {
+    ($logic:ty, $params:ty) => {
         pub struct __HotShellWrapper {
             inner: $crate::__reexport::HotShell<$params>,
         }
@@ -312,12 +302,24 @@ macro_rules! __plugin_hot_reload {
         }
 
         impl $crate::core::plugin::Plugin for __HotShellWrapper {
+            fn supports_in_place() -> bool where Self: Sized {
+                <$logic as $crate::core::PluginLogic>::supports_in_place()
+            }
+
             fn info() -> $crate::core::info::PluginInfo where Self: Sized {
                 $crate::prelude::plugin_info!()
             }
 
             fn bus_layouts() -> Vec<$crate::core::bus::BusLayout> where Self: Sized {
-                vec![$($layout),*]
+                // Hot-reload mode reads bus layouts from the
+                // shell's *baked-in* `$logic` rather than the
+                // running dylib's: bus layouts are queried during
+                // plugin discovery (host port enumeration) and
+                // changes to them require a host-level
+                // re-discovery anyway. Reloading the logic dylib
+                // can iterate DSP and GUI freely; bus layouts
+                // changes warrant a shell rebuild + DAW rescan.
+                <$logic as $crate::core::PluginLogic>::bus_layouts()
             }
 
             fn init(&mut self) {

@@ -1,4 +1,4 @@
-//! `StaticShell` — embeds `PluginLogic` directly into the plugin binary.
+//! `StaticShell` — embeds the plugin directly into the binary.
 //!
 //! No dlopen, no file watcher, no Mutex. Same types as `HotShell`
 //! but zero runtime overhead. Use via `export_static!`.
@@ -6,6 +6,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
+use truce_core::PluginLogic;
 use truce_core::buffer::AudioBuffer;
 use truce_core::bus::BusLayout;
 use truce_core::editor::Editor;
@@ -13,9 +14,8 @@ use truce_core::events::{EventBody, EventList};
 use truce_core::info::PluginInfo;
 use truce_core::plugin::Plugin;
 use truce_core::process::{ProcessContext, ProcessStatus};
+use truce_gui::PluginEditor;
 use truce_params::Params;
-
-use crate::traits::PluginLogic;
 
 // ---------------------------------------------------------------------------
 // StaticShell
@@ -25,16 +25,16 @@ use crate::traits::PluginLogic;
 ///
 /// Same bridging as `HotShell` but without `NativeLoader`, `Mutex`,
 /// file watching, or any dynamic loading overhead. Use via `export_static!`.
-pub struct StaticShell<P: Params, L: PluginLogic> {
+pub struct StaticShell<P: Params, L: PluginLogic + PluginEditor> {
     pub params: Arc<P>,
     logic: L,
     meters: Arc<[AtomicU32; 256]>,
     sample_rate: f64,
 }
 
-unsafe impl<P: Params, L: PluginLogic> Send for StaticShell<P, L> {}
+unsafe impl<P: Params, L: PluginLogic + PluginEditor> Send for StaticShell<P, L> {}
 
-impl<P: Params + Default + 'static, L: PluginLogic + 'static> StaticShell<P, L> {
+impl<P: Params + Default + 'static, L: PluginLogic + PluginEditor + 'static> StaticShell<P, L> {
     /// Create from pre-constructed parts. The plugin logic should
     /// hold an `Arc::clone` of the same params.
     pub fn from_parts(params: Arc<P>, logic: L) -> Self {
@@ -75,7 +75,9 @@ impl<P: Params + Default + 'static, L: PluginLogic + 'static> StaticShell<P, L> 
     }
 }
 
-impl<P: Params + Default + 'static, L: PluginLogic + 'static> Plugin for StaticShell<P, L> {
+impl<P: Params + Default + 'static, L: PluginLogic + PluginEditor + 'static> Plugin
+    for StaticShell<P, L>
+{
     fn info() -> PluginInfo
     where
         Self: Sized,
@@ -146,6 +148,10 @@ impl<P: Params + Default + 'static, L: PluginLogic + 'static> Plugin for StaticS
 
     fn load_state(&mut self, data: &[u8]) {
         self.logic.load_state(data);
+        // Plugin-side cache invalidation runs in the same `&mut`
+        // borrow window so the next `process()` block sees the
+        // refreshed caches. See `PluginEditor::state_changed`.
+        self.logic.state_changed();
     }
 
     fn editor(&mut self) -> Option<Box<dyn Editor>> {
@@ -181,17 +187,19 @@ impl<P: Params + Default + 'static, L: PluginLogic + 'static> Plugin for StaticS
 // export_static! macro
 // ---------------------------------------------------------------------------
 
-/// Compile-time static embedding of a `PluginLogic` type.
+/// Compile-time static embedding of a plugin (`PluginLogic` +
+/// `PluginEditor`) into the binary.
 ///
 /// Produces a `__HotShellWrapper` struct that implements `Plugin + PluginExport`,
 /// so format export macros (`export_clap!`, `export_vst3!`, etc.) work unchanged.
-/// No dlopen, no file watcher, zero runtime overhead.
+/// No dlopen, no file watcher, zero runtime overhead. Bus layouts come from
+/// `<$logic as PluginLogic>::bus_layouts()` — override the trait method to
+/// pick something other than the stereo default.
 ///
 /// ```ignore
 /// export_static! {
 ///     params: GainParams,
 ///     info: plugin_info!(...),
-///     bus_layouts: [BusLayout::stereo()],
 ///     logic: Gain,
 /// }
 ///
@@ -203,7 +211,6 @@ macro_rules! export_static {
     (
         params: $params:ty,
         info: $info:expr,
-        bus_layouts: [$($layout:expr),* $(,)?],
         logic: $logic:ty,
     ) => {
         pub struct __HotShellWrapper {
@@ -211,12 +218,16 @@ macro_rules! export_static {
         }
 
         impl $crate::__macro_deps::truce_core::plugin::Plugin for __HotShellWrapper {
+            fn supports_in_place() -> bool where Self: Sized {
+                <$logic as $crate::__macro_deps::truce_core::PluginLogic>::supports_in_place()
+            }
+
             fn info() -> $crate::__macro_deps::truce_core::info::PluginInfo where Self: Sized {
                 $info
             }
 
             fn bus_layouts() -> Vec<$crate::__macro_deps::truce_core::bus::BusLayout> where Self: Sized {
-                vec![$($layout),*]
+                <$logic as $crate::__macro_deps::truce_core::PluginLogic>::bus_layouts()
             }
 
             fn init(&mut self) {

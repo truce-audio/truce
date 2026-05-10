@@ -172,7 +172,9 @@ impl PluginLogic for Tremolo {
         self.free_phase = free_phase;
         ProcessStatus::Normal
     }
+}
 
+impl PluginEditor for Tremolo {
     fn custom_editor(&self) -> Option<Box<dyn Editor>> {
         Some(Box::new(
             EguiEditor::new(self.params.clone(), (WINDOW_W, WINDOW_H), tremolo_ui)

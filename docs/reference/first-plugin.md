@@ -96,7 +96,9 @@ impl PluginLogic for MyGain {
         }
         ProcessStatus::Normal
     }
+}
 
+impl PluginEditor for MyGain {
     fn layout(&self) -> truce_gui::layout::GridLayout {
         use truce_gui::layout::{GridLayout, knob, widgets};
         GridLayout::build(vec![widgets(vec![knob(P::Gain, "Gain")])])
@@ -104,11 +106,14 @@ impl PluginLogic for MyGain {
 }
 ```
 
-`PluginLogic` is the one trait you implement. `reset()` is called
-when the host knows the sample rate and block size; `process()` is
-called on the audio thread for every block; `layout()` returns a
-declarative description of the GUI. Only `reset` and `process` are
-required. See [chapter 3 → plugin-anatomy.md](plugin-anatomy.md).
+You implement two traits: `PluginLogic` for the audio thread
+(`reset()` runs when the host knows the sample rate and block
+size; `process()` runs every block) and `PluginEditor` for the
+main thread (`layout()` returns a declarative description of the
+GUI). Only `reset` and `process` are required on `PluginLogic`;
+everything else has a default. Headless plugins write
+`impl PluginEditor for MyGain {}` — one trivial line. See
+[chapter 3 → plugin-anatomy.md](plugin-anatomy.md).
 
 ### 3. The export macro — makes it a plugin
 
@@ -122,8 +127,8 @@ truce::plugin! {
 Generates all format entry points (CLAP, VST3, VST2, LV2, AU v2/v3,
 AAX via Cargo features), state serialization, parameter hosting,
 and the hot-reload shell. One macro. Default bus layout is stereo;
-add `bus_layouts: [...]` for instruments, sidechains, or
-mono/mono.
+override `PluginLogic::bus_layouts()` for instruments, sidechains,
+or mono/mono.
 
 ## Tour the generated config
 

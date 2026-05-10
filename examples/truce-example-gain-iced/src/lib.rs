@@ -153,7 +153,9 @@ impl PluginLogic for GainIced {
 
         ProcessStatus::Normal
     }
+}
 
+impl PluginEditor for GainIced {
     fn custom_editor(&self) -> Option<Box<dyn Editor>> {
         Some(Box::new(
             IcedEditor::<GainParams, GainUi>::new(

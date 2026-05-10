@@ -36,6 +36,7 @@ pub(crate) struct PluginScaffoldingContext {
 
     pub params_struct: String,
     pub process_body: &'static str,
+    pub bus_layouts_method: &'static str,
     pub layout_knob: &'static str,
     pub plugin_macro: String,
 }
@@ -65,6 +66,7 @@ impl PluginScaffoldingContext {
             dep_args: dep_args(dep_form, tag),
             params_struct: kind.params_struct(&struct_name),
             process_body: kind.process_body(),
+            bus_layouts_method: kind.bus_layouts_method(),
             layout_knob: kind.layout_knob(),
             plugin_macro: kind.plugin_macro(&struct_name),
             struct_name,
