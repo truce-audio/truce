@@ -693,144 +693,144 @@ pub unsafe fn _process<P: PluginExport>(
 ) {
     let nf = num_frames as usize;
     let ok = run_audio_block::<P>("AAX", || {
-    let inst = unsafe { &mut *ctx.cast::<AaxInstance<P>>() };
-    let num_frames = nf;
+        let inst = unsafe { &mut *ctx.cast::<AaxInstance<P>>() };
+        let num_frames = nf;
 
-    // Host called render before EffectInit primed sample rate /
-    // smoothers. Zero outputs and bail so DSP doesn't run with
-    // uninitialized state.
-    if !inst.prepared {
-        for ch in 0..num_out as usize {
-            let ptr = unsafe { *outputs.add(ch) };
-            if !ptr.is_null() {
-                unsafe { std::ptr::write_bytes(ptr, 0, num_frames) };
+        // Host called render before EffectInit primed sample rate /
+        // smoothers. Zero outputs and bail so DSP doesn't run with
+        // uninitialized state.
+        if !inst.prepared {
+            for ch in 0..num_out as usize {
+                let ptr = unsafe { *outputs.add(ch) };
+                if !ptr.is_null() {
+                    unsafe { std::ptr::write_bytes(ptr, 0, num_frames) };
+                }
+            }
+            return;
+        }
+
+        // Apply any pending state-load before per-block work so the
+        // plugin sees consistent params and extra state for the entire
+        // block. See `pending_state` field comment for the queue-overflow
+        // policy. Bumps `state_revision` so the next `_save_state` call
+        // re-captures the restored values rather than handing back the
+        // stale cache.
+        if let Some(state) = inst.pending_state.pop() {
+            state::apply_state(&mut inst.plugin, &state);
+            inst.state_revision.fetch_add(1, Ordering::Release);
+        }
+
+        // Convert MIDI
+        inst.event_list.clear();
+        if !events.is_null() && num_events > 0 {
+            let ev_slice = unsafe { slice::from_raw_parts(events, num_events as usize) };
+            for ev in ev_slice {
+                let status = ev.status & 0xF0;
+                let channel = ev.status & 0x0F;
+                let body = match status {
+                    0x90 if ev.data2 > 0 => Some(EventBody::NoteOn {
+                        group: 0,
+                        channel,
+                        note: ev.data1,
+                        velocity: ev.data2,
+                    }),
+                    0x90 => Some(EventBody::NoteOff {
+                        group: 0,
+                        channel,
+                        note: ev.data1,
+                        velocity: 0,
+                    }),
+                    0x80 => Some(EventBody::NoteOff {
+                        group: 0,
+                        channel,
+                        note: ev.data1,
+                        velocity: ev.data2,
+                    }),
+                    0xA0 => Some(EventBody::Aftertouch {
+                        group: 0,
+                        channel,
+                        note: ev.data1,
+                        pressure: ev.data2,
+                    }),
+                    0xB0 => Some(EventBody::ControlChange {
+                        group: 0,
+                        channel,
+                        cc: ev.data1,
+                        value: ev.data2,
+                    }),
+                    0xE0 => Some(EventBody::PitchBend {
+                        group: 0,
+                        channel,
+                        value: pitch_bend_from_bytes(ev.data1, ev.data2),
+                    }),
+                    _ => None,
+                };
+                if let Some(body) = body {
+                    inst.event_list.push(Event {
+                        sample_offset: ev.delta_frames,
+                        body,
+                    });
+                }
             }
         }
-        return;
-    }
+        inst.event_list.sort();
 
-    // Apply any pending state-load before per-block work so the
-    // plugin sees consistent params and extra state for the entire
-    // block. See `pending_state` field comment for the queue-overflow
-    // policy. Bumps `state_revision` so the next `_save_state` call
-    // re-captures the restored values rather than handing back the
-    // stale cache.
-    if let Some(state) = inst.pending_state.pop() {
-        state::apply_state(&mut inst.plugin, &state);
-        inst.state_revision.fetch_add(1, Ordering::Release);
-    }
-
-    // Convert MIDI
-    inst.event_list.clear();
-    if !events.is_null() && num_events > 0 {
-        let ev_slice = unsafe { slice::from_raw_parts(events, num_events as usize) };
-        for ev in ev_slice {
-            let status = ev.status & 0xF0;
-            let channel = ev.status & 0x0F;
-            let body = match status {
-                0x90 if ev.data2 > 0 => Some(EventBody::NoteOn {
-                    group: 0,
-                    channel,
-                    note: ev.data1,
-                    velocity: ev.data2,
-                }),
-                0x90 => Some(EventBody::NoteOff {
-                    group: 0,
-                    channel,
-                    note: ev.data1,
-                    velocity: 0,
-                }),
-                0x80 => Some(EventBody::NoteOff {
-                    group: 0,
-                    channel,
-                    note: ev.data1,
-                    velocity: ev.data2,
-                }),
-                0xA0 => Some(EventBody::Aftertouch {
-                    group: 0,
-                    channel,
-                    note: ev.data1,
-                    pressure: ev.data2,
-                }),
-                0xB0 => Some(EventBody::ControlChange {
-                    group: 0,
-                    channel,
-                    cc: ev.data1,
-                    value: ev.data2,
-                }),
-                0xE0 => Some(EventBody::PitchBend {
-                    group: 0,
-                    channel,
-                    value: pitch_bend_from_bytes(ev.data1, ev.data2),
-                }),
-                _ => None,
-            };
-            if let Some(body) = body {
-                inst.event_list.push(Event {
-                    sample_offset: ev.delta_frames,
-                    body,
-                });
-            }
-        }
-    }
-    inst.event_list.sort();
-
-    // Build AudioBuffer from raw pointers, reusing the per-instance scratch.
-    debug_assert!(
-        num_frames <= inst.max_block_size,
-        "host violated AAX contract: render() got {num_frames} frames \
+        // Build AudioBuffer from raw pointers, reusing the per-instance scratch.
+        debug_assert!(
+            num_frames <= inst.max_block_size,
+            "host violated AAX contract: render() got {num_frames} frames \
          but EffectInit declared max {}",
-        inst.max_block_size
-    );
-    unsafe {
-        let mut buffer = inst.scratch.build(
-            inputs,
-            outputs,
-            num_in,
-            num_out,
-            len_u32(num_frames),
-            P::SUPPORTS_IN_PLACE,
+            inst.max_block_size
         );
-        let transport = if !transport_ptr.is_null() && (*transport_ptr).valid != 0 {
-            let t = &*transport_ptr;
-            TransportInfo {
-                playing: t.playing != 0,
-                recording: t.recording != 0,
-                tempo: t.tempo,
-                // The two `as u8` casts are post-clamped to `0..=255`.
-                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                time_sig_num: t.time_sig_num.clamp(0, i32::from(u8::MAX)) as u8,
-                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                time_sig_den: t.time_sig_den.clamp(0, i32::from(u8::MAX)) as u8,
-                position_samples: sample_pos_i64(t.position_samples),
-                position_seconds: 0.0,
-                position_beats: t.position_beats,
-                bar_start_beats: t.bar_start_beats,
-                loop_active: t.loop_active != 0,
-                loop_start_beats: t.loop_start_beats,
-                loop_end_beats: t.loop_end_beats,
-            }
-        } else {
-            TransportInfo::default()
-        };
-        inst.output_events.clear();
-        inst.transport_slot.write(&transport);
-        let mut context = ProcessContext::new(
-            &transport,
-            inst.sample_rate,
-            num_frames,
-            &mut inst.output_events,
-        );
+        unsafe {
+            let mut buffer = inst.scratch.build(
+                inputs,
+                outputs,
+                num_in,
+                num_out,
+                len_u32(num_frames),
+                P::SUPPORTS_IN_PLACE,
+            );
+            let transport = if !transport_ptr.is_null() && (*transport_ptr).valid != 0 {
+                let t = &*transport_ptr;
+                TransportInfo {
+                    playing: t.playing != 0,
+                    recording: t.recording != 0,
+                    tempo: t.tempo,
+                    // The two `as u8` casts are post-clamped to `0..=255`.
+                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                    time_sig_num: t.time_sig_num.clamp(0, i32::from(u8::MAX)) as u8,
+                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                    time_sig_den: t.time_sig_den.clamp(0, i32::from(u8::MAX)) as u8,
+                    position_samples: sample_pos_i64(t.position_samples),
+                    position_seconds: 0.0,
+                    position_beats: t.position_beats,
+                    bar_start_beats: t.bar_start_beats,
+                    loop_active: t.loop_active != 0,
+                    loop_start_beats: t.loop_start_beats,
+                    loop_end_beats: t.loop_end_beats,
+                }
+            } else {
+                TransportInfo::default()
+            };
+            inst.output_events.clear();
+            inst.transport_slot.write(&transport);
+            let mut context = ProcessContext::new(
+                &transport,
+                inst.sample_rate,
+                num_frames,
+                &mut inst.output_events,
+            );
 
-        inst.plugin
-            .process(&mut buffer, &inst.event_list, &mut context);
+            inst.plugin
+                .process(&mut buffer, &inst.event_list, &mut context);
 
-        // Refresh latency / tail caches so the host's main-thread
-        // queries don't have to call into `inst.plugin`.
-        inst.latency_cache
-            .store(inst.plugin.latency(), Ordering::Relaxed);
-        inst.tail_cache.store(inst.plugin.tail(), Ordering::Relaxed);
-    }
+            // Refresh latency / tail caches so the host's main-thread
+            // queries don't have to call into `inst.plugin`.
+            inst.latency_cache
+                .store(inst.plugin.latency(), Ordering::Relaxed);
+            inst.tail_cache.store(inst.plugin.tail(), Ordering::Relaxed);
+        }
     });
     if !ok {
         unsafe {

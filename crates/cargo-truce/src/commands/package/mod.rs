@@ -116,6 +116,104 @@ impl std::str::FromStr for PkgFormat {
     }
 }
 
+/// Per-format static metadata. One row per `PkgFormat` variant; adding
+/// a new format means adding one row to [`PKG_FORMAT_META`] plus a
+/// matching enum variant + `FromStr` arm.
+///
+/// Cross-platform rows. `extension`, `install_location`, etc. are
+/// macOS-specific values (the `pkgbuild` / `productbuild` pipeline);
+/// they're harmless string literals on Linux / Windows and the methods
+/// that read them are gated on `cfg(target_os = "macos")`.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+struct PkgFormatMeta {
+    label: &'static str,
+    pkg_id_suffix: &'static str,
+    extension: &'static str,
+    install_location: &'static str,
+    is_native_bundle: bool,
+    choice_description: &'static str,
+}
+
+const PKG_FORMAT_META: [(PkgFormat, PkgFormatMeta); 7] = [
+    (
+        PkgFormat::Clap,
+        PkgFormatMeta {
+            label: "CLAP",
+            pkg_id_suffix: "clap",
+            extension: "clap",
+            install_location: "/Library/Audio/Plug-Ins/CLAP/",
+            is_native_bundle: false,
+            choice_description: "For Reaper, Bitwig",
+        },
+    ),
+    (
+        PkgFormat::Vst3,
+        PkgFormatMeta {
+            label: "VST3",
+            pkg_id_suffix: "vst3",
+            extension: "vst3",
+            install_location: "/Library/Audio/Plug-Ins/VST3/",
+            is_native_bundle: true,
+            choice_description: "For Ableton, FL Studio, Reaper, Cubase",
+        },
+    ),
+    (
+        PkgFormat::Vst2,
+        PkgFormatMeta {
+            label: "VST2",
+            pkg_id_suffix: "vst2",
+            extension: "vst",
+            install_location: "/Library/Audio/Plug-Ins/VST/",
+            is_native_bundle: false,
+            choice_description: "Legacy — for hosts without VST3 support",
+        },
+    ),
+    (
+        PkgFormat::Au2,
+        PkgFormatMeta {
+            label: "AU2",
+            pkg_id_suffix: "au2",
+            extension: "component",
+            install_location: "/Library/Audio/Plug-Ins/Components/",
+            is_native_bundle: true,
+            choice_description: "For Logic Pro, GarageBand, Ableton",
+        },
+    ),
+    (
+        PkgFormat::Au3,
+        PkgFormatMeta {
+            label: "AU3",
+            pkg_id_suffix: "au3",
+            extension: "app",
+            install_location: "/Applications/",
+            is_native_bundle: true,
+            choice_description: "Audio Unit v3 (appex)",
+        },
+    ),
+    (
+        PkgFormat::Aax,
+        PkgFormatMeta {
+            label: "AAX",
+            pkg_id_suffix: "aax",
+            extension: "aaxplugin",
+            install_location: "/Library/Application Support/Avid/Audio/Plug-Ins/",
+            is_native_bundle: false,
+            choice_description: "For Pro Tools",
+        },
+    ),
+    (
+        PkgFormat::Standalone,
+        PkgFormatMeta {
+            label: "Standalone",
+            pkg_id_suffix: "standalone",
+            extension: "app",
+            install_location: "/Applications/",
+            is_native_bundle: true,
+            choice_description: "Run as a desktop app (no DAW required)",
+        },
+    ),
+];
+
 impl PkgFormat {
     /// Comma-separated list parser. Each token is fed through
     /// [`PkgFormat::from_str`] (the `FromStr` impl above), so an
@@ -126,66 +224,40 @@ impl PkgFormat {
         s.split(',').map(|t| t.trim().parse()).collect()
     }
 
+    fn meta(&self) -> &'static PkgFormatMeta {
+        &PKG_FORMAT_META
+            .iter()
+            .find(|(f, _)| f == self)
+            .expect("PKG_FORMAT_META is exhaustive over PkgFormat")
+            .1
+    }
+
     #[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
     pub(crate) fn label(&self) -> &'static str {
-        match self {
-            PkgFormat::Clap => "CLAP",
-            PkgFormat::Vst3 => "VST3",
-            PkgFormat::Vst2 => "VST2",
-            PkgFormat::Au2 => "AU2",
-            PkgFormat::Au3 => "AU3",
-            PkgFormat::Aax => "AAX",
-            PkgFormat::Standalone => "Standalone",
-        }
+        self.meta().label
     }
 }
 
-// macOS-only `pkgbuild` / `productbuild` plumbing — extensions,
-// install paths, PkgID suffixes, AU3 `.app` naming. Windows packaging
+// macOS-only `pkgbuild` / `productbuild` plumbing. Windows packaging
 // drives Inno Setup directly and doesn't need any of this.
 #[cfg(target_os = "macos")]
 impl PkgFormat {
     pub(crate) fn extension(&self) -> &'static str {
-        match self {
-            PkgFormat::Clap => "clap",
-            PkgFormat::Vst3 => "vst3",
-            PkgFormat::Vst2 => "vst",
-            PkgFormat::Au2 => "component",
-            PkgFormat::Au3 | PkgFormat::Standalone => "app",
-            PkgFormat::Aax => "aaxplugin",
-        }
+        self.meta().extension
     }
 
     pub(crate) fn install_location(&self) -> &'static str {
-        match self {
-            PkgFormat::Clap => "/Library/Audio/Plug-Ins/CLAP/",
-            PkgFormat::Vst3 => "/Library/Audio/Plug-Ins/VST3/",
-            PkgFormat::Vst2 => "/Library/Audio/Plug-Ins/VST/",
-            PkgFormat::Au2 => "/Library/Audio/Plug-Ins/Components/",
-            PkgFormat::Au3 | PkgFormat::Standalone => "/Applications/",
-            PkgFormat::Aax => "/Library/Application Support/Avid/Audio/Plug-Ins/",
-        }
+        self.meta().install_location
     }
 
     pub(crate) fn pkg_id_suffix(&self) -> &'static str {
-        match self {
-            PkgFormat::Clap => "clap",
-            PkgFormat::Vst3 => "vst3",
-            PkgFormat::Vst2 => "vst2",
-            PkgFormat::Au2 => "au2",
-            PkgFormat::Au3 => "au3",
-            PkgFormat::Aax => "aax",
-            PkgFormat::Standalone => "standalone",
-        }
+        self.meta().pkg_id_suffix
     }
 
     /// Whether pkgbuild recognizes this as a native macOS bundle type.
     /// If false, we use --root instead of --component.
     pub(crate) fn is_native_bundle(&self) -> bool {
-        matches!(
-            self,
-            PkgFormat::Vst3 | PkgFormat::Au2 | PkgFormat::Au3 | PkgFormat::Standalone,
-        )
+        self.meta().is_native_bundle
     }
 
     /// Bundle directory name for a given plugin.
@@ -205,15 +277,7 @@ impl PkgFormat {
     }
 
     pub(crate) fn choice_description(&self) -> &'static str {
-        match self {
-            PkgFormat::Clap => "For Reaper, Bitwig",
-            PkgFormat::Vst3 => "For Ableton, FL Studio, Reaper, Cubase",
-            PkgFormat::Vst2 => "Legacy — for hosts without VST3 support",
-            PkgFormat::Au2 => "For Logic Pro, GarageBand, Ableton",
-            PkgFormat::Au3 => "Audio Unit v3 (appex)",
-            PkgFormat::Aax => "For Pro Tools",
-            PkgFormat::Standalone => "Run as a desktop app (no DAW required)",
-        }
+        self.meta().choice_description
     }
 }
 

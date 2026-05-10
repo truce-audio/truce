@@ -17,7 +17,9 @@ use truce_core::export::PluginExport;
 use truce_core::info::PluginCategory;
 use truce_core::process::ProcessContext;
 use truce_core::state;
-use truce_core::wrapper::{default_io_channels, log_missing_bus_layout, run_audio_block, run_register};
+use truce_core::wrapper::{
+    default_io_channels, log_missing_bus_layout, run_audio_block, run_register,
+};
 use truce_params::Params;
 
 use ffi::{Vst3Callbacks, Vst3MidiEvent, Vst3ParamDescriptor, Vst3PluginDescriptor};
@@ -133,7 +135,7 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
         params_arc,
         event_list: EventList::with_capacity(EVENT_LIST_PREALLOC),
         output_events: EventList::with_capacity(EVENT_LIST_PREALLOC),
-        plugin_id_hash: state::hash_plugin_id(info.vst3_id),
+        plugin_id_hash: state::shared_plugin_state_hash(&info),
         sample_rate: 44100.0,
         // 8192 covers the largest block sizes mainstream DAWs / validators
         // use (Reaper / pluginval ≤ 4096); a non-zero default keeps the

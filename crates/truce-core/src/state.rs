@@ -227,21 +227,20 @@ pub fn restore_plugin<P: PluginExport>(plugin: &mut P, bytes: &[u8]) -> Result<(
     Ok(())
 }
 
-/// Resolve the state-envelope hash a non-VST3 format wrapper should
-/// stamp into the saved blob. Today this is just `hash_plugin_id(info.clap_id)`,
-/// which means the same plugin built as CLAP / AU / AAX / VST2 / LV2
-/// produces a single state space — saving in one host and loading in
-/// another will round-trip parameter values (provided the `Plugin::save_state` /
-/// `load_state` extra payload is also format-agnostic).
+/// Resolve the state-envelope hash every format wrapper stamps into
+/// the saved blob. Today this is just `hash_plugin_id(info.clap_id)`,
+/// which means the same plugin built as CLAP / VST3 / AU / AAX / VST2
+/// / LV2 produces a single state space — saving in one host and
+/// loading in another will round-trip parameter values (provided the
+/// `Plugin::save_state` / `load_state` extra payload is also
+/// format-agnostic).
 ///
 /// **Trade-off:** because the input is the CLAP ID, renaming
-/// `info.clap_id` invalidates **every** saved session across all
-/// non-VST3 formats. VST3 is exempt — it uses `info.vst3_id` (a
-/// fixed 16-byte UID by spec) so renames there are independent.
-/// Callers that want format-pinned state (e.g. an AU build that
-/// shouldn't share state with the same plugin's CLAP build) should
-/// add a per-format ID field to [`crate::PluginInfo`] and route through it
-/// instead.
+/// `info.clap_id` invalidates **every** saved session across **every**
+/// format. Callers that want format-pinned state (e.g. an AU build
+/// that shouldn't share state with the same plugin's CLAP build)
+/// should add a per-format ID field to [`crate::PluginInfo`] and
+/// route through it instead.
 #[must_use]
 pub fn shared_plugin_state_hash(info: &crate::PluginInfo) -> u64 {
     hash_plugin_id(info.clap_id)

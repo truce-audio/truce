@@ -21,7 +21,9 @@ use truce_core::info::PluginCategory;
 use truce_core::midi::{pitch_bend_from_bytes, pitch_bend_to_bytes};
 use truce_core::process::ProcessContext;
 use truce_core::state;
-use truce_core::wrapper::{default_io_channels, log_missing_bus_layout, run_audio_block, run_register};
+use truce_core::wrapper::{
+    default_io_channels, log_missing_bus_layout, run_audio_block, run_register,
+};
 use truce_params::{ParamFlags, Params};
 
 use ffi::{AuCallbacks, AuMidiEvent, AuParamDescriptor, AuPluginDescriptor, AuTransportSnapshot};
