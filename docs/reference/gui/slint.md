@@ -77,7 +77,7 @@ use truce_slint::{SlintEditor, SyncFn};
 slint::include_modules!();
 use MyParamsParamId as P;
 
-impl Plugin for MyPlugin {
+impl PluginLogic for MyPlugin {
     fn custom_editor(&self) -> Option<Box<dyn truce_core::editor::Editor>> {
         Some(Box::new(SlintEditor::new(
             self.params.clone(),

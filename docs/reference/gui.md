@@ -18,7 +18,7 @@ use truce_gui::layout::{GridLayout, knob, slider, toggle,
                         dropdown, meter, xy_pad, widgets, section};
 use MyParamsParamId as P;
 
-impl Plugin for MyPlugin {
+impl PluginLogic for MyPlugin {
     // ...
 
     fn layout(&self) -> GridLayout {
@@ -142,8 +142,9 @@ when you need:
 - **Specific aesthetics** the built-in theme system can't reach.
 
 All alternatives integrate the same way: override `custom_editor()`
-on `Plugin` and return a boxed `Editor`. The `Plugin::
-layout()` method becomes irrelevant when a custom editor is used.
+on `PluginLogic` and return a boxed `Editor`. The
+`PluginLogic::layout()` method becomes irrelevant when a custom
+editor is used.
 
 | Backend | Crate | When |
 |---------|-------|------|

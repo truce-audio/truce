@@ -21,7 +21,7 @@ with no custom code:
 use truce::prelude::*;
 use truce_iced::IcedEditor;
 
-impl Plugin for MyPlugin {
+impl PluginLogic for MyPlugin {
     fn custom_editor(&self) -> Option<Box<dyn truce_core::editor::Editor>> {
         Some(Box::new(IcedEditor::from_layout(
             self.params.clone(),

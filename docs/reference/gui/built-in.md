@@ -3,7 +3,7 @@
 The built-in GUI renders widgets from a layout you define in code.
 No custom editor, no framework dependency — declare what you want
 and truce draws it. This is the default; override `layout()` on
-`Plugin` and you're done.
+`PluginLogic` and you're done.
 
 For a first walkthrough see [the GUI chapter](../gui.md). This page
 is the reference for every option.

@@ -1,6 +1,6 @@
 # 3. Plugin anatomy
 
-How the pieces of a truce plugin fit together: the `Plugin`
+How the pieces of a truce plugin fit together: the `PluginLogic`
 trait, the `truce::plugin!` macro, bus layouts, and state
 persistence.
 
@@ -20,10 +20,10 @@ it is.
   YourParams ◄──Arc───── Shell (one of CLAP / VST3 / AU / …)
   (atomic params)         │
                           ├─ calls YourPlugin::new(params)    (inherent)
-                          ├─ calls Plugin::reset(sr, bs) (your code)
-                          ├─ calls Plugin::process(…)    (audio thread)
-                          ├─ calls Plugin::layout(…)     (main thread)
-                          ├─ calls Plugin::save_state(…) (main thread)
+                          ├─ calls PluginLogic::reset(sr, bs) (your code)
+                          ├─ calls PluginLogic::process(…)    (audio thread)
+                          ├─ calls PluginLogic::layout(…)     (main thread)
+                          ├─ calls PluginLogic::save_state(…) (main thread)
                           └─ drops when unloaded
 ```
 
@@ -39,13 +39,13 @@ Everything else — parameter hosting, GUI event dispatch, state
 envelope, format-specific lifecycle, hot-reload shell — is
 generated.
 
-## The `Plugin` trait
+## The `PluginLogic` trait
 
 Only `reset` and `process` are required. Everything else has a
 default. Override what you need.
 
 ```rust
-pub trait Plugin: Send + 'static {
+pub trait PluginLogic: Send + 'static {
     fn reset(&mut self, sample_rate: f64, max_block_size: usize);
 
     fn process(
@@ -127,7 +127,7 @@ Shell creates Arc<MyParams>, clones it into:
     └── MyPlugin::new(arc_clone)
     │
     ▼
-Plugin::reset(sr, max_block)      ◄── sample rate and block size known
+PluginLogic::reset(sr, max_block)      ◄── sample rate and block size known
     │
     │   ┌──────────── playback loop ────────────┐
     │   │  process(buffer, events, ctx)  (audio thread)
@@ -175,7 +175,7 @@ for the full list of `[[plugin]]` keys.
 ## Bus layouts
 
 Supported audio bus configurations go on the `truce::plugin!`
-macro, not on the `Plugin` trait. The host picks one; the
+macro, not on the `PluginLogic` trait. The host picks one; the
 others are rejected at bus-config time before `process` is ever
 called.
 
@@ -249,7 +249,7 @@ anything else the user can change.
 ### Option A: `#[derive(State)]` — recommended
 
 Define a state struct, derive binary serialization, and wire it
-into `Plugin`:
+into `PluginLogic`:
 
 ```rust
 #[derive(State, Default)]
@@ -264,7 +264,7 @@ pub struct MyPlugin {
     extra: MyExtraState,
 }
 
-impl Plugin for MyPlugin {
+impl PluginLogic for MyPlugin {
     fn save_state(&self) -> Vec<u8> { self.extra.serialize() }
 
     fn load_state(&mut self, data: &[u8]) {

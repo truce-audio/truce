@@ -120,7 +120,7 @@ wrapper for one-shot edits where the gesture and value arrive together.
 Same as every other backend:
 
 ```rust
-impl Plugin for MyPlugin {
+impl PluginLogic for MyPlugin {
     fn custom_editor(&self) -> Option<Box<dyn Editor>> {
         Some(Box::new(MyEditor {
             size: (800, 600),

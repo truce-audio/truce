@@ -79,7 +79,7 @@ impl MyGain {
     pub fn new(params: Arc<MyGainParams>) -> Self { Self { params } }
 }
 
-impl Plugin for MyGain {
+impl PluginLogic for MyGain {
     fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {
         self.params.set_sample_rate(sample_rate);
         self.params.snap_smoothers();
@@ -104,7 +104,7 @@ impl Plugin for MyGain {
 }
 ```
 
-`Plugin` is the one trait you implement. `reset()` is called
+`PluginLogic` is the one trait you implement. `reset()` is called
 when the host knows the sample rate and block size; `process()` is
 called on the audio thread for every block; `layout()` returns a
 declarative description of the GUI. Only `reset` and `process` are
