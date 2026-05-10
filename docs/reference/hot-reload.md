@@ -35,7 +35,7 @@ cargo watch -x "build -p my-plugin"
 ```
 
 `--shell` flips the `shell` feature on, which makes `truce::plugin!`
-expand into a dynamic shell that loads your `PluginLogic` out of a
+expand into a dynamic shell that loads your `Plugin` out of a
 separate dylib. The shell watches the dylib for content changes
 and swaps in the new one while the plugin is live.
 
@@ -90,9 +90,9 @@ rare — most iteration is on DSP and GUI layout.
 The `truce::plugin!` macro expands differently when the `shell`
 feature is on:
 
-- **Without `shell`**: `StaticShell` embeds the `PluginLogic`
+- **Without `shell`**: `StaticShell` embeds the `Plugin`
   directly. Zero overhead, ships in production.
-- **With `shell`**: `HotShell` loads the `PluginLogic` from a
+- **With `shell`**: `HotShell` loads the `Plugin` from a
   separate dylib via native Rust ABI. A file watcher thread
   monitors that dylib.
 
@@ -109,7 +109,7 @@ feature is on:
 7. `dlopen` loads the new dylib.
 8. An ABI canary verifies type layouts match.
 9. A vtable probe verifies trait-method dispatch order.
-10. `truce_create()` returns a new `Box<dyn PluginLogic>`.
+10. `truce_create()` returns a new `Box<dyn Plugin>`.
 11. The new instance is reset with the current sample rate, then
     state is restored.
 

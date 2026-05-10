@@ -187,6 +187,13 @@ note below. See [Status](docs/README.md) for host coverage.
   shim on modern distros). 
 - AAX: Avid AAX SDK (optional, obtain from [developer.avid.com](https://developer.avid.com)).
 
+## Acknowledgements
+
+truce stands on the shoulders of [**nih-plug**](https://github.com/robbert-vdh/nih-plug)
+by Robbert van der Helm — the trailblazing Rust audio plugin framework
+whose API design, thread-safe parameter model, and overall shape
+informed countless decisions here.
+
 ## License
 
 MIT OR Apache-2.0

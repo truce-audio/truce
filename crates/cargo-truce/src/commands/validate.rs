@@ -654,7 +654,14 @@ fn parse_clap_summary(output: &str) -> String {
 }
 
 fn find_pluginval() -> Option<String> {
-    // Check common locations
+    // Env-var override takes precedence — CI uses it to point at a
+    // cached download outside the standard locations.
+    if let Ok(path) = std::env::var("PLUGINVAL")
+        && Path::new(&path).exists()
+    {
+        return Some(path);
+    }
+    // Common locations.
     let candidates = [
         "/Applications/pluginval.app/Contents/MacOS/pluginval",
         "/usr/local/bin/pluginval",
@@ -664,7 +671,7 @@ fn find_pluginval() -> Option<String> {
             return Some(c.to_string());
         }
     }
-    // Check PATH
+    // PATH lookup.
     if Command::new("pluginval").arg("--help").output().is_ok() {
         return Some("pluginval".to_string());
     }

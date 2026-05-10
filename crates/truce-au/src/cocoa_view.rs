@@ -11,11 +11,9 @@
 //! second plugin's methods silently shadowed by the first, with method
 //! dispatch reaching the wrong dylib's `g_callbacks`.
 //!
-//! Previously the unique name was baked at C compile time via a
-//! `-DTRUCE_AU_VIEW_FACTORY_NAME=...` define driven by the
-//! `TRUCE_AU_PLUGIN_ID` env var, which forced `truce-au` to recompile
-//! its C/`ObjC` shim per plugin. Doing the registration at runtime in
-//! Rust makes that build step plugin-agnostic.
+//! Registering at runtime in Rust keeps the C/`ObjC` shim
+//! plugin-agnostic, so `truce-au` is compiled once per workspace and
+//! reused across every plugin.
 
 #![cfg(target_os = "macos")]
 

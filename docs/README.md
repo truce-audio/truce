@@ -1,6 +1,6 @@
 # Status
 
-Updated 2026-05-04. Version 0.22.2. **Pre-1.0 — active development.**
+Updated 2026-05-09. Version 0.37. **Pre-1.0 — active development.**
 
 Plugin authors can build, install, validate, and package across CLAP,
 VST3, VST2, LV2, AU v2, AU v3, and AAX from a single Rust crate, on
@@ -51,11 +51,6 @@ backlog).
 - **`cargo truce package` for Linux.** `.deb` / `.rpm` / AppImage
   are not generated today. Linux distribution is "build the bundles
   and ship them yourself" until this lands.
-- **Windows hot-reload memory-leak ceiling test.** The
-  leak-don't-close pattern is correct but each rebuild leaks the
-  previous DLL's address space. Need to confirm the upper bound is
-  sane over a multi-hour session.
-
 ## Future
 
 - More example plugins (delay, compressor, reverb).

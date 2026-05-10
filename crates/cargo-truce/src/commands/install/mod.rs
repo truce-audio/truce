@@ -538,13 +538,11 @@ fn install_vst2(root: &Path, p: &PluginDef, config: &Config, scope: InstallScope
 /// - **macOS**: `~/Library/Audio/Plug-Ins/LV2/{slug}.lv2/`
 /// - **Windows**: `%APPDATA%\LV2\{slug}.lv2\`
 ///
-/// Copies the built shared library into the bundle as `{slug}.so` on
-/// Linux/macOS and `{slug}.dll` on Windows (the LV2 spec places no
-/// constraint on the extension, but the Windows loader only accepts
-/// `.dll`), then `LoadLibrary`/`dlopen`s it to call the plugin's
-/// `__truce_lv2_emit_bundle` entry point, which writes `manifest.ttl`
-/// and `plugin.ttl` describing ports, parameters, and the UI type
-/// appropriate for the host platform.
+/// Stages the bundle via `package::stage::stage_lv2`, which copies the
+/// shared library (`{slug}.so` on Linux/macOS, `{slug}.dll` on Windows
+/// — Windows's loader only accepts `.dll`) alongside the `manifest.ttl`
+/// and `plugin.ttl` that `truce-derive`'s `export_lv2!` proc-macro
+/// emitted at compile time as sidecar files.
 ///
 /// Bundle and binary filenames are slugged to lowercase ASCII with hyphens
 /// so that Turtle IRI references (`lv2:binary <...>`) don't need percent

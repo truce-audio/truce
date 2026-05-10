@@ -59,14 +59,11 @@ pub struct PluginDef {
     pub au_subtype: Option<String>,
     #[serde(default)]
     pub aax_category: Option<String>,
-    // Per-format display-name overrides. Used to surface a different
-    // plugin name in a specific host's plugin browser without
-    // changing `name` (which other formats and the bundle path
-    // continue to use). Embedded into `PluginInfo` at proc-macro
-    // expansion time so the value is part of the rlib — no
-    // `TRUCE_<FORMAT>_NAME_OVERRIDE` env-var hop, which used to
-    // invalidate the format wrapper's fingerprint between two
-    // back-to-back plugin builds with different overrides.
+    // Per-format display-name overrides. Surface a different plugin
+    // name in a specific host's plugin browser without changing
+    // `name` (which other formats and the bundle path continue to
+    // use). Embedded into `PluginInfo` at proc-macro expansion time
+    // so the value is part of the rlib.
     #[serde(default)]
     pub vst3_name: Option<String>,
     #[serde(default)]

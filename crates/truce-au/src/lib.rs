@@ -681,9 +681,7 @@ unsafe extern "C" {
 /// `cargo truce install --au3` from `au3_name`), not from this
 /// function — `g_descriptor->name` only feeds the v2 bridge's
 /// internal scanning responses, so the same value works for both
-/// build flavours and `truce-au` no longer needs the
-/// `cfg(truce_au_v3_only)` gate that the old `TRUCE_AU_VERSION` env
-/// var fed.
+/// build flavours.
 fn resolved_plugin_name(info: &truce_core::info::PluginInfo) -> &'static str {
     truce_core::info::resolve_name_override(info.au_name, info.name)
 }

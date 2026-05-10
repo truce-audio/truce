@@ -168,7 +168,7 @@ pub(crate) fn emit_root_impl(input: TokenStream) -> TokenStream {
         has_ui: true,
     };
 
-    let slug = slugify(&plugin.name);
+    let slug = truce_utils::slugify(&plugin.name);
     let so_name = format!("{slug}.so");
     let (manifest_ttl, plugin_ttl) = truce_build::lv2::render_ttls(&bundle, &so_name);
 
@@ -405,24 +405,3 @@ fn sidecar_dir_for(pkg_name: &str, truce_toml: &std::path::Path) -> Option<PathB
     Some(target_dir.join("lv2-meta").join(pkg_name))
 }
 
-/// Slugify mirroring `truce_utils::slugify`. Used to derive the LV2
-/// `<slug>.so` filename embedded in `manifest.ttl`. Must match
-/// `cargo-truce::lv2_slug` and `truce-utils::slugify` exactly.
-fn slugify(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut last_dash = false;
-    for c in s.chars() {
-        let ascii = c.to_ascii_lowercase();
-        if ascii.is_ascii_alphanumeric() {
-            out.push(ascii);
-            last_dash = false;
-        } else if !last_dash && !out.is_empty() {
-            out.push('-');
-            last_dash = true;
-        }
-    }
-    while out.ends_with('-') {
-        out.pop();
-    }
-    out
-}

@@ -571,11 +571,7 @@ fn build_all_formats(
         build_and_lipo_format(root, plugins, archs, dt, "vst2", "VST2")?;
     }
     if formats.contains(&PkgFormat::Au2) {
-        // AU v2 is built per-plugin (distinct TRUCE_AU_PLUGIN_ID env var),
-        // so the outer loop is plugins × archs rather than archs × plugins.
-        for p in plugins {
-            build_and_lipo_au2(root, p, archs, dt)?;
-        }
+        build_and_lipo_format(root, plugins, archs, dt, "au", "AU v2")?;
     }
     if formats.contains(&PkgFormat::Aax) {
         build_and_lipo_format(root, plugins, archs, dt, "aax", "AAX")?;
@@ -697,43 +693,6 @@ fn build_and_lipo_standalone(
             lipo_into(&inputs, &output)?;
         }
     }
-    Ok(())
-}
-
-/// AU v2 per-plugin build. Used to need `TRUCE_AU_PLUGIN_ID` (for
-/// the `ObjC` class-name `#define`s — now runtime-registered) and
-/// `TRUCE_AU_VERSION=2` (to flip a name-resolution cfg in `truce-au`
-/// — now collapsed because the v3 host reads its display name from
-/// the appex plist rather than `g_descriptor->name`). With both gone,
-/// no env vars are needed at all. Builds per-arch then lipos to
-/// `lib{stem}_au.dylib`.
-fn build_and_lipo_au2(root: &Path, p: &PluginDef, archs: &[MacArch], dt: &str) -> Res {
-    for &arch in archs {
-        eprintln!("Building AU v2 ({}, {})...", p.name, arch.triple());
-        cargo_build_for_arch(
-            &[],
-            &[
-                "-p",
-                &p.crate_name,
-                "--no-default-features",
-                "--features",
-                "au",
-            ],
-            arch,
-            dt,
-        )?;
-        let src = release_lib_for_target(root, &p.dylib_stem(), Some(arch.triple()));
-        let saved =
-            release_lib_for_target(root, &format!("{}_au", p.dylib_stem()), Some(arch.triple()));
-        fs::copy(&src, &saved)?;
-    }
-    let inputs: Vec<PathBuf> = archs
-        .iter()
-        .map(|a| release_lib_for_target(root, &format!("{}_au", p.dylib_stem()), Some(a.triple())))
-        .collect();
-    let output =
-        truce_build::target_dir(root).join(format!("release/lib{}_au.dylib", p.dylib_stem()));
-    lipo_into(&inputs, &output)?;
     Ok(())
 }
 
@@ -1018,10 +977,9 @@ fn run_pkgbuild_for_format(
 /// the canonical `target/release/lib{stem}_{feature}.dylib` location
 /// the stage helpers read from.
 ///
-/// Used for CLAP / VST3 / VST2 / AAX, which all share the same
-/// "build per arch, then lipo" shape. AU2 is per-plugin (distinct
-/// `TRUCE_AU_PLUGIN_ID` env var) and AU3 has its own framework
-/// pipeline, so neither routes through here.
+/// Used for CLAP / VST3 / VST2 / AU2 / AAX, which all share the same
+/// "build per arch, then lipo" shape. AU3 has its own framework
+/// pipeline so it doesn't route through here.
 fn build_and_lipo_format(
     root: &Path,
     plugins: &[&PluginDef],

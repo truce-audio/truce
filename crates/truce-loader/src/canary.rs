@@ -180,9 +180,9 @@ impl PluginLogic for ProbePlugin {
     }
 
     fn save_state(&self) -> Vec<u8> {
-        // If `load_state` wasn't called, return the audit-default
-        // sentinel; otherwise echo what was just loaded so verify can
-        // check the load/save vtable slots aren't crossed.
+        // If `load_state` wasn't called, return the default sentinel;
+        // otherwise echo what was just loaded so verify can check the
+        // load/save vtable slots aren't crossed.
         let cached = self.last_load_state.borrow();
         if cached.is_empty() {
             vec![0xCA, 0xFE]

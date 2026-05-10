@@ -19,12 +19,10 @@ pub mod __macro_deps {
 
 mod atom;
 mod state;
-mod ttl;
 mod types;
 mod ui;
 mod urid;
 
-pub use ttl::emit_bundle;
 pub use types::*;
 
 use std::ffi::{CStr, CString, c_char, c_void};
@@ -751,31 +749,6 @@ macro_rules! export_lv2 {
                     get_ui_descriptor() as *const Lv2UiDescriptor
                 } else {
                     std::ptr::null()
-                }
-            }
-
-            /// Called by `cargo truce install --lv2` after copying the plugin
-            /// shared library into the bundle directory. Writes `manifest.ttl`
-            /// and `plugin.ttl` describing this plugin's ports and parameters.
-            ///
-            /// Returns 0 on success, nonzero on failure.
-            #[unsafe(no_mangle)]
-            pub extern "C" fn __truce_lv2_emit_bundle(
-                bundle_dir: *const c_char,
-                so_filename: *const c_char,
-            ) -> i32 {
-                if bundle_dir.is_null() || so_filename.is_null() {
-                    return 1;
-                }
-                let dir = unsafe { std::ffi::CStr::from_ptr(bundle_dir) };
-                let so = unsafe { std::ffi::CStr::from_ptr(so_filename) };
-                let (Ok(dir_str), Ok(so_str)) = (dir.to_str(), so.to_str()) else {
-                    return 2;
-                };
-                let path = std::path::Path::new(dir_str);
-                match ::truce_lv2::emit_bundle::<$plugin_type>(path, so_str) {
-                    Ok(()) => 0,
-                    Err(_) => 3,
                 }
             }
         }

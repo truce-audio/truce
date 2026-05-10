@@ -139,21 +139,6 @@ impl PkgFormat {
         }
     }
 
-    /// Cargo feature flag name corresponding to this format.
-    /// Used by feature-detection in `resolve_formats` to match against
-    /// each plugin's `[features].default`. Linux pipeline plugs into
-    /// this in a follow-up; for now only macOS/Windows reach for it.
-    #[allow(dead_code)]
-    pub(crate) fn feature_name(&self) -> &'static str {
-        match self {
-            PkgFormat::Clap => "clap",
-            PkgFormat::Vst3 => "vst3",
-            PkgFormat::Vst2 => "vst2",
-            PkgFormat::Au2 | PkgFormat::Au3 => "au",
-            PkgFormat::Aax => "aax",
-            PkgFormat::Standalone => "standalone",
-        }
-    }
 }
 
 // macOS-only `pkgbuild` / `productbuild` plumbing — extensions,
@@ -258,17 +243,6 @@ pub(crate) fn cmd_package(args: &[String]) -> Res {
     {
         linux::cmd_package_linux(&args, &selection)
     }
-}
-
-#[cfg(target_os = "macos")]
-#[allow(dead_code)]
-fn _suppress_linux_unused() {
-    // Reference linux::cmd_package_linux so the Linux pipeline gets
-    // compile-checked on macOS / Windows builds without a runtime
-    // path. Keeping the linux module always-compiled (and this fn
-    // suppressed-dead-code) catches drift on the platform we don't
-    // actually run on at dev time.
-    let _ = linux::cmd_package_linux;
 }
 
 fn print_help() {

@@ -27,10 +27,7 @@ fn main() {
     //   exported `g_callbacks` / `g_descriptor` / `g_param_descriptors`
     //   / `g_num_params` symbols out of the framework dylib, so this
     //   shim's only job for v3 is to populate those globals at load
-    //   time. The v3 host's display name comes from the appex
-    //   Info.plist's `AUNAME`, not from `g_descriptor->name`, so
-    //   v2 and v3 can share the same `au_name`-based resolution
-    //   without a `cfg(truce_au_v3_only)` gate.
+    //   time.
 
     let mut build = cc::Build::new();
     build.file("shim/au_shim_common.c");

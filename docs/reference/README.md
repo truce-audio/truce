@@ -10,7 +10,7 @@
 |---|---------|--------------|
 | 1 | [install.md](install.md) | Rust + system deps + `cargo install cargo-truce` + `cargo truce doctor` |
 | 2 | [first-plugin.md](first-plugin.md) | `cargo truce new`, a tour of the generated files, `install`, load in a DAW |
-| 3 | [plugin-anatomy.md](plugin-anatomy.md) | `PluginLogic` trait, bus layouts, state persistence |
+| 3 | [plugin-anatomy.md](plugin-anatomy.md) | `Plugin` trait, bus layouts, state persistence |
 | 4 | [parameters.md](parameters.md) | `#[derive(Params)]`, `#[param(...)]` attributes, smoothing, meters |
 | 5 | [processing.md](processing.md) | `process()` patterns for effects, MIDI, sample-accurate events, synths |
 | 6 | [midi.md](midi.md) | Reading and emitting MIDI events; per-format support; testing MIDI plugins |

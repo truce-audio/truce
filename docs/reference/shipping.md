@@ -104,27 +104,83 @@ Every format flag produces a complete, signed bundle in
 
 ## `validate`
 
-Runs the free validators:
+Runs the free validators against your installed bundles:
 
 ```sh
-cargo truce validate                 # auval + pluginval + clap-validator, all installed plugins
-cargo truce validate --auval         # macOS AU only
-cargo truce validate --pluginval     # VST3 only
-cargo truce validate --clap-validator
+cargo truce validate                 # every available validator, permissive
+cargo truce validate --all           # same as no flag
+cargo truce validate --clap          # CLAP via clap-validator
+cargo truce validate --pluginval     # VST3 via pluginval
+cargo truce validate --auval         # AU v2 via auval (macOS)
+cargo truce validate --auval3        # AU v3 via auval (macOS)
+cargo truce validate --vst2          # VST2 dlopen + AEffect smoke (macOS)
+cargo truce validate --clap --pluginval -p my-gain   # subset, single plugin
 ```
 
-- **auval** (macOS only, built into CoreAudio) exercises AU v2 +
-  AU v3 lifecycle and parameter behaviour.
-- **pluginval** (Tracktion,
-  <https://github.com/Tracktion/pluginval>) runs at strictness 5
-  against VST3 (and VST2 if installed).
 - **clap-validator**
   (<https://github.com/free-audio/clap-validator>) exercises CLAP
   lifecycle, parameters, state, and process safety.
+- **pluginval** (Tracktion,
+  <https://github.com/Tracktion/pluginval>) runs at strictness 10
+  (max) against the installed VST3 bundle.
+- **auval** (macOS only, built into CoreAudio) exercises AU v2 +
+  AU v3 lifecycle and parameter behaviour.
+- **VST2 smoke** is built in — it `dlopen`s the dylib and verifies
+  `VSTPluginMain` returns a well-formed `AEffect`.
 
-Override tool paths with `PLUGINVAL` / `CLAP_VALIDATOR` env vars
-when the binaries aren't on `PATH`. `cargo truce doctor` tells you
-what's found and what isn't.
+Set `CLAP_VALIDATOR=/path/to/clap-validator` to override
+auto-discovery. `cargo truce doctor` tells you what's found.
+
+### Strict mode for CI
+
+Per-format flags fail the run if their validator is missing:
+
+| Invocation | Validator missing → |
+|---|---|
+| `cargo truce validate` (no flag) | warning, exit 0 |
+| `cargo truce validate --all` | warning, exit 0 |
+| `cargo truce validate --clap` | error, exit non-zero |
+| `cargo truce validate --pluginval` | error, exit non-zero |
+
+Wire `--clap --pluginval` (or whichever subset you want) into your
+CI so a missing validator binary fails the build instead of
+silently passing.
+
+### Installing the validators
+
+```sh
+cargo install --locked --git https://github.com/free-audio/clap-validator clap-validator
+# pluginval: download the binary from https://github.com/Tracktion/pluginval/releases
+```
+
+`auval` ships with macOS — nothing to install.
+
+### CI step (GitHub Actions)
+
+Drop this into the job that already builds and installs your
+plugin. It mirrors what truce's own CI runs on every PR:
+
+```yaml
+- name: Install validators
+  run: |
+    cargo install --locked --git https://github.com/free-audio/clap-validator clap-validator
+    curl -fsSL -o /tmp/pluginval.zip \
+      https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_Linux.zip
+    unzip -oq /tmp/pluginval.zip -d ~/.local/bin
+    chmod +x ~/.local/bin/pluginval
+    echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+- name: Install plugin
+  run: cargo truce install --user --clap --vst3 -p my-gain
+
+- name: Validate
+  run: cargo truce validate --clap --pluginval -p my-gain
+```
+
+Substitute the macOS / Windows pluginval download URL on those
+runners. Headless Linux jobs need `xvfb-run -a` in front of
+`cargo truce validate` because pluginval and clap-validator both
+open a window during state checks.
 
 ## `package`
 

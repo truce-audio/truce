@@ -26,7 +26,8 @@ truce build --lv2` / `install --lv2` selects it at the CLI.
   - one `AtomPort` for MIDI input (if the plugin accepts MIDI)
 - State save/restore via the LV2 State extension
 - UI hosting per platform (X11UI / CocoaUI / WindowsUI)
-- Turtle (`manifest.ttl`, `plugin.ttl`) generation at install time
+- Turtle (`manifest.ttl`, `plugin.ttl`) sidecars emitted by the
+  `export_lv2!` proc-macro at compile time
 
 ## Key macro
 

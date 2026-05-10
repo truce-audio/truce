@@ -15,6 +15,7 @@ syn = { version = "2", features = ["full"] }
 toml = "1"
 truce-build = { workspace = true }
 truce-params = { workspace = true }
+truce-utils = { workspace = true }
 
 [lints]
 workspace = true

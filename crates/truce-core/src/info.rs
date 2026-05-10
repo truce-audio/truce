@@ -41,10 +41,10 @@ pub struct PluginInfo {
     pub lv2_name: Option<&'static str>,
 }
 
-/// Resolve a format's install-time display-name override. Each wrapper
-/// reads its own `TRUCE_{FORMAT}_NAME_OVERRIDE` via `option_env!` and
-/// passes the result here along with the `PluginInfo::name` fallback.
-/// Empty overrides (unset or set to `""`) fall through to `fallback`.
+/// Resolve a format's display-name override. Each wrapper picks its
+/// own `<format>_name` field off `PluginInfo` and passes the result
+/// here along with the `PluginInfo::name` fallback. Empty overrides
+/// (unset or set to `""`) fall through to `fallback`.
 #[must_use]
 pub fn resolve_name_override(
     override_value: Option<&'static str>,

@@ -210,14 +210,11 @@ pub(crate) struct PluginDef {
     #[serde(default = "default_au_tag")]
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub(crate) au_tag: String,
-    // Per-format display-name overrides — `clap_name`, `vst3_name`,
-    // `vst2_name`, `au_name`, `aax_name`, `lv2_name` — used to live
-    // here so cargo-truce could pass them as `TRUCE_<FORMAT>_NAME_OVERRIDE`
-    // env vars to each cargo build. They now flow through `PluginInfo`
-    // (read out of the same `truce.toml` keys by `truce::plugin_info!`),
-    // so cargo-truce no longer needs to inspect them. `au3_name` is
-    // the lone holdout because it also names the AU v3 `.app` bundle
-    // directory, which is install-time logic in this crate.
+    // `au3_name` doubles as the AU v3 `.app` bundle directory name,
+    // which is install-time logic in this crate. Other per-format
+    // display names flow through `PluginInfo` directly (the
+    // proc-macro reads the same `truce.toml` keys), so cargo-truce
+    // doesn't need its own copies.
     #[serde(default)]
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub(crate) au3_name: Option<String>,

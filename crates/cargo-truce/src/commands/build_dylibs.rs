@@ -9,22 +9,15 @@
 //!    per-plugin — emit one skip line and bypass the cargo build loop
 //!    when missing).
 //! 3. One `cargo build -p a -p b -p c …` per format batch with the
-//!    format's feature set. Display-name overrides used to flow as
-//!    per-plugin `TRUCE_*_NAME_OVERRIDE` env vars (and AU2 carried
-//!    `TRUCE_AU_VERSION` / `TRUCE_AU_PLUGIN_ID`); they all moved into
-//!    `PluginInfo` (baked by `truce::plugin_info!`) or runtime
-//!    `ObjC` class registration, so no env vars need to flip
-//!    between batches.
+//!    format's feature set. No per-plugin env vars: per-format display
+//!    names travel with `PluginInfo` (baked by `truce::plugin_info!`)
+//!    and AU class names are registered at runtime via `objc2`.
 //! 4. Copy the produced `lib<stem>.<dylib-ext>` to a format-suffixed
 //!    path (`<stem>_clap`, `<stem>_vst3`, …) so the next format build
 //!    doesn't overwrite the previous one (every plugin's cdylib lands
 //!    at the same canonical cargo path).
 //! 5. For AAX, also call `emit_aax_bundle` to assemble the `.aaxplugin`
 //!    that the install / package paths consume.
-//!
-//! Centralizing this loop turned ~400 paste-copies of the same per-format
-//! pattern (six formats × two commands) into one driver plus a small
-//! enum.
 
 use crate::util::fs_ctx;
 use crate::{Config, PluginDef, Res, cargo_build, release_lib_for_target};
@@ -82,13 +75,6 @@ impl BuildFormat {
         }
     }
 
-    // Per-format display-name overrides used to flow through
-    // `TRUCE_<FORMAT>_NAME_OVERRIDE` env vars set at cargo invocation
-    // time. They now travel with `PluginInfo` (read out of
-    // `truce.toml` by `truce::plugin_info!`), so cargo-truce no
-    // longer has to flip env vars between plugin builds — the
-    // workspace-wide env churn was invalidating each format wrapper's
-    // fingerprint between back-to-back `cargo build` calls.
 }
 
 /// Returns a skip-reason string if AAX cannot be built on this host —

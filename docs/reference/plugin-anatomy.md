@@ -1,6 +1,6 @@
 # 3. Plugin anatomy
 
-How the pieces of a truce plugin fit together: the `PluginLogic`
+How the pieces of a truce plugin fit together: the `Plugin`
 trait, the `truce::plugin!` macro, bus layouts, and state
 persistence.
 
@@ -20,10 +20,10 @@ it is.
   YourParams ◄──Arc───── Shell (one of CLAP / VST3 / AU / …)
   (atomic params)         │
                           ├─ calls YourPlugin::new(params)    (inherent)
-                          ├─ calls PluginLogic::reset(sr, bs) (your code)
-                          ├─ calls PluginLogic::process(…)    (audio thread)
-                          ├─ calls PluginLogic::layout(…)     (main thread)
-                          ├─ calls PluginLogic::save_state(…) (main thread)
+                          ├─ calls Plugin::reset(sr, bs) (your code)
+                          ├─ calls Plugin::process(…)    (audio thread)
+                          ├─ calls Plugin::layout(…)     (main thread)
+                          ├─ calls Plugin::save_state(…) (main thread)
                           └─ drops when unloaded
 ```
 
@@ -31,7 +31,7 @@ Three things you write:
 
 1. A **params struct** with `#[derive(Params)]`.
 2. A **plugin struct** with an inherent `new(params: Arc<P>)` and
-   an `impl PluginLogic`.
+   an `impl Plugin`.
 3. A **single `truce::plugin!` macro call** that wires those into
    every plugin format.
 
@@ -39,13 +39,13 @@ Everything else — parameter hosting, GUI event dispatch, state
 envelope, format-specific lifecycle, hot-reload shell — is
 generated.
 
-## The `PluginLogic` trait
+## The `Plugin` trait
 
 Only `reset` and `process` are required. Everything else has a
 default. Override what you need.
 
 ```rust
-pub trait PluginLogic: Send + 'static {
+pub trait Plugin: Send + 'static {
     fn reset(&mut self, sample_rate: f64, max_block_size: usize);
 
     fn process(
@@ -127,7 +127,7 @@ Shell creates Arc<MyParams>, clones it into:
     └── MyPlugin::new(arc_clone)
     │
     ▼
-PluginLogic::reset(sr, max_block)      ◄── sample rate and block size known
+Plugin::reset(sr, max_block)      ◄── sample rate and block size known
     │
     │   ┌──────────── playback loop ────────────┐
     │   │  process(buffer, events, ctx)  (audio thread)
@@ -145,10 +145,37 @@ PluginLogic::reset(sr, max_block)      ◄── sample rate and block size know
 MyPlugin dropped
 ```
 
+## Per-format display names
+
+By default every format surfaces the same `name` from `truce.toml`.
+A few situations call for different names per format — most often
+running AU v2 and v3 side by side (Logic shows them in the same
+list and the user has no way to tell which is which), or shipping
+a beta in parallel with a release without colliding bundle IDs.
+Set any of `clap_name`, `vst3_name`, `vst2_name`, `au_name`,
+`au3_name`, `aax_name`, `lv2_name` on the `[[plugin]]` table:
+
+```toml
+[[plugin]]
+name      = "Truce Gain"
+bundle_id = "gain"
+crate     = "truce-example-gain"
+category  = "effect"
+fourcc    = "TGan"
+au3_name  = "Truce Gain (AUv3)"   # disambiguate from the AU v2
+```
+
+Overrides only change the display name the host shows. Bundle
+filenames, IDs, and install paths still derive from `name` —
+except `au3_name`, which doubles as the
+`/Applications/{au3_name}.app` install path so two AU v3 builds
+can coexist. See the [`truce.toml` reference in shipping.md](shipping.md#truce-toml-reference)
+for the full list of `[[plugin]]` keys.
+
 ## Bus layouts
 
 Supported audio bus configurations go on the `truce::plugin!`
-macro, not on the `PluginLogic` trait. The host picks one; the
+macro, not on the `Plugin` trait. The host picks one; the
 others are rejected at bus-config time before `process` is ever
 called.
 
@@ -222,7 +249,7 @@ anything else the user can change.
 ### Option A: `#[derive(State)]` — recommended
 
 Define a state struct, derive binary serialization, and wire it
-into `PluginLogic`:
+into `Plugin`:
 
 ```rust
 #[derive(State, Default)]
@@ -237,7 +264,7 @@ pub struct MyPlugin {
     extra: MyExtraState,
 }
 
-impl PluginLogic for MyPlugin {
+impl Plugin for MyPlugin {
     fn save_state(&self) -> Vec<u8> { self.extra.serialize() }
 
     fn load_state(&mut self, data: &[u8]) {

@@ -185,6 +185,11 @@ yellow ones are optional; red ones block something.
 Run `doctor` any time a build behaves oddly — it's usually faster
 than debugging the error message.
 
+If [sccache](https://github.com/mozilla/sccache) is on `PATH`,
+`cargo truce` auto-uses it as `RUSTC_WRAPPER`. `doctor` reports
+when it's active. Set `TRUCE_DISABLE_SCCACHE=1` to skip for one
+invocation.
+
 ## What's next
 
 You're ready for [chapter 2 → first-plugin.md](first-plugin.md) —

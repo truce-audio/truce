@@ -37,9 +37,8 @@ disjoint slices. The cost is one memcpy per aliased channel per block
 you go looking. **Most plugins should ignore this section.**
 
 If you profile and the wrapper memcpy is meaningful for your DSP,
-opt out by setting `SUPPORTS_IN_PLACE = true` on your `Plugin` impl.
-The wrapper then skips the copy and you read+write the shared buffer
-directly:
+set `SUPPORTS_IN_PLACE = true` on your `Plugin` impl. The wrapper
+then skips the copy and you read+write the shared buffer directly:
 
 ```rust
 impl Plugin for MyEffect {
@@ -237,7 +236,7 @@ The full `examples/truce-example-synth/` plugin (in the repo) is
 roughly this shape:
 
 ```rust
-impl PluginLogic for Synth {
+impl Plugin for Synth {
     fn reset(&mut self, sample_rate: f64, _: usize) {
         self.sample_rate = sample_rate;
         self.voices.clear();
