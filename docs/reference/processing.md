@@ -18,14 +18,62 @@ fn process(
 
 Everything in this chapter is a different shape for that function.
 
-## In-place processing
+## Buffer model
 
-For effects, all format wrappers **copy input audio into the output
-buffers before calling `process`**. You can read and write
-`buffer.output(ch)` directly — the input is already there. No
-manual input→output copy needed.
+`AudioBuffer` exposes one `&[f32]` per input channel and one
+`&mut [f32]` per output channel, both borrowing host memory. Wrappers
+do not copy input into output: read from `buffer.input(ch)` and write
+to `buffer.output(ch)`. For instruments, output starts wherever the
+host left it (typically zero, but don't assume — write every sample).
 
-For instruments, output buffers start at zero.
+## In-place I/O (advanced; opt-in)
+
+Some hosts (Reaper, pluginval) pass the same buffer for both input
+and output of a given channel. By default truce handles this for you
+— the wrapper detects the alias and copies the input into per-channel
+scratch so `buffer.input(ch)` and `buffer.output(ch)` are always
+disjoint slices. The cost is one memcpy per aliased channel per block
+(a few hundred KB/sec at audio rates) and it never shows up unless
+you go looking. **Most plugins should ignore this section.**
+
+If you profile and the wrapper memcpy is meaningful for your DSP,
+opt out by setting `SUPPORTS_IN_PLACE = true` on your `Plugin` impl.
+The wrapper then skips the copy and you read+write the shared buffer
+directly:
+
+```rust
+impl Plugin for MyEffect {
+    const SUPPORTS_IN_PLACE: bool = true;
+    // ...
+    fn process(&mut self, buffer: &mut AudioBuffer, _: &EventList,
+               _: &mut ProcessContext) -> ProcessStatus {
+        for ch in 0..buffer.num_output_channels() {
+            if buffer.is_in_place(ch) {
+                // Host shares one buffer for in+out; read each
+                // sample, then overwrite it.
+                let inout = buffer.in_out_mut(ch);
+                for s in inout.iter_mut() { *s = self.process_sample(*s); }
+            } else {
+                let inp = buffer.input(ch);
+                let out = buffer.output(ch);
+                for i in 0..inp.len() { out[i] = self.process_sample(inp[i]); }
+            }
+        }
+        ProcessStatus::Normal
+    }
+}
+```
+
+The contract:
+
+- With `SUPPORTS_IN_PLACE = true`, `buffer.input(ch)` returns an empty
+  slice for in-place channels — the data only exists in the shared
+  buffer. You **must** check `buffer.is_in_place(ch)` and use
+  `buffer.in_out_mut(ch)` for those channels.
+- With `SUPPORTS_IN_PLACE = false` (default), `buffer.input(ch)` and
+  `buffer.output(ch)` are always safe and disjoint, even when the
+  host requested in-place. `is_in_place` still reflects the host's
+  choice — but you can ignore it.
 
 ## Per-sample effect
 

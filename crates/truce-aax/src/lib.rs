@@ -753,9 +753,14 @@ pub unsafe fn _process<P: PluginExport>(
         inst.max_block_size
     );
     unsafe {
-        let mut buffer = inst
-            .scratch
-            .build(inputs, outputs, num_in, num_out, len_u32(num_frames));
+        let mut buffer = inst.scratch.build(
+            inputs,
+            outputs,
+            num_in,
+            num_out,
+            len_u32(num_frames),
+            P::SUPPORTS_IN_PLACE,
+        );
         let transport = if !transport_ptr.is_null() && (*transport_ptr).valid != 0 {
             let t = &*transport_ptr;
             TransportInfo {

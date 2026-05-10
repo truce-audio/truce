@@ -7,6 +7,20 @@ use crate::process::{ProcessContext, ProcessStatus};
 
 /// The core trait that all plugins implement.
 pub trait Plugin: Send + 'static {
+    /// Opt into zero-copy in-place I/O. When `true`, the format
+    /// wrapper skips its safety memcpy on host-aliased buffers and
+    /// hands the plugin the raw shared memory through
+    /// `AudioBuffer::in_out_mut(ch)`. The plugin must check
+    /// `AudioBuffer::is_in_place(ch)` per channel before reading
+    /// `input(ch)` — for in-place channels `input(ch)` returns an
+    /// empty slice, and the data lives only in the shared buffer.
+    ///
+    /// Default `false`: the wrapper copies aliased inputs into scratch
+    /// so `input(ch)` and `output(ch)` are always disjoint. Costs one
+    /// memcpy per aliased channel per block (a few hundred KB/sec at
+    /// audio rates) and lets plugin code stay format-agnostic.
+    const SUPPORTS_IN_PLACE: bool = false;
+
     /// Static metadata about the plugin.
     ///
     /// Use `plugin_info!()` for zero-boilerplate (reads from truce.toml

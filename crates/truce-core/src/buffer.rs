@@ -1,8 +1,23 @@
-/// Non-interleaved audio buffer. Zero-copy — borrows host memory
-/// through the format wrapper.
+/// Non-interleaved audio buffer. Borrows host memory through the
+/// format wrapper.
+///
+/// **In-place I/O.** Some hosts (Reaper, pluginval) pass the same
+/// buffer for both input and output of a given channel. By default
+/// the wrapper copies the aliased inputs into per-channel scratch so
+/// `input(ch)` and `output(ch)` are disjoint `&[f32]` / `&mut [f32]`
+/// — no plugin code change required. Plugins that opt into
+/// `Plugin::SUPPORTS_IN_PLACE = true` skip the copy and must use
+/// [`Self::in_out_mut`] for channels where [`Self::is_in_place`]
+/// returns `true`. See `docs/reference/processing.md` for the
+/// full contract.
 pub struct AudioBuffer<'a> {
     inputs: &'a [&'a [f32]],
     outputs: &'a mut [&'a mut [f32]],
+    /// Bit `ch` is set when `inputs[ch]` and `outputs[ch]` point to
+    /// the same host memory. Channels ≥ 64 are always reported as
+    /// non-aliased — formats with that many channels are exotic
+    /// enough to be a follow-up.
+    in_place_mask: u64,
     offset: usize,
     num_samples: usize,
 }
@@ -78,9 +93,39 @@ impl<'a> AudioBuffer<'a> {
         Self {
             inputs,
             outputs,
+            in_place_mask: 0,
             offset: 0,
             num_samples,
         }
+    }
+
+    /// Set the in-place mask. Called by format wrappers (or
+    /// `RawBufferScratch::build`) after construction once they've
+    /// determined which channels alias on the host side.
+    #[inline]
+    pub fn set_in_place_mask(&mut self, mask: u64) {
+        self.in_place_mask = mask;
+    }
+
+    /// `true` when the host passes a single buffer for both input and
+    /// output of `ch` (in-place I/O). Use [`Self::in_out_mut`] to read
+    /// and write that buffer directly when this returns `true`.
+    #[must_use]
+    pub fn is_in_place(&self, ch: usize) -> bool {
+        ch < 64 && (self.in_place_mask >> ch) & 1 == 1
+    }
+
+    /// Read+write slice for an in-place channel — the same memory the
+    /// host gave us for both input and output. Each sample reads as
+    /// the input value before the plugin overwrites it.
+    ///
+    /// Only meaningful when [`Self::is_in_place`] returns `true`. On a
+    /// non-in-place channel this returns the output slice with no
+    /// input data in it; reading is allowed but produces uninitialized
+    /// host-buffer contents.
+    pub fn in_out_mut(&mut self, ch: usize) -> &mut [f32] {
+        let end = self.offset + self.num_samples;
+        &mut self.outputs[ch][self.offset..end]
     }
 
     #[must_use]
@@ -197,6 +242,7 @@ impl<'a> AudioBuffer<'a> {
             std::mem::transmute::<AudioBuffer<'a>, AudioBuffer<'_>>(AudioBuffer {
                 inputs: s.inputs,
                 outputs: &mut *s.outputs,
+                in_place_mask: s.in_place_mask,
                 offset: new_offset,
                 num_samples: len,
             })
@@ -252,8 +298,12 @@ impl RawBufferScratch {
     ///   the returned `AudioBuffer`.
     ///
     /// In-place I/O (an input pointer that aliases any output pointer)
-    /// is supported: the input is copied into per-channel scratch so
-    /// the input and output slices are disjoint.
+    /// is handled per `supports_in_place`:
+    /// - `false` (default): aliased inputs are copied into per-channel
+    ///   scratch, so `input(ch)` and `output(ch)` are always disjoint.
+    /// - `true`: no copy. Aliased input slices are exposed as empty
+    ///   (`&[]`); the plugin must use [`AudioBuffer::in_out_mut`] for
+    ///   channels where [`AudioBuffer::is_in_place`] returns `true`.
     pub unsafe fn build<'a>(
         &'a mut self,
         inputs: *const *const f32,
@@ -261,6 +311,7 @@ impl RawBufferScratch {
         num_in: u32,
         num_out: u32,
         num_frames: u32,
+        supports_in_place: bool,
     ) -> AudioBuffer<'a> {
         unsafe {
             let nf = num_frames as usize;
@@ -295,18 +346,27 @@ impl RawBufferScratch {
             while self.input_copies.len() < num_in {
                 self.input_copies.push(Vec::new());
             }
+            let mut in_place_mask: u64 = 0;
             for ch in 0..num_in {
                 let ptr = *inputs.add(ch);
                 let slice: &[f32] = if ptr.is_null() {
                     &[]
                 } else if aliases_any_output(ptr) {
-                    // In-place I/O — snapshot the input before the
-                    // plugin starts overwriting the shared buffer
-                    // through the output slice.
-                    let copy = &mut self.input_copies[ch];
-                    copy.clear();
-                    copy.extend_from_slice(std::slice::from_raw_parts(ptr, nf));
-                    std::slice::from_raw_parts(copy.as_ptr(), nf)
+                    if ch < 64 {
+                        in_place_mask |= 1 << ch;
+                    }
+                    if supports_in_place {
+                        // Plugin opted in: hand it nothing through
+                        // input(ch); it must read+write via in_out_mut.
+                        &[]
+                    } else {
+                        // Default: snapshot the input before the
+                        // plugin overwrites the shared buffer.
+                        let copy = &mut self.input_copies[ch];
+                        copy.clear();
+                        copy.extend_from_slice(std::slice::from_raw_parts(ptr, nf));
+                        std::slice::from_raw_parts(copy.as_ptr(), nf)
+                    }
                 } else {
                     std::slice::from_raw_parts(ptr, nf)
                 };
@@ -331,11 +391,11 @@ impl RawBufferScratch {
             // &'a mut self prevents aliasing.
             let self_ptr: *mut Self = self;
             let s = &mut *self_ptr;
-            std::mem::transmute::<AudioBuffer<'static>, AudioBuffer<'a>>(AudioBuffer::from_slices(
-                &s.input_slices,
-                &mut s.output_slices,
-                nf,
-            ))
+            let mut buf = std::mem::transmute::<AudioBuffer<'static>, AudioBuffer<'a>>(
+                AudioBuffer::from_slices(&s.input_slices, &mut s.output_slices, nf),
+            );
+            buf.set_in_place_mask(in_place_mask);
+            buf
         }
     }
 }

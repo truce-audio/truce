@@ -166,7 +166,6 @@ note below. See [Status](docs/README.md) for host coverage.
 - **`truce::plugin!`** — one macro generates all format exports + GUI + state serialization
 - **`cargo truce`** — scaffold, build, install, validate, package; `doctor` reports environment health
 - **`cargo truce package`** — signed distributable installers on both platforms (`.pkg` with notarization on macOS; Inno Setup `.exe` with Authenticode on Windows)
-- **Zero-copy audio** — format wrappers pass host buffers directly
 - **Thread-safe params** — atomic storage, lock-free access from any thread
 - **Automated tests** — render, state, params, GUI screenshots, binary validation
 - **Automated validation** — `cargo truce validate` runs auval, pluginval, and clap-validator in one command
