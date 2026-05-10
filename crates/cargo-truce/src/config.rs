@@ -218,8 +218,7 @@ fn default_au_tag() -> String {
 /// One `[[suite]]` entry from `truce.toml`. Bundles a subset of the
 /// workspace's plugins into a single installer per platform.
 ///
-/// Defaults: `plugins` omitted → all workspace plugins; `formats`
-/// omitted → union of every included plugin's enabled formats;
+/// Defaults: `plugins` omitted → all workspace plugins;
 /// `version` omitted → workspace version. `plugins` and
 /// `exclude_plugins` are mutually exclusive — supplying both is a
 /// hard error caught at validation time.
@@ -235,10 +234,6 @@ pub(crate) struct SuiteDef {
     /// exclusive with `plugins`.
     #[serde(default)]
     pub(crate) exclude_plugins: Option<Vec<String>>,
-    /// Per-suite format restriction. Intersected with each included
-    /// plugin's enabled formats. Omit for the union.
-    #[serde(default)]
-    pub(crate) formats: Option<Vec<String>>,
     /// Suite-level version. Falls back to `[workspace.package].version`.
     #[serde(default)]
     pub(crate) version: Option<String>,
@@ -318,7 +313,6 @@ impl SuiteDef {
         Ok(ResolvedSuite {
             def: self,
             plugins,
-            formats: self.formats.as_deref(),
         })
     }
 }
@@ -328,10 +322,6 @@ impl SuiteDef {
 pub(crate) struct ResolvedSuite<'a> {
     pub(crate) def: &'a SuiteDef,
     pub(crate) plugins: Vec<&'a PluginDef>,
-    /// Caller intersects this with each plugin's enabled formats.
-    /// `None` = no per-suite restriction (use union of plugin defaults).
-    #[allow(dead_code)]
-    pub(crate) formats: Option<&'a [String]>,
 }
 
 /// Read a per-developer build env var. Cargo injects values from
@@ -449,7 +439,6 @@ mod suite_tests {
             bundle_id: name.to_lowercase(),
             plugins: None,
             exclude_plugins: None,
-            formats: None,
             version: None,
             description: None,
         }

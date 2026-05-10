@@ -26,8 +26,8 @@ static LOADER_ID: AtomicU64 = AtomicU64::new(0);
 
 use libloading::{Library, Symbol};
 
+use crate::LoaderPlugin;
 use crate::canary::{AbiCanary, verify_probe};
-use crate::traits::LoaderPlugin;
 
 type ProbeFn = fn() -> Box<dyn LoaderPlugin>;
 type CreateFn = fn(*const ()) -> Box<dyn LoaderPlugin>;

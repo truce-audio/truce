@@ -8,8 +8,7 @@
 /// — no plugin code change required. Plugins that opt into
 /// `Plugin::supports_in_place() = true` skip the copy and must use
 /// [`Self::in_out_mut`] for channels where [`Self::is_in_place`]
-/// returns `true`. See `docs/reference/processing.md` for the
-/// full contract.
+/// returns `true`.
 pub struct AudioBuffer<'a> {
     inputs: &'a [&'a [f32]],
     outputs: &'a mut [&'a mut [f32]],

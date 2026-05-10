@@ -151,8 +151,8 @@ impl<P: Params + Default + 'static, L: PluginLogic + PluginEditor + 'static> Plu
         self.logic.load_state(data);
         // Plugin-side cache invalidation runs in the same `&mut`
         // borrow window so the next `process()` block sees the
-        // refreshed caches. See `PluginEditor::state_changed`.
-        self.logic.state_changed();
+        // refreshed caches.
+        PluginLogic::state_changed(&mut self.logic);
     }
 
     fn editor(&mut self) -> Option<Box<dyn Editor>> {

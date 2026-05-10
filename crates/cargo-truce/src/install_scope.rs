@@ -103,8 +103,7 @@ impl PkgScope {
     }
 }
 
-/// Resolve the requested scope for one format, applying the per-format
-/// guardrails from `docs/internal/install-scope.md`. AAX, AU v3, and
+/// Resolve the requested scope for one format. AAX, AU v3, and
 /// (on Windows) VST2 silently fall back to system scope and return a
 /// note string the caller prints exactly once per `cargo truce`
 /// invocation via [`note_once`].

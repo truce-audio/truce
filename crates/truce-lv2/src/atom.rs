@@ -755,9 +755,8 @@ mod tests {
     /// read it back via `AtomSequenceReader::for_each_midi` +
     /// `midi_bytes_to_event`, and check the round-trip is lossless.
     ///
-    /// Added as the independent codec-level regression guard called
-    /// for in `docs/internal/lv2-midi-broken.md` — the port-layout
-    /// fix in `truce-derive` is the reason MIDI works at all for
+    /// Independent codec-level regression guard: the port-layout fix
+    /// in `truce-derive` is the reason MIDI works at all for
     /// note-effect plugins, but this test pins the codec separately
     /// so future refactors don't regress either layer silently.
     #[test]

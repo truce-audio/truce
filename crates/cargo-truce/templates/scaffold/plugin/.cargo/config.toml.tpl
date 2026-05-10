@@ -3,8 +3,8 @@
 #
 # Cargo injects everything in `[env]` into the environment of any
 # subcommand it spawns, so values here are visible to `cargo truce`
-# without further plumbing. See `docs/reference/cargo-config.md` for
-# the full list of env vars truce understands.
+# without further plumbing. See https://truce.audio/ for the full
+# list of env vars truce understands.
 
 [env]
 # --- macOS code signing ---

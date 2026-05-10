@@ -176,7 +176,7 @@ pub(crate) fn cmd_package(
              installer will be unsigned. Pass --no-sign to silence this warning, or \
              set TRUCE_AZURE_ACCOUNT (+ TRUCE_AZURE_PROFILE), TRUCE_CERT_SHA1, or \
              TRUCE_PFX_PATH in .cargo/config.toml [env]. See \
-             docs/reference/cargo-config.md for the full list."
+             https://truce.audio/ for the full list."
         );
     }
 
@@ -885,8 +885,7 @@ fn stage_aax(
 /// Authenticode signing credentials, read from per-developer build
 /// env (`.cargo/config.toml [env]` or shell). One of three credential
 /// sources must be set: Azure Trusted Signing, a cert thumbprint
-/// already in the store, or a `.pfx` file. See
-/// `docs/reference/cargo-config.md` for the full env-var list.
+/// already in the store, or a `.pfx` file.
 struct WindowsSigningEnv {
     azure_account: Option<String>,
     azure_profile: Option<String>,

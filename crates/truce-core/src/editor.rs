@@ -114,8 +114,7 @@ pub trait Editor: Send {
     /// this at all. Editors that need to size off-screen buffers in
     /// physical pixels should react here, not by exposing a pull-style
     /// `scale_factor()` method that format wrappers were tempted to
-    /// multiply `size()` by (which caused double-scaling on macOS
-    /// VST3 — see `docs/internal/vst3-macos-scale-factor.md`).
+    /// multiply `size()` by (which caused double-scaling on macOS VST3).
     fn set_scale_factor(&mut self, _factor: f64) {}
 
     /// Plugin state was restored (preset recall, undo, session load).

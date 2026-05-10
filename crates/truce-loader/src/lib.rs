@@ -41,7 +41,6 @@ pub mod __macro_deps {
 
 mod canary;
 mod safe_types;
-mod traits;
 
 #[cfg(feature = "shell")]
 mod loader;
@@ -51,7 +50,20 @@ pub mod static_shell;
 
 pub use canary::{AbiCanary, ProbePlugin, verify_probe};
 pub use safe_types::*;
-pub use traits::*;
+
+use truce_core::PluginLogic;
+use truce_gui::PluginEditor;
+
+/// The dylib-boundary trait object: `Box<dyn LoaderPlugin>`. Trait
+/// objects can name only one non-auto trait, so a supertrait is the
+/// only way to package both `PluginLogic` (DSP) and `PluginEditor`
+/// (GUI) vtables behind one `Box<dyn _>`.
+///
+/// Plugin authors don't implement this directly — the blanket impl
+/// derives it from any type that implements both halves.
+pub trait LoaderPlugin: PluginLogic + PluginEditor {}
+
+impl<T: PluginLogic + PluginEditor> LoaderPlugin for T {}
 
 #[cfg(feature = "shell")]
 pub use loader::NativeLoader;
@@ -86,9 +98,9 @@ macro_rules! export_plugin {
 
 /// Convenience prelude for logic dylib authors.
 pub mod prelude {
+    pub use crate::LoaderPlugin;
     pub use crate::canary::{AbiCanary, ProbePlugin};
     pub use crate::safe_types::*;
-    pub use crate::traits::LoaderPlugin;
 
     pub use truce_core::PluginLogic;
     pub use truce_gui::PluginEditor;

@@ -59,9 +59,7 @@ Meter, ... } from "@truce";` works) and JetBrains Mono (so
 `import "JetBrainsMono-Regular.ttf";` works) — your plugin crate
 doesn't need a local truce checkout.
 
-See the [Slint reference doc][slint-doc] for the full plugin
+See [truce.audio](https://truce.audio/) for the full plugin
 walkthrough.
-
-[slint-doc]: https://github.com/truce-audio/truce/blob/main/docs/reference/gui/slint.md
 
 Part of [truce](https://github.com/truce-audio/truce).

@@ -27,7 +27,7 @@ All defined in `ui/main.slint`.
 
 ## See also
 
-- [slint integration guide](../../docs/reference/gui/slint.md)
+- [slint integration guide](https://truce.audio/)
 - [gain](../truce-example-gain/) — same plugin with built-in GUI
 - [gain-egui](../truce-example-gain-egui/) — same plugin with egui
 - [gain-iced](../truce-example-gain-iced/) — same plugin with iced

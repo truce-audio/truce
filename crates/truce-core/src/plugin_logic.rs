@@ -75,6 +75,23 @@ pub trait PluginLogic: Send + 'static {
     /// Restore plugin-specific state.
     fn load_state(&mut self, _data: &[u8]) {}
 
+    /// Called on the audio thread immediately after [`Self::load_state`]
+    /// returns. Use this to invalidate or recompute caches the next
+    /// `process()` block reads — decoded IRs, sample thumbnails,
+    /// computed pad layouts — anything derived from the extra-state
+    /// blob that isn't itself part of the saved bytes.
+    ///
+    /// Runs under the same `&mut self` borrow that just executed
+    /// `load_state`, so the next audio block sees the refreshed
+    /// caches. Default: no-op.
+    ///
+    /// The companion [`crate::Editor::state_changed`] (on the GUI
+    /// side) is fired separately by the format wrappers when a
+    /// custom editor is open and the host loads state. The two
+    /// hooks split plugin-thread cache invalidation from
+    /// GUI-thread repaint.
+    fn state_changed(&mut self) {}
+
     /// Report latency in samples for plugin delay compensation.
     fn latency(&self) -> u32 {
         0

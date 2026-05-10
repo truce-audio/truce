@@ -141,20 +141,24 @@ const EFFECT_PROCESS_BODY: &str = r"    fn process(&mut self, buffer: &mut Audio
 
 const INSTRUMENT_PROCESS_BODY: &str = r"    fn process(&mut self, buffer: &mut AudioBuffer, events: &EventList,
                _context: &mut ProcessContext) -> ProcessStatus {
+        // Trigger / release your voices here. Note events arrive at
+        // sample-accurate offsets via `event.frame_offset`; in-block
+        // dispatch is up to you.
         for event in events.iter() {
             match &event.body {
                 EventBody::NoteOn { note, velocity, .. } => {
-                    // TODO: start a voice
                     let _ = (note, velocity);
                 }
                 EventBody::NoteOff { note, .. } => {
-                    // TODO: release the voice
                     let _ = note;
                 }
                 _ => {}
             }
         }
 
+        // Render your voices into the output channels here. The
+        // scaffold ships silence so a fresh `cargo truce run` is
+        // immediately audible (and visibly silent) for sanity-checking.
         for ch in 0..buffer.num_output_channels() {
             for i in 0..buffer.num_samples() {
                 buffer.output(ch)[i] = 0.0;

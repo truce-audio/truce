@@ -271,7 +271,7 @@ pub fn main_screen_scale() -> f64 {
     // Priority: TRUCE_SCALE env var (dev/test override) → cached scale
     // observed from baseview → 1.0 fallback. No side-channel Xlib calls —
     // those crashed inside NVIDIA's Vulkan driver when invoked from the
-    // render thread (see docs/internal/linux.md, DPI section).
+    // render thread.
     if let Ok(s) = std::env::var("TRUCE_SCALE")
         && let Ok(v) = s.parse::<f64>()
         && v.is_finite()

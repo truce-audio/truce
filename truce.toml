@@ -6,8 +6,7 @@
 # Per-developer build environment (signing identities, AAX SDK path,
 # notarization Apple ID / team ID, Authenticode certs) lives in the
 # local `.cargo/config.toml` (gitignored), not here. See
-# `docs/reference/cargo-config.md` for the complete list of env vars
-# truce reads.
+# https://truce.audio/ for the complete list of env vars truce reads.
 #
 #   # .cargo/config.toml
 #   [env]

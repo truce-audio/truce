@@ -15,7 +15,7 @@ use truce_gui::layout::GridLayout;
 use truce_gui::render::RenderBackend;
 use truce_gui::theme::{Color, Theme};
 
-use crate::traits::LoaderPlugin;
+use crate::LoaderPlugin;
 
 /// ABI fingerprint. Compared between shell and dylib before loading.
 ///

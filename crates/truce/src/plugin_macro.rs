@@ -84,8 +84,7 @@ macro_rules! __plugin_impl {
         // declare a `shell` Cargo feature emit `unexpected_cfgs`
         // warnings at the `truce::plugin!` invocation site (the lint
         // is attributed to the macro, not the cfg attribute, so
-        // per-item `#[allow]` doesn't suppress it). Same trick as
-        // `__truce_format_exports` below.
+        // per-item `#[allow]` doesn't suppress it).
         #[allow(unexpected_cfgs)]
         mod __truce_runtime {
             // `$logic` / `$params` are paths from the user crate root

@@ -20,7 +20,7 @@ the knobs.
 
 ## See also
 
-- [egui integration guide](../../docs/reference/gui/egui.md)
+- [egui integration guide](https://truce.audio/)
 - [gain](../truce-example-gain/) — same plugin with built-in GUI
 - [gain-iced](../truce-example-gain-iced/) — same plugin with iced
 - [gain-slint](../truce-example-gain-slint/) — same plugin with slint

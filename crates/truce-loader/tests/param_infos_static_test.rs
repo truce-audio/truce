@@ -24,11 +24,10 @@ struct Inner {
     b: truce_params::FloatParam,
 }
 
-// Outer struct that's purely a composition of nested params —
-// matches the documented `#[nested]` shape (see
-// `docs/reference/parameters.md`). The derive skips generating
-// `new()` when the outer has no own params or meters, so an Outer of
-// this shape composes by hand from its inner pieces.
+// Outer struct that's purely a composition of nested params. The
+// derive skips generating `new()` when the outer has no own params
+// or meters, so an Outer of this shape composes by hand from its
+// inner pieces.
 #[derive(Params)]
 struct Outer {
     #[nested]

@@ -98,9 +98,9 @@ truce-shim-types = { version = "0.36.2", path = "crates/truce-shim-types" }
 truce-utils = { version = "0.36.2", path = "crates/truce-utils" }
 
 # The truce-audio fork carries the AAX / Pro Tools close-path fix
-# (responder / tracking-area / layer-contents cleanup — see the fork's
-# docs/pro-tools-aax-fix.md). GUI crates consume this via
-# `baseview = { workspace = true }` so the fork origin is declared once.
+# (responder / tracking-area / layer-contents cleanup). GUI crates
+# consume this via `baseview = { workspace = true }` so the fork
+# origin is declared once.
 baseview = { git = "https://github.com/truce-audio/baseview.git" }
 
 # Custom profile for shell-mode (hot-reload) builds. `cargo truce

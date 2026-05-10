@@ -235,9 +235,7 @@ impl<P: Params + 'static> Plugin for HotShell<P> {
             plugin.load_state(data);
             // Plugin-side cache invalidation runs in the same
             // `&mut` borrow window so the next `process()` block
-            // sees the refreshed caches. The companion
-            // `Editor::state_changed` is fired separately by
-            // format wrappers when a custom editor is open.
+            // sees the refreshed caches.
             plugin.state_changed();
         }
     }

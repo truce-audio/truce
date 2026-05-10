@@ -24,8 +24,7 @@
 //! - Cross-crate `#[nested]` (a nested Params type from a different
 //!   crate) is unsupported: the aggregator looks for sidecars in the
 //!   plugin's own `<target>/lv2-meta/<crate>/` directory and errors
-//!   out if a referenced type is missing. Documented in
-//!   `docs/reference/linux-dual-arch.md`.
+//!   out if a referenced type is missing.
 //! - Audio in/out counts default to category-derived stereo. Plugins
 //!   with custom `bus_layouts!` get the wrong port count in the TTL.
 //!   Future: read `audio_in` / `audio_out` from `[[plugin]]` in

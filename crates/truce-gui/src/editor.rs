@@ -984,8 +984,9 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
         // On macOS, wrap the teardown in an autoreleasepool so
         // anything baseview / wgpu / AppKit autoreleases during the
         // view's cleanup drains here rather than escaping into the
-        // host's outer pool. See `../baseview/docs/pro-tools-aax-fix.md`
-        // for why this matters on AAX.
+        // host's outer pool. AAX / Pro Tools is the canonical host
+        // that walks back through residual responders before the
+        // pool drains, surfacing use-after-free crashes.
         #[cfg(target_os = "macos")]
         let pool = unsafe {
             unsafe extern "C" {
