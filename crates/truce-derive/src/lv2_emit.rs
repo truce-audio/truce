@@ -362,9 +362,14 @@ fn audio_io_for(c: truce_build::lv2::Lv2Category) -> (u32, u32) {
 
 fn parse_category(s: &str) -> truce_build::lv2::Lv2Category {
     use truce_build::lv2::Lv2Category;
+    // Synonyms must match `truce_derive::plugin_info!` — `truce.toml`'s
+    // `category = "midi"` resolves to `PluginCategory::NoteEffect` at
+    // runtime, so the sidecar TTL has to agree or the LV2 plugin ends
+    // up with the wrong port set (missing `midi_out` for note effects,
+    // no MIDI decode for instruments).
     match s.to_ascii_lowercase().as_str() {
         "instrument" => Lv2Category::Instrument,
-        "noteeffect" | "note_effect" | "note-effect" => Lv2Category::NoteEffect,
+        "midi" | "noteeffect" | "note_effect" | "note-effect" => Lv2Category::NoteEffect,
         "analyzer" | "analyser" => Lv2Category::Analyzer,
         "tool" | "utility" => Lv2Category::Tool,
         _ => Lv2Category::Effect,
