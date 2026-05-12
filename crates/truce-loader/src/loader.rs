@@ -153,12 +153,25 @@ impl<S: Sample> NativeLoader<S> {
             }
         };
 
-        // macOS: ad-hoc codesign (required by SIP).
+        // macOS: ad-hoc codesign (required by SIP). If the temp path
+        // is non-UTF-8 (rare — `std::env::temp_dir()` usually lives
+        // under a UTF-8 prefix, but the user can override via env)
+        // `to_str` fails and codesign would silently no-op against an
+        // empty path. The `Library::new` call below then fails on
+        // an unsigned dylib with an opaque SIP error, two error
+        // sites from the root cause. Log up front so the cause is
+        // visible.
         #[cfg(target_os = "macos")]
-        {
+        if let Some(temp_str) = temp.to_str() {
             let _ = std::process::Command::new("codesign")
-                .args(["--sign", "-", "--force", temp.to_str().unwrap_or("")])
+                .args(["--sign", "-", "--force", temp_str])
                 .output();
+        } else {
+            log::warn!(
+                "codesign skipped: temp dylib path is not valid UTF-8 ({}); \
+                 dlopen will likely fail under SIP",
+                temp.display()
+            );
         }
 
         let lib = match unsafe { Library::new(&temp) } {

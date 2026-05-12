@@ -1000,13 +1000,21 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
         // Narrow + copy back to host f32 outputs if the plugin ran
         // in f64. No-op when `P::Sample == f32`: the plugin wrote
         // directly into host memory and `output_narrow` is empty.
+        // `zip` over the two slices instead of indexing — if either
+        // vector is shorter (it shouldn't be, but a future drift
+        // would hit this), iteration stops at the min cleanly
+        // rather than panicking on an out-of-bounds index.
         if !same_precision {
-            for (i, host_ptr) in data.host_out_ptrs.iter().enumerate() {
-                if host_ptr.is_null() || i >= data.output_narrow.len() {
+            debug_assert_eq!(
+                data.host_out_ptrs.len(),
+                data.output_narrow.len(),
+                "CLAP narrow-back: host_out_ptrs / output_narrow drifted out of lockstep",
+            );
+            for (host_ptr, plugin) in data.host_out_ptrs.iter().zip(data.output_narrow.iter()) {
+                if host_ptr.is_null() {
                     continue;
                 }
                 let host = std::slice::from_raw_parts_mut(*host_ptr, num_frames);
-                let plugin = &data.output_narrow[i];
                 for (h, &p) in host.iter_mut().zip(plugin.iter()) {
                     *h = p.to_f32();
                 }

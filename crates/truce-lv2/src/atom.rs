@@ -209,6 +209,19 @@ impl<'a> AtomSequenceReader<'a> {
                 let padded = (entry_total + 7) & !7;
 
                 if let Some(v) = self.read_atom_number(value_atom.type_, value_data, value_size) {
+                    // NaN slipping through `clamp` would narrow to 0 on
+                    // `as u8` and propagate through every consumer of
+                    // `position_samples` / `tempo` as silent data loss.
+                    // Skip non-finite values entirely; consumers fall
+                    // back to whatever was previously set (typically the
+                    // wrapper's TransportInfo default).
+                    if !v.is_finite() {
+                        offset += padded;
+                        if padded == 0 {
+                            break;
+                        }
+                        continue;
+                    }
                     if key == self.urid.time_beats_per_minute {
                         info.tempo = v;
                     } else if key == self.urid.time_bar {

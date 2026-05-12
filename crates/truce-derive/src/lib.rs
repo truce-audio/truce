@@ -1862,8 +1862,19 @@ pub fn derive_state(input: TokenStream) -> TokenStream {
     let read_fields: Vec<_> = field_idents.iter().map(|ident| {
         quote! {
             if field_idx < stored_count {
-                if let Some(len_bytes) = cursor.read_bytes(4) {
-                    let field_len = u32::from_le_bytes(len_bytes.try_into().unwrap()) as usize;
+                // `cursor.read_bytes(4)` returns a 4-byte slice when
+                // `Some` (or `None` if the cursor is short). The
+                // `try_into` to `[u8; 4]` therefore can't fail when
+                // we're inside the `if let Some(_)` arm — but
+                // routing through `.ok()` instead of `.unwrap()`
+                // keeps the panic path closed for the case where a
+                // future change to `read_bytes` relaxes its
+                // length-guarantee. Matches the `stored_count` site
+                // a few lines down.
+                if let Some(len_bytes) = cursor.read_bytes(4)
+                    && let Ok(len_arr) = <[u8; 4]>::try_from(len_bytes)
+                {
+                    let field_len = u32::from_le_bytes(len_arr) as usize;
                     let pos_before = cursor.remaining();
                     if let Some(val) = ::truce::core::custom_state::StateField::read_field(&mut cursor) {
                         result.#ident = val;
