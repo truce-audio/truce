@@ -75,7 +75,7 @@ impl<P: Params + ?Sized> EditorUi<P> for WithStateChanged<P> {
 ///
 /// Generic in the plugin's `Params` type so the closure / struct UI can
 /// `Deref` straight to typed parameter fields:
-/// `state.gain.smoothed_next()`, `state.bypass.value()`. Stores its own
+/// `state.gain.read()`, `state.bypass.value()`. Stores its own
 /// `Arc<P>` from construction; rebuilds the typed `PluginContext<P>`
 /// every time the host opens the window via [`PluginContext::with_params`].
 pub struct EguiEditor<P: Params + ?Sized> {

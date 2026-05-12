@@ -124,7 +124,7 @@ pub struct {struct_name}Params {
 const MIDI_PARAMS_STRUCT: &str = r#"#[derive(Params)]
 pub struct {struct_name}Params {
     #[param(name = "Semitones", range = "discrete(-12, 12)")]
-    pub semitones: FloatParam,
+    pub semitones: IntParam,
 }"#;
 
 const EFFECT_PROCESS_BODY: &str = r"    fn process(&mut self, buffer: &mut AudioBuffer, _events: &EventList,
@@ -172,7 +172,7 @@ const MIDI_PROCESS_BODY: &str = r"    fn process(&mut self, _buffer: &mut AudioB
         for event in events.iter() {
             match &event.body {
                 EventBody::NoteOn { group, channel, note, velocity } => {
-                    let shifted = (*note as i16 + self.params.semitones.value() as i16)
+                    let shifted = (i32::from(*note) + self.params.semitones.value_i32())
                         .clamp(0, 127) as u8;
                     context.output_events.push(Event {
                         sample_offset: event.sample_offset,
@@ -182,7 +182,7 @@ const MIDI_PROCESS_BODY: &str = r"    fn process(&mut self, _buffer: &mut AudioB
                     });
                 }
                 EventBody::NoteOff { group, channel, note, velocity } => {
-                    let shifted = (*note as i16 + self.params.semitones.value() as i16)
+                    let shifted = (i32::from(*note) + self.params.semitones.value_i32())
                         .clamp(0, 127) as u8;
                     context.output_events.push(Event {
                         sample_offset: event.sample_offset,

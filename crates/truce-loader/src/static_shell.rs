@@ -34,6 +34,15 @@ pub struct StaticShell<P: Params, L: PluginLogicCore<S>, S: Sample = f32> {
     _sample: std::marker::PhantomData<fn() -> S>,
 }
 
+// SAFETY: `StaticShell` owns `Arc<P>` (params, `Sync` by the
+// `Params` trait contract), `L` (the user's logic — `Send + 'static`
+// per the `PluginLogicCore` bound), an `AtomicU32`-backed meters
+// array, and a `PhantomData<fn() -> S>`. No raw pointers, no
+// `!Send` fields, no interior mutability that escapes the shell's
+// own `&mut` borrows. The host contract that format wrappers
+// invoke methods on a single thread at a time per instance is what
+// keeps the embedded `L` safe to access without an inner mutex —
+// same model `HotShell` uses through `parking_lot::Mutex`.
 unsafe impl<P: Params, L: PluginLogicCore<S>, S: Sample> Send for StaticShell<P, L, S> {}
 
 impl<P: Params + Default + 'static, L: PluginLogicCore<S> + 'static, S: Sample>

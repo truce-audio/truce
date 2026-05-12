@@ -283,7 +283,7 @@ impl EditorBridge for ClosureBridge {
 /// - An `Arc<dyn EditorBridge>` — the host-plugin protocol surface
 ///   (begin/set/end edit, `request_resize`, `get_state`, transport, …).
 /// - An `Arc<P>` typed parameter store — plugin authors `Deref` to
-///   `&P` and read fields directly: `state.gain.smoothed_next()`.
+///   `&P` and read fields directly: `state.gain.read()`.
 ///
 /// The default `P = dyn Params` keeps the trait-object boundary
 /// (`Editor::open(ctx: PluginContext)`) one-typed; editor crates
@@ -415,7 +415,7 @@ impl<P: Params + 'static> PluginContext<P> {
 }
 
 /// Plugin authors read parameter fields directly via `Deref`:
-/// `state.gain.smoothed_next()`, `state.bypass.value()`. The `state`
+/// `state.gain.read()`, `state.bypass.value()`. The `state`
 /// here is `&PluginContext<MyParams>` and `Deref::Target = MyParams`.
 impl<P: ?Sized> Deref for PluginContext<P> {
     type Target = P;

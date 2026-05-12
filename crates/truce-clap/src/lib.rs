@@ -381,10 +381,46 @@ unsafe extern "C" fn clap_plugin_activate<P: PluginExport>(
     unsafe {
         let data = data_from_plugin::<P>(plugin);
         data.sample_rate = sample_rate;
-        data.max_block_size = max_frames_count as usize;
-        data.plugin.reset(sample_rate, max_frames_count as usize);
+        let max_block = max_frames_count as usize;
+        data.max_block_size = max_block;
+        data.plugin.reset(sample_rate, max_block);
         data.plugin.params().set_sample_rate(sample_rate);
         data.plugin.params().snap_smoothers();
+
+        // Pre-grow the widening / narrowing scratch on the f64 path.
+        // Without this, the first audio block after `activate` hits
+        // the global allocator inside `clap_plugin_process` to grow
+        // the outer Vec and each channel's inner Vec — a real RT
+        // hazard on the first block post-reload. The outer-Vec
+        // capacity is already reserved in `create_plugin`; what we
+        // do here is push the inner per-channel `Vec<P::Sample>`s up
+        // to `max_block_size` frames so the per-block `.clear() +
+        // .reserve()` path is no-op-on-the-allocator.
+        let same_precision = std::any::TypeId::of::<P::Sample>() == std::any::TypeId::of::<f32>();
+        if !same_precision {
+            let max_in = data.input_widen.capacity();
+            let max_out = data.output_narrow.capacity();
+            while data.input_widen.len() < max_in {
+                data.input_widen.push(Vec::with_capacity(max_block));
+            }
+            for buf in &mut data.input_widen {
+                if buf.capacity() < max_block {
+                    buf.reserve_exact(max_block - buf.capacity());
+                }
+            }
+            while data.output_narrow.len() < max_out {
+                data.output_narrow.push(Vec::with_capacity(max_block));
+            }
+            for buf in &mut data.output_narrow {
+                if buf.capacity() < max_block {
+                    buf.reserve_exact(max_block - buf.capacity());
+                }
+            }
+            while data.host_out_ptrs.len() < max_out {
+                data.host_out_ptrs.push(std::ptr::null_mut());
+            }
+        }
+
         true
     }
 }

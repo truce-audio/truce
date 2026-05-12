@@ -143,6 +143,15 @@ impl AbiCanary {
 }
 
 fn discriminant_byte<T>(value: &T) -> u8 {
+    // SAFETY: `value: &T` points to a valid `T`, and any `T` has at
+    // least its first byte readable (alignment + size > 0). The
+    // discriminant of a `#[repr(...)]`-tagged or default-repr enum
+    // lives at offset 0, so the first byte is exactly the value the
+    // canary wants to compare. For non-enum `T` the byte is whatever
+    // the layout puts there — fine, because the canary fields that
+    // call this (`result_*_disc`) only pass `ProcessStatus` variants
+    // and only compare the result against the matching dylib reading
+    // of the same call.
     unsafe { *ptr::from_ref::<T>(value).cast::<u8>() }
 }
 

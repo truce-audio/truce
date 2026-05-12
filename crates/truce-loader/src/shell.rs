@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::time::Duration;
 
 use parking_lot::Mutex;
 use truce_core::buffer::AudioBuffer;
@@ -28,6 +29,15 @@ macro_rules! hot_debug {
         eprintln!($($arg)*);
     };
 }
+
+/// How long a GUI / main-thread call into the loader (editor open,
+/// state save / load) waits before giving up and returning the
+/// "loader busy" fallback. Sized to span a typical audio block
+/// (≪ 50 ms) without dragging through a full hot-reload window
+/// (codesign + dlopen + canary verify can run 100s of ms on a 5–20
+/// MB dylib). Matches the watcher's own `LOCK_WAIT` so the two
+/// sides of the mutex have the same patience.
+const GUI_LOCK_WAIT: Duration = Duration::from_millis(50);
 
 // ---------------------------------------------------------------------------
 // HotShell — the Plugin implementation that delegates to the dylib
@@ -64,6 +74,14 @@ pub struct HotShell<P: Params, S: Sample = f32> {
     tail_cache: AtomicU32,
 }
 
+// SAFETY: `HotShell` holds `Arc<P>` (params, `Sync` by the trait
+// contract on `Params`), `Arc<Mutex<NativeLoader<S>>>` (already
+// `Send + Sync`), atomics, and a `meters` array of `AtomicU32`. The
+// `Mutex` is the synchronisation point for every access to the
+// underlying `Box<dyn PluginLogicCore<S>>` — audio thread takes
+// `try_lock`, GUI thread takes `try_lock_for(GUI_LOCK_WAIT)`, file
+// watcher takes a blocking `lock_for`. No raw pointers, no
+// interior mutability that escapes the mutex.
 unsafe impl<P: Params, S: Sample> Send for HotShell<P, S> {}
 
 impl<P: Params + 'static, S: Sample> HotShell<P, S> {
@@ -89,18 +107,27 @@ impl<P: Params + 'static, S: Sample> HotShell<P, S> {
     }
 
     /// Try to get a custom editor from the loaded plugin.
+    ///
+    /// Returns `None` if the loader mutex is held by the watcher thread
+    /// for longer than [`GUI_LOCK_WAIT`] — i.e., a hot-reload is in
+    /// flight. Hosts that retry editor creation across the host's UI
+    /// idle loop (CLAP, VST3, AU) pick up the editor on a later tick;
+    /// the alternative is a UI hang for the full reload window (codesign
+    /// + dlopen + canary verify ≈ a few hundred ms on a 5–20 MB dylib).
     #[must_use]
     pub fn try_custom_editor(&self) -> Option<Box<dyn Editor>> {
-        let loader = self.loader.lock();
+        let loader = self.loader.try_lock_for(GUI_LOCK_WAIT)?;
         let plugin = loader.plugin()?;
         plugin.custom_editor()
     }
 
     /// Try to create a `BuiltinEditor` from the loaded plugin's layout.
-    /// Returns `None` if no plugin is loaded or the layout has zero size.
+    /// Returns `None` if no plugin is loaded, the layout has zero size,
+    /// or the loader mutex was held longer than [`GUI_LOCK_WAIT`] (see
+    /// [`Self::try_custom_editor`] for the trade-off).
     #[must_use]
     pub fn try_builtin_editor(&self) -> Option<truce_gui::editor::BuiltinEditor<P>> {
-        let loader = self.loader.lock();
+        let loader = self.loader.try_lock_for(GUI_LOCK_WAIT)?;
         let plugin = loader.plugin()?;
         let layout = plugin.layout();
         if layout.width == 0 || layout.height == 0 {
@@ -232,7 +259,15 @@ impl<P: Params + 'static, S: Sample> Plugin for HotShell<P, S> {
     }
 
     fn save_state(&self) -> Vec<u8> {
-        let loader = self.loader.lock();
+        // Hosts call this on the main / UI thread (e.g. project save,
+        // preset capture). Bounded `try_lock_for` keeps a concurrent
+        // hot-reload from hanging the host for the full reload window;
+        // on miss the host receives an empty blob — same observable
+        // shape as a plugin that has no extra state. Matches the host
+        // contract better than a UI hang.
+        let Some(loader) = self.loader.try_lock_for(GUI_LOCK_WAIT) else {
+            return Vec::new();
+        };
         loader
             .plugin()
             .map(truce_gui::PluginLogicCore::save_state)
@@ -240,7 +275,16 @@ impl<P: Params + 'static, S: Sample> Plugin for HotShell<P, S> {
     }
 
     fn load_state(&mut self, data: &[u8]) -> Result<(), truce_core::state::StateLoadError> {
-        let mut loader = self.loader.lock();
+        // Same trade-off as `save_state`: bounded wait keeps the UI
+        // thread from blocking through a reload. On timeout we report
+        // success-with-no-op so the host doesn't surface a load
+        // failure for what is effectively a reload race. If the host
+        // load was carrying real preset bytes, the watcher's reload
+        // will pull them back from the next user-driven preset
+        // refresh; the alternative (UI hang) is worse.
+        let Some(mut loader) = self.loader.try_lock_for(GUI_LOCK_WAIT) else {
+            return Ok(());
+        };
         let Some(plugin) = loader.plugin_mut() else {
             return Ok(());
         };

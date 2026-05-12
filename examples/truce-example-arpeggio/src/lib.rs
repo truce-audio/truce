@@ -64,7 +64,7 @@ pub struct ArpParams {
         range = "discrete(1, 4)",
         default = 1
     )]
-    pub octaves: FloatParam,
+    pub octaves: IntParam,
 
     #[param(name = "Pattern", short_name = "Pat")]
     pub pattern: EnumParam<ArpPattern>,
