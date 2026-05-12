@@ -10,7 +10,7 @@ use iced::{Color, Element, Length, Point, Rectangle, Renderer, Theme, alignment,
 use crate::param_cache::ParamCache;
 use crate::param_message::{Message, ParamMessage};
 use crate::theme;
-use truce_core::cast::param_f32;
+use truce_core::Float;
 use truce_params::Params;
 
 const START_ANGLE: f32 = std::f32::consts::PI * 0.75;
@@ -66,7 +66,7 @@ impl<'a, M: Clone + Debug + 'static> KnobWidget<'a, M> {
         let total_h = self.size + 22.0; // Extra space for label + value text
         let program = KnobProgram {
             id: self.id,
-            value: param_f32(self.value),
+            value: f32::from_f64(self.value),
             display: self.display,
             label: self.label.unwrap_or("").to_string(),
             font: self.font,

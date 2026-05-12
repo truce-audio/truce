@@ -9,7 +9,7 @@ use std::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use truce_core::cast::param_f32;
+use truce_core::Float;
 use truce_core::editor::{Editor, PluginContext, RawWindowHandle};
 use truce_params::Params;
 
@@ -269,16 +269,16 @@ impl<P: Params + 'static> BuiltinEditor<P> {
         let get_param: Box<dyn Fn(u32) -> f32> = match &ctx {
             Some(c) => {
                 let c = c.clone();
-                Box::new(move |id| param_f32(c.get_param(id)))
+                Box::new(move |id| f32::from_f64(c.get_param(id)))
             }
-            None => Box::new(move |id| param_f32(p_get.get_normalized(id).unwrap_or(0.0))),
+            None => Box::new(move |id| f32::from_f64(p_get.get_normalized(id).unwrap_or(0.0))),
         };
         let get_param_plain: Box<dyn Fn(u32) -> f32> = match &ctx {
             Some(c) => {
                 let c = c.clone();
-                Box::new(move |id| param_f32(c.get_param_plain(id)))
+                Box::new(move |id| f32::from_f64(c.get_param_plain(id)))
             }
-            None => Box::new(move |id| param_f32(p_get_plain.get_plain(id).unwrap_or(0.0))),
+            None => Box::new(move |id| f32::from_f64(p_get_plain.get_plain(id).unwrap_or(0.0))),
         };
         let format_param: Box<dyn Fn(u32) -> String> = match &ctx {
             Some(c) => {
@@ -320,7 +320,7 @@ impl<P: Params + 'static> BuiltinEditor<P> {
                 .iter()
                 .find(|i| i.id == id)
                 .map_or(0.0, |info| {
-                    param_f32(info.range.normalize(info.default_plain))
+                    f32::from_f64(info.range.normalize(info.default_plain))
                 })
         });
         let next_discrete_normalized: Box<dyn Fn(u32) -> f32> = Box::new(move |id| {
@@ -330,7 +330,7 @@ impl<P: Params + 'static> BuiltinEditor<P> {
             let plain = p_next.get_plain(id).unwrap_or(0.0);
             let max = info.range.max();
             let next = if plain >= max { 0.0 } else { plain + 1.0 };
-            param_f32(info.range.normalize(next))
+            f32::from_f64(info.range.normalize(next))
         });
         let param_name: Box<dyn Fn(u32) -> String> = Box::new(move |id| {
             p_name
@@ -531,10 +531,10 @@ pub fn update_interaction<P: Params + 'static>(editor: &mut BuiltinEditor<P>) {
     }
     for region in &mut editor.interaction.knob_regions {
         if let Some(ref ctx) = editor.context {
-            region.normalized_value = param_f32(ctx.get_param(region.param_id));
+            region.normalized_value = f32::from_f64(ctx.get_param(region.param_id));
         } else {
             region.normalized_value =
-                param_f32(editor.params.get_normalized(region.param_id).unwrap_or(0.0));
+                f32::from_f64(editor.params.get_normalized(region.param_id).unwrap_or(0.0));
         }
     }
 }

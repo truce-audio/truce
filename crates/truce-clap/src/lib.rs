@@ -72,7 +72,8 @@ use clap_sys::version::CLAP_VERSION;
 
 use truce_core::buffer::AudioBuffer;
 use truce_core::bus::ChannelConfig;
-use truce_core::cast::param_f32;
+use truce_core::plugin::Plugin;
+use truce_core::Float;
 use truce_core::editor::{ClosureBridge, Editor, PluginContext, RawWindowHandle, SendPtr};
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
@@ -197,8 +198,23 @@ struct ClapPluginData<P: PluginExport> {
     /// actually point into the host's per-block buffers; each
     /// `process` call rebuilds them and clears them on exit so no
     /// dangling pointer lives between blocks.
-    input_slices: Vec<&'static [f32]>,
-    output_slices: Vec<&'static mut [f32]>,
+    input_slices: Vec<&'static [<P as Plugin>::Sample]>,
+    output_slices: Vec<&'static mut [<P as Plugin>::Sample]>,
+    /// Per-channel widening scratch. Empty when `P::Sample == f32`
+    /// (slices point straight into host memory). When `P::Sample ==
+    /// f64`, each channel's f32 host input is widened into the
+    /// matching slot here and the slice in `input_slices` points
+    /// there.
+    input_widen: Vec<Vec<<P as Plugin>::Sample>>,
+    /// Per-channel narrowing scratch. Same shape: only used when
+    /// `P::Sample == f64`, in which case the plugin writes here and
+    /// the wrapper copies + casts back to the host's f32 output
+    /// pointers after `process()` returns.
+    output_narrow: Vec<Vec<<P as Plugin>::Sample>>,
+    /// Cached pointers to host output channels, captured at slice
+    /// build time so the post-`process` narrow loop can copy back
+    /// without re-walking the CLAP bus structures.
+    host_out_ptrs: Vec<*mut f32>,
 }
 
 // ---------------------------------------------------------------------------
@@ -533,7 +549,7 @@ unsafe fn convert_input_events<P: PluginExport>(
                             group: 0,
                             channel,
                             note,
-                            velocity: denorm_7bit(param_f32(note_event.velocity)),
+                            velocity: denorm_7bit(f32::from_f64(note_event.velocity)),
                         },
                     });
                 }
@@ -547,7 +563,7 @@ unsafe fn convert_input_events<P: PluginExport>(
                             group: 0,
                             channel,
                             note,
-                            velocity: denorm_7bit(param_f32(note_event.velocity)),
+                            velocity: denorm_7bit(f32::from_f64(note_event.velocity)),
                         },
                     });
                 }
@@ -829,41 +845,93 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
         // skipped — skipping would shift downstream buses' channel
         // indices and silently re-route audio onto the wrong bus for
         // multi-bus plugins.
+        //
+        // CLAP audio is always `f32` on the wire. If `P::Sample` is
+        // also `f32`, slices point straight at host memory (zero-
+        // copy). If `P::Sample` is `f64`, each channel's host input
+        // is widened into per-channel scratch in `input_widen`, and
+        // the matching `output_narrow` slot is what the plugin
+        // writes into — we copy + narrow back to the host's f32
+        // output pointers after `process()` returns. Compares
+        // `TypeId` at runtime; the same-precision path stays a
+        // single pointer cast.
+        let same_precision = std::any::TypeId::of::<P::Sample>()
+            == std::any::TypeId::of::<f32>();
+
         data.input_slices.clear();
+        data.input_widen.clear();
+        // Pre-grow widening scratch on the f64 path. Cheap when
+        // `Vec`s already have capacity; a one-time alloc per channel
+        // on the first block that touches it.
+        let mut flat_in_idx = 0usize;
         for bus_idx in 0..proc.audio_inputs_count {
             let buf = &*proc.audio_inputs.add(bus_idx as usize);
             for ch in 0..buf.channel_count {
-                let slice: &[f32] = if buf.data32.is_null() {
-                    &[]
+                let host_ptr: *const f32 = if buf.data32.is_null() {
+                    std::ptr::null()
                 } else {
-                    let ptr = *buf.data32.add(ch as usize);
-                    if ptr.is_null() {
-                        &[]
-                    } else {
-                        std::slice::from_raw_parts(ptr, num_frames)
-                    }
+                    *buf.data32.add(ch as usize)
                 };
-                data.input_slices
-                    .push(transmute::<&[f32], &'static [f32]>(slice));
+                let slice: &[P::Sample] = if host_ptr.is_null() {
+                    &[]
+                } else if same_precision {
+                    // SAFETY: runtime check above proved P::Sample == f32.
+                    let raw = host_ptr.cast::<P::Sample>();
+                    std::slice::from_raw_parts(raw, num_frames)
+                } else {
+                    while data.input_widen.len() <= flat_in_idx {
+                        data.input_widen.push(Vec::with_capacity(num_frames));
+                    }
+                    let scratch = &mut data.input_widen[flat_in_idx];
+                    scratch.clear();
+                    scratch.reserve(num_frames);
+                    let host = std::slice::from_raw_parts(host_ptr, num_frames);
+                    for &h in host {
+                        scratch.push(P::Sample::from_f32(h));
+                    }
+                    // SAFETY: `scratch` lives in `data` which outlives this block.
+                    std::slice::from_raw_parts(scratch.as_ptr(), num_frames)
+                };
+                data.input_slices.push(transmute::<
+                    &[P::Sample],
+                    &'static [P::Sample],
+                >(slice));
+                flat_in_idx += 1;
             }
         }
 
         data.output_slices.clear();
+        data.output_narrow.clear();
+        data.host_out_ptrs.clear();
+        let mut flat_out_idx = 0usize;
         for bus_idx in 0..proc.audio_outputs_count {
             let buf = &mut *proc.audio_outputs.add(bus_idx as usize);
             for ch in 0..buf.channel_count {
-                let slice: &mut [f32] = if buf.data32.is_null() {
-                    &mut []
+                let host_ptr: *mut f32 = if buf.data32.is_null() {
+                    std::ptr::null_mut()
                 } else {
-                    let ptr = *buf.data32.add(ch as usize);
-                    if ptr.is_null() {
-                        &mut []
-                    } else {
-                        std::slice::from_raw_parts_mut(ptr, num_frames)
-                    }
+                    *buf.data32.add(ch as usize)
                 };
-                data.output_slices
-                    .push(transmute::<&mut [f32], &'static mut [f32]>(slice));
+                data.host_out_ptrs.push(host_ptr);
+                let slice: &mut [P::Sample] = if host_ptr.is_null() {
+                    &mut []
+                } else if same_precision {
+                    let raw = host_ptr.cast::<P::Sample>();
+                    std::slice::from_raw_parts_mut(raw, num_frames)
+                } else {
+                    while data.output_narrow.len() <= flat_out_idx {
+                        data.output_narrow.push(Vec::with_capacity(num_frames));
+                    }
+                    let scratch = &mut data.output_narrow[flat_out_idx];
+                    scratch.clear();
+                    scratch.resize(num_frames, P::Sample::default());
+                    std::slice::from_raw_parts_mut(scratch.as_mut_ptr(), num_frames)
+                };
+                data.output_slices.push(transmute::<
+                    &mut [P::Sample],
+                    &'static mut [P::Sample],
+                >(slice));
+                flat_out_idx += 1;
             }
         }
 
@@ -875,9 +943,14 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
         // pattern as `RawBufferScratch::build`.
         let data_ptr: *mut ClapPluginData<P> = data;
         let s = &mut *data_ptr;
-        let mut audio_buffer = transmute::<AudioBuffer<'static>, AudioBuffer<'_>>(
-            AudioBuffer::from_slices(&s.input_slices, &mut s.output_slices, num_frames),
-        );
+        let mut audio_buffer = transmute::<
+            AudioBuffer<'static, P::Sample>,
+            AudioBuffer<'_, P::Sample>,
+        >(AudioBuffer::from_slices(
+            &s.input_slices,
+            &mut s.output_slices,
+            num_frames,
+        ));
 
         data.output_events.clear();
 
@@ -894,6 +967,23 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
         let status = data
             .plugin
             .process(&mut audio_buffer, &data.event_list, &mut context);
+
+        // Narrow + copy back to host f32 outputs if the plugin ran
+        // in f64. No-op when `P::Sample == f32`: the plugin wrote
+        // directly into host memory and `output_narrow` is empty.
+        if !same_precision {
+            for (i, host_ptr) in data.host_out_ptrs.iter().enumerate() {
+                if host_ptr.is_null() || i >= data.output_narrow.len() {
+                    continue;
+                }
+                let host =
+                    std::slice::from_raw_parts_mut(*host_ptr, num_frames);
+                let plugin = &data.output_narrow[i];
+                for (h, &p) in host.iter_mut().zip(plugin.iter()) {
+                    *h = p.to_f32();
+                }
+            }
+        }
 
         // Refresh latency / tail caches so the host's main-thread
         // queries don't have to call into `data.plugin`.
@@ -2025,6 +2115,9 @@ pub unsafe fn create_plugin_instance<P: PluginExport>(
         host_scale_set_by_host: false,
         input_slices: Vec::with_capacity(max_in),
         output_slices: Vec::with_capacity(max_out),
+        input_widen: Vec::with_capacity(max_in),
+        output_narrow: Vec::with_capacity(max_out),
+        host_out_ptrs: Vec::with_capacity(max_out),
     });
 
     let clap = Box::new(clap_plugin {

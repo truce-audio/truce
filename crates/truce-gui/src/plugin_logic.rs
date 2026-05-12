@@ -12,6 +12,7 @@ use truce_core::editor::Editor;
 use truce_core::events::EventList;
 use truce_core::process::{ProcessContext, ProcessStatus};
 use truce_core::state::StateLoadError;
+use truce_params::sample::Sample;
 
 use crate::interaction::WidgetRegion;
 use crate::layout::GridLayout;
@@ -32,7 +33,7 @@ use crate::widgets::WidgetType;
 /// `layout` / `render` / `custom_editor` at their defaults — the
 /// format wrappers fall back to a minimal built-in editor that
 /// reads parameters every frame.
-pub trait PluginLogic: Send + 'static {
+pub trait PluginLogic<S: Sample = f32>: Send + 'static {
     // ---- DSP / lifecycle ----
 
     /// Opt into zero-copy in-place I/O. When this returns `true`,
@@ -75,9 +76,15 @@ pub trait PluginLogic: Send + 'static {
 
     /// Process one block of audio. Real-time — no allocations,
     /// locks, or I/O.
+    ///
+    /// The buffer's element type `S` follows the prelude:
+    /// `prelude` / `prelude32` → `f32`; `prelude64` → `f64`. Plugins
+    /// that pick `f64` get the wrapper to widen/narrow at the block
+    /// boundary so user code stays cast-free; `prelude64m` keeps
+    /// `S = f32` (and reads params at `f64` for stable math).
     fn process(
         &mut self,
-        buffer: &mut AudioBuffer,
+        buffer: &mut AudioBuffer<'_, S>,
         events: &EventList,
         context: &mut ProcessContext,
     ) -> ProcessStatus;

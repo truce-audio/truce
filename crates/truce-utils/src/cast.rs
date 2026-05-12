@@ -69,55 +69,14 @@ pub const fn size_of_u32<T>() -> u32 {
     n as u32
 }
 
-/// Narrow a host-facing `f64` parameter / scale value to the `f32`
-/// the DSP loop and renderer expect.
-///
-/// The host parameter API surface is `f64` (CLAP, VST3, AU all
-/// deliver `double`); per-sample DSP and tiny-skia rendering work in
-/// `f32`. This helper hides that bridge so call sites don't repeat
-/// `as f32` with a `#[allow]`.
-///
-/// Truncation is invisible in practice — parameter values stay in
-/// `[-1e10, 1e10]` and `f32` carries 7 decimals of precision. NaN
-/// debug-asserts; in release it round-trips through `as f32` (which
-/// preserves NaN). Inf passes through unchanged.
-#[inline]
-#[must_use]
-pub fn param_f32(v: f64) -> f32 {
-    debug_assert!(
-        !v.is_nan(),
-        "param_f32: NaN input — caller's f64 parameter value is uninitialized?",
-    );
-    v as f32
-}
-
-/// Narrow an `f64` audio sample to the `f32` the output buffer holds.
-///
-/// Audio output buffers are `f32`; some DSP (synthesis with phase
-/// accumulators, biquad filter state, anything sensitive to denormals
-/// or cumulative round-off) runs in `f64` for headroom and writes
-/// each sample back through this helper. Distinct from
-/// [`param_f32`]: that one narrows host-facing parameter values; this
-/// one narrows per-sample audio. The signatures match but the
-/// contracts differ — keeping them separate stops a reviewer from
-/// having to infer which is which from the surrounding code.
-///
-/// `f32` carries ~7 decimals of precision, far below any audible
-/// threshold for sample values in `[-1.0, 1.0]`. NaN debug-asserts
-/// (a NaN sample would silently produce a NaN buffer that downstream
-/// hosts handle inconsistently); release round-trips through `as`
-/// (which preserves NaN). Inf passes through unchanged. The helper
-/// does **not** clamp to `[-1.0, 1.0]` — saturation policy is the
-/// caller's choice (hard clip vs. soft clip vs. let-it-blow-up).
-#[inline]
-#[must_use]
-pub fn sample_f32(v: f64) -> f32 {
-    debug_assert!(
-        !v.is_nan(),
-        "sample_f32: NaN audio sample — DSP loop produced an undefined value?",
-    );
-    v as f32
-}
+// `param_f32` / `sample_f32` historically lived here as separate
+// helpers that both narrowed `f64 → f32` with a NaN debug-assert.
+// The NaN guard now lives on `truce_core::Float::from_f64` (and
+// `Float::to_f32`), so callers narrow via `f32::from_f64(v)` (param
+// values, filter coefficients) or `s.to_f32()` (audio samples held
+// in a `Sample`-typed value). The named functions added no value
+// over the trait method beyond domain hinting in the call site,
+// which the surrounding code already provides via context.
 
 /// Convert a host-supplied sample-position `f64` to the `i64` truce's
 /// `TransportInfo::position_samples` carries.
@@ -329,25 +288,9 @@ mod tests {
         assert_eq!(discrete_index(2.0, 4), 3);
     }
 
-    #[test]
-    fn param_f32_basic() {
-        assert_eq!(param_f32(0.0), 0.0_f32);
-        assert_eq!(param_f32(1.0), 1.0_f32);
-        assert_eq!(param_f32(-1.0), -1.0_f32);
-        assert_eq!(param_f32(0.5), 0.5_f32);
-        assert!(param_f32(f64::INFINITY).is_infinite());
-        assert!(param_f32(f64::NEG_INFINITY).is_infinite());
-    }
-
-    #[test]
-    fn sample_f32_basic() {
-        assert_eq!(sample_f32(0.0), 0.0_f32);
-        assert_eq!(sample_f32(1.0), 1.0_f32);
-        assert_eq!(sample_f32(-1.0), -1.0_f32);
-        assert!(sample_f32(f64::INFINITY).is_infinite());
-        // Helper does not clamp — values outside [-1, 1] pass through.
-        assert_eq!(sample_f32(2.5), 2.5_f32);
-    }
+    // The historical `param_f32` / `sample_f32` round-trip tests now
+    // live alongside the trait method that replaces them, in
+    // `truce_core::sample::tests`.
 
     #[test]
     fn sample_pos_i64_basic() {

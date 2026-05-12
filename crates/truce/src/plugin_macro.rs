@@ -296,6 +296,11 @@ macro_rules! __plugin_hot_reload {
         }
 
         impl $crate::core::plugin::Plugin for __HotShellWrapper {
+            // Hot-reload pins to `f32` regardless of which prelude
+            // the plugin imports; the loader's `Box<dyn PluginLogic>`
+            // ABI takes the trait's default `S = f32`.
+            type Sample = f32;
+
             fn supports_in_place() -> bool
             where
                 Self: Sized,
@@ -335,7 +340,7 @@ macro_rules! __plugin_hot_reload {
 
             fn process(
                 &mut self,
-                buffer: &mut $crate::core::buffer::AudioBuffer,
+                buffer: &mut $crate::core::buffer::AudioBuffer<'_, f32>,
                 events: &$crate::core::events::EventList,
                 context: &mut $crate::core::process::ProcessContext,
             ) -> $crate::core::process::ProcessStatus {

@@ -184,7 +184,10 @@ struct AaxInstance<P: PluginExport> {
     prepared: bool,
     /// Reused per-block scratch for `RawBufferScratch::build`. Lives
     /// on the instance so the audio thread doesn't heap-allocate.
-    scratch: truce_core::buffer::RawBufferScratch,
+    ///
+    /// Parameterised by `P::Sample`; widens/narrows host-`f32`
+    /// buffers around `plugin.process()` for plugins on `prelude64`.
+    scratch: truce_core::buffer::RawBufferScratch<<P as truce_core::plugin::Plugin>::Sample>,
     editor: Option<Box<dyn Editor>>,
     /// Shared transport slot: audio thread writes each block, editor reads.
     transport_slot: Arc<truce_core::TransportSlot>,
@@ -824,6 +827,11 @@ pub unsafe fn _process<P: PluginExport>(
 
             inst.plugin
                 .process(&mut buffer, &inst.event_list, &mut context);
+            let _ = buffer;
+            // Narrow rendered f64 output back to host f32 when needed.
+            // No-op for `f32` plugins.
+            inst.scratch
+                .finish_widening_f32(outputs, num_out, len_u32(num_frames));
 
             // Refresh latency / tail caches so the host's main-thread
             // queries don't have to call into `inst.plugin`.

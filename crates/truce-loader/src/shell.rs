@@ -107,6 +107,13 @@ impl<P: Params + 'static> HotShell<P> {
 }
 
 impl<P: Params + 'static> Plugin for HotShell<P> {
+    // Hot-reload mode is `f32`-only for now: the dylib boundary
+    // (`Box<dyn PluginLogic>`) takes the trait's default `S = f32`,
+    // so a `prelude64` plugin built as a logic dylib won't satisfy
+    // the loader's expected vtable. Static-mode shells (the common
+    // case for release builds) support `f64` plugins end-to-end.
+    type Sample = f32;
+
     fn info() -> PluginInfo
     where
         Self: Sized,

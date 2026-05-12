@@ -4,6 +4,7 @@ use crate::editor::Editor;
 use crate::events::EventList;
 use crate::info::PluginInfo;
 use crate::process::{ProcessContext, ProcessStatus};
+use truce_params::sample::Sample;
 
 /// The format-facing plugin trait. **Plugin authors do NOT implement
 /// this directly.**
@@ -31,6 +32,24 @@ use crate::process::{ProcessContext, ProcessStatus};
 /// user's impl, except `editor()` which the macro builds from the
 /// user's `custom_editor` (preferred) or `layout` (built-in fallback).
 pub trait Plugin: Send + 'static {
+    /// The plugin's chosen audio sample precision. Either `f32` (the
+    /// default — matches host wire format for nearly all formats) or
+    /// `f64` (for plugins whose DSP path runs in `f64` end-to-end:
+    /// high-order biquads, oscillator phase accumulators, long-running
+    /// cumulative state).
+    ///
+    /// The format wrapper bridges between host buffer precision and
+    /// `Self::Sample` at the block boundary — so the plugin's
+    /// `process()` always receives `AudioBuffer<Self::Sample>`
+    /// regardless of what the host sent. See
+    /// `truce_core::RawBufferScratch` for the conversion machinery.
+    ///
+    /// Drive this from the prelude: `truce::prelude` / `truce::prelude32`
+    /// implies `f32`, `truce::prelude64` implies `f64`. The
+    /// `truce::plugin!` macro emits `type Sample = …;` based on
+    /// which prelude is in scope at the macro call site.
+    type Sample: Sample;
+
     /// Opt into zero-copy in-place I/O. When this returns `true`,
     /// the format wrapper skips its safety memcpy on host-aliased
     /// buffers and hands the plugin the raw shared memory through
@@ -82,7 +101,7 @@ pub trait Plugin: Send + 'static {
     /// Real-time audio processing.
     fn process(
         &mut self,
-        buffer: &mut AudioBuffer,
+        buffer: &mut AudioBuffer<'_, Self::Sample>,
         events: &EventList,
         context: &mut ProcessContext,
     ) -> ProcessStatus;

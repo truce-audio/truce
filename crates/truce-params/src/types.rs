@@ -1,6 +1,7 @@
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicU64, Ordering};
 
 use crate::info::ParamInfo;
+use crate::sample::Float;
 use crate::smooth::{Smoother, SmoothingStyle};
 
 /// Atomic f64 — wraps `AtomicU64` with f64 load/store.
@@ -46,67 +47,37 @@ impl FloatParam {
         }
     }
 
-    /// Current raw value, narrowed to `f32` for direct DSP use.
-    /// Safe from any thread.
-    ///
-    /// **Precision.** Storage is `f64` (preserved across the
-    /// `set_normalized` / `set_plain` / host-automation path); this
-    /// accessor narrows to `f32` because the typical caller is a
-    /// per-sample DSP loop that runs in `f32`. If you need full host
-    /// precision (parameter export, state serialization, the format
-    /// wrappers' read-back paths), call [`Self::value_f64`] instead.
-    // Param values stay in `[-1e10, 1e10]` in practice; f32 has enough
-    // precision for the per-sample DSP read.
-    #[allow(clippy::cast_possible_truncation)]
-    #[inline]
-    pub fn value(&self) -> f32 {
-        self.value.load() as f32
-    }
-
-    /// Current raw value at full `f64` precision. Safe from any
-    /// thread. Prefer this over [`Self::value`] when interoperating
-    /// with the host's `f64` automation channel or the
-    /// `Params::get_plain` API surface.
-    #[inline]
-    pub fn value_f64(&self) -> f64 {
-        self.value.load()
-    }
-
     /// Set the plain value (used by host automation).
     #[inline]
     pub fn set_value(&self, v: f64) {
         self.value.store(v);
     }
 
-    /// Next smoothed value. Call once per sample in `process()`.
-    ///
-    /// Returns `f32` because the typical caller is the per-sample DSP
-    /// loop, which works in `f32`. For loops that already run in
-    /// `f64` (filter biquads, MIDI-frequency math, host-side display),
-    /// use [`Self::smoothed_next_f64`] instead of widening the result
-    /// at every call site.
+    /// Internal: raw target value at `f64` precision (host-side
+    /// surface, before any narrowing for DSP use). Plugin authors
+    /// don't call this directly — they go through the prelude's
+    /// `read` / `value` / `current` instead, which have no
+    /// precision-suffix decisions at the call site.
+    #[doc(hidden)]
     #[inline]
-    pub fn smoothed_next(&self) -> f32 {
+    pub fn raw_target(&self) -> f64 {
+        self.value.load()
+    }
+
+    /// Internal: next smoother step at `f32` (the smoother's native
+    /// precision). See [`Self::raw_target`].
+    #[doc(hidden)]
+    #[inline]
+    pub fn raw_smoothed_next(&self) -> f32 {
         let target = self.value.load();
         self.smoother.next(target)
     }
 
-    /// Next smoothed value, widened to `f64`.
-    ///
-    /// Convenience wrapper over [`Self::smoothed_next`] for callers
-    /// whose surrounding math is `f64` (filter coefficients, decibel
-    /// utilities, anything from `truce_core::util` reaching for the
-    /// `f64` specialization). The smoother itself runs in `f32` —
-    /// this method just hides the widening cast that callers used to
-    /// open-code as `f64::from(param.smoothed_next())`.
+    /// Internal: current smoother value at `f32`. See
+    /// [`Self::raw_target`].
+    #[doc(hidden)]
     #[inline]
-    pub fn smoothed_next_f64(&self) -> f64 {
-        f64::from(self.smoothed_next())
-    }
-
-    /// Current smoothed value without advancing.
-    #[inline]
-    pub fn smoothed(&self) -> f32 {
+    pub fn raw_smoothed_current(&self) -> f32 {
         self.smoother.current()
     }
 
@@ -146,6 +117,84 @@ impl FloatParam {
     /// Parameter ID.
     pub fn id(&self) -> u32 {
         self.info.id
+    }
+}
+
+/// Precision-routed read accessors for [`FloatParam`] at `f32`.
+///
+/// The plugin prelude (`truce::prelude` / `truce::prelude32`) imports
+/// this trait via `pub use … as _;`, so plugin code reads:
+///
+/// ```ignore
+/// use truce::prelude::*;
+/// let gain = self.params.gain.read();   // f32 — no annotation needed
+/// ```
+///
+/// The trait's methods shadow nothing — `FloatParam` has no inherent
+/// `read` / `value` / `current`, so name resolution picks the one
+/// (and only one) trait that's in scope. Importing `prelude64`
+/// instead brings [`FloatParamReadF64`] into scope and the same
+/// source resolves to `f64`. Importing **both** preludes is a
+/// compile error (`multiple applicable items in scope`) — which is
+/// the right error for a file that hasn't committed to a precision.
+pub trait FloatParamReadF32 {
+    /// Next smoothed value. Call once per sample in `process()`.
+    #[must_use]
+    fn read(&self) -> f32;
+
+    /// Current smoothed value without advancing.
+    #[must_use]
+    fn current(&self) -> f32;
+
+    /// Raw target value (post-`set_normalized` / host automation),
+    /// not the smoothed output. Use [`Self::read`] / [`Self::current`]
+    /// in the DSP loop.
+    #[must_use]
+    fn value(&self) -> f32;
+}
+
+/// Precision-routed read accessors for [`FloatParam`] at `f64`. See
+/// [`FloatParamReadF32`] for the contract.
+pub trait FloatParamReadF64 {
+    #[must_use]
+    fn read(&self) -> f64;
+    #[must_use]
+    fn current(&self) -> f64;
+    #[must_use]
+    fn value(&self) -> f64;
+}
+
+impl FloatParamReadF32 for FloatParam {
+    #[inline]
+    fn read(&self) -> f32 {
+        self.raw_smoothed_next()
+    }
+
+    #[inline]
+    fn current(&self) -> f32 {
+        self.raw_smoothed_current()
+    }
+
+    #[inline]
+    fn value(&self) -> f32 {
+        f32::from_f64(self.raw_target())
+    }
+}
+
+impl FloatParamReadF64 for FloatParam {
+    #[inline]
+    fn read(&self) -> f64 {
+        f64::from(self.raw_smoothed_next())
+    }
+
+    #[inline]
+    fn current(&self) -> f64 {
+        f64::from(self.raw_smoothed_current())
+    }
+
+    #[inline]
+    fn value(&self) -> f64 {
+        self.raw_target()
     }
 }
 

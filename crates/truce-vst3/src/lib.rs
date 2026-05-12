@@ -66,7 +66,12 @@ struct Vst3Instance<P: PluginExport> {
     prepared: bool,
     /// Reused per-block scratch for `RawBufferScratch::build`.
     /// Lives on the instance so the audio thread doesn't allocate.
-    scratch: truce_core::buffer::RawBufferScratch,
+    ///
+    /// Parameterised by `P::Sample` so plugins on `prelude64` get
+    /// the widening-scratch path (host wire is `f32`, plugin DSP is
+    /// `f64`) transparently. Same-precision plugins (`prelude32`)
+    /// stay zero-copy through the host pointers.
+    scratch: truce_core::buffer::RawBufferScratch<<P as truce_core::plugin::Plugin>::Sample>,
     /// Cached `(id, range)` pairs sorted by id. Built once in
     /// `cb_create` from `params().param_infos()`. Hosts call
     /// `cb_param_normalize` / `cb_param_denormalize` extremely often
@@ -395,6 +400,14 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
 
         inst.plugin
             .process(&mut audio_buffer, &inst.event_list, &mut context);
+        // End the `audio_buffer` borrow before reaching back into scratch.
+        let _ = audio_buffer;
+        // For `f64` plugins the scratch holds the rendered output —
+        // copy + narrow it back to the host's `f32` pointers here.
+        // No-op for `f32` plugins (output already pointed at the
+        // host buffer).
+        inst.scratch
+            .finish_widening_f32(outputs, num_output_channels, len_u32(num_frames));
 
         // Refresh latency / tail caches so the host's main-thread
         // queries don't have to call into `inst.plugin`.

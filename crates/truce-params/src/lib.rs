@@ -2,13 +2,18 @@
 
 mod info;
 mod range;
+pub mod sample;
 mod smooth;
 mod types;
 
 pub use info::{ParamFlags, ParamInfo, ParamUnit};
 pub use range::ParamRange;
+pub use sample::{Float, Sample};
 pub use smooth::{Smoother, SmoothingStyle};
-pub use types::{BoolParam, EnumParam, FloatParam, IntParam, MeterSlot, ParamEnum};
+pub use types::{
+    BoolParam, EnumParam, FloatParam, FloatParamReadF32, FloatParamReadF64, IntParam, MeterSlot,
+    ParamEnum,
+};
 
 /// Implementation detail — not part of the stable public API.
 /// Used by `truce-loader` to index into meter storage.

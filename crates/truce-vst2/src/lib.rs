@@ -11,7 +11,8 @@ use std::os::raw::c_char;
 use std::slice;
 
 use truce_core::bus::BusLayout;
-use truce_core::cast::{len_u32, param_f32, sample_pos_i64};
+use truce_core::Float;
+use truce_core::cast::{len_u32, sample_pos_i64};
 use truce_core::editor::{ClosureBridge, Editor, PluginContext, RawWindowHandle, SendPtr};
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
@@ -65,7 +66,10 @@ struct Vst2Instance<P: PluginExport> {
     prepared: bool,
     /// Reused per-block scratch for `RawBufferScratch::build`. Lives
     /// on the instance so the audio thread doesn't heap-allocate.
-    scratch: truce_core::buffer::RawBufferScratch,
+    ///
+    /// Parameterised by `P::Sample`; widens/narrows host-`f32`
+    /// buffers around `plugin.process()` for plugins on `prelude64`.
+    scratch: truce_core::buffer::RawBufferScratch<<P as truce_core::plugin::Plugin>::Sample>,
     editor: Option<Box<dyn Editor>>,
     /// `AEffect` pointer, set by the C shim after creation. Used for host callbacks.
     aeffect_ptr: *mut std::ffi::c_void,
@@ -397,6 +401,11 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
 
         inst.plugin
             .process(&mut audio_buffer, &inst.event_list, &mut context);
+        let _ = audio_buffer;
+        // Narrow rendered f64 output back to host f32 when needed.
+        // No-op for `f32` plugins.
+        inst.scratch
+            .finish_widening_f32(outputs, num_output_channels, len_u32(num_frames));
 
         // Refresh latency / tail caches so the host's main-thread
         // queries don't have to call into `inst.plugin`.
@@ -770,7 +779,7 @@ unsafe fn open_editor_inner<P: PluginExport>(
                         }
                     }),
                     set_param: Box::new(move |id, value| {
-                        let norm = param_f32(
+                        let norm = f32::from_f64(
                             params_for_set.set_normalized_returning_normalized(id, value),
                         );
                         if !effect_ptr.as_ptr().is_null() {
