@@ -23,6 +23,14 @@ pub use info::{PluginCategory, PluginInfo};
 pub use plugin::Plugin;
 pub use process::{ProcessContext, ProcessStatus};
 pub use transport::TransportSlot;
+
+// `Float` / `Sample` live in `truce-params` so both that crate and
+// `truce-core`'s `util` module can use them (truce-core depends on
+// truce-params, not the other way around). Re-export so existing
+// callers writing `truce_core::Float` / `truce_core::sample::Sample`
+// keep working.
+pub use truce_params::sample;
+pub use truce_params::sample::{Float, Sample};
 pub use util::{db_to_linear, linear_to_db, meter_display, midi_note_to_freq};
 
 // `cast`, `shell_sidecar`, and `slugify` are hosted in `truce-utils`

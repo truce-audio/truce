@@ -15,6 +15,7 @@ use truce_core::plugin::Plugin;
 use truce_core::process::{ProcessContext, ProcessStatus};
 use truce_gui::PluginLogic;
 use truce_params::Params;
+use truce_params::sample::Sample;
 
 // ---------------------------------------------------------------------------
 // StaticShell
@@ -25,16 +26,17 @@ use truce_params::Params;
 ///
 /// Same bridging as `HotShell` but without `NativeLoader`, `Mutex`,
 /// file watching, or any dynamic loading overhead. Use via `export_static!`.
-pub struct StaticShell<P: Params, L: PluginLogic> {
+pub struct StaticShell<P: Params, L: PluginLogic<S>, S: Sample = f32> {
     pub params: Arc<P>,
     logic: L,
     meters: Arc<[AtomicU32; 256]>,
     sample_rate: f64,
+    _sample: std::marker::PhantomData<fn() -> S>,
 }
 
-unsafe impl<P: Params, L: PluginLogic> Send for StaticShell<P, L> {}
+unsafe impl<P: Params, L: PluginLogic<S>, S: Sample> Send for StaticShell<P, L, S> {}
 
-impl<P: Params + Default + 'static, L: PluginLogic + 'static> StaticShell<P, L> {
+impl<P: Params + Default + 'static, L: PluginLogic<S> + 'static, S: Sample> StaticShell<P, L, S> {
     /// Create from pre-constructed parts. The plugin logic should
     /// hold an `Arc::clone` of the same params.
     pub fn from_parts(params: Arc<P>, logic: L) -> Self {
@@ -43,6 +45,7 @@ impl<P: Params + Default + 'static, L: PluginLogic + 'static> StaticShell<P, L> 
             logic,
             meters: Arc::new(std::array::from_fn(|_| AtomicU32::new(0))),
             sample_rate: 44100.0,
+            _sample: std::marker::PhantomData,
         }
     }
 
@@ -75,7 +78,11 @@ impl<P: Params + Default + 'static, L: PluginLogic + 'static> StaticShell<P, L> 
     }
 }
 
-impl<P: Params + Default + 'static, L: PluginLogic + 'static> Plugin for StaticShell<P, L> {
+impl<P: Params + Default + 'static, L: PluginLogic<S> + 'static, S: Sample> Plugin
+    for StaticShell<P, L, S>
+{
+    type Sample = S;
+
     fn info() -> PluginInfo
     where
         Self: Sized,
@@ -100,7 +107,7 @@ impl<P: Params + Default + 'static, L: PluginLogic + 'static> Plugin for StaticS
 
     fn process(
         &mut self,
-        buffer: &mut AudioBuffer,
+        buffer: &mut AudioBuffer<'_, S>,
         events: &EventList,
         context: &mut ProcessContext,
     ) -> ProcessStatus {
@@ -212,15 +219,23 @@ macro_rules! export_static {
         logic: $logic:ty,
     ) => {
         pub struct __HotShellWrapper {
-            inner: $crate::static_shell::StaticShell<$params, $logic>,
+            // `Sample` here resolves to the type alias the user
+            // imported from a prelude (`prelude` / `prelude32` →
+            // `f32`; `prelude64` → `f64`; `prelude64m` → `f32`). The
+            // `PluginLogic<Sample>` bound on the user's impl must
+            // match this, so the prelude is what picks the audio
+            // buffer precision end-to-end.
+            inner: $crate::static_shell::StaticShell<$params, $logic, Sample>,
         }
 
         impl $crate::__macro_deps::truce_core::plugin::Plugin for __HotShellWrapper {
+            type Sample = Sample;
+
             fn supports_in_place() -> bool
             where
                 Self: Sized,
             {
-                <$logic as $crate::__macro_deps::truce_gui::PluginLogic>::supports_in_place()
+                <$logic as $crate::__macro_deps::truce_gui::PluginLogic<Sample>>::supports_in_place()
             }
 
             fn info() -> $crate::__macro_deps::truce_core::info::PluginInfo
@@ -234,7 +249,7 @@ macro_rules! export_static {
             where
                 Self: Sized,
             {
-                <$logic as $crate::__macro_deps::truce_gui::PluginLogic>::bus_layouts()
+                <$logic as $crate::__macro_deps::truce_gui::PluginLogic<Sample>>::bus_layouts()
             }
 
             fn init(&mut self) {
@@ -247,7 +262,7 @@ macro_rules! export_static {
 
             fn process(
                 &mut self,
-                buffer: &mut $crate::__macro_deps::truce_core::buffer::AudioBuffer,
+                buffer: &mut $crate::__macro_deps::truce_core::buffer::AudioBuffer<'_, Sample>,
                 events: &$crate::__macro_deps::truce_core::events::EventList,
                 context: &mut $crate::__macro_deps::truce_core::process::ProcessContext,
             ) -> $crate::__macro_deps::truce_core::process::ProcessStatus {

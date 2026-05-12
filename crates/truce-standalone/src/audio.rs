@@ -699,7 +699,8 @@ fn open_output_stream<P: PluginExport>(
         inputs: Vec::with_capacity(channels),
         outputs: Vec::with_capacity(channels),
     };
-    let mut scratch = RawBufferScratch::default();
+    let mut scratch: RawBufferScratch<<P as truce_core::plugin::Plugin>::Sample> =
+        RawBufferScratch::default();
 
     let stream = match sample_format {
         cpal::SampleFormat::F32 => device
@@ -995,7 +996,7 @@ fn audio_callback<P: PluginExport>(
     event_list: &mut EventList,
     output_events: &mut EventList,
     ptr_scratch: &mut CallbackPtrScratch,
-    scratch: &mut RawBufferScratch,
+    scratch: &mut RawBufferScratch<<P as truce_core::plugin::Plugin>::Sample>,
     #[cfg(feature = "playback")] playback: Option<&Arc<crate::playback::PlaybackSource>>,
     #[cfg(feature = "playback")] capture: Option<&crate::playback::CapturePusher>,
 ) {
@@ -1110,6 +1111,18 @@ fn audio_callback<P: PluginExport>(
     let mut context = ProcessContext::new(&transport_info, sample_rate, num_frames, output_events);
 
     plugin.process(&mut audio_buffer, event_list, &mut context);
+    let _ = audio_buffer;
+    // Narrow rendered f64 output back to host f32 when the plugin's
+    // `Sample = f64`. No-op for `f32` plugins.
+    // SAFETY: `ptr_scratch.outputs` lives through this function;
+    // `num_out_u32` / `num_frames_u32` match the build above.
+    unsafe {
+        scratch.finish_widening_f32(
+            ptr_scratch.outputs.as_mut_ptr(),
+            num_out_u32,
+            num_frames_u32,
+        );
+    }
 
     // `--output-file` capture: hand a copy of the post-process,
     // pre-mute output to the writer thread. Mute is *device*

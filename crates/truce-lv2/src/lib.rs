@@ -33,6 +33,7 @@ use truce_core::buffer::RawBufferScratch;
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
 use truce_core::info::{PluginCategory, PluginInfo};
+use truce_core::plugin::Plugin;
 use truce_core::process::ProcessContext;
 use truce_core::state::shared_plugin_state_hash;
 use truce_core::wrapper::run_audio_block;
@@ -150,7 +151,13 @@ pub struct Lv2Instance<P: PluginExport> {
     /// LV2 hosts may connect an input and an output port to the same
     /// buffer (in-place processing); the scratch handles the
     /// alias-then-copy fallback internally.
-    scratch: RawBufferScratch,
+    ///
+    /// Parameterised by `P::Sample` so plugins that picked `f64`
+    /// (via `prelude64`) get widening scratch transparently: the
+    /// host wire is always `f32`, and the scratch widens on input
+    /// then narrows on output around `plugin.process()`. Same-precision
+    /// (`f32`) plugins stay zero-copy.
+    scratch: RawBufferScratch<<P as Plugin>::Sample>,
 
     /// Shared transport slot — audio thread writes each block. LV2 UIs
     /// are out-of-process so the UI side still reads `None`; this slot
@@ -444,6 +451,11 @@ pub unsafe fn run<P: PluginExport>(handle: *mut Lv2Instance<P>, n_samples: u32) 
             let mut ctx =
                 ProcessContext::new(&transport, inst.sample_rate, n, &mut inst.output_events);
             let _ = inst.plugin.process(&mut audio, &inst.event_list, &mut ctx);
+            // End the `audio` borrow before reaching back into `scratch`.
+            let _ = audio;
+            // Narrow rendered output back to host f32 pointers when
+            // the plugin's `Sample = f64`. No-op for f32 plugins.
+            s.scratch.finish_widening_f32(out_ptrs, num_out, n_samples);
         }
 
         // Copy meter readings out to the host. The plugin's process() has

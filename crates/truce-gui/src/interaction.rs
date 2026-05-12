@@ -2,7 +2,8 @@
 //!
 //! Tracks widget hit regions and maps mouse drags to parameter value changes.
 
-use truce_core::cast::{discrete_index, discrete_norm, param_f32};
+use truce_core::Float;
+use truce_core::cast::{discrete_index, discrete_norm};
 
 use crate::layout::{
     DROPDOWN_BOX_HEIGHT, GRID_GAP, GRID_PADDING, GridLayout, Layout, PluginLayout, ROWS_COLUMN_GAP,
@@ -757,7 +758,7 @@ fn handle_mouse_down(
             let dd = state.dropdown.as_ref().unwrap();
             let param_id = dd.param_id;
             let count = dd.options.len();
-            let new_norm = param_f32(discrete_norm(option_idx, count));
+            let new_norm = f32::from_f64(discrete_norm(option_idx, count));
             edits.push(ParamEdit::Begin { id: param_id });
             edits.push(ParamEdit::Set {
                 id: param_id,
@@ -929,7 +930,7 @@ fn apply_drag(
             if let Some((pid, new_norm)) = state.update_slider_drag(x) {
                 edits.push(ParamEdit::Set {
                     id: pid,
-                    normalized: param_f32(new_norm),
+                    normalized: f32::from_f64(new_norm),
                 });
             }
         }
@@ -937,7 +938,7 @@ fn apply_drag(
             if let Some((pid, new_norm)) = state.update_drag(y) {
                 edits.push(ParamEdit::Set {
                     id: pid,
-                    normalized: param_f32(new_norm),
+                    normalized: f32::from_f64(new_norm),
                 });
             }
         }

@@ -45,7 +45,8 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use truce_core::buffer::AudioBuffer;
+use truce_core::buffer::RawBufferScratch;
+use truce_core::plugin::Plugin;
 #[cfg(feature = "wav")]
 use truce_core::cast::sample_rate_u32;
 use truce_core::cast::{len_u32, sample_count_usize};
@@ -770,6 +771,16 @@ impl<P: PluginExport> PluginDriver<P> {
         // does the `EVENT_LIST_PREALLOC` reservation, so re-constructing
         // it per block re-allocates on the first push.
         let mut output_events_block = EventList::default();
+
+        // Routes the offline-render loop through the same
+        // `RawBufferScratch::build` helper every format wrapper uses,
+        // so `Plugin::Sample = f64` plugins (prelude64) get widening
+        // scratch transparently. For `Sample = f32` it's still
+        // zero-copy through the host f32 slices.
+        let mut scratch: RawBufferScratch<<P as Plugin>::Sample> = RawBufferScratch::default();
+        scratch.ensure_capacity(in_bufs.len(), out_bufs.len(), self.block_size);
+        let mut in_ptrs: Vec<*const f32> = Vec::with_capacity(in_bufs.len());
+        let mut out_ptrs: Vec<*mut f32> = Vec::with_capacity(out_bufs.len());
         while cursor < total_frames {
             let block_len = self.block_size.min(total_frames - cursor);
 
@@ -804,13 +815,33 @@ impl<P: PluginExport> PluginDriver<P> {
                 );
             }
 
-            let in_slices: Vec<&[f32]> = in_bufs.iter().map(std::vec::Vec::as_slice).collect();
-            let mut out_slices: Vec<&mut [f32]> = out_bufs
-                .iter_mut()
-                .map(std::vec::Vec::as_mut_slice)
-                .collect();
-            let mut audio =
-                AudioBuffer::from_slices_checked(&in_slices, &mut out_slices, block_len);
+            // Mirror `in_bufs` / `out_bufs` into raw pointer arrays for
+            // `RawBufferScratch::build`. Cheap (a handful of pointers
+            // per block) and keeps the conversion-aware path single-sourced.
+            in_ptrs.clear();
+            out_ptrs.clear();
+            for b in &in_bufs {
+                in_ptrs.push(b.as_ptr());
+            }
+            for b in &mut out_bufs {
+                out_ptrs.push(b.as_mut_ptr());
+            }
+            let block_u32 = len_u32(block_len);
+            let num_in_u32 = len_u32(in_ptrs.len());
+            let num_out_u32 = len_u32(out_ptrs.len());
+            // SAFETY: pointers borrowed from `in_bufs` / `out_bufs`
+            // which outlive `audio`; each `Vec<f32>` was resized to
+            // `block_len` above.
+            let mut audio = unsafe {
+                scratch.build(
+                    in_ptrs.as_ptr(),
+                    out_ptrs.as_mut_ptr(),
+                    num_in_u32,
+                    num_out_u32,
+                    block_u32,
+                    P::supports_in_place(),
+                )
+            };
 
             // Transport snapshot for this block.
             let transport_info = TransportInfo {
@@ -832,6 +863,13 @@ impl<P: PluginExport> PluginDriver<P> {
             );
 
             plugin.process(&mut audio, &event_list, &mut ctx);
+            let _ = audio;
+            // Narrow rendered f64 output back into the f32 `out_bufs`
+            // when the plugin's `Sample = f64`. No-op otherwise.
+            // SAFETY: same pointers + counts as the `build` call above.
+            unsafe {
+                scratch.finish_widening_f32(out_ptrs.as_mut_ptr(), num_out_u32, block_u32);
+            }
 
             // Capture audio. `out_bufs` is reused across iterations,
             // so we copy out rather than consuming.

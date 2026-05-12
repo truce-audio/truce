@@ -9,7 +9,7 @@ use truce_core::plugin::Plugin;
 use truce_core::process::{ProcessContext, ProcessStatus};
 use truce_derive::Params;
 use truce_gui::PluginLogic;
-use truce_params::Params;
+use truce_params::{FloatParamReadF32, Params};
 
 #[derive(Params)]
 struct SmootherParams {
@@ -43,7 +43,7 @@ impl PluginLogic for SmootherPlugin {
         _ctx: &mut ProcessContext,
     ) -> ProcessStatus {
         for i in 0..buffer.num_samples() {
-            let g = self.params.gain.smoothed_next();
+            let g = self.params.gain.read();
             self.samples.push(g);
             let (inp, out) = buffer.io_pair(0, 0);
             out[i] = inp[i] * g;

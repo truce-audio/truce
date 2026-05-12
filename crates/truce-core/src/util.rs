@@ -1,83 +1,10 @@
-use std::ops::{Div, Mul, Sub};
-
-/// Float types accepted by the DSP utility helpers in this module.
-///
-/// Sealed at `f32` and `f64`; downstream code can't add new impls.
-/// Plugin authors don't name this trait — it's the bound that lets
-/// the same call site work for both precisions:
-///
-/// ```
-/// use truce_core::util::db_to_linear;
-/// let g_f32: f32 = db_to_linear(-6.0_f32);
-/// let g_f64: f64 = db_to_linear(-6.0_f64);
-/// ```
-pub trait Float:
-    sealed::Sealed + Copy + Mul<Output = Self> + Div<Output = Self> + Sub<Output = Self>
-{
-    #[must_use]
-    fn exp(self) -> Self;
-    #[must_use]
-    fn log10(self) -> Self;
-    #[must_use]
-    fn powf(self, exp: Self) -> Self;
-    #[must_use]
-    fn from_f64(v: f64) -> Self;
-}
-
-mod sealed {
-    pub trait Sealed {}
-    impl Sealed for f32 {}
-    impl Sealed for f64 {}
-}
-
-impl Float for f32 {
-    #[inline]
-    fn exp(self) -> Self {
-        f32::exp(self)
-    }
-    #[inline]
-    fn log10(self) -> Self {
-        f32::log10(self)
-    }
-    #[inline]
-    fn powf(self, exp: Self) -> Self {
-        f32::powf(self, exp)
-    }
-    // Constants like `LN_10 / 20.0` are derived in `f64` and narrowed
-    // once. Truncation here is intentional and bounded — these are
-    // small constants, not user data.
-    #[inline]
-    #[allow(clippy::cast_possible_truncation)]
-    fn from_f64(v: f64) -> Self {
-        v as f32
-    }
-}
-
-impl Float for f64 {
-    #[inline]
-    fn exp(self) -> Self {
-        f64::exp(self)
-    }
-    #[inline]
-    fn log10(self) -> Self {
-        f64::log10(self)
-    }
-    #[inline]
-    fn powf(self, exp: Self) -> Self {
-        f64::powf(self, exp)
-    }
-    #[inline]
-    fn from_f64(v: f64) -> Self {
-        v
-    }
-}
+use truce_params::sample::Float;
 
 /// Convert decibels to linear gain.
 ///
-/// Generic over `f32` and `f64`. Per-sample DSP loops typically read
-/// `f32` from `FloatParam::smoothed_next()`; host-side display code
-/// and filter math that already runs in `f64` get the `f64`
-/// specialization with no explicit cast.
+/// Generic over `f32` and `f64` via [`Float`]. The bound is `Float`
+/// rather than `Sample` because a gain value isn't an audio sample
+/// — it's a scaling coefficient.
 #[inline]
 #[must_use]
 pub fn db_to_linear<F: Float>(db: F) -> F {
@@ -95,10 +22,8 @@ pub fn linear_to_db<F: Float>(linear: F) -> F {
 
 /// Convert a MIDI note number to frequency in Hz (A4 = 440 Hz).
 ///
-/// Generic over `f32` and `f64` — see [`db_to_linear`]. Computes the
-/// `2.powf((note - 69) / 12)` step in the destination precision; the
-/// result for `f32` agrees with the `f64` version to ~1e-5 Hz across
-/// the full MIDI range.
+/// Generic over `f32` and `f64` — see [`db_to_linear`]. A frequency
+/// isn't an audio sample either; bound on [`Float`].
 #[inline]
 #[must_use]
 pub fn midi_note_to_freq<F: Float>(note: u8) -> F {

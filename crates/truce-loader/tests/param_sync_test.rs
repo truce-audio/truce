@@ -9,7 +9,7 @@ use truce_core::plugin::Plugin;
 use truce_core::process::{ProcessContext, ProcessStatus};
 use truce_derive::Params;
 use truce_gui::PluginLogic;
-use truce_params::Params;
+use truce_params::{FloatParamReadF32, Params};
 
 #[derive(Params)]
 struct TestParams {

@@ -10,7 +10,7 @@ use iced::{Color, Element, Length, Point, Rectangle, Renderer, Size, Theme, mous
 use crate::param_cache::ParamCache;
 use crate::param_message::{Message, ParamMessage};
 use crate::theme;
-use truce_core::cast::param_f32;
+use truce_core::Float;
 use truce_params::Params;
 
 /// Builder for an XY pad controlling two parameters.
@@ -69,8 +69,8 @@ impl<'a, M: Clone + Debug + 'static> XYPadWidget<'a, M> {
         let program = XYPadProgram {
             x_id: self.x_id,
             y_id: self.y_id,
-            x_value: param_f32(self.x_value),
-            y_value: param_f32(self.y_value),
+            x_value: f32::from_f64(self.x_value),
+            y_value: f32::from_f64(self.y_value),
             label: self.label.unwrap_or("").to_string(),
             pad_size: self.size,
             font: self.font,

@@ -9,6 +9,7 @@ use truce_core::buffer::AudioBuffer;
 use truce_core::events::{Event, EventBody, EventList, TransportInfo as Transport};
 use truce_core::process::{ProcessContext, ProcessStatus};
 use truce_gui::PluginLogic;
+use truce_params::sample::Sample;
 use truce_gui::interaction::WidgetRegion;
 use truce_gui::layout::GridLayout;
 use truce_gui::render::RenderBackend;
@@ -149,12 +150,12 @@ pub struct ProbePlugin {
     last_load_state: RefCell<Vec<u8>>,
 }
 
-impl PluginLogic for ProbePlugin {
+impl<S: Sample> PluginLogic<S> for ProbePlugin {
     fn reset(&mut self, _sr: f64, _bs: usize) {}
 
     fn process(
         &mut self,
-        _buffer: &mut AudioBuffer,
+        _buffer: &mut AudioBuffer<'_, S>,
         _events: &EventList,
         _context: &mut ProcessContext,
     ) -> ProcessStatus {

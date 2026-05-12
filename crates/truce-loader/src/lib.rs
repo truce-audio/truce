@@ -58,8 +58,15 @@ pub use loader::NativeLoader;
 #[macro_export]
 macro_rules! export_plugin {
     ($logic:ty, $params:ty) => {
+        // `Sample` here is the prelude's `type Sample = …` alias —
+        // `f32` for `prelude` / `prelude32` / `prelude64m`, `f64` for
+        // `prelude64`. Lets `prelude64` plugins compile through the
+        // dylib export path even though `HotShell` (the loader-side
+        // consumer) is currently `f32`-only — a `prelude64` plugin
+        // would simply error at dylib-load time if someone tried to
+        // hot-reload it, rather than failing to compile in static mode.
         #[unsafe(no_mangle)]
-        pub fn truce_create(params_ptr: *const ()) -> Box<dyn $crate::PluginLogic> {
+        pub fn truce_create(params_ptr: *const ()) -> Box<dyn $crate::PluginLogic<Sample>> {
             let params: Arc<$params> = unsafe {
                 Arc::increment_strong_count(params_ptr as *const $params);
                 Arc::from_raw(params_ptr as *const $params)
@@ -73,7 +80,7 @@ macro_rules! export_plugin {
         }
 
         #[unsafe(no_mangle)]
-        pub fn truce_vtable_probe() -> Box<dyn $crate::PluginLogic> {
+        pub fn truce_vtable_probe() -> Box<dyn $crate::PluginLogic<Sample>> {
             Box::new($crate::ProbePlugin::default())
         }
     };

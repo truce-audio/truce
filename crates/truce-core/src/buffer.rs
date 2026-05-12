@@ -1,17 +1,26 @@
+use truce_params::sample::Sample;
+
 /// Non-interleaved audio buffer. Borrows host memory through the
 /// format wrapper.
+///
+/// Generic over the sample type `S` (the plugin's chosen precision,
+/// `f32` or `f64`). The format wrapper bridges between host-buffer
+/// precision and `S` at the block boundary — see
+/// [`RawBufferScratch::build`]. Plugin code under
+/// `use truce::prelude::*;` (f32) or `use truce::prelude64::*;` (f64)
+/// sees `AudioBuffer<S>` with `S` already picked.
 ///
 /// **In-place I/O.** Some hosts (Reaper, pluginval) pass the same
 /// buffer for both input and output of a given channel. By default
 /// the wrapper copies the aliased inputs into per-channel scratch so
-/// `input(ch)` and `output(ch)` are disjoint `&[f32]` / `&mut [f32]`
-/// — no plugin code change required. Plugins that opt into
+/// `input(ch)` and `output(ch)` are disjoint `&[S]` / `&mut [S]` —
+/// no plugin code change required. Plugins that opt into
 /// `Plugin::supports_in_place() = true` skip the copy and must use
 /// [`Self::in_out_mut`] for channels where [`Self::is_in_place`]
 /// returns `true`.
-pub struct AudioBuffer<'a> {
-    inputs: &'a [&'a [f32]],
-    outputs: &'a mut [&'a mut [f32]],
+pub struct AudioBuffer<'a, S: Sample = f32> {
+    inputs: &'a [&'a [S]],
+    outputs: &'a mut [&'a mut [S]],
     /// Bit `ch` is set when `inputs[ch]` and `outputs[ch]` point to
     /// the same host memory. Channels ≥ 64 are always reported as
     /// non-aliased — formats with that many channels are exotic
@@ -21,16 +30,16 @@ pub struct AudioBuffer<'a> {
     num_samples: usize,
 }
 
-impl<'a> AudioBuffer<'a> {
+impl<'a, S: Sample> AudioBuffer<'a, S> {
     /// Safe wrapper around [`Self::from_slices`] for callers that hold their
-    /// own owned `Vec<Vec<f32>>` (e.g. `truce-driver`'s test harness).
+    /// own owned `Vec<Vec<S>>` (e.g. `truce-driver`'s test harness).
     /// Forwards to the unsafe constructor — the borrow checker proves
     /// the lifetime invariants the `unsafe fn` requires when both
     /// slice arrays and the buffer itself live in the same scope.
     /// `num_samples > slice length` still asserts in debug builds.
     pub fn from_slices_checked(
-        inputs: &'a [&'a [f32]],
-        outputs: &'a mut [&'a mut [f32]],
+        inputs: &'a [&'a [S]],
+        outputs: &'a mut [&'a mut [S]],
         num_samples: usize,
     ) -> Self {
         // SAFETY: caller hands us references that the borrow checker
@@ -53,8 +62,8 @@ impl<'a> AudioBuffer<'a> {
     /// input/output slice. Release builds skip these checks (they're
     /// safety preconditions, not runtime invariants).
     pub unsafe fn from_slices(
-        inputs: &'a [&'a [f32]],
-        outputs: &'a mut [&'a mut [f32]],
+        inputs: &'a [&'a [S]],
+        outputs: &'a mut [&'a mut [S]],
         num_samples: usize,
     ) -> Self {
         #[cfg(debug_assertions)]
@@ -69,27 +78,28 @@ impl<'a> AudioBuffer<'a> {
                     assert!(
                         i_end <= o_start || o_end <= i_start,
                         "AudioBuffer: input channel {i} and output channel {o} alias \
-                         (input: {i_start:#x}..{i_end:#x}, output: {o_start:#x}..{o_end:#x})"
+                         — pass disjoint slices or use RawBufferScratch::build which \
+                         handles aliasing automatically",
                     );
                 }
             }
-            // Verify num_samples doesn't exceed any slice.
+            // Verify num_samples doesn't exceed any slice length.
             for (i, inp) in inputs.iter().enumerate() {
                 assert!(
                     num_samples <= inp.len(),
                     "AudioBuffer: num_samples ({num_samples}) exceeds input channel {i} length ({})",
-                    inp.len()
+                    inp.len(),
                 );
             }
             for (o, out) in outputs.iter().enumerate() {
                 assert!(
                     num_samples <= out.len(),
                     "AudioBuffer: num_samples ({num_samples}) exceeds output channel {o} length ({})",
-                    out.len()
+                    out.len(),
                 );
             }
         }
-        Self {
+        AudioBuffer {
             inputs,
             outputs,
             in_place_mask: 0,
@@ -122,7 +132,7 @@ impl<'a> AudioBuffer<'a> {
     /// non-in-place channel this returns the output slice with no
     /// input data in it; reading is allowed but produces uninitialized
     /// host-buffer contents.
-    pub fn in_out_mut(&mut self, ch: usize) -> &mut [f32] {
+    pub fn in_out_mut(&mut self, ch: usize) -> &mut [S] {
         let end = self.offset + self.num_samples;
         &mut self.outputs[ch][self.offset..end]
     }
@@ -143,12 +153,12 @@ impl<'a> AudioBuffer<'a> {
     }
 
     #[must_use]
-    pub fn input(&self, channel: usize) -> &[f32] {
+    pub fn input(&self, channel: usize) -> &[S] {
         let end = self.offset + self.num_samples;
         &self.inputs[channel][self.offset..end]
     }
 
-    pub fn output(&mut self, channel: usize) -> &mut [f32] {
+    pub fn output(&mut self, channel: usize) -> &mut [S] {
         let end = self.offset + self.num_samples;
         &mut self.outputs[channel][self.offset..end]
     }
@@ -160,7 +170,7 @@ impl<'a> AudioBuffer<'a> {
     }
 
     /// Get an input/output pair for a channel. Useful for in-place processing.
-    pub fn io_pair(&mut self, in_ch: usize, out_ch: usize) -> (&[f32], &mut [f32]) {
+    pub fn io_pair(&mut self, in_ch: usize, out_ch: usize) -> (&[S], &mut [S]) {
         let end = self.offset + self.num_samples;
         let input = &self.inputs[in_ch][self.offset..end];
         let output = &mut self.outputs[out_ch][self.offset..end];
@@ -168,28 +178,28 @@ impl<'a> AudioBuffer<'a> {
     }
 
     /// Get an input/output pair for the same channel index. Shorthand for `io_pair(ch, ch)`.
-    pub fn io(&mut self, ch: usize) -> (&[f32], &mut [f32]) {
+    pub fn io(&mut self, ch: usize) -> (&[S], &mut [S]) {
         self.io_pair(ch, ch)
     }
 
-    /// Peak absolute value across an output channel.
+    /// Peak absolute value across an output channel, returned as `f32`
+    /// because meters / UI display always work in `f32` regardless of
+    /// the plugin's internal precision.
     ///
     /// Short-circuits and returns `f32::NAN` on the **first** NaN
     /// sample seen, so meters can flag runaway plugins instead of
     /// silently reporting "peaks within range" while NaN poison
-    /// spreads downstream. (`f32::max` treats NaN as smaller than
-    /// every finite value, which used to make NaN samples disappear
-    /// from the peak — that's why this walks manually instead of
-    /// folding `.max()`.)
+    /// spreads downstream.
     #[must_use]
     pub fn output_peak(&self, ch: usize) -> f32 {
         let end = self.offset + self.num_samples;
         let mut peak = 0.0f32;
         for &b in &self.outputs[ch][self.offset..end] {
-            if b.is_nan() {
+            let v = b.to_f32();
+            if v.is_nan() {
                 return f32::NAN;
             }
-            let abs = b.abs();
+            let abs = v.abs();
             if abs > peak {
                 peak = abs;
             }
@@ -204,32 +214,14 @@ impl<'a> AudioBuffer<'a> {
     ///
     /// # Panics
     /// Panics if `start + len > self.num_samples()`.
-    ///
-    /// # Example
-    /// ```ignore
-    /// let mut offset = 0;
-    /// for event in events.iter() {
-    ///     let at = event.sample_offset as usize;
-    ///     if at > offset {
-    ///         let mut sub = buffer.slice(offset, at - offset);
-    ///         process_sub_block(&mut sub);
-    ///     }
-    ///     handle_event(&event.body);
-    ///     offset = at;
-    /// }
-    /// if offset < buffer.num_samples() {
-    ///     let mut sub = buffer.slice(offset, buffer.num_samples() - offset);
-    ///     process_sub_block(&mut sub);
-    /// }
-    /// ```
-    pub fn slice(&mut self, start: usize, len: usize) -> AudioBuffer<'_> {
+    pub fn slice(&mut self, start: usize, len: usize) -> AudioBuffer<'_, S> {
         assert!(
             start + len <= self.num_samples,
             "slice({start}, {len}) out of bounds for buffer of {} samples",
             self.num_samples,
         );
         let new_offset = self.offset + start;
-        // SAFETY: We construct an AudioBuffer<'a> and transmute to AudioBuffer<'_>.
+        // SAFETY: We construct an AudioBuffer<'a, S> and transmute to AudioBuffer<'_, S>.
         // These have identical memory layout (lifetimes are erased at runtime).
         // This is sound because:
         // 1. &mut self prevents the caller from using self while the slice exists
@@ -238,7 +230,7 @@ impl<'a> AudioBuffer<'a> {
         let self_ptr: *mut Self = self;
         unsafe {
             let s = &mut *self_ptr;
-            std::mem::transmute::<AudioBuffer<'a>, AudioBuffer<'_>>(AudioBuffer {
+            std::mem::transmute::<AudioBuffer<'a, S>, AudioBuffer<'_, S>>(AudioBuffer {
                 inputs: s.inputs,
                 outputs: &mut *s.outputs,
                 in_place_mask: s.in_place_mask,
@@ -249,42 +241,44 @@ impl<'a> AudioBuffer<'a> {
     }
 }
 
-/// Scratch space for `AudioBuffer::from_raw_ptrs`.
+/// Scratch space for `RawBufferScratch::build` / `build_widening`.
 ///
-/// Callers allocate this on the stack and pass it to `from_raw_ptrs`.
-/// The buffer borrows the slices stored here, so this struct must
-/// outlive the returned `AudioBuffer`.
-pub struct RawBufferScratch {
-    pub input_slices: Vec<&'static [f32]>,
-    pub output_slices: Vec<&'static mut [f32]>,
-    /// Per-channel copies of input data when the host passes the same
-    /// buffer for input and output (in-place processing — VST3 spec
-    /// allows this and several real DAWs use it for effects). We can't
-    /// hand a `&[f32]` and `&mut [f32]` to overlapping memory without
-    /// UB, so we copy the input through here so the slices the plugin
-    /// sees are disjoint. Sized lazily; reused across blocks.
-    input_copies: Vec<Vec<f32>>,
+/// Callers allocate this on the stack and pass it to a `build*`
+/// method. The buffer borrows the slices stored here, so this struct
+/// must outlive the returned `AudioBuffer`.
+///
+/// Generic over the plugin's sample type `S`. When the host buffer
+/// matches `S`, slices point into host memory (zero-copy). When the
+/// host buffer is a different precision, the input is widened/narrowed
+/// into per-channel scratch; the output is rendered into scratch and
+/// the wrapper copies + casts it back to the host buffer at the end
+/// of the block (`finish_widening`).
+pub struct RawBufferScratch<S: Sample = f32> {
+    pub input_slices: Vec<&'static [S]>,
+    pub output_slices: Vec<&'static mut [S]>,
+    /// Per-channel input copies. Used (a) when the host passes the
+    /// same buffer for input and output (in-place processing — VST3
+    /// spec allows this and several real DAWs use it for effects),
+    /// or (b) when the host buffer precision differs from `S` and
+    /// we widen/narrow on the way in. In either case the slice the
+    /// plugin sees points into the matching slot here.
+    input_copies: Vec<Vec<S>>,
+    /// Per-channel output scratch. Only populated by
+    /// [`Self::build_widening`] when the host buffer precision differs
+    /// from `S`; the wrapper copies + casts these back to the host
+    /// buffer at the end of the block via [`Self::finish_widening`].
+    output_buffers: Vec<Vec<S>>,
 }
 
-impl RawBufferScratch {
-    /// Build an `AudioBuffer` from raw C pointers.
+impl<S: Sample> RawBufferScratch<S> {
+    /// Build an `AudioBuffer<S>` from raw `f32` host pointers — the
+    /// common case (CLAP, LV2, AAX always; VST3/VST2/AU 32-bit mode).
     ///
-    /// This is the common FFI pattern used by VST3, VST2, AU, and AAX
-    /// wrappers. It converts raw `*const f32` / `*mut f32` channel
-    /// pointers into slices and returns an `AudioBuffer` that borrows
-    /// the scratch storage.
-    ///
-    /// **No input-to-output copy is performed.** Plugins that want
-    /// pass-through must do `output.copy_from_slice(input)` themselves
-    /// — auto-copying clobbers the previous-block tail that delay /
-    /// reverb feedback paths read back from the output, and almost
-    /// every plugin overwrites outputs anyway.
-    ///
-    /// **Channel indexing is preserved.** A null channel pointer
-    /// becomes an empty slice at that index rather than being skipped
-    /// — preserving channel index avoids the silent re-mapping bug
-    /// where (input null, output non-null) pairs would shift the
-    /// output assignments.
+    /// When `S = f32`, slices point directly into host memory (modulo
+    /// in-place input copying). When `S = f64`, every channel is
+    /// widened into per-channel scratch and the wrapper must call
+    /// [`Self::finish_widening_f32`] at the end of the block to copy
+    /// the rendered samples back to the host's `f32` output pointers.
     ///
     /// # Safety
     /// - `inputs` must point to `num_in` valid `*const f32` pointers
@@ -295,15 +289,62 @@ impl RawBufferScratch {
     ///   writable samples; null is allowed and yields an empty slice).
     /// - The pointed-to memory must remain valid for the lifetime of
     ///   the returned `AudioBuffer`.
+    pub unsafe fn build(
+        &mut self,
+        inputs: *const *const f32,
+        outputs: *mut *mut f32,
+        num_in: u32,
+        num_out: u32,
+        num_frames: u32,
+        supports_in_place: bool,
+    ) -> AudioBuffer<'_, S> {
+        // SAFETY: forwarded — caller's contract is the same.
+        unsafe {
+            self.build_inner(
+                inputs,
+                outputs,
+                num_in,
+                num_out,
+                num_frames,
+                supports_in_place,
+            )
+        }
+    }
+
+    /// Copy + narrow the rendered `S` output back to the host's
+    /// `f32` output pointers. No-op when `S = f32` (the slices the
+    /// plugin wrote already point directly at host memory).
     ///
-    /// In-place I/O (an input pointer that aliases any output pointer)
-    /// is handled per `supports_in_place`:
-    /// - `false` (default): aliased inputs are copied into per-channel
-    ///   scratch, so `input(ch)` and `output(ch)` are always disjoint.
-    /// - `true`: no copy. Aliased input slices are exposed as empty
-    ///   (`&[]`); the plugin must use [`AudioBuffer::in_out_mut`] for
-    ///   channels where [`AudioBuffer::is_in_place`] returns `true`.
-    pub unsafe fn build<'a>(
+    /// # Safety
+    /// `outputs` and `num_out` / `num_frames` must match the values
+    /// passed to the prior [`Self::build`] call on this scratch.
+    pub unsafe fn finish_widening_f32(
+        &self,
+        outputs: *mut *mut f32,
+        num_out: u32,
+        num_frames: u32,
+    ) {
+        // When the plugin is `f32` we wrote straight into host memory.
+        if std::any::TypeId::of::<S>() == std::any::TypeId::of::<f32>() {
+            return;
+        }
+        unsafe {
+            let nf = num_frames as usize;
+            for ch in 0..(num_out as usize) {
+                let ptr = *outputs.add(ch);
+                if ptr.is_null() {
+                    continue;
+                }
+                let host = std::slice::from_raw_parts_mut(ptr, nf);
+                let plugin_out = &self.output_buffers[ch];
+                for (h, &p) in host.iter_mut().zip(plugin_out.iter()) {
+                    *h = p.to_f32();
+                }
+            }
+        }
+    }
+
+    unsafe fn build_inner<'a>(
         &'a mut self,
         inputs: *const *const f32,
         outputs: *mut *mut f32,
@@ -311,27 +352,27 @@ impl RawBufferScratch {
         num_out: u32,
         num_frames: u32,
         supports_in_place: bool,
-    ) -> AudioBuffer<'a> {
-        // Cap matches the 64-channel `in_place_mask` width and
-        // `is_in_place`'s ch < 64 guard — wider buses are exotic
-        // enough to be a follow-up; the assert below makes the
-        // truncation observable instead of silently miscounting.
+    ) -> AudioBuffer<'a, S> {
         const MAX_CHANNELS_TRACKED: usize = 64;
+        // Whether the plugin's chosen precision matches the host's.
+        // When matched, we zero-copy host pointers into the slice
+        // arrays; when not, we widen/narrow through input_copies and
+        // output_buffers.
+        let same_precision =
+            std::any::TypeId::of::<S>() == std::any::TypeId::of::<f32>();
+
         unsafe {
             let nf = num_frames as usize;
-
-            // Snapshot output pointers up front so the input pass can
-            // detect aliasing without holding `&mut` to output_slices.
-            let num_out = num_out as usize;
-            let num_in = num_in as usize;
+            let num_out_u = num_out as usize;
+            let num_in_u = num_in as usize;
             debug_assert!(
-                num_out <= MAX_CHANNELS_TRACKED,
+                num_out_u <= MAX_CHANNELS_TRACKED,
                 "RawBufferScratch::build: alias detection only covers up to {MAX_CHANNELS_TRACKED} \
-                 output channels; got {num_out}. Channels beyond the cap won't be \
+                 output channels; got {num_out_u}. Channels beyond the cap won't be \
                  detected as aliased.",
             );
             let out_ptrs: [Option<*mut f32>; MAX_CHANNELS_TRACKED] = std::array::from_fn(|ch| {
-                if ch < num_out {
+                if ch < num_out_u {
                     let p = *outputs.add(ch);
                     if p.is_null() { None } else { Some(p) }
                 } else {
@@ -343,7 +384,7 @@ impl RawBufferScratch {
                 let in_end = in_start + nf * std::mem::size_of::<f32>();
                 out_ptrs
                     .iter()
-                    .take(num_out.min(MAX_CHANNELS_TRACKED))
+                    .take(num_out_u.min(MAX_CHANNELS_TRACKED))
                     .any(|o| {
                         o.is_some_and(|op| {
                             let o_start = op as usize;
@@ -353,75 +394,113 @@ impl RawBufferScratch {
                     })
             };
 
-            self.input_slices.clear();
-            self.input_slices.reserve(num_in);
-            // Grow the per-channel copy slots if the bus widened.
-            while self.input_copies.len() < num_in {
+            // Grow per-channel scratch slots if the bus widened or
+            // we're widening precision and need every channel copied.
+            while self.input_copies.len() < num_in_u {
                 self.input_copies.push(Vec::new());
             }
+            if !same_precision {
+                while self.output_buffers.len() < num_out_u {
+                    self.output_buffers.push(Vec::new());
+                }
+            }
+
+            self.input_slices.clear();
+            self.input_slices.reserve(num_in_u);
             let mut in_place_mask: u64 = 0;
-            for ch in 0..num_in {
+            for ch in 0..num_in_u {
                 let ptr = *inputs.add(ch);
-                let slice: &[f32] = if ptr.is_null() {
+                let slice: &[S] = if ptr.is_null() {
                     &[]
                 } else if aliases_any_output(ptr) {
                     if ch < 64 {
                         in_place_mask |= 1 << ch;
                     }
-                    if supports_in_place {
+                    if supports_in_place && same_precision {
                         // Plugin opted in: hand it nothing through
                         // input(ch); it must read+write via in_out_mut.
+                        // Only supported in the same-precision case;
+                        // the cross-precision path always copies.
                         &[]
                     } else {
-                        // Default: snapshot the input before the
-                        // plugin overwrites the shared buffer.
+                        // Snapshot the input (and widen if needed)
+                        // before the plugin overwrites the shared
+                        // buffer.
+                        let host = std::slice::from_raw_parts(ptr, nf);
                         let copy = &mut self.input_copies[ch];
                         copy.clear();
-                        copy.extend_from_slice(std::slice::from_raw_parts(ptr, nf));
-                        std::slice::from_raw_parts(copy.as_ptr(), nf)
+                        copy.reserve(nf);
+                        for &h in host {
+                            copy.push(S::from_f32(h));
+                        }
+                        let p = copy.as_ptr();
+                        let l = copy.len();
+                        // SAFETY: `copy` lives as long as `self`, which
+                        // outlives the returned `AudioBuffer<'a>`.
+                        std::slice::from_raw_parts(p, l)
                     }
+                } else if same_precision {
+                    // SAFETY: the in-precision case is `&[f32]`. We
+                    // transmute via raw parts because the function
+                    // signature is generic over S but the runtime
+                    // branch knows S == f32.
+                    let raw = ptr.cast::<S>();
+                    std::slice::from_raw_parts(raw, nf)
                 } else {
-                    std::slice::from_raw_parts(ptr, nf)
+                    // Different precision, no aliasing: widen into scratch.
+                    let host = std::slice::from_raw_parts(ptr, nf);
+                    let copy = &mut self.input_copies[ch];
+                    copy.clear();
+                    copy.reserve(nf);
+                    for &h in host {
+                        copy.push(S::from_f32(h));
+                    }
+                    let p = copy.as_ptr();
+                    let l = copy.len();
+                    std::slice::from_raw_parts(p, l)
                 };
                 self.input_slices.push(slice);
             }
 
             self.output_slices.clear();
-            self.output_slices.reserve(num_out);
-            for ch in 0..num_out {
+            self.output_slices.reserve(num_out_u);
+            for ch in 0..num_out_u {
                 let ptr = *outputs.add(ch);
-                let slice: &mut [f32] = if ptr.is_null() {
+                let slice: &mut [S] = if ptr.is_null() {
                     &mut []
+                } else if same_precision {
+                    // SAFETY: same-precision branch — host pointer is
+                    // already `*mut S` modulo runtime type identity.
+                    let raw = ptr.cast::<S>();
+                    std::slice::from_raw_parts_mut(raw, nf)
                 } else {
-                    std::slice::from_raw_parts_mut(ptr, nf)
+                    // Different precision: render into per-channel
+                    // scratch; finish_widening_f32 copies+narrows back.
+                    let buf = &mut self.output_buffers[ch];
+                    buf.clear();
+                    buf.resize(nf, S::default());
+                    let p = buf.as_mut_ptr();
+                    let l = buf.len();
+                    std::slice::from_raw_parts_mut(p, l)
                 };
                 self.output_slices.push(slice);
             }
 
             // SAFETY: Same transmute pattern as AudioBuffer::slice().
             // RawBufferScratch stores 'static slices but we return AudioBuffer<'a>.
-            // Sound because the caller's raw pointers must outlive 'a, and
-            // &'a mut self prevents aliasing.
             let self_ptr: *mut Self = self;
             let s = &mut *self_ptr;
-            let mut buf = std::mem::transmute::<AudioBuffer<'static>, AudioBuffer<'a>>(
+            let mut buf = std::mem::transmute::<AudioBuffer<'static, S>, AudioBuffer<'a, S>>(
                 AudioBuffer::from_slices(&s.input_slices, &mut s.output_slices, nf),
             );
             buf.set_in_place_mask(in_place_mask);
             buf
         }
     }
-}
 
-impl RawBufferScratch {
     /// Pre-allocate the per-channel scratch vectors so `build` runs
     /// allocation-free for buses up to `num_in` × `num_out` channels
-    /// and blocks up to `max_frames`. Idempotent and growth-only:
-    /// safe to call from both `cb_create` (with the default layout's
-    /// counts) and `cb_reset` (with the host's negotiated max). Without
-    /// this hook, the first audio block at >2 channels would heap-
-    /// allocate on the audio thread because the `Default` impl only
-    /// sizes for stereo.
+    /// and blocks up to `max_frames`. Idempotent and growth-only.
     pub fn ensure_capacity(&mut self, num_in: usize, num_out: usize, max_frames: usize) {
         if self.input_slices.capacity() < num_in {
             self.input_slices
@@ -439,15 +518,24 @@ impl RawBufferScratch {
                 buf.reserve_exact(max_frames - buf.capacity());
             }
         }
+        while self.output_buffers.len() < num_out {
+            self.output_buffers.push(Vec::with_capacity(max_frames));
+        }
+        for buf in &mut self.output_buffers {
+            if buf.capacity() < max_frames {
+                buf.reserve_exact(max_frames - buf.capacity());
+            }
+        }
     }
 }
 
-impl Default for RawBufferScratch {
+impl<S: Sample> Default for RawBufferScratch<S> {
     fn default() -> Self {
         Self {
             input_slices: Vec::with_capacity(2),
             output_slices: Vec::with_capacity(2),
             input_copies: Vec::with_capacity(2),
+            output_buffers: Vec::with_capacity(2),
         }
     }
 }
