@@ -1,10 +1,17 @@
 //! User-facing plugin traits + internal bridge.
 //!
-//! `truce-gui` is the home of the user-facing surface for two
-//! reasons: the GUI methods (`layout`, `render`, `hit_test`,
-//! `custom_editor`) reference `truce-gui` types, and putting those
-//! on the same trait as DSP keeps the plugin author's `impl` to one
-//! block instead of two.
+//! This crate is the plugin author's entry point. The single
+//! `impl PluginLogic for MyPlugin { ... }` block covers both
+//! audio-thread DSP and main-thread GUI, with sample precision
+//! routed through the prelude (see [`truce::prelude`] /
+//! `truce::prelude64`).
+//!
+//! `truce-plugin` depends on `truce-gui-types` (light: layout,
+//! render trait, widget regions) — not the full `truce-gui`.
+//! Plugin authors who supply a custom editor (egui, iced, slint,
+//! raw window handle) end up with `truce-plugin` in their dep
+//! tree but not the built-in editor's tiny-skia + baseview +
+//! truce-font stack.
 //!
 //! ## Three traits, one source of truth
 //!
@@ -35,12 +42,11 @@ use truce_core::editor::Editor;
 use truce_core::events::EventList;
 use truce_core::process::{ProcessContext, ProcessStatus};
 use truce_core::state::StateLoadError;
+use truce_gui_types::interaction::WidgetRegion;
+use truce_gui_types::layout::GridLayout;
+use truce_gui_types::render::RenderBackend;
+use truce_gui_types::widgets::WidgetType;
 use truce_params::sample::Sample;
-
-use crate::interaction::WidgetRegion;
-use crate::layout::GridLayout;
-use crate::render::RenderBackend;
-use crate::widgets::WidgetType;
 
 // ---------------------------------------------------------------------------
 // PluginLogicCore — generic trait, what format wrappers consume
@@ -249,10 +255,11 @@ pub mod __plugin_logic_deps {
     pub use truce_core::process::{ProcessContext, ProcessStatus};
     pub use truce_core::state::StateLoadError;
 
-    pub use crate::interaction::WidgetRegion;
-    pub use crate::layout::GridLayout;
-    pub use crate::plugin_logic::default_hit_test;
-    pub use crate::render::RenderBackend;
+    pub use truce_gui_types::interaction::WidgetRegion;
+    pub use truce_gui_types::layout::GridLayout;
+    pub use truce_gui_types::render::RenderBackend;
+
+    pub use crate::default_hit_test;
 }
 
 plugin_logic_leaf_trait! {

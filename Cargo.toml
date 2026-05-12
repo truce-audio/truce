@@ -10,6 +10,8 @@ members = [
     "crates/truce-standalone",
     "crates/truce-driver",
     "crates/truce-gui",
+    "crates/truce-gui-types",
+    "crates/truce-plugin",
     "crates/truce-vst2",
     "crates/truce-lv2",
     "crates/truce-aax",
@@ -80,6 +82,8 @@ truce-au = { path = "crates/truce-au" }
 truce-standalone = { path = "crates/truce-standalone" }
 truce-driver = { path = "crates/truce-driver" }
 truce-gui = { path = "crates/truce-gui" }
+truce-gui-types = { path = "crates/truce-gui-types" }
+truce-plugin = { path = "crates/truce-plugin" }
 truce-vst2 = { path = "crates/truce-vst2" }
 truce-lv2 = { path = "crates/truce-lv2" }
 truce-aax = { path = "crates/truce-aax" }

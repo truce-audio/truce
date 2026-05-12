@@ -6382,8 +6382,17 @@ dependencies = [
  "tiny-skia 0.12.0",
  "truce-core",
  "truce-font",
+ "truce-gui-types",
  "truce-params",
+ "truce-plugin",
  "wgpu 24.0.5",
+]
+
+[[package]]
+name = "truce-gui-types"
+version = "0.37.0"
+dependencies = [
+ "truce-core",
 ]
 
 [[package]]
@@ -6433,6 +6442,15 @@ name = "truce-params"
 version = "0.37.0"
 dependencies = [
  "bitflags 2.11.1",
+]
+
+[[package]]
+name = "truce-plugin"
+version = "0.37.0"
+dependencies = [
+ "truce-core",
+ "truce-gui-types",
+ "truce-params",
 ]
 
 [[package]]

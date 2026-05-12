@@ -10,8 +10,9 @@
 use tiny_skia::{Paint, PathBuilder, Pixmap, PixmapPaint, Stroke, Transform};
 use truce_core::cast::len_u32;
 
-use crate::render::{ImageId, RenderBackend};
-use crate::theme::Color;
+use crate::ColorExt;
+use truce_gui_types::render::{ImageId, RenderBackend};
+use truce_gui_types::theme::Color;
 
 /// CPU-based rendering backend.
 ///

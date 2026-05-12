@@ -17,18 +17,13 @@ impl Color {
     pub const fn rgb(r: f32, g: f32, b: f32) -> Self {
         Self { r, g, b, a: 1.0 }
     }
-
-    #[must_use]
-    pub fn to_skia(&self) -> tiny_skia::Color {
-        tiny_skia::Color::from_rgba(self.r, self.g, self.b, self.a)
-            .unwrap_or(tiny_skia::Color::BLACK)
-    }
-
-    #[must_use]
-    pub fn to_premultiplied(&self) -> tiny_skia::PremultipliedColorU8 {
-        self.to_skia().premultiply().to_color_u8()
-    }
 }
+
+// `Color::to_skia` / `Color::to_premultiplied` (tiny-skia
+// conversions) live in `truce-gui` — they're rasterizer-specific
+// helpers, and putting them here would pull tiny-skia into the
+// light crate. Backends that need them call the conversion at the
+// raster boundary instead.
 
 /// Visual theme for the built-in GUI.
 #[derive(Clone, Debug)]

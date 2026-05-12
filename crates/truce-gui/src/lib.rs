@@ -1,7 +1,12 @@
-//! Built-in GPU-free GUI for truce plugins.
+//! Built-in GPU-free GUI for truce plugins (heavyweight runtime).
 //!
-//! Uses a `RenderBackend` trait to abstract over rendering implementations.
-//! The default `CpuBackend` uses tiny-skia for software rasterization.
+//! Uses a [`truce_gui_types::RenderBackend`] trait to abstract over
+//! rendering implementations. The default [`backend_cpu::CpuBackend`]
+//! uses tiny-skia for software rasterization. The non-runtime data
+//! types (layout, widget regions, interaction state, theme, render
+//! trait, plugin-logic trait) live in `truce-gui-types` and
+//! `truce-plugin`; this crate re-exports them so existing
+//! `truce_gui::...` paths keep working.
 
 // Widget-drawing helpers, `RenderBackend` trait methods, and interaction
 // dispatch all take many independent geometry / state / theme arguments.
@@ -14,30 +19,24 @@ pub mod blit;
 pub mod editor;
 pub mod font;
 pub mod interaction;
-pub mod layout;
-#[macro_use]
-pub mod macros;
 pub mod platform;
-pub mod plugin_logic;
-pub mod render;
-pub mod snapshot;
-pub mod theme;
-pub mod widgets;
+
+// Re-export the lightweight data + trait surface from `truce-gui-types`
+// so old `truce_gui::layout::*` / `truce_gui::widgets::*` /
+// `truce_gui::theme::*` paths continue to resolve. New code can import
+// directly from `truce_gui_types`.
+pub use truce_gui_types::{ImageId, ParamSnapshot, RenderBackend, Theme};
+pub use truce_gui_types::{layout, render, snapshot, theme, widgets};
+
+// Re-export plugin-logic traits from `truce-plugin` for the same
+// backward-compat reason.
+pub use truce_plugin::{PluginLogic, PluginLogic64, PluginLogicCore, default_hit_test};
+
+#[doc(hidden)]
+pub use truce_plugin::__plugin_logic_deps;
 
 pub use editor::BuiltinEditor;
 pub use platform::{EditorScale, to_physical_px};
-pub use plugin_logic::{PluginLogic, PluginLogic64, PluginLogicCore, default_hit_test};
-
-// Re-exported at the crate root so the `plugin_logic_leaf_trait!`
-// macro's `$crate::__plugin_logic_deps::*` paths resolve when the
-// macro is invoked outside `truce_gui` (the macro is `#[macro_export]`
-// and could in principle be called from a downstream crate that
-// wants to declare its own sample-pinned leaf trait).
-#[doc(hidden)]
-pub use plugin_logic::__plugin_logic_deps;
-pub use render::{ImageId, RenderBackend};
-pub use snapshot::ParamSnapshot;
-pub use theme::Theme;
 
 /// Get the display scale factor used to size the next editor.
 ///
@@ -53,4 +52,33 @@ pub fn backing_scale() -> f64 {
         return s;
     }
     platform::main_screen_scale()
+}
+
+// ---------------------------------------------------------------------------
+// tiny-skia conversions for the light `Color` type
+//
+// `truce-gui-types::theme::Color` doesn't pull in `tiny-skia` (the
+// whole point of the split). The conversion helpers live here so
+// the CPU backend and screenshot pipeline can call them without
+// reimplementing the f32→u8 saturation logic at each site.
+// ---------------------------------------------------------------------------
+
+/// Extension trait giving [`truce_gui_types::theme::Color`] the
+/// `to_skia` / `to_premultiplied` methods that used to live on the
+/// inherent impl, now relocated here so `truce-gui-types` stays
+/// rasterizer-free.
+pub trait ColorExt {
+    fn to_skia(&self) -> tiny_skia::Color;
+    fn to_premultiplied(&self) -> tiny_skia::PremultipliedColorU8;
+}
+
+impl ColorExt for truce_gui_types::theme::Color {
+    fn to_skia(&self) -> tiny_skia::Color {
+        tiny_skia::Color::from_rgba(self.r, self.g, self.b, self.a)
+            .unwrap_or(tiny_skia::Color::BLACK)
+    }
+
+    fn to_premultiplied(&self) -> tiny_skia::PremultipliedColorU8 {
+        self.to_skia().premultiply().to_color_u8()
+    }
 }
