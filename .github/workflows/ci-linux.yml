@@ -11,6 +11,13 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
+  # Pin the toolchain via env so cargo's rustup shim always resolves
+  # to 1.90, regardless of what the runner image preinstalled or what
+  # `Swatinem/rust-cache` restored into `~/.cargo/`. Without this the
+  # shim occasionally falls through to `rustup-init` (its bootstrap
+  # binary), which rejects `build -p ... --release` as unknown args
+  # and fails the step with a confusing "unexpected argument 'build'".
+  RUSTUP_TOOLCHAIN: "1.90"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -22,18 +29,18 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.88
+      - uses: dtolnay/rust-toolchain@1.90
         with:
           components: rustfmt
       - run: cargo fmt --all -- --check
 
   test:
-    name: ubuntu-24.04 (1.88)
+    name: ubuntu-24.04 (1.90)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@1.88
+      - uses: dtolnay/rust-toolchain@1.90
         with:
           components: clippy
 

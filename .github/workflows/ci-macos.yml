@@ -11,6 +11,9 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
+  # See note in ci-linux.yml — pin the rustup shim so it can't fall
+  # through to `rustup-init` when the runner / cache state drifts.
+  RUSTUP_TOOLCHAIN: "1.90"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -18,12 +21,12 @@ concurrency:
 
 jobs:
   test:
-    name: macos-14 (1.88)
+    name: macos-14 (1.90)
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@1.88
+      - uses: dtolnay/rust-toolchain@1.90
         with:
           components: clippy
 

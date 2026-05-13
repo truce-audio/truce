@@ -194,7 +194,7 @@ LV2, AU, AAX), and current status.
 
 ## Requirements
 
-- Rust 1.88+ (`rustup update`).
+- Rust 1.90+ (`rustup update`).
 - **macOS**: Xcode CLI tools (`xcode-select --install`). Full Xcode for AU v3.
 - **Windows**: MSVC build tools (Visual Studio 2019+ with the "Desktop
   development with C++" workload). Rust `x86_64-pc-windows-msvc`

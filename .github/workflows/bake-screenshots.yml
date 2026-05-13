@@ -38,6 +38,9 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
+  # See note in ci-linux.yml — pin the rustup shim so it can't fall
+  # through to `rustup-init` when the runner / cache state drifts.
+  RUSTUP_TOOLCHAIN: "1.90"
   # Keep this list in sync with truce.toml's [[plugin]] entries that
   # have screenshot tests under examples/<crate>/src/lib.rs. The
   # `_linux` / `_macos` / `_windows` suffix on the output filename
@@ -65,7 +68,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@1.88
+      - uses: dtolnay/rust-toolchain@1.90
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -111,7 +114,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@1.88
+      - uses: dtolnay/rust-toolchain@1.90
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -146,7 +149,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@1.88
+      - uses: dtolnay/rust-toolchain@1.90
 
       - uses: Swatinem/rust-cache@v2
         with:

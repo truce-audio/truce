@@ -10,6 +10,9 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
   RUSTDOCFLAGS: -D warnings
+  # See note in ci-linux.yml — pin the rustup shim so it can't fall
+  # through to `rustup-init` when the runner / cache state drifts.
+  RUSTUP_TOOLCHAIN: "1.90"
 
 concurrency:
   group: pages-${{ github.ref }}
@@ -27,7 +30,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@1.88
+      - uses: dtolnay/rust-toolchain@1.90
 
       - uses: Swatinem/rust-cache@v2
         with:
