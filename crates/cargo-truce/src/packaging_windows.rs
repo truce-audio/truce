@@ -1387,20 +1387,17 @@ fn render_iss(
 ///              whole installer escalates once for them while
 ///              CLAP / VST3 still target user paths.
 ///   --system → `admin`. UAC on launch, lands under system paths.
-///   --ask    → `lowest` + `PrivilegesRequiredOverridesAllowed=...`
+///   --ask    → `admin` + `PrivilegesRequiredOverridesAllowed=...`
 ///              shows the "Select Setup Install Mode" page with
-///              "Install just for me" pre-selected. UAC fires only if
-///              the end user explicitly picks all-users. Using
-///              `lowest` instead of `admin` here also dodges
-///              Windows' installer-elevation heuristics that have
-///              been observed to suppress the dialog on larger
-///              installers despite an `asInvoker` manifest.
+///              "Install for all users" pre-selected. UAC fires only
+///              when the end user keeps the default; picking "for me
+///              only" skips elevation entirely.
 ///
 /// Mixing admin elevation with `{usercf}` (per-user CLAP/VST3 dest)
 /// is intentional under `--user` with system-only payloads — the
 /// elevation hosts the AAX/VST2 install; CLAP/VST3 still go to
 /// user paths. Suppress ISCC's `UsedUserAreasWarning` when that mix
-/// or the `--ask` lowest-default + user-area combination occurs.
+/// or the `--ask` admin-default + user-area combination occurs.
 fn write_privileges_required(setup: &mut String, scope: PkgScope, formats: &[PkgFormat]) {
     let has_system_only_format = formats
         .iter()
@@ -1413,7 +1410,7 @@ fn write_privileges_required(setup: &mut String, scope: PkgScope, formats: &[Pkg
         PkgScope::User => setup.push_str("PrivilegesRequired=lowest\r\n"),
         PkgScope::System => setup.push_str("PrivilegesRequired=admin\r\n"),
         PkgScope::Ask => {
-            setup.push_str("PrivilegesRequired=lowest\r\n");
+            setup.push_str("PrivilegesRequired=admin\r\n");
             setup.push_str("PrivilegesRequiredOverridesAllowed=commandline dialog\r\n");
             setup.push_str("UsedUserAreasWarning=no\r\n");
         }
@@ -1937,13 +1934,19 @@ fn dir_size_recursive(path: &Path) -> u64 {
 }
 
 fn iss_component_spec(fmt: &PkgFormat) -> (&'static str, &'static str, &'static str) {
+    // Every format is in `Types: full` so the default install pre-checks
+    // it; users who want a subset switch the wizard's Setup Type radio
+    // to "Custom" and pick. VST2 stays in `full` despite being legacy —
+    // packaging it at all is opt-in upstream (the plugin crate's
+    // Cargo.toml has to declare the format), so if the developer chose
+    // to ship VST2 they want it checked by default too.
     match fmt {
         PkgFormat::Clap => ("clap", "CLAP", "full"),
         PkgFormat::Vst3 => ("vst3", "VST3", "full"),
-        PkgFormat::Vst2 => ("vst2", "VST2 (legacy)", "custom"),
-        PkgFormat::Lv2 => ("lv2", "LV2", "custom"),
+        PkgFormat::Vst2 => ("vst2", "VST2 (legacy)", "full"),
+        PkgFormat::Lv2 => ("lv2", "LV2", "full"),
         PkgFormat::Aax => ("aax", "AAX", "full"),
-        PkgFormat::Standalone => ("standalone", "Standalone app", "custom"),
+        PkgFormat::Standalone => ("standalone", "Standalone app", "full"),
         PkgFormat::Au2 | PkgFormat::Au3 => unreachable!("AU is filtered out on Windows"),
     }
 }
