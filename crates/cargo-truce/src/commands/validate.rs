@@ -433,11 +433,12 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
 
                 // CLAP plugin shape is per-platform:
                 //   macOS: a `.clap` *bundle* directory with a binary
-                //          at `Contents/MacOS/<name>`. `cargo truce
-                //          install` writes a bare dylib renamed
-                //          `.clap` (still loadable by hosts), so we
-                //          wrap it in a scratch bundle for
-                //          clap-validator.
+                //          at `Contents/MacOS/<name>`. Current truce
+                //          installs lay this out directly; the
+                //          scratch-bundle branch below is a fallback
+                //          for legacy flat installs from older truce
+                //          releases (pre-bundle layout) so validate
+                //          keeps working until they're reinstalled.
                 //   Linux:   a `.so` renamed `.clap`. dlopen-loadable
                 //          directly — no bundle.
                 //   Windows: a `.dll` renamed `.clap`. LoadLibrary-

@@ -101,9 +101,15 @@ pub(crate) fn stage_lv2(
 /// Stage a CLAP bundle into the staging directory. `target` selects
 /// which `target/<triple>/release/` to read from (`None` = host's
 /// `target/release/`).
+///
+/// macOS uses the loadable-bundle layout that hosts like Bitwig expect
+/// (`{name}.clap/Contents/MacOS/<name>` + `Info.plist`). Linux and
+/// Windows keep the flat `.so` / `.dll` renamed `.clap`.
+#[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
 pub(crate) fn stage_clap(
     root: &Path,
     p: &PluginDef,
+    config: &Config,
     staging: &Path,
     identity: &str,
     target: Option<&str>,
@@ -112,9 +118,45 @@ pub(crate) fn stage_clap(
     if !dylib.exists() {
         return Err(format!("Missing: {}", dylib.display()).into());
     }
-    let dst = staging.join(format!("{}.clap", p.name));
-    fs::copy(&dylib, &dst)?;
-    codesign_bundle(dst.to_str().unwrap(), identity, false)?;
+    let bundle = staging.join(format!("{}.clap", p.name));
+
+    #[cfg(target_os = "macos")]
+    {
+        let macos_dir = bundle.join("Contents/MacOS");
+        fs::create_dir_all(&macos_dir)?;
+        fs::copy(&dylib, macos_dir.join(&p.name))?;
+
+        let plist = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleExecutable</key>
+    <string>{name}</string>
+    <key>CFBundleIdentifier</key>
+    <string>{vendor_id}.{bundle_id}</string>
+    <key>CFBundleName</key>
+    <string>{name}</string>
+    <key>CFBundlePackageType</key>
+    <string>BNDL</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+</dict>
+</plist>"#,
+            name = p.name,
+            bundle_id = p.bundle_id,
+            vendor_id = config.vendor.id,
+        );
+        fs::write(bundle.join("Contents/Info.plist"), &plist)?;
+        codesign_bundle(bundle.to_str().unwrap(), identity, false)?;
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        fs::copy(&dylib, &bundle)?;
+        codesign_bundle(bundle.to_str().unwrap(), identity, false)?;
+    }
+
     Ok(())
 }
 

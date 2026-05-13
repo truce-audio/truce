@@ -198,7 +198,7 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
         let mut produced: Vec<BundleEntry> = Vec::new();
         for p in &plugins {
             if clap {
-                stage_clap(&root, p, &plan.stage_dir, &identity, plan.target)?;
+                stage_clap(&root, p, &config, &plan.stage_dir, &identity, plan.target)?;
                 let filename = format!("{}.clap", p.name);
                 crate::log_output(format!(
                     "CLAP: {}",

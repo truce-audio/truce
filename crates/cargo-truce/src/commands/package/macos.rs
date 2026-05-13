@@ -152,7 +152,14 @@ fn stage_components_only(root: &Path, p: &PluginDef, o: &PackageOpts) -> Res {
         // has produced a universal Mach-O at the canonical path; pass
         // None so `release_lib_for_target` resolves there.
         let result = match fmt {
-            PkgFormat::Clap => stage_clap(root, p, &staging, &crate::application_identity(), None),
+            PkgFormat::Clap => stage_clap(
+                root,
+                p,
+                o.config,
+                &staging,
+                &crate::application_identity(),
+                None,
+            ),
             PkgFormat::Vst3 => stage_vst3(root, p, o.config, &staging, None),
             PkgFormat::Vst2 => stage_vst2(root, p, o.config, &staging, None).map(|_| ()),
             PkgFormat::Lv2 => stage_lv2(root, p, &staging, &crate::application_identity(), None),
@@ -765,7 +772,14 @@ fn package_one_plugin(root: &Path, p: &PluginDef, dist_dir: &Path, o: &PackageOp
         // has produced a universal Mach-O at the canonical path; pass
         // None so `release_lib_for_target` resolves there.
         let result = match fmt {
-            PkgFormat::Clap => stage_clap(root, p, &staging, &crate::application_identity(), None),
+            PkgFormat::Clap => stage_clap(
+                root,
+                p,
+                o.config,
+                &staging,
+                &crate::application_identity(),
+                None,
+            ),
             PkgFormat::Vst3 => stage_vst3(root, p, o.config, &staging, None),
             PkgFormat::Vst2 => stage_vst2(root, p, o.config, &staging, None).map(|_| ()),
             PkgFormat::Lv2 => stage_lv2(root, p, &staging, &crate::application_identity(), None),

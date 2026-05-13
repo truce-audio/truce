@@ -308,10 +308,11 @@ fn scope_for(format: Format, requested: InstallScope) -> InstallScope {
     effective
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
 pub(crate) fn install_clap(
     root: &Path,
     p: &PluginDef,
-    _config: &Config,
+    config: &Config,
     scope: InstallScope,
 ) -> Res {
     let dylib = release_lib(root, &format!("{}_clap", p.dylib_stem()));
@@ -319,23 +320,81 @@ pub(crate) fn install_clap(
         return Err(format!("Missing: {}", dylib.display()).into());
     }
     let clap_dir = scope.clap_dir();
-    let dst = clap_dir.join(format!("{}.clap", p.name));
-
-    if scope.needs_sudo() {
-        run_sudo("mkdir", &[OsStr::new("-p"), clap_dir.as_os_str()])?;
-        run_sudo("cp", &[dylib.as_os_str(), dst.as_os_str()])?;
-    } else {
-        fs_ctx::create_dir_all(&clap_dir)?;
-        fs_ctx::copy(&dylib, &dst)?;
-    }
+    let bundle = clap_dir.join(format!("{}.clap", p.name));
 
     #[cfg(target_os = "macos")]
-    codesign_bundle(
-        dst.to_str().unwrap(),
-        &crate::application_identity(),
-        scope.needs_sudo(),
-    )?;
-    crate::log_output(format!("CLAP: {}", dst.display()));
+    {
+        // CLAP on macOS uses the loadable-bundle layout that hosts
+        // (Bitwig, Studio One) require per Apple's bundle conventions.
+        // Earlier truce versions wrote a flat dylib renamed `.clap`;
+        // if that's still on disk at `bundle`, clear it before
+        // building the directory.
+        let contents = bundle.join("Contents");
+        let macos_dir = contents.join("MacOS");
+        let plist = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleExecutable</key>
+    <string>{name}</string>
+    <key>CFBundleIdentifier</key>
+    <string>{vendor_id}.{bundle_id}</string>
+    <key>CFBundleName</key>
+    <string>{name}</string>
+    <key>CFBundlePackageType</key>
+    <string>BNDL</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+</dict>
+</plist>"#,
+            name = p.name,
+            bundle_id = p.bundle_id,
+            vendor_id = config.vendor.id,
+        );
+        let plist_tmp = tmp_manifests()
+            .join(format!("{}_clap.plist", p.bundle_id))
+            .to_string_lossy()
+            .to_string();
+        fs_ctx::write(&plist_tmp, &plist)?;
+
+        if scope.needs_sudo() {
+            if bundle.exists() && !bundle.is_dir() {
+                run_sudo("rm", &[OsStr::new("-f"), bundle.as_os_str()])?;
+            }
+            run_sudo("mkdir", &[OsStr::new("-p"), macos_dir.as_os_str()])?;
+            let dst_dylib = macos_dir.join(&p.name);
+            run_sudo("cp", &[dylib.as_os_str(), dst_dylib.as_os_str()])?;
+            let dst_plist = contents.join("Info.plist");
+            run_sudo("cp", &[OsStr::new(&plist_tmp), dst_plist.as_os_str()])?;
+        } else {
+            if bundle.exists() && !bundle.is_dir() {
+                fs::remove_file(&bundle)?;
+            }
+            fs_ctx::create_dir_all(&macos_dir)?;
+            fs_ctx::copy(&dylib, macos_dir.join(&p.name))?;
+            fs_ctx::copy(&plist_tmp, contents.join("Info.plist"))?;
+        }
+
+        codesign_bundle(
+            bundle.to_str().unwrap(),
+            &crate::application_identity(),
+            scope.needs_sudo(),
+        )?;
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        if scope.needs_sudo() {
+            run_sudo("mkdir", &[OsStr::new("-p"), clap_dir.as_os_str()])?;
+            run_sudo("cp", &[dylib.as_os_str(), bundle.as_os_str()])?;
+        } else {
+            fs_ctx::create_dir_all(&clap_dir)?;
+            fs_ctx::copy(&dylib, &bundle)?;
+        }
+    }
+
+    crate::log_output(format!("CLAP: {}", bundle.display()));
     Ok(())
 }
 
