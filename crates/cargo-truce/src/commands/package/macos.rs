@@ -1242,7 +1242,9 @@ fn notarize_and_staple(pkg_path: &Path, _config: &Config) -> Res {
             );
             std::thread::sleep(std::time::Duration::from_secs(delay));
         }
-        let output = Command::new("xcrun").args(["stapler", "staple", pkg]).output()?;
+        let output = Command::new("xcrun")
+            .args(["stapler", "staple", pkg])
+            .output()?;
         if output.status.success() {
             stapled = true;
             break;
