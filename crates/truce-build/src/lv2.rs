@@ -16,6 +16,32 @@
 use std::collections::HashSet;
 use std::fmt::Write as _;
 
+/// The plugin's LV2 URI — the identity LV2 hosts persist in saved
+/// sessions. Single source of truth shared by the manifest writer
+/// (`truce-derive::lv2_emit`) and the runtime descriptor
+/// (`truce-lv2::plugin_uri`). If the two paths produced different
+/// strings the host would discover the plugin under one URI then
+/// fail to look it up under another when reopening a project.
+///
+/// Format: `<vendor_url>/lv2/<bundle_id>`, or `urn:truce:<bundle_id>`
+/// when `vendor_url` is empty (lilv's reference loader prefers an
+/// `http://` URI but accepts the URN fallback for projects that
+/// haven't picked a public URL yet).
+#[must_use]
+pub fn plugin_uri(vendor_url: &str, bundle_id: &str) -> String {
+    if vendor_url.is_empty() {
+        return format!("urn:truce:{bundle_id}");
+    }
+    format!("{}/lv2/{}", vendor_url.trim_end_matches('/'), bundle_id)
+}
+
+/// Convention: `<plugin_uri>#ui`. Same single-source-of-truth posture
+/// as [`plugin_uri`].
+#[must_use]
+pub fn ui_uri(vendor_url: &str, bundle_id: &str) -> String {
+    format!("{}#ui", plugin_uri(vendor_url, bundle_id))
+}
+
 /// Top-level inputs to the TTL renderer.
 #[derive(Debug, Clone)]
 pub struct Lv2Bundle {
@@ -453,4 +479,43 @@ fn lv2_unit(u: Lv2Unit) -> Option<&'static str> {
 
 fn escape_turtle(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn plugin_uri_empty_url_falls_back_to_urn() {
+        assert_eq!(plugin_uri("", "my-gain"), "urn:truce:my-gain");
+    }
+
+    #[test]
+    fn plugin_uri_uses_vendor_url() {
+        assert_eq!(
+            plugin_uri("https://example.com", "my-gain"),
+            "https://example.com/lv2/my-gain"
+        );
+    }
+
+    #[test]
+    fn plugin_uri_strips_trailing_slash() {
+        assert_eq!(
+            plugin_uri("https://example.com/", "my-gain"),
+            "https://example.com/lv2/my-gain"
+        );
+        assert_eq!(
+            plugin_uri("https://example.com///", "my-gain"),
+            "https://example.com/lv2/my-gain"
+        );
+    }
+
+    #[test]
+    fn ui_uri_appends_ui_fragment() {
+        assert_eq!(
+            ui_uri("https://example.com", "my-gain"),
+            "https://example.com/lv2/my-gain#ui"
+        );
+        assert_eq!(ui_uri("", "my-gain"), "urn:truce:my-gain#ui");
+    }
 }

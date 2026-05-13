@@ -658,8 +658,9 @@ impl GridLayout {
     /// same call — useful when both are non-default. Equivalent to
     /// `.with_cell_size(s).with_cols(c)`.
     #[must_use]
-    pub fn with_grid(self, cols: u32, cell_size: f32) -> Self {
-        self.with_cell_size(cell_size).with_cols(cols)
+    pub fn with_grid(mut self, cols: u32, cell_size: f32) -> Self {
+        self = self.with_cell_size(cell_size);
+        self.with_cols(cols)
     }
 
     /// Set both header slots at once. Replaces any previously
@@ -770,16 +771,19 @@ impl GridLayout {
         (w as u32, h as u32)
     }
 
-    /// Auto-flow placement without section breaks.
-    pub fn auto_flow(&mut self) {
-        self.auto_flow_with_breaks(&[]);
-    }
-
-    /// Auto-flow placement with section breaks.
+    /// Auto-flow placement with section breaks. Internal helper:
+    /// the public builder API exposes [`Self::with_cols`] /
+    /// [`Self::with_cell_size`] / [`Self::with_grid`] which call
+    /// `flow_and_size` after their field mutation. Previously
+    /// exposed as `pub` (along with a `pub auto_flow()` wrapper for
+    /// the no-breaks case), which mixed in-place mutation into the
+    /// chainable `mut self -> Self` builder surface — confusing.
+    /// Now `pub(crate)`; the no-breaks wrapper is gone since
+    /// internal callers always pass an explicit slice.
     ///
     /// Each break is `(widget_index, label)`: when the cursor reaches that
     /// widget index, it advances to the next row and records a section label.
-    pub fn auto_flow_with_breaks(&mut self, breaks: &[(usize, &'static str)]) {
+    pub(crate) fn auto_flow_with_breaks(&mut self, breaks: &[(usize, &'static str)]) {
         let mut occupied = std::collections::HashSet::new();
         let mut cursor_col: u32 = 0;
         let mut cursor_row: u32 = 0;

@@ -142,12 +142,8 @@ pub(crate) fn emit_root_impl(input: TokenStream) -> TokenStream {
     let has_midi_out = matches!(category, truce_build::lv2::Lv2Category::NoteEffect);
 
     let url = config.vendor.url.clone();
-    let uri = if url.is_empty() {
-        format!("urn:truce:{}", plugin.bundle_id)
-    } else {
-        format!("{}/lv2/{}", url.trim_end_matches('/'), plugin.bundle_id)
-    };
-    let ui_uri = format!("{uri}#ui");
+    let uri = truce_build::lv2::plugin_uri(&url, &plugin.bundle_id);
+    let ui_uri = truce_build::lv2::ui_uri(&url, &plugin.bundle_id);
 
     let bundle = truce_build::lv2::Lv2Bundle {
         plugin_name: plugin.name.clone(),

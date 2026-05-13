@@ -38,7 +38,7 @@ pub(crate) enum BuildFormat {
 
 impl BuildFormat {
     /// Cargo feature flag passed to `cargo build --features <feature>`.
-    fn feature(self) -> &'static str {
+    pub(crate) fn feature(self) -> &'static str {
         match self {
             BuildFormat::Clap => "clap",
             BuildFormat::Vst3 => "vst3",
@@ -50,7 +50,7 @@ impl BuildFormat {
     }
 
     /// Human-facing name used in the "Building <label>..." banner.
-    fn label(self) -> &'static str {
+    pub(crate) fn label(self) -> &'static str {
         match self {
             BuildFormat::Clap => "CLAP",
             BuildFormat::Vst3 => "VST3",
@@ -64,7 +64,7 @@ impl BuildFormat {
     /// Format-suffix appended to the dylib stem on copy. Keeps each
     /// format's binary distinct in `target/<profile>/` so subsequent
     /// per-format builds don't overwrite earlier ones.
-    fn dylib_suffix(self) -> &'static str {
+    pub(crate) fn dylib_suffix(self) -> &'static str {
         match self {
             BuildFormat::Clap => "_clap",
             BuildFormat::Vst3 => "_vst3",

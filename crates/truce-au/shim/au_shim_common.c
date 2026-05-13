@@ -41,15 +41,6 @@ static void au_shim_constructor(void) {
     truce_au_init();
 }
 
-// v2 factory bridge — defined here so it always exists for the Rust linker.
-// The actual implementation is in au_v2_shim.c (only compiled for v2 builds).
-// For v3-only builds, this weak symbol returns NULL.
-__attribute__((weak))
-void *truce_au_v2_factory_bridge(const void *desc) {
-    (void)desc;
-    return NULL; // v2 shim not compiled — overridden when au_v2_shim.c is linked
-}
-
 // Weak stubs for symbols the `export_au!` macro emits in the *consumer*
 // cdylib. They let `truce-au` build its own (unused) cdylib target —
 // which is the only way cargo stops warning about

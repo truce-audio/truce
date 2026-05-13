@@ -8,6 +8,7 @@ use super::stage::{
     generate_distribution_xml, stage_aax, stage_au2, stage_au3, stage_clap, stage_lv2,
     stage_standalone, stage_vst2, stage_vst3, write_format_scripts,
 };
+use crate::commands::build_dylibs::BuildFormat;
 use crate::install_scope::PkgScope;
 use crate::{
     Config, MacArch, PluginDef, Res, cargo_build_multi_arch, copy_dir_recursive, deployment_target,
@@ -576,22 +577,22 @@ fn build_all_formats(
     universal: bool,
 ) -> Res {
     if formats.contains(&PkgFormat::Clap) {
-        build_and_lipo_format(root, plugins, archs, dt, "clap", "CLAP")?;
+        build_and_lipo_format(root, plugins, archs, dt, BuildFormat::Clap)?;
     }
     if formats.contains(&PkgFormat::Vst3) {
-        build_and_lipo_format(root, plugins, archs, dt, "vst3", "VST3")?;
+        build_and_lipo_format(root, plugins, archs, dt, BuildFormat::Vst3)?;
     }
     if formats.contains(&PkgFormat::Vst2) {
-        build_and_lipo_format(root, plugins, archs, dt, "vst2", "VST2")?;
+        build_and_lipo_format(root, plugins, archs, dt, BuildFormat::Vst2)?;
     }
     if formats.contains(&PkgFormat::Lv2) {
-        build_and_lipo_format(root, plugins, archs, dt, "lv2", "LV2")?;
+        build_and_lipo_format(root, plugins, archs, dt, BuildFormat::Lv2)?;
     }
     if formats.contains(&PkgFormat::Au2) {
-        build_and_lipo_format(root, plugins, archs, dt, "au", "AU v2")?;
+        build_and_lipo_format(root, plugins, archs, dt, BuildFormat::Au2)?;
     }
     if formats.contains(&PkgFormat::Aax) {
-        build_and_lipo_format(root, plugins, archs, dt, "aax", "AAX")?;
+        build_and_lipo_format(root, plugins, archs, dt, BuildFormat::Aax)?;
         // Apple-sign + assemble the .aaxplugin bundle once we have the
         // universal Rust dylib. PACE wrap happens later in stage_aax
         // against the staging copy.
@@ -1075,17 +1076,18 @@ fn build_and_lipo_format(
     plugins: &[&PluginDef],
     archs: &[MacArch],
     dt: &str,
-    feature: &str,
-    label: &str,
+    format: BuildFormat,
 ) -> Res {
-    let suffix = format!("_{feature}");
+    let feature = format.feature();
+    let label = format.label();
+    let suffix = format.dylib_suffix();
 
     // AU v2 needs a unique cocoa-view class name per dylib so hosts
     // that look up classes via `[NSBundle classNamed:]` (REAPER) can
     // find the right one — see `truce-au`'s `build.rs`. That means
     // one cargo invocation per plugin with `TRUCE_AU_PLUGIN_ID` set,
     // instead of one batched build for all plugins.
-    if feature == "au" {
+    if format == BuildFormat::Au2 {
         if archs.len() == 1 {
             eprintln!("Building {label} ({})...", archs[0].triple());
         } else {

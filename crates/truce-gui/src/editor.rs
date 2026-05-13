@@ -773,7 +773,9 @@ impl<P: Params + 'static> baseview::WindowHandler for BuiltinWindowHandler<P> {
         {
             // WS_CHILD plugin windows don't receive WM_KEYDOWN
             // until focused; baseview doesn't SetFocus on click,
-            // so we do it here. See truce-egui editor.rs.
+            // so we do it here. Without this, text-edit widgets
+            // never see keystrokes (the DAW keeps eating them for
+            // transport shortcuts).
             #[cfg(target_os = "windows")]
             {
                 if !window.has_focus() {

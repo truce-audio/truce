@@ -6878,6 +6878,7 @@ name = "truce-lv2"
 version = "0.39.3"
 dependencies = [
  "objc",
+ "truce-build",
  "truce-core",
  "truce-params",
 ]
@@ -6934,6 +6935,7 @@ version = "0.39.3"
 dependencies = [
  "baseview",
  "cpal",
+ "crossbeam-queue",
  "dirs",
  "hound",
  "keyboard-types 0.6.2",

@@ -232,9 +232,10 @@ impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
         frame.present();
     }
 
-    // `_window` is unused on macOS / Linux; the Windows ButtonPressed
-    // branch reads it (SetFocus on the child HWND). See truce-egui
-    // editor.rs for the same pattern + rationale.
+    // `_window` is unused on macOS / Linux — only the Windows
+    // ButtonPressed branch reads it, to SetFocus on the child HWND
+    // so text widgets see WM_KEYDOWN. Underscore-prefix keeps the
+    // unused-arg lint quiet on the non-Windows builds.
     #[allow(clippy::too_many_lines, clippy::used_underscore_binding)]
     fn on_event(&mut self, _window: &mut Window, event: Event) -> EventStatus {
         match event {
@@ -260,8 +261,10 @@ impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
                         button: baseview::MouseButton::Left,
                         ..
                     } => {
-                        // Child plugin window needs focus to receive WM_KEYDOWN
-                        // on Windows. See truce-egui editor.rs for rationale.
+                        // WS_CHILD plugin windows don't receive WM_KEYDOWN
+                        // until focused; baseview doesn't SetFocus on click,
+                        // so we do it here. Without this, text-edit widgets
+                        // never see keystrokes on Windows.
                         #[cfg(target_os = "windows")]
                         {
                             if !_window.has_focus() {

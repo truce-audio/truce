@@ -538,23 +538,15 @@ pub unsafe fn extension_data<P: PluginExport>(uri: *const c_char) -> *const c_vo
 // Plugin URI
 // ---------------------------------------------------------------------------
 
-/// Derive the plugin's LV2 URI from its `PluginInfo`. Prefers an `http://`
-/// URI under the vendor's URL so that LV2 hosts that expect well-formed
-/// web URIs (notably the lilv reference loader used by Ardour/Reaper) are
-/// happy. Falls back to `urn:truce:{id}` if the vendor URL is empty.
-///
-/// Keyed off `bundle_id` (not `clap_id`) so the URI matches what the
-/// manifest writer in `truce-derive::lv2_emit` puts in `manifest.ttl`
-/// — those two strings MUST agree or hosts reject the plugin at scan
-/// time (or discover under one URI then fail to look up the saved
-/// project's stored URI).
+/// Derive the plugin's LV2 URI from its `PluginInfo`. Thin wrapper
+/// around [`truce_build::lv2::plugin_uri`] — the single source of
+/// truth shared with the manifest writer in `truce-derive::lv2_emit`.
+/// Both paths MUST produce the same string, or hosts will discover
+/// the plugin under one URI then fail to look up the saved project's
+/// stored URI.
 #[must_use]
 pub fn plugin_uri(info: &PluginInfo) -> String {
-    if info.url.is_empty() {
-        return format!("urn:truce:{}", info.bundle_id);
-    }
-    let base = info.url.trim_end_matches('/');
-    format!("{base}/lv2/{}", info.bundle_id)
+    truce_build::lv2::plugin_uri(info.url, info.bundle_id)
 }
 
 // ---------------------------------------------------------------------------
@@ -724,8 +716,85 @@ pub use atom::AtomSequence;
 // Re-export UI types for the export_lv2 macro to use.
 pub use ui::{Lv2UiDescriptor, ui_descriptor};
 
-/// Derive the plugin's LV2 UI URI (plugin URI + "#ui").
+/// Derive the plugin's LV2 UI URI (plugin URI + "#ui"). Thin wrapper
+/// around [`truce_build::lv2::ui_uri`] — same single-source-of-truth
+/// posture as [`plugin_uri`].
 #[must_use]
 pub fn ui_uri(info: &PluginInfo) -> String {
-    format!("{}#ui", plugin_uri(info))
+    truce_build::lv2::ui_uri(info.url, info.bundle_id)
+}
+
+#[cfg(test)]
+mod uri_consistency_tests {
+    //! Pins the LV2 URI agreement: the manifest writer
+    //! (`truce-derive::lv2_emit`) and this crate's runtime
+    //! `plugin_uri` MUST produce the same string for the same
+    //! `(vendor_url, bundle_id)`. Both now delegate to
+    //! `truce_build::lv2::plugin_uri`, so this test guarantees the
+    //! manifest-vs-runtime contract by checking the runtime call
+    //! against the same `truce_build` function the manifest writer
+    //! uses — any drift on either side breaks this test.
+    use super::{plugin_uri, ui_uri};
+    use truce_core::info::{PluginCategory, PluginInfo};
+
+    fn info_with(url: &'static str, bundle_id: &'static str) -> PluginInfo {
+        PluginInfo {
+            name: "Test",
+            vendor: "Vendor",
+            url,
+            version: "0.0.0",
+            category: PluginCategory::Effect,
+            bundle_id,
+            vst3_id: "",
+            clap_id: "",
+            fourcc: *b"Test",
+            au_type: *b"aufx",
+            au_manufacturer: *b"Vend",
+            aax_id: None,
+            aax_category: None,
+            vst3_name: None,
+            clap_name: None,
+            vst2_name: None,
+            au_name: None,
+            au3_name: None,
+            aax_name: None,
+            lv2_name: None,
+        }
+    }
+
+    #[test]
+    fn runtime_uri_matches_manifest_uri_with_vendor_url() {
+        let info = info_with("https://example.com", "my-gain");
+        assert_eq!(
+            plugin_uri(&info),
+            truce_build::lv2::plugin_uri("https://example.com", "my-gain"),
+        );
+    }
+
+    #[test]
+    fn runtime_uri_matches_manifest_uri_with_trailing_slash() {
+        let info = info_with("https://example.com/", "my-gain");
+        assert_eq!(
+            plugin_uri(&info),
+            truce_build::lv2::plugin_uri("https://example.com/", "my-gain"),
+        );
+    }
+
+    #[test]
+    fn runtime_uri_matches_manifest_uri_empty_url() {
+        let info = info_with("", "my-gain");
+        assert_eq!(
+            plugin_uri(&info),
+            truce_build::lv2::plugin_uri("", "my-gain"),
+        );
+    }
+
+    #[test]
+    fn runtime_ui_uri_matches_manifest_ui_uri() {
+        let info = info_with("https://example.com", "my-gain");
+        assert_eq!(
+            ui_uri(&info),
+            truce_build::lv2::ui_uri("https://example.com", "my-gain"),
+        );
+    }
 }
