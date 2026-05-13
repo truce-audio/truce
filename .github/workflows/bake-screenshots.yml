@@ -67,6 +67,15 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      # `cache-bin: false` keeps `~/.cargo/bin/` (the rustup proxies)
+      # out of the cache. Caching it bit us with `cargo` resolving
+      # to a stale `rustup-init` after restore — see the workflow
+      # history if this needs revisiting.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: bake-ubuntu-24.04
+          cache-bin: false
+
       - name: Linux system deps
         run: |
           sudo apt-get update
@@ -109,6 +118,15 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      # `cache-bin: false` keeps `~/.cargo/bin/` (the rustup proxies)
+      # out of the cache. Caching it bit us with `cargo` resolving
+      # to a stale `rustup-init` after restore — see the workflow
+      # history if this needs revisiting.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: bake-macos-14
+          cache-bin: false
+
       - name: Build cargo-truce
         run: cargo build -p cargo-truce --release
 
@@ -139,6 +157,15 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
+
+      # `cache-bin: false` keeps `~/.cargo/bin/` (the rustup proxies)
+      # out of the cache. Caching it bit us with `cargo` resolving
+      # to a stale `rustup-init` after restore — see the workflow
+      # history if this needs revisiting.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: bake-windows-latest
+          cache-bin: false
 
       - name: Build cargo-truce
         run: cargo build -p cargo-truce --release

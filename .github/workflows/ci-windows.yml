@@ -27,9 +27,14 @@ jobs:
         with:
           components: clippy
 
+      # `cache-bin: false` keeps `~/.cargo/bin/` (the rustup proxies)
+      # out of the cache. Caching it bit us with `cargo` resolving
+      # to a stale `rustup-init` after restore — see the workflow
+      # history if this needs revisiting.
       - uses: Swatinem/rust-cache@v2
         with:
           key: windows-latest
+          cache-bin: false
 
       - name: clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
