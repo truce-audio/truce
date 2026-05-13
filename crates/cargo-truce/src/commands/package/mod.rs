@@ -292,12 +292,34 @@ impl PkgFormat {
             // suffix (or the user's `au3_name` override), so there's
             // no `/Applications/` collision.
             PkgFormat::Standalone => format!("{}.app", plugin.name),
+            // LV2 bundle names follow the spec's lowercase-hyphenated
+            // convention (the same slug `derive(Params)` bakes into
+            // `manifest.ttl` / `plugin.ttl`). Anything else and hosts
+            // can't resolve the bundle from the TTL's binary URI.
+            PkgFormat::Lv2 => format!("{}.lv2", stage::lv2_slug(&plugin.name)),
             _ => format!("{}.{}", plugin.name, self.extension()),
         }
     }
 
     pub(crate) fn choice_description(&self) -> &'static str {
         self.meta().choice_description
+    }
+
+    /// True for formats whose install destination can't be redirected
+    /// into the user's home — AAX lives under
+    /// `/Library/Application Support/Avid/...` where Pro Tools scans,
+    /// AU v3 needs `/Applications/` for `LaunchServices` to register
+    /// the appex, and a standalone `.app` belongs in `/Applications/`
+    /// to show up in Launchpad. When the user picks "Install for me
+    /// only" but selects one of these, the installer escalates
+    /// (`auth="Root"` on the corresponding `<pkg-ref>`) so the
+    /// component still lands in the right place rather than failing
+    /// with a permission-denied shove.
+    pub(crate) fn is_system_only_on_macos(&self) -> bool {
+        matches!(
+            self,
+            PkgFormat::Aax | PkgFormat::Au3 | PkgFormat::Standalone
+        )
     }
 }
 

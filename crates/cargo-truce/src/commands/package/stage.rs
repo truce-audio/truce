@@ -15,6 +15,8 @@ use std::fmt::Write;
 use std::fs;
 use std::path::Path;
 #[cfg(target_os = "macos")]
+use std::path::PathBuf;
+#[cfg(target_os = "macos")]
 use std::process::Command;
 
 /// Slug a plugin's display name into a lowercase, hyphenated, ASCII-safe
@@ -31,10 +33,23 @@ pub(crate) fn lv2_slug(name: &str) -> String {
 /// during the cdylib's compile). No dlopen — the binary doesn't have
 /// to load on this host, so cross-arch builds Just Work.
 ///
+/// On macOS, the inner `.so` is a Mach-O and gets signed with the
+/// caller's identity via `codesign_bundle` — same Developer-ID +
+/// hardened-runtime + secure-timestamp treatment as CLAP / VST3.
+/// Without that step, Apple's notarization-readiness check flags the
+/// LV2 binary as ad-hoc-signed and refuses to submit.
+///
 /// `target` selects which `target/<triple>/release/` directory to
 /// read the built dylib from. `None` reads from the default
-/// `target/release/` (host build).
-pub(crate) fn stage_lv2(root: &Path, p: &PluginDef, staging: &Path, target: Option<&str>) -> Res {
+/// `target/release/` (host build). On non-macOS hosts `identity` is
+/// unused (`codesign_bundle` is a no-op there).
+pub(crate) fn stage_lv2(
+    root: &Path,
+    p: &PluginDef,
+    staging: &Path,
+    identity: &str,
+    target: Option<&str>,
+) -> Res {
     let built = crate::release_lib_for_target(root, &format!("{}_lv2", p.dylib_stem()), target);
     if !built.exists() {
         return Err(format!("Missing: {}", built.display()).into());
@@ -68,9 +83,18 @@ pub(crate) fn stage_lv2(root: &Path, p: &PluginDef, staging: &Path, target: Opti
         "so"
     };
     let bin_name = format!("{slug}.{bin_ext}");
-    fs::copy(&built, bundle.join(&bin_name))?;
+    let bin_path = bundle.join(&bin_name);
+    fs::copy(&built, &bin_path)?;
     fs::copy(&manifest_ttl, bundle.join("manifest.ttl"))?;
     fs::copy(&plugin_ttl, bundle.join("plugin.ttl"))?;
+
+    // Sign the inner Mach-O directly rather than passing the bundle
+    // dir. An LV2 "bundle" is just a directory of files, not a real
+    // macOS bundle (no `Contents/Info.plist`) — codesign refuses to
+    // seal directories it doesn't recognise, but the Mach-O itself
+    // signs fine and that's the only file Apple's notary actually
+    // inspects.
+    codesign_bundle(&bin_path.to_string_lossy(), identity, false)?;
     Ok(())
 }
 
@@ -574,12 +598,36 @@ pub(crate) fn generate_distribution_xml(
             ""
         };
 
+        // Per-choice auth override. pkgbuild stamps every component
+        // with `auth="root"` because the install-location sits under
+        // `/Library/...` or `/Applications/`; left as-is the
+        // installer's `shove` step tries to chown the payload to
+        // `root:wheel` even when "Install for me only" relocated the
+        // destination to the user's home, and fails with EACCES.
+        //
+        // - `--user` (explicit): user-viable formats (CLAP, VST3,
+        //   LV2, AU v2) override to `auth="None"` so the relocated
+        //   `~/Library/Audio/Plug-Ins/...` install runs as the
+        //   current user with no chown. System-only formats (AAX,
+        //   AU v3, standalone) keep `auth="Root"` so they escalate
+        //   for `/Library/...` / `/Applications/`.
+        // - `--ask` (default): leave user-viable formats at the
+        //   component default — the user might pick "System" at
+        //   install time, which needs root either way. System-only
+        //   formats still get `auth="Root"` so they always escalate.
+        // - `--system`: leave defaults; admin is needed regardless.
+        let pkg_ref_auth = match (scope, fmt.is_system_only_on_macos()) {
+            (PkgScope::User | PkgScope::Ask, true) => " auth=\"Root\"",
+            (PkgScope::User, false) => " auth=\"None\"",
+            (PkgScope::Ask | PkgScope::System, _) => "",
+        };
+
         let _ = writeln!(choices_outline, "        <line choice=\"{id}\"/>");
         let _ = write!(
             choices,
             r#"
     <choice id="{id}" title="{label}" description="{desc}"{enabled_attr}>
-        <pkg-ref id="{pkg_id}"/>
+        <pkg-ref id="{pkg_id}"{pkg_ref_auth}/>
     </choice>
 "#
         );
@@ -628,23 +676,79 @@ pub(crate) fn generate_distribution_xml(
     )
 }
 
-/// Write AU cache clearing post-install script for AU component packages.
+/// Build per-format pkgbuild scripts under `staging/<fmt>_scripts/`
+/// and return the directory path. Every format gets a `preinstall`
+/// that removes any existing bundle at the destination before shove
+/// runs — without this, a stale leftover (especially one owned by
+/// root from a prior admin install) blocks the new payload with
+/// `Permission denied` during the relink step. AU v2 additionally
+/// gets a `postinstall` that clears the AU cache so Logic / Garage-
+/// Band re-scan and pick up the new bundle.
+///
+/// The preinstall reads `$2` (the resolved install destination —
+/// already accounts for `enable_currentUserHome` relocation) and
+/// removes `<destination>/<bundle_name>` if present. When running
+/// under root auth (`Install for all users` or a per-pkg-ref
+/// `auth="Root"`) the rm succeeds regardless of leftover owner;
+/// when running as the user the rm only works on user-owned
+/// leftovers and fails loudly with an actionable message otherwise
+/// (so the developer doing `cargo truce package --user` after a
+/// `--system` round sees what to clean up).
 #[cfg(target_os = "macos")]
-pub(crate) fn write_postinstall_script(dir: &Path) -> Res {
-    let scripts_dir = dir.join("scripts");
+pub(crate) fn write_format_scripts(
+    staging: &Path,
+    fmt: &PkgFormat,
+    bundle_name: &str,
+) -> std::result::Result<PathBuf, crate::BoxErr> {
+    let scripts_dir = staging.join(format!("{}_scripts", fmt.pkg_id_suffix()));
+    let _ = fs::remove_dir_all(&scripts_dir);
     fs::create_dir_all(&scripts_dir)?;
-    let script = scripts_dir.join("postinstall");
+
+    let escaped_bundle = bundle_name.replace('"', "\\\"");
+    let preinstall = scripts_dir.join("preinstall");
     fs::write(
-        &script,
-        "#!/bin/bash\n\
-         killall -9 AudioComponentRegistrar 2>/dev/null || true\n\
-         rm -rf ~/Library/Caches/AudioUnitCache/ 2>/dev/null || true\n\
-         rm -f ~/Library/Preferences/com.apple.audio.InfoHelper.plist 2>/dev/null || true\n\
-         exit 0\n",
+        &preinstall,
+        format!(
+            "#!/bin/bash\n\
+             # `cargo truce package` preinstall: remove any prior\n\
+             # bundle at the destination before shove writes ours.\n\
+             # `$2` is the resolved install destination (with\n\
+             # `enable_currentUserHome` redirection applied).\n\
+             set -u\n\
+             BUNDLE=\"$2/{escaped_bundle}\"\n\
+             if [ -e \"$BUNDLE\" ]; then\n    \
+                 if rm -rf \"$BUNDLE\" 2>/dev/null; then\n        \
+                     echo \"preinstall: removed existing $BUNDLE\"\n    \
+                 else\n        \
+                     owner=$(stat -f '%Su' \"$BUNDLE\" 2>/dev/null || echo unknown)\n        \
+                     echo \"\" >&2\n        \
+                     echo \"ERROR: Cannot remove $BUNDLE (owner: $owner).\" >&2\n        \
+                     echo \"Either re-run with 'Install for all users of this computer',\" >&2\n        \
+                     echo \"or run: sudo rm -rf \\\"$BUNDLE\\\"\" >&2\n        \
+                     exit 1\n    \
+                 fi\n\
+             fi\n\
+             exit 0\n",
+        ),
     )?;
-    // Make executable
     Command::new("chmod")
-        .args(["+x", script.to_str().unwrap()])
+        .args(["+x", preinstall.to_str().unwrap()])
         .status()?;
-    Ok(())
+
+    if *fmt == PkgFormat::Au2 {
+        let postinstall = scripts_dir.join("postinstall");
+        fs::write(
+            &postinstall,
+            "#!/bin/bash\n\
+             killall -9 AudioComponentRegistrar 2>/dev/null || true\n\
+             rm -rf ~/Library/Caches/AudioUnitCache/ 2>/dev/null || true\n\
+             rm -f ~/Library/Preferences/com.apple.audio.InfoHelper.plist 2>/dev/null || true\n\
+             exit 0\n",
+        )?;
+        Command::new("chmod")
+            .args(["+x", postinstall.to_str().unwrap()])
+            .status()?;
+    }
+
+    Ok(scripts_dir)
 }

@@ -227,7 +227,13 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
                 produced.push(entry(p, "vst2", filename));
             }
             if lv2 {
-                stage_lv2(&root, p, &plan.stage_dir, plan.target)?;
+                stage_lv2(
+                    &root,
+                    p,
+                    &plan.stage_dir,
+                    &crate::application_identity(),
+                    plan.target,
+                )?;
                 let slug = lv2_slug(&p.name);
                 let filename = format!("{slug}.lv2");
                 crate::log_output(format!(

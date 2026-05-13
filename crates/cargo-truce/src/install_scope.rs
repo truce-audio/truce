@@ -220,6 +220,16 @@ impl InstallScope {
             Self::System => PathBuf::from("/Library/Audio/Plug-Ins/Components"),
         }
     }
+    /// Directory the packager drops `<Plugin>.app` into for the
+    /// standalone host. `Install for me only` relocates `/Applications`
+    /// to `~/Applications`; `cargo truce package` lands the bundle in
+    /// whichever the user picked.
+    pub(crate) fn standalone_dir(self) -> PathBuf {
+        match self {
+            Self::User => home().join("Applications"),
+            Self::System => PathBuf::from("/Applications"),
+        }
+    }
 }
 
 #[cfg(target_os = "windows")]

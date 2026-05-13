@@ -6,9 +6,9 @@
 use super::PkgFormat;
 use super::stage::{
     generate_distribution_xml, stage_aax, stage_au2, stage_au3, stage_clap, stage_lv2,
-    stage_standalone, stage_vst2, stage_vst3, write_postinstall_script,
+    stage_standalone, stage_vst2, stage_vst3, write_format_scripts,
 };
-use crate::install_scope::{PkgScope, note_once};
+use crate::install_scope::PkgScope;
 use crate::{
     Config, MacArch, PluginDef, Res, cargo_build_multi_arch, copy_dir_recursive, deployment_target,
     detect_default_features, lipo_into, load_config, project_root, read_workspace_version,
@@ -78,7 +78,6 @@ pub(crate) fn cmd_package_macos(args: &[String], selection: &super::SuiteSelecti
         no_notarize: parsed.no_notarize,
         no_pace_sign: parsed.no_pace_sign,
         universal,
-        has_au2: formats.contains(&PkgFormat::Au2),
     };
     // Per-plugin installers always run pkgbuild to produce the
     // component packages; whether we *also* run productbuild +
@@ -156,7 +155,7 @@ fn stage_components_only(root: &Path, p: &PluginDef, o: &PackageOpts) -> Res {
             PkgFormat::Clap => stage_clap(root, p, &staging, &crate::application_identity(), None),
             PkgFormat::Vst3 => stage_vst3(root, p, o.config, &staging, None),
             PkgFormat::Vst2 => stage_vst2(root, p, o.config, &staging, None).map(|_| ()),
-            PkgFormat::Lv2 => stage_lv2(root, p, &staging, None),
+            PkgFormat::Lv2 => stage_lv2(root, p, &staging, &crate::application_identity(), None),
             PkgFormat::Au2 => stage_au2(root, p, o.config, &staging),
             PkgFormat::Au3 => stage_au3(root, p, o.config, &staging),
             PkgFormat::Aax => stage_aax(root, p, o.config, &staging, o.universal, o.no_pace_sign),
@@ -172,12 +171,16 @@ fn stage_components_only(root: &Path, p: &PluginDef, o: &PackageOpts) -> Res {
     }
 
     let components_dir = staging.join("components");
+    // Wipe the components dir before rebuilding so a previous run's
+    // `--formats clap,vst3,au2,...` output doesn't leak into the
+    // current `--formats clap,lv2` productbuild — productbuild reads
+    // every `.pkg` it finds via `--package-path`, and a stale entry
+    // typically fails to install (signature mismatch, entitlements
+    // bound to an older identity, etc.).
+    let _ = fs::remove_dir_all(&components_dir);
     fs::create_dir_all(&components_dir)?;
-    let scripts_dir = staging.join("au_scripts");
-    if o.has_au2 {
-        write_postinstall_script(&scripts_dir)?;
-    }
     for fmt in o.formats {
+        let scripts_dir = write_format_scripts(&staging, fmt, &fmt.bundle_name(p))?;
         run_pkgbuild_for_format(p, fmt, &staging, &components_dir, &scripts_dir, o)?;
     }
     Ok(())
@@ -364,10 +367,23 @@ fn generate_suite_distribution_xml(
             } else {
                 ""
             };
+            // Per-choice auth override — same scheme as the per-plugin
+            // installer (see `generate_distribution_xml` in stage.rs).
+            let pkg_ref_auth = match (scope, fmt.is_system_only_on_macos()) {
+                (
+                    crate::install_scope::PkgScope::User | crate::install_scope::PkgScope::Ask,
+                    true,
+                ) => " auth=\"Root\"",
+                (crate::install_scope::PkgScope::User, false) => " auth=\"None\"",
+                (
+                    crate::install_scope::PkgScope::Ask | crate::install_scope::PkgScope::System,
+                    _,
+                ) => "",
+            };
             let _ = write!(
                 choices,
                 r#"    <choice id="{inner_id}" title="{label}" description="{desc}"{enabled_attr}>
-        <pkg-ref id="{pkg_id}"/>
+        <pkg-ref id="{pkg_id}"{pkg_ref_auth}/>
     </choice>
 "#
             );
@@ -523,30 +539,16 @@ fn resolve_formats(
 /// possible when the format mix supports it. Emits a `note_once` per
 /// system-only format so the developer sees why the widen happened.
 fn compute_effective_scope(scope: PkgScope, formats: &[PkgFormat]) -> PkgScope {
-    let has_system_only = formats
-        .iter()
-        .any(|f| matches!(f, PkgFormat::Aax | PkgFormat::Au3));
-    match scope {
-        PkgScope::User if has_system_only => {
-            for f in formats {
-                match f {
-                    PkgFormat::Aax => note_once(
-                        "AAX is system-only; --user package keeps AAX but installs every \
-                         format to /Library/ (macOS Installer.app can't mix per-payload \
-                         scopes). Drop AAX with --formats to keep a pure user-scope build.",
-                    ),
-                    PkgFormat::Au3 => note_once(
-                        "AU v3 is system-only; --user package keeps AU v3 but installs every \
-                         format to /Library/ (macOS Installer.app can't mix per-payload \
-                         scopes). Drop AU v3 with --formats to keep a pure user-scope build.",
-                    ),
-                    _ => {}
-                }
-            }
-            PkgScope::System
-        }
-        other => other,
-    }
+    // Previously this widened `User` → `System` whenever AAX or AU v3
+    // was in the mix, because Distribution-level domains couldn't host
+    // both `/Library/...` and `~/Library/...` payloads in one install.
+    // Per-choice `auth="Root"` (emitted in the Distribution generator)
+    // now lets the user-scope installer escalate just those system-only
+    // payloads, so the User-scope build is honoured as requested and
+    // the user is prompted for admin once if they leave AAX / AU v3 /
+    // standalone selected.
+    let _ = formats;
+    scope
 }
 
 /// Drive Step 1 of the packaging pipeline: per-arch builds + lipo for
@@ -736,7 +738,6 @@ struct PackageOpts<'a> {
     no_notarize: bool,
     no_pace_sign: bool,
     universal: bool,
-    has_au2: bool,
 }
 
 /// Stage signed bundles, run pkgbuild per format, then productbuild
@@ -763,7 +764,7 @@ fn package_one_plugin(root: &Path, p: &PluginDef, dist_dir: &Path, o: &PackageOp
             PkgFormat::Clap => stage_clap(root, p, &staging, &crate::application_identity(), None),
             PkgFormat::Vst3 => stage_vst3(root, p, o.config, &staging, None),
             PkgFormat::Vst2 => stage_vst2(root, p, o.config, &staging, None).map(|_| ()),
-            PkgFormat::Lv2 => stage_lv2(root, p, &staging, None),
+            PkgFormat::Lv2 => stage_lv2(root, p, &staging, &crate::application_identity(), None),
             PkgFormat::Au2 => stage_au2(root, p, o.config, &staging),
             PkgFormat::Au3 => stage_au3(root, p, o.config, &staging),
             PkgFormat::Aax => stage_aax(root, p, o.config, &staging, o.universal, o.no_pace_sign),
@@ -797,15 +798,13 @@ fn package_one_plugin(root: &Path, p: &PluginDef, dist_dir: &Path, o: &PackageOp
 
     // Step 3: Build component .pkg per format
     let components_dir = staging.join("components");
+    // Wipe stale components from prior runs before rebuilding — see
+    // matching note in `stage_components_only` above.
+    let _ = fs::remove_dir_all(&components_dir);
     fs::create_dir_all(&components_dir)?;
 
-    // Prepare AU postinstall script
-    let scripts_dir = staging.join("au_scripts");
-    if o.has_au2 {
-        write_postinstall_script(&scripts_dir)?;
-    }
-
     for fmt in o.formats {
+        let scripts_dir = write_format_scripts(&staging, fmt, &fmt.bundle_name(p))?;
         run_pkgbuild_for_format(p, fmt, &staging, &components_dir, &scripts_dir, o)?;
     }
 
@@ -969,12 +968,21 @@ fn run_pkgbuild_for_format(
         pkg_id,
         "--version".to_string(),
         o.version.to_string(),
+        // `preserve` records the staged files' actual ownership
+        // (mahae:staff for a developer build) in the BOM instead of
+        // synthesising root:wheel. Shove then writes the payload as
+        // the running user — no chown step, no `EACCES` when the
+        // installer's auth level is `None` (per-user install).
+        "--ownership".to_string(),
+        "preserve".to_string(),
     ]);
 
-    if *fmt == PkgFormat::Au2 {
-        pkgbuild_args.push("--scripts".to_string());
-        pkgbuild_args.push(scripts_dir.to_str().unwrap().to_string());
-    }
+    // Per-format scripts dir; always present now (preinstall sweeps
+    // stale leftovers and AU v2's postinstall clears the AU cache).
+    // `write_format_scripts` produced the dir; pkgbuild copies its
+    // contents into the resulting `.pkg`'s `Scripts` payload.
+    pkgbuild_args.push("--scripts".to_string());
+    pkgbuild_args.push(scripts_dir.to_str().unwrap().to_string());
 
     pkgbuild_args.push(component_pkg.to_str().unwrap().to_string());
 

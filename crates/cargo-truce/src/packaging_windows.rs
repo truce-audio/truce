@@ -2020,16 +2020,14 @@ fn iss_files_block(
             )
         }
         PkgFormat::Lv2 => {
-            // LV2 bundle (directory). Lands under `<CommonFiles>\LV2\`
-            // — same layout convention as CLAP/VST3 above (per-scope
-            // root from `scoped_cf`, format-named subdir, then the
-            // bundle). The LV2 spec lists `%APPDATA%\LV2` as the
-            // user-scope path on Windows, but every LV2 host worth
-            // shipping for (Reaper, Ardour, Bitwig) lets the user
-            // configure scan paths, and matching the CLAP/VST3 layout
-            // keeps the installer simpler. Bundle is a directory; we
-            // recurse on copy, arch-gated when universal so an ARM64
-            // machine doesn't get the x86_64 DLL.
+            // LV2 bundle (directory). Per the LV2 filesystem-hierarchy
+            // spec, Windows hosts scan `%COMMONPROGRAMFILES%\LV2` for
+            // system-scope installs and `%APPDATA%\LV2` for user-scope.
+            // CLAP/VST3 share `%LOCALAPPDATA%\Programs\Common` for
+            // user-scope per their own specs — LV2 specifically uses
+            // `%APPDATA%`. `cargo truce uninstall --lv2` reads the
+            // same paths via `InstallScope::lv2_dir`, so packager and
+            // uninstaller need to agree here.
             use crate::commands::package::stage::lv2_slug;
             let slug = lv2_slug(&p.name);
             let src_dir = staging
@@ -2038,7 +2036,17 @@ fn iss_files_block(
                 .join(format!("{slug}.lv2"));
             let src_glob = src_dir.join("*");
             let src_quoted = iss_escape_path(&src_glob);
-            let dest = format!("{}\\LV2\\{slug}.lv2", scoped_cf(scope));
+            let lv2_root = match scope {
+                PkgScope::System => "{commoncf}\\LV2",
+                PkgScope::User => "{userappdata}\\LV2",
+                // `{autoappdata}` resolves to `{commonappdata}` in
+                // admin mode and `{userappdata}` per-user — the LV2
+                // host's expectation. Inno picks the right side at
+                // install time based on `PrivilegesRequired` /
+                // `PrivilegesRequiredOverridesAllowed`.
+                PkgScope::Ask => "{autoappdata}\\LV2",
+            };
+            let dest = format!("{lv2_root}\\{slug}.lv2");
             iss_dual_dest(
                 &src_quoted,
                 &dest,
@@ -2223,10 +2231,17 @@ fn iss_uninstall_lines(
             // LV2 bundle is a directory; the individual files inside
             // are tracked by Inno's `[Files]` block and removed on
             // uninstall, but the empty `{slug}.lv2` dir would be left
-            // behind. Sweep it the same way VST3 does.
+            // behind. Mirror the install root (per-LV2-spec `APPDATA`
+            // for user scope, `COMMONPROGRAMFILES` for system) so the
+            // sweep hits the same path the install wrote to.
             use crate::commands::package::stage::lv2_slug;
             let slug = lv2_slug(plugin_name);
-            let path = format!("{}\\LV2\\{slug}.lv2", scoped_cf(scope));
+            let lv2_root = match scope {
+                PkgScope::System => "{commoncf}\\LV2",
+                PkgScope::User => "{userappdata}\\LV2",
+                PkgScope::Ask => "{autoappdata}\\LV2",
+            };
+            let path = format!("{lv2_root}\\{slug}.lv2");
             let component = comp("lv2");
             vec![format!(
                 "Type: filesandordirs; Name: \"{path}\"; Components: {component}"

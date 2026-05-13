@@ -77,6 +77,7 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
     let mut au2 = false;
     let mut au3 = false;
     let mut aax = false;
+    let mut standalone = false;
     let mut dry_run = false;
     let mut yes = false;
     let mut stale = false;
@@ -94,6 +95,7 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
             "--au2" => au2 = true,
             "--au3" => au3 = true,
             "--aax" => aax = true,
+            "--standalone" => standalone = true,
             "--dry-run" => dry_run = true,
             "--yes" | "-y" => yes = true,
             "--stale" => stale = true,
@@ -149,7 +151,8 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
     // cleanup can tell "user passed no format flag → uninstall
     // everything for these plugins" apart from "user picked specific
     // formats → leave shell sidecars alone for the others".
-    let all_formats_default = !clap && !vst3 && !vst2 && !lv2 && !au2 && !au3 && !aax;
+    let all_formats_default =
+        !clap && !vst3 && !vst2 && !lv2 && !au2 && !au3 && !aax && !standalone;
 
     // Default: all formats if none specified.
     // `au3 = true` lands in a flag that's read only inside macOS-gated
@@ -165,6 +168,7 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
         au2 = true;
         au3 = true;
         aax = true;
+        standalone = true;
     }
 
     let vendor = &config.vendor.name;
@@ -328,6 +332,44 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
                 &mut targets,
             );
         }
+        // `--stale --standalone` cleans up legacy `<Name>.standalone.app`
+        // bundles only — the historical convention `cargo truce package`
+        // used before the rename. The current `<Plugin>.app` layout
+        // collides with arbitrary unrelated apps the user installed
+        // from anywhere; vendor-string substring matching isn't enough
+        // to confidently delete a `.app` from `/Applications`, so we
+        // skip those here. Run with `--stale` + `-p` / `-n` for a
+        // targeted sweep instead.
+        #[cfg(target_os = "macos")]
+        if standalone {
+            let scan_legacy_standalone =
+                |dir: &Path, needs_sudo: bool, targets: &mut Vec<RemoveTarget>| {
+                    if let Ok(entries) = fs::read_dir(dir) {
+                        for entry in entries.flatten() {
+                            let name = entry.file_name();
+                            let name_str = name.to_string_lossy();
+                            if !name_str.ends_with(".standalone.app") {
+                                continue;
+                            }
+                            if !name_str.contains(vendor) {
+                                continue;
+                            }
+                            let display = name_str.trim_end_matches(".standalone.app");
+                            if known_names.contains(&display) {
+                                continue;
+                            }
+                            targets.push(RemoveTarget {
+                                format: "Standalone",
+                                path: entry.path(),
+                                needs_sudo,
+                            });
+                        }
+                    }
+                };
+            for s in &scopes_to_scan {
+                scan_legacy_standalone(&s.standalone_dir(), s.needs_sudo(), &mut targets);
+            }
+        }
 
         // Apply -p (substring match on filename) or -n (exact display name match)
         if let Some(ref filter) = crate_filter {
@@ -486,6 +528,41 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
                 ));
                 push_if_exists("AAX", path, true, &mut targets);
             }
+            if standalone {
+                #[cfg(target_os = "macos")]
+                {
+                    for s in &scopes_to_scan {
+                        // Current convention: plain `<Plugin>.app` so
+                        // Spotlight / Launch Services index it as a
+                        // regular application. The historical
+                        // `<Plugin>.standalone.app` name is checked too
+                        // for users upgrading from older installers.
+                        let dir = s.standalone_dir();
+                        push_if_exists(
+                            "Standalone",
+                            dir.join(format!("{}.app", p.name)),
+                            s.needs_sudo(),
+                            &mut targets,
+                        );
+                        push_if_exists(
+                            "Standalone",
+                            dir.join(format!("{}.standalone.app", p.name)),
+                            s.needs_sudo(),
+                            &mut targets,
+                        );
+                    }
+                }
+                // Linux / Windows standalone paths are handled by the
+                // platform installer (a bare ELF under `~/.local/bin`
+                // on Linux, `%PROGRAMFILES%\<Vendor>\<Plugin>\...exe`
+                // on Windows). Uninstall there is the OS package
+                // manager's responsibility — `cargo truce uninstall`
+                // never put the file there in the first place.
+                #[cfg(not(target_os = "macos"))]
+                {
+                    let _ = p;
+                }
+            }
         }
     }
 
@@ -597,7 +674,7 @@ fn print_help() {
     eprintln!(
         "\
 Usage: cargo truce uninstall [--clap] [--vst3] [--vst2] [--lv2] [--au2] [--au3] [--aax]
-                             [--user|--system] [-p <crate>] [-n <name>]
+                             [--standalone] [--user|--system] [-p <crate>] [-n <name>]
                              [--stale] [--dry-run] [--yes]
 
 Uninstall plugin bundles for this project. Default: all formats,
@@ -612,6 +689,7 @@ Options:
   --au2            AU v2 only (.component, macOS only)
   --au3            AU v3 only (.app, macOS only)
   --aax            AAX only
+  --standalone     Standalone host app only (.app, macOS only)
   --user           Only uninstall from per-user directories.
   --system         Only uninstall from system directories.
   -p <crate>       Filter by cargo crate name.

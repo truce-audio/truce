@@ -542,7 +542,13 @@ fn install_lv2(root: &Path, p: &PluginDef, _config: &Config, scope: InstallScope
         let staging = tmp_lv2(&p.bundle_id);
         let _ = fs::remove_dir_all(&staging);
         fs_ctx::create_dir_all(&staging)?;
-        crate::commands::package::stage::stage_lv2(root, p, &staging, None)?;
+        crate::commands::package::stage::stage_lv2(
+            root,
+            p,
+            &staging,
+            &crate::application_identity(),
+            None,
+        )?;
         let slug = crate::commands::package::stage::lv2_slug(&p.name);
         let staged_bundle = staging.join(format!("{slug}.lv2"));
         let dst_bundle = lv2_dir.join(format!("{slug}.lv2"));
@@ -557,7 +563,13 @@ fn install_lv2(root: &Path, p: &PluginDef, _config: &Config, scope: InstallScope
         )?;
         crate::log_output(format!("LV2:  {}", dst_bundle.display()));
     } else {
-        crate::commands::package::stage::stage_lv2(root, p, &lv2_dir, None)?;
+        crate::commands::package::stage::stage_lv2(
+            root,
+            p,
+            &lv2_dir,
+            &crate::application_identity(),
+            None,
+        )?;
         let slug = crate::commands::package::stage::lv2_slug(&p.name);
         crate::log_output(format!(
             "LV2:  {}",
