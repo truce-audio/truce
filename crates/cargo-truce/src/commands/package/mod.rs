@@ -144,7 +144,11 @@ const PKG_FORMAT_META: [(PkgFormat, PkgFormatMeta); 8] = [
             pkg_id_suffix: "clap",
             extension: "clap",
             install_location: "/Library/Audio/Plug-Ins/CLAP/",
-            is_native_bundle: false,
+            // macOS CLAP is a loadable bundle (`Contents/MacOS/<name>`
+            // + `Info.plist`) — pkgbuild gets the same component-plist
+            // treatment as VST3 / AU so the installer pins it to the
+            // declared install_location and upgrades by bundle ID.
+            is_native_bundle: true,
             choice_description: "For Reaper, Bitwig",
         },
     ),
