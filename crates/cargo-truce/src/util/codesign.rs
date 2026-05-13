@@ -26,6 +26,19 @@ pub(crate) fn is_production_identity(identity: &str) -> bool {
 
 /// Write the entitlements plist used by Developer-ID-signed bundles.
 /// Returns the path to the temp file.
+///
+/// Entitlements:
+/// - `allow-unsigned-executable-memory` — JIT / dynamically generated
+///   code (egui's wgpu shader cache, hot-reload trampolines).
+/// - `device.audio-input` — required for the standalone host on
+///   hardened-runtime builds. cpal opens the input device through
+///   `CoreAudio` HAL, which (unlike `AVAudioEngine`) is blocked silently
+///   without this entitlement: no TCC prompt appears, no error
+///   surfaces, the callback just receives zeros. Plugin bundles
+///   (CLAP / VST3 / AU / AAX) never open the mic themselves — their
+///   DAW does — so the entitlement is a no-op there but cheap to
+///   carry, and a single entitlements file keeps the codesign call
+///   sites identical across formats.
 #[cfg(target_os = "macos")]
 pub(crate) fn write_entitlements_plist() -> PathBuf {
     let path = tmp_manifests().join("entitlements.plist");
@@ -35,6 +48,8 @@ pub(crate) fn write_entitlements_plist() -> PathBuf {
 <plist version="1.0">
 <dict>
     <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <key>com.apple.security.device.audio-input</key>
     <true/>
 </dict>
 </plist>"#;

@@ -188,9 +188,9 @@ note below. See [truce.audio](https://truce.audio/) for host coverage.
 ## Documentation
 
 Full docs live at **[truce.audio](https://truce.audio/)** — install
-guide, first-plugin walkthrough, params / processing / GUI / hot
-reload / shipping reference, per-format gotchas (CLAP, VST3, VST2,
-LV2, AU, AAX), and current status.
+guide, first-plugin walkthrough, params / processing / GUI / audio
+testing / shipping / hot-reload reference, per-format gotchas
+(CLAP, VST3, VST2, LV2, AU, AAX), and current status.
 
 ## Requirements
 
