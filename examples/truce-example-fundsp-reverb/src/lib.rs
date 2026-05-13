@@ -25,12 +25,10 @@ const FILTER_Q: f32 = 0.707;
 const ROOM_SIZE: f64 = 10.0;
 const DAMPING: f64 = 0.5;
 
-/// Minimum delta (seconds) between the value the FDN was built with
-/// and the live param before `reset()` rebuilds the graph. fundsp's
-/// `reverb_stereo` bakes RT60 into the FDN's per-line feedback gains
-/// at construction — there's no `Shared` for it, so changes require
-/// a rebuild that resets the delay lines (= dropped tail). Hysteresis
-/// keeps tiny smoother-driven drifts from triggering rebuilds.
+/// Hysteresis on Time changes — fundsp's `reverb_stereo` bakes RT60
+/// into the FDN at construction, so each crossing triggers a full
+/// rebuild (= delay lines reset, tail dropped). Threshold keeps tiny
+/// drifts from rebuilding.
 const TIME_REBUILD_THRESHOLD_S: f32 = 0.05;
 
 #[derive(Params)]
@@ -53,12 +51,14 @@ pub struct FundspReverbParams {
     )]
     pub high_cut: FloatParam,
 
+    // Unsmoothed: Time changes rebuild the FDN once on the raw
+    // target; the smoother would have no reader.
     #[param(
         name = "Time",
         range = "log(0.1, 20)",
         unit = "s",
         default = 3.0,
-        smooth = "exp(5)"
+        smooth = "none"
     )]
     pub time: FloatParam,
 
@@ -79,19 +79,15 @@ pub struct FundspReverbParams {
 
 pub struct FundspReverb {
     params: Arc<FundspReverbParams>,
-    // Atomic cells the fundsp graph reads via `var()` each sample.
+    // Atomic cells the fundsp graph reads each sample via `var()`.
     low_cut_shared: Shared,
     high_cut_shared: Shared,
     mix_shared: Shared,
     graph: Box<dyn AudioUnit>,
-    /// Sample rate the current graph was constructed at, or 0.0
-    /// when no graph has been built yet. Used by `reset()` to skip
-    /// rebuilds when the host calls us with the same SR (transport
-    /// stops/starts in most DAWs) — rebuilding zaps the FDN's delay
-    /// lines and the user hears the tail die.
+    // Inputs the current graph was built with. `reset()` skips the
+    // rebuild when neither changed — many DAWs call `reset()` on
+    // every transport stop/start, and rebuilding would drop the tail.
     last_built_sr: f64,
-    /// Time value (seconds) the current FDN was built with — paired
-    /// with `last_built_sr` to decide when a rebuild is necessary.
     last_built_time_s: f32,
 }
 
@@ -108,14 +104,11 @@ impl FundspReverb {
         }
     }
 
-    /// Rebuild the graph for the given sample rate. Allocates inside
-    /// fundsp's `allocate()`; only called from `reset()`, off the
-    /// audio thread.
+    /// Allocates via `allocate()` — must stay off the audio thread.
     fn rebuild_graph(&mut self, sample_rate: f64, time_s: f32) {
-        // fundsp's SVF filters take 3 inputs in positional order:
-        // (signal, cutoff, Q). Every input is `f32` — the type
-        // system can't tell the order; stack mismatch is a silent
-        // numerical-blowup bug.
+        // fundsp SVFs take inputs positionally as `(signal, cutoff, Q)`;
+        // every input is `f32` so the type system can't catch a swap —
+        // a wrong stack order feeds the cutoff as audio.
         let hp_l = (pass() | var(&self.low_cut_shared) | dc(FILTER_Q)) >> highpass::<f32>();
         let hp_r = (pass() | var(&self.low_cut_shared) | dc(FILTER_Q)) >> highpass::<f32>();
         let lp_l = (pass() | var(&self.high_cut_shared) | dc(FILTER_Q)) >> lowpass::<f32>();
@@ -125,15 +118,13 @@ impl FundspReverb {
         let wet = filters_stereo >> reverb_stereo(ROOM_SIZE, f64::from(time_s), DAMPING);
         let dry = multipass::<U2>();
 
-        // `var(&mix)` is 1-channel; fundsp's `*` requires matching
-        // output counts on both sides. Broadcast to stereo manually
-        // by stacking two reads of the same `Shared`.
+        // `var()` is mono; broadcast to stereo by stacking two reads
+        // so `*` matches the (stereo) wet/dry counts.
         let mix_stereo = || var(&self.mix_shared) | var(&self.mix_shared);
         let inv_mix_stereo =
             || (dc(1.0) - var(&self.mix_shared)) | (dc(1.0) - var(&self.mix_shared));
 
-        // `&` (Bus): run dry and wet in parallel feeding off the same
-        // input, sum their outputs.
+        // `&` is Bus: dry + wet share the input and sum their outputs.
         let mut graph: Box<dyn AudioUnit> =
             Box::new((dry * inv_mix_stereo()) & (wet * mix_stereo()));
         graph.set_sample_rate(sample_rate);
@@ -146,15 +137,9 @@ impl PluginLogic for FundspReverb {
     fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {
         self.params.set_sample_rate(sample_rate);
         self.params.snap_smoothers();
-        // `value()` returns the raw (unsmoothed) target — what the
-        // user / host set the param to. The smoother's per-sample
-        // crawl toward this target is irrelevant for the rebuild
-        // decision: we only want to fire on actual user changes,
-        // not on the smoother's interpolated path.
         let time_s = self.params.time.value();
-        // Exact-bit comparison: SR is a discrete host setting
-        // (48 000 / 44 100 / 96 000 …), not a measurement —
-        // an epsilon would be wrong here.
+        // SR is a discrete host setting, not a measurement — exact-bit
+        // compare avoids epsilon false-positives that would rebuild.
         let sr_changed = sample_rate.to_bits() != self.last_built_sr.to_bits();
         let time_changed = (time_s - self.last_built_time_s).abs() > TIME_REBUILD_THRESHOLD_S;
         if sr_changed || time_changed {
@@ -170,25 +155,17 @@ impl PluginLogic for FundspReverb {
         _events: &EventList,
         context: &mut ProcessContext,
     ) -> ProcessStatus {
-        // Time changes trigger a graph rebuild. Reading `value()`
-        // (the raw target) instead of `read()` (the smoothed value)
-        // is the key: the smoother crawls toward a new target over
-        // ~200 ms, and rebuilding once per block while it crawled
-        // would zap the FDN's delay lines dozens of times in a row
-        // before settling — audible as a long "shimmer" / unstable
-        // tail after every knob move. With the target, we rebuild
-        // exactly once per user-driven change, the instant they let
-        // go of the knob.
+        // Read the raw target, not `read()`: a smoothed value would
+        // crawl across the threshold for ~200 ms and rebuild every
+        // block — audible as an unstable tail until it settles.
         let time_s = self.params.time.value();
         if (time_s - self.last_built_time_s).abs() > TIME_REBUILD_THRESHOLD_S {
             self.rebuild_graph(self.last_built_sr, time_s);
             self.last_built_time_s = time_s;
         }
 
-        // `for_each_frame::<2, _>` transposes the buffer to stereo
-        // frames so fundsp's `tick(in, out)` can be called directly.
-        // Per-sample smoother read + Shared write inside the closure
-        // gives sample-accurate automation.
+        // `for_each_frame::<2>` transposes channel-major to stereo
+        // frames so fundsp's `tick(in, out)` fits the closure.
         buffer.for_each_frame::<2, _>(|frame_in, frame_out| {
             self.low_cut_shared.set_value(self.params.low_cut.read());
             self.high_cut_shared.set_value(self.params.high_cut.read());
@@ -208,11 +185,11 @@ impl PluginLogic for FundspReverb {
 
     fn layout(&self) -> GridLayout {
         GridLayout::build(vec![widgets(vec![
-            knob(P::LowCut, "Low Cut"),
-            knob(P::HighCut, "High Cut"),
-            knob(P::Time, "Time"),
-            knob(P::Mix, "Mix"),
-            meter(&[P::MeterL, P::MeterR], "Level").at(4, 0).rows(3),
+            knob(P::LowCut, "Low Cut").at(0, 0),
+            knob(P::HighCut, "High Cut").at(1, 0),
+            knob(P::Time, "Time").at(0, 1),
+            knob(P::Mix, "Mix").at(1, 1),
+            meter(&[P::MeterL, P::MeterR], "Level").at(2, 0).rows(2),
         ])])
         .with_title("FUNDSP REVERB")
     }
