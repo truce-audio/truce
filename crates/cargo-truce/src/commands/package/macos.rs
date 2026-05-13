@@ -368,11 +368,9 @@ fn generate_suite_distribution_xml(
             let component_file = format!("{}-{}.pkg", plugin.name, fmt.label());
             let label = fmt.label();
             let desc = fmt.choice_description();
-            let enabled_attr = if *fmt == PkgFormat::Aax {
-                "\n            selected=\"false\""
-            } else {
-                ""
-            };
+            // All formats checked by default — see matching note in
+            // the per-plugin `generate_distribution_xml`.
+            let enabled_attr = "";
             // Per-choice auth override — same scheme as the per-plugin
             // installer (see `generate_distribution_xml` in stage.rs).
             let pkg_ref_auth = match (scope, fmt.is_system_only_on_macos()) {
@@ -950,30 +948,61 @@ fn run_pkgbuild_for_format(
     );
     let component_pkg = components_dir.join(format!("{}-{}.pkg", p.name, fmt.label()));
 
-    let mut pkgbuild_args = if fmt.is_native_bundle() {
-        vec![
-            "--component".to_string(),
-            component_path.to_str().unwrap().to_string(),
-            "--install-location".to_string(),
-            fmt.install_location().to_string(),
-        ]
+    // Stage every format through an isolated `_pkgroot_<fmt>/` so
+    // pkgbuild sees exactly one payload per call. Historically we
+    // used `--component <bundle>` for the "native bundle" formats
+    // (VST3, AU v2, AU v3, standalone) and `--root` only for the
+    // others, but `--component` auto-stamps `BundleIsRelocatable=true`
+    // in the PackageInfo. That makes the installer "upgrade in place"
+    // any prior copy of the bundle ID Launch Services knows about,
+    // including stray `target/bundles/...` staging dirs from
+    // `cargo truce run`, so the .pkg payload silently lands in the
+    // developer's build tree instead of `/Applications/`. Using
+    // `--root` + `--component-plist BundleIsRelocatable=false` pins
+    // the install at the declared `install_location()`.
+    let root_dir = staging.join(format!("_pkgroot_{}", fmt.label()));
+    let _ = fs::remove_dir_all(&root_dir);
+    fs::create_dir_all(&root_dir)?;
+    let dst = root_dir.join(&bundle_name);
+    if component_path.is_dir() {
+        copy_dir_recursive(&component_path, &dst)?;
     } else {
-        let root_dir = staging.join(format!("_pkgroot_{}", fmt.label()));
-        let _ = fs::remove_dir_all(&root_dir);
-        fs::create_dir_all(&root_dir)?;
-        let dst = root_dir.join(&bundle_name);
-        if component_path.is_dir() {
-            copy_dir_recursive(&component_path, &dst)?;
-        } else {
-            fs::copy(&component_path, &dst)?;
-        }
-        vec![
-            "--root".to_string(),
-            root_dir.to_str().unwrap().to_string(),
-            "--install-location".to_string(),
-            fmt.install_location().to_string(),
-        ]
-    };
+        fs::copy(&component_path, &dst)?;
+    }
+    let mut pkgbuild_args = vec![
+        "--root".to_string(),
+        root_dir.to_str().unwrap().to_string(),
+        "--install-location".to_string(),
+        fmt.install_location().to_string(),
+    ];
+    if fmt.is_native_bundle() {
+        let plist_path = staging.join(format!("_component_plist_{}.plist", fmt.label()));
+        let plist = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<array>
+    <dict>
+        <key>RootRelativeBundlePath</key>
+        <string>{bundle_name_escaped}</string>
+        <key>BundleIsRelocatable</key>
+        <false/>
+        <key>BundleIsVersionChecked</key>
+        <true/>
+        <key>BundleHasStrictIdentifier</key>
+        <true/>
+        <key>BundleOverwriteAction</key>
+        <string>upgrade</string>
+    </dict>
+</array>
+</plist>
+"#,
+            bundle_name_escaped = bundle_name.replace('&', "&amp;").replace('<', "&lt;"),
+        );
+        fs::write(&plist_path, plist)?;
+        pkgbuild_args.push("--component-plist".to_string());
+        pkgbuild_args.push(plist_path.to_str().unwrap().to_string());
+    }
 
     pkgbuild_args.extend_from_slice(&[
         "--identifier".to_string(),

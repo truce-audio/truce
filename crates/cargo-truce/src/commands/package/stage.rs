@@ -622,12 +622,12 @@ pub(crate) fn generate_distribution_xml(
         let desc = fmt.choice_description();
         let component_file = format!("{plugin_name}-{label}.pkg");
 
-        // AAX unchecked by default (may need PACE signing for distribution)
-        let enabled_attr = if *fmt == PkgFormat::Aax {
-            "\n            selected=\"false\""
-        } else {
-            ""
-        };
+        // Every format ships checked by default. Pro Tools users
+        // expect AAX to be there without hunting through Customize,
+        // and a PACE/iLok-signed build won't reach `--formats aax`
+        // unless the developer set it up — at which point shipping
+        // it pre-checked is the expected behaviour.
+        let enabled_attr = "";
 
         // Per-choice auth override. pkgbuild stamps every component
         // with `auth="root"` because the install-location sits under
