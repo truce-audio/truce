@@ -1222,13 +1222,54 @@ fn notarize_and_staple(pkg_path: &Path, _config: &Config) -> Res {
         }
     }
 
-    // Staple
+    // Staple. `notarytool --wait` returns as soon as Apple's notary
+    // service has the ticket, but `stapler` reads the ticket from
+    // CloudKit's edge — which can lag the notary service by a couple
+    // of minutes on a fresh submission. Apple's docs explicitly say
+    // to retry on the "CloudKit Record not found" failure path, so
+    // do that with exponential backoff up to a few minutes total
+    // before giving up.
     eprintln!("  Stapling...");
-    let status = Command::new("xcrun")
-        .args(["stapler", "staple", pkg])
-        .status()?;
-    if !status.success() {
-        return Err("stapler staple failed".into());
+    let delays_secs = [15u64, 30, 60, 90, 120];
+    let mut last_stderr = String::new();
+    let mut stapled = false;
+    for (i, delay) in std::iter::once(0u64).chain(delays_secs).enumerate() {
+        if delay > 0 {
+            eprintln!(
+                "    CloudKit ticket not propagated yet; retrying in {delay}s (attempt {}/{})...",
+                i + 1,
+                delays_secs.len() + 1
+            );
+            std::thread::sleep(std::time::Duration::from_secs(delay));
+        }
+        let output = Command::new("xcrun").args(["stapler", "staple", pkg]).output()?;
+        if output.status.success() {
+            stapled = true;
+            break;
+        }
+        last_stderr = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        // Only retry on the documented propagation race. Other
+        // stapler failures (corrupt pkg, signature mismatch, etc.)
+        // won't fix themselves with more waiting.
+        let is_propagation_race = last_stderr.contains("Record not found")
+            || last_stderr.contains("Could not find base64 encoded ticket");
+        if !is_propagation_race {
+            eprintln!("{last_stderr}");
+            return Err("stapler staple failed".into());
+        }
+    }
+    if !stapled {
+        eprintln!("{last_stderr}");
+        return Err(
+            "stapler staple kept hitting CloudKit propagation lag after retries — \
+             re-run `xcrun stapler staple <pkg>` manually in a few minutes once the \
+             ticket lands."
+                .into(),
+        );
     }
 
     eprintln!("  Notarized and stapled.");
