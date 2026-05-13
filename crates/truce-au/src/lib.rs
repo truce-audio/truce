@@ -860,8 +860,8 @@ macro_rules! export_au {
                 ::truce_au::register_au::<$plugin_type>();
             }
 
-            // AU v2 factory — delegates to au_v2_shim.c if compiled,
-            // otherwise the weak stub in au_shim_common.c returns NULL.
+            // AU v2 factory — delegates to au_v2_shim.c, which the
+            // build.rs always compiles into the shim static lib.
             unsafe extern "C" {
                 fn truce_au_v2_factory_bridge(
                     desc: *const ::std::ffi::c_void,

@@ -16,6 +16,7 @@
 //!   failure the previous device's name remains in place and the
 //!   audio callback keeps running unchanged.
 
+use crossbeam_queue::ArrayQueue;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 
@@ -64,7 +65,7 @@ pub struct MidiEvent {
 pub struct AudioHandles<P: PluginExport> {
     /// Event queue the caller pushes MIDI into; drained by the audio
     /// callback each block.
-    pub pending: Arc<Mutex<Vec<MidiEvent>>>,
+    pub pending: Arc<ArrayQueue<MidiEvent>>,
     /// Plugin instance shared between caller and audio callback.
     pub plugin: Arc<Mutex<P>>,
     /// Audio config (sample rate, channels) resolved from the device.
@@ -321,7 +322,11 @@ pub fn start_audio<P: PluginExport>(opts: &Options) -> Result<AudioHandles<P>, B
     // because the audio thread is held to a no-panic contract and
     // poisoning would only ever indicate a framework bug — different
     // trade.
-    let pending: Arc<Mutex<Vec<MidiEvent>>> = Arc::new(Mutex::new(Vec::new()));
+    // Capacity 256: covers a generous MIDI burst within a single
+    // audio callback period. ArrayQueue is lock-free MPMC — the MIDI
+    // input thread pushes, the audio thread drains, neither blocks.
+    // On overflow the producer drops the oldest event (see midi.rs).
+    let pending: Arc<ArrayQueue<MidiEvent>> = Arc::new(ArrayQueue::new(256));
     let plugin = Arc::new(Mutex::new({
         let mut p = P::create();
         p.init();
@@ -581,7 +586,7 @@ fn setup_input_pipeline(
 /// same plugin / pending / transport state across device switches.
 struct OutputResources<P: PluginExport> {
     plugin: Arc<Mutex<P>>,
-    pending: Arc<Mutex<Vec<MidiEvent>>>,
+    pending: Arc<ArrayQueue<MidiEvent>>,
     input_ring: Arc<Mutex<Vec<f32>>>,
     input_enabled: Arc<AtomicBool>,
     /// Drives the audio callback's mute / unmute decision (UI thread
@@ -996,7 +1001,7 @@ fn audio_callback<P: PluginExport>(
     sample_rate: f64,
     is_effect: bool,
     plugin: &Arc<Mutex<P>>,
-    pending: &Arc<Mutex<Vec<MidiEvent>>>,
+    pending: &Arc<ArrayQueue<MidiEvent>>,
     input_ring: &Arc<Mutex<Vec<f32>>>,
     input_enabled: &Arc<AtomicBool>,
     output_enabled: &Arc<AtomicBool>,
@@ -1014,13 +1019,11 @@ fn audio_callback<P: PluginExport>(
 
     event_list.clear();
     output_events.clear();
-    if let Ok(mut events) = pending.try_lock() {
-        for ev in events.drain(..) {
-            event_list.push(Event {
-                sample_offset: 0,
-                body: ev.body,
-            });
-        }
+    while let Some(ev) = pending.pop() {
+        event_list.push(Event {
+            sample_offset: 0,
+            body: ev.body,
+        });
     }
 
     let Ok(mut plugin) = plugin.try_lock() else {

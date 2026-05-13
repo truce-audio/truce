@@ -135,7 +135,7 @@ macro_rules! __layout_widgets {
 /// }
 ///
 /// // Force wrapping: 4 widgets on a 2-col grid.
-/// fn wrapped() -> truce_gui::layout::GridLayout {
+/// fn wrapped() -> truce_gui_types::layout::GridLayout {
 ///     grid!(cols: 2, {
 ///         knob(ID_GAIN, "Gain")
 ///         slider(ID_PAN, "Pan")
@@ -145,13 +145,13 @@ macro_rules! __layout_widgets {
 /// }
 ///
 /// // Header — title + subtitle, or either one alone.
-/// fn with_header() -> truce_gui::layout::GridLayout {
+/// fn with_header() -> truce_gui_types::layout::GridLayout {
 ///     grid!(title: "MY PLUGIN", subtitle: "V1.0", cols: 4, cell: 50.0, {
 ///         knob(ID_GAIN, "Gain")
 ///     })
 /// }
 ///
-/// fn title_only() -> truce_gui::layout::GridLayout {
+/// fn title_only() -> truce_gui_types::layout::GridLayout {
 ///     grid!(title: "MY PLUGIN", { knob(ID_GAIN, "Gain") })
 /// }
 /// ```

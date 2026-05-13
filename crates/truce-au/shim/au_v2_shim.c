@@ -326,9 +326,6 @@ static OSStatus au_v2_get_property_info(void *self_, AudioUnitPropertyID prop,
         case kAudioUnitProperty_BypassEffect:
             if (scope != kAudioUnitScope_Global) return kAudioUnitErr_InvalidScope;
             size = sizeof(UInt32); writable = true; break;
-        case 28: // kAudioUnitProperty_CurrentPreset (legacy)
-        case 36: // kAudioUnitProperty_PresentPreset
-            size = sizeof(AUPreset); writable = true; break;
         case kAudioUnitProperty_LastRenderError:
             size = sizeof(OSStatus); break;
         case kAudioUnitProperty_InPlaceProcessing:
@@ -565,11 +562,12 @@ static OSStatus au_v2_get_property(void *self_, AudioUnitPropertyID prop,
             }
             if (bundleID) CFRelease(bundleID);
 
-            // The Cocoa view factory class is registered with the
-            // ObjC runtime at plugin load time by `cocoa_view::register`
-            // in the Rust side. `truce_au_view_factory_class_name` is
-            // a Rust extern that returns the registered class name as
-            // a NUL-terminated C string.
+            // The Cocoa view factory class is defined in
+            // `au_v2_view.m` and registered with the ObjC runtime
+            // automatically when the dylib loads (via the compiler's
+            // `__objc_classlist`). `truce_au_view_factory_class_name`
+            // returns this dylib's unique class name — see au_v2_view.m
+            // for why each plugin needs its own.
             extern const char *truce_au_view_factory_class_name(void);
             viewInfo->mCocoaAUViewClass[0] = CFStringCreateWithCString(
                 NULL, truce_au_view_factory_class_name(), kCFStringEncodingUTF8);
@@ -585,11 +583,13 @@ static OSStatus au_v2_get_property(void *self_, AudioUnitPropertyID prop,
         }
 
         case 64001: { /* kTrucePrivateProperty_AuCallbacks */
-            /* The cocoa view class is shared across every truce plugin
-             * dylib loaded in the host process, so it must not read
-             * per-dylib globals. It pulls the right callbacks table
-             * through the AudioUnit's dispatch table instead — which
-             * lands here, in the dylib that owns this instance. */
+            /* The Cocoa view methods (see au_v2_view.m) read `rustCtx`
+             * and the callbacks table through the AU dispatch table
+             * rather than touching dylib globals directly. That keeps
+             * the view shim source identical across plugins, even
+             * though each plugin compiles its own uniquely-named
+             * class — every property fetch lands in the dylib that
+             * owns the AU instance, which is always the correct one. */
             *(const AuCallbacks **)outData = g_callbacks;
             *ioSize = sizeof(void*);
             return noErr;
@@ -634,17 +634,6 @@ static OSStatus au_v2_get_property(void *self_, AudioUnitPropertyID prop,
 
             *(CFPropertyListRef *)outData = dict;
             *ioSize = sizeof(CFPropertyListRef);
-            return noErr;
-        }
-
-        case 28: // kAudioUnitProperty_CurrentPreset (legacy)
-        case 36: { // kAudioUnitProperty_PresentPreset
-            if (*ioSize < sizeof(AUPreset))
-                return kAudioUnitErr_InvalidPropertyValue;
-            AUPreset *preset = (AUPreset *)outData;
-            preset->presetNumber = 0;
-            preset->presetName = CFStringCreateWithCString(NULL, "Default", kCFStringEncodingUTF8);
-            *ioSize = sizeof(AUPreset);
             return noErr;
         }
 
@@ -768,10 +757,6 @@ static OSStatus au_v2_set_property(void *self_, AudioUnitPropertyID prop,
             }
             return noErr;
         }
-        case 28: // kAudioUnitProperty_CurrentPreset (legacy)
-        case 36: // kAudioUnitProperty_PresentPreset
-            return noErr; // accept but ignore
-
         case kAudioUnitProperty_ClassInfo: {
             // State load
             if (!g_callbacks || !inst->rustCtx) return kAudioUnitErr_Uninitialized;

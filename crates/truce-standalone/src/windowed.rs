@@ -11,6 +11,8 @@
 
 use std::sync::{Arc, Mutex};
 
+use crossbeam_queue::ArrayQueue;
+
 use baseview::{Event, EventStatus, Window, WindowHandler, WindowOpenOptions, WindowScalePolicy};
 use keyboard_types::{Code, KeyState, Modifiers};
 use raw_window_handle::{HasRawWindowHandle, RawWindowHandle as RwhHandle};
@@ -186,7 +188,7 @@ where
 {
     _editor: Box<dyn Editor>,
     plugin: Arc<Mutex<P>>,
-    pending: Arc<Mutex<Vec<MidiEvent>>>,
+    pending: Arc<ArrayQueue<MidiEvent>>,
     transport: Transport,
     /// Toggle handle for mic input (sends to the worker thread
     /// owning the cpal input stream).
@@ -361,9 +363,10 @@ where
                     velocity: 0,
                 },
             };
-            if let Ok(mut events) = self.pending.lock() {
-                events.push(MidiEvent { body });
-            }
+            // `force_push` drops the oldest event on overflow — see
+            // audio.rs for the rationale (audio thread is the only
+            // consumer; dropping ancient events beats mutex contention).
+            let _ = self.pending.force_push(MidiEvent { body });
             return EventStatus::Captured;
         }
         EventStatus::Ignored

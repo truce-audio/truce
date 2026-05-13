@@ -669,8 +669,10 @@ impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBase
                         button: baseview::MouseButton::Left,
                         ..
                     } => {
-                        // Child plugin window needs focus to receive WM_KEYDOWN
-                        // on Windows. See truce-egui editor.rs for rationale.
+                        // WS_CHILD plugin windows don't receive WM_KEYDOWN
+                        // until focused; baseview doesn't SetFocus on click,
+                        // so we do it here. Without this, text-edit widgets
+                        // never see keystrokes on Windows.
                         #[cfg(target_os = "windows")]
                         {
                             if !window.has_focus() {

@@ -1569,7 +1569,10 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
 
             fn collect_values(&self) -> (Vec<u32>, Vec<f64>) {
                 let mut ids: Vec<u32> = vec![#(#collect_ids),*];
-                let mut values: Vec<f64> = ids.iter().map(|id| self.get_plain(*id).unwrap()).collect();
+                let mut values: Vec<f64> = ids
+                    .iter()
+                    .map(|id| self.get_plain(*id).expect("id was emitted by #[derive(Params)] and so must resolve"))
+                    .collect();
                 #({
                     let (nids, nvals) = self.#nested_idents.collect_values();
                     ids.extend(nids);
@@ -1844,7 +1847,14 @@ pub fn derive_state(input: TokenStream) -> TokenStream {
         reason = "struct field count is bounded by syn parser limits"
     )]
     let field_count = fields.len() as u32;
-    let field_idents: Vec<_> = fields.iter().map(|f| f.ident.as_ref().unwrap()).collect();
+    let field_idents: Vec<_> = fields
+        .iter()
+        .map(|f| {
+            f.ident
+                .as_ref()
+                .expect("Fields::Named guarantees every field carries an ident")
+        })
+        .collect();
 
     let write_fields: Vec<_> = field_idents
         .iter()

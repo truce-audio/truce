@@ -327,7 +327,6 @@ class TruceAUAudioUnit: AUAudioUnit {
     override var latency: TimeInterval { 0 }
     override var tailTime: TimeInterval { 0 }
     override var shouldBypassEffect: Bool { get { false } set { } }
-    override var supportsUserPresets: Bool { false }
 }
 
 // MARK: - Factory

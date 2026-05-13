@@ -10,8 +10,9 @@
 //!   QWERTY on unplug). Held by the windowed / headless runners; drop
 //!   stops the thread.
 
+use crossbeam_queue::ArrayQueue;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use midir::{MidiInput, MidiInputConnection};
@@ -58,7 +59,7 @@ impl MidiInputThread {
     /// `None` if no MIDI device was requested, or if the requested
     /// device isn't present on startup (in which case the thread
     /// still starts so it can auto-connect on hot-plug).
-    pub fn start(opts: &Options, pending: Arc<Mutex<Vec<MidiEvent>>>) -> Option<Self> {
+    pub fn start(opts: &Options, pending: Arc<ArrayQueue<MidiEvent>>) -> Option<Self> {
         let requested = opts.midi_input.clone()?;
         let stop = Arc::new(AtomicBool::new(false));
         let stop_thread = Arc::clone(&stop);
@@ -81,7 +82,7 @@ impl Drop for MidiInputThread {
 // Spawned-thread body — owns its state across the worker's lifetime.
 // Switching to refs would force the caller to outlive the thread.
 #[allow(clippy::needless_pass_by_value)]
-fn midi_thread(requested: String, pending: Arc<Mutex<Vec<MidiEvent>>>, stop: Arc<AtomicBool>) {
+fn midi_thread(requested: String, pending: Arc<ArrayQueue<MidiEvent>>, stop: Arc<AtomicBool>) {
     let mut connection: Option<MidiInputConnection<()>> = None;
     let mut current_name = String::new();
 
@@ -133,10 +134,14 @@ fn midi_thread(requested: String, pending: Arc<Mutex<Vec<MidiEvent>>>, stop: Arc
                     port,
                     "truce-standalone-in",
                     move |_t, bytes, ()| {
-                        if let Some(body) = decode_midi(bytes)
-                            && let Ok(mut q) = pending.lock()
-                        {
-                            q.push(MidiEvent { body });
+                        if let Some(body) = decode_midi(bytes) {
+                            // `force_push` drops the oldest event on
+                            // overflow. The audio thread is the only
+                            // consumer; a flooded queue means the
+                            // audio callback is starved, in which
+                            // case dropping ancient note events is
+                            // strictly better than mutex contention.
+                            let _ = pending.force_push(MidiEvent { body });
                         }
                     },
                     (),
