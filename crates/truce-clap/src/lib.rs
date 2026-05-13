@@ -1631,7 +1631,7 @@ use clap_sys::ext::gui::CLAP_WINDOW_API_COCOA;
 use clap_sys::ext::gui::CLAP_WINDOW_API_WIN32;
 #[cfg(target_os = "linux")]
 use clap_sys::ext::gui::CLAP_WINDOW_API_X11;
-use clap_sys::ext::gui::{CLAP_EXT_GUI, clap_plugin_gui, clap_window};
+use clap_sys::ext::gui::{CLAP_EXT_GUI, clap_gui_resize_hints, clap_plugin_gui, clap_window};
 
 unsafe extern "C" fn gui_is_api_supported<P: PluginExport>(
     _plugin: *const clap_plugin,
@@ -1698,7 +1698,6 @@ unsafe extern "C" fn gui_create<P: PluginExport>(
         if data.gui_created {
             return true;
         }
-        // Create the editor from the plugin
         data.editor = data.plugin.editor();
         data.gui_created = data.editor.is_some();
         data.gui_created
@@ -1956,6 +1955,85 @@ unsafe extern "C" fn gui_hide<P: PluginExport>(_plugin: *const clap_plugin) -> b
     true
 }
 
+/// Stub: we report a fixed-size GUI so `can_resize` is `false` and the
+/// host is documented to ignore this. Some hosts (Bitwig) probe-call
+/// every gui_* function pointer at metadata-scan time as a "is this a
+/// real GUI?" sanity check and treat any `None` slot as "broken/no GUI"
+/// rather than per-spec "feature unsupported". Wiring a defensive stub
+/// keeps the edit button visible without changing observable behaviour.
+unsafe extern "C" fn gui_get_resize_hints<P: PluginExport>(
+    _plugin: *const clap_plugin,
+    _hints: *mut clap_gui_resize_hints,
+) -> bool {
+    false
+}
+
+/// Stub: floating windows aren't supported (`is_api_supported` rejects
+/// `is_floating=true`); `set_transient` is meaningless when the GUI is
+/// always embedded. Present as `Some` for the same Bitwig probe-quirk
+/// described on `gui_get_resize_hints`.
+unsafe extern "C" fn gui_set_transient<P: PluginExport>(
+    _plugin: *const clap_plugin,
+    _window: *const clap_window,
+) -> bool {
+    false
+}
+
+/// Stub: the editor renders its own title bar; we don't need the host's
+/// hint. Present as `Some` for the same Bitwig probe-quirk described
+/// on `gui_get_resize_hints`.
+unsafe extern "C" fn gui_suggest_title<P: PluginExport>(
+    _plugin: *const clap_plugin,
+    _title: *const c_char,
+) {
+}
+
+/// Host asks "is this size OK?". Per spec only meaningful when
+/// `can_resize` returns true, but Bitwig (and some other strict CLAP
+/// hosts) treats a `None` `set_size` as "this plugin has no real
+/// GUI" and silently hides the edit button — even when `get_size`,
+/// `set_parent`, `is_api_supported` etc. are all wired. For
+/// fixed-size editors we report `true` only when the host's
+/// requested size matches `get_size`'s response; otherwise `false`
+/// so a resize-aware host knows we can't honour the new size.
+unsafe extern "C" fn gui_set_size<P: PluginExport>(
+    plugin: *const clap_plugin,
+    width: u32,
+    height: u32,
+) -> bool {
+    unsafe {
+        let mut current_w: u32 = 0;
+        let mut current_h: u32 = 0;
+        if !gui_get_size::<P>(plugin, &raw mut current_w, &raw mut current_h) {
+            return false;
+        }
+        width == current_w && height == current_h
+    }
+}
+
+/// Host hints "I'd like a window of size (w, h); please clamp to
+/// the nearest size you can render at". Pairs with `set_size` to
+/// satisfy strict-CLAP hosts (Bitwig) that pre-flight the GUI by
+/// negotiating sizes before allowing the edit button. We snap to
+/// the editor's reported size since the built-in renderer doesn't
+/// support arbitrary host-driven sizes today.
+unsafe extern "C" fn gui_adjust_size<P: PluginExport>(
+    plugin: *const clap_plugin,
+    width: *mut u32,
+    height: *mut u32,
+) -> bool {
+    unsafe {
+        let mut current_w: u32 = 0;
+        let mut current_h: u32 = 0;
+        if !gui_get_size::<P>(plugin, &raw mut current_w, &raw mut current_h) {
+            return false;
+        }
+        *width = current_w;
+        *height = current_h;
+        true
+    }
+}
+
 fn make_gui_extension<P: PluginExport>() -> clap_plugin_gui {
     clap_plugin_gui {
         is_api_supported: Some(gui_is_api_supported::<P>),
@@ -1965,12 +2043,12 @@ fn make_gui_extension<P: PluginExport>() -> clap_plugin_gui {
         set_scale: Some(gui_set_scale::<P>),
         get_size: Some(gui_get_size::<P>),
         can_resize: Some(gui_can_resize::<P>),
-        get_resize_hints: None,
-        adjust_size: None,
-        set_size: None,
+        get_resize_hints: Some(gui_get_resize_hints::<P>),
+        adjust_size: Some(gui_adjust_size::<P>),
+        set_size: Some(gui_set_size::<P>),
         set_parent: Some(gui_set_parent::<P>),
-        set_transient: None,
-        suggest_title: None,
+        set_transient: Some(gui_set_transient::<P>),
+        suggest_title: Some(gui_suggest_title::<P>),
         show: Some(gui_show::<P>),
         hide: Some(gui_hide::<P>),
     }
@@ -2084,7 +2162,6 @@ unsafe extern "C" fn clap_plugin_get_extension<P: PluginExport>(
         if ext_id == CLAP_EXT_TAIL {
             return (&raw const extensions.tail).cast::<c_void>();
         }
-
         ptr::null()
     }
 }
