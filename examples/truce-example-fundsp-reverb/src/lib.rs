@@ -152,7 +152,10 @@ impl PluginLogic for FundspReverb {
         // decision: we only want to fire on actual user changes,
         // not on the smoother's interpolated path.
         let time_s = self.params.time.value();
-        let sr_changed = sample_rate != self.last_built_sr;
+        // Exact-bit comparison: SR is a discrete host setting
+        // (48 000 / 44 100 / 96 000 …), not a measurement —
+        // an epsilon would be wrong here.
+        let sr_changed = sample_rate.to_bits() != self.last_built_sr.to_bits();
         let time_changed = (time_s - self.last_built_time_s).abs() > TIME_REBUILD_THRESHOLD_S;
         if sr_changed || time_changed {
             self.rebuild_graph(sample_rate, time_s);
