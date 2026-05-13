@@ -19,11 +19,16 @@ use FundspReverbParamsParamId as P;
 
 const DEFAULT_LOW_CUT_HZ: f32 = 120.0;
 const DEFAULT_HIGH_CUT_HZ: f32 = 8000.0;
-const DEFAULT_REVERB_TIME_S: f32 = 2.0;
 const DEFAULT_REVERB_MIX: f32 = 0.25;
 const FILTER_Q: f32 = 0.707;
 const ROOM_SIZE: f64 = 10.0;
 const DAMPING: f64 = 0.5;
+/// fundsp's `reverb_stereo` bakes its decay time into the FDN at
+/// construction — there's no `Shared` cell for it, so live tweaks
+/// would force a graph rebuild that resets the tail. We use a
+/// fixed, effectively-infinite tail instead: 60 s is well past the
+/// perceptual decay floor for any musical material.
+const REVERB_TIME_S: f64 = 60.0;
 
 #[derive(Params)]
 pub struct FundspReverbParams {
@@ -46,15 +51,6 @@ pub struct FundspReverbParams {
     pub high_cut: FloatParam,
 
     #[param(
-        name = "Time",
-        range = "log(0.2, 10.0)",
-        unit = "s",
-        default = 2.0,
-        smooth = "exp(20)"
-    )]
-    pub time: FloatParam,
-
-    #[param(
         name = "Mix",
         range = "linear(0, 1)",
         default = 0.25,
@@ -75,11 +71,6 @@ pub struct FundspReverb {
     low_cut_shared: Shared,
     high_cut_shared: Shared,
     mix_shared: Shared,
-    // `reverb_stereo`'s `time` argument is a build-time constant — no
-    // `Shared` for it. Cached so `process()` can hysteresis-rebuild
-    // when the param drifts far enough.
-    last_built_time_s: f32,
-    sample_rate: f64,
     graph: Box<dyn AudioUnit>,
 }
 
@@ -90,17 +81,14 @@ impl FundspReverb {
             low_cut_shared: shared(DEFAULT_LOW_CUT_HZ),
             high_cut_shared: shared(DEFAULT_HIGH_CUT_HZ),
             mix_shared: shared(DEFAULT_REVERB_MIX),
-            last_built_time_s: DEFAULT_REVERB_TIME_S,
-            sample_rate: 44_100.0,
             graph: Box::new(multipass::<U2>()),
         }
     }
 
-    /// Rebuild the graph against the cached sample rate + reverb
-    /// time. Allocates via fundsp's `allocate()`; callers run this
-    /// off the audio thread (`reset()`, or rare hysteresis hit in
-    /// `process()`).
-    fn rebuild_graph(&mut self) {
+    /// Rebuild the graph for the given sample rate. Allocates inside
+    /// fundsp's `allocate()`; only called from `reset()`, off the
+    /// audio thread.
+    fn rebuild_graph(&mut self, sample_rate: f64) {
         // fundsp's SVF filters take 3 inputs in positional order:
         // (signal, cutoff, Q). Every input is `f32` — the type
         // system can't tell the order; stack mismatch is a silent
@@ -111,8 +99,7 @@ impl FundspReverb {
         let lp_r = (pass() | var(&self.high_cut_shared) | dc(FILTER_Q)) >> lowpass::<f32>();
 
         let filters_stereo = (hp_l | hp_r) >> (lp_l | lp_r);
-        let time = f64::from(self.last_built_time_s);
-        let wet = filters_stereo >> reverb_stereo(ROOM_SIZE, time, DAMPING);
+        let wet = filters_stereo >> reverb_stereo(ROOM_SIZE, REVERB_TIME_S, DAMPING);
         let dry = multipass::<U2>();
 
         // `var(&mix)` is 1-channel; fundsp's `*` requires matching
@@ -126,7 +113,7 @@ impl FundspReverb {
         // input, sum their outputs.
         let mut graph: Box<dyn AudioUnit> =
             Box::new((dry * inv_mix_stereo()) & (wet * mix_stereo()));
-        graph.set_sample_rate(self.sample_rate);
+        graph.set_sample_rate(sample_rate);
         graph.allocate();
         self.graph = graph;
     }
@@ -136,10 +123,7 @@ impl PluginLogic for FundspReverb {
     fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {
         self.params.set_sample_rate(sample_rate);
         self.params.snap_smoothers();
-
-        self.sample_rate = sample_rate;
-        self.last_built_time_s = self.params.time.read();
-        self.rebuild_graph();
+        self.rebuild_graph(sample_rate);
     }
 
     fn process(
@@ -148,14 +132,6 @@ impl PluginLogic for FundspReverb {
         _events: &EventList,
         context: &mut ProcessContext,
     ) -> ProcessStatus {
-        // Reverb time drift triggers a rebuild. 5% hysteresis keeps
-        // it rare — rebuild is the only allocation site in process().
-        let time_now = self.params.time.read();
-        if (time_now / self.last_built_time_s - 1.0).abs() > 0.05 {
-            self.last_built_time_s = time_now;
-            self.rebuild_graph();
-        }
-
         // `for_each_frame::<2, _>` transposes the buffer to stereo
         // frames so fundsp's `tick(in, out)` can be called directly.
         // Per-sample smoother read + Shared write inside the closure
@@ -181,9 +157,8 @@ impl PluginLogic for FundspReverb {
         GridLayout::build(vec![widgets(vec![
             knob(P::LowCut, "Low Cut"),
             knob(P::HighCut, "High Cut"),
-            knob(P::Time, "Time"),
             knob(P::Mix, "Mix"),
-            meter(&[P::MeterL, P::MeterR], "Level").at(4, 0).rows(3),
+            meter(&[P::MeterL, P::MeterR], "Level").at(3, 0).rows(3),
         ])])
         .with_title("FUNDSP REVERB")
     }
