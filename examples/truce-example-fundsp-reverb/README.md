@@ -14,16 +14,18 @@ in (L,R) ───────────────────────�
 |----------|------------------------|
 | Low Cut  | 20 Hz → 2 kHz (log)    |
 | High Cut | 500 Hz → 18 kHz (log)  |
-| Time     | 0.2 s → 10 s (log)     |
+| Time     | 0.1 s → 20 s (log)     |
 | Mix      | 0 → 1                  |
 
 ## Integration patterns
 
-- **Graph built in `reset()`.** fundsp's `allocate()` reserves all delay lines and FIR weights up front; `process()` never allocates.
+- **Graph built off the audio thread.** `reset()` builds the initial graph synchronously (host calls it off the audio path); subsequent rebuilds run on a dedicated worker thread. `process()` never allocates, never calls `Box::new`, never calls `graph.allocate()`, and never drops a `Box<dyn AudioUnit>`.
+- **Lock-free worker handoff.** Three `crossbeam_queue::ArrayQueue`s shuttle work between the audio thread and the rebuild worker: `requests` (audio → worker, latest target wins via `force_push`), `ready` (worker → audio, the freshly-built graph), `discard` (audio → worker, so the old graph is dropped off-thread). The worker `park`s when idle and the audio thread `unpark`s it on a new request.
+- **Worker rebuilds carry their SR.** Each ready graph is tagged with the sample rate it was built for. If `reset()` swaps in a new SR while a worker rebuild is in flight, the audio thread sees the SR mismatch and reroutes the stale graph to the discard queue rather than swapping it in.
 - **Params reach the graph through `fundsp::Shared` atomics.** `var(&shared)` reads them per sample; the closure inside `for_each_frame` writes the smoothed truce-side value into the cell on the same tick (sample-accurate automation).
 - **`Box<dyn AudioUnit>`** for the field type. The concrete `An<…>` is hundreds of chars of nested generics; the vtable cost is one indirection per block.
 - **`AudioBuffer::for_each_frame::<2, _>`** transposes truce's per-channel layout into stack-allocated frames so fundsp's `tick(in, out)` callback can be called directly. No scratch field.
-- **Reverb time rebuilds the graph** when the param drifts ≥ 5% — `reverb_stereo`'s `time` argument is baked at construction. Rebuilds allocate, so the hysteresis keeps it rare.
+- **Reverb time triggers a worker rebuild** when the param drifts ≥ 5% — `reverb_stereo`'s `time` argument is baked at construction. The audio thread reads the raw `param.value()` (not the smoothed `.read()`) so a knob ramp doesn't trip the threshold every block while the smoother crawls across it.
 
 ## Gotchas
 
