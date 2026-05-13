@@ -368,7 +368,7 @@ impl PluginLogic for FundspReverbWorker {
             knob(P::Mix, "Mix").at(1, 1),
             meter(&[P::MeterL, P::MeterR], "Level").at(2, 0).rows(2),
         ])])
-        .with_title("FUNDSP REVERB")
+        .with_title("FUNDSP REVERB (WORKER)")
     }
 }
 

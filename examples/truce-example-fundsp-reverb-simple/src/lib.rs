@@ -210,7 +210,7 @@ impl PluginLogic for FundspReverbSimple {
             knob(P::Mix, "Mix").at(1, 1),
             meter(&[P::MeterL, P::MeterR], "Level").at(2, 0).rows(2),
         ])])
-        .with_title("FUNDSP REVERB")
+        .with_title("FUNDSP REVERB (SIMPLE)")
     }
 }
 
@@ -344,5 +344,30 @@ mod tests {
     #[test]
     fn corrupt_state_no_crash() {
         truce_test::assert_corrupt_state_no_crash::<Plugin>();
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn gui_screenshot_macos() {
+        truce_test::screenshot!(Plugin, "screenshots/fundsp_reverb_simple_default_macos.png").run();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn gui_screenshot_linux() {
+        truce_test::screenshot!(Plugin, "screenshots/fundsp_reverb_simple_default_linux.png")
+            .pixel_threshold(2)
+            .run();
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn gui_screenshot_windows() {
+        truce_test::screenshot!(
+            Plugin,
+            "screenshots/fundsp_reverb_simple_default_windows.png"
+        )
+        .pixel_threshold(2)
+        .run();
     }
 }

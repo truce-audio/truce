@@ -54,6 +54,8 @@ env:
     truce-example-gain-slint
     truce-example-tremolo
     truce-example-state
+    truce-example-fundsp-reverb-worker
+    truce-example-fundsp-reverb-simple
 
 jobs:
   linux:
