@@ -6606,6 +6606,7 @@ name = "truce-example-fundsp-reverb"
 version = "0.39.3"
 dependencies = [
  "clap-sys",
+ "crossbeam-queue",
  "fundsp",
  "truce",
  "truce-aax",

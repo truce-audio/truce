@@ -43,6 +43,9 @@ truce-loader = { workspace = true }
 # Pinned to a minor version because fundsp moves combinator surface
 # (e.g. `hacker` module dropped between 0.22 and 0.23) on every release.
 fundsp = "0.23"
+# Lock-free bounded queues for handing graphs between the audio
+# thread and the rebuild worker without locks or allocation.
+crossbeam-queue = "0.3"
 
 [dev-dependencies]
 truce-test = { workspace = true }

@@ -8,10 +8,13 @@
 //!
 //! See `README.md` for the integration patterns + gotchas.
 
+use crossbeam_queue::ArrayQueue;
 use fundsp::prelude::{
     AudioUnit, Shared, U2, dc, highpass, lowpass, multipass, pass, reverb_stereo, shared, var,
 };
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread::{self, JoinHandle, Thread};
 use truce::prelude::*;
 use truce_gui::layout::{GridLayout, knob, meter, widgets};
 
@@ -77,6 +80,76 @@ pub struct FundspReverbParams {
     pub meter_r: MeterSlot,
 }
 
+/// Allocates via `Box::new` + `allocate()`. The worker thread calls
+/// this off the audio thread; `reset()` also calls it directly since
+/// the host invokes `reset` off the audio thread.
+fn build_graph(
+    sample_rate: f64,
+    time_s: f32,
+    low_cut: &Shared,
+    high_cut: &Shared,
+    mix: &Shared,
+) -> Box<dyn AudioUnit> {
+    // fundsp SVFs take inputs positionally as `(signal, cutoff, Q)`;
+    // every input is `f32` so the type system can't catch a swap.
+    let hp_l = (pass() | var(low_cut) | dc(FILTER_Q)) >> highpass::<f32>();
+    let hp_r = (pass() | var(low_cut) | dc(FILTER_Q)) >> highpass::<f32>();
+    let lp_l = (pass() | var(high_cut) | dc(FILTER_Q)) >> lowpass::<f32>();
+    let lp_r = (pass() | var(high_cut) | dc(FILTER_Q)) >> lowpass::<f32>();
+
+    let filters_stereo = (hp_l | hp_r) >> (lp_l | lp_r);
+    let wet = filters_stereo >> reverb_stereo(ROOM_SIZE, f64::from(time_s), DAMPING);
+    let dry = multipass::<U2>();
+
+    // `var()` is mono; broadcast to stereo by stacking two reads
+    // so `*` matches the (stereo) wet/dry counts.
+    let mix_stereo = || var(mix) | var(mix);
+    let inv_mix_stereo = || (dc(1.0) - var(mix)) | (dc(1.0) - var(mix));
+
+    // `&` is Bus: dry + wet share the input and sum their outputs.
+    let mut graph: Box<dyn AudioUnit> = Box::new((dry * inv_mix_stereo()) & (wet * mix_stereo()));
+    graph.set_sample_rate(sample_rate);
+    graph.allocate();
+    graph
+}
+
+/// Inputs the worker needs to build a graph. SR is paired with each
+/// request so the audio thread can detect (and reject) a ready graph
+/// that was built for a stale SR after a `reset()`.
+#[derive(Copy, Clone)]
+struct RebuildRequest {
+    sample_rate: f64,
+    time_s: f32,
+}
+
+/// A built graph plus the inputs it was built with. Same `(sr, time)`
+/// the audio thread copies into `last_built_*` after swapping in.
+struct ReadyGraph {
+    graph: Box<dyn AudioUnit>,
+    sample_rate: f64,
+    time_s: f32,
+}
+
+/// Lock-free handoff between the audio thread and the rebuild worker.
+/// All three queues are `force_push` / `try_push` from the producer
+/// side, so neither thread ever blocks or allocates on a hot path.
+struct RebuildChannel {
+    // Audio → worker: the latest target. Capacity 1; newer overwrites
+    // older (a `RebuildRequest` is `Copy`, so the displaced value is
+    // free to drop on the audio thread).
+    requests: ArrayQueue<RebuildRequest>,
+    // Worker → audio: at most one freshly-built graph waiting. The
+    // worker overwrites a stale entry on its own thread, where
+    // dropping the graph is safe.
+    ready: ArrayQueue<ReadyGraph>,
+    // Audio → worker: graphs the audio thread has just swapped out.
+    // Drop runs on the worker, never on the audio thread. Capacity is
+    // padded so a slow worker can't stall the audio thread by filling
+    // the queue.
+    discard: ArrayQueue<Box<dyn AudioUnit>>,
+    shutdown: AtomicBool,
+}
+
 pub struct FundspReverb {
     params: Arc<FundspReverbParams>,
     // Atomic cells the fundsp graph reads each sample via `var()`.
@@ -88,46 +161,118 @@ pub struct FundspReverb {
     // rebuild when neither changed.
     last_built_sr: f64,
     last_built_time_s: f32,
+    rebuild: Arc<RebuildChannel>,
+    // Kept so `Drop` can join the worker. `worker_thread` is a
+    // separate handle so the audio thread can `unpark` without
+    // touching the `Option`.
+    worker_thread: Thread,
+    worker_handle: Option<JoinHandle<()>>,
 }
 
 impl FundspReverb {
     pub fn new(params: Arc<FundspReverbParams>) -> Self {
+        let low_cut_shared = shared(DEFAULT_LOW_CUT_HZ);
+        let high_cut_shared = shared(DEFAULT_HIGH_CUT_HZ);
+        let mix_shared = shared(DEFAULT_REVERB_MIX);
+
+        let rebuild = Arc::new(RebuildChannel {
+            requests: ArrayQueue::new(1),
+            ready: ArrayQueue::new(1),
+            discard: ArrayQueue::new(8),
+            shutdown: AtomicBool::new(false),
+        });
+
+        let worker_handle = spawn_rebuild_worker(
+            Arc::clone(&rebuild),
+            low_cut_shared.clone(),
+            high_cut_shared.clone(),
+            mix_shared.clone(),
+        );
+        let worker_thread = worker_handle.thread().clone();
+
         Self {
             params,
-            low_cut_shared: shared(DEFAULT_LOW_CUT_HZ),
-            high_cut_shared: shared(DEFAULT_HIGH_CUT_HZ),
-            mix_shared: shared(DEFAULT_REVERB_MIX),
+            low_cut_shared,
+            high_cut_shared,
+            mix_shared,
             graph: Box::new(multipass::<U2>()),
             last_built_sr: 0.0,
             last_built_time_s: DEFAULT_TIME_S,
+            rebuild,
+            worker_thread,
+            worker_handle: Some(worker_handle),
         }
     }
 
-    /// Allocates via `allocate()`.
-    fn rebuild_graph(&mut self, sample_rate: f64, time_s: f32) {
-        // fundsp SVFs take inputs positionally as `(signal, cutoff, Q)`;
-        // every input is `f32` so the type system can't catch a swap.
-        let hp_l = (pass() | var(&self.low_cut_shared) | dc(FILTER_Q)) >> highpass::<f32>();
-        let hp_r = (pass() | var(&self.low_cut_shared) | dc(FILTER_Q)) >> highpass::<f32>();
-        let lp_l = (pass() | var(&self.high_cut_shared) | dc(FILTER_Q)) >> lowpass::<f32>();
-        let lp_r = (pass() | var(&self.high_cut_shared) | dc(FILTER_Q)) >> lowpass::<f32>();
+    /// Synchronous rebuild path used by `reset()`, which the host
+    /// calls off the audio thread. Drains any in-flight rebuild so a
+    /// graph that's still being built for the *previous* SR can't
+    /// slip into `process()` after this returns.
+    fn rebuild_now(&mut self, sample_rate: f64, time_s: f32) {
+        self.graph = build_graph(
+            sample_rate,
+            time_s,
+            &self.low_cut_shared,
+            &self.high_cut_shared,
+            &self.mix_shared,
+        );
+        self.last_built_sr = sample_rate;
+        self.last_built_time_s = time_s;
+        while self.rebuild.requests.pop().is_some() {}
+        while self.rebuild.ready.pop().is_some() {}
+    }
+}
 
-        let filters_stereo = (hp_l | hp_r) >> (lp_l | lp_r);
-        let wet = filters_stereo >> reverb_stereo(ROOM_SIZE, f64::from(time_s), DAMPING);
-        let dry = multipass::<U2>();
+fn spawn_rebuild_worker(
+    channel: Arc<RebuildChannel>,
+    low_cut: Shared,
+    high_cut: Shared,
+    mix: Shared,
+) -> JoinHandle<()> {
+    thread::Builder::new()
+        .name("fundsp-reverb-rebuild".into())
+        .spawn(move || {
+            loop {
+                // Drop anything the audio thread handed back. Free
+                // off-thread so the audio thread never pays for a
+                // heap free.
+                while channel.discard.pop().is_some() {}
 
-        // `var()` is mono; broadcast to stereo by stacking two reads
-        // so `*` matches the (stereo) wet/dry counts.
-        let mix_stereo = || var(&self.mix_shared) | var(&self.mix_shared);
-        let inv_mix_stereo =
-            || (dc(1.0) - var(&self.mix_shared)) | (dc(1.0) - var(&self.mix_shared));
+                // Coalesce: only the latest target matters. Older
+                // requests are stale by definition because the audio
+                // thread only requests once it crosses the threshold.
+                let mut latest: Option<RebuildRequest> = None;
+                while let Some(req) = channel.requests.pop() {
+                    latest = Some(req);
+                }
+                if let Some(req) = latest {
+                    let graph = build_graph(req.sample_rate, req.time_s, &low_cut, &high_cut, &mix);
+                    let ready = ReadyGraph {
+                        graph,
+                        sample_rate: req.sample_rate,
+                        time_s: req.time_s,
+                    };
+                    // `force_push` drops the previous ready graph
+                    // here on the worker — never on the audio thread.
+                    let _ = channel.ready.force_push(ready);
+                }
 
-        // `&` is Bus: dry + wet share the input and sum their outputs.
-        let mut graph: Box<dyn AudioUnit> =
-            Box::new((dry * inv_mix_stereo()) & (wet * mix_stereo()));
-        graph.set_sample_rate(sample_rate);
-        graph.allocate();
-        self.graph = graph;
+                if channel.shutdown.load(Ordering::Acquire) {
+                    return;
+                }
+                thread::park();
+            }
+        })
+        .expect("spawn fundsp-reverb-rebuild worker")
+}
+
+impl Drop for FundspReverb {
+    fn drop(&mut self) {
+        self.rebuild.shutdown.store(true, Ordering::Release);
+        self.worker_thread.unpark();
+        if let Some(handle) = self.worker_handle.take() {
+            let _ = handle.join();
+        }
     }
 }
 
@@ -140,9 +285,7 @@ impl PluginLogic for FundspReverb {
         let sr_changed = sample_rate.to_bits() != self.last_built_sr.to_bits();
         let time_changed = (time_s - self.last_built_time_s).abs() > TIME_REBUILD_THRESHOLD_S;
         if sr_changed || time_changed {
-            self.rebuild_graph(sample_rate, time_s);
-            self.last_built_sr = sample_rate;
-            self.last_built_time_s = time_s;
+            self.rebuild_now(sample_rate, time_s);
         }
     }
 
@@ -152,13 +295,40 @@ impl PluginLogic for FundspReverb {
         _events: &EventList,
         context: &mut ProcessContext,
     ) -> ProcessStatus {
+        // Swap in any graph the worker has finished. A ready entry
+        // built for a stale SR (one `reset()` ago) is rerouted to the
+        // discard queue so it's freed off-thread.
+        if let Some(ready) = self.rebuild.ready.pop() {
+            if ready.sample_rate.to_bits() == self.last_built_sr.to_bits() {
+                let old = std::mem::replace(&mut self.graph, ready.graph);
+                // try_push: capacity 8 vs at most one swap per block,
+                // so a non-stalled worker drains long before this
+                // ever fills. On the theoretical overflow we keep the
+                // old graph live for a block rather than free on the
+                // audio thread.
+                let _ = self.rebuild.discard.push(old);
+                self.last_built_time_s = ready.time_s;
+            } else {
+                let _ = self.rebuild.discard.push(ready.graph);
+            }
+        }
+
         // Read the raw target, not `read()`: a smoothed value would
-        // crawl across the threshold for ~200 ms and rebuild every
-        // block — audible as an unstable tail until it settles.
+        // crawl across the threshold for ~200 ms and request a
+        // rebuild every block — audible as an unstable tail until it
+        // settles.
         let time_s = self.params.time.value();
         if (time_s - self.last_built_time_s).abs() > TIME_REBUILD_THRESHOLD_S {
-            self.rebuild_graph(self.last_built_sr, time_s);
+            // Optimistic update so we don't re-request the same
+            // target every block while the worker is building. If
+            // the user moves Time again past the threshold, this
+            // diff trips and we re-request.
             self.last_built_time_s = time_s;
+            self.rebuild.requests.force_push(RebuildRequest {
+                sample_rate: self.last_built_sr,
+                time_s,
+            });
+            self.worker_thread.unpark();
         }
 
         // `for_each_frame::<2>` transposes channel-major to stereo
@@ -250,6 +420,34 @@ mod tests {
             .run();
         assertions::assert_no_nans(&result);
         assertions::assert_peak_below(&result, 2.0);
+    }
+
+    /// Regression: Time changes during playback must not crash and
+    /// must not allocate on the audio thread (the worker rebuilds
+    /// off-thread and hands the new graph back via the lock-free
+    /// queue). Ramps Time across the 0.05 s rebuild threshold
+    /// repeatedly so the worker swap path runs many times.
+    #[test]
+    fn time_automation_stays_finite() {
+        use std::time::Duration;
+        use truce_test::{InputSource, assertions, driver};
+
+        let result = driver!(Plugin)
+            .duration(Duration::from_millis(1500))
+            .input(InputSource::Constant(0.3))
+            .script(|s| {
+                for step in 1..=15 {
+                    // 0.067..=1.0 normalized maps across the Time
+                    // log range; each step crosses the threshold.
+                    let normalized = f64::from(step) / 15.0;
+                    s.set_param(P::Time, normalized);
+                    s.wait_ms(80);
+                }
+            })
+            .run();
+        assertions::assert_no_nans(&result);
+        assertions::assert_peak_below(&result, 2.0);
+        assertions::assert_nonzero_after(&result, Duration::from_millis(500));
     }
 
     /// Regression: param → `Shared` sync. Ramps `low_cut` from 0.0 to
