@@ -1,0 +1,57 @@
+<!doctype html>
+<!--
+  Welcome page rendered by macOS Installer.app on the first wizard
+  screen. Self-contained: the productbuild Distribution embeds this
+  file verbatim into the .pkg's Resources/ and references it via
+  `<welcome file="welcome.html"/>`. Inline SVG so there are no
+  external asset dependencies (and so the file plays nice with the
+  productbuild signing step that hashes Resources/).
+-->
+<html>
+<head>
+<meta charset="utf-8"/>
+<style>
+  body {
+    margin: 0;
+    padding: 24px;
+    font-family: -apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif;
+    color: #2a2a2a;
+    background: #fff;
+  }
+  .banner {
+    background: #1A0B2E;
+    color: #F0E4D0;
+    border-radius: 6px;
+    padding: 18px 22px;
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    margin-bottom: 18px;
+  }
+  .banner svg { flex: 0 0 auto; }
+  .banner .title {
+    font-size: 22px;
+    font-weight: 800;
+    letter-spacing: 1px;
+  }
+  p { line-height: 1.55; margin: 12px 0; font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="banner">
+  <svg width="64" height="64" viewBox="0 0 512 512" aria-hidden="true">
+    <rect width="512" height="512" rx="96" fill="#1A0B2E"/>
+    <path d="M 76 256 C 141 181, 192 181, 256 256 C 321 331, 372 331, 436 256"
+          fill="none" stroke="#FF2D7B" stroke-width="17" stroke-linecap="round"/>
+    <path d="M 76 256 C 141 331, 192 331, 256 256 C 321 181, 372 181, 436 256"
+          fill="none" stroke="#14F0E0" stroke-width="17" stroke-linecap="round"/>
+    <circle cx="256" cy="256" r="8" fill="#F0E4D0"/>
+  </svg>
+  <div class="title">TRUCE</div>
+</div>
+
+<p>This installer will guide you through adding the plugin to your system. Pick the formats your DAW understands on the next screen — every format is checked by default, and you can drop any you don't need.</p>
+
+<p>Plug-ins land under <code>/Library/Audio/Plug-Ins/</code> when you install for all users, or under <code>~/Library/Audio/Plug-Ins/</code> when you install for yourself only. Restart your DAW after install to pick up the new plug-in.</p>
+</body>
+</html>
