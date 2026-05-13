@@ -18,12 +18,12 @@ concurrency:
 
 jobs:
   test:
-    name: macos-14 (1.90)
+    name: macos-14 (stable)
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@1.90
+      - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
 
