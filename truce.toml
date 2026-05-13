@@ -23,9 +23,11 @@ au_manufacturer = "Trce"
 #
 [macos.packaging]
 notarize = true
+welcome_html = "static/truce-welcome.html"
 
 [windows.packaging]
 installer_icon = "static/truce-minimal.ico"
+welcome_bmp = "static/truce-welcome.bmp"
 
 # Each [[plugin]] entry defines a plugin to build and install.
 # The crate must support --features au (or whichever formats you declare).
