@@ -5,8 +5,8 @@
 
 use super::PkgFormat;
 use super::stage::{
-    generate_distribution_xml, stage_aax, stage_au2, stage_au3, stage_clap, stage_standalone,
-    stage_vst2, stage_vst3, write_postinstall_script,
+    generate_distribution_xml, stage_aax, stage_au2, stage_au3, stage_clap, stage_lv2,
+    stage_standalone, stage_vst2, stage_vst3, write_postinstall_script,
 };
 use crate::install_scope::{PkgScope, note_once};
 use crate::{
@@ -156,6 +156,7 @@ fn stage_components_only(root: &Path, p: &PluginDef, o: &PackageOpts) -> Res {
             PkgFormat::Clap => stage_clap(root, p, &staging, &crate::application_identity(), None),
             PkgFormat::Vst3 => stage_vst3(root, p, o.config, &staging, None),
             PkgFormat::Vst2 => stage_vst2(root, p, o.config, &staging, None).map(|_| ()),
+            PkgFormat::Lv2 => stage_lv2(root, p, &staging, None),
             PkgFormat::Au2 => stage_au2(root, p, o.config, &staging),
             PkgFormat::Au3 => stage_au3(root, p, o.config, &staging),
             PkgFormat::Aax => stage_aax(root, p, o.config, &staging, o.universal, o.no_pace_sign),
@@ -499,6 +500,9 @@ fn resolve_formats(
         if available.contains("vst2") {
             fmts.push(PkgFormat::Vst2);
         }
+        if available.contains("lv2") {
+            fmts.push(PkgFormat::Lv2);
+        }
         if available.contains("au") {
             fmts.push(PkgFormat::Au2);
             fmts.push(PkgFormat::Au3);
@@ -566,6 +570,9 @@ fn build_all_formats(
     }
     if formats.contains(&PkgFormat::Vst2) {
         build_and_lipo_format(root, plugins, archs, dt, "vst2", "VST2")?;
+    }
+    if formats.contains(&PkgFormat::Lv2) {
+        build_and_lipo_format(root, plugins, archs, dt, "lv2", "LV2")?;
     }
     if formats.contains(&PkgFormat::Au2) {
         build_and_lipo_format(root, plugins, archs, dt, "au", "AU v2")?;
@@ -756,6 +763,7 @@ fn package_one_plugin(root: &Path, p: &PluginDef, dist_dir: &Path, o: &PackageOp
             PkgFormat::Clap => stage_clap(root, p, &staging, &crate::application_identity(), None),
             PkgFormat::Vst3 => stage_vst3(root, p, o.config, &staging, None),
             PkgFormat::Vst2 => stage_vst2(root, p, o.config, &staging, None).map(|_| ()),
+            PkgFormat::Lv2 => stage_lv2(root, p, &staging, None),
             PkgFormat::Au2 => stage_au2(root, p, o.config, &staging),
             PkgFormat::Au3 => stage_au3(root, p, o.config, &staging),
             PkgFormat::Aax => stage_aax(root, p, o.config, &staging, o.universal, o.no_pace_sign),

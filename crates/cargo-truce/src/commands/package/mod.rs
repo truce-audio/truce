@@ -89,6 +89,7 @@ pub(crate) enum PkgFormat {
     Clap,
     Vst3,
     Vst2,
+    Lv2,
     Au2,
     Au3,
     Aax,
@@ -107,6 +108,7 @@ impl std::str::FromStr for PkgFormat {
             "clap" => Ok(PkgFormat::Clap),
             "vst3" => Ok(PkgFormat::Vst3),
             "vst2" => Ok(PkgFormat::Vst2),
+            "lv2" => Ok(PkgFormat::Lv2),
             "au2" => Ok(PkgFormat::Au2),
             "au3" => Ok(PkgFormat::Au3),
             "aax" => Ok(PkgFormat::Aax),
@@ -134,7 +136,7 @@ struct PkgFormatMeta {
     choice_description: &'static str,
 }
 
-const PKG_FORMAT_META: [(PkgFormat, PkgFormatMeta); 7] = [
+const PKG_FORMAT_META: [(PkgFormat, PkgFormatMeta); 8] = [
     (
         PkgFormat::Clap,
         PkgFormatMeta {
@@ -166,6 +168,24 @@ const PKG_FORMAT_META: [(PkgFormat, PkgFormatMeta); 7] = [
             install_location: "/Library/Audio/Plug-Ins/VST/",
             is_native_bundle: false,
             choice_description: "Legacy — for hosts without VST3 support",
+        },
+    ),
+    (
+        PkgFormat::Lv2,
+        PkgFormatMeta {
+            label: "LV2",
+            pkg_id_suffix: "lv2",
+            extension: "lv2",
+            // macOS LV2 plugins live alongside the other formats in
+            // the Audio Plug-Ins root; the bundle itself is a
+            // directory with the `.lv2` extension. Reaper, Ardour,
+            // Bitwig pick them up from here.
+            install_location: "/Library/Audio/Plug-Ins/LV2/",
+            // LV2 bundles are plain directories (not macOS-style
+            // bundle blobs with `Info.plist`) — `pkgbuild` should
+            // recurse into them like any other folder of files.
+            is_native_bundle: false,
+            choice_description: "For Ardour, Bitwig, Reaper, and Linux DAWs",
         },
     ),
     (

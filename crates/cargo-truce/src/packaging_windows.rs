@@ -414,6 +414,9 @@ fn resolve_formats(
         if available.contains("vst2") {
             fmts.push(PkgFormat::Vst2);
         }
+        if available.contains("lv2") {
+            fmts.push(PkgFormat::Lv2);
+        }
         if available.contains("aax") {
             fmts.push(PkgFormat::Aax);
         }
@@ -469,6 +472,7 @@ fn build_all_formats(
     let has_clap = formats.iter().any(|f| matches!(f, PkgFormat::Clap));
     let has_vst3 = formats.iter().any(|f| matches!(f, PkgFormat::Vst3));
     let has_vst2 = formats.iter().any(|f| matches!(f, PkgFormat::Vst2));
+    let has_lv2 = formats.iter().any(|f| matches!(f, PkgFormat::Lv2));
     let has_aax = formats.iter().any(|f| matches!(f, PkgFormat::Aax));
     let has_standalone = formats.iter().any(|f| matches!(f, PkgFormat::Standalone));
 
@@ -542,6 +546,28 @@ fn build_all_formats(
                 let src = release_lib_for_target(root, &p.dylib_stem(), Some(triple));
                 let dst =
                     release_lib_for_target(root, &format!("{}_vst2", p.dylib_stem()), Some(triple));
+                fs::copy(&src, &dst)?;
+            }
+        }
+
+        if has_lv2 {
+            eprintln!("Building LV2 ({})...", arch.tag());
+            let mut build_args: Vec<String> = vec!["--target".into(), triple.into()];
+            for p in plugins {
+                build_args.push("-p".into());
+                build_args.push(p.crate_name.clone());
+            }
+            build_args.extend_from_slice(&[
+                "--no-default-features".into(),
+                "--features".into(),
+                "lv2".into(),
+            ]);
+            let arg_refs: Vec<&str> = build_args.iter().map(std::string::String::as_str).collect();
+            cargo_build(&[], &arg_refs, dt)?;
+            for p in plugins {
+                let src = release_lib_for_target(root, &p.dylib_stem(), Some(triple));
+                let dst =
+                    release_lib_for_target(root, &format!("{}_lv2", p.dylib_stem()), Some(triple));
                 fs::copy(&src, &dst)?;
             }
         }
@@ -668,6 +694,9 @@ fn stage_plugin(
             PkgFormat::Vst2 => {
                 signable.push(stage_vst2(root, p, staging, arch)?);
             }
+            PkgFormat::Lv2 => {
+                signable.push(stage_lv2(root, p, staging, arch)?);
+            }
             PkgFormat::Aax => {
                 if let Some((wrapper, dylib)) = stage_aax(root, p, staging, arch)? {
                     signable.push(dylib);
@@ -790,6 +819,61 @@ fn stage_vst2(
     let dst = dst_dir.join(format!("{}.dll", p.name));
     fs::copy(&dll, &dst)?;
     Ok(dst)
+}
+
+/// Stage an LV2 bundle for one Windows architecture. LV2 bundles are
+/// plain directories with the `.lv2` extension holding the plugin
+/// DLL plus a `manifest.ttl` + `plugin.ttl` describing parameter
+/// shape — the same files `truce::plugin!` writes during the
+/// cdylib's compile via `derive(Params)`.
+fn stage_lv2(
+    root: &Path,
+    p: &PluginDef,
+    staging: &Path,
+    arch: TargetArch,
+) -> std::result::Result<PathBuf, crate::BoxErr> {
+    use crate::commands::package::stage::lv2_slug;
+
+    let dll = release_lib_for_target(
+        root,
+        &format!("{}_lv2", p.dylib_stem()),
+        Some(arch.triple()),
+    );
+    if !dll.exists() {
+        return Err(format!("Missing: {}", dll.display()).into());
+    }
+    let target_dir = truce_build::target_dir(root);
+    let sidecar_dir = target_dir.join("lv2-meta").join(&p.crate_name);
+    let manifest_ttl = sidecar_dir.join("manifest.ttl");
+    let plugin_ttl = sidecar_dir.join("plugin.ttl");
+    if !manifest_ttl.exists() || !plugin_ttl.exists() {
+        return Err(format!(
+            "no LV2 metadata sidecar at {} for {}. \
+             `derive(Params)` writes this during the cdylib's compile; \
+             missing it means either the params struct uses `#[nested]` \
+             (unsupported for the compile-time TTL path) or the plugin \
+             crate isn't listed under `[[plugin]]` in truce.toml.",
+            sidecar_dir.display(),
+            p.name,
+        )
+        .into());
+    }
+
+    let slug = lv2_slug(&p.name);
+    let bundle = staging
+        .join("lv2")
+        .join(arch.tag())
+        .join(format!("{slug}.lv2"));
+    let _ = fs::remove_dir_all(&bundle);
+    fs::create_dir_all(&bundle)?;
+    let dst_dll = bundle.join(format!("{slug}.dll"));
+    fs::copy(&dll, &dst_dll)?;
+    fs::copy(&manifest_ttl, bundle.join("manifest.ttl"))?;
+    fs::copy(&plugin_ttl, bundle.join("plugin.ttl"))?;
+    // Inno Setup signs/copies whatever path we return; the DLL is the
+    // signable artifact here (manifest.ttl / plugin.ttl are plain text
+    // and don't need Authenticode).
+    Ok(dst_dll)
 }
 
 /// Build/stage the AAX bundle for one architecture. Returns
@@ -1724,6 +1808,22 @@ fn component_install_size(
             })
             .max()
             .unwrap_or(0),
+        PkgFormat::Lv2 => {
+            use crate::commands::package::stage::lv2_slug;
+            let slug = lv2_slug(&p.name);
+            archs
+                .iter()
+                .map(|a| {
+                    dir_size_recursive(
+                        &staging
+                            .join("lv2")
+                            .join(a.tag())
+                            .join(format!("{slug}.lv2")),
+                    )
+                })
+                .max()
+                .unwrap_or(0)
+        }
         PkgFormat::Vst3 => {
             let contents = staging
                 .join("vst3")
@@ -1779,6 +1879,10 @@ fn files_all_check_gated(fmt: &PkgFormat, universal: bool, scope: PkgScope) -> b
         // arch-gated when universal. In `--system`/`--user` the iss_admin_only
         // emitter drops the IsAdminInstallMode check, so single-arch is bare.
         PkgFormat::Vst2 => universal || matches!(scope, PkgScope::Ask),
+        // LV2 is a bundle (directory). Same gating shape as VST3 — only
+        // arch-gate when universal; the host picks the matching dll
+        // out of the bundle at load time.
+        PkgFormat::Lv2 => universal,
         // Host-arch only (single arch dir staged), so no per-arch Check.
         // Only gated in `--ask` (on IsAdminInstallMode).
         PkgFormat::Aax => matches!(scope, PkgScope::Ask),
@@ -1809,6 +1913,7 @@ fn iss_component_spec(fmt: &PkgFormat) -> (&'static str, &'static str, &'static 
         PkgFormat::Clap => ("clap", "CLAP", "full"),
         PkgFormat::Vst3 => ("vst3", "VST3", "full"),
         PkgFormat::Vst2 => ("vst2", "VST2 (legacy)", "custom"),
+        PkgFormat::Lv2 => ("lv2", "LV2", "custom"),
         PkgFormat::Aax => ("aax", "AAX", "full"),
         PkgFormat::Standalone => ("standalone", "Standalone app", "custom"),
         PkgFormat::Au2 | PkgFormat::Au3 => unreachable!("AU is filtered out on Windows"),
@@ -1912,6 +2017,34 @@ fn iss_files_block(
                 &comp("vst2"),
                 arch_check,
                 /* is_dir = */ false,
+            )
+        }
+        PkgFormat::Lv2 => {
+            // LV2 bundle (directory). Lands under `<CommonFiles>\LV2\`
+            // — same layout convention as CLAP/VST3 above (per-scope
+            // root from `scoped_cf`, format-named subdir, then the
+            // bundle). The LV2 spec lists `%APPDATA%\LV2` as the
+            // user-scope path on Windows, but every LV2 host worth
+            // shipping for (Reaper, Ardour, Bitwig) lets the user
+            // configure scan paths, and matching the CLAP/VST3 layout
+            // keeps the installer simpler. Bundle is a directory; we
+            // recurse on copy, arch-gated when universal so an ARM64
+            // machine doesn't get the x86_64 DLL.
+            use crate::commands::package::stage::lv2_slug;
+            let slug = lv2_slug(&p.name);
+            let src_dir = staging
+                .join("lv2")
+                .join(arch.tag())
+                .join(format!("{slug}.lv2"));
+            let src_glob = src_dir.join("*");
+            let src_quoted = iss_escape_path(&src_glob);
+            let dest = format!("{}\\LV2\\{slug}.lv2", scoped_cf(scope));
+            iss_dual_dest(
+                &src_quoted,
+                &dest,
+                &comp("lv2"),
+                arch_check,
+                /* is_dir = */ true,
             )
         }
         PkgFormat::Aax => {
@@ -2082,6 +2215,19 @@ fn iss_uninstall_lines(
             // the uninstall hits the same path the bundle was written to.
             let path = format!("{}\\VST3\\{name}.vst3", scoped_cf(scope));
             let component = comp("vst3");
+            vec![format!(
+                "Type: filesandordirs; Name: \"{path}\"; Components: {component}"
+            )]
+        }
+        PkgFormat::Lv2 => {
+            // LV2 bundle is a directory; the individual files inside
+            // are tracked by Inno's `[Files]` block and removed on
+            // uninstall, but the empty `{slug}.lv2` dir would be left
+            // behind. Sweep it the same way VST3 does.
+            use crate::commands::package::stage::lv2_slug;
+            let slug = lv2_slug(plugin_name);
+            let path = format!("{}\\LV2\\{slug}.lv2", scoped_cf(scope));
+            let component = comp("lv2");
             vec![format!(
                 "Type: filesandordirs; Name: \"{path}\"; Components: {component}"
             )]
