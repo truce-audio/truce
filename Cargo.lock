@@ -6602,7 +6602,28 @@ dependencies = [
 ]
 
 [[package]]
-name = "truce-example-fundsp-reverb"
+name = "truce-example-fundsp-reverb-simple"
+version = "0.40.0"
+dependencies = [
+ "clap-sys",
+ "fundsp",
+ "truce",
+ "truce-aax",
+ "truce-au",
+ "truce-clap",
+ "truce-core",
+ "truce-gui",
+ "truce-loader",
+ "truce-lv2",
+ "truce-params",
+ "truce-standalone",
+ "truce-test",
+ "truce-vst2",
+ "truce-vst3",
+]
+
+[[package]]
+name = "truce-example-fundsp-reverb-worker"
 version = "0.40.0"
 dependencies = [
  "clap-sys",

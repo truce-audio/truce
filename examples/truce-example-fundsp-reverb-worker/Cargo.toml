@@ -1,5 +1,5 @@
 [package]
-name = "truce-example-fundsp-reverb"
+name = "truce-example-fundsp-reverb-worker"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,7 +9,7 @@ rust-version.workspace = true
 crate-type = ["cdylib", "rlib"]
 
 [[bin]]
-name = "truce-example-fundsp-reverb-standalone"
+name = "truce-example-fundsp-reverb-worker-standalone"
 path = "src/main.rs"
 required-features = ["standalone"]
 

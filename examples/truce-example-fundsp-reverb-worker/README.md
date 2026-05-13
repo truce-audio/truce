@@ -1,6 +1,8 @@
-# Fundsp Reverb
+# Fundsp Reverb (Worker variant)
 
 Stereo plate reverb wired through a [`fundsp`](https://github.com/SamiPerttu/fundsp) audio graph. The point of this example is the integration shape — how to hold a fundsp graph inside a truce plugin and keep it alloc-free on the audio thread.
+
+This is the **production-pattern** variant: graph rebuilds happen on a dedicated worker thread and the audio thread picks them up via a lock-free swap. For the simpler inline-rebuild version (rt-unsafe but easier to read top-to-bottom), see [`truce-example-fundsp-reverb-simple`](../truce-example-fundsp-reverb-simple/). Both crates share the same topology, params, and signal flow.
 
 ```text
 in (L,R) ──► high-pass (low cut)  ──► low-pass (high cut)  ──► reverb_stereo ──┐
@@ -35,8 +37,8 @@ in (L,R) ───────────────────────�
 ## Build
 
 ```sh
-cargo build -p truce-example-fundsp-reverb
-cargo test  -p truce-example-fundsp-reverb --release
-cargo truce install -p truce-example-fundsp-reverb
-cargo truce run     -p truce-example-fundsp-reverb
+cargo build -p truce-example-fundsp-reverb-worker
+cargo test  -p truce-example-fundsp-reverb-worker --release
+cargo truce install -p truce-example-fundsp-reverb-worker
+cargo truce run     -p truce-example-fundsp-reverb-worker
 ```

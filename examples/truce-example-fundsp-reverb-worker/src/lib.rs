@@ -1,5 +1,15 @@
 //! Stereo plate reverb wired through a `fundsp` audio graph.
 //!
+//! **Worker-thread variant.** Rebuilds the fundsp graph on a
+//! dedicated background thread and hands the new graph to the audio
+//! thread via lock-free queues, so `process()` never calls
+//! `Box::new`, `graph.allocate()`, or drops a graph. This is the
+//! production pattern.
+//!
+//! For the simpler inline-rebuild version (rt-unsafe but easier to
+//! read end-to-end), see the sibling crate
+//! `truce-example-fundsp-reverb-simple`.
+//!
 //! ```text
 //!     in (L,R) ──► high-pass (low cut) ──► low-pass (high cut) ──► reverb_stereo ──┐
 //!                                                                                  │
@@ -18,7 +28,7 @@ use std::thread::{self, JoinHandle, Thread};
 use truce::prelude::*;
 use truce_gui::layout::{GridLayout, knob, meter, widgets};
 
-use FundspReverbParamsParamId as P;
+use FundspReverbWorkerParamsParamId as P;
 
 const DEFAULT_LOW_CUT_HZ: f32 = 120.0;
 const DEFAULT_HIGH_CUT_HZ: f32 = 8000.0;
@@ -35,7 +45,7 @@ const DAMPING: f64 = 0.5;
 const TIME_REBUILD_THRESHOLD_S: f32 = 0.05;
 
 #[derive(Params)]
-pub struct FundspReverbParams {
+pub struct FundspReverbWorkerParams {
     #[param(
         name = "Low Cut",
         range = "log(20, 2000)",
@@ -150,8 +160,8 @@ struct RebuildChannel {
     shutdown: AtomicBool,
 }
 
-pub struct FundspReverb {
-    params: Arc<FundspReverbParams>,
+pub struct FundspReverbWorker {
+    params: Arc<FundspReverbWorkerParams>,
     // Atomic cells the fundsp graph reads each sample via `var()`.
     low_cut_shared: Shared,
     high_cut_shared: Shared,
@@ -169,8 +179,8 @@ pub struct FundspReverb {
     worker_handle: Option<JoinHandle<()>>,
 }
 
-impl FundspReverb {
-    pub fn new(params: Arc<FundspReverbParams>) -> Self {
+impl FundspReverbWorker {
+    pub fn new(params: Arc<FundspReverbWorkerParams>) -> Self {
         let low_cut_shared = shared(DEFAULT_LOW_CUT_HZ);
         let high_cut_shared = shared(DEFAULT_HIGH_CUT_HZ);
         let mix_shared = shared(DEFAULT_REVERB_MIX);
@@ -266,7 +276,7 @@ fn spawn_rebuild_worker(
         .expect("spawn fundsp-reverb-rebuild worker")
 }
 
-impl Drop for FundspReverb {
+impl Drop for FundspReverbWorker {
     fn drop(&mut self) {
         self.rebuild.shutdown.store(true, Ordering::Release);
         self.worker_thread.unpark();
@@ -276,7 +286,7 @@ impl Drop for FundspReverb {
     }
 }
 
-impl PluginLogic for FundspReverb {
+impl PluginLogic for FundspReverbWorker {
     fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {
         self.params.set_sample_rate(sample_rate);
         self.params.snap_smoothers();
@@ -363,8 +373,8 @@ impl PluginLogic for FundspReverb {
 }
 
 truce::plugin! {
-    logic: FundspReverb,
-    params: FundspReverbParams,
+    logic: FundspReverbWorker,
+    params: FundspReverbWorkerParams,
 }
 
 #[cfg(test)]
@@ -525,13 +535,13 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn gui_screenshot_macos() {
-        truce_test::screenshot!(Plugin, "screenshots/fundsp_reverb_default_macos.png").run();
+        truce_test::screenshot!(Plugin, "screenshots/fundsp_reverb_worker_default_macos.png").run();
     }
 
     #[cfg(target_os = "linux")]
     #[test]
     fn gui_screenshot_linux() {
-        truce_test::screenshot!(Plugin, "screenshots/fundsp_reverb_default_linux.png")
+        truce_test::screenshot!(Plugin, "screenshots/fundsp_reverb_worker_default_linux.png")
             .pixel_threshold(2)
             .run();
     }
@@ -539,8 +549,11 @@ mod tests {
     #[cfg(target_os = "windows")]
     #[test]
     fn gui_screenshot_windows() {
-        truce_test::screenshot!(Plugin, "screenshots/fundsp_reverb_default_windows.png")
-            .pixel_threshold(2)
-            .run();
+        truce_test::screenshot!(
+            Plugin,
+            "screenshots/fundsp_reverb_worker_default_windows.png"
+        )
+        .pixel_threshold(2)
+        .run();
     }
 }

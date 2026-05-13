@@ -39,7 +39,8 @@ members = [
     "examples/truce-example-state",
     "examples/truce-example-gain-iced",
     "examples/truce-example-gain-slint",
-    "examples/truce-example-fundsp-reverb",
+    "examples/truce-example-fundsp-reverb-worker",
+    "examples/truce-example-fundsp-reverb-simple",
 ]
 
 [workspace.package]
