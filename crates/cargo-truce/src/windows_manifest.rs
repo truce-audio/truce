@@ -151,15 +151,13 @@ fn make_int_resource(id: u16) -> *const u16 {
 /// error. An .ico file can carry up to 65535 images, but in practice
 /// the truce icon has 7 — overflow here means a malformed input.
 fn u16_or(value: usize, ctx: &str) -> std::result::Result<u16, crate::BoxErr> {
-    u16::try_from(value).map_err(|_| -> crate::BoxErr {
-        format!("{ctx}: value {value} exceeds u16 range").into()
-    })
+    u16::try_from(value)
+        .map_err(|_| -> crate::BoxErr { format!("{ctx}: value {value} exceeds u16 range").into() })
 }
 
 fn u32_or(value: usize, ctx: &str) -> std::result::Result<u32, crate::BoxErr> {
-    u32::try_from(value).map_err(|_| -> crate::BoxErr {
-        format!("{ctx}: value {value} exceeds u32 range").into()
-    })
+    u32::try_from(value)
+        .map_err(|_| -> crate::BoxErr { format!("{ctx}: value {value} exceeds u32 range").into() })
 }
 
 /// Build the `RT_GROUP_ICON` resource payload from the parsed `.ico`
@@ -304,7 +302,10 @@ struct IcoEntry {
     offset: usize,
 }
 
-fn parse_ico_directory(bytes: &[u8], path: &Path) -> std::result::Result<Vec<IcoEntry>, crate::BoxErr> {
+fn parse_ico_directory(
+    bytes: &[u8],
+    path: &Path,
+) -> std::result::Result<Vec<IcoEntry>, crate::BoxErr> {
     // ICONDIR: u16 reserved (=0), u16 type (=1 icon), u16 count.
     // Then `count` × 16-byte `ICONDIRENTRY`.
     if bytes.len() < 6 {

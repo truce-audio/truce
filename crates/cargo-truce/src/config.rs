@@ -444,6 +444,7 @@ mod suite_tests {
             },
             au3_subtype: None,
             au_tag: default_au_tag(),
+            windows_icon: None,
         }
     }
 

@@ -301,7 +301,6 @@ fn archs_label(archs: &[TargetArch]) -> String {
     archs.iter().map(|a| a.tag()).collect::<Vec<_>>().join("+")
 }
 
-
 // ---------------------------------------------------------------------------
 // Argument parsing
 // ---------------------------------------------------------------------------
@@ -1362,7 +1361,13 @@ fn render_iss(
     if formats.contains(&PkgFormat::Standalone) {
         let bin_stem = crate::read_standalone_bin_name(&p.crate_name)
             .unwrap_or_else(|| format!("{}-standalone", p.crate_name));
-        write_icons_section(&mut setup, &iss_escape(&p.name), &bin_stem, "standalone", scope);
+        write_icons_section(
+            &mut setup,
+            &iss_escape(&p.name),
+            &bin_stem,
+            "standalone",
+            scope,
+        );
     }
 
     // [UninstallDelete] — per-format (bundle dirs get wholesale cleanup).
