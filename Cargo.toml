@@ -44,7 +44,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.40.2"
+version = "0.41.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.90"
@@ -99,9 +99,9 @@ truce-slint = { path = "crates/truce-slint" }
 truce-slint-build = { path = "crates/truce-slint-build" }
 truce-dsp = { path = "crates/truce-dsp" }
 truce-font = { path = "crates/truce-font" }
-truce-build = { version = "0.40.2", path = "crates/truce-build" }
-truce-shim-types = { version = "0.40.2", path = "crates/truce-shim-types" }
-truce-utils = { version = "0.40.2", path = "crates/truce-utils" }
+truce-build = { version = "0.41.0", path = "crates/truce-build" }
+truce-shim-types = { version = "0.41.0", path = "crates/truce-shim-types" }
+truce-utils = { version = "0.41.0", path = "crates/truce-utils" }
 
 # Common third-party deps consumed by multiple workspace crates.
 # Hoisted here so version bumps are a one-line change. wgpu and the
