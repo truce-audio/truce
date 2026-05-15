@@ -978,9 +978,14 @@ static OSStatus au_v2_render(void *self_,
     AuTransportSnapshot transport;
     fill_transport_snapshot(inst, inTimeStamp, &transport);
 
+    /* AU v2 hosts deliver MIDI exclusively through the legacy
+     * `MusicDeviceMIDIEvent` path (3-byte MIDI 1.0); they don't have a
+     * MIDIEventList equivalent. Forward NULL / 0 for the MIDI 2.0
+     * UMP array so the Rust event-decoder skips it. */
     g_callbacks->process(inst->rustCtx, inPtrs, outPtrs,
                          numIn, numOut, inFrameCount,
                          inst->midiBuffer, inst->midiCount,
+                         NULL, 0,
                          &transport);
     inst->midiCount = 0;
 

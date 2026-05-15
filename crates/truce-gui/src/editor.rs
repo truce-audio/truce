@@ -18,40 +18,12 @@ use crate::interaction::{self, InputEvent, InteractionState, ParamEdit};
 use crate::layout::{GridLayout, Layout, PluginLayout};
 use crate::platform::EditorScale;
 use crate::render::RenderBackend;
-use crate::snapshot::ParamSnapshot;
+use crate::render_core::{
+    EditorSnapshotClosures, build_snapshot_closures as build_snapshot_closures_impl,
+    render_widgets as render_widgets_impl,
+};
 use crate::theme::Theme;
-use crate::widgets::{self, WidgetType};
-
-/// Owned `'static` closures that back a `ParamSnapshot` for the current
-/// frame. Each closure captures an `Arc` of the params / context, so the
-/// struct can live across a separate `&mut self.interaction` borrow.
-struct EditorSnapshotClosures {
-    get_param: Box<dyn Fn(u32) -> f32>,
-    get_param_plain: Box<dyn Fn(u32) -> f32>,
-    format_param: Box<dyn Fn(u32) -> String>,
-    get_meter: Box<dyn Fn(u32) -> f32>,
-    get_options: Box<dyn Fn(u32) -> Vec<String>>,
-    default_normalized: Box<dyn Fn(u32) -> f32>,
-    next_discrete_normalized: Box<dyn Fn(u32) -> f32>,
-    param_name: Box<dyn Fn(u32) -> String>,
-    widget_type: Box<dyn Fn(u32) -> WidgetType>,
-}
-
-impl EditorSnapshotClosures {
-    fn as_snapshot(&self) -> ParamSnapshot<'_> {
-        ParamSnapshot {
-            get_param: &*self.get_param,
-            get_param_plain: &*self.get_param_plain,
-            format_param: &*self.format_param,
-            get_meter: &*self.get_meter,
-            get_options: &*self.get_options,
-            default_normalized: &*self.default_normalized,
-            next_discrete_normalized: &*self.next_discrete_normalized,
-            param_name: &*self.param_name,
-            widget_type: &*self.widget_type,
-        }
-    }
-}
+use crate::widgets;
 
 /// Built-in editor that renders parameter widgets to a pixel buffer.
 ///
@@ -224,7 +196,7 @@ impl<P: Params + 'static> BuiltinEditor<P> {
         let backend = self
             .backend
             .get_or_insert_with(|| CpuBackend::new(w, h, scale).expect("Failed to create backend"));
-        Self::render_widgets(
+        render_widgets_impl(
             &self.layout,
             &self.theme,
             &mut self.interaction,
@@ -233,136 +205,14 @@ impl<P: Params + 'static> BuiltinEditor<P> {
         );
     }
 
-    /// Render all widgets to a `RenderBackend`. Takes split borrows of
-    /// the relevant editor fields rather than `&mut self`, so callers
-    /// can hold `&mut self.backend` (or pass an external backend) at
-    /// the same time.
-    fn render_widgets(
-        layout: &Layout,
-        theme: &Theme,
-        interaction: &mut InteractionState,
-        snapshot: &ParamSnapshot<'_>,
-        backend: &mut dyn RenderBackend,
-    ) {
-        // `widgets::draw` does not clear; do it here so the built-in
-        // editor's background matches the theme.
-        backend.clear(theme.background);
-        widgets::draw(backend, layout, theme, snapshot, interaction);
-    }
-
     /// Build owned boxed closures from `self.context` / `self.params` that
     /// back a `ParamSnapshot`. Each closure clones the `Arc<P>` or the
     /// `PluginContext`, so `EditorSnapshotClosures` is `'static` and safe
-    /// to hold across a borrow of `&mut self.interaction`.
+    /// to hold across a borrow of `&mut self.interaction`. Delegates to
+    /// the shared `render_core` impl so the iOS editor doesn't have to
+    /// duplicate the (~100-line) closure scaffolding.
     fn build_snapshot_closures(&self) -> EditorSnapshotClosures {
-        let ctx = self.context.clone();
-        let p = Arc::clone(&self.params);
-        let p_get = Arc::clone(&p);
-        let p_get_plain = Arc::clone(&p);
-        let p_fmt = Arc::clone(&p);
-        let p_opts = Arc::clone(&p);
-        let p_default = Arc::clone(&p);
-        let p_next = Arc::clone(&p);
-        let p_name = Arc::clone(&p);
-        let p_wtype = Arc::clone(&p);
-
-        let get_param: Box<dyn Fn(u32) -> f32> = match &ctx {
-            Some(c) => {
-                let c = c.clone();
-                // `c.get_param` resolves through `PluginContextReadF32`
-                // (imported above) so the bridge's `f64` is narrowed
-                // inside the trait method.
-                Box::new(move |id| c.get_param(id))
-            }
-            None => Box::new(move |id| p_get.get_normalized(id).unwrap_or(0.0).to_f32()),
-        };
-        let get_param_plain: Box<dyn Fn(u32) -> f32> = match &ctx {
-            Some(c) => {
-                let c = c.clone();
-                Box::new(move |id| c.get_param_plain(id))
-            }
-            None => Box::new(move |id| p_get_plain.get_plain(id).unwrap_or(0.0).to_f32()),
-        };
-        let format_param: Box<dyn Fn(u32) -> String> = match &ctx {
-            Some(c) => {
-                let c = c.clone();
-                Box::new(move |id| c.format_param(id))
-            }
-            None => Box::new(move |id| {
-                let v = p_fmt.get_plain(id).unwrap_or(0.0);
-                p_fmt
-                    .format_value(id, v)
-                    .unwrap_or_else(|| format!("{v:.1}"))
-            }),
-        };
-        let get_meter: Box<dyn Fn(u32) -> f32> = match &ctx {
-            Some(c) => {
-                let c = c.clone();
-                Box::new(move |id| c.get_meter(id))
-            }
-            None => Box::new(move |_| 0.0),
-        };
-        let get_options: Box<dyn Fn(u32) -> Vec<String>> = Box::new(move |id| {
-            let Some(info) = p_opts.param_infos().iter().find(|i| i.id == id).copied() else {
-                return Vec::new();
-            };
-            let count = info.range.step_count_usize() + 1;
-            (0..count)
-                .map(|i| {
-                    let norm = truce_core::cast::discrete_norm(i, count);
-                    let plain = info.range.denormalize(norm);
-                    p_opts
-                        .format_value(id, plain)
-                        .unwrap_or_else(|| format!("{plain:.0}"))
-                })
-                .collect()
-        });
-        let default_normalized: Box<dyn Fn(u32) -> f32> = Box::new(move |id| {
-            p_default
-                .param_infos()
-                .iter()
-                .find(|i| i.id == id)
-                .map_or(0.0, |info| {
-                    f32::from_f64(info.range.normalize(info.default_plain))
-                })
-        });
-        let next_discrete_normalized: Box<dyn Fn(u32) -> f32> = Box::new(move |id| {
-            let Some(info) = p_next.param_infos().iter().find(|i| i.id == id).copied() else {
-                return 0.0;
-            };
-            let plain = p_next.get_plain(id).unwrap_or(0.0);
-            let max = info.range.max();
-            let next = if plain >= max { 0.0 } else { plain + 1.0 };
-            f32::from_f64(info.range.normalize(next))
-        });
-        let param_name: Box<dyn Fn(u32) -> String> = Box::new(move |id| {
-            p_name
-                .param_infos()
-                .iter()
-                .find(|i| i.id == id)
-                .map(|i| i.name.to_string())
-                .unwrap_or_default()
-        });
-        let widget_type: Box<dyn Fn(u32) -> WidgetType> = Box::new(move |id| {
-            let info = p_wtype.param_infos().iter().find(|i| i.id == id).copied();
-            match info.as_ref().map(|i| &i.range) {
-                Some(truce_params::ParamRange::Discrete { min: 0, max: 1 }) => WidgetType::Toggle,
-                Some(truce_params::ParamRange::Enum { .. }) => WidgetType::Selector,
-                _ => WidgetType::Knob,
-            }
-        });
-
-        EditorSnapshotClosures {
-            get_param,
-            get_param_plain,
-            format_param,
-            get_meter,
-            get_options,
-            default_normalized,
-            next_discrete_normalized,
-            param_name,
-            widget_type,
-        }
+        build_snapshot_closures_impl(&self.params, self.context.as_ref())
     }
 
     /// Apply a single `ParamEdit` returned by `interaction::dispatch`.
@@ -459,7 +309,7 @@ impl<P: Params + 'static> BuiltinEditor<P> {
         update_interaction(self);
         let owned = self.build_snapshot_closures();
         let snapshot = owned.as_snapshot();
-        Self::render_widgets(
+        render_widgets_impl(
             &self.layout,
             &self.theme,
             &mut self.interaction,
@@ -476,6 +326,7 @@ impl<P: Params + 'static> BuiltinEditor<P> {
 impl<P: Params + 'static> BuiltinEditor<P> {
     fn on_mouse_down(&mut self, x: f32, y: f32) {
         self.dispatch_events(&[InputEvent::MouseDown {
+            pointer_id: truce_gui_types::interaction::SINGLE_POINTER,
             x,
             y,
             button: crate::interaction::MouseButton::Left,
@@ -484,6 +335,7 @@ impl<P: Params + 'static> BuiltinEditor<P> {
 
     fn on_mouse_up(&mut self, x: f32, y: f32) {
         self.dispatch_events(&[InputEvent::MouseUp {
+            pointer_id: truce_gui_types::interaction::SINGLE_POINTER,
             x,
             y,
             button: crate::interaction::MouseButton::Left,
@@ -491,7 +343,11 @@ impl<P: Params + 'static> BuiltinEditor<P> {
     }
 
     fn on_mouse_moved(&mut self, x: f32, y: f32) {
-        self.dispatch_events(&[InputEvent::MouseMove { x, y }]);
+        self.dispatch_events(&[InputEvent::MouseMove {
+            pointer_id: truce_gui_types::interaction::SINGLE_POINTER,
+            x,
+            y,
+        }]);
     }
 }
 

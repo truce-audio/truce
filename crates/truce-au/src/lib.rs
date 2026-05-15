@@ -10,9 +10,21 @@ use std::ffi::CString;
 use std::os::raw::c_char;
 use std::slice;
 
+// `Float::from_f64` is only invoked from the macOS-only `set_param`
+// closure in `cb_gui_open` (the AU v2 host notifier path). Gate the
+// import so iOS builds, which take a `_id`-no-op branch instead,
+// don't flag it as unused.
+#[cfg(target_os = "macos")]
 use truce_core::Float;
 use truce_core::cast::{len_u32, sample_pos_i64};
-use truce_core::editor::{ClosureBridge, Editor, PluginContext, RawWindowHandle, SendPtr};
+use truce_core::editor::Editor;
+// `ClosureBridge`, `PluginContext`, `SendPtr`, `RawWindowHandle` are
+// consumed only inside the apple-gated body of `cb_gui_open` — the
+// AppKit/UiKit variants don't exist on Linux/Windows. Importing them
+// from a non-apple module would also trigger the unused-import lint
+// there.
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+use truce_core::editor::{ClosureBridge, PluginContext, RawWindowHandle, SendPtr};
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
 use truce_core::info::PluginCategory;
@@ -25,7 +37,10 @@ use truce_core::wrapper::{
 };
 use truce_params::{ParamFlags, Params};
 
-use ffi::{AuCallbacks, AuMidiEvent, AuParamDescriptor, AuPluginDescriptor, AuTransportSnapshot};
+use ffi::{
+    AuCallbacks, AuMidi2Event, AuMidiEvent, AuParamDescriptor, AuPluginDescriptor,
+    AuTransportSnapshot,
+};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -184,6 +199,8 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
     num_frames: u32,
     events: *const AuMidiEvent,
     num_events: u32,
+    events2: *const AuMidi2Event,
+    num_events2: u32,
     transport_ptr: *const AuTransportSnapshot,
 ) {
     let nf = num_frames as usize;
@@ -257,6 +274,23 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
                     _ => None,
                 };
                 if let Some(body) = body {
+                    inst.event_list.push(Event {
+                        sample_offset: ev.sample_offset,
+                        body,
+                    });
+                }
+            }
+        }
+        // MIDI 2.0 UMP decode. AU v3 hosts on iOS 17+ / macOS 14+
+        // deliver per-note expression + 32-bit-resolution channel
+        // voice messages through `AURenderEvent.MIDIEventList`; the
+        // Swift shim hands them here as 64-bit UMPs (MIDI 2.0 CV
+        // message type 0x4). Other UMP types (utility, system,
+        // SysEx, data) are not yet mapped — skipped here.
+        if !events2.is_null() && num_events2 > 0 {
+            let slice2 = slice::from_raw_parts(events2, num_events2 as usize);
+            for ev in slice2 {
+                if let Some(body) = decode_ump_channel_voice_2(ev.words) {
                     inst.event_list.push(Event {
                         sample_offset: ev.sample_offset,
                         body,
@@ -480,6 +514,129 @@ unsafe extern "C" fn cb_state_free(data: *mut u8, _len: u32) {
 // Output event callbacks (plugin → host MIDI)
 // ---------------------------------------------------------------------------
 
+/// Decode a Universal MIDI Packet's first two words into a MIDI 2.0
+/// channel-voice [`EventBody`]. Returns `None` for non-channel-voice
+/// UMPs (utility, system, `SysEx`, data) — those are not surfaced to
+/// plugins yet. Spec reference: MIDI 2.0 M2-104-UM, §4.1 (MIDI 2.0
+/// Channel Voice Messages).
+#[allow(clippy::cast_possible_truncation)] // UMP fields are bit-packed; truncation is intentional
+fn decode_ump_channel_voice_2(words: [u32; 4]) -> Option<EventBody> {
+    // Bit layout (word 0):
+    //   31..28 mt (message type, 0x4 = MIDI 2.0 CV)
+    //   27..24 group (0..=15)
+    //   23..20 status nibble (0x8 = NoteOff, 0x9 = NoteOn, ...)
+    //   19..16 channel (0..=15)
+    //   15..0  status-specific (note + attribute-type, cc number, ...)
+    let w0 = words[0];
+    let w1 = words[1];
+    let mt = ((w0 >> 28) & 0xF) as u8;
+    if mt != 0x4 {
+        return None;
+    }
+    let group = ((w0 >> 24) & 0xF) as u8;
+    let status = ((w0 >> 20) & 0xF) as u8;
+    let channel = ((w0 >> 16) & 0xF) as u8;
+    let byte_a = ((w0 >> 8) & 0xFF) as u8; // note / cc number / etc.
+    let byte_b = (w0 & 0xFF) as u8; // attribute-type / index / etc.
+    let body = match status {
+        0x8 => EventBody::NoteOff2 {
+            group,
+            channel,
+            note: byte_a & 0x7F,
+            velocity: (w1 >> 16) as u16,
+            attribute_type: byte_b,
+            attribute: (w1 & 0xFFFF) as u16,
+        },
+        0x9 => EventBody::NoteOn2 {
+            group,
+            channel,
+            note: byte_a & 0x7F,
+            velocity: (w1 >> 16) as u16,
+            attribute_type: byte_b,
+            attribute: (w1 & 0xFFFF) as u16,
+        },
+        0xA => EventBody::PolyPressure2 {
+            group,
+            channel,
+            note: byte_a & 0x7F,
+            pressure: w1,
+        },
+        // 0x0 = Registered Per-Note (RPN-like), 0x1 = Assignable
+        // Per-Note. MIDI 2.0 §4.1.4. The lower 8 bits of word 0
+        // carry the per-note controller index; word 1 is the value.
+        0x0 | 0x1 => EventBody::PerNoteCC {
+            group,
+            channel,
+            note: byte_a & 0x7F,
+            cc: byte_b,
+            value: w1,
+            registered: status == 0x0,
+        },
+        // 0x6 = Per-Note Pitch Bend.
+        0x6 => EventBody::PerNotePitchBend {
+            group,
+            channel,
+            note: byte_a & 0x7F,
+            value: w1,
+        },
+        // 0xF = Per-Note Management. The flags live in byte_b (per
+        // §4.1.6); only the low two bits are defined today.
+        0xF => EventBody::PerNoteManagement {
+            group,
+            channel,
+            note: byte_a & 0x7F,
+            flags: byte_b,
+        },
+        0xB => EventBody::ControlChange2 {
+            group,
+            channel,
+            cc: byte_a & 0x7F,
+            value: w1,
+        },
+        0xD => EventBody::ChannelPressure2 {
+            group,
+            channel,
+            pressure: w1,
+        },
+        0xE => EventBody::PitchBend2 {
+            group,
+            channel,
+            value: w1,
+        },
+        // 0x2 = Registered Controller (RPN), 0x3 = Assignable
+        // Controller (NRPN). Bank lives in `byte_a` (lower 7 bits),
+        // index in `byte_b` (lower 7 bits).
+        0x2 => EventBody::RegisteredController {
+            group,
+            channel,
+            bank: byte_a & 0x7F,
+            index: byte_b & 0x7F,
+            value: w1,
+        },
+        0x3 => EventBody::AssignableController {
+            group,
+            channel,
+            bank: byte_a & 0x7F,
+            index: byte_b & 0x7F,
+            value: w1,
+        },
+        0xC => EventBody::ProgramChange2 {
+            group,
+            channel,
+            program: (w1 >> 24) as u8 & 0x7F,
+            // Word 0 bit 0 carries the "B" (bank-valid) flag; the
+            // bank bytes live in word 1's bottom half (MSB then LSB).
+            bank: if w0 & 0x01 == 1 {
+                Some(((w1 >> 8) as u8 & 0x7F, w1 as u8 & 0x7F))
+            } else {
+                None
+            },
+        },
+        _ => return None,
+    };
+    Some(body)
+}
+
 /// Map a truce `Event` body to a 3-byte AU MIDI packet. Returns
 /// `None` for event types that don't fit (MIDI 2.0, `ParamChange`,
 /// Transport, etc.). Mirrors the VST2/VST3 encoders.
@@ -610,6 +767,19 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     parent: *mut std::ffi::c_void,
 ) {
+    // AU is macOS+iOS-only at runtime. Linux/Windows builds compile
+    // the wrapper crate for completeness (it's part of the workspace
+    // build matrix) but the body references AppKit / UIKit /
+    // AUEventListener APIs that don't exist off-Apple. Stubbing the
+    // body keeps the FFI table population in `register_au_inner`
+    // type-checking on every platform.
+    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+    {
+        let _ = ctx;
+        let _ = parent;
+        let _ = std::marker::PhantomData::<P>;
+    }
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
     unsafe {
         let inst = &mut *ctx.cast::<AuInstance<P>>();
         if let Some(ref mut editor) = inst.editor {
@@ -627,8 +797,15 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
             let transport_slot = inst.transport_slot.clone();
             let ctx_for_begin = ctx_raw;
             let ctx_for_end = ctx_raw;
+            // iOS AU v3 hosts the editor inside an .appex; v2's
+            // `AUEventListener` doesn't exist there. Parameter
+            // changes from the editor flow to the host directly
+            // through the AUParameterTree's setter (handled by the
+            // Swift shim). The begin/set/end closures are no-ops on
+            // iOS so the plugin's editor code stays platform-agnostic.
             let context = PluginContext::from_closures(
                 ClosureBridge {
+                    #[cfg(target_os = "macos")]
                     begin_edit: Box::new(move |id| {
                         // Broadcasts kAudioUnitEvent_BeginParameterChangeGesture
                         // via AUEventListenerNotify so hosts (Logic, Live,
@@ -636,6 +813,11 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                         // undo step and one automation gesture.
                         truce_au_v2_host_begin_param_gesture(ctx_for_begin.as_ptr().cast_mut(), id);
                     }),
+                    #[cfg(target_os = "ios")]
+                    begin_edit: Box::new(move |_id| {
+                        let _ = ctx_for_begin;
+                    }),
+                    #[cfg(target_os = "macos")]
                     set_param: Box::new(move |id, value| {
                         // One combined trait dispatch (set_normalized
                         // + get_plain) instead of two — the
@@ -645,11 +827,24 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                             f32::from_f64(params_for_set.set_normalized_returning_plain(id, value));
                         truce_au_v2_host_set_param(ctx_raw.as_ptr().cast_mut(), id, plain);
                     }),
+                    #[cfg(target_os = "ios")]
+                    set_param: Box::new(move |id, value| {
+                        // No host-notify on iOS; just write the
+                        // normalised value through. The Swift shim
+                        // polls the parameter tree.
+                        let _ = ctx_raw;
+                        let _ = params_for_set.set_normalized_returning_plain(id, value);
+                    }),
+                    #[cfg(target_os = "macos")]
                     end_edit: Box::new(move |id| {
                         // Closes the gesture started by begin_edit so the
                         // host commits the undo group / stops automation
                         // recording.
                         truce_au_v2_host_end_param_gesture(ctx_for_end.as_ptr().cast_mut(), id);
+                    }),
+                    #[cfg(target_os = "ios")]
+                    end_edit: Box::new(move |_id| {
+                        let _ = ctx_for_end;
                     }),
                     request_resize: Box::new(|_w, _h| false),
                     get_param: Box::new(move |id| params_for_get.get_normalized(id).unwrap_or(0.0)),
@@ -685,7 +880,10 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                 },
                 params_for_ctx,
             );
+            #[cfg(target_os = "macos")]
             let handle = RawWindowHandle::AppKit(parent);
+            #[cfg(target_os = "ios")]
+            let handle = RawWindowHandle::UiKit(parent);
             editor.open(handle, context);
         }
     }
@@ -718,6 +916,13 @@ unsafe extern "C" fn cb_gui_close<P: PluginExport>(ctx: *mut std::ffi::c_void) {
 unsafe extern "C" {
     fn malloc(size: usize) -> *mut std::ffi::c_void;
     fn free(ptr: *mut std::ffi::c_void);
+}
+
+// AU v2 host-side automation notifiers live in `au_v2_shim.c`,
+// which only compiles on macOS. iOS doesn't have AU v2 at all —
+// AU v3 host notifies via the parameter tree directly.
+#[cfg(target_os = "macos")]
+unsafe extern "C" {
     fn truce_au_v2_host_set_param(ctx: *mut std::ffi::c_void, param_id: u32, value: f32);
     fn truce_au_v2_host_begin_param_gesture(ctx: *mut std::ffi::c_void, param_id: u32);
     fn truce_au_v2_host_end_param_gesture(ctx: *mut std::ffi::c_void, param_id: u32);
@@ -855,6 +1060,8 @@ fn register_au_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
 #[macro_export]
 macro_rules! export_au {
     ($plugin_type:ty) => {
+        // macOS: register both AU v2 (`.component`) and AU v3 (`.appex`)
+        // entry points. AU v2's factory delegates to the C shim.
         #[cfg(target_os = "macos")]
         mod _au_entry {
             use super::*;
@@ -878,6 +1085,20 @@ macro_rules! export_au {
                 desc: *const ::std::ffi::c_void,
             ) -> *mut ::std::ffi::c_void {
                 truce_au_v2_factory_bridge(desc)
+            }
+        }
+        // iOS: AU v3 only. The Swift `AudioUnitFactory` /
+        // `TruceAUAudioUnit` in the .appex bundle reads our exported
+        // globals (g_callbacks / g_descriptor / ...) at runtime via
+        // the dynamic symbol table; we just need `truce_au_init` to
+        // run from the dylib constructor.
+        #[cfg(target_os = "ios")]
+        mod _au_entry {
+            use super::*;
+
+            #[unsafe(no_mangle)]
+            pub extern "C" fn truce_au_init() {
+                ::truce_au::register_au::<$plugin_type>();
             }
         }
     };

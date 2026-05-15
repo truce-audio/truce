@@ -6,16 +6,28 @@
     <string>$(EXECUTABLE_NAME)</string>
     <key>CFBundleIdentifier</key>
     <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+    <key>CFBundleName</key>
+    <string>AUNAME</string>
+    <key>CFBundleDisplayName</key>
+    <string>AUNAME</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
     <key>CFBundlePackageType</key>
     <string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
     <key>CFBundleVersion</key>
     <string>AUVER</string>
     <key>CFBundleShortVersionString</key>
     <string>1.0</string>
+    <key>MinimumOSVersion</key>
+    <string>MINIOS</string>
+    <key>CFBundleSupportedPlatforms</key>
+    <array>
+        <string>SUPPORTEDPLAT</string>
+    </array>
     <key>NSExtension</key>
     <dict>
         <key>NSExtensionPrincipalClass</key>
-        <string>$(PRODUCT_MODULE_NAME).AudioUnitFactory</string>
+        <string>AudioUnitFactory</string>
         <key>NSExtensionPointIdentifier</key>
         <string>com.apple.AudioUnit-UI</string>
         <key>NSExtensionAttributes</key>

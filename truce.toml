@@ -48,6 +48,14 @@ welcome_bmp = "static/truce-welcome.bmp"
 #   au3_name  = "..."
 #   aax_name  = "..."
 #   lv2_name  = "..."
+#
+# Per-plugin iOS overrides:
+#
+#   ios_icon_set            = ".appiconset directory"
+#   ios_minimum_os_version  = "16.0"
+#   ios_url                 = "https://example.com/this-plugin"
+#                             # iOS container "About" link-out;
+#                             # falls back to [vendor].url
 
 [[plugin]]
 name = "Truce Gain"
@@ -61,18 +69,27 @@ aax_category = "Dynamics"
 au3_name = "Truce Gain (AUv3)"
 windows_icon = "static/truce-minimal.ico"
 macos_icon = "static/truce-minimal.icns"
+ios_icon_set = "static/truce-minimal.appiconset"
+ios_url = "https://truce.audio/"
 
 [[plugin]]
 name = "Truce Synth"
 bundle_id = "synth"
 crate = "truce-example-synth"
 category = "instrument"
+description = """
+A subtractive monosynth built on the truce framework: saw / square \
+/ triangle / sine oscillators, a resonant low-pass filter, and an \
+ADSR envelope, hosted as a sandboxed AUv3 instrument. Drop it onto \
+your DAW's instrument track to play melodies, basslines, or pads.
+"""
 fourcc = "TSyn"
 au3_subtype = "TSn3"
 au_tag = "Synthesizer"
 au3_name = "Truce Synth (AUv3)"
 windows_icon = "static/truce-minimal.ico"
 macos_icon = "static/truce-minimal.icns"
+ios_icon_set = "static/truce-minimal.appiconset"
 
 [[plugin]]
 name = "Truce EQ"
@@ -86,6 +103,7 @@ aax_category = "EQ"
 au3_name = "Truce EQ (AUv3)"
 windows_icon = "static/truce-minimal.ico"
 macos_icon = "static/truce-minimal.icns"
+ios_icon_set = "static/truce-minimal.appiconset"
 
 [[plugin]]
 name = "Truce Transpose"
@@ -101,6 +119,7 @@ au_tag = "MIDI"
 au3_name = "Truce Transpose (AUv3)"
 windows_icon = "static/truce-minimal.ico"
 macos_icon = "static/truce-minimal.icns"
+ios_icon_set = "static/truce-minimal.appiconset"
 
 [[plugin]]
 name = "Truce Gain Egui"
@@ -114,6 +133,7 @@ aax_category = "Dynamics"
 au3_name = "Truce Gain Egui (AUv3)"
 windows_icon = "static/truce-minimal.ico"
 macos_icon = "static/truce-minimal.icns"
+ios_icon_set = "static/truce-minimal.appiconset"
 
 [[plugin]]
 name = "Truce Arpeggio"
@@ -127,6 +147,7 @@ au_tag = "MIDI"
 au3_name = "Truce Arpeggio (AUv3)"
 windows_icon = "static/truce-minimal.ico"
 macos_icon = "static/truce-minimal.icns"
+ios_icon_set = "static/truce-minimal.appiconset"
 
 [[plugin]]
 name = "Truce Gain Iced"
@@ -140,6 +161,7 @@ aax_category = "Dynamics"
 au3_name = "Truce Gain Iced (AUv3)"
 windows_icon = "static/truce-minimal.ico"
 macos_icon = "static/truce-minimal.icns"
+ios_icon_set = "static/truce-minimal.appiconset"
 
 [[plugin]]
 name = "Truce Gain Slint"
@@ -153,6 +175,7 @@ aax_category = "Dynamics"
 au3_name = "Truce Gain Slint (AUv3)"
 windows_icon = "static/truce-minimal.ico"
 macos_icon = "static/truce-minimal.icns"
+ios_icon_set = "static/truce-minimal.appiconset"
 
 [[plugin]]
 name = "Truce Tremolo"
@@ -166,6 +189,7 @@ aax_category = "Modulation"
 au3_name = "Truce Tremolo (AUv3)"
 windows_icon = "static/truce-minimal.ico"
 macos_icon = "static/truce-minimal.icns"
+ios_icon_set = "static/truce-minimal.appiconset"
 
 [[plugin]]
 name = "Truce State"
@@ -179,6 +203,7 @@ aax_category = "Other"
 au3_name = "Truce State (AUv3)"
 windows_icon = "static/truce-minimal.ico"
 macos_icon = "static/truce-minimal.icns"
+ios_icon_set = "static/truce-minimal.appiconset"
 
 [[plugin]]
 name = "Truce Fundsp Reverb (Worker)"
@@ -192,6 +217,7 @@ aax_category = "Reverb"
 au3_name = "Truce Fundsp Reverb Worker (AUv3)"
 windows_icon = "static/truce-minimal.ico"
 macos_icon = "static/truce-minimal.icns"
+ios_icon_set = "static/truce-minimal.appiconset"
 
 [[plugin]]
 name = "Truce Fundsp Reverb (Simple)"
@@ -205,6 +231,7 @@ aax_category = "Reverb"
 au3_name = "Truce Fundsp Reverb Simple (AUv3)"
 windows_icon = "static/truce-minimal.ico"
 macos_icon = "static/truce-minimal.icns"
+ios_icon_set = "static/truce-minimal.appiconset"
 
 # Suite installer wrapping every example above. `cargo truce package`
 # (no flags) produces both per-plugin installers and this suite installer.

@@ -16,12 +16,21 @@ egui = "0.31"
 egui-wgpu = { workspace = true }
 wgpu = { workspace = true }
 pollster = "0.4"
-baseview = { workspace = true }
 raw-window-handle = "0.5"
 keyboard-types = "0.6"
+log = "0.4"
+
+# baseview is desktop-only. iOS uses the in-tree editor_ios.rs which
+# builds its wgpu surface from a CAMetalLayer attached to a UIView.
+[target.'cfg(not(target_os = "ios"))'.dependencies]
+baseview = { workspace = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc = "0.2"
+
+[target.'cfg(target_os = "ios")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSString", "NSGeometry"] }
 
 [lints]
 workspace = true

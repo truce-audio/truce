@@ -339,6 +339,21 @@ pub(crate) fn cmd_package(args: &[String]) -> Res {
         print_help();
         return Ok(());
     }
+    // iOS short-circuit: AU v3 inside an `.ipa` is the only viable
+    // iOS distribution shape and doesn't share any of the macOS /
+    // Windows / Linux packaging pipeline (no productbuild, no Inno
+    // Setup, no tarball). Handle it as a thin pass-through before
+    // the platform dispatch.
+    if args.iter().any(|a| a == "--ios") {
+        #[cfg(target_os = "macos")]
+        {
+            return package_ios(args);
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            return Err("--ios packaging requires macOS (Xcode-only).".into());
+        }
+    }
     let (selection, args) = extract_suite_selection(args)?;
     #[cfg(target_os = "windows")]
     {
@@ -352,6 +367,58 @@ pub(crate) fn cmd_package(args: &[String]) -> Res {
     {
         linux::cmd_package_linux(&args, &selection)
     }
+}
+
+#[cfg(target_os = "macos")]
+fn package_ios(args: &[String]) -> Res {
+    use crate::commands::install::au_ios;
+    let mut plugin_filter: Option<&str> = None;
+    let mut xcframework_only = false;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--ios" => {}
+            "--xcframework" => xcframework_only = true,
+            "-p" => {
+                i += 1;
+                plugin_filter = args.get(i).map(String::as_str);
+                if plugin_filter.is_none() {
+                    return Err("-p needs a plugin name".into());
+                }
+            }
+            other => return Err(format!("Unknown flag for --ios packaging: {other}").into()),
+        }
+        i += 1;
+    }
+    let root = crate::project_root();
+    let config = crate::load_config()?;
+    let crate_name = if let Some(s) = plugin_filter {
+        s.to_string()
+    } else if config.plugin.len() == 1 {
+        config.plugin[0].crate_name.clone()
+    } else {
+        return Err(
+            "iOS packaging needs `-p <crate>` when the workspace has multiple plugins.".into(),
+        );
+    };
+    let p = config
+        .plugin
+        .iter()
+        .find(|p| p.crate_name == crate_name || p.bundle_id == crate_name)
+        .ok_or_else(|| -> crate::BoxErr {
+            format!("No plugin with crate name or bundle id '{crate_name}'.").into()
+        })?;
+    if xcframework_only {
+        let xcfw = au_ios::build_xcframework(&root, p)?;
+        eprintln!("\nPackaged: {}", xcfw.display());
+        return Ok(());
+    }
+    let ipa = au_ios::package_ipa(&root, p)?;
+    eprintln!("\nPackaged: {}", ipa.display());
+    if let Some(team) = crate::ios_team_id() {
+        eprintln!("Signed for team {team}.");
+    }
+    Ok(())
 }
 
 fn print_help() {

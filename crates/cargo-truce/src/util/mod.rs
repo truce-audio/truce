@@ -84,6 +84,29 @@ pub(crate) mod fs_ctx {
     }
 }
 
+/// Convert a path to `&str`, panicking with a clear message if
+/// the path isn't valid UTF-8. The shell-out helpers in this
+/// crate (`run`, `run_capture`, codesign argv assembly) take
+/// `&[&str]` rather than `&[OsStr]` because every other arg in
+/// those vecs is a literal; this is the standard way to thread
+/// a path through. The panic is preferable to `to_string_lossy`
+/// — passing a lossy path to `Command::arg` would silently
+/// invoke a different binary than the caller named.
+///
+/// Today only the iOS install pipeline calls this; the gate is
+/// `macos` to match, and widens to `any(target_os = "macos", …)`
+/// when other shell-out sites fold in.
+#[cfg(target_os = "macos")]
+#[track_caller]
+pub(crate) fn path_str(path: &Path) -> &str {
+    path.to_str().unwrap_or_else(|| {
+        panic!(
+            "non-UTF-8 path can't be passed as a string: {}",
+            path.display()
+        )
+    })
+}
+
 /// Consume the next CLI arg as the value for `flag`. Advances `*i`
 /// past the consumed slot. Used by every per-subcommand arg loop in
 /// `cargo-truce` (`build`/`install`/`uninstall`/`run`/`screenshot`/

@@ -16,14 +16,25 @@ truce-params = { workspace = true }
 truce-plugin = { workspace = true }
 tiny-skia = "0.12"
 fontdue = "0.9"
-baseview = { workspace = true }
 raw-window-handle = "0.5"
 wgpu = { workspace = true }
 pollster = "0.4"
 log = "0.4"
 
+# baseview hosts the editor on macOS / Windows / Linux. iOS embeds
+# a UIView directly into the AUv3 view controller — no baseview.
+[target.'cfg(not(target_os = "ios"))'.dependencies]
+baseview = { workspace = true }
+
 [target.'cfg(target_os = "macos")'.dependencies]
 objc = "0.2"
+
+# iOS UIKit + CoreGraphics bridging for the UIView host.
+[target.'cfg(target_os = "ios")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSString", "NSGeometry"] }
+objc2-ui-kit = { version = "0.3", features = ["UIView", "UIScreen", "UIWindow"] }
+objc2-quartz-core = { version = "0.3", features = ["CALayer", "CAMetalLayer"] }
 
 [lints]
 workspace = true

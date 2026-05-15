@@ -1,3 +1,15 @@
+// iced's `iced` umbrella crate has a non-optional dependency on
+// `iced_winit`, and iced_winit calls
+// `winit::platform::modifier_supplement::KeyEventExtModifierSupplement`
+// methods (`key_without_modifiers`, `text_with_all_modifiers`)
+// inside a `cfg(not(target_arch = "wasm32"))` block — winit only
+// provides that trait on desktop, so the path fires on iOS and
+// fails to compile. There's no feature flag to opt out of
+// iced_winit, so the iced example is desktop-only. Plugin
+// authors targeting iOS should use the built-in editor or
+// `truce-egui` / `truce-slint`.
+#![cfg(not(target_os = "ios"))]
+
 use std::sync::Arc;
 
 use iced::widget::{Column, Row, container, text};

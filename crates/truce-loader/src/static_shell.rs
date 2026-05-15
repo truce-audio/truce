@@ -175,8 +175,18 @@ impl<P: Params + Default + 'static, L: PluginLogicCore<S> + 'static, S: Sample> 
         if let Some(editor) = self.logic.custom_editor() {
             return Some(editor);
         }
-        self.try_builtin_editor()
-            .map(|e| Box::new(truce_gpu::GpuEditor::new(e)) as Box<dyn Editor>)
+        // iOS's `BuiltinEditor` already owns its UIView + (in phase
+        // 2) the CAMetalLayer wgpu surface; no `GpuEditor` wrapper.
+        #[cfg(target_os = "ios")]
+        {
+            self.try_builtin_editor()
+                .map(|e| Box::new(e) as Box<dyn Editor>)
+        }
+        #[cfg(not(target_os = "ios"))]
+        {
+            self.try_builtin_editor()
+                .map(|e| Box::new(truce_gpu::GpuEditor::new(e)) as Box<dyn Editor>)
+        }
     }
 
     fn latency(&self) -> u32 {

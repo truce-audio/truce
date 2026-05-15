@@ -17,8 +17,14 @@ bytemuck = { version = "1", features = ["derive"] }
 pollster = "0.4"
 lyon_tessellation = "1"
 fontdue = "0.9"
-baseview = { workspace = true }
 raw-window-handle = "0.5"
+
+# baseview is the macOS/Windows/Linux windowing layer; iOS embeds
+# wgpu surfaces directly in a UIView attached to the AUv3 view
+# controller (see `truce-gui::editor_ios`), so the baseview-bound
+# editor here is gated off the iOS build.
+[target.'cfg(not(target_os = "ios"))'.dependencies]
+baseview = { workspace = true }
 
 [features]
 default = []

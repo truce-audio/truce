@@ -22,6 +22,8 @@ use std::path::Path;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(crate) mod aax;
 #[cfg(target_os = "macos")]
+pub(crate) mod au_ios;
+#[cfg(target_os = "macos")]
 pub(crate) mod au_v3;
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -40,6 +42,8 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
     let mut au2 = false;
     let mut au3 = false;
     let mut aax = false;
+    let mut ios = false;
+    let mut ios_device = false;
     let mut no_build = false;
     let mut shell_mode = false;
     let mut debug = false;
@@ -56,6 +60,11 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
             "--au2" => au2 = true,
             "--au3" => au3 = true,
             "--aax" => aax = true,
+            "--ios" => ios = true,
+            "--ios-device" => {
+                ios = true;
+                ios_device = true;
+            }
             "--no-build" => no_build = true,
             "--shell" => shell_mode = true,
             "--debug" => debug = true,
@@ -89,6 +98,28 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
     // custom cargo profile; the second build (the logic dylib the
     // shell dlopens at runtime) defaults to release for better DSP
     // perf, with `--debug` flipping it to debug for fast iteration.
+
+    // iOS short-circuit: AU v3 inside a container app is the only
+    // viable iOS format. Drives the native Rust pipeline in
+    // `au_ios::install_one`; `--ios` defaults to the simulator,
+    // `--ios-device` switches to a tethered device install (real
+    // signing identity + provisioning profile required).
+    if ios {
+        #[cfg(target_os = "macos")]
+        {
+            let target = if ios_device {
+                au_ios::IosTarget::Device
+            } else {
+                au_ios::IosTarget::Simulator
+            };
+            return install_ios(plugin_filter.as_deref(), target);
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = ios_device;
+            return Err("iOS plugins build only on macOS (Xcode-only).".into());
+        }
+    }
 
     if !clap && !vst3 && !vst2 && !lv2 && !au2 && !au3 && !aax {
         // No format flags specified — enable all formats that the project supports.
@@ -271,6 +302,7 @@ fn print_help() {
     eprintln!(
         "\
 Usage: cargo truce install [--clap] [--vst3] [--vst2] [--lv2] [--au2] [--au3] [--aax]
+                           [--ios|--ios-device]
                            [--user|--system] [--shell] [--debug] [--no-build] [-p <crate>]
 
 Build and install plugins into the host's plug-in directories. Defaults
@@ -288,6 +320,9 @@ Options:
   --au2            AU v2 only (.component, macOS only)
   --au3            AU v3 only (.appex, macOS only)
   --aax            AAX only (requires pre-built template)
+  --ios            AUv3 on the booted iOS Simulator (ad-hoc-signed)
+  --ios-device     AUv3 on a tethered iOS device (needs team ID +
+                   provisioning profile in .cargo/config.toml [env])
   --user           Install per-user (default).
   --system         Install system-wide (sudo / admin required).
   --shell          Build dynamic shells + per-plugin logic dylibs.
@@ -730,4 +765,37 @@ fn install_au(root: &Path, p: &PluginDef, config: &Config, scope: InstallScope) 
     )?;
     crate::log_output(format!("AU:   {}", bundle.display()));
     Ok(())
+}
+
+/// Drive the iOS `AUv3` pipeline: build the Rust framework for the
+/// chosen slice, compile the Swift `.appex` via `swiftc`, assemble
+/// the container `.app`, sign, and install onto the simulator or a
+/// tethered device.
+///
+/// Native Rust port of `scripts/build-ios-poc.sh`. The shell script
+/// stays in the tree as an executable spec / fallback.
+#[cfg(target_os = "macos")]
+fn install_ios(plugin_filter: Option<&str>, target: au_ios::IosTarget) -> Res {
+    let root = crate::project_root();
+    let config = crate::load_config()?;
+    // Mirror the rest of cargo-truce's default-plugin behaviour:
+    // single-plugin workspace → that plugin; multi-plugin → require
+    // an explicit `-p`.
+    let crate_name = if let Some(s) = plugin_filter {
+        s.to_string()
+    } else if config.plugin.len() == 1 {
+        config.plugin[0].crate_name.clone()
+    } else {
+        return Err(
+            "iOS install needs `-p <crate>` when the workspace has multiple plugins.".into(),
+        );
+    };
+    let p = config
+        .plugin
+        .iter()
+        .find(|p| p.crate_name == crate_name || p.bundle_id == crate_name)
+        .ok_or_else(|| -> crate::BoxErr {
+            format!("No plugin with crate name or bundle id '{crate_name}'.").into()
+        })?;
+    au_ios::install_one(&root, p, target)
 }

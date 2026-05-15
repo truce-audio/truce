@@ -27,17 +27,27 @@
 //! ```
 
 pub mod auto_layout;
+#[cfg(not(target_os = "ios"))]
 pub mod editor;
 pub mod font;
 pub mod param_cache;
 pub mod param_message;
+#[cfg(not(target_os = "ios"))]
 pub mod platform;
+#[cfg(not(target_os = "ios"))]
 mod screenshot;
 pub mod theme;
 pub mod widgets;
 
+#[cfg(target_os = "ios")]
+mod editor_ios;
+
 // Re-export primary types for convenience.
+#[cfg(not(target_os = "ios"))]
 pub use editor::{AutoPlugin, IcedEditor, IcedPlugin};
+
+#[cfg(target_os = "ios")]
+pub use editor_ios::{AutoPlugin, IcedEditor, IcedPlugin};
 pub use param_cache::ParamCache;
 pub use param_message::{Message, ParamMessage};
 // Re-export `PluginContext` so plugin authors can use it without a direct

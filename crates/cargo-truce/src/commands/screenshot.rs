@@ -21,6 +21,11 @@
 
 use crate::{Res, cargo_build, cargo_build_debug, deployment_target, load_config, project_root};
 use std::path::{Path, PathBuf};
+// `Command` is only used by the iOS / `simctl` paths which are
+// themselves gated on macOS; matching the cfg here keeps non-macOS
+// builds warning-free.
+#[cfg(target_os = "macos")]
+use std::process::Command;
 
 /// FFI signature emitted by `truce::plugin!`'s `__truce_screenshot`.
 /// `(state_ptr, state_len, out_path_ptr, out_path_len, scale) -> u32`
@@ -39,6 +44,22 @@ type ScreenshotFn = unsafe extern "C" fn(*const u8, usize, *const u8, usize, f64
 
 #[allow(clippy::too_many_lines)]
 pub(crate) fn cmd_screenshot(args: &[String]) -> Res {
+    // iOS short-circuit: render via the booted simulator instead of
+    // dlopen'ing a desktop cdylib. The simulator path captures the
+    // *real* rendered editor (including the iOS BuiltinEditor's
+    // CGImage blit + UIView compositing), which the desktop
+    // `__truce_screenshot` path can't see. Useful for catching iOS-
+    // specific regressions (scale factor, layer.contents swap, etc).
+    if args.iter().any(|a| a == "--ios") {
+        #[cfg(target_os = "macos")]
+        {
+            return cmd_screenshot_ios(args);
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            return Err("--ios screenshot requires macOS (Xcode + simctl).".into());
+        }
+    }
     let mut plugin_filter: Option<String> = None;
     let mut out_path: Option<PathBuf> = None;
     let mut state_path: Option<PathBuf> = None;
@@ -304,6 +325,7 @@ fn print_help() {
 Usage: cargo truce screenshot --out <path> [-p <crate>]
                               [--state <path.pluginstate>] [--check]
                               [--scale <f64>] [--debug]
+                              [--ios]
 
 Render a plugin's editor headlessly and save a PNG. The CLI is
 self-contained — works on any crate built with `truce::plugin!`,
@@ -328,6 +350,441 @@ Options:
   --check          Diff against the existing baseline at <path>;
                    exit non-zero on regression. Strict pixel match —
                    bake the baseline on the host you gate from.
-  --debug          Cargo dev profile (faster compile). Default is release."
+  --debug          Cargo dev profile (faster compile). Default is release.
+  --ios            Build + install on the booted iOS Simulator and capture the
+                   simulator's rendered output via `xcrun simctl io screenshot`.
+                   The desktop dlopen path doesn't see the iOS BuiltinEditor's
+                   CGImage blit / UIView compositing, so this is what catches
+                   iOS-specific render regressions.
+  --crop-mode <m>  (--ios only) `editor` (default) crops to the plug-in editor's
+                   region. `container` crops just the iOS status bar band off the
+                   top, keeping the rest of the container chrome — use for
+                   framework-level tests that gate on the container layout."
     );
+}
+
+#[cfg(target_os = "macos")]
+fn cmd_screenshot_ios(args: &[String]) -> Res {
+    let mut plugin_filter: Option<&str> = None;
+    let mut out_path: Option<PathBuf> = None;
+    let mut check_mode = false;
+    let mut crop_mode = IosCropMode::Editor;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--ios" => {}
+            "--out" => {
+                i += 1;
+                out_path = args.get(i).map(PathBuf::from);
+                if out_path.is_none() {
+                    return Err("--out needs a path".into());
+                }
+            }
+            "-p" => {
+                i += 1;
+                plugin_filter = args.get(i).map(String::as_str);
+            }
+            "--check" => check_mode = true,
+            "--crop-mode" => {
+                i += 1;
+                crop_mode = match args.get(i).map(String::as_str) {
+                    Some("editor") => IosCropMode::Editor,
+                    Some("container") => IosCropMode::Container,
+                    Some(other) => {
+                        return Err(format!(
+                            "--crop-mode: expected `editor` or `container`, got `{other}`"
+                        )
+                        .into());
+                    }
+                    None => return Err("--crop-mode needs a value (editor|container)".into()),
+                };
+            }
+            other => return Err(format!("unknown flag for --ios: {other}").into()),
+        }
+        i += 1;
+    }
+    let out_path = out_path.ok_or("--out <path> required")?;
+
+    // Resolve plugin + drive the install pipeline so the simulator
+    // has a freshly-built bundle to launch.
+    let config = load_config()?;
+    let p = crate::commands::pick_plugins(&config, plugin_filter)?
+        .into_iter()
+        .next()
+        .ok_or("no plugin to screenshot")?;
+    let root = project_root();
+    crate::commands::install::au_ios::install_one(
+        &root,
+        p,
+        crate::commands::install::au_ios::IosTarget::Simulator,
+    )?;
+    // Full reverse-DNS bundle ID: `{vendor.id}.{bundle_id-suffix}`.
+    // simctl looks up the installed app by its CFBundleIdentifier,
+    // which `build_bundle` constructed the same way.
+    let suffix = p.bundle_id.replace('_', "-");
+    let bundle_id = format!("{}.{suffix}", config.vendor.id);
+    eprintln!("==> Launching {bundle_id} on booted simulator...");
+    let launched = Command::new("xcrun")
+        .args(["simctl", "launch", "booted", &bundle_id])
+        .status()
+        .map_err(|e| format!("simctl launch: {e}"))?;
+    if !launched.success() {
+        return Err(format!("simctl launch exited {launched}").into());
+    }
+    // Give the editor + audio pipeline ~1.5s to lay out + paint
+    // its first frame. CADisplayLink runs at 60Hz so a single frame
+    // is enough, but the AUv3 instantiate-then-gui_open path is
+    // dispatched async on the main queue (~100ms typical).
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    let resolved_out = if out_path.is_absolute() {
+        out_path.clone()
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(&out_path)
+    };
+    if check_mode {
+        // Render to <target>/screenshots/<basename> for diffing; never
+        // overwrite the committed baseline in --check mode.
+        let render_dir = truce_build::target_dir(&root).join("screenshots");
+        std::fs::create_dir_all(&render_dir).ok();
+        let basename = out_path.file_name().map_or_else(
+            || std::ffi::OsString::from(format!("{}_ios.png", p.crate_name)),
+            std::ffi::OsStr::to_os_string,
+        );
+        let render_path = render_dir.join(basename);
+        capture_simctl_screenshot(&render_path)?;
+        crop_for_mode(&render_path, &bundle_id, crop_mode);
+        diff_simctl_screenshot(&render_path, &resolved_out)?;
+        return Ok(());
+    }
+    capture_simctl_screenshot(&resolved_out)?;
+    crop_for_mode(&resolved_out, &bundle_id, crop_mode);
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Copy, Clone)]
+enum IosCropMode {
+    /// Crop down to just the plug-in editor's region. Default —
+    /// per-plug-in tests that gate on the editor's visual output.
+    Editor,
+    /// Crop only the iOS status bar band (which holds the variable
+    /// clock) off the top; keep the full container app chrome
+    /// below. For framework-level tests of the container layout.
+    Container,
+}
+
+#[cfg(target_os = "macos")]
+fn crop_for_mode(png_path: &Path, bundle_id: &str, mode: IosCropMode) {
+    match mode {
+        IosCropMode::Editor => crop_to_editor_frame(png_path, bundle_id),
+        IosCropMode::Container => crop_to_container_chrome(png_path, bundle_id),
+    }
+}
+
+/// Crop the simulator screenshot down to just the editor's region.
+/// Reads the editor frame the container app wrote into its app
+/// container's `Documents/_truce_editor_frame.json` on first paint,
+/// trims the PNG in-place, and overwrites the source file. Failures
+/// here are non-fatal — the untrimmed screenshot stays in place with
+/// a warning, since cropping is a quality-of-life feature and the
+/// underlying PNG is still useful.
+#[cfg(target_os = "macos")]
+fn crop_to_editor_frame(png_path: &Path, bundle_id: &str) {
+    let frame = match read_editor_frame_json(bundle_id) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("warning: skipping screenshot trim ({e})");
+            return;
+        }
+    };
+    if let Err(e) = crop_png(png_path, frame.x, frame.y, frame.w, frame.h) {
+        eprintln!("warning: failed to trim {} ({e})", png_path.display());
+    }
+}
+
+/// Crop just the iOS status bar band off the top. The status bar
+/// is where the variable clock lives — chopping that one band keeps
+/// the rest of the container chrome (title, editor, button, status)
+/// intact while making the diff stable across runs. Falls back to
+/// leaving the screenshot untrimmed if the container didn't write
+/// the safe-area inset (older builds, or layout still pending).
+#[cfg(target_os = "macos")]
+fn crop_to_container_chrome(png_path: &Path, bundle_id: &str) {
+    let frame = match read_editor_frame_json(bundle_id) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("warning: skipping screenshot trim ({e})");
+            return;
+        }
+    };
+    let (src_w, src_h) = match png_size(png_path) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("warning: skipping container crop ({e})");
+            return;
+        }
+    };
+    let top = frame.safe_area_top_px.min(src_h);
+    if top == 0 {
+        return; // nothing to crop — leave untouched.
+    }
+    let height = src_h.saturating_sub(top);
+    if let Err(e) = crop_png(png_path, 0, top, src_w, height) {
+        eprintln!("warning: failed to trim {} ({e})", png_path.display());
+    }
+}
+
+/// Cheap PNG dimensions probe (just the IHDR chunk). Pulling in
+/// `png::Decoder` would be the same cost as `crop_png`'s read path,
+/// but the chunk header is at a fixed offset so reading 24 bytes is
+/// enough.
+#[cfg(target_os = "macos")]
+fn png_size(path: &Path) -> Result<(u32, u32), crate::BoxErr> {
+    let file = std::fs::File::open(path).map_err(|e| format!("open {}: {e}", path.display()))?;
+    let decoder = png::Decoder::new(std::io::BufReader::new(file));
+    let reader = decoder
+        .read_info()
+        .map_err(|e| format!("read_info {}: {e}", path.display()))?;
+    let info = reader.info();
+    Ok((info.width, info.height))
+}
+
+#[cfg(target_os = "macos")]
+struct EditorFrame {
+    x: u32,
+    y: u32,
+    w: u32,
+    h: u32,
+    /// Safe-area top inset in physical pixels — the height of the
+    /// iOS status bar band that contains the (variable) clock. Used
+    /// by `--mode container` to crop just that band off so framework
+    /// chrome screenshots stay stable across runs.
+    safe_area_top_px: u32,
+}
+
+#[cfg(target_os = "macos")]
+fn read_editor_frame_json(bundle_id: &str) -> Result<EditorFrame, crate::BoxErr> {
+    let out = Command::new("xcrun")
+        .args(["simctl", "get_app_container", "booted", bundle_id, "data"])
+        .output()
+        .map_err(|e| format!("simctl get_app_container: {e}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "simctl get_app_container exited {} ({})",
+            out.status,
+            String::from_utf8_lossy(&out.stderr).trim(),
+        )
+        .into());
+    }
+    let container = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if container.is_empty() {
+        return Err("simctl returned empty app container path".into());
+    }
+    let frame_path = Path::new(&container).join("Documents/_truce_editor_frame.json");
+    let json = std::fs::read_to_string(&frame_path)
+        .map_err(|e| format!("read {}: {e}", frame_path.display()))?;
+    // Tiny hand-rolled parser — the file is a single-line object
+    // with four / five integer fields; pulling in `serde_json` for
+    // this is overkill.
+    let pick = |key: &str| -> Result<u32, crate::BoxErr> {
+        let needle = format!("\"{key}\":");
+        let start = json
+            .find(&needle)
+            .ok_or_else(|| format!("frame JSON missing key {key}"))?
+            + needle.len();
+        let rest = &json[start..];
+        let end = rest
+            .find(|c: char| !c.is_ascii_digit() && c != '-')
+            .unwrap_or(rest.len());
+        rest[..end]
+            .trim()
+            .parse::<i64>()
+            .map(|v| u32::try_from(v.max(0)).unwrap_or(0))
+            .map_err(|e| format!("frame JSON {key}: {e}").into())
+    };
+    Ok(EditorFrame {
+        x: pick("x")?,
+        y: pick("y")?,
+        w: pick("w")?,
+        h: pick("h")?,
+        // Tolerate older containers that didn't write this field
+        // yet — fall back to 0 so the editor-mode crop keeps working.
+        safe_area_top_px: pick("safeAreaTopPx").unwrap_or(0),
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn crop_png(path: &Path, x: u32, y: u32, w: u32, h: u32) -> Result<(), crate::BoxErr> {
+    if w == 0 || h == 0 {
+        return Err(format!("crop rect is zero-area ({w}×{h})").into());
+    }
+    let file = std::fs::File::open(path).map_err(|e| format!("open {}: {e}", path.display()))?;
+    let decoder = png::Decoder::new(std::io::BufReader::new(file));
+    let mut reader = decoder
+        .read_info()
+        .map_err(|e| format!("read_info {}: {e}", path.display()))?;
+    let info = reader.info().clone();
+    if info.bit_depth != png::BitDepth::Eight {
+        return Err(format!(
+            "unsupported bit depth {:?} (only 8-bit PNGs supported)",
+            info.bit_depth
+        )
+        .into());
+    }
+    let channels = match info.color_type {
+        png::ColorType::Rgba => 4,
+        png::ColorType::Rgb => 3,
+        _ => return Err(format!("unsupported color type {:?}", info.color_type).into()),
+    };
+    let src_w = info.width;
+    let src_h = info.height;
+    if x.saturating_add(w) > src_w || y.saturating_add(h) > src_h {
+        return Err(
+            format!("crop ({x},{y},{w}×{h}) out of bounds for {src_w}×{src_h} image").into(),
+        );
+    }
+    let mut buf = vec![
+        0u8;
+        reader
+            .output_buffer_size()
+            .ok_or("png output_buffer_size returned None")?
+    ];
+    let frame = reader
+        .next_frame(&mut buf)
+        .map_err(|e| format!("decode frame: {e}"))?;
+    buf.truncate(frame.buffer_size());
+
+    let row_bytes = (src_w as usize) * channels;
+    let crop_row_bytes = (w as usize) * channels;
+    let mut out_buf = Vec::with_capacity(crop_row_bytes * h as usize);
+    for row in 0..h {
+        let src_row = (y + row) as usize;
+        let src_x = (x as usize) * channels;
+        let off = src_row * row_bytes + src_x;
+        out_buf.extend_from_slice(&buf[off..off + crop_row_bytes]);
+    }
+
+    let tmp = path.with_extension("png.tmp");
+    {
+        let out_file =
+            std::fs::File::create(&tmp).map_err(|e| format!("create {}: {e}", tmp.display()))?;
+        let mut encoder = png::Encoder::new(std::io::BufWriter::new(out_file), w, h);
+        encoder.set_color(if channels == 4 {
+            png::ColorType::Rgba
+        } else {
+            png::ColorType::Rgb
+        });
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder
+            .write_header()
+            .map_err(|e| format!("png header: {e}"))?;
+        writer
+            .write_image_data(&out_buf)
+            .map_err(|e| format!("png write: {e}"))?;
+    }
+    std::fs::rename(&tmp, path).map_err(|e| format!("rename {}: {e}", path.display()))?;
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn capture_simctl_screenshot(out: &Path) -> Res {
+    if let Some(parent) = out.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent).ok();
+    }
+    let status = Command::new("xcrun")
+        .args(["simctl", "io", "booted", "screenshot"])
+        .arg(out)
+        .status()
+        .map_err(|e| format!("xcrun simctl io screenshot: {e}"))?;
+    if !status.success() {
+        return Err(format!("simctl io screenshot exited {status}").into());
+    }
+    eprintln!("Screenshot: {}", out.display());
+    Ok(())
+}
+
+/// Per-channel tolerance for simulator render jitter. Pixels are
+/// RGBA8; the simulator occasionally bumps a single channel by ±1
+/// between captures even with identical content.
+#[cfg(target_os = "macos")]
+const SIMCTL_CHANNEL_TOLERANCE: u8 = 2;
+
+/// Inverse of the diff-pixel count budget (~0.5% of the image).
+/// Catches real layout regressions while ignoring background
+/// rendering noise plus incidental text variance (the status label
+/// transitions "Loading audio…" → "Ready" between consecutive
+/// captures and covers a few thousand pixels on its own).
+#[cfg(target_os = "macos")]
+const SIMCTL_DIFF_BUDGET_DENOM: usize = 200;
+
+#[cfg(target_os = "macos")]
+fn diff_simctl_screenshot(render: &Path, baseline: &Path) -> Res {
+    if !baseline.exists() {
+        return Err(format!(
+            "baseline not found at {}. Render saved at {}. \
+             Accept with: cp {} {}",
+            baseline.display(),
+            render.display(),
+            render.display(),
+            baseline.display(),
+        )
+        .into());
+    }
+    // simctl io screenshot PNGs aren't byte-stable across captures
+    // even when the rendered pixels are identical (PNG metadata
+    // chunks, encoder settings drift). Decode both sides to raw
+    // RGBA then compare pixels with a small per-channel tolerance
+    // to absorb the simulator's render jitter. Hard size mismatch
+    // is a real regression (someone changed the device or chrome
+    // dimensions) so that still fails immediately.
+    let (cur, cw, ch) = load_png(render);
+    let (refp, rw, rh) = load_png(baseline);
+    if (cw, ch) != (rw, rh) {
+        return Err(format!(
+            "iOS screenshot size changed: rendered {cw}x{ch}, baseline {rw}x{rh}. \
+             Either the simulator device differs from the one that baked the \
+             baseline, or the container layout actually changed. Re-bake with: \
+             cp {} {}",
+            render.display(),
+            baseline.display(),
+        )
+        .into());
+    }
+    let pixel_count = (cw as usize) * (ch as usize);
+    let diff_budget = pixel_count / SIMCTL_DIFF_BUDGET_DENOM;
+    let diff_count = cur
+        .chunks_exact(4)
+        .zip(refp.chunks_exact(4))
+        .filter(|(a, b)| {
+            a.iter()
+                .zip(b.iter())
+                .any(|(av, bv)| av.abs_diff(*bv) > SIMCTL_CHANNEL_TOLERANCE)
+        })
+        .count();
+    if diff_count <= diff_budget {
+        eprintln!(
+            "OK: {} matches {} (diff {} ≤ {})",
+            render.display(),
+            baseline.display(),
+            diff_count,
+            diff_budget,
+        );
+        return Ok(());
+    }
+    Err(format!(
+        "iOS screenshot differs from baseline ({diff_count} of {pixel_count} pixels \
+         exceed channel tolerance {SIMCTL_CHANNEL_TOLERANCE}, budget {diff_budget}).
+  rendered: {}
+  baseline: {}
+  accept with: cp {} {}",
+        render.display(),
+        baseline.display(),
+        render.display(),
+        baseline.display(),
+    )
+    .into())
 }

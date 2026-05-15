@@ -74,7 +74,8 @@ unsafe impl<T> Sync for SendPtr<T> {}
 /// Raw platform window handle for GUI parenting.
 #[derive(Clone, Copy, Debug)]
 pub enum RawWindowHandle {
-    AppKit(*mut std::ffi::c_void), // NSView*
+    AppKit(*mut std::ffi::c_void), // macOS NSView*
+    UiKit(*mut std::ffi::c_void),  // iOS / iPadOS UIView*
     Win32(*mut std::ffi::c_void),  // HWND
     X11(u64),                      // X11 Window ID
 }

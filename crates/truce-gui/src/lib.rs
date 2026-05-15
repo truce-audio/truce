@@ -16,10 +16,19 @@
 
 pub mod backend_cpu;
 pub mod blit;
+// baseview-bound editor is macOS / Windows / Linux only. iOS
+// embeds the editor in a UIView managed by the AUv3 view
+// controller — see [`editor_ios`].
+#[cfg(not(target_os = "ios"))]
 pub mod editor;
+#[cfg(target_os = "ios")]
+pub mod editor_ios;
+#[cfg(target_os = "ios")]
+pub use editor_ios as editor;
 pub mod font;
 pub mod interaction;
 pub mod platform;
+mod render_core;
 
 // Re-export the lightweight data + trait surface from `truce-gui-types`
 // so old `truce_gui::layout::*` / `truce_gui::widgets::*` /

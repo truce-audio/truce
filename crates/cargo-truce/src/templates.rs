@@ -22,6 +22,25 @@ pub mod au3 {
 }
 
 // ---------------------------------------------------------------------------
+// AU v3 iOS container app — Swift source for the .app stub
+// ---------------------------------------------------------------------------
+
+// iOS install is macOS-only (Xcode + simctl). Gating the module
+// silences dead-code warnings on Linux / Windows.
+#[cfg(target_os = "macos")]
+pub mod au_ios {
+    /// The container app's full `AppMain.swift`: imports, the
+    /// `private let log` global, free helper functions, the
+    /// `UIFont` convenience extension, and the
+    /// `@UIApplicationMain class AppDelegate` that hosts the
+    /// editor, audio engine, and Core MIDI bridge. Carries
+    /// literal `{app_name}` / `{vendor_name}` / `{description}` /
+    /// `{vendor_url}` placeholders that `render_app_main_swift`
+    /// substitutes per install.
+    pub const APP_MAIN: &str = include_str!("../templates/au_ios/AppMain.swift");
+}
+
+// ---------------------------------------------------------------------------
 // AAX template files
 // ---------------------------------------------------------------------------
 

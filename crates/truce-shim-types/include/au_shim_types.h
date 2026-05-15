@@ -46,6 +46,18 @@ typedef struct {
     uint8_t _pad;
 } AuMidiEvent;
 
+/* Universal MIDI Packet container — carries MIDI 2.0 channel-voice
+ * messages (64-bit UMPs) and forward-compat slots for SysEx-8 / data
+ * (128-bit UMPs). Used only by the AU v3 path; AU v2 hosts deliver
+ * legacy 3-byte MIDI 1.0 via `AuMidiEvent` and pass `NULL`/`0` for the
+ * MIDI 2.0 array. The MSB of `words[0]` carries the UMP message type
+ * nibble (0x2_ = MIDI 1.0 CV, 0x4_ = MIDI 2.0 CV, …) — see the M2-104
+ * spec, §2.1.4. */
+typedef struct {
+    uint32_t sample_offset;
+    uint32_t words[4];
+} AuMidi2Event;
+
 /* Transport snapshot filled by the AU v2 / v3 shim from
  * HostCallbackInfo (v2) or AUAudioUnit.musicalContextBlock +
  * transportStateBlock (v3). Fields default to 0 / false when the host
@@ -76,6 +88,7 @@ typedef struct {
                     uint32_t num_input_channels, uint32_t num_output_channels,
                     uint32_t num_frames,
                     const AuMidiEvent *events, uint32_t num_events,
+                    const AuMidi2Event *events2, uint32_t num_events2,
                     const AuTransportSnapshot *transport);
     uint32_t (*param_count)(void *ctx);
     /* Per-param descriptors are read from `g_param_descriptors`

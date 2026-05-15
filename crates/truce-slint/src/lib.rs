@@ -21,12 +21,29 @@
 //! })
 //! ```
 
+// baseview + wgpu live behind `blit` + `editor` on non-iOS hosts.
+// iOS uses `editor_ios.rs` which runs the same Slint
+// `MinimalSoftwareWindow` CPU renderer + blits via `CGImage`
+// (skipping baseview / wgpu entirely). `platform.rs` carries the
+// Slint platform-registration glue — needed on every target;
+// inside the file, the baseview / wgpu re-exports are themselves
+// cfg-gated.
+#[cfg(not(target_os = "ios"))]
 pub mod blit;
+#[cfg(not(target_os = "ios"))]
 pub mod editor;
 pub mod platform;
+#[cfg(not(target_os = "ios"))]
 mod screenshot;
 
+#[cfg(target_os = "ios")]
+mod editor_ios;
+
+#[cfg(not(target_os = "ios"))]
 pub use editor::{SlintEditor, SyncFn};
+
+#[cfg(target_os = "ios")]
+pub use editor_ios::{SlintEditor, SyncFn};
 
 // Re-export `PluginContext` so plugin authors using the `bind!` macro
 // don't need a direct truce-core dependency.

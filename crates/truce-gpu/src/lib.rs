@@ -22,8 +22,14 @@ macro_rules! hot_debug {
 }
 
 mod backend;
+// `editor` is the baseview-driven host (macOS/Windows/Linux). iOS
+// hosts the editor via `truce-gui::editor_ios` inside a UIView
+// attached to the AUv3 view controller, so the baseview-backed
+// editor doesn't compile on iOS.
+#[cfg(not(target_os = "ios"))]
 pub mod editor;
 pub mod platform;
 
 pub use backend::WgpuBackend;
+#[cfg(not(target_os = "ios"))]
 pub use editor::GpuEditor;

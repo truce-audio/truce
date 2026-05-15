@@ -10,9 +10,8 @@ use std::sync::Arc;
 use truce::prelude::*;
 use truce_core::custom_state::{State as StateTrait, StateBinding};
 use truce_core::editor::PluginContext;
-use truce_egui::EguiEditor;
-use truce_egui::editor::EditorUi;
 use truce_egui::theme::{HEADER_BG, HEADER_TEXT};
+use truce_egui::{EditorUi, EguiEditor};
 use truce_gui::font;
 
 const WINDOW_W: u32 = 320;

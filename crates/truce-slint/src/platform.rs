@@ -12,11 +12,15 @@ use slint::platform::software_renderer::{
 };
 use slint::platform::{Platform, PlatformError};
 
-// Baseview parent-window bridge, wgpu surface constructor, and
-// per-OS scale-factor query are shared with the other GUI editor
-// crates — re-exported from `truce_gui::platform` so this module
-// only carries Slint-specific platform glue.
-pub use truce_gui::platform::{ParentWindow, create_wgpu_surface, query_backing_scale};
+// Baseview parent-window bridge + wgpu surface constructor are
+// desktop-only (iOS doesn't have baseview and creates its own
+// CAMetalLayer-backed UIView in `editor_ios.rs`). `query_backing_scale`
+// stays available on every target so the iOS path can read the
+// UIScreen scale through the same helper.
+#[cfg(not(target_os = "ios"))]
+pub use truce_gui::platform::{ParentWindow, create_wgpu_surface};
+
+pub use truce_gui::platform::query_backing_scale;
 
 // ---------------------------------------------------------------------------
 // Slint Platform — registered once per process

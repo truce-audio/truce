@@ -1,0 +1,244 @@
+name: iOS
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: macos-latest → iOS (device + sim)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # iOS device + simulator slices have distinct Mach-O platform
+      # IDs and can't share a target dir cache key, but installing
+      # both rustup targets is cheap. The simulator triple uses the
+      # `-sim` suffix; the device triple is the plain Apple iOS.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: macos-latest-ios
+          cache-bin: false
+
+      # Plugin authors target iOS through `cargo truce install --ios`
+      # (simulator) or `cargo truce install --ios-device`. CI exercises
+      # the framework-build half of the pipeline for both slices —
+      # signing + installation needs an Apple Developer team ID and a
+      # paired device / booted simulator, both of which need extra
+      # secret wiring to add to CI. Catching the build-side regressions
+      # (FFI mismatches, feature-flag drift, swiftc bridging-header
+      # rot) is the high-value coverage here.
+      - name: Build framework dylib (simulator slice)
+        run: |
+          cargo build -p truce-example-gain \
+            --target aarch64-apple-ios-sim \
+            --release --no-default-features --features au
+
+      - name: Build framework dylib (device slice)
+        run: |
+          cargo build -p truce-example-gain \
+            --target aarch64-apple-ios \
+            --release --no-default-features --features au
+
+      - name: Verify iOS dylibs are valid Mach-O for their platform
+        run: |
+          set -e
+          DEV=target/aarch64-apple-ios/release/libtruce_example_gain.dylib
+          SIM=target/aarch64-apple-ios-sim/release/libtruce_example_gain.dylib
+          test -f "$DEV"
+          test -f "$SIM"
+          # Verify each slice carries the right platform load
+          # command. The simulator slice always uses the unified
+          # `LC_BUILD_VERSION` form (`platform 7` = iPhoneSimulator);
+          # the device slice depends on the deployment-target version:
+          # older iOS targets emit the legacy `LC_VERSION_MIN_IPHONEOS`
+          # load command, newer ones emit `LC_BUILD_VERSION`
+          # `platform 2` = iPhoneOS. Accept either form for the
+          # device slice; reject any form of iPhoneSimulator on it.
+          # Accidentally building the simulator slice against the
+          # device SDK would otherwise silently produce a dylib that
+          # fails to load on the simulator at runtime.
+          if otool -l "$DEV" | grep -q "LC_VERSION_MIN_IPHONEOS"; then
+            echo "DEV: legacy LC_VERSION_MIN_IPHONEOS — OK"
+          else
+            otool -l "$DEV" | grep -A2 LC_BUILD_VERSION | grep "platform 2"
+            echo "DEV: LC_BUILD_VERSION platform 2 — OK"
+          fi
+          if otool -l "$DEV" | grep -A2 LC_BUILD_VERSION | grep -q "platform 7"; then
+            echo "ERROR: DEV dylib carries iPhoneSimulator platform 7"
+            exit 1
+          fi
+          otool -l "$SIM" | grep -A2 LC_BUILD_VERSION | grep "platform 7"
+          echo "SIM: LC_BUILD_VERSION platform 7 — OK"
+
+      # Boot a simulator for the install + screenshot smoke check.
+      # GitHub's `macos-latest` runner image bundles a handful of
+      # iOS runtimes + device types but the specific versions drift
+      # with each image rev — hard-coding (say) "iPhone 17 Pro /
+      # iOS 26.3" breaks the next time the image updates. Discover
+      # both at runtime: pick the newest installed iOS runtime and
+      # any iPhone Pro device type compatible with it.
+      - name: Boot iOS Simulator
+        run: |
+          set -euo pipefail
+          echo "Available runtimes:"; xcrun simctl list runtimes
+          RUNTIME=$(xcrun simctl list runtimes -j \
+            | python3 -c 'import json,sys; rs=[r for r in json.load(sys.stdin)["runtimes"] if r["isAvailable"] and r["identifier"].startswith("com.apple.CoreSimulator.SimRuntime.iOS-")]; rs.sort(key=lambda r: tuple(int(x) for x in r["version"].split("."))); print(rs[-1]["identifier"])')
+          echo "Picked runtime: $RUNTIME"
+          DEVICE=$(xcrun simctl list devicetypes -j \
+            | python3 -c 'import json,sys; ds=[d for d in json.load(sys.stdin)["devicetypes"] if "iPhone" in d["name"] and "Pro" in d["name"] and "Max" not in d["name"]]; ds.sort(key=lambda d: d["name"]); print(ds[-1]["identifier"])')
+          echo "Picked device:  $DEVICE"
+          xcrun simctl create truce-ci "$DEVICE" "$RUNTIME"
+          xcrun simctl boot truce-ci
+          xcrun simctl bootstatus truce-ci
+
+      - name: Install plugin on simulator
+        run: |
+          ./target/debug/cargo-truce install --ios -p truce-example-gain
+
+      # iOS screenshot regression. The desktop screenshot path
+      # (dlopen of the cdylib) can't see iOS-specific compositing
+      # like the BuiltinEditor's CGImage blit. `--ios` captures the
+      # simulator's actual rendered output via simctl io screenshot.
+      - name: iOS screenshot smoke
+        run: |
+          ./target/debug/cargo-truce screenshot --ios --out target/screenshots/gain_default_ios.png -p truce-example-gain
+
+      # Framework-level container-mode screenshots for every example
+      # we ship. `--crop-mode container` crops only the iOS status
+      # bar band (the variable clock) and keeps the rest of the
+      # container chrome — title, embedded editor, Play button,
+      # status line — so the screenshot gates on the framework's
+      # container app layout independently of the per-plugin editor
+      # pixel diff.
+      #
+      # Bake step: just capture + write to `target/screenshots/`,
+      # no diff against committed baselines. The diff step below
+      # runs `--check` with `continue-on-error: true` so reviewers
+      # see the per-example diff counts without the build failing
+      # — useful while the runner image's device / iOS version
+      # doesn't yet match what baked the committed baselines.
+      #
+      # `truce-example-gain-iced` is skipped: iced's iOS backend is
+      # broken upstream (iced_winit doesn't currently build for iOS)
+      # and its container app never wires the editor, so no stable
+      # baseline is possible.
+      - name: iOS container screenshots (bake)
+        run: |
+          set -e
+          for crate in \
+              truce-example-gain \
+              truce-example-synth \
+              truce-example-eq \
+              truce-example-transpose \
+              truce-example-gain-egui \
+              truce-example-arpeggio \
+              truce-example-gain-slint \
+              truce-example-tremolo \
+              truce-example-state \
+              truce-example-fundsp-reverb-worker \
+              truce-example-fundsp-reverb-simple; do
+            short=${crate#truce-example-}
+            short_under=${short//-/_}
+            ./target/debug/cargo-truce screenshot --ios \
+              --crop-mode container \
+              --out "target/screenshots/${short_under}_container_ios.png" \
+              -p "$crate"
+          done
+
+      # Soft diff: run `--check` against every committed baseline
+      # and let the build keep going on regression. Failing entries
+      # log the per-example pixel-diff count from
+      # `diff_simctl_screenshot`, which is enough for a reviewer
+      # to decide whether the runner image needs re-baking (size
+      # mismatch / large diff) or whether the new render is a
+      # legitimate regression that warrants attention.
+      - name: iOS container screenshots (diff vs baselines)
+        continue-on-error: true
+        run: |
+          set +e
+          fail=0
+          for crate in \
+              truce-example-gain \
+              truce-example-synth \
+              truce-example-eq \
+              truce-example-transpose \
+              truce-example-gain-egui \
+              truce-example-arpeggio \
+              truce-example-gain-slint \
+              truce-example-tremolo \
+              truce-example-state \
+              truce-example-fundsp-reverb-worker \
+              truce-example-fundsp-reverb-simple; do
+            short=${crate#truce-example-}
+            short_under=${short//-/_}
+            echo "=== $crate ==="
+            ./target/debug/cargo-truce screenshot --ios \
+              --crop-mode container \
+              --check \
+              --out "examples/$crate/screenshots/${short_under}_container_ios.png" \
+              -p "$crate" || fail=$((fail + 1))
+          done
+          echo "container-mode regressions: $fail / 11"
+
+      - name: upload iOS screenshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-screenshots
+          path: target/screenshots/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      # The Swift templates that `cargo truce install --ios` feeds to
+      # swiftc live alongside the Rust code. A drift between the
+      # bridging header and the C ABI (AuMidiEvent, AuMidi2Event,
+      # AuCallbacks::process signature) is invisible to `cargo
+      # check`. Smoke-compile the appex template against the
+      # simulator SDK so CI catches the drift.
+      - name: Swiftc smoke build (simulator AUExt)
+        run: |
+          set -e -o pipefail
+          SDK_PATH=$(xcrun --sdk iphonesimulator --show-sdk-path)
+          STAGE=$(mktemp -d)
+          cp crates/cargo-truce/templates/au3/AudioUnitFactory.swift "$STAGE/"
+          cp crates/cargo-truce/templates/au3/BridgingHeader.h "$STAGE/"
+          # Stub external Rust globals — swiftc requires the symbols
+          # to resolve to compile -emit-executable. The actual
+          # appex links against the framework's exports; the smoke
+          # build just needs to parse + type-check the template.
+          cat > "$STAGE/stubs.c" <<'EOF'
+          #include "../../../crates/truce-shim-types/include/au_shim_types.h"
+          const AuPluginDescriptor *g_descriptor = (void *)0;
+          const AuCallbacks *g_callbacks = (void *)0;
+          const AuParamDescriptor *g_param_descriptors = (void *)0;
+          uint32_t g_num_params = 0;
+          void truce_au_init(void) {}
+          EOF
+          xcrun -sdk iphonesimulator swiftc \
+            -target arm64-apple-ios16.0-simulator \
+            -sdk "$SDK_PATH" \
+            -module-name AUExt \
+            -typecheck \
+            -import-objc-header "$STAGE/BridgingHeader.h" \
+            -Xcc "-I$PWD/crates/truce-shim-types/include" \
+            -Xcc -isysroot -Xcc "$SDK_PATH" \
+            -Xcc -target -Xcc arm64-apple-ios16.0-simulator \
+            "$STAGE/AudioUnitFactory.swift"

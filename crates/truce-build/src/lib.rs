@@ -59,6 +59,13 @@ pub struct PluginDef {
     pub crate_name: String,
     #[serde(default)]
     pub version: Option<String>,
+    /// User-facing one-paragraph description shown in distribution
+    /// surfaces — the iOS container app's "About" pane, App Store
+    /// description, generated docs. Optional; absent → callers
+    /// generate a category-aware default ("A truce effect", "A
+    /// truce instrument", …).
+    #[serde(default)]
+    pub description: Option<String>,
     #[serde(default)]
     pub fourcc: Option<String>,
     pub category: String,

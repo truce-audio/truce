@@ -62,18 +62,26 @@ pub struct Modifiers {
 /// Platform-agnostic input event consumed by `dispatch`.
 ///
 /// Cursor coordinates are in logical pixels, matching what widgets draw at.
+///
+/// `pointer_id` distinguishes simultaneous pointers (multi-touch).
+/// Mouse-driven flows always pass [`SINGLE_POINTER`] (= 0); iOS touch
+/// dispatch uses the `UITouch*` cast to `u64` so each finger gets a
+/// stable identifier across `Down → Move → Up`.
 #[derive(Clone, Copy, Debug)]
 pub enum InputEvent {
     MouseMove {
+        pointer_id: u64,
         x: f32,
         y: f32,
     },
     MouseDown {
+        pointer_id: u64,
         x: f32,
         y: f32,
         button: MouseButton,
     },
     MouseUp {
+        pointer_id: u64,
         x: f32,
         y: f32,
         button: MouseButton,
@@ -95,6 +103,11 @@ pub enum InputEvent {
     /// The cursor left the editor surface. Dispatch clears hover state.
     MouseLeave,
 }
+
+/// Single-pointer sentinel for mouse-driven flows. iOS touch
+/// dispatch substitutes the `UITouch*` cast to `u64` so multiple
+/// fingers can drag independently.
+pub const SINGLE_POINTER: u64 = 0;
 
 /// Pixels of vertical drag (or wheel travel) that map to a full
 /// 0.0 → 1.0 normalized parameter range. Shared between knob drag
@@ -160,11 +173,15 @@ pub struct DropdownState {
     pub visible_count: usize,
 }
 
-/// Tracks the current mouse interaction state.
+/// Tracks the current mouse / touch interaction state.
 #[derive(Default)]
 pub struct InteractionState {
     pub knob_regions: Vec<WidgetRegion>,
-    pub dragging: Option<DragState>,
+    /// One entry per active pointer (mouse: at most 1; touch: up
+    /// to one per finger). Keyed by `DragState::pointer_id`. Linear
+    /// scan — N is bounded by the device's reported max touches
+    /// (≤10 in practice).
+    pub drags: Vec<DragState>,
     /// Region index under the cursor (for hover highlight).
     pub hover_idx: Option<usize>,
     /// Currently open dropdown popup (at most one at a time).
@@ -178,6 +195,9 @@ pub struct InteractionState {
 }
 
 pub struct DragState {
+    /// Identifier of the pointer (mouse or touch) driving this drag.
+    /// See [`SINGLE_POINTER`].
+    pub pointer_id: u64,
     pub region_idx: usize,
     pub param_id: u32,
     pub start_value: f64,
@@ -287,14 +307,34 @@ impl InteractionState {
         self.knob_regions.get(idx)
     }
 
-    /// Begin a drag on a widget by region index.
-    pub fn begin_drag(&mut self, idx: usize, current_normalized: f64, mouse_y: f32) {
-        let Some(region) = self.knob_regions.get(idx) else {
-            return;
-        };
+    /// Begin a drag on a widget by region index. Returns any prior
+    /// drag for the same `pointer_id` so the caller can emit a
+    /// matching `ParamEdit::End` for it — without this, hosts that
+    /// model gestures as a Begin/End stack (VST3, CLAP, AU on iOS)
+    /// see a stranded Begin and report the param as permanently
+    /// "being touched". iOS reliably triggers this when a system
+    /// gesture recognizer (Control Center swipe, multitasking
+    /// gesture) steals a touch without firing `touchesCancelled:`;
+    /// the next `touchesBegan:` may reuse the same `UITouch*`
+    /// pointer for a different finger.
+    #[must_use]
+    pub fn begin_drag(
+        &mut self,
+        pointer_id: u64,
+        idx: usize,
+        current_normalized: f64,
+        mouse_y: f32,
+    ) -> Option<DragState> {
+        let region = self.knob_regions.get(idx)?;
         let param_id = region.param_id;
         let wtype = region.widget_type;
-        self.dragging = Some(DragState {
+        let stranded = self
+            .drags
+            .iter()
+            .position(|d| d.pointer_id == pointer_id)
+            .map(|i| self.drags.swap_remove(i));
+        self.drags.push(DragState {
+            pointer_id,
             region_idx: idx,
             param_id,
             start_value: current_normalized,
@@ -305,31 +345,44 @@ impl InteractionState {
             region_w: region.w,
             region_h: region.h,
         });
+        stranded
     }
 
-    /// Update during a drag. Returns (`param_id`, `new_normalized_value`) if dragging.
+    /// Find the drag for a pointer (read-only).
     #[must_use]
-    pub fn update_drag(&self, mouse_y: f32) -> Option<(u32, f64)> {
-        let drag = self.dragging.as_ref()?;
+    pub fn drag_for(&self, pointer_id: u64) -> Option<&DragState> {
+        self.drags.iter().find(|d| d.pointer_id == pointer_id)
+    }
+
+    /// Update a single drag's knob value (vertical-drag widgets).
+    /// Returns the new (`param_id`, normalized value) for the drag
+    /// matching `pointer_id`, or `None` if no such drag is active.
+    #[must_use]
+    pub fn update_drag(&self, pointer_id: u64, mouse_y: f32) -> Option<(u32, f64)> {
+        let drag = self.drag_for(pointer_id)?;
         let dy = drag.start_y - mouse_y;
         let delta = f64::from(dy) / f64::from(KNOB_PIXELS_PER_UNIT);
         let new_value = (drag.start_value + delta).clamp(0.0, 1.0);
         Some((drag.param_id, new_value))
     }
 
-    /// Update during a horizontal slider drag. Returns (`param_id`, `new_value`).
+    /// Update a single horizontal-slider drag. Same shape as
+    /// [`InteractionState::update_drag`] but maps `x` rather than `y`.
     #[must_use]
-    pub fn update_slider_drag(&self, mouse_x: f32) -> Option<(u32, f64)> {
-        let drag = self.dragging.as_ref()?;
+    pub fn update_slider_drag(&self, pointer_id: u64, mouse_x: f32) -> Option<(u32, f64)> {
+        let drag = self.drag_for(pointer_id)?;
         let margin = 4.0;
         let rel = (mouse_x - drag.region_x - margin) / (drag.region_w - margin * 2.0);
         let new_value = f64::from(rel).clamp(0.0, 1.0);
         Some((drag.param_id, new_value))
     }
 
-    /// End a drag.
-    pub fn end_drag(&mut self) {
-        self.dragging = None;
+    /// End the drag for `pointer_id`. Returns the popped state so
+    /// callers can emit the `ParamEdit::End` (and the y-axis `End`
+    /// on XY pads) without re-searching the vec.
+    pub fn end_drag(&mut self, pointer_id: u64) -> Option<DragState> {
+        let idx = self.drags.iter().position(|d| d.pointer_id == pointer_id)?;
+        Some(self.drags.swap_remove(idx))
     }
 
     /// Test if a point is inside the open dropdown popup.
@@ -514,10 +567,9 @@ pub fn dispatch_in(
 
     for ev in events {
         match *ev {
-            InputEvent::MouseMove { x, y } => {
+            InputEvent::MouseMove { pointer_id, x, y } => {
                 let drag_info = state
-                    .dragging
-                    .as_ref()
+                    .drag_for(pointer_id)
                     .map(|d| (d.widget_type, d.region_idx));
                 if let Some((wtype, region_idx)) = drag_info {
                     let y_id = if wtype == WidgetType::XYPad {
@@ -525,34 +577,40 @@ pub fn dispatch_in(
                     } else {
                         None
                     };
-                    apply_drag(x, y, y_id, state, &mut edits);
+                    apply_drag(pointer_id, x, y, y_id, state, &mut edits);
                 } else {
-                    if state.dropdown_is_open() {
-                        state.dropdown_update_hover(x, y);
+                    // Hover / dropdown-hover are single-cursor concepts;
+                    // skip for genuine multi-touch pointers so a second
+                    // finger landing doesn't yank hover state away from
+                    // the cursor's last position on a hybrid Mac.
+                    if pointer_id == SINGLE_POINTER {
+                        if state.dropdown_is_open() {
+                            state.dropdown_update_hover(x, y);
+                        }
+                        state.hover_idx = state.hit_test(x, y);
                     }
-                    state.hover_idx = state.hit_test(x, y);
                 }
             }
             InputEvent::MouseDown {
+                pointer_id,
                 x,
                 y,
                 button: MouseButton::Left,
             } => {
                 handle_mouse_down(
-                    x, y, layout, snapshot, state, window_w, window_h, &mut edits,
+                    pointer_id, x, y, layout, snapshot, state, window_w, window_h, &mut edits,
                 );
             }
             InputEvent::MouseUp {
+                pointer_id,
                 button: MouseButton::Left,
                 ..
             } => {
-                if let Some(drag) = state.dragging.as_ref() {
-                    let param_id = drag.param_id;
-                    let was_xy = drag.widget_type == WidgetType::XYPad;
-                    let region_idx = drag.region_idx;
-                    state.end_drag();
-                    edits.push(ParamEdit::End { id: param_id });
-                    if was_xy && let Some(y_id) = layout_param_id_y(layout, region_idx) {
+                if let Some(drag) = state.end_drag(pointer_id) {
+                    edits.push(ParamEdit::End { id: drag.param_id });
+                    if drag.widget_type == WidgetType::XYPad
+                        && let Some(y_id) = layout_param_id_y(layout, drag.region_idx)
+                    {
                         edits.push(ParamEdit::End { id: y_id });
                     }
                 }
@@ -640,6 +698,7 @@ pub fn dispatch_in(
 
 /// Mouse-down handling factored out of the big match so it's readable.
 fn handle_mouse_down(
+    pointer_id: u64,
     x: f32,
     y: f32,
     layout: &Layout,
@@ -650,9 +709,8 @@ fn handle_mouse_down(
     edits: &mut Vec<ParamEdit>,
 ) {
     // If a dropdown popup is open, handle it first.
-    if state.dropdown_is_open() {
+    if let Some(dd) = state.dropdown.as_ref() {
         if let Some(option_idx) = state.dropdown_popup_hit(x, y) {
-            let dd = state.dropdown.as_ref().unwrap();
             let param_id = dd.param_id;
             let count = dd.options.len();
             let new_norm = f32::from_f64(discrete_norm(option_idx, count));
@@ -709,7 +767,21 @@ fn handle_mouse_down(
         _ => {
             // Knob / Slider / XYPad / Meter: begin a drag.
             let norm = f64::from((snapshot.get_param)(param_id));
-            state.begin_drag(idx, norm, y);
+            // If a system gesture stole the previous touch for this
+            // pointer_id without firing `touchesCancelled:`, the
+            // displaced drag's `Begin` is still on the host's
+            // gesture stack — flush an `End` for it (XY pads need
+            // both axes) before opening the new gesture.
+            if let Some(stranded) = state.begin_drag(pointer_id, idx, norm, y) {
+                edits.push(ParamEdit::End {
+                    id: stranded.param_id,
+                });
+                if stranded.widget_type == WidgetType::XYPad
+                    && let Some(y_id) = layout_param_id_y(layout, stranded.region_idx)
+                {
+                    edits.push(ParamEdit::End { id: y_id });
+                }
+            }
             edits.push(ParamEdit::Begin { id: param_id });
             if wtype == Some(WidgetType::XYPad)
                 && let Some(y_id) = layout_param_id_y(layout, idx)
@@ -791,13 +863,14 @@ fn open_dropdown(
 }
 
 fn apply_drag(
+    pointer_id: u64,
     x: f32,
     y: f32,
     y_id_for_xy: Option<u32>,
     state: &InteractionState,
     edits: &mut Vec<ParamEdit>,
 ) {
-    let Some(drag) = state.dragging.as_ref() else {
+    let Some(drag) = state.drag_for(pointer_id) else {
         return;
     };
     match drag.widget_type {
@@ -824,7 +897,7 @@ fn apply_drag(
             }
         }
         WidgetType::Slider => {
-            if let Some((pid, new_norm)) = state.update_slider_drag(x) {
+            if let Some((pid, new_norm)) = state.update_slider_drag(pointer_id, x) {
                 edits.push(ParamEdit::Set {
                     id: pid,
                     normalized: f32::from_f64(new_norm),
@@ -832,7 +905,7 @@ fn apply_drag(
             }
         }
         _ => {
-            if let Some((pid, new_norm)) = state.update_drag(y) {
+            if let Some((pid, new_norm)) = state.update_drag(pointer_id, y) {
                 edits.push(ParamEdit::Set {
                     id: pid,
                     normalized: f32::from_f64(new_norm),

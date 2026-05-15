@@ -2,10 +2,120 @@
 /// framework via C FFI (g_callbacks function pointer table).
 import os.log
 import AudioToolbox
+import CoreMIDI
 
 private let logger = Logger(subsystem: "com.truce.au3", category: "AUExt")
 import AVFAudio
 import CoreAudioKit
+
+#if os(iOS)
+import UIKit
+// AppKit `NSView` / `NSSize` / `NSRect` are macOS-only. The iOS
+// AUv3 view-controller hosts a UIView; the helpers below alias
+// the AppKit types to their UIKit equivalents so most of the
+// factory code stays platform-agnostic.
+typealias NSView = UIView
+typealias NSSize = CGSize
+typealias NSRect = CGRect
+#else
+import AppKit
+#endif
+
+// MARK: - UMP helpers
+
+/// `AURenderEventMIDIEventList` raw value from
+/// `AudioToolbox/AudioUnitProperties.h`. Compared against
+/// `head.eventType.rawValue` instead of a Swift enum case so older
+/// Xcode versions (where the case isn't yet imported) still
+/// compile. The enum value is stable per Apple's header.
+let kAURenderEventMIDIEventListRaw: UInt16 = 10
+
+/// UMP packet length in 32-bit words by message type. Spec: MIDI
+/// 2.0 M2-104-UM, §2.1.4 (Message Type field).
+@inline(__always) func umpPacketLength(messageType mt: UInt8) -> Int {
+    switch mt {
+    case 0x0, 0x1, 0x2: return 1            // utility, system, MIDI 1.0 CV
+    case 0x3, 0x4: return 2                  // SysEx-7, MIDI 2.0 CV
+    case 0x5, 0xD, 0xE, 0xF: return 4        // data 128, flex, UMP stream
+    default: return 1
+    }
+}
+
+/// Read the `MIDIEventsList` slot of an `AURenderEvent` and forward
+/// every UMP it carries into the appropriate AuMidi(2)Event buffer.
+/// Returns `(midi1_added, midi2_added)`. Pointer-based: avoids the
+/// Swift overlay's `.midiEventList` discriminator which isn't
+/// exposed on every Xcode version we want to support.
+func forwardMIDIEventList(
+    event: UnsafePointer<AURenderEvent>,
+    bufStart: Int64,
+    frameCount: UInt32,
+    midiBuf: UnsafeMutablePointer<AuMidiEvent>, midiStart: UInt32,
+    midi2Buf: UnsafeMutablePointer<AuMidi2Event>, midi2Start: UInt32
+) -> (UInt32, UInt32) {
+    // AURenderEvent is a tagged union; reach into the
+    // `MIDIEventsList` slot via raw pointer arithmetic so the code
+    // compiles on Xcodes that haven't yet imported the symbol.
+    // Layout: AURenderEventHeader (16 bytes) + AUMIDIEventList payload.
+    // AUMIDIEventList: { AURenderEventHeader head; uint64_t
+    //                    eventSampleTime; MIDIEventList eventList; }
+    let raw = UnsafeRawPointer(event)
+    let payload = raw.advanced(by: 16)
+    let absTime = payload.assumingMemoryBound(to: Int64.self).pointee
+    let relOffset = max(0, absTime - bufStart)
+    let offset = UInt32(min(relOffset, Int64(frameCount - 1)))
+    // MIDIEventList layout (CoreMIDI/MIDIServices.h):
+    //   MIDIProtocolID protocol; uint32_t numPackets;
+    //   MIDIEventPacket packet[1];  // variable-length tail
+    let listBase = payload.advanced(by: 8)
+    let proto = listBase.assumingMemoryBound(to: UInt32.self).pointee
+    let numPackets = listBase.advanced(by: 4).assumingMemoryBound(to: UInt32.self).pointee
+    // Protocol 1 = MIDI 1.0 UMP, 2 = MIDI 2.0 UMP. We accept both.
+    _ = proto
+    var pktBase = listBase.advanced(by: 8) // start of first packet
+    var midiCount: UInt32 = midiStart
+    var midi2Count: UInt32 = midi2Start
+    var packetIdx: UInt32 = 0
+    while packetIdx < numPackets && midiCount < 256 && midi2Count < 256 {
+        // MIDIEventPacket: { MIDITimeStamp timeStamp; uint32_t
+        // wordCount; uint32_t words[64]; }
+        let wordCount = pktBase.advanced(by: 8).assumingMemoryBound(to: UInt32.self).pointee
+        let wordsPtr = pktBase.advanced(by: 12).assumingMemoryBound(to: UInt32.self)
+        var i: UInt32 = 0
+        while i < wordCount && midiCount < 256 && midi2Count < 256 {
+            let w0 = (wordsPtr + Int(i)).pointee
+            let mt = UInt8((w0 >> 28) & 0xF)
+            let packetWords = UInt32(umpPacketLength(messageType: mt))
+            if i + packetWords > wordCount { break }
+            if mt == 0x2 {
+                // MIDI 1.0 CV: extract the 3-byte legacy message
+                // so the existing Rust decoder handles it.
+                midiBuf[Int(midiCount)] = AuMidiEvent(
+                    sample_offset: offset,
+                    status: UInt8((w0 >> 16) & 0xFF),
+                    data1: UInt8((w0 >> 8) & 0xFF),
+                    data2: UInt8(w0 & 0xFF),
+                    _pad: 0)
+                midiCount += 1
+            } else if mt == 0x4 {
+                // MIDI 2.0 CV: forward two words verbatim. The
+                // Rust decoder (`decode_ump_channel_voice_2`)
+                // reads them as `[u32; 4]` (zero-padded).
+                let w1 = (wordsPtr + Int(i) + 1).pointee
+                midi2Buf[Int(midi2Count)] = AuMidi2Event(
+                    sample_offset: offset,
+                    words: (w0, w1, 0, 0))
+                midi2Count += 1
+            }
+            i += packetWords
+        }
+        // Advance to the next packet. Variable-length packets are
+        // tightly packed; total bytes = header (12) + wordCount * 4.
+        pktBase = pktBase.advanced(by: 12 + Int(wordCount) * 4)
+        packetIdx += 1
+    }
+    return (midiCount - midiStart, midi2Count - midi2Start)
+}
 
 // MARK: - AUAudioUnit subclass
 
@@ -87,7 +197,13 @@ class TruceAUAudioUnit: AUAudioUnit {
     }
 
     private func buildParameterTree() {
-        guard let callbacks = g_callbacks, let ctx = rustCtx else { return }
+        // We need `rustCtx` to be non-nil (the body uses `rustCtx!`
+        // below) but the value is only consumed through the closures
+        // that capture it explicitly, so the `let ctx = ...` binding
+        // would be unused. `case .some` matches both the
+        // existence check and silences the unused-binding warning
+        // without forcing a runtime !-unwrap here.
+        guard let callbacks = g_callbacks, case .some = rustCtx else { return }
         var params: [AUParameter] = []
         var groups: [String: [AUParameter]] = [:]
 
@@ -150,6 +266,7 @@ class TruceAUAudioUnit: AUAudioUnit {
         inPtrs: UnsafeMutablePointer<UnsafePointer<Float>?>,
         outPtrs: UnsafeMutablePointer<UnsafeMutablePointer<Float>?>,
         midiBuf: UnsafeMutablePointer<AuMidiEvent>,
+        midi2Buf: UnsafeMutablePointer<AuMidi2Event>,
         transportBuf: UnsafeMutablePointer<AuTransportSnapshot>,
         musicalContext: AUHostMusicalContextBlock?,
         transportState: AUHostTransportStateBlock?
@@ -160,20 +277,38 @@ class TruceAUAudioUnit: AUAudioUnit {
             if s != noErr { return s }
         }
         var numMidi: UInt32 = 0
+        var numMidi2: UInt32 = 0
+        let bufStart = Int64(timestamp.pointee.mSampleTime)
         var ev = events
-        while let event = ev, numMidi < 256 {
+        while let event = ev, numMidi < 256 && numMidi2 < 256 {
             let head = event.pointee.head
             if head.eventType == .MIDI {
                 let m = event.pointee.MIDI
                 // Convert absolute eventSampleTime to relative offset within buffer
                 let absTime = m.eventSampleTime
-                let bufStart = Int64(timestamp.pointee.mSampleTime)
                 let relOffset = max(0, absTime - bufStart)
                 midiBuf[Int(numMidi)] = AuMidiEvent(
                     sample_offset: UInt32(min(relOffset, Int64(frameCount - 1))),
                     status: m.data.0, data1: m.length > 1 ? m.data.1 : 0,
                     data2: m.length > 2 ? m.data.2 : 0, _pad: 0)
                 numMidi += 1
+            } else if head.eventType.rawValue == kAURenderEventMIDIEventListRaw {
+                // iOS 17+ / macOS 14+: AU hosts deliver UMPs through
+                // AURenderEvent.MIDIEventsList (CoreMIDI's MIDIEventList
+                // structure). Walk the packet list and classify each
+                // word group by UMP message type — MIDI 1.0 channel
+                // voice (mt=0x2, 32 bits) flows through the legacy
+                // 3-byte path; MIDI 2.0 channel voice (mt=0x4, 64
+                // bits) flows through midi2Buf. Other UMP types
+                // (utility, system, SysEx, data) are not surfaced.
+                let (midiAdded, midi2Added) = forwardMIDIEventList(
+                    event: event,
+                    bufStart: bufStart,
+                    frameCount: frameCount,
+                    midiBuf: midiBuf, midiStart: numMidi,
+                    midi2Buf: midi2Buf, midi2Start: numMidi2)
+                numMidi += midiAdded
+                numMidi2 += midi2Added
             } else if head.eventType == .parameter || head.eventType == .parameterRamp {
                 cb.pointee.param_set_value(ctx, UInt32(event.pointee.parameter.parameterAddress),
                                            Double(event.pointee.parameter.value))
@@ -243,7 +378,9 @@ class TruceAUAudioUnit: AUAudioUnit {
         }
 
         cb.pointee.process(ctx, inPtrs, outPtrs, numIn, numOut,
-                           frameCount, midiBuf, numMidi, transportBuf)
+                           frameCount, midiBuf, numMidi,
+                           midi2Buf, numMidi2,
+                           transportBuf)
         return noErr
     }
 
@@ -255,6 +392,7 @@ class TruceAUAudioUnit: AUAudioUnit {
         let inPtrs = UnsafeMutablePointer<UnsafePointer<Float>?>.allocate(capacity: 32)
         let outPtrs = UnsafeMutablePointer<UnsafeMutablePointer<Float>?>.allocate(capacity: 32)
         let midiBuf = UnsafeMutablePointer<AuMidiEvent>.allocate(capacity: 256)
+        let midi2Buf = UnsafeMutablePointer<AuMidi2Event>.allocate(capacity: 256)
         let transportBuf = UnsafeMutablePointer<AuTransportSnapshot>.allocate(capacity: 1)
 
         // Snapshot the host blocks at render-graph compile time. AU v3
@@ -270,6 +408,7 @@ class TruceAUAudioUnit: AUAudioUnit {
                 timestamp: timestamp, frameCount: frameCount,
                 outputData: outputData, events: events, pull: pull,
                 inPtrs: inPtrs, outPtrs: outPtrs, midiBuf: midiBuf,
+                midi2Buf: midi2Buf,
                 transportBuf: transportBuf,
                 musicalContext: musicalContext,
                 transportState: transportState)
@@ -331,6 +470,18 @@ class TruceAUAudioUnit: AUAudioUnit {
 
 // MARK: - Factory
 
+// `@objc(AudioUnitFactory)` pins the runtime class name to
+// `AudioUnitFactory` (no module prefix) and — critically — forces
+// Swift's optimizer to keep the class in `__objc_classlist`.
+// Without this, `swiftc -O` strips the class because nothing in
+// the module references it directly; NSExtension's runtime lookup
+// (via `NSExtensionPrincipalClass`) is invisible to the optimizer
+// and the appex launches with no principal class, dying with
+// XPC error 4097 (`NSXPCConnectionInvalid`). The matching
+// Info.plist key is `<key>NSExtensionPrincipalClass</key>
+// <string>AudioUnitFactory</string>` (no `$(PRODUCT_MODULE_NAME).`
+// prefix).
+@objc(AudioUnitFactory)
 class AudioUnitFactory: AUViewController, AUAudioUnitFactory {
     private var auInstance: TruceAUAudioUnit?
 
@@ -372,8 +523,13 @@ class AudioUnitFactory: AUViewController, AUAudioUnitFactory {
             }
         }
         let v = NSView(frame: NSRect(origin: .zero, size: size))
+        #if os(macOS)
         v.wantsLayer = true
         v.layer?.backgroundColor = CGColor(red: 0.15, green: 0.15, blue: 0.15, alpha: 1)
+        #else
+        // UIView always has a backing layer; set the BG directly.
+        v.backgroundColor = UIColor(red: 0.15, green: 0.15, blue: 0.15, alpha: 1)
+        #endif
         self.view = v
         self.preferredContentSize = size
         logger.info("loadView: \(size.width)x\(size.height)")
@@ -385,11 +541,19 @@ class AudioUnitFactory: AUViewController, AUAudioUnitFactory {
         setupGUIIfReady()
     }
 
+    #if os(macOS)
     override func viewWillAppear() {
         super.viewWillAppear()
         logger.info("viewWillAppear: view.frame=\(self.view.frame.width)x\(self.view.frame.height)")
         setupGUIIfReady()
     }
+    #else
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        logger.info("viewWillAppear: view.frame=\(self.view.frame.width)x\(self.view.frame.height)")
+        setupGUIIfReady()
+    }
+    #endif
 
 
     /// Rust context for THIS instance's AU (per-instance).
@@ -429,8 +593,29 @@ class AudioUnitFactory: AUViewController, AUAudioUnitFactory {
         startParamSync()
     }
 
+    #if os(macOS)
     override func viewDidDisappear() {
         super.viewDidDisappear()
+        teardownGUI()
+    }
+
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        centerGUI()
+    }
+    #else
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        teardownGUI()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        centerGUI()
+    }
+    #endif
+
+    private func teardownGUI() {
         // Close the GUI when the host hides the plugin window.
         // This stops the repaint timer. setupGUIIfReady will
         // re-create the GUI when the window is shown again.
@@ -441,11 +626,6 @@ class AudioUnitFactory: AUViewController, AUAudioUnitFactory {
         guiContainer?.removeFromSuperview()
         guiContainer = nil
         guiSetUp = false
-    }
-
-    override func viewDidLayout() {
-        super.viewDidLayout()
-        centerGUI()
     }
 
     private func centerGUI() {

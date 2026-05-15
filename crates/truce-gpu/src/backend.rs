@@ -647,10 +647,14 @@ impl WgpuBackend {
         Self::from_surface(&instance, surface, logical_w, logical_h, scale)
     }
 
-    /// Create a GPU backend from a baseview window handle.
+    /// Create a GPU backend from a baseview window handle. baseview
+    /// is the macOS / Windows / Linux windowing layer — iOS does not
+    /// compile this constructor (the iOS editor builds its surface
+    /// directly from a `CAMetalLayer` attached to a `UIView`).
     ///
     /// # Safety
     /// The window must remain valid for the lifetime of the backend.
+    #[cfg(not(target_os = "ios"))]
     #[must_use]
     pub unsafe fn from_window(
         window: &baseview::Window,

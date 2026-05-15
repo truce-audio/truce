@@ -35,6 +35,10 @@ pub(crate) use config::{
     Config, PluginDef, application_identity, deployment_target, load_config, read_build_env,
     resolve_aax_sdk_path,
 };
+#[cfg(target_os = "macos")]
+pub(crate) use config::{
+    ios_appex_provisioning_profile, ios_application_identity, ios_provisioning_profile, ios_team_id,
+};
 #[cfg(any(target_os = "macos", test))]
 pub(crate) use util::tmp_verify;
 pub(crate) use util::{

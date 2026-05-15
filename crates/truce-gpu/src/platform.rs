@@ -9,4 +9,9 @@
 //! the four GUI crates' versions could (and did) drift in tiny ways
 //! between releases.
 
-pub use truce_gui::platform::{ParentWindow, create_wgpu_surface, query_backing_scale};
+pub use truce_gui::platform::{ParentWindow, query_backing_scale};
+// `create_wgpu_surface` constructs from a baseview window handle;
+// not available on iOS (the iOS path builds its surface directly
+// from the CAMetalLayer-backed UIView in `truce-gui::editor_ios`).
+#[cfg(not(target_os = "ios"))]
+pub use truce_gui::platform::create_wgpu_surface;

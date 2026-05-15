@@ -29,6 +29,15 @@ pub(crate) struct Config {
     #[serde(default)]
     #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
     pub(crate) windows: WindowsConfig,
+    /// iOS-only workspace config (default minimum OS version, etc.).
+    /// Per-plugin iOS metadata (app group, icon set) lives on
+    /// [`PluginDef`]. Team ID and signing identities come from
+    /// `.cargo/config.toml [env]` (see `ios_team_id()` /
+    /// `ios_application_identity()`), keeping per-developer
+    /// credentials out of the tracked file.
+    #[serde(default)]
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub(crate) ios: IosConfig,
     pub(crate) vendor: VendorConfig,
     pub(crate) plugin: Vec<PluginDef>,
     /// Packaging metadata (welcome HTML, license HTML, etc.). Consumed
@@ -42,6 +51,17 @@ pub(crate) struct Config {
     /// Empty = per-plugin output only (today's behaviour).
     #[serde(default, rename = "suite")]
     pub(crate) suites: Vec<SuiteDef>,
+}
+
+#[derive(Deserialize, Default)]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) struct IosConfig {
+    /// Default minimum iOS version for all plugins. Per-plugin
+    /// `ios_minimum_os_version` overrides. Apple deprecates older
+    /// SDK targets aggressively; 16.0 is the lowest officially
+    /// supported by the `AUv3` + Swift toolchain we drive.
+    #[serde(default)]
+    pub(crate) minimum_os_version: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -171,6 +191,37 @@ pub(crate) struct PluginDef {
     #[serde(default)]
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub(crate) macos_icon: Option<String>,
+    /// App Group identifier for cross-process preset / state sharing
+    /// between the container `.app` and the `.appex`. When present,
+    /// adds `com.apple.security.application-groups` to both
+    /// entitlements files so `fullState` blobs round-trip and
+    /// `FileManager.containerURL(forSecurityApplicationGroupIdentifier:)`
+    /// resolves. Convention: `group.{vendor.id}.{bundle_id}`.
+    #[serde(default)]
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub(crate) ios_app_group: Option<String>,
+    /// Per-plugin iOS app icon (`.appiconset` directory, path relative
+    /// to workspace root). Copied into the container app's resources
+    /// at install / package time. Absent → the container ships with
+    /// the system default icon (fine for simulator-only smoke testing,
+    /// rejected by App Store review for distribution builds).
+    #[serde(default)]
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub(crate) ios_icon_set: Option<String>,
+    /// Per-plugin iOS minimum OS version override. Falls back to
+    /// `[ios].minimum_os_version`, which itself defaults to "16.0".
+    #[serde(default)]
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub(crate) ios_minimum_os_version: Option<String>,
+    /// Per-plugin URL the iOS container's "About" sheet links to
+    /// (the link-out icon in the top-right opens this in Safari).
+    /// Falls back to `[vendor].url`, then to <https://truce.audio/>.
+    /// Useful when a plug-in has its own product page distinct from
+    /// the vendor's homepage — common in suites where individual
+    /// plug-ins ship with separate marketing pages.
+    #[serde(default)]
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub(crate) ios_url: Option<String>,
 }
 
 impl std::ops::Deref for PluginDef {
@@ -204,6 +255,26 @@ impl PluginDef {
         self.au3_subtype
             .as_deref()
             .unwrap_or(self.resolved_fourcc())
+    }
+
+    /// Resolved iOS minimum OS version: per-plugin override → workspace
+    /// `[ios].minimum_os_version` → `"16.0"`. The 16.0 floor matches
+    /// what the Swift + `AUv3` toolchain we drive supports without
+    /// deprecation warnings.
+    #[cfg(target_os = "macos")]
+    pub(crate) fn resolved_ios_minimum_os_version(&self, ios: &IosConfig) -> String {
+        self.ios_minimum_os_version
+            .clone()
+            .or_else(|| ios.minimum_os_version.clone())
+            .unwrap_or_else(|| "16.0".to_string())
+    }
+
+    /// Resolved iOS App Group identifier. `None` → no group entitlement
+    /// is added. `Some(s)` → both container + appex get the
+    /// `com.apple.security.application-groups` entitlement.
+    #[cfg(target_os = "macos")]
+    pub(crate) fn resolved_ios_app_group(&self) -> Option<&str> {
+        self.ios_app_group.as_deref()
     }
 
     /// Name used for the AU v3 containing `.app` bundle directory.
@@ -400,6 +471,59 @@ pub(crate) fn deployment_target() -> String {
     read_build_env("MACOSX_DEPLOYMENT_TARGET").unwrap_or_else(|| "11.0".to_string())
 }
 
+/// Apple Developer team ID for iOS device / distribution builds.
+/// Returned `None` means simulator-only ad-hoc signing is the only
+/// viable install path. Source: `TRUCE_IOS_TEAM_ID` build env.
+#[cfg(target_os = "macos")]
+pub(crate) fn ios_team_id() -> Option<String> {
+    read_build_env("TRUCE_IOS_TEAM_ID")
+}
+
+/// iOS-specific signing identity (e.g. `"Apple Development: …"` for
+/// device builds, `"Apple Distribution: …"` for .ipa releases).
+/// Falls back to [`application_identity`] so users without an
+/// iOS-specific override get the macOS identity (which is wrong for
+/// device installs but right for simulator + ad-hoc). Source:
+/// `TRUCE_IOS_SIGNING_IDENTITY`.
+#[cfg(target_os = "macos")]
+pub(crate) fn ios_application_identity() -> String {
+    read_build_env("TRUCE_IOS_SIGNING_IDENTITY").unwrap_or_else(application_identity)
+}
+
+/// Path to a `.mobileprovision` provisioning profile for the
+/// container `.app`. Required for device installs and `.ipa`
+/// packaging — simulator builds proceed without one. Source:
+/// `TRUCE_IOS_PROVISIONING_PROFILE`.
+#[cfg(target_os = "macos")]
+pub(crate) fn ios_provisioning_profile() -> Option<PathBuf> {
+    resolve_profile_env("TRUCE_IOS_PROVISIONING_PROFILE")
+}
+
+/// Optional path to a `.mobileprovision` for the `.appex` extension
+/// when a separate profile is needed (i.e. when
+/// `TRUCE_IOS_PROVISIONING_PROFILE` is bound to the container's
+/// exact bundle ID, not a wildcard covering both). Source:
+/// `TRUCE_IOS_APPEX_PROVISIONING_PROFILE`. Returns `None` when
+/// unset — callers fall back to the container app's profile, which
+/// works for wildcard profiles that match both IDs.
+#[cfg(target_os = "macos")]
+pub(crate) fn ios_appex_provisioning_profile() -> Option<PathBuf> {
+    resolve_profile_env("TRUCE_IOS_APPEX_PROVISIONING_PROFILE")
+}
+
+#[cfg(target_os = "macos")]
+fn resolve_profile_env(key: &str) -> Option<PathBuf> {
+    let raw = read_build_env(key)?;
+    let path = PathBuf::from(&raw);
+    if path.exists() {
+        return Some(path);
+    }
+    eprintln!(
+        "warning: {key}={raw} (from .cargo/config.toml [env] or shell env) but file does not exist"
+    );
+    None
+}
+
 /// Resolve the AAX SDK path from the `AAX_SDK_PATH` build env. The
 /// path must point at an extant directory; a stale value emits a
 /// warning and resolves to `None` so callers can degrade gracefully.
@@ -445,6 +569,7 @@ mod suite_tests {
                 bundle_id: bundle_id.into(),
                 crate_name: crate_name.into(),
                 version: None,
+                description: None,
                 fourcc: None,
                 category: "effect".into(),
                 au_type: None,
@@ -462,6 +587,10 @@ mod suite_tests {
             au_tag: default_au_tag(),
             windows_icon: None,
             macos_icon: None,
+            ios_app_group: None,
+            ios_icon_set: None,
+            ios_minimum_os_version: None,
+            ios_url: None,
         }
     }
 

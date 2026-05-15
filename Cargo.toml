@@ -75,7 +75,12 @@ pedantic = { level = "warn", priority = -1 }
 # dev-only; omitting `version =` removes one place per release that
 # has to track `[workspace.package].version`.
 [workspace.dependencies]
-truce = { path = "crates/truce" }
+# `default-features = false` at the workspace so individual examples
+# can override per-format gating without iOS pulling `truce/clap`
+# transitively. The macOS / Windows / Linux examples each
+# explicitly enable `truce/<format>` in their own `[features]` block
+# (`clap = ["…", "truce/clap"]`).
+truce = { path = "crates/truce", default-features = false }
 truce-core = { path = "crates/truce-core" }
 truce-params = { path = "crates/truce-params" }
 truce-clap = { path = "crates/truce-clap" }

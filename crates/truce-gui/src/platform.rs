@@ -29,6 +29,17 @@ unsafe impl HasRawWindowHandle for ParentWindow {
                 handle.ns_view = ptr;
                 RwhRawWindowHandle::AppKit(handle)
             }
+            RawWindowHandle::UiKit(ptr) => {
+                // baseview doesn't host on iOS — the iOS editor
+                // path attaches a UIView directly without going
+                // through this bridge. We surface the handle for
+                // completeness (and so future iOS-aware backends
+                // can read it) but in practice no caller on iOS
+                // reaches this arm.
+                let mut handle = raw_window_handle::UiKitWindowHandle::empty();
+                handle.ui_view = ptr;
+                RwhRawWindowHandle::UiKit(handle)
+            }
             RawWindowHandle::Win32(ptr) => {
                 let mut handle = raw_window_handle::Win32WindowHandle::empty();
                 handle.hwnd = ptr;
@@ -94,6 +105,50 @@ pub fn query_backing_scale(parent: &RawWindowHandle) -> f64 {
 #[must_use]
 pub fn query_backing_scale(_parent: &RawWindowHandle) -> f64 {
     main_screen_scale()
+}
+
+#[cfg(target_os = "ios")]
+#[must_use]
+pub fn query_backing_scale(parent: &RawWindowHandle) -> f64 {
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+
+    let ui_view_ptr = match parent {
+        RawWindowHandle::UiKit(ptr) => *ptr,
+        _ => return 1.0,
+    };
+    if ui_view_ptr.is_null() {
+        return main_screen_scale();
+    }
+    // SAFETY: UIView is a UIKit class; `contentScaleFactor` is a
+    // public Objective-C property returning CGFloat (= f64 on
+    // arm64). Called on the main thread per UIKit's threading
+    // rule, which is also where AUv3 view controllers live.
+    unsafe {
+        let ui_view: *mut AnyObject = ui_view_ptr.cast();
+        let scale: f64 = msg_send![ui_view, contentScaleFactor];
+        if scale > 0.0 { scale } else { 1.0 }
+    }
+}
+
+#[cfg(target_os = "ios")]
+#[must_use]
+pub fn main_screen_scale() -> f64 {
+    use objc2::msg_send;
+    use objc2::runtime::{AnyClass, AnyObject};
+    // SAFETY: `+[UIScreen mainScreen]` is documented to return the
+    // process's primary screen on the main thread.
+    unsafe {
+        let Some(cls) = AnyClass::get(c"UIScreen") else {
+            return 1.0;
+        };
+        let screen: *mut AnyObject = msg_send![cls, mainScreen];
+        if screen.is_null() {
+            return 1.0;
+        }
+        let scale: f64 = msg_send![screen, scale];
+        if scale > 0.0 { scale } else { 1.0 }
+    }
 }
 
 /// Query the main screen's backing scale factor (no parent window needed).
@@ -322,6 +377,7 @@ fn win32_dpi_scale(hwnd: *mut std::ffi::c_void) -> f64 {
 ///
 /// # Safety
 /// The window handle must be valid for the lifetime of the returned surface.
+#[cfg(not(target_os = "ios"))]
 #[must_use]
 pub unsafe fn create_wgpu_surface(
     instance: &wgpu::Instance,

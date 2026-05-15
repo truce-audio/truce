@@ -13,16 +13,27 @@ truce-core = { workspace = true }
 truce-gui = { workspace = true }
 truce-params = { workspace = true }
 slint = { version = "=1.15.1", default-features = false, features = ["compat-1-2", "renderer-software", "std"] }
-baseview = { workspace = true }
 raw-window-handle = "0.5"
-wgpu = { workspace = true }
-pollster = "0.4"
 bytemuck = { version = "1", features = ["derive"] }
 paste = "1"
 log = "0.4"
 
+# baseview + wgpu + the macOS-only objc helper aren't viable in an
+# iOS App Extension sandbox; baseview doesn't ship an iOS port and
+# wgpu surface creation on iOS needs the UIKit CAMetalLayer path
+# we haven't wired up here yet. Non-iOS targets keep the full
+# stack; iOS gets the lightweight stub editor in `editor_ios.rs`.
+[target.'cfg(not(target_os = "ios"))'.dependencies]
+baseview = { workspace = true }
+wgpu = { workspace = true }
+pollster = "0.4"
+
 [target.'cfg(target_os = "macos")'.dependencies]
 objc = "0.2"
+
+[target.'cfg(target_os = "ios")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSString", "NSGeometry"] }
 
 [lints]
 workspace = true

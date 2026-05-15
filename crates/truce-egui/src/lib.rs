@@ -20,12 +20,25 @@
 //! });
 //! ```
 
+// `editor.rs` is the baseview-driven desktop path; `editor_ios.rs`
+// drives the UIView + CADisplayLink + CAMetalLayer host on iOS.
+// `renderer.rs` (egui-wgpu wrapper) is shared — it has both a
+// baseview-window and a raw-CAMetalLayer constructor.
+#[cfg(not(target_os = "ios"))]
 pub mod editor;
 pub mod font;
 pub mod platform;
 pub mod renderer;
+#[cfg(not(target_os = "ios"))]
 mod screenshot;
 pub mod theme;
 pub mod widgets;
 
+#[cfg(target_os = "ios")]
+mod editor_ios;
+
+#[cfg(not(target_os = "ios"))]
 pub use editor::{EditorUi, EguiEditor};
+
+#[cfg(target_os = "ios")]
+pub use editor_ios::{EditorUi, EguiEditor};
