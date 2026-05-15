@@ -1,6 +1,7 @@
 #include "TruceAAX_Parameters.h"
 
 #include "AAX_CLinearTaperDelegate.h"
+#include "AAX_CLogTaperDelegate.h"
 #include "AAX_CNumberDisplayDelegate.h"
 #include "AAX_CUnitDisplayDelegateDecorator.h"
 #include "AAX_CBinaryTaperDelegate.h"
@@ -80,15 +81,39 @@ AAX_Result TruceAAX_Parameters::EffectInit() {
             paramID = AAX_CString(idStr.str().c_str());
         }
 
-        auto param = std::unique_ptr<AAX_IParameter>(new AAX_CParameter<float>(
-            paramID,
-            AAX_CString(info.name),
-            (float)info.default_value,
-            AAX_CLinearTaperDelegate<float>((float)info.min, (float)info.max),
-            AAX_CUnitDisplayDelegateDecorator<float>(
-                AAX_CNumberDisplayDelegate<float>(),
-                AAX_CString(info.unit)),
-            true));  // automatable
+        // Pick the taper that matches Rust's `ParamRange` for this
+        // param. AAX_CParameter stores the taper internally via
+        // `Clone()`, so a stack-local instance per branch is fine —
+        // the constructor copies before this scope ends. A
+        // matched taper is what stops a log-ranged knob from
+        // fighting the editor: with the default linear taper,
+        // AAX's normalize/denormalize disagree with Rust's, and
+        // the next render block writes back a different plain
+        // value than the editor just stored.
+        std::unique_ptr<AAX_IParameter> param;
+        AAX_CUnitDisplayDelegateDecorator<float> display(
+            AAX_CNumberDisplayDelegate<float>(),
+            AAX_CString(info.unit));
+        if (info.range_type == TRUCE_AAX_RANGE_LOG) {
+            param.reset(new AAX_CParameter<float>(
+                paramID,
+                AAX_CString(info.name),
+                (float)info.default_value,
+                AAX_CLogTaperDelegate<float>((float)info.min, (float)info.max),
+                display,
+                true));
+        } else {
+            // Linear and Discrete both use a linear taper over
+            // [min, max]; for Discrete the step quantization comes
+            // from `SetNumberOfSteps` below, not the taper.
+            param.reset(new AAX_CParameter<float>(
+                paramID,
+                AAX_CString(info.name),
+                (float)info.default_value,
+                AAX_CLinearTaperDelegate<float>((float)info.min, (float)info.max),
+                display,
+                true));
+        }
 
         param->SetNumberOfSteps(info.step_count > 0 ? info.step_count : 128);
         param->SetType(AAX_eParameterType_Continuous);

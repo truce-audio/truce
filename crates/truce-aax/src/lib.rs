@@ -31,7 +31,7 @@ use truce_core::wrapper::{
     default_io_channels, first_bus_layout, log_missing_bus_layout, run_audio_block,
     run_extern_callback_with, run_register,
 };
-use truce_params::{ParamFlags, Params};
+use truce_params::{ParamFlags, ParamRange, Params};
 
 // ---------------------------------------------------------------------------
 // C ABI types (must match truce_aax_bridge.h)
@@ -44,7 +44,17 @@ use truce_params::{ParamFlags, Params};
 /// manual cdylib swap against an out-of-sync template from being
 /// silently misread (e.g. category bits read from the offset of a
 /// since-removed field).
-pub const TRUCE_AAX_ABI_VERSION: u32 = 1;
+pub const TRUCE_AAX_ABI_VERSION: u32 = 2;
+
+/// Wire values for [`TruceAaxParamInfo::range_type`]. The C++ shim
+/// switches on these to pick the matching `AAX_ITaperDelegate` for
+/// each registered parameter — without this, AAX defaults to a
+/// linear normalize/denormalize and round-trips a log-ranged knob
+/// through `RenderAudio` into a different plain value than the
+/// editor wrote (knob fights the user mid-drag).
+pub const TRUCE_AAX_RANGE_LINEAR: u8 = 0;
+pub const TRUCE_AAX_RANGE_LOG: u8 = 1;
+pub const TRUCE_AAX_RANGE_DISCRETE: u8 = 2;
 
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -112,6 +122,17 @@ pub struct TruceAaxParamInfo {
     pub default_value: f64,
     pub step_count: u32,
     pub unit: *const c_char,
+    /// One of `TRUCE_AAX_RANGE_LINEAR` / `_LOG` / `_DISCRETE`. Drives
+    /// taper-delegate selection in the C++ shim so AAX's normalized
+    /// ↔ plain mapping matches what `ParamRange` does on the Rust
+    /// side; mismatched tapers send the editor's writes back as a
+    /// different plain value on the next render block.
+    pub range_type: u8,
+    /// Trailing pad keeps the struct's natural alignment stable
+    /// across the C ABI; explicit pad makes the layout obvious to
+    /// the matching C struct in `truce_aax_bridge.h`.
+    #[allow(clippy::pub_underscore_fields)]
+    pub _pad: [u8; 7],
 }
 
 #[repr(C)]
@@ -358,6 +379,14 @@ fn register_aax_inner<P: PluginExport>(layout: &BusLayout) {
         let mut params = Vec::with_capacity(param_infos.len());
         for pi in &param_infos {
             let cs = truce_core::wrapper::ParamCStrings::from_info(pi);
+            // Enum maps to the same shape as Discrete in AAX — both
+            // get the linear taper with `SetNumberOfSteps`, which is
+            // how AAX represents stepped automatable controls.
+            let range_type = match pi.range {
+                ParamRange::Linear { .. } => TRUCE_AAX_RANGE_LINEAR,
+                ParamRange::Logarithmic { .. } => TRUCE_AAX_RANGE_LOG,
+                ParamRange::Discrete { .. } | ParamRange::Enum { .. } => TRUCE_AAX_RANGE_DISCRETE,
+            };
             let info = TruceAaxParamInfo {
                 id: pi.id,
                 name: cs.name.as_ptr(),
@@ -366,6 +395,8 @@ fn register_aax_inner<P: PluginExport>(layout: &BusLayout) {
                 default_value: pi.default_plain,
                 step_count: pi.range.step_count().map_or(0, std::num::NonZero::get),
                 unit: cs.unit.as_ptr(),
+                range_type,
+                _pad: [0; 7],
             };
             params.push(StaticParamInfo {
                 info,

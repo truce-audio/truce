@@ -19,7 +19,17 @@ extern "C" {
  * refuses to load a mismatched pair — protects against a manual
  * cdylib swap against a stale C++ template (which would otherwise
  * read fields at the wrong offset). */
-#define TRUCE_AAX_ABI_VERSION 1u
+#define TRUCE_AAX_ABI_VERSION 2u
+
+/* Wire values for TruceAaxParamInfo::range_type. The shim picks the
+ * matching AAX_ITaperDelegate per param so AAX's normalize/denormalize
+ * mirrors what truce-params does on the Rust side — a mismatched taper
+ * (e.g. AAX-linear over a log-ranged knob) round-trips editor writes
+ * back through RenderAudio as a different plain value, which the GUI
+ * sees as the knob fighting the user mid-drag. */
+#define TRUCE_AAX_RANGE_LINEAR   0u
+#define TRUCE_AAX_RANGE_LOG      1u
+#define TRUCE_AAX_RANGE_DISCRETE 2u
 
 /* Plugin descriptor — read once at load time. */
 typedef struct {
@@ -54,6 +64,8 @@ typedef struct {
     double default_value;
     uint32_t step_count;
     const char* unit;           /* "dB", "Hz", "%", "" etc. */
+    uint8_t range_type;         /* One of TRUCE_AAX_RANGE_*. */
+    uint8_t _pad[7];            /* Match Rust-side trailing pad. */
 } TruceAaxParamInfo;
 
 /* MIDI event. */
