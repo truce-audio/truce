@@ -1,6 +1,8 @@
 [package]
 name = "truce-font"
 version.workspace = true
+repository.workspace = true
+homepage.workspace = true
 edition.workspace = true
 license = "MIT OR Apache-2.0"
 rust-version.workspace = true
