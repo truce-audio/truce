@@ -345,6 +345,7 @@ pub(crate) fn build_bundle(
             &description,
             &vendor_url,
             p.ios_scale_editor_to_fit,
+            p.mute_preview_output,
         ),
     )?;
 
@@ -1240,6 +1241,7 @@ fn render_app_main_swift(
     description: &str,
     vendor_url: &str,
     scale_editor_to_fit: bool,
+    mute_preview_output: bool,
 ) -> String {
     // Source lives in `templates/au_ios/AppMain.swift` (compiled
     // in via `include_str!`); we substitute the placeholder tokens
@@ -1248,11 +1250,12 @@ fn render_app_main_swift(
     let description = swift_escape(description);
     let vendor_name = swift_escape(vendor_name);
     let vendor_url = swift_escape(vendor_url);
-    let scale_token = if scale_editor_to_fit { "true" } else { "false" };
+    let bool_token = |b: bool| if b { "true" } else { "false" };
     crate::templates::au_ios::APP_MAIN
         .replace("{app_name}", app_name)
         .replace("{vendor_name}", &vendor_name)
         .replace("{description}", &description)
         .replace("{vendor_url}", &vendor_url)
-        .replace("{ios_scale_editor_to_fit}", scale_token)
+        .replace("{ios_scale_editor_to_fit}", bool_token(scale_editor_to_fit))
+        .replace("{mute_preview_output}", bool_token(mute_preview_output))
 }

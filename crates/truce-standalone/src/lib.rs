@@ -196,6 +196,17 @@ where
     // concerns the developer shouldn't pin in code.
     defaults.apply(&mut opts);
 
+    // Lowest tier above the runtime default: the TOML-baked
+    // `mute_preview_output`. Lets analyzer-style plug-ins ship a
+    // standalone that drives `process()` from mic input without
+    // closing a feedback loop to the speakers. CLI / env / `Defaults`
+    // already set `output_enabled` to something explicit if any of
+    // those tiers cared, so this `or` only fires when nothing above
+    // it spoke.
+    if P::info().mute_preview_output {
+        opts.output_enabled = opts.output_enabled.or(Some(false));
+    }
+
     if opts.list_devices {
         audio::list_devices();
         return;

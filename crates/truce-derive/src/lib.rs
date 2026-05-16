@@ -176,6 +176,7 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
     let au3_name = opt_str(&plugin.au3_name);
     let aax_name = opt_str(&plugin.aax_name);
     let lv2_name = opt_str(&plugin.lv2_name);
+    let mute_preview_output = plugin.mute_preview_output;
 
     // `include_bytes!` registers `truce.toml` as a build-time dependency
     // through the compiler's normal dep-info tracking. Without it, edits
@@ -208,6 +209,7 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
                 au3_name: #au3_name,
                 aax_name: #aax_name,
                 lv2_name: #lv2_name,
+                mute_preview_output: #mute_preview_output,
             }
         }
     };

@@ -45,6 +45,14 @@ pub struct PluginInfo {
     pub au3_name: Option<&'static str>,
     pub aax_name: Option<&'static str>,
     pub lv2_name: Option<&'static str>,
+
+    /// Silence the audio output in *preview* hosts (truce-standalone
+    /// and the iOS `AUv3` container app). `process()` still runs so
+    /// editors that visualise an input signal — analyzers, tuners,
+    /// spectrum displays — keep updating from mic / file input. Set
+    /// from `mute_preview_output` in `truce.toml`; real DAW hosts
+    /// ignore this since they own their own output graph.
+    pub mute_preview_output: bool,
 }
 
 /// Resolve a format's display-name override. Each wrapper picks its

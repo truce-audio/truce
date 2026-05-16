@@ -86,6 +86,15 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     /// Substituted at install time; the template carries the
     /// literal "true"/"false" produced by `render_app_main_swift`.
     let scaleEditorToFit: Bool = {ios_scale_editor_to_fit}
+    /// Per-plugin "silence preview audio" flag
+    /// (`mute_preview_output` in truce.toml). When true, the
+    /// source-node render block zeros its output buffer instead of
+    /// copying the plug-in's `cb.process` output — `cb.process`
+    /// still runs each block so editors that visualise an input
+    /// signal (analyzers, tuners, spectrum displays) keep updating
+    /// from mic input without forming a feedback loop to the
+    /// speakers.
+    let mutePreviewOutput: Bool = {mute_preview_output}
     /// The editor's `UIView` (the one `gui_open` painted into).
     /// Held so `applyEditorScale` can apply a `CGAffineTransform`
     /// without re-doing the gui_open work. Nil until the editor
@@ -836,10 +845,20 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
             }
 
             // Copy AU output into AVAudioEngine's output buffer.
+            // When `mutePreviewOutput` is set the plug-in's output
+            // is discarded and we hand silence to the mixer instead.
+            // `cb.process` already ran above, so the editor's
+            // visualisation (FFT, meters, ...) sees the input it
+            // needs; we just refuse to close the loop to the
+            // speakers.
             for ch in 0..<bufList.count {
                 let dst = bufList[ch].mData!.assumingMemoryBound(to: Float.self)
-                let src = ch == 0 ? outL : outR
-                for i in 0..<n { dst[i] = src[i] }
+                if self.mutePreviewOutput {
+                    for i in 0..<n { dst[i] = 0 }
+                } else {
+                    let src = ch == 0 ? outL : outR
+                    for i in 0..<n { dst[i] = src[i] }
+                }
             }
             // Drain plug-in MIDI output → virtual MIDI source so
             // other iOS apps subscribed to "{app_name}" see the

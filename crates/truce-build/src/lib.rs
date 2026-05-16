@@ -94,6 +94,15 @@ pub struct PluginDef {
     pub aax_name: Option<String>,
     #[serde(default)]
     pub lv2_name: Option<String>,
+    /// Silence the audio output in *preview* hosts (truce-standalone,
+    /// the iOS `AUv3` container app). `process()` keeps running on the
+    /// usual cadence so plug-ins whose editor visualises an input
+    /// signal (analyzers, tuners, spectrum displays) still update —
+    /// but the signal never reaches the speakers, so a mic-fed analyzer
+    /// doesn't form a feedback loop with its own loopback. Real DAW
+    /// hosts ignore this flag; they own their own output graph.
+    #[serde(default)]
+    pub mute_preview_output: bool,
 }
 
 /// Resolve cargo's effective target directory for a given workspace root.

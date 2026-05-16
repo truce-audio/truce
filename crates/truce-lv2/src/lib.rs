@@ -759,6 +759,7 @@ mod uri_consistency_tests {
             au3_name: None,
             aax_name: None,
             lv2_name: None,
+            mute_preview_output: false,
         }
     }
 

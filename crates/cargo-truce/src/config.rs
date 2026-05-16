@@ -602,6 +602,7 @@ mod suite_tests {
                 au3_name: None,
                 aax_name: None,
                 lv2_name: None,
+                mute_preview_output: false,
             },
             au3_subtype: None,
             au_tag: default_au_tag(),
