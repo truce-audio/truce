@@ -22,7 +22,7 @@
 use std::sync::{Arc, Mutex};
 
 use objc2::msg_send;
-use objc2::runtime::{AnyClass, AnyObject, ClassBuilder, Sel};
+use objc2::runtime::{AnyClass, AnyObject, AnyProtocol, Bool, ClassBuilder, Sel};
 use objc2::sel;
 use objc2_foundation::{NSPoint, NSRect, NSSize};
 
@@ -333,6 +333,45 @@ unsafe fn install_editor_view<P: Params + 'static>(
                 sel!(touchesCancelled:withEvent:),
                 touches_cancelled::<P> as unsafe extern "C" fn(_, _, _, _),
             );
+            // `UIKeyInput` conformance — implemented as raw selector
+            // additions because ObjC protocols are duck-typed at
+            // dispatch time. The runtime calls `respondsToSelector:`
+            // before delivering keyboard events; presence of these
+            // three selectors is what flips the view into a usable
+            // text input. `canBecomeFirstResponder` overrides
+            // `UIResponder`'s default `NO` so `becomeFirstResponder`
+            // actually presents the soft keyboard.
+            builder.add_method(
+                sel!(canBecomeFirstResponder),
+                can_become_first_responder as unsafe extern "C" fn(_, _) -> Bool,
+            );
+            builder.add_method(
+                sel!(hasText),
+                has_text as unsafe extern "C" fn(_, _) -> Bool,
+            );
+            builder.add_method(
+                sel!(insertText:),
+                insert_text::<P> as unsafe extern "C" fn(_, _, _),
+            );
+            builder.add_method(
+                sel!(deleteBackward),
+                delete_backward::<P> as unsafe extern "C" fn(_, _),
+            );
+            // Explicitly declare `UIKeyInput` conformance. UIKit
+            // checks `[obj conformsToProtocol:@protocol(UIKeyInput)]`
+            // before presenting the soft keyboard for a first
+            // responder — just implementing the three selectors via
+            // `respondsToSelector:` isn't sufficient. Same `UIView`
+            // also has to implement `UITextInputTraits` (which
+            // `UIKeyInput` inherits from); empty trait methods
+            // default to sensible values so no extra selectors
+            // needed.
+            if let Some(proto) = AnyProtocol::get(c"UIKeyInput") {
+                builder.add_protocol(proto);
+            }
+            if let Some(proto) = AnyProtocol::get(c"UITextInputTraits") {
+                builder.add_protocol(proto);
+            }
             builder.register()
         };
 
@@ -465,6 +504,38 @@ fn run_frame<P: Params + 'static>(inner: &mut Inner<P>) {
     inner
         .renderer
         .render(&output.textures_delta, &clipped, inner.scale);
+    // Drive the iOS soft keyboard from egui's focus state. egui
+    // reports `wants_keyboard_input()` while a `TextEdit` (or any
+    // focus-grabbing widget) is the active receiver; we mirror
+    // that into `becomeFirstResponder` / `resignFirstResponder` on
+    // the host UIView. UIKit only presents the keyboard for the
+    // current first responder, so without this the typing
+    // capabilities we just added (`insertText:`, `deleteBackward`)
+    // would never receive callbacks.
+    // Drive the iOS soft keyboard from egui's focus state. egui
+    // sets `wants_keyboard_input()` while a `TextEdit` (or other
+    // focus-grabbing widget) is the active receiver; we mirror
+    // that into `becomeFirstResponder` / `resignFirstResponder`
+    // on the host UIView. UIKit only presents the keyboard for
+    // the current first responder *and* only if that responder
+    // conforms to `UIKeyInput` — the class declares both
+    // `UIKeyInput` + `UITextInputTraits` at class-build time
+    // (via `add_protocol` in `install_editor_view`) so UIKit
+    // accepts our `becomeFirstResponder`. Tapping a non-text
+    // egui widget makes `wants_keyboard_input` go false again on
+    // the next frame; we resign and the keyboard dismisses.
+    let wants_kb = inner.egui_ctx.wants_keyboard_input();
+    let view = inner.child_view;
+    if !view.is_null() {
+        unsafe {
+            let is_first: Bool = msg_send![view, isFirstResponder];
+            if wants_kb && !is_first.as_bool() {
+                let _: Bool = msg_send![view, becomeFirstResponder];
+            } else if !wants_kb && is_first.as_bool() {
+                let _: Bool = msg_send![view, resignFirstResponder];
+            }
+        }
+    }
     let _ = inner.params;
 }
 
@@ -516,6 +587,86 @@ enum TouchPhase {
     Began,
     Moved,
     Ended,
+}
+
+// ---------------------------------------------------------------------------
+// UIKeyInput conformance — drives the iOS soft keyboard for egui text widgets
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" fn can_become_first_responder(_self: &AnyObject, _cmd: Sel) -> Bool {
+    Bool::YES
+}
+
+/// `UIKeyInput.hasText` — `UIKit` reads this to decide whether
+/// to allow `deleteBackward` to fire. Always returning true
+/// matches what egui-internal text widgets do (their delete
+/// handler is a no-op when the field is empty, so over-firing
+/// is harmless and the `UIKit` predictive-text bar lights up
+/// correctly).
+unsafe extern "C" fn has_text(_self: &AnyObject, _cmd: Sel) -> Bool {
+    Bool::YES
+}
+
+/// `UIKeyInput.insertText:` — `UIKit` hands us the user's typed
+/// characters as an `NSString*` (one keystroke per call for
+/// regular keys, longer strings for IME composition commits).
+/// We forward to egui as a `Text` event; egui's `TextEdit`
+/// widget appends it at the cursor.
+unsafe extern "C" fn insert_text<P: Params + 'static>(
+    self_: &AnyObject,
+    _cmd: Sel,
+    text: *mut AnyObject,
+) {
+    unsafe {
+        if text.is_null() {
+            return;
+        }
+        let utf8: *const std::os::raw::c_char = msg_send![text, UTF8String];
+        if utf8.is_null() {
+            return;
+        }
+        let Ok(s) = std::ffi::CStr::from_ptr(utf8).to_str() else {
+            return;
+        };
+        if s.is_empty() {
+            return;
+        }
+        let Some(arc) = borrow_inner_arc::<P>(self_) else {
+            return;
+        };
+        let Ok(mut guard) = arc.lock() else { return };
+        let Some(inner) = guard.as_mut() else { return };
+        inner.pending_events.push(egui::Event::Text(s.to_string()));
+    }
+}
+
+/// `UIKeyInput.deleteBackward` — Backspace. egui maps this to a
+/// pressed+released `Key::Backspace` event; the `TextEdit`
+/// widget removes the character before the cursor (or the
+/// selection).
+unsafe extern "C" fn delete_backward<P: Params + 'static>(self_: &AnyObject, _cmd: Sel) {
+    unsafe {
+        let Some(arc) = borrow_inner_arc::<P>(self_) else {
+            return;
+        };
+        let Ok(mut guard) = arc.lock() else { return };
+        let Some(inner) = guard.as_mut() else { return };
+        let modifiers = egui::Modifiers::default();
+        inner.pending_events.push(egui::Event::Key {
+            key: egui::Key::Backspace,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        });
+        inner.pending_events.push(egui::Event::Key {
+            key: egui::Key::Backspace,
+            physical_key: None,
+            pressed: false,
+            repeat: false,
+            modifiers,
+        });
+    }
 }
 
 unsafe fn dispatch_touch<P: Params + 'static>(

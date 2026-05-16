@@ -6,8 +6,8 @@ use truce_core::Float;
 use truce_core::cast::{discrete_index, discrete_norm};
 
 use crate::layout::{
-    GRID_GAP, GRID_PADDING, GridLayout, Layout, PluginLayout, ROWS_COLUMN_GAP,
-    ROWS_LAYOUT_TOP, ROWS_ROW_GAP, ROWS_SECTION_LABEL_HEIGHT, WidgetKind, compute_section_offsets,
+    GRID_GAP, GRID_PADDING, GridLayout, Layout, PluginLayout, ROWS_COLUMN_GAP, ROWS_LAYOUT_TOP,
+    ROWS_ROW_GAP, ROWS_SECTION_LABEL_HEIGHT, WidgetKind, compute_section_offsets,
 };
 use crate::snapshot::ParamSnapshot;
 use crate::widgets::WidgetType;

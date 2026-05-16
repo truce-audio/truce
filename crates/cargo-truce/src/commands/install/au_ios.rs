@@ -385,19 +385,22 @@ pub(crate) fn build_bundle(
     if !app_status.success() {
         return Err(format!("swiftc app exited {app_status}").into());
     }
-    let orientation_tokens: Vec<String> = p
-        .ios_orientations
-        .clone()
-        .unwrap_or_else(|| {
-            DEFAULT_IOS_ORIENTATIONS
-                .iter()
-                .map(|s| (*s).to_string())
-                .collect()
-        });
+    let orientation_tokens: Vec<String> = p.ios_orientations.clone().unwrap_or_else(|| {
+        DEFAULT_IOS_ORIENTATIONS
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect()
+    });
     let orientations_xml = render_orientation_array(&orientation_tokens)?;
     fs_ctx::write(
         app_dir.join("Info.plist"),
-        app_info_plist(app_name, &app_bundle_id, &min_ios, target, &orientations_xml),
+        app_info_plist(
+            app_name,
+            &app_bundle_id,
+            &min_ios,
+            target,
+            &orientations_xml,
+        ),
     )?;
 
     // Optional icon set. Two paths:
@@ -1019,8 +1022,7 @@ fn framework_info_plist(
 /// Default orientation set when a plug-in doesn't declare its own.
 /// Matches the historical behaviour: portrait + both landscapes,
 /// no portrait-upside-down (audio apps don't generally use it).
-const DEFAULT_IOS_ORIENTATIONS: &[&str] =
-    &["portrait", "landscape-left", "landscape-right"];
+const DEFAULT_IOS_ORIENTATIONS: &[&str] = &["portrait", "landscape-left", "landscape-right"];
 
 /// Convert the TOML-friendly orientation token into the
 /// `UIInterfaceOrientation*` constant iOS expects in the
