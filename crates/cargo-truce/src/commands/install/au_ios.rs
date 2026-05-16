@@ -194,14 +194,18 @@ pub(crate) fn build_bundle(
 
     let stage = out.join("build/stage");
     fs_ctx::create_dir_all(&stage)?;
-    let templates = root.join("crates/cargo-truce/templates/au3");
-    fs_ctx::copy(
-        templates.join("AudioUnitFactory.swift"),
+    // AU v3 Swift sources come from the `include_str!`-baked
+    // constants in `crate::templates::au3` rather than from disk —
+    // when `cargo-truce` runs inside a downstream project (one
+    // that depends on truce as a path / git dep), the templates
+    // dir isn't at `<project-root>/crates/cargo-truce/templates`.
+    fs_ctx::write(
         stage.join("AudioUnitFactory.swift"),
+        crate::templates::au3::SWIFT_SOURCE,
     )?;
-    fs_ctx::copy(
-        templates.join("BridgingHeader.h"),
+    fs_ctx::write(
         stage.join("BridgingHeader.h"),
+        crate::templates::au3::BRIDGING_HEADER,
     )?;
 
     eprintln!("==> [3/5] AUExt.appex (swiftc)");
@@ -214,7 +218,7 @@ pub(crate) fn build_bundle(
     let au_tag = &p.au_tag;
 
     let appex_info = render_appex_info_plist(
-        &templates.join("AUExt-Info.plist"),
+        crate::templates::au3::APPEX_INFO_PLIST,
         app_name,
         au_type,
         au_sub,
@@ -223,10 +227,20 @@ pub(crate) fn build_bundle(
         &appex_bundle_id,
         &min_ios,
         target,
-    )?;
+    );
     fs_ctx::write(appex_dir.join("Info.plist"), appex_info)?;
 
-    let shim_include = root.join("crates/truce-shim-types/include");
+    // Write `au_shim_types.h` from the `include_str!`-baked
+    // constant (re-exported through `truce-shim-types`) into the
+    // stage dir so the bridging header's `#import` resolves
+    // without depending on the truce checkout layout — downstream
+    // projects that depend on truce as a path / git dep don't
+    // have a `crates/truce-shim-types/include` under their root.
+    fs_ctx::write(
+        stage.join("au_shim_types.h"),
+        crate::templates::au3::SHIM_TYPES_H,
+    )?;
+    let shim_include = stage.clone();
     let appex_bin = appex_dir.join("AUExt");
 
     let appex_status = Command::new("xcrun")
@@ -1098,7 +1112,7 @@ fn app_info_plist(
 
 #[allow(clippy::too_many_arguments)] // plist key-by-key — no win in collapsing
 fn render_appex_info_plist(
-    template_path: &Path,
+    template: &str,
     plugin_name: &str,
     au_type: &str,
     au_sub: &str,
@@ -1107,14 +1121,8 @@ fn render_appex_info_plist(
     appex_bundle_id: &str,
     min_ios: &str,
     target: IosTarget,
-) -> Result<String, crate::BoxErr> {
-    let raw = std::fs::read_to_string(template_path)
-        .map_err(|e| format!("read {}: {e}", template_path.display()))?;
-    // Inject MinimumOSVersion + CFBundleSupportedPlatforms right
-    // before the closing `</dict>` if they're not already present.
-    // The template historically targeted simulator + ad-hoc-signing
-    // and didn't need them; the device path does.
-    let s = raw
+) -> String {
+    template
         .replace("AUNAME", plugin_name)
         .replace("AUTYPE", au_type)
         .replace("AUSUB", au_sub)
@@ -1126,8 +1134,7 @@ fn render_appex_info_plist(
         .replace("$(EXECUTABLE_NAME)", "AUExt")
         .replace("$(PRODUCT_BUNDLE_IDENTIFIER)", appex_bundle_id)
         .replace("$(PRODUCT_BUNDLE_PACKAGE_TYPE)", "XPC!")
-        .replace("$(PRODUCT_MODULE_NAME)", "AUExt");
-    Ok(s)
+        .replace("$(PRODUCT_MODULE_NAME)", "AUExt")
 }
 
 /// Build the `<plist>` content for an `.entitlements` file.

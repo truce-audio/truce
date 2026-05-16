@@ -121,11 +121,20 @@ impl EguiRenderer {
                     force_fallback_adapter: false,
                 }))?;
 
+            // `downlevel_defaults` caps `max_texture_dimension_2d`
+            // at 2048 — that targets WebGL2-era hardware. iOS / iOS-
+            // simulator Metal supports far more (16384+ on modern
+            // devices), so an 800x400 logical editor scaled 3× to a
+            // 2400x1200 drawable would otherwise trip a validation
+            // panic in `Surface::configure`. Request the adapter's
+            // reported limits so we never artificially cap below
+            // what the device can do.
+            let required_limits = adapter.limits();
             let (device, queue) = pollster::block_on(adapter.request_device(
                 &wgpu::DeviceDescriptor {
                     label: Some("truce-egui-aax"),
                     required_features: wgpu::Features::empty(),
-                    required_limits: wgpu::Limits::downlevel_defaults(),
+                    required_limits,
                     memory_hints: wgpu::MemoryHints::Performance,
                 },
                 None,
@@ -139,6 +148,15 @@ impl EguiRenderer {
                 .find(|f| !f.is_srgb())
                 .copied()
                 .unwrap_or(surface_caps.formats[0]);
+            // iOS-sim Metal's `surface_caps.alpha_modes` may not
+            // contain `CompositeAlphaMode::Auto`; configure() then
+            // panics. Pick the first reported mode explicitly so
+            // we always land on one the surface actually supports.
+            let alpha_mode = surface_caps
+                .alpha_modes
+                .first()
+                .copied()
+                .unwrap_or(wgpu::CompositeAlphaMode::Auto);
 
             let surface_config = wgpu::SurfaceConfiguration {
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -147,7 +165,7 @@ impl EguiRenderer {
                 height,
                 present_mode: wgpu::PresentMode::AutoVsync,
                 desired_maximum_frame_latency: 2,
-                alpha_mode: wgpu::CompositeAlphaMode::Auto,
+                alpha_mode,
                 view_formats: vec![],
             };
             surface.configure(&device, &surface_config);
