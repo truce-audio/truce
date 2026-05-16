@@ -109,6 +109,15 @@ jobs:
           xcrun simctl boot truce-ci
           xcrun simctl bootstatus truce-ci
 
+      # `cargo build --workspace` isn't part of this job (it would
+      # also recompile every example crate against the host triple
+      # for no benefit — the iOS slices above are what we actually
+      # need built). The install / screenshot steps below run
+      # `./target/debug/cargo-truce` directly though, so build just
+      # that binary for the host.
+      - name: Build cargo-truce for host
+        run: cargo build -p cargo-truce
+
       - name: Install plugin on simulator
         run: |
           ./target/debug/cargo-truce install --ios -p truce-example-gain
