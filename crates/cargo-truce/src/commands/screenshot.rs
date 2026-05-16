@@ -477,10 +477,63 @@ enum IosCropMode {
 
 #[cfg(target_os = "macos")]
 fn crop_for_mode(png_path: &Path, bundle_id: &str, mode: IosCropMode) {
-    match mode {
-        IosCropMode::Editor => crop_to_editor_frame(png_path, bundle_id),
-        IosCropMode::Container => crop_to_container_chrome(png_path, bundle_id),
+    let frame = match read_editor_frame_json(bundle_id) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("warning: skipping screenshot trim ({e})");
+            return;
+        }
+    };
+    // `simctl io screenshot` always returns the physical framebuffer,
+    // which is portrait on every iPhone. For a landscape-only plug-in
+    // iOS still renders the UI in landscape — that means the captured
+    // PNG has the UI rotated 90° inside a portrait canvas, and the
+    // editor-frame coords (which the container wrote in the rendered
+    // UI's coordinate space) land out of bounds against the un-rotated
+    // PNG. Rotate the file in place so its orientation matches the
+    // coord space before the crop step touches the dimensions.
+    if let Err(e) = orient_to_ui(png_path, frame.orientation.as_deref()) {
+        eprintln!("warning: orient {} skipped ({e})", png_path.display());
     }
+    match mode {
+        IosCropMode::Editor => crop_to_editor_frame(png_path, &frame),
+        IosCropMode::Container => crop_to_container_chrome(png_path, &frame),
+    }
+}
+
+/// Rotate `path` in place so the saved PNG matches the rendered-UI
+/// orientation the container reported. `sips -r <degrees>` rotates
+/// clockwise; we pick whichever rotation undoes iOS's rotation of
+/// the UI inside the portrait framebuffer.
+///
+/// For `landscapeLeft` (home button on left): iOS draws the UI 90°
+/// CCW inside the portrait framebuffer, so rotating the PNG 90° CW
+/// (`sips -r 90`) returns it to upright. `landscapeRight` is the
+/// mirror (270° CW = 90° CCW); `portraitUpsideDown` is 180°.
+/// `portrait` and unknown orientations no-op.
+#[cfg(target_os = "macos")]
+fn orient_to_ui(path: &Path, orientation: Option<&str>) -> Result<(), crate::BoxErr> {
+    let degrees = match orientation.unwrap_or("portrait") {
+        "landscapeLeft" => "90",
+        "landscapeRight" => "270",
+        "portraitUpsideDown" => "180",
+        _ => return Ok(()),
+    };
+    let out = Command::new("sips")
+        .args(["-r", degrees, "--out"])
+        .arg(path)
+        .arg(path)
+        .output()
+        .map_err(|e| format!("sips: {e}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "sips -r {degrees} exited {} ({})",
+            out.status,
+            String::from_utf8_lossy(&out.stderr).trim(),
+        )
+        .into());
+    }
+    Ok(())
 }
 
 /// Crop the simulator screenshot down to just the editor's region.
@@ -491,14 +544,7 @@ fn crop_for_mode(png_path: &Path, bundle_id: &str, mode: IosCropMode) {
 /// a warning, since cropping is a quality-of-life feature and the
 /// underlying PNG is still useful.
 #[cfg(target_os = "macos")]
-fn crop_to_editor_frame(png_path: &Path, bundle_id: &str) {
-    let frame = match read_editor_frame_json(bundle_id) {
-        Ok(f) => f,
-        Err(e) => {
-            eprintln!("warning: skipping screenshot trim ({e})");
-            return;
-        }
-    };
+fn crop_to_editor_frame(png_path: &Path, frame: &EditorFrame) {
     if let Err(e) = crop_png(png_path, frame.x, frame.y, frame.w, frame.h) {
         eprintln!("warning: failed to trim {} ({e})", png_path.display());
     }
@@ -511,14 +557,7 @@ fn crop_to_editor_frame(png_path: &Path, bundle_id: &str) {
 /// leaving the screenshot untrimmed if the container didn't write
 /// the safe-area inset (older builds, or layout still pending).
 #[cfg(target_os = "macos")]
-fn crop_to_container_chrome(png_path: &Path, bundle_id: &str) {
-    let frame = match read_editor_frame_json(bundle_id) {
-        Ok(f) => f,
-        Err(e) => {
-            eprintln!("warning: skipping screenshot trim ({e})");
-            return;
-        }
-    };
+fn crop_to_container_chrome(png_path: &Path, frame: &EditorFrame) {
     let (src_w, src_h) = match png_size(png_path) {
         Ok(d) => d,
         Err(e) => {
@@ -562,6 +601,14 @@ struct EditorFrame {
     /// by `--mode container` to crop just that band off so framework
     /// chrome screenshots stay stable across runs.
     safe_area_top_px: u32,
+    /// Interface orientation the container was rendering in when it
+    /// wrote the frame. `simctl io screenshot` always captures the
+    /// portrait-physical framebuffer, so a landscape-only plug-in
+    /// shows up rotated 90° inside a portrait PNG. `crop_for_mode`
+    /// rotates the file to match this orientation before cropping
+    /// so the frame coords (which are in the rendered UI's space)
+    /// line up. `None` for older containers that didn't write it.
+    orientation: Option<String>,
 }
 
 #[cfg(target_os = "macos")]
@@ -604,6 +651,17 @@ fn read_editor_frame_json(bundle_id: &str) -> Result<EditorFrame, crate::BoxErr>
             .map(|v| u32::try_from(v.max(0)).unwrap_or(0))
             .map_err(|e| format!("frame JSON {key}: {e}").into())
     };
+    // Hand-rolled string-field reader for the new `orientation`
+    // entry. Same shape as `pick` but parses a quoted value instead
+    // of an integer. `None` when the field is absent (older
+    // containers) so callers can fall back to "portrait".
+    let pick_string = |key: &str| -> Option<String> {
+        let needle = format!("\"{key}\":\"");
+        let start = json.find(&needle)? + needle.len();
+        let rest = &json[start..];
+        let end = rest.find('"')?;
+        Some(rest[..end].to_string())
+    };
     Ok(EditorFrame {
         x: pick("x")?,
         y: pick("y")?,
@@ -612,6 +670,7 @@ fn read_editor_frame_json(bundle_id: &str) -> Result<EditorFrame, crate::BoxErr>
         // Tolerate older containers that didn't write this field
         // yet — fall back to 0 so the editor-mode crop keeps working.
         safe_area_top_px: pick("safeAreaTopPx").unwrap_or(0),
+        orientation: pick_string("orientation"),
     })
 }
 

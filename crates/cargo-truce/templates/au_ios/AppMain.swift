@@ -566,9 +566,28 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     /// `didFinishLaunchingWithOptions` (editor block + plug-in-
     /// independent fallback). Last writer wins; both producers
     /// agree on `safeAreaTopPx` so order doesn't affect that field.
+    ///
+    /// The `orientation` field tells `cargo truce screenshot` which
+    /// way the UI is rendered inside the (always-portrait-physical)
+    /// framebuffer: `simctl io screenshot` captures the framebuffer
+    /// as-is, so a landscape-only plug-in's content appears rotated
+    /// 90° within a portrait-shaped PNG. The Rust side rotates the
+    /// PNG to match this orientation before applying the crop —
+    /// otherwise the editor-frame coords (which are in the rendered
+    /// UI space) land out of bounds against the portrait framebuffer.
     func writeFrameJson(x: Int, y: Int, w: Int, h: Int, scale: CGFloat, safeTopPx: Int) {
+        let orientationName: String
+        switch UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene })
+            .first?.interfaceOrientation ?? .portrait {
+        case .landscapeLeft:        orientationName = "landscapeLeft"
+        case .landscapeRight:       orientationName = "landscapeRight"
+        case .portraitUpsideDown:   orientationName = "portraitUpsideDown"
+        default:                    orientationName = "portrait"
+        }
         let json = "{\"x\":\(x),\"y\":\(y),\"w\":\(w),\"h\":\(h),"
-            + "\"scale\":\(scale),\"safeAreaTopPx\":\(safeTopPx)}"
+            + "\"scale\":\(scale),\"safeAreaTopPx\":\(safeTopPx),"
+            + "\"orientation\":\"\(orientationName)\"}"
         if let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
             let url = dir.appendingPathComponent("_truce_editor_frame.json")
             try? json.write(to: url, atomically: true, encoding: .utf8)
