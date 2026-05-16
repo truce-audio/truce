@@ -1420,7 +1420,7 @@ mod tests {
     // -- Tests: dropdown overflow/clipping --
 
     #[test]
-    fn dropdown_flips_upward_when_near_bottom() {
+    fn dropdown_anchors_below_button_even_near_bottom() {
         let mut editor = make_editor_bottom_dropdown();
         let (dx, dy) = {
             let region = editor
@@ -1441,26 +1441,21 @@ mod tests {
         let (_, popup_y, _, popup_h) = dd.popup_rect;
         let window_h = editor.layout.height() as f32;
 
-        // Popup should not extend past the window bottom
+        // Popup never extends past the window bottom — it clips /
+        // scrolls into the remaining space instead.
         assert!(
-            popup_y + popup_h <= window_h + 1.0, // +1 for float rounding
+            popup_y + popup_h <= window_h + 1.0,
             "popup bottom {} exceeds window height {window_h}",
             popup_y + popup_h
         );
 
-        // If it flipped, popup_y should be above the button
-        let anchor_below = region.dropdown_anchor_y;
-        let anchor_above = anchor_below - 20.0;
-        let item_h = 18.0f32;
-        let padding = 4.0f32;
-        let full_h = dd.options.len() as f32 * item_h + padding * 2.0;
-        if anchor_below + full_h > window_h {
-            // Should have flipped upward: popup top is above the button top
-            assert!(
-                popup_y < anchor_above,
-                "expected upward flip: popup_y={popup_y}, anchor_above={anchor_above}"
-            );
-        }
+        // Popup never flips above the button: anchored at
+        // `dropdown_anchor_y` (= bottom-of-button-box) regardless
+        // of how little room remains below.
+        assert_eq!(
+            popup_y, region.dropdown_anchor_y,
+            "popup should anchor below the button, not flip upward"
+        );
     }
 
     #[test]

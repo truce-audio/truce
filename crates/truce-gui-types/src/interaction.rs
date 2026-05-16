@@ -6,7 +6,7 @@ use truce_core::Float;
 use truce_core::cast::{discrete_index, discrete_norm};
 
 use crate::layout::{
-    DROPDOWN_BOX_HEIGHT, GRID_GAP, GRID_PADDING, GridLayout, Layout, PluginLayout, ROWS_COLUMN_GAP,
+    GRID_GAP, GRID_PADDING, GridLayout, Layout, PluginLayout, ROWS_COLUMN_GAP,
     ROWS_LAYOUT_TOP, ROWS_ROW_GAP, ROWS_SECTION_LABEL_HEIGHT, WidgetKind, compute_section_offsets,
 };
 use crate::snapshot::ParamSnapshot;
@@ -820,24 +820,20 @@ fn open_dropdown(
     let padding = 4.0f32;
 
     let anchor_below = region.dropdown_anchor_y; // bottom of button box
-    let anchor_above = anchor_below - DROPDOWN_BOX_HEIGHT; // top of button box
     let popup_w = region.w.max(80.0);
     let full_popup_h = options.len() as f32 * item_h + padding * 2.0;
 
-    let (popup_y, avail_h) = if anchor_below + full_popup_h <= window_h {
-        (anchor_below, full_popup_h)
-    } else if anchor_above - full_popup_h >= 0.0 {
-        (anchor_above - full_popup_h, full_popup_h)
-    } else {
-        let space_below = window_h - anchor_below;
-        let space_above = anchor_above;
-        if space_below >= space_above {
-            (anchor_below, space_below.max(item_h + padding * 2.0))
-        } else {
-            let h = space_above.max(item_h + padding * 2.0);
-            (anchor_above - h, h)
-        }
-    };
+    // Anchor the popup directly under the dropdown button. The
+    // earlier behaviour auto-flipped above when the full popup
+    // didn't fit below — on small editors (and iPhone-scaled
+    // ones) the flipped position landed near the top of the
+    // editor, far from the button the user just tapped, which
+    // read as a positioning bug. Today we keep the popup anchored
+    // below and just clip / scroll the list when there isn't
+    // enough room.
+    let space_below = (window_h - anchor_below).max(item_h + padding * 2.0);
+    let avail_h = full_popup_h.min(space_below);
+    let popup_y = anchor_below;
 
     let visible_count = ((avail_h - padding * 2.0) / item_h).floor().max(1.0) as usize;
     let visible_count = visible_count.min(options.len());

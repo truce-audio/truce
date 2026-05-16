@@ -325,7 +325,13 @@ pub(crate) fn build_bundle(
         .to_string();
     fs_ctx::write(
         &app_main_src,
-        render_app_main_swift(app_name, &cfg.vendor.name, &description, &vendor_url),
+        render_app_main_swift(
+            app_name,
+            &cfg.vendor.name,
+            &description,
+            &vendor_url,
+            p.ios_scale_editor_to_fit,
+        ),
     )?;
 
     let app_status = Command::new("xcrun")
@@ -379,9 +385,19 @@ pub(crate) fn build_bundle(
     if !app_status.success() {
         return Err(format!("swiftc app exited {app_status}").into());
     }
+    let orientation_tokens: Vec<String> = p
+        .ios_orientations
+        .clone()
+        .unwrap_or_else(|| {
+            DEFAULT_IOS_ORIENTATIONS
+                .iter()
+                .map(|s| (*s).to_string())
+                .collect()
+        });
+    let orientations_xml = render_orientation_array(&orientation_tokens)?;
     fs_ctx::write(
         app_dir.join("Info.plist"),
-        app_info_plist(app_name, &app_bundle_id, &min_ios, target),
+        app_info_plist(app_name, &app_bundle_id, &min_ios, target, &orientations_xml),
     )?;
 
     // Optional icon set. Two paths:
@@ -1000,7 +1016,56 @@ fn framework_info_plist(
     )
 }
 
-fn app_info_plist(app_name: &str, bundle_id: &str, min_ios: &str, target: IosTarget) -> String {
+/// Default orientation set when a plug-in doesn't declare its own.
+/// Matches the historical behaviour: portrait + both landscapes,
+/// no portrait-upside-down (audio apps don't generally use it).
+const DEFAULT_IOS_ORIENTATIONS: &[&str] =
+    &["portrait", "landscape-left", "landscape-right"];
+
+/// Convert the TOML-friendly orientation token into the
+/// `UIInterfaceOrientation*` constant iOS expects in the
+/// `UISupportedInterfaceOrientations` plist array.
+fn map_orientation(token: &str) -> Result<&'static str, crate::BoxErr> {
+    Ok(match token {
+        "portrait" => "UIInterfaceOrientationPortrait",
+        "portrait-upside-down" => "UIInterfaceOrientationPortraitUpsideDown",
+        "landscape-left" => "UIInterfaceOrientationLandscapeLeft",
+        "landscape-right" => "UIInterfaceOrientationLandscapeRight",
+        other => {
+            return Err(format!(
+                "ios_orientations: unknown value `{other}`; expected one of \
+                 portrait / portrait-upside-down / landscape-left / landscape-right"
+            )
+            .into());
+        }
+    })
+}
+
+/// Build the `<string>…</string>` lines for the
+/// `UISupportedInterfaceOrientations` array. Returns the joined
+/// inner XML (no `<array>` wrapper). Rejects empty input and
+/// unknown tokens — empty would let iOS reject the bundle at
+/// install time with a less actionable message.
+fn render_orientation_array(tokens: &[String]) -> Result<String, crate::BoxErr> {
+    if tokens.is_empty() {
+        return Err("ios_orientations: list must contain at least one entry".into());
+    }
+    let mut out = String::new();
+    for t in tokens {
+        out.push_str("        <string>");
+        out.push_str(map_orientation(t)?);
+        out.push_str("</string>\n");
+    }
+    Ok(out)
+}
+
+fn app_info_plist(
+    app_name: &str,
+    bundle_id: &str,
+    min_ios: &str,
+    target: IosTarget,
+    orientations_xml: &str,
+) -> String {
     let platform = target.supported_platform();
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -1022,10 +1087,7 @@ fn app_info_plist(app_name: &str, bundle_id: &str, min_ios: &str, target: IosTar
     <key>UILaunchScreen</key><dict/>
     <key>UISupportedInterfaceOrientations</key>
     <array>
-        <string>UIInterfaceOrientationPortrait</string>
-        <string>UIInterfaceOrientationLandscapeLeft</string>
-        <string>UIInterfaceOrientationLandscapeRight</string>
-    </array>
+{orientations_xml}    </array>
 </dict>
 </plist>
 "#
@@ -1168,18 +1230,20 @@ fn render_app_main_swift(
     vendor_name: &str,
     description: &str,
     vendor_url: &str,
+    scale_editor_to_fit: bool,
 ) -> String {
     // Source lives in `templates/au_ios/AppMain.swift` (compiled
-    // in via `include_str!`); we substitute the four
-    // `{placeholder}` tokens the template carries. Everything else
-    // (Swift braces, string interpolation `\(expr)`, etc.) is
-    // left intact.
+    // in via `include_str!`); we substitute the placeholder tokens
+    // the template carries. Everything else (Swift braces, string
+    // interpolation `\(expr)`, etc.) is left intact.
     let description = swift_escape(description);
     let vendor_name = swift_escape(vendor_name);
     let vendor_url = swift_escape(vendor_url);
+    let scale_token = if scale_editor_to_fit { "true" } else { "false" };
     crate::templates::au_ios::APP_MAIN
         .replace("{app_name}", app_name)
         .replace("{vendor_name}", &vendor_name)
         .replace("{description}", &description)
         .replace("{vendor_url}", &vendor_url)
+        .replace("{ios_scale_editor_to_fit}", scale_token)
 }

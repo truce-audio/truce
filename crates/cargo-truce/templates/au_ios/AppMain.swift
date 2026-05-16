@@ -52,9 +52,82 @@ extension UIFont {
     }
 }
 
+/// Root view controller — exposes `viewDidLayoutSubviews` /
+/// `viewWillTransition(to:with:)` as closure callbacks so the
+/// AppDelegate can drive scale-to-fit + the landscape sidebar
+/// re-layout without subclassing further.
+class ContainerViewController: UIViewController {
+    var onLayout: (() -> Void)?
+    var onWillTransition: ((CGSize) -> Void)?
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        onLayout?()
+    }
+    override func viewWillTransition(
+        to size: CGSize, with coordinator: UIViewControllerTransitionCoordinator
+    ) {
+        super.viewWillTransition(to: size, with: coordinator)
+        coordinator.animate(alongsideTransition: { _ in
+            self.onWillTransition?(size)
+        })
+    }
+}
+
 @UIApplicationMain
 class AppDelegate: UIResponder, UIApplicationDelegate {
     var window: UIWindow?
+    /// Root VC owning the chrome + editor preview. Held so the
+    /// AppDelegate can read `view.bounds` for scale-to-fit /
+    /// orientation-aware layout decisions and hook the sidebar
+    /// overlay into the view hierarchy.
+    var rootVC: ContainerViewController?
+    /// Per-plugin "scale the editor to fit the container hero
+    /// region" flag (`ios_scale_editor_to_fit` in truce.toml).
+    /// Substituted at install time; the template carries the
+    /// literal "true"/"false" produced by `render_app_main_swift`.
+    let scaleEditorToFit: Bool = {ios_scale_editor_to_fit}
+    /// The editor's `UIView` (the one `gui_open` painted into).
+    /// Held so `applyEditorScale` can apply a `CGAffineTransform`
+    /// without re-doing the gui_open work. Nil until the editor
+    /// is open.
+    var editorContainer: UIView?
+    /// Natural pixel size the editor reported via `gui_get_size`.
+    /// The scale-to-fit math divides the available host bounds by
+    /// this to compute the uniform scale factor.
+    var editorNaturalSize: CGSize = .zero
+    /// Chrome elements held on the delegate so the landscape
+    /// re-layout can re-parent them between the top bar / bottom
+    /// of the root view and the sidebar overlay.
+    var topBar: UIStackView?
+    var separator: UIView?
+    var previewHost: UIView?
+    /// Landscape sidebar overlay. Built lazily on the first
+    /// rotation to landscape so portrait-only installs (and
+    /// portrait-first launches) pay nothing.
+    var hamburgerBtn: UIButton?
+    var sidebarOverlay: UIView?
+    var sidebarTrailingConstraint: NSLayoutConstraint?
+    var sidebarTapCatcher: UIView?
+    var sidebarVisible: Bool = false
+    /// Flips true once the editor-block write at the bottom of
+    /// `application(_:didFinishLaunchingWithOptions:)` runs. The
+    /// plug-in-independent fallback (which writes only the safe-
+    /// area inset with zeroed editor frame) consults this and
+    /// skips if the editor already wrote. Both blocks are
+    /// `DispatchQueue.main.async`, so they fire in enqueue order
+    /// — the flag is set on the first block before the second
+    /// runs.
+    var editorFrameWritten: Bool = false
+    /// Cached `previewHost` constraint set per layout mode, so
+    /// switching orientation deactivates the prior mode's anchors
+    /// before activating the new ones.
+    var previewHostPortraitConstraints: [NSLayoutConstraint] = []
+    var previewHostLandscapeConstraints: [NSLayoutConstraint] = []
+    /// Last layout mode applied; gates the re-layout work so
+    /// every `viewDidLayoutSubviews` call doesn't reshuffle the
+    /// view hierarchy (it can fire many times per orientation
+    /// change as constraints settle).
+    var lastLayoutLandscape: Bool? = nil
     // Audio test wiring lives on the delegate so the toggle button
     // can start / stop the engine across taps. AU instances must be
     // retained for the engine + scene to outlive the
@@ -161,7 +234,10 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
             .allocate(capacity: self.midiInRingCapacity)
 
         let window = UIWindow(frame: UIScreen.main.bounds)
-        let vc = UIViewController()
+        let vc = ContainerViewController()
+        self.rootVC = vc
+        vc.onLayout = { [weak self] in self?.applyOrientationLayout() }
+        vc.onWillTransition = { [weak self] _ in self?.applyOrientationLayout() }
         // Force a dark UI throughout. iOS resolves all
         // semantic colors (.label, .secondaryLabel,
         // .systemBackground, …) against this trait so labels +
@@ -232,6 +308,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
             topBar.leadingAnchor.constraint(equalTo: g.leadingAnchor, constant: 16),
             topBar.trailingAnchor.constraint(equalTo: g.trailingAnchor, constant: -16),
         ])
+        self.topBar = topBar
 
         // Hairline separator under the bar — gives the chrome a
         // proper navigation-bar look without UINavigationController.
@@ -245,6 +322,23 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
             separator.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             separator.heightAnchor.constraint(equalToConstant: 0.5),
         ])
+        self.separator = separator
+
+        // Hamburger button — only visible in landscape, drawn over
+        // the editor at the safe-area top-trailing corner. Built
+        // here (hidden) so `applyOrientationLayout` can just toggle
+        // `isHidden` rather than allocate on every rotation.
+        let hamburger = iconBarButton(systemName: "line.3.horizontal") { [weak self] in
+            self?.toggleSidebar()
+        }
+        hamburger.translatesAutoresizingMaskIntoConstraints = false
+        hamburger.isHidden = true
+        root.addSubview(hamburger)
+        NSLayoutConstraint.activate([
+            hamburger.topAnchor.constraint(equalTo: g.topAnchor, constant: 4),
+            hamburger.trailingAnchor.constraint(equalTo: g.trailingAnchor, constant: -8),
+        ])
+        self.hamburgerBtn = hamburger
 
         // ── Bottom action area (status + button anchored to bottom) ──
         let statusLabel = UILabel()
@@ -292,12 +386,24 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         let previewHost = UIView()
         previewHost.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(previewHost)
-        NSLayoutConstraint.activate([
+        // Two constraint sets — portrait sandwiches the editor
+        // between the separator-bottom and the Play button; the
+        // landscape set pins it to the safe-area edges so the
+        // editor fills the screen (chrome moves into the sidebar).
+        self.previewHostPortraitConstraints = [
             previewHost.topAnchor.constraint(equalTo: separator.bottomAnchor, constant: 8),
             previewHost.bottomAnchor.constraint(equalTo: auBtn.topAnchor, constant: -16),
             previewHost.leadingAnchor.constraint(equalTo: g.leadingAnchor, constant: 16),
             previewHost.trailingAnchor.constraint(equalTo: g.trailingAnchor, constant: -16),
-        ])
+        ]
+        self.previewHostLandscapeConstraints = [
+            previewHost.topAnchor.constraint(equalTo: g.topAnchor),
+            previewHost.bottomAnchor.constraint(equalTo: g.bottomAnchor),
+            previewHost.leadingAnchor.constraint(equalTo: g.leadingAnchor),
+            previewHost.trailingAnchor.constraint(equalTo: g.trailingAnchor),
+        ]
+        NSLayoutConstraint.activate(self.previewHostPortraitConstraints)
+        self.previewHost = previewHost
 
         // GUI path runs first + unconditionally. `g_callbacks` is
         // populated by the framework dylib loaded in this process,
@@ -363,6 +469,14 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
             ])
             cb.pointee.gui_open(ctx, Unmanaged.passUnretained(container).toOpaque())
             log.info("editor: gui_open(\(w)x\(h)) into UIView")
+            // Keep references for `applyEditorScale`. We leave the
+            // fixed-size constraints in place even when scale-to-
+            // fit is active — the transform shrinks the rasterised
+            // bitmap at composite time without changing the
+            // editor's logical-pixel coordinate space (which the
+            // CPU backend bakes into its tiny-skia Pixmap size).
+            self.editorContainer = container
+            self.editorNaturalSize = sz
 
             // After layout settles (one main-queue hop), publish the
             // editor's physical-pixel frame so `cargo truce screenshot
@@ -382,6 +496,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
                 let ph = Int(frameInWindow.height * s)
                 self?.writeFrameJson(x: px, y: py, w: pw, h: ph, scale: s,
                                      safeTopPx: Int(vc.view.safeAreaInsets.top * s))
+                self?.editorFrameWritten = true
             }
         }
 
@@ -392,13 +507,15 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         // Plug-in-independent safe-area inset write. Runs even when
         // the editor never opens (e.g. alt-GUI backends with no iOS
         // implementation yet) so `--crop-mode container` always has
-        // a status-bar height to crop. Loses to the editor-block
-        // write above if both fire, but the values match.
+        // a status-bar height to crop. Skips when the editor block
+        // above already wrote — otherwise the (0,0,0,0) frame here
+        // would clobber the real editor rect.
         DispatchQueue.main.async { [weak self] in
+            guard let self = self, !self.editorFrameWritten else { return }
             vc.view.layoutIfNeeded()
             let s = vc.view.window?.screen.scale ?? UIScreen.main.scale
             let safeTopPx = Int(vc.view.safeAreaInsets.top * s)
-            self?.writeFrameJson(x: 0, y: 0, w: 0, h: 0, scale: s, safeTopPx: safeTopPx)
+            self.writeFrameJson(x: 0, y: 0, w: 0, h: 0, scale: s, safeTopPx: safeTopPx)
         }
         return true
     }
@@ -1158,6 +1275,23 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         }
         usageBody.text = usageText
 
+        // Explicit Close button — iOS hides the swipe-grabber on
+        // landscape iPhone where sheets present full-screen, and
+        // the navigation chrome-less `UIViewController` we present
+        // has no implicit dismiss control. Without this the user
+        // is stuck on the About screen until they kill the app.
+        var closeCfg = UIButton.Configuration.plain()
+        closeCfg.image = UIImage(systemName: "xmark.circle.fill")?
+            .applyingSymbolConfiguration(.init(pointSize: 28, weight: .regular))
+        closeCfg.contentInsets = NSDirectionalEdgeInsets(top: 4, leading: 4, bottom: 4, trailing: 4)
+        let closeBtn = UIButton(configuration: closeCfg)
+        closeBtn.tintColor = .secondaryLabel
+        closeBtn.translatesAutoresizingMaskIntoConstraints = false
+        closeBtn.addAction(UIAction { [weak sheet] _ in
+            sheet?.dismiss(animated: true)
+        }, for: .touchUpInside)
+        sheet.view.addSubview(closeBtn)
+
         let stack = UIStackView(arrangedSubviews: [descLabel, usageHeader, usageBody])
         stack.axis = .vertical
         stack.spacing = 12
@@ -1167,7 +1301,9 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
         let g = sheet.view.safeAreaLayoutGuide
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: g.topAnchor, constant: 24),
+            closeBtn.topAnchor.constraint(equalTo: g.topAnchor, constant: 8),
+            closeBtn.trailingAnchor.constraint(equalTo: g.trailingAnchor, constant: -12),
+            stack.topAnchor.constraint(equalTo: closeBtn.bottomAnchor, constant: 8),
             stack.leadingAnchor.constraint(equalTo: g.leadingAnchor, constant: 20),
             stack.trailingAnchor.constraint(equalTo: g.trailingAnchor, constant: -20),
         ])
@@ -1190,5 +1326,209 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         btn.tintColor = .secondaryLabel
         btn.addAction(UIAction { _ in action() }, for: .touchUpInside)
         return btn
+    }
+
+    // MARK: - Orientation-aware layout
+    //
+    // Portrait: chrome stacks vertically — top bar / editor /
+    // status / Play button. The editor lives in `previewHost`,
+    // which sandwiches between the chrome bands.
+    //
+    // Landscape: chrome moves behind a hamburger overlay. The
+    // editor fills the full safe-area rect; tapping the
+    // hamburger in the top-right slides a sidebar in from the
+    // right carrying the same title / status / Play button views.
+    //
+    // Scale-to-fit (`scaleEditorToFit`) is independent — applies
+    // a `CGAffineTransform` to the editor view so an oversize
+    // editor shrinks uniformly to fit `previewHost.bounds`.
+
+    /// Called from `ContainerViewController.viewDidLayoutSubviews`
+    /// and after orientation transitions. Idempotent — short-
+    /// circuits on the second consecutive call with the same
+    /// orientation so repeated layout passes don't re-shuffle
+    /// the view hierarchy.
+    func applyOrientationLayout() {
+        guard let root = self.rootVC?.view else { return }
+        let isLandscape = root.bounds.width > root.bounds.height
+        if self.lastLayoutLandscape != isLandscape {
+            self.lastLayoutLandscape = isLandscape
+            if isLandscape {
+                NSLayoutConstraint.deactivate(self.previewHostPortraitConstraints)
+                NSLayoutConstraint.activate(self.previewHostLandscapeConstraints)
+                self.topBar?.isHidden = true
+                self.separator?.isHidden = true
+                self.auTestButton?.isHidden = true
+                self.auStatusLabel?.isHidden = true
+                self.hamburgerBtn?.isHidden = false
+                self.buildSidebarIfNeeded()
+                // `previewHost` was added to `root` after the
+                // hamburger, so by default it draws OVER it and
+                // the tap target is hidden. Hoist hamburger +
+                // sidebar to the front of root's subview list so
+                // they sit above the editor in landscape.
+                if let hamburger = self.hamburgerBtn {
+                    root.bringSubviewToFront(hamburger)
+                }
+                if let tap = self.sidebarTapCatcher {
+                    root.bringSubviewToFront(tap)
+                }
+                if let sidebar = self.sidebarOverlay {
+                    root.bringSubviewToFront(sidebar)
+                }
+            } else {
+                NSLayoutConstraint.deactivate(self.previewHostLandscapeConstraints)
+                NSLayoutConstraint.activate(self.previewHostPortraitConstraints)
+                self.topBar?.isHidden = false
+                self.separator?.isHidden = false
+                self.auTestButton?.isHidden = false
+                self.auStatusLabel?.isHidden = false
+                self.hamburgerBtn?.isHidden = true
+                self.hideSidebar(animated: false)
+            }
+        }
+        self.applyEditorScale()
+    }
+
+    /// Apply the uniform scale-to-fit transform to the editor
+    /// container so the rasterised bitmap fills `previewHost.bounds`
+    /// without distorting aspect ratio. Up-scales as well as down-
+    /// scales — small desktop editors expand to fill iPad real
+    /// estate; large editors shrink to fit iPhone. No-op when
+    /// `scaleEditorToFit` is false.
+    func applyEditorScale() {
+        guard self.scaleEditorToFit,
+              let container = self.editorContainer,
+              let host = container.superview else { return }
+        let avail = host.bounds.size
+        let natural = self.editorNaturalSize
+        guard natural.width > 0, natural.height > 0,
+              avail.width > 0, avail.height > 0 else { return }
+        let s = min(avail.width / natural.width,
+                    avail.height / natural.height)
+        container.transform = CGAffineTransform(scaleX: s, y: s)
+    }
+
+    /// Allocate the sidebar overlay + tap-catcher on first
+    /// landscape entry. Held thereafter for the app's lifetime
+    /// so subsequent rotations just toggle visibility.
+    func buildSidebarIfNeeded() {
+        if self.sidebarOverlay != nil { return }
+        guard let root = self.rootVC?.view else { return }
+
+        // Tap-catcher: full-screen invisible view behind the
+        // sidebar that dismisses on tap-outside. Tapping the
+        // sidebar itself doesn't fall through because the
+        // sidebar's own gesture absorbs the touch.
+        let tap = UIView()
+        tap.translatesAutoresizingMaskIntoConstraints = false
+        tap.backgroundColor = UIColor(white: 0.0, alpha: 0.0)
+        tap.isHidden = true
+        root.addSubview(tap)
+        NSLayoutConstraint.activate([
+            tap.topAnchor.constraint(equalTo: root.topAnchor),
+            tap.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            tap.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            tap.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+        ])
+        let tapGesture = UITapGestureRecognizer(
+            target: self, action: #selector(self.tapCatcherTapped))
+        tap.addGestureRecognizer(tapGesture)
+        self.sidebarTapCatcher = tap
+
+        let sidebar = UIView()
+        sidebar.translatesAutoresizingMaskIntoConstraints = false
+        sidebar.backgroundColor = .systemBackground
+        sidebar.layer.shadowColor = UIColor.black.cgColor
+        sidebar.layer.shadowOpacity = 0.3
+        sidebar.layer.shadowRadius = 8
+        sidebar.layer.shadowOffset = CGSize(width: -2, height: 0)
+        root.addSubview(sidebar)
+        let g = root.safeAreaLayoutGuide
+        let width = min(320.0, root.bounds.width * 0.65)
+        // Trailing constraint constant = `width` parks the sidebar
+        // off-screen to the right. Animate to 0 on toggle to slide
+        // it in over the editor.
+        let trailing = sidebar.trailingAnchor.constraint(
+            equalTo: root.trailingAnchor, constant: width)
+        NSLayoutConstraint.activate([
+            sidebar.topAnchor.constraint(equalTo: g.topAnchor),
+            sidebar.bottomAnchor.constraint(equalTo: g.bottomAnchor),
+            sidebar.widthAnchor.constraint(equalToConstant: width),
+            trailing,
+        ])
+        self.sidebarOverlay = sidebar
+        self.sidebarTrailingConstraint = trailing
+
+        // Move chrome from root into a vertical stack inside the
+        // sidebar. Re-parenting auto-deactivates the original
+        // constraints; we re-anchor in the new context.
+        let chromeStack = UIStackView()
+        chromeStack.translatesAutoresizingMaskIntoConstraints = false
+        chromeStack.axis = .vertical
+        chromeStack.spacing = 16
+        chromeStack.alignment = .fill
+        sidebar.addSubview(chromeStack)
+        NSLayoutConstraint.activate([
+            chromeStack.topAnchor.constraint(equalTo: sidebar.topAnchor, constant: 16),
+            chromeStack.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor, constant: 16),
+            chromeStack.trailingAnchor.constraint(equalTo: sidebar.trailingAnchor, constant: -16),
+        ])
+        if let topBar = self.topBar {
+            topBar.removeFromSuperview()
+            topBar.isHidden = false
+            chromeStack.addArrangedSubview(topBar)
+        }
+        if let status = self.auStatusLabel {
+            status.removeFromSuperview()
+            status.isHidden = false
+            chromeStack.addArrangedSubview(status)
+        }
+        if let btn = self.auTestButton {
+            btn.removeFromSuperview()
+            btn.isHidden = false
+            chromeStack.addArrangedSubview(btn)
+            btn.heightAnchor.constraint(greaterThanOrEqualToConstant: 50).isActive = true
+        }
+    }
+
+    /// Slide the sidebar in / out. No-op if the sidebar hasn't
+    /// been built yet (portrait-only sessions never call
+    /// `buildSidebarIfNeeded`).
+    func toggleSidebar() {
+        if self.sidebarVisible { self.hideSidebar(animated: true) }
+        else { self.showSidebar() }
+    }
+
+    func showSidebar() {
+        guard let trailing = self.sidebarTrailingConstraint else { return }
+        self.sidebarTapCatcher?.isHidden = false
+        trailing.constant = 0
+        UIView.animate(withDuration: 0.25) {
+            self.rootVC?.view.layoutIfNeeded()
+        }
+        self.sidebarVisible = true
+    }
+
+    func hideSidebar(animated: Bool) {
+        guard let trailing = self.sidebarTrailingConstraint,
+              let sidebar = self.sidebarOverlay else { return }
+        trailing.constant = sidebar.bounds.width
+        let finish: () -> Void = {
+            self.sidebarTapCatcher?.isHidden = true
+        }
+        if animated {
+            UIView.animate(withDuration: 0.25, animations: {
+                self.rootVC?.view.layoutIfNeeded()
+            }, completion: { _ in finish() })
+        } else {
+            self.rootVC?.view.layoutIfNeeded()
+            finish()
+        }
+        self.sidebarVisible = false
+    }
+
+    @objc func tapCatcherTapped() {
+        self.hideSidebar(animated: true)
     }
 }

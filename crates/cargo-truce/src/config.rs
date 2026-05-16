@@ -222,6 +222,26 @@ pub(crate) struct PluginDef {
     #[serde(default)]
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub(crate) ios_url: Option<String>,
+    /// Per-plugin allowed interface orientations for the iOS
+    /// container app. Accepted values: `"portrait"`,
+    /// `"portrait-upside-down"`, `"landscape-left"`,
+    /// `"landscape-right"`. The first entry becomes the launch
+    /// orientation. Absent → defaults to
+    /// `["portrait", "landscape-left", "landscape-right"]`
+    /// (preserves the historical behaviour). Empty array is
+    /// rejected at install time.
+    #[serde(default)]
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub(crate) ios_orientations: Option<Vec<String>>,
+    /// Scale the embedded editor uniformly to fit the
+    /// container's hero region while preserving aspect ratio.
+    /// Never up-scales above 1.0. Useful for plug-ins shipping a
+    /// single desktop-sized editor that would otherwise overflow
+    /// the iPhone screen. Default `false` (verbatim natural-pixel
+    /// layout).
+    #[serde(default)]
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub(crate) ios_scale_editor_to_fit: bool,
 }
 
 impl std::ops::Deref for PluginDef {
@@ -591,6 +611,8 @@ mod suite_tests {
             ios_icon_set: None,
             ios_minimum_os_version: None,
             ios_url: None,
+            ios_orientations: None,
+            ios_scale_editor_to_fit: false,
         }
     }
 
