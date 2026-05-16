@@ -823,17 +823,17 @@ fn open_dropdown(
     let popup_w = region.w.max(80.0);
     let full_popup_h = options.len() as f32 * item_h + padding * 2.0;
 
-    // Anchor the popup directly under the dropdown button. The
-    // earlier behaviour auto-flipped above when the full popup
-    // didn't fit below — on small editors (and iPhone-scaled
-    // ones) the flipped position landed near the top of the
-    // editor, far from the button the user just tapped, which
-    // read as a positioning bug. Today we keep the popup anchored
-    // below and just clip / scroll the list when there isn't
-    // enough room.
-    let space_below = (window_h - anchor_below).max(item_h + padding * 2.0);
+    // Always anchor the popup directly under the dropdown button.
+    // If the full list doesn't fit between `anchor_below` and the
+    // window's bottom, cap `visible_count` and scroll — DON'T
+    // shift the popup upward to make more items fit. Shifting up
+    // landed the popup near `y = 0` (literally the top of the
+    // editor) for any dropdown whose full option list was taller
+    // than the editor, far from the button the user just tapped.
+    // Scrolling is the lesser annoyance.
+    let popup_y = anchor_below.max(0.0);
+    let space_below = (window_h - popup_y).max(item_h + padding * 2.0);
     let avail_h = full_popup_h.min(space_below);
-    let popup_y = anchor_below;
 
     let visible_count = ((avail_h - padding * 2.0) / item_h).floor().max(1.0) as usize;
     let visible_count = visible_count.min(options.len());

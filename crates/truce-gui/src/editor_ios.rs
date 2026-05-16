@@ -580,6 +580,20 @@ fn tick<P: Params + 'static>(inner: &mut Inner<P>) {
     let backend = inner.backend.get_or_insert_with(|| {
         CpuBackend::new(w, h, scale).expect("CpuBackend allocation failed (out of memory?)")
     });
+    // Rebuild hit-test regions FIRST so the per-tick wipe doesn't
+    // clobber fields `render_widgets` writes into them — chiefly
+    // `WidgetRegion::dropdown_anchor_y`, which the dropdown's
+    // `draw` pass fills with the visual button's bottom edge.
+    // `build_regions_grid` resets that field to 0, so if it runs
+    // after render the next dropdown tap reads anchor = 0 and
+    // opens its popup at the top of the editor. The macOS editor
+    // gates `build_regions` on layout changes (in
+    // `update_interaction`) and renders separately; here we just
+    // run both every tick in the right order.
+    match &inner.layout {
+        Layout::Rows(pl) => inner.interaction.build_regions(pl),
+        Layout::Grid(gl) => inner.interaction.build_regions_grid(gl),
+    }
     render_widgets(
         &inner.layout,
         &inner.theme,
@@ -587,14 +601,6 @@ fn tick<P: Params + 'static>(inner: &mut Inner<P>) {
         &snapshot,
         backend,
     );
-    // Rebuild hit-test regions from the current layout so the
-    // next touch event can map (x, y) → knob via
-    // `interaction::dispatch`. Mirrors the macOS editor's
-    // `update_interaction` call site.
-    match &inner.layout {
-        Layout::Rows(pl) => inner.interaction.build_regions(pl),
-        Layout::Grid(gl) => inner.interaction.build_regions_grid(gl),
-    }
     // Snapshot the post-render values for next-frame
     // change-detection — currently informational; the iOS pump
     // repaints every CADisplayLink tick regardless.

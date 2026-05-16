@@ -1200,7 +1200,9 @@ mod tests {
         let dd = editor.interaction.dropdown.as_ref().unwrap();
         let region = &editor.interaction.knob_regions[dd.region_idx];
 
-        // popup_rect.1 (popup_y) must equal the stored anchor
+        // popup_y must equal the stored anchor — popup always
+        // anchors directly below the button (scrolls on tight
+        // editors rather than relocating).
         assert_eq!(dd.popup_rect.1, region.dropdown_anchor_y);
     }
 
@@ -1420,7 +1422,7 @@ mod tests {
     // -- Tests: dropdown overflow/clipping --
 
     #[test]
-    fn dropdown_anchors_below_button_even_near_bottom() {
+    fn dropdown_anchors_below_button_scrolls_when_tight() {
         let mut editor = make_editor_bottom_dropdown();
         let (dx, dy) = {
             let region = editor
@@ -1441,20 +1443,19 @@ mod tests {
         let (_, popup_y, _, popup_h) = dd.popup_rect;
         let window_h = editor.layout.height() as f32;
 
-        // Popup never extends past the window bottom — it clips /
-        // scrolls into the remaining space instead.
+        // Popup anchors at the button's bottom — never shifts up
+        // and never flips above. If the full option list doesn't
+        // fit between the anchor and the window bottom, the popup
+        // scrolls instead of relocating away from the tap target.
+        assert_eq!(
+            popup_y, region.dropdown_anchor_y,
+            "popup must anchor at dropdown_anchor_y, got popup_y={popup_y}"
+        );
+        // Popup never extends past the window bottom.
         assert!(
             popup_y + popup_h <= window_h + 1.0,
             "popup bottom {} exceeds window height {window_h}",
             popup_y + popup_h
-        );
-
-        // Popup never flips above the button: anchored at
-        // `dropdown_anchor_y` (= bottom-of-button-box) regardless
-        // of how little room remains below.
-        assert_eq!(
-            popup_y, region.dropdown_anchor_y,
-            "popup should anchor below the button, not flip upward"
         );
     }
 
