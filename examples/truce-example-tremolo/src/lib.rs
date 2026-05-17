@@ -83,7 +83,7 @@ impl Shape {
 
 #[derive(Params)]
 pub struct TremoloParams {
-    #[param(name = "Depth", range = "linear(0, 1)", smooth = "exp(5)")]
+    #[param(name = "Depth", range = "linear(0, 1)", unit = "%", smooth = "exp(5)")]
     pub depth: FloatParam,
 
     #[param(name = "Rate")]
