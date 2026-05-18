@@ -16,30 +16,33 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# Asks one question: would a plugin scaffolded by the LAST released
-# `cargo-truce` still compile against THIS commit of truce?
+# Asks one question, on each scaffold shape: would a plugin
+# scaffolded by the LAST released `cargo-truce` still compile against
+# THIS commit of truce?
 #
 # Catches accidental breakage in the public surface that older
 # scaffold-templated plugins lean on (renamed prelude items, dropped
 # re-exports, derive-macro signature shifts).
 #
-# Minimal v1: macOS only, single effect shape, against the latest
-# git tag. Expand to more shapes / OSes / multiple prior versions
-# once the workflow proves stable. See
-# `../truce-docs/docs/internal/scaffold-backcompat-check.md`.
+# v1 scope: macOS only, against the latest git tag. Three shapes
+# (effect, instrument, workspace-mixed) run as parallel matrix jobs
+# so a regression in one template doesn't mask the others. Tag
+# resolution runs once in a setup job and feeds the matrix.
+#
+# See `../truce-docs/docs/internal/scaffold-backcompat-check.md`.
+
+# `cargo install` of the released cargo-truce takes ~1 min on a
+# fresh runner; we cache it by tag and reuse across the three
+# matrix shapes. The setup job resolves the tag and primes the
+# cache; the matrix jobs always hit the cache.
 jobs:
-  backcompat:
-    name: scaffold w/ last release, build against HEAD
+  setup:
+    name: resolve last release
     runs-on: macos-14
+    outputs:
+      tag: ${{ steps.latest.outputs.tag }}
     steps:
-      - uses: actions/checkout@v4
-
       - uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: cli-backcompat
-          cache-bin: false
 
       # Latest non-prerelease tag on the truce repo, e.g. `v0.43.0`.
       # Sort by semver-ish descending; pick the first plain
@@ -60,8 +63,6 @@ jobs:
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "Latest released tag: $tag"
 
-      # Cache the installed binary by tag so subsequent runs against
-      # the same released version skip the ~minute-long install.
       - name: Cache released cargo-truce
         id: cache-old-cargo-truce
         uses: actions/cache@v4
@@ -78,20 +79,55 @@ jobs:
                         cargo-truce \
                         --root "$RUNNER_TEMP/old-cargo-truce"
 
+  backcompat:
+    needs: setup
+    name: ${{ matrix.shape.id }} (scaffold w/ ${{ needs.setup.outputs.tag }})
+    runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        shape:
+          - id: effect
+            new_args: "probe-fx --vendor Probe --vendor-id com.probe.test"
+            project_dir: probe-fx
+          - id: instrument
+            new_args: "probe-synth --instrument --vendor Probe --vendor-id com.probe.test"
+            project_dir: probe-synth
+          - id: workspace-mixed
+            new_args: "probe --workspace fx synth midi --type:synth=instrument --type:midi=midi --vendor Probe --vendor-id com.probe.test"
+            project_dir: probe
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: cli-backcompat-${{ matrix.shape.id }}
+          cache-bin: false
+
+      # Restore the cargo-truce binary the setup job primed. The cache
+      # key matches the one in the setup job, so this is always a hit
+      # by the time the matrix runs.
+      - name: Restore released cargo-truce from cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/old-cargo-truce
+          key: old-cargo-truce-${{ needs.setup.outputs.tag }}-macos-14
+
       - name: Show released cargo-truce version
         shell: bash
         run: |
           "$RUNNER_TEMP/old-cargo-truce/bin/cargo-truce" --version || \
           "$RUNNER_TEMP/old-cargo-truce/bin/cargo-truce" -h | head -1
 
-      - name: Scaffold a single-effect plugin with the released cargo-truce
+      - name: Scaffold (${{ matrix.shape.id }})
         shell: bash
         run: |
           mkdir -p "$RUNNER_TEMP/scaffold"
           cd "$RUNNER_TEMP/scaffold"
-          "$RUNNER_TEMP/old-cargo-truce/bin/cargo-truce" new probe-fx \
-            --vendor Probe --vendor-id com.probe.test
-          ls -la probe-fx/
+          "$RUNNER_TEMP/old-cargo-truce/bin/cargo-truce" new ${{ matrix.shape.new_args }}
+          ls -la "${{ matrix.shape.project_dir }}/"
 
       # Rewrite scaffolded `{ git = ".../truce", tag = "..." }` to
       # `{ path = "<workspace>/crates/<name>" }`. Same Python regex
@@ -104,7 +140,7 @@ jobs:
           python3 - <<'PY'
           import os, re, pathlib
           truce_crates = pathlib.Path(os.environ["GITHUB_WORKSPACE"], "crates").as_posix()
-          root = pathlib.Path(os.environ["RUNNER_TEMP"], "scaffold", "probe-fx")
+          root = pathlib.Path(os.environ["RUNNER_TEMP"], "scaffold", "${{ matrix.shape.project_dir }}")
           needle = '{ git = "https://github.com/truce-audio/truce"'
           tag_re = re.compile(r',\s*tag\s*=\s*"[^"]*"')
           rewrote = 0
@@ -141,5 +177,5 @@ jobs:
       # templates).
       - name: cargo check against truce HEAD
         shell: bash
-        working-directory: ${{ runner.temp }}/scaffold/probe-fx
+        working-directory: ${{ runner.temp }}/scaffold/${{ matrix.shape.project_dir }}
         run: cargo check --all-targets
