@@ -37,7 +37,7 @@ pub struct TransportSlot {
     /// after Nth write; odd = writer mid-update.
     seq: AtomicU64,
     /// Last-written transport. Written only by `write` (single writer
-    /// assumption — the audio-thread callback). Read under seqlock by
+    /// assumption - the audio-thread callback). Read under seqlock by
     /// any number of `read`-calling threads.
     data: UnsafeCell<TransportInfo>,
 }
@@ -58,7 +58,7 @@ impl TransportSlot {
     }
 
     /// Realtime-safe write. Called on the audio thread at the top of
-    /// each process block. Wait-free — never blocks, never drops.
+    /// each process block. Wait-free - never blocks, never drops.
     ///
     /// Single-writer: this assumes only one thread (the host's audio
     /// callback) ever calls `write` on a given slot. Format wrappers
@@ -70,7 +70,7 @@ impl TransportSlot {
         let s = self.seq.load(Ordering::Relaxed);
         // First store: just signals "write in progress" to readers.
         // The data write that follows is published by the *second*
-        // store's Release — readers acquire on that one. This first
+        // store's Release - readers acquire on that one. This first
         // store's only job is to flip parity, so Relaxed is enough.
         self.seq.store(s.wrapping_add(1), Ordering::Relaxed);
         // SAFETY: single-writer invariant means no other thread writes
@@ -86,7 +86,7 @@ impl TransportSlot {
         unsafe {
             write_volatile(self.data.get(), *info);
         }
-        // Release pairs with `read`'s Acquire load — makes the data
+        // Release pairs with `read`'s Acquire load - makes the data
         // write above visible to any reader that observes this
         // updated even value.
         self.seq.store(s.wrapping_add(2), Ordering::Release);
@@ -98,10 +98,10 @@ impl TransportSlot {
     /// Bounded retry: each iteration is an Acquire-ordered counter
     /// load and a `TransportInfo` copy. In the worst observable case
     /// (writer scheduled out mid-update) the reader spins until the
-    /// writer resumes — typically nanoseconds; with thread preemption
+    /// writer resumes - typically nanoseconds; with thread preemption
     /// in pathological scheduling, microseconds. We cap at 8 attempts
     /// and bail out with `None` rather than potentially spin forever
-    /// — the editor next frame will read again.
+    /// - the editor next frame will read again.
     pub fn read(&self) -> Option<TransportInfo> {
         for _ in 0..8 {
             let s1 = self.seq.load(Ordering::Acquire);
@@ -117,7 +117,7 @@ impl TransportSlot {
             // writer started during the copy; if that fails we
             // discard and retry rather than returning torn state.
             // `read_volatile` is the same mitigation `write` uses on
-            // the producer side — see that doc-comment for the data-
+            // the producer side - see that doc-comment for the data-
             // race rationale.
             let snapshot = unsafe { read_volatile(self.data.get()) };
             let s2 = self.seq.load(Ordering::Acquire);

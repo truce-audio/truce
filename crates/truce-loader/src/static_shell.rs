@@ -1,4 +1,4 @@
-//! `StaticShell` — embeds the plugin directly into the binary.
+//! `StaticShell` - embeds the plugin directly into the binary.
 //!
 //! No dlopen, no file watcher, no Mutex. Same types as `HotShell`
 //! but zero runtime overhead. Use via `export_static!`.
@@ -35,13 +35,13 @@ pub struct StaticShell<P: Params, L: PluginLogicCore<S>, S: Sample = f32> {
 }
 
 // SAFETY: `StaticShell` owns `Arc<P>` (params, `Sync` by the
-// `Params` trait contract), `L` (the user's logic — `Send + 'static`
+// `Params` trait contract), `L` (the user's logic - `Send + 'static`
 // per the `PluginLogicCore` bound), an `AtomicU32`-backed meters
 // array, and a `PhantomData<fn() -> S>`. No raw pointers, no
 // `!Send` fields, no interior mutability that escapes the shell's
 // own `&mut` borrows. The host contract that format wrappers
 // invoke methods on a single thread at a time per instance is what
-// keeps the embedded `L` safe to access without an inner mutex —
+// keeps the embedded `L` safe to access without an inner mutex -
 // same model `HotShell` uses through `parking_lot::Mutex`.
 unsafe impl<P: Params, L: PluginLogicCore<S>, S: Sample> Send for StaticShell<P, L, S> {}
 
@@ -131,7 +131,7 @@ impl<P: Params + Default + 'static, L: PluginLogicCore<S> + 'static, S: Sample> 
             }
         }
 
-        // No sync needed — plugin reads from the same Arc<Params>.
+        // No sync needed - plugin reads from the same Arc<Params>.
 
         // Build a ProcessContext with param/meter callbacks for the logic.
         let params = &self.params;
@@ -165,7 +165,7 @@ impl<P: Params + Default + 'static, L: PluginLogicCore<S> + 'static, S: Sample> 
         let result = self.logic.load_state(data);
         // Plugin-side cache invalidation runs in the same `&mut`
         // borrow window so the next `process()` block sees the
-        // refreshed caches — fire it whether or not load_state
+        // refreshed caches - fire it whether or not load_state
         // succeeded so partial state still triggers a refresh.
         PluginLogicCore::state_changed(&mut self.logic);
         result
@@ -200,7 +200,7 @@ impl<P: Params + Default + 'static, L: PluginLogicCore<S> + 'static, S: Sample> 
         // Meter IDs live in a dedicated high range starting at
         // `truce_params::METER_ID_BASE`; storage is offset into
         // `self.meters`. `wrapping_sub` keeps out-of-range ids from
-        // panicking — they fall through to the `get` -> None path.
+        // panicking - they fall through to the `get` -> None path.
         let idx = meter_id.wrapping_sub(truce_params::METER_ID_BASE) as usize;
         if let Some(slot) = self.meters.get(idx) {
             f32::from_bits(slot.load(Ordering::Relaxed))
@@ -219,7 +219,7 @@ impl<P: Params + Default + 'static, L: PluginLogicCore<S> + 'static, S: Sample> 
 /// Produces a `__HotShellWrapper` struct that implements `Plugin + PluginExport`,
 /// so format export macros (`export_clap!`, `export_vst3!`, etc.) work unchanged.
 /// No dlopen, no file watcher, zero runtime overhead. Bus layouts come from
-/// `<$logic as PluginLogic>::bus_layouts()` — override the trait method to
+/// `<$logic as PluginLogic>::bus_layouts()` - override the trait method to
 /// pick something other than the stereo default.
 ///
 /// ```ignore

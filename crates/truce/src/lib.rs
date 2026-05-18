@@ -43,7 +43,7 @@ mod prelude_impl {
     pub use truce_core::sample::{Float, Sample as SampleTrait};
     pub use truce_core::state::StateLoadError;
     pub use truce_core::util::{db_to_linear, linear_to_db, meter_display, midi_note_to_freq};
-    // `AudioBuffer` is *not* re-exported from `truce_core` here —
+    // `AudioBuffer` is *not* re-exported from `truce_core` here -
     // each prelude module declares its own per-precision
     // `pub type AudioBuffer<'a> = truce_core::buffer::AudioBuffer<'a, $sample>;`
     // so the `#[plugin_logic]`-rewritten user impl sees the right
@@ -54,7 +54,7 @@ mod prelude_impl {
         TransportInfo,
     };
     pub use truce_derive::{ParamEnum, Params, State, plugin_info};
-    // `PluginLogic` itself is *not* re-exported here — each prelude
+    // `PluginLogic` itself is *not* re-exported here - each prelude
     // chooses its own leaf trait (`PluginLogic` for f32, aliased
     // `PluginLogic64 as PluginLogic` for f64) so plugin authors write
     // `impl PluginLogic for X { ... }` without naming a precision.
@@ -67,12 +67,12 @@ mod prelude_impl {
     };
 }
 
-// Stamps a prelude module from one template — all four preludes
+// Stamps a prelude module from one template - all four preludes
 // (default / 32 / 64 / 64m) only differ in:
-//   - `$sample` — the buffer type (`f32` / `f64`)
-//   - `$leaf`   — which `PluginLogic` leaf trait to alias as
+//   - `$sample` - the buffer type (`f32` / `f64`)
+//   - `$leaf`   - which `PluginLogic` leaf trait to alias as
 //                  `PluginLogic` in the user's scope
-//   - `$float_read` / `$ctx_read` — which precision-routed read
+//   - `$float_read` / `$ctx_read` - which precision-routed read
 //                  traits to bring in via `as _`
 //
 // Keeping the bodies in one place means a future addition (new
@@ -111,7 +111,7 @@ macro_rules! define_prelude {
 }
 
 define_prelude! {
-    /// Default prelude. Same shape as [`prelude32`] — `f32` audio
+    /// Default prelude. Same shape as [`prelude32`] - `f32` audio
     /// path. Use whichever name reads better at the import site.
     prelude, sample = f32, leaf = PluginLogic,
     float_read = FloatParamReadF32, ctx_read = PluginContextReadF32
@@ -135,7 +135,7 @@ define_prelude! {
     /// the way out.
     ///
     /// **Don't import both `prelude` and `prelude64` in the same
-    /// file** — the two `read` / `value` / `current` traits will
+    /// file** - the two `read` / `value` / `current` traits will
     /// collide on method dispatch. That collision is the right
     /// error if the file hasn't committed to a precision.
     prelude64, sample = f64, leaf = PluginLogic64,
@@ -144,7 +144,7 @@ define_prelude! {
 
 define_prelude! {
     /// Mixed-precision prelude (`m` for "mixed"). The audio buffer
-    /// stays at host wire precision (`f32` — no wrapper-boundary
+    /// stays at host wire precision (`f32` - no wrapper-boundary
     /// widening cost) but `param.read()` returns `f64` so
     /// intermediary math (filter coefficients, phase accumulators,
     /// long-tail feedback) runs at `f64` precision.

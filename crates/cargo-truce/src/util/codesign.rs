@@ -28,15 +28,15 @@ pub(crate) fn is_production_identity(identity: &str) -> bool {
 /// Returns the path to the temp file.
 ///
 /// Entitlements:
-/// - `allow-unsigned-executable-memory` — JIT / dynamically generated
+/// - `allow-unsigned-executable-memory` - JIT / dynamically generated
 ///   code (egui's wgpu shader cache, hot-reload trampolines).
-/// - `device.audio-input` — required for the standalone host on
+/// - `device.audio-input` - required for the standalone host on
 ///   hardened-runtime builds. cpal opens the input device through
 ///   `CoreAudio` HAL, which (unlike `AVAudioEngine`) is blocked silently
 ///   without this entitlement: no TCC prompt appears, no error
 ///   surfaces, the callback just receives zeros. Plugin bundles
-///   (CLAP / VST3 / AU / AAX) never open the mic themselves — their
-///   DAW does — so the entitlement is a no-op there but cheap to
+///   (CLAP / VST3 / AU / AAX) never open the mic themselves - their
+///   DAW does - so the entitlement is a no-op there but cheap to
 ///   carry, and a single entitlements file keeps the codesign call
 ///   sites identical across formats.
 #[cfg(target_os = "macos")]
@@ -66,13 +66,13 @@ pub(crate) fn write_entitlements_plist() -> PathBuf {
 /// **Inside-out signing.** When `path` is a directory (a bundle),
 /// every Mach-O in the bundle is enumerated and signed explicitly
 /// before the bundle's outer seal is applied. This bypasses Apple's
-/// `codesign --deep` traversal — which doesn't recurse into
+/// `codesign --deep` traversal - which doesn't recurse into
 /// `Contents/Resources/` for AAX (`TDMw`) and other non-app bundle
 /// types, leaving inner dylibs with their linker-applied ad-hoc
 /// signature and breaking notarization. Apple has been deprecating
 /// `--deep` for years anyway; enumerate ourselves to be sure.
 // On non-macOS targets the body is a no-op `Ok(())` so all three
-// args are unused — silence the warnings only on those targets.
+// args are unused - silence the warnings only on those targets.
 // `unnecessary_wraps` likewise fires only off-macOS where the body
 // can't actually fail; the `Result` return is required by the
 // cross-platform staging callers.
@@ -121,7 +121,7 @@ pub(crate) fn codesign_bundle(bundle: &str, identity: &str, use_sudo: bool) -> c
         }
 
         // Bundle-level (or single-file) seal. With the inner Mach-Os
-        // already signed inside-out, we don't need `--deep` here —
+        // already signed inside-out, we don't need `--deep` here -
         // codesign will validate the inner signatures and stamp the
         // outer Info.plist seal.
         sign_one(OsStr::new(bundle))?;
@@ -202,7 +202,7 @@ fn walk_mach_os(dir: &Path, out: &mut Vec<PathBuf>) {
 /// `--options runtime`, ad-hoc cert leakage) without a six-minute
 /// round-trip to Apple's servers.
 ///
-/// No-op when `identity` is ad-hoc — ad-hoc bundles are deliberately
+/// No-op when `identity` is ad-hoc - ad-hoc bundles are deliberately
 /// not notarization-ready and the checks would all fail by design.
 #[cfg(target_os = "macos")]
 pub(crate) fn verify_signed_for_notarization(path: &Path, identity: &str) -> crate::Res {
@@ -335,7 +335,7 @@ pub(crate) fn which_unix(name: &str) -> std::result::Result<PathBuf, std::io::Er
 }
 
 /// PACE-sign an AAX bundle on macOS. No-ops cleanly when wraptool isn't
-/// installed or `PACE_ACCOUNT` / `PACE_SIGN_ID` aren't set — Pro Tools
+/// installed or `PACE_ACCOUNT` / `PACE_SIGN_ID` aren't set - Pro Tools
 /// Developer loads unsigned AAX, retail rejects with `-14013` → `-7054`.
 ///
 /// Must run **after** Apple codesign on the bundle: PACE wraps the binary
@@ -351,17 +351,17 @@ pub(crate) fn which_unix(name: &str) -> std::result::Result<PathBuf, std::io::Er
 pub(crate) fn pace_sign_aax_macos(bundle: &Path) -> crate::Res {
     let Some(wraptool) = locate_wraptool_macos() else {
         eprintln!(
-            "    wraptool not found — AAX bundle is unsigned for PACE. \
+            "    wraptool not found - AAX bundle is unsigned for PACE. \
              Pro Tools Developer will load it; retail Pro Tools won't."
         );
         return Ok(());
     };
     let Ok(account) = std::env::var("PACE_ACCOUNT") else {
-        eprintln!("    PACE_ACCOUNT not set — skipping PACE signing.");
+        eprintln!("    PACE_ACCOUNT not set - skipping PACE signing.");
         return Ok(());
     };
     let Ok(signid) = std::env::var("PACE_SIGN_ID") else {
-        eprintln!("    PACE_SIGN_ID not set — skipping PACE signing.");
+        eprintln!("    PACE_SIGN_ID not set - skipping PACE signing.");
         return Ok(());
     };
 

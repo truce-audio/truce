@@ -3,7 +3,7 @@
 //! Strings can't be parameters (the param system stores numeric atoms),
 //! so the user's per-instance label lives in a separate state struct
 //! that the framework serialises alongside the parameter envelope.
-//! The plugin does nothing to the audio — it's a pass-through whose
+//! The plugin does nothing to the audio - it's a pass-through whose
 //! only job is to demonstrate `save_state` / `load_state` end-to-end.
 
 use std::sync::Arc;
@@ -28,8 +28,8 @@ const WINDOW_H: u32 = 120;
 ///
 /// Use `derive(State)` for everything that isn't a numeric atom:
 /// strings, file paths, loaded sample buffers, lists, view modes,
-/// nested structs. State is opaque to the host — no automation, no
-/// CC mapping, no UI in the host's parameter list — the framework
+/// nested structs. State is opaque to the host - no automation, no
+/// CC mapping, no UI in the host's parameter list - the framework
 /// just round-trips the bytes you hand it via `save_state` /
 /// `load_state` (see [`InstanceMemo`] below).
 ///
@@ -56,7 +56,7 @@ pub struct InstanceMemo {
 pub struct StateExample {
     params: Arc<StateExampleParams>,
     memo: InstanceMemo,
-    /// Runtime counter — how many times the host has restored
+    /// Runtime counter - how many times the host has restored
     /// state on this instance (preset recall, undo, session
     /// load). Lives on the plugin struct, *not* in `InstanceMemo`,
     /// because it's diagnostic and shouldn't persist across
@@ -111,13 +111,13 @@ impl PluginLogic for StateExample {
 
     /// Called on the audio thread immediately after `load_state`.
     /// The standard place for plugin-side cache invalidation that
-    /// the next `process()` block reads — decoded IRs, sample
+    /// the next `process()` block reads - decoded IRs, sample
     /// thumbnails, computed pad layouts, etc.
     ///
     /// This example has no DSP-side derived data, so the body is
     /// just a diagnostic counter. The companion editor-side hook
     /// (`StateExampleUi::state_changed` below, on
-    /// [`truce_core::Editor`]) is what refreshes the GUI cache —
+    /// [`truce_core::Editor`]) is what refreshes the GUI cache -
     /// the two hooks split plugin-thread invalidation from
     /// GUI-thread repaint.
     fn state_changed(&mut self) {
@@ -191,7 +191,7 @@ impl EditorUi<StateExampleParams> for StateExampleUi {
                         .hint_text("(unnamed)")
                         .desired_width(f32::INFINITY),
                 );
-                // Push to plugin state on every keystroke. Cheap — the
+                // Push to plugin state on every keystroke. Cheap - the
                 // memo only holds one String, and `update` does one
                 // serialize + one set_state per call.
                 if response.changed() {
@@ -263,7 +263,7 @@ mod tests {
 
     #[test]
     fn long_label_round_trips() {
-        // 8 KB of label — exercises the `Vec<u8>` growth path in
+        // 8 KB of label - exercises the `Vec<u8>` growth path in
         // `serialize` plus the byte-count length-prefix in
         // `StateField` for `String`.
         let mut p = make_plugin();
@@ -278,7 +278,7 @@ mod tests {
     fn garbage_state_doesnt_panic() {
         // A truncated / hostile blob must leave the plugin at its
         // default rather than panic in deserialize. The Err return
-        // is the documented signal — we just want to confirm it
+        // is the documented signal - we just want to confirm it
         // doesn't unwind.
         let mut p = make_plugin();
         let _ = p.load_state(&[]);

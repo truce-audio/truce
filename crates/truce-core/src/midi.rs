@@ -2,13 +2,13 @@
 //!
 //! `parse_midi1` decodes a slice of MIDI 1.0 bytes (channel-voice
 //! status `0x80..=0xEF`) into an [`EventBody`]; `event_to_midi1`
-//! does the inverse. Both work on wire-native integers — see
+//! does the inverse. Both work on wire-native integers - see
 //! [`crate::events`] for the value-domain rationale, and the
 //! re-exported [`truce_utils::midi`] helpers (below) for normalize /
 //! denormalize when plugin code wants `f32`.
 //!
 //! System common (`0xF1..=0xF7`), system real-time (`0xF8..=0xFF`),
-//! and `SysEx` (`0xF0`) return `None` from [`parse_midi1`] — the
+//! and `SysEx` (`0xF0`) return `None` from [`parse_midi1`] - the
 //! framework's [`EventBody`] doesn't model them. Format wrappers
 //! that care must inspect the raw bytes themselves.
 //!
@@ -92,7 +92,7 @@ pub fn parse_midi1(group: u8, bytes: &[u8]) -> Option<EventBody> {
 
 /// Encode an [`EventBody`] into a MIDI 1.0 byte stream.
 ///
-/// Returns `(length, bytes)` — `length` is `2` for `ChannelPressure`
+/// Returns `(length, bytes)` - `length` is `2` for `ChannelPressure`
 /// and `ProgramChange`, `3` for everything else. Sinks must respect
 /// the length: emitting all 3 bytes for a 2-byte status produces a
 /// spurious trailing zero that a downstream parser interprets as a
@@ -187,7 +187,7 @@ mod tests {
         // status byte.
         let event = EventBody::NoteOn {
             group: 0,
-            channel: 64, // 0x40 — high bit would flip 0x90 → 0xD0
+            channel: 64, // 0x40 - high bit would flip 0x90 → 0xD0
             note: 60,
             velocity: 100,
         };

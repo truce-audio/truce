@@ -1,4 +1,4 @@
-//! Tempo-synced tremolo — exercises the host-transport feature.
+//! Tempo-synced tremolo - exercises the host-transport feature.
 //!
 //! The DSP reads `ProcessContext::transport` to lock an amplitude LFO
 //! to the host's beat grid. The editor reads `PluginContext::transport`
@@ -6,7 +6,7 @@
 //!
 //! Both paths drop back to sensible defaults when the host doesn't
 //! expose transport: free-running at 120 BPM internally, and a dash
-//! ("—") for unknown fields in the readout.
+//! ("-") for unknown fields in the readout.
 
 use truce::prelude::*;
 use truce_core::cast::len_u32;
@@ -224,7 +224,7 @@ fn tremolo_ui(ctx: &egui::Context, state: &PluginContext<TremoloParams>) {
 }
 
 /// Read the editor's transport closure and render a compact readout
-/// like `▶ 128.0 BPM • 4/4 • ♩ 12.25` (or `■ — BPM` when stopped).
+/// like `▶ 128.0 BPM • 4/4 • ♩ 12.25` (or `■ - BPM` when stopped).
 fn draw_transport_readout(ui: &mut egui::Ui, state: &PluginContext<TremoloParams>) {
     let transport = state.transport();
     let line = format_transport(transport.as_ref());
@@ -247,17 +247,17 @@ fn format_transport(info: Option<&TransportInfo>) -> String {
     let tempo = if t.tempo > 0.0 {
         format!("{:.1} BPM", t.tempo)
     } else {
-        "— BPM".into()
+        "- BPM".into()
     };
     let sig = if t.time_sig_num > 0 && t.time_sig_den > 0 {
         format!("{}/{}", t.time_sig_num, t.time_sig_den)
     } else {
-        "—/—".into()
+        "-/-".into()
     };
     let beat = if t.tempo > 0.0 {
         format!("\u{2669} {:.2}", t.position_beats)
     } else {
-        "\u{2669} —".into()
+        "\u{2669} -".into()
     };
     format!("{state}  {tempo}  \u{2022}  {sig}  \u{2022}  {beat}")
 }
@@ -270,7 +270,7 @@ truce::plugin! {
 #[cfg(test)]
 mod tests {
     // Beats-per-cycle values are powers of two (0.125, 0.5, 1.0, 4.0)
-    // — bit-exact equality is the contract.
+    // - bit-exact equality is the contract.
     #![allow(clippy::float_cmp, clippy::cast_precision_loss)]
 
     use super::*;
@@ -309,7 +309,7 @@ mod tests {
         let s = format_transport(Some(&stopped));
         // Stopped, no tempo reported → square + em dash placeholders.
         assert!(s.contains('\u{25A0}'));
-        assert!(s.contains("— BPM"));
+        assert!(s.contains("- BPM"));
     }
 
     #[test]

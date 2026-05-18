@@ -126,7 +126,7 @@ macro_rules! __layout_widgets {
 /// ```ignore
 /// use truce_gui_types::grid;
 ///
-/// // Minimal — auto-cols, default cell size, no header.
+/// // Minimal - auto-cols, default cell size, no header.
 /// fn gui_layout() -> truce_gui_types::layout::GridLayout {
 ///     grid!({
 ///         knob(ID_GAIN, "Gain")
@@ -144,7 +144,7 @@ macro_rules! __layout_widgets {
 ///     })
 /// }
 ///
-/// // Header — title + subtitle, or either one alone.
+/// // Header - title + subtitle, or either one alone.
 /// fn with_header() -> truce_gui_types::layout::GridLayout {
 ///     grid!(title: "MY PLUGIN", subtitle: "V1.0", cols: 4, cell: 50.0, {
 ///         knob(ID_GAIN, "Gain")
@@ -177,7 +177,7 @@ macro_rules! grid {
             .with_grid($cols, $cell)
     }};
 
-    // --- Header arms — title and subtitle both optional ---
+    // --- Header arms - title and subtitle both optional ---
 
     // title + subtitle + body.
     (title: $title:expr, subtitle: $subtitle:expr, { $($body:tt)* }) => {{
@@ -196,14 +196,14 @@ macro_rules! grid {
             .with_cell_size($cell)
             .with_titles($crate::layout::HeaderTitles::pair($title, $subtitle))
     }};
-    // title + subtitle + cols + cell — full form.
+    // title + subtitle + cols + cell - full form.
     (title: $title:expr, subtitle: $subtitle:expr, cols: $cols:expr, cell: $cell:expr, { $($body:tt)* }) => {{
         $crate::layout::GridLayout::build($crate::__grid_sections!($($body)*))
             .with_grid($cols, $cell)
             .with_titles($crate::layout::HeaderTitles::pair($title, $subtitle))
     }};
 
-    // title only — any combination of cols / cell, body required.
+    // title only - any combination of cols / cell, body required.
     (title: $title:expr, { $($body:tt)* }) => {{
         $crate::layout::GridLayout::build($crate::__grid_sections!($($body)*))
             .with_title($title)
@@ -224,7 +224,7 @@ macro_rules! grid {
             .with_title($title)
     }};
 
-    // subtitle only — same shape.
+    // subtitle only - same shape.
     (subtitle: $subtitle:expr, { $($body:tt)* }) => {{
         $crate::layout::GridLayout::build($crate::__grid_sections!($($body)*))
             .with_subtitle($subtitle)
@@ -292,7 +292,7 @@ macro_rules! __grid_items {
         $crate::__grid_items!($w, $b, $($rest)*);
     };
 
-    // Widget types — dispatch to modifier parser
+    // Widget types - dispatch to modifier parser
     ($w:ident, $b:ident, knob($id:expr, $label:expr) $($rest:tt)*) => {
         $crate::__grid_mods!($w, $b, $crate::layout::GridWidget::knob($id, $label), $($rest)*);
     };

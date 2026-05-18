@@ -1,4 +1,4 @@
-//! `NativeLoader` — loads and hot-reloads a plugin dylib.
+//! `NativeLoader` - loads and hot-reloads a plugin dylib.
 //!
 //! Uses native Rust ABI (no C translation layer). Verifies
 //! compatibility via `AbiCanary` + vtable probe before use.
@@ -19,7 +19,7 @@ use parking_lot::Mutex;
 /// A truly per-instance counter wouldn't help: each `NativeLoader`
 /// needs an ID *unique among other `NativeLoaders` in the same
 /// process*, and only a process-scoped atomic can guarantee that.
-/// `Relaxed` ordering is sufficient — the only consumer is the
+/// `Relaxed` ordering is sufficient - the only consumer is the
 /// owning `NativeLoader`, which reads the value back from its own
 /// `instance_id` field, never via a re-load of `LOADER_ID`.
 static LOADER_ID: AtomicU64 = AtomicU64::new(0);
@@ -47,7 +47,7 @@ struct Candidate<S: Sample> {
 
 /// Manages a hot-reloadable plugin dylib.
 ///
-/// Generic over `S` (the plugin's sample type — `f32` by default, the
+/// Generic over `S` (the plugin's sample type - `f32` by default, the
 /// host-wire format). A `prelude64` plugin built into a logic dylib
 /// must be loaded by an `S = f64` shell; the precision is also baked
 /// into [`AbiCanary::sample_precision`] so a mismatch fails the canary
@@ -63,7 +63,7 @@ pub struct NativeLoader<S: Sample = f32> {
     last_hash: u32,
     /// Set to true to stop the file watcher thread.
     watcher_stop: Arc<AtomicBool>,
-    /// Old library handles — leaked to avoid TLS destructor segfaults.
+    /// Old library handles - leaked to avoid TLS destructor segfaults.
     leaked_handles: Vec<Library>,
     /// Temp-file paths corresponding 1:1 to `leaked_handles` plus the
     /// currently active library. The dylib at each path is mmap-backed
@@ -88,7 +88,7 @@ unsafe impl<S: Sample> Send for NativeLoader<S> {}
 impl<S: Sample> NativeLoader<S> {
     /// Construct the loader and run the initial load.
     ///
-    /// Does not spawn the file watcher — call
+    /// Does not spawn the file watcher - call
     /// [`NativeLoader::spawn_watcher`] after wrapping the loader in an
     /// `Arc<Mutex<...>>` so the watcher thread can drive reloads
     /// itself, off the audio thread.
@@ -116,7 +116,7 @@ impl<S: Sample> NativeLoader<S> {
     /// The watcher polls the dylib path; when mtime advances and
     /// settles, it acquires `loader` and runs [`NativeLoader::reload`]
     /// directly. This keeps the codesign / dlopen / canary-probe work
-    /// off the audio thread — the audio thread only observes
+    /// off the audio thread - the audio thread only observes
     /// reloads via [`NativeLoader::load_counter`] advances and runs
     /// `plugin.reset()` to match the new sample rate / block size.
     ///
@@ -140,7 +140,7 @@ impl<S: Sample> NativeLoader<S> {
     /// whether to swap the old state out for the result.
     ///
     /// `new_hash` comes from the caller to avoid re-reading the dylib
-    /// — `load` and `reload` already hashed it to detect "unchanged"
+    /// - `load` and `reload` already hashed it to detect "unchanged"
     /// before deciding to call us. Re-hashing inside here would double
     /// the per-reload I/O on a 5-20 MB dylib.
     fn build_candidate(&mut self, new_hash: u32) -> Option<Candidate<S>> {
@@ -154,7 +154,7 @@ impl<S: Sample> NativeLoader<S> {
         };
 
         // macOS: ad-hoc codesign (required by SIP). If the temp path
-        // is non-UTF-8 (rare — `std::env::temp_dir()` usually lives
+        // is non-UTF-8 (rare - `std::env::temp_dir()` usually lives
         // under a UTF-8 prefix, but the user can override via env)
         // `to_str` fails and codesign would silently no-op against an
         // empty path. The `Library::new` call below then fails on
@@ -204,7 +204,7 @@ impl<S: Sample> NativeLoader<S> {
         let shell_canary = AbiCanary::current::<S>();
         if !shell_canary.matches(&dylib_canary) {
             log::error!(
-                "ABI mismatch — rebuild both shell and logic:\n{}",
+                "ABI mismatch - rebuild both shell and logic:\n{}",
                 shell_canary.diff_report(&dylib_canary)
             );
             cleanup_temp(lib, &temp);
@@ -321,18 +321,18 @@ impl<S: Sample> NativeLoader<S> {
             && !state.is_empty()
         {
             if let Err(e) = plugin.load_state(&state) {
-                // The new dylib refused state saved by the previous one —
+                // The new dylib refused state saved by the previous one -
                 // typically a state-format change between builds during
                 // iteration. The plugin keeps its post-`create()` defaults;
                 // log so the developer can see why the params jumped.
                 log::warn!("hot-reload: new dylib rejected previous state ({e}); keeping defaults");
             }
             // Fire state_changed in the same `&mut` borrow window as
-            // `load_state` — format-wrapper bridges (StaticShell, HotShell)
+            // `load_state` - format-wrapper bridges (StaticShell, HotShell)
             // do this for host-driven loads, but at this depth we hold the
             // raw `dyn PluginLogic` and have to call it ourselves.
             // Run on both Ok and Err so partial state still triggers a
-            // cache refresh — same policy as the format-wrapper bridges.
+            // cache refresh - same policy as the format-wrapper bridges.
             plugin.state_changed();
         }
 
@@ -353,7 +353,7 @@ impl<S: Sample> NativeLoader<S> {
         self.plugin.as_mut().map(std::convert::AsMut::as_mut)
     }
 
-    /// Monotonic counter of successful (or attempted) reloads — bumps
+    /// Monotonic counter of successful (or attempted) reloads - bumps
     /// once per `copy_versioned()` invocation, which precedes every
     /// candidate build. Two consumers (audio path + GUI watcher) that
     /// share the same `NativeLoader` use this to detect "the other
@@ -392,14 +392,14 @@ impl<S: Sample> Drop for NativeLoader<S> {
         self.plugin = None;
         // Leaked handles are intentionally not closed (TLS destructors
         // in the dylib could segfault on unload). But we *can* clean
-        // up the temp files for the active handle — its plugin is gone
+        // up the temp files for the active handle - its plugin is gone
         // now and there's no possibility of a future `dlsym`.
         if let (Some(lib), Some(path)) = (self.library.take(), self.current_temp.take()) {
             drop(lib);
             let _ = std::fs::remove_file(&path);
         }
         // Files behind `leaked_handles` stay on disk until the process
-        // exits — matches the leak-the-handle policy. macOS / Linux
+        // exits - matches the leak-the-handle policy. macOS / Linux
         // mmap survives the unlink, but on Windows the file is locked
         // while loaded so we cannot delete it; either way, leaving
         // them is no worse than the leaked dlopen handle itself.
@@ -447,7 +447,7 @@ fn watch_loop<S: Sample>(
         if mtime <= last_mtime {
             continue;
         }
-        // Wait for the compiler to finish writing — broken into
+        // Wait for the compiler to finish writing - broken into
         // STOP_CHECK chunks so dropping the loader during the settle
         // window doesn't block for the full SETTLE duration.
         for _ in 0..settle_chunks {
@@ -481,9 +481,9 @@ fn file_mtime(path: &std::path::Path) -> SystemTime {
 /// 500 ms doesn't allocate its full contents per poll cycle.
 ///
 /// Returns `None` on `open` / `read` failure (file missing,
-/// permissions, mid-write interruption — the compiler's mid-write
+/// permissions, mid-write interruption - the compiler's mid-write
 /// window is the common case). An empty file successfully hashes
-/// to `Some(0)` — distinct from the I/O failure case so a caller
+/// to `Some(0)` - distinct from the I/O failure case so a caller
 /// can't conflate "unreadable" with "unchanged" against an initial
 /// `last_hash = 0`.
 fn crc32_file(path: &std::path::Path) -> Option<u32> {
@@ -495,7 +495,7 @@ fn crc32_file(path: &std::path::Path) -> Option<u32> {
         match file.read(&mut buf) {
             Ok(0) => break,
             Ok(n) => hasher.update(&buf[..n]),
-            // Partial-read interruption / I/O failure — return None and
+            // Partial-read interruption / I/O failure - return None and
             // let the caller retry on the next poll. The compiler's
             // mid-write window is the common case here.
             Err(_) => return None,

@@ -8,7 +8,7 @@ use crate::theme::Color;
 ///
 /// Returned by [`RenderBackend::register_image`]; passed to
 /// [`RenderBackend::draw_image`]. Valid until `unregister_image` or the
-/// backend is dropped. Two backends do not share ids — ids from one
+/// backend is dropped. Two backends do not share ids - ids from one
 /// backend must not be used with another.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ImageId(pub u32);

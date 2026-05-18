@@ -9,7 +9,7 @@
 /// directly rather than re-deriving the convention.
 ///
 /// Construct via [`Self::new`] / [`Self::stereo`] + the `with_*`
-/// builders rather than struct literal — `#[non_exhaustive]` so
+/// builders rather than struct literal - `#[non_exhaustive]` so
 /// pre-1.0 future fields don't break downstream.
 #[derive(Clone, Debug, Default)]
 #[non_exhaustive]

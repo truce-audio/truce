@@ -3,7 +3,7 @@
 //! Build-time schema + target-dir helpers shared by `truce-derive`
 //! (proc macros) and `cargo-truce` (install / build pipeline).
 //!
-//! Plugin crates do not need a `build.rs` — `truce::plugin_info!()`
+//! Plugin crates do not need a `build.rs` - `truce::plugin_info!()`
 //! reads `truce.toml` directly at compile time and tracks it via
 //! `include_bytes!`.
 
@@ -60,7 +60,7 @@ pub struct PluginDef {
     #[serde(default)]
     pub version: Option<String>,
     /// User-facing one-paragraph description shown in distribution
-    /// surfaces — the iOS container app's "About" pane, App Store
+    /// surfaces - the iOS container app's "About" pane, App Store
     /// description, generated docs. Optional; absent → callers
     /// generate a category-aware default ("A truce effect", "A
     /// truce instrument", …).
@@ -97,7 +97,7 @@ pub struct PluginDef {
     /// Silence the audio output in *preview* hosts (truce-standalone,
     /// the iOS `AUv3` container app). `process()` keeps running on the
     /// usual cadence so plug-ins whose editor visualises an input
-    /// signal (analyzers, tuners, spectrum displays) still update —
+    /// signal (analyzers, tuners, spectrum displays) still update -
     /// but the signal never reaches the speakers, so a mic-fed analyzer
     /// doesn't form a feedback loop with its own loopback. Real DAW
     /// hosts ignore this flag; they own their own output graph.
@@ -154,7 +154,7 @@ fn read_cargo_config_target_dir(root: &Path) -> Option<PathBuf> {
 ///
 /// Returns `Err(message)` rather than panicking so callers in
 /// proc-macro contexts can route the message into a `compile_error!`
-/// with a span — panicking from a proc macro produces no span and a
+/// with a span - panicking from a proc macro produces no span and a
 /// noisy multi-line error frame.
 ///
 /// # Errors

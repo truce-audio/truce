@@ -1,4 +1,4 @@
-//! Platform window bridging for baseview — re-exports from
+//! Platform window bridging for baseview - re-exports from
 //! `truce_gui::platform`.
 //!
 //! iOS uses the stub editor in `editor_ios.rs` and doesn't go

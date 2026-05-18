@@ -11,14 +11,14 @@
 // Widget-drawing helpers, `RenderBackend` trait methods, and interaction
 // dispatch all take many independent geometry / state / theme arguments.
 // Bundling them into builder structs is a worthwhile refactor but a
-// separate change — for now the long signatures are intentional.
+// separate change - for now the long signatures are intentional.
 #![allow(clippy::too_many_arguments)]
 
 pub mod backend_cpu;
 pub mod blit;
 // baseview-bound editor is macOS / Windows / Linux only. iOS
 // embeds the editor in a UIView managed by the AUv3 view
-// controller — see [`editor_ios`].
+// controller - see [`editor_ios`].
 #[cfg(not(target_os = "ios"))]
 pub mod editor;
 #[cfg(target_os = "ios")]

@@ -11,7 +11,7 @@
 //! For typical visualization workloads (a 1–2 second ring drained at
 //! 60 Hz against a 44.1 kHz / 48 kHz source) drops never happen in
 //! practice. If they do, the worst-case artifact is a brief visual
-//! glitch — the kind of thing human eyes don't notice.
+//! glitch - the kind of thing human eyes don't notice.
 //!
 //! Per-sample integrity is preserved via `AtomicU32` storage of the
 //! `f32` bit pattern, so the consumer never sees torn individual
@@ -83,7 +83,7 @@ pub struct AudioTapConsumer {
 /// # Panics
 ///
 /// Panics if `channels == 0` or `capacity_frames == 0`. Both are
-/// programmer errors — a zero-sized ring is never useful.
+/// programmer errors - a zero-sized ring is never useful.
 #[must_use]
 pub fn audio_tap(capacity_frames: usize, channels: u16) -> (AudioTapProducer, AudioTapConsumer) {
     assert!(channels > 0, "audio_tap: channels must be > 0");
@@ -230,7 +230,7 @@ impl AudioTapConsumer {
 #[cfg(test)]
 mod tests {
     // Audio samples pushed through the ring are bit-identical on the
-    // way out — `assert_eq!(dest[0], s)` is the right shape.
+    // way out - `assert_eq!(dest[0], s)` is the right shape.
     // Test indices `i as f32` lose precision past 2^24 but our loops
     // are bounded by tiny ring capacities.
     #![allow(clippy::float_cmp, clippy::cast_precision_loss)]
@@ -286,7 +286,7 @@ mod tests {
 
         // Fill exactly.
         assert_eq!(tx.push_block(&[1.0, 2.0, 3.0, 4.0], 1), 0);
-        // Overflow by 3 — samples [1, 2, 3] are overwritten.
+        // Overflow by 3 - samples [1, 2, 3] are overwritten.
         assert_eq!(tx.push_block(&[5.0, 6.0, 7.0], 1), 3);
 
         let mut dest = [0.0_f32; 8];
@@ -340,7 +340,7 @@ mod tests {
     #[test]
     fn available_clamps_to_capacity_after_overwrite() {
         let (mut tx, rx) = audio_tap(4, 1);
-        // Push 8 samples into a 4-sample ring — 4 drops.
+        // Push 8 samples into a 4-sample ring - 4 drops.
         tx.push_block(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0], 1);
         assert_eq!(rx.available(), 4);
     }

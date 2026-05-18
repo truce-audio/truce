@@ -13,7 +13,7 @@
 use std::path::PathBuf;
 
 /// Resolved CLI + env + project-baked + runtime defaults.
-// Sparse independent CLI flags — bitflags would just add ceremony.
+// Sparse independent CLI flags - bitflags would just add ceremony.
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Clone, Debug, Default)]
 pub struct Options {
@@ -28,7 +28,7 @@ pub struct Options {
     /// in `truce.toml`.
     pub input_enabled: Option<bool>,
     /// Whether the speaker output is enabled at launch. `None` →
-    /// runtime default (on — the user launched standalone to hear
+    /// runtime default (on - the user launched standalone to hear
     /// the plugin). Set explicitly via `--output-enabled on|off`,
     /// the env var, or `[plugin.standalone].output_enabled` in
     /// `truce.toml`.
@@ -90,7 +90,7 @@ OPTIONS:
 #[cfg(feature = "playback")]
 const HELP_PLAYBACK: &str = "\
   --input-file <path>       Decode <path>.wav and feed it into the
-                            plugin's input bus. One-shot — plays once,
+                            plugin's input bus. One-shot - plays once,
                             then plugin sees silence on the file
                             channel. Mic + file sum when both are
                             enabled. Linear-interp resample if file SR
@@ -125,7 +125,7 @@ fn print_help() {
 }
 
 /// Parse argv + env and return resolved options. Plugin-author
-/// defaults are not handled here — [`crate::run_with`] applies them
+/// defaults are not handled here - [`crate::run_with`] applies them
 /// after parsing. When `--help` / `-h` is present, prints help and
 /// returns options with `help = true` so the caller exits cleanly
 /// at the binary boundary (no `process::exit` from library code,
@@ -156,7 +156,7 @@ pub fn parse() -> Result<Options, String> {
     let list_midi = args.contains("--list-midi");
     let verbose = args.contains(["-v", "--verbose"]);
 
-    // Parse values — each `Option<...>` short-circuits to None if absent.
+    // Parse values - each `Option<...>` short-circuits to None if absent.
     let output_device = args
         .opt_value_from_str::<_, String>("--output")
         .map_err(|e| format!("--output: {e}"))?;
@@ -241,7 +241,7 @@ pub fn parse() -> Result<Options, String> {
 }
 
 /// Parse an on/off boolean. `source` is the human-facing label
-/// prepended to error messages — pass the originating CLI flag
+/// prepended to error messages - pass the originating CLI flag
 /// (`"--input-enabled"`) when called from argv parsing, or the env
 /// var name (`"TRUCE_STANDALONE_INPUT_ENABLED"`) when called from the
 /// env-fallback layer. Either way, the user sees a parse error

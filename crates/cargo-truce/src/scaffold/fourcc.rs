@@ -22,7 +22,7 @@ use super::PluginSpec;
 /// alphanumeric content (`""`, `"---"`) it falls through to all-`'X'`.
 #[must_use]
 pub fn to_fourcc(s: &str) -> String {
-    // `filter_map` keeps the iterator chain total — no `unwrap` after
+    // `filter_map` keeps the iterator chain total - no `unwrap` after
     // the `!seg.is_empty()` guard, no defensive panic on empty input.
     // `chars().next()` returns `None` only when the segment was empty,
     // which the split filter has already excluded.
@@ -67,7 +67,7 @@ pub fn to_fourcc(s: &str) -> String {
 /// Returns `Err` only when 35+ plugins share the same 3-character
 /// prefix and the suffix slots ('2'–'9', 'A'–'Z' = 34 distinct
 /// characters) are exhausted. The caller (`scaffold`) should surface
-/// this as a clean error — the user can rename one plugin to break the
+/// this as a clean error - the user can rename one plugin to break the
 /// prefix collision instead of getting a process panic mid-scaffold.
 ///
 /// # Errors
@@ -85,7 +85,7 @@ pub fn resolve_fourccs(plugins: &[PluginSpec]) -> Result<HashMap<String, String>
             assignments.insert(p.name.clone(), fc);
             continue;
         }
-        // Collision — mutate last character
+        // Collision - mutate last character
         let base: String = fc.chars().take(3).collect();
         let mut resolved = false;
         for suffix in ('2'..='9').chain('A'..='Z') {

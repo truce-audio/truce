@@ -97,10 +97,10 @@ pub struct EguiEditor<P: Params + ?Sized> {
     /// `set_scale_factor`; the baseview handler holds a clone and
     /// applies surface/renderer reconfiguration on the next frame
     /// when the value diverges from its last-applied snapshot. Single
-    /// source of truth shared with iced / slint backends — see
+    /// source of truth shared with iced / slint backends - see
     /// [`truce_gui::EditorScale`].
     scale: EditorScale,
-    /// Active baseview window handle — exists only while editor is open.
+    /// Active baseview window handle - exists only while editor is open.
     window: Option<baseview::WindowHandle>,
     /// Typed editor context stored at `open()` for `state_changed` forwarding.
     context: Option<PluginContext<P>>,
@@ -109,7 +109,7 @@ pub struct EguiEditor<P: Params + ?Sized> {
 // SAFETY: `baseview::WindowHandle` holds a raw native window pointer
 // (HWND / NSView / X11 Window) and is not auto-`Send`. Hosts call
 // `Editor::open` / `idle` / `close` from a single dedicated GUI thread
-// — never concurrently and never from the audio thread — so the
+// - never concurrently and never from the audio thread - so the
 // handle is only ever touched on the thread that created it. The
 // `Editor` trait requires `Send` so the editor can live behind a
 // trait object; this impl asserts that the type doesn't escape its
@@ -165,7 +165,7 @@ impl<P: Params + 'static> EguiEditor<P> {
     ///
     /// # Panics
     ///
-    /// Panics if called after `open()` — by then the `Arc<Mutex<_>>`
+    /// Panics if called after `open()` - by then the `Arc<Mutex<_>>`
     /// holding the UI has been cloned for the running editor and
     /// can't be unwrapped. Configure callbacks during construction.
     #[must_use]
@@ -222,7 +222,7 @@ fn unpack_size(packed: u64) -> (u32, u32) {
 }
 
 // ---------------------------------------------------------------------------
-// Baseview WindowHandler — owns the egui frame loop + wgpu renderer
+// Baseview WindowHandler - owns the egui frame loop + wgpu renderer
 // ---------------------------------------------------------------------------
 
 struct EguiWindowHandler<P: Params + ?Sized> {
@@ -333,7 +333,7 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
         self.run_frame();
     }
 
-    // `_window` is unused on macOS / Linux — only the Windows
+    // `_window` is unused on macOS / Linux - only the Windows
     // ButtonPressed branch reads it (to SetFocus on the child HWND so
     // text widgets see WM_KEYDOWN). Underscore-prefix keeps that signal
     // intact; the allow lets the Windows branch use the binding without
@@ -359,7 +359,7 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
                         self.modifiers = convert_kb_modifiers(modifiers);
                         // baseview reports cursor in f64 logical points;
                         // egui uses f32. Window dimensions never reach
-                        // 2^23 — the narrowing is invisible.
+                        // 2^23 - the narrowing is invisible.
                         #[allow(clippy::cast_possible_truncation)]
                         let pos = egui::pos2(position.x as f32, position.y as f32);
                         self.last_cursor_pos = pos;
@@ -369,7 +369,7 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
                     ButtonPressed { button, modifiers } => {
                         // On Windows, a WS_CHILD plugin window doesn't receive
                         // WM_KEYDOWN/WM_CHAR until it has HWND focus. baseview
-                        // doesn't SetFocus on mouse-down, so we do it here —
+                        // doesn't SetFocus on mouse-down, so we do it here -
                         // otherwise text-edit widgets never see keystrokes
                         // (the DAW keeps eating them for transport etc.).
                         #[cfg(target_os = "windows")]
@@ -427,7 +427,7 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
                 self.modifiers = convert_kb_modifiers(kb.modifiers);
 
                 // Text input. Suppress Text events when Ctrl/Cmd is
-                // held — otherwise Ctrl+A/Ctrl+C/etc. would also insert
+                // held - otherwise Ctrl+A/Ctrl+C/etc. would also insert
                 // the character into focused text fields, which egui's
                 // shortcut handler reads through `command_pressed()`.
                 let modifier_held = self.modifiers.command || self.modifiers.mac_cmd;
@@ -463,7 +463,7 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
                     #[allow(clippy::cast_possible_truncation)]
                     let scale = info.scale() as f32;
                     truce_gui::platform::note_linux_scale_factor(info.scale());
-                    // Store logical size — egui screen_rect uses logical
+                    // Store logical size - egui screen_rect uses logical
                     // points. Round so a physical 800px@2× reports as 400
                     // logical, not 399 (truncating cast). Window
                     // dimensions stay well below u32::MAX.
@@ -520,8 +520,8 @@ fn convert_kb_modifiers(mods: keyboard_types::Modifiers) -> egui::Modifiers {
     let ctrl = mods.contains(keyboard_types::Modifiers::CONTROL);
     let shift = mods.contains(keyboard_types::Modifiers::SHIFT);
     let meta = mods.contains(keyboard_types::Modifiers::META);
-    // `mac_cmd` — Mac-specific Cmd-key flag, fed by META on macOS only.
-    // `command` — egui's cross-platform "primary modifier" alias:
+    // `mac_cmd` - Mac-specific Cmd-key flag, fed by META on macOS only.
+    // `command` - egui's cross-platform "primary modifier" alias:
     //   on macOS it tracks Cmd (= `mac_cmd`); elsewhere it tracks
     //   Ctrl. Mapping META→command on Linux/Windows (the original
     //   behavior) made egui treat Super as the shortcut modifier,
@@ -627,7 +627,7 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
         egui_ctx.set_visuals(visuals.clone());
         let font = self.font;
 
-        // Refresh the shared scale from the parent window — on macOS
+        // Refresh the shared scale from the parent window - on macOS
         // the parent's NSWindow may live on a non-main display whose
         // `backingScaleFactor` differs from `NSScreen.mainScreen`'s.
         // On Linux the same call returns the cached baseview scale.
@@ -680,7 +680,7 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
                 // `on_frame` calling `run_frame` every vblank, not by
                 // egui's own scheduler. `egui_ctx.request_repaint()`
                 // schedules a single frame, which baseview would
-                // immediately paint anyway — the call had no effect.
+                // immediately paint anyway - the call had no effect.
 
                 EguiWindowHandler::<P> {
                     ui,
@@ -735,7 +735,7 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
     fn set_scale_factor(&mut self, factor: f64) {
         // Write to the shared cell; the baseview handler picks up the
         // change on its next frame and resizes the wgpu surface +
-        // renderer to match. No explicit notification needed —
+        // renderer to match. No explicit notification needed -
         // baseview's frame loop polls.
         self.scale.set(factor);
     }

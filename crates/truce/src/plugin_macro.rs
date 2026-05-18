@@ -1,4 +1,4 @@
-//! The `plugin!` macro — one macro to export a `PluginLogic` impl
+//! The `plugin!` macro - one macro to export a `PluginLogic` impl
 //! to all formats with zero boilerplate.
 
 /// Export a plugin to all active format targets.
@@ -17,7 +17,7 @@
 ///
 /// # Feature-combination matrix
 ///
-/// The macro doesn't statically require *any* feature gate — every
+/// The macro doesn't statically require *any* feature gate - every
 /// arm is `#[cfg(feature = "...")]`-guarded so consumers can mix and
 /// match. The four legitimate combinations:
 ///
@@ -70,7 +70,7 @@ macro_rules! __plugin_impl {
         // Compile-time LV2 TTL emission. Walks the params type's
         // sidecar tree (written by `derive(Params)`) and produces
         // `manifest.ttl` / `plugin.ttl` next to it. cargo-truce's
-        // stage_lv2 reads those files at package time — no dlopen.
+        // stage_lv2 reads those files at package time - no dlopen.
         $crate::__reexport::__truce_lv2_emit_root!($params);
 
         // Always export the PluginLogic for dylib use (shell-mode or
@@ -134,7 +134,7 @@ macro_rules! __plugin_impl {
         /// `cargo-truce::commands::screenshot::ScreenshotFn`:**
         /// `unsafe extern "C" fn(*const u8, usize, *const u8, usize, f64) -> u32`.
         /// The CLI dlopens this plugin's cdylib and casts the
-        /// `__truce_screenshot` symbol to that type — any drift (extra
+        /// `__truce_screenshot` symbol to that type - any drift (extra
         /// arg, reordered args, return-type change) becomes silent UB
         /// at the call site rather than a link-time error. Update both
         /// sides together.
@@ -151,7 +151,7 @@ macro_rules! __plugin_impl {
         /// - `state_ptr` (if non-null) must point to `state_len`
         ///   readable bytes (the contents of a `.pluginstate` file).
         /// - `out_path_ptr` must point to `out_path_len` valid
-        ///   UTF-8 bytes — the absolute path the caller wants the
+        ///   UTF-8 bytes - the absolute path the caller wants the
         ///   PNG written to.
         #[doc(hidden)]
         #[unsafe(no_mangle)]
@@ -192,7 +192,7 @@ macro_rules! __plugin_impl {
             0
         }
 
-        // Format exports — same wrapper name in both modes.
+        // Format exports - same wrapper name in both modes.
         //
         // Wrapped in a synthetic module so a single
         // `#[allow(unexpected_cfgs)]` covers every cfg-feature gate
@@ -254,7 +254,7 @@ macro_rules! __plugin_hot_reload {
 
         impl __HotShellWrapper {
             fn dylib_path() -> std::path::PathBuf {
-                // Runtime escape hatch — point the shell at any
+                // Runtime escape hatch - point the shell at any
                 // dylib (advanced; only works when the DAW inherits
                 // the env, e.g. launched from the same terminal).
                 if let Ok(p) = std::env::var("TRUCE_LOGIC_PATH") {

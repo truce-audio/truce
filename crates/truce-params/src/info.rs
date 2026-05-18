@@ -17,7 +17,7 @@ pub struct ParamInfo {
     pub unit: ParamUnit,
     /// Which `*Param` type backs this entry. Drives display rounding
     /// (`IntParam` skips fractional digits) and `value_text` parsing,
-    /// independently of [`ParamRange`] — a `FloatParam` declared with
+    /// independently of [`ParamRange`] - a `FloatParam` declared with
     /// `range = "discrete(...)"` should still format as a float, so
     /// inferring kind from range alone is wrong.
     pub kind: ParamValueKind,

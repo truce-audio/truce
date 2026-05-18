@@ -307,7 +307,7 @@ impl PluginLogic for Arpeggio {
                 self.active_note = Some(note);
                 self.last_step = Some(step_num);
             } else if let Some(step) = self.last_step {
-                // Same step — check whether we've crossed the gate-off
+                // Same step - check whether we've crossed the gate-off
                 // boundary within it.
                 let gate_off_beat = (step_as_f64(step) + gate_frac) * beats_per_step;
                 if beat >= gate_off_beat
@@ -379,7 +379,7 @@ mod tests {
     }
 
     /// `category = "midi"` must surface as `PluginCategory::NoteEffect`
-    /// — anything else turns off the MIDI decode path in `truce-lv2::run`
+    /// - anything else turns off the MIDI decode path in `truce-lv2::run`
     /// and the plugin silently ignores host MIDI.
     #[test]
     fn category_is_note_effect() {

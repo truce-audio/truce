@@ -25,7 +25,7 @@ pub fn param_selector<P: ?Sized>(
 
     if response.clicked() {
         let value: f32 = state.get_param(id);
-        // `step_count - 1` denominator fits losslessly in `f32` —
+        // `step_count - 1` denominator fits losslessly in `f32` -
         // typical discrete-param ranges are well under `2^24`.
         #[allow(clippy::cast_precision_loss)]
         let new_value: f32 = if step_count > 1 {

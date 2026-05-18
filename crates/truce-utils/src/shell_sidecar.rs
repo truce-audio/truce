@@ -13,7 +13,7 @@
 //! `<crate_name>` matches the consuming crate's `CARGO_PKG_NAME`. The
 //! file content is one line: the absolute path to the logic dylib
 //! (e.g. `/Users/me/projects/my-plugin/target/shell/libmy_plugin.dylib`).
-//! No TOML / no JSON — a single path keeps both writer and reader
+//! No TOML / no JSON - a single path keeps both writer and reader
 //! trivial and parser-free.
 //!
 //! ## Why `~/.truce/` and not the bundle
@@ -25,16 +25,16 @@
 //! sidesteps that: the shell binary already has `env!("CARGO_PKG_NAME")`
 //! baked at compile time, so the read site needs only `$HOME` plus the
 //! crate name. Trade-off: only one shell install per crate at a time,
-//! which is fine — the only reason to install the same plugin twice is
+//! which is fine - the only reason to install the same plugin twice is
 //! beta/release coexistence, and shell-mode is a dev-loop feature.
 
 use std::path::PathBuf;
 
 /// Resolve `$HOME/.truce/shell/<crate_name>.path` for a given crate.
-/// `crate_name` is the consuming crate's `CARGO_PKG_NAME` — the
+/// `crate_name` is the consuming crate's `CARGO_PKG_NAME` - the
 /// reader passes `env!("CARGO_PKG_NAME")` and the writer passes the
 /// resolved plugin's `crate_name` from `truce.toml`. Returns `None`
-/// when neither `HOME` (Unix) nor `USERPROFILE` (Windows) is set —
+/// when neither `HOME` (Unix) nor `USERPROFILE` (Windows) is set -
 /// the caller should fail loud rather than guess a path.
 #[must_use]
 pub fn sidecar_path(crate_name: &str) -> Option<PathBuf> {
@@ -47,7 +47,7 @@ pub fn sidecar_path(crate_name: &str) -> Option<PathBuf> {
 }
 
 fn home_dir() -> Option<PathBuf> {
-    // Unix: HOME. Windows: USERPROFILE. No external `dirs` dep — both
+    // Unix: HOME. Windows: USERPROFILE. No external `dirs` dep - both
     // env vars are set by every shell / login session truce supports.
     if let Ok(home) = std::env::var("HOME")
         && !home.is_empty()

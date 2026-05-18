@@ -61,7 +61,7 @@ impl<'a, M: Clone + Debug + 'static> MeterWidget<'a, M> {
     pub fn into_element(self) -> Element<'a, Message<M>> {
         let total_h = self.height;
         // `label` and `font` are accepted on the builder for API symmetry
-        // with knob/dropdown but the meter currently renders bars only —
+        // with knob/dropdown but the meter currently renders bars only -
         // text labels are drawn by the surrounding layout, not the canvas.
         let _ = (self.label, self.font);
         let program = MeterProgram {

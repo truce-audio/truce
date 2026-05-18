@@ -1,4 +1,4 @@
-//! `cargo truce uninstall` — remove plugin bundles for the current project,
+//! `cargo truce uninstall` - remove plugin bundles for the current project,
 //! or with `--stale` evict vendor-matching bundles no longer in `truce.toml`.
 
 #[cfg(target_os = "macos")]
@@ -32,7 +32,7 @@ fn unregister_au3(config: &Config, plugin: &PluginDef, app_path: &Path) {
     }
     // `lsregister -u ""` interprets the empty string as the current
     // directory and unregisters whatever app-bundle the CWD happens to
-    // be — alarming if the user invoked `cargo truce uninstall` from inside
+    // be - alarming if the user invoked `cargo truce uninstall` from inside
     // some other `.app`. Skip the call instead.
     if let Some(app_path_str) = app_path.to_str() {
         let _ = Command::new(
@@ -123,7 +123,7 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
         i += 1;
     }
 
-    // Without an explicit scope flag, scan both user and system —
+    // Without an explicit scope flag, scan both user and system -
     // a dev who switched scopes mid-iteration may have stale copies
     // in the other half of the disk.
     let scopes_to_scan: Vec<InstallScope> = match cli_scope {
@@ -131,7 +131,7 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
         Some(InstallScope::System) => vec![InstallScope::System],
         None => vec![InstallScope::User, InstallScope::System],
     };
-    // AAX, AU v3, and (on Windows) VST2 are always system-scope —
+    // AAX, AU v3, and (on Windows) VST2 are always system-scope -
     // surface the same one-line note as `install` when `--user` was
     // explicitly requested for one of them.
     let user_explicit = matches!(cli_scope, Some(InstallScope::User));
@@ -157,7 +157,7 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
     // Default: all formats if none specified.
     // `au3 = true` lands in a flag that's read only inside macOS-gated
     // blocks; the assignment-never-read warning on Linux/Windows is
-    // intentional — keeping the flag uniform across platforms is more
+    // intentional - keeping the flag uniform across platforms is more
     // readable than a per-platform `if`.
     #[allow(unused_assignments)]
     if all_formats_default {
@@ -179,7 +179,7 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
     // bundle-removal loop to clean up `~/.truce/shell/<crate>.path`
     // sidecars when the user is uninstalling all formats for a
     // plugin. Empty for `--stale` (we only have display names there,
-    // not crate names — sidecars stay).
+    // not crate names - sidecars stay).
     let mut crate_names_for_sidecar_cleanup: Vec<String> = Vec::new();
 
     if stale {
@@ -226,7 +226,7 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
                 scan(&s.vst2_dir(), "vst", "VST2", s.needs_sudo(), &mut targets);
             }
         } else if vst2 && scan_system {
-            // Windows VST2 is always system-only — `vst2_dir()` returns
+            // Windows VST2 is always system-only - `vst2_dir()` returns
             // the same path for both scopes.
             scan(
                 &InstallScope::System.vst2_dir(),
@@ -245,7 +245,7 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
             // not-in-project check is best-effort and may keep some
             // bundles that *are* in the project but whose display name
             // hash-mangles into something else. That's the same
-            // best-effort posture as the other format scans —
+            // best-effort posture as the other format scans -
             // vendor-matching catches the common case of "shipped a
             // plugin, then renamed it" without false positives across
             // unrelated vendors.
@@ -288,7 +288,7 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
             // Scan /Applications for vendor-matching v3 apps not in project.
             // Recognize truce AU v3 containers by bundle-name convention:
             // legacy "<name> v3.app" or the new default "<name> (AUv3).app".
-            // A custom `au3_name` override may produce neither pattern — those
+            // A custom `au3_name` override may produce neither pattern - those
             // orphans can only be detected when the current config still
             // produces a recognizable name, so we compare against the current
             // bundle names as well.
@@ -333,7 +333,7 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
             );
         }
         // `--stale --standalone` cleans up legacy `<Name>.standalone.app`
-        // bundles only — the historical convention `cargo truce package`
+        // bundles only - the historical convention `cargo truce package`
         // used before the rename. The current `<Plugin>.app` layout
         // collides with arbitrary unrelated apps the user installed
         // from anywhere; vendor-string substring matching isn't enough
@@ -556,7 +556,7 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
                 // platform installer (a bare ELF under `~/.local/bin`
                 // on Linux, `%PROGRAMFILES%\<Vendor>\<Plugin>\...exe`
                 // on Windows). Uninstall there is the OS package
-                // manager's responsibility — `cargo truce uninstall`
+                // manager's responsibility - `cargo truce uninstall`
                 // never put the file there in the first place.
                 #[cfg(not(target_os = "macos"))]
                 {
@@ -579,7 +579,7 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
     eprintln!();
 
     if dry_run {
-        eprintln!("Dry run — nothing was removed.");
+        eprintln!("Dry run - nothing was removed.");
         return Ok(());
     }
 
@@ -604,7 +604,7 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
             if let Some(p) = matched_plugin {
                 unregister_au3(&config, p, &t.path);
             } else if let Some(path_str) = t.path.to_str() {
-                // Stale AU v3 — unregister by path only (lsregister).
+                // Stale AU v3 - unregister by path only (lsregister).
                 // Skip the call when the path can't be UTF-8'd: `lsregister
                 // -u ""` would unregister whatever app the CWD happens to be.
                 let _ = Command::new(
@@ -679,7 +679,7 @@ Usage: cargo truce uninstall [--clap] [--vst3] [--vst2] [--lv2] [--au2] [--au3] 
 
 Uninstall plugin bundles for this project. Default: all formats,
 all plugins, both user + system scopes. Asks for confirmation. AAX and
-AU v3 are always system-scope — `--user` skips them.
+AU v3 are always system-scope - `--user` skips them.
 
 Options:
   --clap           CLAP only

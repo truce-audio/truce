@@ -2,7 +2,7 @@
 //!
 //! Runs a plugin cdylib with direct cpal audio I/O and an optional
 //! GUI window (via baseview + the plugin's own `Editor`). Zero
-//! plugin-library code is required — the runner obtains the editor
+//! plugin-library code is required - the runner obtains the editor
 //! via `PluginExport::editor()`, the same API every format wrapper
 //! uses.
 //!
@@ -54,7 +54,7 @@ pub mod headless;
 pub use truce_core::export::PluginExport;
 
 // ---------------------------------------------------------------------------
-// Verbose state — set once from CLI / env, read everywhere via `vlog!`.
+// Verbose state - set once from CLI / env, read everywhere via `vlog!`.
 // ---------------------------------------------------------------------------
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -73,7 +73,7 @@ pub(crate) fn set_verbose(on: bool) {
 
 /// `eprintln!`, but only fires when [`is_verbose`] is true. Used for
 /// status chatter (device picks, toggles, transport state, save /
-/// load notices) — anything the user might want a trace of but that
+/// load notices) - anything the user might want a trace of but that
 /// shouldn't clutter the default output.
 macro_rules! vlog {
     ($($arg:tt)*) => {
@@ -84,7 +84,7 @@ macro_rules! vlog {
 }
 pub(crate) use vlog;
 
-/// Plugin-author launch defaults — used as the lowest tier of the
+/// Plugin-author launch defaults - used as the lowest tier of the
 /// CLI parser, beneath argv and `TRUCE_STANDALONE_*` env vars.
 /// Empty `Defaults::default()` lets every value fall through to the
 /// compiled runtime default (input off, output on, cpal-picked
@@ -105,7 +105,7 @@ impl Defaults {
     /// the default; CLI / env take precedence.
     ///
     /// Adding a new field to [`Defaults`] **must also add a line
-    /// here** — keeping the apply logic next to the struct is the
+    /// here** - keeping the apply logic next to the struct is the
     /// only thing stopping a new field from silently never being
     /// applied. The `match` below is exhaustive over [`Defaults`]'s
     /// fields by destructuring; adding a field there forces a
@@ -140,14 +140,14 @@ where
 /// rebinds the standard handles to whatever terminal launched us, so
 /// `--help`, `--list-devices`, and error diagnostics print where the
 /// user expects. Failure means there was no parent console (Start
-/// Menu / Explorer launch) — silently move on; that's the case the
+/// Menu / Explorer launch) - silently move on; that's the case the
 /// subsystem flag exists to handle. No-op on non-Windows or in
 /// console-subsystem builds (`AttachConsole` returns failure when a
 /// console is already attached, which we ignore).
 #[cfg(target_os = "windows")]
 fn attach_parent_console() {
     use windows_sys::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
-    // SAFETY: trivial FFI — no aliasing or lifetime concerns.
+    // SAFETY: trivial FFI - no aliasing or lifetime concerns.
     unsafe {
         let _ = AttachConsole(ATTACH_PARENT_PROCESS);
     }
@@ -157,7 +157,7 @@ fn attach_parent_console() {
 fn attach_parent_console() {}
 
 /// Run the plugin standalone with the supplied launch defaults.
-/// Argv and env still take precedence — `defaults` only fills in
+/// Argv and env still take precedence - `defaults` only fills in
 /// values neither layer set. Same dispatch as [`run`].
 pub fn run_with<P: PluginExport>(defaults: Defaults)
 where
@@ -186,12 +186,12 @@ where
         return;
     }
 
-    // Latch the verbose flag before anything else logs — every
+    // Latch the verbose flag before anything else logs - every
     // `vlog!` checks this static.
     set_verbose(opts.verbose);
 
     // Layer the plugin-author defaults beneath whatever argv / env
-    // already resolved. Other Options fields stay CLI/env-only —
+    // already resolved. Other Options fields stay CLI/env-only -
     // device, sample rate, buffer, MIDI, BPM, state are per-machine
     // concerns the developer shouldn't pin in code.
     defaults.apply(&mut opts);
@@ -232,7 +232,7 @@ where
 
     // `--no-playback` only applies in the canonical CI render
     // shape (--input-file + --output-file). In any other combo
-    // there's either no driver or no destination — soft-warn and
+    // there's either no driver or no destination - soft-warn and
     // fall through to real-time so the runner stays useful.
     #[cfg(feature = "playback")]
     if opts.no_playback && !(opts.input_file.is_some() && opts.output_file.is_some()) {

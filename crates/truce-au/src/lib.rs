@@ -23,7 +23,7 @@ use truce_core::SYSEX_POOL_PREALLOC;
 use truce_core::cast::{len_u32, sample_pos_i64};
 use truce_core::editor::Editor;
 // `ClosureBridge`, `PluginContext`, `SendPtr`, `RawWindowHandle` are
-// consumed only inside the apple-gated body of `cb_gui_open` — the
+// consumed only inside the apple-gated body of `cb_gui_open` - the
 // AppKit/UiKit variants don't exist on Linux/Windows. Importing them
 // from a non-apple module would also trigger the unused-import lint
 // there.
@@ -48,7 +48,7 @@ use ffi::{
 };
 
 // ---------------------------------------------------------------------------
-// Instance wrapper — one per plugin instance, stored as the opaque ctx
+// Instance wrapper - one per plugin instance, stored as the opaque ctx
 // ---------------------------------------------------------------------------
 
 /// Bounded handoff slot for state loads. Capacity 1: presets don't
@@ -118,7 +118,7 @@ struct AuInstance<P: PluginExport> {
 // in this file feeds a `*const c_char` (or `*const SomeDesc`) into a
 // descriptor that the AU host caches for the process lifetime. Hosts
 // re-read these pointers on demand (display, parameter sweeps,
-// validation) — there's no signal back to Rust saying "you may free
+// validation) - there's no signal back to Rust saying "you may free
 // this now". Freeing is therefore unsound.
 //
 // The leak is bounded: O(plugin_count × (param_count + a few strings))
@@ -127,7 +127,7 @@ struct AuInstance<P: PluginExport> {
 // the host process, which reclaims the allocation.
 //
 // `Box::into_raw(boxed_instance)` in `cb_create` follows the same
-// pattern but is *paired* with `cb_destroy` reconstituting the Box —
+// pattern but is *paired* with `cb_destroy` reconstituting the Box -
 // so it isn't a leak, just a C-lifetime handoff.
 //
 // ---------------------------------------------------------------------------
@@ -224,7 +224,7 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
         let inst = &mut *ctx.cast::<AuInstance<P>>();
         let num_frames = nf;
 
-        // Host called render before AU initialized us — sample rate
+        // Host called render before AU initialized us - sample rate
         // and smoothers haven't been primed. Zero outputs and bail.
         if !inst.prepared {
             for ch in 0..num_output_channels as usize {
@@ -338,9 +338,9 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
                     }
                     _ => {
                         // mt 0x0 (utility), 0x1 (system real-time),
-                        // 0x2 (MIDI 1 CV — already arrived via the
+                        // 0x2 (MIDI 1 CV - already arrived via the
                         // legacy `events` slice above), 0xD / 0xF
-                        // (flex / stream) — out of scope today.
+                        // (flex / stream) - out of scope today.
                     }
                 }
             }
@@ -508,7 +508,7 @@ unsafe extern "C" fn cb_state_save<P: PluginExport>(
         let len = blob.len();
         let ptr = malloc(len).cast::<u8>();
         if ptr.is_null() {
-            // malloc failed — `*out_data` is already null and
+            // malloc failed - `*out_data` is already null and
             // `*out_len` already 0 from the pre-zero above.
             return;
         }
@@ -539,7 +539,7 @@ unsafe extern "C" fn cb_state_load<P: PluginExport>(
             state::apply_params(&*inst.params_arc, &deserialized);
             // Hand the deserialized state to the audio thread for
             // application. `force_push` overwrites any older pending
-            // blob — see the `pending_state` field comment for why
+            // blob - see the `pending_state` field comment for why
             // newest-wins is the right policy.
             let _ = inst.pending_state.force_push(deserialized);
             if let Some(ref mut editor) = inst.editor {
@@ -703,7 +703,7 @@ unsafe extern "C" fn cb_gui_get_size<P: PluginExport>(
         if ctx.is_null() {
             return;
         }
-        // Lazily install the editor here too — some AU validators
+        // Lazily install the editor here too - some AU validators
         // (`auval`, Logic Pro's plugin validator) call `..._get_size`
         // before `..._has_editor`, which is the canonical install
         // site. Without this, those validators saw `inst.editor ==
@@ -718,7 +718,7 @@ unsafe extern "C" fn cb_gui_get_size<P: PluginExport>(
             // AU is macOS-only; hosts embed our NSView inside a Cocoa
             // container at logical-point coordinates and AppKit handles
             // the Retina backing transparently. Report the editor size
-            // as-is — no scaling.
+            // as-is - no scaling.
             let (ew, eh) = editor.size();
             *w = ew;
             *h = eh;
@@ -783,7 +783,7 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                     #[cfg(target_os = "macos")]
                     set_param: Box::new(move |id, value| {
                         // One combined trait dispatch (set_normalized
-                        // + get_plain) instead of two — the
+                        // + get_plain) instead of two - the
                         // `#[derive(Params)]` impl can compute both in
                         // a single match-arm walk.
                         let plain =
@@ -858,7 +858,7 @@ unsafe extern "C" fn cb_gui_close<P: PluginExport>(ctx: *mut std::ffi::c_void) {
         if let Some(ref mut editor) = inst.editor {
             editor.close();
         }
-        // Keep the editor alive — just closed, not dropped.
+        // Keep the editor alive - just closed, not dropped.
         //
         // Dropping the editor here would synchronously deallocate its
         // baseview NSWindow + content NSView. Logic / Pro Tools tend
@@ -882,7 +882,7 @@ unsafe extern "C" {
 }
 
 // AU v2 host-side automation notifiers live in `au_v2_shim.c`,
-// which only compiles on macOS. iOS doesn't have AU v2 at all —
+// which only compiles on macOS. iOS doesn't have AU v2 at all -
 // AU v3 host notifies via the parameter tree directly.
 #[cfg(target_os = "macos")]
 unsafe extern "C" {
@@ -902,7 +902,7 @@ unsafe extern "C" {
 /// to `PluginInfo::name`. The v3 host gets its display name out of
 /// the appex's `Info.plist` (`AUNAME`, populated by
 /// `cargo truce install --au3` from `au3_name`), not from this
-/// function — `g_descriptor->name` only feeds the v2 bridge's
+/// function - `g_descriptor->name` only feeds the v2 bridge's
 /// internal scanning responses, so the same value works for both
 /// build flavours.
 fn resolved_plugin_name(info: &truce_core::info::PluginInfo) -> &'static str {
@@ -931,7 +931,7 @@ fn register_au_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
     // `PluginExport` impls without a `Params::param_infos_static`
     // override fall back to the historical
     // `Self::create().params().param_infos()` walk inside the trait
-    // default — see `PluginExport::param_infos_static`.
+    // default - see `PluginExport::param_infos_static`.
     let param_infos = P::param_infos_static();
     let mut param_descs: Vec<AuParamDescriptor> = Vec::with_capacity(param_infos.len());
 
@@ -1037,7 +1037,7 @@ macro_rules! export_au {
                 ::truce_au::register_au::<$plugin_type>();
             }
 
-            // AU v2 factory — delegates to au_v2_shim.c, which the
+            // AU v2 factory - delegates to au_v2_shim.c, which the
             // build.rs always compiles into the shim static lib.
             unsafe extern "C" {
                 fn truce_au_v2_factory_bridge(
@@ -1080,7 +1080,7 @@ mod tests {
         // reads `TRUCE_SYSEX_POOL_PREALLOC` from `au_shim_types.h`
         // to size its per-render `sysexOutScratch`. Confirm the C
         // macro still expands to the same value as the Rust const
-        // — otherwise the scratch is either undersized (event
+        // - otherwise the scratch is either undersized (event
         // drops) or wasteful (memory bloat per AU instance).
         let needle = format!("#define TRUCE_SYSEX_POOL_PREALLOC ({SYSEX_POOL_PREALLOC})");
         let needle_paren = format!(

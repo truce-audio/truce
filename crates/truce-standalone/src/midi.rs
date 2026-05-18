@@ -2,9 +2,9 @@
 //!
 //! Two entry points:
 //!
-//! - [`list_midi`] — print available MIDI input devices and return.
+//! - [`list_midi`] - print available MIDI input devices and return.
 //!   Exposed as the `--list-midi` CLI flag.
-//! - [`MidiInputThread`] — open a MIDI input, forward decoded note /
+//! - [`MidiInputThread`] - open a MIDI input, forward decoded note /
 //!   CC / bend events into the audio thread's queue, and poll every
 //!   second for hot-plug (auto-reconnect on replug, fall-through to
 //!   QWERTY on unplug). Held by the windowed / headless runners; drop
@@ -79,7 +79,7 @@ impl Drop for MidiInputThread {
     }
 }
 
-// Spawned-thread body — owns its state across the worker's lifetime.
+// Spawned-thread body - owns its state across the worker's lifetime.
 // Switching to refs would force the caller to outlive the thread.
 #[allow(clippy::needless_pass_by_value)]
 fn midi_thread(requested: String, pending: Arc<ArrayQueue<MidiEvent>>, stop: Arc<AtomicBool>) {
@@ -102,7 +102,7 @@ fn midi_thread(requested: String, pending: Arc<ArrayQueue<MidiEvent>>, stop: Arc
             if !still_present {
                 eprintln!(
                     "MIDI device '{current_name}' \
-                     disconnected — falling back to QWERTY."
+                     disconnected - falling back to QWERTY."
                 );
                 connection = None;
                 current_name.clear();

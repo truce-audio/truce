@@ -1,6 +1,6 @@
 // Synth runs ADSR + voice rendering in f64 for cumulative-state
 // stability (phase accumulator, envelope coefficients); the f64
-// prelude makes that the buffer precision too — the format wrapper
+// prelude makes that the buffer precision too - the format wrapper
 // widens the host's f32 audio buffer to f64 at the block boundary
 // and narrows on the way out.
 use truce::prelude64::*;

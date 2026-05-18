@@ -5,7 +5,7 @@
 //! field count interpolated as a literal. The addition failed to
 //! compile (no `Add<u32> for usize`) for any struct annotated with
 //! the derive. The bug went unnoticed because nothing in-tree used
-//! the derive — fixed by casting the field count at the arithmetic
+//! the derive - fixed by casting the field count at the arithmetic
 //! site.
 
 use truce_core::custom_state::State;
@@ -65,7 +65,7 @@ fn default_round_trips() {
 fn deserialize_garbage_does_not_panic() {
     assert!(PrimitiveState::deserialize(&[]).is_none());
     assert!(PrimitiveState::deserialize(&[0xFF; 3]).is_none());
-    // A 4-byte stored_count past usize::MAX shouldn't loop forever —
+    // A 4-byte stored_count past usize::MAX shouldn't loop forever -
     // the `cursor.remaining() / 4 + N` bound caps it.
     let mut bogus = vec![0xFF, 0xFF, 0xFF, 0xFF];
     bogus.extend_from_slice(&[0u8; 16]);

@@ -10,14 +10,14 @@
 //! Run: `cargo test -p cargo-truce --test scaffold_e2e`
 //!
 //! Tests self-serialize at the build step via a process-level mutex,
-//! so `--test-threads=1` is optional — scaffolding and rewriting run
+//! so `--test-threads=1` is optional - scaffolding and rewriting run
 //! concurrently, only `cargo check` is single-threaded to share the
 //! target dir safely.
 //!
-//! Most tests run `cargo check` only — ~7s warm. `workspace_full_build`
+//! Most tests run `cargo check` only - ~7s warm. `workspace_full_build`
 //! does a full `cargo build` on a multi-plugin workspace to catch
 //! link-time regressions (format wrapper symbol exports, cdylib link
-//! args, etc.) that `check` skips — ~60s cold, ~5-10s warm. Run just
+//! args, etc.) that `check` skips - ~60s cold, ~5-10s warm. Run just
 //! that one when iterating on link-related code:
 //!
 //! ```
@@ -36,7 +36,7 @@ use truce_utils::cast::sample_count_usize;
 // Fixtures
 // ---------------------------------------------------------------------------
 
-/// `<truce-repo-root>/` — this crate's manifest lives at
+/// `<truce-repo-root>/` - this crate's manifest lives at
 /// `<truce>/crates/cargo-truce/Cargo.toml`, so two parents up is the
 /// workspace root.
 fn truce_root() -> &'static Path {
@@ -165,7 +165,7 @@ impl Scaffold {
     /// `{ path = "<truce-root>/crates/<name>", ... }`. Keeps `cargo
     /// check` off the network.
     fn rewrite_git_to_path(&self) -> Result<(), String> {
-        // Inject path deps with forward slashes even on Windows — TOML
+        // Inject path deps with forward slashes even on Windows - TOML
         // basic strings (`path = "..."`) treat backslash as an escape
         // introducer, so a native `D:\a\truce\...` path would break
         // toml parsing with `missing escaped value`. Cargo accepts
@@ -203,7 +203,7 @@ impl Scaffold {
         self.run_cargo("test")
     }
 
-    /// Run `cargo clippy --workspace --all-targets -- -D warnings` —
+    /// Run `cargo clippy --workspace --all-targets -- -D warnings` -
     /// the same lint policy CI applies to the truce repo itself, run
     /// against a freshly-scaffolded plugin. Catches templates that
     /// emit lint-noisy boilerplate that would surface in every user's
@@ -241,7 +241,7 @@ impl Scaffold {
     /// against the scaffolded project, returning the binary's path on
     /// success. Used by tests that need to build a specific bin with
     /// a non-default feature set (e.g. the standalone runner with the
-    /// optional `playback` feature) — `run_cargo` uses `--workspace`
+    /// optional `playback` feature) - `run_cargo` uses `--workspace`
     /// which can't target per-package features.
     fn cargo_build_bin(
         &self,
@@ -316,9 +316,9 @@ impl Scaffold {
 
     /// Run a `cargo truce <subcommand>` invocation against the
     /// scaffolded project. Exercises the actual `cargo-truce` binary
-    /// (not just bare `cargo build`), so xtask-side regressions —
+    /// (not just bare `cargo build`), so xtask-side regressions -
     /// bundle staging, per-format feature gating, `project_root`
-    /// resolution from a child cwd — surface here.
+    /// resolution from a child cwd - surface here.
     ///
     /// Sets `CARGO_TARGET_DIR` to the shared cache so artifacts
     /// land alongside the other tests' `cargo check` / `cargo build`
@@ -330,7 +330,7 @@ impl Scaffold {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         // Wipe the staged-bundles dir so this test's assertions don't
         // pick up artifacts from earlier `truce_subcommand` runs.
-        // Cargo build artifacts under `release/` survive — that's the
+        // Cargo build artifacts under `release/` survive - that's the
         // whole point of sharing the target dir.
         let _ = std::fs::remove_dir_all(shared_target().join("bundles"));
         let out = Command::new(cargo_truce_bin())
@@ -375,7 +375,7 @@ impl Scaffold {
 
     /// Assert that `<shared-target>/bundles/` holds exactly `expected`
     /// entries whose name ends with `ext` (e.g. `.clap`, `.vst3`).
-    /// Stronger end-to-end check than "cargo-truce exited 0" —
+    /// Stronger end-to-end check than "cargo-truce exited 0" -
     /// catches silent staging regressions (e.g. format-flag honored at
     /// build time but bundle never materialized).
     ///
@@ -406,8 +406,8 @@ impl Scaffold {
     }
 }
 
-/// Snapshot the shared target tree — top-level, `release/`,
-/// `debug/`, `bundles/` — for inclusion in failure messages. Helps
+/// Snapshot the shared target tree - top-level, `release/`,
+/// `debug/`, `bundles/` - for inclusion in failure messages. Helps
 /// pinpoint whether the build wrote to a different profile dir, the
 /// staging step skipped, or cargo silently produced no output.
 fn diagnose_target_layout() -> String {
@@ -452,7 +452,7 @@ fn diagnose_target_layout() -> String {
 /// codes and whitespace). Skips three benign cases:
 ///
 /// - "Compiling …": not a diagnostic, just cargo progress.
-/// - rustc's "warnings emitted" / "X warnings emitted" summary lines —
+/// - rustc's "warnings emitted" / "X warnings emitted" summary lines -
 ///   redundant with the underlying warnings we're already capturing.
 /// - "warning: build failed, waiting for other jobs to finish…":
 ///   cargo's job-cancellation noise, not a real diagnostic.
@@ -555,7 +555,7 @@ fn rewrite_git_refs(content: &str, crates_dir: &str) -> String {
         let key = line[..eq_idx].trim();
         let replacement = format!(r#"{{ path = "{crates_dir}/{key}""#);
         let mut rewritten = line.replacen(NEEDLE, &replacement, 1);
-        // Strip `, tag = "..."` if present — invalid on path deps.
+        // Strip `, tag = "..."` if present - invalid on path deps.
         // Scaffolds emit it immediately after the URL.
         let needle = r#", tag = ""#;
         if let Some(start) = rewritten.find(needle) {
@@ -567,7 +567,7 @@ fn rewrite_git_refs(content: &str, crates_dir: &str) -> String {
         out.push_str(&rewritten);
         out.push('\n');
     }
-    // Preserve trailing-newline state — `lines()` drops the final \n.
+    // Preserve trailing-newline state - `lines()` drops the final \n.
     if !content.ends_with('\n') && out.ends_with('\n') {
         out.pop();
     }
@@ -645,7 +645,7 @@ fn single_plugin_no_standalone() {
     let s = Scaffold::new("single-no-standalone", "demo_bare").arg("--no-standalone");
     s.run().unwrap();
     s.rewrite_git_to_path().unwrap();
-    // No `src/main.rs` — the standalone host shouldn't be scaffolded.
+    // No `src/main.rs` - the standalone host shouldn't be scaffolded.
     assert!(
         !s.generated.join("src/main.rs").exists(),
         "[single-no-standalone] src/main.rs leaked into a --no-standalone scaffold"
@@ -672,7 +672,7 @@ fn workspace_no_standalone() {
 
 // Lint-clean check on a fresh single-plugin scaffold. `clippy -D
 // warnings` matches the policy CI runs against the truce repo itself
-// — if we let a template emit code that triggers a lint, every user
+// - if we let a template emit code that triggers a lint, every user
 // of `cargo truce new` would inherit it.
 #[test]
 fn single_plugin_clippy_clean() {
@@ -710,8 +710,8 @@ fn single_plugin_tests_pass() {
 
 // `cargo test --workspace` on a multi-plugin workspace mixing every
 // plugin kind (effect + instrument + midi). Doubles as a link-time
-// build check — `cargo test` compiles and links every cdylib like
-// `cargo build` does — and verifies the per-kind default test
+// build check - `cargo test` compiles and links every cdylib like
+// `cargo build` does - and verifies the per-kind default test
 // templates (`render_effect` vs `render_instrument` vs note-effect
 // silence assertion) all pass.
 #[test]
@@ -726,9 +726,9 @@ fn workspace_mixed_types_tests_pass() {
 
 // `cargo truce build --clap` on a single-plugin scaffold. Exercises
 // the actual `cargo-truce` binary (not bare `cargo build`), so
-// xtask-side regressions — `project_root` resolution from a child
+// xtask-side regressions - `project_root` resolution from a child
 // cwd, per-format feature gating in `detect_default_features`,
-// bundle staging into `target/bundles/` — surface here. Single
+// bundle staging into `target/bundles/` - surface here. Single
 // plugin + CLAP only to keep the test under a minute. Does not use
 // the shared target dir; see `truce_subcommand` for why.
 #[test]
@@ -778,13 +778,13 @@ fn scaffold_cargo_truce_screenshot() {
     let project_pic = s.generated.join("screenshots/scaffold_smoke.png");
     assert!(
         project_pic.exists(),
-        "[truce-screenshot] expected PNG at {} but it's missing — \
+        "[truce-screenshot] expected PNG at {} but it's missing - \
          did `--out` resolve elsewhere?",
         project_pic.display()
     );
     assert!(
         !truce_leak.exists(),
-        "[truce-screenshot] PNG leaked into truce checkout at {} — \
+        "[truce-screenshot] PNG leaked into truce checkout at {} - \
          the CLI mis-resolved the output path against the wrong root",
         truce_leak.display()
     );
@@ -795,7 +795,7 @@ fn scaffold_cargo_truce_screenshot() {
 // run the standalone with `--no-playback --input-file --output-file`,
 // then bit-exact diff input vs output. The scaffolded effect template
 // is a unity-gain passthrough at default settings (the gain param's
-// default plain value is 0 dB — see `truce-derive`'s
+// default plain value is 0 dB - see `truce-derive`'s
 // `default_plain = a.default.unwrap_or(0.0)`), so input and output
 // must agree to within i16 quantization noise. Catches regressions
 // in: the `playback` feature wiring, `--no-playback` offline-render
@@ -872,7 +872,7 @@ fn scaffold_standalone_offline_render() {
     let cmp_len = in_samples.len().min(out_samples.len());
     assert!(
         cmp_len > 0,
-        "[offline-render] zero-length comparison — input/output decoded empty"
+        "[offline-render] zero-length comparison - input/output decoded empty"
     );
     let (max_idx, max_diff) = in_samples
         .iter()
@@ -904,7 +904,7 @@ fn scaffold_standalone_offline_render() {
     // and `mix_into` saturates after the file is consumed).
     let tail = &out_samples[cmp_len..];
     let tail_peak = tail.iter().fold(0.0_f32, |a, &b| a.max(b.abs()));
-    // Bit-exact zero is the contract — `mix_into` saturates by
+    // Bit-exact zero is the contract - `mix_into` saturates by
     // returning early, never touching the buffer past EOF.
     #[allow(clippy::float_cmp)]
     {
@@ -921,7 +921,7 @@ fn scaffold_standalone_offline_render() {
 /// Generate a 1-second 20 Hz → 20 kHz exponential sweep as
 /// stereo i16 PCM @ 48 kHz at the given path. Exponential
 /// rather than linear so the test signal exercises the full
-/// audible band evenly on a log frequency axis — same shape
+/// audible band evenly on a log frequency axis - same shape
 /// most measurement tools use.
 //
 // `i as f64` for the sample-index/time relation; n = 48_000

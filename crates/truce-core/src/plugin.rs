@@ -33,13 +33,13 @@ use truce_params::sample::Sample;
 /// user's `custom_editor` (preferred) or `layout` (built-in fallback).
 pub trait Plugin: Send + 'static {
     /// The plugin's chosen audio sample precision. Either `f32` (the
-    /// default — matches host wire format for nearly all formats) or
+    /// default - matches host wire format for nearly all formats) or
     /// `f64` (for plugins whose DSP path runs in `f64` end-to-end:
     /// high-order biquads, oscillator phase accumulators, long-running
     /// cumulative state).
     ///
     /// The format wrapper bridges between host buffer precision and
-    /// `Self::Sample` at the block boundary — so the plugin's
+    /// `Self::Sample` at the block boundary - so the plugin's
     /// `process()` always receives `AudioBuffer<Self::Sample>`
     /// regardless of what the host sent. See
     /// `truce_core::RawBufferScratch` for the conversion machinery.
@@ -55,7 +55,7 @@ pub trait Plugin: Send + 'static {
     /// buffers and hands the plugin the raw shared memory through
     /// `AudioBuffer::in_out_mut(ch)`. The plugin must check
     /// `AudioBuffer::is_in_place(ch)` per channel before reading
-    /// `input(ch)` — for in-place channels `input(ch)` returns an
+    /// `input(ch)` - for in-place channels `input(ch)` returns an
     /// empty slice, and the data lives only in the shared buffer.
     ///
     /// Default `false`: the wrapper copies aliased inputs into scratch
@@ -64,7 +64,7 @@ pub trait Plugin: Send + 'static {
     /// audio rates) and lets plugin code stay format-agnostic.
     ///
     /// `where Self: Sized` so a `dyn Plugin` trait object stays
-    /// dyn-compatible — the format wrappers consume `P: Plugin`
+    /// dyn-compatible - the format wrappers consume `P: Plugin`
     /// generically and call the method statically.
     #[must_use]
     fn supports_in_place() -> bool
@@ -77,7 +77,7 @@ pub trait Plugin: Send + 'static {
     /// Static metadata about the plugin.
     ///
     /// Use `plugin_info!()` for zero-boilerplate (reads from truce.toml
-    /// + Cargo.toml at compile time — no `build.rs` required).
+    /// + Cargo.toml at compile time - no `build.rs` required).
     fn info() -> PluginInfo
     where
         Self: Sized;
@@ -107,7 +107,7 @@ pub trait Plugin: Send + 'static {
     ) -> ProcessStatus;
 
     /// Save extra state beyond parameter values. Empty `Vec` means
-    /// "no extra state" — matches the user-facing
+    /// "no extra state" - matches the user-facing
     /// `truce_gui::PluginLogic::save_state` shape so the wrapper bridge
     /// is a passthrough rather than an `Option<Vec<u8>>` ↔ `Vec<u8>`
     /// translation.

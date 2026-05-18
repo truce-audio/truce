@@ -1,4 +1,4 @@
-/// AU v3 Swift implementation — delegates all plugin logic to the Rust
+/// AU v3 Swift implementation - delegates all plugin logic to the Rust
 /// framework via C FFI (g_callbacks function pointer table).
 import os.log
 import AudioToolbox
@@ -155,7 +155,7 @@ class TruceAUAudioUnit: AUAudioUnit {
         // with an empty output bus array via -10868
         // (kAudioUnitErr_FormatNotSupported) at instantiation.
         // The output bus exists purely so the framework can read a
-        // sample rate from its format — no audio is ever written
+        // sample rate from its format - no audio is ever written
         // to it. The render block below memsets the output buffer
         // to 0 for aumi plugins to satisfy strict hosts that audit
         // for stale data.
@@ -183,7 +183,7 @@ class TruceAUAudioUnit: AUAudioUnit {
     }
 
     /// MIDI output ports exposed to the host. `aumi` (MIDI Processor)
-    /// plugins — identified here by "no audio outputs declared" —
+    /// plugins - identified here by "no audio outputs declared" -
     /// must advertise at least one MIDI output for Apple's AU
     /// infrastructure to accept instantiation. Plugins with audio
     /// outputs (`aufx`, `aumu`, `aumf`) return an empty array so
@@ -298,7 +298,7 @@ class TruceAUAudioUnit: AUAudioUnit {
                 // iOS 17+ / macOS 14+: AU hosts deliver UMPs through
                 // AURenderEvent.MIDIEventsList (CoreMIDI's MIDIEventList
                 // structure). Walk the packet list and classify each
-                // word group by UMP message type — MIDI 1.0 channel
+                // word group by UMP message type - MIDI 1.0 channel
                 // voice (mt=0x2, 32 bits) flows through the legacy
                 // 3-byte path; MIDI 2.0 channel voice (mt=0x4, 64
                 // bits) flows through midi2Buf. Other UMP types
@@ -454,7 +454,7 @@ class TruceAUAudioUnit: AUAudioUnit {
         // becomes `0xF0` + inner + `0xF7` in this buffer before
         // being handed to `midiOutputEventBlock`. Sized to
         // `TRUCE_SYSEX_POOL_PREALLOC` (mirrored from
-        // `truce_core::SYSEX_POOL_PREALLOC`, 128 KiB by default —
+        // `truce_core::SYSEX_POOL_PREALLOC`, 128 KiB by default -
         // the worst-case sum of all inner payloads in one block)
         // plus 512 B of framing headroom (2 bytes × up to 256
         // events).
@@ -521,7 +521,7 @@ class TruceAUAudioUnit: AUAudioUnit {
     override var channelCapabilities: [NSNumber]? {
         guard let d = g_descriptor?.pointee else { return nil }
         // aumi (MIDI Processor, zero audio I/O): advertise 0 inputs
-        // and "any" (-1) outputs — the output bus is a dummy kept
+        // and "any" (-1) outputs - the output bus is a dummy kept
         // alive only so AUv3 can negotiate a sample rate. This
         // `[0, -1]` shape is the AUChannelInfo Apple's framework
         // requires for AU MIDI effects.
@@ -543,7 +543,7 @@ class TruceAUAudioUnit: AUAudioUnit {
 // MARK: - Factory
 
 // `@objc(AudioUnitFactory)` pins the runtime class name to
-// `AudioUnitFactory` (no module prefix) and — critically — forces
+// `AudioUnitFactory` (no module prefix) and - critically - forces
 // Swift's optimizer to keep the class in `__objc_classlist`.
 // Without this, `swiftc -O` strips the class because nothing in
 // the module references it directly; NSExtension's runtime lookup
@@ -563,7 +563,7 @@ class AudioUnitFactory: AUViewController, AUAudioUnitFactory {
         logger.info("factory createAudioUnit")
         // If the view is already loaded (host called loadView before
         // createAudioUnit), set up the GUI now that we have an instance.
-        // Must dispatch to main thread — NSView operations require it.
+        // Must dispatch to main thread - NSView operations require it.
         if isViewLoaded {
             DispatchQueue.main.async { [weak self] in
                 self?.setupGUIIfReady()
@@ -587,7 +587,7 @@ class AudioUnitFactory: AUViewController, AUAudioUnitFactory {
                     var w: UInt32 = 0, h: UInt32 = 0
                     cb.pointee.gui_get_size(ctx, &w, &h)
                     if w > 0 && h > 0 {
-                        // w/h are in logical points — use directly.
+                        // w/h are in logical points - use directly.
                         size = NSSize(width: CGFloat(w), height: CGFloat(h))
                     }
                 }
@@ -645,7 +645,7 @@ class AudioUnitFactory: AUViewController, AUAudioUnitFactory {
         cb.pointee.gui_get_size(ctx, &w, &h)
         guard w > 0, h > 0 else { return }
 
-        // w/h are in logical points — use directly.
+        // w/h are in logical points - use directly.
         guiPtSize = NSSize(width: CGFloat(w), height: CGFloat(h))
         logger.info("setupGUI: \(w)x\(h) view=\(self.view.frame.width)x\(self.view.frame.height)")
 

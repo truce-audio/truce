@@ -82,7 +82,7 @@ pub struct Vst2Callbacks {
     /// `Vst2MidiEventCompact` shape mirrors the input direction.
     pub output_event_at:
         unsafe extern "C" fn(ctx: *mut c_void, index: u32, out: *mut Vst2MidiEvent),
-    /// `SysEx` input — shim calls once per `kVstSysExType` event in
+    /// `SysEx` input - shim calls once per `kVstSysExType` event in
     /// `effProcessEvents`, **after** stripping the leading `0xF0`
     /// / trailing `0xF7` framing the host includes (Steinberg
     /// vendor-extension convention; real-world hosts like Cubase
@@ -95,7 +95,7 @@ pub struct Vst2Callbacks {
     pub output_sysex_count: unsafe extern "C" fn(ctx: *mut c_void) -> u32,
     /// Fill `out_delta_frames`, `out_bytes`, `out_len` with the
     /// index-th `SysEx` output event. Returns inner bytes (no
-    /// `0xF0` / `0xF7` framing) — the shim re-adds framing into
+    /// `0xF0` / `0xF7` framing) - the shim re-adds framing into
     /// its per-block scratch before handing the bytes to the host.
     /// Pointer is valid until the next `process()` call clears the
     /// pool (which happens after the host has consumed the event).

@@ -1,4 +1,4 @@
-//! `cargo truce screenshot` — drive a plugin's editor headlessly
+//! `cargo truce screenshot` - drive a plugin's editor headlessly
 //! and save a PNG.
 //!
 //! Self-contained: works on any crate built with `truce::plugin!`,
@@ -8,16 +8,16 @@
 //! user picks (or a sensible default).
 //!
 //! Flags:
-//! - `-p <crate>` — pick one plugin from a multi-plugin truce.toml.
-//! - `--out <path>` — output path (CWD-relative, or absolute).
+//! - `-p <crate>` - pick one plugin from a multi-plugin truce.toml.
+//! - `--out <path>` - output path (CWD-relative, or absolute).
 //!   Required. The CLI never picks a path on the author's behalf.
-//! - `--state <path>` — load a `.pluginstate` blob before rendering.
+//! - `--state <path>` - load a `.pluginstate` blob before rendering.
 //!   Path is CWD-relative or absolute.
-//! - `--check` — diff against the existing baseline; exit non-zero
-//!   on regression. Strict pixel match — every host gates the same
+//! - `--check` - diff against the existing baseline; exit non-zero
+//!   on regression. Strict pixel match - every host gates the same
 //!   way, so cross-OS rasterizer drift will fail. Bake your
 //!   baselines on whichever host you gate from.
-//! - `--debug` — cargo dev profile (faster compile).
+//! - `--debug` - cargo dev profile (faster compile).
 
 use crate::{Res, cargo_build, cargo_build_debug, deployment_target, load_config, project_root};
 use std::path::{Path, PathBuf};
@@ -29,7 +29,7 @@ use std::process::Command;
 
 /// FFI signature emitted by `truce::plugin!`'s `__truce_screenshot`.
 /// `(state_ptr, state_len, out_path_ptr, out_path_len, scale) -> u32`
-/// — 0 on success, non-zero on failure (logged to stderr by the
+/// - 0 on success, non-zero on failure (logged to stderr by the
 /// plugin). `scale` is the render scale (default 2.0); `<= 0` falls
 /// back to [`truce_core::screenshot::DEFAULT_SCREENSHOT_SCALE`] inside
 /// the plugin.
@@ -257,7 +257,7 @@ unsafe fn call_screenshot(
 }
 
 /// `--check`: diff the just-rendered PNG (at `render_path`) against
-/// the committed baseline (at `ref_path`). Strict pixel match — any
+/// the committed baseline (at `ref_path`). Strict pixel match - any
 /// difference fails the check.
 fn check_against_reference(render_path: &Path, ref_path: &Path, label: &str) -> Res {
     if !ref_path.exists() {
@@ -301,7 +301,7 @@ fn check_against_reference(render_path: &Path, ref_path: &Path, label: &str) -> 
 }
 
 /// Read an RGBA PNG from disk for `--check` comparison. Mirrors
-/// `truce_core::screenshot::load_png` — duplicated here so the
+/// `truce_core::screenshot::load_png` - duplicated here so the
 /// CLI doesn't pull in the audio framework's transitive dep tree
 /// just to decode a 1024×768 PNG.
 fn load_png(path: &Path) -> (Vec<u8>, u32, u32) {
@@ -328,7 +328,7 @@ Usage: cargo truce screenshot --out <path> [-p <crate>]
                               [--ios]
 
 Render a plugin's editor headlessly and save a PNG. The CLI is
-self-contained — works on any crate built with `truce::plugin!`,
+self-contained - works on any crate built with `truce::plugin!`,
 no test code required.
 
 Required:
@@ -348,7 +348,7 @@ Options:
                    bakes its baseline at a different scale via
                    `ScreenshotTest::scale`.
   --check          Diff against the existing baseline at <path>;
-                   exit non-zero on regression. Strict pixel match —
+                   exit non-zero on regression. Strict pixel match -
                    bake the baseline on the host you gate from.
   --debug          Cargo dev profile (faster compile). Default is release.
   --ios            Build + install on the booted iOS Simulator and capture the
@@ -358,7 +358,7 @@ Options:
                    iOS-specific render regressions.
   --crop-mode <m>  (--ios only) `editor` (default) crops to the plug-in editor's
                    region. `container` crops just the iOS status bar band off the
-                   top, keeping the rest of the container chrome — use for
+                   top, keeping the rest of the container chrome - use for
                    framework-level tests that gate on the container layout."
     );
 }
@@ -419,7 +419,7 @@ fn cmd_screenshot_ios(args: &[String]) -> Res {
     // previous launch left it in: a landscape-only plug-in earlier
     // in a CI loop will leave the sim in landscape, and any
     // portrait-supporting plug-in launched afterwards will render
-    // in landscape too — making baseline dimensions order-dependent.
+    // in landscape too - making baseline dimensions order-dependent.
     // Locking the Info.plist forces iOS to rotate the sim to the
     // canonical orientation on container launch.
     let canonical_orientation = p
@@ -481,7 +481,7 @@ fn cmd_screenshot_ios(args: &[String]) -> Res {
 #[cfg(target_os = "macos")]
 #[derive(Copy, Clone)]
 enum IosCropMode {
-    /// Crop down to just the plug-in editor's region. Default —
+    /// Crop down to just the plug-in editor's region. Default -
     /// per-plug-in tests that gate on the editor's visual output.
     Editor,
     /// Crop only the iOS status bar band (which holds the variable
@@ -501,7 +501,7 @@ fn crop_for_mode(png_path: &Path, bundle_id: &str, mode: IosCropMode) {
     };
     // `simctl io screenshot` always returns the physical framebuffer,
     // which is portrait on every iPhone. For a landscape-only plug-in
-    // iOS still renders the UI in landscape — that means the captured
+    // iOS still renders the UI in landscape - that means the captured
     // PNG has the UI rotated 90° inside a portrait canvas, and the
     // editor-frame coords (which the container wrote in the rendered
     // UI's coordinate space) land out of bounds against the un-rotated
@@ -555,7 +555,7 @@ fn orient_to_ui(path: &Path, orientation: Option<&str>) -> Result<(), crate::Box
 /// Reads the editor frame the container app wrote into its app
 /// container's `Documents/_truce_editor_frame.json` on first paint,
 /// trims the PNG in-place, and overwrites the source file. Failures
-/// here are non-fatal — the untrimmed screenshot stays in place with
+/// here are non-fatal - the untrimmed screenshot stays in place with
 /// a warning, since cropping is a quality-of-life feature and the
 /// underlying PNG is still useful.
 #[cfg(target_os = "macos")]
@@ -566,7 +566,7 @@ fn crop_to_editor_frame(png_path: &Path, frame: &EditorFrame) {
 }
 
 /// Crop just the iOS status bar band off the top. The status bar
-/// is where the variable clock lives — chopping that one band keeps
+/// is where the variable clock lives - chopping that one band keeps
 /// the rest of the container chrome (title, editor, button, status)
 /// intact while making the diff stable across runs. Falls back to
 /// leaving the screenshot untrimmed if the container didn't write
@@ -582,7 +582,7 @@ fn crop_to_container_chrome(png_path: &Path, frame: &EditorFrame) {
     };
     let top = frame.safe_area_top_px.min(src_h);
     if top == 0 {
-        return; // nothing to crop — leave untouched.
+        return; // nothing to crop - leave untouched.
     }
     let height = src_h.saturating_sub(top);
     if let Err(e) = crop_png(png_path, 0, top, src_w, height) {
@@ -611,7 +611,7 @@ struct EditorFrame {
     y: u32,
     w: u32,
     h: u32,
-    /// Safe-area top inset in physical pixels — the height of the
+    /// Safe-area top inset in physical pixels - the height of the
     /// iOS status bar band that contains the (variable) clock. Used
     /// by `--mode container` to crop just that band off so framework
     /// chrome screenshots stay stable across runs.
@@ -647,7 +647,7 @@ fn read_editor_frame_json(bundle_id: &str) -> Result<EditorFrame, crate::BoxErr>
     let frame_path = Path::new(&container).join("Documents/_truce_editor_frame.json");
     let json = std::fs::read_to_string(&frame_path)
         .map_err(|e| format!("read {}: {e}", frame_path.display()))?;
-    // Tiny hand-rolled parser — the file is a single-line object
+    // Tiny hand-rolled parser - the file is a single-line object
     // with four / five integer fields; pulling in `serde_json` for
     // this is overkill.
     let pick = |key: &str| -> Result<u32, crate::BoxErr> {
@@ -683,7 +683,7 @@ fn read_editor_frame_json(bundle_id: &str) -> Result<EditorFrame, crate::BoxErr>
         w: pick("w")?,
         h: pick("h")?,
         // Tolerate older containers that didn't write this field
-        // yet — fall back to 0 so the editor-mode crop keeps working.
+        // yet - fall back to 0 so the editor-mode crop keeps working.
         safe_area_top_px: pick("safeAreaTopPx").unwrap_or(0),
         orientation: pick_string("orientation"),
     })

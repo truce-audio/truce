@@ -31,7 +31,7 @@ mod tests {
     #[test]
     fn snake_case_is_camelcased() {
         // Crate names with underscores (`demo_effect`) must split on the
-        // separator — `Demo_effect` would trip rustc's
+        // separator - `Demo_effect` would trip rustc's
         // `non_camel_case_types` warning on every generated struct.
         assert_eq!(to_pascal_case("demo_effect"), "DemoEffect");
     }

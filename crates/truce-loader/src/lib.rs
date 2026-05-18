@@ -12,7 +12,7 @@
 //! # ABI boundary
 //!
 //! Across the dylib boundary the shell holds a
-//! `Box<dyn truce_plugin::PluginLogicCore<S>>` — the generic
+//! `Box<dyn truce_plugin::PluginLogicCore<S>>` - the generic
 //! wrapper-facing trait that both leaf traits forward into via
 //! blanket impls in `truce-plugin`. The single trait object
 //! carries DSP and GUI methods through one vtable, with `S` baked
@@ -48,7 +48,7 @@ pub mod __macro_deps {
     pub use truce_gui;
     // `ProbePlugin` is a vtable-binding shim emitted into every
     // `export_plugin!` expansion as the `truce_vtable_probe` symbol.
-    // It is not a public type — plugin authors never name it. Kept
+    // It is not a public type - plugin authors never name it. Kept
     // reachable here under `$crate::__macro_deps::` so the macro can
     // resolve it without leaking the type at the crate root (where a
     // prior version of this re-export was, and where the v0.40 audit
@@ -83,15 +83,15 @@ pub use loader::NativeLoader;
 /// Export the `#[unsafe(no_mangle)]` functions required by the shell.
 ///
 /// `params_ptr` is a raw `Arc<Params>` pointer from the shell.
-/// The plugin receives shared params — one copy, no sync.
+/// The plugin receives shared params - one copy, no sync.
 #[macro_export]
 macro_rules! export_plugin {
     ($logic:ty, $params:ty) => {
-        // `Sample` here is the prelude's `type Sample = …` alias —
+        // `Sample` here is the prelude's `type Sample = …` alias -
         // `f32` for `prelude` / `prelude32` / `prelude64m`, `f64` for
         // `prelude64`. Lets `prelude64` plugins compile through the
         // dylib export path even though `HotShell` (the loader-side
-        // consumer) is currently `f32`-only — a `prelude64` plugin
+        // consumer) is currently `f32`-only - a `prelude64` plugin
         // would simply error at dylib-load time if someone tried to
         // hot-reload it, rather than failing to compile in static mode.
         #[unsafe(no_mangle)]
@@ -110,7 +110,7 @@ macro_rules! export_plugin {
 
         #[unsafe(no_mangle)]
         pub fn truce_abi_canary() -> $crate::AbiCanary {
-            // `Sample` from the prelude — the dylib stamps its
+            // `Sample` from the prelude - the dylib stamps its
             // chosen precision into the canary so the shell can
             // reject a mismatched load before vtable-binding.
             $crate::AbiCanary::current::<Sample>()

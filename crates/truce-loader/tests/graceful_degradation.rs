@@ -1,6 +1,6 @@
 //! Regression test: missing dylib should not crash.
 //! Bug: after cargo clean, dev shell couldn't find the debug dylib.
-//! Plugin loaded with no logic, no GUI, no audio — but didn't crash.
+//! Plugin loaded with no logic, no GUI, no audio - but didn't crash.
 
 #[cfg(feature = "shell")]
 mod test {

@@ -5,7 +5,7 @@
 //! 1. `derive(Params)` writes a *per-struct sidecar* at
 //!    `<target>/lv2-meta/<crate>/<struct>.params.toml` with this
 //!    struct's own params, meters, and `#[nested]` child type names.
-//!    No TTL rendered here — every `derive(Params)` invocation in
+//!    No TTL rendered here - every `derive(Params)` invocation in
 //!    every crate writes its own sidecar, including helper / utility /
 //!    test structs. Cheap metadata; no side effects beyond the file.
 //!
@@ -16,7 +16,7 @@
 //!    and renders the final `manifest.ttl` / `plugin.ttl` next to the
 //!    sidecars.
 //!
-//! Step 1 fires for non-plugin crates too, which is fine — those
+//! Step 1 fires for non-plugin crates too, which is fine - those
 //! sidecars are unused unless something invokes `__truce_lv2_emit_root!`
 //! on them. Step 2 only fires once per plugin (from `truce::plugin!`).
 //!
@@ -184,7 +184,7 @@ fn aggregate(
     visited: &mut std::collections::HashSet<String>,
 ) -> Result<(), String> {
     if !visited.insert(struct_name.to_string()) {
-        // Cycle — Rust wouldn't let one compile, but defend anyway.
+        // Cycle - Rust wouldn't let one compile, but defend anyway.
         return Ok(());
     }
     let path = sidecar_dir.join(format!("{struct_name}.params.toml"));
@@ -358,7 +358,7 @@ fn audio_io_for(c: truce_build::lv2::Lv2Category) -> (u32, u32) {
 
 fn parse_category(s: &str) -> truce_build::lv2::Lv2Category {
     use truce_build::lv2::Lv2Category;
-    // Synonyms must match `truce_derive::plugin_info!` — `truce.toml`'s
+    // Synonyms must match `truce_derive::plugin_info!` - `truce.toml`'s
     // `category = "midi"` resolves to `PluginCategory::NoteEffect` at
     // runtime, so the sidecar TTL has to agree or the LV2 plugin ends
     // up with the wrong port set (missing `midi_out` for note effects,

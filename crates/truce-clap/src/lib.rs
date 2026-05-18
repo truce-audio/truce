@@ -106,7 +106,7 @@ enum GuiParamChange {
 /// Capacity sized for the worst case "user wiggles every param at
 /// once during MIDI-learn": ~64 widgets × (begin + value + end) per
 /// gesture, with several blocks of headroom before the audio thread
-/// next drains. Overflow drops the change — blocking or panicking
+/// next drains. Overflow drops the change - blocking or panicking
 /// from the audio path is worse, and the host's next automation tick
 /// recovers the lost values via the param tree. Per-instance memory
 /// is `CAPACITY * sizeof(GuiParamChange)` (≈ 32 KB), one-time at
@@ -131,7 +131,7 @@ struct ClapPluginData<P: PluginExport> {
     /// Stable handle to the params Arc, set once at instance creation.
     /// Host-thread callbacks (`params_get_value`, `params_value_to_text`,
     /// `params_text_to_value`, `state_save`) read params through this
-    /// handle so they never form a `&data.plugin` reference — the audio
+    /// handle so they never form a `&data.plugin` reference - the audio
     /// thread's `&mut data.plugin` would otherwise let LLVM deduce
     /// noalias on the plugin field and reorder loads past the audio
     /// thread's stores. Params are atomic-backed and `Sync`.
@@ -195,7 +195,7 @@ struct ClapPluginData<P: PluginExport> {
     host_scale_set_by_host: bool,
     /// Persistent input/output channel-slice scratch reused across
     /// process callbacks so the audio thread doesn't allocate per
-    /// block. The `'static` annotation is fictional — the slices
+    /// block. The `'static` annotation is fictional - the slices
     /// actually point into the host's per-block buffers; each
     /// `process` call rebuilds them and clears them on exit so no
     /// dangling pointer lives between blocks.
@@ -334,11 +334,11 @@ unsafe fn data_from_plugin<P: PluginExport>(
 //   valid for the plugin's lifetime. The host guarantees it is not
 //   freed until after clap_plugin.destroy() returns.
 // - Audio-thread callbacks (process, start/stop_processing) have
-//   exclusive access — the host never calls them concurrently.
+//   exclusive access - the host never calls them concurrently.
 // - Main-thread callbacks (init, destroy, activate, deactivate,
 //   gui_*, params on main thread) are serialized by the host.
 // - params_flush may be called from the audio thread while process
-//   is not active, or from the main thread — never concurrently
+//   is not active, or from the main thread - never concurrently
 //   with process().
 // - Audio buffer pointers (inputs/outputs in clap_process) are
 //   valid for the declared channel count × frame count. The host
@@ -391,7 +391,7 @@ unsafe extern "C" fn clap_plugin_activate<P: PluginExport>(
         // Pre-grow the widening / narrowing scratch on the f64 path.
         // Without this, the first audio block after `activate` hits
         // the global allocator inside `clap_plugin_process` to grow
-        // the outer Vec and each channel's inner Vec — a real RT
+        // the outer Vec and each channel's inner Vec - a real RT
         // hazard on the first block post-reload. The outer-Vec
         // capacity is already reserved in `create_plugin`; what we
         // do here is push the inner per-channel `Vec<P::Sample>`s up
@@ -467,7 +467,7 @@ unsafe extern "C" fn clap_plugin_on_main_thread<P: PluginExport>(plugin: *const 
 
 /// Build a `TransportInfo` from a CLAP transport event/struct.
 ///
-/// Same flag-driven decoding is needed in two places — the
+/// Same flag-driven decoding is needed in two places - the
 /// `CLAP_EVENT_TRANSPORT` arm of `convert_input_events` (which sees a
 /// `clap_event_transport` arriving as an input event mid-block) and
 /// the per-process `clap_process::transport` field. Hosts deliver
@@ -496,7 +496,7 @@ fn build_transport_info(t: &clap_event_transport) -> TransportInfo {
         time_sig_num: if has_time_sig { t.tsig_num as u8 } else { 4 },
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         time_sig_den: if has_time_sig { t.tsig_denom as u8 } else { 4 },
-        // CLAP doesn't expose sample-position in transport — tracked
+        // CLAP doesn't expose sample-position in transport - tracked
         // by the plugin's own block cursor when needed.
         position_samples: 0,
         position_seconds: if flags & CLAP_TRANSPORT_HAS_SECONDS_TIMELINE != 0 {
@@ -727,7 +727,7 @@ unsafe fn convert_input_events<P: PluginExport>(
                     // CLAP delivers `SysEx` payloads as a pointer +
                     // length owned by the host for the duration of
                     // this `process()` call. Copy into our pool
-                    // immediately — the bytes can't be assumed valid
+                    // immediately - the bytes can't be assumed valid
                     // after we return. `push_sysex` is fail-closed
                     // when the pool is exhausted; we drop the
                     // message and keep going (a corrupt-by-split
@@ -743,7 +743,7 @@ unsafe fn convert_input_events<P: PluginExport>(
                 }
                 _ => {
                     // Unsupported event type (system real-time,
-                    // MIDI 2.0) — skip silently. MIDI 2.0 demux is
+                    // MIDI 2.0) - skip silently. MIDI 2.0 demux is
                     // gated behind a per-plug-in version opt-in
                     // that's not wired yet; until then the channel
                     // voice 1.0 + `SysEx` paths above are the only
@@ -852,14 +852,14 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
         // since the last block. Runs before per-block work so the
         // plugin sees consistent params for the entire block. The
         // single-slot queue means a rapid double-recall lands the
-        // newest blob and the older one is dropped — preferred to
+        // newest blob and the older one is dropped - preferred to
         // the audio thread chasing stale state across blocks.
         let state_loaded = data.pending_state.pop().is_some_and(|state| {
             state::apply_state(&mut data.plugin, &state);
             true
         });
 
-        // Convert CLAP input events to our EventList — sort by
+        // Convert CLAP input events to our EventList - sort by
         // sample offset so the plugin sees them in time order.
         // `state_loaded` causes ParamValue/ParamMod events to be
         // dropped because they predate the state-load intent.
@@ -882,7 +882,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
         //    thread doesn't `Vec::new()` per process.
         // 2. **Channel indexing preserved.** A null channel pointer
         //    becomes an empty slice at the same flat-channel index
-        //    rather than being dropped — preserving channel layout
+        //    rather than being dropped - preserving channel layout
         //    avoids the silent re-mapping the densifying loop used to
         //    produce when only some channels were null.
         // 3. **No auto input→output copy.** Plugins that want
@@ -899,7 +899,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
         // Build per-channel slices preserving channel index across
         // every bus. A null bus (`buf.data32 == null`) emits empty
         // slices for each of its declared channels rather than being
-        // skipped — skipping would shift downstream buses' channel
+        // skipped - skipping would shift downstream buses' channel
         // indices and silently re-route audio onto the wrong bus for
         // multi-bus plugins.
         //
@@ -908,7 +908,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
         // copy). If `P::Sample` is `f64`, each channel's host input
         // is widened into per-channel scratch in `input_widen`, and
         // the matching `output_narrow` slot is what the plugin
-        // writes into — we copy + narrow back to the host's f32
+        // writes into - we copy + narrow back to the host's f32
         // output pointers after `process()` returns. Compares
         // `TypeId` at runtime; the same-precision path stays a
         // single pointer cast.
@@ -917,7 +917,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
         data.input_slices.clear();
         // Reset each inner scratch buffer's length to 0 (preserves
         // its heap allocation), don't `.clear()` the outer
-        // `Vec<Vec<_>>` — that would drop every inner Vec and force
+        // `Vec<Vec<_>>` - that would drop every inner Vec and force
         // the per-channel `Vec::with_capacity` push below to
         // re-allocate every block, defeating the activate-time
         // pre-grow.
@@ -1004,7 +1004,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
         // Construct the AudioBuffer with a borrow scope tied to this
         // call only. Without the transmute, the borrow checker
         // propagates the `'static` lifetimes inside `input_slices`
-        // out to the AudioBuffer's lifetime parameter — which would
+        // out to the AudioBuffer's lifetime parameter - which would
         // pin `data` mutably for the rest of the function. Same
         // pattern as `RawBufferScratch::build`.
         let data_ptr: *mut ClapPluginData<P> = data;
@@ -1033,7 +1033,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
         // Narrow + copy back to host f32 outputs if the plugin ran
         // in f64. No-op when `P::Sample == f32`: the plugin wrote
         // directly into host memory and `output_narrow` is empty.
-        // `zip` over the two slices instead of indexing — if either
+        // `zip` over the two slices instead of indexing - if either
         // vector is shorter (it shouldn't be, but a future drift
         // would hit this), iteration stops at the min cleanly
         // rather than panicking on an out-of-bounds index.
@@ -1203,7 +1203,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                     }
                     EventBody::ParamChange { id, value } => {
                         // CLAP params are global, not tied to a specific
-                        // note/audio port — every key uses the `-1`
+                        // note/audio port - every key uses the `-1`
                         // wildcard so hosts that route automation by
                         // port_index match GUI-driven and process-driven
                         // param events on the same key. The
@@ -1235,7 +1235,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                         // returning). Our pool is cleared at the
                         // *start* of the next block, so pointing
                         // the host at `pool_offset` satisfies that
-                        // strictly — and any future host that
+                        // strictly - and any future host that
                         // defers the copy until later in
                         // `process()` is still fine because the
                         // pool stays valid through the whole block.
@@ -1540,13 +1540,13 @@ unsafe extern "C" fn state_load<P: PluginExport>(
         // Apply params synchronously on the host thread (atomic-safe)
         // so host queries that read parameter values right after
         // `clap_plugin_state.load` see the restored values without
-        // first running a process block — clap-validator reads back
+        // first running a process block - clap-validator reads back
         // immediately after a load round-trip.
         state::apply_params(&*data.params_arc, &deserialized);
 
         // Hand the deserialized state to the audio thread for
         // application. `force_push` overwrites any older pending blob
-        // — see the `pending_state` field comment for why "newest
+        // - see the `pending_state` field comment for why "newest
         // wins" is the right policy here.
         let _ = data.pending_state.force_push(deserialized);
 
@@ -1816,7 +1816,7 @@ unsafe extern "C" fn gui_get_size<P: PluginExport>(
             }
             #[cfg(not(target_os = "macos"))]
             {
-                // Round-to-nearest, not truncate — `(w * scale) as u32`
+                // Round-to-nearest, not truncate - `(w * scale) as u32`
                 // would round 199.9 → 199, drifting one pixel on
                 // fractional scales. Matches VST3 / AAX / the
                 // `to_physical_px` helper used elsewhere. Logical
@@ -1891,7 +1891,7 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
 
         let params = data.plugin.params_arc();
         // SAFETY: `data.plugin` is the `Box::into_raw` plugin instance owned
-        // by the host's plugin slot — outlives the editor. Params fields are
+        // by the host's plugin slot - outlives the editor. Params fields are
         // atomic; cross-thread reads from the GUI thread are sound. The host
         // pointers are valid for the plugin's lifetime; closures capturing
         // them run on the main thread only.
@@ -2053,7 +2053,7 @@ unsafe extern "C" fn gui_suggest_title<P: PluginExport>(
 /// Host asks "is this size OK?". Per spec only meaningful when
 /// `can_resize` returns true, but Bitwig (and some other strict CLAP
 /// hosts) treats a `None` `set_size` as "this plugin has no real
-/// GUI" and silently hides the edit button — even when `get_size`,
+/// GUI" and silently hides the edit button - even when `get_size`,
 /// `set_parent`, `is_api_supported` etc. are all wired. For
 /// fixed-size editors we report `true` only when the host's
 /// requested size matches `get_size`'s response; otherwise `false`
@@ -2169,7 +2169,7 @@ impl<P: PluginExport> Extensions<P> {
     ///
     /// Backed by a function-local `OnceLock` keyed off a leaked
     /// `Box<Self>`. The `OnceLock` itself stores the pointer as
-    /// `usize` because Rust forbids generic statics — a literal
+    /// `usize` because Rust forbids generic statics - a literal
     /// `OnceLock<Extensions<P>>` static can't reference the outer
     /// generic parameter, so we erase to `usize` and re-attach the
     /// type on read. `OnceLock::get_or_init` runs the constructor at

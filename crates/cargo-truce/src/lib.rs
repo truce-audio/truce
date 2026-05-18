@@ -1,4 +1,4 @@
-//! `cargo-truce` library — engine for `cargo truce <subcommand>`.
+//! `cargo-truce` library - engine for `cargo truce <subcommand>`.
 //!
 //! `main.rs` owns argument parsing, the `cargo truce` arg strip,
 //! the user-facing help block, and dispatch for `new` (single +
@@ -48,7 +48,7 @@ pub(crate) use util::{
     tag_fail, tag_ok, tag_warn, take_outputs, take_skipped, verify_shell_profile_declared,
     vprintln,
 };
-// `tmp_dir` is the raw escape hatch — used by `reset_au` (macOS only)
+// `tmp_dir` is the raw escape hatch - used by `reset_au` (macOS only)
 // to walk every subdir under `tmp/`. Most callers pick the typed
 // helper that matches their purpose (`tmp_manifests`, `tmp_lv2`, …).
 #[cfg(target_os = "macos")]
@@ -83,7 +83,7 @@ pub(crate) use util::{rustup_has_target, tmp_aax_template};
 
 // macOS-only: codesign / lipo / notary / AAX PACE-sign pipeline. The
 // `MacosPackagingConfig` / `copy_dir_recursive` re-exports land here
-// too — only `commands::package::{macos, stage}` consume them, and
+// too - only `commands::package::{macos, stage}` consume them, and
 // both are macOS-gated.
 #[cfg(target_os = "macos")]
 pub(crate) use config::MacosPackagingConfig;

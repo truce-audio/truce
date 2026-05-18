@@ -1,4 +1,4 @@
-//! `Float` and `Sample` — the precision-routing traits that let
+//! `Float` and `Sample` - the precision-routing traits that let
 //! plugin code stay in one float type without per-call-site casts.
 //!
 //! Plugin authors don't usually name these traits directly. They
@@ -22,7 +22,7 @@
 //! ## Two traits, why
 //!
 //! - [`Float`] is the **broad math bound**. Use it for utilities like
-//!   `db_to_linear`, `midi_note_to_freq` — values that happen to be
+//!   `db_to_linear`, `midi_note_to_freq` - values that happen to be
 //!   `f32` or `f64` but aren't audio samples. The bound carries the
 //!   precision-routing methods (`from_f32`/`from_f64`/`to_f32`/`to_f64`)
 //!   plus a handful of math primitives (`exp`, `log10`, `powf`).
@@ -57,7 +57,7 @@ pub trait Float:
     fn from_f32(v: f32) -> Self;
 
     /// Narrow an `f64` to this precision. Identity for `f64`. For
-    /// `f32`, debug-asserts non-NaN — DSP code that produces a NaN
+    /// `f32`, debug-asserts non-NaN - DSP code that produces a NaN
     /// here is always a bug, and silent NaN propagation through the
     /// audio path causes host-inconsistent behaviour. Release builds
     /// preserve NaN via the bare `as` cast so the upstream bug stays
@@ -117,7 +117,7 @@ impl Float for f32 {
     fn from_f64(v: f64) -> Self {
         debug_assert!(
             !v.is_nan(),
-            "Float::from_f64: NaN narrowed to f32 — DSP loop or coefficient \
+            "Float::from_f64: NaN narrowed to f32 - DSP loop or coefficient \
              computation produced an undefined value?",
         );
         v as f32
@@ -163,7 +163,7 @@ impl Float for f64 {
     fn to_f32(self) -> f32 {
         debug_assert!(
             !self.is_nan(),
-            "Float::to_f32: NaN narrowed to f32 — DSP loop or coefficient \
+            "Float::to_f32: NaN narrowed to f32 - DSP loop or coefficient \
              computation produced an undefined value?",
         );
         self as f32

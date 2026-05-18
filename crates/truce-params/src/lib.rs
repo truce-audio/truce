@@ -15,7 +15,7 @@ pub use types::{
     ParamEnum,
 };
 
-/// Implementation detail — not part of the stable public API.
+/// Implementation detail - not part of the stable public API.
 /// Used by `truce-loader` to index into meter storage.
 #[doc(hidden)]
 pub const METER_ID_BASE: u32 = 1 << 24;
@@ -34,7 +34,7 @@ pub mod __private {
 ///
 /// Used by the `#[derive(Params)]` macro for default `format_value` implementations
 /// on `FloatParam` and `IntParam` fields. `IntParam` is identified by
-/// `ParamValueKind::Int`, set by the derive from the field type — its
+/// `ParamValueKind::Int`, set by the derive from the field type - its
 /// value is always integer-valued, so the fractional `{:.1}` / `{:.2}`
 /// formats float-typed params use would render "0.0 st" / "0.00"
 /// instead of "0 st" / "0".
@@ -115,7 +115,7 @@ pub fn format_param_value(info: &ParamInfo, value: f64) -> String {
 /// editors can pass `Arc<dyn Params>` into the screenshot pipeline
 /// without naming the concrete type. Generic code that needs to
 /// *construct* a fresh `Params` value should add a `Default` bound
-/// rather than expecting one on the trait — `#[derive(Params)]` emits
+/// rather than expecting one on the trait - `#[derive(Params)]` emits
 /// `impl Default` alongside the trait impl, so that bound is free for
 /// derive users.
 pub trait Params: __private::Sealed + Send + Sync + 'static {
@@ -135,7 +135,7 @@ pub trait Params: __private::Sealed + Send + Sync + 'static {
     /// Format wrappers' `register_*` paths (see
     /// `PluginExport::param_infos_static` in `truce-core`)
     /// call this to learn the parameter set without constructing a
-    /// full plugin — historically each format built a throwaway
+    /// full plugin - historically each format built a throwaway
     /// instance just to read `&self.param_infos()`, paying for any
     /// allocation the constructor did (DSP buffers, FFT plans, image
     /// atlases, etc.) at static-init time. The derive macro overrides
@@ -143,7 +143,7 @@ pub trait Params: __private::Sealed + Send + Sync + 'static {
     /// same compile-time metadata it uses for [`Self::param_infos`],
     /// so registration becomes allocation-free after the first call.
     ///
-    /// Default impl returns an empty vec — hand-written `Params` impls
+    /// Default impl returns an empty vec - hand-written `Params` impls
     /// that don't override fall through to the runtime path inside
     /// `PluginExport::param_infos_static`. Gated by `Self: Sized` so
     /// adding the method preserves dyn-compatibility for the existing
@@ -161,7 +161,7 @@ pub trait Params: __private::Sealed + Send + Sync + 'static {
 
     /// IDs of every `#[meter]` slot declared on the params struct
     /// (including nested subtrees), in declaration order. Default impl
-    /// returns empty — only structs that declare meters need to
+    /// returns empty - only structs that declare meters need to
     /// override. The derive macro implements it automatically.
     ///
     /// Format wrappers that expose DSP-side meters back to the UI
@@ -176,12 +176,12 @@ pub trait Params: __private::Sealed + Send + Sync + 'static {
 
     /// Set normalized value (0.0–1.0) by ID.
     ///
-    /// Takes `&self`, not `&mut self` — the per-param storage in
+    /// Takes `&self`, not `&mut self` - the per-param storage in
     /// `FloatParam` / `BoolParam` / `IntParam` / `EnumParam` is built
     /// on `AtomicU32` / `AtomicU64`, so writes go through interior
     /// mutability. Format wrappers, GUI editors, and the audio thread
     /// all hold `&Params` (or `Arc<Params>`) concurrently and write
-    /// without coordination — every implementation must be sound under
+    /// without coordination - every implementation must be sound under
     /// concurrent `&self` writes from multiple threads.
     fn set_normalized(&self, id: u32, value: f64);
 
@@ -245,7 +245,7 @@ pub trait Params: __private::Sealed + Send + Sync + 'static {
     /// because the parent derive doesn't see into the nested type.
     /// At runtime, the `set_plain` / `get_plain` dispatcher matches
     /// at the outer level first and silently never reaches the
-    /// nested one — preset round-trips would corrupt the nested
+    /// nested one - preset round-trips would corrupt the nested
     /// value. This method makes that bug surface as a panic at
     /// plugin construction instead of as quiet state loss.
     ///

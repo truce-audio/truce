@@ -1,7 +1,7 @@
 //! AAX format wrapper for truce.
 //!
 //! Exports C ABI functions that the pre-built AAX template binary
-//! loads via dlopen. No AAX SDK dependency — the Rust side only
+//! loads via dlopen. No AAX SDK dependency - the Rust side only
 //! knows about the C bridge types defined in `truce_aax_bridge.h`.
 
 // The `pub unsafe fn _*` block below is a single FFI surface whose
@@ -40,7 +40,7 @@ use truce_params::{ParamFlags, ParamRange, Params};
 /// Bumped any time the C ABI shape (descriptor / param info / event
 /// structs / callback signatures) changes. The C++ template resolves
 /// `truce_aax_abi_version` first and refuses to load if the value
-/// disagrees with its compile-time `TRUCE_AAX_ABI_VERSION` — keeps a
+/// disagrees with its compile-time `TRUCE_AAX_ABI_VERSION` - keeps a
 /// manual cdylib swap against an out-of-sync template from being
 /// silently misread (e.g. category bits read from the offset of a
 /// since-removed field).
@@ -48,7 +48,7 @@ pub const TRUCE_AAX_ABI_VERSION: u32 = 2;
 
 /// Wire values for [`TruceAaxParamInfo::range_type`]. The C++ shim
 /// switches on these to pick the matching `AAX_ITaperDelegate` for
-/// each registered parameter — without this, AAX defaults to a
+/// each registered parameter - without this, AAX defaults to a
 /// linear normalize/denormalize and round-trips a log-ranged knob
 /// through `RenderAudio` into a different plain value than the
 /// editor wrote (knob fights the user mid-drag).
@@ -275,7 +275,7 @@ pub fn register_aax<P: PluginExport>() {
     // The AAX shim's `extern "C" fn init()` static initializer
     // (`.init_array` / `__mod_init_func` / `.CRT$XCU`) calls this
     // function. A panic crossing that boundary aborts the host
-    // process — wrap the body so a plugin-author misconfiguration
+    // process - wrap the body so a plugin-author misconfiguration
     // logs cleanly and leaves INFO unset (host sees no plugin).
     run_register::<P>("AAX", || {
         let Some(layout) = first_bus_layout::<P>() else {
@@ -290,7 +290,7 @@ fn register_aax_inner<P: PluginExport>(layout: &BusLayout) {
     INFO.get_or_init(|| {
         let info = P::info();
 
-        // Leak the name/vendor CStrings via `into_raw()` — they live for
+        // Leak the name/vendor CStrings via `into_raw()` - they live for
         // the process lifetime and are owned by the static `INFO`.
         let name = CString::new(resolved_plugin_name(&info))
             .unwrap_or_default()
@@ -300,7 +300,7 @@ fn register_aax_inner<P: PluginExport>(layout: &BusLayout) {
         let is_instrument = info.au_type == *b"aumu";
         let is_note_effect = info.category == PluginCategory::NoteEffect;
         // Note effects need MIDI input *and* a category that lands them
-        // in Pro Tools' MIDI plug-ins menu — without
+        // in Pro Tools' MIDI plug-ins menu - without
         // `AAX_ePlugInCategory_MIDIEffect` they show up under audio
         // effects, and inserting one before an instrument routes only
         // the wrapper's stereo passthrough (no notes reach the synth).
@@ -326,14 +326,14 @@ fn register_aax_inner<P: PluginExport>(layout: &BusLayout) {
                 Some("Dither") => AAX_CAT_DITHER,
                 Some("SoundField") => AAX_CAT_SOUND_FIELD,
                 Some("Effect") => AAX_CAT_EFFECT,
-                _ => AAX_CAT_EQ, // default — EQ is always visible
+                _ => AAX_CAT_EQ, // default - EQ is always visible
             }
         };
 
         // AAX requires every plugin to have audio I/O, even pure
         // MIDI effects (NoteEffect) and output-only instruments.
         // Other wrappers (AU v2/v3, CLAP, VST3, LV2) accept
-        // audio-less plugins natively — AAX is the outlier.
+        // audio-less plugins natively - AAX is the outlier.
         // Synthesize dummy channels here so plugin authors can
         // declare truthful `bus_layouts: [BusLayout::new()]` for
         // MIDI effects without AAX-specific workarounds polluting
@@ -356,7 +356,7 @@ fn register_aax_inner<P: PluginExport>(layout: &BusLayout) {
             num_params: 0, // filled below
             manufacturer_id: fourcc(info.au_manufacturer),
             product_id: fourcc(info.fourcc),
-            // plugin_id must differ from product_id — XOR with a salt
+            // plugin_id must differ from product_id - XOR with a salt
             plugin_id: fourcc(info.fourcc) ^ 0x0101_0101,
             wants_input_midi: i32::from(is_instrument || is_note_effect),
             category,
@@ -367,8 +367,8 @@ fn register_aax_inner<P: PluginExport>(layout: &BusLayout) {
         // Static metadata path: derive emits a `LazyLock`-cached
         // `Vec<ParamInfo>`, and `has_editor_static` is a const-style
         // predicate plugins can override. Together they let the AAX
-        // `Describe` block — which runs from C++ static init on some
-        // hosts — skip plugin construction entirely. Plugins without
+        // `Describe` block - which runs from C++ static init on some
+        // hosts - skip plugin construction entirely. Plugins without
         // overrides fall back to the runtime path inside the
         // `PluginExport` defaults, matching the historical behavior.
         let param_infos = P::param_infos_static();
@@ -379,7 +379,7 @@ fn register_aax_inner<P: PluginExport>(layout: &BusLayout) {
         let mut params = Vec::with_capacity(param_infos.len());
         for pi in &param_infos {
             let cs = truce_core::wrapper::ParamCStrings::from_info(pi);
-            // Enum maps to the same shape as Discrete in AAX — both
+            // Enum maps to the same shape as Discrete in AAX - both
             // get the linear taper with `SetNumberOfSteps`, which is
             // how AAX represents stepped automatable controls.
             let range_type = match pi.range {
@@ -642,7 +642,7 @@ macro_rules! export_aax {
 // when Pro Tools exits, which reclaims the allocation.
 //
 // `Box::into_raw(boxed_instance)` in `_create` follows the same
-// pattern but is *paired* with `_destroy` reconstituting the Box —
+// pattern but is *paired* with `_destroy` reconstituting the Box -
 // so it isn't a leak, just a C-lifetime handoff.
 //
 // ---------------------------------------------------------------------------
@@ -664,7 +664,7 @@ macro_rules! export_aax {
 //
 // `&*` vs `&mut *` on the `ctx` cast below: the choice tracks what each
 // callback actually mutates on the `AaxInstance`. Read-only or
-// interior-mutability-only paths (`_get_param`, `_set_param` — which
+// interior-mutability-only paths (`_get_param`, `_set_param` - which
 // goes through atomics in `Params`, `_format_param`, `_save_state`)
 // take `&*`; paths that write `inst.event_list` / `inst.sample_rate` /
 // `inst.editor` take `&mut *`. The sequential-per-instance guarantee
@@ -924,7 +924,7 @@ pub unsafe fn _process<P: PluginExport>(
 /// change, Channel pressure, Bank-select-CC#0. Mirrors
 /// `truce_vst2::try_encode_vst2_midi` so the two formats stay in sync.
 ///
-/// `SysEx` is **not** dropped here — it goes through a separate
+/// `SysEx` is **not** dropped here - it goes through a separate
 /// multi-packet path the C++ template assembles / fragments
 /// around `0xF0` ... `0xF7` framing
 /// (see `_push_sysex_input`, `_output_sysex_count`,
@@ -1008,7 +1008,7 @@ pub unsafe fn _output_event_at<P: PluginExport>(
     }
 }
 
-/// `SysEx` input — the AAX C++ template reassembles long messages
+/// `SysEx` input - the AAX C++ template reassembles long messages
 /// across consecutive `AAX_CMidiPacket` slots (per the SDK's
 /// `0xF0` start / `0xF7` end framing) and calls this once per
 /// complete logical message with the inner bytes. We copy into
@@ -1071,7 +1071,7 @@ pub unsafe fn _set_param<P: PluginExport>(ctx: *mut std::ffi::c_void, id: u32, v
     inst.params_arc.set_plain(id, value);
     // Bump the revision counter so the next `_save_state` notices the
     // change. `Release` synchronizes with the `Acquire` load in
-    // `_save_state` — anyone seeing the bumped revision also sees the
+    // `_save_state` - anyone seeing the bumped revision also sees the
     // param store.
     inst.state_revision.fetch_add(1, Ordering::Release);
 }
@@ -1139,13 +1139,13 @@ unsafe fn save_state_body<P: PluginExport>(
     //
     //   1. Snapshot `state_revision` *before* reading params.
     //   2. If the cache exists and was captured at this revision,
-    //      hand back a clone — no audio update has happened since.
+    //      hand back a clone - no audio update has happened since.
     //   3. Otherwise serialize the current param snapshot.
     //   4. Re-read `state_revision` *after* serialization. If it
     //      didn't advance, the serialized blob is consistent with
     //      `revision_before` and we cache it. If it did advance, an
     //      audio-thread `_set_param` ran during our read and the
-    //      blob may not represent any single moment in time —
+    //      blob may not represent any single moment in time -
     //      return it (best-effort) but don't cache, so the next
     //      call re-serializes.
     //
@@ -1169,7 +1169,7 @@ unsafe fn save_state_body<P: PluginExport>(
         // the rest of the plugin's lifetime. A panic anywhere on the
         // main thread (the only `_save_state` caller in Pro Tools)
         // would otherwise silently disable the seqlock-style cache
-        // — the next save would re-serialize, the next after that
+        // - the next save would re-serialize, the next after that
         // would too, and the hot-path optimization would be
         // effectively gone. The cache content is just an
         // `Option<(u64, Arc<[u8]>)>`, with no invariants a panic
@@ -1190,7 +1190,7 @@ unsafe fn save_state_body<P: PluginExport>(
             // so a `_set_param` that lands between two reads produces
             // a blob mixing pre- and post-update values for adjacent
             // params. Re-serialize until we get a consistent revision
-            // (or exhaust the budget — see `SNAPSHOT_RETRIES`).
+            // (or exhaust the budget - see `SNAPSHOT_RETRIES`).
             let mut rev_start = revision_before;
             let mut fresh: Arc<[u8]> = Arc::from(serialize_now(inst));
             let mut consistent = false;
@@ -1214,7 +1214,7 @@ unsafe fn save_state_body<P: PluginExport>(
 
 /// Hand a serialized state blob to the C caller as a raw pointer +
 /// length. The blob is copied into a fresh boxed slice the C side will
-/// later free with `_free_state` — taking `&[u8]` rather than `Vec<u8>`
+/// later free with `_free_state` - taking `&[u8]` rather than `Vec<u8>`
 /// lets callers hand us either a freshly-built `Vec` or a borrow into
 /// an `Arc<[u8]>` without an intermediate clone.
 ///
@@ -1223,7 +1223,7 @@ unsafe fn save_state_body<P: PluginExport>(
 /// `Vec::from_raw_parts`, which requires the Rust global allocator
 /// **and** uniquely-owned bytes (no other Arc clones outstanding).
 /// Pro Tools holds the buffer until it calls `_free_state`, but the
-/// in-memory cache also keeps an `Arc` clone — there are at least 2
+/// in-memory cache also keeps an `Arc` clone - there are at least 2
 /// references at the moment of hand-off, so we can't `Arc::try_unwrap`.
 /// A ref-counted hand-off (a small bridge type the C side would
 /// decrement on free) would eliminate the copy entirely; today's
@@ -1255,7 +1255,7 @@ pub unsafe fn _load_state<P: PluginExport>(ctx: *mut std::ffi::c_void, data: *co
             state::apply_params(&*inst.params_arc, &deserialized);
             // Hand the deserialized state to the audio thread for
             // application. `force_push` overwrites any older pending blob
-            // — see the `pending_state` field comment for why
+            // - see the `pending_state` field comment for why
             // newest-wins is the right policy. The audio thread's drain
             // bumps `state_revision`, so the cache invalidation is
             // covered there; we still drop the cached `Arc<[u8]>` here
@@ -1310,7 +1310,7 @@ pub unsafe fn _editor_open<P: PluginExport>(
     callbacks: *const TruceAaxGuiCallbacks,
 ) {
     unsafe {
-        // Defensive null checks — the AAX template is in-tree so the
+        // Defensive null checks - the AAX template is in-tree so the
         // contract is between matched halves, but every other format
         // wrapper guards parent + callback pointers (CLAP `:1455`,
         // VST3 `cb_gui_open`). Mismatched ABI between a stale shim
@@ -1424,7 +1424,7 @@ pub unsafe fn _editor_get_size<P: PluginExport>(ctx: *mut c_void, w: *mut u32, h
         match &inst.editor {
             Some(editor) => {
                 // Logical size. The patched baseview CGLayer path handles
-                // HiDPI internally — same contract as CLAP / VST3 / AU.
+                // HiDPI internally - same contract as CLAP / VST3 / AU.
                 let (ew, eh) = editor.size();
                 *w = ew;
                 *h = eh;
@@ -1442,7 +1442,7 @@ pub unsafe fn _editor_get_size<P: PluginExport>(ctx: *mut c_void, w: *mut u32, h
 /// going through `Vec::into_boxed_slice` (which trims capacity to len)
 /// then `mem::forget`. Don't change either side to use `libc::malloc`
 /// / `Vec::into_raw_parts` / a different cap-tracking strategy
-/// without updating the other — `Vec::from_raw_parts` requires the
+/// without updating the other - `Vec::from_raw_parts` requires the
 /// allocator and `cap` to match exactly. AAX never calls
 /// `_free_state` with a non-Rust pointer today; the comment exists to
 /// flag that drift if VST3's `libc_malloc` shape ever migrates here.

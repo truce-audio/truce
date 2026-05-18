@@ -32,7 +32,7 @@
 /// Cast a `usize` element count (`Vec::len()`, iterator count) to
 /// `u32` for an FFI field.
 ///
-/// Debug-asserts the value fits — a 5GB+ `Vec<u8>` would silently
+/// Debug-asserts the value fits - a 5GB+ `Vec<u8>` would silently
 /// truncate without this guard. Release builds wrap; callers that
 /// can produce values past `u32::MAX` should use `try_into` and
 /// surface a typed error instead.
@@ -131,7 +131,7 @@ pub fn frame_count_f64(n: usize) -> f64 {
 /// Cast a host-supplied sample rate (`f64`) to the `u32` audio APIs
 /// (`cpal`, `hound`, Core Audio's `AudioStreamBasicDescription`) carry.
 ///
-/// Audio sample rates are positive and bounded — 192 kHz is the
+/// Audio sample rates are positive and bounded - 192 kHz is the
 /// highest in mainstream use, far below `u32::MAX`. NaN and
 /// negative inputs debug-assert; release builds clamp to `0` so a
 /// garbage host doesn't produce undefined behavior at the FFI
@@ -141,7 +141,7 @@ pub fn frame_count_f64(n: usize) -> f64 {
 pub fn sample_rate_u32(rate: f64) -> u32 {
     debug_assert!(
         !rate.is_nan() && rate >= 0.0,
-        "sample_rate_u32: invalid rate {rate} — host sample rate is uninitialized?",
+        "sample_rate_u32: invalid rate {rate} - host sample rate is uninitialized?",
     );
     if rate.is_nan() || rate < 0.0 {
         return 0;
@@ -153,7 +153,7 @@ pub fn sample_rate_u32(rate: f64) -> u32 {
 }
 
 /// Map a discrete index in `[0, count - 1]` to a normalized value
-/// in `[0.0, 1.0]`. Returns `0.0` when `count <= 1` — there's only
+/// in `[0.0, 1.0]`. Returns `0.0` when `count <= 1` - there's only
 /// one valid index, so any input collapses to the bottom of the
 /// range.
 ///
@@ -177,7 +177,7 @@ pub fn discrete_norm(idx: usize, count: usize) -> f64 {
 }
 
 /// Map a normalized value in `[0.0, 1.0]` to a discrete index in
-/// `[0, count - 1]`. Returns `0` when `count <= 1` — the index is
+/// `[0, count - 1]`. Returns `0` when `count <= 1` - the index is
 /// pinned to the only valid slot.
 ///
 /// `norm` is clamped to `[0.0, 1.0]` before scaling so an

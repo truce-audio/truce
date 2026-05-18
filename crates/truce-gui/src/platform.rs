@@ -30,7 +30,7 @@ unsafe impl HasRawWindowHandle for ParentWindow {
                 RwhRawWindowHandle::AppKit(handle)
             }
             RawWindowHandle::UiKit(ptr) => {
-                // baseview doesn't host on iOS — the iOS editor
+                // baseview doesn't host on iOS - the iOS editor
                 // path attaches a UIView directly without going
                 // through this bridge. We surface the handle for
                 // completeness (and so future iOS-aware backends
@@ -48,7 +48,7 @@ unsafe impl HasRawWindowHandle for ParentWindow {
             RawWindowHandle::X11(window_id) => {
                 let mut handle = raw_window_handle::XlibWindowHandle::empty();
                 // rwh 0.5 field type is c_ulong: u64 on Linux/macOS, u32 on Windows.
-                // The Windows narrowing is the lossy edge — `XID` is 32-bit there.
+                // The Windows narrowing is the lossy edge - `XID` is 32-bit there.
                 #[allow(clippy::cast_possible_truncation)]
                 {
                     handle.window = window_id as _;
@@ -229,7 +229,7 @@ impl EditorScale {
     }
 
     /// Update the current scale. Non-finite or non-positive values are
-    /// silently dropped — callers are forwarding numbers from hosts /
+    /// silently dropped - callers are forwarding numbers from hosts /
     /// `info.scale()` where a bad value is a host bug, not something
     /// to propagate into the surface config.
     pub fn set(&self, scale: f64) {
@@ -255,7 +255,7 @@ impl EditorScale {
     ///
     /// Used by every editor backend's per-frame loop to gate surface /
     /// renderer reconfiguration on actual host scale events. Bit-equality
-    /// is the correct semantics — the cell is written verbatim from
+    /// is the correct semantics - the cell is written verbatim from
     /// host callbacks, never through accumulating arithmetic, so an
     /// epsilon-based check would either thrash on noise (there is
     /// none) or miss a legitimate `1.0 → 1.0001` host signal.
@@ -277,7 +277,7 @@ impl EditorScale {
 /// round to nearest, then clamp the result to `1` so a degenerate
 /// `0 × scale` doesn't collapse a wgpu surface (`width: 0` is a
 /// validation error). The `logical.max(1)` guard handles the
-/// converse — a zero-logical caller can't multiply through to `0`
+/// converse - a zero-logical caller can't multiply through to `0`
 /// before the round.
 ///
 /// Replaces a mix of truncating `(logical * scale) as u32` casts,
@@ -296,7 +296,7 @@ pub fn to_physical_px(logical: u32, scale: f64) -> u32 {
 
 /// Cached display scale factor on Linux, stored as f64 bits. Zero means unset.
 ///
-/// Linux has no safe synchronous DPI query from plugin code — the authoritative
+/// Linux has no safe synchronous DPI query from plugin code - the authoritative
 /// value is read by baseview internally (from `Xft.dpi` with a screen-geometry
 /// fallback) and delivered via `WindowEvent::Resized::info.scale()` once the
 /// window is live. We cache the first value an editor sees there so that later
@@ -324,7 +324,7 @@ pub fn note_linux_scale_factor(scale: f64) {
 #[cfg(target_os = "linux")]
 pub fn main_screen_scale() -> f64 {
     // Priority: TRUCE_SCALE env var (dev/test override) → cached scale
-    // observed from baseview → 1.0 fallback. No side-channel Xlib calls —
+    // observed from baseview → 1.0 fallback. No side-channel Xlib calls -
     // those crashed inside NVIDIA's Vulkan driver when invoked from the
     // render thread.
     if let Ok(s) = std::env::var("TRUCE_SCALE")

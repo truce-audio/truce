@@ -1,6 +1,6 @@
 //! Helper widgets that wrap egui primitives with truce's parameter protocol.
 //!
-//! These are optional — users can always use raw egui widgets and call
+//! These are optional - users can always use raw egui widgets and call
 //! `PluginContext` methods (`get_param`, `set_param`, `automate`, …) directly.
 
 mod knob;

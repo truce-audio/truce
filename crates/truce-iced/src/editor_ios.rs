@@ -1,4 +1,4 @@
-//! iced editor on iOS — phase-4 MVP stub.
+//! iced editor on iOS - phase-4 MVP stub.
 //!
 //! The desktop editor (`editor.rs`) is wired through baseview +
 //! iced_wgpu. Neither is viable in an iOS App Extension sandbox
@@ -76,7 +76,7 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedEditor<P, M> {
 impl<P: Params + 'static> IcedEditor<P, AutoPlugin> {
     /// Create an editor that would auto-generate the UI from a
     /// `GridLayout` on the desktop. On iOS, the stub does no
-    /// rendering — the layout is held for future use.
+    /// rendering - the layout is held for future use.
     pub fn from_layout(params: Arc<P>, layout: GridLayout) -> Self {
         let size = (layout.width, layout.height);
         let _ = layout;

@@ -1,4 +1,4 @@
-//! `cargo truce run` — build a plugin's `--features standalone` binary,
+//! `cargo truce run` - build a plugin's `--features standalone` binary,
 //! stage it into `target/bundles/`, and launch it from there.
 //!
 //! The staging step keeps every truce-produced artifact in one
@@ -99,12 +99,12 @@ pub(crate) fn cmd_run(args: &[String]) -> Res {
             perms.set_mode(0o755);
             std::fs::set_permissions(&exec_path, perms)?;
         }
-        // The standalone exe is parentless — without an embedded
+        // The standalone exe is parentless - without an embedded
         // application manifest declaring per-monitor v2 DPI awareness,
         // the editor renders blurry on non-100% Windows displays.
         // Per-plugin `windows_icon` (if set) gets baked into the
         // staged .exe so Explorer / Start-Menu shows the plugin's icon
-        // for the dev-run host too — keeps `cargo truce run` visually
+        // for the dev-run host too - keeps `cargo truce run` visually
         // consistent with the eventual installed artefact.
         #[cfg(target_os = "windows")]
         {

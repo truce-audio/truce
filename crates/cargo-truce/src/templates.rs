@@ -23,7 +23,7 @@ pub mod au3 {
     /// Values substituted into `APPEX_INFO_PLIST` by
     /// [`render_appex_info_plist`]. One struct shared by the macOS and
     /// iOS appex paths so a new placeholder added to the template forces
-    /// a struct-field update — making "iOS path substitutes it, macOS
+    /// a struct-field update - making "iOS path substitutes it, macOS
     /// path forgets" a compile error rather than a runtime
     /// `(null) platform` bundle rejection.
     pub struct AppexPlistValues<'a> {
@@ -51,7 +51,7 @@ pub mod au3 {
     }
 
     /// Render `APPEX_INFO_PLIST` against `values`. After substitution,
-    /// asserts every placeholder we tried to replace is actually gone —
+    /// asserts every placeholder we tried to replace is actually gone -
     /// catches typos where the renderer says `MINIOS` but the template
     /// was renamed to `MIN_OS` (or vice versa) before they ship as a
     /// literal token in the bundle.
@@ -164,7 +164,7 @@ pub mod au3 {
 }
 
 // ---------------------------------------------------------------------------
-// AU v3 iOS container app — Swift source for the .app stub
+// AU v3 iOS container app - Swift source for the .app stub
 // ---------------------------------------------------------------------------
 
 // iOS install is macOS-only (Xcode + simctl). Gating the module
@@ -186,7 +186,7 @@ pub mod au_ios {
 // AAX template files
 // ---------------------------------------------------------------------------
 
-// AAX is macOS / Windows only — Avid's SDK ships no Linux libs and Pro
+// AAX is macOS / Windows only - Avid's SDK ships no Linux libs and Pro
 // Tools doesn't run on Linux. Gating the module keeps Linux from
 // spuriously warning about unused `include_str!` constants.
 #[cfg(any(target_os = "macos", target_os = "windows"))]

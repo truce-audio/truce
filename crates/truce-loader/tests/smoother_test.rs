@@ -108,14 +108,14 @@ fn smoother_ramps_gradually() {
     let samples = &shell.logic_ref().samples;
     assert!(!samples.is_empty(), "should have recorded samples");
 
-    // The first sample should NOT be 1.0 — it should be somewhere
+    // The first sample should NOT be 1.0 - it should be somewhere
     // between 0 and 1 (smoother hasn't reached target yet).
     let first = samples[0];
     let last = samples[samples.len() - 1];
 
     assert!(
         first < 0.9,
-        "First sample {first} is too close to 1.0 — smoother was snapped instead of ramping"
+        "First sample {first} is too close to 1.0 - smoother was snapped instead of ramping"
     );
     assert!(
         last > first,

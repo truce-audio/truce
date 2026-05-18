@@ -1,17 +1,17 @@
-//! `cargo truce reset-aax` — flush the Pro Tools AAX plugin cache.
+//! `cargo truce reset-aax` - flush the Pro Tools AAX plugin cache.
 //!
 //! macOS-only (Pro Tools' AAX cache lives at
 //! `/Users/Shared/Pro Tools/AAXPlugInCache`). Removes the per-vendor
 //! cache files Pro Tools writes there; on next launch Pro Tools
 //! re-scans the AAX plugin directory. Does **not** touch Audio Unit
-//! caches — see `cargo truce reset-au` for that.
+//! caches - see `cargo truce reset-au` for that.
 
 use crate::Res;
 
 #[cfg(not(target_os = "macos"))]
 pub(crate) fn cmd_reset_aax(_args: &[String]) -> Res {
     Err(
-        "`cargo truce reset-aax` is macOS-only — it flushes the Pro \
+        "`cargo truce reset-aax` is macOS-only - it flushes the Pro \
          Tools AAX cache under `/Users/Shared/Pro Tools/`, which \
          doesn't exist on Linux or Windows. On Windows, restart Pro \
          Tools to rescan."
@@ -49,7 +49,7 @@ pub(crate) fn cmd_reset_aax(args: &[String]) -> Res {
 
     let aax_cache = PathBuf::from("/Users/Shared/Pro Tools/AAXPlugInCache");
     if !aax_cache.exists() {
-        eprintln!("No AAX cache at {} — nothing to do.", aax_cache.display());
+        eprintln!("No AAX cache at {} - nothing to do.", aax_cache.display());
         return Ok(());
     }
 

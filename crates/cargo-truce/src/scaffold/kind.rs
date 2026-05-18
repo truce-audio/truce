@@ -1,4 +1,4 @@
-//! Plugin kind — drives the per-kind text fragments injected into
+//! Plugin kind - drives the per-kind text fragments injected into
 //! the scaffold's lib.rs (params struct, process body, layout knob,
 //! plugin macro args, effect-only tests).
 //!

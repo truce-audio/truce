@@ -34,7 +34,7 @@ use crate::backend_cpu::CpuBackend;
 use crate::platform::EditorScale;
 use crate::render_core::{build_snapshot_closures, render_widgets};
 
-/// Built-in editor for iOS — API-compatible with the macOS
+/// Built-in editor for iOS - API-compatible with the macOS
 /// `BuiltinEditor` at the `Editor` trait level so plugin code and
 /// host wrappers stay platform-agnostic. Implements:
 ///
@@ -53,8 +53,8 @@ pub struct BuiltinEditor<P: Params + 'static> {
     /// State the `CADisplayLink` thunk + touch handlers reach
     /// through. Set on `open()`, cleared on `close()`. `RefCell`
     /// (not `Mutex`) because every access path is main-thread only
-    /// — `UIKit` callbacks, `AUv3` view-controller lifecycle, and
-    /// `Editor::open`/`close` all dispatch on the main thread — so
+    /// - `UIKit` callbacks, `AUv3` view-controller lifecycle, and
+    /// `Editor::open`/`close` all dispatch on the main thread - so
     /// the right primitive is single-threaded interior mutability.
     /// A `Mutex` here would deadlock on the main thread if a
     /// `tick:` arrives mid-`close()`; `RefCell::try_borrow_mut`
@@ -70,7 +70,7 @@ pub struct BuiltinEditor<P: Params + 'static> {
 // callbacks (main thread by definition), `touchesBegan/Moved/Ended`
 // (main thread), and `open` / `close` (also main thread). The
 // `Editor` trait's `Send` requirement is satisfied because no
-// concrete value of `BuiltinEditor` is ever sent across threads —
+// concrete value of `BuiltinEditor` is ever sent across threads -
 // the inner `Arc<RefCell<…>>` would be `!Send` if it could be
 // inspected by the compiler, but its access discipline is enforced
 // by UIKit's main-thread contract instead.
@@ -86,11 +86,11 @@ struct Inner<P: Params + 'static> {
     display_link: *mut AnyObject,
     /// `NSObject*` (runtime-allocated) that owns the `tick:`
     /// selector the display link targets. Pointer-equivalent to a
-    /// retain — the run loop holds a strong ref while the link is
+    /// retain - the run loop holds a strong ref while the link is
     /// active; we release it on close.
     tick_target: *mut AnyObject,
     /// Bounds in logical points, captured at `open` time. The child
-    /// view's frame is fixed to whatever the layout reported — no
+    /// view's frame is fixed to whatever the layout reported - no
     /// runtime resize negotiation yet.
     logical_w: u32,
     logical_h: u32,
@@ -98,7 +98,7 @@ struct Inner<P: Params + 'static> {
     /// host-driven param-change detection. Mirrors the macOS
     /// editor's `last_painted_values`.
     last_painted_values: Vec<f32>,
-    /// Pinned shared state with the rest of the editor — needed so
+    /// Pinned shared state with the rest of the editor - needed so
     /// the `CADisplayLink` callback can flip `needs_repaint`, route
     /// touch events, and reach the same backend / interaction /
     /// snapshot pipeline the macOS path uses.
@@ -205,7 +205,7 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
             return;
         };
         // SAFETY: invalidate the display link before releasing the
-        // view — the link retains its target, and a pending tick
+        // view - the link retains its target, and a pending tick
         // firing on a freed view would crash. The view's ivar
         // pointer is released here via `Arc::from_raw`.
         unsafe {
@@ -245,7 +245,7 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
 const INNER_PTR_IVAR: &std::ffi::CStr = c"_truce_inner_ptr";
 
 // The framework's `NSRunLoopCommonModes` constant. CADisplayLink's
-// run-loop-mode match goes by pointer / hash, not string compare —
+// run-loop-mode match goes by pointer / hash, not string compare -
 // a self-constructed NSString with the same content silently wedges
 // the timer.
 unsafe extern "C" {
@@ -326,7 +326,7 @@ unsafe fn install_editor_view<P: Params + 'static>(
         let bg: *mut AnyObject = msg_send![color_cls, darkGrayColor];
         let _: () = msg_send![view, setBackgroundColor: bg];
         let _: () = msg_send![view, setUserInteractionEnabled: true];
-        // Opt in to multi-touch — UIView's default is single-touch
+        // Opt in to multi-touch - UIView's default is single-touch
         // (only the first finger generates `touchesBegan:` events).
         // Multi-finger knob drags rely on every finger producing its
         // own `UITouch` in the begin/move/end batches.
@@ -353,7 +353,7 @@ unsafe fn install_editor_view<P: Params + 'static>(
         let run_loop_cls = AnyClass::get(c"NSRunLoop").expect("NSRunLoop missing");
         let main: *mut AnyObject = msg_send![run_loop_cls, mainRunLoop];
         // The framework's exported `NSRunLoopCommonModes` constant
-        // (NOT a manually-built NSString with the same content) —
+        // (NOT a manually-built NSString with the same content) -
         // CADisplayLink's run-loop-mode match goes by pointer / hash,
         // not string compare, so a self-constructed NSString silently
         // wedges the timer.
@@ -581,7 +581,7 @@ fn tick<P: Params + 'static>(inner: &mut Inner<P>) {
         CpuBackend::new(w, h, scale).expect("CpuBackend allocation failed (out of memory?)")
     });
     // Rebuild hit-test regions FIRST so the per-tick wipe doesn't
-    // clobber fields `render_widgets` writes into them — chiefly
+    // clobber fields `render_widgets` writes into them - chiefly
     // `WidgetRegion::dropdown_anchor_y`, which the dropdown's
     // `draw` pass fills with the visual button's bottom edge.
     // `build_regions_grid` resets that field to 0, so if it runs
@@ -602,7 +602,7 @@ fn tick<P: Params + 'static>(inner: &mut Inner<P>) {
         backend,
     );
     // Snapshot the post-render values for next-frame
-    // change-detection — currently informational; the iOS pump
+    // change-detection - currently informational; the iOS pump
     // repaints every CADisplayLink tick regardless.
     inner
         .last_painted_values
@@ -667,7 +667,7 @@ const K_CG_RENDERING_INTENT_DEFAULT: i32 = 0;
 unsafe fn blit_pixmap_to_layer(view: *mut AnyObject, width: u32, height: u32, rgba: &[u8]) {
     // SAFETY: main-thread Core Graphics + UIKit calls. The pixel
     // buffer outlives the CGImage because the data provider's
-    // release callback is None — Core Graphics treats the buffer
+    // release callback is None - Core Graphics treats the buffer
     // as borrowed for the image's lifetime, and we release the
     // image at the end of this fn. The CpuBackend reuses its
     // pixmap across frames so the buffer pointer stays stable.
@@ -728,7 +728,7 @@ impl Iterator for NSEnumerator {
 }
 
 fn fnv1a_64(bytes: &[u8]) -> u64 {
-    // Tiny non-crypto hash for class-name uniqueness — std doesn't
+    // Tiny non-crypto hash for class-name uniqueness - std doesn't
     // expose a stable hash without a key, so we hand-roll FNV-1a.
     // Collisions would just keep the previously registered class
     // active for both monomorphizations, which is benign here (the

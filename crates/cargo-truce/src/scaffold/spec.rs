@@ -4,7 +4,7 @@
 
 use super::PluginKind;
 
-/// Per-plugin spec — the unit a template consumer thinks in.
+/// Per-plugin spec - the unit a template consumer thinks in.
 pub struct PluginSpec {
     pub name: String,
     pub kind: PluginKind,
@@ -40,7 +40,7 @@ pub struct VendorInfo {
 }
 
 impl VendorInfo {
-    /// Single-mode placeholder — the user is expected to edit
+    /// Single-mode placeholder - the user is expected to edit
     /// `truce.toml` after scaffolding. Kept identical to the
     /// pre-refactor placeholder so existing test fixtures stand.
     #[must_use]

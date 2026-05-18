@@ -23,7 +23,7 @@ pub(crate) fn rustup_has_target(triple: &str) -> bool {
 }
 
 /// Query `rustup target list --installed` once per process and cache
-/// the result. Returns `None` when rustup itself isn't on PATH —
+/// the result. Returns `None` when rustup itself isn't on PATH -
 /// callers decide how to handle that (usually: surface a clear error
 /// before invoking cargo with `--target`). Used by every cross-arch
 /// build path (macOS universal Mach-O, Windows x64+arm64 installer,
@@ -58,7 +58,7 @@ fn installed_rustup_targets() -> Option<&'static std::collections::HashSet<Strin
 pub(crate) fn ensure_rustup_target(triple: &str) -> crate::Res {
     let Some(installed) = installed_rustup_targets() else {
         return Err(format!(
-            "rustup not available — can't verify target `{triple}` is installed. \
+            "rustup not available - can't verify target `{triple}` is installed. \
              Either `rustup` isn't on PATH, or `cargo` is resolving to a non-rustup \
              toolchain (e.g. Homebrew's). Install rustup from https://rustup.rs and \
              make sure `which cargo` points at `~/.cargo/bin/cargo`."
@@ -80,7 +80,7 @@ pub(crate) fn ensure_rustup_target(triple: &str) -> crate::Res {
 
 #[allow(unused_variables)]
 /// Run `cargo build` with the active profile. Release by default;
-/// flips to dev when `set_debug_profile(true)` has been called — so
+/// flips to dev when `set_debug_profile(true)` has been called - so
 /// commands that accept `--debug` (`build`, `install`, `run`) pick
 /// that up without each call site having to thread a flag through.
 /// `package` never flips the flag, so shipped artifacts stay release.
@@ -161,7 +161,7 @@ fn cargo_build_inner(
         // Cache rustc invocations at the input-hash level. Wins
         // every time cargo's fingerprint flips but the rustc inputs
         // (source + flags + env reachable via `env!`/`option_env!`)
-        // are byte-identical — common on cross-arch / cross-feature
+        // are byte-identical - common on cross-arch / cross-feature
         // batches that touch leaf crates back to back.
         cmd.env("RUSTC_WRAPPER", wrapper);
     }
@@ -183,7 +183,7 @@ fn cargo_build_inner(
 /// flags must be scoped to a single bin: the trailing args only reach
 /// the chosen target's final rustc invocation, not its dependencies.
 ///
-/// `RUSTFLAGS` is the wrong tool here — it leaks onto every rustc
+/// `RUSTFLAGS` is the wrong tool here - it leaks onto every rustc
 /// spawn cargo does for the build, including transitively-required
 /// cdylib link steps that reject exe-only flags like `/SUBSYSTEM:WINDOWS`
 /// (the cdylib has no `main`, so `link.exe` errors with `LNK2019`).
@@ -245,10 +245,10 @@ pub(crate) fn cargo_rustc_bin(
 
 /// Resolve a path to `sccache` if it's available and the user hasn't
 /// pinned `RUSTC_WRAPPER` themselves. Returns `None` when sccache is
-/// off the path (silent passthrough — no error, no log) or when the
+/// off the path (silent passthrough - no error, no log) or when the
 /// user has already configured a wrapper they presumably prefer.
 pub(crate) fn sccache_wrapper() -> Option<std::ffi::OsString> {
-    // Respect any user-set wrapper — don't override their choice.
+    // Respect any user-set wrapper - don't override their choice.
     // `TRUCE_DISABLE_SCCACHE=1` is the escape hatch when the user
     // wants cargo-truce to skip auto-wrapping for one invocation.
     if std::env::var_os("RUSTC_WRAPPER").is_some()
@@ -278,7 +278,7 @@ fn which(name: &str) -> Option<std::ffi::OsString> {
 /// Apple architecture. Used by both AU v3 install and `cargo truce package`
 /// to drive per-arch cargo builds and lipo into universal binaries. Defined
 /// unconditionally so cross-platform codepaths can reference it without a
-/// cfg matrix — only the macOS arms actually touch lipo/xcodebuild.
+/// cfg matrix - only the macOS arms actually touch lipo/xcodebuild.
 #[cfg(target_os = "macos")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum MacArch {
@@ -318,7 +318,7 @@ pub(crate) fn lipo_into(inputs: &[PathBuf], output: &Path) -> crate::Res {
         fs::create_dir_all(parent)?;
     }
     if inputs.len() == 1 {
-        // No fattening needed — just copy to the canonical location so
+        // No fattening needed - just copy to the canonical location so
         // downstream stage code reads from the same path in both modes.
         fs::copy(&inputs[0], output)?;
         return Ok(());
@@ -361,9 +361,9 @@ pub(crate) fn cargo_build_for_arch(
 
 /// Build for every Apple arch in `archs` in a single cargo invocation
 /// by passing multiple `--target <triple>` flags. Cargo 1.64+ accepts
-/// this and parallelizes codegen across targets internally — shared
+/// this and parallelizes codegen across targets internally - shared
 /// `.rmeta` is computed once, target-specific codegen runs per-arch
-/// inside the same process — so the user gets:
+/// inside the same process - so the user gets:
 ///
 /// - One `target/.cargo-lock` acquisition (no inter-process lock
 ///   contention on the workspace lock file).

@@ -3,7 +3,7 @@
 //! Split into two phases:
 //!
 //! - [`emit_au_v3_bundle`] produces a complete, signed `{Plugin Name}.app`
-//!   in `target/bundles/`. No side effects outside the repo — no sudo,
+//!   in `target/bundles/`. No side effects outside the repo - no sudo,
 //!   no `/Applications/` writes, no DAW cache bust, no pluginkit
 //!   registration. Safe for CI artifacts and dry-run inspection.
 //!
@@ -12,7 +12,7 @@
 //!   with pluginkit. Assumes the bundle was produced by
 //!   `emit_au_v3_bundle`.
 //!
-//! The xcode project + framework scratch stay in `tmp_dir()` — only
+//! The xcode project + framework scratch stay in `tmp_dir()` - only
 //! the final signed bundle lives under `target/`. Signatures are
 //! produced against the `target/bundles/` path and remain valid
 //! after the install-time `sudo cp -R` because macOS bundle
@@ -41,7 +41,7 @@ use std::process::Command;
 ///    fixup + Versions/Current symlinks + Info.plist + initial sign).
 /// 3. Materialize the Xcode project from embedded templates into
 ///    `tmp_dir()`.
-/// 4. Run `xcodebuild` — produces `TruceAUv3.app` in the build dir.
+/// 4. Run `xcodebuild` - produces `TruceAUv3.app` in the build dir.
 /// 5. Move the built `.app` to `target/bundles/{au3_app_name}.app/`
 ///    and embed the Rust framework at `Contents/Frameworks/`.
 /// 6. Sign inside-out (framework → appex → app) against the
@@ -137,7 +137,7 @@ fn build_au_v3_for_plugin(
 /// into the canonical `target/release/lib{stem}_au.dylib` path.
 /// Returns the lipo output path.
 ///
-/// The framework dylib is identical to AU v2's `--features au` build —
+/// The framework dylib is identical to AU v2's `--features au` build -
 /// AU v3's appex compiles its Swift `AudioUnitFactory` /
 /// `TruceAUAudioUnit` separately via xcodebuild, and display-name
 /// overrides (`au_name`) travel via `PluginInfo` rather than env vars,
@@ -163,7 +163,7 @@ fn build_rust_framework_dylib(
     for &arch in archs {
         crate::vprintln!("  Building Rust framework ({})...", arch.triple());
         // Same `TRUCE_AU_PLUGIN_ID` as AU v2 so the truce-au build
-        // cache is shared across the v2 and v3 paths for one plugin —
+        // cache is shared across the v2 and v3 paths for one plugin -
         // and so the framework dylib's cocoa-view class name matches
         // what the .component build produced. v3 doesn't itself need
         // unique class names (the .appex runs sandboxed per-process),
@@ -198,7 +198,7 @@ fn build_rust_framework_dylib(
 /// fixup, Versions/Current symlinks, Info.plist, initial sign.
 ///
 /// Preserves `fw_build` across runs so xcodebuild's link-time
-/// framework metadata cache survives — we overwrite the pieces that
+/// framework metadata cache survives - we overwrite the pieces that
 /// change (dylib, plist, symlinks) idempotently.
 fn assemble_framework_bundle(
     fw_build: &Path,
@@ -289,7 +289,7 @@ fn assemble_framework_bundle(
 /// Preserves `build_dir` across runs so xcodebuild's `DerivedData` /
 /// `SYMROOT` build cache survives. `write_if_changed` for every source
 /// file means mtimes only bump when the embedded template bytes
-/// actually shifted — xcodebuild then incrementally rebuilds only the
+/// actually shifted - xcodebuild then incrementally rebuilds only the
 /// TUs that changed.
 fn write_xcode_project_files(
     build_dir: &Path,
@@ -569,13 +569,13 @@ fn sign_au_v3_inside_out(final_app: &Path, build_dir: &Path, fw_name: &str, sign
 /// into three phases so the daemon-restart + cache-bust sequence
 /// happens once per install instead of once per plugin:
 ///
-/// 1. **Per plugin** — pre-clean stale `pluginkit` state, `sudo ditto`
+/// 1. **Per plugin** - pre-clean stale `pluginkit` state, `sudo ditto`
 ///    the bundle into `/Applications/`, and `lsregister -f -R`.
-/// 2. **Once for the batch** — `killall pkd` +
+/// 2. **Once for the batch** - `killall pkd` +
 ///    `killall AudioComponentRegistrar`, clear the AU cache, wait 2s
 ///    for `pkd` to respawn. Previously this ran per-plugin, wasting
 ///    `(N-1) × 2s` plus the daemon-respawn cost.
-/// 3. **Per plugin** — `pluginkit -a` + poll-until-registered, then
+/// 3. **Per plugin** - `pluginkit -a` + poll-until-registered, then
 ///    print `Installed:`.
 fn install_au_v3(root: &Path, config: &Config, plugins: &[&PluginDef]) -> Res {
     // ---- Phase 1: copy bundles + lsregister per plugin ----
@@ -607,7 +607,7 @@ fn install_au_v3(root: &Path, config: &Config, plugins: &[&PluginDef]) -> Res {
             p.bundle_id
         );
 
-        // Pre-clean. `pluginkit -e ignore` only disables the registration —
+        // Pre-clean. `pluginkit -e ignore` only disables the registration -
         // if `pkd` auto-discovered the staging-tree appex during the build
         // phase, its path stays in the database and can win the next dyld
         // load race over our installed copy. `pluginkit -r <path>` evicts
@@ -692,7 +692,7 @@ fn register_appex(appex_path: &str, appex_id: &str) -> bool {
 /// Build-then-install convenience for `cargo truce install --au3`.
 ///
 /// `no_build` skips the build phase and consumes whatever's already
-/// in `target/bundles/` — mirrors the behavior of the other formats'
+/// in `target/bundles/` - mirrors the behavior of the other formats'
 /// `--no-build` paths.
 pub(crate) fn build_and_install_au_v3(
     root: &Path,
@@ -701,7 +701,7 @@ pub(crate) fn build_and_install_au_v3(
     no_build: bool,
 ) -> Res {
     // Single skip gate. If we don't have a real Developer ID, don't
-    // build *or* install — otherwise install_au_v3 would happily copy
+    // build *or* install - otherwise install_au_v3 would happily copy
     // a stale signed bundle from a previous run and produce a misleading
     // "succeeded" line in the install summary.
     let sign_id = crate::application_identity();
@@ -716,7 +716,7 @@ pub(crate) fn build_and_install_au_v3(
         return Ok(());
     }
     if !no_build {
-        // `cargo truce install` only needs the host arch — universal
+        // `cargo truce install` only needs the host arch - universal
         // builds are reserved for the packaging path. AU2 isn't built
         // here, so the AU3 path can't reuse an AU2 artifact.
         emit_au_v3_bundle(root, config, plugins, &[MacArch::host()], false)?;

@@ -1,7 +1,7 @@
 //! Generic helpers shared across commands: paths, sub-process invocation,
 //! signing, and Visual Studio / `CMake` / Ninja location.
 //!
-//! Functions here have no per-command flavor — anything that's specific
+//! Functions here have no per-command flavor - anything that's specific
 //! to install, package, or doctor lives next to the command that uses it.
 
 use crate::BoxErr;
@@ -64,7 +64,7 @@ pub(crate) mod fs_ctx {
     }
 
     /// Write only if the target file is missing or its bytes differ. On a
-    /// no-op, the file's mtime stays put — important for tools like cmake
+    /// no-op, the file's mtime stays put - important for tools like cmake
     /// that rebuild based on mtime comparisons.
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     pub(crate) fn write_if_changed(
@@ -90,7 +90,7 @@ pub(crate) mod fs_ctx {
 /// `&[&str]` rather than `&[OsStr]` because every other arg in
 /// those vecs is a literal; this is the standard way to thread
 /// a path through. The panic is preferable to `to_string_lossy`
-/// — passing a lossy path to `Command::arg` would silently
+/// - passing a lossy path to `Command::arg` would silently
 /// invoke a different binary than the caller named.
 ///
 /// Today only the iOS install pipeline calls this; the gate is
@@ -149,7 +149,7 @@ pub(crate) fn shared_lib_name(stem: &str) -> String {
 // Each `cargo truce <command>` invocation sets the profile at most
 // once (in arg parsing, before any build), then reads it many times.
 // `OnceLock` matches that lifecycle: `set_build_profile` calls
-// `OnceLock::set` (idempotent if the same profile is set twice — the
+// `OnceLock::set` (idempotent if the same profile is set twice - the
 // second call's value is discarded), and reads never wait on a lock.
 static PROFILE: OnceLock<String> = OnceLock::new();
 
@@ -274,7 +274,7 @@ pub(crate) fn program_files() -> PathBuf {
 /// # Errors
 ///
 /// Returns `Err` when the manifest can't be read, parsed, or doesn't
-/// declare a version anywhere — callers want the IO/parse case
+/// declare a version anywhere - callers want the IO/parse case
 /// distinguishable from the "no version key" case so the user can
 /// fix the right thing.
 pub(crate) fn read_workspace_version(root: &Path) -> Result<String, crate::BoxErr> {
@@ -323,11 +323,11 @@ fn locate_plugin_manifest(project_root: &Path, crate_name: &str) -> Option<PathB
     if !out.status.success() {
         return None;
     }
-    // Cheap substring parse — avoids depending on serde_json here. We
+    // Cheap substring parse - avoids depending on serde_json here. We
     // only need `"name":"crate_name"` and the package's `"manifest_path"`.
     //
     // `cargo metadata` emits each package as
-    // `{"name":..., "version":..., ..., "manifest_path":..., ...}` —
+    // `{"name":..., "version":..., ..., "manifest_path":..., ...}` -
     // `manifest_path` is always *after* `name` within the same object,
     // and only appears at the package level (not in `dependencies` /
     // `targets`). So scanning forward from the matched `name` lands on
@@ -350,7 +350,7 @@ fn locate_plugin_manifest(project_root: &Path, crate_name: &str) -> Option<PathB
 ///
 /// Looks for a `[[bin]]` whose `required-features` contains
 /// `"standalone"`; falls back to the only `[[bin]]` if exactly one is
-/// declared. Returns `None` if no match — callers (`cargo truce run`)
+/// declared. Returns `None` if no match - callers (`cargo truce run`)
 /// then default to the scaffold convention `{crate_name}-standalone`,
 /// which is also what the doc instructs hand-written plugins to use.
 pub(crate) fn read_standalone_bin_name(crate_name: &str) -> Option<String> {
@@ -387,9 +387,9 @@ pub(crate) fn read_standalone_bin_name(crate_name: &str) -> Option<String> {
 ///
 /// Lookup order:
 ///
-/// 1. **Root `Cargo.toml`'s `[features].default`** — the single-crate
+/// 1. **Root `Cargo.toml`'s `[features].default`** - the single-crate
 ///    layout (`cargo truce new` produces this). Most reliable signal.
-/// 2. **Plugin crates listed in `truce.toml`** — the workspace layout
+/// 2. **Plugin crates listed in `truce.toml`** - the workspace layout
 ///    (`cargo truce new --workspace`). Reads each plugin's own
 ///    `[features].default` and returns the **union**, so `install`
 ///    tries the formats declared by at least one plugin and skips the
@@ -433,7 +433,7 @@ pub(crate) fn detect_default_features() -> std::collections::HashSet<String> {
 
 pub(crate) fn project_root() -> PathBuf {
     // Walk up from the current directory looking for truce.toml. This
-    // is what `cargo truce` does — the globally installed binary runs
+    // is what `cargo truce` does - the globally installed binary runs
     // from any project directory.
     let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let mut dir = cwd.as_path();
@@ -470,13 +470,13 @@ pub(crate) fn run_sudo(cmd: &str, args: &[&OsStr]) -> crate::Res {
 
 /// Print a one-line "why" before the first `sudo` call of the run, so the
 /// user understands the password prompt that's about to appear. No-op on
-/// subsequent calls — sudo's own cred cache covers the rest of the install.
+/// subsequent calls - sudo's own cred cache covers the rest of the install.
 fn announce_sudo_once() {
     static ANNOUNCED: AtomicBool = AtomicBool::new(false);
     if !ANNOUNCED.swap(true, Ordering::Relaxed) {
         eprintln!(
             "→ Installing to system plugin directories (/Library/Audio/Plug-Ins/, \
-             /Library/Application Support/Avid/) — sudo required."
+             /Library/Application Support/Avid/) - sudo required."
         );
     }
 }
@@ -540,7 +540,7 @@ pub(crate) fn take_outputs() -> Vec<String> {
 /// `cmd_install` so the user sees what didn't make it.
 static SKIPPED: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
-/// Append a soft-skip reason. One line per (format, plugin) target —
+/// Append a soft-skip reason. One line per (format, plugin) target -
 /// callers should embed the plugin name in the message so the user
 /// can match each skip to the corresponding `Installed:` row.
 pub(crate) fn log_skip(line: String) {
@@ -659,7 +659,7 @@ pub(crate) fn tmp_dir() -> PathBuf {
 // `<id>_lv2_stage/`, `<id>_vst3.plist`, `verify-pkg-*/` … each shape
 // gets its own subdir below. Helpers always create the dir lazily.
 
-/// `tmp/manifests/` — short-lived plist / `.manifest` / `.json` config
+/// `tmp/manifests/` - short-lived plist / `.manifest` / `.json` config
 /// files handed to platform tools (codesign, signtool, pkgbuild, etc).
 /// Linux's tarball pipeline doesn't shell out to platform tools, so the
 /// helper is gated to the platforms that actually consume it.
@@ -670,7 +670,7 @@ pub(crate) fn tmp_manifests() -> PathBuf {
     dir
 }
 
-/// `tmp/scripts/` — generated `.bat` / shell driver scripts. Only the
+/// `tmp/scripts/` - generated `.bat` / shell driver scripts. Only the
 /// Windows AAX builder shells out to `.bat` files today; if macOS ever
 /// grows a similar driver this gate can widen.
 #[cfg(target_os = "windows")]
@@ -680,7 +680,7 @@ pub(crate) fn tmp_scripts() -> PathBuf {
     dir
 }
 
-/// `tmp/verify/` — scratch dirs for post-build artifact verification
+/// `tmp/verify/` - scratch dirs for post-build artifact verification
 /// (pkgutil --expand targets, validator inputs).
 #[cfg(any(target_os = "macos", test))]
 pub(crate) fn tmp_verify() -> PathBuf {
@@ -689,7 +689,7 @@ pub(crate) fn tmp_verify() -> PathBuf {
     dir
 }
 
-/// `tmp/aax-template/` — Avid AAX C++ wrapper build directory.
+/// `tmp/aax-template/` - Avid AAX C++ wrapper build directory.
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(crate) fn tmp_aax_template() -> PathBuf {
     let dir = tmp_dir().join("aax-template");
@@ -697,7 +697,7 @@ pub(crate) fn tmp_aax_template() -> PathBuf {
     dir
 }
 
-/// `tmp/au-v3/<bundle_id>/` — per-plugin AU v3 framework + appex build root.
+/// `tmp/au-v3/<bundle_id>/` - per-plugin AU v3 framework + appex build root.
 #[cfg(target_os = "macos")]
 pub(crate) fn tmp_au_v3(bundle_id: &str) -> PathBuf {
     let dir = tmp_dir().join("au-v3").join(bundle_id);
@@ -705,7 +705,7 @@ pub(crate) fn tmp_au_v3(bundle_id: &str) -> PathBuf {
     dir
 }
 
-/// `tmp/lv2/<bundle_id>/` — LV2 bundle staging directory.
+/// `tmp/lv2/<bundle_id>/` - LV2 bundle staging directory.
 pub(crate) fn tmp_lv2(bundle_id: &str) -> PathBuf {
     let dir = tmp_dir().join("lv2").join(bundle_id);
     let _ = fs::create_dir_all(&dir);
@@ -717,7 +717,7 @@ pub(crate) fn tmp_lv2(bundle_id: &str) -> PathBuf {
 ///
 /// All callers (`commands::install::aax`, `commands::package::stage`,
 /// `commands::package::macos`) live behind macOS / Windows cfgs, so
-/// the function is genuinely dead on Linux — gate it the same way
+/// the function is genuinely dead on Linux - gate it the same way
 /// instead of using `#[allow(dead_code)]`.
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(crate) fn copy_dir_recursive(src: &Path, dst: &Path) -> crate::Res {
@@ -789,7 +789,7 @@ fn paint(text: &str, ansi: &str) -> String {
 }
 
 /// Cached check: `NO_COLOR` unset AND stderr is a tty. Decided once per
-/// process — no need to re-stat the terminal on every line.
+/// process - no need to re-stat the terminal on every line.
 fn doctor_use_color() -> bool {
     use std::io::IsTerminal;
     static USE: OnceLock<bool> = OnceLock::new();

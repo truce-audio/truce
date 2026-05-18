@@ -10,7 +10,7 @@
 //!
 //! Each pair (`norm_*` / `denorm_*`) round-trips for every
 //! representable wire input. See the per-helper docs for endpoint
-//! semantics — pitch-bend is asymmetric on both MIDI 1.0 and MIDI
+//! semantics - pitch-bend is asymmetric on both MIDI 1.0 and MIDI
 //! 2.0 because the spec's center value sits one code closer to the
 //! negative end than the positive.
 //!
@@ -55,7 +55,7 @@ pub fn norm_7bit(v: u8) -> f32 {
 pub fn denorm_7bit(v: f32) -> u8 {
     debug_assert!(
         !v.is_nan(),
-        "denorm_7bit: NaN input — caller's normalized value is uninitialized?",
+        "denorm_7bit: NaN input - caller's normalized value is uninitialized?",
     );
     (v.clamp(0.0, 1.0) * 127.0).round() as u8
 }
@@ -79,7 +79,7 @@ pub fn denorm_7bit(v: f32) -> u8 {
 pub fn norm_pitch_bend(raw: u16) -> f32 {
     debug_assert!(
         raw <= 16383,
-        "norm_pitch_bend: raw {raw} > 16383 — caller didn't mask LSB|MSB<<7?",
+        "norm_pitch_bend: raw {raw} > 16383 - caller didn't mask LSB|MSB<<7?",
     );
     (f32::from(raw) - 8192.0) / 8192.0
 }
@@ -88,14 +88,14 @@ pub fn norm_pitch_bend(raw: u16) -> f32 {
 /// (`0..=16383`).
 ///
 /// Inverse of [`norm_pitch_bend`]. `-1.0` → `0`, `0.0` → `8192`,
-/// `1.0` → `16383` (clamped — the perfectly symmetric `+1.0`
+/// `1.0` → `16383` (clamped - the perfectly symmetric `+1.0`
 /// would be `16384`). NaN debug-asserts.
 #[inline]
 #[must_use]
 pub fn denorm_pitch_bend(v: f32) -> u16 {
     debug_assert!(
         !v.is_nan(),
-        "denorm_pitch_bend: NaN input — caller's normalized value is uninitialized?",
+        "denorm_pitch_bend: NaN input - caller's normalized value is uninitialized?",
     );
     let raw = (v.clamp(-1.0, 1.0) * 8192.0 + 8192.0).round();
     (raw as u16).min(16383)

@@ -1,4 +1,4 @@
-//! egui editor on iOS — `CAMetalLayer`-backed `UIView` running
+//! egui editor on iOS - `CAMetalLayer`-backed `UIView` running
 //! egui-wgpu, driven by `CADisplayLink`, with `UITouch` events
 //! translated into `egui::RawInput`.
 //!
@@ -52,7 +52,7 @@ pub struct EguiEditor<P: Params + ?Sized> {
     inner: Arc<Mutex<Option<Inner<P>>>>,
 }
 
-// SAFETY: see truce-gui::editor_ios for the symmetric rationale —
+// SAFETY: see truce-gui::editor_ios for the symmetric rationale -
 // UIKit + CADisplayLink + wgpu surface presentation all happen on
 // the main thread, where the AUv3 host calls Editor methods.
 unsafe impl<P: Params + ?Sized> Send for EguiEditor<P> {}
@@ -124,14 +124,14 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
         }
         let (lw, lh) = self.size;
         // `query_backing_scale(parent)` reads `parent.contentScaleFactor`
-        // — but at `gui_open` time the AUv3 container UIView hasn't
+        // - but at `gui_open` time the AUv3 container UIView hasn't
         // been attached to a visible window yet, so the property
         // still returns its default 1.0 instead of the device's
         // actual scale. `main_screen_scale()` goes through
         // `UIScreen.mainScreen.scale` and returns 3.0 on iPhone
         // Retina regardless of the view hierarchy state. Without
         // this, egui paints into a 1× wgpu surface that
-        // CoreAnimation upscales 3× — visibly grainy edges.
+        // CoreAnimation upscales 3× - visibly grainy edges.
         // Mirrors the built-in iOS editor's `EditorScale::new(...)`
         // construction.
         let scale = truce_gui::platform::main_screen_scale();
@@ -184,7 +184,7 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
         // Pin egui's logical→physical scale to the device backing
         // scale (3× on Retina iPhones). Without this, egui paints
         // at 1× pixels-per-point into a 3×-sized wgpu surface and
-        // Core Animation upscales the result — visible as grainy
+        // Core Animation upscales the result - visible as grainy
         // edges on every widget. Mirrors the macOS editor's
         // backingScaleFactor application.
         egui_ctx.set_pixels_per_point(scalef);
@@ -333,7 +333,7 @@ unsafe fn install_editor_view<P: Params + 'static>(
                 sel!(touchesCancelled:withEvent:),
                 touches_cancelled::<P> as unsafe extern "C" fn(_, _, _, _),
             );
-            // `UIKeyInput` conformance — implemented as raw selector
+            // `UIKeyInput` conformance - implemented as raw selector
             // additions because ObjC protocols are duck-typed at
             // dispatch time. The runtime calls `respondsToSelector:`
             // before delivering keyboard events; presence of these
@@ -360,7 +360,7 @@ unsafe fn install_editor_view<P: Params + 'static>(
             // Explicitly declare `UIKeyInput` conformance. UIKit
             // checks `[obj conformsToProtocol:@protocol(UIKeyInput)]`
             // before presenting the soft keyboard for a first
-            // responder — just implementing the three selectors via
+            // responder - just implementing the three selectors via
             // `respondsToSelector:` isn't sufficient. Same `UIView`
             // also has to implement `UITextInputTraits` (which
             // `UIKeyInput` inherits from); empty trait methods
@@ -483,7 +483,7 @@ fn run_frame<P: Params + 'static>(inner: &mut Inner<P>) {
     // Pin the root viewport's pixels_per_point on every frame.
     // `RawInput::default()` seeds the viewport map with
     // `native_pixels_per_point: None`, which egui then resolves to
-    // 1.0 — overriding `Context::set_pixels_per_point` we ran at
+    // 1.0 - overriding `Context::set_pixels_per_point` we ran at
     // open. Without this, every frame's tessellation snaps back to
     // 1× DPI and Core Animation upscales the result, producing the
     // grainy edges we saw.
@@ -518,7 +518,7 @@ fn run_frame<P: Params + 'static>(inner: &mut Inner<P>) {
     // that into `becomeFirstResponder` / `resignFirstResponder`
     // on the host UIView. UIKit only presents the keyboard for
     // the current first responder *and* only if that responder
-    // conforms to `UIKeyInput` — the class declares both
+    // conforms to `UIKeyInput` - the class declares both
     // `UIKeyInput` + `UITextInputTraits` at class-build time
     // (via `add_protocol` in `install_editor_view`) so UIKit
     // accepts our `becomeFirstResponder`. Tapping a non-text
@@ -590,14 +590,14 @@ enum TouchPhase {
 }
 
 // ---------------------------------------------------------------------------
-// UIKeyInput conformance — drives the iOS soft keyboard for egui text widgets
+// UIKeyInput conformance - drives the iOS soft keyboard for egui text widgets
 // ---------------------------------------------------------------------------
 
 unsafe extern "C" fn can_become_first_responder(_self: &AnyObject, _cmd: Sel) -> Bool {
     Bool::YES
 }
 
-/// `UIKeyInput.hasText` — `UIKit` reads this to decide whether
+/// `UIKeyInput.hasText` - `UIKit` reads this to decide whether
 /// to allow `deleteBackward` to fire. Always returning true
 /// matches what egui-internal text widgets do (their delete
 /// handler is a no-op when the field is empty, so over-firing
@@ -607,7 +607,7 @@ unsafe extern "C" fn has_text(_self: &AnyObject, _cmd: Sel) -> Bool {
     Bool::YES
 }
 
-/// `UIKeyInput.insertText:` — `UIKit` hands us the user's typed
+/// `UIKeyInput.insertText:` - `UIKit` hands us the user's typed
 /// characters as an `NSString*` (one keystroke per call for
 /// regular keys, longer strings for IME composition commits).
 /// We forward to egui as a `Text` event; egui's `TextEdit`
@@ -640,7 +640,7 @@ unsafe extern "C" fn insert_text<P: Params + 'static>(
     }
 }
 
-/// `UIKeyInput.deleteBackward` — Backspace. egui maps this to a
+/// `UIKeyInput.deleteBackward` - Backspace. egui maps this to a
 /// pressed+released `Key::Backspace` event; the `TextEdit`
 /// widget removes the character before the cursor (or the
 /// selection).
@@ -681,7 +681,7 @@ unsafe fn dispatch_touch<P: Params + 'static>(
         let Ok(mut guard) = arc.lock() else { return };
         let Some(inner) = guard.as_mut() else { return };
 
-        // Pick one touch — egui is single-pointer. Real multi-touch
+        // Pick one touch - egui is single-pointer. Real multi-touch
         // would need an `egui::Event` per finger which egui doesn't
         // model natively; "first finger wins" is the standard
         // single-pointer reduction.
@@ -719,7 +719,7 @@ unsafe fn dispatch_touch<P: Params + 'static>(
 }
 
 // ---------------------------------------------------------------------------
-// Utilities — lifted from truce-gui::editor_ios (kept duplicated; both
+// Utilities - lifted from truce-gui::editor_ios (kept duplicated; both
 // crates need them, and the helper is six lines).
 // ---------------------------------------------------------------------------
 

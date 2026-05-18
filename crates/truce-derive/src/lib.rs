@@ -24,7 +24,7 @@ mod lv2_emit;
 /// Resolve `truce.toml` and pull out the `[[plugin]]` entry for the
 /// current crate. Routes every failure mode through `Result<…, String>`
 /// so callers can convert errors into `compile_error!` tokens with a
-/// span — `panic!`-ing from a proc macro produces a span-less,
+/// span - `panic!`-ing from a proc macro produces a span-less,
 /// multi-line error frame instead of the clean compiler diagnostic the
 /// caller actually wants.
 pub(crate) fn try_resolve_plugin() -> Result<(Config, String, std::path::PathBuf), String> {
@@ -49,7 +49,7 @@ pub(crate) fn try_resolve_plugin() -> Result<(Config, String, std::path::PathBuf
     // Canonicalize so the embedded `include_bytes!` reference is stable
     // across `cargo check` / `cargo build` invocations (both resolve
     // CARGO_MANIFEST_DIR identically, but a future caller might run the
-    // proc-macro from a symlinked path — canonicalizing pins the literal
+    // proc-macro from a symlinked path - canonicalizing pins the literal
     // to the realpath).
     let canonical = path.canonicalize().unwrap_or(path);
     Ok((config, pkg_name, canonical))
@@ -108,7 +108,7 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
     // Keep these mappings in sync with
     // `truce_core::info::category_from_str`. Historically this match only
     // knew about "instrument" and fell everything else through to
-    // `Effect` — which silently broke LV2 MIDI for every note-effect
+    // `Effect` - which silently broke LV2 MIDI for every note-effect
     // plugin because `truce-lv2::derive_port_layout` reads the category
     // to decide whether to open the MIDI input decode path.
     let category = match plugin.category.as_str() {
@@ -123,7 +123,7 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
     // plugins must not expose audio I/O. Logic routes `aumi` to the
     // MIDI FX slot, which is where arpeggiators / transposers /
     // note-shapers belong. Must stay in sync with
-    // `cargo-truce/src/config.rs::resolved_au_type` — a mismatch
+    // `cargo-truce/src/config.rs::resolved_au_type` - a mismatch
     // causes auval "Class Data fields … do not match component
     // description".
     let au_type = plugin
@@ -180,7 +180,7 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
 
     // `include_bytes!` registers `truce.toml` as a build-time dependency
     // through the compiler's normal dep-info tracking. Without it, edits
-    // to truce.toml don't trigger a rebuild — proc macros on stable Rust
+    // to truce.toml don't trigger a rebuild - proc macros on stable Rust
     // have no other way to declare external file dependencies.
     // Path is canonicalized in `try_resolve_plugin` so the literal is
     // stable across invocations.
@@ -221,7 +221,7 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
 /// type is `<input>`. Invoked by `truce::plugin!`'s expansion. See
 /// [`lv2_emit::emit_root_impl`] for the gory details.
 ///
-/// Doc-hidden because plugin authors never call it directly — it's
+/// Doc-hidden because plugin authors never call it directly - it's
 /// part of the `truce::plugin!` machinery.
 #[doc(hidden)]
 #[proc_macro]
@@ -250,7 +250,7 @@ pub(crate) struct ParamField {
 impl ParamField {
     /// ID that the auto-assignment block at the top of `derive_params`
     /// has guaranteed is populated. Calling this before the auto-assign
-    /// loop runs is a logic error — the `expect` message names the
+    /// loop runs is a logic error - the `expect` message names the
     /// invariant rather than just panicking with `unwrap`'s opaque
     /// `called Option::unwrap on a None`.
     pub(crate) fn id(&self) -> u32 {
@@ -265,7 +265,7 @@ impl ParamField {
 pub(crate) struct NestedField {
     pub(crate) ident: syn::Ident,
     /// Field type, retained so the derive can call associated
-    /// functions on it without an instance — specifically
+    /// functions on it without an instance - specifically
     /// [`Params::param_infos_static`] for the registration-time
     /// "no temp plugin" path.
     pub(crate) ty: syn::Type,
@@ -303,7 +303,7 @@ pub(crate) struct ParamAttrs {
     smooth: Option<String>,
     format_fn: Option<String>,
     parse_fn: Option<String>,
-    /// Compile-error tokens collected during parsing — emitted by
+    /// Compile-error tokens collected during parsing - emitted by
     /// the derive output so unknown keys and unexpected literal
     /// kinds surface at compile time instead of as silent default
     /// values.
@@ -362,7 +362,7 @@ fn parse_param_attrs(field: &syn::Field) -> ParamAttrs {
         // `parse_nested_meta`'s closure can only return one error per
         // call (it short-circuits the *current* attribute group on
         // first Err), so route per-key errors through `attrs.errors`
-        // instead — each malformed key generates a `compile_error!`
+        // instead - each malformed key generates a `compile_error!`
         // and parsing continues.
         let parse_result = attr.parse_nested_meta(|meta| {
             let key = meta
@@ -418,7 +418,7 @@ fn parse_param_attrs(field: &syn::Field) -> ParamAttrs {
                 "default" => {
                     // `meta.value()` returns the stream after `=`. Parse as
                     // an `Expr` so we accept negative literals like
-                    // `default = -1` (which `Lit` alone refuses — `-1` is
+                    // `default = -1` (which `Lit` alone refuses - `-1` is
                     // an `Expr::Unary(Neg, Lit::Int(1))`, not a literal).
                     let expr: Expr = meta.value()?.parse()?;
                     match parse_default_expr(&expr) {
@@ -654,7 +654,7 @@ fn parse_range_tokens(range: &str) -> proc_macro2::TokenStream {
         return quote! { ::truce::params::ParamRange::Enum { count: #count } };
     }
     bad(format!(
-        "unknown range `{range}` — supported: linear(min, max), log(min, max), discrete(min, max), enum(count)"
+        "unknown range `{range}` - supported: linear(min, max), log(min, max), discrete(min, max), enum(count)"
     ))
 }
 
@@ -669,13 +669,13 @@ fn parse_unit_tokens(unit: &str) -> proc_macro2::TokenStream {
         "st" => quote! { ::truce::params::ParamUnit::Semitones },
         "pan" => quote! { ::truce::params::ParamUnit::Pan },
         "" | "none" => quote! { ::truce::params::ParamUnit::None },
-        // Loud compile-error rather than silent fallback — typos like
+        // Loud compile-error rather than silent fallback - typos like
         // `"hz "` (trailing space) or `"DB"` (uppercase) shouldn't map
         // to `ParamUnit::None` and surface only as "0.5" instead of
         // "0.5 Hz" in the host.
         other => {
             let msg =
-                format!("unknown unit `{other}` — supported: dB, Hz, ms, s, %, st, pan, none");
+                format!("unknown unit `{other}` - supported: dB, Hz, ms, s, %, st, pan, none");
             quote! { compile_error!(#msg) }
         }
     }
@@ -734,7 +734,7 @@ fn parse_smooth_tokens(smooth: &str) -> proc_macro2::TokenStream {
         };
     }
     bad(format!(
-        "unknown smoothing style `{smooth}` — supported: \"none\", \"linear(<ms>)\", \"exp(<ms>)\"",
+        "unknown smoothing style `{smooth}` - supported: \"none\", \"linear(<ms>)\", \"exp(<ms>)\"",
     ))
 }
 
@@ -758,7 +758,7 @@ fn gen_param_info_literal(f: &ParamField) -> Option<proc_macro2::TokenStream> {
     let default_plain = a.default.unwrap_or(0.0);
 
     if let Some(d) = a.default {
-        // Integer round-trip exactness checks — an epsilon-based
+        // Integer round-trip exactness checks - an epsilon-based
         // comparison would silently accept fractional defaults like
         // `2.5` for an `Int` / `Enum` param. The `as i64` / `as u32`
         // truncations are the round-trip's whole point.
@@ -848,7 +848,7 @@ fn gen_field_constructor(f: &ParamField) -> proc_macro2::TokenStream {
     // visible to the macro at expansion time without per-call
     // const-eval plumbing.
     if let Some(d) = a.default {
-        // Integer round-trip exactness checks — an epsilon-based
+        // Integer round-trip exactness checks - an epsilon-based
         // comparison would silently accept fractional defaults like
         // `2.5` for an `Int` / `Enum` param. The `as i64` / `as u32`
         // truncations are the round-trip's whole point.
@@ -972,7 +972,7 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
     // Checks:
     //  1. No two params share an ID.
     //  2. No explicit param ID lands in the meter range (≥ METER_ID_BASE).
-    //     Auto-assigned params can't hit this — you'd need 16M fields.
+    //     Auto-assigned params can't hit this - you'd need 16M fields.
     //  3. No param ID collides with any meter ID (follows from #2 when
     //     both checks pass, but surfaced separately for a clearer error).
     {
@@ -1009,7 +1009,7 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
     // own params, meters, and #[nested] child type names. The final
     // TTL render happens later via `__truce_lv2_emit_root!`, which
     // `truce::plugin!` invokes with the root params type and which
-    // walks the sidecar tree to aggregate. Failures here are silent —
+    // walks the sidecar tree to aggregate. Failures here are silent -
     // they surface at TTL-emit time when the aggregator can't find
     // the data it needs.
     let nested_for_sidecar: Vec<(syn::Ident, syn::Type)> = nested_fields
@@ -1078,7 +1078,7 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
     // `gen_param_info_literal`) rather than a runtime `self.<f>.info`
     // read. Lifted into a `LazyLock<Vec<ParamInfo>>` so format
     // wrappers' `register_*` paths can read parameter metadata
-    // without constructing a plugin instance — see the
+    // without constructing a plugin instance - see the
     // `PluginExport::param_infos_static` doc on why that matters
     // (AAX `Describe` runs at C++ static init time).
     let own_info_literals: Vec<proc_macro2::TokenStream> = param_fields
@@ -1112,7 +1112,7 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
         {
             // `LazyLock` so the first call computes the metadata and
             // every later registration reads the cache. `clone()` is
-            // a single Vec allocation — cheap relative to the avoided
+            // a single Vec allocation - cheap relative to the avoided
             // plugin construction. (`ParamInfo` is `Clone`.)
             static INFOS: ::std::sync::LazyLock<Vec<::truce::params::ParamInfo>> =
                 ::std::sync::LazyLock::new(|| #static_infos_body);
@@ -1613,8 +1613,8 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
 /// - **Leading digit after underscore strip** (`_3band` → `"3band"`):
 ///   `split('_')` drops the leading `_`, leaving a fragment that can't
 ///   start an enum variant. The guard prepends `_` to produce
-///   `"_3band"`. (Pure `r#3band` is unreachable — `Ident::new_raw`
-///   rejects digit-first idents — but `_3band` is a legal Rust ident
+///   `"_3band"`. (Pure `r#3band` is unreachable - `Ident::new_raw`
+///   rejects digit-first idents - but `_3band` is a legal Rust ident
 ///   and is the case the test actually exercises.)
 /// - **All-non-alphanumeric** (`__`, `_`): `Ident::new("", span)` would
 ///   panic, so we fall back to `_` as a single-char placeholder. The
@@ -1666,7 +1666,7 @@ fn snake_to_pascal(ident: &syn::Ident) -> syn::Ident {
 /// ```
 /// # Panics
 ///
-/// Panics if `syn` fails to parse the input token stream — same
+/// Panics if `syn` fails to parse the input token stream - same
 /// "rustc-already-rejected" condition as [`derive_params`].
 #[proc_macro_derive(ParamEnum, attributes(name))]
 #[allow(clippy::too_many_lines)]
@@ -1802,7 +1802,7 @@ pub fn derive_param_enum(input: TokenStream) -> TokenStream {
 }
 
 // ---------------------------------------------------------------------------
-// #[derive(State)] — binary serialization for custom plugin state
+// #[derive(State)] - binary serialization for custom plugin state
 // ---------------------------------------------------------------------------
 
 /// Derive binary serialization for a custom state struct.
@@ -1823,7 +1823,7 @@ pub fn derive_param_enum(input: TokenStream) -> TokenStream {
 /// ```
 /// # Panics
 ///
-/// Panics if `syn` fails to parse the input token stream — same
+/// Panics if `syn` fails to parse the input token stream - same
 /// "rustc-already-rejected" condition as [`derive_params`].
 #[proc_macro_derive(State)]
 pub fn derive_state(input: TokenStream) -> TokenStream {
@@ -1887,7 +1887,7 @@ pub fn derive_state(input: TokenStream) -> TokenStream {
                 // `cursor.read_bytes(4)` returns a 4-byte slice when
                 // `Some` (or `None` if the cursor is short). The
                 // `try_into` to `[u8; 4]` therefore can't fail when
-                // we're inside the `if let Some(_)` arm — but
+                // we're inside the `if let Some(_)` arm - but
                 // routing through `.ok()` instead of `.unwrap()`
                 // keeps the panic path closed for the case where a
                 // future change to `read_bytes` relaxes its

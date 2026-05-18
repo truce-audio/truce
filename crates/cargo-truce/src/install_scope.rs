@@ -245,12 +245,12 @@ impl InstallScope {
             Self::System => crate::common_program_files().join("VST3"),
         }
     }
-    // `self` is unused — Windows VST2 has no per-scope split. Kept on
+    // `self` is unused - Windows VST2 has no per-scope split. Kept on
     // `&self` for shape-symmetry with `clap_dir` / `vst3_dir` / `lv2_dir`
     // so callers don't need a special case for VST2.
     #[allow(clippy::unused_self)]
     pub(crate) fn vst2_dir(self) -> PathBuf {
-        // Windows VST2 falls back to system in `effective_scope` —
+        // Windows VST2 falls back to system in `effective_scope` -
         // keep the user arm wired to the system path so an unfiltered
         // `--user` invocation still resolves to a real directory if
         // something bypasses `effective_scope`.

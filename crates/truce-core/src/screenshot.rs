@@ -2,7 +2,7 @@
 //!
 //! Drives a fresh plugin instance through `Editor::screenshot()` and
 //! saves the resulting RGBA bytes as a PNG. No comparison, no
-//! platform gating — that machinery lives in `truce-test`.
+//! platform gating - that machinery lives in `truce-test`.
 //!
 //! Useful both as the render half of `truce_test::assert_screenshot`
 //! and as a standalone capture path for `cargo truce screenshot` and
@@ -21,8 +21,8 @@ use crate::plugin::Plugin;
 /// reference PNG baked on one host (CI runner, dev machine, headless
 /// container) renders at the same physical dimensions on any other.
 /// Without a pin, `truce_gui::backing_scale()` would return whatever
-/// the host's main-screen DPI happens to be — 1.0 on a virtualized
-/// CI runner, 2.0 on a Retina `MacBook` — and reference PNGs would
+/// the host's main-screen DPI happens to be - 1.0 on a virtualized
+/// CI runner, 2.0 on a Retina `MacBook` - and reference PNGs would
 /// mismatch across machines.
 pub const DEFAULT_SCREENSHOT_SCALE: f64 = 2.0;
 
@@ -126,12 +126,12 @@ pub fn render_pixels_for<P: PluginExport>(plugin: &mut P) -> (Vec<u8>, u32, u32)
 /// duration of the call so the editor's `EditorScale` (initialized
 /// from `truce_gui::backing_scale()` during `Plugin::editor()`)
 /// picks up the screenshot value rather than the host's main-screen
-/// DPI. The override is cleared on return — including on panic — so
+/// DPI. The override is cleared on return - including on panic - so
 /// any subsequent live-editor construction sees the regular
 /// platform scale.
 ///
-/// Lets callers prepare plugin state — set params, load a state
-/// blob, drive a `process()` block to populate meters — before the
+/// Lets callers prepare plugin state - set params, load a state
+/// blob, drive a `process()` block to populate meters - before the
 /// editor renders. The `truce-test` `ScreenshotTest::setup` /
 /// `state_file` paths and the `cargo truce screenshot --state` flag
 /// both ride on this entry point.
@@ -150,7 +150,7 @@ pub fn render_pixels_for_at_scale<P: PluginExport>(
         panic!(
             "plugin {} returned no editor: Plugin::editor() returned None. \
              Implement `fn editor(&mut self)` on your plugin (or one of \
-             the built-in editor wrappers — truce-gpu / truce-egui / \
+             the built-in editor wrappers - truce-gpu / truce-egui / \
              truce-iced / truce-slint) so screenshot rendering has \
              something to draw.",
             std::any::type_name::<P>()
@@ -173,7 +173,7 @@ pub fn render_pixels_for_at_scale<P: PluginExport>(
     })
 }
 
-/// Read an RGBA PNG from disk. Panics on I/O / decode error — the
+/// Read an RGBA PNG from disk. Panics on I/O / decode error - the
 /// caller (test or CLI) is expected to surface a meaningful message
 /// in that case, so a crash here is sufficient for callers that
 /// already failed `Path::exists()`.

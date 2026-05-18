@@ -50,13 +50,13 @@ macro_rules! hot_debug {
 const GUI_LOCK_WAIT: Duration = Duration::from_millis(50);
 
 // ---------------------------------------------------------------------------
-// HotShell — the Plugin implementation that delegates to the dylib
+// HotShell - the Plugin implementation that delegates to the dylib
 // ---------------------------------------------------------------------------
 
 /// A hot-reloadable plugin shell.
 ///
 /// `P` is the parameter type (owned by the shell, survives reload).
-/// `S` is the plugin's sample type (defaults to `f32` — the host wire
+/// `S` is the plugin's sample type (defaults to `f32` - the host wire
 /// format). A `prelude64` plugin needs `S = f64`; the precision is
 /// embedded in `AbiCanary::sample_precision`, so loading an `f64`
 /// logic dylib into an `f32` shell (or vice versa) fails the canary
@@ -88,7 +88,7 @@ pub struct HotShell<P: Params, S: Sample = f32> {
 // contract on `Params`), `Arc<Mutex<NativeLoader<S>>>` (already
 // `Send + Sync`), atomics, and a `meters` array of `AtomicU32`. The
 // `Mutex` is the synchronisation point for every access to the
-// underlying `Box<dyn PluginLogicCore<S>>` — audio thread takes
+// underlying `Box<dyn PluginLogicCore<S>>` - audio thread takes
 // `try_lock`, GUI thread takes `try_lock_for(GUI_LOCK_WAIT)`, file
 // watcher takes a blocking `lock_for`. No raw pointers, no
 // interior mutability that escapes the mutex.
@@ -119,7 +119,7 @@ impl<P: Params + 'static, S: Sample> HotShell<P, S> {
     /// Try to get a custom editor from the loaded plugin.
     ///
     /// Returns `None` if the loader mutex is held by the watcher thread
-    /// for longer than [`GUI_LOCK_WAIT`] — i.e., a hot-reload is in
+    /// for longer than [`GUI_LOCK_WAIT`] - i.e., a hot-reload is in
     /// flight. Hosts that retry editor creation across the host's UI
     /// idle loop (CLAP, VST3, AU) pick up the editor on a later tick;
     /// the alternative is a UI hang for the full reload window (codesign
@@ -199,10 +199,10 @@ impl<P: Params + 'static, S: Sample> Plugin for HotShell<P, S> {
         context: &mut ProcessContext,
     ) -> ProcessStatus {
         // Lock-free on the audio thread: if the watcher thread holds
-        // the loader (reload in flight — codesign + dlopen + canary
+        // the loader (reload in flight - codesign + dlopen + canary
         // probe takes 100s of ms on a 5–20 MB dylib), skip this block
         // rather than block. A skipped block is silent for one buffer
-        // (`Normal` returns the host's already-zeroed output) — better
+        // (`Normal` returns the host's already-zeroed output) - better
         // than parking the audio thread under priority inversion. The
         // watcher takes the lock briefly per reload (mtime poll loop's
         // `try_lock_for(50ms)`), so contention is bounded to the
@@ -235,7 +235,7 @@ impl<P: Params + 'static, S: Sample> Plugin for HotShell<P, S> {
         }
         self.params.snap_smoothers();
 
-        // No sync needed — plugin reads from the same Arc<Params>.
+        // No sync needed - plugin reads from the same Arc<Params>.
 
         // Build a ProcessContext with param/meter callbacks for the logic.
         let params = &self.params;
@@ -272,7 +272,7 @@ impl<P: Params + 'static, S: Sample> Plugin for HotShell<P, S> {
         // Hosts call this on the main / UI thread (e.g. project save,
         // preset capture). Bounded `try_lock_for` keeps a concurrent
         // hot-reload from hanging the host for the full reload window;
-        // on miss the host receives an empty blob — same observable
+        // on miss the host receives an empty blob - same observable
         // shape as a plugin that has no extra state. Matches the host
         // contract better than a UI hang.
         let Some(loader) = self.loader.try_lock_for(GUI_LOCK_WAIT) else {
@@ -301,7 +301,7 @@ impl<P: Params + 'static, S: Sample> Plugin for HotShell<P, S> {
         let result = plugin.load_state(data);
         // Plugin-side cache invalidation runs in the same `&mut`
         // borrow window so the next `process()` block sees the
-        // refreshed caches — fire even on partial state.
+        // refreshed caches - fire even on partial state.
         plugin.state_changed();
         result
     }
@@ -317,7 +317,7 @@ impl<P: Params + 'static, S: Sample> Plugin for HotShell<P, S> {
 
         // Built-in editor path (layout + GPU). Shares `self.loader`
         // with the audio path so the GUI and audio thread always render
-        // the same dylib version — a separate NativeLoader for the GUI
+        // the same dylib version - a separate NativeLoader for the GUI
         // could otherwise pick up a newer build than the audio thread is
         // still processing through. The watcher uses `try_lock` so the
         // audio thread keeps priority on the mutex.
@@ -354,7 +354,7 @@ impl<P: Params + 'static, S: Sample> Plugin for HotShell<P, S> {
 }
 
 // ---------------------------------------------------------------------------
-// HotEditor — wraps editors for GUI hot-reload
+// HotEditor - wraps editors for GUI hot-reload
 // ---------------------------------------------------------------------------
 
 enum HotEditorInner<P: Params> {
@@ -452,7 +452,7 @@ impl<P: Params + 'static, S: Sample> HotEditor<P, S> {
                         }
                     }
 
-                    // Wait briefly for the loader lock — the audio
+                    // Wait briefly for the loader lock - the audio
                     // thread holds it across each `process()` call,
                     // and a bare `try_lock` would routinely miss
                     // under sustained audio activity. 50 ms is big

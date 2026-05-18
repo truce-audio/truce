@@ -24,7 +24,7 @@ pub struct PluginInfo {
     /// Maps to `AAX_ePlugInCategory` constants.
     pub aax_category: Option<&'static str>,
 
-    /// Per-format display-name overrides — populated by
+    /// Per-format display-name overrides - populated by
     /// `truce::plugin_info!()` from the matching `truce.toml` keys.
     /// Format wrappers fall back to `name` when the override is `None`.
     /// Baked at compile time so cargo-truce no longer needs to pass
@@ -34,7 +34,7 @@ pub struct PluginInfo {
     ///
     /// `au3_name` is exposed for parity with the other formats and
     /// for user introspection, but `truce-au`'s `resolved_plugin_name`
-    /// reads `au_name` for both v2 and v3 builds — the v3 host's
+    /// reads `au_name` for both v2 and v3 builds - the v3 host's
     /// displayed label comes from the appex `Info.plist`'s `AUNAME`
     /// (which `cargo truce install --au3` populates from `au3_name`),
     /// not from `g_descriptor->name`.
@@ -46,7 +46,7 @@ pub struct PluginInfo {
     pub aax_name: Option<&'static str>,
     pub lv2_name: Option<&'static str>,
 
-    /// Standalone-only. Format wrappers MUST NOT read this — it
+    /// Standalone-only. Format wrappers MUST NOT read this - it
     /// exists for preview hosts (truce-standalone, the iOS `AUv3`
     /// container app) that need a TOML-driven way to mute the
     /// plug-in's audio output while keeping `process()` ticking, so
@@ -105,7 +105,7 @@ pub const fn category_from_str(s: &str) -> PluginCategory {
 /// # Panics
 ///
 /// Panics at compile time when used in a `const` context (preferred)
-/// or at runtime if `s.len() != 4`. ASCII-ness isn't checked here —
+/// or at runtime if `s.len() != 4`. ASCII-ness isn't checked here -
 /// callers that need it should validate separately.
 #[must_use]
 pub const fn fourcc(s: &[u8]) -> [u8; 4] {

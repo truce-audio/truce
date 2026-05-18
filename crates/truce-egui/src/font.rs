@@ -9,7 +9,7 @@ use std::sync::Arc;
 ///
 /// # Panics
 ///
-/// Cannot panic in practice — egui's `FontDefinitions::default()`
+/// Cannot panic in practice - egui's `FontDefinitions::default()`
 /// always populates the `Proportional` and `Monospace` families, so
 /// the `unwrap()`s succeed. A future egui release that drops either
 /// family would surface as a panic here rather than a silent miss.

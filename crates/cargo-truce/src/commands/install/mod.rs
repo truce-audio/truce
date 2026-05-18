@@ -1,4 +1,4 @@
-//! `cargo truce install` — build per-format dylibs and install into the
+//! `cargo truce install` - build per-format dylibs and install into the
 //! standard plug-in directories.
 
 use crate::format::Format;
@@ -8,7 +8,7 @@ use crate::{
     Config, PluginDef, Res, deployment_target, detect_default_features, load_config, project_root,
     release_lib, run_sudo, tmp_lv2,
 };
-// Plist scratch (VST3 / VST2 / AU) only happens on macOS — gate the
+// Plist scratch (VST3 / VST2 / AU) only happens on macOS - gate the
 // import so Windows / Linux builds don't see it as unused.
 #[cfg(target_os = "macos")]
 use crate::tmp_manifests;
@@ -122,7 +122,7 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
     }
 
     if !clap && !vst3 && !vst2 && !lv2 && !au2 && !au3 && !aax {
-        // No format flags specified — enable all formats that the project supports.
+        // No format flags specified - enable all formats that the project supports.
         // Check which features are defined in the first plugin's Cargo.toml.
         let available = detect_default_features();
         clap = available.contains("clap");
@@ -262,7 +262,7 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
     if au3 {
         #[cfg(target_os = "macos")]
         {
-            // AU v3 is always system-scope on macOS — emit the note
+            // AU v3 is always system-scope on macOS - emit the note
             // once before delegating to the (system-only) installer.
             let _ = scope_for(Format::Au3, scope);
             build_and_install_au_v3(&root, &config, &plugins, no_build)?;
@@ -612,13 +612,13 @@ fn install_vst2(root: &Path, p: &PluginDef, config: &Config, scope: InstallScope
 ///
 /// Stages the bundle via `package::stage::stage_lv2`, which copies the
 /// shared library (`{slug}.so` on Linux/macOS, `{slug}.dll` on Windows
-/// — Windows's loader only accepts `.dll`) alongside the `manifest.ttl`
+/// - Windows's loader only accepts `.dll`) alongside the `manifest.ttl`
 /// and `plugin.ttl` that `truce-derive`'s `export_lv2!` proc-macro
 /// emitted at compile time as sidecar files.
 ///
 /// Bundle and binary filenames are slugged to lowercase ASCII with hyphens
 /// so that Turtle IRI references (`lv2:binary <...>`) don't need percent
-/// encoding — some LV2 hosts reject bundles whose TTL has spaces or other
+/// encoding - some LV2 hosts reject bundles whose TTL has spaces or other
 /// non-URI characters in filenames even when the on-disk files are valid.
 fn install_lv2(root: &Path, p: &PluginDef, _config: &Config, scope: InstallScope) -> Res {
     let lv2_dir = scope.lv2_dir();
@@ -783,7 +783,7 @@ fn install_ios(plugin_filter: Option<&str>, target: au_ios::IosTarget) -> Res {
     let plugins = super::pick_plugins(&config, plugin_filter)?;
     let total = plugins.len();
     for (i, p) in plugins.into_iter().enumerate() {
-        // Outer-loop counter — distinguishes the per-plugin pass
+        // Outer-loop counter - distinguishes the per-plugin pass
         // from the `[N/5]` inner build stages `install_one` emits.
         // The iOS pipeline takes ~30-60 s per plugin, so a workspace
         // install (12 plugins) is several minutes of cargo + swiftc

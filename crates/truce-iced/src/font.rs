@@ -7,7 +7,7 @@
 ///
 /// # Panics
 ///
-/// Panics if iced's process-wide font-system `RwLock` is poisoned —
+/// Panics if iced's process-wide font-system `RwLock` is poisoned -
 /// in normal operation no holder panics while writing, so this is a
 /// recovery-impossible condition rather than a runtime contract.
 #[must_use]

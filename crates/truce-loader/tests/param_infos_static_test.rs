@@ -3,12 +3,12 @@
 //!
 //! Format wrappers (`truce-vst2` / `truce-vst3` / `truce-au` /
 //! `truce-aax`) read parameter metadata at registration time without
-//! constructing a plugin instance — the derive emits a `LazyLock`-
+//! constructing a plugin instance - the derive emits a `LazyLock`-
 //! cached `Vec<ParamInfo>` for that path. This test asserts the
 //! cached path matches `param_infos()` from a real instance and that
 //! the `LazyLock` returns the same Vec twice.
 
-// `ParamInfo` static-vs-instance equality is the *point* of this test —
+// `ParamInfo` static-vs-instance equality is the *point* of this test -
 // any drift between the two paths is a real bug, so float fields must
 // compare bit-exact.
 #![allow(clippy::float_cmp)]

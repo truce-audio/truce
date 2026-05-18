@@ -28,7 +28,7 @@ pub(crate) fn cmd_package_macos(args: &[String], selection: &super::SuiteSelecti
 
     // Scope resolution: CLI > truce.toml [packaging] preferred_scope >
     // OS default (`--ask`). `cargo truce install` has no toml
-    // override — the install scope is a per-invocation developer
+    // override - the install scope is a per-invocation developer
     // choice, not a project-wide one.
     let scope = resolve_pkg_scope(parsed.cli_scope, &config)?;
     eprintln!("Package scope: {}", scope.label());
@@ -91,7 +91,7 @@ pub(crate) fn cmd_package_macos(args: &[String], selection: &super::SuiteSelecti
     // unstaged siblings.
     let suites: Vec<crate::config::ResolvedSuite<'_>> = if parsed.plugin_filter.is_some() {
         if !config.suites.is_empty() {
-            eprintln!("(-p set; skipping suite installers — they need every member plugin staged)");
+            eprintln!("(-p set; skipping suite installers - they need every member plugin staged)");
         }
         Vec::new()
     } else {
@@ -181,7 +181,7 @@ fn stage_components_only(root: &Path, p: &PluginDef, o: &PackageOpts) -> Res {
     let components_dir = staging.join("components");
     // Wipe the components dir before rebuilding so a previous run's
     // `--formats clap,vst3,au2,...` output doesn't leak into the
-    // current `--formats clap,lv2` productbuild — productbuild reads
+    // current `--formats clap,lv2` productbuild - productbuild reads
     // every `.pkg` it finds via `--package-path`, and a stale entry
     // typically fails to install (signature mismatch, entitlements
     // bound to an older identity, etc.).
@@ -376,10 +376,10 @@ fn generate_suite_distribution_xml(
             let component_file = format!("{}-{}.pkg", plugin.name, fmt.label());
             let label = fmt.label();
             let desc = fmt.choice_description();
-            // All formats checked by default — see matching note in
+            // All formats checked by default - see matching note in
             // the per-plugin `generate_distribution_xml`.
             let enabled_attr = "";
-            // Per-choice auth override — same scheme as the per-plugin
+            // Per-choice auth override - same scheme as the per-plugin
             // installer (see `generate_distribution_xml` in stage.rs).
             let pkg_ref_auth = match (scope, fmt.is_system_only_on_macos()) {
                 (
@@ -547,7 +547,7 @@ fn resolve_formats(
 
 /// Widen `--user` scope to `System` when system-only formats (AAX,
 /// AU v3) are in the bundle. macOS Installer.app's `<domains>` is
-/// global to the installer, not per-payload — pure user-scope is only
+/// global to the installer, not per-payload - pure user-scope is only
 /// possible when the format mix supports it. Emits a `note_once` per
 /// system-only format so the developer sees why the widen happened.
 fn compute_effective_scope(scope: PkgScope, formats: &[PkgFormat]) -> PkgScope {
@@ -607,7 +607,7 @@ fn build_all_formats(
         //
         // AU2 and AU3 share `--features au` byte-for-byte. When AU2 was
         // built first in this same run, the universal `lib<stem>_au.dylib`
-        // is already on disk — let AU3 reuse it instead of re-running
+        // is already on disk - let AU3 reuse it instead of re-running
         // cargo + lipo for an identical artifact.
         let reuse_au_artifacts = formats.contains(&PkgFormat::Au2);
         crate::commands::install::au_v3::emit_au_v3_bundle(
@@ -619,7 +619,7 @@ fn build_all_formats(
         )?;
     }
     if formats.contains(&PkgFormat::Standalone) {
-        // Standalone is a `[[bin]]`, not a cdylib — the per-arch
+        // Standalone is a `[[bin]]`, not a cdylib - the per-arch
         // outputs land at `target/<triple>/release/<bin>` rather than
         // `lib<stem>_<feature>.dylib`, so it doesn't fit the shared
         // `build_and_lipo_format` shape.
@@ -643,7 +643,7 @@ fn build_all_formats(
 ///
 /// `bin_stem` resolves through `read_standalone_bin_name`, which
 /// inspects each plugin's `Cargo.toml` so hand-edited `[[bin]] name`
-/// values still work — falls back to the scaffold convention
+/// values still work - falls back to the scaffold convention
 /// (`{crate_name}-standalone`) when the manifest can't be parsed.
 fn build_and_lipo_standalone(
     root: &Path,
@@ -739,7 +739,7 @@ fn build_and_lipo_standalone(
 /// Captured driver state shared across the per-plugin packaging loop.
 /// Carrying these as a struct keeps `package_one_plugin`'s signature
 /// readable instead of fanning ten args out at every call.
-// Sparse independent CLI flags — bitflags would just add ceremony.
+// Sparse independent CLI flags - bitflags would just add ceremony.
 #[allow(clippy::struct_excessive_bools)]
 struct PackageOpts<'a> {
     config: &'a Config,
@@ -754,7 +754,7 @@ struct PackageOpts<'a> {
 
 /// Stage signed bundles, run pkgbuild per format, then productbuild
 /// the distribution. The function follows the original numbered steps
-/// (2 through 7) — splitting them into separate helpers would inflate
+/// (2 through 7) - splitting them into separate helpers would inflate
 /// the boilerplate without surfacing any reuse, since `cmd_package_macos`
 /// is the only caller.
 fn package_one_plugin(root: &Path, p: &PluginDef, dist_dir: &Path, o: &PackageOpts) -> Res {
@@ -799,7 +799,7 @@ fn package_one_plugin(root: &Path, p: &PluginDef, dist_dir: &Path, o: &PackageOp
     }
 
     // Step 2.5: Notarization-readiness check.
-    // Mirror Apple's notarization-server checks locally — every
+    // Mirror Apple's notarization-server checks locally - every
     // Mach-O under the staged tree needs Developer ID +
     // timestamp + hardened runtime. Catches unsigned inner
     // Mach-Os (codesign --deep doesn't recurse into AAX
@@ -817,7 +817,7 @@ fn package_one_plugin(root: &Path, p: &PluginDef, dist_dir: &Path, o: &PackageOp
 
     // Step 3: Build component .pkg per format
     let components_dir = staging.join("components");
-    // Wipe stale components from prior runs before rebuilding — see
+    // Wipe stale components from prior runs before rebuilding - see
     // matching note in `stage_components_only` above.
     let _ = fs::remove_dir_all(&components_dir);
     fs::create_dir_all(&components_dir)?;
@@ -897,7 +897,7 @@ fn package_one_plugin(root: &Path, p: &PluginDef, dist_dir: &Path, o: &PackageOp
 
 /// Step 6 of the per-plugin packaging pipeline: productbuild → signed
 /// `.pkg`. The dist suffix uses the developer-requested `scope`, not
-/// the effective one — a `--user` build that quietly widens to
+/// the effective one - a `--user` build that quietly widens to
 /// system-domain because of AAX still gets the `-user` filename so the
 /// developer's CI scripts find it.
 fn run_productbuild(
@@ -914,7 +914,7 @@ fn run_productbuild(
     // slug). Display names with spaces (`Truce Gain.pkg`) sort weirdly
     // in directory listings, embed funny in URLs / artifact-uploaders,
     // and don't match the Linux tarball's slug. Keep the user-facing
-    // bundle name + Info.plist `CFBundleName` etc. on `p.name` — only
+    // bundle name + Info.plist `CFBundleName` etc. on `p.name` - only
     // the dist artifact's filename changes.
     let pkg_name = format!(
         "{}-{}-macos{}.pkg",
@@ -1035,7 +1035,7 @@ fn run_pkgbuild_for_format(
         // `preserve` records the staged files' actual ownership
         // (mahae:staff for a developer build) in the BOM instead of
         // synthesising root:wheel. Shove then writes the payload as
-        // the running user — no chown step, no `EACCES` when the
+        // the running user - no chown step, no `EACCES` when the
         // installer's auth level is `None` (per-user install).
         "--ownership".to_string(),
         "preserve".to_string(),
@@ -1084,7 +1084,7 @@ fn build_and_lipo_format(
 
     // AU v2 needs a unique cocoa-view class name per dylib so hosts
     // that look up classes via `[NSBundle classNamed:]` (REAPER) can
-    // find the right one — see `truce-au`'s `build.rs`. That means
+    // find the right one - see `truce-au`'s `build.rs`. That means
     // one cargo invocation per plugin with `TRUCE_AU_PLUGIN_ID` set,
     // instead of one batched build for all plugins.
     if format == BuildFormat::Au2 {
@@ -1178,7 +1178,7 @@ fn resolve_pkg_scope(cli: Option<PkgScope>, config: &Config) -> Result<PkgScope,
 fn notarize_and_staple(pkg_path: &Path, _config: &Config) -> Res {
     let pkg = pkg_path.to_str().unwrap();
 
-    // Notarization credentials are per-developer — read from the
+    // Notarization credentials are per-developer - read from the
     // build env (`.cargo/config.toml [env]` or shell). The keychain
     // profile is preferred; explicit Apple ID + team ID are the
     // fallback path when no keychain profile is set up.
@@ -1212,7 +1212,7 @@ fn notarize_and_staple(pkg_path: &Path, _config: &Config) -> Res {
                 String::from_utf8_lossy(&o.stdout),
                 String::from_utf8_lossy(&o.stderr)
             );
-            // notarytool returns 0 even on Invalid — check the status string
+            // notarytool returns 0 even on Invalid - check the status string
             let ok = o.status.success()
                 && !text.contains("status: Invalid")
                 && !text.contains("status: Rejected");
@@ -1275,7 +1275,7 @@ fn notarize_and_staple(pkg_path: &Path, _config: &Config) -> Res {
 
     // Staple. `notarytool --wait` returns as soon as Apple's notary
     // service has the ticket, but `stapler` reads the ticket from
-    // CloudKit's edge — which can lag the notary service by a couple
+    // CloudKit's edge - which can lag the notary service by a couple
     // of minutes on a fresh submission. Apple's docs explicitly say
     // to retry on the "CloudKit Record not found" failure path, so
     // do that with exponential backoff up to a few minutes total
@@ -1318,7 +1318,7 @@ fn notarize_and_staple(pkg_path: &Path, _config: &Config) -> Res {
     if !stapled {
         eprintln!("{last_stderr}");
         return Err(
-            "stapler staple kept hitting CloudKit propagation lag after retries — \
+            "stapler staple kept hitting CloudKit propagation lag after retries - \
              re-run `xcrun stapler staple <pkg>` manually in a few minutes once the \
              ticket lands."
                 .into(),

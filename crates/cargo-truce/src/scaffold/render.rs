@@ -1,4 +1,4 @@
-//! Template renderer — wraps `tinytemplate` so the rest of the
+//! Template renderer - wraps `tinytemplate` so the rest of the
 //! scaffold module talks to a small `Renderer` API instead of the
 //! tinytemplate machinery directly.
 
@@ -83,13 +83,13 @@ impl Renderer {
         // include the registered template name on the outside and let
         // the underlying error carry the in-template location.
         // Templates are static `include_str!` literals and contexts
-        // are crate-internal — every render-time failure is a
+        // are crate-internal - every render-time failure is a
         // programmer error in this crate, hence `panic!` rather than
         // bubbling a `Result` to the scaffold driver.
         self.tt.render(name, ctx).unwrap_or_else(|e| {
             panic!(
                 "scaffold template '{name}' failed to render: {e}\n\
-                 (this is a bug in cargo-truce — the template or its \
+                 (this is a bug in cargo-truce - the template or its \
                  context drifted; please report it.)"
             )
         })

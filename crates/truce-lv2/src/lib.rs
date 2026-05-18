@@ -5,10 +5,10 @@
 //! hand-roll the bindings rather than pulling in a large `lv2-sys` crate.
 //!
 //! Port layout (default):
-//!   - `0..num_in` — audio input (one port per channel)
-//!   - `num_in..num_in+num_out` — audio output (one port per channel)
-//!   - next N — control input (one port per parameter, float)
-//!   - `atom_in_port` — single `AtomPort` for MIDI input (if plugin accepts MIDI)
+//!   - `0..num_in` - audio input (one port per channel)
+//!   - `num_in..num_in+num_out` - audio output (one port per channel)
+//!   - next N - control input (one port per parameter, float)
+//!   - `atom_in_port` - single `AtomPort` for MIDI input (if plugin accepts MIDI)
 //!
 //! MIDI, State, and UI support live in sibling modules.
 
@@ -56,7 +56,7 @@ pub struct PortLayout {
     pub num_params: u32,
     pub num_meters: u32,
     /// Whether the input atom port should additionally advertise
-    /// `midi:MidiEvent` support. The port itself always exists — hosts
+    /// `midi:MidiEvent` support. The port itself always exists - hosts
     /// deliver `time:Position` through it regardless of whether the
     /// plugin consumes MIDI.
     pub accepts_midi_in: bool,
@@ -125,7 +125,7 @@ pub struct Lv2Instance<P: PluginExport> {
     audio_inputs: Vec<*const f32>,
     audio_outputs: Vec<*mut f32>,
     control_ports: Vec<*const f32>,
-    /// Output control ports — one per `#[meter]` slot. We write the
+    /// Output control ports - one per `#[meter]` slot. We write the
     /// latest meter reading here at the end of each `run()` so the host
     /// forwards it to the UI via `port_event`.
     meter_ports: Vec<*mut f32>,
@@ -137,7 +137,7 @@ pub struct Lv2Instance<P: PluginExport> {
 
     /// Last observed value on each control port; used to emit
     /// `ParamChange` events only when the host actually moved a knob.
-    /// `None` means "never read" — the first poll after instantiation
+    /// `None` means "never read" - the first poll after instantiation
     /// always emits, then subsequent polls only emit on diff.
     last_control: Vec<Option<f32>>,
 
@@ -160,14 +160,14 @@ pub struct Lv2Instance<P: PluginExport> {
     /// (`f32`) plugins stay zero-copy.
     scratch: RawBufferScratch<<P as Plugin>::Sample>,
 
-    /// Shared transport slot — audio thread writes each block. LV2 UIs
+    /// Shared transport slot - audio thread writes each block. LV2 UIs
     /// are out-of-process so the UI side still reads `None`; this slot
     /// exists so an in-process consumer (tests / DSP-side code) can
     /// observe host transport.
     transport_slot: Arc<truce_core::TransportSlot>,
 }
 
-// Raw pointers only — we never share an instance between threads. LV2 hosts
+// Raw pointers only - we never share an instance between threads. LV2 hosts
 // drive a single instance from one thread at a time (audio thread for
 // run(), main thread for everything else).
 unsafe impl<P: PluginExport> Send for Lv2Instance<P> {}
@@ -181,11 +181,11 @@ unsafe impl<P: PluginExport> Send for Lv2Instance<P> {}
 /// Caller passes in `&P` so the layout extraction reuses the existing
 /// instance rather than constructing a fresh one. The TTL writer paths
 /// build their own plugin and the LV2 `instantiate` callback already
-/// owns one — both call this directly to skip a second `P::create()`.
+/// owns one - both call this directly to skip a second `P::create()`.
 ///
 /// # Panics
 ///
-/// Panics if `P::bus_layouts()` is empty — same plugin-author
+/// Panics if `P::bus_layouts()` is empty - same plugin-author
 /// contract as [`truce_core::wrapper::first_bus_layout`]; zero-bus
 /// plugins must return `vec![BusLayout::new()]` explicitly.
 pub fn derive_port_layout<P: PluginExport>(plugin: &P) -> PortLayout {
@@ -349,7 +349,7 @@ pub unsafe fn run<P: PluginExport>(handle: *mut Lv2Instance<P>, n_samples: u32) 
         if n > inst.max_block_size {
             // Host exceeded our pre-allocated ceiling. Calling
             // `plugin.reset(sr, n)` would wipe filter delay lines /
-            // oscillator phase mid-stream — plugins assume `reset()`
+            // oscillator phase mid-stream - plugins assume `reset()`
             // happens at quiescent points only. So we grow the input
             // scratch in place (a one-time realloc per increase) and
             // continue. The audio thread paying for `realloc` here is
@@ -357,7 +357,7 @@ pub unsafe fn run<P: PluginExport>(handle: *mut Lv2Instance<P>, n_samples: u32) 
             debug_assert!(
                 false,
                 "LV2 host delivered block of {n} samples, exceeding pre-allocated \
-                 {LV2_MAX_PREALLOC_BLOCK} — input scratch will realloc on the audio thread",
+                 {LV2_MAX_PREALLOC_BLOCK} - input scratch will realloc on the audio thread",
             );
             inst.scratch
                 .ensure_capacity(inst.audio_inputs.len(), inst.audio_outputs.len(), n);
@@ -368,7 +368,7 @@ pub unsafe fn run<P: PluginExport>(handle: *mut Lv2Instance<P>, n_samples: u32) 
         inst.output_events.clear();
 
         // Emit ParamChange events for any control port that moved since last
-        // run. The event carries the PLAIN value — format wrappers agree on
+        // run. The event carries the PLAIN value - format wrappers agree on
         // plain (see `HotShell::process`'s comment). Writing plain directly
         // also lets the plugin see the value immediately via its params Arc;
         // the event is only there so `PluginLogic`s that observe param
@@ -410,7 +410,7 @@ pub unsafe fn run<P: PluginExport>(handle: *mut Lv2Instance<P>, n_samples: u32) 
                     // SysEx is delivered as a single MIDI atom whose
                     // payload starts with `0xF0` and ends with `0xF7`.
                     // The framework's `EventBody::SysEx` carries only
-                    // the inner bytes — strip the framing here so
+                    // the inner bytes - strip the framing here so
                     // plug-in code never sees the start/end markers.
                     // A pool-full push gets dropped silently; truncating
                     // a `SysEx` makes it corrupt by definition, so the
@@ -439,7 +439,7 @@ pub unsafe fn run<P: PluginExport>(handle: *mut Lv2Instance<P>, n_samples: u32) 
         // copy-into-scratch fallback (LV2 hosts may connect an input
         // and an output port to the same buffer for in-place
         // processing). Plugins that want pass-through must do
-        // `output.copy_from_slice(input)` themselves — `build` does
+        // `output.copy_from_slice(input)` themselves - `build` does
         // not auto-copy because that would clobber the previous-block
         // tail delay / reverb feedback paths read from the output.
         //
@@ -448,7 +448,7 @@ pub unsafe fn run<P: PluginExport>(handle: *mut Lv2Instance<P>, n_samples: u32) 
         // through the call. SAFETY: single-threaded LV2 instance
         // (`run` is called on one thread at a time per host
         // contract), so the simultaneous `&mut`s never alias an
-        // overlapping field — `scratch`, `output_events`, and the
+        // overlapping field - `scratch`, `output_events`, and the
         // immutable reads of `audio_inputs` / `audio_outputs` /
         // `event_list` / `sample_rate` are disjoint.
         {
@@ -503,7 +503,7 @@ pub unsafe fn run<P: PluginExport>(handle: *mut Lv2Instance<P>, n_samples: u32) 
         }
     });
     if !ok {
-        // Panic in plugin.process() — zero output port buffers so
+        // Panic in plugin.process() - zero output port buffers so
         // the host doesn't keep playing whatever stale samples were
         // there when DSP died.
         unsafe {
@@ -558,7 +558,7 @@ pub unsafe fn extension_data<P: PluginExport>(uri: *const c_char) -> *const c_vo
 // ---------------------------------------------------------------------------
 
 /// Derive the plugin's LV2 URI from its `PluginInfo`. Thin wrapper
-/// around [`truce_build::lv2::plugin_uri`] — the single source of
+/// around [`truce_build::lv2::plugin_uri`] - the single source of
 /// truth shared with the manifest writer in `truce-derive::lv2_emit`.
 /// Both paths MUST produce the same string, or hosts will discover
 /// the plugin under one URI then fail to look up the saved project's
@@ -736,7 +736,7 @@ pub use atom::AtomSequence;
 pub use ui::{Lv2UiDescriptor, ui_descriptor};
 
 /// Derive the plugin's LV2 UI URI (plugin URI + "#ui"). Thin wrapper
-/// around [`truce_build::lv2::ui_uri`] — same single-source-of-truth
+/// around [`truce_build::lv2::ui_uri`] - same single-source-of-truth
 /// posture as [`plugin_uri`].
 #[must_use]
 pub fn ui_uri(info: &PluginInfo) -> String {
@@ -752,7 +752,7 @@ mod uri_consistency_tests {
     //! `truce_build::lv2::plugin_uri`, so this test guarantees the
     //! manifest-vs-runtime contract by checking the runtime call
     //! against the same `truce_build` function the manifest writer
-    //! uses — any drift on either side breaks this test.
+    //! uses - any drift on either side breaks this test.
     use super::{plugin_uri, ui_uri};
     use truce_core::info::{PluginCategory, PluginInfo};
 

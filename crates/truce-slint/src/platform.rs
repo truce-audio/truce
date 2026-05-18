@@ -23,7 +23,7 @@ pub use truce_gui::platform::{ParentWindow, create_wgpu_surface};
 pub use truce_gui::platform::query_backing_scale;
 
 // ---------------------------------------------------------------------------
-// Slint Platform — registered once per process
+// Slint Platform - registered once per process
 // ---------------------------------------------------------------------------
 
 // Thread-local slot used to pass a pre-created `MinimalSoftwareWindow` to
@@ -60,15 +60,15 @@ thread_local! {
 /// Ensure the custom Slint platform is registered on the calling thread.
 ///
 /// Slint's `set_platform` is thread-local *and* one-shot: the first
-/// successful call wins; subsequent calls — by us or anyone else
-/// linking against the same `slint` runtime — return `Err`. We can't
+/// successful call wins; subsequent calls - by us or anyone else
+/// linking against the same `slint` runtime - return `Err`. We can't
 /// recover from that, so the goal here is to record what actually
 /// happened the first time `ensure_platform` ran on this thread and
 /// stop trying. The retained `Some(Ok)` / `Some(Err)` distinction lets
 /// diagnostic code tell "we own the platform" from "we're a guest on
 /// someone else's".
 ///
-/// Must be called on every thread that creates Slint components —
+/// Must be called on every thread that creates Slint components -
 /// including the baseview render thread, not just the plugin thread.
 /// Idempotent per thread.
 pub fn ensure_platform() {
@@ -81,7 +81,7 @@ pub fn ensure_platform() {
         } else {
             state.set(Some(Err(())));
             log::warn!(
-                "[truce-slint] slint::platform::set_platform returned Err — \
+                "[truce-slint] slint::platform::set_platform returned Err - \
                  another platform is already registered on this thread; the \
                  pre-attached MinimalSoftwareWindow handed off via NEXT_WINDOW \
                  won't be picked up by Component::new(), so the editor will \
@@ -108,21 +108,21 @@ pub fn ensure_platform() {
 ///
 /// Panics if `ensure_platform` was never called on this thread, or
 /// returned `Err` (another platform was registered first). Both
-/// branches print a precise reason — the panic is preferred over a
+/// branches print a precise reason - the panic is preferred over a
 /// black-frame failure mode at runtime.
 #[must_use]
 pub fn create_slint_window() -> Rc<MinimalSoftwareWindow> {
     PLATFORM_STATE.with(|state| match state.get() {
         Some(Ok(())) => {}
         Some(Err(())) => panic!(
-            "[truce-slint] cannot create a Slint window — `ensure_platform` \
+            "[truce-slint] cannot create a Slint window - `ensure_platform` \
              returned Err on this thread (another platform was registered \
              first). The pre-attached MinimalSoftwareWindow handed off via \
              NEXT_WINDOW won't be picked up by Component::new(), so the \
              editor would render to the wrong window."
         ),
         None => panic!(
-            "[truce-slint] cannot create a Slint window — `ensure_platform` \
+            "[truce-slint] cannot create a Slint window - `ensure_platform` \
              has not been called on this thread. Call it before creating \
              Slint components."
         ),
@@ -192,7 +192,7 @@ pub fn render_to_rgba(
     // reference PNGs agree on color.
     //
     // The translucent branch goes through `UNPREMUL_LUT` to avoid a
-    // per-channel integer divide on every non-edge pixel — the divide
+    // per-channel integer divide on every non-edge pixel - the divide
     // dominated this loop's CPU on a 600×400 editor at 2× scale
     // (480k pixels per frame, 3 divides each = 1.4M divides/frame).
     //

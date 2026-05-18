@@ -6,9 +6,9 @@
 //! - **Mic Input** (checkable, `Ctrl+I` shown as the accelerator hint;
 //!   effect plugins only)
 //! - **Audio Output** (checkable mute toggle, `Ctrl+O`)
-//! - **Input Device** submenu — repopulated from cpal on each open
+//! - **Input Device** submenu - repopulated from cpal on each open
 //!   (effect plugins only)
-//! - **Output Device** submenu — same for outputs
+//! - **Output Device** submenu - same for outputs
 //!
 //! Attached to the baseview window via `SetMenu`. Routes clicks
 //! back to `InputController` / `OutputController` through a
@@ -21,7 +21,7 @@
 //! - Windows menu bars sit *inside* the window's non-client area,
 //!   not at the top of the screen. Adding the menu shrinks the
 //!   client rect by `SM_CYMENU`, so we grow the parent window by
-//!   the same amount before the editor child opens — the plugin
+//!   the same amount before the editor child opens - the plugin
 //!   keeps the size it asked for.
 //! - There's no auto-populated "App" menu like Cocoa's. The
 //!   window's `[X]` close button covers Quit; we ship just the
@@ -70,7 +70,7 @@ const SUBCLASS_ID: usize = 0x7472_7563; // 'truc'
 struct MenuState {
     input: InputController,
     output: OutputController,
-    /// The Plugin popup itself — needed for `CheckMenuItem` on the
+    /// The Plugin popup itself - needed for `CheckMenuItem` on the
     /// toggles (whose commands live in the Plugin popup).
     hmenu_plugin: HMENU,
     /// True if the mic-input item is in the menu (effect plugins
@@ -85,7 +85,7 @@ struct MenuState {
 /// Install the native menu bar.
 ///
 /// `is_effect` controls whether mic-input and input-device items
-/// appear — input-side controls are useless for instruments and
+/// appear - input-side controls are useless for instruments and
 /// analyzers since the runner feeds them silence.
 pub fn install(
     hwnd: *mut c_void,
@@ -119,7 +119,7 @@ pub fn install(
 
         // Mic-input item (effects only). `\t` separates the label
         // from the accelerator hint; Windows right-aligns the hint
-        // in the popup. The hint is cosmetic — actual `Ctrl+I`
+        // in the popup. The hint is cosmetic - actual `Ctrl+I`
         // dispatch happens in the baseview keyboard handler.
         if is_effect {
             let item_text = wide("Mic Input\tCtrl+I");
@@ -150,7 +150,7 @@ pub fn install(
             std::ptr::null(),
         );
 
-        // Input Device submenu — empty at install; repopulated on
+        // Input Device submenu - empty at install; repopulated on
         // WM_INITMENUPOPUP so hot-plug just works. Effects only.
         if is_effect {
             let input_label = wide("Input Device");
@@ -229,7 +229,7 @@ unsafe fn grow_window_for_menu(hwnd: HWND) {
 /// item (mic toggle + dynamic device items), refreshes the
 /// checkmark / repopulates submenus on `WM_INITMENUPOPUP`, and
 /// tears down the boxed state on `WM_NCDESTROY`.
-// Why: `(wparam & 0xFFFF) as u16` is the canonical Win32 LOWORD shape —
+// Why: `(wparam & 0xFFFF) as u16` is the canonical Win32 LOWORD shape -
 // the high bits of WPARAM are reserved/zero on WM_COMMAND, so the
 // truncation is the contract.
 #[allow(clippy::cast_possible_truncation)]
@@ -366,7 +366,7 @@ unsafe extern "system" fn subclass_proc(
 /// Replace all items in `popup` with one entry per device. Items
 /// fire command IDs in `[cmd_base .. cmd_base + devices.len())`;
 /// the matching device gets `MF_CHECKED`.
-// Why: `i as u16` for the menu command ID — the loop body breaks at
+// Why: `i as u16` for the menu command ID - the loop body breaks at
 // `i >= 256` so the cast is bounded well below `u16::MAX`.
 #[allow(clippy::cast_possible_truncation)]
 unsafe fn repopulate_device_menu(
@@ -390,7 +390,7 @@ unsafe fn repopulate_device_menu(
         }
 
         for (i, name) in devices.iter().enumerate() {
-            // Don't blow past the reserved range — a system with >256
+            // Don't blow past the reserved range - a system with >256
             // devices on one side would silently drop the rest.
             if i >= 256 {
                 break;
@@ -409,7 +409,7 @@ unsafe fn repopulate_device_menu(
 /// Look up a menu item's display string by command ID. Returns
 /// `None` if the ID isn't in the menu (or `GetMenuStringW` fails).
 // Why: `GetMenuStringW` returns the char count as `int` (always
-// non-negative on success — we early-return on `len <= 0`); the buffer
+// non-negative on success - we early-return on `len <= 0`); the buffer
 // is sized from that count and stays well below `i32::MAX`. Casts here
 // are FFI-bounded by Win32's own API contract.
 #[allow(

@@ -5,7 +5,7 @@
 //! audio thread (advances `position_beats` each block and populates
 //! the `TransportInfo` handed to `plugin.process`).
 //!
-//! Not a DAW transport — no timeline, no loop points, no automation
+//! Not a DAW transport - no timeline, no loop points, no automation
 //! lanes. Just enough to let plugins that care about host tempo
 //! (LFOs, tempo-synced effects, arpeggiators) see a live beat grid.
 
@@ -65,7 +65,7 @@ impl Transport {
     }
 
     pub fn toggle_playing(&self) {
-        // Atomic flip via fetch_xor — equivalent to load+!+store but in
+        // Atomic flip via fetch_xor - equivalent to load+!+store but in
         // one RMW op, so a parallel toggler can never lose its update.
         // (The audio thread doesn't toggle, but this future-proofs it.)
         self.inner.playing.fetch_xor(true, Ordering::Relaxed);
@@ -112,7 +112,7 @@ impl Transport {
     }
 
     /// Called from the UI thread (via `PluginContext::transport`).
-    /// Non-mutating — just reads the current position.
+    /// Non-mutating - just reads the current position.
     //
     // `u64 as f64` for sample-rate / micro-beats decode; both are
     // bounded by musical/audio ranges, well below 2^52.
@@ -127,7 +127,7 @@ impl Transport {
     }
 
     // Kept as a method to read alongside `tick_audio` / `snapshot`
-    // even though no `self` field is touched — the args are pre-loaded
+    // even though no `self` field is touched - the args are pre-loaded
     // by the callers from `self.inner` atomics.
     #[allow(clippy::unused_self)]
     fn info(&self, position_beats: f64, bpm: f64, sr: f64, playing: bool) -> TransportInfo {

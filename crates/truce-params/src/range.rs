@@ -13,9 +13,9 @@ pub enum ParamRange {
 impl ParamRange {
     /// Map a plain value to 0.0–1.0.
     ///
-    /// Degenerate bounds — `min == max` for `Linear` / `Discrete`,
+    /// Degenerate bounds - `min == max` for `Linear` / `Discrete`,
     /// non-positive or empty for `Logarithmic`, `count <= 1` for
-    /// `Enum` — collapse to `0.0`. Combined with [`Self::denormalize`]
+    /// `Enum` - collapse to `0.0`. Combined with [`Self::denormalize`]
     /// returning `min` on the same inputs, the pair is round-trip
     /// stable: the result always converges to the bottom of the
     /// (degenerate) range rather than producing NaN or wrapping into
@@ -141,7 +141,7 @@ impl ParamRange {
     /// `.map(NonZeroU32::get).unwrap_or(0)` at the FFI boundary.
     ///
     /// Discrete / Enum variants with degenerate bounds (`min > max`,
-    /// or `count <= 1`) return `None` — semantically continuous,
+    /// or `count <= 1`) return `None` - semantically continuous,
     /// because there's nothing to step through.
     #[must_use]
     pub fn step_count(&self) -> Option<std::num::NonZeroU32> {
@@ -178,7 +178,7 @@ impl ParamRange {
 #[cfg(test)]
 mod tests {
     // Round-trip and degenerate-bounds tests assert exact float
-    // results (0.0, midpoints, fixed points) — equality is the
+    // results (0.0, midpoints, fixed points) - equality is the
     // contract being verified. Cast truncations in this module are
     // bounded by the literal `count: 4` test fixtures.
     #![allow(
@@ -280,7 +280,7 @@ mod tests {
         }
     }
 
-    /// `normalize` must never return NaN — a host that briefly
+    /// `normalize` must never return NaN - a host that briefly
     /// overshoots automation below `min` (or hands us a fresh
     /// uninitialized -1.0) used to flow `(-1.0).ln()` (= NaN) into
     /// saved state and the editor round-trip.

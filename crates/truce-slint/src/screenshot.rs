@@ -1,7 +1,7 @@
 //! Headless Slint screenshot rendering.
 //!
 //! Renders a Slint UI to an RGBA pixel buffer using the `SoftwareRenderer`.
-//! No GPU or window needed — runs entirely in-process. Driven by
+//! No GPU or window needed - runs entirely in-process. Driven by
 //! `SlintEditor::screenshot()` (`Editor` trait impl in `editor.rs`),
 //! which is itself called from `truce_test::assert_screenshot::<Plugin>(...)`.
 
@@ -15,11 +15,11 @@ use crate::editor::SyncFn;
 use crate::platform;
 
 /// Headless render path shared by `SlintEditor::screenshot()` and any
-/// future ad-hoc callers in this crate. Kept `pub(crate)` — external
+/// future ad-hoc callers in this crate. Kept `pub(crate)` - external
 /// callers should go through the `Editor::screenshot()` trait.
 ///
 /// Returns `None` when the Slint window's `draw_if_needed` reports no
-/// draw happened — without that signal the buffer would contain
+/// draw happened - without that signal the buffer would contain
 /// zero-alpha pixels and the screenshot diff would surface as a
 /// confusing "blank vs reference" rather than the underlying "renderer
 /// didn't run." Matches the peer pattern in `truce-egui` and `truce-iced`
@@ -71,7 +71,7 @@ pub(crate) fn render_with_state<P: Params + ?Sized>(
             // Un-premultiply with round-to-nearest. The previous
             // truncating integer division (floor) made screenshots
             // 1-bit darker than `truce-gpu::WgpuBackend::read_pixels`,
-            // which rounds — producing reference-PNG drift between
+            // which rounds - producing reference-PNG drift between
             // the two render paths.
             let a = u16::from(px.alpha);
             let half = a / 2;

@@ -56,7 +56,7 @@ impl<'a> StateCursor<'a> {
     ///
     /// # Panics
     ///
-    /// Does not panic — the `expect` inside is unreachable because
+    /// Does not panic - the `expect` inside is unreachable because
     /// `read_bytes(4)` only returns `Some` when the slice is exactly
     /// 4 bytes long.
     pub fn skip_field(&mut self) -> bool {
@@ -181,7 +181,7 @@ impl<T: StateField> StateField for Option<T> {
 }
 
 // ---------------------------------------------------------------------------
-// StateBinding — typed wrapper for editor state access
+// StateBinding - typed wrapper for editor state access
 // ---------------------------------------------------------------------------
 
 use crate::editor::PluginContext;

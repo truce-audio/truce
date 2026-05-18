@@ -1,10 +1,10 @@
-//! `cargo truce reset-au` — flush macOS Audio Unit caches and restart
+//! `cargo truce reset-au` - flush macOS Audio Unit caches and restart
 //! `pkd` / `AudioComponentRegistrar`.
 //!
 //! macOS-only. Clears `~/Library/Caches/AudioUnitCache`, the `GarageBand`
 //! / Logic container caches, the Reaper AU plist, pluginkit
 //! registrations, and the AU v3 build scratch under `target/tmp/au_v3_*`.
-//! Does **not** touch Pro Tools AAX caches — see `cargo truce reset-aax`
+//! Does **not** touch Pro Tools AAX caches - see `cargo truce reset-aax`
 //! for that. CLAP / VST3 / VST2 / LV2 are unaffected; those formats let
 //! their host DAWs manage caches.
 
@@ -13,7 +13,7 @@ use crate::Res;
 #[cfg(not(target_os = "macos"))]
 pub(crate) fn cmd_reset_au(_args: &[String]) -> Res {
     Err(
-        "`cargo truce reset-au` is macOS-only — it flushes Apple's AU \
+        "`cargo truce reset-au` is macOS-only - it flushes Apple's AU \
          caches and restarts `pkd` / `AudioComponentRegistrar`, neither \
          of which exist on Linux or Windows. CLAP / VST3 / VST2 / LV2 \
          let their host DAWs manage caches; restart your DAW if a plugin \

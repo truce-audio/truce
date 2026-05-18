@@ -98,7 +98,7 @@ struct GlyphAtlas {
     pending: Vec<(u32, u32, u32, u32, Vec<u8>)>,
     /// Set when `ensure_glyph` couldn't fit a new glyph. The next call to
     /// `WgpuBackend::clear` evicts the cache so subsequent frames can
-    /// re-rasterize from scratch — never mid-frame, which would invalidate
+    /// re-rasterize from scratch - never mid-frame, which would invalidate
     /// UVs the current frame's vertex buffer already references.
     overflow_pending: bool,
 }
@@ -127,7 +127,7 @@ impl GlyphAtlas {
     /// `overflow_pending` and returns without inserting; caller must
     /// tolerate a missing entry for the rest of this frame. Subsequent
     /// frames clear the atlas at frame start and re-rasterize.
-    // Quantized cache key — `(size * 10.0) as u32` deliberately
+    // Quantized cache key - `(size * 10.0) as u32` deliberately
     // truncates to one decimal place for HashMap stability. Atlas
     // dimensions and glyph metrics fit comfortably in f32.
     #[allow(
@@ -154,7 +154,7 @@ impl GlyphAtlas {
             // Atlas full. Calling self.clear() here would wipe entries
             // the current frame's vertex buffer still references and
             // evict glyphs that earlier draw_text iterations expect to
-            // look up — at best wrong UVs, at worst a HashMap lookup
+            // look up - at best wrong UVs, at worst a HashMap lookup
             // panic. Defer the clear to the next frame boundary.
             self.overflow_pending = true;
             return;
@@ -312,7 +312,7 @@ pub struct WgpuBackend {
     /// custom render). Set by [`RenderBackend::clear`] and consumed by
     /// `finish()` / `present()`.
     clear_color: Option<wgpu::Color>,
-    /// Fallback clear color for the present path (which can't `Load` —
+    /// Fallback clear color for the present path (which can't `Load` -
     /// the swap-chain texture would surface stale prior-frame content).
     /// Used when `clear_color` is `None`. The Metal layer path defaults
     /// to `TRANSPARENT` so the host's compositor sees through; other
@@ -648,7 +648,7 @@ impl WgpuBackend {
     }
 
     /// Create a GPU backend from a baseview window handle. baseview
-    /// is the macOS / Windows / Linux windowing layer — iOS does not
+    /// is the macOS / Windows / Linux windowing layer - iOS does not
     /// compile this constructor (the iOS editor builds its surface
     /// directly from a `CAMetalLayer` attached to a `UIView`).
     ///
@@ -679,7 +679,7 @@ impl WgpuBackend {
     /// Unlike [`Self::from_surface`] / `from_metal_layer` / [`Self::from_window`],
     /// this constructor does **not** own a `wgpu::Surface` or manage
     /// frame acquisition. The caller is expected to have its own render
-    /// loop, allocate command encoders, and present — this backend only
+    /// loop, allocate command encoders, and present - this backend only
     /// supplies the 2D widget pipeline, glyph atlas, and lyon-tessellated
     /// primitive recording.
     ///
@@ -987,7 +987,7 @@ impl WgpuBackend {
     }
 
     /// Flush accumulated geometry into a single render pass on `view`,
-    /// recorded into `encoder`. The caller retains ownership of both —
+    /// recorded into `encoder`. The caller retains ownership of both -
     /// this method neither submits the encoder nor calls `present()`.
     ///
     /// If `clear()` was called since the last `begin_frame`, the pass
@@ -1021,7 +1021,7 @@ impl WgpuBackend {
         // MSAA load/store must agree across frames: if we plan to `Load`
         // next pass, this pass must `Store` (otherwise the next pass loads
         // undefined contents). With a `resolve_target` set, `Discard` is
-        // standard for MSAA — but it's only well-defined when we also
+        // standard for MSAA - but it's only well-defined when we also
         // `Clear` on entry, since a fresh load after a discard is UB.
         let (load, store) = match self.clear_color {
             Some(c) => (wgpu::LoadOp::Clear(c), wgpu::StoreOp::Discard),
@@ -1269,7 +1269,7 @@ impl RenderBackend for WgpuBackend {
         self.indices.clear();
         self.batches.clear();
         // If a previous frame hit atlas overflow, do the eviction at the
-        // frame boundary now — past frames' vertex buffers are gone, so
+        // frame boundary now - past frames' vertex buffers are gone, so
         // dropping the UV cache is safe. Glyphs re-rasterize lazily as
         // draw_text walks them this frame.
         if self.glyph_atlas.overflow_pending {
@@ -1385,7 +1385,7 @@ impl RenderBackend for WgpuBackend {
             self.glyph_atlas.ensure_glyph(&self.font, ch, phys_size);
         }
 
-        // `.get` rather than `[..]` — when the atlas overflows mid-frame,
+        // `.get` rather than `[..]` - when the atlas overflows mid-frame,
         // `ensure_glyph` skips the insert (see GlyphAtlas::ensure_glyph)
         // and we want to drop the missing glyph silently rather than
         // panic on lookup. The next frame clears the atlas and these
@@ -1528,7 +1528,7 @@ impl RenderBackend for WgpuBackend {
         self.flush_atlas();
 
         let Some(surface) = &self.surface else {
-            return; // headless — no surface to present to
+            return; // headless - no surface to present to
         };
 
         let Ok(frame) = surface.get_current_texture() else {
@@ -1540,7 +1540,7 @@ impl RenderBackend for WgpuBackend {
 
         if self.vertices.is_empty() {
             // No draws this frame, but the surface is double/triple-buffered
-            // — without a render pass the swap chain shows whatever was
+            // - without a render pass the swap chain shows whatever was
             // there before (often the second-prior frame, producing a
             // visible flicker on idle). Issue a clear-only pass so the
             // surface ends up at `clear_color`.
@@ -1556,7 +1556,7 @@ impl RenderBackend for WgpuBackend {
 
 impl WgpuBackend {
     /// Issue a render pass that only clears the surface. Used by
-    /// `present()` when there is no geometry — without it the swap chain
+    /// `present()` when there is no geometry - without it the swap chain
     /// would show stale buffer contents. Always clears (`Load` would
     /// surface prior-frame garbage), falling back to
     /// `present_clear_default` when no `clear()` was requested.
@@ -1694,7 +1694,7 @@ impl WgpuBackend {
         // `compatible_surface: Some(&surface)`, which can produce subtle
         // rasterization differences (driver-specific shader compile, MSAA
         // resolve, sRGB rounding). Bake screenshot baselines on the host
-        // you gate from — this is the same constraint already documented
+        // you gate from - this is the same constraint already documented
         // in `cargo truce screenshot --check`.
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
@@ -1940,7 +1940,7 @@ impl WgpuBackend {
     /// # Panics
     ///
     /// Panics if `wgpu::Buffer::map_async` reports failure when reading
-    /// back the GPU readback buffer — that indicates an adapter / driver
+    /// back the GPU readback buffer - that indicates an adapter / driver
     /// fault rather than a recoverable runtime condition, so the
     /// snapshot path bubbles it up rather than papering over it.
     pub fn read_pixels(&mut self) -> Vec<u8> {
@@ -2029,8 +2029,8 @@ impl WgpuBackend {
         readback_buf.unmap();
 
         // Shader writes premultiplied alpha (BlendState::PREMULTIPLIED_ALPHA_BLENDING),
-        // but downstream consumers — `truce-test`'s reference-PNG comparison
-        // and `cargo truce screenshot` output — assume straight RGBA, the
+        // but downstream consumers - `truce-test`'s reference-PNG comparison
+        // and `cargo truce screenshot` output - assume straight RGBA, the
         // same convention `truce-slint::screenshot::render_with_state` uses.
         // Un-premultiply here so the GPU readback matches the headless
         // contract instead of leaking the GPU's internal format.
@@ -2068,7 +2068,7 @@ mod tests {
     // Both ortho-matrix tests check that the helper maps top-left
     // screen-space origin (0, 0) to wgpu's top-left clip-space corner
     // (-1, +1) and bottom-right screen (w, h) to clip (+1, -1). The Y
-    // flip is the `-2.0 / h` term in `ortho_matrix` — without it,
+    // flip is the `-2.0 / h` term in `ortho_matrix` - without it,
     // increasing screen-y would move the vertex *up* in clip space.
     #[test]
     fn ortho_matrix_maps_origin() {
@@ -2242,7 +2242,7 @@ mod tests {
         rx.recv().unwrap().unwrap();
         let mapped = slice.get_mapped_range();
 
-        // Probe the green rect center (16, 16) — should be ~green.
+        // Probe the green rect center (16, 16) - should be ~green.
         let row_off = 16usize * bytes_per_row as usize;
         let px_off = row_off + 16 * 4;
         let r = mapped[px_off];

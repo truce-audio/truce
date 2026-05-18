@@ -5,7 +5,7 @@ use truce_params::sample::Sample;
 ///
 /// Generic over the sample type `S` (the plugin's chosen precision,
 /// `f32` or `f64`). The format wrapper bridges between host-buffer
-/// precision and `S` at the block boundary — see
+/// precision and `S` at the block boundary - see
 /// [`RawBufferScratch::build`]. Plugin code under
 /// `use truce::prelude::*;` (f32) or `use truce::prelude64::*;` (f64)
 /// sees `AudioBuffer<S>` with `S` already picked.
@@ -13,7 +13,7 @@ use truce_params::sample::Sample;
 /// **In-place I/O.** Some hosts (Reaper, pluginval) pass the same
 /// buffer for both input and output of a given channel. By default
 /// the wrapper copies the aliased inputs into per-channel scratch so
-/// `input(ch)` and `output(ch)` are disjoint `&[S]` / `&mut [S]` —
+/// `input(ch)` and `output(ch)` are disjoint `&[S]` / `&mut [S]` -
 /// no plugin code change required. Plugins that opt into
 /// `Plugin::supports_in_place() = true` skip the copy and must use
 /// [`Self::in_out_mut`] for channels where [`Self::is_in_place`]
@@ -23,7 +23,7 @@ pub struct AudioBuffer<'a, S: Sample = f32> {
     outputs: &'a mut [&'a mut [S]],
     /// Bit `ch` is set when `inputs[ch]` and `outputs[ch]` point to
     /// the same host memory. Channels ≥ 64 are always reported as
-    /// non-aliased — formats with that many channels are exotic
+    /// non-aliased - formats with that many channels are exotic
     /// enough to be a follow-up.
     in_place_mask: u64,
     offset: usize,
@@ -33,7 +33,7 @@ pub struct AudioBuffer<'a, S: Sample = f32> {
 impl<'a, S: Sample> AudioBuffer<'a, S> {
     /// Safe wrapper around [`Self::from_slices`] for callers that hold their
     /// own owned `Vec<Vec<S>>` (e.g. `truce-driver`'s test harness).
-    /// Forwards to the unsafe constructor — the borrow checker proves
+    /// Forwards to the unsafe constructor - the borrow checker proves
     /// the lifetime invariants the `unsafe fn` requires when both
     /// slice arrays and the buffer itself live in the same scope.
     /// `num_samples > slice length` still asserts in debug builds.
@@ -78,7 +78,7 @@ impl<'a, S: Sample> AudioBuffer<'a, S> {
                     assert!(
                         i_end <= o_start || o_end <= i_start,
                         "AudioBuffer: input channel {i} and output channel {o} alias \
-                         — pass disjoint slices or use RawBufferScratch::build which \
+                         - pass disjoint slices or use RawBufferScratch::build which \
                          handles aliasing automatically",
                     );
                 }
@@ -124,7 +124,7 @@ impl<'a, S: Sample> AudioBuffer<'a, S> {
         ch < 64 && (self.in_place_mask >> ch) & 1 == 1
     }
 
-    /// Read+write slice for an in-place channel — the same memory the
+    /// Read+write slice for an in-place channel - the same memory the
     /// host gave us for both input and output. Each sample reads as
     /// the input value before the plugin overwrites it.
     ///
@@ -189,8 +189,8 @@ impl<'a, S: Sample> AudioBuffer<'a, S> {
     /// `io()` / `io_pair()` give a per-channel slice view, which is
     /// the right shape for "process channel `ch` in isolation"
     /// loops. But libraries that expect a per-frame `(in: &[S],
-    /// out: &mut [S])` callback — `fundsp::AudioUnit::tick`,
-    /// `nih_plug`'s frame iterators, custom per-sample DSP nodes —
+    /// out: &mut [S])` callback - `fundsp::AudioUnit::tick`,
+    /// `nih_plug`'s frame iterators, custom per-sample DSP nodes -
     /// can't take that shape directly without either copying inputs
     /// into a scratch first (heap allocation on the audio thread)
     /// or fighting the borrow checker over two simultaneous `&mut`
@@ -267,7 +267,7 @@ impl<'a, S: Sample> AudioBuffer<'a, S> {
 
     /// Return a sub-block view covering samples `start..start+len`.
     ///
-    /// The returned buffer borrows `self` exclusively — you cannot use
+    /// The returned buffer borrows `self` exclusively - you cannot use
     /// the original buffer while the slice is alive.
     ///
     /// # Panics
@@ -315,7 +315,7 @@ pub struct RawBufferScratch<S: Sample = f32> {
     pub input_slices: Vec<&'static [S]>,
     pub output_slices: Vec<&'static mut [S]>,
     /// Per-channel input copies. Used (a) when the host passes the
-    /// same buffer for input and output (in-place processing — VST3
+    /// same buffer for input and output (in-place processing - VST3
     /// spec allows this and several real DAWs use it for effects),
     /// or (b) when the host buffer precision differs from `S` and
     /// we widen/narrow on the way in. In either case the slice the
@@ -329,7 +329,7 @@ pub struct RawBufferScratch<S: Sample = f32> {
 }
 
 impl<S: Sample> RawBufferScratch<S> {
-    /// Build an `AudioBuffer<S>` from raw `f32` host pointers — the
+    /// Build an `AudioBuffer<S>` from raw `f32` host pointers - the
     /// common case (CLAP, LV2, AAX always; VST3/VST2/AU 32-bit mode).
     ///
     /// When `S = f32`, slices point directly into host memory (modulo
@@ -356,7 +356,7 @@ impl<S: Sample> RawBufferScratch<S> {
         num_frames: u32,
         supports_in_place: bool,
     ) -> AudioBuffer<'_, S> {
-        // SAFETY: forwarded — caller's contract is the same.
+        // SAFETY: forwarded - caller's contract is the same.
         unsafe {
             self.build_inner(
                 inputs,
@@ -526,7 +526,7 @@ impl<S: Sample> RawBufferScratch<S> {
                 let slice: &mut [S] = if ptr.is_null() {
                     &mut []
                 } else if same_precision {
-                    // SAFETY: same-precision branch — host pointer is
+                    // SAFETY: same-precision branch - host pointer is
                     // already `*mut S` modulo runtime type identity.
                     let raw = ptr.cast::<S>();
                     std::slice::from_raw_parts_mut(raw, nf)

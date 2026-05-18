@@ -1,4 +1,4 @@
-//! Build manifest — the contract between `cargo truce build` and
+//! Build manifest - the contract between `cargo truce build` and
 //! `cargo truce package`.
 //!
 //! `cargo truce build` writes `target/bundles/manifest.toml` recording
@@ -33,7 +33,7 @@ const FILENAME: &str = "manifest.toml";
 pub struct BundleManifest {
     pub schema_version: u32,
     /// Cargo target triple the bundles were compiled for. The
-    /// containing directory's name should match this — the field is
+    /// containing directory's name should match this - the field is
     /// authoritative; the path is convention.
     pub target_triple: String,
     /// Cargo profile name: `"release"`, `"debug"`, or `"shell"`.
@@ -127,7 +127,7 @@ impl BundleManifest {
     }
 
     /// Merge `incoming` into `self`. If `target_triple` or `profile`
-    /// differs, `incoming` replaces `self` wholesale — bundles built
+    /// differs, `incoming` replaces `self` wholesale - bundles built
     /// for a different target/profile aren't usable alongside the new
     /// ones. Otherwise, entries with matching `(plugin_crate, format)`
     /// are replaced and new entries are appended.

@@ -1,4 +1,4 @@
-//! `cargo truce status` — show installed plugins and AU registration state.
+//! `cargo truce status` - show installed plugins and AU registration state.
 //!
 //! macOS-only: every path it scans (`/Library/Audio/Plug-Ins/...`,
 //! `~/Library/Audio/Plug-Ins/...`, `auval -a`) is Apple-specific.
@@ -13,7 +13,7 @@ fn print_help() {
 Usage: cargo truce status
 
 Show installed plugin bundles for this project's vendor and the AU
-registration state. macOS-only — every path scanned
+registration state. macOS-only - every path scanned
 (/Library/Audio/Plug-Ins/..., ~/Library/Audio/Plug-Ins/..., auval -a)
 is Apple-specific.
 
@@ -29,7 +29,7 @@ pub(crate) fn cmd_status(args: &[String]) -> Res {
         return Ok(());
     }
     Err(
-        "`cargo truce status` is macOS-only — every directory it scans \
+        "`cargo truce status` is macOS-only - every directory it scans \
          (`/Library/Audio/Plug-Ins/...`, `auval -a`) is Apple-specific. \
          For Linux / Windows, list bundles directly under your DAW's \
          configured plug-in path."

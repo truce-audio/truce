@@ -38,7 +38,7 @@ pub fn auto_view<'a, M: Clone + Debug + 'static, P: Params>(
 
     let mut main_col: Column<'a, Message<M>> = Column::new().spacing(8).padding(15);
 
-    // Header band — drawn whenever either title slot is set.
+    // Header band - drawn whenever either title slot is set.
     if !layout.titles.is_empty() {
         let mut header_row = row![].spacing(8).align_y(alignment::Vertical::Center);
         if let Some(t) = layout.titles.title {

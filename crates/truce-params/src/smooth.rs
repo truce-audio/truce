@@ -15,7 +15,7 @@ pub enum SmoothingStyle {
 /// (via `next` / `snap`) and the sole reader of `coeff`. The
 /// editor / main thread is the sole writer of `sample_rate` and
 /// `coeff` via [`Self::set_sample_rate`], which computes the new
-/// coefficient locally from the supplied `sr` before storing —
+/// coefficient locally from the supplied `sr` before storing -
 /// so a concurrent audio block sees either the old (`sample_rate`,
 /// `coeff`) pair or the new one, never a mid-update split. The
 /// stored `sample_rate` field is informational; it isn't read in
@@ -47,7 +47,7 @@ impl Smoother {
     pub fn set_sample_rate(&self, sr: f64) {
         // Compute coeff from the local `sr` (not from a re-loaded
         // `self.sample_rate`) so the (sample_rate, coeff) pair the
-        // audio thread observes via `coeff` is always self-consistent —
+        // audio thread observes via `coeff` is always self-consistent -
         // even if a second `set_sample_rate` from a different thread
         // races. Order: stash the informational sample_rate first,
         // then publish the audio-visible coeff last.
@@ -110,7 +110,7 @@ impl Smoother {
 /// Pure coefficient calculation: smoothing style + sample rate →
 /// per-sample step coefficient. Lifted out of `Smoother` so
 /// `set_sample_rate` can compute the new coefficient against its
-/// local `sr` argument without re-loading any shared state — the
+/// local `sr` argument without re-loading any shared state - the
 /// audio thread then sees a single atomic publish of `coeff`
 /// instead of a two-step (`sample_rate`, `coeff`) write.
 fn compute_coeff(style: SmoothingStyle, sr: f64) -> f64 {

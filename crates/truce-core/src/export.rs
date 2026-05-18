@@ -19,7 +19,7 @@ use truce_params::{ParamInfo, Params};
 /// ```
 ///
 /// All parameter mutation goes through the atomic-backed accessors on
-/// `&Params` — no `&mut Params` accessor is required, which keeps the
+/// `&Params` - no `&mut Params` accessor is required, which keeps the
 /// trait usable while the editor holds an `Arc<Params>` reader.
 pub trait PluginExport: Plugin + Sized {
     type Params: Params;
@@ -42,8 +42,8 @@ pub trait PluginExport: Plugin + Sized {
     /// Format wrappers' `register_*` paths (`truce-vst2`, `truce-vst3`,
     /// `truce-au`, `truce-aax`) call this instead of the historical
     /// `Self::create().params().param_infos()` walk, which constructed
-    /// a full plugin instance — including any allocation the
-    /// constructor did (DSP buffers, FFT plans, image atlases) — just
+    /// a full plugin instance - including any allocation the
+    /// constructor did (DSP buffers, FFT plans, image atlases) - just
     /// to read static metadata. On platforms where registration runs
     /// from C++ static initializers (notably AAX `Describe`) those
     /// allocations sit in a fragile init-order regime; avoiding them
@@ -53,7 +53,7 @@ pub trait PluginExport: Plugin + Sized {
     /// [`Params::param_infos_static`]
     /// when it returns a non-empty vec (the `#[derive(Params)]` path
     /// emits an override built from compile-time metadata) and falls
-    /// back to the runtime construction otherwise — so plugins with
+    /// back to the runtime construction otherwise - so plugins with
     /// hand-written `Params` impls that don't override the static
     /// path keep working unchanged.
     #[must_use]
@@ -70,7 +70,7 @@ pub trait PluginExport: Plugin + Sized {
     /// `Describe` path needs to know this at registration time
     /// (`has_editor` field on the static descriptor); the historical
     /// way to learn it was `Self::create().editor().is_some()`, which
-    /// — paired with [`Self::param_infos_static`] — was the second
+    /// - paired with [`Self::param_infos_static`] - was the second
     /// reason every format's registration walk constructed a plugin.
     ///
     /// Default impl falls back to that runtime path so unannotated
@@ -86,7 +86,7 @@ pub trait PluginExport: Plugin + Sized {
     /// }
     /// ```
     ///
-    /// VST2 / VST3 / AU never call this — they don't need the answer
+    /// VST2 / VST3 / AU never call this - they don't need the answer
     /// at registration time.
     #[must_use]
     fn has_editor_static() -> bool {

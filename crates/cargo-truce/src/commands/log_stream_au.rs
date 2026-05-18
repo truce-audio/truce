@@ -1,8 +1,8 @@
-//! `cargo truce log-stream-au` — tail AU v3 appex logs live.
+//! `cargo truce log-stream-au` - tail AU v3 appex logs live.
 //!
 //! macOS-only. Wraps `/usr/bin/log stream` with a predicate matching
 //! the AU v3 Swift wrapper's subsystem (`com.truce.au3`). Forward-only
-//! — does not surface historical entries; for those use `log show
+//! - does not surface historical entries; for those use `log show
 //! --last <duration>` directly.
 
 use crate::Res;
@@ -14,7 +14,7 @@ Usage: cargo truce log-stream-au
 
 Tail AU v3 appex logs live. Wraps `/usr/bin/log stream` with a
 predicate matching the AU v3 Swift wrapper's subsystem
-(`com.truce.au3`). Forward-only — does not surface historical
+(`com.truce.au3`). Forward-only - does not surface historical
 entries. For those, run `log show --last <duration>` directly.
 
 macOS-only.
@@ -31,7 +31,7 @@ pub(crate) fn cmd_log_stream_au(args: &[String]) -> Res {
         return Ok(());
     }
     Err(
-        "`cargo truce log-stream-au` is macOS-only — it wraps Apple's \
+        "`cargo truce log-stream-au` is macOS-only - it wraps Apple's \
          `/usr/bin/log stream`, which doesn't exist on Linux or Windows. \
          AU v3 itself is also macOS-only."
             .into(),

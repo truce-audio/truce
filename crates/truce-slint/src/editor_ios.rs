@@ -1,4 +1,4 @@
-//! Slint editor on iOS — `MinimalSoftwareWindow` driving a tight CPU
+//! Slint editor on iOS - `MinimalSoftwareWindow` driving a tight CPU
 //! render pipeline, blitted to a `UIView`'s layer via `CGImage`.
 //!
 //! Slint's software renderer outputs `PremultipliedRgbaColor` pixels
@@ -52,7 +52,7 @@ struct Inner<P: Params + ?Sized> {
     logical_h: u32,
     scale: f32,
     slint_window: Rc<MinimalSoftwareWindow>,
-    /// Renderer pixel buffer — `PremultipliedRgbaColor`-typed so
+    /// Renderer pixel buffer - `PremultipliedRgbaColor`-typed so
     /// Slint can write straight into it without a per-frame cast.
     px_buf: Vec<PremultipliedRgbaColor>,
     /// Un-premultiplied RGBA8 bytes ready for `CGImage`.
@@ -104,7 +104,7 @@ impl<P: Params + 'static> Editor for SlintEditor<P> {
         // hits `UIScreen.mainScreen.scale` and returns the device's
         // real scale (3.0 on Retina iPhones). Without this, Slint's
         // software renderer paints at 1× into a buffer treated as
-        // 3× — visible as grainy edges. Mirrors the built-in iOS
+        // 3× - visible as grainy edges. Mirrors the built-in iOS
         // editor's `EditorScale::new` construction.
         //
         // Editor dimensions × backing-scale stay well below 2^23,
@@ -140,7 +140,7 @@ impl<P: Params + 'static> Editor for SlintEditor<P> {
         // runs, so seeding a fresh window with a physical size
         // while the default 1× scale is still in effect leaves the
         // first frame's draw at 1× DPI and Core Animation upscales
-        // the bitmap — visible as grainy edges on every widget.
+        // the bitmap - visible as grainy edges on every widget.
         ensure_platform();
         let slint_window = create_slint_window();
         slint_window
@@ -151,7 +151,7 @@ impl<P: Params + 'static> Editor for SlintEditor<P> {
         slint_window.set_size(slint::PhysicalSize::new(phys_w, phys_h));
 
         // Run the user's setup closure inside the configured
-        // platform — produces the SyncFn we call each frame.
+        // platform - produces the SyncFn we call each frame.
         let typed_ctx = context.with_params(Arc::clone(&self.params));
         let sync = (self.setup)(typed_ctx.clone());
 
@@ -277,11 +277,11 @@ unsafe fn install_editor_view<P: Params + 'static>(
         let _: () = msg_send![view, setUserInteractionEnabled: true];
         let _: () = msg_send![view, setContentScaleFactor: f64::from(scale)];
 
-        // The view's default `CALayer` is fine — we blit a CGImage
+        // The view's default `CALayer` is fine - we blit a CGImage
         // into `layer.contents` each tick. No CAMetalLayer needed
         // (Slint's software renderer is CPU-only).
 
-        // Pin the Arc into the ivar — released in close().
+        // Pin the Arc into the ivar - released in close().
         let leaked: *const Mutex<Option<Inner<P>>> = Arc::into_raw(Arc::clone(slot));
         let base = view.cast::<u8>();
         let ivar_ptr: *mut *mut std::ffi::c_void =
@@ -466,7 +466,7 @@ unsafe fn dispatch_touch<P: Params + 'static>(
 }
 
 // ---------------------------------------------------------------------------
-// CGImage blit — same shape as truce-gui::editor_ios. Duplicated
+// CGImage blit - same shape as truce-gui::editor_ios. Duplicated
 // rather than shared because the helper is < 50 lines and lifting it
 // into a separate crate would force every alt-GUI backend to depend
 // on truce-gui, which we explicitly avoid.

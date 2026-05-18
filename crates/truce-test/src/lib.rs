@@ -2,13 +2,13 @@
 //!
 //! Two layers:
 //!
-//! - **Audio runs** — built on top of [`truce_driver::PluginDriver`].
+//! - **Audio runs** - built on top of [`truce_driver::PluginDriver`].
 //!   Re-exported here so plugin tests have one crate to depend on.
 //!   Use the [`driver!`] macro for ergonomic builder construction
 //!   (it wires `manifest_dir` from the calling crate's
 //!   `CARGO_MANIFEST_DIR`, so `state_file` paths resolve correctly).
 //!   Assertions live in [`assertions`].
-//! - **Static plugin checks** — `assert_state_round_trip`,
+//! - **Static plugin checks** - `assert_state_round_trip`,
 //!   `assert_has_editor`, AU `FourCC`, bus config, param defaults, GUI
 //!   lifecycle, etc. These don't render audio, just instantiate the
 //!   plugin and inspect.
@@ -100,19 +100,19 @@ pub fn assert_state_round_trip<P: PluginExport>() {
     let param_infos = plugin.params().param_infos();
     for pi in &param_infos {
         // `get_plain` returns `None` if the param id was dropped during
-        // round-trip — for example, a plugin update that renumbered
+        // round-trip - for example, a plugin update that renumbered
         // params. We surface that as the assertion failure rather than
         // an `.unwrap()` panic that would point at the wrong line.
         let v1 = plugin.params().get_plain(pi.id).unwrap_or_else(|| {
             panic!(
-                "param {} ({}) missing from source plugin after restore_plugin — \
+                "param {} ({}) missing from source plugin after restore_plugin - \
                  the param id is no longer registered",
                 pi.id, pi.name
             )
         });
         let v2 = plugin2.params().get_plain(pi.id).unwrap_or_else(|| {
             panic!(
-                "param {} ({}) was lost during state round-trip — \
+                "param {} ({}) was lost during state round-trip - \
                  saved-state blob references an id that the freshly-built plugin \
                  doesn't expose. Either the param was renamed/renumbered or \
                  the deserializer is dropping it.",
@@ -246,7 +246,7 @@ pub fn assert_bus_config_effect<P: PluginExport>() {
 
 /// Assert bus config is correct for an instrument (no inputs, has outputs).
 ///
-/// Catches the `GarageBand` `SupportedNumChannels` bug — instruments must
+/// Catches the `GarageBand` `SupportedNumChannels` bug - instruments must
 /// report 0 input channels for AU hosts to show them.
 ///
 /// # Panics
@@ -341,7 +341,7 @@ pub fn assert_param_defaults_match<P: PluginExport>() {
     for pi in &infos {
         let current = plugin.params().get_plain(pi.id).unwrap_or_else(|| {
             panic!(
-                "param {} ({}) has a ParamInfo entry but get_plain returned None — \
+                "param {} ({}) has a ParamInfo entry but get_plain returned None - \
                  derive macro inconsistency",
                 pi.id, pi.name
             )
@@ -376,7 +376,7 @@ pub fn assert_param_normalized_clamped<P: PluginExport>() {
         let val = plugin.params().get_normalized(pi.id).unwrap_or_else(|| {
             panic!(
                 "param {} ({}) get_normalized returned None despite ParamInfo \
-                 entry — derive macro inconsistency",
+                 entry - derive macro inconsistency",
                 pi.id, pi.name
             )
         });
@@ -393,7 +393,7 @@ pub fn assert_param_normalized_clamped<P: PluginExport>() {
         let val = plugin.params().get_normalized(pi.id).unwrap_or_else(|| {
             panic!(
                 "param {} ({}) get_normalized returned None despite ParamInfo \
-                 entry — derive macro inconsistency",
+                 entry - derive macro inconsistency",
                 pi.id, pi.name
             )
         });
@@ -434,7 +434,7 @@ pub fn assert_param_normalized_roundtrip<P: PluginExport>() {
                 .collect();
             (v, (0.5 / f64::from(steps)).max(1e-6))
         } else {
-            // Continuous param: tighter tolerance — round-trip should
+            // Continuous param: tighter tolerance - round-trip should
             // be exact modulo `clamp(0, 1)` and float rounding.
             (vec![0.0, 0.25, 0.5, 0.75, 1.0], 1e-6)
         };
@@ -443,7 +443,7 @@ pub fn assert_param_normalized_roundtrip<P: PluginExport>() {
             let got = plugin.params().get_normalized(pi.id).unwrap_or_else(|| {
                 panic!(
                     "param {} ({}) get_normalized returned None despite ParamInfo \
-                     entry — derive macro inconsistency",
+                     entry - derive macro inconsistency",
                     pi.id, pi.name
                 )
             });
@@ -503,7 +503,7 @@ pub fn assert_no_duplicate_param_ids<P: PluginExport>() {
 /// Assert corrupt state data doesn't crash.
 ///
 /// Each blob in the corpus must either deserialize cleanly OR return
-/// `None` — and `restore_values` on a successful parse must not panic.
+/// `None` - and `restore_values` on a successful parse must not panic.
 /// The previous form passed trivially when `deserialize_state` returned
 /// `None` for everything (which would happen if the implementation
 /// regressed to "always reject"), so we now also exercise at least one
@@ -512,7 +512,7 @@ pub fn assert_no_duplicate_param_ids<P: PluginExport>() {
 /// # Panics
 ///
 /// Panics if `deserialize_state` rejects a blob produced by
-/// `snapshot_plugin` (sanity check — without this the test passes
+/// `snapshot_plugin` (sanity check - without this the test passes
 /// trivially when `deserialize_state` is hard-broken), or if any of
 /// the corruption probes (`deserialize_state` / `restore_values`)
 /// itself panics.
@@ -545,7 +545,7 @@ pub fn assert_corrupt_state_no_crash<P: PluginExport>() {
     let blob = state::snapshot_plugin(&snapshot_plugin);
     assert!(
         state::deserialize_state(&blob, hash).is_some(),
-        "deserialize_state rejected a blob produced by snapshot_plugin — \
+        "deserialize_state rejected a blob produced by snapshot_plugin - \
          the corruption test would pass trivially under this regression"
     );
 }
@@ -590,7 +590,7 @@ type SetupFn<P> = Box<dyn FnOnce(&mut P)>;
 ///
 /// Construct via the [`screenshot!`] macro:
 /// `screenshot!(Plugin, "screenshots/main.png")`. The path is the
-/// committed reference PNG location — relative to the calling
+/// committed reference PNG location - relative to the calling
 /// crate's `Cargo.toml` directory, or absolute. There's no implicit
 /// directory and no auto-derived filename; every test names its
 /// own reference.
@@ -642,7 +642,7 @@ pub struct ScreenshotTest<P: PluginExport> {
     /// `.pluginstate` bytes loaded after init, before `set_param`
     /// shortcuts and `setup` closure.
     state_bytes: Option<Vec<u8>>,
-    /// `.set_param(id, v)` shortcuts — applied after state load,
+    /// `.set_param(id, v)` shortcuts - applied after state load,
     /// before the `setup` closure.
     param_overrides: Vec<(u32, f64)>,
     /// Optional plugin mutation between `P::create()` and render.
@@ -656,7 +656,7 @@ pub struct ScreenshotTest<P: PluginExport> {
 
 impl<P: PluginExport> ScreenshotTest<P> {
     /// Internal constructor used by [`screenshot!`]. Plugin authors
-    /// should not call this directly — the macro fills
+    /// should not call this directly - the macro fills
     /// `manifest_dir` from the calling crate's compile-time
     /// `CARGO_MANIFEST_DIR`.
     #[doc(hidden)]
@@ -713,7 +713,7 @@ impl<P: PluginExport> ScreenshotTest<P> {
     /// # Panics
     ///
     /// Panics if the file cannot be read (missing path, permission
-    /// error, etc.) — the test failure points at the resolved path so
+    /// error, etc.) - the test failure points at the resolved path so
     /// it's easy to fix the call site.
     #[must_use]
     pub fn state_file<S: Into<PathBuf>>(mut self, path: S) -> Self {
@@ -843,7 +843,7 @@ macro_rules! screenshot {
 /// `manifest_dir_hint`, when given, is the calling crate's
 /// `CARGO_MANIFEST_DIR` (captured at compile time by the
 /// `screenshot!` macro). Walking up from there to the workspace root
-/// is more reliable than walking up from CWD — the latter is
+/// is more reliable than walking up from CWD - the latter is
 /// mis-anchored when tests run from a different directory or when
 /// CWD is inside `target/`.
 fn compare_against_reference(
@@ -862,7 +862,7 @@ fn compare_against_reference(
     ));
 
     if !ref_path.exists() {
-        // No baseline — save the current render so the user can
+        // No baseline - save the current render so the user can
         // inspect it before committing.
         std::fs::create_dir_all(&render_dir).ok();
         save_png(&render_path, pixels, width, height);
@@ -910,7 +910,7 @@ fn compare_against_reference(
     }
 
     if diff_count > max_diff_pixels {
-        // Save the failing render only on failure — successful tests
+        // Save the failing render only on failure - successful tests
         // no longer eat I/O writing artifacts they don't need.
         std::fs::create_dir_all(&render_dir).ok();
         save_png(&render_path, pixels, width, height);
@@ -933,13 +933,13 @@ fn compare_against_reference(
 /// anchor the resolution, then routes through `truce_build::target_dir`
 /// so `CARGO_TARGET_DIR` and `<root>/.cargo/config.toml`'s
 /// `[build].target-dir` both override the literal `target/`. Used
-/// only for the failing-render artifact path — committed reference
+/// only for the failing-render artifact path - committed reference
 /// paths come from the builder's manifest-dir-anchored resolution.
 fn workspace_target_screenshots_dir(manifest_dir_hint: Option<&std::path::Path>) -> PathBuf {
     // Prefer the calling crate's `CARGO_MANIFEST_DIR` (captured at
     // compile time and threaded through the `screenshot!` macro). It's
     // a stable anchor regardless of where `cargo test` runs from. Fall
-    // back to CWD only when no hint is available — old code paths or
+    // back to CWD only when no hint is available - old code paths or
     // direct calls into this function.
     let start = manifest_dir_hint.map_or_else(
         || std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
@@ -954,14 +954,14 @@ fn workspace_target_screenshots_dir(manifest_dir_hint: Option<&std::path::Path>)
             && let Ok(doc) = s.parse::<toml::Table>()
         {
             // Workspace `Cargo.toml` is the strongest anchor we'll
-            // see — short-circuit and take its enclosing dir as
+            // see - short-circuit and take its enclosing dir as
             // the target-dir root.
             if doc.contains_key("workspace") {
                 return truce_build::target_dir(&dir).join("screenshots");
             }
             // Otherwise we may be under a single-crate or workspace
             // member. Remember the topmost package and keep walking
-            // — if we never find a workspace, the topmost package
+            // - if we never find a workspace, the topmost package
             // is the right anchor.
             if doc.contains_key("package") {
                 topmost_package = Some(dir.clone());
