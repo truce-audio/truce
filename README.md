@@ -94,8 +94,8 @@ a real-time spectrum analyzer with diff overlay for debugging/reverse-engineerin
 Nine smaller example plugins ship in-tree to cover the basics — gain,
 EQ, synth, transpose, arpeggio, tremolo, plus three gain variants
 showing the egui / iced / Slint backends. See
-[examples/README.md](examples/README.md) for the full table with
-screenshots.
+[truce.audio/docs/examples](https://truce.audio/docs/examples/) for the full
+table with screenshots.
 
 ## Minimal Example
 
@@ -175,7 +175,7 @@ builds on macOS and Windows — supports audio, MIDI, state, and UI
 requires the Avid AAX SDK and PACE/iLok signing for retail Pro Tools
 releases. VST2 is opt-in on all platforms — see note below. iOS only
 hosts AU v3 by platform contract; every other format is unviable
-there. See [truce.audio](https://truce.audio/) for host coverage.
+there.
 
 ## Features
 
@@ -245,5 +245,3 @@ anything sold, subscription-gated, dual-licensed commercially,
 or bundled into a paid offering. See [`LICENSE`](LICENSE) for the
 precise boundary and the permission process (Section 2.2).
 
-If you're building an audio plug-in or a free OSS project:
-ignore the third paragraph.
