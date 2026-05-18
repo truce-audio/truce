@@ -244,17 +244,23 @@ pub(crate) fn build_bundle(
     let au_mfr = &cfg.vendor.au_manufacturer;
     let au_tag = &p.au_tag;
 
-    let appex_info = render_appex_info_plist(
-        crate::templates::au3::APPEX_INFO_PLIST,
-        app_name,
-        au_type,
-        au_sub,
-        au_mfr,
-        au_tag,
-        &appex_bundle_id,
-        &min_ios,
-        target,
-    );
+    let appex_info =
+        crate::templates::au3::render_appex_info_plist(&crate::templates::au3::AppexPlistValues {
+            au_name: app_name,
+            au_type,
+            au_sub,
+            au_mfr,
+            au_tag,
+            au_ver: "1",
+            min_os: &min_ios,
+            supported_platform: target.supported_platform(),
+            xcode_tokens: Some(crate::templates::au3::XcodeTokens {
+                executable_name: "AUExt",
+                bundle_id: &appex_bundle_id,
+                package_type: "XPC!",
+                module_name: "AUExt",
+            }),
+        });
     fs_ctx::write(appex_dir.join("Info.plist"), appex_info)?;
 
     // Write `au_shim_types.h` from the `include_str!`-baked
@@ -1139,33 +1145,6 @@ fn app_info_plist(
 </plist>
 "#
     )
-}
-
-#[allow(clippy::too_many_arguments)] // plist key-by-key — no win in collapsing
-fn render_appex_info_plist(
-    template: &str,
-    plugin_name: &str,
-    au_type: &str,
-    au_sub: &str,
-    au_mfr: &str,
-    au_tag: &str,
-    appex_bundle_id: &str,
-    min_ios: &str,
-    target: IosTarget,
-) -> String {
-    template
-        .replace("AUNAME", plugin_name)
-        .replace("AUTYPE", au_type)
-        .replace("AUSUB", au_sub)
-        .replace("AUMFR", au_mfr)
-        .replace("AUTAG", au_tag)
-        .replace("AUVER", "1")
-        .replace("MINIOS", min_ios)
-        .replace("SUPPORTEDPLAT", target.supported_platform())
-        .replace("$(EXECUTABLE_NAME)", "AUExt")
-        .replace("$(PRODUCT_BUNDLE_IDENTIFIER)", appex_bundle_id)
-        .replace("$(PRODUCT_BUNDLE_PACKAGE_TYPE)", "XPC!")
-        .replace("$(PRODUCT_MODULE_NAME)", "AUExt")
 }
 
 /// Build the `<plist>` content for an `.entitlements` file.

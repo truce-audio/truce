@@ -404,7 +404,7 @@ class TruceAUAudioUnit: AUAudioUnit {
                 cb.pointee.output_event_at(ctx, i, &ev)
                 let st = ev.status & 0xF0
                 let len = (st == 0xC0 || st == 0xD0) ? 2 : 3
-                var bytes: [UInt8] = [ev.status, ev.data1, ev.data2]
+                let bytes: [UInt8] = [ev.status, ev.data1, ev.data2]
                 let evTime = AUEventSampleTime(bufStart + Int64(ev.sample_offset))
                 _ = bytes.withUnsafeBufferPointer { buf in
                     outputBlock(evTime, 0 /* cable */, len, buf.baseAddress!)

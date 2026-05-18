@@ -330,29 +330,29 @@ fn write_xcode_project_files(
         .unwrap();
     let ver = format!("{}.{}", now.as_secs(), now.subsec_millis());
 
-    // `MINIOS` / `SUPPORTEDPLAT` are placeholders the iOS path also
-    // substitutes — they were added to the shared template when iOS
-    // support landed. macOS values: `MacOSX` for the platform string,
-    // and a deployment target that must match the appex's actual
-    // `MACOSX_DEPLOYMENT_TARGET` (hard-coded to 13.0 in `generate_pbxproj`).
-    // Leaving the placeholders unsubstituted makes xcodebuild reject the
-    // outer `.app` with "embedded content built for the (null) platform".
-    let plist = templates::au3::APPEX_INFO_PLIST
-        .replace("AUVER", &ver)
-        .replace("AUTYPE", p.resolved_au_type())
-        .replace("AUSUB", p.au3_sub())
-        .replace("AUMFR", &config.vendor.au_manufacturer)
-        .replace(
-            "AUNAME",
-            &format!(
-                "{}: {}",
-                config.vendor.name,
-                p.au3_name.as_deref().unwrap_or(p.name.as_str()),
-            ),
-        )
-        .replace("AUTAG", &p.au_tag)
-        .replace("MINIOS", "13.0")
-        .replace("SUPPORTEDPLAT", "MacOSX");
+    // `min_os` / `supported_platform` must match the pbxproj's
+    // `MACOSX_DEPLOYMENT_TARGET` (`generate_pbxproj` hard-codes 13.0)
+    // and the `MacOSX` platform string. Mismatches surface as the
+    // xcodebuild error "embedded content built for the (null) platform"
+    // when the outer `.app` tries to embed the `.appex`. `xcode_tokens`
+    // is `None` because xcodebuild expands the `$(...)` plist tokens
+    // from this target's `PRODUCT_BUNDLE_IDENTIFIER` etc. at build time.
+    let au_name = format!(
+        "{}: {}",
+        config.vendor.name,
+        p.au3_name.as_deref().unwrap_or(p.name.as_str()),
+    );
+    let plist = templates::au3::render_appex_info_plist(&templates::au3::AppexPlistValues {
+        au_name: &au_name,
+        au_type: p.resolved_au_type(),
+        au_sub: p.au3_sub(),
+        au_mfr: &config.vendor.au_manufacturer,
+        au_tag: &p.au_tag,
+        au_ver: &ver,
+        min_os: "13.0",
+        supported_platform: "MacOSX",
+        xcode_tokens: None,
+    });
     // AUVER regenerates every call (CFBundleVersion cache-bust for
     // hosts), so this plist's bytes shift run-to-run regardless.
     // xcodebuild still bundles the new plist but skips Swift / ObjC
