@@ -271,10 +271,17 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
                     ])
                     .output()?;
                 let stdout = String::from_utf8_lossy(&output.stdout);
+                let stderr = String::from_utf8_lossy(&output.stderr);
                 if stdout.contains("VALIDATION SUCCEEDED") {
                     eprintln!("PASS");
                 } else {
                     eprintln!("FAIL");
+                    if !stdout.is_empty() {
+                        eprintln!("{stdout}");
+                    }
+                    if !stderr.is_empty() {
+                        eprintln!("{stderr}");
+                    }
                     #[cfg(target_os = "macos")]
                     {
                         let expected = PathBuf::from(format!(
@@ -321,10 +328,17 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
                     ])
                     .output()?;
                 let stdout = String::from_utf8_lossy(&output.stdout);
+                let stderr = String::from_utf8_lossy(&output.stderr);
                 if stdout.contains("VALIDATION SUCCEEDED") {
                     eprintln!("PASS");
                 } else {
                     eprintln!("FAIL");
+                    if !stdout.is_empty() {
+                        eprintln!("{stdout}");
+                    }
+                    if !stderr.is_empty() {
+                        eprintln!("{stderr}");
+                    }
                     #[cfg(target_os = "macos")]
                     {
                         let expected = PathBuf::from(format!(
@@ -381,10 +395,17 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
                     ])
                     .output()?;
                 let stdout = String::from_utf8_lossy(&output.stdout);
+                let stderr = String::from_utf8_lossy(&output.stderr);
                 if stdout.contains("SUCCESS") || output.status.success() {
                     eprintln!("PASS");
                 } else {
                     eprintln!("FAIL");
+                    if !stdout.is_empty() {
+                        eprintln!("{stdout}");
+                    }
+                    if !stderr.is_empty() {
+                        eprintln!("{stderr}");
+                    }
                     failures += 1;
                 }
                 warn_on_scope_collision(Format::Vst3, &user_path, &system_path);
