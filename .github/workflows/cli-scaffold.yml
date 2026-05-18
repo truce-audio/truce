@@ -230,8 +230,11 @@ jobs:
 
       # `--no-notarize` on macOS skips the Apple notarization round-trip
       # (no credentials in CI). Windows package goes through Inno Setup
-      # installed above. Linux package needs `--formats` so it builds the
-      # right set even on a workspace where defaults might include AAX.
+      # installed above. `--formats` is constrained to CLAP + VST3 -
+      # the scaffold templates only enable those by default; LV2 / AU /
+      # AAX are commented-out opt-ins in the generated Cargo.toml, so
+      # asking for them here errors with "package does not contain this
+      # feature".
       - name: cargo truce package
         shell: bash
         working-directory: ${{ runner.temp }}/scaffold/${{ matrix.shape.project_dir }}
@@ -239,8 +242,6 @@ jobs:
           set -e
           if [ "${{ runner.os }}" = "macOS" ]; then
             $CARGO_TRUCE package --formats clap,vst3 --no-notarize
-          elif [ "${{ runner.os }}" = "Linux" ]; then
-            $CARGO_TRUCE package --formats clap,vst3,lv2
           else
             $CARGO_TRUCE package --formats clap,vst3
           fi
