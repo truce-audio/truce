@@ -228,6 +228,20 @@ pub(crate) fn build_format_dylibs(
             fs_ctx::copy(&src, &dst)?;
         }
 
+        // macOS bundle-format link path. The cdylib above is MH_DYLIB,
+        // which CFBundle rejects on the JUCE-hosted VST3 path. Run
+        // `clang -bundle` against the matching Rust `staticlib` to
+        // produce a real MH_BUNDLE at the canonical bundle-bin path
+        // that stage / install steps read from. AU2 / AAX keep the
+        // cdylib (their loaders are happy with MH_DYLIB).
+        #[cfg(target_os = "macos")]
+        if matches!(
+            format,
+            BuildFormat::Clap | BuildFormat::Vst3 | BuildFormat::Vst2
+        ) {
+            link_macos_bundle_for_plugin(root, p, format, target)?;
+        }
+
         // AAX additionally assembles the `.aaxplugin` bundle in
         // `target/bundles/` here - both install (which then copies the
         // bundle to /Library/...) and build (which leaves it in
@@ -344,5 +358,62 @@ fn write_shell_sidecar(root: &std::path::Path, crate_name: &str, logic_profile: 
         sidecar.display(),
         canonical.display(),
     );
+    Ok(())
+}
+
+/// Link a per-arch Rust staticlib into a macOS loadable bundle binary
+/// and place it at the canonical `target/<profile>/<stem>_<fmt>.bundle-bin`
+/// path. Idempotent over the input archs: each call replaces the
+/// previous bundle binary at that path.
+///
+/// `target` selects which `target/<triple>/release/` to read the
+/// `.a` from; `None` uses the host's `target/release/` (single-arch
+/// install / `cargo truce build` host-only path).
+#[cfg(target_os = "macos")]
+fn link_macos_bundle_for_plugin(
+    root: &Path,
+    p: &PluginDef,
+    format: BuildFormat,
+    target: Option<&str>,
+) -> Res {
+    let staticlib = crate::release_static_for_target(root, &p.dylib_stem(), target);
+    if !staticlib.exists() {
+        return Err(format!(
+            "macOS bundle link needs a staticlib at {} but cargo didn't emit one. \
+             Check that the plugin crate's `[lib]` block lists `\"staticlib\"` in \
+             its `crate-type`.",
+            staticlib.display()
+        )
+        .into());
+    }
+
+    // For host-only builds the cargo profile dir is `target/release/`;
+    // we infer the arch from cfg!(target_arch) for that case. For
+    // explicit `--target` builds we read the triple's arch prefix.
+    let arch = match target {
+        Some(t) if t.starts_with("aarch64") => crate::MacArch::Arm64,
+        Some(t) if t.starts_with("x86_64") => crate::MacArch::X86_64,
+        Some(other) => {
+            return Err(
+                format!("unrecognized cargo target triple {other} for macOS bundle link").into(),
+            );
+        }
+        None => crate::MacArch::host(),
+    };
+
+    let exports = match format {
+        BuildFormat::Clap => crate::CLAP_EXPORTS,
+        BuildFormat::Vst3 => crate::VST3_EXPORTS,
+        BuildFormat::Vst2 => crate::VST2_EXPORTS,
+        _ => unreachable!("caller gates on bundle formats"),
+    };
+
+    let out = crate::release_bundle_bin(root, &p.dylib_stem(), format.dylib_suffix());
+    crate::link_macos_bundle(
+        &[(arch, staticlib)],
+        exports,
+        &crate::deployment_target(),
+        &out,
+    )?;
     Ok(())
 }

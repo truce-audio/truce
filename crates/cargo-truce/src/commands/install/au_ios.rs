@@ -510,19 +510,11 @@ pub(crate) fn build_bundle(
     let team_for_app = team_id.as_deref();
     fs_ctx::write(
         &app_ent,
-        render_entitlements_plist(
-            p.resolved_ios_app_group(),
-            &app_bundle_id,
-            team_for_app,
-        ),
+        render_entitlements_plist(p.resolved_ios_app_group(), &app_bundle_id, team_for_app),
     )?;
     fs_ctx::write(
         &appex_ent,
-        render_entitlements_plist(
-            p.resolved_ios_app_group(),
-            &appex_bundle_id,
-            team_for_app,
-        ),
+        render_entitlements_plist(p.resolved_ios_app_group(), &appex_bundle_id, team_for_app),
     )?;
 
     let identity = signing_identity_for(target);

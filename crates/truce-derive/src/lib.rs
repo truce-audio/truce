@@ -252,9 +252,9 @@ impl ParamField {
     /// invariant rather than just panicking with `unwrap`'s opaque
     /// `called Option::unwrap on a None`.
     pub(crate) fn id(&self) -> u32 {
-        self.attrs.id.expect(
-            "ParamField::id called before the auto-assignment block ran",
-        )
+        self.attrs
+            .id
+            .expect("ParamField::id called before the auto-assignment block ran")
     }
 }
 
@@ -279,9 +279,8 @@ impl MeterField {
     /// has guaranteed is populated. Same invariant as
     /// [`ParamField::id`].
     fn id(&self) -> u32 {
-        self.id.expect(
-            "MeterField::id called before the auto-assignment block ran",
-        )
+        self.id
+            .expect("MeterField::id called before the auto-assignment block ran")
     }
 }
 

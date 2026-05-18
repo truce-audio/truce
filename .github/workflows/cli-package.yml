@@ -1,0 +1,152 @@
+name: cargo truce package
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Exercises `cargo truce package` end-to-end on each OS:
+#   macOS   -> productbuild .pkg (codesigned ad-hoc, NOT notarized)
+#   Linux   -> tarball + install.sh
+#   Windows -> Inno Setup .exe (unsigned: no signtool creds in CI)
+#
+# AAX and AU v3 are skipped via `--formats clap,vst3,vst2{,au2,lv2}`:
+# AAX needs the Avid SDK + PACE eden, AU v3 needs a real Developer ID
+# for the appex extension sandbox to load.
+jobs:
+  macos:
+    name: package (macos-14)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: cli-package-macos-14
+          cache-bin: false
+
+      - name: Build cargo-truce
+        run: cargo build -p cargo-truce
+
+      # --no-notarize: notarization needs a paid Apple Developer
+      # account + an app-specific password / notary keychain profile,
+      # neither of which is wired up in CI. The pkg still gets a
+      # codesign pass against the ad-hoc identity (`-`).
+      - name: cargo truce package --formats clap,vst3,vst2,au2 --no-notarize
+        run: ./target/debug/cargo-truce package --formats clap,vst3,vst2,au2 --no-notarize -p truce-example-gain
+
+      - name: Verify .pkg produced
+        run: |
+          set -e
+          ls -la target/dist/
+          test -f target/dist/truce-example-gain-*-macos.pkg
+
+      - name: Upload .pkg artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: truce-example-gain-macos.pkg
+          path: target/dist/*.pkg
+          if-no-files-found: error
+          retention-days: 14
+
+  linux:
+    name: package (ubuntu-24.04)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: cli-package-ubuntu-24.04
+          cache-bin: false
+
+      - name: Linux system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config \
+            libx11-dev libx11-xcb-dev libxcb1-dev libxcb-dri2-0-dev libxcb-icccm4-dev libxcursor-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev libxrandr-dev \
+            libgl1-mesa-dev libvulkan-dev \
+            libasound2-dev libjack-jackd2-dev \
+            libfontconfig1-dev libfreetype-dev
+
+      - name: Build cargo-truce
+        run: cargo build -p cargo-truce
+
+      - name: cargo truce package --formats clap,vst3,vst2,lv2
+        run: ./target/debug/cargo-truce package --formats clap,vst3,vst2,lv2 -p truce-example-gain
+
+      - name: Verify tarball produced
+        run: |
+          set -e
+          ls -la target/dist/
+          test -f target/dist/truce-example-gain-*-linux-*.tar.gz
+
+      - name: Upload tarball artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: truce-example-gain-linux.tar.gz
+          path: target/dist/*.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+
+  windows:
+    name: package (windows-latest)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: cli-package-windows-latest
+          cache-bin: false
+
+      # Inno Setup 6 ships ISCC.exe at `C:\Program Files (x86)\Inno
+      # Setup 6\` - exactly where `cargo-truce`'s `locate_iscc` looks
+      # first. The choco package is the standard pre-installed source
+      # on GHA windows-latest runners.
+      - name: Install Inno Setup 6
+        run: choco install innosetup --no-progress --yes
+
+      - name: Build cargo-truce
+        run: cargo build -p cargo-truce
+
+      # No Authenticode signing: TRUCE_CERT_SHA1 / TRUCE_PFX_PATH /
+      # TRUCE_AZURE_ACCOUNT are unset, so `sign_files` short-circuits.
+      # The installer comes out unsigned but valid.
+      - name: cargo truce package --formats clap,vst3,vst2
+        shell: bash
+        run: ./target/debug/cargo-truce.exe package --formats clap,vst3,vst2 -p truce-example-gain
+
+      - name: Verify installer produced
+        shell: bash
+        run: |
+          set -e
+          ls -la target/dist/
+          ls target/dist/truce-example-gain-*-windows.exe
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: truce-example-gain-windows.exe
+          path: target/dist/*.exe
+          if-no-files-found: error
+          retention-days: 14

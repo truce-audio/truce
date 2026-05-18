@@ -70,6 +70,8 @@ pub(crate) use util::read_workspace_version;
 // powers macOS universal lipo, Windows x64+arm64, and Linux dual-arch
 // `--target` builds. Always available.
 pub(crate) use util::release_lib_for_target;
+#[cfg(target_os = "macos")]
+pub(crate) use util::{release_bundle_bin, release_static_for_target};
 
 // `tag_info` formats the doctor/packager status prefix; the `doctor`
 // command runs on every platform, so this stays unconditional.
@@ -89,8 +91,9 @@ pub(crate) use util::{rustup_has_target, tmp_aax_template};
 pub(crate) use config::MacosPackagingConfig;
 #[cfg(target_os = "macos")]
 pub(crate) use util::{
-    MacArch, cargo_build_for_arch, cargo_build_multi_arch, copy_dir_recursive, extract_team_id,
-    is_production_identity, lipo_into, locate_wraptool_macos, pace_sign_aax_macos, run_codesign,
+    CLAP_EXPORTS, MacArch, VST2_EXPORTS, VST3_EXPORTS, cargo_build_for_arch,
+    cargo_build_multi_arch, copy_dir_recursive, extract_team_id, is_production_identity,
+    link_macos_bundle, lipo_into, locate_wraptool_macos, pace_sign_aax_macos, run_codesign,
     run_quiet, run_silent, tmp_au_v3,
 };
 

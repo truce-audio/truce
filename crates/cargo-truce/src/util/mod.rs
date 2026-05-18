@@ -14,6 +14,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 mod build;
+#[cfg(target_os = "macos")]
+mod bundle_link;
 mod codesign;
 mod locate;
 
@@ -24,6 +26,8 @@ pub(crate) use build::rustup_has_target;
 #[cfg(target_os = "macos")]
 pub(crate) use build::{MacArch, cargo_build_for_arch, cargo_build_multi_arch, lipo_into};
 pub(crate) use build::{cargo_build, cargo_build_debug, sccache_wrapper};
+#[cfg(target_os = "macos")]
+pub(crate) use bundle_link::{CLAP_EXPORTS, VST2_EXPORTS, VST3_EXPORTS, link_macos_bundle};
 pub(crate) use codesign::codesign_bundle;
 #[cfg(target_os = "macos")]
 pub(crate) use codesign::{
@@ -243,6 +247,31 @@ pub(crate) fn release_lib_for_target(root: &Path, stem: &str, target: Option<&st
             .join(shared_lib_name(stem)),
         None => release_lib(root, stem),
     }
+}
+
+/// Per-target path to the Rust staticlib for a given stem. Rust always
+/// emits `lib<stem>.a` regardless of platform. Used by the macOS
+/// bundle-format link path (VST3 / CLAP / VST2) which feeds the static
+/// archive to `clang -bundle` rather than the cdylib.
+#[cfg(target_os = "macos")]
+pub(crate) fn release_static_for_target(root: &Path, stem: &str, target: Option<&str>) -> PathBuf {
+    let dir = match target {
+        Some(t) => truce_build::target_dir(root).join(t).join(profile_subdir()),
+        None => truce_build::target_dir(root).join(profile_subdir()),
+    };
+    dir.join(format!("lib{stem}.a"))
+}
+
+/// Canonical path to the linked bundle binary for a given plugin +
+/// format. Both the install and package pipelines write to this path
+/// after `clang -bundle` finishes; stage/install steps read from it.
+/// No `lib` prefix because the file is a loadable executable, not a
+/// library.
+#[cfg(target_os = "macos")]
+pub(crate) fn release_bundle_bin(root: &Path, stem: &str, format_suffix: &str) -> PathBuf {
+    truce_build::target_dir(root)
+        .join(profile_subdir())
+        .join(format!("{stem}{format_suffix}.bundle-bin"))
 }
 
 /// Return the Windows `%COMMONPROGRAMFILES%` directory (typically `C:\Program Files\Common Files`).

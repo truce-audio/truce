@@ -9,7 +9,7 @@ rust-version.workspace = true
 description = "Example gain plugin with Slint GUI"
 
 [lib]
-crate-type = ["cdylib", "rlib"]
+crate-type = ["cdylib", "staticlib", "rlib"]
 
 [[bin]]
 name = "truce-example-gain-slint-standalone"

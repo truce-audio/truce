@@ -1,0 +1,256 @@
+name: cargo truce install + validate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Each OS job exercises `cargo truce install` end-to-end and then
+# runs `cargo truce validate` against the freshly installed bundles -
+# validate needs the plugin in the host's scan path, so the order is
+# fixed (install first, validate second). The three OS jobs run in
+# parallel; AAX and AU v3 are skipped (no SDK / no Developer ID in CI).
+jobs:
+  macos:
+    name: install + validate (macos-14)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: cli-install-macos-14
+          cache-bin: false
+
+      - name: Build cargo-truce
+        run: cargo build -p cargo-truce
+
+      - name: Cache pluginval
+        id: cache-pluginval
+        uses: actions/cache@v4
+        with:
+          path: /Applications/pluginval.app
+          key: pluginval-macos-1.0.4
+
+      - name: Download pluginval
+        if: steps.cache-pluginval.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL -o /tmp/pluginval.zip \
+            https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_macOS.zip
+          unzip -oq /tmp/pluginval.zip -d /Applications/
+
+      - name: Cache clap-validator
+        id: cache-clap-validator
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/clap-validator
+          key: clap-validator-macos-2026-05-09
+
+      - name: Install clap-validator
+        if: steps.cache-clap-validator.outputs.cache-hit != 'true'
+        run: cargo install --locked --git https://github.com/free-audio/clap-validator clap-validator
+
+      - name: Pre-flight - validators present
+        run: |
+          command -v clap-validator
+          command -v auval
+          test -x /Applications/pluginval.app/Contents/MacOS/pluginval
+
+      # AU v2 must land in the system Components dir (auval only scans
+      # there). CI macOS runners have passwordless sudo, so --system is
+      # fine. CLAP / VST3 / VST2 / LV2 piggyback on the same install
+      # call so we exercise every macOS bundle format in one shot.
+      - name: cargo truce install --system --clap --vst3 --vst2 --au2 --lv2
+        run: sudo ./target/debug/cargo-truce install --system --clap --vst3 --vst2 --au2 --lv2 -p truce-example-gain
+
+      - name: Verify installed bundle filetypes
+        run: |
+          set -e
+          # CLAP / VST3 / VST2 bundle binaries must be MH_BUNDLE.
+          # AU v2's .component stays MH_DYLIB (loader is happy with it).
+          for fmt in "CLAP/Truce Gain.clap" "VST3/Truce Gain.vst3" "VST/Truce Gain.vst" "Components/Truce Gain.component"; do
+            otool -hv "/Library/Audio/Plug-Ins/$fmt/Contents/MacOS/Truce Gain" | tee /tmp/hdr.txt
+            if [ "$fmt" = "Components/Truce Gain.component" ]; then
+              grep -q "DYLIB" /tmp/hdr.txt || { echo "::error::$fmt expected MH_DYLIB"; exit 1; }
+            else
+              grep -q "BUNDLE" /tmp/hdr.txt || { echo "::error::$fmt expected MH_BUNDLE"; exit 1; }
+            fi
+          done
+
+      - name: cargo truce validate --clap --pluginval --auval
+        run: |
+          set -e -o pipefail
+          ./target/debug/cargo-truce validate --clap --pluginval --auval -p truce-example-gain 2>&1 | tee validate.log
+          if grep -E "SKIP|not found" validate.log >/dev/null; then
+            echo "::error::validate skipped a step - failing"
+            exit 1
+          fi
+
+  linux:
+    name: install + validate (ubuntu-24.04)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: cli-install-ubuntu-24.04
+          cache-bin: false
+
+      - name: Linux system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config \
+            libx11-dev libx11-xcb-dev libxcb1-dev libxcb-dri2-0-dev libxcb-icccm4-dev libxcursor-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev libxrandr-dev \
+            libgl1-mesa-dev libvulkan-dev mesa-vulkan-drivers \
+            libasound2-dev libjack-jackd2-dev \
+            libfontconfig1-dev libfreetype-dev \
+            xvfb
+
+      - name: Build cargo-truce
+        run: cargo build -p cargo-truce
+
+      - name: Cache pluginval
+        id: cache-pluginval
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/bin/pluginval
+          key: pluginval-linux-1.0.4
+
+      - name: Download pluginval
+        if: steps.cache-pluginval.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/.local/bin
+          curl -fsSL -o /tmp/pluginval.zip \
+            https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_Linux.zip
+          unzip -oq /tmp/pluginval.zip -d /tmp/pluginval-bin
+          install -m 755 /tmp/pluginval-bin/pluginval ~/.local/bin/pluginval
+
+      - name: Cache clap-validator
+        id: cache-clap-validator
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/clap-validator
+          key: clap-validator-linux-2026-05-09
+
+      - name: Install clap-validator
+        if: steps.cache-clap-validator.outputs.cache-hit != 'true'
+        run: cargo install --locked --git https://github.com/free-audio/clap-validator clap-validator
+
+      - name: Validators on PATH
+        run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Pre-flight - validators present
+        run: |
+          command -v clap-validator
+          command -v pluginval
+
+      - name: cargo truce install --clap --vst3 --lv2
+        run: ./target/debug/cargo-truce install --user --clap --vst3 --lv2 -p truce-example-gain
+
+      - name: Verify installed bundles
+        run: |
+          set -e
+          ls -la "$HOME/.clap/"
+          ls -la "$HOME/.vst3/"
+          ls -la "$HOME/.lv2/"
+
+      - name: cargo truce validate --clap --pluginval
+        run: |
+          set -e -o pipefail
+          xvfb-run -a ./target/debug/cargo-truce validate --clap --pluginval -p truce-example-gain 2>&1 | tee validate.log
+          if grep -E "SKIP|not found" validate.log >/dev/null; then
+            echo "::error::validate skipped a step - failing"
+            exit 1
+          fi
+
+  windows:
+    name: install + validate (windows-latest)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: cli-install-windows-latest
+          cache-bin: false
+
+      - name: Build cargo-truce
+        run: cargo build -p cargo-truce
+
+      - name: Cache pluginval
+        id: cache-pluginval
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.bin/pluginval
+          key: pluginval-windows-1.0.4
+
+      - name: Download pluginval
+        if: steps.cache-pluginval.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          mkdir -p .bin/pluginval
+          curl -fsSL -o pluginval.zip \
+            https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_Windows.zip
+          unzip -oq pluginval.zip -d .bin/pluginval
+
+      - name: Cache clap-validator
+        id: cache-clap-validator
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/clap-validator.exe
+          key: clap-validator-windows-2026-05-09
+
+      - name: Install clap-validator
+        if: steps.cache-clap-validator.outputs.cache-hit != 'true'
+        run: cargo install --locked --git https://github.com/free-audio/clap-validator clap-validator
+
+      - name: Validators on PATH
+        shell: bash
+        run: echo "$GITHUB_WORKSPACE/.bin/pluginval" >> "$GITHUB_PATH"
+
+      - name: Pre-flight - validators present
+        shell: bash
+        run: |
+          command -v clap-validator
+          command -v pluginval
+
+      - name: cargo truce install --clap --vst3
+        shell: bash
+        run: ./target/debug/cargo-truce.exe install --user --clap --vst3 -p truce-example-gain
+
+      - name: Verify installed bundles
+        shell: bash
+        run: |
+          set -e
+          ls -la "$LOCALAPPDATA/Programs/Common/CLAP/"
+          ls -la "$LOCALAPPDATA/Programs/Common/VST3/"
+
+      - name: cargo truce validate --clap --pluginval
+        shell: bash
+        run: |
+          set -e -o pipefail
+          ./target/debug/cargo-truce.exe validate --clap --pluginval -p truce-example-gain 2>&1 | tee validate.log
+          if grep -E "SKIP|not found" validate.log >/dev/null; then
+            echo "::error::validate skipped a step - failing"
+            exit 1
+          fi

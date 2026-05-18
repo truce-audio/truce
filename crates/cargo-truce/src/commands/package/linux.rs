@@ -19,7 +19,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use super::SuiteSelection;
+use super::{PkgFormat, SuiteSelection};
 use crate::config::{Config, PluginDef, ResolvedSuite};
 use crate::{BoxErr, Res, load_config, project_root, read_workspace_version};
 use truce_build::BundleManifest;
@@ -29,6 +29,8 @@ const INSTALL_SH_TEMPLATE: &str = include_str!("install.sh.tmpl");
 pub(crate) fn cmd_package_linux(args: &[String], selection: &SuiteSelection) -> Res {
     let mut no_build = false;
     let mut targets: Vec<String> = Vec::new();
+    let mut formats: Option<Vec<PkgFormat>> = None;
+    let mut plugin_filter: Option<String> = None;
     let mut i = 0;
     let mut leftover: Vec<&str> = Vec::new();
     while i < args.len() {
@@ -40,6 +42,16 @@ pub(crate) fn cmd_package_linux(args: &[String], selection: &SuiteSelection) -> 
                 let v = args.get(i).ok_or("--target requires a value")?;
                 targets.push(v.clone());
             }
+            "--formats" => {
+                i += 1;
+                let v = args.get(i).ok_or("--formats requires a value")?;
+                formats = Some(PkgFormat::parse_list(v)?);
+            }
+            "-p" => {
+                i += 1;
+                let v = args.get(i).ok_or("-p requires a plugin crate name")?;
+                plugin_filter = Some(v.clone());
+            }
             other => leftover.push(other),
         }
         i += 1;
@@ -47,11 +59,24 @@ pub(crate) fn cmd_package_linux(args: &[String], selection: &SuiteSelection) -> 
     if let Some(unknown) = leftover.first() {
         return Err(format!(
             "unknown flag: {unknown}\n\
-             Linux `cargo truce package` accepts the suite-selection flags \
-             (--suite, --no-suite, --no-per-plugin), --target <triple> \
-             (repeatable), and --no-build."
+             Linux `cargo truce package` accepts -p <crate>, the \
+             suite-selection flags (--suite, --no-suite, --no-per-plugin), \
+             --target <triple> (repeatable), --formats <list>, and --no-build."
         )
         .into());
+    }
+
+    // `--formats` drives the build step (Linux doesn't have a
+    // post-build filter the way macOS / Windows pkgbuild + iscc do -
+    // the tarball stages whatever's in the manifest). Combining
+    // `--formats` with `--no-build` is therefore a no-op at best and
+    // misleading at worst: the manifest already reflects whatever the
+    // prior build produced.
+    if no_build && formats.is_some() {
+        return Err("--formats cannot be combined with --no-build on Linux: \
+                    `--formats` drives the implicit `cargo truce build`, so \
+                    with `--no-build` the existing manifest is consumed as-is."
+            .into());
     }
 
     let config = load_config()?;
@@ -76,6 +101,17 @@ pub(crate) fn cmd_package_linux(args: &[String], selection: &SuiteSelection) -> 
         for t in &targets {
             build_args.push("--target".into());
             build_args.push(t.clone());
+        }
+        if let Some(ref fmts) = formats {
+            for f in fmts {
+                if let Some(flag) = build_flag_for_format(f) {
+                    build_args.push(flag.into());
+                }
+            }
+        }
+        if let Some(ref p) = plugin_filter {
+            build_args.push("-p".into());
+            build_args.push(p.clone());
         }
         super::super::build::cmd_build(&build_args)?;
         eprintln!();
@@ -109,12 +145,23 @@ pub(crate) fn cmd_package_linux(args: &[String], selection: &SuiteSelection) -> 
         out
     };
 
-    let suites: Vec<ResolvedSuite<'_>> = config
-        .suites
-        .iter()
-        .filter(|s| selection.want_suite(&s.name))
-        .map(|s| s.resolve(&config.plugin))
-        .collect::<Result<_, _>>()?;
+    // `-p <crate>` narrows packaging to a single plugin. Same rule as
+    // the macOS / Windows packagers: a single-plugin run can't satisfy
+    // a multi-member suite, so suite tarballs are skipped in that mode.
+    let selected_plugins = crate::commands::pick_plugins(&config, plugin_filter.as_deref())?;
+    let suites: Vec<ResolvedSuite<'_>> = if plugin_filter.is_some() {
+        if !config.suites.is_empty() {
+            eprintln!("(-p set; skipping suite tarballs - they need every member plugin staged)");
+        }
+        Vec::new()
+    } else {
+        config
+            .suites
+            .iter()
+            .filter(|s| selection.want_suite(&s.name))
+            .map(|s| s.resolve(&config.plugin))
+            .collect::<Result<_, _>>()?
+    };
 
     for (triple, bundles_dir, manifest) in &plans {
         let arch = arch_from_triple(triple);
@@ -134,7 +181,7 @@ pub(crate) fn cmd_package_linux(args: &[String], selection: &SuiteSelection) -> 
 
         if selection.want_per_plugin() {
             eprintln!("Per-plugin tarballs");
-            for plugin in &config.plugin {
+            for plugin in &selected_plugins {
                 build_per_plugin_tarball(&ctx, plugin)?;
             }
         } else {
@@ -393,6 +440,25 @@ fn stage_plugin_payload(
         bundles,
         standalone,
     })
+}
+
+/// Map a `PkgFormat` to its `cargo truce build` flag, or `None` for
+/// formats that aren't a build target (the standalone host binary
+/// is staged by `cargo truce run`, not `build`). `Au2`/`Au3`/`Aax`
+/// map to their build flags even though those formats are no-ops on
+/// Linux; `cargo truce build` already emits a single skip line and
+/// returns cleanly, so passing them is harmless.
+fn build_flag_for_format(f: &PkgFormat) -> Option<&'static str> {
+    match f {
+        PkgFormat::Clap => Some("--clap"),
+        PkgFormat::Vst3 => Some("--vst3"),
+        PkgFormat::Vst2 => Some("--vst2"),
+        PkgFormat::Lv2 => Some("--lv2"),
+        PkgFormat::Au2 => Some("--au2"),
+        PkgFormat::Au3 => Some("--au3"),
+        PkgFormat::Aax => Some("--aax"),
+        PkgFormat::Standalone => None,
+    }
 }
 
 /// Map a manifest format slug (`"vst2"`, `"clap"`, …) to the install
