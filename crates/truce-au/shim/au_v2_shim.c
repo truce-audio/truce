@@ -30,6 +30,15 @@ typedef struct {
     UInt32 maxFramesPerSlice;
     Boolean initialized;
 
+    // kAudioUnitProperty_PresentPreset (= 36) state. The host writes
+    // an AUPreset (presetNumber + retained CFStringRef name) here and
+    // reads it back; we also round-trip the name through
+    // kAudioUnitProperty_ClassInfo's `kAUPresetNameKey` (= "name") so
+    // auval's "Preset name is not retained in retrieved class data"
+    // check passes. Negative presetNumber means "user preset, not from
+    // the factory list" per Apple convention.
+    AUPreset currentPreset;
+
     // Internal output buffers
     float *outputBuffers[32];
     UInt32 outputBufferSize; // in frames
@@ -262,6 +271,13 @@ static OSStatus au_v2_open(void *self_, AudioComponentInstance instance) {
     if (g_descriptor->num_inputs > 0)
         build_asbd(&inst->inputFormat, inst->sampleRate, g_descriptor->num_inputs);
 
+    // Default preset. presetNumber = -1 is Apple's "no factory preset
+    // selected, this is a user / default state" sentinel. The name is
+    // CFRetained here and released in au_v2_close.
+    inst->currentPreset.presetNumber = -1;
+    inst->currentPreset.presetName = CFSTR("Untitled");
+    CFRetain(inst->currentPreset.presetName);
+
     return noErr;
 }
 
@@ -280,6 +296,10 @@ static OSStatus au_v2_close(void *self_) {
     inst->sysexPacketBuf = NULL;
     free(inst->sysexFrameScratch);
     inst->sysexFrameScratch = NULL;
+    if (inst->currentPreset.presetName) {
+        CFRelease(inst->currentPreset.presetName);
+        inst->currentPreset.presetName = NULL;
+    }
     free(inst);
     return noErr;
 }
@@ -369,6 +389,9 @@ static OSStatus au_v2_get_property_info(void *self_, AudioUnitPropertyID prop,
             size = sizeof(AUMIDIOutputCallbackStruct); writable = true; break;
         case kAudioUnitProperty_ClassInfo:
             size = sizeof(CFPropertyListRef); writable = true; break;
+        case kAudioUnitProperty_PresentPreset:
+            if (scope != kAudioUnitScope_Global) return kAudioUnitErr_InvalidScope;
+            size = sizeof(AUPreset); writable = true; break;
         case kAudioUnitProperty_Latency:
             if (scope != kAudioUnitScope_Global) return kAudioUnitErr_InvalidScope;
             size = sizeof(Float64); break;
@@ -647,8 +670,27 @@ static OSStatus au_v2_get_property(void *self_, AudioUnitPropertyID prop,
             return noErr;
         }
 
+        case kAudioUnitProperty_PresentPreset: {
+            if (scope != kAudioUnitScope_Global) return kAudioUnitErr_InvalidScope;
+            if (*ioSize < sizeof(AUPreset)) return kAudioUnitErr_InvalidPropertyValue;
+            // Hand the caller a struct copy. The host receives ownership
+            // of the name reference and is expected to CFRelease it,
+            // so we balance with an extra CFRetain here.
+            *(AUPreset *)outData = inst->currentPreset;
+            if (inst->currentPreset.presetName) {
+                CFRetain(inst->currentPreset.presetName);
+            }
+            *ioSize = sizeof(AUPreset);
+            return noErr;
+        }
+
         case kAudioUnitProperty_ClassInfo: {
-            // State save — build a CFDictionary
+            // State save: build a CFDictionary using Apple's standard
+            // preset keys. The "name" slot carries the current preset
+            // name (set by the host via kAudioUnitProperty_PresentPreset
+            // or by a prior ClassInfo round-trip), not the component
+            // name. auval's "preset name is not retained" check reads
+            // this slot.
             if (!g_callbacks || !inst->rustCtx) return kAudioUnitErr_Uninitialized;
 
             CFMutableDictionaryRef dict = CFDictionaryCreateMutable(NULL, 0,
@@ -664,7 +706,9 @@ static OSStatus au_v2_get_property(void *self_, AudioUnitPropertyID prop,
             CFNumberRef nSub = CFNumberCreate(NULL, kCFNumberSInt32Type, &compSubType);
             CFNumberRef nMfr = CFNumberCreate(NULL, kCFNumberSInt32Type, &compMfr);
             CFNumberRef nVer = CFNumberCreate(NULL, kCFNumberSInt32Type, &compVer);
-            CFStringRef sName = CFStringCreateWithCString(NULL, g_descriptor->name, kCFStringEncodingUTF8);
+            CFStringRef sName = inst->currentPreset.presetName
+                ? (CFStringRef)CFRetain(inst->currentPreset.presetName)
+                : CFSTR("Untitled");
 
             CFDictionarySetValue(dict, CFSTR("type"), nType);
             CFDictionarySetValue(dict, CFSTR("subtype"), nSub);
@@ -672,7 +716,8 @@ static OSStatus au_v2_get_property(void *self_, AudioUnitPropertyID prop,
             CFDictionarySetValue(dict, CFSTR("version"), nVer);
             CFDictionarySetValue(dict, CFSTR("name"), sName);
 
-            CFRelease(nType); CFRelease(nSub); CFRelease(nMfr); CFRelease(nVer); CFRelease(sName);
+            CFRelease(nType); CFRelease(nSub); CFRelease(nMfr); CFRelease(nVer);
+            if (inst->currentPreset.presetName) CFRelease(sName);
 
             // Plugin state blob
             uint8_t *data = NULL; uint32_t len = 0;
@@ -809,6 +854,26 @@ static OSStatus au_v2_set_property(void *self_, AudioUnitPropertyID prop,
             }
             return noErr;
         }
+        case kAudioUnitProperty_PresentPreset: {
+            if (scope != kAudioUnitScope_Global) return kAudioUnitErr_InvalidScope;
+            if (!inData || inSize < sizeof(AUPreset))
+                return kAudioUnitErr_InvalidPropertyValue;
+            const AUPreset *src = (const AUPreset *)inData;
+            // Release the old name and retain the incoming one. The
+            // host owns its copy independently of ours.
+            if (inst->currentPreset.presetName) {
+                CFRelease(inst->currentPreset.presetName);
+                inst->currentPreset.presetName = NULL;
+            }
+            inst->currentPreset.presetNumber = src->presetNumber;
+            if (src->presetName) {
+                inst->currentPreset.presetName = (CFStringRef)CFRetain(src->presetName);
+            }
+            notify_listeners(inst, kAudioUnitProperty_PresentPreset,
+                             kAudioUnitScope_Global, 0);
+            return noErr;
+        }
+
         case kAudioUnitProperty_ClassInfo: {
             // State load
             if (!g_callbacks || !inst->rustCtx) return kAudioUnitErr_Uninitialized;
@@ -823,6 +888,24 @@ static OSStatus au_v2_set_property(void *self_, AudioUnitPropertyID prop,
                 return kAudioUnitErr_InvalidPropertyValue;
 
             CFDictionaryRef dict = (CFDictionaryRef)plist;
+
+            // Round-trip the preset name through the standard "name"
+            // slot so auval's "preset name is not retained" check
+            // passes. We accept whatever the host wrote into ClassInfo
+            // even if it never called PresentPreset.
+            CFStringRef savedName = CFDictionaryGetValue(dict, CFSTR("name"));
+            if (savedName && CFGetTypeID(savedName) == CFStringGetTypeID()) {
+                if (inst->currentPreset.presetName) {
+                    CFRelease(inst->currentPreset.presetName);
+                }
+                inst->currentPreset.presetName = (CFStringRef)CFRetain(savedName);
+                // A user-loaded blob isn't tied to a factory preset
+                // index, so reset the number to -1 per Apple convention.
+                inst->currentPreset.presetNumber = -1;
+                notify_listeners(inst, kAudioUnitProperty_PresentPreset,
+                                 kAudioUnitScope_Global, 0);
+            }
+
             CFDataRef cfData = CFDictionaryGetValue(dict, CFSTR("truce_state"));
             if (cfData && CFGetTypeID(cfData) == CFDataGetTypeID()) {
                 const uint8_t *bytes = CFDataGetBytePtr(cfData);
