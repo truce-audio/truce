@@ -11,9 +11,10 @@ use super::stage::{
 use crate::commands::build_dylibs::BuildFormat;
 use crate::install_scope::PkgScope;
 use crate::{
-    Config, MacArch, PluginDef, Res, cargo_build_multi_arch, copy_dir_recursive, deployment_target,
-    detect_default_features, lipo_into, load_config, project_root, read_workspace_version,
-    release_lib_for_target,
+    CLAP_EXPORTS, Config, MacArch, PluginDef, Res, VST2_EXPORTS, VST3_EXPORTS,
+    cargo_build_multi_arch, copy_dir_recursive, deployment_target, detect_default_features,
+    link_macos_bundle, lipo_into, load_config, project_root, read_workspace_version,
+    release_bundle_bin, release_lib_for_target, release_static_for_target,
 };
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -1131,6 +1132,43 @@ fn build_and_lipo_format(
         let output = truce_build::target_dir(root)
             .join(format!("release/lib{}{suffix}.dylib", p.dylib_stem()));
         lipo_into(&inputs, &output)?;
+    }
+
+    // VST3 / CLAP / VST2 also need an MH_BUNDLE binary (not the
+    // MH_DYLIB that `rustc --crate-type cdylib` emits) so JUCE-hosted
+    // VST3 + CFBundle loaders accept them. Link the per-arch Rust
+    // `staticlib` (`lib<stem>.a`) through `clang -bundle` per arch,
+    // then `lipo` the slices into a universal bundle-bin that the
+    // stage / install pipelines copy into `Contents/MacOS/`. AU2 +
+    // AAX keep the cdylib - their loaders are happy with MH_DYLIB.
+    if matches!(
+        format,
+        BuildFormat::Clap | BuildFormat::Vst3 | BuildFormat::Vst2
+    ) {
+        let exports: &[&str] = match format {
+            BuildFormat::Clap => CLAP_EXPORTS,
+            BuildFormat::Vst3 => VST3_EXPORTS,
+            BuildFormat::Vst2 => VST2_EXPORTS,
+            _ => unreachable!(),
+        };
+        for p in plugins {
+            let mut staticlibs: Vec<(MacArch, PathBuf)> = Vec::with_capacity(archs.len());
+            for &arch in archs {
+                let a = release_static_for_target(root, &p.dylib_stem(), Some(arch.triple()));
+                if !a.exists() {
+                    return Err(format!(
+                        "macOS bundle link needs a staticlib at {} but cargo didn't emit one. \
+                         Check that the plugin crate's `[lib]` block lists `\"staticlib\"` in \
+                         its `crate-type`.",
+                        a.display()
+                    )
+                    .into());
+                }
+                staticlibs.push((arch, a));
+            }
+            let out = release_bundle_bin(root, &p.dylib_stem(), suffix);
+            link_macos_bundle(&staticlibs, exports, dt, &out)?;
+        }
     }
     Ok(())
 }

@@ -114,7 +114,13 @@ pub(crate) fn stage_clap(
     identity: &str,
     target: Option<&str>,
 ) -> Res {
+    #[cfg(not(target_os = "macos"))]
     let dylib = crate::release_lib_for_target(root, &format!("{}_clap", p.dylib_stem()), target);
+    #[cfg(target_os = "macos")]
+    let dylib = {
+        let _ = target;
+        crate::release_bundle_bin(root, &p.dylib_stem(), "_clap")
+    };
     if !dylib.exists() {
         return Err(format!("Missing: {}", dylib.display()).into());
     }
@@ -171,7 +177,10 @@ pub(crate) fn stage_vst3(
     staging: &Path,
     target: Option<&str>,
 ) -> Res {
+    #[cfg(not(target_os = "macos"))]
     let dylib = crate::release_lib_for_target(root, &format!("{}_vst3", p.dylib_stem()), target);
+    #[cfg(target_os = "macos")]
+    let dylib = crate::release_bundle_bin(root, &p.dylib_stem(), "_vst3");
     if !dylib.exists() {
         return Err(format!("Missing: {}", dylib.display()).into());
     }
@@ -282,7 +291,13 @@ pub(crate) fn stage_vst2(
     target: Option<&str>,
 ) -> Result<std::path::PathBuf, crate::BoxErr> {
     let _ = config; // only used on macOS
+    #[cfg(not(target_os = "macos"))]
     let dylib = crate::release_lib_for_target(root, &format!("{}_vst2", p.dylib_stem()), target);
+    #[cfg(target_os = "macos")]
+    let dylib = {
+        let _ = target;
+        crate::release_bundle_bin(root, &p.dylib_stem(), "_vst2")
+    };
     if !dylib.exists() {
         return Err(format!("Missing: {}", dylib.display()).into());
     }

@@ -9,7 +9,7 @@ edition = "2024"
 {{- endif }}
 
 [lib]
-crate-type = ["cdylib", "rlib"]
+crate-type = ["cdylib", "staticlib", "rlib"]
 {{ if has_standalone }}
 [[bin]]
 name = "{crate_name}-standalone"

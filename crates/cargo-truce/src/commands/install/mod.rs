@@ -6,8 +6,13 @@ use crate::install_scope::{InstallScope, effective_scope, note_once, set_cli_ins
 use crate::util::fs_ctx;
 use crate::{
     Config, PluginDef, Res, deployment_target, detect_default_features, load_config, project_root,
-    release_lib, run_sudo, tmp_lv2,
+    run_sudo, tmp_lv2,
 };
+// CLAP / VST3 / VST2 read the cdylib from `release_lib` on non-macOS
+// targets only; on macOS those formats consume the bundle-bin produced
+// by the `clang -bundle` link step, so `release_lib` is unused there.
+#[cfg(not(target_os = "macos"))]
+use crate::release_lib;
 // Plist scratch (VST3 / VST2 / AU) only happens on macOS - gate the
 // import so Windows / Linux builds don't see it as unused.
 #[cfg(target_os = "macos")]
@@ -350,7 +355,10 @@ pub(crate) fn install_clap(
     config: &Config,
     scope: InstallScope,
 ) -> Res {
+    #[cfg(not(target_os = "macos"))]
     let dylib = release_lib(root, &format!("{}_clap", p.dylib_stem()));
+    #[cfg(target_os = "macos")]
+    let dylib = crate::release_bundle_bin(root, &p.dylib_stem(), "_clap");
     if !dylib.exists() {
         return Err(format!("Missing: {}", dylib.display()).into());
     }
@@ -435,7 +443,10 @@ pub(crate) fn install_clap(
 
 #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
 fn install_vst3(root: &Path, p: &PluginDef, config: &Config, scope: InstallScope) -> Res {
+    #[cfg(not(target_os = "macos"))]
     let dylib = release_lib(root, &format!("{}_vst3", p.dylib_stem()));
+    #[cfg(target_os = "macos")]
+    let dylib = crate::release_bundle_bin(root, &p.dylib_stem(), "_vst3");
     if !dylib.exists() {
         return Err(format!("Missing: {}", dylib.display()).into());
     }
@@ -516,7 +527,10 @@ fn install_vst3(root: &Path, p: &PluginDef, config: &Config, scope: InstallScope
 
 #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
 fn install_vst2(root: &Path, p: &PluginDef, config: &Config, scope: InstallScope) -> Res {
+    #[cfg(not(target_os = "macos"))]
     let dylib = release_lib(root, &format!("{}_vst2", p.dylib_stem()));
+    #[cfg(target_os = "macos")]
+    let dylib = crate::release_bundle_bin(root, &p.dylib_stem(), "_vst2");
     if !dylib.exists() {
         return Err(format!("Missing: {}", dylib.display()).into());
     }
