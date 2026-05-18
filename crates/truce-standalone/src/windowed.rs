@@ -1,7 +1,7 @@
 //! Windowed standalone host.
 //!
 //! Opens an outer parentless baseview window and hosts the plugin's
-//! own editor (obtained via `plugin.editor()`) as a child of it —
+//! own editor (obtained via `plugin.editor()`) as a child of it -
 //! same contract CLAP / VST3 / AU follow. The plugin library is
 //! unchanged; standalone is a "host" like any other.
 //!
@@ -65,7 +65,7 @@ where
     };
 
     // `--state <path>` was already applied inside `audio::start_audio`
-    // — it loads BEFORE `snap_smoothers` so the editor + first audio
+    // - it loads BEFORE `snap_smoothers` so the editor + first audio
     // block see the restored values, not defaults ramping toward them.
 
     let midi_thread = MidiInputThread::start(opts, Arc::clone(&audio_handles.pending));
@@ -75,7 +75,7 @@ where
         // while holding the lock) instead of cascading the panic
         // through the UI thread. The plugin instance itself may be
         // in a degraded state but the editor handle is just a
-        // factory — recovering is enough to keep the standalone
+        // factory - recovering is enough to keep the standalone
         // alive long enough for the user to save state and exit.
         let mut plugin = audio_handles
             .plugin
@@ -84,7 +84,7 @@ where
         plugin.editor()
     };
     let Some(mut editor) = editor else {
-        eprintln!("Plugin returned no editor — falling back to headless mode.");
+        eprintln!("Plugin returned no editor - falling back to headless mode.");
         drop(audio_handles);
         crate::headless::run::<P>(opts);
         return;
@@ -101,7 +101,7 @@ where
     let pending = Arc::clone(&audio_handles.pending);
     let transport = audio_handles.transport.clone();
 
-    // Both controllers are `Send + Sync` — the cpal streams they
+    // Both controllers are `Send + Sync` - the cpal streams they
     // wrap live on dedicated worker threads, not on `audio_handles`.
     let input_ctrl = audio_handles.input.clone();
     let output_ctrl = audio_handles.output.clone();
@@ -118,7 +118,7 @@ where
         let truce_parent = match window.raw_window_handle() {
             RwhHandle::AppKit(h) => RawWindowHandle::AppKit(h.ns_view),
             RwhHandle::Win32(h) => RawWindowHandle::Win32(h.hwnd),
-            // `h.window` is `c_ulong` — u64 on 64-bit Linux, u32 on
+            // `h.window` is `c_ulong` - u64 on 64-bit Linux, u32 on
             // Windows. The match arm has to type-check on every
             // platform even though X11 only actually fires on Linux,
             // so widen explicitly. Identity on Linux/macOS, real
@@ -135,7 +135,7 @@ where
         // the main thread before the event loop starts, so this is
         // the right hook.
         //
-        // The menu installs for every plugin category — the
+        // The menu installs for every plugin category - the
         // Audio Output toggle and Output Device picker are
         // universally useful. The install path itself omits the
         // Mic Input toggle and Input Device picker for non-effects
@@ -147,7 +147,7 @@ where
         // Windows: same idea, but the menu bar lives inside the
         // window's non-client area, so the install path also grows
         // the parent so the editor child keeps its requested size.
-        // Must run BEFORE `editor.open()` below — the resize has to
+        // Must run BEFORE `editor.open()` below - the resize has to
         // settle before the editor's child window sizes itself.
         #[cfg(target_os = "windows")]
         if let RwhHandle::Win32(h) = window.raw_window_handle() {
@@ -226,7 +226,7 @@ where
     #[allow(clippy::items_after_statements)]
     fn on_event(&mut self, _window: &mut Window, event: Event) -> EventStatus {
         // On Linux X11 + NVIDIA, letting baseview unwind the parent
-        // window normally crashes inside `XCloseDisplay` — the
+        // window normally crashes inside `XCloseDisplay` - the
         // driver's Xlib extension cleanup callback segfaults during
         // teardown of the wgpu-bearing child window thread, even
         // when the wgpu surface/device/instance themselves drop
@@ -235,7 +235,7 @@ where
         // is saved on Ctrl-S, not at exit), so when the user closes
         // the window we bypass Drop / atexit entirely via `_exit`.
         // The OS reclaims the audio FDs, X handles, and the wgpu
-        // child thread — no driver teardown ever runs.
+        // child thread - no driver teardown ever runs.
         //
         // The one piece of state we *do* finalize explicitly is the
         // `--output-file` capture sink: skipping its writer-thread
@@ -249,7 +249,7 @@ where
             // on macOS / Windows, but on the Linux `_exit` path we *do*
             // read it (to finalize the WAV header before bypassing
             // Drop). Allow the leading-underscore access at this site
-            // rather than renaming the field — the Drop-only semantics
+            // rather than renaming the field - the Drop-only semantics
             // on the other platforms are still the dominant case.
             #[cfg(feature = "playback")]
             #[allow(clippy::used_underscore_binding)]
@@ -303,7 +303,7 @@ where
         // input (effects only). First press on macOS triggers the
         // system permission dialog; subsequent toggles don't
         // re-prompt. On macOS the NSMenuItem accelerator usually
-        // dispatches this before baseview sees the event — the
+        // dispatches this before baseview sees the event - the
         // handler below is the only path on Windows / Linux (Win32
         // menu accelerators need an HACCEL table baseview doesn't
         // expose) and a guard on macOS. Capture both Down and Up
@@ -363,7 +363,7 @@ where
                     velocity: 0,
                 },
             };
-            // `force_push` drops the oldest event on overflow — see
+            // `force_push` drops the oldest event on overflow - see
             // audio.rs for the rationale (audio thread is the only
             // consumer; dropping ancient events beats mutex contention).
             let _ = self.pending.force_push(MidiEvent { body });
@@ -394,7 +394,7 @@ where
         };
         let blob = truce_core::state::snapshot_plugin(&*plugin);
         let param_count = plugin.params().param_infos().len();
-        // Drop the plugin lock before we open the dialog — the
+        // Drop the plugin lock before we open the dialog - the
         // audio thread acquires this mutex on every block, and a
         // few-second dialog wait is enough to glitch playback.
         drop(plugin);
@@ -454,7 +454,7 @@ fn pick_save_path<P: PluginExport>(plugin_slug: &str) -> Option<std::path::PathB
         .as_secs();
     let path = dir.join(format!("quicksave-{ts}.pluginstate"));
     eprintln!(
-        "native save dialog not yet wired on Linux — \
+        "native save dialog not yet wired on Linux - \
          saving to {}",
         path.display()
     );
@@ -483,7 +483,7 @@ where
     // Poison-tolerant: if the audio thread panicked, the editor
     // context still needs the params Arc to function. Recovering
     // the inner guard is safe because params_arc only clones an
-    // Arc<P::Params> — it doesn't read mutable state.
+    // Arc<P::Params> - it doesn't read mutable state.
     let params: Arc<P::Params> = plugin
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)

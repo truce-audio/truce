@@ -50,7 +50,7 @@ pub(crate) fn require_home_dir() -> Result<PathBuf, crate::BoxErr> {
 }
 
 /// Windows `LOCALAPPDATA` (`%LOCALAPPDATA%`, e.g.
-/// `C:\Users\alice\AppData\Local`) — used as the user-scope plug-in
+/// `C:\Users\alice\AppData\Local`) - used as the user-scope plug-in
 /// install root for CLAP and VST3 on Windows.
 #[cfg(target_os = "windows")]
 pub(crate) fn require_local_appdata() -> Result<PathBuf, crate::BoxErr> {
@@ -60,7 +60,7 @@ pub(crate) fn require_local_appdata() -> Result<PathBuf, crate::BoxErr> {
 }
 
 /// Windows `APPDATA` (`%APPDATA%`, e.g.
-/// `C:\Users\alice\AppData\Roaming`) — used as the user-scope LV2
+/// `C:\Users\alice\AppData\Roaming`) - used as the user-scope LV2
 /// install root on Windows. Distinct from `LOCALAPPDATA`: roaming
 /// data follows the user across machines via Active Directory,
 /// matching the LV2 convention of bundle-relative resources.

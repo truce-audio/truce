@@ -5,17 +5,17 @@
 //! and the plugin editor renders blurry / wrong-sized on non-100%
 //! displays. baseview does call `SetProcessDpiAwarenessContext` at
 //! runtime, but that only gives PMA v1 and runs after the first HWND
-//! is created — too late to influence initial sizing.
+//! is created - too late to influence initial sizing.
 //!
 //! Embedding here (rather than via a `build.rs` in the user's plugin
 //! crate) keeps `truce-standalone` and the user's crate free of any
-//! manifest plumbing — the truce framework owns the canonical DPI
+//! manifest plumbing - the truce framework owns the canonical DPI
 //! policy in one place. Runs after the staged exe is in place, so
 //! it's idempotent across repeated `cargo truce run` invocations.
 //!
 //! Embed strategy: prefer `mt.exe` from the Windows 10/11 SDK to write
 //! a real `RT_MANIFEST` resource into the PE. If `mt.exe` isn't found,
-//! drop a `<exe>.manifest` sidecar — Windows loads that automatically
+//! drop a `<exe>.manifest` sidecar - Windows loads that automatically
 //! when the exe launches, but it's brittle if the bare exe is ever
 //! redistributed without the file alongside.
 
@@ -67,11 +67,11 @@ pub(crate) fn embed_dpi_manifest(exe: &Path) -> Res {
             Ok(s) if s.success() => return Ok(()),
             Ok(s) => eprintln!(
                 "  warning: mt.exe exited with {s} embedding manifest into {} \
-                 — falling back to sidecar",
+                 - falling back to sidecar",
                 exe.display()
             ),
             Err(e) => {
-                eprintln!("  warning: failed to invoke mt.exe ({e}) — falling back to sidecar");
+                eprintln!("  warning: failed to invoke mt.exe ({e}) - falling back to sidecar");
             }
         }
     } else {
@@ -135,13 +135,13 @@ fn which(name: &str) -> std::io::Result<PathBuf> {
 // `EndUpdateResource` triad rcedit uses; staying inside the workspace
 // avoids shipping a third-party binary or wiring a per-plugin
 // `build.rs`. Resource type constants and resource name `1` follow the
-// `MAKEINTRESOURCE` convention — Win32 treats pointer-sized integers
+// `MAKEINTRESOURCE` convention - Win32 treats pointer-sized integers
 // below 0x10000 as numeric IDs.
 
 // `MAKEINTRESOURCEW`: Win32 treats pointer-sized integers below
 // 0x10000 as numeric resource IDs (vs pointers to wide strings).
 // `ptr::without_provenance` is the strict-provenance-clean way to
-// express that "address but no allocation" — keeps clippy happy
+// express that "address but no allocation" - keeps clippy happy
 // without `#[allow(clippy::manual_dangling_ptr)]`.
 fn make_int_resource(id: u16) -> *const u16 {
     std::ptr::without_provenance(id as usize)
@@ -149,7 +149,7 @@ fn make_int_resource(id: u16) -> *const u16 {
 
 /// Convert `usize` → `u16` for resource counts/IDs with a contextual
 /// error. An .ico file can carry up to 65535 images, but in practice
-/// the truce icon has 7 — overflow here means a malformed input.
+/// the truce icon has 7 - overflow here means a malformed input.
 fn u16_or(value: usize, ctx: &str) -> std::result::Result<u16, crate::BoxErr> {
     u16::try_from(value)
         .map_err(|_| -> crate::BoxErr { format!("{ctx}: value {value} exceeds u16 range").into() })
@@ -222,7 +222,7 @@ pub(crate) fn embed_icon(exe: &Path, ico: &Path) -> Res {
     // pointer; we own `exe_w` for the duration. `UpdateResource` /
     // `EndUpdateResource` consume the returned handle on success.
     // `make_int_resource` builds the `MAKEINTRESOURCE` integer-as-ptr
-    // sentinel — values < 0x10000 are interpreted as IDs by Win32.
+    // sentinel - values < 0x10000 are interpreted as IDs by Win32.
     unsafe {
         let h = BeginUpdateResourceW(exe_w.as_ptr(), 0);
         if h.is_null() {
@@ -351,7 +351,7 @@ fn parse_ico_directory(
             width: bytes[off],
             height: bytes[off + 1],
             color_count: bytes[off + 2],
-            // bytes[off+3] is the reserved field, dropped here — the
+            // bytes[off+3] is the reserved field, dropped here - the
             // 14-byte resource entry zeros it anyway.
             planes: u16::from_le_bytes([bytes[off + 4], bytes[off + 5]]),
             bit_count: u16::from_le_bytes([bytes[off + 6], bytes[off + 7]]),

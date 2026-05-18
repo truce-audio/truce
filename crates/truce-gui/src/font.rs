@@ -32,7 +32,7 @@ struct GlyphCache {
 // hosts that drive multiple plugin UIs from different threads. Each
 // thread now lazy-inits its own cache; the font bytes are `'static`
 // (re-exported from `truce-font`) so the per-thread duplication only
-// covers parsed font tables and rasterized glyphs — small and bounded
+// covers parsed font tables and rasterized glyphs - small and bounded
 // (one per (char, size) the thread has actually drawn).
 thread_local! {
     static CACHE: RefCell<Option<GlyphCache>> = const { RefCell::new(None) };
@@ -54,7 +54,7 @@ fn with_cache<R>(f: impl FnOnce(&mut GlyphCache) -> R) -> R {
 }
 
 // Quantized cache key (one decimal place). The truncation is the
-// quantization's whole point — `12.34` and `12.36` both → `123`.
+// quantization's whole point - `12.34` and `12.36` both → `123`.
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 fn size_key(size: f32) -> u32 {
     (size * 10.0) as u32
@@ -62,7 +62,7 @@ fn size_key(size: f32) -> u32 {
 
 /// Rasterize and cache a glyph, returning its cached data.
 //
-// Glyph metrics widen i32 metric values to f32 — bitmap heights and
+// Glyph metrics widen i32 metric values to f32 - bitmap heights and
 // pixel offsets are tiny (a glyph fits in screen-space pixels).
 #[allow(clippy::cast_precision_loss)]
 fn get_glyph(cache: &mut GlyphCache, ch: char, size: f32) -> &CachedGlyph {
@@ -81,7 +81,7 @@ fn get_glyph(cache: &mut GlyphCache, ch: char, size: f32) -> &CachedGlyph {
 }
 
 /// sRGB-to-linear lookup for byte-encoded color channels. Used by
-/// `draw_text_fontdue` to composite glyphs in linear space — see the
+/// `draw_text_fontdue` to composite glyphs in linear space - see the
 /// gamma rationale on that function.
 #[allow(clippy::cast_precision_loss)]
 static SRGB_TO_LINEAR: LazyLock<[f32; 256]> = LazyLock::new(|| {
@@ -128,17 +128,17 @@ fn linear_to_srgb_u8(lin: f32) -> u8 {
 /// half-coverage pixel against opaque white produces a perceptual
 /// midtone, not the gamma-darkened midtone of naive sRGB blending),
 /// and the result is re-encoded to sRGB. Treats the destination as
-/// straight sRGB rather than sRGB-premultiplied — fully correct when
+/// straight sRGB rather than sRGB-premultiplied - fully correct when
 /// the destination alpha is 1 (the dominant case for text rendering),
 /// approximate when the destination is itself translucent. The rest
 /// of the CPU backend uses tiny-skia which is sRGB-naive too, so a
 /// fully gamma-correct pipeline would need matching changes there.
 ///
-/// Glyph caching is internal — first call for a given (char, size)
+/// Glyph caching is internal - first call for a given (char, size)
 /// pair rasterizes; subsequent calls blit from the per-thread cache.
 //
 // Glyph dimensions widen `u32 as f32`. Glyph bitmaps are tens of
-// pixels wide — far below 2^23 / 2^31. The bounds-checked
+// pixels wide - far below 2^23 / 2^31. The bounds-checked
 // `i32 -> u32` indexing already guards against negative values.
 #[allow(
     clippy::cast_precision_loss,

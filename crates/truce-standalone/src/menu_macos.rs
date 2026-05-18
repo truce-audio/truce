@@ -5,14 +5,14 @@
 //!
 //! - **Mic Input** (toggle, ⌘I, checkmark when on; effect plugins only)
 //! - **Audio Output** (toggle, ⌘O, checkmark when unmuted)
-//! - **Input Device** submenu — lists cpal-visible inputs (effects only)
-//! - **Output Device** submenu — same for outputs
+//! - **Input Device** submenu - lists cpal-visible inputs (effects only)
+//! - **Output Device** submenu - same for outputs
 //!
 //! Installed via `NSApp.setMainMenu(...)`.
 //!
 //! Action wiring uses a custom `TruceMenuTarget` Objective-C
-//! class declared at runtime. The class has one ivar — a raw
-//! pointer to a `MenuState` heap-allocated by Rust — and four
+//! class declared at runtime. The class has one ivar - a raw
+//! pointer to a `MenuState` heap-allocated by Rust - and four
 //! action selectors (`toggleInputAction:`, `toggleOutputAction:`,
 //! `selectInputDeviceAction:`, `selectOutputDeviceAction:`) that
 //! dereference the pointer and route the click to the matching
@@ -40,16 +40,16 @@ use crate::vlog;
 struct MenuState {
     input: InputController,
     output: OutputController,
-    /// Mic-toggle item — checkmark refreshed on Plugin-menu open.
+    /// Mic-toggle item - checkmark refreshed on Plugin-menu open.
     /// Null for instrument plugins (item not added).
     mic_item: *mut Object,
-    /// Output mute-toggle item — checkmark refreshed on
+    /// Output mute-toggle item - checkmark refreshed on
     /// Plugin-menu open.
     output_item: *mut Object,
-    /// Input device submenu — repopulated on open from cpal.
+    /// Input device submenu - repopulated on open from cpal.
     /// Null for instrument plugins (submenu not added).
     input_device_menu: *mut Object,
-    /// Output device submenu — repopulated on open from cpal.
+    /// Output device submenu - repopulated on open from cpal.
     output_device_menu: *mut Object,
     /// Pointer to the action-target object itself, for re-targeting
     /// the device items repopulated each open.
@@ -59,7 +59,7 @@ struct MenuState {
 /// Install the native menu bar.
 ///
 /// `is_effect` controls whether mic-input and input-device items
-/// appear — input-side controls are useless for instruments and
+/// appear - input-side controls are useless for instruments and
 /// analyzers since the runner feeds them silence.
 pub fn install(
     app_name: &str,
@@ -70,7 +70,7 @@ pub fn install(
     unsafe {
         let app: *mut Object = msg_send![class!(NSApplication), sharedApplication];
 
-        // App menu — "About <App>" / "Hide <App>" / "Quit <App>".
+        // App menu - "About <App>" / "Hide <App>" / "Quit <App>".
         let app_menu_item = make_menu_item(app_name);
         let app_menu = make_menu(app_name);
         add_app_menu_items(app_menu, app_name);
@@ -81,7 +81,7 @@ pub fn install(
         let plugin_menu = make_menu("Audio");
         let target = make_menu_target(input.clone(), output.clone());
 
-        // Mic toggle (⌘I) — only meaningful for effects.
+        // Mic toggle (⌘I) - only meaningful for effects.
         let mic_item = if is_effect {
             let item = make_toggle_item("Mic Input", "i", sel!(toggleInputAction:), target);
             let _: () = msg_send![plugin_menu, addItem: item];
@@ -90,7 +90,7 @@ pub fn install(
             std::ptr::null_mut()
         };
 
-        // Output toggle (⌘O) — applies to every plugin category.
+        // Output toggle (⌘O) - applies to every plugin category.
         let output_item = make_toggle_item("Audio Output", "o", sel!(toggleOutputAction:), target);
         let _: () = msg_send![plugin_menu, addItem: output_item];
 
@@ -98,7 +98,7 @@ pub fn install(
         let sep: *mut Object = msg_send![class!(NSMenuItem), separatorItem];
         let _: () = msg_send![plugin_menu, addItem: sep];
 
-        // Input device submenu — only useful for effects (instrument
+        // Input device submenu - only useful for effects (instrument
         // runners don't read from the input ring). Empty at install;
         // repopulated on open.
         let input_dev_menu = if is_effect {
@@ -111,7 +111,7 @@ pub fn install(
             std::ptr::null_mut()
         };
 
-        // Output device submenu — every plugin needs this.
+        // Output device submenu - every plugin needs this.
         let output_dev_item = make_menu_item("Output Device");
         let output_dev_menu = make_menu("Output Device");
         let _: () = msg_send![output_dev_item, setSubmenu: output_dev_menu];
@@ -130,7 +130,7 @@ pub fn install(
 
         // Wire menuWillOpen on the Plugin menu (toggle checkmarks)
         // and both device submenus (repopulate + checkmark). Input
-        // submenu may be null for instruments — only delegate if
+        // submenu may be null for instruments - only delegate if
         // we actually built it.
         let _: () = msg_send![plugin_menu, setDelegate: target];
         if !input_dev_menu.is_null() {
@@ -140,7 +140,7 @@ pub fn install(
 
         let _: () = msg_send![plugin_menu_item, setSubmenu: plugin_menu];
 
-        // Main menu — the one NSApp draws.
+        // Main menu - the one NSApp draws.
         let main_menu = make_menu("");
         let _: () = msg_send![main_menu, addItem: app_menu_item];
         let _: () = msg_send![main_menu, addItem: plugin_menu_item];
@@ -194,7 +194,7 @@ unsafe fn make_toggle_item(
 }
 
 /// Add the standard App-menu items. macOS does NOT auto-fill the
-/// app name here — we have to spell out "Quit <App>" ourselves.
+/// app name here - we have to spell out "Quit <App>" ourselves.
 unsafe fn add_app_menu_items(menu: *mut Object, app_name: &str) {
     unsafe {
         let title = ns_string(&format!("Quit {app_name}"));
@@ -282,7 +282,7 @@ unsafe fn item_title(item: *mut Object) -> Option<String> {
         return None;
     }
     // SAFETY: `UTF8String` returns a NUL-terminated buffer owned by
-    // the autoreleased NSString — valid for the duration of this call.
+    // the autoreleased NSString - valid for the duration of this call.
     Some(unsafe {
         std::ffi::CStr::from_ptr(cstr)
             .to_string_lossy()
@@ -308,7 +308,7 @@ fn ensure_class() -> &'static Class {
     REGISTER_CLASS.call_once(|| unsafe {
         let superclass = class!(NSObject);
         let mut decl = ClassDecl::new("TruceMenuTarget", superclass)
-            .expect("TruceMenuTarget already registered (this should be unreachable — Once gate)");
+            .expect("TruceMenuTarget already registered (this should be unreachable - Once gate)");
 
         decl.add_ivar::<*mut c_void>(STATE_IVAR);
 
@@ -388,7 +388,7 @@ fn ensure_class() -> &'static Class {
             select_output_device_action as extern "C" fn(&Object, Sel, *mut Object),
         );
 
-        // -(void) menuWillOpen:(NSMenu *)menu — refresh state for
+        // -(void) menuWillOpen:(NSMenu *)menu - refresh state for
         // the about-to-open menu. Dispatch by pointer comparison so
         // we know whether to refresh the mic checkmark or
         // repopulate a device submenu.
@@ -424,7 +424,7 @@ fn ensure_class() -> &'static Class {
                     return;
                 }
 
-                // Plugin menu (any other we delegate) — refresh the
+                // Plugin menu (any other we delegate) - refresh the
                 // toggle checkmarks.
                 if !state.mic_item.is_null() {
                     let on = state.input.is_enabled();

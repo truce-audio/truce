@@ -10,16 +10,16 @@ use crate::events::TransportInfo;
 ///
 /// Used to capture `*const Params` / host-handle pointers in
 /// `PluginContext` closures without the `ptr as usize` hack. The
-/// `Send`/`Sync` impls are unconditional in `T` — they have to be,
+/// `Send`/`Sync` impls are unconditional in `T` - they have to be,
 /// because the wrapped types are typically `#[repr(C)]` host structs
 /// that are themselves `!Send + !Sync` by default. Construction is
 /// therefore `unsafe`: each call site must justify why cross-thread
 /// access to the pointed-to data is sound.
 ///
 /// Justifications used in-tree:
-/// - **`P: Params`** — fields are atomic; concurrent reads from the
+/// - **`P: Params`** - fields are atomic; concurrent reads from the
 ///   GUI thread while the audio thread writes are safe by design.
-/// - **Format-host handles** (`clap_host`, `AEffect`, etc.) — used
+/// - **Format-host handles** (`clap_host`, `AEffect`, etc.) - used
 ///   only from a single thread (UI), and the wrapping is purely for
 ///   capturing in `Send + Sync` closures stored in `PluginContext`.
 ///
@@ -34,7 +34,7 @@ impl<T> SendPtr<T> {
     /// # Safety
     /// The caller must ensure that:
     /// 1. The pointed-to data outlives every clone of this `SendPtr`.
-    /// 2. Cross-thread access to `*ptr` is sound — either because `T`
+    /// 2. Cross-thread access to `*ptr` is sound - either because `T`
     ///    is `Sync`, because access is synchronized externally
     ///    (atomic fields, Mutex, single-thread-only access pattern),
     ///    or because the wrapper is only ever read on a thread where
@@ -123,7 +123,7 @@ pub trait Editor: Send {
     ///
     /// Called after `load_state()` while the editor is open. Re-read any
     /// cached state from the plugin. Parameter values are already updated
-    /// and will be picked up on the next render — this is only needed for
+    /// and will be picked up on the next render - this is only needed for
     /// custom state stored outside the parameter system.
     fn state_changed(&mut self) {}
 
@@ -135,7 +135,7 @@ pub trait Editor: Send {
     /// screenshot reflects parameter defaults without needing a live
     /// host.
     ///
-    /// Returns `(rgba_pixels, physical_width, physical_height)` — RGBA8
+    /// Returns `(rgba_pixels, physical_width, physical_height)` - RGBA8
     /// row-major, ready to feed into `truce_test::assert_screenshot_pixels`.
     /// Default impl returns `None`; backends that support headless
     /// capture (built-in widgets, egui, iced, slint) override.
@@ -151,8 +151,8 @@ pub trait Editor: Send {
 }
 
 /// Bridge between the editor and the host / plugin. Format wrappers
-/// (CLAP / VST3 / VST2 / AU / AAX / LV2) implement this trait — or
-/// build a [`ClosureBridge`] from per-method closures — and pass an
+/// (CLAP / VST3 / VST2 / AU / AAX / LV2) implement this trait - or
+/// build a [`ClosureBridge`] from per-method closures - and pass an
 /// `Arc<dyn EditorBridge>` to the editor through [`PluginContext`].
 ///
 /// Editors call into the bridge for everything they can't do
@@ -227,7 +227,7 @@ pub trait EditorBridge: Send + Sync {
 /// (the historical shape, before the trait existed) construct one of
 /// these and wrap it in an `Arc<dyn EditorBridge>`. Wrappers that
 /// already have a typed host-pointer struct should `impl EditorBridge`
-/// for that struct directly and skip this adapter — one less layer of
+/// for that struct directly and skip this adapter - one less layer of
 /// indirection per call.
 pub struct ClosureBridge {
     pub begin_edit: Box<dyn Fn(u32) + Send + Sync>,
@@ -281,9 +281,9 @@ impl EditorBridge for ClosureBridge {
 
 /// Context passed to [`Editor::open`]. Carries:
 ///
-/// - An `Arc<dyn EditorBridge>` — the host-plugin protocol surface
+/// - An `Arc<dyn EditorBridge>` - the host-plugin protocol surface
 ///   (begin/set/end edit, `request_resize`, `get_state`, transport, …).
-/// - An `Arc<P>` typed parameter store — plugin authors `Deref` to
+/// - An `Arc<P>` typed parameter store - plugin authors `Deref` to
 ///   `&P` and read fields directly: `state.gain.read()`.
 ///
 /// The default `P = dyn Params` keeps the trait-object boundary
@@ -371,7 +371,7 @@ impl<P: ?Sized> PluginContext<P> {
     }
     /// Format into a caller-owned buffer. See
     /// [`EditorBridge::format_param_into`] for the allocation
-    /// trade-off — the caller's buffer is reused, but bridges that
+    /// trade-off - the caller's buffer is reused, but bridges that
     /// don't override the default impl still allocate internally.
     pub fn format_param_into(&self, id: impl Into<u32>, out: &mut String) {
         self.bridge.format_param_into(id.into(), out);
@@ -468,7 +468,7 @@ pub fn for_test_params(params: Arc<dyn Params>) -> PluginContext<dyn Params> {
 // The editor-bridge surface is sample-agnostic (`f64` on the wire, the
 // lossless lowest-common-denominator that round-trips any host
 // automation precision). These two extension traits route the call
-// site to the user's chosen precision — same pattern as
+// site to the user's chosen precision - same pattern as
 // `FloatParamReadF32` / `FloatParamReadF64` for the audio-thread
 // param reads. Brought into scope via `pub use ... as _;` in each
 // prelude:
@@ -476,7 +476,7 @@ pub fn for_test_params(params: Arc<dyn Params>) -> PluginContext<dyn Params> {
 //   - `prelude64` / `prelude64m`     → `PluginContextReadF64`
 //
 // Single-prelude code dispatches unambiguously. Importing both
-// preludes in the same file collides on `get_param` — the right
+// preludes in the same file collides on `get_param` - the right
 // error if the file hasn't committed to a precision.
 // ---------------------------------------------------------------------------
 

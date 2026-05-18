@@ -16,7 +16,7 @@
 
 /// A timestamped event within a process block.
 ///
-/// `Copy` because every [`EventBody`] variant is POD — lets the
+/// `Copy` because every [`EventBody`] variant is POD - lets the
 /// audio path move events without per-event clones.
 #[derive(Clone, Copy, Debug)]
 pub struct Event {
@@ -202,17 +202,17 @@ pub enum EventBody {
     Transport(TransportInfo),
 
     // -- System layer --
-    /// System Exclusive (`SysEx`) message — MIDI 1.0 and MIDI 2.0
+    /// System Exclusive (`SysEx`) message - MIDI 1.0 and MIDI 2.0
     /// alike. The payload bytes live in [`EventList::sysex_bytes`];
     /// resolve a body to its slice with
     /// `event_list.sysex_bytes(&body)` rather than indexing the
     /// pool directly. The bytes are the inner `SysEx` data
     /// **without** the leading `0xF0` start byte or trailing `0xF7`
-    /// end byte — format wrappers strip those at the boundary so
+    /// end byte - format wrappers strip those at the boundary so
     /// plugin code doesn't have to.
     ///
     /// Inlining the bytes in the variant would balloon every event's
-    /// footprint to the worst-case (~64 KiB) — channel-voice events
+    /// footprint to the worst-case (~64 KiB) - channel-voice events
     /// are <8 bytes today and we want to keep the per-event memory
     /// pressure on the audio thread proportional to that. The
     /// indices-into-a-pool layout pays the price (two-step access)
@@ -226,7 +226,7 @@ pub enum EventBody {
 /// Host-populated transport snapshot. Constructed by every format
 /// wrapper from the host's own transport struct via struct-literal
 /// expressions, so this stays "exhaustive" (no `#[non_exhaustive]`)
-/// — that attribute would block cross-crate construction. Adding a
+/// - that attribute would block cross-crate construction. Adding a
 /// new field is a coordinated workspace-wide change.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct TransportInfo {
@@ -245,7 +245,7 @@ pub struct TransportInfo {
 }
 
 impl TransportInfo {
-    /// Synthetic transport for snapshot tests — playing at 120 BPM,
+    /// Synthetic transport for snapshot tests - playing at 120 BPM,
     /// 4/4, position 4.0 beats. Used as the default by every snapshot
     /// helper (`truce-egui`, `truce-slint`, `truce-iced`,
     /// `truce-test`) so that transport-aware widgets render a
@@ -281,7 +281,7 @@ pub const EVENT_LIST_PREALLOC: usize = 256;
 ///
 /// Sized at construction in [`EventList::with_capacity`]; never
 /// re-allocates on the audio thread. A plugin that pushes beyond
-/// this gets a [`PushError::PoolFull`] and the message is dropped —
+/// this gets a [`PushError::PoolFull`] and the message is dropped -
 /// truncating or splitting a `SysEx` makes it invalid.
 ///
 /// **Mirror:** `TRUCE_SYSEX_POOL_PREALLOC` in
@@ -320,7 +320,7 @@ impl std::error::Error for PushError {}
 /// `events` is the per-block event ring; `sysex_pool` is the
 /// variable-byte arena that [`EventBody::SysEx`] entries index into.
 /// Both are pre-allocated by [`EventList::with_capacity`] and reset
-/// (length only — backing memory preserved) by [`Self::clear`], so
+/// (length only - backing memory preserved) by [`Self::clear`], so
 /// steady-state operation is allocation-free.
 #[derive(Clone, Debug, Default)]
 pub struct EventList {
@@ -339,7 +339,7 @@ impl EventList {
     /// the first block alloc-free.
     ///
     /// The `SysEx` byte pool is sized to [`SYSEX_POOL_PREALLOC`]
-    /// regardless of `capacity` — `capacity` controls the event ring
+    /// regardless of `capacity` - `capacity` controls the event ring
     /// only.
     #[must_use]
     pub fn with_capacity(capacity: usize) -> Self {
@@ -350,7 +350,7 @@ impl EventList {
     }
 
     /// Append an event. Note: `sample_offset` is **not** bounds-checked
-    /// against any block size — callers that build event lists per
+    /// against any block size - callers that build event lists per
     /// block must validate `sample_offset < num_samples` themselves
     /// (the audio thread can't recover from an out-of-range offset, so
     /// we treat that as a contract violation rather than panicking).
@@ -360,7 +360,7 @@ impl EventList {
 
     /// Append a `SysEx` event whose payload is copied into the pool.
     /// `data` is the inner `SysEx` bytes **without** the leading
-    /// `0xF0` / trailing `0xF7` — wrappers strip those at the
+    /// `0xF0` / trailing `0xF7` - wrappers strip those at the
     /// boundary.
     ///
     /// Returns [`PushError::PoolFull`] when the pool can't hold
@@ -395,7 +395,7 @@ impl EventList {
     }
 
     /// Resolve a [`EventBody::SysEx`] entry to its payload bytes.
-    /// Returns an empty slice for any other variant — the slice is
+    /// Returns an empty slice for any other variant - the slice is
     /// indexed against the internal byte pool, so a non-`SysEx`
     /// body has nothing to point at.
     #[must_use]
@@ -421,7 +421,7 @@ impl EventList {
     /// with identical sample offsets stay in the order they were
     /// pushed, which is what plugins assume when they iterate (e.g.
     /// "MIDI on this sample then a CC on the same sample" stays in
-    /// that order). Don't replace with `sort_unstable_by_key` — the
+    /// that order). Don't replace with `sort_unstable_by_key` - the
     /// stability guarantee is load-bearing.
     ///
     /// Sorting reorders [`Event`] entries only; `SysEx` pool
@@ -500,7 +500,7 @@ mod tests {
     #[test]
     fn push_sysex_pool_full_is_recoverable() {
         // Construct a tiny pool by going through `with_capacity` with a
-        // post-hoc shrink — we can't pass a custom pool size today, so
+        // post-hoc shrink - we can't pass a custom pool size today, so
         // exercise the failure path by overflowing the configured 128 KiB.
         let mut list = EventList::with_capacity(8);
         let big = vec![0u8; SYSEX_POOL_PREALLOC];

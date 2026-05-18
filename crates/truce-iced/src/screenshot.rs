@@ -53,7 +53,7 @@ where
     // `compatible_surface: None` (vs the live render path's
     // `Some(&surface)`) is unavoidable in a headless run. On multi-GPU
     // hosts wgpu may pick a different physical adapter than the editor's
-    // live path, with subtle rasterization differences — bake baselines
+    // live path, with subtle rasterization differences - bake baselines
     // on the host you gate from.
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
         backends: wgpu::Backends::PRIMARY,
@@ -62,7 +62,7 @@ where
 
     let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
         power_preference: wgpu::PowerPreference::HighPerformance,
-        compatible_surface: None, // headless — see note above
+        compatible_surface: None, // headless - see note above
         force_fallback_adapter: false,
     }))?;
 
@@ -81,7 +81,7 @@ where
 
     // Create iced engine + renderer (MSAA 4x for smooth edges).
     // `mut` because `Engine::submit` (later) consumes the engine and
-    // `Renderer::present` borrows it `&mut` — we own it through both.
+    // `Renderer::present` borrows it `&mut` - we own it through both.
     let mut engine = iced_wgpu::Engine::new(
         &adapter,
         &device,

@@ -35,7 +35,7 @@ pub(crate) fn which_exe(name: &str) -> Option<PathBuf> {
 /// Used by `cargo truce doctor` for tool checks. We can't call
 /// `Command::new("which")` because Windows doesn't ship one (the
 /// closest equivalent is `where.exe`, but it has different output
-/// formatting and isn't on every minimal install — Server Core,
+/// formatting and isn't on every minimal install - Server Core,
 /// containers, sandboxed CI). Doing the PATH walk ourselves keeps
 /// behavior identical across platforms.
 pub(crate) fn find_on_path(name: &str) -> Option<PathBuf> {
@@ -84,7 +84,7 @@ pub(crate) fn locate_cmake() -> Option<PathBuf> {
     None
 }
 
-/// Locate `ninja.exe`. Same strategy as cmake — the VS `CMake` component bundles
+/// Locate `ninja.exe`. Same strategy as cmake - the VS `CMake` component bundles
 /// Ninja next to it, so that's the most common path on machines that have VS
 /// with "C++ `CMake` tools" installed.
 #[cfg(target_os = "windows")]
@@ -102,8 +102,8 @@ pub(crate) fn locate_ninja() -> Option<PathBuf> {
     None
 }
 
-/// Locate `cl.exe` (the MSVC C/C++ compiler). Tries `%PATH%` first — that
-/// only succeeds inside a Developer Command Prompt — then falls back to
+/// Locate `cl.exe` (the MSVC C/C++ compiler). Tries `%PATH%` first - that
+/// only succeeds inside a Developer Command Prompt - then falls back to
 /// scanning `VC\Tools\MSVC\<version>\bin\Hostx64\x64\cl.exe` under each VS
 /// install reported by `vswhere.exe`. Returns the newest toolchain version
 /// found across all VS installs.

@@ -1,4 +1,4 @@
-//! Platform glue for truce-iced — mirrors `truce-egui::platform` and
+//! Platform glue for truce-iced - mirrors `truce-egui::platform` and
 //! `truce-gpu::platform` in shape.
 //!
 //! `ParentWindow`, `query_backing_scale`, and `note_linux_scale_factor`

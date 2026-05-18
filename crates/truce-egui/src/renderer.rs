@@ -99,7 +99,7 @@ impl EguiRenderer {
         width: u32,
         height: u32,
     ) -> Option<Self> {
-        // See `from_window` — same zero-guard applies; AAX hands a
+        // See `from_window` - same zero-guard applies; AAX hands a
         // CAMetalLayer that may not yet have a real bounds size.
         if width == 0 || height == 0 {
             return None;
@@ -122,7 +122,7 @@ impl EguiRenderer {
                 }))?;
 
             // `downlevel_defaults` caps `max_texture_dimension_2d`
-            // at 2048 — that targets WebGL2-era hardware. iOS / iOS-
+            // at 2048 - that targets WebGL2-era hardware. iOS / iOS-
             // simulator Metal supports far more (16384+ on modern
             // devices), so an 800x400 logical editor scaled 3× to a
             // 2400x1200 drawable would otherwise trip a validation
@@ -226,7 +226,7 @@ impl EguiRenderer {
             // `egui_wgpu::Renderer::render` (egui 0.31) takes
             // `&mut RenderPass<'static>`, but `begin_render_pass` returns a
             // pass borrowing `encoder` and `frame_view` lifetimes. wgpu 24
-            // exposes `forget_lifetime()` specifically to bridge this —
+            // exposes `forget_lifetime()` specifically to bridge this -
             // discharging the borrow checker's view without changing the
             // GPU contract (the inner scope still ends before `encoder`
             // is consumed by `submit`). The egui-wgpu API is the

@@ -7,7 +7,7 @@
 //! `truce::prelude64`).
 //!
 //! `truce-plugin` depends on `truce-gui-types` (light: layout,
-//! render trait, widget regions) — not the full `truce-gui`.
+//! render trait, widget regions) - not the full `truce-gui`.
 //! Plugin authors who supply a custom editor (egui, iced, slint,
 //! raw window handle) end up with `truce-plugin` in their dep
 //! tree but not the built-in editor's tiny-skia + baseview +
@@ -15,9 +15,9 @@
 //!
 //! ## Three traits, one source of truth
 //!
-//! - [`PluginLogic`]   — what plugin authors implement for `f32`-buffer plugins.
-//! - [`PluginLogic64`] — what plugin authors implement for `f64`-buffer plugins.
-//! - [`PluginLogicCore`] — generic-over-`S` trait the format wrappers consume.
+//! - [`PluginLogic`]   - what plugin authors implement for `f32`-buffer plugins.
+//! - [`PluginLogic64`] - what plugin authors implement for `f64`-buffer plugins.
+//! - [`PluginLogicCore`] - generic-over-`S` trait the format wrappers consume.
 //!
 //! The two leaf traits are stamped from one
 //! `plugin_logic_leaf_trait!` `macro_rules!` definition (further
@@ -34,7 +34,7 @@
 //! `PluginLogic64` as `PluginLogic` in the user's scope, so the
 //! same impl header reads the same regardless of which prelude is
 //! in use. The `<S>` token that used to live on the impl header is
-//! gone — the prelude carries the precision choice.
+//! gone - the prelude carries the precision choice.
 
 use truce_core::buffer::AudioBuffer;
 use truce_core::bus::BusLayout;
@@ -49,14 +49,14 @@ use truce_gui_types::widgets::WidgetType;
 use truce_params::sample::Sample;
 
 // ---------------------------------------------------------------------------
-// PluginLogicCore — generic trait, what format wrappers consume
+// PluginLogicCore - generic trait, what format wrappers consume
 // ---------------------------------------------------------------------------
 
 /// Wrapper-facing plugin trait, generic over the audio sample type.
 ///
 /// Format wrappers (`StaticShell`, `HotShell`, CLAP / VST3 / etc.)
 /// bind on `PluginLogicCore<S>`. Plugin authors don't implement this
-/// directly — they implement [`PluginLogic`] (`f32`) or
+/// directly - they implement [`PluginLogic`] (`f32`) or
 /// [`PluginLogic64`] (`f64`), and the blanket impls below route them
 /// into `PluginLogicCore`.
 ///
@@ -87,7 +87,7 @@ pub trait PluginLogicCore<S: Sample = f32>: Send + 'static {
     ///
     /// # Errors
     ///
-    /// Forwards whatever the user impl returns — typically a malformed
+    /// Forwards whatever the user impl returns - typically a malformed
     /// blob error decoded by `bincode` / `serde` / similar.
     fn load_state(&mut self, data: &[u8]) -> Result<(), StateLoadError>;
     fn state_changed(&mut self);
@@ -101,13 +101,13 @@ pub trait PluginLogicCore<S: Sample = f32>: Send + 'static {
 }
 
 // ---------------------------------------------------------------------------
-// Leaf traits — what plugin authors implement
+// Leaf traits - what plugin authors implement
 // ---------------------------------------------------------------------------
 
 /// Define a sample-pinned leaf trait. Two invocations:
 /// `PluginLogic` (f32) and [`PluginLogic64`] (f64). The trait
 /// definition has to be a macro because we want the two trait
-/// surfaces to stay in exact lock-step — adding a new method means
+/// surfaces to stay in exact lock-step - adding a new method means
 /// updating one place, not three (the macro, plus two trait
 /// declarations).
 ///
@@ -152,7 +152,7 @@ macro_rules! plugin_logic_leaf_trait {
             /// the first `process` and any time the host reconfigures.
             fn reset(&mut self, sample_rate: f64, max_block_size: usize);
 
-            /// Process one block of audio. Real-time — no allocations,
+            /// Process one block of audio. Real-time - no allocations,
             /// locks, or I/O.
             fn process(
                 &mut self,
@@ -161,7 +161,7 @@ macro_rules! plugin_logic_leaf_trait {
                 context: &mut $crate::__plugin_logic_deps::ProcessContext,
             ) -> $crate::__plugin_logic_deps::ProcessStatus;
 
-            /// Serialize plugin-specific state (DSP state, not params —
+            /// Serialize plugin-specific state (DSP state, not params -
             /// those are saved automatically). Default: no extra state.
             fn save_state(&self) -> Vec<u8> {
                 Vec::new()
@@ -172,7 +172,7 @@ macro_rules! plugin_logic_leaf_trait {
             /// # Errors
             ///
             /// Return `Err(StateLoadError)` when the blob is malformed
-            /// or otherwise can't be interpreted — the format wrapper
+            /// or otherwise can't be interpreted - the format wrapper
             /// logs the failure (and on hosts that support it, surfaces
             /// it to the DAW).
             fn load_state(
@@ -193,7 +193,7 @@ macro_rules! plugin_logic_leaf_trait {
             }
 
             /// Report tail time in samples (audio produced after input
-            /// stops — reverbs, delays). `u32::MAX` for infinite tail.
+            /// stops - reverbs, delays). `u32::MAX` for infinite tail.
             fn tail(&self) -> u32 {
                 0
             }
@@ -266,7 +266,7 @@ plugin_logic_leaf_trait! {
     /// The `f32`-buffer user-facing plugin trait.
     ///
     /// Plugin authors implement this in a single `impl` block when
-    /// their audio path is `f32` end-to-end (the default — matches
+    /// their audio path is `f32` end-to-end (the default - matches
     /// the host wire format for nearly all DAWs and formats).
     /// `truce::prelude` and `truce::prelude32` re-export this name
     /// directly; `truce::prelude64m` does too (the `m` mixed-precision
@@ -275,7 +275,7 @@ plugin_logic_leaf_trait! {
     ///
     /// Only [`Self::reset`] and [`Self::process`] are required;
     /// everything else has a default. Headless (no-GUI) plugins leave
-    /// `layout` / `render` / `custom_editor` at their defaults — the
+    /// `layout` / `render` / `custom_editor` at their defaults - the
     /// format wrappers fall back to a minimal built-in editor.
     pub trait PluginLogic<sample = f32>
 }
@@ -284,7 +284,7 @@ plugin_logic_leaf_trait! {
     /// The `f64`-buffer user-facing plugin trait. Same surface as
     /// [`PluginLogic`] but with the audio buffer pinned to `f64`.
     ///
-    /// Plugin authors don't usually name this directly — `truce::prelude64`
+    /// Plugin authors don't usually name this directly - `truce::prelude64`
     /// re-exports it as `PluginLogic`, so the impl header reads the
     /// same regardless of which precision the prelude chose. Pick
     /// `truce::prelude64` (and thus this leaf) when the DSP path runs
@@ -294,7 +294,7 @@ plugin_logic_leaf_trait! {
 }
 
 // ---------------------------------------------------------------------------
-// Bridges — each leaf forwards every method to PluginLogicCore<S>
+// Bridges - each leaf forwards every method to PluginLogicCore<S>
 // ---------------------------------------------------------------------------
 
 /// Define a blanket `impl<T: $leaf> PluginLogicCore<$sample> for T`
@@ -378,7 +378,7 @@ plugin_logic_bridge!(PluginLogic, f32);
 plugin_logic_bridge!(PluginLogic64, f64);
 
 // ---------------------------------------------------------------------------
-// Default hit test — referenced by leaf macro expansions
+// Default hit test - referenced by leaf macro expansions
 // ---------------------------------------------------------------------------
 
 /// Default hit test: circular for knobs, rectangular for everything

@@ -3,13 +3,13 @@
 //! Instantiate a plugin, feed it scripted audio + events for a fixed
 //! duration, capture the output. Used by:
 //!
-//! - **Tests** via [`truce-test`](../truce_test) — adds assertion
+//! - **Tests** via [`truce-test`](../truce_test) - adds assertion
 //!   helpers on top of the captured [`DriverResult`].
-//! - **The standalone host's offline-render path** —
+//! - **The standalone host's offline-render path** -
 //!   `cargo truce run --no-playback` parses CLI flags into an
 //!   [`InputSource::Buffer`] + [`Script`], runs [`PluginDriver`],
 //!   writes the captured audio out as WAV.
-//! - **Plugin authors writing custom `main.rs` bins** — batch CI
+//! - **Plugin authors writing custom `main.rs` bins** - batch CI
 //!   renders, demo audio generation, preset rendering pipelines.
 //!
 //! No cpal, no midir, no live-audio plumbing. The driver does:
@@ -121,7 +121,7 @@ pub enum MeterCapture {
 
 #[derive(Clone, Copy)]
 pub struct CaptureSpec {
-    /// Capture the rendered audio. Default true — turning it off
+    /// Capture the rendered audio. Default true - turning it off
     /// means `DriverResult::output` is empty (use case: a meter-only
     /// run that doesn't care about audio).
     pub audio: bool,
@@ -156,7 +156,7 @@ impl Default for CaptureSpec {
 /// land at the current cursor position.
 #[derive(Default, Clone)]
 pub struct Script {
-    /// `(sample_offset, body)` — sorted by offset on `run`.
+    /// `(sample_offset, body)` - sorted by offset on `run`.
     events: Vec<(usize, EventBody)>,
     cursor_samples: usize,
     sample_rate: f64,
@@ -208,7 +208,7 @@ impl Script {
 
     /// Set a parameter to a normalized [0.0, 1.0] value, sample-
     /// accurate at the cursor's offset. The plugin sees a
-    /// `ParamChange` event in its event list — same delivery path
+    /// `ParamChange` event in its event list - same delivery path
     /// CLAP / VST3 / AU automation lanes use.
     pub fn set_param(&mut self, id: impl Into<u32>, normalized: f64) {
         self.push(EventBody::ParamChange {
@@ -217,7 +217,7 @@ impl Script {
         });
     }
 
-    /// Push an arbitrary `EventBody` at the current cursor — escape
+    /// Push an arbitrary `EventBody` at the current cursor - escape
     /// hatch for events `Script` doesn't have a typed helper for.
     pub fn raw(&mut self, body: EventBody) {
         self.push(body);
@@ -225,13 +225,13 @@ impl Script {
 
     /// Advance the cursor by `ms` milliseconds at the run's sample
     /// rate. Resolves correctly only after `Script::sample_rate` is
-    /// filled in by `PluginDriver::run` — call sites can rely on the
+    /// filled in by `PluginDriver::run` - call sites can rely on the
     /// driver wiring it before scanning the script.
     ///
     /// `wait_ms(0)` is *almost always* a copy-paste artifact and
     /// trips a `debug_assert` in dev builds. If you genuinely want
     /// "schedule the next event at the current cursor", that's the
-    /// implicit default — drop the call. If you want a typed no-op
+    /// implicit default - drop the call. If you want a typed no-op
     /// for clarity (e.g. mirroring a user-supplied delay variable
     /// that *can* be zero), use `wait_samples(0)` which doesn't
     /// trip the assertion.
@@ -242,7 +242,7 @@ impl Script {
     pub fn wait_ms(&mut self, ms: u64) {
         debug_assert!(
             ms != 0,
-            "wait_ms(0) is a no-op — drop the call, or use wait_samples(0) if you mean it"
+            "wait_ms(0) is a no-op - drop the call, or use wait_samples(0) if you mean it"
         );
         let sr = if self.sample_rate > 0.0 {
             self.sample_rate
@@ -273,7 +273,7 @@ impl Script {
 ///
 /// Holds the post-run plugin instance (`plugin: P`) so post-run
 /// assertions can read params or custom state directly. As a side
-/// effect, `DriverResult: !Send` whenever `P: !Send` — which is
+/// effect, `DriverResult: !Send` whenever `P: !Send` - which is
 /// true for plugins built via `truce::plugin!` (the generated
 /// `Plugin` alias is `unsafe impl Send` only conditionally on its
 /// inner `Params` type). Test code rarely cares; document if you
@@ -364,7 +364,7 @@ fn io_err(e: hound::Error) -> std::io::Error {
 type SetupFn<P> = Box<dyn FnOnce(&mut P, &SetupContext)>;
 
 /// Context passed to the [`PluginDriver::setup`] closure. Carries the
-/// driver state that's been *resolved* by the time setup runs — in
+/// driver state that's been *resolved* by the time setup runs - in
 /// particular the auto-detected channel count, which would otherwise
 /// be invisible to the closure (the user's `&mut P` doesn't know).
 ///
@@ -417,7 +417,7 @@ pub struct PluginDriver<P: PluginExport> {
     /// Manifest dir for `state_file` path resolution. Set by callers
     /// that pass a relative path; absolute paths bypass.
     manifest_dir: PathBuf,
-    /// `.set_param(id, v)` shortcuts — applied after state load,
+    /// `.set_param(id, v)` shortcuts - applied after state load,
     /// before the `setup` closure.
     param_overrides: Vec<(u32, f64)>,
     /// `&mut P` closure run after state load + param overrides.
@@ -514,7 +514,7 @@ impl<P: PluginExport> PluginDriver<P> {
         // was painted onto the stale cursor.
         //
         // The single-`.script` case (the common one) is handled by
-        // the run-time rescale at `run()` — both safety nets are
+        // the run-time rescale at `run()` - both safety nets are
         // needed so any builder ordering produces correct offsets.
         let old_sr = self.script.sample_rate;
         let new_sr = self.sample_rate;
@@ -538,7 +538,7 @@ impl<P: PluginExport> PluginDriver<P> {
     /// `.setup` closure (if any).
     ///
     /// For automation *during* a run, use `.script(|s| s.set_param(...))`
-    /// — that emits a sample-accurate `ParamChange` event the plugin
+    /// - that emits a sample-accurate `ParamChange` event the plugin
     /// processes inline.
     #[must_use]
     pub fn set_param(mut self, id: impl Into<u32>, normalized: f64) -> Self {
@@ -558,14 +558,14 @@ impl<P: PluginExport> PluginDriver<P> {
 
     /// Mutate the plugin between init/reset+state-load and the
     /// first process block. Use when the test needs more than
-    /// param tweaks — load arbitrary fields, drive a warmup
+    /// param tweaks - load arbitrary fields, drive a warmup
     /// `process()` call to populate meters / lookahead, etc.
     ///
     /// Composes with `state_file` (state loads first) and
     /// `set_param` (shortcuts apply first); the closure runs last.
     ///
     /// The closure receives a [`SetupContext`] with the resolved
-    /// channel count, sample rate, and block size — exactly what the
+    /// channel count, sample rate, and block size - exactly what the
     /// upcoming process loop will use. Channel resolution happens
     /// before setup runs, so a closure that allocates per-channel
     /// scratch can size correctly without re-querying `P::bus_layouts`.
@@ -767,7 +767,7 @@ impl<P: PluginExport> PluginDriver<P> {
 
         let mut cursor = 0usize;
         let mut event_list = EventList::with_capacity(script_events.len().min(256));
-        // Hoisted out of the loop and reused — `EventList::default()`
+        // Hoisted out of the loop and reused - `EventList::default()`
         // does the `EVENT_LIST_PREALLOC` reservation, so re-constructing
         // it per block re-allocates on the first push.
         let mut output_events_block = EventList::default();
@@ -951,10 +951,10 @@ impl<P: PluginExport> PluginDriver<P> {
 /// warn loudly about events scheduled past `total_frames`.
 ///
 /// A builder order like `.script(...).sample_rate(48000).run()` would
-/// otherwise emit events at offsets computed against the old SR —
+/// otherwise emit events at offsets computed against the old SR -
 /// `wait_ms(100)` produced `4410` at 44100 Hz but the run uses 48000,
 /// putting "100ms" at 91.875ms instead.
-// usize → f64 widening on sample offsets — driver test runs are
+// usize → f64 widening on sample offsets - driver test runs are
 // bounded well below 2^52 frames.
 #[allow(clippy::cast_precision_loss)]
 fn prepare_script_events(
@@ -980,7 +980,7 @@ fn prepare_script_events(
     if dropped > 0 {
         eprintln!(
             "[truce-driver] warning: {dropped} script event(s) scheduled past \
-             total_frames ({total_frames}) — they will not be delivered. Check \
+             total_frames ({total_frames}) - they will not be delivered. Check \
              `.duration(...)` vs `wait_ms`/`wait_samples` calls in your script."
         );
     }

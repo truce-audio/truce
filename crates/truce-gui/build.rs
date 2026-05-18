@@ -1,3 +1,3 @@
 fn main() {
-    // No build steps required — baseview handles platform windowing.
+    // No build steps required - baseview handles platform windowing.
 }

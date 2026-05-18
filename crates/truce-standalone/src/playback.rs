@@ -2,7 +2,7 @@
 //!
 //! Decodes a WAV at startup, adapts it to the device sample rate +
 //! channel count once, then sums the result into the audio
-//! callback's per-channel buffers each block. One-shot — the
+//! callback's per-channel buffers each block. One-shot - the
 //! cursor saturates at the end of the file and subsequent calls
 //! contribute nothing.
 //!
@@ -41,7 +41,7 @@ impl PlaybackSource {
     ///
     /// Returns `Err(String)` if `hound::WavReader::open` fails or
     /// the source's sample format / bit depth is one we don't
-    /// decode. Sample-rate / channel mismatches don't error — they
+    /// decode. Sample-rate / channel mismatches don't error - they
     /// trigger a warning and proceed with the documented adaptation.
     pub fn from_wav(path: &Path, target_sr: f64, target_channels: usize) -> Result<Self, String> {
         let mut reader = hound::WavReader::open(path)
@@ -127,12 +127,12 @@ impl PlaybackSource {
             if src_channels > target_channels {
                 eprintln!(
                     "file is {src_channels}ch, device is \
-                     {target_channels}ch — discarding channels [{target_channels}..{src_channels}]"
+                     {target_channels}ch - discarding channels [{target_channels}..{src_channels}]"
                 );
             } else {
                 eprintln!(
                     "file is {src_channels}ch, device is \
-                     {target_channels}ch — zero-filling channels [{src_channels}..{target_channels}]"
+                     {target_channels}ch - zero-filling channels [{src_channels}..{target_channels}]"
                 );
             }
             let mut out = vec![0.0_f32; resampled_frames * target_channels];
@@ -156,7 +156,7 @@ impl PlaybackSource {
 
     /// Sum `frames` frames of playback samples into `channel_bufs`
     /// (one `Vec<f32>` per device channel, all sized `>= frames`).
-    /// Saturates at EOF — calls beyond `total_frames` are no-ops.
+    /// Saturates at EOF - calls beyond `total_frames` are no-ops.
     pub fn mix_into(&self, channel_bufs: &mut [Vec<f32>], frames: usize) {
         let start = self.cursor.load(Ordering::Relaxed);
         if start >= self.total_frames {
@@ -197,20 +197,20 @@ impl PlaybackSource {
 }
 
 // ---------------------------------------------------------------------------
-// Capture sink — `--output-file` real-time path.
+// Capture sink - `--output-file` real-time path.
 // ---------------------------------------------------------------------------
 
 /// `--output-file` capture: owned by the runner. Spawns a writer
 /// thread on `create`; runner calls `finalize` (consuming `self`)
 /// during shutdown to set the shutdown flag and join the writer.
 ///
-/// The audio callback doesn't hold `CaptureSink` directly — it
+/// The audio callback doesn't hold `CaptureSink` directly - it
 /// holds a [`CapturePusher`] (cheap Clone) which references the
 /// same channel + flags.
 ///
 /// Shutdown isn't driven by sender drop because cpal on macOS may
 /// keep the closure (and therefore the `SyncSender` clone) alive
-/// for some time after the cpal Stream is dropped — a
+/// for some time after the cpal Stream is dropped - a
 /// `CapturePusher` left holding a sender would block the writer
 /// thread's `recv` indefinitely. Instead, an `Arc<AtomicBool>`
 /// shutdown flag short-circuits both sides: the runner sets it
@@ -228,7 +228,7 @@ pub struct CaptureSink {
 
 /// Cheap-clone handle the audio callback uses to push blocks.
 /// Each clone holds its own `mpsc::SyncSender` (also cheap to
-/// clone — internally `Arc<…>`); the writer thread exits via the
+/// clone - internally `Arc<…>`); the writer thread exits via the
 /// shared shutdown flag, not channel close, so it doesn't matter
 /// how many sender clones outlive the runner.
 #[derive(Clone)]
@@ -359,7 +359,7 @@ impl CaptureSink {
 impl CapturePusher {
     /// Hand a block of interleaved samples to the writer thread.
     /// No-op once the shutdown flag is set (typically because
-    /// the runner already finalized — cpal callbacks may keep
+    /// the runner already finalized - cpal callbacks may keep
     /// firing for a few hundred ms after the Stream is dropped
     /// on macOS, and we don't want to enqueue garbage past
     /// finalize). Try non-blocking first; on full, warn once and
@@ -371,7 +371,7 @@ impl CapturePusher {
             return;
         }
         // `Ok(())` and `Err(Disconnected(_))` happen to share an empty
-        // body but mean different things — happy-path success vs.
+        // body but mean different things - happy-path success vs.
         // "writer thread already exited; drop the samples and let
         // audio keep running". Merging into `_ => {}` would lose the
         // semantic comment a future reader needs.
@@ -382,13 +382,13 @@ impl CapturePusher {
                 if !self.blocked_at_least_once.swap(true, Ordering::Relaxed) {
                     eprintln!(
                         "capture: audio thread blocking on \
-                         disk write — output may glitch (this warning fires once)"
+                         disk write - output may glitch (this warning fires once)"
                     );
                 }
                 let _ = self.chunk_tx.send(samples);
             }
             Err(mpsc::TrySendError::Disconnected(_)) => {
-                // Writer exited — capture is dead. Audio
+                // Writer exited - capture is dead. Audio
                 // continues; the file is whatever got flushed.
             }
         }
@@ -409,7 +409,7 @@ impl Drop for CaptureSink {
 
 /// Linear-interp resample interleaved `src` from `src_sr` to
 /// `target_sr`. Quality limitation called out in `--help`. No
-/// anti-alias filter — fine for pre-rendered test signals at the
+/// anti-alias filter - fine for pre-rendered test signals at the
 /// device's native SR (the dominant case is no resample at all),
 /// audible aliasing on broadband content.
 fn linear_resample(
@@ -442,7 +442,7 @@ fn linear_resample(
 #[cfg(test)]
 mod tests {
     // Silence + mono-broadcast assertions check bit-exact zeros and
-    // bit-equal channel samples — equality is the contract.
+    // bit-equal channel samples - equality is the contract.
     #![allow(clippy::float_cmp)]
 
     use super::*;
@@ -481,7 +481,7 @@ mod tests {
         // First 4 frames have content (additive into zero-init bufs)
         assert!(bufs[0][0] != 0.0);
         assert!(bufs[0][3] != 0.0);
-        // Frames 4..8 stay zero — saturated.
+        // Frames 4..8 stay zero - saturated.
         assert_eq!(bufs[0][4], 0.0);
         assert_eq!(bufs[0][7], 0.0);
 
@@ -555,7 +555,7 @@ mod tests {
         let pusher = sink.pusher();
         pusher.submit(vec![0.1, 0.1]);
         sink.finalize();
-        // Late submit — the audio thread didn't see the flag in
+        // Late submit - the audio thread didn't see the flag in
         // time. Should be a no-op (no panic, no late write).
         pusher.submit(vec![0.9, 0.9]);
 

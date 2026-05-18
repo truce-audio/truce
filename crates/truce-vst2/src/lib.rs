@@ -2,7 +2,7 @@
 //!
 //! Uses a C shim that implements the `AEffect` interface. The shim calls
 //! back into Rust for all plugin logic via C FFI. Clean-room
-//! implementation — no Steinberg SDK headers.
+//! implementation - no Steinberg SDK headers.
 
 pub mod ffi;
 
@@ -92,7 +92,7 @@ struct Vst2Instance<P: PluginExport> {
 // (`aeffect_ptr` and the optional `pending_editor_parent`). Neither
 // auto-derives `Send` and `*mut` makes the whole struct `!Send` by
 // default. VST2 hosts call every dispatcher / callback on a single
-// host thread per instance — never concurrently and never from the
+// host thread per instance - never concurrently and never from the
 // audio thread for editor-state pointers. The two pointers are read
 // only inside `unsafe extern "C"` callbacks the host invokes
 // sequentially. This impl asserts the single-thread invariant
@@ -177,7 +177,7 @@ impl Vst2TransportSnapshot {
 // the host process, which reclaims the allocation.
 //
 // `Box::into_raw(boxed_instance)` in `cb_create` follows the same
-// pattern but is *paired* with `cb_destroy` reconstituting the Box —
+// pattern but is *paired* with `cb_destroy` reconstituting the Box -
 // so it isn't a leak, just a C-lifetime handoff.
 //
 // ---------------------------------------------------------------------------
@@ -288,7 +288,7 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
         let inst = &mut *ctx.cast::<Vst2Instance<P>>();
         let num_frames = num_frames as usize;
 
-        // Host called process() before effMainsChanged(true) — sample
+        // Host called process() before effMainsChanged(true) - sample
         // rate and smoothers haven't been primed yet. Zero outputs
         // and bail rather than running DSP through uninitialized state.
         if !inst.prepared {
@@ -505,7 +505,7 @@ unsafe extern "C" fn cb_output_event_at<P: PluginExport>(
     }
 }
 
-// `SysEx` input — shim hands us the byte pointer + length; we copy
+// `SysEx` input - shim hands us the byte pointer + length; we copy
 // into the plug-in's `EventList` pool. Pool-full failures drop the
 // message (atomic-by-spec; truncating corrupts).
 unsafe extern "C" fn cb_push_sysex_input<P: PluginExport>(
@@ -676,7 +676,7 @@ unsafe extern "C" fn cb_state_load<P: PluginExport>(
         // the audio thread for application via `pending_state`. The
         // `restored` flag below tracks deserialize success (host-side
         // data integrity) and drives the editor-open state machine
-        // exactly as before — the audio thread will catch up on its
+        // exactly as before - the audio thread will catch up on its
         // next process block.
         let restored = if !data.is_null() && len > 0 {
             let blob = slice::from_raw_parts(data, len as usize);
@@ -695,7 +695,7 @@ unsafe extern "C" fn cb_state_load<P: PluginExport>(
             false
         };
 
-        // Single ordered block — read once on each side instead of
+        // Single ordered block - read once on each side instead of
         // checking `inst.editor` and `inst.pending_editor_parent` in
         // separate `if let` arms. Two arms could let a pending-parent
         // open path land out of order with the state_changed
@@ -734,7 +734,7 @@ unsafe extern "C" fn cb_state_load<P: PluginExport>(
 /// global allocator with `cap == len`. `cb_state_save` upholds this
 /// via `Vec::into_boxed_slice` (which trims `cap` to `len`) then
 /// `mem::forget`. Don't change either side to a different allocator
-/// or cap-tracking strategy without updating the other —
+/// or cap-tracking strategy without updating the other -
 /// `Vec::from_raw_parts` requires both to match exactly.
 unsafe extern "C" fn cb_state_free(data: *mut u8, len: u32) {
     unsafe {
@@ -792,7 +792,7 @@ unsafe extern "C" fn cb_gui_get_size<P: PluginExport>(
     unsafe {
         let inst = &*ctx.cast::<Vst2Instance<P>>();
         if let Some(ref editor) = inst.editor {
-            // VST2 has no standardised DPI channel — hosts read back
+            // VST2 has no standardised DPI channel - hosts read back
             // whatever `effEditGetRect` returns and embed the NSView /
             // HWND at that pixel size. Report the editor's logical size
             // unchanged; hosts on Retina macOS will scale through AppKit
@@ -908,7 +908,7 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
     // when `state_loaded == 0` and only forwards to this callback
     // *after* `effSetChunk` (or the fresh-instance `effMainsChanged`)
     // bumps `state_loaded`. The Rust-side `pending_editor_parent`
-    // path below is a defensive backstop — it covers a hypothetical
+    // path below is a defensive backstop - it covers a hypothetical
     // future caller (e.g. an integration-test driver) that bypasses
     // the C shim and invokes `cb_gui_open` directly. The two paths
     // never race in practice because the C shim's `state_loaded`
@@ -971,7 +971,7 @@ fn register_vst2_inner<P: PluginExport>(layout: &BusLayout) {
     // `PluginExport` impls without a `Params::param_infos_static`
     // override fall back to the historical
     // `Self::create().params().param_infos()` walk inside the trait
-    // default — see `PluginExport::param_infos_static`.
+    // default - see `PluginExport::param_infos_static`.
     let infos = P::param_infos_static();
     let bypass_param_id = infos
         .iter()

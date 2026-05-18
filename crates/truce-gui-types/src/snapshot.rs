@@ -3,7 +3,7 @@
 //! `interaction::dispatch`).
 //!
 //! Callers build a `ParamSnapshot` per frame from their own parameter
-//! store — typically `BuiltinEditor` forwards `PluginContext` + `Params`
+//! store - typically `BuiltinEditor` forwards `PluginContext` + `Params`
 //! accesses, but any plugin that owns its own frame can populate it
 //! from whatever source it likes.
 
@@ -12,7 +12,7 @@ use crate::widgets::WidgetType;
 /// Immutable view of one frame's worth of parameter state.
 ///
 /// Each field is a borrowed closure, so the snapshot itself is cheap
-/// to construct — no copying of values up front. Closures are read
+/// to construct - no copying of values up front. Closures are read
 /// on demand as widgets/dispatch need them.
 pub struct ParamSnapshot<'a> {
     /// Read normalized value (0.0–1.0).

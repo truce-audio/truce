@@ -4,7 +4,7 @@ use crate::info::ParamInfo;
 use crate::sample::Float;
 use crate::smooth::{Smoother, SmoothingStyle};
 
-/// Atomic f64 — wraps `AtomicU64` with f64 load/store.
+/// Atomic f64 - wraps `AtomicU64` with f64 load/store.
 pub struct AtomicF64 {
     bits: AtomicU64,
 }
@@ -55,7 +55,7 @@ impl FloatParam {
 
     /// Internal: raw target value at `f64` precision (host-side
     /// surface, before any narrowing for DSP use). Plugin authors
-    /// don't call this directly — they go through the prelude's
+    /// don't call this directly - they go through the prelude's
     /// `read` / `value` / `current` instead, which have no
     /// precision-suffix decisions at the call site.
     #[doc(hidden)]
@@ -127,15 +127,15 @@ impl FloatParam {
 ///
 /// ```ignore
 /// use truce::prelude::*;
-/// let gain = self.params.gain.read();   // f32 — no annotation needed
+/// let gain = self.params.gain.read();   // f32 - no annotation needed
 /// ```
 ///
-/// The trait's methods shadow nothing — `FloatParam` has no inherent
+/// The trait's methods shadow nothing - `FloatParam` has no inherent
 /// `read` / `value` / `current`, so name resolution picks the one
 /// (and only one) trait that's in scope. Importing `prelude64`
 /// instead brings [`FloatParamReadF64`] into scope and the same
 /// source resolves to `f64`. Importing **both** preludes is a
-/// compile error (`multiple applicable items in scope`) — which is
+/// compile error (`multiple applicable items in scope`) - which is
 /// the right error for a file that hasn't committed to a precision.
 pub trait FloatParamReadF32 {
     /// Next smoothed value. Call once per sample in `process()`.
@@ -218,7 +218,7 @@ impl BoolParam {
             1.0 => true,
             other => panic!(
                 "BoolParam '{}' default {} must be exactly 0.0 (false) \
-                 or 1.0 (true) — bool params have no halfway value",
+                 or 1.0 (true) - bool params have no halfway value",
                 info.name, other,
             ),
         };
@@ -252,14 +252,14 @@ impl IntParam {
     ///
     /// Panics if `info.default_plain` is non-finite or doesn't
     /// round-trip through `i64`. The cast `f64 as i64` saturates
-    /// silently — `default_plain = -1.0` lands on `-1` (fine), but
+    /// silently - `default_plain = -1.0` lands on `-1` (fine), but
     /// `default_plain = 1e30` saturates to `i64::MAX` and `f64::NAN`
     /// becomes `0`. The derive populates `default_plain` from
     /// `#[param(default = ...)]`; a user-supplied float there is a
     /// programmer error, not a runtime condition we should
     /// silently absorb.
     // `truncated as f64 == default` is the integer round-trip
-    // exactness check — epsilon would defeat its purpose. The
+    // exactness check - epsilon would defeat its purpose. The
     // `as i64` truncation is the round-trip's whole point.
     #[allow(
         clippy::float_cmp,
@@ -279,7 +279,7 @@ impl IntParam {
         assert!(
             truncated as f64 == default,
             "IntParam '{}' default {} doesn't round-trip through i64 \
-             — supply an integer-valued default in the derive attribute",
+             - supply an integer-valued default in the derive attribute",
             info.name,
             default,
         );
@@ -372,12 +372,12 @@ impl<E: ParamEnum> EnumParam<E> {
     ///
     /// Panics if `info.default_plain` is non-finite, negative, or
     /// `>= E::variant_count()`. The cast `f64 as u32` saturates
-    /// silently — a user-supplied `#[param(default = -1)]` would
+    /// silently - a user-supplied `#[param(default = -1)]` would
     /// land on variant 0 without any signal that the default was
     /// invalid. Validate up front so the bug surfaces at plugin
     /// construction time.
     // `f64::from(idx) == default` is the integer round-trip
-    // exactness check — epsilon would defeat its purpose. The
+    // exactness check - epsilon would defeat its purpose. The
     // `as u32` truncation is the round-trip's whole point.
     #[allow(
         clippy::float_cmp,
@@ -455,7 +455,7 @@ impl<E: ParamEnum> EnumParam<E> {
 
     /// Format a plain value (index as f64) to the variant name string.
     ///
-    /// Associated function — the dispatch is purely on `E`, no instance
+    /// Associated function - the dispatch is purely on `E`, no instance
     /// state is read. The `#[derive(Params)]` macro calls it as
     /// `<EnumParam<E>>::format_by_index(value)` so the field type
     /// supplies `E`.

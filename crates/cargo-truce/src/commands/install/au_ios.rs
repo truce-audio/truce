@@ -8,7 +8,7 @@
 //! tethered device.
 //!
 //! Mirrors the shape of `install/au_v3.rs` (the macOS pipeline) but
-//! skips xcodebuild — for a one-app + one-appex + one-framework
+//! skips xcodebuild - for a one-app + one-appex + one-framework
 //! bundle the swiftc invocations are clearer and easier to iterate
 //! against than driving a pbxproj template.
 
@@ -24,7 +24,7 @@ use std::process::Command;
 /// `arm64` (or `x86_64` on Intel Macs); device builds target
 /// `arm64` only. The two slices have distinct `LC_BUILD_VERSION`
 /// platforms (`platform 7` for the simulator, `platform 2` for
-/// physical iOS) and aren't lipo-able into one Mach-O — `lipo`
+/// physical iOS) and aren't lipo-able into one Mach-O - `lipo`
 /// rejects them with `have the same architectures`.
 #[derive(Clone, Copy)]
 pub(crate) enum IosTarget {
@@ -80,7 +80,7 @@ pub(crate) fn install_one(root: &Path, p: &PluginDef, target: IosTarget) -> Res 
 /// `UISupportedInterfaceOrientations` for the container. The
 /// screenshot pipeline passes a single-element slice so iOS forces
 /// the simulator to rotate to a canonical orientation when the
-/// container launches — without that, the sim inherits whatever
+/// container launches - without that, the sim inherits whatever
 /// rotation the previous test left it as, and portrait-supporting
 /// plug-ins can render in landscape (and vice versa), producing
 /// non-deterministic baseline dimensions.
@@ -113,7 +113,7 @@ fn install_one_inner(
             );
         }
         // Ad-hoc signing (`-`) can never produce a device-installable
-        // binary — installd requires the code-directory hash to chain
+        // binary - installd requires the code-directory hash to chain
         // up to an Apple-trusted root, which only a real Developer ID
         // signing identity provides. Catching this upfront avoids a
         // confusing AMDeviceSecureInstallApplication failure later.
@@ -126,7 +126,7 @@ fn install_one_inner(
         }
     }
     let bundle = build_bundle(root, p, &cfg, target, orientations_override)?;
-    // Full reverse-DNS identifier — the value installd records and
+    // Full reverse-DNS identifier - the value installd records and
     // `simctl launch` / `devicectl process launch` accept. Must match
     // the CFBundleIdentifier written into the .app's Info.plist
     // (constructed the same way inside build_bundle).
@@ -177,7 +177,7 @@ pub(crate) fn build_bundle(
     let fw_name = format!("{}AU", capitalise_id(&p.bundle_id));
     // Full reverse-DNS CFBundleIdentifier: `{vendor.id}.{bundle_id}`.
     // `truce.toml` stores `bundle_id` as the short suffix
-    // (`"synth"`) — the iOS provisioning profile's wildcard App ID
+    // (`"synth"`) - the iOS provisioning profile's wildcard App ID
     // (e.g. `TEAM.com.acme.*`) matches the assembled full ID, not
     // the bare suffix. Mirrors the macOS AU v3 pipeline which uses
     // the same construction for its plist identifiers. Underscores
@@ -222,7 +222,7 @@ pub(crate) fn build_bundle(
     let stage = out.join("build/stage");
     fs_ctx::create_dir_all(&stage)?;
     // AU v3 Swift sources come from the `include_str!`-baked
-    // constants in `crate::templates::au3` rather than from disk —
+    // constants in `crate::templates::au3` rather than from disk -
     // when `cargo-truce` runs inside a downstream project (one
     // that depends on truce as a path / git dep), the templates
     // dir isn't at `<project-root>/crates/cargo-truce/templates`.
@@ -266,7 +266,7 @@ pub(crate) fn build_bundle(
     // Write `au_shim_types.h` from the `include_str!`-baked
     // constant (re-exported through `truce-shim-types`) into the
     // stage dir so the bridging header's `#import` resolves
-    // without depending on the truce checkout layout — downstream
+    // without depending on the truce checkout layout - downstream
     // projects that depend on truce as a path / git dep don't
     // have a `crates/truce-shim-types/include` under their root.
     fs_ctx::write(
@@ -315,7 +315,7 @@ pub(crate) fn build_bundle(
             "-O",
             "-Xlinker",
             "-ObjC",
-            // App-Extension principal-class entry point — swiftc's
+            // App-Extension principal-class entry point - swiftc's
             // default `main` is a no-op stub that exits immediately.
             "-Xlinker",
             "-e",
@@ -471,7 +471,7 @@ pub(crate) fn build_bundle(
         // already-written `Info.plist`. Simpler than re-running
         // `app_info_plist` with the additions because the
         // helper's `format!` template doesn't carry the keys
-        // unconditionally — most plugins don't supply an icon.
+        // unconditionally - most plugins don't supply an icon.
         let info_path = app_dir.join("Info.plist");
         let raw = std::fs::read_to_string(&info_path)
             .map_err(|e| format!("read {}: {e}", info_path.display()))?;
@@ -499,7 +499,7 @@ pub(crate) fn build_bundle(
     // in the entitlements; iOS installd matches that against the
     // embedded mobileprovision's allow-list. Pull the team ID from
     // the env var (set by the user) OR extract it from the profile
-    // itself — typical workflow has only the profile path set.
+    // itself - typical workflow has only the profile path set.
     let team_id: Option<String> = if matches!(target, IosTarget::Device) {
         crate::ios_team_id().or_else(|| {
             crate::ios_provisioning_profile()
@@ -544,7 +544,7 @@ pub(crate) fn build_bundle(
         // executable was not found") at AMDeviceSecureInstall
         // time. Two paths:
         //   1. The container's profile is a wildcard
-        //      (`<prefix>.*`) that covers both bundle IDs — reuse
+        //      (`<prefix>.*`) that covers both bundle IDs - reuse
         //      it for the appex too.
         //   2. TRUCE_IOS_APPEX_PROVISIONING_PROFILE is set to a
         //      separate profile bound to the `<bundle>.AUExt` ID.
@@ -707,7 +707,7 @@ pub(crate) fn build_xcframework(root: &Path, p: &PluginDef) -> Result<PathBuf, c
         slices.push(slice_dir);
     }
     let xcfw_out = out.join(format!("{fw_name}.xcframework"));
-    // xcodebuild refuses to write into an existing output dir —
+    // xcodebuild refuses to write into an existing output dir -
     // a stale leftover from a previous failed run trips the
     // "couldn't be copied because an item with the same name
     // already exists" message. Clean the slot first.
@@ -735,7 +735,7 @@ pub(crate) fn build_xcframework(root: &Path, p: &PluginDef) -> Result<PathBuf, c
 /// (`Payload/{App}.app/...`). The signing identity comes from
 /// `TRUCE_IOS_SIGNING_IDENTITY` (typically `"Apple Distribution: …"`
 /// for App Store / `TestFlight` submissions). Notarisation /
-/// `altool` upload is intentionally out of scope — that's a
+/// `altool` upload is intentionally out of scope - that's a
 /// distribution step, not a build step.
 pub(crate) fn package_ipa(root: &Path, p: &PluginDef) -> Result<PathBuf, crate::BoxErr> {
     let cfg = crate::load_config()?;
@@ -750,7 +750,7 @@ pub(crate) fn package_ipa(root: &Path, p: &PluginDef) -> Result<PathBuf, crate::
     })?;
     crate::copy_dir_recursive(&app_dir, &payload.join(file_name))?;
     let ipa_path = out_dir.join(format!("{}.ipa", p.name));
-    // `zip -r` over `Payload/` is the canonical Apple shape — the
+    // `zip -r` over `Payload/` is the canonical Apple shape - the
     // `.ipa` extension is documentation. Strip resource forks
     // (`-X`) so Linux / Windows hosts that unpack the ipa don't see
     // AppleDouble metadata files.
@@ -798,7 +798,7 @@ fn embed_app_icon(
     };
     let src = root.join(path);
     if !src.exists() {
-        eprintln!("warning: ios_icon_set={path} does not resolve — skipping icon embed");
+        eprintln!("warning: ios_icon_set={path} does not resolve - skipping icon embed");
         return Ok(String::new());
     }
     let is_appiconset = src.join("Contents.json").exists();
@@ -810,7 +810,7 @@ fn embed_app_icon(
         // actool's `--app-icon <NAME>` argument is the .appiconset's
         // stem (directory name minus the `.appiconset` extension).
         // actool itself wants a parent `.xcassets` catalog, NOT a
-        // bare `.appiconset` — it scans the catalog looking for an
+        // bare `.appiconset` - it scans the catalog looking for an
         // app-icon set whose name matches `--app-icon`. Construct
         // a one-shot catalog wrapping the user's iconset so the
         // user doesn't have to maintain an .xcassets dir themselves.
@@ -870,7 +870,7 @@ fn embed_app_icon(
             return Ok(extract_plist_body(&additions));
         }
         eprintln!(
-            "warning: actool exited {status} compiling {} — falling back to raw PNG copy",
+            "warning: actool exited {status} compiling {} - falling back to raw PNG copy",
             src.display()
         );
     }
@@ -926,7 +926,7 @@ fn extract_plist_body(plist: &str) -> String {
 
 /// Pull the team identifier out of a `.mobileprovision`. The file
 /// is CMS-signed; `security cms -D -i <profile>` decodes it to
-/// plist XML containing a `TeamIdentifier` array — first entry is
+/// plist XML containing a `TeamIdentifier` array - first entry is
 /// the active team ID. Returns `None` if the decode fails or the
 /// key isn't present (very unusual for a real Apple-issued profile).
 fn extract_team_id_from_profile(profile: &Path) -> Option<String> {
@@ -1097,7 +1097,7 @@ fn map_orientation(token: &str) -> Result<&'static str, crate::BoxErr> {
 /// Build the `<string>…</string>` lines for the
 /// `UISupportedInterfaceOrientations` array. Returns the joined
 /// inner XML (no `<array>` wrapper). Rejects empty input and
-/// unknown tokens — empty would let iOS reject the bundle at
+/// unknown tokens - empty would let iOS reject the bundle at
 /// install time with a less actionable message.
 fn render_orientation_array(tokens: &[String]) -> Result<String, crate::BoxErr> {
     if tokens.is_empty() {
@@ -1135,7 +1135,7 @@ fn app_info_plist(
     <key>LSRequiresIPhoneOS</key><true/>
     <key>MinimumOSVersion</key><string>{min_ios}</string>
     <key>CFBundleSupportedPlatforms</key><array><string>{platform}</string></array>
-    <key>NSMicrophoneUsageDescription</key><string>{app_name} can route your device's microphone through the plug-in so you can hear it process live audio — useful for previewing effects without a DAW.</string>
+    <key>NSMicrophoneUsageDescription</key><string>{app_name} can route your device's microphone through the plug-in so you can hear it process live audio - useful for previewing effects without a DAW.</string>
     <key>NSBluetoothAlwaysUsageDescription</key><string>{app_name} discovers Bluetooth MIDI controllers paired in Settings so you can play / control the plug-in from an external keyboard.</string>
     <key>UILaunchScreen</key><dict/>
     <key>UISupportedInterfaceOrientations</key>
@@ -1153,7 +1153,7 @@ fn app_info_plist(
 /// validates `application-identifier` + `com.apple.developer.team-identifier`
 /// against the embedded `.mobileprovision`. Without them the
 /// signed binary's claim falls back to the implicit Info.plist
-/// bundle ID with no team prefix — installd rejects with error
+/// bundle ID with no team prefix - installd rejects with error
 /// 0xe8008015 ("A valid provisioning profile for this executable
 /// was not found"). For ad-hoc simulator installs the entitlement
 /// is omitted (no profile means nothing to validate against).
@@ -1165,7 +1165,7 @@ fn render_entitlements_plist(
 ) -> String {
     let mut keys = String::new();
     // `com.apple.security.app-sandbox` and `network.client` are
-    // macOS-only entitlements — iOS apps don't carry them (the
+    // macOS-only entitlements - iOS apps don't carry them (the
     // platform sandboxes everything by default). Claiming them in
     // an iOS-signed binary triggers a profile-validation failure
     // at `AMDeviceSecureInstallApplication` (error 0xe8008015):

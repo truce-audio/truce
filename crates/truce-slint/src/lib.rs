@@ -25,7 +25,7 @@
 // iOS uses `editor_ios.rs` which runs the same Slint
 // `MinimalSoftwareWindow` CPU renderer + blits via `CGImage`
 // (skipping baseview / wgpu entirely). `platform.rs` carries the
-// Slint platform-registration glue — needed on every target;
+// Slint platform-registration glue - needed on every target;
 // inside the file, the baseview / wgpu re-exports are themselves
 // cfg-gated.
 #[cfg(not(target_os = "ios"))]
@@ -95,7 +95,7 @@ macro_rules! bind {
             $crate::bind!(@wire $state, $ui, $id, $name $( : $ty $(($arg))? )?);
         )*
         let ui = $ui;
-        // Return type is inferred from the surrounding `SetupFn` —
+        // Return type is inferred from the surrounding `SetupFn` -
         // typically `SyncFn<P>` aka `Box<dyn Fn(&PluginContext<P>)>`.
         Box::new(move |state: &$crate::PluginContext<_>| {
             $(
@@ -117,7 +117,7 @@ macro_rules! bind {
     (@sync $state:expr, $ui:expr, $id:expr, $name:ident) => {
         $crate::paste! {
             // `state.get_param` resolves through the user's
-            // prelude's `PluginContextReadF{32,64}` trait — could
+            // prelude's `PluginContextReadF{32,64}` trait - could
             // be either precision. `.to_f32()` narrows uniformly,
             // matching slint's `f32`-typed property setter.
             $ui.[<set_ $name>]($state.get_param($id.into()).to_f32());

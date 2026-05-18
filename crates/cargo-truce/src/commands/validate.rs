@@ -1,4 +1,4 @@
-//! `cargo truce validate` — drive auval (AU v2/v3), pluginval (VST3), and
+//! `cargo truce validate` - drive auval (AU v2/v3), pluginval (VST3), and
 //! clap-validator (CLAP) against the project's installed bundles, with
 //! shadow-install collision detection.
 
@@ -21,7 +21,7 @@ use std::process::Command;
 fn warn_on_scope_collision(format: Format, user_path: &Path, system_path: &Path) {
     // On platforms with no distinct system-scope plug-in dir (Linux,
     // Windows for some formats), `InstallScope::User` and `::System`
-    // resolve to the same path — a single install can't shadow itself.
+    // resolve to the same path - a single install can't shadow itself.
     if user_path == system_path {
         return;
     }
@@ -440,9 +440,9 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
                 //          releases (pre-bundle layout) so validate
                 //          keeps working until they're reinstalled.
                 //   Linux:   a `.so` renamed `.clap`. dlopen-loadable
-                //          directly — no bundle.
+                //          directly - no bundle.
                 //   Windows: a `.dll` renamed `.clap`. LoadLibrary-
-                //          loadable directly — no bundle.
+                //          loadable directly - no bundle.
                 #[cfg(target_os = "macos")]
                 let validate_path = if installed.join("Contents/MacOS").is_dir() {
                     installed.clone()
@@ -577,7 +577,7 @@ fn validate_vst2_macos(plugins: &[&PluginDef]) -> usize {
 
     let mut failures = 0;
     for p in plugins {
-        // Cross-scope collision check first — visible regardless of
+        // Cross-scope collision check first - visible regardless of
         // whether the smoke binary builds. Two installed `.vst` bundles
         // are valid on disk but only one will be loaded by any given
         // host scan.
@@ -681,7 +681,7 @@ fn parse_clap_summary(output: &str) -> String {
 }
 
 fn find_pluginval() -> Option<String> {
-    // Env-var override takes precedence — CI uses it to point at a
+    // Env-var override takes precedence - CI uses it to point at a
     // cached download outside the standard locations.
     if let Ok(path) = std::env::var("PLUGINVAL")
         && Path::new(&path).exists()

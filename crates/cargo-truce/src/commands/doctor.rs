@@ -1,4 +1,4 @@
-//! `cargo truce doctor` — environment diagnostics: Rust toolchain, code
+//! `cargo truce doctor` - environment diagnostics: Rust toolchain, code
 //! signing tools, AAX SDK, installed plugins.
 
 use crate::format::Format;
@@ -22,7 +22,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 // ---------------------------------------------------------------------------
-// doctor — environment diagnostics
+// doctor - environment diagnostics
 // ---------------------------------------------------------------------------
 
 fn print_help() {
@@ -41,7 +41,7 @@ Options:
 }
 
 // Returns `Res` for uniformity with the rest of the `cmd_*` dispatch
-// table even though every diagnostic only ever prints — the helpers
+// table even though every diagnostic only ever prints - the helpers
 // don't surface fallible errors today.
 #[allow(clippy::unnecessary_wraps, clippy::too_many_lines)]
 pub(crate) fn cmd_doctor(args: &[String]) -> Res {
@@ -67,7 +67,7 @@ pub(crate) fn cmd_doctor(args: &[String]) -> Res {
     }
     match crate::util::sccache_wrapper() {
         Some(p) => eprintln!(
-            "    {} sccache active at {} — caches rustc invocations across builds",
+            "    {} sccache active at {} - caches rustc invocations across builds",
             tag_ok(),
             p.to_string_lossy()
         ),
@@ -75,12 +75,12 @@ pub(crate) fn cmd_doctor(args: &[String]) -> Res {
             || env::var_os("RUSTC_WORKSPACE_WRAPPER").is_some() =>
         {
             eprintln!(
-                "    {} RUSTC_WRAPPER already set — skipping sccache auto-detect",
+                "    {} RUSTC_WRAPPER already set - skipping sccache auto-detect",
                 tag_info()
             );
         }
         None => eprintln!(
-            "    {} sccache not on PATH — optional. `brew install sccache` (or cargo install) caches rustc \
+            "    {} sccache not on PATH - optional. `brew install sccache` (or cargo install) caches rustc \
              invocations at the input-hash level and speeds up env-flipping rebuilds",
             tag_info()
         ),
@@ -101,7 +101,7 @@ pub(crate) fn cmd_doctor(args: &[String]) -> Res {
         match locate_wraptool_macos() {
             Some(p) => eprintln!("    {} wraptool (PACE) at {}", tag_ok(), p.display()),
             None => eprintln!(
-                "    {} wraptool not found — only needed for signed AAX builds. \
+                "    {} wraptool not found - only needed for signed AAX builds. \
                  Install Eden via the iLok License Manager, then optionally \
                  `sudo ln -s /Applications/PACEAntiPiracy/Eden/Fusion/Current/bin/wraptool /usr/local/bin/wraptool`",
                 tag_info()
@@ -109,25 +109,25 @@ pub(crate) fn cmd_doctor(args: &[String]) -> Res {
         }
 
         // Universal packaging (default for `cargo truce package`) needs both
-        // Apple Rust targets. Missing targets are a warning, not an error —
+        // Apple Rust targets. Missing targets are a warning, not an error -
         // `--host-only` still works without them.
         let has_x64 = rustup_has_target("x86_64-apple-darwin");
         let has_arm = rustup_has_target("aarch64-apple-darwin");
         match (has_x64, has_arm) {
             (true, true) => eprintln!(
-                "    {} Rust targets: x86_64-apple-darwin + aarch64-apple-darwin — `cargo truce package` will produce universal Mach-O binaries",
+                "    {} Rust targets: x86_64-apple-darwin + aarch64-apple-darwin - `cargo truce package` will produce universal Mach-O binaries",
                 tag_ok()
             ),
             (false, true) => eprintln!(
-                "    {} Rust target x86_64-apple-darwin missing — run: rustup target add x86_64-apple-darwin (or pass `--host-only` to skip)",
+                "    {} Rust target x86_64-apple-darwin missing - run: rustup target add x86_64-apple-darwin (or pass `--host-only` to skip)",
                 tag_warn()
             ),
             (true, false) => eprintln!(
-                "    {} Rust target aarch64-apple-darwin missing — run: rustup target add aarch64-apple-darwin (or pass `--host-only` to skip)",
+                "    {} Rust target aarch64-apple-darwin missing - run: rustup target add aarch64-apple-darwin (or pass `--host-only` to skip)",
                 tag_warn()
             ),
             (false, false) => eprintln!(
-                "    {} No Apple Rust targets installed — run: rustup target add x86_64-apple-darwin aarch64-apple-darwin (or pass `--host-only` to skip)",
+                "    {} No Apple Rust targets installed - run: rustup target add x86_64-apple-darwin aarch64-apple-darwin (or pass `--host-only` to skip)",
                 tag_warn()
             ),
         }
@@ -143,7 +143,7 @@ pub(crate) fn cmd_doctor(args: &[String]) -> Res {
                 p.display()
             ),
             None => eprintln!(
-                "    {} cmake.exe not found — install cmake or VS \"C++ CMake tools\"",
+                "    {} cmake.exe not found - install cmake or VS \"C++ CMake tools\"",
                 tag_fail()
             ),
         }
@@ -154,7 +154,7 @@ pub(crate) fn cmd_doctor(args: &[String]) -> Res {
                 p.display()
             ),
             None => eprintln!(
-                "    {} ninja.exe not found — install ninja or VS \"C++ CMake tools\"",
+                "    {} ninja.exe not found - install ninja or VS \"C++ CMake tools\"",
                 tag_fail()
             ),
         }
@@ -179,7 +179,7 @@ pub(crate) fn cmd_doctor(args: &[String]) -> Res {
     #[cfg(target_os = "windows")]
     {
         // `cl.exe` is only on PATH inside a Developer Command Prompt, but Rust
-        // (cc-rs) and CMake both auto-discover MSVC via vswhere — so the bare
+        // (cc-rs) and CMake both auto-discover MSVC via vswhere - so the bare
         // PATH check would falsely flag the tool as missing on a perfectly
         // working setup. Try PATH first, then fall back to vswhere.
         if which_exe("cl.exe").is_some() {
@@ -187,12 +187,12 @@ pub(crate) fn cmd_doctor(args: &[String]) -> Res {
         } else {
             match locate_msvc_cl() {
                 Some(p) => eprintln!(
-                    "    {} MSVC compiler at {} (not in PATH — Rust/CMake auto-discover it via vswhere)",
+                    "    {} MSVC compiler at {} (not in PATH - Rust/CMake auto-discover it via vswhere)",
                     tag_ok(),
                     p.display()
                 ),
                 None => eprintln!(
-                    "    {} MSVC compiler: not found — install VS \"Desktop development with C++\" workload",
+                    "    {} MSVC compiler: not found - install VS \"Desktop development with C++\" workload",
                     tag_fail()
                 ),
             }
@@ -238,7 +238,7 @@ pub(crate) fn cmd_doctor(args: &[String]) -> Res {
         );
     }
 
-    // Plugin install paths — both scopes side-by-side per format.
+    // Plugin install paths - both scopes side-by-side per format.
     // Helps a user who's confused about why a host is finding the
     // wrong copy of their plugin: when the same name appears under
     // both scopes, the host picks one and shadows the other.
@@ -338,7 +338,7 @@ fn show_scope_paths() {
             continue;
         };
         report_scope_line(f, "user", InstallScope::User, &user_path);
-        // Linux's user and system dirs resolve to the same path —
+        // Linux's user and system dirs resolve to the same path -
         // skip the duplicate row to keep the matrix readable.
         if user_path != system_path {
             report_scope_line(f, "system", InstallScope::System, &system_path);
@@ -362,7 +362,7 @@ fn show_scope_paths() {
             true,
             Path::new("/Applications"),
             // /Applications/ also holds every non-plug-in Mac app,
-            // so a count by ".app" would be meaningless — skip it.
+            // so a count by ".app" would be meaningless - skip it.
             "",
         );
     }
@@ -390,7 +390,7 @@ fn report_fixed(format_label: &str, scope_label: &str, needs_sudo: bool, path: &
 fn report_path_line(label: &str, needs_sudo: bool, path: &Path, ext: &str) {
     if !path.exists() {
         eprintln!(
-            "    {label:<14} {}{}— not present",
+            "    {label:<14} {}{}- not present",
             display_path(path),
             spacer(path)
         );
@@ -398,7 +398,7 @@ fn report_path_line(label: &str, needs_sudo: bool, path: &Path, ext: &str) {
     }
     let count_str = if ext.is_empty() {
         // Path is shared with non-plug-in content (e.g.
-        // `/Applications/` for AU v3) — counting `.app`s would
+        // `/Applications/` for AU v3) - counting `.app`s would
         // include every Mac app on disk. Skip the count.
         String::new()
     } else {
@@ -463,7 +463,7 @@ fn count_bundles_with_ext(dir: &Path, ext: &str) -> usize {
 
 /// Probe writability by trying to create a tempfile in `dir`. Avoids
 /// false positives from `metadata().permissions().readonly()` which
-/// only reports the file mode, not the effective access — system
+/// only reports the file mode, not the effective access - system
 /// dirs on macOS are 0755 and would read as "writable" without
 /// surfacing the sudo requirement.
 fn path_is_writable(dir: &Path) -> bool {
@@ -484,7 +484,7 @@ fn path_is_writable(dir: &Path) -> bool {
 
 /// Like `check_which`, but consults `env_var` (process env, then
 /// `.cargo/config.toml` `[env]`) before falling back to `$PATH`. Lets users
-/// point doctor at tools installed outside `$PATH` — useful for `.app`-bundled
+/// point doctor at tools installed outside `$PATH` - useful for `.app`-bundled
 /// binaries (pluginval) or sibling source checkouts (clap-validator).
 fn check_which_with_env(name: &str, env_var: Option<&str>) {
     if let Some(var) = env_var
@@ -496,7 +496,7 @@ fn check_which_with_env(name: &str, env_var: Option<&str>) {
             return;
         }
         eprintln!(
-            "    {} {name}: ${var}={path} but file not found — falling back to $PATH",
+            "    {} {name}: ${var}={path} but file not found - falling back to $PATH",
             tag_warn()
         );
     }

@@ -1,7 +1,7 @@
 //! Build-script helper for truce plugins with a Slint GUI.
 //!
 //! Wraps [`slint_build::compile_with_config`] and pre-fills the
-//! truce-specific bits — the `@truce` widget library path and the
+//! truce-specific bits - the `@truce` widget library path and the
 //! include path that lets `.slint` files do `import
 //! "JetBrainsMono-Regular.ttf";`.
 //!
@@ -18,7 +18,7 @@
 //! `Cargo.toml`). At the consuming crate's build time we
 //! materialize them into `OUT_DIR` and hand those paths to
 //! `slint-build`. That removes the historical "needs a local truce
-//! checkout" requirement — a plugin published to crates.io that
+//! checkout" requirement - a plugin published to crates.io that
 //! depends on `truce-slint-build` from the registry builds without
 //! any out-of-band file paths.
 //!
@@ -118,7 +118,7 @@ impl fmt::Display for CompileError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NoOutDir => {
-                f.write_str("OUT_DIR not set — call truce_slint_build::compile from a build script")
+                f.write_str("OUT_DIR not set - call truce_slint_build::compile from a build script")
             }
             Self::Io(e) => write!(f, "writing bundled assets to OUT_DIR: {e}"),
             Self::Slint(e) => write!(f, "slint compile failed: {e}"),

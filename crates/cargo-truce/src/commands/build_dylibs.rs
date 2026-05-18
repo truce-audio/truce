@@ -6,7 +6,7 @@
 //! 1. Skip on unsupported platforms (AU is macOS-only, AAX is macOS /
 //!    Windows) with a single `log_skip` line.
 //! 2. For AAX, gate on a configured SDK path (project-wide check, not
-//!    per-plugin — emit one skip line and bypass the cargo build loop
+//!    per-plugin - emit one skip line and bypass the cargo build loop
 //!    when missing).
 //! 3. One `cargo build -p a -p b -p c …` per format batch with the
 //!    format's feature set. No per-plugin env vars: per-format display
@@ -76,7 +76,7 @@ impl BuildFormat {
     }
 }
 
-/// Returns a skip-reason string if AAX cannot be built on this host —
+/// Returns a skip-reason string if AAX cannot be built on this host -
 /// either the platform isn't supported (Linux) or the SDK isn't
 /// configured (mac/Windows without `AAX_SDK_PATH` set in
 /// `.cargo/config.toml`'s `[env]` table or the shell env). `None`
@@ -130,7 +130,7 @@ pub(crate) fn build_format_dylibs(
     deployment_target: &str,
     target: Option<&str>,
 ) -> Res {
-    // Platform / SDK gates first — every gate emits a single skip line
+    // Platform / SDK gates first - every gate emits a single skip line
     // and exits cleanly, so the caller's "if format_selected { build }"
     // doesn't need its own cfg arms.
     match format {
@@ -170,7 +170,7 @@ pub(crate) fn build_format_dylibs(
     // dylib's cocoa-view class lands in `__objc_classlist` under a
     // unique name. Hosts load every `.component` into one process;
     // libobjc dedupes classes by name and `[NSBundle classNamed:]`
-    // returns nil on the loser's bundle — host then thinks the
+    // returns nil on the loser's bundle - host then thinks the
     // plugin has no GUI. Splitting AU2 into one cargo invocation per
     // plugin is the cost of correctness here; truce-au's tiny C/ObjC
     // shim recompiles per plugin but the leaf cdylib link cost
@@ -230,7 +230,7 @@ pub(crate) fn build_format_dylibs(
         }
 
         // AAX additionally assembles the `.aaxplugin` bundle in
-        // `target/bundles/` here — both install (which then copies the
+        // `target/bundles/` here - both install (which then copies the
         // bundle to /Library/...) and build (which leaves it in
         // `target/bundles/`) want the bundle assembled.
         #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -249,7 +249,7 @@ pub(crate) fn build_format_dylibs(
 /// checkout doesn't rebuild every framework crate.
 ///
 /// After every successful build, writes the sidecar that the shell
-/// binary reads at runtime to find this dylib — see
+/// binary reads at runtime to find this dylib - see
 /// [`write_shell_sidecar`].
 pub(crate) fn build_logic_dylibs(
     plugins: &[&PluginDef],
@@ -315,7 +315,7 @@ fn write_shell_sidecar(root: &std::path::Path, crate_name: &str, logic_profile: 
     let sidecar =
         truce_utils::shell_sidecar::sidecar_path(crate_name).ok_or_else(|| -> crate::BoxErr {
             "could not resolve $HOME (or %USERPROFILE% on Windows) for the \
-         shell sidecar — the runtime needs $HOME to locate the logic \
+         shell sidecar - the runtime needs $HOME to locate the logic \
          dylib without it"
                 .into()
         })?;

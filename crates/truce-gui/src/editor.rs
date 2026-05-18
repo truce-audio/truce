@@ -40,7 +40,7 @@ pub struct BuiltinEditor<P: Params> {
     /// Weak-ish handle to the blit backend the window-handler
     /// materializes. The editor keeps the canonical `Arc` and the
     /// handler gets a clone. On close we take the `Option` out of
-    /// the inner mutex — dropping the wgpu Surface synchronously —
+    /// the inner mutex - dropping the wgpu Surface synchronously -
     /// before asking baseview to tear the `NSView` down.
     blit_backend: Option<SharedBackend>,
     /// Set whenever something visible changes (param edited via the
@@ -53,7 +53,7 @@ pub struct BuiltinEditor<P: Params> {
     needs_repaint: Arc<AtomicBool>,
     /// Normalized values captured at the last render pass, in the
     /// same order as `interaction.knob_regions`. Used to detect
-    /// host-driven param changes (automation, preset recall) — if any
+    /// host-driven param changes (automation, preset recall) - if any
     /// live value drifts from the last-painted one, we force a
     /// repaint even if the UI never received a direct edit.
     last_painted_values: Vec<f32>,
@@ -69,7 +69,7 @@ pub struct BuiltinEditor<P: Params> {
 // SAFETY: `baseview::WindowHandle` holds a raw native window pointer
 // (HWND / NSView / X11 Window) and is not auto-`Send`. Hosts call
 // `Editor::open` / `idle` / `close` from a single dedicated GUI thread
-// — never concurrently and never from the audio thread — so the
+// - never concurrently and never from the audio thread - so the
 // handle is only ever touched on the thread that created it. The
 // `Editor` trait requires `Send` so the editor can live behind a
 // trait object; this impl asserts that the type doesn't escape its
@@ -94,7 +94,7 @@ impl<P: Params + 'static> BuiltinEditor<P> {
     /// the host / params Arc) against those captured at the last
     /// render. A mismatch means an automation lane wrote a new value,
     /// a preset was recalled, or some other off-UI state change
-    /// happened — force a repaint so the widget tracks it.
+    /// happened - force a repaint so the widget tracks it.
     fn detect_host_param_changes(&mut self) {
         let regions = &self.interaction.knob_regions;
         if regions.len() != self.last_painted_values.len() {
@@ -117,7 +117,7 @@ impl<P: Params + 'static> BuiltinEditor<P> {
         let regions = &self.interaction.knob_regions;
         // Resize-then-overwrite reuses the existing allocation
         // unchanged when the region count is steady (the common
-        // case — knob layouts only change on
+        // case - knob layouts only change on
         // `interaction.build_regions`). The previous
         // clear-then-extend form pumped through the iterator path
         // every frame even when the length didn't change.
@@ -187,7 +187,7 @@ impl<P: Params + 'static> BuiltinEditor<P> {
     ///
     /// Panics if the lazy `CpuBackend::new` allocation fails (out of
     /// memory or zero dimensions). The backend is allocated on first
-    /// render — subsequent calls reuse it.
+    /// render - subsequent calls reuse it.
     pub fn render(&mut self) {
         let (w, h) = (self.layout.width(), self.layout.height());
         let scale = self.scale.get_f32();
@@ -352,13 +352,13 @@ impl<P: Params + 'static> BuiltinEditor<P> {
 }
 
 // ---------------------------------------------------------------------------
-// C callbacks — thin wrappers that cast the context pointer back to &mut Self
+// C callbacks - thin wrappers that cast the context pointer back to &mut Self
 // ---------------------------------------------------------------------------
 
 /// Update interaction regions and live param values.
 ///
 /// Takes `&mut BuiltinEditor<P>` so the borrow checker enforces
-/// non-aliasing — the function only touches Rust references and is
+/// non-aliasing - the function only touches Rust references and is
 /// fully safe.
 pub fn update_interaction<P: Params + 'static>(editor: &mut BuiltinEditor<P>) {
     match &editor.layout {
@@ -390,7 +390,7 @@ pub fn update_interaction<P: Params + 'static>(editor: &mut BuiltinEditor<P>) {
     }
     for region in &mut editor.interaction.knob_regions {
         if let Some(ref ctx) = editor.context {
-            // Resolves through `PluginContextReadF32` — bridge's `f64` narrows inside.
+            // Resolves through `PluginContextReadF32` - bridge's `f64` narrows inside.
             region.normalized_value = ctx.get_param(region.param_id);
         } else {
             region.normalized_value =
@@ -400,7 +400,7 @@ pub fn update_interaction<P: Params + 'static>(editor: &mut BuiltinEditor<P>) {
 }
 
 // ---------------------------------------------------------------------------
-// Baseview WindowHandler — drives the CPU render loop
+// Baseview WindowHandler - drives the CPU render loop
 // ---------------------------------------------------------------------------
 //
 // On macOS + AAX: blits via CoreGraphics (CGImage → CALayer) to avoid Metal
@@ -457,7 +457,7 @@ fn create_wgpu_backend(window: &mut baseview::Window, phys_w: u32, phys_h: u32) 
     // Blit texture matches the CPU pixmap, which is now sized at
     // physical pixels (see CpuBackend's scale handling). With texture
     // and surface at the same physical size, the full-screen-triangle
-    // blit samples 1:1 — no stretch, no Retina blur.
+    // blit samples 1:1 - no stretch, no Retina blur.
     let blit = crate::blit::BlitPipeline::new(&device, format, phys_w, phys_h);
 
     BlitBackend {
@@ -475,7 +475,7 @@ fn create_wgpu_backend(window: &mut baseview::Window, phys_w: u32, phys_h: u32) 
 // `close`). Children before parent: per-pipeline GPU resources, then
 // the surface (releases swap chain / CAMetalLayer), then queue, then
 // device. `BuiltinEditor::close` does the same thing explicitly via
-// destructure — this declaration order keeps the implicit path safe
+// destructure - this declaration order keeps the implicit path safe
 // too.
 struct BlitBackend {
     blit: crate::blit::BlitPipeline,
@@ -488,7 +488,7 @@ struct BlitBackend {
 impl BlitBackend {
     /// Reconfigure the wgpu surface and blit texture for a new physical
     /// size. Used when `Editor::set_scale_factor` reports a host-driven
-    /// DPI change — the logical editor size doesn't change, but the
+    /// DPI change - the logical editor size doesn't change, but the
     /// physical pixmap and surface need to grow / shrink to match.
     fn resize(&mut self, phys_w: u32, phys_h: u32) {
         self.surface_config.width = phys_w.max(1);
@@ -501,7 +501,7 @@ impl BlitBackend {
 /// Shared ownership of the blit backend between `BuiltinEditor` and the
 /// `BuiltinWindowHandler` baseview hands us. Sharing lets the editor
 /// drop the wgpu surface *before* it asks baseview to close the `NSView`
-/// — important on AAX where interleaving Metal teardown with baseview's
+/// - important on AAX where interleaving Metal teardown with baseview's
 /// close sequence inside Pro Tools' outer autorelease pool has been
 /// seen to leave stale refs in DFW container views.
 type SharedBackend = Arc<Mutex<Option<BlitBackend>>>;
@@ -511,7 +511,7 @@ struct BuiltinWindowHandler<P: Params> {
     /// while `backend.lock()` returns `Some(_)`. `BuiltinEditor::close`
     /// takes the inner `Option<BlitBackend>` (atomically through this
     /// mutex) before returning, and the host can only drop the editor
-    /// after `close()` returns — so any frame that holds the lock and
+    /// after `close()` returns - so any frame that holds the lock and
     /// finds the inner option `Some` is guaranteed the editor is still
     /// alive. The lock acquire is the synchronization point that keeps
     /// an in-flight `on_frame` from dereferencing this pointer after
@@ -528,7 +528,7 @@ struct BuiltinWindowHandler<P: Params> {
     /// it already does) and compares; on divergence it rebuilds the
     /// pixmap and reconfigures the surface. Unlike egui / iced /
     /// slint we don't need a separate `EditorScale` clone on the
-    /// handler — the editor is reachable through the same ptr that
+    /// handler - the editor is reachable through the same ptr that
     /// guards the lifecycle, so reading `editor.scale` is the
     /// canonical access path.
     last_applied_scale: f32,
@@ -551,7 +551,7 @@ impl<P: Params + 'static> baseview::WindowHandler for BuiltinWindowHandler<P> {
         };
         if guard.is_none() {
             // Editor already dropped the backend in its close path.
-            // Nothing to do — baseview will tear us down next.
+            // Nothing to do - baseview will tear us down next.
             return;
         }
 
@@ -640,7 +640,7 @@ impl<P: Params + 'static> baseview::WindowHandler for BuiltinWindowHandler<P> {
             }
         }
 
-        // Lock-then-check-then-deref pattern, same as `on_frame` —
+        // Lock-then-check-then-deref pattern, same as `on_frame` -
         // the backend cell is the synchronization point with
         // `BuiltinEditor::close`. If the cell is `None`, the editor
         // pointer is no longer guaranteed valid and we must not deref.
@@ -668,7 +668,7 @@ impl<P: Params + 'static> baseview::WindowHandler for BuiltinWindowHandler<P> {
                 // reported scale through `note_linux_scale_factor` so
                 // newly opened editors on the same process see the
                 // correct DPI from the cache, but we deliberately do
-                // not resize the CPU pixmap or wgpu blit surface — a
+                // not resize the CPU pixmap or wgpu blit surface - a
                 // user who drags the host window across a DPI boundary
                 // accepts the stretched/cropped output. Matches the
                 // `truce-gpu` `GpuEditor` posture so the two paths
@@ -729,7 +729,7 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
 
     fn open(&mut self, parent: RawWindowHandle, context: PluginContext) {
         let (w, h) = self.size();
-        // Refresh the shared scale from the parent window — on macOS
+        // Refresh the shared scale from the parent window - on macOS
         // this is the live `[NSWindow backingScaleFactor]`, on
         // Windows the per-monitor DPI from the parent HWND. Any
         // `set_scale_factor` the host issues after open will overwrite
@@ -783,7 +783,7 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
                 // Render + present an initial frame synchronously, before
                 // baseview shows the window. Without this, the window briefly
                 // displays whatever garbage is in the surface buffer until the
-                // first `on_frame` tick — especially noticeable on VST2
+                // first `on_frame` tick - especially noticeable on VST2
                 // (Windows), where `effEditOpen` creates and shows the window
                 // in one call.
                 let editor = unsafe { &mut *(editor_addr as *mut BuiltinEditor<P>) };
@@ -813,7 +813,7 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
 
                 // Publish the backend into the shared cell. If the
                 // editor has already been asked to close (very
-                // unlikely race — only if close fires before baseview
+                // unlikely race - only if close fires before baseview
                 // calls our build closure), the None-check on the
                 // mutex side will simply replace Some(None) → Some
                 // and everything drops at the usual time.
@@ -864,7 +864,7 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
         // `BlitPipeline`'s field-declaration order. Order: per-pipeline
         // GPU resources first (textures, bind groups, sampler), then
         // the surface (releases the swap chain / CAMetalLayer), then
-        // queue, then device last — children before parent.
+        // queue, then device last - children before parent.
         if let Some(shared) = self.blit_backend.take()
             && let Ok(mut guard) = shared.lock()
             && let Some(backend) = guard.take()
@@ -1117,7 +1117,7 @@ mod tests {
         editor.on_mouse_up(dx, dy);
         assert!(editor.interaction.dropdown_is_open());
 
-        // Click same button again — should close, not reopen
+        // Click same button again - should close, not reopen
         editor.on_mouse_down(dx, dy);
         assert!(!editor.interaction.dropdown_is_open());
     }
@@ -1154,7 +1154,7 @@ mod tests {
 
         // Touch model: down then up at the same point commits the
         // option under the release point. (Down alone starts a
-        // popup-drag — the up handler decides commit-vs-scroll.)
+        // popup-drag - the up handler decides commit-vs-scroll.)
         editor.on_mouse_down(px + 10.0, option_y);
         editor.on_mouse_up(px + 10.0, option_y);
 
@@ -1206,7 +1206,7 @@ mod tests {
         let dd = editor.interaction.dropdown.as_ref().unwrap();
         let region = &editor.interaction.knob_regions[dd.region_idx];
 
-        // popup_y must equal the stored anchor — popup always
+        // popup_y must equal the stored anchor - popup always
         // anchors directly below the button (scrolls on tight
         // editors rather than relocating).
         assert_eq!(dd.popup_rect.1, region.dropdown_anchor_y);
@@ -1451,7 +1451,7 @@ mod tests {
         let (_, popup_y, _, popup_h) = dd.popup_rect;
         let window_h = editor.layout.height() as f32;
 
-        // Popup anchors at the button's bottom — never shifts up
+        // Popup anchors at the button's bottom - never shifts up
         // and never flips above. If the full option list doesn't
         // fit between the anchor and the window bottom, the popup
         // scrolls instead of relocating away from the tap target.
@@ -1520,14 +1520,14 @@ mod tests {
         editor.on_mouse_down(dx, dy);
         editor.on_mouse_up(dx, dy);
 
-        // Scroll up past the top — should stay at 0
+        // Scroll up past the top - should stay at 0
         editor.interaction.dropdown_scroll(-10);
         assert_eq!(
             editor.interaction.dropdown.as_ref().unwrap().scroll_offset,
             0
         );
 
-        // Scroll down past the bottom — should clamp
+        // Scroll down past the bottom - should clamp
         editor.interaction.dropdown_scroll(1000);
         let dd = editor.interaction.dropdown.as_ref().unwrap();
         let max_offset = dd.options.len().saturating_sub(dd.visible_count);
@@ -1605,7 +1605,7 @@ mod tests {
         assert!(editor.interaction.dropdown_is_open());
         assert_eq!(editor.interaction.dropdown.as_ref().unwrap().region_idx, 0);
 
-        // Click dropdown B — should close A and open B
+        // Click dropdown B - should close A and open B
         editor.on_mouse_down(bx, by);
         editor.on_mouse_up(bx, by);
         assert!(editor.interaction.dropdown_is_open());

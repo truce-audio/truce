@@ -29,7 +29,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-// AAX is macOS / Windows only — Avid's SDK ships no Linux libs and
+// AAX is macOS / Windows only - Avid's SDK ships no Linux libs and
 // Pro Tools doesn't run on Linux. The function isn't defined on Linux
 // at all; the `pub(crate) use ...build_aax_template;` re-export in
 // `lib.rs` is matched by the same gate.
@@ -57,14 +57,14 @@ pub(crate) fn build_aax_template(_root: &Path, sdk_path: &Path, universal_mac: b
             return Ok(());
         }
         // Record *before* we finish so a subsequent call on failure
-        // doesn't silently skip — but also *before* cmake, because
+        // doesn't silently skip - but also *before* cmake, because
         // if the build succeeds there's no reason to re-run it in
         // the same process.
         let _ = set.lock().map(|mut s| s.insert(memo_key.clone()));
     }
 
     // Ensure the AAX SDK's static library is built with the right
-    // architecture coverage. Avid's SDK ships as source — the `.a` /
+    // architecture coverage. Avid's SDK ships as source - the `.a` /
     // `.lib` only exists after the developer has built it themselves,
     // and on Apple Silicon the default build is arm64-only. Our
     // template cmake falls through to building from source whenever
@@ -84,7 +84,7 @@ pub(crate) fn build_aax_template(_root: &Path, sdk_path: &Path, universal_mac: b
     // Write embedded template files to a temp directory.
     //
     // Use `write_if_changed` so unchanged files keep their old
-    // mtime — cmake then correctly skips recompilation when the
+    // mtime - cmake then correctly skips recompilation when the
     // embedded template bytes haven't shifted since last run.
     // Previously we wiped `src/` on every invocation, which forced
     // cmake to rebuild every TU on every plugin.
@@ -154,17 +154,17 @@ pub(crate) fn build_aax_template(_root: &Path, sdk_path: &Path, universal_mac: b
     #[cfg(target_os = "windows")]
     {
         let vcvars = locate_vcvars64()
-            .ok_or("could not locate vcvars64.bat — install VS 2022+ with the C++ workload")?;
+            .ok_or("could not locate vcvars64.bat - install VS 2022+ with the C++ workload")?;
 
         // cmake + ninja aren't necessarily on %PATH% when running outside the
         // truce repo (truce's .cargo/config.toml historically set it). vcvars
         // doesn't add them either. Resolve both explicitly and prepend their
         // directories to the .bat's PATH so the build works from any project.
         let cmake = locate_cmake().ok_or(
-            "could not locate cmake.exe — install cmake or the VS \"C++ CMake tools\" component",
+            "could not locate cmake.exe - install cmake or the VS \"C++ CMake tools\" component",
         )?;
         let ninja = locate_ninja()
-            .ok_or("could not locate ninja.exe — install ninja or the VS \"C++ CMake tools\" component (which bundles it)")?;
+            .ok_or("could not locate ninja.exe - install ninja or the VS \"C++ CMake tools\" component (which bundles it)")?;
         let cmake_dir = cmake.parent().unwrap().display().to_string();
         let ninja_dir = ninja.parent().unwrap().display().to_string();
 
@@ -291,12 +291,12 @@ fn ensure_aax_sdk_library(sdk_path: &Path) -> Result<PathBuf, crate::BoxErr> {
     crate::vprintln!("AAX: building SDK library at {}", lib_path.display());
 
     let vcvars = locate_vcvars64()
-        .ok_or("could not locate vcvars64.bat — install VS 2022+ with the C++ workload")?;
+        .ok_or("could not locate vcvars64.bat - install VS 2022+ with the C++ workload")?;
     let cmake = locate_cmake().ok_or(
-        "could not locate cmake.exe — install cmake or the VS \"C++ CMake tools\" component",
+        "could not locate cmake.exe - install cmake or the VS \"C++ CMake tools\" component",
     )?;
     let ninja = locate_ninja().ok_or(
-        "could not locate ninja.exe — install ninja or the VS \"C++ CMake tools\" component",
+        "could not locate ninja.exe - install ninja or the VS \"C++ CMake tools\" component",
     )?;
     let cmake_dir = cmake.parent().unwrap().display().to_string();
     let ninja_dir = ninja.parent().unwrap().display().to_string();
@@ -347,7 +347,7 @@ fn template_binary() -> PathBuf {
 }
 #[cfg(target_os = "windows")]
 fn template_binary() -> PathBuf {
-    // Ninja is single-config — target lands directly in the build dir.
+    // Ninja is single-config - target lands directly in the build dir.
     // CMakeLists.txt sets SUFFIX=.aaxplugin, PREFIX="".
     tmp_aax_template().join("build/TruceAAXTemplate.aaxplugin")
 }
@@ -396,7 +396,7 @@ fn ensure_template(root: &Path, universal_mac: bool) -> Result<Option<PathBuf>, 
 ///    template binary, Rust dylib, and Info.plist in place.
 /// 3. Codesign the bundle (Apple identity) on macOS.
 ///
-/// PACE wraptool signing is separate — `cargo truce package` drives
+/// PACE wraptool signing is separate - `cargo truce package` drives
 /// it against the same `target/bundles/` path during the packaging
 /// pass.
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
@@ -420,12 +420,12 @@ pub(crate) fn emit_aax_bundle(
     universal_mac: bool,
 ) -> Res {
     let Some(template) = ensure_template(root, universal_mac)? else {
-        // SDK missing — log per-plugin so the user sees one Skipped
+        // SDK missing - log per-plugin so the user sees one Skipped
         // entry per (AAX, plugin) target. Both `cargo truce build`
         // and `cargo truce install` flow through this point so the
         // log fires from either entry.
         crate::log_skip(format!(
-            "AAX: skipped {} — SDK not configured. \
+            "AAX: skipped {} - SDK not configured. \
              Set AAX_SDK_PATH in .cargo/config.toml [env].",
             p.name
         ));
@@ -485,12 +485,12 @@ pub(crate) fn emit_aax_bundle(
         );
         fs_ctx::write(contents.join("Info.plist"), plist)?;
 
-        // Apple codesign against `target/bundles/` — user-owned, no
+        // Apple codesign against `target/bundles/` - user-owned, no
         // sudo needed. PACE wraps this signature in a separate
         // packaging step.
         //
         // `codesign_bundle` enumerates every Mach-O in the bundle
-        // and signs each explicitly before the outer seal — the AAX
+        // and signs each explicitly before the outer seal - the AAX
         // inner dylib at `Contents/Resources/lib*_aax.dylib` is
         // covered. (Apple's `codesign --deep` skips that path for
         // TDMw-type bundles; we don't rely on --deep.)
@@ -524,7 +524,7 @@ pub(crate) fn emit_aax_bundle(
         )?;
 
         // Authenticode signing is driven by `cargo truce package`'s
-        // outer signing loop — the bundle sits unsigned here for
+        // outer signing loop - the bundle sits unsigned here for
         // `install` to copy verbatim.
         crate::vprintln!("  AAX:  {}", bundle.display());
     }

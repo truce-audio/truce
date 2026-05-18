@@ -1,4 +1,4 @@
-//! `BaseviewTranslator` — the windowing-toolkit-specific half of
+//! `BaseviewTranslator` - the windowing-toolkit-specific half of
 //! `truce-gui`'s interaction surface. The platform-agnostic data
 //! types (`InputEvent`, `MouseButton`, `Modifiers`, `WidgetRegion`,
 //! `InteractionState`, `DragState`, `DropdownState`, `dispatch`, …)
@@ -30,7 +30,7 @@ const WHEEL_LINE_PX: f32 = 20.0;
 /// logical→physical conversion at raster time; callers must not
 /// pre-multiply by `scale`.
 // All fields share a `last_` prefix because the struct's whole purpose
-// is to remember the previous cursor / click — the prefix is meaningful,
+// is to remember the previous cursor / click - the prefix is meaningful,
 // not redundant.
 #[cfg(not(target_os = "ios"))]
 #[allow(clippy::struct_field_names)]

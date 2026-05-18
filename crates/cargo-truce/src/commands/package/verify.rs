@@ -2,7 +2,7 @@
 //!
 //! Each platform's installer pipeline ends by producing a single file:
 //! `.pkg` (macOS), `.exe` (Windows), `.tar.gz` (Linux). A whole class of
-//! bugs leaves these files *technically valid* but with no payload —
+//! bugs leaves these files *technically valid* but with no payload -
 //! e.g. a malformed Distribution.xml that drops every `<pkg-ref>`
 //! produces a 2 KB metadata-only `.pkg` that opens in Installer.app
 //! and reports "can't find the data needed for installation". The build
@@ -52,7 +52,7 @@ pub(crate) fn assert_min_size(artifact: &Path) -> Res {
 /// Expand a macOS `.pkg` and assert every named component package is
 /// present with a non-empty Payload. Catches the productbuild bug
 /// where a malformed Distribution.xml (e.g. nested `<choice>` elements)
-/// silently drops `<pkg-ref>` references — productbuild reports
+/// silently drops `<pkg-ref>` references - productbuild reports
 /// success but the resulting `.pkg` contains only a Distribution file.
 ///
 /// `expected_components` lists the component-package filenames each
@@ -96,7 +96,7 @@ pub(crate) fn assert_pkg_contains_components(pkg: &Path, expected_components: &[
     if !missing.is_empty() {
         return Err(format!(
             "{} is missing {} expected component(s): {}\n\
-             productbuild reported success but the payload was dropped — \
+             productbuild reported success but the payload was dropped - \
              check the suite distribution.xml for nested <choice> elements \
              or unresolved pkg-ref filenames.",
             pkg.display(),
@@ -110,7 +110,7 @@ pub(crate) fn assert_pkg_contains_components(pkg: &Path, expected_components: &[
 
 /// Read a `.tar.gz` member listing and assert each substring appears
 /// at least once. Catches the case where `tar` reports success but the
-/// archive is missing per-plugin payload directories — e.g. a staging
+/// archive is missing per-plugin payload directories - e.g. a staging
 /// step that silently failed for one plugin.
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub(crate) fn assert_tarball_contains(tarball: &Path, expected_substrings: &[&str]) -> Res {
@@ -137,7 +137,7 @@ pub(crate) fn assert_tarball_contains(tarball: &Path, expected_substrings: &[&st
         return Err(format!(
             "{} is missing {} expected entry/entries: {}\n\
              The tar step succeeded but staging produced no matching \
-             files — check stage_plugin_payload for silent failures.",
+             files - check stage_plugin_payload for silent failures.",
             tarball.display(),
             missing.len(),
             missing.join(", "),

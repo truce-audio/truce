@@ -1,13 +1,13 @@
 //! Helpers shared across format wrappers (CLAP, VST3, VST2, AU, AAX, LV2).
 //!
 //! Each wrapper still owns its format-specific descriptor types and
-//! callback tables — those don't unify cleanly. What unifies is the
+//! callback tables - those don't unify cleanly. What unifies is the
 //! "boring" boundary glue: building `CStrings` from `ParamInfo` fields,
 //! picking the default bus layout, and resolving install-time name
 //! overrides (see also [`crate::info::resolve_name_override`]).
 //!
 //! Each helper is a single small function so the wrappers stay
-//! greppable — the per-format vtable construction code reads as
+//! greppable - the per-format vtable construction code reads as
 //! "for each param, get cstrings, build descriptor" without inlined
 //! `CString::new(...).unwrap_or_default()` boilerplate.
 //!
@@ -56,12 +56,12 @@ impl ParamCStrings {
 /// **Note for `aumi` (MIDI processor) plugins:** the convention is
 /// `bus_layouts: [BusLayout::new()]`, which has zero input *and* zero
 /// output channels. This helper returns `Some((0, 0))` for that case
-/// — which is correct for AU (the AU shim's `channelCapabilities`
+/// - which is correct for AU (the AU shim's `channelCapabilities`
 /// returns `[0, 0]` and the host treats the plugin as MIDI-only) but
 /// **wrong for AAX**, which requires every plugin to advertise at
 /// least stereo audio I/O. AAX maps `(0, 0)` → `(2, 2)` (synthesizing
 /// a stereo passthrough) inside `truce-aax::register_aax` after this
-/// helper returns. Don't push that remap into this helper — only AAX
+/// helper returns. Don't push that remap into this helper - only AAX
 /// needs it.
 ///
 /// `None` indicates a plugin-author bug: zero-bus plugins must return
@@ -98,7 +98,7 @@ pub fn first_bus_layout<P: PluginExport>() -> Option<BusLayout> {
 /// wrapper prints the same actionable message.
 pub fn log_missing_bus_layout<P: PluginExport>(format: &str) {
     eprintln!(
-        "[truce {format}] {}::bus_layouts() returned an empty list — \
+        "[truce {format}] {}::bus_layouts() returned an empty list - \
          plugin will not register. Plugins with no audio I/O (e.g. \
          aumi MIDI-effects) should return vec![BusLayout::new()] \
          explicitly.",
@@ -112,13 +112,13 @@ pub fn log_missing_bus_layout<P: PluginExport>(format: &str) {
 /// `extern "C" fn init` static initializers (`.init_array` /
 /// `__mod_init_func` / `.CRT$XCU`) emitted by the export macros. A
 /// panic that escapes those entry points crosses an `extern "C"`
-/// boundary and aborts the host process — a `panic = "abort"`
+/// boundary and aborts the host process - a `panic = "abort"`
 /// configuration would do the same. Catching the unwind here turns
 /// any panic during registration into a logged diagnostic plus
 /// "host sees no plugin," which is the same outcome a plugin author
 /// would expect from a missing `bus_layouts` declaration.
 ///
-/// `AssertUnwindSafe` is applied internally — the panic is treated
+/// `AssertUnwindSafe` is applied internally - the panic is treated
 /// as fatal-for-this-plugin, so leaving an `Arc` ref-count or
 /// `OnceLock` half-set is acceptable: the host won't load the
 /// plugin and the process will exit shortly after registration
@@ -140,7 +140,7 @@ pub fn run_register<P>(format: &str, body: impl FnOnce()) {
 /// Format wrappers call this around the `cb_process` body so a panic
 /// from user `process()` can't unwind across the `extern "C"` FFI
 /// boundary into the host (UB on most toolchains; abort on others).
-/// Returns `true` on clean exit, `false` if the body panicked — the
+/// Returns `true` on clean exit, `false` if the body panicked - the
 /// caller should zero output buffers on `false` so the host doesn't
 /// keep playing whatever happened to be in those slots.
 ///
@@ -185,12 +185,12 @@ pub fn run_audio_block_with<P, R>(format: &str, fallback: R, body: impl FnOnce()
 /// Same shape as [`run_audio_block_with`] but parameterized on
 /// `action` (e.g. `"save_state"`, `"load_state"`) so the panic log
 /// pinpoints which callback boundary fired. Use this for non-process
-/// FFI surfaces — state save / load, param formatting, anything the
+/// FFI surfaces - state save / load, param formatting, anything the
 /// host calls through an `extern "C" fn` where a panic would unwind
 /// across an ABI that doesn't promise abort-on-unwind.
 ///
 /// Audio-thread process bodies should keep using
-/// [`run_audio_block`] / [`run_audio_block_with`] — the hardcoded
+/// [`run_audio_block`] / [`run_audio_block_with`] - the hardcoded
 /// `"process()"` label there keeps existing log lines stable.
 pub fn run_extern_callback_with<P, R>(
     format: &str,

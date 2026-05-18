@@ -14,12 +14,12 @@ use crate::widgets::WidgetType;
 
 /// Lower an explicit `WidgetKind` from a layout helper into the
 /// runtime `WidgetType` the interaction code dispatches on. `None`
-/// (meaning "infer from param range") stays as Knob — callers that
+/// (meaning "infer from param range") stays as Knob - callers that
 /// need inference overwrite `widget_type` after calling
 /// `build_regions_*`.
 //
 // `Some(Knob) => Knob` and `None => Knob` share a value but mean
-// different things — explicit user-specified Knob vs. an
+// different things - explicit user-specified Knob vs. an
 // inference-pending placeholder. Keep the arms separate so the
 // distinction is greppable.
 #[allow(clippy::match_same_arms)]
@@ -49,7 +49,7 @@ pub enum MouseButton {
 }
 
 /// Keyboard modifier state at event time.
-// Standard four modifier flags — bitflags would just add ceremony.
+// Standard four modifier flags - bitflags would just add ceremony.
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Modifiers {
@@ -117,7 +117,7 @@ const KNOB_PIXELS_PER_UNIT: f32 = 200.0;
 // The `BaseviewTranslator` lives in `truce-gui` (heavy crate) because
 // it depends on `baseview` for windowing-platform event translation.
 // Light backends (truce-egui, truce-iced, truce-slint) don't use it
-// — they translate their own framework's events into `InputEvent`s
+// - they translate their own framework's events into `InputEvent`s
 // and call `dispatch` directly.
 
 /// A requested edit to a host parameter, emitted by `dispatch`.
@@ -179,14 +179,14 @@ pub struct InteractionState {
     pub knob_regions: Vec<WidgetRegion>,
     /// One entry per active pointer (mouse: at most 1; touch: up
     /// to one per finger). Keyed by `DragState::pointer_id`. Linear
-    /// scan — N is bounded by the device's reported max touches
+    /// scan - N is bounded by the device's reported max touches
     /// (≤10 in practice).
     pub drags: Vec<DragState>,
     /// Region index under the cursor (for hover highlight).
     pub hover_idx: Option<usize>,
     /// Currently open dropdown popup (at most one at a time).
     pub dropdown: Option<DropdownState>,
-    /// Active touch-drag on the open dropdown popup — set on
+    /// Active touch-drag on the open dropdown popup - set on
     /// `MouseDown` inside the popup, updated on `MouseMove`
     /// (mapping vertical motion to `scroll_offset` change),
     /// cleared on `MouseUp`. iOS pattern: tap to select, swipe to
@@ -327,7 +327,7 @@ impl InteractionState {
 
     /// Begin a drag on a widget by region index. Returns any prior
     /// drag for the same `pointer_id` so the caller can emit a
-    /// matching `ParamEdit::End` for it — without this, hosts that
+    /// matching `ParamEdit::End` for it - without this, hosts that
     /// model gestures as a Begin/End stack (VST3, CLAP, AU on iOS)
     /// see a stranded Begin and report the param as permanently
     /// "being touched". iOS reliably triggers this when a system
@@ -536,7 +536,7 @@ impl InteractionState {
 }
 
 // ---------------------------------------------------------------------------
-// Public `dispatch` — drive widget interactions from input events.
+// Public `dispatch` - drive widget interactions from input events.
 // ---------------------------------------------------------------------------
 
 /// Route a batch of input events through the widget tree, updating
@@ -560,13 +560,13 @@ pub fn dispatch(
 }
 
 /// Like [`dispatch`] but takes explicit `window_size` in the same
-/// coordinate space as the layout — i.e. the size of the surface the
+/// coordinate space as the layout - i.e. the size of the surface the
 /// layout is being composited onto.
 ///
 /// Use this when the layout is a chrome panel overlaid on a larger
 /// custom-rendered surface (visualizers, graphs, canvases). It lets
 /// dropdown popups and other bounds-aware overlays use the full
-/// window rather than being clipped to the layout's bounding box —
+/// window rather than being clipped to the layout's bounding box -
 /// otherwise a popup that wouldn't fit below the button flips above
 /// it even when there's room below in the outer window.
 // Window dimensions widen `u32 as f32`; window sizes are bounded by
@@ -586,7 +586,7 @@ pub fn dispatch_in(
     for ev in events {
         match *ev {
             InputEvent::MouseMove { pointer_id, x, y } => {
-                // Popup-drag wins over knob-drag — a finger that
+                // Popup-drag wins over knob-drag - a finger that
                 // landed inside the open popup scrolls the list,
                 // not any widget under it.
                 if let Some(drag) = state.popup_drag.as_ref()
@@ -693,7 +693,7 @@ pub fn dispatch_in(
                             x >= px && x <= px + pw && y >= py && y <= py + ph
                         });
                     if inside_popup {
-                        // dy == 0 should be a no-op — falling through to
+                        // dy == 0 should be a no-op - falling through to
                         // the else branch would silently scroll +1 each
                         // time a host emits a zero-magnitude wheel event.
                         let delta = match dy.partial_cmp(&0.0) {
@@ -710,7 +710,7 @@ pub fn dispatch_in(
                 if let Some(idx) = state.hit_test(x, y) {
                     // Only scroll-adjust continuous-value widgets.
                     // Dropdowns / Selectors / Toggles are discrete UI
-                    // affordances — the user expects click to cycle,
+                    // affordances - the user expects click to cycle,
                     // not wheel to drag them across their whole range.
                     let wtype = state.knob_regions[idx].widget_type;
                     if matches!(
@@ -740,7 +740,7 @@ pub fn dispatch_in(
             // built-in editor doesn't have a context menu of its own,
             // and most plugin hosts (VST3, AU, AAX) treat right-click
             // inside the editor surface as their hook for the host's
-            // own automation / parameter-link menu — swallowing the
+            // own automation / parameter-link menu - swallowing the
             // event here would suppress that.
             InputEvent::MouseDown { .. } | InputEvent::MouseUp { .. } => {}
         }
@@ -763,7 +763,7 @@ fn handle_mouse_down(
 ) {
     // If a dropdown popup is open, handle it first.
     if let Some(dd) = state.dropdown.as_ref() {
-        // MouseDown inside the popup starts a touch-drag — the
+        // MouseDown inside the popup starts a touch-drag - the
         // commit-or-scroll decision is deferred to MouseUp based
         // on whether the user moved or stayed still. Without
         // this, every tap on the popup commits immediately and
@@ -826,7 +826,7 @@ fn handle_mouse_down(
             // If a system gesture stole the previous touch for this
             // pointer_id without firing `touchesCancelled:`, the
             // displaced drag's `Begin` is still on the host's
-            // gesture stack — flush an `End` for it (XY pads need
+            // gesture stack - flush an `End` for it (XY pads need
             // both axes) before opening the new gesture.
             if let Some(stranded) = state.begin_drag(pointer_id, idx, norm, y) {
                 edits.push(ParamEdit::End {
@@ -881,7 +881,7 @@ fn open_dropdown(
 
     // Always anchor the popup directly under the dropdown button.
     // If the full list doesn't fit between `anchor_below` and the
-    // window's bottom, cap `visible_count` and scroll — DON'T
+    // window's bottom, cap `visible_count` and scroll - DON'T
     // shift the popup upward to make more items fit. Shifting up
     // landed the popup near `y = 0` (literally the top of the
     // editor) for any dropdown whose full option list was taller
@@ -923,7 +923,7 @@ fn open_dropdown(
 //
 // Cast contract: `start_scroll_offset` is bounded by
 // `dd.options.len()` which (per the dropdown widget shape) caps
-// at a few hundred — well below `i32::MAX`. `items_scrolled` is
+// at a few hundred - well below `i32::MAX`. `items_scrolled` is
 // `(dy / item_h)` where `dy` is a finite single-frame motion;
 // the product never approaches i32 limits.
 #[allow(

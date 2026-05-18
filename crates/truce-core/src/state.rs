@@ -8,7 +8,7 @@ const STATE_VERSION: u32 = 1;
 /// and currently log it; future hosts will surface a non-success code
 /// to the DAW (e.g. CLAP `state_load` returning `false`).
 ///
-/// `Malformed` is the typical case — the blob's framing or content
+/// `Malformed` is the typical case - the blob's framing or content
 /// doesn't match what `save_state` would emit (version skew between
 /// older session files and newer plugin builds is the canonical
 /// example). `Other` carries a free-form message for plugin-specific
@@ -88,7 +88,7 @@ pub struct DeserializedState {
 ///
 /// `restore_values` and `snap_smoothers` go through the param
 /// struct's interior atomics, so they don't strictly need to run on
-/// the audio thread — but applying the whole state in one place keeps
+/// the audio thread - but applying the whole state in one place keeps
 /// the param values and the user's extra-state blob coherent for any
 /// observer reading after this returns.
 pub fn apply_state<P: crate::export::PluginExport>(plugin: &mut P, state: &DeserializedState) {
@@ -101,7 +101,7 @@ pub fn apply_state<P: crate::export::PluginExport>(plugin: &mut P, state: &Deser
         // Audio-thread error path: host already received a "yes I
         // accepted the state" return from the format wrapper's setChunk
         // by the time we run, so the only thing left is logging.
-        // `eprintln!` is deliberate — `truce-core` is the audio-runtime
+        // `eprintln!` is deliberate - `truce-core` is the audio-runtime
         // crate, no `log` dep, and a state-load failure is a one-shot
         // event not a per-block hot path. Format wrappers that surface
         // this to the host (e.g. CLAP's `state_load` returning `false`)
@@ -110,7 +110,7 @@ pub fn apply_state<P: crate::export::PluginExport>(plugin: &mut P, state: &Deser
     }
 }
 
-/// Apply just the parameter values from a deserialized state — the
+/// Apply just the parameter values from a deserialized state - the
 /// host-thread-safe subset of [`apply_state`]. Format wrappers call
 /// this from their state-load callback (host main thread) before
 /// pushing the full state onto the audio-thread handoff queue, so
@@ -209,7 +209,7 @@ pub fn deserialize_state(data: &[u8], expected_plugin_id: u64) -> Option<Deseria
 }
 
 // ---------------------------------------------------------------------------
-// `snapshot_plugin` / `restore_plugin` — high-level helpers wrapping
+// `snapshot_plugin` / `restore_plugin` - high-level helpers wrapping
 // `serialize_state` + `deserialize_state` with the params-collect /
 // restore + custom-state plumbing every host needs to do anyway.
 // ---------------------------------------------------------------------------
@@ -244,7 +244,7 @@ impl std::fmt::Display for RestoreError {
 
 impl std::error::Error for RestoreError {}
 
-/// Serialize a plugin instance into the canonical state envelope —
+/// Serialize a plugin instance into the canonical state envelope -
 /// parameter values + optional `Plugin::save_state()` payload, with
 /// the magic / version / plugin-ID header `serialize_state` writes.
 ///
@@ -281,7 +281,7 @@ pub fn restore_plugin<P: PluginExport>(plugin: &mut P, bytes: &[u8]) -> Result<(
 /// Resolve the state-envelope hash every format wrapper stamps into
 /// the saved blob. Today this is just `hash_plugin_id(info.clap_id)`,
 /// which means the same plugin built as CLAP / VST3 / AU / AAX / VST2
-/// / LV2 produces a single state space — saving in one host and
+/// / LV2 produces a single state space - saving in one host and
 /// loading in another will round-trip parameter values (provided the
 /// `Plugin::save_state` / `load_state` extra payload is also
 /// format-agnostic).

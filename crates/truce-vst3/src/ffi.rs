@@ -22,7 +22,7 @@ pub struct Vst3PluginDescriptor {
     pub num_outputs: u32,
     /// `1` if the plugin emits MIDI back to the host (note effects /
     /// arpeggiators / chord generators). The shim gates the
-    /// `kEvent | kOutput` bus on this flag — without it the host
+    /// `kEvent | kOutput` bus on this flag - without it the host
     /// never allocates `ProcessData::outputEvents`, and the drain
     /// loop after `process()` is a no-op.
     pub has_midi_output: i32,
@@ -129,8 +129,8 @@ pub struct Vst3Callbacks {
     // `SysEx` input. The shim calls this once per `kDataEvent` /
     // `kMidiSysEx` event seen in the host's input event list,
     // before invoking `process`. Bytes are the inner `SysEx`
-    // payload — VST3 hosts deliver `DataEvent::bytes` without the
-    // `0xF0` / `0xF7` framing per the SDK convention — and are
+    // payload - VST3 hosts deliver `DataEvent::bytes` without the
+    // `0xF0` / `0xF7` framing per the SDK convention - and are
     // valid only for the duration of this call. The Rust side
     // copies into [`truce_core::EventList::sysex_pool`] so the
     // plug-in's `process()` sees a stable view.

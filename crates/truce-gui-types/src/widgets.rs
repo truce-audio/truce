@@ -19,7 +19,7 @@ pub enum WidgetType {
     Slider,
     Toggle,
     Selector,
-    /// Dropdown list — click to open a popup of all options.
+    /// Dropdown list - click to open a popup of all options.
     Dropdown,
     Meter,
     XYPad,
@@ -95,7 +95,7 @@ pub fn draw_knob(
     );
 }
 
-/// Draw a header bar. Each slot is independently optional — passing
+/// Draw a header bar. Each slot is independently optional - passing
 /// `None` for both should be avoided (the caller is expected to skip
 /// `draw_header` entirely when the layout has no header).
 pub fn draw_header(
@@ -285,7 +285,7 @@ pub fn draw_toggle(
     );
 }
 
-/// Draw a selector (enum parameter — click to cycle through values).
+/// Draw a selector (enum parameter - click to cycle through values).
 ///
 /// Shows the current value name with < > arrows.
 pub fn draw_selector(
@@ -303,7 +303,7 @@ pub fn draw_selector(
     let cx = x + width / 2.0;
     let cy = y + height / 2.0 - 5.0;
 
-    // Background box — size to fit content
+    // Background box - size to fit content
     let val_size = 10.0;
     let arrow_size = 8.0;
     let arrow_pad = 9.0; // space for arrow on each side
@@ -357,7 +357,7 @@ pub fn draw_selector(
     );
 }
 
-/// Draw a dropdown (closed state) — shows current value with a down arrow.
+/// Draw a dropdown (closed state) - shows current value with a down arrow.
 ///
 /// When open, `draw_dropdown_popup` renders the option list as an overlay.
 pub fn draw_dropdown(
@@ -689,14 +689,14 @@ pub fn draw_section_label(
 }
 
 // ---------------------------------------------------------------------------
-// Public compositor — draws an entire layout in one call.
+// Public compositor - draws an entire layout in one call.
 // ---------------------------------------------------------------------------
 
 /// Render every widget in `layout` onto `backend` using `theme`,
 /// reading live values from `snapshot` and interaction flags from
 /// `state`.
 ///
-/// Does not call `backend.clear()` or `backend.present()` — the caller
+/// Does not call `backend.clear()` or `backend.present()` - the caller
 /// owns the surrounding frame. This lets plugins with custom renderers
 /// draw their own content first (or last) and still get the same widget
 /// chrome as `BuiltinEditor`.
@@ -882,7 +882,7 @@ fn draw_grid(
     }
 }
 
-/// Per-call arguments to [`draw_widget_entry`] — what's being
+/// Per-call arguments to [`draw_widget_entry`] - what's being
 /// drawn, where, and which `InteractionState` region it owns.
 /// Splits cleanly from [`WidgetDrawCtx`] (the rendering
 /// infrastructure) so the function signature reads as
@@ -895,11 +895,11 @@ struct WidgetDraw<'a> {
     w: f32,
     h: f32,
     param_id: u32,
-    /// Only `WidgetType::XYPad` reads this — the second axis's
+    /// Only `WidgetType::XYPad` reads this - the second axis's
     /// param. `None` falls back to `param_id` for one-axis widgets
     /// that accidentally route through the XY path.
     param_id_y: Option<u32>,
-    /// Only `WidgetType::Meter` reads this — the meter IDs to
+    /// Only `WidgetType::Meter` reads this - the meter IDs to
     /// sample. `None` falls back to `[param_id]`.
     meter_ids: Option<&'a [u32]>,
     label: &'static str,

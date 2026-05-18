@@ -2,9 +2,9 @@
 //!
 //! Two entry points:
 //!
-//! - [`Scaffolder::single`] — one plugin, project root = plugin
+//! - [`Scaffolder::single`] - one plugin, project root = plugin
 //!   crate root. Used by `cargo truce new <name>`.
-//! - [`Scaffolder::workspace`] — N plugins under
+//! - [`Scaffolder::workspace`] - N plugins under
 //!   `<root>/plugins/<name>/`, with a workspace `Cargo.toml` +
 //!   `truce.toml` + `.cargo` at the root. Used by
 //!   `cargo truce new <root> --workspace <p1> [p2 …]`.
@@ -50,7 +50,7 @@ pub struct Scaffolder {
 
 impl Scaffolder {
     /// Build a fresh scaffolder. The pinned tag is derived from
-    /// cargo-truce's own version (`CARGO_PKG_VERSION`) — when the
+    /// cargo-truce's own version (`CARGO_PKG_VERSION`) - when the
     /// workspace version bumps, scaffolds automatically follow.
     // No `Default` impl: the workspace never constructs a
     // `Scaffolder` through `Default::default`, so the trait would be
@@ -64,7 +64,7 @@ impl Scaffolder {
         }
     }
 
-    /// Single-mode scaffold — one plugin crate at `<root>/`.
+    /// Single-mode scaffold - one plugin crate at `<root>/`.
     ///
     /// # Errors
     ///
@@ -99,7 +99,7 @@ impl Scaffolder {
         Ok(())
     }
 
-    /// Workspace-mode scaffold — N plugin crates under
+    /// Workspace-mode scaffold - N plugin crates under
     /// `<root>/plugins/<name>/` plus the workspace root files.
     ///
     /// # Errors
@@ -153,7 +153,7 @@ impl Scaffolder {
     }
 
     /// Shared per-plugin file emission. Used by both single and
-    /// workspace modes — `dep_form` distinguishes the two.
+    /// workspace modes - `dep_form` distinguishes the two.
     fn write_plugin_files(
         &self,
         layout: &ProjectLayout,

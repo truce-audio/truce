@@ -54,7 +54,7 @@ impl ProjectLayout {
     }
 }
 
-/// Workspace-root paths — `Cargo.toml`, `truce.toml`, `.gitignore`,
+/// Workspace-root paths - `Cargo.toml`, `truce.toml`, `.gitignore`,
 /// `.cargo/config.toml` at the root of a `--workspace` scaffold.
 pub struct WorkspaceLayout {
     root: PathBuf,

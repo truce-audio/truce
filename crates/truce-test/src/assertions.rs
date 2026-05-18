@@ -48,7 +48,7 @@ fn peak_in_range<P: PluginExport>(result: &DriverResult<P>, start: usize, end: u
         .output
         .iter()
         .flat_map(|ch| {
-            // Bound `start` against the channel too — a channel shorter
+            // Bound `start` against the channel too - a channel shorter
             // than `start` (mismatch between `result.total_frames` and
             // an individual channel) would otherwise panic on
             // `ch[start..]`.
@@ -233,7 +233,7 @@ fn final_meters<P: PluginExport>(result: &DriverResult<P>) -> &[(u32, f32)] {
         MeterReadings::Final(v) => v.as_slice(),
         MeterReadings::PerBlock(blocks) => blocks.last().map_or(&[], std::vec::Vec::as_slice),
         MeterReadings::None => panic!(
-            "meter assertion called but CaptureSpec::meters was MeterCapture::None — \
+            "meter assertion called but CaptureSpec::meters was MeterCapture::None - \
              call .capture_meters(MeterCapture::Final) on the driver"
         ),
     }

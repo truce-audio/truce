@@ -21,7 +21,7 @@ use truce_params::Params;
 pub struct ParamCache<P: Params + ?Sized> {
     params: Arc<P>,
     /// Param IDs (cached at construction so each `sync` doesn't reallocate
-    /// `Vec<ParamInfo>`). The set is fixed for the lifetime of the editor —
+    /// `Vec<ParamInfo>`). The set is fixed for the lifetime of the editor -
     /// `param_infos()` returns the same list every call.
     ids: Vec<u32>,
     /// Cached normalized values, indexed by param ID.

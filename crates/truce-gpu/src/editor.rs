@@ -1,4 +1,4 @@
-//! GPU editor — wraps `BuiltinEditor` rendering with wgpu + baseview.
+//! GPU editor - wraps `BuiltinEditor` rendering with wgpu + baseview.
 //!
 //! Creates a baseview child window with a wgpu surface. Each frame,
 //! delegates widget rendering to `BuiltinEditor::render_to()` through
@@ -42,7 +42,7 @@ pub struct GpuEditor<P: Params> {
 // thread, never concurrently and never from the audio thread, so the
 // handle is only ever touched on the thread that created it. The
 // `Editor` trait requires `Send` so the editor can live behind a
-// trait object — this impl asserts that the *type* doesn't escape its
+// trait object - this impl asserts that the *type* doesn't escape its
 // thread in practice. All other fields (`Arc<Mutex<...>>`, `(u32,
 // u32)`) are already `Send`.
 unsafe impl<P: Params> Send for GpuEditor<P> {}
@@ -90,7 +90,7 @@ struct GpuWindowHandler<P: Params> {
     /// tracking, double-click synthesis, and line→pixel scroll
     /// conversion once for everyone.
     translator: truce_gui::interaction::BaseviewTranslator,
-    /// Current logical size — used to detect hot-reload size changes.
+    /// Current logical size - used to detect hot-reload size changes.
     current_size: (u32, u32),
     /// Bridge handle, retained so we can drive `request_resize` from
     /// the render loop when hot-reload changes the editor's size.
@@ -166,7 +166,7 @@ impl<P: Params + 'static> WindowHandler for GpuWindowHandler<P> {
                     // `note_linux_scale_factor` to keep the cross-
                     // backend Linux DPI cache populated, but
                     // deliberately do not reconfigure the wgpu surface
-                    // or the inner `BuiltinEditor` — a user who drags
+                    // or the inner `BuiltinEditor` - a user who drags
                     // the host window across a DPI boundary accepts the
                     // stretched/cropped output. Matches the
                     // `truce-gui::BuiltinEditor` CPU path so the two
@@ -192,7 +192,7 @@ impl<P: Params + 'static> Editor for GpuEditor<P> {
     }
 
     fn open(&mut self, parent: RawWindowHandle, context: PluginContext) {
-        // Refresh the shared scale from the parent window — on macOS
+        // Refresh the shared scale from the parent window - on macOS
         // this is the live `[NSWindow backingScaleFactor]`, on Windows
         // the per-monitor DPI from the parent HWND. Any
         // `set_scale_factor` the host issues *after* open will
@@ -290,7 +290,7 @@ impl<P: Params + 'static> Editor for GpuEditor<P> {
         // so the `params` arg is unused.
         //
         // `EditorScale` falls back to `backing_scale()` for pre-open
-        // / headless calls — 2.0 on Retina, 1.0 elsewhere — so the
+        // / headless calls - 2.0 on Retina, 1.0 elsewhere - so the
         // historical "fixed 2×" behavior is preserved on the macOS
         // hosts where reference PNGs were originally baked.
         let mut inner = self.inner.lock().ok()?;

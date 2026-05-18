@@ -38,7 +38,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // linear, so `c.rgb` is full-strength linear color and `c.a` is
     // the straight alpha. Multiplying by alpha here premultiplies in
     // linear space, which is what the sRGB-encoding surface format
-    // expects for correct gamma — un-premultiplied sRGB bytes blended
+    // expects for correct gamma - un-premultiplied sRGB bytes blended
     // directly would render translucent pixels too bright.
     let c = textureSample(tex, samp, in.uv);
     return vec4(c.rgb * c.a, c.a);

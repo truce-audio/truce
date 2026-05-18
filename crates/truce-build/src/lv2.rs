@@ -4,7 +4,7 @@
 //! `manifest.ttl` + `plugin.ttl` next to the cargo target tree, before
 //! `cargo truce package` even runs. cargo-truce then just copies those
 //! files into the produced `.lv2` bundle alongside the cross-built
-//! `.so`. No dlopen is involved at any point — that's what makes
+//! `.so`. No dlopen is involved at any point - that's what makes
 //! cross-arch LV2 tarballs viable.
 //!
 //! The TTL string-building here mirrors the runtime path in
@@ -16,7 +16,7 @@
 use std::collections::HashSet;
 use std::fmt::Write as _;
 
-/// The plugin's LV2 URI — the identity LV2 hosts persist in saved
+/// The plugin's LV2 URI - the identity LV2 hosts persist in saved
 /// sessions. Single source of truth shared by the manifest writer
 /// (`truce-derive::lv2_emit`) and the runtime descriptor
 /// (`truce-lv2::plugin_uri`). If the two paths produced different
@@ -49,7 +49,7 @@ pub struct Lv2Bundle {
     pub vendor: String,
     pub url: String,
     /// Plugin URI. Caller computes (typically `<vendor.url>/lv2/<clap_id>`
-    /// or `urn:truce:<clap_id>` when `url` is empty) — kept explicit so
+    /// or `urn:truce:<clap_id>` when `url` is empty) - kept explicit so
     /// the URI scheme stays in one place at the call site.
     pub uri: String,
     /// UI URI. Convention is `<plugin_uri>#ui`.
@@ -330,7 +330,7 @@ fn emit_port(f: &mut String, index: u32, b: &Lv2Bundle, layout: &Layout, param_s
     } else if index == layout.atom_in_port() {
         // Input atom port. Always declared so hosts deliver
         // `time:Position` to every plugin type. We always advertise
-        // `midi:MidiEvent` support too — Reaper (and others) only route
+        // `midi:MidiEvent` support too - Reaper (and others) only route
         // transport to ports that also accept MIDI. Effects ignore any
         // arriving MIDI bytes.
         let _ = writeln!(f, "        a lv2:InputPort, atom:AtomPort ;");
@@ -404,7 +404,7 @@ fn emit_control_port(f: &mut String, index: u32, p: &Lv2Param, symbol: &str) {
         let _ = writeln!(f, "        lv2:designation lv2:enabled ;");
         let _ = writeln!(
             f,
-            "        rdfs:comment \"truce IS_BYPASS — `1` is bypassed (inverse of lv2:enabled)\" ;"
+            "        rdfs:comment \"truce IS_BYPASS - `1` is bypassed (inverse of lv2:enabled)\" ;"
         );
     }
     if p.flags.readonly {

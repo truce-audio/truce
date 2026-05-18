@@ -1,4 +1,4 @@
-//! `cargo truce package` — build, sign, and create installers.
+//! `cargo truce package` - build, sign, and create installers.
 //!
 //! Top-level dispatch + the format-flag parsing shared between the macOS
 //! `.pkg` pipeline (`macos.rs`) and the Windows Inno Setup pipeline
@@ -145,7 +145,7 @@ const PKG_FORMAT_META: [(PkgFormat, PkgFormatMeta); 8] = [
             extension: "clap",
             install_location: "/Library/Audio/Plug-Ins/CLAP/",
             // macOS CLAP is a loadable bundle (`Contents/MacOS/<name>`
-            // + `Info.plist`) — pkgbuild gets the same component-plist
+            // + `Info.plist`) - pkgbuild gets the same component-plist
             // treatment as VST3 / AU so the installer pins it to the
             // declared install_location and upgrades by bundle ID.
             is_native_bundle: true,
@@ -171,7 +171,7 @@ const PKG_FORMAT_META: [(PkgFormat, PkgFormatMeta); 8] = [
             extension: "vst",
             install_location: "/Library/Audio/Plug-Ins/VST/",
             is_native_bundle: false,
-            choice_description: "Legacy — for hosts without VST3 support",
+            choice_description: "Legacy - for hosts without VST3 support",
         },
     ),
     (
@@ -186,7 +186,7 @@ const PKG_FORMAT_META: [(PkgFormat, PkgFormatMeta); 8] = [
             // Bitwig pick them up from here.
             install_location: "/Library/Audio/Plug-Ins/LV2/",
             // LV2 bundles are plain directories (not macOS-style
-            // bundle blobs with `Info.plist`) — `pkgbuild` should
+            // bundle blobs with `Info.plist`) - `pkgbuild` should
             // recurse into them like any other folder of files.
             is_native_bundle: false,
             choice_description: "For Ardour, Bitwig, Reaper, and Linux DAWs",
@@ -310,7 +310,7 @@ impl PkgFormat {
     }
 
     /// True for formats whose install destination can't be redirected
-    /// into the user's home — AAX lives under
+    /// into the user's home - AAX lives under
     /// `/Library/Application Support/Avid/...` where Pro Tools scans,
     /// AU v3 needs `/Applications/` for `LaunchServices` to register
     /// the appex, and a standalone `.app` belongs in `/Applications/`
@@ -328,7 +328,7 @@ impl PkgFormat {
 }
 
 // `args` is unused on platforms where the body falls through to the
-// "not supported" Err branch — silence the unused-variable warning
+// "not supported" Err branch - silence the unused-variable warning
 // only on those targets.
 #[cfg_attr(
     not(any(target_os = "macos", target_os = "windows")),
@@ -464,7 +464,7 @@ Install scope (where the resulting installer puts files at the end user's machin
 
 Signing / notarization (macOS / Windows):
   --no-notarize        Skip macOS notarization (still codesigns).
-  --no-pace-sign       Skip PACE (AAX) signing — useful for non-Pro Tools
+  --no-pace-sign       Skip PACE (AAX) signing - useful for non-Pro Tools
                        sanity checks. Apple codesign always runs on macOS.
   --no-sign            Synonym for --no-pace-sign on macOS.
 

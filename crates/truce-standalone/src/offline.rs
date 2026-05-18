@@ -1,4 +1,4 @@
-//! Offline render — `--no-playback --input-file in.wav --output-file out.wav`.
+//! Offline render - `--no-playback --input-file in.wav --output-file out.wav`.
 //!
 //! Decodes the input WAV to channel-major buffers, hands the whole
 //! thing to [`truce_driver::PluginDriver`] as an
@@ -16,7 +16,7 @@
 //! `main.rs` bins. This module just adapts the CLI input/output
 //! shape to the driver's builder.
 //!
-//! Instrument support is currently disabled — instruments need a
+//! Instrument support is currently disabled - instruments need a
 //! MIDI-file driver, not yet wired up.
 
 use std::path::Path;
@@ -30,7 +30,7 @@ use truce_driver::{InputSource, PluginDriver};
 use crate::cli::Options;
 
 /// Block size when `--buffer` isn't supplied. 1024 frames at
-/// 48 kHz is ~21 ms — plenty of room for plugin work, small
+/// 48 kHz is ~21 ms - plenty of room for plugin work, small
 /// enough that a tail-truncation loss is bounded.
 const DEFAULT_BLOCK_SIZE: usize = 1024;
 
@@ -67,7 +67,7 @@ where
     let sample_rate = opts
         .sample_rate
         .map_or_else(|| f64::from(file_sr), f64::from);
-    // Cap to 2 channels for v1 — most plugins are stereo;
+    // Cap to 2 channels for v1 - most plugins are stereo;
     // surround / mono workflows can wait for an explicit flag.
     let channels = file_channels.clamp(1, 2);
     let block_size = opts.buffer_size.map_or(DEFAULT_BLOCK_SIZE, |b| b as usize);
@@ -117,7 +117,7 @@ where
     Ok(())
 }
 
-/// Minimal WAV spec read — open, grab `(sample_rate, channels)`,
+/// Minimal WAV spec read - open, grab `(sample_rate, channels)`,
 /// drop. Avoids decoding the entire file just to figure out
 /// what target SR / channels to render at.
 fn peek_wav_spec(path: &Path) -> Result<(u32, usize), String> {
@@ -129,7 +129,7 @@ fn peek_wav_spec(path: &Path) -> Result<(u32, usize), String> {
 
 /// Decode `path` to channel-major `Vec<Vec<f32>>`, adapted to
 /// `target_sr` / `target_channels`. Reuses [`crate::playback::PlaybackSource`]
-/// for the format/SR/channel adapter logic — this drains the source
+/// for the format/SR/channel adapter logic - this drains the source
 /// once into per-channel buffers sized to the file length.
 fn decode_wav_channel_major(
     path: &Path,

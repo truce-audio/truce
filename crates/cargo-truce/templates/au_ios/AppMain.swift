@@ -26,7 +26,7 @@ private func sectionHeader(_ text: String) -> UILabel {
 /// Dispatch one short MIDI 1.0 message from a virtual source. The
 /// `AuMidiEvent` ABI is "any 3-byte MIDI message" but a plug-in
 /// can legally emit System Common / Real-Time bytes (status >=
-/// 0xF0) where the canonical length isn't 3 — passing those
+/// 0xF0) where the canonical length isn't 3 - passing those
 /// through unchanged dispatches a malformed packet and the
 /// receiving end's parser typically dies on the second byte. We
 /// drop them at the boundary until the framework grows a
@@ -52,7 +52,7 @@ extension UIFont {
     }
 }
 
-/// Root view controller — exposes `viewDidLayoutSubviews` /
+/// Root view controller - exposes `viewDidLayoutSubviews` /
 /// `viewWillTransition(to:with:)` as closure callbacks so the
 /// AppDelegate can drive scale-to-fit + the landscape sidebar
 /// re-layout without subclassing further.
@@ -89,7 +89,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     /// Per-plugin "silence preview audio" flag
     /// (`mute_preview_output` in truce.toml). When true, the
     /// source-node render block zeros its output buffer instead of
-    /// copying the plug-in's `cb.process` output — `cb.process`
+    /// copying the plug-in's `cb.process` output - `cb.process`
     /// still runs each block so editors that visualise an input
     /// signal (analyzers, tuners, spectrum displays) keep updating
     /// from mic input without forming a feedback loop to the
@@ -139,7 +139,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     /// area inset with zeroed editor frame) consults this and
     /// skips if the editor already wrote. Both blocks are
     /// `DispatchQueue.main.async`, so they fire in enqueue order
-    /// — the flag is set on the first block before the second
+    /// - the flag is set on the first block before the second
     /// runs.
     var editorFrameWritten: Bool = false
     /// Cached `previewHost` constraint set per layout mode, so
@@ -154,7 +154,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     /// Constraints `placeChromeInRoot` activates when moving the
     /// chrome (topBar / status / auBtn) from the sidebar back into
     /// root. Tracked so the next re-entry can deactivate the prior
-    /// set before installing fresh ones — Auto Layout otherwise
+    /// set before installing fresh ones - Auto Layout otherwise
     /// accumulates dead references across rotations.
     var chromeRootConstraints: [NSLayoutConstraint] = []
     /// `separator.top → topBar.bottom`. Held so `placeChromeInRoot`
@@ -177,12 +177,12 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     var auInputBuses: UInt32 = 0
     var auOutputBuses: UInt32 = 0
     var auStatusLabel: UILabel?
-    // In-process plugin context — `g_callbacks.create()` returns a
+    // In-process plugin context - `g_callbacks.create()` returns a
     // ctx the framework owns. We drive it from an
     // `AVAudioSourceNode` render callback, skipping AVAudioUnit /
     // PluginKit / XPC entirely. The out-of-process AVAudioUnit
     // path was hitting `kAudioComponentErr_NotPermitted` (-3000)
-    // on device — iOS refuses to spawn a container's own appex as
+    // on device - iOS refuses to spawn a container's own appex as
     // a host child in some signing configurations. In-process side-
     // steps the issue, and the framework is already in our address
     // space because the editor uses it.
@@ -205,7 +205,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     // diagnostic feature.
     let micRingLock = NSLock()
     var micRing: [Float] = []
-    // Core MIDI bridge — published only for MIDI processors
+    // Core MIDI bridge - published only for MIDI processors
     // (numIn == 0, numOut == 0). The Play button toggles it.
     // While active, the plug-in appears in iOS as both a virtual
     // MIDI source (its output) and a virtual MIDI destination
@@ -219,7 +219,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     /// Per-channel scratch buffers reused by the AVAudioSourceNode
     /// render block. Pre-allocated in `prepareRenderScratch`
     /// before the engine starts so the render thread itself never
-    /// allocates — the framework's RT-safety contract everywhere
+    /// allocates - the framework's RT-safety contract everywhere
     /// else (CLAP / VST3 / VST2 / AU / AAX wrappers all hoist
     /// scratch to instance fields with `EVENT_LIST_PREALLOC`-style
     /// pre-allocation; the in-app preview engine has to match).
@@ -228,7 +228,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     var renderScratchOutL: UnsafeMutablePointer<Float>?
     var renderScratchOutR: UnsafeMutablePointer<Float>?
     var renderScratchCapacity: Int = 0
-    /// MIDI events handed to `cb.process` this block — fresh `var
+    /// MIDI events handed to `cb.process` this block - fresh `var
     /// midi: [AuMidiEvent] = []` per render would allocate; this
     /// scratch has its backing storage reserved once at engine
     /// start and `removeAll(keepingCapacity: true)`-ed between
@@ -251,19 +251,19 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     /// next slot to read; `count` is how many slots are in flight;
     /// the next write goes to `(head + count) % capacity`. On
     /// overflow we drop the oldest event (bump `head`, count stays
-    /// at capacity) — preferable to blocking the MIDI thread.
+    /// at capacity) - preferable to blocking the MIDI thread.
     var midiInRingBuf: UnsafeMutablePointer<AuMidiEvent>?
     let midiInRingCapacity: Int = 4096
     var midiInRingHead: Int = 0
     var midiInRingCount: Int = 0
-    // Held for the "About this plug-in" modal — full description
+    // Held for the "About this plug-in" modal - full description
     // is one tap away rather than cluttering the default view.
     var fullDescription: String = ""
 
     func application(_ application: UIApplication,
                      didFinishLaunchingWithOptions launchOptions:
                         [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
-        // Pre-allocate the MIDI-in ring up front — the Core MIDI
+        // Pre-allocate the MIDI-in ring up front - the Core MIDI
         // input callback fires on a high-priority MIDI thread and
         // any allocation under `midiInRingLock` would stall the
         // audio render thread waiting on the same lock. The 4096-
@@ -349,7 +349,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         ])
         self.topBar = topBar
 
-        // Hairline separator under the bar — gives the chrome a
+        // Hairline separator under the bar - gives the chrome a
         // proper navigation-bar look without UINavigationController.
         let separator = UIView()
         separator.backgroundColor = UIColor(white: 1.0, alpha: 0.08)
@@ -365,7 +365,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         self.separator = separator
         self.separatorTopConstraint = separatorTop
 
-        // Hamburger button — only visible in landscape, drawn over
+        // Hamburger button - only visible in landscape, drawn over
         // the editor at the safe-area top-trailing corner. Built
         // here (hidden) so `applyOrientationLayout` can just toggle
         // `isHidden` rather than allocate on every rotation.
@@ -395,7 +395,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         self.auStatusLabel = statusLabel
 
         // `.gray` reads as "this is interactive" without the loud
-        // tinted-blue Apple uses for primary CTAs — keeps the
+        // tinted-blue Apple uses for primary CTAs - keeps the
         // editor as the visual anchor.
         var btnConfig = UIButton.Configuration.gray()
         btnConfig.title = "Play"
@@ -420,14 +420,14 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         ])
         self.auTestButton = auBtn
 
-        // ── Editor preview (hero — fills the centre vertically) ─
+        // ── Editor preview (hero - fills the centre vertically) ─
         // Usage instructions + the headphones-feedback tip live in
         // the (i) sheet so the default screen reads as just
         // [title] / [editor] / [play], with chrome receded.
         let previewHost = UIView()
         previewHost.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(previewHost)
-        // Two constraint sets — portrait sandwiches the editor
+        // Two constraint sets - portrait sandwiches the editor
         // between the separator-bottom and the Play button; the
         // landscape set pins it to the safe-area edges so the
         // editor fills the screen (chrome moves into the sidebar).
@@ -460,10 +460,10 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         // so the editor renders even if AVAudioUnit.instantiate
         // fails downstream (e.g. when the appex's wgpu init can't
         // come up under sandbox + simulator constraints). The
-        // editor doesn't need the AVAudioUnit instance — it talks
+        // editor doesn't need the AVAudioUnit instance - it talks
         // to a local plugin context built from `g_callbacks.create`.
         //
-        // Editor + audio share ONE plugin instance — without this
+        // Editor + audio share ONE plugin instance - without this
         // unification turning a knob updates only the editor's
         // private context while the audio engine plays from a
         // separate ctx with default params.
@@ -491,7 +491,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
             // when the editor was smaller, leaving a visible black
             // margin on the right / bottom of any sub-200×150
             // editor. The fallback for a degenerate (0×0) editor is
-            // 200×150 — applied only when both axes are zero, so a
+            // 200×150 - applied only when both axes are zero, so a
             // tiny-but-valid editor renders edge-to-edge.
             let sz: CGSize
             if w == 0 && h == 0 {
@@ -521,7 +521,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
             log.info("editor: gui_open(\(w)x\(h)) into UIView")
             // Keep references for `applyEditorScale`. We leave the
             // fixed-size constraints in place even when scale-to-
-            // fit is active — the transform shrinks the rasterised
+            // fit is active - the transform shrinks the rasterised
             // bitmap at composite time without changing the
             // editor's logical-pixel coordinate space (which the
             // CPU backend bakes into its tiny-skia Pixmap size).
@@ -533,7 +533,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
             // --ios --crop-mode editor` can crop the simulator-screen
             // capture down to just the plugin region. The safe-area
             // inset write that powers `--crop-mode container` happens
-            // unconditionally below — it's a property of the view
+            // unconditionally below - it's a property of the view
             // controller, not the plug-in, so it must publish even
             // for plug-ins whose iOS editor hasn't initialised.
             DispatchQueue.main.async { [weak self] in
@@ -558,7 +558,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         // the editor never opens (e.g. alt-GUI backends with no iOS
         // implementation yet) so `--crop-mode container` always has
         // a status-bar height to crop. Skips when the editor block
-        // above already wrote — otherwise the (0,0,0,0) frame here
+        // above already wrote - otherwise the (0,0,0,0) frame here
         // would clobber the real editor rect.
         DispatchQueue.main.async { [weak self] in
             guard let self = self, !self.editorFrameWritten else { return }
@@ -581,7 +581,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     /// framebuffer: `simctl io screenshot` captures the framebuffer
     /// as-is, so a landscape-only plug-in's content appears rotated
     /// 90° within a portrait-shaped PNG. The Rust side rotates the
-    /// PNG to match this orientation before applying the crop —
+    /// PNG to match this orientation before applying the crop -
     /// otherwise the editor-frame coords (which are in the rendered
     /// UI space) land out of bounds against the portrait framebuffer.
     func writeFrameJson(x: Int, y: Int, w: Int, h: Int, scale: CGFloat, safeTopPx: Int) {
@@ -640,7 +640,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     }
 
     func toggleAudio() {
-        // MIDI processors live on a different code path — no audio
+        // MIDI processors live on a different code path - no audio
         // I/O, just a Core MIDI bridge that publishes the plug-in
         // to the rest of iOS.
         if self.auInputBuses == 0 && self.auOutputBuses == 0 {
@@ -665,7 +665,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
                         self.micPermissionGranted = true
                         self.startAudio()
                     } else {
-                        self.setStatus("Mic permission denied — enable in Settings to preview audio")
+                        self.setStatus("Mic permission denied - enable in Settings to preview audio")
                     }
                 }
             }
@@ -750,7 +750,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         // keeps the session co-operative with other apps.
         // `.defaultToSpeaker` is the standard "use loudspeaker, not
         // earpiece" preference. `.allowBluetoothA2DP` is what
-        // actually gets output to AirPods / Bluetooth headphones —
+        // actually gets output to AirPods / Bluetooth headphones -
         // without it iOS treats BT as input-only (HFP) and the
         // tone still comes out of the phone speaker even when
         // headphones are paired. Wired EarPods preempt unconditionally.
@@ -822,7 +822,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
             }
 
             // During the fade-out tail (between Stop tap and real
-            // engine teardown) the input is silence — `cb.process`
+            // engine teardown) the input is silence - `cb.process`
             // still runs, so the plug-in's meters can decay to
             // zero before we kill the engine.
             if self.fadingOut {
@@ -831,7 +831,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
                 // Drain the mic-tap ring into the input scratch.
                 // If there's not enough data yet (engine warming
                 // up / tap hasn't fired) the remainder stays at
-                // 0 — pre-roll silence is preferable to glitching.
+                // 0 - pre-roll silence is preferable to glitching.
                 self.micRingLock.lock()
                 let avail = min(self.micRing.count / 2, n)
                 for i in 0..<avail {
@@ -941,7 +941,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         // Wire mic capture into the ring buffer the source node
         // drains. We pull a tap off the engine's `inputNode` rather
         // than routing it through the graph so the source node
-        // stays the sole input to `cb.process` — mic samples flow
+        // stays the sole input to `cb.process` - mic samples flow
         // into the ring, source pulls them out at render time.
         if isEffect {
             self.micRingLock.lock()
@@ -963,7 +963,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
                     self.micRing.append(r)
                 }
                 // Bound the ring so a stalled source node doesn't
-                // pile up unbounded memory — drop oldest beyond
+                // pile up unbounded memory - drop oldest beyond
                 // ~500 ms of stereo audio (44.1 kHz × 2ch × 0.5s).
                 let cap = 44100
                 if self.micRing.count > cap * 2 {
@@ -991,7 +991,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
                     noteOffRef.pointee = true
                     // Audio keeps running so the envelope's release
                     // tail is audible; the user taps Stop to cut it.
-                    self?.setStatus("Note released — tap Stop to silence")
+                    self?.setStatus("Note released - tap Stop to silence")
                 }
             }
         } catch {
@@ -1007,7 +1007,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         // and the plug-in's meters integrate down to zero), then
         // tear everything down on a 250 ms delay. Without the
         // fade the meter is stuck at whatever level it had when
-        // we cut audio — the editor's display loop has no way to
+        // we cut audio - the editor's display loop has no way to
         // animate it back to zero without DSP feeding it.
         self.fadingOut = true
         self.audioActive = false
@@ -1022,7 +1022,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         if let engine = self.audioEngine {
             // Removing the input tap before stop avoids the tap's
             // ring buffer continuing to fill after the engine is
-            // torn down. Only effects install one — instruments
+            // torn down. Only effects install one - instruments
             // never call `installTap` so skip the removal there
             // to avoid a "tap not installed" warning.
             if self.auInputBuses > 0 {
@@ -1082,13 +1082,13 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
             self?.enqueueMidiIn(pktListPtr)
         }
         self.connectAllMidiSources()
-        // Virtual destination — other apps see "{app_name}" in
+        // Virtual destination - other apps see "{app_name}" in
         // their MIDI destination list and can send to it. Routes
         // into the same ring as connected sources.
         MIDIDestinationCreateWithBlock(self.midiClient, clientName, &self.midiVirtualDest) { [weak self] pktListPtr, _ in
             self?.enqueueMidiIn(pktListPtr)
         }
-        // Virtual source — only published if the plug-in actually
+        // Virtual source - only published if the plug-in actually
         // emits MIDI. Pure audio effects shouldn't show up as a
         // ghost source in other apps' MIDI input pickers.
         let hasMidiOut = (g_descriptor?.pointee.has_midi_output ?? 0) != 0
@@ -1133,7 +1133,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         let sourceNode = AVAudioSourceNode(format: fmt) { _, _, frameCount, abl in
             let bufList = UnsafeMutableAudioBufferListPointer(abl)
             let n = Int(frameCount)
-            // Output silence — the plug-in has no audio buses,
+            // Output silence - the plug-in has no audio buses,
             // we're just here to drive `cb.process`.
             for ch in 0..<bufList.count {
                 let dst = bufList[ch].mData!.assumingMemoryBound(to: Float.self)
@@ -1177,15 +1177,15 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
             self.updateTestButtonLabel()
             let hasOut = self.midiVirtualSource != 0
             self.setStatus(hasOut
-                ? "MIDI bridge active — “{app_name}” published as MIDI source + destination"
-                : "MIDI bridge active — “{app_name}” published as MIDI destination")
+                ? "MIDI bridge active - “{app_name}” published as MIDI source + destination"
+                : "MIDI bridge active - “{app_name}” published as MIDI destination")
         } catch {
             log.error("MIDI bridge engine start: \(error.localizedDescription)")
             self.setStatus("MIDI bridge start failed: \(error.localizedDescription)")
             self.teardownMidiBridge()
             // We bumped the refcount in `acquireAudioSession` above
             // but the engine failed to start, so release back to
-            // balance — otherwise a later `stopMidiBridge` decrement
+            // balance - otherwise a later `stopMidiBridge` decrement
             // would leave the count permanently above zero.
             self.releaseAudioSession()
         }
@@ -1203,7 +1203,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     }
 
     /// Tear down MIDI endpoints + client. Safe to call multiple
-    /// times — handles are zeroed after dispose so a second call
+    /// times - handles are zeroed after dispose so a second call
     /// no-ops on the already-disposed slots.
     func teardownMidiBridge() {
         if self.midiVirtualSource != 0 {
@@ -1241,7 +1241,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
     /// Parse a legacy `MIDIPacketList` (one callback may carry
     /// multiple packets; multi-byte messages get extracted as the
-    /// first 3 bytes — multi-byte SysEx is dropped at this seam).
+    /// first 3 bytes - multi-byte SysEx is dropped at this seam).
     /// Allocation-free: byte extract via `withUnsafeBytes` without
     /// an intermediate `Array`, push into the pre-allocated fixed
     /// ring under lock.
@@ -1311,7 +1311,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         // Plug-in description (from truce.toml) on top, followed by
         // a "How to use" section that explains the DAW-host flow and
         // the in-app preview. For effects we also surface the
-        // headphones-feedback tip — irrelevant for instruments.
+        // headphones-feedback tip - irrelevant for instruments.
         let descLabel = UILabel()
         descLabel.text = self.fullDescription
         descLabel.numberOfLines = 0
@@ -1332,29 +1332,29 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         var usageText: String
         if isMidiProcessor {
             usageText = "Load “{app_name}” inside an AUv3 host like "
-                + "GarageBand, AUM, Cubasis, or Logic Pro for iPad — or "
+                + "GarageBand, AUM, Cubasis, or Logic Pro for iPad - or "
                 + "tap Start MIDI bridge to publish it as a virtual MIDI "
                 + "source and destination that any other iOS MIDI app "
                 + "can connect to."
         } else if isInstrument {
             usageText = "Load “{app_name}” inside an AUv3 host like "
-                + "GarageBand, AUM, Cubasis, or Logic Pro for iPad — or "
+                + "GarageBand, AUM, Cubasis, or Logic Pro for iPad - or "
                 + "tap Play to hear a test note. While preview is "
                 + "active, “{app_name}” is also published as a virtual "
                 + "MIDI destination, so external MIDI keyboards and "
                 + "other iOS MIDI apps can play the instrument live."
         } else {
             usageText = "Load “{app_name}” inside an AUv3 host like "
-                + "GarageBand, AUM, Cubasis, or Logic Pro for iPad — or "
+                + "GarageBand, AUM, Cubasis, or Logic Pro for iPad - or "
                 + "tap Play to preview it without a DAW."
         }
         if self.auInputBuses > 0 {
-            usageText += "\n\nTip: use headphones or earbuds when previewing — "
+            usageText += "\n\nTip: use headphones or earbuds when previewing - "
                 + "the mic will pick up the loudspeaker and feed back otherwise."
         }
         usageBody.text = usageText
 
-        // Explicit Close button — iOS hides the swipe-grabber on
+        // Explicit Close button - iOS hides the swipe-grabber on
         // landscape iPhone where sheets present full-screen, and
         // the navigation chrome-less `UIViewController` we present
         // has no implicit dismiss control. Without this the user
@@ -1393,7 +1393,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         self.window?.rootViewController?.present(sheet, animated: true)
     }
 
-    /// SF Symbol icon button sized for the top bar — matches the
+    /// SF Symbol icon button sized for the top bar - matches the
     /// look of a `UIBarButtonItem` (28pt tap target, secondary-label
     /// tint) without needing UINavigationController.
     func iconBarButton(systemName: String, action: @escaping () -> Void) -> UIButton {
@@ -1409,7 +1409,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
     // MARK: - Orientation-aware layout
     //
-    // Portrait: chrome stacks vertically — top bar / editor /
+    // Portrait: chrome stacks vertically - top bar / editor /
     // status / Play button. The editor lives in `previewHost`,
     // which sandwiches between the chrome bands.
     //
@@ -1418,12 +1418,12 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     // hamburger in the top-right slides a sidebar in from the
     // right carrying the same title / status / Play button views.
     //
-    // Scale-to-fit (`scaleEditorToFit`) is independent — applies
+    // Scale-to-fit (`scaleEditorToFit`) is independent - applies
     // a `CGAffineTransform` to the editor view so an oversize
     // editor shrinks uniformly to fit `previewHost.bounds`.
 
     /// Called from `ContainerViewController.viewDidLayoutSubviews`
-    /// and after orientation transitions. Idempotent — short-
+    /// and after orientation transitions. Idempotent - short-
     /// circuits on the second consecutive call with the same
     /// orientation so repeated layout passes don't re-shuffle
     /// the view hierarchy.
@@ -1464,7 +1464,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
                 // `previewHost.bottom` to `auBtn.topAnchor`; with
                 // auBtn still parked in the off-screen sidebar, the
                 // anchor resolves up near the safe-area top and
-                // previewHost collapses into a thin band — the
+                // previewHost collapses into a thin band - the
                 // "halfway up and cut off" failure mode of any
                 // portrait → landscape → portrait cycle.
                 //
@@ -1472,7 +1472,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
                 // the very first layout pass `previousLandscape` is
                 // nil and chrome is still in its initial root-side
                 // position from `application(_:didFinishLaunching…)`
-                // — running placeChromeInRoot there would
+                // - running placeChromeInRoot there would
                 // remove-and-re-add chrome that's already correctly
                 // parented, auto-removing the still-active
                 // `separator.top → topBar.bottom` and
@@ -1499,7 +1499,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     /// view constraint that the re-parent invalidated. UIKit auto-
     /// removes any constraint whose endpoint views temporarily lack
     /// a common ancestor, and a `removeFromSuperview` puts the view
-    /// in a no-superview state mid-move — which kills not just the
+    /// in a no-superview state mid-move - which kills not just the
     /// chrome's own root anchors but also `separator.top →
     /// topBar.bottom` and the `previewHost.bottom → auBtn.top`
     /// entry inside `previewHostPortraitConstraints`. Re-activating
@@ -1510,7 +1510,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     /// Only called on landscape → portrait transitions (see the
     /// `previousLandscape == true` gate in `applyOrientationLayout`).
     /// The initial portrait pass leaves chrome where the launch
-    /// code put it — calling this method there would re-parent
+    /// code put it - calling this method there would re-parent
     /// already-correctly-parented views and break the still-active
     /// initial constraints.
     func placeChromeInRoot() {
@@ -1557,7 +1557,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         }
 
         // Separator stays in root the whole time, but its top is
-        // tied to topBar.bottom — the cross-view constraint was
+        // tied to topBar.bottom - the cross-view constraint was
         // auto-removed when topBar left root (above). Build a
         // fresh one against the now re-parented topBar.
         if let separator = self.separator, let topBar = self.topBar {
@@ -1588,10 +1588,10 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     }
 
     /// Move the chrome into the sidebar's vertical stack. The
-    /// stack manages each child's positioning internally — no
+    /// stack manages each child's positioning internally - no
     /// explicit constraints; `removeFromSuperview` drops the
     /// previous root-side constraints automatically (they lose
-    /// their common-ancestor with the chrome view). Idempotent —
+    /// their common-ancestor with the chrome view). Idempotent -
     /// safe to call on every landscape entry, including after
     /// `placeChromeInRoot` moved the views back.
     ///
@@ -1647,7 +1647,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     /// Apply the uniform scale-to-fit transform to the editor
     /// container so the rasterised bitmap fills `previewHost.bounds`
     /// without distorting aspect ratio. Up-scales as well as down-
-    /// scales — small desktop editors expand to fill iPad real
+    /// scales - small desktop editors expand to fill iPad real
     /// estate; large editors shrink to fit iPhone. No-op when
     /// `scaleEditorToFit` is false.
     func applyEditorScale() {
@@ -1717,7 +1717,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         // Build the empty chrome stack that the chrome views land
         // in while landscape is active. The actual re-parenting
         // happens in `placeChromeInSidebar`, called from
-        // `applyOrientationLayout` on every landscape entry — that
+        // `applyOrientationLayout` on every landscape entry - that
         // method is also the only one that knows how to UNDO the
         // move (`placeChromeInRoot`), so keeping the chrome views
         // in root at build time means we never end up with chrome

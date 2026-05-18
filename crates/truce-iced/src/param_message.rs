@@ -25,7 +25,7 @@ pub enum Message<M> {
     Param(ParamMessage),
     /// A meter value was updated (polled at ~60fps).
     Meter(u32, f32),
-    /// Tick — fired ~60fps, triggers param/meter polling.
+    /// Tick - fired ~60fps, triggers param/meter polling.
     Tick,
     /// Plugin-specific message.
     Plugin(M),

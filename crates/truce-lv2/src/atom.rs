@@ -23,7 +23,7 @@ use truce_core::midi::{pitch_bend_from_bytes, pitch_bend_to_bytes};
 
 use crate::urid::{Urid, UridMap};
 
-/// Layout of `LV2_Atom` — type + size prefix.
+/// Layout of `LV2_Atom` - type + size prefix.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct Atom {
@@ -31,14 +31,14 @@ pub struct Atom {
     pub type_: Urid,
 }
 
-/// `LV2_Atom_Sequence_Body` — unit/pad prefix for a sequence body.
+/// `LV2_Atom_Sequence_Body` - unit/pad prefix for a sequence body.
 #[repr(C)]
 pub struct AtomSequenceBody {
     pub unit: Urid,
     pub pad: u32,
 }
 
-/// Full `LV2_Atom_Sequence` — header then body then events. The port
+/// Full `LV2_Atom_Sequence` - header then body then events. The port
 /// pointer the host hands us points here.
 #[repr(C)]
 pub struct AtomSequence {
@@ -47,7 +47,7 @@ pub struct AtomSequence {
     // Followed by event data; we walk it manually.
 }
 
-/// `LV2_Atom_Event` — per-event header. Time is in frames relative to the
+/// `LV2_Atom_Event` - per-event header. Time is in frames relative to the
 /// start of the current `run()` block.
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -236,7 +236,7 @@ impl<'a> AtomSequenceReader<'a> {
                         let v_u8 = v.round().clamp(0.0, f64::from(u8::MAX)) as u8;
                         info.time_sig_num = v_u8;
                     } else if key == self.urid.time_beat {
-                        // Non-standard but some hosts still emit it — treat
+                        // Non-standard but some hosts still emit it - treat
                         // it as the absolute beat position directly. Stash
                         // here and only apply if bar/barBeat aren't given.
                         beat_direct = Some(v);
@@ -286,7 +286,7 @@ impl<'a> AtomSequenceReader<'a> {
             } else if let Some(bd) = beat_direct {
                 info.position_beats = bd;
             } else if let Some(bb) = bar_beat {
-                // No bar field — best we can do is surface the intra-bar
+                // No bar field - best we can do is surface the intra-bar
                 // offset as the position, matching our previous behavior
                 // for hosts that only emit `time:barBeat`.
                 info.position_beats = bb;
@@ -497,7 +497,7 @@ pub unsafe fn write_midi_out_sequence(out: *mut AtomSequence, events: &EventList
                 } => {
                     buf[0] = 0xD0 | (channel & 0x0F);
                     buf[1] = pressure & 0x7F;
-                    // 2-byte channel pressure — emit a 2-byte MIDI msg.
+                    // 2-byte channel pressure - emit a 2-byte MIDI msg.
                     (2, event.sample_offset)
                 }
                 EventBody::PitchBend { channel, value, .. } => {
@@ -634,7 +634,7 @@ pub unsafe fn write_time_position_sequence(
         // TransportInfo stores `bar_start_beats` as the absolute beat
         // position at which the current bar started, so the bar index is
         // `bar_start_beats / beatsPerBar`. Writers never emit a raw global
-        // beat count — the reader reconstructs it on the other side.
+        // beat count - the reader reconstructs it on the other side.
         let bpb = if info.time_sig_num > 0 {
             f64::from(info.time_sig_num)
         } else {
@@ -648,7 +648,7 @@ pub unsafe fn write_time_position_sequence(
         // Bail at the first overflow so the partial atom-object we'd
         // otherwise emit (with a body.size derived from `prop_offset`
         // but missing later properties) doesn't end up in the wire
-        // stream — strict hosts (Ardour, Carla) reject malformed
+        // stream - strict hosts (Ardour, Carla) reject malformed
         // objects.
         let mut ok = true;
         ok = ok
@@ -693,13 +693,13 @@ pub unsafe fn write_time_position_sequence(
             // Drop the whole notify event if any property didn't fit.
             // The notify-out port's `rsz:minimumSize 4096` is sized
             // for the worst case (~150B for this object) so we
-            // shouldn't hit this in practice — but the bail makes the
+            // shouldn't hit this in practice - but the bail makes the
             // wire format strictly correct rather than relying on the
             // size declaration.
             return;
         }
 
-        // `prop_offset` already includes `obj_header_size` — it started at
+        // `prop_offset` already includes `obj_header_size` - it started at
         // that value and advanced for each property written.
         (*ev_ptr).body.size = len_u32(prop_offset);
         // Sequence size = body header + event header + event body size.
@@ -721,7 +721,7 @@ mod tests {
     /// Every URI gets a unique deterministic id.
     fn test_urid_map() -> UridMap {
         let mut u = UridMap::default();
-        // Any non-zero values will do — the codec only compares for equality.
+        // Any non-zero values will do - the codec only compares for equality.
         u.midi_event = 1;
         u.atom_sequence = 2;
         u.atom_chunk = 3;

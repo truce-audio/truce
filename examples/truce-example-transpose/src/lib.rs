@@ -99,7 +99,7 @@ impl PluginLogic for Transpose {
                     velocity,
                 } => {
                     // Use the pitch that was actually sent, not the
-                    // current shift — held notes get a matching off
+                    // current shift - held notes get a matching off
                     // even after the user re-transposes mid-hold.
                     let output_note = self.active_notes[*note as usize]
                         .take()

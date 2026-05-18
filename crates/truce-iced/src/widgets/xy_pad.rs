@@ -193,7 +193,7 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for XYPadProgram {
             }
             Event::Mouse(mouse::Event::CursorMoved { .. }) if state.dragging => {
                 // While dragging we want updates even when the cursor
-                // leaves the pad — `cursor.position_in(bounds)` returns
+                // leaves the pad - `cursor.position_in(bounds)` returns
                 // `None` outside, freezing the indicator. Use the
                 // window-space position and clamp into the pad rect
                 // ourselves (mirrors `KnobProgram::update`).

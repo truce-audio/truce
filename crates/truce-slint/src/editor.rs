@@ -25,7 +25,7 @@ use crate::platform::{self, ParentWindow};
 /// Per-frame sync closure: takes the current `PluginContext` and updates the
 /// Slint component's properties. Returned by the editor's `setup` callback.
 ///
-/// Deliberately not `Send`-bounded — Slint's generated UI types contain
+/// Deliberately not `Send`-bounded - Slint's generated UI types contain
 /// `Rc<...>` and are `!Send`, so they can only be captured here (the
 /// closure stays on whichever thread `setup` was called on, namely
 /// baseview's window thread or the screenshot caller's thread).
@@ -37,7 +37,7 @@ pub type SyncFn<P> = Box<dyn Fn(&PluginContext<P>)>;
 ///
 /// # Contract
 ///
-/// The `Send + Sync` bound is on the *outer* closure only — required so
+/// The `Send + Sync` bound is on the *outer* closure only - required so
 /// that `Arc<dyn Fn(...) + Send + Sync>` is itself `Send`, which is in
 /// turn required because `SlintEditor: Send` (the `Editor` trait
 /// demands it). It does **not** propagate to the `SyncFn` the closure
@@ -47,7 +47,7 @@ pub type SyncFn<P> = Box<dyn Fn(&PluginContext<P>)>;
 /// In practice this means the setup closure must:
 /// - Construct the Slint component **inside** the closure body
 ///   (`let ui = MyUi::new()?;`), never capture it from the surrounding
-///   environment — that would force the outer closure to be `!Send`
+///   environment - that would force the outer closure to be `!Send`
 ///   and violate this bound.
 /// - Capture only `Send + Sync` data in its environment (e.g. plain
 ///   handles, `Arc<...>`, etc.).
@@ -98,7 +98,7 @@ pub struct SlintEditor<P: Params + ?Sized> {
 // SAFETY: `baseview::WindowHandle` holds a raw native window pointer
 // (HWND / NSView / X11 Window) and is not auto-`Send`. Hosts call
 // `Editor::open` / `idle` / `close` from a single dedicated GUI thread
-// — never concurrently and never from the audio thread — so the
+// - never concurrently and never from the audio thread - so the
 // handle is only ever touched on the thread that created it. The
 // `Editor` trait requires `Send` so the editor can live behind a
 // trait object; this impl asserts that the type doesn't escape its
@@ -152,7 +152,7 @@ struct SlintWindowHandler<P: Params + ?Sized> {
     last_applied_scale: f32,
     /// Cached physical extents derived from `(width, height,
     /// last_applied_scale)`. Updated only when the scale-change branch
-    /// fires — `on_frame`'s render path reads these directly instead
+    /// fires - `on_frame`'s render path reads these directly instead
     /// of re-calling `to_physical_px` twice per frame.
     last_phys_w: u32,
     last_phys_h: u32,
@@ -195,11 +195,11 @@ impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
         // 2. Sync host params → Slint properties
         (self.sync_fn)(&self.state);
 
-        // 3. Force redraw — params/meters change externally every frame
+        // 3. Force redraw - params/meters change externally every frame
         self.slint_window.request_redraw();
 
         // 4. Render Slint to pixel buffer. Reuse the cached physical
-        // extents — the scale-change branch above is the only writer,
+        // extents - the scale-change branch above is the only writer,
         // so re-multiplying every frame would just duplicate work.
         let phys_w = self.last_phys_w;
         let phys_h = self.last_phys_h;
@@ -232,7 +232,7 @@ impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
         frame.present();
     }
 
-    // `_window` is unused on macOS / Linux — only the Windows
+    // `_window` is unused on macOS / Linux - only the Windows
     // ButtonPressed branch reads it, to SetFocus on the child HWND
     // so text widgets see WM_KEYDOWN. Underscore-prefix keeps the
     // unused-arg lint quiet on the non-Windows builds.
@@ -332,7 +332,7 @@ impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
                     // Mirror the OS-reported scale into the shared
                     // cell (so a follow-up host `set_scale_factor`
                     // reads a fresh baseline) and bump `last_applied`
-                    // so `on_frame`'s diff-check stays a no-op — we
+                    // so `on_frame`'s diff-check stays a no-op - we
                     // apply the reconfigure inline below.
                     self.scale.set(scale);
                     #[allow(clippy::cast_possible_truncation)]
@@ -377,7 +377,7 @@ impl<P: Params + 'static> Editor for SlintEditor<P> {
         platform::ensure_platform();
 
         let (lw, lh) = self.size;
-        // Refresh shared scale from the parent window — on macOS the
+        // Refresh shared scale from the parent window - on macOS the
         // parent's NSWindow may live on a non-main display whose
         // `backingScaleFactor` differs from `NSScreen.mainScreen`'s.
         // Any `set_scale_factor` the host issues *after* open will
@@ -472,7 +472,7 @@ impl<P: Params + 'static> Editor for SlintEditor<P> {
                         scale_factor: scale_f32,
                     });
 
-                // Developer creates the Slint component here — it attaches
+                // Developer creates the Slint component here - it attaches
                 // to slint_window via create_window_adapter().
                 let sync_fn = setup(typed_ctx.clone());
 

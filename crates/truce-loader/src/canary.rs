@@ -1,4 +1,4 @@
-//! ABI canary — runtime verification that shell and dylib have
+//! ABI canary - runtime verification that shell and dylib have
 //! compatible type layouts and vtable ordering.
 
 use std::cell::RefCell;
@@ -17,7 +17,7 @@ use truce_params::sample::Sample;
 
 /// ABI fingerprint. Compared between shell and dylib before loading.
 ///
-/// This is the ONE `#[repr(C)]` type in the system — it's the
+/// This is the ONE `#[repr(C)]` type in the system - it's the
 /// bootstrap verification struct that makes everything else safe.
 #[repr(C)]
 pub struct AbiCanary {
@@ -40,11 +40,11 @@ pub struct AbiCanary {
     pub result_tail_disc: u8,
     pub result_keepalive_disc: u8,
     pub rustc_version_hash: u64,
-    /// Bit-width of the plugin's chosen sample type — `32` for `f32`,
+    /// Bit-width of the plugin's chosen sample type - `32` for `f32`,
     /// `64` for `f64`. Without this field, a shell built against
     /// `prelude` (f32) loading a logic dylib built against `prelude64`
     /// would bind to a vtable whose `process()` slot expects
-    /// `AudioBuffer<f64>` — silent UB on the first audio block. The
+    /// `AudioBuffer<f64>` - silent UB on the first audio block. The
     /// width difference between the two `AudioBuffer<S>` instantiations
     /// (and `dyn PluginLogic<S>`) is invisible at the dyn-trait
     /// boundary, so a structural canary alone wouldn't catch it.
@@ -115,7 +115,7 @@ impl AbiCanary {
                 }
             };
         }
-        // Single source of truth — adding a field to AbiCanary means
+        // Single source of truth - adding a field to AbiCanary means
         // adding one line below; `matches` and `diff_report` both
         // reuse this list.
         check!(trait_object_size);
@@ -148,7 +148,7 @@ fn discriminant_byte<T>(value: &T) -> u8 {
     // discriminant of a `#[repr(...)]`-tagged or default-repr enum
     // lives at offset 0, so the first byte is exactly the value the
     // canary wants to compare. For non-enum `T` the byte is whatever
-    // the layout puts there — fine, because the canary fields that
+    // the layout puts there - fine, because the canary fields that
     // call this (`result_*_disc`) only pass `ProcessStatus` variants
     // and only compare the result against the matching dylib reading
     // of the same call.
@@ -169,7 +169,7 @@ fn rustc_hash() -> u64 {
 /// method, and checks the results. If any method returns the wrong
 /// value, the vtable is reordered and the dylib is rejected.
 ///
-/// `last_load_state` is the only mutable cell — `load_state` writes
+/// `last_load_state` is the only mutable cell - `load_state` writes
 /// it, `save_state` reads it back. This lets `verify_probe`
 /// round-trip a sentinel through the load/save pair to confirm the
 /// `load_state` slot isn't swapped with another `&mut self` slot.
@@ -251,16 +251,16 @@ impl<S: Sample> PluginLogicCore<S> for ProbePlugin {
 
 /// Verify a probe plugin returns the expected values.
 ///
-/// Coverage notes — methods exercised, in source-declaration order:
+/// Coverage notes - methods exercised, in source-declaration order:
 /// `latency`, `tail`, `layout`, `hit_test`, `save_state` (default
 /// path), `uses_custom_render`, `custom_editor`, then `load_state` +
 /// `save_state` (echo path). 8 of 11 trait methods covered. The three
-/// not exercised — `reset`, `process`, `render` — would require
+/// not exercised - `reset`, `process`, `render` - would require
 /// constructing an `AudioBuffer` / `RenderBackend` mock, which is
 /// heavyweight enough to outweigh the marginal vtable-reorder
 /// detection benefit. (Trait-object dispatch goes through a vtable
 /// whose slot order is rustc-internal and not stable; we don't depend
-/// on a particular layout — the goal here is just to call enough of
+/// on a particular layout - the goal here is just to call enough of
 /// the surface that any ABI-affecting reshuffle is likely to land on
 /// a method we *do* exercise.)
 ///
@@ -344,7 +344,7 @@ pub enum ProbeError {
     /// for the canary sentinel.
     LoadStateFailed(truce_core::state::StateLoadError),
     /// `load_state` + `save_state` together didn't echo the
-    /// sentinel back — the two `&mut self` slots are crossed.
+    /// sentinel back - the two `&mut self` slots are crossed.
     LoadSaveRoundTrip,
 }
 

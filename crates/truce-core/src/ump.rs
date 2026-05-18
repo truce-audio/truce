@@ -9,7 +9,7 @@
 //! fixed 128-bit slot, so [`decode_ump_channel_voice_2`] works in
 //! terms of `[u32; 4]` with the upper two words zeroed for
 //! channel-voice. The matching encoder is intentionally not exposed
-//! today — see the note next to the decoder.
+//! today - see the note next to the decoder.
 //!
 //! Spec reference: MIDI 2.0 M2-104-UM §4.1.
 //!
@@ -42,9 +42,9 @@ const SYSEX_STATUS_END: u8 = 0x3;
 
 /// Decode the first two words of a UMP packet into a MIDI 2.0
 /// channel-voice [`EventBody`]. Returns `None` for non-channel-voice
-/// packets (utility, system, `SysEx`, data) — those are handled by
+/// packets (utility, system, `SysEx`, data) - those are handled by
 /// dedicated decoders (or not at all). `words[2]` and `words[3]` are
-/// ignored — channel-voice 2.0 is 64 bits and the upper half of a
+/// ignored - channel-voice 2.0 is 64 bits and the upper half of a
 /// 128-bit slot is undefined for it.
 #[must_use]
 #[allow(clippy::cast_possible_truncation)] // UMP fields are bit-packed; truncation is intentional
@@ -193,10 +193,10 @@ pub struct SysExPacket<'a> {
 /// What [`SysExAssembler::push_sysex7_packet`] /
 /// [`SysExAssembler::push_sysex8_packet`] does with the input UMP.
 pub enum SysExFeed<'a> {
-    /// Packet was a `Continue` / `Start` — buffered, nothing to
+    /// Packet was a `Continue` / `Start` - buffered, nothing to
     /// emit yet.
     Buffered,
-    /// Packet was `Complete` or `End` — `payload` is ready to push
+    /// Packet was `Complete` or `End` - `payload` is ready to push
     /// to the host's event list. The slice is invalidated by the
     /// next call into the assembler.
     Complete(SysExPacket<'a>),
@@ -251,7 +251,7 @@ struct StreamSlot {
 /// Each slot's buffer is bounded by the per-slot capacity passed
 /// to [`Self::with_capacity`]; pushing past it returns
 /// [`SysExFeed::Overflow`] and discards that slot's partial
-/// message — truncated `SysEx` is corrupt by definition.
+/// message - truncated `SysEx` is corrupt by definition.
 pub struct SysExAssembler {
     slots: [StreamSlot; SYSEX_ASSEMBLER_SLOTS],
     /// Monotonically increases on every packet; used to break ties
@@ -262,7 +262,7 @@ pub struct SysExAssembler {
 impl SysExAssembler {
     /// Allocate per-slot buffers up front. `capacity` is the
     /// largest `SysEx` payload (in bytes) **per stream** the
-    /// assembler will accept — total memory is
+    /// assembler will accept - total memory is
     /// `SYSEX_ASSEMBLER_SLOTS × capacity`.
     ///
     /// Matching `capacity` to the consuming
@@ -271,7 +271,7 @@ impl SysExAssembler {
     /// maximum single-message length.
     #[must_use]
     pub fn with_capacity(capacity: usize) -> Self {
-        // Per-slot init done by array literal — each `StreamSlot`
+        // Per-slot init done by array literal - each `StreamSlot`
         // allocates its own `Vec::with_capacity(capacity)`.
         let slots = std::array::from_fn(|_| StreamSlot {
             buffer: Vec::with_capacity(capacity),
@@ -309,7 +309,7 @@ impl SysExAssembler {
             .position(|s| s.in_use && s.group == group && s.stream_id == stream_id)
     }
 
-    /// Claim a slot for `(group, stream_id)` — preferring an empty
+    /// Claim a slot for `(group, stream_id)` - preferring an empty
     /// one, falling back to LRU eviction. Eviction drops the
     /// victim's in-progress message (we have no way to surface
     /// the loss back to the host other than the eventual missing
@@ -356,7 +356,7 @@ impl SysExAssembler {
         if n > 6 {
             return SysExFeed::Invalid;
         }
-        // Bytes packed into the bottom 16 bits of w0 + all of w1 —
+        // Bytes packed into the bottom 16 bits of w0 + all of w1 -
         // each in its own 8-bit slot, top bit always 0 per spec.
         let raw = [
             ((w0 >> 8) & 0xFF) as u8,
@@ -422,7 +422,7 @@ impl SysExAssembler {
 
         match status {
             SYSEX_STATUS_COMPLETE => {
-                // Single-packet message — claim a slot, fill it,
+                // Single-packet message - claim a slot, fill it,
                 // mark it not-in-progress so the next call can
                 // evict it. Reuse any existing slot for this
                 // (group, stream_id) (in case the previous stream
@@ -435,7 +435,7 @@ impl SysExAssembler {
                 slot.buffer.clear();
                 if slot.buffer.capacity() < bytes.len() {
                     // Release the slot on overflow so the next call
-                    // can reclaim it — otherwise an oversize
+                    // can reclaim it - otherwise an oversize
                     // `Complete` would leave an `in_use` slot
                     // occupying the table forever (until LRU evicted
                     // it manually). Mirror the `Start` arm.
@@ -473,7 +473,7 @@ impl SysExAssembler {
             }
             SYSEX_STATUS_CONTINUE | SYSEX_STATUS_END => {
                 let Some(idx) = self.find_slot(group, stream_id) else {
-                    // Out-of-band continuation — drop.
+                    // Out-of-band continuation - drop.
                     return SysExFeed::Invalid;
                 };
                 let slot = &mut self.slots[idx];
@@ -553,7 +553,7 @@ mod tests {
         let n = bytes.len() as u32;
         let mut padded = [0u8; 6];
         padded[..bytes.len()].copy_from_slice(bytes);
-        // group is implicitly 0 — `<< 24` would be a no-op so we omit it.
+        // group is implicitly 0 - `<< 24` would be a no-op so we omit it.
         let w0 = (0x3u32 << 28)
             | (u32::from(status) << 20)
             | (n << 16)
@@ -637,7 +637,7 @@ mod tests {
             let p = sysex7_packet_for_group(group, SYSEX_STATUS_START, &[group]);
             assert!(matches!(a.push_sysex7_packet(p), SysExFeed::Buffered));
         }
-        // And the fourth too — confirms total slot count is `SYSEX_ASSEMBLER_SLOTS`,
+        // And the fourth too - confirms total slot count is `SYSEX_ASSEMBLER_SLOTS`,
         // not `SYSEX_ASSEMBLER_SLOTS - 1`.
         let p = sysex7_packet_for_group(4, SYSEX_STATUS_START, &[4]);
         assert!(matches!(a.push_sysex7_packet(p), SysExFeed::Buffered));
@@ -793,7 +793,7 @@ mod tests {
             let start = sysex7_packet_for_group(group, SYSEX_STATUS_START, &[group]);
             assert!(matches!(a.push_sysex7_packet(start), SysExFeed::Buffered));
         }
-        // One more — must evict group 0 (LRU).
+        // One more - must evict group 0 (LRU).
         let new_group = slots_u8;
         let evictor = sysex7_packet_for_group(new_group, SYSEX_STATUS_START, &[new_group]);
         assert!(matches!(a.push_sysex7_packet(evictor), SysExFeed::Buffered));

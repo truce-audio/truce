@@ -43,7 +43,7 @@ struct Vst3Instance<P: PluginExport> {
     /// Stable handle to the params Arc, set once at instance creation.
     /// Host-thread callbacks (`cb_param_*`, `cb_state_save`) read params
     /// through this handle so they never form a `&Inst.plugin` reference
-    /// — the audio thread's `&mut Inst.plugin` would otherwise let LLVM
+    /// - the audio thread's `&mut Inst.plugin` would otherwise let LLVM
     /// deduce noalias on the plugin field and reorder loads past the
     /// audio thread's stores. Params are atomic-backed and `Sync`.
     params_arc: Arc<P::Params>,
@@ -60,7 +60,7 @@ struct Vst3Instance<P: PluginExport> {
     max_block_size: usize,
     /// `true` once `cb_reset` has run (i.e. the host called
     /// `setActive(true)`). Until then, `cb_process` early-returns and
-    /// zeros outputs — running DSP before the plugin's smoothers and
+    /// zeros outputs - running DSP before the plugin's smoothers and
     /// per-rate state are primed produces NaN / garbage that the host
     /// then has to clean up. Pluginval's "process before activate"
     /// robustness paths exercise exactly this case.
@@ -217,7 +217,7 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
         let inst = &mut *ctx.cast::<Vst3Instance<P>>();
         let num_frames = nf;
 
-        // Host called process() before setActive(true) — the plugin
+        // Host called process() before setActive(true) - the plugin
         // hasn't been told its sample rate / max block size yet, so
         // running DSP would feed garbage out of un-snapped smoothers.
         // Zero outputs and bail.
@@ -280,7 +280,7 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
                     0xF0 => {
                         // Note expression: data1=typeId, data2=value*127, note_id=noteId.
                         // Spec says data2 ∈ 0..=127, but the C++ shim isn't required
-                        // to clamp — values 128..=255 are ABI-legal. Clamp first
+                        // to clamp - values 128..=255 are ABI-legal. Clamp first
                         // and scale through u64 so the multiplication can't wrap
                         // and data2 == 127 maps to exactly u32::MAX.
                         let type_id = ev.data1;
@@ -323,8 +323,8 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
                 }
             }
         }
-        // Sort happens once below — after the param-change push
-        // section also runs — instead of twice.
+        // Sort happens once below - after the param-change push
+        // section also runs - instead of twice.
 
         // Build AudioBuffer from raw pointers. Uses the per-instance
         // `scratch` so the audio thread doesn't heap-allocate.
@@ -403,7 +403,7 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
             .process(&mut audio_buffer, &inst.event_list, &mut context);
         // End the `audio_buffer` borrow before reaching back into scratch.
         let _ = audio_buffer;
-        // For `f64` plugins the scratch holds the rendered output —
+        // For `f64` plugins the scratch holds the rendered output -
         // copy + narrow it back to the host's `f32` pointers here.
         // No-op for `f32` plugins (output already pointed at the
         // host buffer).
@@ -417,7 +417,7 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
         inst.tail_cache.store(inst.plugin.tail(), Ordering::Relaxed);
     });
     if !ok {
-        // Panic in plugin.process() — zero outputs so the host
+        // Panic in plugin.process() - zero outputs so the host
         // doesn't keep playing whatever stale samples were in the
         // buffer when DSP died.
         unsafe {
@@ -553,7 +553,7 @@ unsafe extern "C" fn cb_state_save<P: PluginExport>(
         let len = blob.len();
         let ptr = libc_malloc(len).cast::<u8>();
         if ptr.is_null() {
-            // malloc failed — `*out_data` is already null and
+            // malloc failed - `*out_data` is already null and
             // `*out_len` already 0 from the pre-zero above; nothing
             // to do on this branch except return.
             return;
@@ -586,7 +586,7 @@ unsafe extern "C" fn cb_state_load<P: PluginExport>(
             state::apply_params(&*inst.params_arc, &deserialized);
             // Hand the deserialized state to the audio thread for
             // application. `force_push` overwrites any older pending
-            // blob — see the `pending_state` field comment for why
+            // blob - see the `pending_state` field comment for why
             // newest-wins is the right policy.
             let _ = inst.pending_state.force_push(deserialized);
             if let Some(ref mut editor) = inst.editor {
@@ -772,7 +772,7 @@ unsafe extern "C" fn cb_get_output_sysex_event<P: PluginExport>(
         let inst = &*ctx.cast::<Vst3Instance<P>>();
         // Walk the filtered iterator, same shape as
         // `cb_get_output_event`. Bytes point into the plug-in's
-        // SysEx pool — valid until the shim's next `process()`
+        // SysEx pool - valid until the shim's next `process()`
         // clears the `EventList`, which is after the host's
         // `addEvent` has copied them.
         if let Some(event) = inst
@@ -819,7 +819,7 @@ unsafe extern "C" fn cb_gui_get_size<P: PluginExport>(
             // true on Windows/Linux, where hosts expect physical pixels and
             // may drive the scale via `IPlugViewContentScaleSupport`. On
             // macOS, AppKit handles the Retina backing automatically and
-            // hosts expect logical points — scaling here would double the
+            // hosts expect logical points - scaling here would double the
             // window on Retina displays.
             #[cfg(target_os = "macos")]
             {
@@ -828,7 +828,7 @@ unsafe extern "C" fn cb_gui_get_size<P: PluginExport>(
             }
             #[cfg(not(target_os = "macos"))]
             {
-                // Round-to-nearest, not truncate — `(w * scale) as u32`
+                // Round-to-nearest, not truncate - `(w * scale) as u32`
                 // would round 199.9 → 199, drifting one pixel on
                 // fractional scales. Matches the CLAP / AAX / `to_physical_px`
                 // helper used elsewhere. Logical pixel sizes are bounded
@@ -969,7 +969,7 @@ fn resolved_plugin_name(info: &truce_core::info::PluginInfo) -> &'static str {
 
 fn vst3_cid(id: &str) -> [u8; 16] {
     // FNV-1a-128, per http://www.isthe.com/chongo/tech/comp/fnv/.
-    // Standard constants — DAWs persist this CID as the plugin's identity in
+    // Standard constants - DAWs persist this CID as the plugin's identity in
     // saved sessions, so the algorithm and constants must stay stable across
     // releases.
     const FNV_OFFSET_BASIS: u128 = 0x6C62_272E_07BB_0142_62B8_2175_6295_C58D;

@@ -4,7 +4,7 @@ use truce_params::sample::Float;
 ///
 /// Generic over `f32` and `f64` via [`Float`]. The bound is `Float`
 /// rather than `Sample` because a gain value isn't an audio sample
-/// — it's a scaling coefficient.
+/// - it's a scaling coefficient.
 #[inline]
 #[must_use]
 pub fn db_to_linear<F: Float>(db: F) -> F {
@@ -13,7 +13,7 @@ pub fn db_to_linear<F: Float>(db: F) -> F {
 
 /// Convert linear gain to decibels.
 ///
-/// Generic over `f32` and `f64` — see [`db_to_linear`].
+/// Generic over `f32` and `f64` - see [`db_to_linear`].
 #[inline]
 #[must_use]
 pub fn linear_to_db<F: Float>(linear: F) -> F {
@@ -22,7 +22,7 @@ pub fn linear_to_db<F: Float>(linear: F) -> F {
 
 /// Convert a MIDI note number to frequency in Hz (A4 = 440 Hz).
 ///
-/// Generic over `f32` and `f64` — see [`db_to_linear`]. A frequency
+/// Generic over `f32` and `f64` - see [`db_to_linear`]. A frequency
 /// isn't an audio sample either; bound on [`Float`].
 #[inline]
 #[must_use]

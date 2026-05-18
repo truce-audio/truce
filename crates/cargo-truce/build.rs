@@ -4,7 +4,7 @@
 //! `src/templates.rs` pulls every file under `templates/` into the
 //! binary via `include_str!`. Cargo's default rebuild tracking only
 //! watches Rust sources, so a pure template edit (a `.swift` / `.h` /
-//! `.cpp` / `.plist` touch) doesn't re-trigger `include_str!` — the
+//! `.cpp` / `.plist` touch) doesn't re-trigger `include_str!` - the
 //! `cargo-truce install --au3` / `--aax` paths then ship stale bytes
 //! to xcodebuild / cmake and any recent template fix silently falls
 //! on the floor.

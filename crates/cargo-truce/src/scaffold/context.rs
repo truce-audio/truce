@@ -2,7 +2,7 @@
 //! flat record matching the field names the corresponding
 //! `.tpl` file references.
 //!
-//! Kept private to the `scaffold` module — only the `Scaffolder`
+//! Kept private to the `scaffold` module - only the `Scaffolder`
 //! constructs these. Public callers work with `PluginSpec` / the
 //! flag inputs in `spec.rs` instead.
 
@@ -15,7 +15,7 @@ use super::spec::{DepForm, FeatureSet, PluginSpec, VendorInfo};
 const REPO_URL: &str = "https://github.com/truce-audio/truce";
 
 // ---------------------------------------------------------------------------
-// PluginScaffoldingContext — fields the per-plugin templates (Cargo.toml,
+// PluginScaffoldingContext - fields the per-plugin templates (Cargo.toml,
 // build.rs, src/lib.rs, src/main.rs) reference.
 // ---------------------------------------------------------------------------
 
@@ -75,7 +75,7 @@ impl PluginScaffoldingContext {
 }
 
 // ---------------------------------------------------------------------------
-// WorkspaceContext — fields the workspace root Cargo.toml.tpl needs.
+// WorkspaceContext - fields the workspace root Cargo.toml.tpl needs.
 // ---------------------------------------------------------------------------
 
 #[derive(Serialize)]
@@ -99,7 +99,7 @@ impl WorkspaceContext {
 }
 
 // ---------------------------------------------------------------------------
-// TruceTomlContext — fields truce.toml.tpl needs.
+// TruceTomlContext - fields truce.toml.tpl needs.
 // ---------------------------------------------------------------------------
 
 #[derive(Serialize)]
@@ -160,7 +160,7 @@ impl TruceTomlContext {
             .collect();
         // Suite installers wrap multiple plugins. A single-plugin
         // scaffold has nothing to wrap, so don't emit a `[[suite]]`
-        // block — the per-plugin installer is exactly what the user
+        // block - the per-plugin installer is exactly what the user
         // wants.
         let suite = (is_workspace && plugins.len() >= 2).then(|| TruceTomlSuite {
             name: to_pascal_case(workspace_name),
@@ -177,7 +177,7 @@ impl TruceTomlContext {
 }
 
 // ---------------------------------------------------------------------------
-// Helpers — pure functions producing the precomputed string fields
+// Helpers - pure functions producing the precomputed string fields
 // the templates substitute in.
 // ---------------------------------------------------------------------------
 

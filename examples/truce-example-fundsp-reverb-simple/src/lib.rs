@@ -2,9 +2,9 @@
 //!
 //! **Pedagogical variant.** This crate rebuilds the fundsp graph
 //! *inline on the audio thread* whenever the Time parameter crosses
-//! the hysteresis threshold. That's a real-time-safety violation —
+//! the hysteresis threshold. That's a real-time-safety violation -
 //! `Box::new` + `graph.allocate()` can block on the system allocator
-//! — and is shown here only because it makes the integration shape
+//! - and is shown here only because it makes the integration shape
 //! obvious in one file.
 //!
 //! For the production pattern (rebuild on a dedicated worker thread
@@ -37,7 +37,7 @@ const FILTER_Q: f32 = 0.707;
 const ROOM_SIZE: f64 = 10.0;
 const DAMPING: f64 = 0.5;
 
-/// Hysteresis on Time changes — fundsp's `reverb_stereo` bakes RT60
+/// Hysteresis on Time changes - fundsp's `reverb_stereo` bakes RT60
 /// into the FDN at construction, so each crossing triggers a full
 /// rebuild (= delay lines reset, tail dropped). Threshold keeps tiny
 /// drifts from rebuilding.
@@ -117,7 +117,7 @@ impl FundspReverbSimple {
     }
 
     /// Allocates via `Box::new` + `allocate()`. **Called from
-    /// `process()` on the audio thread when Time changes** — that's
+    /// `process()` on the audio thread when Time changes** - that's
     /// the simplification this variant exists to highlight. See the
     /// `truce-example-fundsp-reverb-worker` crate for the
     /// worker-thread + lock-free swap pattern that keeps `process()`
@@ -172,7 +172,7 @@ impl PluginLogic for FundspReverbSimple {
     ) -> ProcessStatus {
         // Read the raw target, not `read()`: a smoothed value would
         // crawl across the threshold for ~200 ms and rebuild every
-        // block — audible as an unstable tail until it settles.
+        // block - audible as an unstable tail until it settles.
         let time_s = self.params.time.value();
         if (time_s - self.last_built_time_s).abs() > TIME_REBUILD_THRESHOLD_S {
             // This is the rt-safety violation called out at the top
@@ -301,7 +301,7 @@ mod tests {
     }
 
     /// Regression: sample-rate propagation. SVF coefficients are
-    /// SR-dependent — if `set_sample_rate` misses a sub-node the
+    /// SR-dependent - if `set_sample_rate` misses a sub-node the
     /// filter de-tunes or blows up at non-default rates.
     #[test]
     fn stability_at_96k() {

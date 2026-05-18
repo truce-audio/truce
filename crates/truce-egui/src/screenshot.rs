@@ -9,7 +9,7 @@ use truce_core::editor::PluginContext;
 use truce_params::Params;
 
 /// Headless render path shared by `EguiEditor::screenshot()` and any
-/// future ad-hoc callers in this crate. Kept `pub(crate)` — external
+/// future ad-hoc callers in this crate. Kept `pub(crate)` - external
 /// callers should go through the `Editor::screenshot()` trait.
 ///
 /// Returns `None` when no wgpu adapter is available (CI runners without
@@ -67,13 +67,13 @@ pub(crate) fn render_with_state<P: Params + ?Sized>(
     // backend (Metal on macOS, DX12 on Windows, Vulkan on Linux) so
     // the screenshot pipeline runs everywhere. Per-backend
     // rasterization differs across platforms, so the same plugin
-    // can produce different pixel bytes on different OSes — author
+    // can produce different pixel bytes on different OSes - author
     // your reference PNGs on whichever host you intend to gate
     // screenshots from, and bump the `tolerance` if you need
     // cross-machine antialiasing slack.
     //
     // `compatible_surface: None` (vs the live render path's
-    // `Some(&surface)`) is unavoidable here — there's no `wgpu::Surface`
+    // `Some(&surface)`) is unavoidable here - there's no `wgpu::Surface`
     // in a screenshot run. On multi-GPU hosts wgpu may consequently
     // pick a different physical adapter than the editor's live path,
     // so the same caveat applies: bake baselines on the host you gate

@@ -20,7 +20,7 @@ impl Color {
 }
 
 // `Color::to_skia` / `Color::to_premultiplied` (tiny-skia
-// conversions) live in `truce-gui` — they're rasterizer-specific
+// conversions) live in `truce-gui` - they're rasterizer-specific
 // helpers, and putting them here would pull tiny-skia into the
 // light crate. Backends that need them call the conversion at the
 // raster boundary instead.

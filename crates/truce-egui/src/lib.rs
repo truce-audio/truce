@@ -22,7 +22,7 @@
 
 // `editor.rs` is the baseview-driven desktop path; `editor_ios.rs`
 // drives the UIView + CADisplayLink + CAMetalLayer host on iOS.
-// `renderer.rs` (egui-wgpu wrapper) is shared — it has both a
+// `renderer.rs` (egui-wgpu wrapper) is shared - it has both a
 // baseview-window and a raw-CAMetalLayer constructor.
 #[cfg(not(target_os = "ios"))]
 pub mod editor;

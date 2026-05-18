@@ -6,7 +6,7 @@
 //
 // Coordinates the rows-layout uses to step through `Row`s. `widgets::draw_rows`
 // (paint side) and `interaction::build_regions` (hit-test side) walk the
-// rows in lock-step, so they have to agree on these step sizes — drift
+// rows in lock-step, so they have to agree on these step sizes - drift
 // would make hover / drag rectangles miss the painted widget.
 
 /// Pixel height of the title-bar header `widgets::draw_header` paints
@@ -34,14 +34,14 @@ pub const ROWS_ROW_GAP: f32 = 19.0;
 // Dropdown widget shared constants
 // ---------------------------------------------------------------------------
 
-/// Pixel height of the dropdown button box (the closed state — clicking
+/// Pixel height of the dropdown button box (the closed state - clicking
 /// this opens the popup). Both `widgets::draw_dropdown` (paint side) and
 /// `interaction::open_dropdown` (popup-anchor math) need to agree.
 pub const DROPDOWN_BOX_HEIGHT: f32 = 20.0;
 
 use truce_core::cast::len_u32;
 
-/// A widget definition for the layout — either explicit type or auto-detected.
+/// A widget definition for the layout - either explicit type or auto-detected.
 #[derive(Clone, Debug)]
 pub struct KnobDef {
     pub param_id: u32,
@@ -63,11 +63,11 @@ pub enum WidgetKind {
     Slider,
     Toggle,
     Selector,
-    /// Dropdown list — click to open a popup showing all options.
+    /// Dropdown list - click to open a popup showing all options.
     Dropdown,
     /// Level meter. Shows one bar per meter ID. Supports mono, stereo, or multi-channel.
     Meter,
-    /// XY pad. Controls two params — X param stored in `param_id`, Y param in `xy_param_y`.
+    /// XY pad. Controls two params - X param stored in `param_id`, Y param in `xy_param_y`.
     XYPad,
 }
 
@@ -245,7 +245,7 @@ impl PluginLayout {
 pub const AUTO: u32 = u32::MAX;
 
 // Grid spacing constants. All dimensions in this module are in logical
-// points — the rendering backend (`CpuBackend` / `WgpuBackend`)
+// points - the rendering backend (`CpuBackend` / `WgpuBackend`)
 // multiplies by the display scale factor at raster time.
 pub const GRID_GAP: f32 = 19.0;
 pub const GRID_PADDING: f32 = 10.0;
@@ -476,7 +476,7 @@ impl From<GridWidget> for Section {
 /// Title band drawn above a layout. The `title` slot renders
 /// larger / brighter on the left of the band; the `subtitle` slot
 /// renders smaller / dimmer on the right. Each slot is independently
-/// optional — set either, both, or neither.
+/// optional - set either, both, or neither.
 ///
 /// Use [`HeaderTitles::title`] / [`HeaderTitles::subtitle`] /
 /// [`HeaderTitles::pair`] for the common cases; build the struct
@@ -489,7 +489,7 @@ pub struct HeaderTitles {
 }
 
 impl HeaderTitles {
-    /// Both slots empty — no header band is drawn.
+    /// Both slots empty - no header band is drawn.
     #[must_use]
     pub const fn none() -> Self {
         Self {
@@ -525,7 +525,7 @@ impl HeaderTitles {
         }
     }
 
-    /// `true` when neither slot is set — caller should skip the
+    /// `true` when neither slot is set - caller should skip the
     /// header band entirely.
     #[must_use]
     pub const fn is_empty(&self) -> bool {
@@ -552,12 +552,12 @@ pub struct GridLayout {
     pub width: u32,
     /// Computed height in logical points.
     pub height: u32,
-    /// Pre-flow widget snapshot — copy of `widgets` before
+    /// Pre-flow widget snapshot - copy of `widgets` before
     /// `auto_flow_with_breaks` ran. Lets [`Self::with_cols`] reset
     /// and re-flow against a different column count without
     /// losing AUTO-vs-explicit placement.
     original_widgets: Vec<GridWidget>,
-    /// Pre-flow section breaks — `(widget_index, label)` pairs as
+    /// Pre-flow section breaks - `(widget_index, label)` pairs as
     /// passed to `auto_flow_with_breaks` originally. Stored so
     /// re-flow recovers the same section labels.
     original_breaks: Vec<(usize, &'static str)>,
@@ -603,7 +603,7 @@ impl GridLayout {
             widgets.extend(s.widgets);
         }
         // Account for explicitly-positioned widgets that reach
-        // beyond the widest auto-flow row — the grid still has to
+        // beyond the widest auto-flow row - the grid still has to
         // be wide enough to seat them.
         let max_explicit_col = widgets
             .iter()
@@ -632,7 +632,7 @@ impl GridLayout {
 
     /// Override the default column count (which is the widest
     /// section's widget count, or whatever explicit positions
-    /// require — whichever is larger). Use to force wrapping:
+    /// require - whichever is larger). Use to force wrapping:
     /// `.with_cols(2)` on a 4-widget section produces a 2×2 grid.
     /// Recomputes auto-flow placement and window size.
     #[must_use]
@@ -643,7 +643,7 @@ impl GridLayout {
     }
 
     /// Override the default cell size ([`GRID_DEFAULT_CELL_SIZE`]).
-    /// The cell is square — this is both the width and height of
+    /// The cell is square - this is both the width and height of
     /// one grid cell in logical points.
     #[must_use]
     pub fn with_cell_size(mut self, cell_size: f32) -> Self {
@@ -655,7 +655,7 @@ impl GridLayout {
     }
 
     /// Like [`Self::with_cols`] but accepts the cell size in the
-    /// same call — useful when both are non-default. Equivalent to
+    /// same call - useful when both are non-default. Equivalent to
     /// `.with_cell_size(s).with_cols(c)`.
     #[must_use]
     pub fn with_grid(mut self, cols: u32, cell_size: f32) -> Self {
@@ -665,7 +665,7 @@ impl GridLayout {
 
     /// Set both header slots at once. Replaces any previously
     /// configured titles. Recomputes the height to account for the
-    /// extra band — width stays the same since the header spans the
+    /// extra band - width stays the same since the header spans the
     /// full grid width.
     ///
     /// ```ignore
@@ -777,7 +777,7 @@ impl GridLayout {
     /// `flow_and_size` after their field mutation. Previously
     /// exposed as `pub` (along with a `pub auto_flow()` wrapper for
     /// the no-breaks case), which mixed in-place mutation into the
-    /// chainable `mut self -> Self` builder surface — confusing.
+    /// chainable `mut self -> Self` builder surface - confusing.
     /// Now `pub(crate)`; the no-breaks wrapper is gone since
     /// internal callers always pass an explicit slice.
     ///
@@ -815,7 +815,7 @@ impl GridLayout {
             }
 
             if w.col != AUTO && w.row != AUTO {
-                // Explicitly placed — already marked in first pass.
+                // Explicitly placed - already marked in first pass.
                 any_emitted = true;
                 continue;
             }
@@ -920,7 +920,7 @@ impl From<PluginLayout> for GridLayout {
             height: 0,
             // PluginLayout drives placement from `rows` directly,
             // so widgets are already explicitly positioned. The
-            // re-flow stash is the same widgets with no breaks —
+            // re-flow stash is the same widgets with no breaks -
             // calling `with_cols` would re-run auto-flow against
             // explicit (col,row) values, which is a no-op.
             original_widgets: widgets,
@@ -955,8 +955,8 @@ impl Layout {
             Layout::Grid(g) => g.height,
         }
     }
-    /// Title slot of the editor's header band — left, larger /
-    /// brighter — or `None` when the layout doesn't set one.
+    /// Title slot of the editor's header band - left, larger /
+    /// brighter - or `None` when the layout doesn't set one.
     #[must_use]
     pub fn title(&self) -> Option<&str> {
         match self {
@@ -964,8 +964,8 @@ impl Layout {
             Layout::Grid(g) => g.titles.title,
         }
     }
-    /// Subtitle slot of the editor's header band — right, smaller /
-    /// dimmer — or `None` when the layout doesn't set one.
+    /// Subtitle slot of the editor's header band - right, smaller /
+    /// dimmer - or `None` when the layout doesn't set one.
     #[must_use]
     pub fn subtitle(&self) -> Option<&str> {
         match self {

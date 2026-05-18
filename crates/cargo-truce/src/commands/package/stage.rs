@@ -30,11 +30,11 @@ pub(crate) fn lv2_slug(name: &str) -> String {
 /// Stage an LV2 bundle into `staging/{slug}.lv2/`. Copies the built
 /// shared library plus the proc-macro-emitted `manifest.ttl` /
 /// `plugin.ttl` sidecars (written by truce-derive's `derive(Params)`
-/// during the cdylib's compile). No dlopen — the binary doesn't have
+/// during the cdylib's compile). No dlopen - the binary doesn't have
 /// to load on this host, so cross-arch builds Just Work.
 ///
 /// On macOS, the inner `.so` is a Mach-O and gets signed with the
-/// caller's identity via `codesign_bundle` — same Developer-ID +
+/// caller's identity via `codesign_bundle` - same Developer-ID +
 /// hardened-runtime + secure-timestamp treatment as CLAP / VST3.
 /// Without that step, Apple's notarization-readiness check flags the
 /// LV2 binary as ad-hoc-signed and refuses to submit.
@@ -90,7 +90,7 @@ pub(crate) fn stage_lv2(
 
     // Sign the inner Mach-O directly rather than passing the bundle
     // dir. An LV2 "bundle" is just a directory of files, not a real
-    // macOS bundle (no `Contents/Info.plist`) — codesign refuses to
+    // macOS bundle (no `Contents/Info.plist`) - codesign refuses to
     // seal directories it doesn't recognise, but the Mach-O itself
     // signs fine and that's the only file Apple's notary actually
     // inspects.
@@ -183,7 +183,7 @@ pub(crate) fn stage_vst3(
     //   Linux:   Contents/<arch>-linux/<name>.so   (ELF, .so)
     //   Windows: Contents/<arch>-win/<name>.vst3   (PE, .vst3)
     // The earlier "always Contents/MacOS/<name>" layout produced bundles
-    // that hosts on Linux refused to load — VST3 hosts pick the inner
+    // that hosts on Linux refused to load - VST3 hosts pick the inner
     // binary from the arch-specific subdir and fall back to nothing.
     #[cfg(target_os = "macos")]
     {
@@ -238,7 +238,7 @@ pub(crate) fn stage_vst3(
 
 /// VST3 bundle inner-directory name per the VST3 SDK "Bundle Locations"
 /// spec. Maps a cargo target triple to the bundle's `Contents/<dir>/`.
-/// macOS callers don't reach this — they use the special `MacOS` dir.
+/// macOS callers don't reach this - they use the special `MacOS` dir.
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 fn vst3_arch_subdir(triple: &str) -> &'static str {
     match triple {
@@ -246,7 +246,7 @@ fn vst3_arch_subdir(triple: &str) -> &'static str {
         "aarch64-unknown-linux-gnu" | "aarch64-unknown-linux-musl" => "aarch64-linux",
         "x86_64-pc-windows-msvc" | "x86_64-pc-windows-gnu" => "x86_64-win",
         "aarch64-pc-windows-msvc" => "aarch64-win",
-        // Linux/Windows on a non-mainstream arch — VST3 hosts on those
+        // Linux/Windows on a non-mainstream arch - VST3 hosts on those
         // arches wouldn't load it anyway. Emit something deterministic
         // so the bundle structure stays parseable.
         _ => "unknown",
@@ -416,11 +416,11 @@ pub(crate) fn stage_au2(root: &Path, p: &PluginDef, config: &Config, staging: &P
 /// Stage an AAX bundle into the staging directory.
 ///
 /// `universal_mac` controls whether the AAX C++ template (the wrapper binary
-/// Pro Tools launches) is built fat — the Rust cdylib in Resources/ is
+/// Pro Tools launches) is built fat - the Rust cdylib in Resources/ is
 /// already lipo'd universal when the caller passes `universal_mac = true`.
 /// Stage an AAX bundle into the packaging staging tree.
 ///
-/// Reads from `target/bundles/{Plugin}.aaxplugin/` — the fully-
+/// Reads from `target/bundles/{Plugin}.aaxplugin/` - the fully-
 /// assembled + Apple-signed output of
 /// [`emit_aax_bundle`](crate::commands::install::aax::emit_aax_bundle).
 /// PACE-signs the staged copy in place (PACE wraps the Apple
@@ -459,8 +459,8 @@ pub(crate) fn stage_aax(
 
 /// Stage an AU v3 `.app` bundle into the staging directory for pkgbuild.
 ///
-/// Reads from `target/bundles/{Plugin}.app/` — the fully-signed output
-/// of [`emit_au_v3_bundle`] — and copies it into the staging tree.
+/// Reads from `target/bundles/{Plugin}.app/` - the fully-signed output
+/// of [`emit_au_v3_bundle`] - and copies it into the staging tree.
 /// The bundle is already signed + has its embedded framework, so this
 /// is a pure copy.
 #[cfg(target_os = "macos")]
@@ -525,7 +525,7 @@ pub(crate) fn stage_standalone(root: &Path, p: &PluginDef, config: &Config, stag
     if !built.exists() {
         return Err(format!(
             "Standalone binary missing at {}. \
-             The build step should have produced it — make sure the \
+             The build step should have produced it - make sure the \
              plugin's Cargo.toml declares a [[bin]] target named '{}'.",
             built.display(),
             bin_stem,
@@ -583,7 +583,7 @@ pub(crate) fn stage_standalone(root: &Path, p: &PluginDef, config: &Config, stag
 /// Write a `.app/Contents/Info.plist` for a standalone host bundle.
 /// Shared between `commands::run` (dev iteration) and the packaging
 /// pipeline so the live-run app and the installed app present
-/// identically to the OS — same Dock name, same mic-permission prompt,
+/// identically to the OS - same Dock name, same mic-permission prompt,
 /// same hi-DPI flag.
 #[cfg(target_os = "macos")]
 pub(crate) fn write_standalone_info_plist(
@@ -667,7 +667,7 @@ pub(crate) fn generate_distribution_xml(
         // Every format ships checked by default. Pro Tools users
         // expect AAX to be there without hunting through Customize,
         // and a PACE/iLok-signed build won't reach `--formats aax`
-        // unless the developer set it up — at which point shipping
+        // unless the developer set it up - at which point shipping
         // it pre-checked is the expected behaviour.
         let enabled_attr = "";
 
@@ -685,7 +685,7 @@ pub(crate) fn generate_distribution_xml(
         //   AU v3, standalone) keep `auth="Root"` so they escalate
         //   for `/Library/...` / `/Applications/`.
         // - `--ask` (default): leave user-viable formats at the
-        //   component default — the user might pick "System" at
+        //   component default - the user might pick "System" at
         //   install time, which needs root either way. System-only
         //   formats still get `auth="Root"` so they always escalate.
         // - `--system`: leave defaults; admin is needed regardless.
@@ -718,7 +718,7 @@ pub(crate) fn generate_distribution_xml(
         .map_or("", |_| "    <license file=\"license.html\"/>\n");
 
     // Per-scope <domains> drives Installer.app's "Destination Select"
-    // page. `--ask` enables both — Installer.app shows the radio
+    // page. `--ask` enables both - Installer.app shows the radio
     // buttons. `--user` / `--system` hard-lock the prefix, no page.
     let domains = match scope {
         PkgScope::User => {
@@ -752,13 +752,13 @@ pub(crate) fn generate_distribution_xml(
 /// Build per-format pkgbuild scripts under `staging/<fmt>_scripts/`
 /// and return the directory path. Every format gets a `preinstall`
 /// that removes any existing bundle at the destination before shove
-/// runs — without this, a stale leftover (especially one owned by
+/// runs - without this, a stale leftover (especially one owned by
 /// root from a prior admin install) blocks the new payload with
 /// `Permission denied` during the relink step. AU v2 additionally
 /// gets a `postinstall` that clears the AU cache so Logic / Garage-
 /// Band re-scan and pick up the new bundle.
 ///
-/// The preinstall reads `$2` (the resolved install destination —
+/// The preinstall reads `$2` (the resolved install destination -
 /// already accounts for `enable_currentUserHome` relocation) and
 /// removes `<destination>/<bundle_name>` if present. When running
 /// under root auth (`Install for all users` or a per-pkg-ref

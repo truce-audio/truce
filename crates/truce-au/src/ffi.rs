@@ -170,7 +170,7 @@ pub struct AuMidiEvent {
     pub _pad: u8,
 }
 
-/// Universal MIDI Packet container — carries MIDI 2.0 channel-voice
+/// Universal MIDI Packet container - carries MIDI 2.0 channel-voice
 /// messages (64-bit UMPs, words[0..2]) and forward-compat slots for
 /// SysEx-8 / data (128-bit UMPs, all four words). AU v3 hosts on iOS
 /// 17+ / macOS 14+ deliver MIDI through `AURenderEvent.MIDIEventList`

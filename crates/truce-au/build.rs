@@ -23,13 +23,13 @@ fn main() {
     //   it appears in `__objc_classlist` (required by REAPER's
     //   `[NSBundle classNamed:]` lookup). The class name must be
     //   unique per plugin: hosts load every installed `.component`
-    //   into one process, and libobjc dedupes by name — the loser's
+    //   into one process, and libobjc dedupes by name - the loser's
     //   bundle then returns nil from `classNamed:` and the host
     //   thinks it has no GUI. Uniqueness comes from the
     //   `TRUCE_AU_PLUGIN_ID` env var (cargo-truce sets it from
     //   truce.toml); sanitised into an alphanumeric suffix and
     //   handed to the .m via `-DTRUCE_AU_VIEW_FACTORY_NAME=...`.
-    //   Plain `cargo build` (no env) uses a default name — fine for
+    //   Plain `cargo build` (no env) uses a default name - fine for
     //   unit tests, not for multi-plugin hosting.
     //
     // - AU v3 (.appex): the AUAudioUnit subclass + factory are
@@ -57,7 +57,7 @@ fn main() {
         // AU v2 only exists on macOS; the .component bundle layout
         // and AudioComponentPlugInInterface dispatch are macOS-only.
         // iOS hosts AU v3 exclusively via the App Extension shim
-        // (Swift-side, compiled by xcodebuild — not from this build).
+        // (Swift-side, compiled by xcodebuild - not from this build).
         build.file("shim/au_v2_shim.c");
         build.file("shim/au_v2_view.m");
     }

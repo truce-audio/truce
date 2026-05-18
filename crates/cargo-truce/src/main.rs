@@ -1,4 +1,4 @@
-//! cargo-truce — build tool for truce audio plugins.
+//! cargo-truce - build tool for truce audio plugins.
 //!
 //! Install:
 //!   cargo install cargo-truce
@@ -22,7 +22,7 @@ fn main() -> ExitCode {
     let cmd = args.first().map_or("help", std::string::String::as_str);
 
     match cmd {
-        // Scaffold commands — handled here
+        // Scaffold commands - handled here
         "new" => match cmd_new(&args[1..]) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
@@ -30,7 +30,7 @@ fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
-        // Build/install commands — forwarded to the engine in lib.rs.
+        // Build/install commands - forwarded to the engine in lib.rs.
         "install" | "build" | "package" | "uninstall" | "run" | "screenshot" | "status"
         | "reset-au" | "reset-aax" | "validate" | "doctor" | "log-stream-au" => {
             cargo_truce::run(&args)
@@ -52,7 +52,7 @@ fn main() -> ExitCode {
 fn print_help() {
     eprintln!(
         "\
-cargo-truce — build tool for truce audio plugins
+cargo-truce - build tool for truce audio plugins
 
 Usage: cargo truce <command> [options]
 
@@ -82,10 +82,10 @@ Build / Install / Package:
   install [--clap] [--vst3] [--vst2] [--lv2] [--au2] [--au3] [--aax] [--user|--system] [--shell] [--debug] [--no-build] [-p <crate>]
       Build and install plugins into the host's plug-in directories.
       Defaults to release because installing usually means audio-
-      testing in a DAW — release avoids surprise CPU spikes from
+      testing in a DAW - release avoids surprise CPU spikes from
       debug-build DSP under load. This differs from `cargo build`'s
       debug default; pass `--debug` to opt back into the cargo dev
-      profile (faster compile, slower DSP — fine for light plugins
+      profile (faster compile, slower DSP - fine for light plugins
       and wiring checks).
 
       Defaults to whichever formats are in the plugin's Cargo.toml
@@ -100,7 +100,7 @@ Build / Install / Package:
       note.
       --clap         CLAP only (no sudo)
       --vst3         VST3 only
-      --vst2         VST2 only (legacy format — see truce/Cargo.toml note)
+      --vst2         VST2 only (legacy format - see truce/Cargo.toml note)
       --lv2          LV2 only
       --au2          AU v2 only (.component, macOS only)
       --au3          AU v3 only (.appex, requires Xcode, macOS only)
@@ -145,7 +145,7 @@ Build / Install / Package:
                      by default, debug if `--debug` is also passed.
       --debug        Cargo dev profile (faster compile, slower DSP).
                      Bundles still stage and sign correctly, but the
-                     binary inside is debug-quality — not for shipping.
+                     binary inside is debug-quality - not for shipping.
 
   package [-p <crate>] [--formats clap,vst3,...] [--user|--system|--ask] [--no-notarize]
       Build, sign, and package plugins into macOS .pkg / Windows .exe
@@ -175,7 +175,7 @@ Build / Install / Package:
   uninstall [--clap] [--vst3] [--vst2] [--au2] [--au3] [--aax] [--user|--system] [-p <crate>] [-n <name>] [--stale] [--dry-run] [--yes]
       Uninstall plugin bundles for this project.
       Default: all formats, all plugins, both user + system scopes.
-      Asks for confirmation. AAX and AU v3 are always system-scope —
+      Asks for confirmation. AAX and AU v3 are always system-scope -
       `--user` skips them with the same one-line note as install.
       -p <crate>   Filter by cargo crate name (e.g. -p truce-example-gain)
       -n <name>    Filter by display name (e.g. -n 'Truce Gain')
@@ -223,7 +223,7 @@ Maintenance:
 
   log-stream-au
       macOS-only. Tail AU v3 appex logs live (`os_log` output from the
-      Swift wrapper, subsystem `com.truce.au3`). Forward-only — for
+      Swift wrapper, subsystem `com.truce.au3`). Forward-only - for
       historical entries use `log show --last <duration>` directly.
       Press Ctrl-C to stop.
 
@@ -244,7 +244,7 @@ Run 'cargo truce new <name>' to scaffold a new project."
 use cargo_truce::{BoxErr, Res};
 
 // ---------------------------------------------------------------------------
-// new — single standalone plugin
+// new - single standalone plugin
 // ---------------------------------------------------------------------------
 
 fn print_new_help() {
@@ -453,7 +453,7 @@ fn scaffold_workspace(scaffolder: &Scaffolder, parsed: NewArgs, features: Featur
     }
 
     // `--type:foo=instrument` must reference an actual plugin name
-    // — typos here would silently apply the default kind to every
+    // - typos here would silently apply the default kind to every
     // plugin, which is exactly the trap the override is supposed
     // to avoid.
     for (override_name, _) in &parsed.type_overrides {

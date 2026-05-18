@@ -11,7 +11,7 @@ use crate::vlog;
 
 /// Read `path` and apply it to `plugin` via the canonical state
 /// envelope. Logs a single line on success, a single line on each
-/// failure mode (read error vs envelope mismatch). Never panics —
+/// failure mode (read error vs envelope mismatch). Never panics -
 /// state load is a convenience, not a hard prereq for processing.
 pub fn load_into<P: PluginExport>(plugin: &mut P, path: &Path) {
     let bytes = match std::fs::read(path) {

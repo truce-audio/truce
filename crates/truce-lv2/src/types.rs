@@ -1,12 +1,12 @@
 //! Hand-written bindings for the LV2 core C ABI (`lv2.h`).
 //!
-//! The LV2 spec guarantees these types are stable — they have not changed
+//! The LV2 spec guarantees these types are stable - they have not changed
 //! since LV2 1.0 (2011) and new extensions go through separate URIs rather
 //! than modifying the core struct.
 
 use std::ffi::{c_char, c_void};
 
-/// Plugin instance handle — opaque `void*` on the C side.
+/// Plugin instance handle - opaque `void*` on the C side.
 pub type LV2Handle = *mut c_void;
 
 /// Function pointer signatures for the descriptor's methods.
@@ -39,7 +39,7 @@ pub struct LV2Descriptor {
 unsafe impl Send for LV2Descriptor {}
 unsafe impl Sync for LV2Descriptor {}
 
-/// `LV2_Feature` — passed by the host to `instantiate` via a null-terminated
+/// `LV2_Feature` - passed by the host to `instantiate` via a null-terminated
 /// array. Each feature carries a URI identifying what it provides and an
 /// opaque data pointer defined by that extension.
 #[repr(C)]

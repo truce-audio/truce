@@ -1,9 +1,9 @@
-//! LV2 UI — supports `X11UI` on Linux, `CocoaUI` on macOS, and
+//! LV2 UI - supports `X11UI` on Linux, `CocoaUI` on macOS, and
 //! `WindowsUI` on Windows.
 //!
 //! All three UI types share an identical LV2 C ABI: `instantiate`,
 //! `port_event`, `cleanup`, plus the `ui:parent` feature. Only the
-//! semantics of the parent handle differ — an `xcb_window_t` on X11,
+//! semantics of the parent handle differ - an `xcb_window_t` on X11,
 //! an `NSView*` on Cocoa, an `HWND` on Win32. `parse_parent_feature`
 //! returns the raw pointer and the `instantiate_ui` caller reinterprets
 //! it per platform before handing it to the editor via `RawWindowHandle`.
@@ -11,8 +11,8 @@
 //! LV2 UIs do not share memory with the plugin. All communication goes
 //! through two function pointers the host provides:
 //!
-//! - `write_function` (UI → host): "Set port N to V" — host forwards to plugin.
-//! - `port_event` (host → UI): "Port N changed to V" — so the UI can update.
+//! - `write_function` (UI → host): "Set port N to V" - host forwards to plugin.
+//! - `port_event` (host → UI): "Port N changed to V" - so the UI can update.
 //!
 //! We implement this by keeping a shadow `Params` instance that mirrors the
 //! plugin's state from the UI side. The existing `Editor` trait expects a
@@ -27,9 +27,9 @@
 //! simply collapse the gestures to no-ops. `get_state`/`set_state` are
 //! still no-ops. Widget out-parameter currently returns the host-supplied
 //! PARENT (pragmatic for Ardour/Jalv which accept it; stricter X11UI /
-//! `CocoaUI` hosts may want the actual child window / view — follow-up).
+//! `CocoaUI` hosts may want the actual child window / view - follow-up).
 
-// LV2 atoms / sequences are 8-byte aligned by spec — see the same
+// LV2 atoms / sequences are 8-byte aligned by spec - see the same
 // allow on `crate::atom`.
 #![allow(clippy::cast_ptr_alignment)]
 
@@ -130,7 +130,7 @@ pub struct Lv2UiInstance<P: PluginExport> {
     /// Shadow plugin kept alive so the editor's internal refs stay valid.
     /// Not dropped until `cleanup_ui()`.
     _plugin: Box<P>,
-    /// Arc into `_plugin`'s params — used by `PluginContext` closures.
+    /// Arc into `_plugin`'s params - used by `PluginContext` closures.
     params: Arc<P::Params>,
     /// Param metadata (id → port index, range for denormalization).
     param_slots: Vec<ParamSlot>,
@@ -138,7 +138,7 @@ pub struct Lv2UiInstance<P: PluginExport> {
     /// the `get_meter` closure so editor widgets can read the current
     /// reading without a trip to the plugin.
     meter_slots: Arc<Vec<MeterSlot>>,
-    /// The plugin's editor — drives rendering. The host's
+    /// The plugin's editor - drives rendering. The host's
     /// `write_function` + controller are captured by `PluginContext`'s
     /// closures and don't need to live on the struct itself.
     editor: Option<Box<dyn Editor>>,
@@ -161,7 +161,7 @@ pub struct Lv2UiInstance<P: PluginExport> {
     /// updates 60-180×/sec, so this is reused per event rather than
     /// freshly allocated. `RefCell` because `port_event` only has
     /// `&self` (the LV2 host hands us a `LV2UI_Handle`, which we cast
-    /// to `&Lv2UiInstance<P>`) — fine on the UI thread, which hosts
+    /// to `&Lv2UiInstance<P>`) - fine on the UI thread, which hosts
     /// are required to use single-threaded.
     notify_scratch: core::cell::RefCell<Vec<u8>>,
     _phantom: PhantomData<P>,
@@ -194,7 +194,7 @@ pub unsafe fn instantiate_ui<P: PluginExport>(
     features: *const *const LV2Feature,
 ) -> Lv2UiHandle {
     unsafe {
-        // Locate PARENT feature — on X11 the host passes the window id the UI
+        // Locate PARENT feature - on X11 the host passes the window id the UI
         // should embed in; on macOS it passes an `NSView*` from Cocoa. Both
         // arrive as `feature.data: *mut c_void` and we reinterpret per
         // platform.
@@ -266,14 +266,14 @@ pub unsafe fn instantiate_ui<P: PluginExport>(
             parsed.touch,
         );
 
-        // Record the editor's preferred size BEFORE `open()` — hosts that
+        // Record the editor's preferred size BEFORE `open()` - hosts that
         // pre-size their container based on the widget's initial bounds
         // (Reaper's LV2 runner, for one) need us to hand back a correctly-
         // sized parent before the first repaint.
         //
         // On Windows and X11 the host works in physical pixels, so we scale
         // logical-point `editor.size()` by the editor's DPI. On macOS the
-        // native view coordinate system is logical points — no scaling.
+        // native view coordinate system is logical points - no scaling.
         let (pref_w, pref_h) = editor.size();
         // LV2 hosts on X11 conventionally expect pixel sizes, but we have
         // no host-provided scale channel today; report logical points and
@@ -289,7 +289,7 @@ pub unsafe fn instantiate_ui<P: PluginExport>(
         editor.open(handle, ctx);
 
         // Ask the host to match our preferred size via the `ui:resize`
-        // extension (optional — not every host provides it, but Reaper
+        // extension (optional - not every host provides it, but Reaper
         // honors it, and without it the UI floats inside a default-sized
         // window with large empty margins).
         if let Some(resize) = parsed.resize
@@ -322,7 +322,7 @@ pub unsafe fn instantiate_ui<P: PluginExport>(
         // honor `ui:resize` reliably at instantiate time; without this, the
         // parent stays at Reaper's default size and the child renders
         // inside a too-large frame that overflows the FX-slot chrome. We
-        // deliberately do NOT resize baseview's child — it already rendered
+        // deliberately do NOT resize baseview's child - it already rendered
         // itself at the correct physical extent, and a second `SetWindowPos`
         // makes wgpu stretch the previously-rendered surface.
         #[cfg(target_os = "windows")]
@@ -417,7 +417,7 @@ pub unsafe fn port_event<P: PluginExport>(
             return;
         }
 
-        // Atom event on the notify-out port — look for time:Position.
+        // Atom event on the notify-out port - look for time:Position.
         if port_index == ui.notify_port_index
             && ui.atom_event_transfer_urid != 0
             && format == ui.atom_event_transfer_urid
@@ -468,7 +468,7 @@ unsafe fn decode_notify_atom<P: PluginExport>(
 
         let needed = core::mem::size_of::<OneEvent>() + body_size + 8;
         // `try_borrow_mut` instead of `borrow_mut` so a re-entrant
-        // `port_event` (which the LV2 spec forbids — UI thread only —
+        // `port_event` (which the LV2 spec forbids - UI thread only -
         // but a buggy host could still trigger via a queued
         // synthetic event) drops the call rather than panicking.
         // A panic here would unwind through the FFI boundary into
@@ -513,7 +513,7 @@ pub unsafe fn ui_extension_data(_uri: *const c_char) -> *const c_void {
 // Internals
 // ---------------------------------------------------------------------------
 
-/// Layout of the host's `urid:map` feature record — semantically
+/// Layout of the host's `urid:map` feature record - semantically
 /// identical to the private struct in `urid.rs` but expressed inline
 /// here so `parse_features` can read it without exposing the urid
 /// module's internal type.
@@ -528,16 +528,16 @@ struct UridMapFeature {
 /// Replaces three separate walks (`ui:parent`, `ui:resize`,
 /// `urid:map`) with a single sweep. Returns the resolved values in
 /// one struct so callers stop juggling three independent helpers
-/// — and so an early `ui:parent` miss can short-circuit before any
+/// - and so an early `ui:parent` miss can short-circuit before any
 /// further work.
 struct ParsedFeatures {
-    /// `ui:parent` — `NSView*` (Cocoa) or `xcb_window_t` (X11). `None`
+    /// `ui:parent` - `NSView*` (Cocoa) or `xcb_window_t` (X11). `None`
     /// when the host doesn't supply one (no UI to embed; bail out).
     parent: Option<*mut c_void>,
-    /// `ui:resize` — optional. `None` when the host doesn't expose it
+    /// `ui:resize` - optional. `None` when the host doesn't expose it
     /// (Reaper Linux does, Carla doesn't, etc.).
     resize: Option<&'static Lv2UiResize>,
-    /// `ui:touch` — optional. `None` when the host doesn't expose it
+    /// `ui:touch` - optional. `None` when the host doesn't expose it
     /// (Reaper Linux + Ardour do, jalv doesn't). When present, the
     /// editor's `begin_edit` / `end_edit` closures forward to
     /// `touch(handle, port_index, grabbed)` so hosts can group
@@ -607,8 +607,8 @@ unsafe fn parse_features(features: *const *const LV2Feature) -> ParsedFeatures {
 ///
 /// Reaper on Windows doesn't resize its LV2 UI container from
 /// `ui:resize` at instantiate time, so Reaper's parent HWND stays at
-/// its default extent and the child — which baseview already sized to
-/// the editor's preferred dimensions — renders inside a too-large
+/// its default extent and the child - which baseview already sized to
+/// the editor's preferred dimensions - renders inside a too-large
 /// frame that overflows the FX-slot chrome.
 ///
 /// We intentionally *only* resize the parent, never the child: baseview
@@ -725,7 +725,7 @@ unsafe fn resize_ns_view(view: *mut c_void, width: u32, height: u32) {
 /// baseview creates an `NSView` with a tracking area that has the
 /// `NSTrackingCursorUpdate` option set, but it does not implement
 /// `-[NSView cursorUpdate:]`. Without that handler the system falls
-/// back to whatever cursor the containing window last set — in Reaper
+/// back to whatever cursor the containing window last set - in Reaper
 /// that's often a crosshair from the track-list drag. We add a tiny
 /// `cursorUpdate:` method to the child view's class at runtime that
 /// pushes the arrow cursor.
@@ -759,7 +759,7 @@ unsafe fn install_child_cursor_update(parent: *mut c_void) {
         return;
     }
     let count: usize = msg_send![subviews, count];
-    // The editor's child view is the most recent subview — iterate all
+    // The editor's child view is the most recent subview - iterate all
     // baseview-owned subviews to be safe against hosts that wrap the
     // parent with their own helper views.
     for i in 0..count {
@@ -782,7 +782,7 @@ unsafe fn install_child_cursor_update(parent: *mut c_void) {
 }
 
 // `params` and `meter_slots` get cloned into per-callback closures
-// below — owned-arg avoids forcing the caller to lend them across
+// below - owned-arg avoids forcing the caller to lend them across
 // the closure-building scope.
 #[allow(clippy::needless_pass_by_value)]
 fn build_editor_context<P: PluginExport>(
@@ -794,7 +794,7 @@ fn build_editor_context<P: PluginExport>(
     transport_slot: Arc<TransportSlot>,
     touch: Option<&'static Lv2UiTouch>,
 ) -> PluginContext {
-    // Clone slot metadata into each closure — small vec, cheap.
+    // Clone slot metadata into each closure - small vec, cheap.
     let slots_for_set: Vec<(u32, u32, truce_params::ParamRange)> = slots
         .iter()
         .map(|s| (s.id, s.port_index, s.range))
@@ -824,7 +824,7 @@ fn build_editor_context<P: PluginExport>(
     let params_for_ctx = params.clone();
     let meter_slots_for_get = meter_slots.clone();
 
-    // The write_function is a plain extern "C" fn — bitcast-safe to move
+    // The write_function is a plain extern "C" fn - bitcast-safe to move
     // across closure boundaries. We keep controller as usize to sidestep
     // raw-pointer Send issues.
     let write_set = write_function;
@@ -834,7 +834,7 @@ fn build_editor_context<P: PluginExport>(
     // through the captured `Option<&...>`. `touch_fn = None` collapses
     // both gesture closures into no-ops without runtime branching.
     //
-    // `Lv2UiTouch::touch` is a host-supplied extern "C" fn — Send-safe by
+    // `Lv2UiTouch::touch` is a host-supplied extern "C" fn - Send-safe by
     // ABI. `handle` is a host pointer we never deref ourselves; it's
     // forwarded back as the first arg to the host callback. Box-as-usize
     // would lose the function-pointer ABI, so we cast through usize for
@@ -895,7 +895,7 @@ fn build_editor_context<P: PluginExport>(
             set_state: Box::new(|_bytes: Vec<u8>| {}),
             // The DSP broadcasts host transport as `time:Position` atoms on
             // the notify-out port. `port_event` decodes them and writes the
-            // slot — this closure just reads the latest value.
+            // slot - this closure just reads the latest value.
             transport: Box::new(move || transport_slot.read()),
         },
         params_for_ctx,

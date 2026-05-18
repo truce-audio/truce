@@ -5,7 +5,7 @@
 //! manifest parse error, etc.) instead of string-grepping the
 //! `Display` output. The catch-all `Other` variant carries any
 //! still-stringly-typed errors from `Err("…".into())` sites the
-//! codebase hasn't migrated yet — `From<String>` and `From<&str>`
+//! codebase hasn't migrated yet - `From<String>` and `From<&str>`
 //! conversions keep `?` propagation transparent during the migration.
 
 use std::io;

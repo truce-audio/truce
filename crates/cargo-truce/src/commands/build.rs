@@ -1,4 +1,4 @@
-//! `cargo truce build` — produce per-format bundles in `target/bundles/`
+//! `cargo truce build` - produce per-format bundles in `target/bundles/`
 //! without installing.
 //!
 //! Every format flag (`--clap` / `--vst3` / `--vst2` / `--lv2` / `--au2`
@@ -91,7 +91,7 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
 
     if shell_mode {
         // Bail early if the user's Cargo.toml is missing
-        // `[profile.shell]` — clearer than cargo's downstream
+        // `[profile.shell]` - clearer than cargo's downstream
         // "profile `shell` is not declared" message.
         crate::verify_shell_profile_declared()?;
         crate::set_build_profile("shell");
@@ -183,7 +183,7 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
         }
 
         // Shell mode: also build the per-plugin logic dylibs the shells
-        // dlopen at runtime. Host-only — shell relies on dlopen of a
+        // dlopen at runtime. Host-only - shell relies on dlopen of a
         // freshly built binary, same constraint as LV2.
         if shell_mode && plan.target.is_none() {
             build_logic_dylibs(&plugins, logic_profile, dt)?;
@@ -363,7 +363,7 @@ fn write_bundle_manifest(
     next.bundles = produced.to_vec();
 
     // Missing manifest is the common case (first build); start empty.
-    // Corrupt/incompatible is treated the same — the manifest is a
+    // Corrupt/incompatible is treated the same - the manifest is a
     // derived artifact, not user data, so replacing beats failing.
     let mut manifest = match BundleManifest::load_if_present(bundles_dir) {
         Ok(Some(existing)) => existing,

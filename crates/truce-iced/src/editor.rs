@@ -1,4 +1,4 @@
-//! `IcedEditor` — implements `truce_core::Editor` using iced for rendering.
+//! `IcedEditor` - implements `truce_core::Editor` using iced for rendering.
 //!
 //! Uses `iced_runtime::program::State` for manual iced runtime driving
 //! and `iced_wgpu` for GPU-accelerated rendering, embedded as a child
@@ -22,7 +22,7 @@ use crate::param_cache::ParamCache;
 use crate::param_message::{Message, ParamMessage};
 
 // ---------------------------------------------------------------------------
-// IcedPlugin trait — what plugin authors implement
+// IcedPlugin trait - what plugin authors implement
 // ---------------------------------------------------------------------------
 
 /// Trait for plugin-specific iced UI logic.
@@ -66,7 +66,7 @@ pub trait IcedPlugin<P: Params>: Sized + 'static {
 }
 
 // ---------------------------------------------------------------------------
-// AutoPlugin — built-in plugin for GridLayout auto mode
+// AutoPlugin - built-in plugin for GridLayout auto mode
 // ---------------------------------------------------------------------------
 
 /// Built-in `IcedPlugin` that generates a view from a `GridLayout`.
@@ -87,7 +87,7 @@ impl<P: Params> IcedPlugin<P> for AutoPlugin {
 }
 
 // ---------------------------------------------------------------------------
-// IcedProgram — adapts IcedPlugin to iced_runtime::Program
+// IcedProgram - adapts IcedPlugin to iced_runtime::Program
 // ---------------------------------------------------------------------------
 
 pub(crate) struct IcedProgram<P: Params + 'static, M: IcedPlugin<P>> {
@@ -118,7 +118,7 @@ impl<P: Params + 'static, M: IcedPlugin<P>> iced_runtime::Program for IcedProgra
     type Message = Message<M::Message>;
 
     fn update(&mut self, message: Self::Message) -> Task<Self::Message> {
-        // Handle param messages — forward to host
+        // Handle param messages - forward to host
         if let Message::Param(ref param_msg) = message {
             self.apply_param_message(param_msg);
         }
@@ -140,14 +140,14 @@ impl<P: Params + 'static, M: IcedPlugin<P>> iced_runtime::Program for IcedProgra
 }
 
 // ---------------------------------------------------------------------------
-// IcedEditor — main entry point, implements truce_core::Editor
+// IcedEditor - main entry point, implements truce_core::Editor
 // ---------------------------------------------------------------------------
 
 /// Iced-based plugin editor.
 ///
 /// Type parameters:
-/// - `P` — the plugin's `Params` type
-/// - `M` — the plugin's `IcedPlugin` implementation
+/// - `P` - the plugin's `Params` type
+/// - `M` - the plugin's `IcedPlugin` implementation
 pub struct IcedEditor<P, M>
 where
     P: Params + 'static,
@@ -177,7 +177,7 @@ where
     /// `screenshot()` builds a separate offscreen iced program. The
     /// closure also carries the construction invariant for `AutoPlugin`,
     /// whose `IcedPlugin::new` is `panic!("must be created via
-    /// from_layout")` — going through `M::new` instead would panic on
+    /// from_layout")` - going through `M::new` instead would panic on
     /// the screenshot path.
     make_plugin: Box<dyn Fn(Arc<P>) -> M + Send + Sync>,
     meter_ids: Vec<u32>,
@@ -187,7 +187,7 @@ where
 // SAFETY: `baseview::WindowHandle` holds a raw native window pointer
 // (HWND / NSView / X11 Window) and is not auto-`Send`. Hosts call
 // `Editor::open` / `idle` / `close` from a single dedicated GUI thread
-// — never concurrently and never from the audio thread — so the
+// - never concurrently and never from the audio thread - so the
 // handle is only ever touched on the thread that created it. The
 // `Editor` trait requires `Send` so the editor can live behind a
 // trait object; this impl asserts that the type doesn't escape its
@@ -203,8 +203,8 @@ impl<P: Params + 'static, M: IcedPlugin<P> + 'static> Drop for IcedEditor<P, M> 
     /// `baseview::WindowHandle` has no `Drop`, so without an explicit
     /// `close` the render thread would keep running against a freed
     /// `*mut IcedEditor` and later panic inside wgpu as surfaces tear
-    /// down. `close()` is idempotent — `baseview_window.take()`
-    /// no-ops on the second call — so calling it here on top of a
+    /// down. `close()` is idempotent - `baseview_window.take()`
+    /// no-ops on the second call - so calling it here on top of a
     /// well-behaved host's earlier `close()` is safe.
     fn drop(&mut self) {
         Editor::close(self);
@@ -277,11 +277,11 @@ impl<P: Params + 'static, M: IcedPlugin<P> + 'static> IcedEditor<P, M> {
 }
 
 // ---------------------------------------------------------------------------
-// IcedRuntime — active iced state (exists only while editor is open)
+// IcedRuntime - active iced state (exists only while editor is open)
 // ---------------------------------------------------------------------------
 
 struct IcedRuntime<P: Params, M: IcedPlugin<P>> {
-    /// Rendering pipeline — initialized lazily when the baseview window
+    /// Rendering pipeline - initialized lazily when the baseview window
     /// finishes building and a wgpu surface is available.
     render: Option<RenderState<P, M>>,
     /// Current cursor position in logical coordinates.
@@ -458,9 +458,9 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
         // moved without a corresponding window event.
         //
         // Bit-level comparison rather than `!=` so the implicit
-        // invariant — "values come through `EditorScale::set` /
+        // invariant - "values come through `EditorScale::set` /
         // `.get()`, both of which round-trip via `to_bits` /
-        // `from_bits`, so equal inputs produce equal stored bits" —
+        // `from_bits`, so equal inputs produce equal stored bits" -
         // is explicit at the comparison site. `2.0 != 2.0` would
         // never be true via this path today, but a clippy lint and
         // a future refactor that narrowed the type to `f32` somewhere
@@ -654,7 +654,7 @@ impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBase
                         // baseview reports logical points; iced widgets
                         // hit-test in logical units against
                         // `viewport.logical_size()`, so forward as-is.
-                        // Window dimensions stay well below 2^23 — the
+                        // Window dimensions stay well below 2^23 - the
                         // f64 → f32 narrowing is invisible.
                         #[allow(clippy::cast_possible_truncation)]
                         let pos = (position.x as f32, position.y as f32);
@@ -711,7 +711,7 @@ impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBase
                 // Mirror the OS-reported scale into the shared cell
                 // (so a follow-up `set_scale_factor` from the host
                 // reads a fresh baseline) and bump `last_applied_scale`
-                // so `tick()`'s diff-check stays a no-op — we apply
+                // so `tick()`'s diff-check stays a no-op - we apply
                 // the reconfigure inline below.
                 runtime.scale.set(info.scale());
                 runtime.last_applied_scale = info.scale();
@@ -819,7 +819,7 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
     }
 
     fn close(&mut self) {
-        // baseview's Linux WindowHandle has no Drop impl — we must call
+        // baseview's Linux WindowHandle has no Drop impl - we must call
         // close() explicitly to request shutdown and join the render
         // thread. Without this, the thread keeps running against a
         // dangling self pointer after the host drops this editor, which
@@ -844,7 +844,7 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
         _params: Arc<dyn truce_params::Params>,
     ) -> Option<(Vec<u8>, u32, u32)> {
         // Build the plugin via the editor's own constructor closure.
-        // Calling `M::new` directly would panic for `AutoPlugin` —
+        // Calling `M::new` directly would panic for `AutoPlugin` -
         // `from_layout` captures the `GridLayout` in the closure and
         // the `IcedPlugin::new` impl on `AutoPlugin` is `panic!("must
         // be created via from_layout")`.

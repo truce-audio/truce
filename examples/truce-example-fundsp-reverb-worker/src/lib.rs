@@ -38,7 +38,7 @@ const FILTER_Q: f32 = 0.707;
 const ROOM_SIZE: f64 = 10.0;
 const DAMPING: f64 = 0.5;
 
-/// Hysteresis on Time changes — fundsp's `reverb_stereo` bakes RT60
+/// Hysteresis on Time changes - fundsp's `reverb_stereo` bakes RT60
 /// into the FDN at construction, so each crossing triggers a full
 /// rebuild (= delay lines reset, tail dropped). Threshold keeps tiny
 /// drifts from rebuilding.
@@ -264,7 +264,7 @@ fn spawn_rebuild_worker(
                         time_s: req.time_s,
                     };
                     // `force_push` drops the previous ready graph
-                    // here on the worker — never on the audio thread.
+                    // here on the worker - never on the audio thread.
                     let _ = channel.ready.force_push(ready);
                 }
 
@@ -326,7 +326,7 @@ impl PluginLogic for FundspReverbWorker {
 
         // Read the raw target, not `read()`: a smoothed value would
         // crawl across the threshold for ~200 ms and request a
-        // rebuild every block — audible as an unstable tail until it
+        // rebuild every block - audible as an unstable tail until it
         // settles.
         let time_s = self.params.time.value();
         if (time_s - self.last_built_time_s).abs() > TIME_REBUILD_THRESHOLD_S {
@@ -487,7 +487,7 @@ mod tests {
     }
 
     /// Regression: sample-rate propagation. SVF coefficients are
-    /// SR-dependent — if `set_sample_rate` misses a sub-node the
+    /// SR-dependent - if `set_sample_rate` misses a sub-node the
     /// filter de-tunes or blows up at non-default rates.
     #[test]
     fn stability_at_96k() {

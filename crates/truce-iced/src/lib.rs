@@ -6,7 +6,7 @@
 //!
 //! # Usage Modes
 //!
-//! ## Auto mode — zero custom code
+//! ## Auto mode - zero custom code
 //!
 //! ```rust,ignore
 //! fn editor(&mut self) -> Option<Box<dyn Editor>> {
@@ -15,7 +15,7 @@
 //! }
 //! ```
 //!
-//! ## Custom mode — full iced control
+//! ## Custom mode - full iced control
 //!
 //! ```rust,ignore
 //! fn editor(&mut self) -> Option<Box<dyn Editor>> {

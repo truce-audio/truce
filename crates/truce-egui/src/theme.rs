@@ -2,7 +2,7 @@
 
 use egui::Color32;
 
-// Core palette — matches truce_gui::theme::Theme::dark()
+// Core palette - matches truce_gui::theme::Theme::dark()
 pub const BACKGROUND: Color32 = Color32::from_rgb(31, 31, 36);
 pub const SURFACE: Color32 = Color32::from_rgb(46, 46, 56);
 pub const PRIMARY: Color32 = Color32::from_rgb(77, 153, 242);

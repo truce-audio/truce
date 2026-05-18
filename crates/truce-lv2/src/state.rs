@@ -18,11 +18,11 @@ pub(crate) const LV2_STATE__INTERFACE_URI: &str = "http://lv2plug.in/ns/ext/stat
 
 const TRUCE_STATE_KEY_URI: &str = "urn:truce:state-blob";
 
-/// `LV2_State_Status` — returned by store/retrieve + our save/restore.
+/// `LV2_State_Status` - returned by store/retrieve + our save/restore.
 const LV2_STATE_SUCCESS: u32 = 0;
 const _LV2_STATE_ERR_UNKNOWN: u32 = 1;
 
-/// `LV2_State_Flags` — bit 0 is POD (we always are), bit 1 is PORTABLE.
+/// `LV2_State_Flags` - bit 0 is POD (we always are), bit 1 is PORTABLE.
 const LV2_STATE_IS_POD: u32 = 1 << 0;
 const LV2_STATE_IS_PORTABLE: u32 = 1 << 1;
 
@@ -66,7 +66,7 @@ pub struct Lv2StateInterface {
 
 /// Build (or retrieve) the state interface vtable for this plugin type.
 pub(crate) fn state_interface<P: PluginExport>() -> &'static Lv2StateInterface {
-    // Monomorphized static per-P — safe because no captured state.
+    // Monomorphized static per-P - safe because no captured state.
     struct Holder<P>(std::marker::PhantomData<P>);
     impl<P: PluginExport> Holder<P> {
         const IFACE: Lv2StateInterface = Lv2StateInterface {

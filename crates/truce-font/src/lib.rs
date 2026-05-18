@@ -1,6 +1,6 @@
 //! Bundled fonts for the truce audio plugin framework.
 //!
-//! Currently exposes a single font — `JetBrains` Mono Regular — as a
+//! Currently exposes a single font - `JetBrains` Mono Regular - as a
 //! `&'static [u8]` of the TTF bytes, suitable for hand-off to
 //! `fontdue`, `egui::FontData::from_static`, `iced::Font` (via the
 //! `with_font` helpers on each editor backend), or any other font

@@ -12,7 +12,7 @@ use crate::vlog;
 
 /// Run audio-only and block until SIGINT (or, when capturing a
 /// finite `--input-file` to `--output-file`, until the input file
-/// runs dry — at which point the capture sink is finalized and
+/// runs dry - at which point the capture sink is finalized and
 /// the runner returns cleanly).
 pub fn run<P: PluginExport>(opts: &Options) {
     #[cfg_attr(not(feature = "playback"), allow(unused_mut))]
@@ -32,9 +32,9 @@ pub fn run<P: PluginExport>(opts: &Options) {
     let is_instrument = P::info().category != PluginCategory::Effect;
     vlog!("Plugin: {}", P::info().name);
     if is_instrument && opts.midi_input.is_none() {
-        // Soft warning — actionable, so always print.
+        // Soft warning - actionable, so always print.
         eprintln!(
-            "(instrument; no --midi-input specified — plugin will \
+            "(instrument; no --midi-input specified - plugin will \
              emit silence. Use --list-midi to see available devices.)"
         );
     }
@@ -58,7 +58,7 @@ pub fn run<P: PluginExport>(opts: &Options) {
     }
 
     if auto_exit_on_eof {
-        // Poll the playback cursor on a coarse cadence — a few
+        // Poll the playback cursor on a coarse cadence - a few
         // hundred ms of post-EOF padding is fine and keeps this
         // loop off the hot path. The audio thread keeps draining
         // the file until it saturates; we wait a little after EOF
@@ -73,7 +73,7 @@ pub fn run<P: PluginExport>(opts: &Options) {
         }
     } else {
         // Block the main thread. cpal drives audio from its own
-        // thread, so parking main is enough — SIGINT takes down
+        // thread, so parking main is enough - SIGINT takes down
         // the process.
         loop {
             std::thread::park();

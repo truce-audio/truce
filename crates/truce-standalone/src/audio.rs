@@ -8,8 +8,8 @@
 //! that talk to the workers via `mpsc` channels:
 //!
 //! - **Toggle / enable** for input (drop the cpal input stream when
-//!   off — saves CPU and skips the OS mic permission prompt) and
-//!   output (mute — keep the stream open so processing keeps ticking,
+//!   off - saves CPU and skips the OS mic permission prompt) and
+//!   output (mute - keep the stream open so processing keeps ticking,
 //!   just zero-fill the speaker buffer).
 //! - **Switch device** for either side. Worker drops the old stream
 //!   and opens a new one against the requested device name; on
@@ -181,7 +181,7 @@ enum OutputCmd {
 
 impl OutputController {
     /// Mute / unmute the output. The cpal stream stays open either
-    /// way — disabling just makes the audio callback zero-fill its
+    /// way - disabling just makes the audio callback zero-fill its
     /// buffer, so the plugin keeps processing (transport ticks,
     /// MIDI is consumed) while the speakers are silent.
     pub fn set_enabled(&self, on: bool) {
@@ -197,7 +197,7 @@ impl OutputController {
 
     /// Switch the output device by name. Pass `None` to fall back
     /// to the system default. Failure to open is logged but
-    /// non-fatal — the previous stream remains running.
+    /// non-fatal - the previous stream remains running.
     pub fn set_device(&self, name: Option<String>) {
         let _ = self.cmd_tx.send(OutputCmd::SetDevice(name));
     }
@@ -320,10 +320,10 @@ pub fn start_audio<P: PluginExport>(opts: &Options) -> Result<AudioHandles<P>, B
     // out half-mutated state. Format-wrapper paths
     // (`truce-clap`, `truce-loader`, etc.) lean on `parking_lot`
     // because the audio thread is held to a no-panic contract and
-    // poisoning would only ever indicate a framework bug — different
+    // poisoning would only ever indicate a framework bug - different
     // trade.
     // Capacity 256: covers a generous MIDI burst within a single
-    // audio callback period. ArrayQueue is lock-free MPMC — the MIDI
+    // audio callback period. ArrayQueue is lock-free MPMC - the MIDI
     // input thread pushes, the audio thread drains, neither blocks.
     // On overflow the producer drops the oldest event (see midi.rs).
     let pending: Arc<ArrayQueue<MidiEvent>> = Arc::new(ArrayQueue::new(256));
@@ -356,7 +356,7 @@ pub fn start_audio<P: PluginExport>(opts: &Options) -> Result<AudioHandles<P>, B
     let (output_cmd_tx, output_cmd_rx) = mpsc::channel::<OutputCmd>();
     let (open_result_tx, open_result_rx) = mpsc::channel::<Result<(), String>>();
 
-    // Output defaults to enabled — the user launched standalone to
+    // Output defaults to enabled - the user launched standalone to
     // hear the plugin. `--output-enabled off` (or the config file)
     // can flip the launch state.
     let output_enabled = Arc::new(AtomicBool::new(opts.output_enabled.unwrap_or(true)));
@@ -369,7 +369,7 @@ pub fn start_audio<P: PluginExport>(opts: &Options) -> Result<AudioHandles<P>, B
 
     // Decode `--input-file` (if set) once at startup against the
     // resolved device sample-rate / channel-count. Hard error on
-    // unreadable / unparseable file — we fail noisily here rather
+    // unreadable / unparseable file - we fail noisily here rather
     // than letting the audio worker silently emit zeros.
     #[cfg(feature = "playback")]
     let playback = match &opts.input_file {
@@ -398,7 +398,7 @@ pub fn start_audio<P: PluginExport>(opts: &Options) -> Result<AudioHandles<P>, B
         Some(path) => {
             let sink = crate::playback::CaptureSink::create(path, sample_rate, channels)?;
             vlog!(
-                "Capture: {} ({} Hz, {} ch, f32) — pre-mute output",
+                "Capture: {} ({} Hz, {} ch, f32) - pre-mute output",
                 path.display(),
                 sample_rate,
                 channels,
@@ -451,7 +451,7 @@ pub fn start_audio<P: PluginExport>(opts: &Options) -> Result<AudioHandles<P>, B
 
     if !output_enabled.load(Ordering::Relaxed) {
         vlog!(
-            "Output: muted at launch — toggle from the Plugin menu or \
+            "Output: muted at launch - toggle from the Plugin menu or \
              pass --output-enabled on"
         );
     }
@@ -504,7 +504,7 @@ fn setup_input_pipeline(
         };
         let name = device.and_then(|d| d.name().ok());
         if name.is_none() {
-            eprintln!("Note: no input device found — input-enable will be a no-op.");
+            eprintln!("Note: no input device found - input-enable will be a no-op.");
         }
         name
     } else {
@@ -559,11 +559,11 @@ fn setup_input_pipeline(
                 {
                     #[cfg(target_os = "macos")]
                     {
-                        "disabled — press Cmd+I in the window or pass --input-enabled on"
+                        "disabled - press Cmd+I in the window or pass --input-enabled on"
                     }
                     #[cfg(not(target_os = "macos"))]
                     {
-                        "disabled — press Ctrl+I in the window or pass --input-enabled on"
+                        "disabled - press Ctrl+I in the window or pass --input-enabled on"
                     }
                 }
             }
@@ -596,7 +596,7 @@ struct OutputResources<P: PluginExport> {
     current_name: Arc<Mutex<Option<String>>>,
     /// Optional `.wav` playback source (gated on the `playback`
     /// feature). When present, summed into the input bus alongside
-    /// the mic ring — see the matrix in `cli.rs::HELP`.
+    /// the mic ring - see the matrix in `cli.rs::HELP`.
     #[cfg(feature = "playback")]
     playback: Option<Arc<crate::playback::PlaybackSource>>,
     /// Optional `--output-file` capture pusher. Cloned into each
@@ -607,7 +607,7 @@ struct OutputResources<P: PluginExport> {
     capture: Option<crate::playback::CapturePusher>,
 }
 
-// Spawned-thread body — owns its state across the worker's lifetime.
+// Spawned-thread body - owns its state across the worker's lifetime.
 // Switching to refs would force the caller to outlive the thread.
 #[allow(clippy::too_many_arguments, clippy::needless_pass_by_value)]
 fn output_worker<P: PluginExport>(
@@ -639,7 +639,7 @@ fn output_worker<P: PluginExport>(
         match cmd {
             OutputCmd::SetDevice(name) => {
                 // Drop the old stream BEFORE building the new one
-                // — some backends won't open a second exclusive
+                // - some backends won't open a second exclusive
                 // stream against the same device.
                 stream = None;
                 if let Err(e) = open_output_stream::<P>(
@@ -671,7 +671,7 @@ fn open_output_stream<P: PluginExport>(
     res: &OutputResources<P>,
     stream_slot: &mut Option<cpal::Stream>,
 ) -> Result<(), String> {
-    // Resolve fresh each open — hot-plug may have changed the
+    // Resolve fresh each open - hot-plug may have changed the
     // device list since the last switch.
     let host = cpal::default_host();
     let device = match name {
@@ -696,12 +696,12 @@ fn open_output_stream<P: PluginExport>(
     let capture_a = res.capture.clone();
 
     // Per-stream audio-callback scratch. Owned by the move-closure so
-    // it lives across callbacks but never crosses threads — cpal calls
+    // it lives across callbacks but never crosses threads - cpal calls
     // the closure on a single dedicated audio thread per stream.
     // Amortizes the `vec![0.0; num_frames]` per-channel allocation and
     // the `channel_bufs.clone()` for the effect input mirror, plus the
     // two `EventList::default()`s per block (input drain + plugin output)
-    // — both `clear()`ed and reused, capacity-preserving.
+    // - both `clear()`ed and reused, capacity-preserving.
     let mut channel_bufs: Vec<Vec<f32>> = Vec::with_capacity(channels);
     let mut input_bufs: Vec<Vec<f32>> = Vec::with_capacity(channels);
     let mut event_list = EventList::with_capacity(EVENT_LIST_PREALLOC);
@@ -779,7 +779,7 @@ fn open_output_stream<P: PluginExport>(
 // Input worker
 // ---------------------------------------------------------------------------
 
-// Spawned-thread body — owns its state across the worker's lifetime.
+// Spawned-thread body - owns its state across the worker's lifetime.
 // Switching to refs would force the caller to outlive the thread.
 #[allow(clippy::needless_pass_by_value)]
 fn input_worker(
@@ -813,7 +813,7 @@ fn input_worker(
             InputCmd::SetDevice(name) => {
                 device_name = name;
                 if want_enabled {
-                    // Drop old before opening new — some backends
+                    // Drop old before opening new - some backends
                     // won't open a second exclusive stream against
                     // the same device.
                     stream = None;
@@ -830,7 +830,7 @@ fn input_worker(
                     );
                 } else if let Ok(mut g) = current_name.lock() {
                     // Reflect the chosen device immediately even
-                    // though we haven't opened a stream — the menu
+                    // though we haven't opened a stream - the menu
                     // checkmark should match the user's pick.
                     g.clone_from(&device_name);
                 }
@@ -1045,7 +1045,7 @@ fn audio_callback<P: PluginExport>(
     // sources that *sum* into the plugin's bus, and the plugin reads
     // from `input_bufs` while writing to `channel_bufs`. Three
     // `is_effect`-gated steps live together here so the invariant
-    // ("only effects have inputs") stays in one place — instruments
+    // ("only effects have inputs") stays in one place - instruments
     // skip the whole block and just clear `input_bufs`.
     if is_effect {
         // (1) Mic ring → channel_bufs (per-block sum).
@@ -1089,7 +1089,7 @@ fn audio_callback<P: PluginExport>(
     // and feed them through the shared `RawBufferScratch::build` helper.
     // Standalone never aliases input and output buffers (`input_bufs` is
     // a copy of `channel_bufs` for effects, plain empty for instruments),
-    // so the alias-detection scratch path inside `build` is dormant — but
+    // so the alias-detection scratch path inside `build` is dormant - but
     // routing through the same helper keeps every format wrapper on a
     // single audited unsafe path.
     ptr_scratch.inputs.clear();
@@ -1143,7 +1143,7 @@ fn audio_callback<P: PluginExport>(
     // real plugin output, matching every DAW's mute-and-bounce.
     // The capture path transfers Vec ownership to the writer thread
     // (channel-bounded `mpsc::sync_channel`), so the per-block alloc
-    // here can't be amortized without a free-list pool. Left as-is —
+    // here can't be amortized without a free-list pool. Left as-is -
     // capture is a `--output-file` dev convenience, not a hot path.
     #[cfg(feature = "playback")]
     if let Some(pusher) = capture {

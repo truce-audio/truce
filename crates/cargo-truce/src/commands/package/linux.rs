@@ -7,7 +7,7 @@
 //! (`.deb`, `.rpm`, `AppImage`, AUR) are out of scope here.
 //!
 //! The actual cross-compile to `x86_64-unknown-linux-gnu` is the
-//! plugin author's responsibility — this code organises whatever's
+//! plugin author's responsibility - this code organises whatever's
 //! sitting under `target/<profile>/` after a build into a tarball
 //! shaped for end-user install. Running `cargo truce package` on a
 //! macOS host produces a Linux tarball whose bundles are the host's
@@ -176,7 +176,7 @@ fn validate_manifest_triple(manifest: &BundleManifest, bundles_dir: &Path, expec
 
 /// Map a cargo target triple to the short arch label embedded in the
 /// tarball stem (`aarch64`, `x86_64`). Falls back to the first dash-
-/// separated segment for triples we don't recognise — same shape as
+/// separated segment for triples we don't recognise - same shape as
 /// `uname -m` on Linux.
 fn arch_from_triple(triple: &str) -> &str {
     triple.split('-').next().unwrap_or("unknown")
@@ -259,7 +259,7 @@ fn build_suite_tarball(ctx: &TarballCtx<'_>, suite: &ResolvedSuite<'_>) -> Res {
 
     // Suite tarball must contain install.sh + every bundle the manifest
     // listed for any member plugin, under its format-grouped path.
-    // Mirrors the macOS productbuild check — catches a staging
+    // Mirrors the macOS productbuild check - catches a staging
     // silent-skip that would ship a partial suite archive.
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
@@ -289,7 +289,7 @@ fn expected_tarball_paths(stem: &str, summaries: &[&PluginSummary]) -> Vec<Strin
     paths
 }
 
-/// Per-plugin payload — what the install.sh sees. Captures per-plugin
+/// Per-plugin payload - what the install.sh sees. Captures per-plugin
 /// metadata the script needs for the user-vs-system + per-plugin
 /// selection logic.
 struct PluginSummary {
@@ -320,7 +320,7 @@ struct BundleEntry {
 /// Reads the build manifest written by `cargo truce build` to find
 /// what bundles to copy; if the manifest lists nothing for this
 /// plugin and the plugin has no standalone either, that's a hard
-/// error rather than a silent skip — empty plugin payloads ship
+/// error rather than a silent skip - empty plugin payloads ship
 /// broken tarballs.
 fn stage_plugin_payload(
     plugin: &PluginDef,
@@ -369,7 +369,7 @@ fn stage_plugin_payload(
         });
     }
 
-    // Standalone — when the plugin has the `standalone` feature in
+    // Standalone - when the plugin has the `standalone` feature in
     // its default features, `cargo truce run` stages a binary or
     // .app under `target/bundles/<Plugin>.standalone[.app]`. On
     // Linux it's a bare ELF; pick that up if present.
@@ -378,7 +378,7 @@ fn stage_plugin_payload(
     if bundles.is_empty() && standalone.is_none() {
         return Err(format!(
             "no bundles or standalone for {} in {}. \
-             The build manifest doesn't list this plugin's formats — \
+             The build manifest doesn't list this plugin's formats - \
              re-run `cargo truce build` (optionally with `-p {}`).",
             plugin.name,
             bundles_dir.display(),

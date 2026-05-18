@@ -12,7 +12,7 @@
 //! `std::env::var`. A direct-read fallback (`read_cargo_config_env`)
 //! covers the rare case where `cargo-truce` runs outside cargo.
 //!
-//! There is no truce.toml-side option for any of these — by design.
+//! There is no truce.toml-side option for any of these - by design.
 //! The split keeps secrets out of the tracked file and removes the
 //! "which copy wins?" question every time a developer onboards.
 
@@ -41,12 +41,12 @@ pub(crate) struct Config {
     pub(crate) vendor: VendorConfig,
     pub(crate) plugin: Vec<PluginDef>,
     /// Packaging metadata (welcome HTML, license HTML, etc.). Consumed
-    /// by `cmd_package_macos` only — Windows packaging uses
+    /// by `cmd_package_macos` only - Windows packaging uses
     /// `WindowsConfig::packaging`, Linux has no packaging path.
     #[serde(default)]
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub(crate) packaging: PackagingConfig,
-    /// Suite installers — repeatable. Each entry produces one
+    /// Suite installers - repeatable. Each entry produces one
     /// installer per platform that bundles the listed plugins.
     /// Empty = per-plugin output only (today's behaviour).
     #[serde(default, rename = "suite")]
@@ -93,7 +93,7 @@ pub(crate) struct WindowsPackagingConfig {
 
 #[derive(Deserialize, Default)]
 pub(crate) struct MacosConfig {
-    /// Notarization config — only the `cmd_package_macos` path reads
+    /// Notarization config - only the `cmd_package_macos` path reads
     /// these fields, so on Windows / Linux they're parsed-and-ignored.
     #[serde(default)]
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
@@ -111,19 +111,19 @@ pub(crate) struct MacosPackagingConfig {
     #[serde(default)]
     pub(crate) notarize: bool,
     /// Welcome-page HTML for the productbuild Distribution wizard
-    /// (relative to workspace root). macOS-only — Windows has its own
+    /// (relative to workspace root). macOS-only - Windows has its own
     /// `[windows.packaging] welcome_bmp` slot with a different file
     /// format (164x314 .bmp).
     pub(crate) welcome_html: Option<String>,
     /// License-page HTML for the productbuild Distribution wizard.
-    /// macOS-only — Windows uses `[windows.packaging] license_rtf`.
+    /// macOS-only - Windows uses `[windows.packaging] license_rtf`.
     pub(crate) license_html: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
 pub(crate) struct PackagingConfig {
     /// Default format list for `cargo truce package` when no
-    /// `--formats` flag is passed. Cross-platform — both the macOS
+    /// `--formats` flag is passed. Cross-platform - both the macOS
     /// `.pkg` and Windows Inno Setup paths read it. Linux's tarball
     /// pipeline ignores it (Linux ships every default-feature format
     /// the plugin built, no opt-in).
@@ -185,7 +185,7 @@ pub(crate) struct PluginDef {
     /// root). Copied into the standalone `.app`'s `Contents/Resources/`
     /// and referenced by `CFBundleIconFile` so Finder, the Dock,
     /// Launchpad, and Spotlight pick it up. Linux uses `.desktop` +
-    /// freedesktop icons — file formats don't survive a single
+    /// freedesktop icons - file formats don't survive a single
     /// cross-OS slot. macOS has no installer-chrome icon equivalent;
     /// `.pkg` files inherit Installer.app's icon by design.
     #[serde(default)]
@@ -217,7 +217,7 @@ pub(crate) struct PluginDef {
     /// (the link-out icon in the top-right opens this in Safari).
     /// Falls back to `[vendor].url`, then to <https://truce.audio/>.
     /// Useful when a plug-in has its own product page distinct from
-    /// the vendor's homepage — common in suites where individual
+    /// the vendor's homepage - common in suites where individual
     /// plug-ins ship with separate marketing pages.
     #[serde(default)]
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
@@ -235,7 +235,7 @@ pub(crate) struct PluginDef {
     pub(crate) ios_orientations: Option<Vec<String>>,
     /// Scale the embedded editor uniformly to fit the
     /// container's hero region while preserving aspect ratio.
-    /// Never up-scales above 1.0. Default `true` — desktop-sized
+    /// Never up-scales above 1.0. Default `true` - desktop-sized
     /// editors are the common case and overflow the iPhone screen
     /// without it. Opt out (`false`) for plug-ins whose editor is
     /// already iPhone-sized or that ship multiple per-orientation
@@ -266,7 +266,7 @@ impl PluginDef {
     pub(crate) fn resolved_au_type(&self) -> &str {
         // Keep in sync with `truce-derive::plugin_info`. NoteEffect →
         // `aumi` (Apple's MIDI Processor). `aumi` plugins declare no
-        // audio buses per Apple spec — wrappers that can't express
+        // audio buses per Apple spec - wrappers that can't express
         // that (AAX) synthesize dummy audio I/O internally.
         self.au_type
             .as_deref()
@@ -306,7 +306,7 @@ impl PluginDef {
     /// When `au3_name` is set in truce.toml it wins (both display
     /// name in host browsers and bundle path stay in sync). Otherwise
     /// we fall back to the historical `"{name} v3"` disambiguator so
-    /// projects that haven't opted in are unaffected. macOS-only —
+    /// projects that haven't opted in are unaffected. macOS-only -
     /// AU v3 only installs to `/Applications/` on macOS.
     #[cfg(target_os = "macos")]
     pub(crate) fn au3_app_name(&self) -> String {
@@ -339,14 +339,14 @@ fn default_au_tag() -> String {
 ///
 /// Defaults: `plugins` omitted → all workspace plugins;
 /// `version` omitted → workspace version. `plugins` and
-/// `exclude_plugins` are mutually exclusive — supplying both is a
+/// `exclude_plugins` are mutually exclusive - supplying both is a
 /// hard error caught at validation time.
 #[derive(Deserialize, Debug)]
 pub(crate) struct SuiteDef {
     pub(crate) name: String,
     pub(crate) bundle_id: String,
     /// Explicit plugin list. Names match `[[plugin]].crate` (or
-    /// `[[plugin]].bundle_id` — both accepted). Omit for "all".
+    /// `[[plugin]].bundle_id` - both accepted). Omit for "all".
     #[serde(default)]
     pub(crate) plugins: Option<Vec<String>>,
     /// Plugins to exclude from the otherwise-implicit "all". Mutually
@@ -376,7 +376,7 @@ impl SuiteDef {
     ) -> Result<ResolvedSuite<'a>, BoxErr> {
         if self.plugins.is_some() && self.exclude_plugins.is_some() {
             return Err(format!(
-                "[[suite]] '{}' sets both `plugins` and `exclude_plugins` — \
+                "[[suite]] '{}' sets both `plugins` and `exclude_plugins` - \
                  these are mutually exclusive",
                 self.name,
             )
@@ -483,7 +483,7 @@ pub(crate) fn application_identity() -> String {
 
 /// Resolved installer signing identity. `None` means the installer
 /// won't be signed. Read from the `TRUCE_INSTALLER_SIGNING_IDENTITY`
-/// build env. macOS-only — only the `productbuild` step in
+/// build env. macOS-only - only the `productbuild` step in
 /// `cmd_package_macos` consumes this.
 #[cfg(target_os = "macos")]
 pub(crate) fn installer_identity() -> Option<String> {
@@ -517,7 +517,7 @@ pub(crate) fn ios_application_identity() -> String {
 
 /// Path to a `.mobileprovision` provisioning profile for the
 /// container `.app`. Required for device installs and `.ipa`
-/// packaging — simulator builds proceed without one. Source:
+/// packaging - simulator builds proceed without one. Source:
 /// `TRUCE_IOS_PROVISIONING_PROFILE`.
 #[cfg(target_os = "macos")]
 pub(crate) fn ios_provisioning_profile() -> Option<PathBuf> {
@@ -529,7 +529,7 @@ pub(crate) fn ios_provisioning_profile() -> Option<PathBuf> {
 /// `TRUCE_IOS_PROVISIONING_PROFILE` is bound to the container's
 /// exact bundle ID, not a wildcard covering both). Source:
 /// `TRUCE_IOS_APPEX_PROVISIONING_PROFILE`. Returns `None` when
-/// unset — callers fall back to the container app's profile, which
+/// unset - callers fall back to the container app's profile, which
 /// works for wildcard profiles that match both IDs.
 #[cfg(target_os = "macos")]
 pub(crate) fn ios_appex_provisioning_profile() -> Option<PathBuf> {
