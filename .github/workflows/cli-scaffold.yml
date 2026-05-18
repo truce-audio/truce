@@ -1,0 +1,252 @@
+name: cargo truce new + install + validate + package + uninstall
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Round-trips `cargo truce new` through the install / validate /
+# package / uninstall pipeline on each OS, for each scaffold shape.
+# Catches regressions where the template produces a buildable plugin
+# but one of the downstream packagers chokes on its truce.toml /
+# Cargo.toml shape (e.g. workspace-mode bundle-id derivation,
+# instrument vs effect category routing).
+#
+# Each (os, shape) pair runs as a parallel matrix job.
+jobs:
+  scaffold:
+    name: ${{ matrix.shape.id }} (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, ubuntu-24.04, windows-latest]
+        shape:
+          - id: effect
+            new_args: "acme-fx --vendor Acme --vendor-id com.acme.test"
+            project_dir: acme-fx
+          - id: instrument
+            new_args: "acme-synth --instrument --vendor Acme --vendor-id com.acme.test"
+            project_dir: acme-synth
+          - id: workspace-mixed
+            new_args: "acme --workspace fx synth midi --type:synth=instrument --type:midi=midi --vendor Acme --vendor-id com.acme.test"
+            project_dir: acme
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: cli-scaffold-${{ matrix.os }}-${{ matrix.shape.id }}
+          cache-bin: false
+
+      - name: Linux system deps
+        if: matrix.os == 'ubuntu-24.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config \
+            libx11-dev libx11-xcb-dev libxcb1-dev libxcb-dri2-0-dev libxcb-icccm4-dev libxcursor-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev libxrandr-dev \
+            libgl1-mesa-dev libvulkan-dev mesa-vulkan-drivers \
+            libasound2-dev libjack-jackd2-dev \
+            libfontconfig1-dev libfreetype-dev \
+            xvfb
+
+      - name: Install Inno Setup
+        if: matrix.os == 'windows-latest'
+        run: choco install innosetup --no-progress --yes
+
+      - name: Build cargo-truce
+        run: cargo build -p cargo-truce
+
+      # ─────────────────────────────────────────────────────────────────
+      # Validators - same cache shape as cli-install.yml so the binaries
+      # are shared across workflows.
+      # ─────────────────────────────────────────────────────────────────
+      - name: Cache pluginval (macOS)
+        if: matrix.os == 'macos-14'
+        id: cache-pluginval-mac
+        uses: actions/cache@v4
+        with:
+          path: /Applications/pluginval.app
+          key: pluginval-macos-1.0.4
+      - name: Download pluginval (macOS)
+        if: matrix.os == 'macos-14' && steps.cache-pluginval-mac.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL -o /tmp/pluginval.zip \
+            https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_macOS.zip
+          unzip -oq /tmp/pluginval.zip -d /Applications/
+
+      - name: Cache pluginval (Linux)
+        if: matrix.os == 'ubuntu-24.04'
+        id: cache-pluginval-linux
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/bin/pluginval
+          key: pluginval-linux-1.0.4
+      - name: Download pluginval (Linux)
+        if: matrix.os == 'ubuntu-24.04' && steps.cache-pluginval-linux.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/.local/bin
+          curl -fsSL -o /tmp/pluginval.zip \
+            https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_Linux.zip
+          unzip -oq /tmp/pluginval.zip -d /tmp/pluginval-bin
+          install -m 755 /tmp/pluginval-bin/pluginval ~/.local/bin/pluginval
+
+      - name: Cache pluginval (Windows)
+        if: matrix.os == 'windows-latest'
+        id: cache-pluginval-win
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.bin/pluginval
+          key: pluginval-windows-1.0.4
+      - name: Download pluginval (Windows)
+        if: matrix.os == 'windows-latest' && steps.cache-pluginval-win.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          mkdir -p .bin/pluginval
+          curl -fsSL -o pluginval.zip \
+            https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_Windows.zip
+          unzip -oq pluginval.zip -d .bin/pluginval
+
+      - name: Cache clap-validator
+        id: cache-clap-validator
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/clap-validator
+            ~/.cargo/bin/clap-validator.exe
+          key: clap-validator-${{ matrix.os }}-2026-05-09
+
+      - name: Install clap-validator
+        if: steps.cache-clap-validator.outputs.cache-hit != 'true'
+        run: cargo install --locked --git https://github.com/free-audio/clap-validator clap-validator
+
+      - name: Validators on PATH
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          elif [ "${{ runner.os }}" = "Windows" ]; then
+            echo "$GITHUB_WORKSPACE/.bin/pluginval" >> "$GITHUB_PATH"
+          fi
+
+      # ─────────────────────────────────────────────────────────────────
+      # Resolve binary path once. Windows needs the `.exe` suffix; macOS
+      # and Linux don't. Stored in $GITHUB_ENV so every later `bash` step
+      # uses the same string.
+      # ─────────────────────────────────────────────────────────────────
+      - name: Resolve cargo-truce path
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            echo "CARGO_TRUCE=$GITHUB_WORKSPACE/target/debug/cargo-truce.exe" >> "$GITHUB_ENV"
+          else
+            echo "CARGO_TRUCE=$GITHUB_WORKSPACE/target/debug/cargo-truce" >> "$GITHUB_ENV"
+          fi
+
+      - name: Scaffold (${{ matrix.shape.id }})
+        shell: bash
+        run: |
+          set -e
+          mkdir -p "$RUNNER_TEMP/scaffold"
+          cd "$RUNNER_TEMP/scaffold"
+          "$CARGO_TRUCE" new ${{ matrix.shape.new_args }}
+          ls -la "${{ matrix.shape.project_dir }}"
+
+      # The scaffold templates pin `truce = { git = "...", tag = "..." }`
+      # so generated projects build against a published release. In CI
+      # we want them to build against THIS commit instead, so rewrite
+      # every git ref to a local `path = ...` pointing at the truce
+      # crates checked out in $GITHUB_WORKSPACE. Mirrors what the
+      # scaffold_e2e tests do; Python (preinstalled on every GHA
+      # runner) gives us consistent regex behavior across OSes.
+      - name: Rewrite git deps to local paths
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os, re, pathlib
+          truce_crates = pathlib.Path(os.environ["GITHUB_WORKSPACE"], "crates").as_posix()
+          root = pathlib.Path(os.environ["RUNNER_TEMP"], "scaffold", "${{ matrix.shape.project_dir }}")
+          needle = '{ git = "https://github.com/truce-audio/truce"'
+          tag_re = re.compile(r',\s*tag\s*=\s*"[^"]*"')
+          rewrote = 0
+          for path in root.rglob("Cargo.toml"):
+              content = path.read_text()
+              if needle not in content:
+                  continue
+              new_lines = []
+              for line in content.splitlines():
+                  stripped = line.lstrip()
+                  if stripped.startswith("#") or needle not in line:
+                      new_lines.append(line)
+                      continue
+                  eq = line.find("=")
+                  key = line[:eq].strip() if eq >= 0 else "truce"
+                  replacement = f'{{ path = "{truce_crates}/{key}"'
+                  out = line.replace(needle, replacement, 1)
+                  out = tag_re.sub("", out, count=1)
+                  new_lines.append(out)
+              suffix = "\n" if content.endswith("\n") else ""
+              path.write_text("\n".join(new_lines) + suffix)
+              rewrote += 1
+              print(f"rewrote {path}")
+          if rewrote == 0:
+              print("WARNING: no Cargo.toml had a git dep to rewrite", flush=True)
+          PY
+
+      - name: cargo truce install --user
+        shell: bash
+        working-directory: ${{ runner.temp }}/scaffold/${{ matrix.shape.project_dir }}
+        run: $CARGO_TRUCE install --user --clap --vst3
+
+      - name: cargo truce validate --clap --pluginval
+        shell: bash
+        working-directory: ${{ runner.temp }}/scaffold/${{ matrix.shape.project_dir }}
+        run: |
+          set -e -o pipefail
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            xvfb-run -a $CARGO_TRUCE validate --clap --pluginval 2>&1 | tee validate.log
+          else
+            $CARGO_TRUCE validate --clap --pluginval 2>&1 | tee validate.log
+          fi
+          if grep -E "SKIP|not found" validate.log >/dev/null; then
+            echo "::error::validate skipped a step - failing"
+            exit 1
+          fi
+
+      # `--no-notarize` on macOS skips the Apple notarization round-trip
+      # (no credentials in CI). Windows package goes through Inno Setup
+      # installed above. Linux package needs `--formats` so it builds the
+      # right set even on a workspace where defaults might include AAX.
+      - name: cargo truce package
+        shell: bash
+        working-directory: ${{ runner.temp }}/scaffold/${{ matrix.shape.project_dir }}
+        run: |
+          set -e
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            $CARGO_TRUCE package --formats clap,vst3 --no-notarize
+          elif [ "${{ runner.os }}" = "Linux" ]; then
+            $CARGO_TRUCE package --formats clap,vst3,lv2
+          else
+            $CARGO_TRUCE package --formats clap,vst3
+          fi
+          ls -la target/dist/
+
+      - name: cargo truce uninstall --user --yes
+        shell: bash
+        working-directory: ${{ runner.temp }}/scaffold/${{ matrix.shape.project_dir }}
+        run: $CARGO_TRUCE uninstall --user --yes
