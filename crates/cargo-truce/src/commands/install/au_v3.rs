@@ -330,6 +330,13 @@ fn write_xcode_project_files(
         .unwrap();
     let ver = format!("{}.{}", now.as_secs(), now.subsec_millis());
 
+    // `MINIOS` / `SUPPORTEDPLAT` are placeholders the iOS path also
+    // substitutes — they were added to the shared template when iOS
+    // support landed. macOS values: `MacOSX` for the platform string,
+    // and a deployment target that must match the appex's actual
+    // `MACOSX_DEPLOYMENT_TARGET` (hard-coded to 13.0 in `generate_pbxproj`).
+    // Leaving the placeholders unsubstituted makes xcodebuild reject the
+    // outer `.app` with "embedded content built for the (null) platform".
     let plist = templates::au3::APPEX_INFO_PLIST
         .replace("AUVER", &ver)
         .replace("AUTYPE", p.resolved_au_type())
@@ -343,7 +350,9 @@ fn write_xcode_project_files(
                 p.au3_name.as_deref().unwrap_or(p.name.as_str()),
             ),
         )
-        .replace("AUTAG", &p.au_tag);
+        .replace("AUTAG", &p.au_tag)
+        .replace("MINIOS", "13.0")
+        .replace("SUPPORTEDPLAT", "MacOSX");
     // AUVER regenerates every call (CFBundleVersion cache-bust for
     // hosts), so this plist's bytes shift run-to-run regardless.
     // xcodebuild still bundles the new plist but skips Swift / ObjC
