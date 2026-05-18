@@ -38,6 +38,9 @@ jobs:
       - name: Build cargo-truce
         run: cargo build -p cargo-truce
 
+      - name: cargo truce doctor
+        run: ./target/debug/cargo-truce doctor
+
       - name: Cache pluginval
         id: cache-pluginval
         uses: actions/cache@v4
@@ -90,6 +93,9 @@ jobs:
             fi
           done
 
+      - name: cargo truce status
+        run: ./target/debug/cargo-truce status
+
       - name: cargo truce validate --clap --pluginval --auval
         run: |
           set -e -o pipefail
@@ -98,6 +104,23 @@ jobs:
             echo "::error::validate skipped a step - failing"
             exit 1
           fi
+
+      # Round-trip: uninstall every format we just installed and
+      # confirm nothing is left behind. `--yes` bypasses the
+      # confirmation prompt; system scope needs sudo to remove from
+      # /Library/Audio/Plug-Ins/.
+      - name: cargo truce uninstall --system --yes
+        run: sudo ./target/debug/cargo-truce uninstall --system --yes -p truce-example-gain
+
+      - name: Verify nothing left behind
+        run: |
+          set -e
+          for fmt in "CLAP/Truce Gain.clap" "VST3/Truce Gain.vst3" "VST/Truce Gain.vst" "Components/Truce Gain.component" "LV2/truce-gain.lv2"; do
+            if [ -e "/Library/Audio/Plug-Ins/$fmt" ]; then
+              echo "::error::uninstall left $fmt behind"
+              exit 1
+            fi
+          done
 
   linux:
     name: install + validate (ubuntu-24.04)
@@ -126,6 +149,9 @@ jobs:
 
       - name: Build cargo-truce
         run: cargo build -p cargo-truce
+
+      - name: cargo truce doctor
+        run: ./target/debug/cargo-truce doctor
 
       - name: Cache pluginval
         id: cache-pluginval
@@ -181,6 +207,19 @@ jobs:
             exit 1
           fi
 
+      - name: cargo truce uninstall --user --yes
+        run: ./target/debug/cargo-truce uninstall --user --yes -p truce-example-gain
+
+      - name: Verify nothing left behind
+        run: |
+          set -e
+          for fmt in ".clap/Truce Gain.clap" ".vst3/Truce Gain.vst3" ".lv2/truce-gain.lv2"; do
+            if [ -e "$HOME/$fmt" ]; then
+              echo "::error::uninstall left $fmt behind"
+              exit 1
+            fi
+          done
+
   windows:
     name: install + validate (windows-latest)
     runs-on: windows-latest
@@ -196,6 +235,10 @@ jobs:
 
       - name: Build cargo-truce
         run: cargo build -p cargo-truce
+
+      - name: cargo truce doctor
+        shell: bash
+        run: ./target/debug/cargo-truce.exe doctor
 
       - name: Cache pluginval
         id: cache-pluginval
@@ -254,3 +297,18 @@ jobs:
             echo "::error::validate skipped a step - failing"
             exit 1
           fi
+
+      - name: cargo truce uninstall --user --yes
+        shell: bash
+        run: ./target/debug/cargo-truce.exe uninstall --user --yes -p truce-example-gain
+
+      - name: Verify nothing left behind
+        shell: bash
+        run: |
+          set -e
+          for fmt in "CLAP/Truce Gain.clap" "VST3/Truce Gain.vst3"; do
+            if [ -e "$LOCALAPPDATA/Programs/Common/$fmt" ]; then
+              echo "::error::uninstall left $fmt behind"
+              exit 1
+            fi
+          done
