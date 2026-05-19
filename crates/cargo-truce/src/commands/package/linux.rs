@@ -26,11 +26,13 @@ use truce_build::BundleManifest;
 
 const INSTALL_SH_TEMPLATE: &str = include_str!("install.sh.tmpl");
 
+#[allow(clippy::too_many_lines)]
 pub(crate) fn cmd_package_linux(args: &[String], selection: &SuiteSelection) -> Res {
     let mut no_build = false;
     let mut targets: Vec<String> = Vec::new();
     let mut formats: Option<Vec<PkgFormat>> = None;
     let mut plugin_filter: Option<String> = None;
+    let mut target_cpu_arg: Option<String> = None;
     let mut i = 0;
     let mut leftover: Vec<&str> = Vec::new();
     while i < args.len() {
@@ -52,6 +54,11 @@ pub(crate) fn cmd_package_linux(args: &[String], selection: &SuiteSelection) -> 
                 let v = args.get(i).ok_or("-p requires a plugin crate name")?;
                 plugin_filter = Some(v.clone());
             }
+            "--target-cpu" => {
+                i += 1;
+                let v = args.get(i).ok_or("--target-cpu requires a value")?;
+                target_cpu_arg = Some(v.clone());
+            }
             other => leftover.push(other),
         }
         i += 1;
@@ -61,7 +68,8 @@ pub(crate) fn cmd_package_linux(args: &[String], selection: &SuiteSelection) -> 
             "unknown flag: {unknown}\n\
              Linux `cargo truce package` accepts -p <crate>, the \
              suite-selection flags (--suite, --no-suite, --no-per-plugin), \
-             --target <triple> (repeatable), --formats <list>, and --no-build."
+             --target <triple> (repeatable), --formats <list>, --target-cpu \
+             <value>, and --no-build."
         )
         .into());
     }
@@ -112,6 +120,10 @@ pub(crate) fn cmd_package_linux(args: &[String], selection: &SuiteSelection) -> 
         if let Some(ref p) = plugin_filter {
             build_args.push("-p".into());
             build_args.push(p.clone());
+        }
+        if let Some(ref v) = target_cpu_arg {
+            build_args.push("--target-cpu".into());
+            build_args.push(v.clone());
         }
         super::super::build::cmd_build(&build_args)?;
         eprintln!();

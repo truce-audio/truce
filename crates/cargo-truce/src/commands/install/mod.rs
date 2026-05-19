@@ -3,7 +3,7 @@
 
 use crate::format::Format;
 use crate::install_scope::{InstallScope, effective_scope, note_once, set_cli_install_scope};
-use crate::util::fs_ctx;
+use crate::util::{fs_ctx, parse_target_cpu_arg};
 use crate::{
     Config, PluginDef, Res, deployment_target, detect_default_features, load_config, project_root,
     run_sudo, tmp_lv2,
@@ -52,6 +52,7 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
     let mut no_build = false;
     let mut shell_mode = false;
     let mut debug = false;
+    let mut target_cpu_arg: Option<String> = None;
     let mut plugin_filter: Option<String> = None;
     let mut cli_scope: Option<InstallScope> = None;
 
@@ -73,6 +74,10 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
             "--no-build" => no_build = true,
             "--shell" => shell_mode = true,
             "--debug" => debug = true,
+            "--target-cpu" => {
+                target_cpu_arg =
+                    Some(crate::util::arg_value(args, &mut i, "--target-cpu")?.to_string());
+            }
             "--user" => set_cli_install_scope(&mut cli_scope, InstallScope::User)?,
             "--system" => set_cli_install_scope(&mut cli_scope, InstallScope::System)?,
             "--ask" => {
@@ -180,6 +185,11 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
     } else {
         crate::set_debug_profile(debug);
     }
+    let target_cpu = target_cpu_arg
+        .as_deref()
+        .map(parse_target_cpu_arg)
+        .unwrap_or_default();
+    crate::set_target_cpu(target_cpu);
 
     let root = project_root();
     let dt = &deployment_target();
@@ -309,6 +319,7 @@ fn print_help() {
 Usage: cargo truce install [--clap] [--vst3] [--vst2] [--lv2] [--au2] [--au3] [--aax]
                            [--ios|--ios-device]
                            [--user|--system] [--shell] [--debug] [--no-build] [-p <crate>]
+                           [--target-cpu <value>]
 
 Build and install plugins into the host's plug-in directories. Defaults
 to release. Defaults to whichever formats are in the plugin's Cargo.toml
@@ -316,6 +327,11 @@ default features (typically clap + vst3).
 
 Per-format scope is per-user by default; pass --system for the shared
 system directories. AAX and AU v3 are always system-scope.
+
+x86_64 builds default to `-C target-cpu=x86-64-v3` (AVX2 + FMA + BMI2)
+so `wide`'s compile-time SIMD dispatch picks the wider path. aarch64
+builds use NEON unconditionally and get no extra flag. Override with
+`--target-cpu`.
 
 Options:
   --clap           CLAP only
@@ -334,6 +350,14 @@ Options:
   --debug          Cargo dev profile (faster compile, slower DSP).
   --no-build       Skip build, install existing artifacts.
   -p <crate>       Install only the plugin with this cargo crate name.
+  --target-cpu <value>
+                   Override the x86_64 default. Accepted values:
+                     baseline   no flag (rustc default = x86-64 / SSE2)
+                     v2|v3|v4   x86-64-v<N> (v3 is the implicit default)
+                     native     -C target-cpu=native (local-dev only;
+                                won't run on machines without the
+                                build host's exact feature set)
+                     <literal>  passed verbatim to rustc (apple-m1, znver4)
   -h, --help       Show this message"
     );
 }

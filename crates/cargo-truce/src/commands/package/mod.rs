@@ -477,6 +477,12 @@ Build invocation (Linux):
                        existing `target/bundles/` manifest as-is. Errors
                        if no manifest is present.
 
+Codegen tuning (all platforms):
+  --target-cpu <value> Override the x86_64 default of `-C target-cpu=x86-64-v3`.
+                       baseline|v2|v3|v4|native or any literal rustc
+                       target-cpu name. See `cargo truce build --help`
+                       for the full description.
+
 Misc:
   -h, --help           Show this message."
     );

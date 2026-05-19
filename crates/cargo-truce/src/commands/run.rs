@@ -5,7 +5,7 @@
 //! directory: whatever `build` / `install` / `package` consume lives
 //! alongside the standalone executable. `cargo clean` sweeps it.
 
-use crate::util::fs_ctx;
+use crate::util::{fs_ctx, parse_target_cpu_arg};
 use crate::{Res, cargo_build, deployment_target, load_config, project_root};
 use std::path::PathBuf;
 use std::process::Command;
@@ -18,6 +18,7 @@ pub(crate) fn cmd_run(args: &[String]) -> Res {
     let mut plugin_filter: Option<String> = None;
     let mut no_build = false;
     let mut debug = false;
+    let mut target_cpu_arg: Option<String> = None;
     let mut extra_args: Vec<String> = Vec::new();
     let mut past_separator = false;
     let mut i = 0;
@@ -31,6 +32,10 @@ pub(crate) fn cmd_run(args: &[String]) -> Res {
                 }
                 "--no-build" => no_build = true,
                 "--debug" => debug = true,
+                "--target-cpu" => {
+                    target_cpu_arg =
+                        Some(crate::util::arg_value(args, &mut i, "--target-cpu")?.to_string());
+                }
                 "--help" | "-h" => {
                     print_help();
                     return Ok(());
@@ -43,6 +48,11 @@ pub(crate) fn cmd_run(args: &[String]) -> Res {
     }
 
     crate::set_debug_profile(debug);
+    let target_cpu = target_cpu_arg
+        .as_deref()
+        .map(parse_target_cpu_arg)
+        .unwrap_or_default();
+    crate::set_target_cpu(target_cpu);
 
     let matched = super::pick_plugins(&config, plugin_filter.as_deref())?;
     let plugin = *matched.first().ok_or("no plugins in truce.toml")?;
@@ -250,7 +260,8 @@ fn bin_filename(stem: &str) -> String {
 fn print_help() {
     eprintln!(
         "\
-Usage: cargo truce run [-p <crate>] [--no-build] [--debug] [-- <args>]
+Usage: cargo truce run [-p <crate>] [--no-build] [--debug]
+                       [--target-cpu <value>] [-- <args>]
 
 Build and run a plugin standalone. Pass `--debug` for a faster-compile
 dev-profile build (fine when iterating outside a DAW); release otherwise.
@@ -258,10 +269,17 @@ dev-profile build (fine when iterating outside a DAW); release otherwise.
 Anything after `--` is forwarded verbatim to the standalone binary
 (e.g. `cargo truce run -- --headless --bpm 140`).
 
+x86_64 builds default to `-C target-cpu=x86-64-v3` (AVX2 + FMA + BMI2);
+override with `--target-cpu` (see `cargo truce build --help` for the
+full value list).
+
 Options:
   -p <crate>       Build and run only the plugin with this cargo crate name.
   --no-build       Skip rebuild; run the existing staged binary.
   --debug          Cargo dev profile (faster compile).
+  --target-cpu <value>
+                   Override the x86_64 default. baseline|v2|v3|v4|native
+                   or any literal rustc target-cpu name.
   -h, --help       Show this message."
     );
 }

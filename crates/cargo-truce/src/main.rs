@@ -79,7 +79,7 @@ Scaffold:
         --type:<plugin>=<kind>      Per-plugin type override (effect, instrument, midi)
 
 Build / Install / Package:
-  install [--clap] [--vst3] [--vst2] [--lv2] [--au2] [--au3] [--aax] [--user|--system] [--shell] [--debug] [--no-build] [-p <crate>]
+  install [--clap] [--vst3] [--vst2] [--lv2] [--au2] [--au3] [--aax] [--user|--system] [--shell] [--debug] [--no-build] [-p <crate>] [--target-cpu <value>]
       Build and install plugins into the host's plug-in directories.
       Defaults to release because installing usually means audio-
       testing in a DAW - release avoids surprise CPU spikes from
@@ -123,8 +123,14 @@ Build / Install / Package:
       --no-build     Skip build, install existing artifacts
       -p <crate>     Install only the plugin with this cargo crate name
                      (e.g. -p truce-example-gain)
+      --target-cpu <value>
+                     Override the x86_64 default of `-C target-cpu=x86-64-v3`.
+                     Accepts baseline|v2|v3|v4|native or any literal
+                     rustc target-cpu name (apple-m1, znver4, ...).
+                     See `cargo truce build --help` for the full
+                     description and per-value caveats.
 
-  build [--clap] [--vst3] [--vst2] [--lv2] [--au2] [--au3] [--aax] [-p <crate>] [--shell] [--debug]
+  build [--clap] [--vst3] [--vst2] [--lv2] [--au2] [--au3] [--aax] [-p <crate>] [--shell] [--debug] [--target-cpu <value>]
       Build per-format bundles into target/bundles/ without installing.
       Defaults to release; pass `--debug` for the cargo dev profile
       when iterating on layout, packaging, or format-wrapper wiring.
@@ -146,8 +152,13 @@ Build / Install / Package:
       --debug        Cargo dev profile (faster compile, slower DSP).
                      Bundles still stage and sign correctly, but the
                      binary inside is debug-quality - not for shipping.
+      --target-cpu <value>
+                     Override the x86_64 default of `-C target-cpu=x86-64-v3`.
+                     baseline|v2|v3|v4|native or any literal rustc
+                     target-cpu name. See `cargo truce build --help` for
+                     the per-value description.
 
-  package [-p <crate>] [--formats clap,vst3,...] [--user|--system|--ask] [--no-notarize]
+  package [-p <crate>] [--formats clap,vst3,...] [--user|--system|--ask] [--no-notarize] [--target-cpu <value>]
       Build, sign, and package plugins into macOS .pkg / Windows .exe
       installers. Output goes to `target/dist/`.
 
@@ -167,10 +178,16 @@ Build / Install / Package:
       Set `[packaging] preferred_scope = \"user\" | \"system\" | \"ask\"`
       in `truce.toml` to override the default for a project.
 
-  run [-p <crate>] [--debug] [-- <args>]
+      --target-cpu <value>
+                     Override the x86_64 default of `-C target-cpu=x86-64-v3`.
+                     baseline|v2|v3|v4|native or any literal rustc
+                     target-cpu name. See `cargo truce build --help`.
+
+  run [-p <crate>] [--debug] [--target-cpu <value>] [-- <args>]
       Build and run a plugin standalone. Pass `--debug` for a
       faster-compile dev-profile build (fine when iterating outside
-      a DAW); release otherwise.
+      a DAW); release otherwise. `--target-cpu` mirrors `build`'s flag
+      (x86_64 defaults to x86-64-v3).
 
   uninstall [--clap] [--vst3] [--vst2] [--au2] [--au3] [--aax] [--user|--system] [-p <crate>] [-n <name>] [--stale] [--dry-run] [--yes]
       Uninstall plugin bundles for this project.

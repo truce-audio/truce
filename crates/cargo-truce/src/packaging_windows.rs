@@ -98,11 +98,19 @@ impl TargetArch {
 // Entry point
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::too_many_lines)]
 pub(crate) fn cmd_package(
     args: &[String],
     selection: &crate::commands::package::SuiteSelection,
 ) -> Res {
     let opts = parse_args(args)?;
+
+    let target_cpu = opts
+        .target_cpu_arg
+        .as_deref()
+        .map(crate::util::parse_target_cpu_arg)
+        .unwrap_or_default();
+    crate::set_target_cpu(target_cpu);
 
     let config = load_config()?;
     let root = project_root();
@@ -326,6 +334,9 @@ struct Opts {
     /// Setup's "Choose installation mode" page; `--user` /
     /// `--system` hard-lock to one mode.
     cli_scope: Option<PkgScope>,
+    /// Raw `--target-cpu` value (parsed into `TargetCpu` via
+    /// `parse_target_cpu_arg`). `None` keeps the per-arch default.
+    target_cpu_arg: Option<String>,
 }
 
 impl Opts {
@@ -383,6 +394,10 @@ fn parse_args(args: &[String]) -> std::result::Result<Opts, crate::BoxErr> {
             #[allow(clippy::match_same_arms)]
             "--universal" => {}
             "--host-only" => opts.host_only = true,
+            "--target-cpu" => {
+                opts.target_cpu_arg =
+                    Some(crate::util::arg_value(args, &mut i, "--target-cpu")?.to_string());
+            }
             // --no-notarize is a macOS concept; accept and ignore on Windows so
             // cross-platform CI scripts don't break.
             "--no-notarize" => {}

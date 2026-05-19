@@ -27,6 +27,13 @@ pub(crate) fn cmd_package_macos(args: &[String], selection: &super::SuiteSelecti
 
     let parsed = parse_package_args(args)?;
 
+    let target_cpu = parsed
+        .target_cpu_arg
+        .as_deref()
+        .map(crate::util::parse_target_cpu_arg)
+        .unwrap_or_default();
+    crate::set_target_cpu(target_cpu);
+
     // Scope resolution: CLI > truce.toml [packaging] preferred_scope >
     // OS default (`--ask`). `cargo truce install` has no toml
     // override - the install scope is a per-invocation developer
@@ -460,6 +467,7 @@ struct PackageArgs {
     host_only: bool,
     no_pace_sign: bool,
     cli_scope: Option<PkgScope>,
+    target_cpu_arg: Option<String>,
 }
 
 fn parse_package_args(args: &[String]) -> Result<PackageArgs, crate::BoxErr> {
@@ -469,6 +477,7 @@ fn parse_package_args(args: &[String]) -> Result<PackageArgs, crate::BoxErr> {
     let mut host_only = false;
     let mut no_pace_sign = false;
     let mut cli_scope: Option<PkgScope> = None;
+    let mut target_cpu_arg: Option<String> = None;
 
     let mut i = 0;
     while i < args.len() {
@@ -493,6 +502,10 @@ fn parse_package_args(args: &[String]) -> Result<PackageArgs, crate::BoxErr> {
             // scripts that also hit Windows keep working.
             "--universal" | "--no-installer" => {}
             "--host-only" => host_only = true,
+            "--target-cpu" => {
+                target_cpu_arg =
+                    Some(crate::util::arg_value(args, &mut i, "--target-cpu")?.to_string());
+            }
             other => return Err(format!("unknown flag: {other}").into()),
         }
         i += 1;
@@ -505,6 +518,7 @@ fn parse_package_args(args: &[String]) -> Result<PackageArgs, crate::BoxErr> {
         host_only,
         no_pace_sign,
         cli_scope,
+        target_cpu_arg,
     })
 }
 
