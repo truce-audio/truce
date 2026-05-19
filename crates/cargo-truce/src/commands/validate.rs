@@ -176,6 +176,7 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
     let mut run_pluginval = false;
     let mut run_clap = false;
     let mut run_vst2 = false;
+    let mut run_aax = false;
     // Track explicit per-format flags so a missing validator counts as a
     // failure for CI (`--clap`, `--pluginval`, …) but stays a warning for
     // a casual `cargo truce validate` run on a host that's missing some
@@ -185,6 +186,7 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
     let mut pluginval_explicit = false;
     let mut clap_explicit = false;
     let mut vst2_explicit = false;
+    let mut aax_explicit = false;
     let mut plugin_filter: Option<String> = None;
 
     let mut i = 0;
@@ -210,12 +212,17 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
                 run_vst2 = true;
                 vst2_explicit = true;
             }
+            "--aax" => {
+                run_aax = true;
+                aax_explicit = true;
+            }
             "--all" => {
                 run_auval = true;
                 run_auval_v3 = true;
                 run_pluginval = true;
                 run_clap = true;
                 run_vst2 = true;
+                run_aax = true;
             }
             "-p" => {
                 plugin_filter = Some(crate::util::arg_value(args, &mut i, "-p")?.to_string());
@@ -228,12 +235,13 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
         }
         i += 1;
     }
-    if !run_auval && !run_auval_v3 && !run_pluginval && !run_clap && !run_vst2 {
+    if !run_auval && !run_auval_v3 && !run_pluginval && !run_clap && !run_vst2 && !run_aax {
         run_auval = true;
         run_auval_v3 = true;
         run_pluginval = true;
         run_clap = true;
         run_vst2 = true;
+        run_aax = true;
     }
 
     let plugins: Vec<&PluginDef> = super::pick_plugins(&config, plugin_filter.as_deref())?;
@@ -516,6 +524,25 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
         }
     }
 
+    // pluginrunner (AAX). Ships with Pro Tools Developer's CommandLineTools.
+    // Catches ABI / load-time failures that Pro Tools' own scanner
+    // reports only as cryptic "OOP cache generation timed out"
+    // subprocess kills - by then the actual stderr message from the
+    // template (e.g. `[truce-aax] ABI version mismatch`) has been
+    // swallowed.
+    if run_aax {
+        eprintln!("\npluginrunner (AAX)\n");
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        {
+            failures += validate_aax(&plugins, aax_explicit);
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        {
+            eprintln!("  Skipping: AAX is macOS / Windows only.");
+            let _ = aax_explicit;
+        }
+    }
+
     // VST2 binary smoke (no industry validator; this is ours)
     if run_vst2 {
         eprintln!("VST2 binary smoke\n");
@@ -546,7 +573,7 @@ fn print_help() {
     eprintln!(
         "\
 Usage: cargo truce validate [--auval] [--auval3] [--pluginval] [--clap] [--vst2]
-                            [--all] [-p <crate>]
+                            [--aax] [--all] [-p <crate>]
 
 Run validation tools on installed plugins. With no flag, runs every
 available validator.
@@ -557,10 +584,104 @@ Options:
   --pluginval      VST3 validation via pluginval.
   --clap           CLAP validation via clap-validator.
   --vst2           VST2 dlopen + AEffect smoke (macOS).
+  --aax            AAX validation via pluginrunner (Pro Tools
+                   Developer's CommandLineTools, macOS / Windows).
   --all            Run every available validator (default).
   -p <crate>       Validate only the plugin with this cargo crate name.
   -h, --help       Show this message"
     );
+}
+
+/// Run Avid's `pluginrunner` against each installed AAX bundle. AAX
+/// is always system-scope, so we read from the canonical system path.
+/// `pluginrunner` exits non-zero on bridge load failures (ABI
+/// mismatch, dlopen errors, codesign breakage) without needing a Pro
+/// Tools rescan, so this catches ABI drift before the user notices
+/// plugins missing in the host.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn validate_aax(plugins: &[&PluginDef], aax_explicit: bool) -> usize {
+    let Some(runner) = find_pluginrunner() else {
+        eprintln!(
+            "  pluginrunner not found at /Applications/Pro Tools Developer.app/\
+             Contents/CommandLineTools/pluginrunner. Install Pro Tools \
+             Developer to enable AAX validation, or set PLUGINRUNNER=/path/to/pluginrunner."
+        );
+        return usize::from(aax_explicit);
+    };
+
+    let mut failures = 0;
+    for p in plugins {
+        let bundle = aax_install_dir().join(format!("{}.aaxplugin", p.file_stem()));
+        if !bundle.exists() {
+            eprintln!("  {} ... SKIP (not installed)", p.name);
+            continue;
+        }
+        eprint!("  {} ... ", p.name);
+        let output = Command::new(&runner).arg(&bundle).output();
+        let output = match output {
+            Ok(o) => o,
+            Err(e) => {
+                eprintln!("INVOKE ERROR ({e})");
+                failures += 1;
+                continue;
+            }
+        };
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        // pluginrunner exits 0 even when the truce template refuses
+        // to load (the bridge prints to stderr and returns control
+        // cleanly), so the stderr banner is the reliable signal.
+        let bridge_failed = stderr.contains("ABI version mismatch")
+            || stderr.contains("Failed to load Rust plugin");
+        if output.status.success() && !bridge_failed {
+            eprintln!("PASS");
+        } else {
+            eprintln!("FAIL");
+            if !stdout.is_empty() {
+                eprintln!("{stdout}");
+            }
+            if !stderr.is_empty() {
+                eprintln!("{stderr}");
+            }
+            failures += 1;
+        }
+    }
+    failures
+}
+
+#[cfg(target_os = "macos")]
+fn aax_install_dir() -> PathBuf {
+    PathBuf::from("/Library/Application Support/Avid/Audio/Plug-Ins")
+}
+
+#[cfg(target_os = "windows")]
+fn aax_install_dir() -> PathBuf {
+    PathBuf::from("C:\\Program Files\\Common Files\\Avid\\Audio\\Plug-Ins")
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn find_pluginrunner() -> Option<String> {
+    if let Ok(path) = std::env::var("PLUGINRUNNER")
+        && Path::new(&path).exists()
+    {
+        return Some(path);
+    }
+    #[cfg(target_os = "macos")]
+    let candidates = [
+        "/Applications/Pro Tools Developer.app/Contents/CommandLineTools/pluginrunner",
+        "/Applications/Pro Tools.app/Contents/CommandLineTools/pluginrunner",
+    ];
+    #[cfg(target_os = "windows")]
+    let candidates = [
+        "C:\\Program Files\\Avid\\Pro Tools Developer\\pluginrunner.exe",
+        "C:\\Program Files\\Avid\\Pro Tools\\pluginrunner.exe",
+    ];
+    for c in candidates {
+        if Path::new(c).exists() {
+            return Some(c.to_string());
+        }
+    }
+    None
 }
 
 /// Build each plugin as a VST2 dylib, dlopen it via the C smoke binary

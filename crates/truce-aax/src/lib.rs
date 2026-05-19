@@ -37,14 +37,14 @@ use truce_params::{ParamFlags, ParamRange, Params};
 // C ABI types (must match truce_aax_bridge.h)
 // ---------------------------------------------------------------------------
 
-/// Bumped any time the C ABI shape (descriptor / param info / event
-/// structs / callback signatures) changes. The C++ template resolves
-/// `truce_aax_abi_version` first and refuses to load if the value
-/// disagrees with its compile-time `TRUCE_AAX_ABI_VERSION` - keeps a
-/// manual cdylib swap against an out-of-sync template from being
-/// silently misread (e.g. category bits read from the offset of a
-/// since-removed field).
-pub const TRUCE_AAX_ABI_VERSION: u32 = 3;
+// The C ABI version constant lives in
+// `cargo-truce/templates/aax/truce_aax_bridge.h` (the file the C++
+// AAX template includes). `build.rs` parses it and emits
+// `abi_version.rs` into `OUT_DIR`, so the Rust cdylib's
+// `truce_aax_abi_version()` export and the template's
+// `#define TRUCE_AAX_ABI_VERSION` can't drift - bumping one alone
+// would be a compile failure here, not a silent runtime ABI mismatch.
+include!(concat!(env!("OUT_DIR"), "/abi_version.rs"));
 
 /// Wire values for [`TruceAaxParamInfo::range_type`]. The C++ shim
 /// switches on these to pick the matching `AAX_ITaperDelegate` for
