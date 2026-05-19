@@ -44,7 +44,7 @@ use truce_params::{ParamFlags, ParamRange, Params};
 /// manual cdylib swap against an out-of-sync template from being
 /// silently misread (e.g. category bits read from the offset of a
 /// since-removed field).
-pub const TRUCE_AAX_ABI_VERSION: u32 = 2;
+pub const TRUCE_AAX_ABI_VERSION: u32 = 3;
 
 /// Wire values for [`TruceAaxParamInfo::range_type`]. The C++ shim
 /// switches on these to pick the matching `AAX_ITaperDelegate` for
