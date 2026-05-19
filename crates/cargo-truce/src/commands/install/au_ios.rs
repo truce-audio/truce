@@ -575,6 +575,14 @@ fn simctl_install(bundle: &Path, app_bundle_id: &str) -> Res {
         .status();
     match installed {
         Ok(s) if s.success() => {
+            // `simctl install` returns as soon as the .app is copied into the
+            // simulator's filesystem, but FrontBoard / installd registers the
+            // bundle in its database asynchronously. A `simctl launch
+            // <bundle-id>` issued in that window fails with `unknown to
+            // FrontBoard`, which has shown up as a flake on cold CI runners.
+            // Block until the bundle is registered (or a small timeout
+            // elapses) so the subsequent launch is deterministic.
+            wait_for_simctl_registration(app_bundle_id);
             eprintln!(
                 "Installed: {}\nLaunch with: xcrun simctl launch booted {app_bundle_id}",
                 bundle.display()
@@ -586,6 +594,38 @@ fn simctl_install(bundle: &Path, app_bundle_id: &str) -> Res {
         )
         .into()),
         Err(e) => Err(format!("xcrun simctl install booted: {e}").into()),
+    }
+}
+
+/// Poll `simctl get_app_container booted <bundle-id>` until it succeeds or
+/// the timeout elapses. The command returns the on-disk container path for
+/// the app and exits non-zero with `No such file or directory` while the
+/// bundle hasn't been ingested yet, so success is a definitive signal that
+/// `FrontBoard` has registered it.
+///
+/// Best-effort: never returns an error. If the polling times out we fall
+/// through and let the caller's launch attempt produce the original
+/// `unknown to FrontBoard` message so the operator sees the diagnostic
+/// from `simctl` rather than an opaque framework-side timeout.
+fn wait_for_simctl_registration(app_bundle_id: &str) {
+    use std::time::{Duration, Instant};
+    const TIMEOUT: Duration = Duration::from_secs(10);
+    const POLL_INTERVAL: Duration = Duration::from_millis(200);
+    let deadline = Instant::now() + TIMEOUT;
+    loop {
+        let ok = Command::new("xcrun")
+            .args(["simctl", "get_app_container", "booted", app_bundle_id])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success());
+        if ok {
+            return;
+        }
+        if Instant::now() >= deadline {
+            return;
+        }
+        std::thread::sleep(POLL_INTERVAL);
     }
 }
 
