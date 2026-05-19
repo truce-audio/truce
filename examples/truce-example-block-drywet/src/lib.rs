@@ -40,6 +40,7 @@ pub struct DryWetParams {
         name = "Mix",
         range = "linear(0, 1)",
         default = 0.5,
+        unit = "%",
         smooth = "exp(20)"
     )]
     pub mix: FloatParam,
