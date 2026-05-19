@@ -325,22 +325,25 @@ fn write_shell_sidecar(root: &std::path::Path, crate_name: &str, logic_profile: 
         .join(crate::util::shared_lib_name(&stem));
     let canonical = dylib_path.canonicalize().unwrap_or(dylib_path);
 
-    let sidecar =
-        truce_utils::shell_sidecar::sidecar_path(crate_name).ok_or_else(|| -> crate::CargoTruceError {
+    let sidecar = truce_utils::shell_sidecar::sidecar_path(crate_name).ok_or_else(
+        || -> crate::CargoTruceError {
             "could not resolve $HOME (or %USERPROFILE% on Windows) for the \
          shell sidecar - the runtime needs $HOME to locate the logic \
          dylib without it"
                 .into()
-        })?;
+        },
+    )?;
     if let Some(parent) = sidecar.parent() {
         fs::create_dir_all(parent).map_err(|e| -> crate::CargoTruceError {
             format!("failed to create {}: {e}", parent.display()).into()
         })?;
     }
     let tmp = sidecar.with_extension(format!("path.tmp.{}", std::process::id()));
-    fs::write(&tmp, format!("{}\n", canonical.display())).map_err(|e| -> crate::CargoTruceError {
-        format!("failed to write shell sidecar {}: {e}", tmp.display()).into()
-    })?;
+    fs::write(&tmp, format!("{}\n", canonical.display())).map_err(
+        |e| -> crate::CargoTruceError {
+            format!("failed to write shell sidecar {}: {e}", tmp.display()).into()
+        },
+    )?;
     // `fs::rename` is atomic on POSIX (rename(2)) and on Windows
     // (`MoveFileExW` with `MOVEFILE_REPLACE_EXISTING`). Same parent
     // directory guarantees same filesystem.

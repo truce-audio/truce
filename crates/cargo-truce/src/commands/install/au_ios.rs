@@ -521,11 +521,12 @@ pub(crate) fn build_bundle(
     let identity = signing_identity_for(target);
     let appex_prof_env = crate::ios_appex_provisioning_profile();
     let mobileprovision = if matches!(target, IosTarget::Device) {
-        let app_prof = crate::ios_provisioning_profile().ok_or_else(|| -> crate::CargoTruceError {
-            "iOS device install needs TRUCE_IOS_PROVISIONING_PROFILE pointing at a \
+        let app_prof =
+            crate::ios_provisioning_profile().ok_or_else(|| -> crate::CargoTruceError {
+                "iOS device install needs TRUCE_IOS_PROVISIONING_PROFILE pointing at a \
              .mobileprovision in .cargo/config.toml [env]"
-                .into()
-        })?;
+                    .into()
+            })?;
         // iOS installd validates BOTH the container app and the
         // appex against their own embedded.mobileprovision. A
         // mismatched / missing appex profile produces error
@@ -644,7 +645,10 @@ fn device_install(bundle: &Path, app_bundle_id: &str) -> Res {
 /// `<target>/ios/xcframework/<fw_name>.xcframework`. Consumed by
 /// the `package --ios` path; install paths pick a single slice and
 /// skip this step.
-pub(crate) fn build_xcframework(root: &Path, p: &PluginDef) -> Result<PathBuf, crate::CargoTruceError> {
+pub(crate) fn build_xcframework(
+    root: &Path,
+    p: &PluginDef,
+) -> Result<PathBuf, crate::CargoTruceError> {
     let cfg = crate::load_config()?;
     let out = truce_build::target_dir(root).join("ios/xcframework");
     let _ = std::fs::remove_dir_all(&out);
@@ -734,9 +738,11 @@ pub(crate) fn package_ipa(root: &Path, p: &PluginDef) -> Result<PathBuf, crate::
     fs_ctx::create_dir_all(&out_dir)?;
     let payload = out_dir.join("Payload");
     fs_ctx::create_dir_all(&payload)?;
-    let file_name = app_dir.file_name().ok_or_else(|| -> crate::CargoTruceError {
-        format!("app bundle has no file name: {}", app_dir.display()).into()
-    })?;
+    let file_name = app_dir
+        .file_name()
+        .ok_or_else(|| -> crate::CargoTruceError {
+            format!("app bundle has no file name: {}", app_dir.display()).into()
+        })?;
     crate::copy_dir_recursive(&app_dir, &payload.join(file_name))?;
     let ipa_path = out_dir.join(format!("{}.ipa", p.file_stem()));
     // `zip -r` over `Payload/` is the canonical Apple shape - the

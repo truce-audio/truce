@@ -35,10 +35,10 @@ mod render_core;
 // so old `truce_gui::layout::*` / `truce_gui::widgets::*` /
 // `truce_gui::theme::*` paths continue to resolve. New code can import
 // directly from `truce_gui_types`.
-pub use truce_gui_types::{ImageId, ParamSnapshot, RenderBackend, Theme};
-pub use truce_gui_types::{layout, render, snapshot, theme, widgets};
 #[cfg(target_os = "ios")]
 pub use truce_gui_types::ios;
+pub use truce_gui_types::{ImageId, ParamSnapshot, RenderBackend, Theme};
+pub use truce_gui_types::{layout, render, snapshot, theme, widgets};
 
 // Re-export plugin-logic traits from `truce-plugin` for the same
 // backward-compat reason.

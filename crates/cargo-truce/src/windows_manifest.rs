@@ -151,20 +151,24 @@ fn make_int_resource(id: u16) -> *const u16 {
 /// error. An .ico file can carry up to 65535 images, but in practice
 /// the truce icon has 7 - overflow here means a malformed input.
 fn u16_or(value: usize, ctx: &str) -> std::result::Result<u16, crate::CargoTruceError> {
-    u16::try_from(value)
-        .map_err(|_| -> crate::CargoTruceError { format!("{ctx}: value {value} exceeds u16 range").into() })
+    u16::try_from(value).map_err(|_| -> crate::CargoTruceError {
+        format!("{ctx}: value {value} exceeds u16 range").into()
+    })
 }
 
 fn u32_or(value: usize, ctx: &str) -> std::result::Result<u32, crate::CargoTruceError> {
-    u32::try_from(value)
-        .map_err(|_| -> crate::CargoTruceError { format!("{ctx}: value {value} exceeds u32 range").into() })
+    u32::try_from(value).map_err(|_| -> crate::CargoTruceError {
+        format!("{ctx}: value {value} exceeds u32 range").into()
+    })
 }
 
 /// Build the `RT_GROUP_ICON` resource payload from the parsed `.ico`
 /// directory. Same 6-byte `ICONDIR` header as the file, then a 14-byte
 /// `GRPICONDIRENTRY` per image (the 16-byte on-disk entry differs in
 /// its last field: file offset → resource ID).
-fn build_group_icon_blob(entries: &[IcoEntry]) -> std::result::Result<Vec<u8>, crate::CargoTruceError> {
+fn build_group_icon_blob(
+    entries: &[IcoEntry],
+) -> std::result::Result<Vec<u8>, crate::CargoTruceError> {
     let count = u16_or(entries.len(), "RT_GROUP_ICON entry count")?;
     let mut grp = Vec::with_capacity(6 + entries.len() * 14);
     grp.extend_from_slice(&[0, 0]); // Reserved

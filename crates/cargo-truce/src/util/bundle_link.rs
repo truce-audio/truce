@@ -204,9 +204,9 @@ fn clang_bundle_single(
     cmd.arg(staticlib);
     cmd.arg("-o").arg(out);
 
-    let output = cmd
-        .output()
-        .map_err(|e| -> crate::CargoTruceError { format!("invoking clang for bundle link: {e}").into() })?;
+    let output = cmd.output().map_err(|e| -> crate::CargoTruceError {
+        format!("invoking clang for bundle link: {e}").into()
+    })?;
     if !output.status.success() {
         return Err(format!(
             "clang -bundle failed for {} ({arch_flag}):\n{}",

@@ -637,11 +637,20 @@ fn plugin_stage_dir(root: &Path, bundle_id: &str, arch: &str) -> Result<PathBuf,
 }
 
 /// Per-suite Linux staging dir, also arch-namespaced.
-fn suite_stage_dir(root: &Path, suite_bundle_id: &str, arch: &str) -> Result<PathBuf, CargoTruceError> {
+fn suite_stage_dir(
+    root: &Path,
+    suite_bundle_id: &str,
+    arch: &str,
+) -> Result<PathBuf, CargoTruceError> {
     stage_dir(root, "suite", suite_bundle_id, arch)
 }
 
-fn stage_dir(root: &Path, kind: &str, bundle_id: &str, arch: &str) -> Result<PathBuf, CargoTruceError> {
+fn stage_dir(
+    root: &Path,
+    kind: &str,
+    bundle_id: &str,
+    arch: &str,
+) -> Result<PathBuf, CargoTruceError> {
     let staging = truce_build::target_dir(root)
         .join("package/linux")
         .join(arch)

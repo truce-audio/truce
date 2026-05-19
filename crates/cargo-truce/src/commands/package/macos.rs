@@ -1191,7 +1191,10 @@ fn set_cli_scope(slot: &mut Option<PkgScope>, want: PkgScope) -> Res {
     Ok(())
 }
 
-fn resolve_pkg_scope(cli: Option<PkgScope>, config: &Config) -> Result<PkgScope, crate::CargoTruceError> {
+fn resolve_pkg_scope(
+    cli: Option<PkgScope>,
+    config: &Config,
+) -> Result<PkgScope, crate::CargoTruceError> {
     if let Some(s) = cli {
         return Ok(s);
     }

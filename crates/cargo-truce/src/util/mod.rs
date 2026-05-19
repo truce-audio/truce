@@ -51,7 +51,10 @@ pub(crate) mod fs_ctx {
     use std::fs;
     use std::path::Path;
 
-    pub(crate) fn copy(from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<u64, CargoTruceError> {
+    pub(crate) fn copy(
+        from: impl AsRef<Path>,
+        to: impl AsRef<Path>,
+    ) -> Result<u64, CargoTruceError> {
         let (from, to) = (from.as_ref(), to.as_ref());
         fs::copy(from, to)
             .map_err(|e| format!("copy {} -> {}: {e}", from.display(), to.display()).into())
@@ -64,7 +67,10 @@ pub(crate) mod fs_ctx {
 
     // Both used only by AAX template + AU v3 staging on macOS / Windows.
     #[cfg(any(target_os = "macos", target_os = "windows"))]
-    pub(crate) fn write(path: impl AsRef<Path>, contents: impl AsRef<[u8]>) -> Result<(), CargoTruceError> {
+    pub(crate) fn write(
+        path: impl AsRef<Path>,
+        contents: impl AsRef<[u8]>,
+    ) -> Result<(), CargoTruceError> {
         let path = path.as_ref();
         fs::write(path, contents).map_err(|e| format!("write {}: {e}", path.display()).into())
     }
@@ -387,11 +393,12 @@ pub(crate) fn program_files() -> PathBuf {
 /// fix the right thing.
 pub(crate) fn read_workspace_version(root: &Path) -> Result<String, crate::CargoTruceError> {
     let path = root.join("Cargo.toml");
-    let content = fs::read_to_string(&path)
-        .map_err(|e| -> crate::CargoTruceError { format!("read {}: {e}", path.display()).into() })?;
-    let doc: toml::Table = content
-        .parse()
-        .map_err(|e| -> crate::CargoTruceError { format!("parse {}: {e}", path.display()).into() })?;
+    let content = fs::read_to_string(&path).map_err(|e| -> crate::CargoTruceError {
+        format!("read {}: {e}", path.display()).into()
+    })?;
+    let doc: toml::Table = content.parse().map_err(|e| -> crate::CargoTruceError {
+        format!("parse {}: {e}", path.display()).into()
+    })?;
     if let Some(v) = doc
         .get("workspace")
         .and_then(|w| w.get("package"))
@@ -750,7 +757,10 @@ pub(crate) fn run_silent(cmd: &str, args: &[&OsStr]) {
 
 // Gated to macOS: only `cmd_status` (macOS impl) shells out to `auval`.
 #[cfg(target_os = "macos")]
-pub(crate) fn run_quiet(cmd: &str, args: &[&OsStr]) -> std::result::Result<String, CargoTruceError> {
+pub(crate) fn run_quiet(
+    cmd: &str,
+    args: &[&OsStr],
+) -> std::result::Result<String, CargoTruceError> {
     let output = Command::new(cmd).args(args).output()?;
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }

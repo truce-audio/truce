@@ -719,4 +719,3 @@ impl Iterator for NSEnumerator {
         (!obj.is_null()).then_some(obj)
     }
 }
-

@@ -525,4 +525,3 @@ unsafe fn blit_pixmap_to_layer(view: *mut AnyObject, width: u32, height: u32, rg
         CGImageRelease(image);
     }
 }
-

@@ -208,7 +208,10 @@ pub(crate) fn build_aax_template(sdk_path: &Path, universal_mac: bool) -> Res {
 /// coverage we need. Incremental cmake makes subsequent runs a
 /// no-op once the library is warm.
 #[cfg(target_os = "macos")]
-fn ensure_aax_sdk_library(sdk_path: &Path, universal_mac: bool) -> Result<PathBuf, crate::CargoTruceError> {
+fn ensure_aax_sdk_library(
+    sdk_path: &Path,
+    universal_mac: bool,
+) -> Result<PathBuf, crate::CargoTruceError> {
     let build_dir = sdk_path.join("build-truce");
     let lib_path = build_dir.join("Libs/AAXLibrary/libAAXLibrary.a");
 
