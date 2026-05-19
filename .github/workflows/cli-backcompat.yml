@@ -28,13 +28,14 @@ concurrency:
 # (effect, instrument, workspace-mixed) run as parallel matrix jobs
 # so a regression in one template doesn't mask the others. Tag
 # resolution runs once in a setup job and feeds the matrix.
-#
-# See `../truce-docs/docs/internal/scaffold-backcompat-check.md`.
 
 # `cargo install` of the released cargo-truce takes ~1 min on a
 # fresh runner; we cache it by tag and reuse across the three
 # matrix shapes. The setup job resolves the tag and primes the
-# cache; the matrix jobs always hit the cache.
+# cache. The matrix jobs use `actions/cache/restore` (read-only)
+# and fall back to installing themselves on miss - the first run
+# of a new tag races cache upload against matrix-job dispatch and
+# can land on a cache miss, so the matrix must be self-sufficient.
 jobs:
   setup:
     name: resolve last release
@@ -106,14 +107,24 @@ jobs:
           key: cli-backcompat-${{ matrix.shape.id }}
           cache-bin: false
 
-      # Restore the cargo-truce binary the setup job primed. The cache
-      # key matches the one in the setup job, so this is always a hit
-      # by the time the matrix runs.
+      # Restore the cargo-truce binary the setup job primed. On a
+      # cache miss (new tag, cache propagation lag), the next step
+      # installs the binary directly so this matrix is self-sufficient.
       - name: Restore released cargo-truce from cache
-        uses: actions/cache@v4
+        id: cache-restore
+        uses: actions/cache/restore@v4
         with:
           path: ${{ runner.temp }}/old-cargo-truce
           key: old-cargo-truce-${{ needs.setup.outputs.tag }}-macos-14
+
+      - name: Install released cargo-truce (cache-miss fallback)
+        if: steps.cache-restore.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          cargo install --git https://github.com/truce-audio/truce \
+                        --tag "${{ needs.setup.outputs.tag }}" \
+                        cargo-truce \
+                        --root "$RUNNER_TEMP/old-cargo-truce"
 
       - name: Show released cargo-truce version
         shell: bash
