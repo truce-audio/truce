@@ -12,7 +12,7 @@ category = "{p.category}"
 fourcc = "{p.fourcc}"
 au_tag = "{p.au_tag}"
 {{ endfor }}{{ if suite }}
-# Suite installer — bundles every plugin above into a single
+# Suite installer - bundles every plugin above into a single
 # `.pkg` (macOS), `.exe` (Windows) and `.tar.gz` (Linux) so end
 # users install the whole collection in one go. The per-plugin
 # installers still ship in parallel; pass `--no-per-plugin` to

@@ -6,10 +6,16 @@ homepage.workspace = true
 edition.workspace = true
 license-file.workspace = true
 rust-version.workspace = true
-description = "Lightweight GUI types for truce — layout, render trait, widget regions. No rasterization, no windowing."
+description = "Lightweight GUI types for truce - layout, render trait, widget regions. No rasterization, no windowing."
 
 [dependencies]
 truce-core = { workspace = true }
+
+# iOS-only Obj-C runtime bindings, used by the `ios` module's
+# `ivar_offset` helper. Other GUI backends pick this up transitively
+# via `truce-gui` and call into the helpers from their `editor_ios.rs`.
+[target.'cfg(target_os = "ios")'.dependencies]
+objc2 = "0.6"
 
 [lints]
 workspace = true

@@ -10,11 +10,11 @@
  * load every installed `.component` into one process; if two plugins
  * publish a class with the same name, `libobjc` keeps the first one
  * and `[NSBundle classNamed:name]` on the loser's bundle returns nil
- * — the host then thinks the plugin has no GUI. Uniqueness comes
+ * - the host then thinks the plugin has no GUI. Uniqueness comes
  * from the `TRUCE_AU_PLUGIN_ID` env var that `cargo-truce` sets at
  * build time; the build.rs sanitises and passes it as a `-D` define.
  * Without that env (plain `cargo build` for unit tests), the class
- * falls back to a default name — fine for isolated tests, not for
+ * falls back to a default name - fine for isolated tests, not for
  * multi-plugin hosting.
  */
 
@@ -28,13 +28,13 @@
 //   64000: AuPlugin context pointer (rustCtx)
 //   64001: pointer to the AU's AuCallbacks table (g_callbacks of the
 //          dylib that owns this AudioUnit). Reading both via the AU
-//          dispatch table keeps the methods plugin-agnostic — per-
+//          dispatch table keeps the methods plugin-agnostic - per-
 //          dylib globals reached are always the right ones.
 #define kTrucePrivateProperty_RustContext  64000
 #define kTrucePrivateProperty_AuCallbacks  64001
 
 #ifndef TRUCE_AU_VIEW_FACTORY_NAME
-// Default name when `TRUCE_AU_PLUGIN_ID` is unset — keeps `cargo build`
+// Default name when `TRUCE_AU_PLUGIN_ID` is unset - keeps `cargo build`
 // of the workspace cdylibs working for unit tests.
 #define TRUCE_AU_VIEW_FACTORY_NAME TruceAUCocoaViewProxy
 #endif

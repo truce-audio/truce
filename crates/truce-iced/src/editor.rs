@@ -21,9 +21,7 @@ use crate::auto_layout;
 use crate::param_cache::ParamCache;
 use crate::param_message::{Message, ParamMessage};
 
-// ---------------------------------------------------------------------------
 // IcedPlugin trait - what plugin authors implement
-// ---------------------------------------------------------------------------
 
 /// Trait for plugin-specific iced UI logic.
 ///
@@ -65,9 +63,7 @@ pub trait IcedPlugin<P: Params>: Sized + 'static {
     fn state_changed(&mut self) {}
 }
 
-// ---------------------------------------------------------------------------
 // AutoPlugin - built-in plugin for GridLayout auto mode
-// ---------------------------------------------------------------------------
 
 /// Built-in `IcedPlugin` that generates a view from a `GridLayout`.
 pub struct AutoPlugin {
@@ -86,9 +82,7 @@ impl<P: Params> IcedPlugin<P> for AutoPlugin {
     }
 }
 
-// ---------------------------------------------------------------------------
 // IcedProgram - adapts IcedPlugin to iced_runtime::Program
-// ---------------------------------------------------------------------------
 
 pub(crate) struct IcedProgram<P: Params + 'static, M: IcedPlugin<P>> {
     pub(crate) plugin: M,
@@ -139,9 +133,7 @@ impl<P: Params + 'static, M: IcedPlugin<P>> iced_runtime::Program for IcedProgra
     }
 }
 
-// ---------------------------------------------------------------------------
 // IcedEditor - main entry point, implements truce_core::Editor
-// ---------------------------------------------------------------------------
 
 /// Iced-based plugin editor.
 ///
@@ -276,9 +268,7 @@ impl<P: Params + 'static, M: IcedPlugin<P> + 'static> IcedEditor<P, M> {
     }
 }
 
-// ---------------------------------------------------------------------------
 // IcedRuntime - active iced state (exists only while editor is open)
-// ---------------------------------------------------------------------------
 
 struct IcedRuntime<P: Params, M: IcedPlugin<P>> {
     /// Rendering pipeline - initialized lazily when the baseview window
@@ -564,9 +554,7 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Baseview window handler (all platforms)
-// ---------------------------------------------------------------------------
 
 struct IcedBaseviewHandler<P: Params + 'static, M: IcedPlugin<P>> {
     editor: *mut IcedEditor<P, M>,
@@ -735,9 +723,7 @@ impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBase
     }
 }
 
-// ---------------------------------------------------------------------------
 // Editor trait implementation
-// ---------------------------------------------------------------------------
 
 impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
     fn size(&self) -> (u32, u32) {

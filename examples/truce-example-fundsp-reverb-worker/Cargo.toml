@@ -40,7 +40,7 @@ clap-sys = { version = "0.5", optional = true }
 truce-standalone = { workspace = true, features = ["gui"], optional = true }
 truce-gui = { workspace = true }
 truce-loader = { workspace = true }
-# fundsp 0.23's main prelude runs every node in f32 — matches truce's
+# fundsp 0.23's main prelude runs every node in f32 - matches truce's
 # default `prelude` import, no widen/narrow on the audio boundary.
 # Pinned to a minor version because fundsp moves combinator surface
 # (e.g. `hacker` module dropped between 0.22 and 0.23) on every release.

@@ -22,9 +22,7 @@ pub use truce_gui::platform::{ParentWindow, create_wgpu_surface};
 
 pub use truce_gui::platform::query_backing_scale;
 
-// ---------------------------------------------------------------------------
 // Slint Platform - registered once per process
-// ---------------------------------------------------------------------------
 
 // Thread-local slot used to pass a pre-created `MinimalSoftwareWindow` to
 // `create_window_adapter()`. Set this before creating a Slint component so
@@ -132,9 +130,7 @@ pub fn create_slint_window() -> Rc<MinimalSoftwareWindow> {
     window
 }
 
-// ---------------------------------------------------------------------------
 // Pixel buffer rendering helper
-// ---------------------------------------------------------------------------
 
 /// Per-α reciprocal table: `UNPREMUL_LUT[a] = floor((255 << 16) / a)`
 /// for `a ∈ 1..=255`, slot `0` unused (the `α == 0` fast path skips

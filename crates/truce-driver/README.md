@@ -5,36 +5,36 @@ Headless driver for truce plugins.
 ## Overview
 
 Instantiate a plugin, feed it scripted audio + events for a fixed
-duration, capture the output — no DAW, no format wrapper, no GUI.
+duration, capture the output - no DAW, no format wrapper, no GUI.
 Three consumers in-tree:
 
-- **[`truce-test`](../truce-test)** — assertion helpers
+- **[`truce-test`](../truce-test)** - assertion helpers
   (`assert_state_round_trip`, `assert_nonzero`, the `driver!`
   macro) layered on top of the captured `DriverResult`.
-- **`truce-standalone`'s offline-render path** — `cargo truce run
+- **`truce-standalone`'s offline-render path** - `cargo truce run
   --no-playback` parses CLI flags into an `InputSource::Buffer` +
   `Script`, runs `PluginDriver`, writes the captured audio out
   as WAV.
-- **Plugin authors writing custom `main.rs` binaries** — batch
+- **Plugin authors writing custom `main.rs` binaries** - batch
   CI renders, demo audio generation, preset-rendering pipelines.
 
 ## Key types
 
-- **`PluginDriver<P>`** — the builder. Carries sample rate, block
+- **`PluginDriver<P>`** - the builder. Carries sample rate, block
   size, channel count, the input source, the script, the
   transport state, and the capture spec.
-- **`InputSource`** — `Silence` / `Constant` / `Buffer(Vec<Vec<f32>>)` /
+- **`InputSource`** - `Silence` / `Constant` / `Buffer(Vec<Vec<f32>>)` /
   `Generator(Box<dyn FnMut(usize, f64) -> f32>)`.
-- **`Script`** — sample-accurate sequence of `EventBody`s with a
+- **`Script`** - sample-accurate sequence of `EventBody`s with a
   cursor (`note_on`, `note_off`, `set_param`, `wait_ms`, …).
-- **`CaptureSpec`** — what to capture per block (audio, output
+- **`CaptureSpec`** - what to capture per block (audio, output
   events, meters, param snapshots).
-- **`DriverResult`** — the post-run capture, indexable by channel.
+- **`DriverResult`** - the post-run capture, indexable by channel.
 
 ## Precision
 
-`PluginDriver` routes through `RawBufferScratch<P::Sample>` — the
-same widening/narrowing path the format wrappers use — so
+`PluginDriver` routes through `RawBufferScratch<P::Sample>` - the
+same widening/narrowing path the format wrappers use - so
 `prelude64` plugins can be driven in headless tests with the
 wrapper-boundary conversion done internally. The driver's public
 input / output buffers are always `f32` (host-wire); the plugin's

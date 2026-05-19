@@ -31,6 +31,9 @@ pub mod snapshot;
 pub mod theme;
 pub mod widgets;
 
+#[cfg(target_os = "ios")]
+pub mod ios;
+
 pub use render::{ImageId, RenderBackend};
 pub use snapshot::ParamSnapshot;
 pub use theme::Theme;

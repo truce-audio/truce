@@ -12,18 +12,18 @@ inheriting the audio / params / GUI dependency closure that
 
 ## Modules
 
-- **`cast`** — numeric-cast helpers for the audio-plugin / host
+- **`cast`** - numeric-cast helpers for the audio-plugin / host
   FFI boundary: `usize ↔ u32` length casts with overflow asserts,
   host-`f64` ↔ DSP-`i64` sample-position narrowing,
   `discrete_index` / `discrete_norm` for stepped-param math.
   Idempotent NaN/inf-safe.
-- **`midi`** — value-domain normalize / denormalize between
+- **`midi`** - value-domain normalize / denormalize between
   wire-native integers (`u7`, 14-bit pitch bend) and `f32`
   ranges, plus the MIDI spec's MIDI 1.0 ↔ MIDI 2.0 bit-replication
   bridges.
-- **`slugify`** — `&str → kebab-case-string` for bundle names and
+- **`slugify`** - `&str → kebab-case-string` for bundle names and
   install paths.
-- **`shell_sidecar`** — resolves the `$HOME/.truce/shell/<crate>.path`
+- **`shell_sidecar`** - resolves the `$HOME/.truce/shell/<crate>.path`
   sidecar that `cargo truce install --shell` writes, so a
   hot-reload-mode shell can find its matching logic dylib at
   runtime.

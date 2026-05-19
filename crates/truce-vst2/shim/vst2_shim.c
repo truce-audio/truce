@@ -2,7 +2,7 @@
  * Truce VST2 shim.
  *
  * Implements the AEffect interface, calling back into Rust for all
- * plugin logic. Clean-room implementation — no Steinberg SDK headers.
+ * plugin logic. Clean-room implementation - no Steinberg SDK headers.
  */
 
 #include "vst2_types.h"
@@ -43,7 +43,7 @@ void truce_vst2_register(
  * --------------------------------------------------------------------------- */
 
 typedef struct {
-    AEffect effect;             /* MUST be first — host casts pointer */
+    AEffect effect;             /* MUST be first - host casts pointer */
     void* rust_ctx;
     audioMasterCallback master;
     float sample_rate;
@@ -106,7 +106,7 @@ static VstIntPtr dispatcher(AEffect* e, int32_t opcode, int32_t index,
             if (!g_vst2_callbacks || !inst->rust_ctx || !ptr) return 0;
             if (!g_vst2_callbacks->gui_has_editor(inst->rust_ctx)) return 0;
             if (!inst->state_loaded) {
-                /* Editor requested before state restored — defer gui_open */
+                /* Editor requested before state restored - defer gui_open */
                 inst->deferred_parent = ptr;
             } else {
                 g_vst2_callbacks->gui_open(inst->rust_ctx, ptr);
@@ -130,7 +130,7 @@ static VstIntPtr dispatcher(AEffect* e, int32_t opcode, int32_t index,
 
         case effMainsChanged:
             if (value && g_vst2_callbacks && inst->rust_ctx) {
-                /* Fresh instance (no saved state) — allow deferred editor to open */
+                /* Fresh instance (no saved state) - allow deferred editor to open */
                 if (!inst->state_loaded) {
                     inst->state_loaded = 1;
                     if (inst->deferred_parent) {
@@ -165,7 +165,7 @@ static VstIntPtr dispatcher(AEffect* e, int32_t opcode, int32_t index,
                      * `EventList`'s SysEx pool synchronously.
                      *
                      * Real-world VST2 hosts (Cubase, Reaper) deliver
-                     * framed SysEx — leading 0xF0, trailing 0xF7 —
+                     * framed SysEx - leading 0xF0, trailing 0xF7 -
                      * per the Steinberg vendor extension's
                      * `sysexDump` convention. Truce's internal
                      * `EventBody::SysEx` stores inner bytes only,
@@ -243,7 +243,7 @@ static VstIntPtr dispatcher(AEffect* e, int32_t opcode, int32_t index,
             if (strcmp(s, "bypass") == 0) {
                 /* Advertise bypass support only if the plugin actually
                  * has an IS_BYPASS-flagged param wired into the
-                 * descriptor — the effSetBypass handler is a no-op
+                 * descriptor - the effSetBypass handler is a no-op
                  * otherwise. */
                 return (g_vst2_descriptor
                         && g_vst2_descriptor->bypass_param_id != 0xFFFFFFFFu)
@@ -283,7 +283,7 @@ static VstIntPtr dispatcher(AEffect* e, int32_t opcode, int32_t index,
             return 0;
         }
 
-        /* opcode 44 — host announces bypass on/off. Route to the
+        /* opcode 44 - host announces bypass on/off. Route to the
          * IS_BYPASS-flagged param (if any) so the param value tracks
          * the host's master-bypass UI. `value` is 0 (off) or 1 (on). */
         case 44 /* effSetBypass */: {
@@ -332,7 +332,7 @@ void truce_vst2_host_automate(AEffect* e, uint32_t param_id, float normalized) {
 /* Fill `out` with the host's current transport state.
  *
  * Wraps `audioMasterGetTime`. Returns with `out->valid = 0` if the host
- * refuses (rare in practice — most hosts always return time info). Safe
+ * refuses (rare in practice - most hosts always return time info). Safe
  * to call from the audio thread: the host callback is blocking but
  * expected to complete in tens of nanoseconds. */
 void truce_vst2_host_get_time(AEffect* e, Vst2TransportSnapshot* out) {
@@ -487,7 +487,7 @@ static void processReplacing(AEffect* e, float** inputs, float** outputs,
                  * the per-block scratch. Real-world VST2 hosts
                  * expect framed SysEx per the Steinberg vendor
                  * extension; truce's pool stores inner bytes only.
-                 * Skip the event if the scratch is exhausted —
+                 * Skip the event if the scratch is exhausted -
                  * truncating SysEx is never the right answer. */
                 uint32_t framed_len = len + 2;
                 if (inst->sysex_out_used + framed_len > sizeof(inst->sysex_out_scratch)) {
@@ -539,7 +539,7 @@ AEffect* VSTPluginMain(audioMasterCallback audioMaster) {
 
     /* `effFlagsIsSynth` is the VST2 signal "host should route MIDI to
      * me." Both instruments (`aumu`) and MIDI processors (`aumi`,
-     * arpeggiators / chord generators) need it — without it, hosts
+     * arpeggiators / chord generators) need it - without it, hosts
      * default to audio-only routing and the MIDI input never arrives.
      * VST2 has no separate "MIDI effect" category, so setting the
      * synth bit is the documented workaround. */

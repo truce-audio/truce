@@ -28,7 +28,7 @@ use crate::{Config, PluginDef};
 pub(crate) fn pick_plugins<'a>(
     config: &'a Config,
     filter: Option<&str>,
-) -> Result<Vec<&'a PluginDef>, crate::BoxErr> {
+) -> Result<Vec<&'a PluginDef>, crate::CargoTruceError> {
     match filter {
         Some(f) => {
             let matched: Vec<_> = config.plugin.iter().filter(|p| p.crate_name == f).collect();

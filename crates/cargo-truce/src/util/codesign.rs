@@ -252,7 +252,7 @@ pub(crate) fn verify_signed_for_notarization(path: &Path, identity: &str) -> cra
 /// Inspect a single Mach-O via `codesign -d -vvvv` and return any
 /// notarization-blocking issues. Empty Vec = passes.
 #[cfg(target_os = "macos")]
-fn check_mach_o_signing(path: &Path) -> Result<Vec<String>, crate::BoxErr> {
+fn check_mach_o_signing(path: &Path) -> Result<Vec<String>, crate::CargoTruceError> {
     let path_str = path.to_str().ok_or("Mach-O path is not UTF-8")?;
     let output = Command::new("codesign")
         .args(["-d", "-vvvv", path_str])

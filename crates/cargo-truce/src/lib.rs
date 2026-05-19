@@ -109,7 +109,6 @@ pub(crate) use util::{
 use std::process::ExitCode;
 
 pub type Res = std::result::Result<(), CargoTruceError>;
-pub type BoxErr = CargoTruceError;
 
 /// Run a command with the given args (e.g. `["install", "--clap"]`).
 ///

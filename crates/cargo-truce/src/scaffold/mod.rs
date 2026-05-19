@@ -26,7 +26,7 @@ mod spec;
 use std::fs;
 use std::path::Path;
 
-use crate::{BoxErr, Res};
+use crate::{CargoTruceError, Res};
 
 use context::{PluginScaffoldingContext, TruceTomlContext, WorkspaceContext};
 use layout::{ProjectLayout, WorkspaceLayout};
@@ -204,6 +204,6 @@ impl Scaffolder {
 /// error so failures are diagnosable.
 fn write(path: &Path, content: String) -> Res {
     fs::write(path, content)
-        .map_err(|e| -> BoxErr { format!("write {}: {}", path.display(), e).into() })?;
+        .map_err(|e| -> CargoTruceError { format!("write {}: {}", path.display(), e).into() })?;
     Ok(())
 }

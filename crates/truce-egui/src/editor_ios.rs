@@ -21,6 +21,7 @@ use objc2::sel;
 use objc2_foundation::{NSPoint, NSRect, NSSize};
 
 use truce_core::editor::{Editor, PluginContext, RawWindowHandle};
+use truce_gui::ios::{TouchPhase, fnv1a_64, ivar_offset};
 use truce_params::Params;
 
 use crate::renderer::EguiRenderer;
@@ -251,9 +252,7 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
     }
 }
 
-// ---------------------------------------------------------------------------
 // UIView subclass with CAMetalLayer + CADisplayLink + touch handlers
-// ---------------------------------------------------------------------------
 
 const INNER_PTR_IVAR: &std::ffi::CStr = c"_truce_egui_inner_ptr";
 
@@ -565,16 +564,7 @@ unsafe extern "C" fn touches_cancelled<P: Params + 'static>(
     unsafe { dispatch_touch::<P>(self_, touches, TouchPhase::Ended) }
 }
 
-#[derive(Clone, Copy)]
-enum TouchPhase {
-    Began,
-    Moved,
-    Ended,
-}
-
-// ---------------------------------------------------------------------------
 // UIKeyInput conformance - drives the iOS soft keyboard for egui text widgets
-// ---------------------------------------------------------------------------
 
 unsafe extern "C" fn can_become_first_responder(_self: &AnyObject, _cmd: Sel) -> Bool {
     Bool::YES
@@ -701,32 +691,3 @@ unsafe fn dispatch_touch<P: Params + 'static>(
     }
 }
 
-// ---------------------------------------------------------------------------
-// Utilities - lifted from truce-gui::editor_ios (kept duplicated; both
-// crates need them, and the helper is six lines).
-// ---------------------------------------------------------------------------
-
-fn fnv1a_64(bytes: &[u8]) -> u64 {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for &b in bytes {
-        h ^= u64::from(b);
-        h = h.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    h
-}
-
-unsafe fn ivar_offset(cls: &AnyClass, name: &std::ffi::CStr) -> usize {
-    unsafe extern "C" {
-        fn class_getInstanceVariable(
-            cls: *const AnyClass,
-            name: *const std::os::raw::c_char,
-        ) -> *mut std::ffi::c_void;
-        fn ivar_getOffset(ivar: *mut std::ffi::c_void) -> isize;
-    }
-    unsafe {
-        let ivar = class_getInstanceVariable(std::ptr::from_ref::<AnyClass>(cls), name.as_ptr());
-        assert!(!ivar.is_null(), "ivar {name:?} not registered");
-        let off = ivar_getOffset(ivar);
-        usize::try_from(off).expect("non-negative ivar offset")
-    }
-}

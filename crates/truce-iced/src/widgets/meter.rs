@@ -82,9 +82,7 @@ impl<'a, M: Clone + Debug + 'static> From<MeterWidget<'a, M>> for Element<'a, Me
     }
 }
 
-// ---------------------------------------------------------------------------
 // Canvas program
-// ---------------------------------------------------------------------------
 
 struct MeterProgram {
     values: Vec<f32>,

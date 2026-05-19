@@ -258,7 +258,7 @@ Run 'cargo truce new <name>' to scaffold a new project."
     );
 }
 
-use cargo_truce::{BoxErr, Res};
+use cargo_truce::{CargoTruceError, Res};
 
 // ---------------------------------------------------------------------------
 // new - single standalone plugin
@@ -335,7 +335,7 @@ struct NewArgs {
     workspace_mode: bool,
 }
 
-fn parse_new_args(args: &[String]) -> Result<NewArgs, BoxErr> {
+fn parse_new_args(args: &[String]) -> Result<NewArgs, CargoTruceError> {
     let mut name: Option<String> = None;
     let mut plugin_names: Vec<String> = Vec::new();
     let mut default_kind = PluginKind::Effect;

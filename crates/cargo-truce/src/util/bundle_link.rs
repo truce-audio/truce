@@ -206,7 +206,7 @@ fn clang_bundle_single(
 
     let output = cmd
         .output()
-        .map_err(|e| -> crate::BoxErr { format!("invoking clang for bundle link: {e}").into() })?;
+        .map_err(|e| -> crate::CargoTruceError { format!("invoking clang for bundle link: {e}").into() })?;
     if !output.status.success() {
         return Err(format!(
             "clang -bundle failed for {} ({arch_flag}):\n{}",

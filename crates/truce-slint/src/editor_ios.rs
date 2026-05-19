@@ -24,6 +24,7 @@ use slint::platform::software_renderer::{MinimalSoftwareWindow, PremultipliedRgb
 use slint::platform::{PointerEventButton, WindowAdapter, WindowEvent};
 
 use truce_core::editor::{Editor, PluginContext, RawWindowHandle};
+use truce_gui::ios::{TouchPhase, fnv1a_64, ivar_offset};
 use truce_params::Params;
 
 use crate::platform::{create_slint_window, ensure_platform, render_to_rgba};
@@ -206,9 +207,7 @@ impl<P: Params + 'static> Editor for SlintEditor<P> {
     }
 }
 
-// ---------------------------------------------------------------------------
 // UIView subclass + CADisplayLink + touch handling
-// ---------------------------------------------------------------------------
 
 const INNER_PTR_IVAR: &std::ffi::CStr = c"_truce_slint_inner_ptr";
 
@@ -417,13 +416,6 @@ unsafe extern "C" fn touches_cancelled<P: Params + 'static>(
     unsafe { dispatch_touch::<P>(self_, touches, TouchPhase::Ended) }
 }
 
-#[derive(Clone, Copy)]
-enum TouchPhase {
-    Began,
-    Moved,
-    Ended,
-}
-
 unsafe fn dispatch_touch<P: Params + 'static>(
     self_: &AnyObject,
     touches: *mut AnyObject,
@@ -464,12 +456,10 @@ unsafe fn dispatch_touch<P: Params + 'static>(
     }
 }
 
-// ---------------------------------------------------------------------------
 // CGImage blit - same shape as truce-gui::editor_ios. Duplicated
 // rather than shared because the helper is < 50 lines and lifting it
 // into a separate crate would force every alt-GUI backend to depend
 // on truce-gui, which we explicitly avoid.
-// ---------------------------------------------------------------------------
 
 #[link(name = "CoreGraphics", kind = "framework")]
 unsafe extern "C" {
@@ -536,31 +526,3 @@ unsafe fn blit_pixmap_to_layer(view: *mut AnyObject, width: u32, height: u32, rg
     }
 }
 
-// ---------------------------------------------------------------------------
-// Utilities
-// ---------------------------------------------------------------------------
-
-fn fnv1a_64(bytes: &[u8]) -> u64 {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for &b in bytes {
-        h ^= u64::from(b);
-        h = h.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    h
-}
-
-unsafe fn ivar_offset(cls: &AnyClass, name: &std::ffi::CStr) -> usize {
-    unsafe extern "C" {
-        fn class_getInstanceVariable(
-            cls: *const AnyClass,
-            name: *const std::os::raw::c_char,
-        ) -> *mut std::ffi::c_void;
-        fn ivar_getOffset(ivar: *mut std::ffi::c_void) -> isize;
-    }
-    unsafe {
-        let ivar = class_getInstanceVariable(std::ptr::from_ref::<AnyClass>(cls), name.as_ptr());
-        assert!(!ivar.is_null(), "ivar {name:?} not registered");
-        let off = ivar_getOffset(ivar);
-        usize::try_from(off).expect("non-negative ivar offset")
-    }
-}

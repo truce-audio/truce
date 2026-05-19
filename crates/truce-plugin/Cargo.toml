@@ -6,7 +6,7 @@ homepage.workspace = true
 edition.workspace = true
 license-file.workspace = true
 rust-version.workspace = true
-description = "User-facing PluginLogic traits for truce — the plugin author's entry point."
+description = "User-facing PluginLogic traits for truce - the plugin author's entry point."
 
 [dependencies]
 truce-core = { workspace = true }

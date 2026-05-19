@@ -67,7 +67,7 @@ typedef struct {
     // to hold one MIDIPacketList of up to 256 SysEx events whose
     // total framed payload tops out at truce_core::SYSEX_POOL_PREALLOC
     // (128 KiB) + 2 framing bytes per event. Per-packet overhead is
-    // ~14 B (timestamp + length + headers) — we allocate enough
+    // ~14 B (timestamp + length + headers) - we allocate enough
     // headroom that the entire pool of SysEx events fits in one
     // call to midiOutputCallback.
     Byte *sysexPacketBuf;
@@ -168,7 +168,7 @@ static void fill_param_event(AudioUnitEvent *event, AudioUnit unit,
  * cached value) and broadcasts a `kAudioUnitEvent_ParameterValueChange`
  * via `AUEventListenerNotify` so any registered AUEventListener sees
  * the change and records automation. `AudioUnitSetParameter` alone does
- * not synthesise the listener notification — hosts that thin / record
+ * not synthesise the listener notification - hosts that thin / record
  * automation rely on the explicit broadcast. */
 void truce_au_v2_host_set_param(void *ctx, uint32_t param_id, float value) {
     TruceAUv2 *inst = au_ctx_map_lookup(ctx);
@@ -223,7 +223,7 @@ static int is_instrument(void) {
  *
  * Returns the next free `MIDIPacket *` for further appends, or NULL
  * when even an empty list can't hold this packet (the event is
- * dropped — truncating MIDI / `SysEx` is corrupt). On flush the
+ * dropped - truncating MIDI / `SysEx` is corrupt). On flush the
  * callsite's `*pkt` is replaced with a fresh init pointer.
  *
  * Centralised here so the channel-voice and `SysEx` drains share
@@ -561,7 +561,7 @@ static OSStatus au_v2_get_property(void *self_, AudioUnitPropertyID prop,
 
         case kAudioUnitProperty_MIDIOutputCallbackInfo: {
             /* Hosts that read this expect a CFArray of CFString port
-             * names — one entry per logical MIDI output port. truce
+             * names - one entry per logical MIDI output port. truce
              * exposes a single port; "Truce MIDI Out" is the visible
              * label in the host's MIDI routing UI. The CFArray
              * ownership transfers to the caller. */
@@ -641,7 +641,7 @@ static OSStatus au_v2_get_property(void *self_, AudioUnitPropertyID prop,
             // `au_v2_view.m` and registered with the ObjC runtime
             // automatically when the dylib loads (via the compiler's
             // `__objc_classlist`). `truce_au_view_factory_class_name`
-            // returns this dylib's unique class name — see au_v2_view.m
+            // returns this dylib's unique class name - see au_v2_view.m
             // for why each plugin needs its own.
             extern const char *truce_au_view_factory_class_name(void);
             viewInfo->mCocoaAUViewClass[0] = CFStringCreateWithCString(
@@ -663,7 +663,7 @@ static OSStatus au_v2_get_property(void *self_, AudioUnitPropertyID prop,
              * rather than touching dylib globals directly. That keeps
              * the view shim source identical across plugins, even
              * though each plugin compiles its own uniquely-named
-             * class — every property fetch lands in the dylib that
+             * class - every property fetch lands in the dylib that
              * owns the AU instance, which is always the correct one. */
             *(const AuCallbacks **)outData = g_callbacks;
             *ioSize = sizeof(void*);
@@ -962,7 +962,7 @@ static OSStatus au_v2_schedule_parameters(void *self_,
 // Render
 // ---------------------------------------------------------------------------
 
-/* Fill `out` from HostCallbackInfo. Each proc is optional — missing
+/* Fill `out` from HostCallbackInfo. Each proc is optional - missing
  * callbacks leave their corresponding fields at zero. `valid` is set
  * to 1 as long as at least one proc returned successfully. */
 static void fill_transport_snapshot(TruceAUv2 *inst,
@@ -1024,7 +1024,7 @@ static void fill_transport_snapshot(TruceAUv2 *inst,
     }
     if (ok == 0 && ts && (ts->mFlags & kAudioTimeStampSampleTimeValid)) {
         // Fall back to the render timestamp if the host has no transport
-        // procs — at least gives the plugin a sample position.
+        // procs - at least gives the plugin a sample position.
         out->position_samples = ts->mSampleTime;
         ok = 1;
     }
@@ -1042,7 +1042,7 @@ static OSStatus au_v2_render(void *self_,
     if (!inst->initialized || !g_callbacks || !inst->rustCtx)
         return kAudioUnitErr_Uninitialized;
 
-    // Clear the output-is-silence flag — we produce audio
+    // Clear the output-is-silence flag - we produce audio
     if (ioFlags) *ioFlags &= ~kAudioUnitRenderAction_OutputIsSilence;
 
     if (inFrameCount > inst->maxFramesPerSlice)
@@ -1095,12 +1095,12 @@ static OSStatus au_v2_render(void *self_,
         }
     }
 
-    // Save host's original buffer pointers — we MUST write back to these
+    // Save host's original buffer pointers - we MUST write back to these
     void *hostBufs[32] = {0};
     for (uint32_t c = 0; c < ioData->mNumberBuffers && c < 32; c++)
         hostBufs[c] = ioData->mBuffers[c].mData;
 
-    // Build channel pointers — process into our internal buffers
+    // Build channel pointers - process into our internal buffers
     const float *inPtrs[32];
     float *outPtrs[32];
 
@@ -1175,7 +1175,7 @@ static OSStatus au_v2_render(void *self_,
              * synchronously so reusing the scratch for the next
              * event is sound. If a single event exceeds the
              * packet-list size even on a freshly-flushed buffer,
-             * skip it — truncating SysEx is corrupt. */
+             * skip it - truncating SysEx is corrupt. */
             for (uint32_t i = 0; pkt && i < sx_count; i++) {
                 uint32_t delta = 0;
                 const uint8_t *bytes = NULL;
@@ -1201,7 +1201,7 @@ static OSStatus au_v2_render(void *self_,
 
             /* Flush whatever's left in the list. The loop above
              * already flushed once per `add` failure, so the final
-             * `pktList` may be empty — `numPackets == 0` is the
+             * `pktList` may be empty - `numPackets == 0` is the
              * documented signal not to call the host callback. */
             if (pktList->numPackets > 0) {
                 inst->midiOutputCallback(inst->midiOutputUserData,
@@ -1286,7 +1286,7 @@ static OSStatus au_v2_remove_render_notify(void *self_, AURenderCallback proc, v
 }
 
 // ---------------------------------------------------------------------------
-// Lookup — maps selectors to method function pointers
+// Lookup - maps selectors to method function pointers
 // ---------------------------------------------------------------------------
 
 static AudioComponentMethod au_v2_lookup(SInt16 selector) {
@@ -1338,10 +1338,10 @@ static AudioComponentMethod au_v2_lookup(SInt16 selector) {
 }
 
 // ---------------------------------------------------------------------------
-// Factory function — exported symbol, referenced by Info.plist factoryFunction.
+// Factory function - exported symbol, referenced by Info.plist factoryFunction.
 // Returns an AudioComponentPlugInInterface* (AU v2 interface). The
 // real definition is in the consumer cdylib via the Rust `export_au!`
-// macro — it forwards to `truce_au_v2_factory_bridge` defined below.
+// macro - it forwards to `truce_au_v2_factory_bridge` defined below.
 // ---------------------------------------------------------------------------
 
 static void *truce_au_v2_factory(const AudioComponentDescription *desc) {

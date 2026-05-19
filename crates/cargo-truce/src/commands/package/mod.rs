@@ -4,7 +4,7 @@
 //! `.pkg` pipeline (`macos.rs`) and the Windows Inno Setup pipeline
 //! (`packaging_windows`).
 
-use crate::BoxErr;
+use crate::CargoTruceError;
 #[cfg(target_os = "macos")]
 use crate::PluginDef;
 use crate::Res;
@@ -56,7 +56,7 @@ impl SuiteSelection {
 #[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
 pub(crate) fn extract_suite_selection(
     args: &[String],
-) -> Result<(SuiteSelection, Vec<String>), BoxErr> {
+) -> Result<(SuiteSelection, Vec<String>), CargoTruceError> {
     let mut sel = SuiteSelection::default();
     let mut remaining = Vec::with_capacity(args.len());
     let mut i = 0;
@@ -101,7 +101,7 @@ pub(crate) enum PkgFormat {
 }
 
 impl std::str::FromStr for PkgFormat {
-    type Err = BoxErr;
+    type Err = CargoTruceError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
@@ -244,7 +244,7 @@ impl PkgFormat {
     /// unknown token surfaces a "unknown format: …" error rather
     /// than a generic parse failure.
     #[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
-    pub(crate) fn parse_list(s: &str) -> Result<Vec<PkgFormat>, BoxErr> {
+    pub(crate) fn parse_list(s: &str) -> Result<Vec<PkgFormat>, CargoTruceError> {
         s.split(',').map(|t| t.trim().parse()).collect()
     }
 
@@ -405,7 +405,7 @@ fn package_ios(args: &[String]) -> Res {
         .plugin
         .iter()
         .find(|p| p.crate_name == crate_name || p.bundle_id == crate_name)
-        .ok_or_else(|| -> crate::BoxErr {
+        .ok_or_else(|| -> crate::CargoTruceError {
             format!("No plugin with crate name or bundle id '{crate_name}'.").into()
         })?;
     if xcframework_only {

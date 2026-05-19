@@ -26,7 +26,7 @@ clap-sys = "0.5"
 # truce-au  = \{ git = "https://github.com/truce-audio/truce", tag = "{tag}" }
 # truce-aax = \{ git = "https://github.com/truce-audio/truce", tag = "{tag}" }
 #
-# VST2 is a legacy format — the Steinberg VST2 SDK was deprecated in
+# VST2 is a legacy format - the Steinberg VST2 SDK was deprecated in
 # 2018 and distributing VST2 plugins may require agreement with
 # Steinberg's licensing terms. Enable only if you understand the
 # implications:

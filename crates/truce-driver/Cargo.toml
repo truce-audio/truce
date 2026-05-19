@@ -6,7 +6,7 @@ homepage.workspace = true
 edition.workspace = true
 license-file.workspace = true
 rust-version.workspace = true
-description = "Headless driver for truce plugins — instantiate, feed scripted audio + events, capture output"
+description = "Headless driver for truce plugins - instantiate, feed scripted audio + events, capture output"
 
 [dependencies]
 truce-core = { workspace = true }

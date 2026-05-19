@@ -1,5 +1,5 @@
 /**
- * AAX plugin entry point — GetEffectDescriptions.
+ * AAX plugin entry point - GetEffectDescriptions.
  *
  * Loads the Rust cdylib via the bridge, reads the plugin descriptor,
  * and registers with Pro Tools.
@@ -31,8 +31,8 @@
 // adds one extra `AddMIDINode` call for `mOutputNode` past the end of
 // the base struct. The render proc remains
 // `AAX_CMonolithicParameters::StaticRenderAudio`, which only reads
-// `mPrivateData->mMonolithicParametersPtr` — at the unchanged offset
-// — and dispatches to `parameters->RenderAudio(*ptr, ...)`. The cast
+// `mPrivateData->mMonolithicParametersPtr` - at the unchanged offset
+// - and dispatches to `parameters->RenderAudio(*ptr, ...)`. The cast
 // of `*ptr` back to `TruceAaxExtendedRenderInfo*` inside `RenderAudio`
 // is what gives the parameters object access to `mOutputNode`.
 static AAX_Result TruceDescribeOneConfig(
@@ -80,7 +80,7 @@ static AAX_Result TruceDescribeOneConfig(
     // `RenderAudio` to subscribers of this output node; the channel
     // mask isn't honored on output (Pro Tools accepts whatever channel
     // the packet's status byte carries), but the SDK still requires
-    // *some* mask be set — `0xFFFF` matches the input-MIDI default.
+    // *some* mask be set - `0xFFFF` matches the input-MIDI default.
     if (needsOutputMIDI) {
         err = compDesc->AddMIDINode(outputNodeID, AAX_eMIDINodeType_LocalOutput,
                                     outputMIDIName, 0xFFFF);
@@ -91,7 +91,7 @@ static AAX_Result TruceDescribeOneConfig(
     if (err != AAX_SUCCESS) return err;
 
     // Skip the additional input MIDI nodes (mNumAdditionalInputMIDINodes
-    // is always 0 for truce — we don't expose multi-port-input plugins).
+    // is always 0 for truce - we don't expose multi-port-input plugins).
 
     err = compDesc->AddAudioIn(AAX_FIELD_INDEX(TruceAaxExtendedRenderInfo, base.mAudioInputs));
     if (err != AAX_SUCCESS) return err;
@@ -102,7 +102,7 @@ static AAX_Result TruceDescribeOneConfig(
     err = compDesc->AddClock(AAX_FIELD_INDEX(TruceAaxExtendedRenderInfo, base.mClock));
     if (err != AAX_SUCCESS) return err;
 
-    // No meters declared — fill the slot with a small block of private
+    // No meters declared - fill the slot with a small block of private
     // data so the offset stays reserved (matches `StaticDescribe`'s
     // behavior for `mNumMeters == 0`).
     err = compDesc->AddPrivateData(AAX_FIELD_INDEX(TruceAaxExtendedRenderInfo, base.mMeters),
@@ -208,7 +208,7 @@ static bool GetBundlePath(char* out, size_t outLen) {
 #endif
 }
 
-// AAX entry point — called by Pro Tools on plugin load
+// AAX entry point - called by Pro Tools on plugin load
 AAX_Result GetEffectDescriptions(AAX_ICollection* outCollection) {
     // Load the Rust cdylib
     if (!g_bridge_loaded) {
@@ -252,8 +252,8 @@ AAX_Result GetEffectDescriptions(AAX_ICollection* outCollection) {
 
     // Register mono configuration. The Rust wrapper synthesizes
     // dummy stereo I/O for plugins that declare no audio buses
-    // (pure MIDI effects, instruments) — see the layout match in
-    // `truce-aax/src/lib.rs::register_aax` — so `num_inputs > 0`
+    // (pure MIDI effects, instruments) - see the layout match in
+    // `truce-aax/src/lib.rs::register_aax` - so `num_inputs > 0`
     // always holds at this point and `Mono` is the right choice.
     setupInfo.mInputStemFormat = AAX_eStemFormat_Mono;
     setupInfo.mOutputStemFormat = AAX_eStemFormat_Mono;

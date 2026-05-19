@@ -470,7 +470,7 @@ struct PackageArgs {
     target_cpu_arg: Option<String>,
 }
 
-fn parse_package_args(args: &[String]) -> Result<PackageArgs, crate::BoxErr> {
+fn parse_package_args(args: &[String]) -> Result<PackageArgs, crate::CargoTruceError> {
     let mut plugin_filter: Option<String> = None;
     let mut format_str: Option<String> = None;
     let mut no_notarize = false;
@@ -526,7 +526,7 @@ fn parse_package_args(args: &[String]) -> Result<PackageArgs, crate::BoxErr> {
 fn resolve_formats(
     format_str: Option<&str>,
     config: &Config,
-) -> Result<Vec<PkgFormat>, crate::BoxErr> {
+) -> Result<Vec<PkgFormat>, crate::CargoTruceError> {
     if let Some(s) = format_str {
         PkgFormat::parse_list(s)
     } else if !config.packaging.formats.is_empty() {
@@ -904,7 +904,7 @@ fn run_productbuild(
     components_dir: &Path,
     resources_dir: &Path,
     o: &PackageOpts,
-) -> Result<PathBuf, crate::BoxErr> {
+) -> Result<PathBuf, crate::CargoTruceError> {
     // Filename uses `crate_name` for per-plugin installers so the
     // output is consistent across macOS / Windows / Linux and across
     // plugins vs suites (which already key off a bundle/crate-style
@@ -1191,7 +1191,7 @@ fn set_cli_scope(slot: &mut Option<PkgScope>, want: PkgScope) -> Res {
     Ok(())
 }
 
-fn resolve_pkg_scope(cli: Option<PkgScope>, config: &Config) -> Result<PkgScope, crate::BoxErr> {
+fn resolve_pkg_scope(cli: Option<PkgScope>, config: &Config) -> Result<PkgScope, crate::CargoTruceError> {
     if let Some(s) = cli {
         return Ok(s);
     }

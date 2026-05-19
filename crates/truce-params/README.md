@@ -14,7 +14,7 @@ types inside your `Params` struct, then derive with `#[derive(Params)]`.
 - **`FloatParam`** -- continuous floating-point parameter (with smoother)
 - **`IntParam`** -- discrete integer parameter. Pick this over
   `FloatParam` whenever `range = "discrete(...)"` describes the
-  parameter — the type expresses intent and skips the unused
+  parameter - the type expresses intent and skips the unused
   smoother state.
 - **`BoolParam`** -- on/off toggle parameter
 - **`EnumParam`** -- parameter backed by a Rust enum (via `#[derive(ParamEnum)]`)
@@ -24,7 +24,7 @@ types inside your `Params` struct, then derive with `#[derive(Params)]`.
 - **`Float` / `Sample`** -- sealed traits over `f32` / `f64` that
   carry the cross-precision math methods (`to_f32`, `to_f64`,
   `from_f32`, `from_f64`, plus `exp`, `log10`, `powf`). `Sample`
-  is `Float + Default + Send + Sync + 'static` — the audio buffer
+  is `Float + Default + Send + Sync + 'static` - the audio buffer
   element bound.
 - **`FloatParamReadF32` / `FloatParamReadF64`** -- precision-routed
   read traits. The prelude brings one of them into scope as `_`;

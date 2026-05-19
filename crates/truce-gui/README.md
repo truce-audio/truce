@@ -14,7 +14,7 @@ Windowing is handled through baseview; the tiny-skia pixmap is uploaded to a
 wgpu surface each frame for compositing. All supported formats (CLAP, VST3,
 VST2, AU, LV2, AAX, standalone) use the same path.
 
-`truce-gui` is the **heavy** half of the GUI split — the
+`truce-gui` is the **heavy** half of the GUI split - the
 `BuiltinEditor` and its runtime dependencies (tiny-skia,
 baseview, fontdue, truce-font) live here. The lightweight
 trait + data surface (`GridLayout`, `RenderBackend`,

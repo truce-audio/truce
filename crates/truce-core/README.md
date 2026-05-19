@@ -12,7 +12,7 @@ format wrappers or GUI backends.
 ## Key types and traits
 
 - **`Plugin`** -- the wrapper-facing format-export trait. Plugin
-  authors don't implement this directly — the `truce::plugin!`
+  authors don't implement this directly - the `truce::plugin!`
   macro emits the impl. `Plugin::Sample` is the audio buffer's
   element type (`f32` / `f64`).
 - **`PluginExport`** -- wraps a `Plugin` for format-specific export

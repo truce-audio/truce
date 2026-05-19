@@ -40,7 +40,7 @@ TruceAAX_Parameters::~TruceAAX_Parameters() {
 }
 
 // ---------------------------------------------------------------------------
-// EffectInit — define parameters
+// EffectInit - define parameters
 // ---------------------------------------------------------------------------
 
 AAX_Result TruceAAX_Parameters::EffectInit() {
@@ -51,7 +51,7 @@ AAX_Result TruceAAX_Parameters::EffectInit() {
     if (!mRustCtx) return AAX_ERROR_NULL_OBJECT;
 
     // Initialize plugin with sample rate. Pre-size for the
-    // worst-case Pro Tools H/W buffer (8192 samples — the cap
+    // worst-case Pro Tools H/W buffer (8192 samples - the cap
     // exposed in the session settings, also used for offline
     // bounce). The plugin allocates internal scratch up to this
     // bound; per-block work in RenderAudio uses the actual
@@ -83,7 +83,7 @@ AAX_Result TruceAAX_Parameters::EffectInit() {
 
         // Pick the taper that matches Rust's `ParamRange` for this
         // param. AAX_CParameter stores the taper internally via
-        // `Clone()`, so a stack-local instance per branch is fine —
+        // `Clone()`, so a stack-local instance per branch is fine -
         // the constructor copies before this scope ends. A
         // matched taper is what stops a log-ranged knob from
         // fighting the editor: with the default linear taper,
@@ -128,7 +128,7 @@ AAX_Result TruceAAX_Parameters::EffectInit() {
 }
 
 // ---------------------------------------------------------------------------
-// RenderAudio — main processing callback
+// RenderAudio - main processing callback
 // ---------------------------------------------------------------------------
 
 void TruceAAX_Parameters::RenderAudio(
@@ -156,7 +156,7 @@ void TruceAAX_Parameters::RenderAudio(
 
     // Defensive: if the host violates the 8192-sample cap declared
     // in EffectInit, re-reset the plugin so its internal scratch
-    // can fit the new block. This will glitch the audio — but a
+    // can fit the new block. This will glitch the audio - but a
     // glitch is recoverable; reading past the end of an allocated
     // buffer is not.
     if (bufferSize > 0 && (uint32_t)bufferSize > mMaxBlockSize) {
@@ -248,7 +248,7 @@ void TruceAAX_Parameters::RenderAudio(
                     // SysEx start: status `0xF0` in the first byte of
                     // a packet. Subsequent packets carry only data
                     // bytes until a `0xF7` terminator. Per the AAX
-                    // SDK each `AAX_CMidiPacket` is one message — so
+                    // SDK each `AAX_CMidiPacket` is one message - so
                     // once we enter either `SysEx` branch the whole
                     // packet belongs to it (channel-voice is the
                     // explicit `else`).
@@ -351,7 +351,7 @@ void TruceAAX_Parameters::RenderAudio(
     // built in `TruceAAX_Describe.cpp` registered an extra `LocalOutput`
     // MIDI node past the end of `AAX_SInstrumentRenderInfo`; recover it
     // by casting `ioRenderInfo` back to the extended struct that the
-    // runtime actually populates (the cast is sound — same offsets for
+    // runtime actually populates (the cast is sound - same offsets for
     // the inherited fields, plus one extra slot for `mOutputNode`).
     auto* extendedInfo = reinterpret_cast<TruceAaxExtendedRenderInfo*>(ioRenderInfo);
     AAX_IMIDINode* outputNode = extendedInfo->mOutputNode;
@@ -388,7 +388,7 @@ void TruceAAX_Parameters::RenderAudio(
                 if (!bytes && len > 0) continue;
 
                 // Build framed stream on the fly without buffering
-                // the whole message — chunk loop reads the next byte
+                // the whole message - chunk loop reads the next byte
                 // from one of three sources (start marker, payload,
                 // end marker) based on position.
                 uint32_t totalLen = len + 2;     // +2 for 0xF0 / 0xF7
@@ -434,7 +434,7 @@ AAX_Result TruceAAX_Parameters::GetChunk(AAX_CTypeID chunkID, AAX_SPlugInChunk* 
     if (!mRustCtx || !g_bridge_loaded) return AAX_ERROR_NULL_OBJECT;
     // Prefer the blob cached by the immediately-preceding GetChunkSize
     // call. Fall back to a fresh serialize only if Pro Tools violates
-    // the usual size-then-copy contract (defensive — shouldn't happen).
+    // the usual size-then-copy contract (defensive - shouldn't happen).
     if (mPendingChunk.empty()) {
         uint8_t* data = nullptr;
         uint32_t len = g_bridge.save_state(mRustCtx, &data);

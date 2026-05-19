@@ -1,5 +1,5 @@
 /**
- * truce AAX bridge — C ABI between the AAX template and the Rust plugin.
+ * truce AAX bridge - C ABI between the AAX template and the Rust plugin.
  *
  * The AAX template (C++) dlopen()s the Rust cdylib and resolves these
  * symbols to delegate all plugin logic to the Rust side.
@@ -16,19 +16,19 @@ extern "C" {
 
 /* Bumped any time the bridge ABI shape changes. The bridge loader
  * compares this against the cdylib's `truce_aax_abi_version()` and
- * refuses to load a mismatched pair — protects against a manual
+ * refuses to load a mismatched pair - protects against a manual
  * cdylib swap against a stale C++ template (which would otherwise
  * read fields at the wrong offset).
  *
  * Version history:
  *   1 → 2: initial range_type field on TruceAaxParamInfo (log/discrete).
- *   2 → 3: SysEx I/O — push_sysex_input + output_sysex_count +
+ *   2 → 3: SysEx I/O - push_sysex_input + output_sysex_count +
  *           output_sysex_at exports. */
 #define TRUCE_AAX_ABI_VERSION 3u
 
 /* Wire values for TruceAaxParamInfo::range_type. The shim picks the
  * matching AAX_ITaperDelegate per param so AAX's normalize/denormalize
- * mirrors what truce-params does on the Rust side — a mismatched taper
+ * mirrors what truce-params does on the Rust side - a mismatched taper
  * (e.g. AAX-linear over a log-ranged knob) round-trips editor writes
  * back through RenderAudio as a different plain value, which the GUI
  * sees as the knob fighting the user mid-drag. */
@@ -36,7 +36,7 @@ extern "C" {
 #define TRUCE_AAX_RANGE_LOG      1u
 #define TRUCE_AAX_RANGE_DISCRETE 2u
 
-/* Plugin descriptor — read once at load time. */
+/* Plugin descriptor - read once at load time. */
 typedef struct {
     const char* name;           /* Display name */
     const char* vendor;         /* Vendor name */
@@ -48,7 +48,7 @@ typedef struct {
     int32_t product_id;         /* FourCC */
     int32_t plugin_id;          /* FourCC (unique per stem format) */
     int wants_input_midi;       /* 1 for instruments and MIDI/note
-                                 * effects — gates the LocalInput MIDI
+                                 * effects - gates the LocalInput MIDI
                                  * node and the per-render MIDI event
                                  * collection. */
     uint32_t category;          /* AAX_ePlugInCategory bitmask */
@@ -146,13 +146,13 @@ void truce_aax_process(void* ctx,
  * C++ template forwards each to AAX_IMIDINode::PostMIDIPacket on the
  * LocalOutput node it registered in its hand-built component
  * descriptor. Only encodable events (NoteOn/Off, CC, channel/poly
- * pressure, pitch bend, program change) are surfaced — see
+ * pressure, pitch bend, program change) are surfaced - see
  * `try_encode_aax_midi` in truce-aax/src/lib.rs for the predicate. */
 uint32_t truce_aax_output_event_count(void* ctx);
 void     truce_aax_output_event_at(void* ctx, uint32_t index,
                                     TruceAaxMidiEvent* out);
 
-/* SysEx input — the C++ template walks the host's AAX_CMidiStream
+/* SysEx input - the C++ template walks the host's AAX_CMidiStream
  * looking for `0xF0` start bytes and accumulates across consecutive
  * AAX_CMidiPackets until it hits `0xF7`. Once a complete message
  * is reassembled, it calls this once with the inner bytes (no
@@ -166,7 +166,7 @@ void     truce_aax_output_event_at(void* ctx, uint32_t index,
 void     truce_aax_push_sysex_input(void* ctx, uint32_t delta_frames,
                                      const uint8_t* bytes, uint32_t len);
 
-/* SysEx output — Rust reports the number of SysEx-shaped events the
+/* SysEx output - Rust reports the number of SysEx-shaped events the
  * plug-in queued during process(), and provides each event's inner
  * bytes. The C++ template fragments each event into a sequence of
  * ≤4-byte AAX_CMidiPackets framed with `0xF0` ... `0xF7` and posts

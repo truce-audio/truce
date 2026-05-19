@@ -127,9 +127,7 @@ impl<P: Params + 'static> SlintEditor<P> {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Baseview WindowHandler
-// ---------------------------------------------------------------------------
 
 struct SlintWindowHandler<P: Params + ?Sized> {
     slint_window: Rc<MinimalSoftwareWindow>,
@@ -364,9 +362,7 @@ impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Editor trait
-// ---------------------------------------------------------------------------
 
 impl<P: Params + 'static> Editor for SlintEditor<P> {
     fn size(&self) -> (u32, u32) {

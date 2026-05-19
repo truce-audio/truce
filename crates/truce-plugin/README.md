@@ -4,7 +4,7 @@ User-facing plugin traits for the truce audio plugin framework.
 
 ## Overview
 
-`truce-plugin` is the home of `PluginLogic` — the one trait plugin
+`truce-plugin` is the home of `PluginLogic` - the one trait plugin
 authors implement, covering both audio-thread DSP and main-thread
 GUI. The crate is intentionally light: it depends on `truce-core`,
 `truce-gui-types` (data + render-trait surface only), and

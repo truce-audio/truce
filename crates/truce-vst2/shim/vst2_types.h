@@ -1,5 +1,5 @@
 /**
- * VST2 types — clean-room definitions of the AEffect interface.
+ * VST2 types - clean-room definitions of the AEffect interface.
  * These are the public C ABI types that all VST2 hosts expect.
  * No Steinberg SDK headers are used.
  */
@@ -83,14 +83,14 @@ typedef struct AEffect AEffect;
 typedef VstIntPtr (*audioMasterCallback)(AEffect* effect, int32_t opcode,
     int32_t index, VstIntPtr value, void* ptr, float opt);
 
-/* The main plugin struct — returned by VSTPluginMain */
+/* The main plugin struct - returned by VSTPluginMain */
 struct AEffect {
     int32_t magic;                  /* Must be kVstMagic */
 
     VstIntPtr (*dispatcher)(AEffect*, int32_t opcode, int32_t index,
                             VstIntPtr value, void* ptr, float opt);
 
-    /* Deprecated accumulating process — unused, set to NULL */
+    /* Deprecated accumulating process - unused, set to NULL */
     void (*process)(AEffect*, float** inputs, float** outputs,
                     int32_t sampleFrames);
 
@@ -127,7 +127,7 @@ struct AEffect {
     char future[56];            /* Reserved */
 };
 
-/* VstTimeInfo — host time + transport state.
+/* VstTimeInfo - host time + transport state.
  * Memory layout matches the VST 2.4 SDK so we can cast the audioMasterGetTime
  * return directly. Clean-room definition, no Steinberg headers. */
 typedef struct {
@@ -180,7 +180,7 @@ typedef struct {
 } VstMidiEvent;
 
 /* SysEx event. The dump buffer is the inner SysEx payload without the
- * 0xF0 / 0xF7 framing — that matches the VST2 SDK convention. */
+ * 0xF0 / 0xF7 framing - that matches the VST2 SDK convention. */
 typedef struct {
     int32_t type;               /* kVstSysExType = 6 */
     int32_t byteSize;           /* sizeof(VstMidiSysExEvent) */
@@ -204,7 +204,7 @@ typedef struct {
 typedef struct {
     int32_t numEvents;
     VstIntPtr reserved;
-    VstEvent* events[2];        /* Variable length — [2] for alignment */
+    VstEvent* events[2];        /* Variable length - [2] for alignment */
 } VstEvents;
 
 /* Truce callback types (Rust → C boundary) */
@@ -267,14 +267,14 @@ typedef struct {
      * filtered out on the Rust side so [0..count) maps cleanly. */
     uint32_t (*output_event_count)(void* ctx);
     void (*output_event_at)(void* ctx, uint32_t index, Vst2MidiEventCompact* out);
-    /* SysEx input — shim calls once per kVstSysExType event in
+    /* SysEx input - shim calls once per kVstSysExType event in
      * effProcessEvents, AFTER the shim has stripped any leading
      * 0xF0 / trailing 0xF7 framing the host included. Rust always
      * sees inner bytes; the host-side framing convention is the
      * shim's problem. Valid only for the duration of this call. */
     void (*push_sysex_input)(void* ctx, uint32_t delta_frames,
                              const uint8_t* bytes, uint32_t len);
-    /* SysEx output — Rust returns inner bytes (no framing); the
+    /* SysEx output - Rust returns inner bytes (no framing); the
      * shim re-adds 0xF0 / 0xF7 before handing the bytes to the
      * host via VstMidiSysExEvent. Bytes returned here point into
      * the plug-in's EventList SysEx pool, valid until the next

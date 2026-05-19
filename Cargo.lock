@@ -6603,7 +6603,6 @@ version = "0.45.0"
 dependencies = [
  "crossbeam-queue",
  "truce-core",
- "truce-gui",
  "truce-params",
 ]
 
@@ -7117,6 +7116,7 @@ dependencies = [
 name = "truce-gui-types"
 version = "0.45.0"
 dependencies = [
+ "objc2 0.6.4",
  "truce-core",
 ]
 

@@ -1,20 +1,16 @@
-//! iced editor on iOS - phase-4 MVP stub.
+//! iOS placeholder editor - no live iced render yet.
 //!
 //! The desktop editor (`editor.rs`) is wired through baseview +
 //! iced_wgpu. Neither is viable in an iOS App Extension sandbox
-//! without the UIKit `CAMetalLayer` plumbing we haven't lifted out
-//! of `truce-gui` yet. The stub here:
+//! without the UIKit `CAMetalLayer` plumbing that lives in
+//! `truce-gui` only. The placeholder here:
 //!
 //! - Implements `Editor` so plugins consuming `truce_iced::IcedEditor`
 //!   compile cleanly for iOS targets.
-//! - Attaches a placeholder `UIView` with a label so a smoke-tested
-//!   install doesn't paint black.
-//! - Preserves the `IcedPlugin` trait shape so plugin code is
+//! - Attaches a `UIView` with a label so an installed plugin's editor
+//!   paints something instead of black.
+//! - Preserves the `IcedPlugin` trait shape so plugin code stays
 //!   portable across platforms.
-//!
-//! Real implementation is a follow-up: build a thin
-//! `UIView + CAMetalLayer + CADisplayLink` host, run iced_wgpu on
-//! top, and translate `UITouch` → iced events.
 
 #![cfg(target_os = "ios")]
 
@@ -146,9 +142,9 @@ unsafe fn build_placeholder_view(parent: *mut AnyObject, size: (u32, u32)) -> *m
         };
         let label: *mut AnyObject = msg_send![label_alloc, initWithFrame: label_frame];
         let txt = NSString::from_str(
-            "iced backend on iOS is a phase-4 MVP stub.\n\
-             Build + parameter wiring work end-to-end; the\n\
-             iced render pump lands in a follow-up.",
+            "iced editor placeholder on iOS.\n\
+             Build + parameter wiring work end-to-end;\n\
+             the iced render pump is not yet hooked up.",
         );
         let _: () = msg_send![label, setText: &*txt];
         let _: () = msg_send![label, setNumberOfLines: 0_isize];

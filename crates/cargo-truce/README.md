@@ -45,7 +45,7 @@ cargo-truce ships as both a binary and a library (`cargo_truce` crate).
 The library half (`cargo_truce::run`, `cargo_truce::scaffold::*`) is the
 engine for the build/install/package pipelines; the binary is a thin
 arg-parsing shell that drives it. Embedding the engine in your own
-tooling is supported but mostly intended for internal use — most
+tooling is supported but mostly intended for internal use - most
 plugin authors only need the `cargo truce` CLI.
 
 Part of [truce](https://github.com/truce-audio/truce).

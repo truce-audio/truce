@@ -16,7 +16,7 @@
 //! The split keeps secrets out of the tracked file and removes the
 //! "which copy wins?" question every time a developer onboards.
 
-use crate::{BoxErr, project_root};
+use crate::{CargoTruceError, project_root};
 use serde::Deserialize;
 use std::fs;
 use std::path::PathBuf;
@@ -388,7 +388,7 @@ impl SuiteDef {
     pub(crate) fn resolve<'a>(
         &'a self,
         workspace_plugins: &'a [PluginDef],
-    ) -> Result<ResolvedSuite<'a>, BoxErr> {
+    ) -> Result<ResolvedSuite<'a>, CargoTruceError> {
         if self.plugins.is_some() && self.exclude_plugins.is_some() {
             return Err(format!(
                 "[[suite]] '{}' sets both `plugins` and `exclude_plugins` - \
@@ -398,7 +398,7 @@ impl SuiteDef {
             .into());
         }
 
-        let resolve_one = |needle: &str| -> Result<&'a PluginDef, BoxErr> {
+        let resolve_one = |needle: &str| -> Result<&'a PluginDef, CargoTruceError> {
             workspace_plugins
                 .iter()
                 .find(|p| p.crate_name == needle || p.bundle_id == needle)
@@ -580,7 +580,7 @@ pub(crate) fn resolve_aax_sdk_path() -> Option<PathBuf> {
     None
 }
 
-pub(crate) fn load_config() -> std::result::Result<Config, BoxErr> {
+pub(crate) fn load_config() -> std::result::Result<Config, CargoTruceError> {
     let root = project_root();
     let path = root.join("truce.toml");
     if !path.exists() {

@@ -85,9 +85,7 @@ impl<'a, M: Clone + Debug + 'static> From<KnobWidget<'a, M>> for Element<'a, Mes
     }
 }
 
-// ---------------------------------------------------------------------------
 // Canvas program
-// ---------------------------------------------------------------------------
 
 struct KnobProgram {
     id: u32,

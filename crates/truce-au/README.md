@@ -6,7 +6,7 @@ Audio Unit v2 + v3 format wrapper for the truce audio plugin framework.
 
 Bridges a truce `PluginExport` implementation to Apple's Audio Unit API.
 The same Rust dylib serves both AU v2 (`.component`, in-process) and AU
-v3 (`.appex` inside a container `.app`, sandboxed) — only the bundle
+v3 (`.appex` inside a container `.app`, sandboxed) - only the bundle
 shape and the surrounding shim differ. The framework dylib is the
 identical artifact in either case; cargo-truce's install / package
 commands wrap it in the right bundle layout.

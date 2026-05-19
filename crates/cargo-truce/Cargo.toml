@@ -2,7 +2,7 @@
 name = "cargo-truce"
 version.workspace = true
 edition = "2024"
-# Same dual-license shape as the workspace — Apache 2.0 for plug-in
+# Same dual-license shape as the workspace - Apache 2.0 for plug-in
 # authors using `cargo truce`, permission-gated Framework License
 # for redistributing it as part of a competing build tool. See
 # LICENSE + LICENSE-APACHE at the workspace root.
@@ -29,7 +29,7 @@ thiserror = { workspace = true }
 toml = { workspace = true }
 serde = { version = "1", features = ["derive"] }
 # Substitution engine for `cargo truce new` scaffolds. Single dep on
-# top of the existing serde — the only transitive that lands.
+# top of the existing serde - the only transitive that lands.
 tinytemplate = "1.2"
 # `cargo truce screenshot --check` decodes the rendered + reference
 # PNGs to count differing pixels. Same crate truce-core uses for
@@ -45,7 +45,7 @@ version = "0.9"
 
 # Post-link icon embed for the standalone host .exe lives in
 # `windows_manifest::embed_icon` and calls `BeginUpdateResource` /
-# `UpdateResource` / `EndUpdateResource` directly — same shell-out-free
+# `UpdateResource` / `EndUpdateResource` directly - same shell-out-free
 # pattern as the mt.exe-driven manifest embed sitting next to it.
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_System_LibraryLoader"] }

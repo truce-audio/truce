@@ -37,6 +37,8 @@ mod render_core;
 // directly from `truce_gui_types`.
 pub use truce_gui_types::{ImageId, ParamSnapshot, RenderBackend, Theme};
 pub use truce_gui_types::{layout, render, snapshot, theme, widgets};
+#[cfg(target_os = "ios")]
+pub use truce_gui_types::ios;
 
 // Re-export plugin-logic traits from `truce-plugin` for the same
 // backward-compat reason.

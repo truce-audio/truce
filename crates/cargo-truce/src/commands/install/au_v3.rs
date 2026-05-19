@@ -151,7 +151,7 @@ fn build_rust_framework_dylib(
     archs: &[MacArch],
     dt: &str,
     reuse_au_artifacts: bool,
-) -> Result<PathBuf, crate::BoxErr> {
+) -> Result<PathBuf, crate::CargoTruceError> {
     let lipo_dst =
         truce_build::target_dir(root).join(format!("release/lib{}_au.dylib", p.dylib_stem()));
 
@@ -391,7 +391,7 @@ fn run_xcodebuild_for_plugin(
     build_dir: &Path,
     archs: &[MacArch],
     p: &PluginDef,
-) -> Result<PathBuf, crate::BoxErr> {
+) -> Result<PathBuf, crate::CargoTruceError> {
     crate::vprintln!("  Building with xcodebuild...");
     let archs_flag = format!(
         "ARCHS={}",

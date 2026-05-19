@@ -1,4 +1,4 @@
-# Local build-environment config. Gitignored — set your own values.
+# Local build-environment config. Gitignored - set your own values.
 # `cargo truce install` and `cargo truce package` both read from here.
 #
 # Cargo injects everything in `[env]` into the environment of any

@@ -359,7 +359,7 @@ fn set_cli_scope(slot: &mut Option<PkgScope>, want: PkgScope) -> Res {
     Ok(())
 }
 
-fn resolve_pkg_scope(cli: Option<PkgScope>, config: &Config) -> Result<PkgScope, crate::BoxErr> {
+fn resolve_pkg_scope(cli: Option<PkgScope>, config: &Config) -> Result<PkgScope, crate::CargoTruceError> {
     if let Some(s) = cli {
         return Ok(s);
     }
@@ -369,7 +369,7 @@ fn resolve_pkg_scope(cli: Option<PkgScope>, config: &Config) -> Result<PkgScope,
     Ok(PkgScope::os_default())
 }
 
-fn parse_args(args: &[String]) -> std::result::Result<Opts, crate::BoxErr> {
+fn parse_args(args: &[String]) -> std::result::Result<Opts, crate::CargoTruceError> {
     let mut opts = Opts::default();
     let mut i = 0;
     while i < args.len() {
@@ -411,7 +411,7 @@ fn parse_args(args: &[String]) -> std::result::Result<Opts, crate::BoxErr> {
 fn resolve_formats(
     config: &Config,
     format_str: Option<&str>,
-) -> std::result::Result<Vec<PkgFormat>, crate::BoxErr> {
+) -> std::result::Result<Vec<PkgFormat>, crate::CargoTruceError> {
     let raw = if let Some(s) = format_str {
         PkgFormat::parse_list(s)?
     } else if !config.packaging.formats.is_empty() {
@@ -457,7 +457,7 @@ fn resolve_formats(
 fn resolve_plugins<'a>(
     config: &'a Config,
     filter: Option<&str>,
-) -> std::result::Result<Vec<&'a PluginDef>, crate::BoxErr> {
+) -> std::result::Result<Vec<&'a PluginDef>, crate::CargoTruceError> {
     crate::commands::pick_plugins(config, filter)
 }
 
@@ -694,7 +694,7 @@ fn stage_plugin(
     formats: &[PkgFormat],
     staging: &Path,
     arch: TargetArch,
-) -> std::result::Result<StagedPlugin, crate::BoxErr> {
+) -> std::result::Result<StagedPlugin, crate::CargoTruceError> {
     let mut signable = Vec::new();
     for fmt in formats {
         eprint!("  Staging {} ({})... ", fmt.label(), arch.tag());
@@ -737,7 +737,7 @@ fn stage_clap(
     p: &PluginDef,
     staging: &Path,
     arch: TargetArch,
-) -> std::result::Result<PathBuf, crate::BoxErr> {
+) -> std::result::Result<PathBuf, crate::CargoTruceError> {
     let dll = release_lib_for_target(
         root,
         &format!("{}_clap", p.dylib_stem()),
@@ -765,7 +765,7 @@ fn stage_standalone(
     p: &PluginDef,
     staging: &Path,
     arch: TargetArch,
-) -> std::result::Result<PathBuf, crate::BoxErr> {
+) -> std::result::Result<PathBuf, crate::CargoTruceError> {
     let bin_stem = crate::read_standalone_bin_name(&p.crate_name)
         .unwrap_or_else(|| format!("{}-standalone", p.crate_name));
     let exe_name = format!("{bin_stem}.exe");
@@ -809,7 +809,7 @@ fn stage_vst3(
     p: &PluginDef,
     staging: &Path,
     arch: TargetArch,
-) -> std::result::Result<PathBuf, crate::BoxErr> {
+) -> std::result::Result<PathBuf, crate::CargoTruceError> {
     // VST3 on Windows is a bundle directory. Multi-arch bundles carry both
     // arch subdirs side-by-side - the host picks at load time.
     let dll = release_lib_for_target(
@@ -834,7 +834,7 @@ fn stage_vst2(
     p: &PluginDef,
     staging: &Path,
     arch: TargetArch,
-) -> std::result::Result<PathBuf, crate::BoxErr> {
+) -> std::result::Result<PathBuf, crate::CargoTruceError> {
     let dll = release_lib_for_target(
         root,
         &format!("{}_vst2", p.dylib_stem()),
@@ -860,7 +860,7 @@ fn stage_lv2(
     p: &PluginDef,
     staging: &Path,
     arch: TargetArch,
-) -> std::result::Result<PathBuf, crate::BoxErr> {
+) -> std::result::Result<PathBuf, crate::CargoTruceError> {
     use crate::commands::package::stage::lv2_slug;
 
     let dll = release_lib_for_target(
@@ -934,7 +934,7 @@ fn stage_aax(
     p: &PluginDef,
     staging: &Path,
     arch: TargetArch,
-) -> std::result::Result<Option<(PathBuf, PathBuf)>, crate::BoxErr> {
+) -> std::result::Result<Option<(PathBuf, PathBuf)>, crate::CargoTruceError> {
     if arch != TargetArch::host() {
         return Ok(None);
     }
@@ -946,7 +946,7 @@ fn stage_aax(
             eprintln!("AAX: building template with SDK at {}", sdk_path.display());
             // On Windows, AAX stays host-arch regardless (SDK 2.9 ships x64
             // libs only - see stage_aax comments). `universal_mac` is a no-op.
-            build_aax_template(root, &sdk_path, false)?;
+            build_aax_template(&sdk_path, false)?;
         } else {
             return Err(
                 "AAX SDK not configured. Set AAX_SDK_PATH in .cargo/config.toml [env] \

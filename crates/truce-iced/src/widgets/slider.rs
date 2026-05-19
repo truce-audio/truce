@@ -83,9 +83,7 @@ impl<'a, M: Clone + Debug + 'static> From<SliderWidget<'a, M>> for Element<'a, M
     }
 }
 
-// ---------------------------------------------------------------------------
 // Canvas program
-// ---------------------------------------------------------------------------
 
 struct SliderProgram {
     id: u32,

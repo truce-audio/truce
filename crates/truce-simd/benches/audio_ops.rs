@@ -423,16 +423,16 @@ fn bench_trim_block(c: &mut Criterion) {
 // Three points of comparison, one per process-body shape that ships
 // in the example tree:
 //
-//   - `gain`              — examples/truce-example-gain (naive, per-sample
+//   - `gain`              - examples/truce-example-gain (naive, per-sample
 //                           atomic + scalar multiply, the "before"
 //                           shape every plugin author has written).
-//   - `gain_simd_fast`    — examples/truce-example-block-gain's
+//   - `gain_simd_fast`    - examples/truce-example-block-gain's
 //                           converged-smoother fast path (constant
 //                           gain across the block; scale_block per
 //                           channel). The typical real-world
 //                           case (user dials in -6 dB and walks
 //                           away).
-//   - `gain_simd_slow`    — examples/truce-example-block-gain's
+//   - `gain_simd_slow`    - examples/truce-example-block-gain's
 //                           slow path (active smoother;
 //                           math::db_to_linear_block precompute,
 //                           chunks_mut + mul_block apply). The
@@ -442,7 +442,7 @@ fn bench_trim_block(c: &mut Criterion) {
 // All three operate on the same input buffer shape (FRAMES × CHANS)
 // and the same parameter state; the only difference is the process
 // body. Criterion's `Throughput::Elements` lets you read the bench
-// as Gelem/s — directly comparable across the three rows.
+// as Gelem/s - directly comparable across the three rows.
 // ---------------------------------------------------------------------------
 
 fn naive_gain_process(

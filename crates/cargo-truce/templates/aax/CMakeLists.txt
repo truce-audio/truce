@@ -14,7 +14,7 @@ if(NOT DEFINED AAX_SDK_PATH)
     endif()
 endif()
 
-# AAX library — use pre-built if available, otherwise build from source.
+# AAX library - use pre-built if available, otherwise build from source.
 # `AAX_LIB_PATH` may be passed in via `-D` by cargo-truce (pointing at a
 # truce-managed build under `{sdk}/build-truce/`). If not provided, fall
 # back to the SDK's conventional `build-lib/` tree.
@@ -108,7 +108,7 @@ if(APPLE)
 elseif(WIN32)
     # Windows AAX plugins are .aaxplugin DLLs that live inside the
     # Contents/x64/ subdirectory of the bundle. cmake's MODULE output
-    # defaults to .dll — rename to .aaxplugin.
+    # defaults to .dll - rename to .aaxplugin.
     set_target_properties(TruceAAXTemplate PROPERTIES
         SUFFIX ".aaxplugin"
         PREFIX ""

@@ -291,7 +291,7 @@ pub(crate) fn stage_vst2(
     config: &Config,
     staging: &Path,
     target: Option<&str>,
-) -> Result<std::path::PathBuf, crate::BoxErr> {
+) -> Result<std::path::PathBuf, crate::CargoTruceError> {
     let _ = config; // only used on macOS
     #[cfg(not(target_os = "macos"))]
     let dylib = crate::release_lib_for_target(root, &format!("{}_vst2", p.dylib_stem()), target);
@@ -791,7 +791,7 @@ pub(crate) fn write_format_scripts(
     staging: &Path,
     fmt: &PkgFormat,
     bundle_name: &str,
-) -> std::result::Result<PathBuf, crate::BoxErr> {
+) -> std::result::Result<PathBuf, crate::CargoTruceError> {
     let scripts_dir = staging.join(format!("{}_scripts", fmt.pkg_id_suffix()));
     let _ = fs::remove_dir_all(&scripts_dir);
     fs::create_dir_all(&scripts_dir)?;

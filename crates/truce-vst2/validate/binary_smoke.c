@@ -90,7 +90,7 @@ int main(int argc, char** argv) {
     } else if (is_midi_effect) {
         CHECK(effect->numInputs == 0, "midi effect: numInputs == 0");
         CHECK(effect->numOutputs == 0, "midi effect: numOutputs == 0");
-        /* VST2 has no separate "MIDI effect" category — the wrapper
+        /* VST2 has no separate "MIDI effect" category - the wrapper
          * sets effFlagsIsSynth so hosts route MIDI input to a
          * 0-in/0-out plugin. Test matches the wrapper's documented
          * behavior (see vst2_shim.c is_synth derivation). */
@@ -125,7 +125,7 @@ int main(int argc, char** argv) {
     /* Parameter get/set round-trip. Pick a target on the opposite
      * extreme from `orig` so the test works for both continuous params
      * (FloatParam) and discrete params that snap to ends (BoolParam,
-     * EnumParam) — setting 0.75 fails on a default-true BoolParam
+     * EnumParam) - setting 0.75 fails on a default-true BoolParam
      * because 0.75 still rounds back to 1.0. */
     if (effect->numParams > 0) {
         float orig = effect->getParameter(effect, 0);

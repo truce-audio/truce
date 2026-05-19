@@ -20,25 +20,25 @@ required-features = ["standalone"]
 # Scaffolded default: {default_label}. To add LV2 / AU / AAX / VST2,
 # uncomment the matching line in the root `Cargo.toml`'s
 # `[workspace.dependencies]`, then add the feature + optional dep
-# below (e.g. `lv2 = ["dep:truce-lv2", "truce/lv2"]` +
+# below (e.g. `lv2 = ["dep:truce-lv2"]` +
 # `truce-lv2 = \{ workspace = true, optional = true }`).
 {{- else -}}
 # Scaffolded default: {default_label}. To add LV2 / AU / AAX / VST2,
 # add the matching feature + optional dep below (e.g.
-# `lv2 = ["dep:truce-lv2", "truce/lv2"]` +
+# `lv2 = ["dep:truce-lv2"]` +
 # `truce-lv2 = \{ git = "https://github.com/truce-audio/truce", tag = "{tag}", optional = true }`).
-# VST2 is a legacy format — the Steinberg VST2 SDK was deprecated in
+# VST2 is a legacy format - the Steinberg VST2 SDK was deprecated in
 # 2018 and distributing VST2 plugins may require agreement with
 # Steinberg's licensing terms.
 {{- endif }}
-# Format features pair `"dep:truce-<format>"` (pulls in the
-# wrapper crate) with `"truce/<format>"` (turns on the matching
-# feature on the truce umbrella so `truce::<format>_wrapper` is
-# in scope and the macro's per-format expansion arm fires).
+# Each format feature gates the matching wrapper crate as an optional
+# dep. The `truce::plugin!` macro keys its per-format expansion arm on
+# `#[cfg(feature = "<format>")]` against this crate's features and
+# references the wrapper through `::truce_<format>::` absolute paths.
 [features]
 default = {default_features | unescaped}
-clap = ["dep:truce-clap", "dep:clap-sys", "truce/clap"]
-vst3 = ["dep:truce-vst3", "truce/vst3"]
+clap = ["dep:truce-clap", "dep:clap-sys"]
+vst3 = ["dep:truce-vst3"]
 {{ if has_standalone -}}
 standalone = ["dep:truce-standalone"]
 {{ endif -}}

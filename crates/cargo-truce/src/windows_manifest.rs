@@ -150,21 +150,21 @@ fn make_int_resource(id: u16) -> *const u16 {
 /// Convert `usize` → `u16` for resource counts/IDs with a contextual
 /// error. An .ico file can carry up to 65535 images, but in practice
 /// the truce icon has 7 - overflow here means a malformed input.
-fn u16_or(value: usize, ctx: &str) -> std::result::Result<u16, crate::BoxErr> {
+fn u16_or(value: usize, ctx: &str) -> std::result::Result<u16, crate::CargoTruceError> {
     u16::try_from(value)
-        .map_err(|_| -> crate::BoxErr { format!("{ctx}: value {value} exceeds u16 range").into() })
+        .map_err(|_| -> crate::CargoTruceError { format!("{ctx}: value {value} exceeds u16 range").into() })
 }
 
-fn u32_or(value: usize, ctx: &str) -> std::result::Result<u32, crate::BoxErr> {
+fn u32_or(value: usize, ctx: &str) -> std::result::Result<u32, crate::CargoTruceError> {
     u32::try_from(value)
-        .map_err(|_| -> crate::BoxErr { format!("{ctx}: value {value} exceeds u32 range").into() })
+        .map_err(|_| -> crate::CargoTruceError { format!("{ctx}: value {value} exceeds u32 range").into() })
 }
 
 /// Build the `RT_GROUP_ICON` resource payload from the parsed `.ico`
 /// directory. Same 6-byte `ICONDIR` header as the file, then a 14-byte
 /// `GRPICONDIRENTRY` per image (the 16-byte on-disk entry differs in
 /// its last field: file offset → resource ID).
-fn build_group_icon_blob(entries: &[IcoEntry]) -> std::result::Result<Vec<u8>, crate::BoxErr> {
+fn build_group_icon_blob(entries: &[IcoEntry]) -> std::result::Result<Vec<u8>, crate::CargoTruceError> {
     let count = u16_or(entries.len(), "RT_GROUP_ICON entry count")?;
     let mut grp = Vec::with_capacity(6 + entries.len() * 14);
     grp.extend_from_slice(&[0, 0]); // Reserved
@@ -207,7 +207,7 @@ pub(crate) fn embed_icon(exe: &Path, ico: &Path) -> Res {
     const LANG_NEUTRAL: u16 = 0;
 
     let ico_bytes = std::fs::read(ico)
-        .map_err(|e| -> crate::BoxErr { format!("read {}: {e}", ico.display()).into() })?;
+        .map_err(|e| -> crate::CargoTruceError { format!("read {}: {e}", ico.display()).into() })?;
     let entries = parse_ico_directory(&ico_bytes, ico)?;
     let grp = build_group_icon_blob(&entries)?;
     let grp_len = u32_or(grp.len(), "RT_GROUP_ICON payload size")?;
@@ -305,7 +305,7 @@ struct IcoEntry {
 fn parse_ico_directory(
     bytes: &[u8],
     path: &Path,
-) -> std::result::Result<Vec<IcoEntry>, crate::BoxErr> {
+) -> std::result::Result<Vec<IcoEntry>, crate::CargoTruceError> {
     // ICONDIR: u16 reserved (=0), u16 type (=1 icon), u16 count.
     // Then `count` × 16-byte `ICONDIRENTRY`.
     if bytes.len() < 6 {

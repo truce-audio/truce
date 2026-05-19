@@ -44,7 +44,7 @@ truce-lv2 = { workspace = true, optional = true }
 
 # iced 0.13 transitively pulls `iced_winit` which doesn't compile
 # for iOS (winit's KeyEvent API drift). Skip the iced + truce-iced
-# deps on iOS — the example's `lib.rs` is `#[cfg(not(target_os =
+# deps on iOS - the example's `lib.rs` is `#[cfg(not(target_os =
 # "ios"))]`-gated to a stub, so the dep list matches.
 [target.'cfg(not(target_os = "ios"))'.dependencies]
 truce-iced = { workspace = true }

@@ -225,7 +225,7 @@ unsafe fn call_screenshot(
     state: Option<&[u8]>,
     out_path: &Path,
     scale: f64,
-) -> Result<(), crate::BoxErr> {
+) -> Result<(), crate::CargoTruceError> {
     unsafe {
         let lib = libloading::Library::new(lib_path)
             .map_err(|e| format!("failed to dlopen {}: {e}", lib_path.display()))?;
@@ -529,7 +529,7 @@ fn crop_for_mode(png_path: &Path, bundle_id: &str, mode: IosCropMode) {
 /// mirror (270° CW = 90° CCW); `portraitUpsideDown` is 180°.
 /// `portrait` and unknown orientations no-op.
 #[cfg(target_os = "macos")]
-fn orient_to_ui(path: &Path, orientation: Option<&str>) -> Result<(), crate::BoxErr> {
+fn orient_to_ui(path: &Path, orientation: Option<&str>) -> Result<(), crate::CargoTruceError> {
     let degrees = match orientation.unwrap_or("portrait") {
         "landscapeLeft" => "90",
         "landscapeRight" => "270",
@@ -597,7 +597,7 @@ fn crop_to_container_chrome(png_path: &Path, frame: &EditorFrame) {
 /// but the chunk header is at a fixed offset so reading 24 bytes is
 /// enough.
 #[cfg(target_os = "macos")]
-fn png_size(path: &Path) -> Result<(u32, u32), crate::BoxErr> {
+fn png_size(path: &Path) -> Result<(u32, u32), crate::CargoTruceError> {
     let file = std::fs::File::open(path).map_err(|e| format!("open {}: {e}", path.display()))?;
     let decoder = png::Decoder::new(std::io::BufReader::new(file));
     let reader = decoder
@@ -629,7 +629,7 @@ struct EditorFrame {
 }
 
 #[cfg(target_os = "macos")]
-fn read_editor_frame_json(bundle_id: &str) -> Result<EditorFrame, crate::BoxErr> {
+fn read_editor_frame_json(bundle_id: &str) -> Result<EditorFrame, crate::CargoTruceError> {
     let out = Command::new("xcrun")
         .args(["simctl", "get_app_container", "booted", bundle_id, "data"])
         .output()
@@ -652,7 +652,7 @@ fn read_editor_frame_json(bundle_id: &str) -> Result<EditorFrame, crate::BoxErr>
     // Tiny hand-rolled parser - the file is a single-line object
     // with four / five integer fields; pulling in `serde_json` for
     // this is overkill.
-    let pick = |key: &str| -> Result<u32, crate::BoxErr> {
+    let pick = |key: &str| -> Result<u32, crate::CargoTruceError> {
         let needle = format!("\"{key}\":");
         let start = json
             .find(&needle)
@@ -692,7 +692,7 @@ fn read_editor_frame_json(bundle_id: &str) -> Result<EditorFrame, crate::BoxErr>
 }
 
 #[cfg(target_os = "macos")]
-fn crop_png(path: &Path, x: u32, y: u32, w: u32, h: u32) -> Result<(), crate::BoxErr> {
+fn crop_png(path: &Path, x: u32, y: u32, w: u32, h: u32) -> Result<(), crate::CargoTruceError> {
     if w == 0 || h == 0 {
         return Err(format!("crop rect is zero-area ({w}×{h})").into());
     }

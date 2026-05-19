@@ -57,7 +57,7 @@ static const tresult kInvalidArgument = 5;
 static const tresult kNotImplemented = 2;
 
 // IIDs from the official Steinberg VST3 SDK (via vst3 crate bindings).
-// Byte layout differs between Windows (COM) and macOS/Linux — MAKE_IID handles this.
+// Byte layout differs between Windows (COM) and macOS/Linux - MAKE_IID handles this.
 static const TUID FUnknown_iid        = MAKE_IID(0x00000000, 0x00000000, 0xC0000000, 0x00000046);
 static const TUID IPluginBase_iid     = MAKE_IID(0x22888DDB, 0x156E45AE, 0x8358B348, 0x08190625);
 static const TUID IComponent_iid      = MAKE_IID(0xE831FF31, 0xF2D54301, 0x928EBBEE, 0x25697802);
@@ -189,7 +189,7 @@ struct Vst3Callbacks {
     // Output events
     uint32_t (*get_output_event_count)(void*);
     void (*get_output_event)(void*, uint32_t, Vst3MidiEvent*);
-    // SysEx input — shim calls this once per `kDataEvent` /
+    // SysEx input - shim calls this once per `kDataEvent` /
     // `MIDI_SYSEX` event seen in the input event list, before
     // calling `process`. Bytes are the inner SysEx payload (no
     // 0xF0 / 0xF7 framing; VST3 hosts deliver the inner data per
@@ -197,7 +197,7 @@ struct Vst3Callbacks {
     // this call only.
     void (*push_sysex_input)(void*, uint32_t /*sample_offset*/,
                              const uint8_t* /*bytes*/, uint32_t /*len*/);
-    // SysEx output — shim queries after `process` to drain
+    // SysEx output - shim queries after `process` to drain
     // SysEx-shaped events the plug-in pushed. Bytes are the inner
     // payload; the shim wraps them in `kDataEvent` + `MIDI_SYSEX`
     // when forwarding to the host's output `IEventList`.
@@ -223,7 +223,7 @@ static const Vst3Callbacks* g_cb = nullptr;
 static const Vst3ParamDescriptor* g_params = nullptr;
 static uint32_t g_num_params = 0;
 
-// Unit info (parameter groups) — built at registration time
+// Unit info (parameter groups) - built at registration time
 static const int kMaxUnits = 64;
 struct UnitEntry { int32 id; int32 parentId; char name[128]; };
 static UnitEntry g_units[kMaxUnits];
@@ -495,7 +495,7 @@ public:
     tresult setActive(TBool state) {
         if (state && g_cb && ctx) {
             // If we're being activated and no state chunk was received,
-            // this is a fresh instance — allow the editor to open.
+            // this is a fresh instance - allow the editor to open.
             if (!stateLoaded) {
                 stateLoaded = true;
                 if (deferredParent) {
@@ -721,7 +721,7 @@ public:
                     struct { int16_t channel; int16_t pitch; float velocity; int32 noteId; float tuning; } noteOff;
                     struct { int16_t channel; int16_t pitch; float pressure; int32 noteId; } polyPressure;
                     struct { int32 typeId; int32 noteId; double value; } noteExpressionValue; // forces 8-byte alignment
-                    // kDataEvent — VST3 SDK `Event::DataEvent`. The
+                    // kDataEvent - VST3 SDK `Event::DataEvent`. The
                     // `type` discriminant (0 = MIDI_SYSEX) tells us
                     // the byte stream's semantics; `bytes` is owned
                     // by the host for the duration of the
@@ -772,7 +772,7 @@ public:
                         midiEvents[numMidi].note_id = (uint8_t)(ev.noteExpressionValue.noteId & 0xFF);
                         numMidi++;
                         break;
-                    case 2: // kDataEvent — SysEx and other variable-length blobs
+                    case 2: // kDataEvent - SysEx and other variable-length blobs
                         // SDK: `ivstevents.h` enumerates Event types as
                         // kNoteOnEvent=0, kNoteOffEvent=1, kDataEvent=2,
                         // kPolyPressureEvent=3, kNoteExpression*=4..5,
@@ -854,14 +854,14 @@ public:
                 }
             }
 
-            // SysEx output — separate slot from channel-voice
+            // SysEx output - separate slot from channel-voice
             // because the payload is variable-length. We build a
             // VST3 `kDataEvent` (type 2) with `dataType = 0`
             // (`kMidiSysEx`) pointing at the bytes Rust hands us.
             // The host's `addEvent` is the SDK's
             // `IEventList::addEvent`, which copies the event +
             // its inline bytes into the host's own buffer before
-            // returning — so the pointer staying valid only for
+            // returning - so the pointer staying valid only for
             // the duration of the call is the right contract.
             if (g_cb->get_output_sysex_count && g_cb->get_output_sysex_event) {
                 struct OEVtbl {
@@ -990,7 +990,7 @@ public:
 };
 
 // ---------------------------------------------------------------------------
-// IPlugView — minimal COM object for GUI embedding
+// IPlugView - minimal COM object for GUI embedding
 // ---------------------------------------------------------------------------
 
 struct IPlugViewVtbl {
@@ -1013,7 +1013,7 @@ struct IPlugViewVtbl {
 
 struct ViewRect { int32 left; int32 top; int32 right; int32 bottom; };
 
-// IPlugViewContentScaleSupport — one method past FUnknown.
+// IPlugViewContentScaleSupport - one method past FUnknown.
 struct IPlugViewContentScaleSupportVtbl {
     tresult (*queryInterface)(void*, const TUID, void**);
     uint32  (*addRef)(void*);
@@ -1097,7 +1097,7 @@ static tresult pv_attached(void* s, void* parent, FIDString /*type*/) {
     auto* pv = (TrucePlugView*)s;
     if (!g_cb || !pv->ctx) return kResultOk;
     if (pv->comp && !pv->comp->stateLoaded) {
-        // Editor attached before state was restored — defer gui_open
+        // Editor attached before state was restored - defer gui_open
         pv->comp->deferredParent = parent;
     } else {
         g_cb->gui_open(pv->ctx, parent);
@@ -1144,7 +1144,7 @@ static IPlugViewVtbl g_plugview_vtbl = {
 };
 
 // ---------------------------------------------------------------------------
-// Vtables — laid out exactly as C++ COM hosts expect
+// Vtables - laid out exactly as C++ COM hosts expect
 // ---------------------------------------------------------------------------
 
 // We use a multi-vtable approach: the object has 3 vtable pointers at the start.
@@ -1448,7 +1448,7 @@ static tresult ui_getUnitInfo(void*, int32 idx, UnitInfo* out) {
 static int32 ui_getProgramListCount(void*) { return 0; }
 // Typed `kNotImplemented` stubs for each of the IUnitInfo vtable
 // slots we don't care about. One stub per unique signature keeps
-// modern clang's `-Wcast-function-type-mismatch` happy — casting a
+// modern clang's `-Wcast-function-type-mismatch` happy - casting a
 // nullary function pointer to specific signatures is UB in strict
 // readings and warns on arm64 macOS clang.
 static tresult ui_ni_iv(void*, int32, void*)                         { return kNotImplemented; }
@@ -1517,7 +1517,7 @@ static uint32 factory_addRef(void* self) {
 
 static uint32 factory_release(void* self) {
     auto r = --(((FactoryCOM*)self)->refCount);
-    // Don't free — factory is a global static
+    // Don't free - factory is a global static
     return r;
 }
 

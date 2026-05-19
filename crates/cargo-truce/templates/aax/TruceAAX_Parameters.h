@@ -10,7 +10,7 @@
 // `AAX_CMonolithicParameters::StaticDescribe` registers the standard
 // `AAX_SInstrumentRenderInfo` field set, which has slots for input /
 // global / transport MIDI nodes but **no** slot for a `LocalOutput`
-// node — the SDK's monolithic-parameters helper simply doesn't expose
+// node - the SDK's monolithic-parameters helper simply doesn't expose
 // plugin → host MIDI through `AAX_SInstrumentSetupInfo`. We replicate
 // the body of `StaticDescribe` inline (`Describe.cpp`) and append one
 // more port: `mOutputNode` at the end of this struct, registered via
@@ -19,7 +19,7 @@
 // The `base` member's layout is identical to a freestanding
 // `AAX_SInstrumentRenderInfo`, so passing `&extended->base` to the
 // inherited `RenderAudio(AAX_SInstrumentRenderInfo*)` virtual is sound
-// — Pro Tools fills the slots by offset, and the offsets of all
+// - Pro Tools fills the slots by offset, and the offsets of all
 // inherited fields match. The extra `mOutputNode` slot lives past the
 // end of `base` and is read inside `RenderAudio` by casting back up to
 // `TruceAaxExtendedRenderInfo*`.

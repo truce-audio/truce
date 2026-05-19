@@ -35,7 +35,7 @@ use std::process::Command;
 // `lib.rs` is matched by the same gate.
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 #[allow(clippy::too_many_lines)]
-pub(crate) fn build_aax_template(_root: &Path, sdk_path: &Path, universal_mac: bool) -> Res {
+pub(crate) fn build_aax_template(sdk_path: &Path, universal_mac: bool) -> Res {
     // Referenced only by the macOS cmake branch below; touch it on Windows so
     // the parameter doesn't trip the unused-variable lint.
     #[cfg(target_os = "windows")]
@@ -208,7 +208,7 @@ pub(crate) fn build_aax_template(_root: &Path, sdk_path: &Path, universal_mac: b
 /// coverage we need. Incremental cmake makes subsequent runs a
 /// no-op once the library is warm.
 #[cfg(target_os = "macos")]
-fn ensure_aax_sdk_library(sdk_path: &Path, universal_mac: bool) -> Result<PathBuf, crate::BoxErr> {
+fn ensure_aax_sdk_library(sdk_path: &Path, universal_mac: bool) -> Result<PathBuf, crate::CargoTruceError> {
     let build_dir = sdk_path.join("build-truce");
     let lib_path = build_dir.join("Libs/AAXLibrary/libAAXLibrary.a");
 
@@ -280,7 +280,7 @@ fn ensure_aax_sdk_library(sdk_path: &Path, universal_mac: bool) -> Result<PathBu
 
 /// Windows variant: single-arch, no lipo check.
 #[cfg(target_os = "windows")]
-fn ensure_aax_sdk_library(sdk_path: &Path) -> Result<PathBuf, crate::BoxErr> {
+fn ensure_aax_sdk_library(sdk_path: &Path) -> Result<PathBuf, crate::CargoTruceError> {
     let build_dir = sdk_path.join("build-truce");
     let lib_path = build_dir.join("Libs/AAXLibrary/AAXLibrary.lib");
     if lib_path.exists() {
@@ -359,13 +359,13 @@ fn template_binary() -> PathBuf {
 /// when building for macOS packaging; `false` for host-only dev /
 /// install, `true` for `cargo truce package --universal`.
 #[cfg(any(target_os = "macos", target_os = "windows"))]
-fn ensure_template(root: &Path, universal_mac: bool) -> Result<Option<PathBuf>, crate::BoxErr> {
+fn ensure_template(universal_mac: bool) -> Result<Option<PathBuf>, crate::CargoTruceError> {
     let template = template_binary();
     if let Some(sdk_path) = resolve_aax_sdk_path() {
         if !template.exists() {
             crate::vprintln!("AAX: building template with SDK at {}", sdk_path.display());
         }
-        build_aax_template(root, &sdk_path, universal_mac)?;
+        build_aax_template(&sdk_path, universal_mac)?;
     } else if !template.exists() {
         // Per-plugin skip lines are emitted by `install_aax`; `ensure_template`
         // is called once per plugin during the build phase but the resolution
@@ -412,13 +412,14 @@ pub(crate) fn emit_aax_bundle(
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
 pub(crate) fn emit_aax_bundle(
     root: &Path,
     p: &PluginDef,
-    _config: &Config,
+    config: &Config,
     universal_mac: bool,
 ) -> Res {
-    let Some(template) = ensure_template(root, universal_mac)? else {
+    let Some(template) = ensure_template(universal_mac)? else {
         // SDK missing - log per-plugin so the user sees one Skipped
         // entry per (AAX, plugin) target. Both `cargo truce build`
         // and `cargo truce install` flow through this point so the
@@ -474,7 +475,7 @@ pub(crate) fn emit_aax_bundle(
     <key>CFBundleExecutable</key>
     <string>{exec_name}</string>
     <key>CFBundleIdentifier</key>
-    <string>com.truce.{bundle_id}.aax</string>
+    <string>{vendor_id}.{bundle_id}.aax</string>
     <key>CFBundleName</key>
     <string>{display_name}</string>
     <key>CFBundlePackageType</key>
@@ -485,6 +486,7 @@ pub(crate) fn emit_aax_bundle(
 </plist>"#,
             display_name = p.name,
             bundle_id = p.bundle_id,
+            vendor_id = config.vendor.id,
         );
         fs_ctx::write(contents.join("Info.plist"), plist)?;
 

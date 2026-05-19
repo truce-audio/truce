@@ -56,7 +56,7 @@ fn main() {
 
 The helper bundles the truce widget library (so `import { Knob,
 Meter, ... } from "@truce";` works) and JetBrains Mono (so
-`import "JetBrainsMono-Regular.ttf";` works) — your plugin crate
+`import "JetBrainsMono-Regular.ttf";` works) - your plugin crate
 doesn't need a local truce checkout.
 
 See [truce.audio](https://truce.audio/) for the full plugin

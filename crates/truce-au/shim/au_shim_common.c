@@ -2,7 +2,7 @@
  * Shared globals and registration for AU v2 and v3 shims.
  *
  * The same compiled framework dylib serves both v2 (.component) and
- * v3 (.appex) — the appex compiles its Swift AUAudioUnit subclass
+ * v3 (.appex) - the appex compiles its Swift AUAudioUnit subclass
  * separately and reads g_callbacks/g_descriptor/etc. out of this
  * dylib at runtime via dynamic symbol lookup.
  */
@@ -42,7 +42,7 @@ static void au_shim_constructor(void) {
 }
 
 // Weak stubs for symbols the `export_au!` macro emits in the *consumer*
-// cdylib. They let `truce-au` build its own (unused) cdylib target —
+// cdylib. They let `truce-au` build its own (unused) cdylib target -
 // which is the only way cargo stops warning about
 // `rustc-link-arg-cdylib` from this rlib. Consumer-supplied strong
 // definitions override these at link time in the real plugin dylib.

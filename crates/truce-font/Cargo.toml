@@ -4,7 +4,7 @@ version.workspace = true
 repository.workspace = true
 homepage.workspace = true
 edition.workspace = true
-# Plain Apache 2.0 — this crate is a tiny font-loading wrapper plus
+# Plain Apache 2.0 - this crate is a tiny font-loading wrapper plus
 # the bundled JetBrains Mono asset; no Framework License carve-out
 # applies. The bundled `JetBrainsMono-Regular.ttf` asset is governed
 # separately by the SIL Open Font License 1.1, included alongside

@@ -21,7 +21,7 @@ use std::process::Command;
 
 use super::{PkgFormat, SuiteSelection};
 use crate::config::{Config, PluginDef, ResolvedSuite};
-use crate::{BoxErr, Res, load_config, project_root, read_workspace_version};
+use crate::{CargoTruceError, Res, load_config, project_root, read_workspace_version};
 use truce_build::BundleManifest;
 
 const INSTALL_SH_TEMPLATE: &str = include_str!("install.sh.tmpl");
@@ -139,7 +139,7 @@ pub(crate) fn cmd_package_linux(args: &[String], selection: &SuiteSelection) -> 
     // `target/bundles/<triple>/manifest.toml`.
     let bundles_root = truce_build::target_dir(&root).join("bundles");
     let plans: Vec<(String, PathBuf, BundleManifest)> = if targets.is_empty() {
-        let manifest = BundleManifest::load(&bundles_root).map_err(BoxErr::from)?;
+        let manifest = BundleManifest::load(&bundles_root).map_err(CargoTruceError::from)?;
         validate_manifest_triple(&manifest, &bundles_root, truce_build::host_triple())?;
         vec![(
             manifest.target_triple.clone(),
@@ -150,7 +150,7 @@ pub(crate) fn cmd_package_linux(args: &[String], selection: &SuiteSelection) -> 
         let mut out = Vec::new();
         for t in &targets {
             let dir = bundles_root.join(t);
-            let manifest = BundleManifest::load(&dir).map_err(BoxErr::from)?;
+            let manifest = BundleManifest::load(&dir).map_err(CargoTruceError::from)?;
             validate_manifest_triple(&manifest, &dir, t)?;
             out.push((t.clone(), dir, manifest));
         }
@@ -386,7 +386,7 @@ fn stage_plugin_payload(
     staging: &Path,
     bundles_dir: &Path,
     manifest: &BundleManifest,
-) -> Result<PluginSummary, BoxErr> {
+) -> Result<PluginSummary, CargoTruceError> {
     let mut bundles = Vec::new();
 
     // Tarball layout mirrors the Linux install destinations: bundles
@@ -491,7 +491,7 @@ fn stage_standalone_payload(
     plugin: &PluginDef,
     staging: &Path,
     bundles_dir: &Path,
-) -> Result<Option<String>, BoxErr> {
+) -> Result<Option<String>, CargoTruceError> {
     // On Linux, `cargo truce run` stages a bare binary at
     // `target/bundles/<Plugin>.standalone`. macOS uses `.app`,
     // Windows uses `.exe`. We're producing a Linux tarball, so the
@@ -632,16 +632,16 @@ fn write_readme(
 /// first. The in-archive layout uses the version-tagged stem via
 /// `create_tarball`'s `--transform`, so the on-disk path stays
 /// internal-only.
-fn plugin_stage_dir(root: &Path, bundle_id: &str, arch: &str) -> Result<PathBuf, BoxErr> {
+fn plugin_stage_dir(root: &Path, bundle_id: &str, arch: &str) -> Result<PathBuf, CargoTruceError> {
     stage_dir(root, "plugin", bundle_id, arch)
 }
 
 /// Per-suite Linux staging dir, also arch-namespaced.
-fn suite_stage_dir(root: &Path, suite_bundle_id: &str, arch: &str) -> Result<PathBuf, BoxErr> {
+fn suite_stage_dir(root: &Path, suite_bundle_id: &str, arch: &str) -> Result<PathBuf, CargoTruceError> {
     stage_dir(root, "suite", suite_bundle_id, arch)
 }
 
-fn stage_dir(root: &Path, kind: &str, bundle_id: &str, arch: &str) -> Result<PathBuf, BoxErr> {
+fn stage_dir(root: &Path, kind: &str, bundle_id: &str, arch: &str) -> Result<PathBuf, CargoTruceError> {
     let staging = truce_build::target_dir(root)
         .join("package/linux")
         .join(arch)
@@ -664,10 +664,10 @@ fn create_tarball(staging: &Path, out: &Path, stem: &str) -> Res {
     // is stable regardless of where we staged.
     let parent = staging
         .parent()
-        .ok_or_else(|| BoxErr::from("staging dir has no parent"))?;
+        .ok_or_else(|| CargoTruceError::from("staging dir has no parent"))?;
     let basename = staging
         .file_name()
-        .ok_or_else(|| BoxErr::from("staging dir has no name"))?
+        .ok_or_else(|| CargoTruceError::from("staging dir has no name"))?
         .to_string_lossy()
         .into_owned();
     let status = Command::new("tar")

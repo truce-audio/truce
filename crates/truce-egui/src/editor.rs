@@ -220,9 +220,7 @@ fn unpack_size(packed: u64) -> (u32, u32) {
     ((packed >> 32) as u32, packed as u32)
 }
 
-// ---------------------------------------------------------------------------
 // Baseview WindowHandler - owns the egui frame loop + wgpu renderer
-// ---------------------------------------------------------------------------
 
 struct EguiWindowHandler<P: Params + ?Sized> {
     ui: Arc<Mutex<Box<dyn EditorUi<P>>>>,
@@ -493,9 +491,7 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
     }
 }
 
-// ---------------------------------------------------------------------------
 // Event conversion helpers
-// ---------------------------------------------------------------------------
 
 fn convert_mouse_button(btn: baseview::MouseButton) -> Option<egui::PointerButton> {
     match btn {
@@ -607,9 +603,7 @@ fn convert_key(key: &keyboard_types::Key) -> Option<egui::Key> {
     })
 }
 
-// ---------------------------------------------------------------------------
 // Editor trait implementation
-// ---------------------------------------------------------------------------
 
 impl<P: Params + 'static> Editor for EguiEditor<P> {
     fn size(&self) -> (u32, u32) {

@@ -12,7 +12,7 @@ description = "VST2 format wrapper for truce (clean-room C shim)"
 # makes cargo accept this crate's `rustc-link-arg-cdylib=` directives
 # without warning. The actual cdylib is produced by the consumer (the
 # plugin's example crate); the empty cdylib cargo builds for this
-# crate is unused — it silences the "package does not contain a cdylib
+# crate is unused - it silences the "package does not contain a cdylib
 # target" warning and nothing else.
 [lib]
 crate-type = ["rlib", "cdylib"]

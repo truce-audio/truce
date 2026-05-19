@@ -6,7 +6,7 @@ homepage.workspace = true
 edition.workspace = true
 license-file.workspace = true
 rust-version.workspace = true
-description = "Audio plugin framework — write once, build VST3, CLAP, AU, AAX"
+description = "Audio plugin framework - write once, build VST3, CLAP, AU, AAX"
 
 [dependencies]
 truce-core = { workspace = true }
@@ -17,7 +17,7 @@ truce-derive = { workspace = true }
 
 [features]
 # CLAP is the only default format. VST3, VST2, AU, AAX are all opt-in.
-# VST2 in particular is a legacy format — the Steinberg VST2 SDK was
+# VST2 in particular is a legacy format - the Steinberg VST2 SDK was
 # deprecated in 2018 and VST2 plugin distribution may require agreement
 # with Steinberg's licensing terms. Enable only if you understand the
 # implications.

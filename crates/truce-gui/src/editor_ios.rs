@@ -26,6 +26,7 @@ use objc2_foundation::{NSPoint, NSRect, NSSize};
 
 use truce_core::editor::{Editor, PluginContext, RawWindowHandle};
 use truce_gui_types::interaction::{self, InputEvent, InteractionState, MouseButton, ParamEdit};
+use truce_gui_types::ios::{TouchPhase, fnv1a_64, ivar_offset};
 use truce_gui_types::layout::{GridLayout, Layout, PluginLayout};
 use truce_gui_types::theme::Theme;
 use truce_params::Params;
@@ -458,13 +459,6 @@ unsafe extern "C" fn touches_cancelled<P: Params + 'static>(
     }
 }
 
-#[derive(Clone, Copy)]
-enum TouchPhase {
-    Began,
-    Moved,
-    Ended,
-}
-
 unsafe fn dispatch_touch<P: Params + 'static>(
     self_: &AnyObject,
     touches: *mut AnyObject,
@@ -726,37 +720,3 @@ impl Iterator for NSEnumerator {
     }
 }
 
-fn fnv1a_64(bytes: &[u8]) -> u64 {
-    // Tiny non-crypto hash for class-name uniqueness - std doesn't
-    // expose a stable hash without a key, so we hand-roll FNV-1a.
-    // Collisions would just keep the previously registered class
-    // active for both monomorphizations, which is benign here (the
-    // methods are identical instantiations).
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for &b in bytes {
-        h ^= u64::from(b);
-        h = h.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    h
-}
-
-unsafe fn ivar_offset(cls: &AnyClass, name: &std::ffi::CStr) -> usize {
-    // SAFETY: `class_getInstanceVariable` returns NULL if the class
-    // doesn't have the ivar; `install_editor_view` always adds it
-    // before any instance is allocated, so a null here is a logic
-    // bug. `ivar_getOffset` returns the byte offset from the
-    // instance start.
-    unsafe extern "C" {
-        fn class_getInstanceVariable(
-            cls: *const AnyClass,
-            name: *const std::os::raw::c_char,
-        ) -> *mut std::ffi::c_void;
-        fn ivar_getOffset(ivar: *mut std::ffi::c_void) -> isize;
-    }
-    unsafe {
-        let ivar = class_getInstanceVariable(std::ptr::from_ref::<AnyClass>(cls), name.as_ptr());
-        assert!(!ivar.is_null(), "ivar {name:?} not registered");
-        let off = ivar_getOffset(ivar);
-        usize::try_from(off).expect("non-negative ivar offset")
-    }
-}

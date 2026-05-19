@@ -1,5 +1,5 @@
 /**
- * Bridge loader — dlopen()s the Rust cdylib and resolves symbols.
+ * Bridge loader - dlopen()s the Rust cdylib and resolves symbols.
  */
 
 #include "TruceAAX_Bridge.h"
@@ -95,7 +95,7 @@ bool TruceBridge_Load(TruceBridge* bridge, const char* bundle_path) {
     if (cdylib_abi != TRUCE_AAX_ABI_VERSION) {
         fprintf(stderr,
                 "[truce-aax] ABI version mismatch: template expects %u, "
-                "cdylib reports %u — refusing to load\n",
+                "cdylib reports %u - refusing to load\n",
                 TRUCE_AAX_ABI_VERSION, cdylib_abi);
         close_lib(lib);
         return false;

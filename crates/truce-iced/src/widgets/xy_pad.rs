@@ -89,9 +89,7 @@ impl<'a, M: Clone + Debug + 'static> From<XYPadWidget<'a, M>> for Element<'a, Me
     }
 }
 
-// ---------------------------------------------------------------------------
 // Canvas program
-// ---------------------------------------------------------------------------
 
 struct XYPadProgram {
     x_id: u32,

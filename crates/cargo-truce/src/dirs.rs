@@ -37,8 +37,8 @@ pub fn home_dir() -> Option<PathBuf> {
 /// Windows callers go through `require_local_appdata` / `require_appdata`
 /// instead; gate accordingly so the function isn't dead-code on Windows.
 #[cfg(not(target_os = "windows"))]
-pub(crate) fn require_home_dir() -> Result<PathBuf, crate::BoxErr> {
-    home_dir().ok_or_else(|| -> crate::BoxErr {
+pub(crate) fn require_home_dir() -> Result<PathBuf, crate::CargoTruceError> {
+    home_dir().ok_or_else(|| -> crate::CargoTruceError {
         if cfg!(windows) {
             "can't determine home directory: neither USERPROFILE nor HOME is set".into()
         } else {
@@ -51,7 +51,7 @@ pub(crate) fn require_home_dir() -> Result<PathBuf, crate::BoxErr> {
 /// `C:\Users\alice\AppData\Local`) - used as the user-scope plug-in
 /// install root for CLAP and VST3 on Windows.
 #[cfg(target_os = "windows")]
-pub(crate) fn require_local_appdata() -> Result<PathBuf, crate::BoxErr> {
+pub(crate) fn require_local_appdata() -> Result<PathBuf, crate::CargoTruceError> {
     std::env::var_os("LOCALAPPDATA")
         .map(PathBuf::from)
         .ok_or_else(|| "LOCALAPPDATA env var not set".into())
@@ -63,7 +63,7 @@ pub(crate) fn require_local_appdata() -> Result<PathBuf, crate::BoxErr> {
 /// data follows the user across machines via Active Directory,
 /// matching the LV2 convention of bundle-relative resources.
 #[cfg(target_os = "windows")]
-pub(crate) fn require_appdata() -> Result<PathBuf, crate::BoxErr> {
+pub(crate) fn require_appdata() -> Result<PathBuf, crate::CargoTruceError> {
     std::env::var_os("APPDATA")
         .map(PathBuf::from)
         .ok_or_else(|| "APPDATA env var not set".into())

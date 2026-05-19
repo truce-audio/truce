@@ -6,7 +6,7 @@ Main entry point for the truce audio plugin framework.
 
 `truce` is the only dependency most plugin authors need. It re-exports
 `truce-core` (traits and types), `truce-params` (parameter system), and the
-proc macros from `truce-derive` (all four — `Params`, `ParamEnum`, `State`,
+proc macros from `truce-derive` (all four - `Params`, `ParamEnum`, `State`,
 and `plugin_info!()`), giving you a single import path for everything.
 
 ## Key re-exports
@@ -24,7 +24,7 @@ Four flavours, each pinning a different precision combination:
 
 | Prelude | Audio buffer | `param.read()` returns | When to pick |
 |---|---|---|---|
-| `prelude` / `prelude32` | `f32` | `f32` | Default — host wire is `f32` everywhere |
+| `prelude` / `prelude32` | `f32` | `f32` | Default - host wire is `f32` everywhere |
 | `prelude64m` | `f32` | `f64` | Stable `f64` intermediate math, narrow on buffer write |
 | `prelude64` | `f64` | `f64` | Wrapper widens host `f32` → plugin `f64` once per block |
 
@@ -38,7 +38,7 @@ so `&mut AudioBuffer` resolves to the prelude's chosen precision
 |---------|-------------|
 | `clap` (default) | Enable CLAP format export |
 | `vst3` | Enable VST3 format export |
-| `vst2` | Enable VST2 format export (legacy — see `Cargo.toml` note) |
+| `vst2` | Enable VST2 format export (legacy - see `Cargo.toml` note) |
 | `lv2` | Enable LV2 format export |
 | `shell` | Build a dynamic shell that dlopens a hot-reloadable logic dylib (turns on `truce-loader/shell`) |
 | `hot-debug` | Verbose hot-reload diagnostics |
@@ -56,7 +56,7 @@ the conventional pattern.
 truce = { git = "https://github.com/truce-audio/truce", tag = "vX.Y.Z", features = ["clap"] }
 ```
 
-(Replace `vX.Y.Z` with the latest release tag — see the
+(Replace `vX.Y.Z` with the latest release tag - see the
 [releases page](https://github.com/truce-audio/truce/releases). Use
 `branch = "main"` instead of `tag = ...` to track the bleeding edge.
 Or just run `cargo truce new` and let the scaffolder write the
@@ -84,7 +84,7 @@ impl PluginLogic for MyPlugin {
         ProcessStatus::Normal
     }
 
-    // GUI methods (layout, custom_editor, …) all have defaults —
+    // GUI methods (layout, custom_editor, …) all have defaults -
     // omit them for built-in widgets with the default layout.
 }
 

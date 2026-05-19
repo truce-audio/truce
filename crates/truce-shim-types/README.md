@@ -22,12 +22,12 @@ pub fn include_dir() -> std::path::PathBuf;
 
 Three consumers need the **exact same bytes** of the header:
 
-1. **`truce-au/build.rs`** — passes `include_dir()` to `cc-rs` so the
+1. **`truce-au/build.rs`** - passes `include_dir()` to `cc-rs` so the
    shim sources (`au_shim_common.c`, `au_v2_shim.c`) can
    `#include "au_shim_types.h"` during compile.
-2. **`truce-au/src/ffi.rs`** — defines `AuTransportSnapshot` whose
+2. **`truce-au/src/ffi.rs`** - defines `AuTransportSnapshot` whose
    Rust layout has to match the C struct in the header.
-3. **`cargo-truce/src/templates.rs`** — embeds `AU_SHIM_TYPES_H` into
+3. **`cargo-truce/src/templates.rs`** - embeds `AU_SHIM_TYPES_H` into
    the AU v3 Xcode template that `cargo truce install --au3` writes
    into the user's build tree, where the Swift `BridgingHeader.h`
    then `#import`s it.
@@ -36,7 +36,7 @@ Merging into either consumer breaks the other:
 
 - **Into `truce-au`**: `cargo-truce` would have to depend on
   `truce-au`, dragging the AU NSView Objective-C compile cone into
-  `cargo install cargo-truce`. Wrong shape — cargo-truce is meant to
+  `cargo install cargo-truce`. Wrong shape - cargo-truce is meant to
   be lean.
 - **Into `cargo-truce/templates/`**: works for the embedding case
   but `truce-au/build.rs` loses the published path it can pin to

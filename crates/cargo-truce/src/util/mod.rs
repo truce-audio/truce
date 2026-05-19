@@ -4,7 +4,7 @@
 //! Functions here have no per-command flavor - anything that's specific
 //! to install, package, or doctor lives next to the command that uses it.
 
-use crate::BoxErr;
+use crate::CargoTruceError;
 use std::env;
 use std::ffi::OsStr;
 use std::fs;
@@ -47,24 +47,24 @@ pub(crate) use locate::{
 /// leftover surfaces as "Permission denied (os error 13)" with no hint at
 /// which file the user needs to fix. These wrappers bubble the path up.
 pub(crate) mod fs_ctx {
-    use crate::BoxErr;
+    use crate::CargoTruceError;
     use std::fs;
     use std::path::Path;
 
-    pub(crate) fn copy(from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<u64, BoxErr> {
+    pub(crate) fn copy(from: impl AsRef<Path>, to: impl AsRef<Path>) -> Result<u64, CargoTruceError> {
         let (from, to) = (from.as_ref(), to.as_ref());
         fs::copy(from, to)
             .map_err(|e| format!("copy {} -> {}: {e}", from.display(), to.display()).into())
     }
 
-    pub(crate) fn create_dir_all(path: impl AsRef<Path>) -> Result<(), BoxErr> {
+    pub(crate) fn create_dir_all(path: impl AsRef<Path>) -> Result<(), CargoTruceError> {
         let path = path.as_ref();
         fs::create_dir_all(path).map_err(|e| format!("mkdir -p {}: {e}", path.display()).into())
     }
 
     // Both used only by AAX template + AU v3 staging on macOS / Windows.
     #[cfg(any(target_os = "macos", target_os = "windows"))]
-    pub(crate) fn write(path: impl AsRef<Path>, contents: impl AsRef<[u8]>) -> Result<(), BoxErr> {
+    pub(crate) fn write(path: impl AsRef<Path>, contents: impl AsRef<[u8]>) -> Result<(), CargoTruceError> {
         let path = path.as_ref();
         fs::write(path, contents).map_err(|e| format!("write {}: {e}", path.display()).into())
     }
@@ -76,7 +76,7 @@ pub(crate) mod fs_ctx {
     pub(crate) fn write_if_changed(
         path: impl AsRef<Path>,
         contents: impl AsRef<[u8]>,
-    ) -> Result<bool, BoxErr> {
+    ) -> Result<bool, CargoTruceError> {
         let path = path.as_ref();
         let new = contents.as_ref();
         if let Ok(existing) = fs::read(path)
@@ -85,7 +85,7 @@ pub(crate) mod fs_ctx {
             return Ok(false);
         }
         fs::write(path, new)
-            .map_err(|e| -> BoxErr { format!("write {}: {e}", path.display()).into() })?;
+            .map_err(|e| -> CargoTruceError { format!("write {}: {e}", path.display()).into() })?;
         Ok(true)
     }
 }
@@ -121,7 +121,7 @@ pub(crate) fn arg_value<'a>(
     args: &'a [String],
     i: &mut usize,
     flag: &str,
-) -> Result<&'a str, BoxErr> {
+) -> Result<&'a str, CargoTruceError> {
     *i += 1;
     args.get(*i)
         .map(String::as_str)
@@ -258,12 +258,12 @@ pub(crate) fn resolve_target_cpu(triple: &str) -> Option<String> {
 /// Returns `Ok(())` when the profile is declared. Otherwise returns
 /// an error string the caller can propagate; the message includes
 /// the exact lines to add.
-pub(crate) fn verify_shell_profile_declared() -> Result<(), BoxErr> {
+pub(crate) fn verify_shell_profile_declared() -> Result<(), CargoTruceError> {
     let cargo_toml = project_root().join("Cargo.toml");
-    let content = fs::read_to_string(&cargo_toml).map_err(|e| -> BoxErr {
+    let content = fs::read_to_string(&cargo_toml).map_err(|e| -> CargoTruceError {
         format!("failed to read {}: {e}", cargo_toml.display()).into()
     })?;
-    let doc: toml::Table = content.parse().map_err(|e| -> BoxErr {
+    let doc: toml::Table = content.parse().map_err(|e| -> CargoTruceError {
         format!("failed to parse {}: {e}", cargo_toml.display()).into()
     })?;
     let has_profile_shell = doc
@@ -385,13 +385,13 @@ pub(crate) fn program_files() -> PathBuf {
 /// declare a version anywhere - callers want the IO/parse case
 /// distinguishable from the "no version key" case so the user can
 /// fix the right thing.
-pub(crate) fn read_workspace_version(root: &Path) -> Result<String, crate::BoxErr> {
+pub(crate) fn read_workspace_version(root: &Path) -> Result<String, crate::CargoTruceError> {
     let path = root.join("Cargo.toml");
     let content = fs::read_to_string(&path)
-        .map_err(|e| -> crate::BoxErr { format!("read {}: {e}", path.display()).into() })?;
+        .map_err(|e| -> crate::CargoTruceError { format!("read {}: {e}", path.display()).into() })?;
     let doc: toml::Table = content
         .parse()
-        .map_err(|e| -> crate::BoxErr { format!("parse {}: {e}", path.display()).into() })?;
+        .map_err(|e| -> crate::CargoTruceError { format!("parse {}: {e}", path.display()).into() })?;
     if let Some(v) = doc
         .get("workspace")
         .and_then(|w| w.get("package"))
@@ -750,7 +750,7 @@ pub(crate) fn run_silent(cmd: &str, args: &[&OsStr]) {
 
 // Gated to macOS: only `cmd_status` (macOS impl) shells out to `auval`.
 #[cfg(target_os = "macos")]
-pub(crate) fn run_quiet(cmd: &str, args: &[&OsStr]) -> std::result::Result<String, BoxErr> {
+pub(crate) fn run_quiet(cmd: &str, args: &[&OsStr]) -> std::result::Result<String, CargoTruceError> {
     let output = Command::new(cmd).args(args).output()?;
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }

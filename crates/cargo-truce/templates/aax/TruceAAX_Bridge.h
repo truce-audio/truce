@@ -1,5 +1,5 @@
 /**
- * Bridge loader — dlopen()s the Rust cdylib and resolves truce_aax_* symbols.
+ * Bridge loader - dlopen()s the Rust cdylib and resolves truce_aax_* symbols.
  */
 
 #pragma once

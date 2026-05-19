@@ -10,7 +10,7 @@ description = "Build-script helper for truce plugins with Slint GUIs. Bundles th
 
 # Ship the bundled widget sources so the published crate works
 # out-of-tree. JetBrains Mono comes in via `truce-font` rather than
-# being duplicated under `fonts/` here — single source of truth for
+# being duplicated under `fonts/` here - single source of truth for
 # the TTF + OFL license text.
 include = [
     "src/**",

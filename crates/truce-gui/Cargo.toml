@@ -22,7 +22,7 @@ pollster = "0.4"
 log = "0.4"
 
 # baseview hosts the editor on macOS / Windows / Linux. iOS embeds
-# a UIView directly into the AUv3 view controller — no baseview.
+# a UIView directly into the AUv3 view controller - no baseview.
 [target.'cfg(not(target_os = "ios"))'.dependencies]
 baseview = { workspace = true }
 
