@@ -308,6 +308,16 @@ pub unsafe fn instantiate_ui<P: PluginExport>(
         #[cfg(target_os = "macos")]
         resize_ns_view(parent_ptr, pref_w, pref_h);
 
+        // baseview attached its child at frame origin `(0, 0)`. NSView
+        // is unflipped by default, so `(0, 0)` is the parent's
+        // bottom-left, which renders the editor anchored to the bottom
+        // of the host's plugin window. Reposition the child so its
+        // top edge sits at the parent's top edge, and tag the
+        // autoresizing mask so subsequent host-driven parent resizes
+        // keep it pinned there.
+        #[cfg(target_os = "macos")]
+        anchor_child_to_top(parent_ptr);
+
         // `editor.open()` just added baseview's child NSView under the
         // host's parent. Install a `cursorUpdate:` handler on that child so
         // macOS shows an arrow cursor over our editor instead of inheriting
@@ -685,6 +695,72 @@ unsafe fn fit_win32_parent_to_child(parent: *mut c_void) {
             h,
             SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
         );
+    }
+}
+
+/// Reposition every direct subview of `parent` so its top edge sits
+/// at the parent's top edge, and pin it there under future parent
+/// resizes via `autoresizingMask = NSViewMinYMargin | NSViewMaxXMargin`.
+///
+/// `NSView` is unflipped by default, so an attached child at frame
+/// origin `(0, 0)` lands at the parent's bottom-left in Cocoa
+/// coordinates. baseview creates its child at `(0, 0)` and leaves the
+/// autoresizing mask at `NSViewNotSizable`, so without this fixup the
+/// editor renders anchored to the bottom of the host's plugin window.
+/// X11 and Win32 use top-left origins natively and don't need the
+/// equivalent step.
+#[cfg(target_os = "macos")]
+unsafe fn anchor_child_to_top(parent: *mut c_void) {
+    use objc::runtime::Object;
+    use objc::{msg_send, sel, sel_impl};
+
+    #[repr(C)]
+    struct NSPoint {
+        x: f64,
+        y: f64,
+    }
+    #[repr(C)]
+    struct NSSize {
+        width: f64,
+        height: f64,
+    }
+    #[repr(C)]
+    struct NSRect {
+        origin: NSPoint,
+        size: NSSize,
+    }
+
+    // Cocoa autoresizing-mask bit flags (`NSAutoresizingMaskOptions`).
+    // `NSViewMinYMargin` keeps the gap between child-bottom and
+    // parent-bottom flexible; `NSViewMaxXMargin` keeps the gap between
+    // child-right and parent-right flexible. Together they anchor the
+    // child to the parent's top-left in unflipped NSView coordinates.
+    const NSVIEW_MIN_Y_MARGIN: u64 = 8;
+    const NSVIEW_MAX_X_MARGIN: u64 = 4;
+
+    if parent.is_null() {
+        return;
+    }
+    let parent_obj = parent.cast::<Object>();
+    let parent_frame: NSRect = msg_send![parent_obj, frame];
+    let subviews: *mut Object = msg_send![parent_obj, subviews];
+    if subviews.is_null() {
+        return;
+    }
+    let count: usize = msg_send![subviews, count];
+    for i in 0..count {
+        let child: *mut Object = msg_send![subviews, objectAtIndex: i];
+        if child.is_null() {
+            continue;
+        }
+        let child_frame: NSRect = msg_send![child, frame];
+        let new_origin = NSPoint {
+            x: child_frame.origin.x,
+            y: parent_frame.size.height - child_frame.size.height,
+        };
+        let _: () = msg_send![child, setFrameOrigin: new_origin];
+        let _: () =
+            msg_send![child, setAutoresizingMask: NSVIEW_MIN_Y_MARGIN | NSVIEW_MAX_X_MARGIN];
     }
 }
 
