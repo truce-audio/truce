@@ -46,7 +46,7 @@ env:
   # current runner, which is the signal to bump both files in lockstep
   # and re-bake.
   IOS_SIM_DEVICE: "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro"
-  IOS_SIM_RUNTIME: "com.apple.CoreSimulator.SimRuntime.iOS-26-3"
+  IOS_SIM_RUNTIME: "com.apple.CoreSimulator.SimRuntime.iOS-26-2"
   # Keep this list in sync with truce.toml's [[plugin]] entries that
   # have screenshot tests under examples/<crate>/src/lib.rs. The
   # `_linux` / `_macos` / `_windows` / `_default_ios` / `_container_ios`

@@ -24,7 +24,7 @@ env:
   # MUST MATCH `bake-screenshots.yml`'s identical block, otherwise
   # bake-and-test drift across workflows.
   IOS_SIM_DEVICE: "com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro"
-  IOS_SIM_RUNTIME: "com.apple.CoreSimulator.SimRuntime.iOS-26-3"
+  IOS_SIM_RUNTIME: "com.apple.CoreSimulator.SimRuntime.iOS-26-2"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
