@@ -15,6 +15,7 @@ use truce_core::editor::{ClosureBridge, Editor, PluginContext, RawWindowHandle, 
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
 use truce_core::info::PluginCategory;
+use truce_core::midi::decode_short_message;
 use truce_core::process::ProcessContext;
 use truce_core::state;
 use truce_core::wrapper::{
@@ -244,76 +245,46 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
         if !events.is_null() && num_events > 0 {
             let event_slice = slice::from_raw_parts(events, num_events as usize);
             for ev in event_slice {
-                let status = ev.status & 0xF0;
-                let channel = ev.status & 0x0F;
-                let body = match status {
-                    0x90 if ev.data2 > 0 => Some(EventBody::NoteOn {
+                let body = if ev.status & 0xF0 == 0xF0 {
+                    // VST3-specific: note expression carried in the
+                    // same event struct. `data1=typeId`,
+                    // `data2=value*127`, `note_id=noteId`. Spec says
+                    // `data2 ∈ 0..=127`, but the C++ shim isn't
+                    // required to clamp - values 128..=255 are
+                    // ABI-legal. Clamp first and scale through u64 so
+                    // the multiplication can't wrap and `data2 == 127`
+                    // maps to exactly `u32::MAX`.
+                    let type_id = ev.data1;
+                    let data2_clamped = u64::from(ev.data2.min(127));
+                    // `data2_clamped <= 127`, so the product fits in
+                    // u32 by construction.
+                    #[allow(clippy::cast_possible_truncation)]
+                    let value = (data2_clamped * u64::from(u32::MAX) / 127) as u32;
+                    let note = ev.note_id;
+                    let make_pn_cc = |cc| EventBody::PerNoteCC {
                         group: 0,
-                        channel,
-                        note: ev.data1,
-                        velocity: ev.data2,
-                    }),
-                    0x90 => Some(EventBody::NoteOff {
-                        group: 0,
-                        channel,
-                        note: ev.data1,
-                        velocity: 0,
-                    }),
-                    0x80 => Some(EventBody::NoteOff {
-                        group: 0,
-                        channel,
-                        note: ev.data1,
-                        velocity: ev.data2,
-                    }),
-                    0xB0 => Some(EventBody::ControlChange {
-                        group: 0,
-                        channel,
-                        cc: ev.data1,
-                        value: ev.data2,
-                    }),
-                    0xA0 => Some(EventBody::Aftertouch {
-                        group: 0,
-                        channel,
-                        note: ev.data1,
-                        pressure: ev.data2,
-                    }),
-                    0xF0 => {
-                        // Note expression: data1=typeId, data2=value*127, note_id=noteId.
-                        // Spec says data2 ∈ 0..=127, but the C++ shim isn't required
-                        // to clamp - values 128..=255 are ABI-legal. Clamp first
-                        // and scale through u64 so the multiplication can't wrap
-                        // and data2 == 127 maps to exactly u32::MAX.
-                        let type_id = ev.data1;
-                        let data2_clamped = u64::from(ev.data2.min(127));
-                        // `data2_clamped <= 127`, so the product fits
-                        // in u32 by construction.
-                        #[allow(clippy::cast_possible_truncation)]
-                        let value = (data2_clamped * u64::from(u32::MAX) / 127) as u32;
-                        let note = ev.note_id;
-                        let make_pn_cc = |cc| EventBody::PerNoteCC {
+                        channel: 0,
+                        note,
+                        cc,
+                        value,
+                        registered: true,
+                    };
+                    match type_id {
+                        0 => Some(make_pn_cc(7)),  // volume
+                        1 => Some(make_pn_cc(10)), // pan
+                        2 => Some(EventBody::PerNotePitchBend {
                             group: 0,
                             channel: 0,
                             note,
-                            cc,
                             value,
-                            registered: true,
-                        };
-                        match type_id {
-                            0 => Some(make_pn_cc(7)),  // volume
-                            1 => Some(make_pn_cc(10)), // pan
-                            2 => Some(EventBody::PerNotePitchBend {
-                                group: 0,
-                                channel: 0,
-                                note,
-                                value,
-                            }), // tuning
-                            3 => Some(make_pn_cc(1)),  // vibrato
-                            4 => Some(make_pn_cc(11)), // expression
-                            5 => Some(make_pn_cc(74)), // brightness
-                            _ => None,
-                        }
+                        }), // tuning
+                        3 => Some(make_pn_cc(1)),  // vibrato
+                        4 => Some(make_pn_cc(11)), // expression
+                        5 => Some(make_pn_cc(74)), // brightness
+                        _ => None,
                     }
-                    _ => None,
+                } else {
+                    decode_short_message(ev.status, ev.data1, ev.data2)
                 };
                 if let Some(body) = body {
                     inst.event_list.push(Event {

@@ -78,7 +78,7 @@ use truce_core::editor::{ClosureBridge, Editor, PluginContext, RawWindowHandle, 
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
 use truce_core::info::{PluginCategory, PluginInfo};
-use truce_core::midi::{denorm_7bit, pitch_bend_from_bytes, pitch_bend_to_bytes};
+use truce_core::midi::{decode_short_message, denorm_7bit, pitch_bend_to_bytes};
 use truce_core::plugin::Plugin;
 use truce_core::process::{ProcessContext, ProcessStatus};
 use truce_core::state;
@@ -662,59 +662,9 @@ unsafe fn convert_input_events<P: PluginExport>(
                     // silently drop CC / PitchBend / Aftertouch /
                     // ChannelPressure / ProgramChange at the wrapper.
                     let midi = &*header.cast::<clap_event_midi>();
-                    let status = midi.data[0];
-                    let channel = status & 0x0F;
-                    let d1 = midi.data[1];
-                    let d2 = midi.data[2];
-                    let body = match status & 0xF0 {
-                        0x80 => Some(EventBody::NoteOff {
-                            group: 0,
-                            channel,
-                            note: d1,
-                            velocity: d2,
-                        }),
-                        0x90 if d2 == 0 => Some(EventBody::NoteOff {
-                            group: 0,
-                            channel,
-                            note: d1,
-                            velocity: 0,
-                        }),
-                        0x90 => Some(EventBody::NoteOn {
-                            group: 0,
-                            channel,
-                            note: d1,
-                            velocity: d2,
-                        }),
-                        0xA0 => Some(EventBody::Aftertouch {
-                            group: 0,
-                            channel,
-                            note: d1,
-                            pressure: d2,
-                        }),
-                        0xB0 => Some(EventBody::ControlChange {
-                            group: 0,
-                            channel,
-                            cc: d1,
-                            value: d2,
-                        }),
-                        0xC0 => Some(EventBody::ProgramChange {
-                            group: 0,
-                            channel,
-                            program: d1,
-                        }),
-                        0xD0 => Some(EventBody::ChannelPressure {
-                            group: 0,
-                            channel,
-                            pressure: d1,
-                        }),
-                        0xE0 => Some(EventBody::PitchBend {
-                            group: 0,
-                            channel,
-                            value: pitch_bend_from_bytes(d1, d2),
-                        }),
-                        _ => None,
-                    };
-                    if let Some(body) = body {
+                    if let Some(body) =
+                        decode_short_message(midi.data[0], midi.data[1], midi.data[2])
+                    {
                         data.event_list.push(Event {
                             sample_offset,
                             body,

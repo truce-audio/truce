@@ -24,7 +24,7 @@ use truce_core::editor::{ClosureBridge, Editor, PluginContext, RawWindowHandle, 
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
 use truce_core::info::PluginCategory;
-use truce_core::midi::{pitch_bend_from_bytes, pitch_bend_to_bytes};
+use truce_core::midi::{decode_short_message, pitch_bend_to_bytes};
 use truce_core::process::ProcessContext;
 use truce_core::state;
 use truce_core::wrapper::{
@@ -792,47 +792,7 @@ pub unsafe fn _process<P: PluginExport>(
         if !events.is_null() && num_events > 0 {
             let ev_slice = unsafe { slice::from_raw_parts(events, num_events as usize) };
             for ev in ev_slice {
-                let status = ev.status & 0xF0;
-                let channel = ev.status & 0x0F;
-                let body = match status {
-                    0x90 if ev.data2 > 0 => Some(EventBody::NoteOn {
-                        group: 0,
-                        channel,
-                        note: ev.data1,
-                        velocity: ev.data2,
-                    }),
-                    0x90 => Some(EventBody::NoteOff {
-                        group: 0,
-                        channel,
-                        note: ev.data1,
-                        velocity: 0,
-                    }),
-                    0x80 => Some(EventBody::NoteOff {
-                        group: 0,
-                        channel,
-                        note: ev.data1,
-                        velocity: ev.data2,
-                    }),
-                    0xA0 => Some(EventBody::Aftertouch {
-                        group: 0,
-                        channel,
-                        note: ev.data1,
-                        pressure: ev.data2,
-                    }),
-                    0xB0 => Some(EventBody::ControlChange {
-                        group: 0,
-                        channel,
-                        cc: ev.data1,
-                        value: ev.data2,
-                    }),
-                    0xE0 => Some(EventBody::PitchBend {
-                        group: 0,
-                        channel,
-                        value: pitch_bend_from_bytes(ev.data1, ev.data2),
-                    }),
-                    _ => None,
-                };
-                if let Some(body) = body {
+                if let Some(body) = decode_short_message(ev.status, ev.data1, ev.data2) {
                     inst.event_list.push(Event {
                         sample_offset: ev.delta_frames,
                         body,

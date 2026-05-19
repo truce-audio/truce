@@ -20,6 +20,80 @@ pub use truce_utils::midi::*;
 
 use crate::events::EventBody;
 
+/// Decode one MIDI 1.0 channel-voice short message into an
+/// [`EventBody`].
+///
+/// Takes the three wire bytes as scalars rather than a slice so
+/// format wrappers (CLAP / VST3 / VST2 / AU / AAX) can hand the
+/// host's per-event `status` / `data1` / `data2` fields directly
+/// without copying into a buffer. The `group` field on the
+/// returned event is `0`; callers demuxing UMP-Type-2 packets that
+/// carry a real group index should write it on the returned event.
+///
+/// Two-byte messages (`ProgramChange`, `ChannelPressure`) ignore
+/// `data2`. `data1` and `data2` are masked to the 7-bit MIDI 1.0
+/// data range before use so an out-of-spec high bit on either byte
+/// can't corrupt the decoded value.
+///
+/// Returns `None` for status bytes outside `0x80..=0xEF`
+/// (system-common, system-real-time, and `SysEx` are not modeled
+/// by [`EventBody`]; wrappers that care must inspect raw bytes).
+#[must_use]
+pub fn decode_short_message(status: u8, data1: u8, data2: u8) -> Option<EventBody> {
+    let channel = status & 0x0F;
+    let d1 = data1 & 0x7F;
+    let d2 = data2 & 0x7F;
+    match status & 0xF0 {
+        0x90 if d2 > 0 => Some(EventBody::NoteOn {
+            group: 0,
+            channel,
+            note: d1,
+            velocity: d2,
+        }),
+        // MIDI 1.0 quirk: NoteOn with velocity 0 is a NoteOff.
+        0x90 => Some(EventBody::NoteOff {
+            group: 0,
+            channel,
+            note: d1,
+            velocity: 0,
+        }),
+        0x80 => Some(EventBody::NoteOff {
+            group: 0,
+            channel,
+            note: d1,
+            velocity: d2,
+        }),
+        0xA0 => Some(EventBody::Aftertouch {
+            group: 0,
+            channel,
+            note: d1,
+            pressure: d2,
+        }),
+        0xB0 => Some(EventBody::ControlChange {
+            group: 0,
+            channel,
+            cc: d1,
+            value: d2,
+        }),
+        0xC0 => Some(EventBody::ProgramChange {
+            group: 0,
+            channel,
+            program: d1,
+        }),
+        0xD0 => Some(EventBody::ChannelPressure {
+            group: 0,
+            channel,
+            pressure: d1,
+        }),
+        0xE0 => Some(EventBody::PitchBend {
+            group: 0,
+            channel,
+            value: pitch_bend_from_bytes(d1, d2),
+        }),
+        _ => None,
+    }
+}
+
 /// Decode a MIDI 1.0 channel-voice byte stream into an
 /// [`EventBody`].
 ///
@@ -35,58 +109,32 @@ pub fn parse_midi1(group: u8, bytes: &[u8]) -> Option<EventBody> {
     if bytes.is_empty() {
         return None;
     }
+    let status = bytes[0];
+    // Two-byte messages (`ProgramChange`, `ChannelPressure`) need
+    // only `bytes[1]`; three-byte messages need both. `data2` is
+    // unread for two-byte forms, so a zero fill is sound.
+    let (data1, data2) = match status & 0xF0 {
+        0xC0 | 0xD0 if bytes.len() >= 2 => (bytes[1], 0),
+        0x80..=0xB0 | 0xE0 if bytes.len() >= 3 => (bytes[1], bytes[2]),
+        _ => return None,
+    };
+    let mut event = decode_short_message(status, data1, data2)?;
+    // `decode_short_message` always fills `group = 0`; rewrite if
+    // the caller supplied a UMP group.
+    rewrite_group(&mut event, group);
+    Some(event)
+}
 
-    let status = bytes[0] & 0xF0;
-    let channel = bytes[0] & 0x0F;
-
-    match status {
-        0x90 if bytes.len() >= 3 && bytes[2] > 0 => Some(EventBody::NoteOn {
-            group,
-            channel,
-            note: bytes[1],
-            velocity: bytes[2],
-        }),
-        // MIDI 1.0 quirk: NoteOn with velocity 0 is a NoteOff.
-        0x90 if bytes.len() >= 3 => Some(EventBody::NoteOff {
-            group,
-            channel,
-            note: bytes[1],
-            velocity: 0,
-        }),
-        0x80 if bytes.len() >= 3 => Some(EventBody::NoteOff {
-            group,
-            channel,
-            note: bytes[1],
-            velocity: bytes[2],
-        }),
-        0xA0 if bytes.len() >= 3 => Some(EventBody::Aftertouch {
-            group,
-            channel,
-            note: bytes[1],
-            pressure: bytes[2],
-        }),
-        0xB0 if bytes.len() >= 3 => Some(EventBody::ControlChange {
-            group,
-            channel,
-            cc: bytes[1],
-            value: bytes[2],
-        }),
-        0xD0 if bytes.len() >= 2 => Some(EventBody::ChannelPressure {
-            group,
-            channel,
-            pressure: bytes[1],
-        }),
-        0xE0 if bytes.len() >= 3 => Some(EventBody::PitchBend {
-            group,
-            channel,
-            value: pitch_bend_from_bytes(bytes[1], bytes[2]),
-        }),
-        0xC0 if bytes.len() >= 2 => Some(EventBody::ProgramChange {
-            group,
-            channel,
-            program: bytes[1],
-        }),
-        _ => None,
+fn rewrite_group(event: &mut EventBody, new_group: u8) {
+    match event {
+        EventBody::NoteOn { group, .. }
+        | EventBody::NoteOff { group, .. }
+        | EventBody::Aftertouch { group, .. }
+        | EventBody::ChannelPressure { group, .. }
+        | EventBody::ControlChange { group, .. }
+        | EventBody::PitchBend { group, .. }
+        | EventBody::ProgramChange { group, .. } => *group = new_group,
+        _ => {}
     }
 }
 
@@ -203,6 +251,55 @@ mod tests {
             assert_eq!(group, 7);
         } else {
             panic!("expected NoteOn");
+        }
+    }
+
+    #[test]
+    fn decode_program_change() {
+        let event = decode_short_message(0xC3, 42, 0).unwrap();
+        if let EventBody::ProgramChange {
+            channel, program, ..
+        } = event
+        {
+            assert_eq!(channel, 3);
+            assert_eq!(program, 42);
+        } else {
+            panic!("expected ProgramChange, got {event:?}");
+        }
+    }
+
+    #[test]
+    fn decode_channel_pressure() {
+        let event = decode_short_message(0xD5, 96, 0).unwrap();
+        if let EventBody::ChannelPressure {
+            channel, pressure, ..
+        } = event
+        {
+            assert_eq!(channel, 5);
+            assert_eq!(pressure, 96);
+        } else {
+            panic!("expected ChannelPressure, got {event:?}");
+        }
+    }
+
+    #[test]
+    fn decode_short_message_unknown_status_returns_none() {
+        // System common / real-time / SysEx aren't modeled.
+        assert!(decode_short_message(0xF0, 0, 0).is_none());
+        assert!(decode_short_message(0xF8, 0, 0).is_none());
+    }
+
+    #[test]
+    fn decode_short_message_strips_data_high_bit() {
+        // Hosts shouldn't, but if they did, the helper masks the
+        // 7-bit MIDI 1.0 data range so the decoded value stays in
+        // domain.
+        let event = decode_short_message(0xB0, 0xFF, 0xFF).unwrap();
+        if let EventBody::ControlChange { cc, value, .. } = event {
+            assert_eq!(cc, 0x7F);
+            assert_eq!(value, 0x7F);
+        } else {
+            panic!("expected ControlChange, got {event:?}");
         }
     }
 }
