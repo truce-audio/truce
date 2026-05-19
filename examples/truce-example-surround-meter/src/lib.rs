@@ -141,7 +141,7 @@ impl PluginLogic for SurroundMeter {
             meter(&METER_IDS, "5.1").at(0, 0).rows(2),
             knob(P::Trim, "Trim").at(0, 2),
         ])])
-        .with_title("5.1 METER")
+        .with_title("5.1 MTR")
     }
 }
 

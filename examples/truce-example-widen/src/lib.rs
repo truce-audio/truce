@@ -113,9 +113,7 @@ impl PluginLogic for Widen {
     fn layout(&self) -> GridLayout {
         GridLayout::build(vec![widgets(vec![
             knob(P::Width, "Width").at(0, 0),
-            meter(&[P::MeterLeft, P::MeterRight], "Level")
-                .at(1, 0)
-                .rows(2),
+            meter(&[P::MeterLeft, P::MeterRight], "Level").at(0, 1),
         ])])
         .with_title("WIDEN")
     }
