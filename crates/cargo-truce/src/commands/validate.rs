@@ -10,7 +10,7 @@ use crate::{deployment_target, project_root, tmp_verify};
 #[cfg(target_os = "macos")]
 use std::fs;
 use std::path::Path;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 use std::path::PathBuf;
 use std::process::Command;
 
