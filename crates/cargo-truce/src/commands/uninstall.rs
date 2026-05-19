@@ -188,18 +188,20 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
         let scan = |dir: &Path,
                     ext: &str,
                     format: &'static str,
+                    match_token: &str,
+                    known_stems: &[&str],
                     needs_sudo: bool,
                     targets: &mut Vec<RemoveTarget>| {
             if let Ok(entries) = fs::read_dir(dir) {
                 for entry in entries.flatten() {
                     let name = entry.file_name();
                     let name = name.to_string_lossy();
-                    if !name.contains(vendor) {
+                    if !name.contains(match_token) {
                         continue;
                     }
-                    // Strip extension to get the display name
-                    let display = name.trim_end_matches(&format!(".{ext}"));
-                    if known_names.contains(&display) {
+                    // Strip extension to get the stem
+                    let stem = name.trim_end_matches(&format!(".{ext}"));
+                    if known_stems.contains(&stem) {
                         continue;
                     }
                     targets.push(RemoveTarget {
@@ -211,20 +213,57 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
             }
         };
 
+        // LV2 bundles are slug-cased (`Truce Analyzer` ->
+        // `truce-analyzer.lv2`), so the vendor display name won't
+        // substring-match and the trimmed stem won't equal any raw
+        // display name in `known_names`. Pre-compute slug forms so
+        // LV2's stale scan actually catches orphans.
+        let vendor_lv2_slug = truce_utils::slugify(vendor);
+        let known_lv2_slugs: Vec<String> = config
+            .plugin
+            .iter()
+            .map(|p| crate::commands::package::stage::lv2_slug(&p.name))
+            .collect();
+        let known_lv2_slug_refs: Vec<&str> = known_lv2_slugs.iter().map(String::as_str).collect();
+
         let scan_system = scopes_to_scan.contains(&InstallScope::System);
         if clap {
             for s in &scopes_to_scan {
-                scan(&s.clap_dir(), "clap", "CLAP", s.needs_sudo(), &mut targets);
+                scan(
+                    &s.clap_dir(),
+                    "clap",
+                    "CLAP",
+                    vendor,
+                    &known_names,
+                    s.needs_sudo(),
+                    &mut targets,
+                );
             }
         }
         if vst3 {
             for s in &scopes_to_scan {
-                scan(&s.vst3_dir(), "vst3", "VST3", s.needs_sudo(), &mut targets);
+                scan(
+                    &s.vst3_dir(),
+                    "vst3",
+                    "VST3",
+                    vendor,
+                    &known_names,
+                    s.needs_sudo(),
+                    &mut targets,
+                );
             }
         }
         if vst2 && !cfg!(target_os = "windows") {
             for s in &scopes_to_scan {
-                scan(&s.vst2_dir(), "vst", "VST2", s.needs_sudo(), &mut targets);
+                scan(
+                    &s.vst2_dir(),
+                    "vst",
+                    "VST2",
+                    vendor,
+                    &known_names,
+                    s.needs_sudo(),
+                    &mut targets,
+                );
             }
         } else if vst2 && scan_system {
             // Windows VST2 is always system-only - `vst2_dir()` returns
@@ -233,34 +272,40 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
                 &InstallScope::System.vst2_dir(),
                 "dll",
                 "VST2",
+                vendor,
+                &known_names,
                 InstallScope::System.needs_sudo(),
                 &mut targets,
             );
         }
         if lv2 {
-            // LV2 bundles are directories ending in `.lv2`. The shared
-            // `scan` helper trims the trailing `.{ext}` from the
-            // filename and compares against the project's display
-            // names; the bundle directory uses `lv2_slug` (lowercase,
-            // hyphenated) rather than the raw display name, so the
-            // not-in-project check is best-effort and may keep some
-            // bundles that *are* in the project but whose display name
-            // hash-mangles into something else. That's the same
-            // best-effort posture as the other format scans -
-            // vendor-matching catches the common case of "shipped a
-            // plugin, then renamed it" without false positives across
-            // unrelated vendors.
             #[cfg(target_os = "linux")]
             {
                 // Linux LV2 lives at `~/.lv2/`; scope is irrelevant
                 // (`lv2_dir` returns the same path for User and System).
                 let s = InstallScope::User;
-                scan(&s.lv2_dir(), "lv2", "LV2", s.needs_sudo(), &mut targets);
+                scan(
+                    &s.lv2_dir(),
+                    "lv2",
+                    "LV2",
+                    &vendor_lv2_slug,
+                    &known_lv2_slug_refs,
+                    s.needs_sudo(),
+                    &mut targets,
+                );
             }
             #[cfg(not(target_os = "linux"))]
             {
                 for s in &scopes_to_scan {
-                    scan(&s.lv2_dir(), "lv2", "LV2", s.needs_sudo(), &mut targets);
+                    scan(
+                        &s.lv2_dir(),
+                        "lv2",
+                        "LV2",
+                        &vendor_lv2_slug,
+                        &known_lv2_slug_refs,
+                        s.needs_sudo(),
+                        &mut targets,
+                    );
                 }
             }
         }
@@ -271,6 +316,8 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
                     &s.au_v2_dir(),
                     "component",
                     "AU v2",
+                    vendor,
+                    &known_names,
                     s.needs_sudo(),
                     &mut targets,
                 );
@@ -329,6 +376,8 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
                 Path::new("/Library/Application Support/Avid/Audio/Plug-Ins"),
                 "aaxplugin",
                 "AAX",
+                vendor,
+                &known_names,
                 true,
                 &mut targets,
             );
