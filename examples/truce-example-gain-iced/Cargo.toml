@@ -48,7 +48,7 @@ truce-lv2 = { workspace = true, optional = true }
 # "ios"))]`-gated to a stub, so the dep list matches.
 [target.'cfg(not(target_os = "ios"))'.dependencies]
 truce-iced = { workspace = true }
-iced = { version = "0.14", default-features = false, features = ["wgpu", "canvas", "thread-pool"] }
+iced = { version = "0.14", default-features = false }
 
 [dev-dependencies]
 truce-test = { workspace = true }

@@ -32,5 +32,8 @@ baseview = { workspace = true }
 objc2 = "0.6"
 objc2-foundation = { version = "0.3", features = ["NSString", "NSGeometry"] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+iced = { version = "0.14", default-features = false, features = ["x11", "wayland"] }
+
 [lints]
 workspace = true
