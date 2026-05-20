@@ -15,6 +15,8 @@ use crossbeam_queue::ArrayQueue;
 
 use baseview::{Event, EventStatus, Window, WindowHandler, WindowOpenOptions, WindowScalePolicy};
 use keyboard_types::{Code, KeyState, Modifiers};
+#[cfg(target_os = "linux")]
+use raw_window_handle::HasRawDisplayHandle;
 use raw_window_handle::{HasRawWindowHandle, RawWindowHandle as RwhHandle};
 
 use truce_core::editor::{ClosureBridge, Editor, PluginContext, RawWindowHandle};
@@ -158,6 +160,16 @@ where
                 input_ctrl.clone(),
                 output_ctrl.clone(),
             );
+        }
+
+        // Linux: plugin editors don't currently support resize, but
+        // X11 window managers happily let the user drag the outer
+        // baseview frame. Pin min == max size hints so resize grips
+        // disappear. Must run after the window is mapped (above) and
+        // before the editor sizes its child to the parent.
+        #[cfg(target_os = "linux")]
+        if let RwhHandle::Xlib(h) = window.raw_window_handle() {
+            crate::windowed_x11::pin_size(window.raw_display_handle(), &h);
         }
 
         let ctx = synthesize_editor_context::<P>(&plugin, &transport);

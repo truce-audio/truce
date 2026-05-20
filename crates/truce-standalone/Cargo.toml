@@ -25,6 +25,13 @@ baseview = { workspace = true, optional = true }
 raw-window-handle = { version = "0.5", optional = true }
 keyboard-types = { version = "0.6", optional = true }
 
+# Linux/X11 size-hint helper for `gui`-enabled standalone hosts.
+# Plugin editors don't expose resize yet, so we pin WM min == max
+# size on the outer baseview window. `x11-dl` is dlopen-based so
+# we don't force libX11 to link on Wayland-only systems.
+[target.'cfg(target_os = "linux")'.dependencies]
+x11-dl = { version = "2", optional = true }
+
 # macOS native-menu bridge for `gui`-enabled standalone hosts.
 # Hand-rolled `objc` runtime calls - no `cocoa` / `cacao` dep
 # beyond what `objc` itself pulls in.
@@ -58,6 +65,7 @@ gui = [
     "dep:raw-window-handle",
     "dep:keyboard-types",
     "dep:objc",
+    "dep:x11-dl",
     "windows-sys/Win32_Foundation",
     "windows-sys/Win32_UI_WindowsAndMessaging",
     "windows-sys/Win32_UI_Shell",

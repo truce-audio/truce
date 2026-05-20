@@ -49,6 +49,9 @@ pub mod menu_macos;
 #[cfg(all(target_os = "windows", feature = "gui"))]
 pub mod menu_windows;
 
+#[cfg(all(target_os = "linux", feature = "gui"))]
+pub mod windowed_x11;
+
 pub mod headless;
 
 pub use truce_core::export::PluginExport;
