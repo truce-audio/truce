@@ -59,9 +59,29 @@ jobs:
       # secret wiring to add to CI. Catching the build-side regressions
       # (FFI mismatches, feature-flag drift, swiftc bridging-header
       # rot) is the high-value coverage here.
-      - name: Build framework dylib (simulator slice)
+      #
+      # The simulator build batches every plugin the screenshot loop
+      # below exercises into a single cargo invocation so shared deps
+      # (truce-core, wgpu, baseview, ...) compile once across the
+      # workspace. Each per-crate `cargo build` inside the loop's
+      # `install_one_screenshot` then resolves to a fingerprint-only
+      # no-op. The single `-p truce-example-gain` shape is preserved
+      # for the device slice where only the framework-build smoke is
+      # exercised.
+      - name: Build framework dylib (simulator slice, all screenshot plugins)
         run: |
-          cargo build -p truce-example-gain \
+          cargo build \
+            -p truce-example-gain \
+            -p truce-example-synth \
+            -p truce-example-eq \
+            -p truce-example-gain-egui \
+            -p truce-example-arpeggio \
+            -p truce-example-gain-slint \
+            -p truce-example-tremolo \
+            -p truce-example-state \
+            -p truce-example-fundsp-reverb-worker \
+            -p truce-example-fundsp-reverb-simple \
+            -p truce-example-transpose \
             --target aarch64-apple-ios-sim \
             --release --no-default-features --features au
 
