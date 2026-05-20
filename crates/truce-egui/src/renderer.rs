@@ -41,17 +41,17 @@ impl EguiRenderer {
             power_preference: wgpu::PowerPreference::HighPerformance,
             compatible_surface: Some(&surface),
             force_fallback_adapter: false,
-        }))?;
+        }))
+        .ok()?;
 
-        let (device, queue) = pollster::block_on(adapter.request_device(
-            &wgpu::DeviceDescriptor {
-                label: Some("truce-egui"),
-                required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::downlevel_defaults(),
-                memory_hints: wgpu::MemoryHints::Performance,
-            },
-            None,
-        ))
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            label: Some("truce-egui"),
+            required_features: wgpu::Features::empty(),
+            required_limits: wgpu::Limits::downlevel_defaults(),
+            experimental_features: wgpu::ExperimentalFeatures::default(),
+            memory_hints: wgpu::MemoryHints::Performance,
+            trace: wgpu::Trace::Off,
+        }))
         .ok()?;
 
         let surface_caps = surface.get_capabilities(&adapter);
@@ -74,7 +74,11 @@ impl EguiRenderer {
         };
         surface.configure(&device, &surface_config);
 
-        let egui_rpass = egui_wgpu::Renderer::new(&device, surface_format, None, 1, false);
+        let egui_rpass = egui_wgpu::Renderer::new(
+            &device,
+            surface_format,
+            egui_wgpu::RendererOptions::default(),
+        );
 
         Some(Self {
             device,
@@ -119,7 +123,8 @@ impl EguiRenderer {
                     power_preference: wgpu::PowerPreference::HighPerformance,
                     compatible_surface: Some(&surface),
                     force_fallback_adapter: false,
-                }))?;
+                }))
+                .ok()?;
 
             // `downlevel_defaults` caps `max_texture_dimension_2d`
             // at 2048 - that targets WebGL2-era hardware. iOS / iOS-
@@ -130,16 +135,16 @@ impl EguiRenderer {
             // reported limits so we never artificially cap below
             // what the device can do.
             let required_limits = adapter.limits();
-            let (device, queue) = pollster::block_on(adapter.request_device(
-                &wgpu::DeviceDescriptor {
+            let (device, queue) =
+                pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
                     label: Some("truce-egui-aax"),
                     required_features: wgpu::Features::empty(),
                     required_limits,
+                    experimental_features: wgpu::ExperimentalFeatures::default(),
                     memory_hints: wgpu::MemoryHints::Performance,
-                },
-                None,
-            ))
-            .ok()?;
+                    trace: wgpu::Trace::Off,
+                }))
+                .ok()?;
 
             let surface_caps = surface.get_capabilities(&adapter);
             let surface_format = surface_caps
@@ -170,7 +175,11 @@ impl EguiRenderer {
             };
             surface.configure(&device, &surface_config);
 
-            let egui_rpass = egui_wgpu::Renderer::new(&device, surface_format, None, 1, false);
+            let egui_rpass = egui_wgpu::Renderer::new(
+                &device,
+                surface_format,
+                egui_wgpu::RendererOptions::default(),
+            );
 
             Some(Self {
                 device,
@@ -247,6 +256,7 @@ impl EguiRenderer {
                             }),
                             store: wgpu::StoreOp::Store,
                         },
+                        depth_slice: None,
                     })],
                     depth_stencil_attachment: None,
                     timestamp_writes: None,

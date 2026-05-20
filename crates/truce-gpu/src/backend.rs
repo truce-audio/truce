@@ -360,17 +360,17 @@ impl WgpuBackend {
             power_preference: wgpu::PowerPreference::HighPerformance,
             compatible_surface: Some(&surface),
             force_fallback_adapter: false,
-        }))?;
+        }))
+        .ok()?;
 
-        let (device, queue) = pollster::block_on(adapter.request_device(
-            &wgpu::DeviceDescriptor {
-                label: Some("truce-gpu"),
-                required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::downlevel_defaults(),
-                memory_hints: wgpu::MemoryHints::Performance,
-            },
-            None,
-        ))
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            label: Some("truce-gpu"),
+            required_features: wgpu::Features::empty(),
+            required_limits: wgpu::Limits::downlevel_defaults(),
+            experimental_features: wgpu::ExperimentalFeatures::default(),
+            memory_hints: wgpu::MemoryHints::Performance,
+            trace: wgpu::Trace::Off,
+        }))
         .ok()?;
         let device = Arc::new(device);
         let queue = Arc::new(queue);
@@ -1035,6 +1035,7 @@ impl WgpuBackend {
                     view: &self.msaa_texture,
                     resolve_target: Some(view),
                     ops: wgpu::Operations { load, store },
+                    depth_slice: None,
                 })],
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
@@ -1577,6 +1578,7 @@ impl WgpuBackend {
                         load: wgpu::LoadOp::Clear(clear_color),
                         store: wgpu::StoreOp::Discard,
                     },
+                    depth_slice: None,
                 })],
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
@@ -1621,6 +1623,7 @@ impl WgpuBackend {
                         load: wgpu::LoadOp::Clear(clear_color),
                         store: wgpu::StoreOp::Discard,
                     },
+                    depth_slice: None,
                 })],
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
@@ -1700,17 +1703,17 @@ impl WgpuBackend {
             power_preference: wgpu::PowerPreference::HighPerformance,
             compatible_surface: None,
             force_fallback_adapter: false,
-        }))?;
+        }))
+        .ok()?;
 
-        let (device, queue) = pollster::block_on(adapter.request_device(
-            &wgpu::DeviceDescriptor {
-                label: Some("truce-gpu-headless"),
-                required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::downlevel_defaults(),
-                memory_hints: wgpu::MemoryHints::Performance,
-            },
-            None,
-        ))
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            label: Some("truce-gpu-headless"),
+            required_features: wgpu::Features::empty(),
+            required_limits: wgpu::Limits::downlevel_defaults(),
+            experimental_features: wgpu::ExperimentalFeatures::default(),
+            memory_hints: wgpu::MemoryHints::Performance,
+            trace: wgpu::Trace::Off,
+        }))
         .ok()?;
         let device = Arc::new(device);
         let queue = Arc::new(queue);
@@ -2015,7 +2018,10 @@ impl WgpuBackend {
         buf_slice.map_async(wgpu::MapMode::Read, move |result| {
             tx.send(result).unwrap();
         });
-        self.device.poll(wgpu::Maintain::Wait);
+        let _ = self.device.poll(wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: None,
+        });
         rx.recv().unwrap().expect("buffer map failed");
 
         let mapped = buf_slice.get_mapped_range();
@@ -2145,7 +2151,7 @@ mod tests {
             backends: wgpu::Backends::PRIMARY,
             ..Default::default()
         });
-        let Some(adapter) =
+        let Ok(adapter) =
             pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
                 compatible_surface: None,
@@ -2154,15 +2160,14 @@ mod tests {
         else {
             return; // no GPU in this environment
         };
-        let (device, queue) = pollster::block_on(adapter.request_device(
-            &wgpu::DeviceDescriptor {
-                label: Some("standalone-test"),
-                required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::downlevel_defaults(),
-                memory_hints: wgpu::MemoryHints::Performance,
-            },
-            None,
-        ))
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            label: Some("standalone-test"),
+            required_features: wgpu::Features::empty(),
+            required_limits: wgpu::Limits::downlevel_defaults(),
+            experimental_features: wgpu::ExperimentalFeatures::default(),
+            memory_hints: wgpu::MemoryHints::Performance,
+            trace: wgpu::Trace::Off,
+        }))
         .expect("request_device");
         let device = Arc::new(device);
         let queue = Arc::new(queue);
@@ -2238,7 +2243,10 @@ mod tests {
         slice.map_async(wgpu::MapMode::Read, move |r| {
             tx.send(r).unwrap();
         });
-        device.poll(wgpu::Maintain::Wait);
+        let _ = device.poll(wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: None,
+        });
         rx.recv().unwrap().unwrap();
         let mapped = slice.get_mapped_range();
 

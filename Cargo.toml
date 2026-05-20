@@ -136,8 +136,8 @@ toml = "1"
 # (Linux's native backend) isn't feature-gated in wgpu 24 — wgpu-hal
 # compiles it unconditionally on `cfg(target_os = "linux")`, so it's
 # already covered without an explicit flag.
-wgpu = { version = "24", default-features = false, features = ["wgsl", "metal", "dx12"] }
-egui-wgpu = "0.31"
+wgpu = { version = "27", default-features = false, features = ["wgsl", "metal", "dx12"] }
+egui-wgpu = "0.33"
 iced_wgpu = "0.14"
 
 # The truce-audio fork carries the AAX / Pro Tools close-path fix

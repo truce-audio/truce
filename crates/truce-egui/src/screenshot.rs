@@ -86,17 +86,17 @@ pub(crate) fn render_with_state<P: Params + ?Sized>(
         power_preference: wgpu::PowerPreference::HighPerformance,
         compatible_surface: None,
         force_fallback_adapter: false,
-    }))?;
+    }))
+    .ok()?;
 
-    let (device, queue) = pollster::block_on(adapter.request_device(
-        &wgpu::DeviceDescriptor {
-            label: Some("truce-egui-screenshot"),
-            required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::downlevel_defaults(),
-            memory_hints: wgpu::MemoryHints::Performance,
-        },
-        None,
-    ))
+    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        label: Some("truce-egui-screenshot"),
+        required_features: wgpu::Features::empty(),
+        required_limits: wgpu::Limits::downlevel_defaults(),
+        experimental_features: wgpu::ExperimentalFeatures::default(),
+        memory_hints: wgpu::MemoryHints::Performance,
+        trace: wgpu::Trace::Off,
+    }))
     .ok()?;
 
     // Match the live render path, which picks the first non-sRGB
@@ -128,7 +128,8 @@ pub(crate) fn render_with_state<P: Params + ?Sized>(
     let target_view = target_tex.create_view(&wgpu::TextureViewDescriptor::default());
 
     // egui-wgpu renderer
-    let mut egui_renderer = egui_wgpu::Renderer::new(&device, format, None, 1, false);
+    let mut egui_renderer =
+        egui_wgpu::Renderer::new(&device, format, egui_wgpu::RendererOptions::default());
 
     // Update textures
     for (id, delta) in &output.textures_delta.set {
@@ -168,6 +169,7 @@ pub(crate) fn render_with_state<P: Params + ?Sized>(
                         }),
                         store: wgpu::StoreOp::Store,
                     },
+                    depth_slice: None,
                 })],
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
@@ -217,7 +219,10 @@ pub(crate) fn render_with_state<P: Params + ?Sized>(
     buf_slice.map_async(wgpu::MapMode::Read, move |result| {
         tx.send(result).unwrap();
     });
-    device.poll(wgpu::Maintain::Wait);
+    let _ = device.poll(wgpu::PollType::Wait {
+        submission_index: None,
+        timeout: None,
+    });
     rx.recv().unwrap().expect("buffer map failed");
 
     let mapped = buf_slice.get_mapped_range();

@@ -418,16 +418,16 @@ impl<P: Params + 'static> Editor for SlintEditor<P> {
                     }))
                     .expect("no suitable GPU adapter");
 
-                let (device, queue) = pollster::block_on(adapter.request_device(
-                    &wgpu::DeviceDescriptor {
+                let (device, queue) =
+                    pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
                         label: Some("truce-slint"),
                         required_features: wgpu::Features::empty(),
                         required_limits: wgpu::Limits::downlevel_defaults(),
+                        experimental_features: wgpu::ExperimentalFeatures::default(),
                         memory_hints: wgpu::MemoryHints::Performance,
-                    },
-                    None,
-                ))
-                .expect("failed to create wgpu device");
+                        trace: wgpu::Trace::Off,
+                    }))
+                    .expect("failed to create wgpu device");
 
                 let caps = surface.get_capabilities(&adapter);
                 let format = caps
