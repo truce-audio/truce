@@ -50,7 +50,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.45.4"
+version = "0.46.0"
 edition = "2024"
 # Dual-license: Apache 2.0 for plug-in authors + end-user audio
 # software, with a permission-gated Framework License carve-out for
@@ -117,9 +117,9 @@ truce-slint = { path = "crates/truce-slint" }
 truce-slint-build = { path = "crates/truce-slint-build" }
 truce-simd = { path = "crates/truce-simd" }
 truce-font = { path = "crates/truce-font" }
-truce-build = { version = "0.45.4", path = "crates/truce-build" }
-truce-shim-types = { version = "0.45.4", path = "crates/truce-shim-types" }
-truce-utils = { version = "0.45.4", path = "crates/truce-utils" }
+truce-build = { version = "0.46.0", path = "crates/truce-build" }
+truce-shim-types = { version = "0.46.0", path = "crates/truce-shim-types" }
+truce-utils = { version = "0.46.0", path = "crates/truce-utils" }
 
 # Common third-party deps consumed by multiple workspace crates.
 # Hoisted here so version bumps are a one-line change. wgpu and the
