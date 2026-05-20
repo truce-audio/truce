@@ -457,12 +457,38 @@ fn cmd_screenshot_ios(args: &[String]) -> Res {
     let suffix = p.bundle_id.replace('_', "-");
     let bundle_id = format!("{}.{suffix}", config.vendor.id);
     eprintln!("==> Launching {bundle_id} on booted simulator...");
-    let launched = Command::new("xcrun")
-        .args(["simctl", "launch", "booted", &bundle_id])
-        .status()
-        .map_err(|e| format!("simctl launch: {e}"))?;
-    if !launched.success() {
-        return Err(format!("simctl launch exited {launched}").into());
+    // Retry the launch on the cold-runner FrontBoard flake. The
+    // `simctl_install` step already polls `simctl get_app_container`
+    // to confirm `installd` has registered the bundle, but
+    // SBMainWorkspace (the service `simctl launch` talks to via
+    // FrontBoard) sometimes lags `installd` by a few hundred ms - the
+    // app is reachable by container path before the workspace's
+    // launch table sees it. Up to 5 attempts at 500ms each is well
+    // within the observed sync window without slowing the happy path
+    // (first attempt succeeds in the warm case).
+    let mut launched_ok = false;
+    let mut last_status = None;
+    for attempt in 0..5 {
+        let status = Command::new("xcrun")
+            .args(["simctl", "launch", "booted", &bundle_id])
+            .status()
+            .map_err(|e| format!("simctl launch: {e}"))?;
+        if status.success() {
+            launched_ok = true;
+            break;
+        }
+        last_status = Some(status);
+        if attempt < 4 {
+            eprintln!(
+                "    simctl launch attempt {} failed; retrying after 500ms...",
+                attempt + 1
+            );
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
+    }
+    if !launched_ok {
+        let status = last_status.expect("loop ran at least once");
+        return Err(format!("simctl launch exited {status} after 5 attempts").into());
     }
     // Give the editor + audio pipeline ~1.5s to lay out + paint
     // its first frame. CADisplayLink runs at 60Hz so a single frame
