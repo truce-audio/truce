@@ -172,12 +172,19 @@ pub(crate) fn emit_root_impl(input: TokenStream) -> TokenStream {
     };
 
     let slug = truce_utils::slugify(&plugin.name);
-    let so_name = format!("{slug}.so");
-    let (manifest_ttl, plugin_ttl) = truce_build::lv2::render_ttls(&bundle, &so_name);
+    // Windows loaders only resolve `.dll`; Linux/macOS LV2 bundles use `.so`.
+    // Matches the extension `stage_lv2` writes into the bundle.
+    let bin_ext = if cfg!(target_os = "windows") {
+        "dll"
+    } else {
+        "so"
+    };
+    let bin_name = format!("{slug}.{bin_ext}");
+    let (manifest_ttl, plugin_ttl) = truce_build::lv2::render_ttls(&bundle, &bin_name);
 
     let _ = std::fs::write(sidecar_dir.join("manifest.ttl"), &manifest_ttl);
     let _ = std::fs::write(sidecar_dir.join("plugin.ttl"), &plugin_ttl);
-    let _ = std::fs::write(sidecar_dir.join("so_name.txt"), &so_name);
+    let _ = std::fs::write(sidecar_dir.join("so_name.txt"), &bin_name);
 
     TokenStream::new()
 }
