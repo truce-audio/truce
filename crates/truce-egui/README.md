@@ -26,10 +26,8 @@ using egui's immediate-mode paradigm.
 struct MyUi;
 
 impl<P: Params> EditorUi<P> for MyUi {
-    fn ui(&mut self, ctx: &egui::Context, state: &PluginContext<P>) {
-        egui::CentralPanel::default().show(ctx, |ui| {
-            // bind widgets via the PluginContext
-        });
+    fn ui(&mut self, ui: &mut egui::Ui, state: &PluginContext<P>) {
+        // bind widgets via the PluginContext
     }
 }
 ```

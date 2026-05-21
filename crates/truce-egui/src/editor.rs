@@ -21,7 +21,7 @@ use truce_gui::EditorScale;
 /// Implement this for complex UIs that need internal state. For simple
 /// closure-based UIs, use `EguiEditor::new()` instead.
 pub trait EditorUi<P: Params + ?Sized>: Send {
-    fn ui(&mut self, ctx: &egui::Context, state: &PluginContext<P>);
+    fn ui(&mut self, ui: &mut egui::Ui, state: &PluginContext<P>);
 
     /// Called once when the editor window opens. Use to create `StateBindings`.
     fn opened(&mut self, _state: &PluginContext<P>) {}
@@ -31,16 +31,16 @@ pub trait EditorUi<P: Params + ?Sized>: Send {
     fn state_changed(&mut self, _state: &PluginContext<P>) {}
 }
 
-impl<P: Params + ?Sized, F: FnMut(&egui::Context, &PluginContext<P>) + Send> EditorUi<P> for F {
-    fn ui(&mut self, ctx: &egui::Context, state: &PluginContext<P>) {
-        self(ctx, state);
+impl<P: Params + ?Sized, F: FnMut(&mut egui::Ui, &PluginContext<P>) + Send> EditorUi<P> for F {
+    fn ui(&mut self, ui: &mut egui::Ui, state: &PluginContext<P>) {
+        self(ui, state);
     }
 }
 
 /// No-op placeholder for `mem::replace` during builder chain.
 struct NopUi<P: ?Sized>(PhantomData<fn(&P)>);
 impl<P: Params + ?Sized> EditorUi<P> for NopUi<P> {
-    fn ui(&mut self, _ctx: &egui::Context, _state: &PluginContext<P>) {}
+    fn ui(&mut self, _ui: &mut egui::Ui, _state: &PluginContext<P>) {}
 }
 
 /// Type alias to keep the `WithStateChanged` field signature within
@@ -54,8 +54,8 @@ struct WithStateChanged<P: Params + ?Sized> {
 }
 
 impl<P: Params + ?Sized> EditorUi<P> for WithStateChanged<P> {
-    fn ui(&mut self, ctx: &egui::Context, state: &PluginContext<P>) {
-        self.inner.ui(ctx, state);
+    fn ui(&mut self, ui: &mut egui::Ui, state: &PluginContext<P>) {
+        self.inner.ui(ui, state);
     }
 
     fn opened(&mut self, state: &PluginContext<P>) {
@@ -122,7 +122,7 @@ impl<P: Params + 'static> EguiEditor<P> {
     pub fn new(
         params: Arc<P>,
         size: (u32, u32),
-        ui_fn: impl FnMut(&egui::Context, &PluginContext<P>) + Send + 'static,
+        ui_fn: impl FnMut(&mut egui::Ui, &PluginContext<P>) + Send + 'static,
     ) -> Self {
         Self {
             params,
@@ -158,7 +158,7 @@ impl<P: Params + 'static> EguiEditor<P> {
     /// API (`EguiEditor::with_ui`), implement `EditorUi::state_changed` instead.
     ///
     /// ```ignore
-    /// EguiEditor::new(params, (400, 300), |ctx, state| { /* ui */ })
+    /// EguiEditor::new(params, (400, 300), |ui, state| { /* ui */ })
     ///     .on_state_changed(|state| { /* re-read cached state */ })
     /// ```
     ///
@@ -285,11 +285,11 @@ impl<P: Params + ?Sized> EguiWindowHandler<P> {
             .or_default()
             .native_pixels_per_point = Some(ppp);
 
-        let ui = &self.ui;
+        let ui_arc = &self.ui;
         let context = &self.context;
-        let output = self.egui_ctx.run(raw_input, |ctx| {
-            if let Ok(mut ui_fn) = ui.lock() {
-                ui_fn.ui(ctx, context);
+        let output = self.egui_ctx.run_ui(raw_input, |ui| {
+            if let Ok(mut ui_fn) = ui_arc.lock() {
+                ui_fn.ui(ui, context);
             }
         });
 
@@ -407,6 +407,9 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
                         self.pending_events.push(egui::Event::MouseWheel {
                             unit: egui::MouseWheelUnit::Point,
                             delta: egui::vec2(dx, dy),
+                            // baseview doesn't tell us touch / inertial phase;
+                            // `Move` is egui's "unknown" recommendation.
+                            phase: egui::TouchPhase::Move,
                             modifiers: self.modifiers,
                         });
                         EventStatus::Captured
@@ -765,9 +768,9 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
             pixels_per_point,
             self.font,
             self.visuals.clone(),
-            move |ctx, state| {
+            move |root_ui, state| {
                 if let Ok(mut ui) = ui.lock() {
-                    ui.ui(ctx, state);
+                    ui.ui(root_ui, state);
                 }
             },
         )

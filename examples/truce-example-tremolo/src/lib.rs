@@ -189,11 +189,11 @@ impl PluginLogic for Tremolo {
     }
 }
 
-fn tremolo_ui(ctx: &egui::Context, state: &PluginContext<TremoloParams>) {
-    egui::TopBottomPanel::top("header")
-        .exact_height(30.0)
+fn tremolo_ui(ui: &mut egui::Ui, state: &PluginContext<TremoloParams>) {
+    egui::Panel::top("header")
+        .exact_size(30.0)
         .frame(egui::Frame::NONE.fill(HEADER_BG))
-        .show(ctx, |ui| {
+        .show_inside(ui, |ui| {
             ui.horizontal_centered(|ui| {
                 ui.add_space(10.0);
                 ui.label(
@@ -206,8 +206,8 @@ fn tremolo_ui(ctx: &egui::Context, state: &PluginContext<TremoloParams>) {
         });
 
     egui::CentralPanel::default()
-        .frame(egui::Frame::central_panel(&ctx.style()).inner_margin(10.0))
-        .show(ctx, |ui| {
+        .frame(egui::Frame::central_panel(ui.style()).inner_margin(10.0))
+        .show_inside(ui, |ui| {
             draw_transport_readout(ui, state);
             ui.add_space(10.0);
 
@@ -220,7 +220,8 @@ fn tremolo_ui(ctx: &egui::Context, state: &PluginContext<TremoloParams>) {
 
             // Keep the UI animating so the beat position readout updates
             // while the host transport is running.
-            ctx.request_repaint_after(std::time::Duration::from_millis(33));
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(33));
         });
 }
 

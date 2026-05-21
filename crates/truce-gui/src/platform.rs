@@ -398,7 +398,7 @@ pub unsafe fn create_wgpu_surface(
                 let rwh6_display =
                     wgpu::rwh::RawDisplayHandle::AppKit(wgpu::rwh::AppKitDisplayHandle::new());
                 wgpu::SurfaceTargetUnsafe::RawHandle {
-                    raw_display_handle: rwh6_display,
+                    raw_display_handle: Some(rwh6_display),
                     raw_window_handle: rwh6_window,
                 }
             }
@@ -414,7 +414,7 @@ pub unsafe fn create_wgpu_surface(
                 let rwh6_display =
                     wgpu::rwh::RawDisplayHandle::Windows(wgpu::rwh::WindowsDisplayHandle::new());
                 wgpu::SurfaceTargetUnsafe::RawHandle {
-                    raw_display_handle: rwh6_display,
+                    raw_display_handle: Some(rwh6_display),
                     raw_window_handle: rwh6_window,
                 }
             }
@@ -431,7 +431,7 @@ pub unsafe fn create_wgpu_surface(
                     wgpu::rwh::XlibDisplayHandle::new(display_ptr, display_handle.screen),
                 );
                 wgpu::SurfaceTargetUnsafe::RawHandle {
-                    raw_display_handle: rwh6_display,
+                    raw_display_handle: Some(rwh6_display),
                     raw_window_handle: rwh6_window,
                 }
             }

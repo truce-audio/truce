@@ -407,10 +407,9 @@ pub fn update_interaction<P: Params + 'static>(editor: &mut BuiltinEditor<P>) {
 // Otherwise: blits via wgpu fullscreen triangle.
 
 fn create_wgpu_backend(window: &mut baseview::Window, phys_w: u32, phys_h: u32) -> BlitBackend {
-    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::PRIMARY,
-        ..Default::default()
-    });
+    let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
+    desc.backends = wgpu::Backends::PRIMARY;
+    let instance = wgpu::Instance::new(desc);
 
     let surface = unsafe { crate::platform::create_wgpu_surface(&instance, window) }
         .expect("failed to create wgpu surface");
@@ -596,7 +595,9 @@ impl<P: Params + 'static> baseview::WindowHandler for BuiltinWindowHandler<P> {
                 ..
             } = backend;
             blit.update(queue, pixels);
-            let Ok(frame) = surface.get_current_texture() else {
+            let (wgpu::CurrentSurfaceTexture::Success(frame)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(frame)) = surface.get_current_texture()
+            else {
                 return;
             };
             let view = frame
@@ -795,7 +796,10 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
                         ..
                     } = &mut backend;
                     blit.update(queue, pixels);
-                    if let Ok(frame) = surface.get_current_texture() {
+                    if let wgpu::CurrentSurfaceTexture::Success(frame)
+                    | wgpu::CurrentSurfaceTexture::Suboptimal(frame) =
+                        surface.get_current_texture()
+                    {
                         let view = frame
                             .texture
                             .create_view(&wgpu::TextureViewDescriptor::default());

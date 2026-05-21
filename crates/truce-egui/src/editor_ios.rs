@@ -27,14 +27,14 @@ use truce_params::Params;
 use crate::renderer::EguiRenderer;
 
 pub trait EditorUi<P: Params + ?Sized>: Send {
-    fn ui(&mut self, ctx: &egui::Context, state: &PluginContext<P>);
+    fn ui(&mut self, ui: &mut egui::Ui, state: &PluginContext<P>);
     fn opened(&mut self, _state: &PluginContext<P>) {}
     fn state_changed(&mut self, _state: &PluginContext<P>) {}
 }
 
-impl<P: Params + ?Sized, F: FnMut(&egui::Context, &PluginContext<P>) + Send> EditorUi<P> for F {
-    fn ui(&mut self, ctx: &egui::Context, state: &PluginContext<P>) {
-        self(ctx, state);
+impl<P: Params + ?Sized, F: FnMut(&mut egui::Ui, &PluginContext<P>) + Send> EditorUi<P> for F {
+    fn ui(&mut self, ui: &mut egui::Ui, state: &PluginContext<P>) {
+        self(ui, state);
     }
 }
 
@@ -71,7 +71,7 @@ impl<P: Params + 'static> EguiEditor<P> {
     pub fn new(
         params: Arc<P>,
         size: (u32, u32),
-        ui: impl FnMut(&egui::Context, &PluginContext<P>) + Send + 'static,
+        ui: impl FnMut(&mut egui::Ui, &PluginContext<P>) + Send + 'static,
     ) -> Self {
         Self::with_ui_impl(params, size, Box::new(ui))
     }
@@ -483,9 +483,9 @@ fn run_frame<P: Params + 'static>(inner: &mut Inner<P>) {
         .or_default()
         .native_pixels_per_point = Some(inner.scale);
 
-    let output = inner.egui_ctx.run(raw_input, |ctx| {
+    let output = inner.egui_ctx.run_ui(raw_input, |root_ui| {
         if let Ok(mut ui) = inner.ui.lock() {
-            ui.ui(ctx, &inner.context);
+            ui.ui(root_ui, &inner.context);
         }
     });
     let clipped = inner

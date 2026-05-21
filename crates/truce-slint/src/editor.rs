@@ -216,7 +216,9 @@ impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
 
         blit.update(&self.queue, &self.rgba_buf);
 
-        let Ok(frame) = self.surface.get_current_texture() else {
+        let (wgpu::CurrentSurfaceTexture::Success(frame)
+        | wgpu::CurrentSurfaceTexture::Suboptimal(frame)) = self.surface.get_current_texture()
+        else {
             return;
         };
         let view = frame
@@ -402,10 +404,9 @@ impl<P: Params + 'static> Editor for SlintEditor<P> {
                 platform::ensure_platform();
 
                 // Create wgpu surface
-                let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-                    backends: wgpu::Backends::PRIMARY,
-                    ..Default::default()
-                });
+                let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
+                desc.backends = wgpu::Backends::PRIMARY;
+                let instance = wgpu::Instance::new(desc);
 
                 let surface = unsafe { platform::create_wgpu_surface(&instance, window) }
                     .expect("failed to create wgpu surface");

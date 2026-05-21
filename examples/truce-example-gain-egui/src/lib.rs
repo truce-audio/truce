@@ -91,11 +91,11 @@ impl PluginLogic for GainEgui {
     }
 }
 
-fn gain_ui(ctx: &egui::Context, state: &PluginContext<GainParams>) {
-    egui::TopBottomPanel::top("header")
-        .exact_height(30.0)
+fn gain_ui(ui: &mut egui::Ui, state: &PluginContext<GainParams>) {
+    egui::Panel::top("header")
+        .exact_size(30.0)
         .frame(egui::Frame::NONE.fill(HEADER_BG))
-        .show(ctx, |ui| {
+        .show_inside(ui, |ui| {
             ui.horizontal_centered(|ui| {
                 ui.add_space(10.0);
                 ui.label(
@@ -107,8 +107,8 @@ fn gain_ui(ctx: &egui::Context, state: &PluginContext<GainParams>) {
             });
         });
     egui::CentralPanel::default()
-        .frame(egui::Frame::central_panel(&ctx.style()).inner_margin(10.0))
-        .show(ctx, |ui| {
+        .frame(egui::Frame::central_panel(ui.style()).inner_margin(10.0))
+        .show_inside(ui, |ui| {
             ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
             ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(10.0, 0.0);

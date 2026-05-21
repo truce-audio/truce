@@ -30,10 +30,9 @@ impl EguiRenderer {
         if width == 0 || height == 0 {
             return None;
         }
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::PRIMARY,
-            ..Default::default()
-        });
+        let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
+        desc.backends = wgpu::Backends::PRIMARY;
+        let instance = wgpu::Instance::new(desc);
 
         let surface = unsafe { crate::platform::create_wgpu_surface(&instance, window)? };
 
@@ -109,10 +108,9 @@ impl EguiRenderer {
             return None;
         }
         unsafe {
-            let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-                backends: wgpu::Backends::METAL,
-                ..Default::default()
-            });
+            let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
+            desc.backends = wgpu::Backends::METAL;
+            let instance = wgpu::Instance::new(desc);
 
             let surface = instance
                 .create_surface_unsafe(wgpu::SurfaceTargetUnsafe::CoreAnimationLayer(metal_layer))
@@ -224,7 +222,9 @@ impl EguiRenderer {
             &screen_desc,
         );
 
-        let Ok(frame) = self.surface.get_current_texture() else {
+        let (wgpu::CurrentSurfaceTexture::Success(frame)
+        | wgpu::CurrentSurfaceTexture::Suboptimal(frame)) = self.surface.get_current_texture()
+        else {
             return;
         };
         let frame_view = frame
@@ -261,6 +261,7 @@ impl EguiRenderer {
                     depth_stencil_attachment: None,
                     timestamp_writes: None,
                     occlusion_query_set: None,
+                    multiview_mask: None,
                 })
                 .forget_lifetime();
 

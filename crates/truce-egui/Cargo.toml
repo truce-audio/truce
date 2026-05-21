@@ -12,7 +12,7 @@ description = "egui-based GUI backend for truce audio plugins"
 truce-core = { workspace = true }
 truce-gui = { workspace = true }
 truce-params = { workspace = true }
-egui = "0.33"
+egui = "0.34"
 egui-wgpu = { workspace = true }
 wgpu = { workspace = true }
 pollster = "0.4"

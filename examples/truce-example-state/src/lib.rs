@@ -165,11 +165,11 @@ impl EditorUi<StateExampleParams> for StateExampleUi {
         self.edit_buf = self.binding.get().label.clone();
     }
 
-    fn ui(&mut self, ctx: &egui::Context, _state: &PluginContext<StateExampleParams>) {
-        egui::TopBottomPanel::top("header")
-            .exact_height(30.0)
+    fn ui(&mut self, ui: &mut egui::Ui, _state: &PluginContext<StateExampleParams>) {
+        egui::Panel::top("header")
+            .exact_size(30.0)
             .frame(egui::Frame::NONE.fill(HEADER_BG))
-            .show(ctx, |ui| {
+            .show_inside(ui, |ui| {
                 ui.horizontal_centered(|ui| {
                     ui.add_space(10.0);
                     ui.label(
@@ -182,8 +182,8 @@ impl EditorUi<StateExampleParams> for StateExampleUi {
             });
 
         egui::CentralPanel::default()
-            .frame(egui::Frame::central_panel(&ctx.style()).inner_margin(12.0))
-            .show(ctx, |ui| {
+            .frame(egui::Frame::central_panel(ui.style()).inner_margin(12.0))
+            .show_inside(ui, |ui| {
                 ui.label("Instance label");
                 ui.add_space(4.0);
                 let response = ui.add(

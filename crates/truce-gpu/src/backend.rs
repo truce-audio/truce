@@ -507,8 +507,11 @@ impl WgpuBackend {
         // Pipeline
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("truce-gpu-pipeline-layout"),
-            bind_group_layouts: &[&viewport_bind_group_layout, &tex_bind_group_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[
+                Some(&viewport_bind_group_layout),
+                Some(&tex_bind_group_layout),
+            ],
+            immediate_size: 0,
         });
 
         let vertex_layout = wgpu::VertexBufferLayout {
@@ -576,7 +579,7 @@ impl WgpuBackend {
                 mask: !0,
                 alpha_to_coverage_enabled: false,
             },
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
 
@@ -633,10 +636,9 @@ impl WgpuBackend {
         logical_h: u32,
         scale: f32,
     ) -> Option<Self> {
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::METAL,
-            ..Default::default()
-        });
+        let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
+        desc.backends = wgpu::Backends::METAL;
+        let instance = wgpu::Instance::new(desc);
 
         let surface = unsafe {
             instance
@@ -663,10 +665,9 @@ impl WgpuBackend {
         scale: f32,
     ) -> Option<Self> {
         unsafe {
-            let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-                backends: wgpu::Backends::PRIMARY,
-                ..Default::default()
-            });
+            let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
+            desc.backends = wgpu::Backends::PRIMARY;
+            let instance = wgpu::Instance::new(desc);
 
             let surface = crate::platform::create_wgpu_surface(&instance, window)?;
             Self::from_surface(&instance, surface, logical_w, logical_h, scale)
@@ -827,8 +828,11 @@ impl WgpuBackend {
         // Pipeline
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("truce-gpu-pipeline-layout"),
-            bind_group_layouts: &[&viewport_bind_group_layout, &tex_bind_group_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[
+                Some(&viewport_bind_group_layout),
+                Some(&tex_bind_group_layout),
+            ],
+            immediate_size: 0,
         });
 
         let vertex_layout = wgpu::VertexBufferLayout {
@@ -887,7 +891,7 @@ impl WgpuBackend {
                 mask: !0,
                 alpha_to_coverage_enabled: false,
             },
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
 
@@ -1040,6 +1044,7 @@ impl WgpuBackend {
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                multiview_mask: None,
             });
 
             pass.set_pipeline(&self.pipeline);
@@ -1532,7 +1537,9 @@ impl RenderBackend for WgpuBackend {
             return; // headless - no surface to present to
         };
 
-        let Ok(frame) = surface.get_current_texture() else {
+        let (wgpu::CurrentSurfaceTexture::Success(frame)
+        | wgpu::CurrentSurfaceTexture::Suboptimal(frame)) = surface.get_current_texture()
+        else {
             return;
         };
         let frame_view = frame
@@ -1583,6 +1590,7 @@ impl WgpuBackend {
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                multiview_mask: None,
             });
         }
         self.queue.submit(std::iter::once(encoder.finish()));
@@ -1628,6 +1636,7 @@ impl WgpuBackend {
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                multiview_mask: None,
             });
 
             pass.set_pipeline(&self.pipeline);
@@ -1685,10 +1694,9 @@ impl WgpuBackend {
         let phys_w = truce_gui::to_physical_px(width, f64::from(scale));
         let phys_h = truce_gui::to_physical_px(height, f64::from(scale));
 
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::PRIMARY,
-            ..Default::default()
-        });
+        let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
+        desc.backends = wgpu::Backends::PRIMARY;
+        let instance = wgpu::Instance::new(desc);
 
         // Headless: there is no `wgpu::Surface` to constrain the adapter
         // pick against, so `compatible_surface` is `None`. On a multi-GPU
@@ -1837,8 +1845,11 @@ impl WgpuBackend {
         // Pipeline
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("truce-gpu-pipeline-layout"),
-            bind_group_layouts: &[&viewport_bind_group_layout, &tex_bind_group_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[
+                Some(&viewport_bind_group_layout),
+                Some(&tex_bind_group_layout),
+            ],
+            immediate_size: 0,
         });
 
         let vertex_layout = wgpu::VertexBufferLayout {
@@ -1897,7 +1908,7 @@ impl WgpuBackend {
                 mask: !0,
                 alpha_to_coverage_enabled: false,
             },
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
 
@@ -2147,10 +2158,9 @@ mod tests {
     #[test]
     #[allow(clippy::too_many_lines, clippy::many_single_char_names)]
     fn standalone_pipeline_renders() {
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::PRIMARY,
-            ..Default::default()
-        });
+        let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
+        desc.backends = wgpu::Backends::PRIMARY;
+        let instance = wgpu::Instance::new(desc);
         let Ok(adapter) =
             pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,

@@ -134,8 +134,8 @@ toml = "1"
 # source format) lives here; per-OS backends (`metal`, `dx12`,
 # `vulkan`, `gles`) are added via target-conditional deps in
 # `truce-gpu/Cargo.toml`, then unified across the workspace.
-wgpu = { version = "27", default-features = false, features = ["wgsl"] }
-egui-wgpu = "0.33"
+wgpu = { version = "29", default-features = false, features = ["wgsl"] }
+egui-wgpu = "0.34"
 iced_wgpu = "0.14"
 
 # The truce-audio fork carries the AAX / Pro Tools close-path fix

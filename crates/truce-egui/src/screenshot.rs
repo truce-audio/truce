@@ -30,7 +30,7 @@ pub(crate) fn render_with_state<P: Params + ?Sized>(
     pixels_per_point: f32,
     font: Option<&'static [u8]>,
     visuals: Option<egui::Visuals>,
-    ui_fn: impl Fn(&egui::Context, &PluginContext<P>),
+    ui_fn: impl Fn(&mut egui::Ui, &PluginContext<P>),
 ) -> Option<(Vec<u8>, u32, u32)> {
     let (width, height) = size;
     let ctx = egui::Context::default();
@@ -56,8 +56,8 @@ pub(crate) fn render_with_state<P: Params + ?Sized>(
         .or_default()
         .native_pixels_per_point = Some(pixels_per_point);
 
-    let output = ctx.run(raw_input, |ctx| {
-        ui_fn(ctx, state);
+    let output = ctx.run_ui(raw_input, |ui| {
+        ui_fn(ui, state);
     });
 
     let clipped_primitives = ctx.tessellate(output.shapes, output.pixels_per_point);
@@ -77,10 +77,9 @@ pub(crate) fn render_with_state<P: Params + ?Sized>(
     // pick a different physical adapter than the editor's live path,
     // so the same caveat applies: bake baselines on the host you gate
     // from.
-    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::PRIMARY,
-        ..Default::default()
-    });
+    let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
+    desc.backends = wgpu::Backends::PRIMARY;
+    let instance = wgpu::Instance::new(desc);
 
     let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
         power_preference: wgpu::PowerPreference::HighPerformance,
@@ -174,6 +173,7 @@ pub(crate) fn render_with_state<P: Params + ?Sized>(
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                multiview_mask: None,
             })
             .forget_lifetime();
 
