@@ -130,13 +130,11 @@ thiserror = "2"
 toml = "1"
 # wgpu's default features include `webgpu` (browser) and `webgl`
 # (browser GLES fallback). Plugins ship as native dylibs in DAWs,
-# never the browser, so opt out of those and pin the two native
-# backends that are feature-flagged here (`metal` macOS, `dx12`
-# Windows) plus `wgsl` for the shader source format. Vulkan support
-# (Linux's native backend) isn't feature-gated in wgpu 24 — wgpu-hal
-# compiles it unconditionally on `cfg(target_os = "linux")`, so it's
-# already covered without an explicit flag.
-wgpu = { version = "27", default-features = false, features = ["wgsl", "metal", "dx12"] }
+# never the browser, so opt out of those. Only `wgsl` (the shader
+# source format) lives here; per-OS backends (`metal`, `dx12`,
+# `vulkan`, `gles`) are added via target-conditional deps in
+# `truce-gpu/Cargo.toml`, then unified across the workspace.
+wgpu = { version = "27", default-features = false, features = ["wgsl"] }
 egui-wgpu = "0.33"
 iced_wgpu = "0.14"
 

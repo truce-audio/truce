@@ -26,6 +26,23 @@ raw-window-handle = "0.5"
 [target.'cfg(not(target_os = "ios"))'.dependencies]
 baseview = { workspace = true }
 
+# wgpu backend features, gated per OS so the macOS / Windows builds
+# don't drag in the Linux Vulkan + GLES stacks (and vice versa).
+# Cargo unifies the feature set across the dep graph, so enabling
+# them here once is enough - downstream wgpu users (truce-gui,
+# truce-egui, truce-slint, etc.) all see the right backend.
+[target.'cfg(target_os = "macos")'.dependencies]
+wgpu = { workspace = true, features = ["metal"] }
+
+[target.'cfg(target_os = "ios")'.dependencies]
+wgpu = { workspace = true, features = ["metal"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+wgpu = { workspace = true, features = ["dx12"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+wgpu = { workspace = true, features = ["vulkan", "gles"] }
+
 [features]
 default = []
 hot-debug = []
