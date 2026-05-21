@@ -6,7 +6,9 @@ homepage.workspace = true
 edition.workspace = true
 license-file.workspace = true
 rust-version.workspace = true
-description = "Audio plugin framework - write once, build VST3, CLAP, AU, AAX"
+description = "Audio plugin framework - write once, build CLAP, VST3, VST2, LV2, AU v2, AU v3, AAX, and a standalone host binary"
+keywords = ["audio", "plugin", "vst", "clap", "midi"]
+categories = ["multimedia::audio"]
 
 [dependencies]
 truce-core = { workspace = true }

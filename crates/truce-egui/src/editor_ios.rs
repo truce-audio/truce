@@ -495,18 +495,18 @@ fn run_frame<P: Params + 'static>(inner: &mut Inner<P>) {
         .renderer
         .render(&output.textures_delta, &clipped, inner.scale);
     // Drive the iOS soft keyboard from egui's focus state. egui
-    // sets `wants_keyboard_input()` while a `TextEdit` (or other
-    // focus-grabbing widget) is the active receiver; we mirror
-    // that into `becomeFirstResponder` / `resignFirstResponder`
-    // on the host UIView. UIKit only presents the keyboard for
-    // the current first responder *and* only if that responder
-    // conforms to `UIKeyInput`; the class declares both
-    // `UIKeyInput` + `UITextInputTraits` at class-build time
-    // (via `add_protocol` in `install_editor_view`) so UIKit
-    // accepts our `becomeFirstResponder`. Tapping a non-text
-    // egui widget makes `wants_keyboard_input` go false again on
-    // the next frame; we resign and the keyboard dismisses.
-    let wants_kb = inner.egui_ctx.wants_keyboard_input();
+    // sets `egui_wants_keyboard_input()` while a `TextEdit` (or
+    // other focus-grabbing widget) is the active receiver; we
+    // mirror that into `becomeFirstResponder` /
+    // `resignFirstResponder` on the host UIView. UIKit only
+    // presents the keyboard for the current first responder *and*
+    // only if that responder conforms to `UIKeyInput`; the class
+    // declares both `UIKeyInput` + `UITextInputTraits` at class-
+    // build time (via `add_protocol` in `install_editor_view`) so
+    // UIKit accepts our `becomeFirstResponder`. Tapping a non-text
+    // egui widget makes the flag go false again on the next frame;
+    // we resign and the keyboard dismisses.
+    let wants_kb = inner.egui_ctx.egui_wants_keyboard_input();
     let view = inner.child_view;
     if !view.is_null() {
         unsafe {

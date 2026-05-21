@@ -7,9 +7,9 @@ edition = "2024"
 # for redistributing it as part of a competing build tool. See
 # LICENSE + LICENSE-APACHE at the workspace root.
 license-file = "../../LICENSE"
-description = "Build tool for truce audio plugins"
+description = "Build tool for truce audio plugins (CLAP, VST3, VST2, LV2, AU v2, AU v3, AAX, and a standalone host binary)"
 repository = "https://github.com/truce-audio/truce"
-keywords = ["audio", "plugin", "vst", "clap", "daw"]
+keywords = ["audio", "plugin", "vst", "clap", "midi"]
 categories = [
     "multimedia::audio",
     "development-tools::build-utils",
