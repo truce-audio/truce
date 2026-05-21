@@ -358,11 +358,20 @@ pub fn start_audio<P: PluginExport>(opts: &Options) -> Result<AudioHandles<P>, B
     let transport = Transport::new(opts.bpm.unwrap_or(120.0), sample_rate);
 
     // Initial output device name (may differ from the resolver's
-    // requested name if it matched by substring).
-    let initial_output_name = initial_output
-        .description()
-        .map(|d| d.name().to_string())
-        .ok();
+    // requested name if it matched by substring). When the user did
+    // not pass `--output`, leave this `None` so the worker re-resolves
+    // via `default_output_device()` on each open - the cpal ALSA
+    // backend's virtual default reports a description ("Default Audio
+    // Device") that doesn't appear in `output_devices()`, so a
+    // name-based re-resolve would fail.
+    let initial_output_name = if opts.output_device.is_some() {
+        initial_output
+            .description()
+            .map(|d| d.name().to_string())
+            .ok()
+    } else {
+        None
+    };
     let output_current_name = Arc::new(Mutex::new(initial_output_name.clone()));
     let (output_cmd_tx, output_cmd_rx) = mpsc::channel::<OutputCmd>();
     let (open_result_tx, open_result_rx) = mpsc::channel::<Result<(), String>>();
