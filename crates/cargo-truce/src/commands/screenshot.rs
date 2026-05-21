@@ -460,6 +460,9 @@ fn cmd_screenshot_ios(args: &[String]) -> Res {
     // which `build_bundle` constructed the same way.
     let suffix = p.bundle_id.replace('_', "-");
     let bundle_id = format!("{}.{suffix}", config.vendor.id);
+    // Delete any stale `_truce_editor_frame.json` so the poll below
+    // gates on *this* launch's first paint, not a prior run's file.
+    clear_editor_frame_json(&bundle_id);
     eprintln!("==> Launching {bundle_id} on booted simulator...");
     // Retry the launch on the cold-runner FrontBoard flake. The
     // `simctl_install` step already polls `simctl get_app_container`
@@ -496,12 +499,11 @@ fn cmd_screenshot_ios(args: &[String]) -> Res {
     }
     // Wait for the editor to actually paint before snapping the
     // screenshot. The editor writes `_truce_editor_frame.json` into
-    // its Documents container on first layout, which is a
-    // deterministic signal that gui_open + the first paint pass
-    // have run. Polling for that file is robust across cold CI
-    // runners where a fixed `sleep(1500)` sometimes catches the
-    // launch transition's white frame before the app's UI lands.
-    wait_for_editor_frame_json(&bundle_id);
+    // its Documents container on first layout — its appearance is
+    // proof the editor has rendered at least one frame. Hard-fail
+    // on timeout so the downstream "screenshot size mismatch" error
+    // doesn't mask the real "editor never rendered" failure.
+    wait_for_editor_frame_json(&bundle_id)?;
     // Small grace pause once the JSON appears: the file lands at
     // the end of `BuiltinEditor::open`'s first paint, but a host
     // sometimes drives one more frame for animated content. Cheap
@@ -707,41 +709,71 @@ struct EditorFrame {
     orientation: Option<String>,
 }
 
-/// Poll the simulator's app data container for the editor's
-/// `_truce_editor_frame.json` and return once it appears (or a
-/// generous timeout elapses). The file is written at the end of
-/// `BuiltinEditor::open`'s first paint pass on iOS, so its
-/// presence is a deterministic "the editor has actually drawn at
-/// least once" signal — much more reliable than a fixed sleep on
-/// cold CI runners where launch transitions can take a few
-/// seconds. Best-effort: never returns an error, the caller's
-/// subsequent crop step will surface a clear diagnostic if the
-/// editor never came up.
+/// Resolve `Documents/_truce_editor_frame.json` inside the bundle's
+/// data container, if simctl can find it right now. Returns `None`
+/// when the container isn't registered yet (just-installed apps).
 #[cfg(target_os = "macos")]
-fn wait_for_editor_frame_json(bundle_id: &str) {
-    const TIMEOUT: Duration = Duration::from_secs(10);
+fn editor_frame_json_path(bundle_id: &str) -> Option<PathBuf> {
+    let out = Command::new("xcrun")
+        .args(["simctl", "get_app_container", "booted", bundle_id, "data"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let container = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if container.is_empty() {
+        return None;
+    }
+    Some(Path::new(&container).join("Documents/_truce_editor_frame.json"))
+}
+
+/// Delete any leftover `_truce_editor_frame.json` from a prior
+/// container run so the post-launch poll gates on *this* launch's
+/// first paint. Best-effort — a missing file or missing container
+/// is fine.
+#[cfg(target_os = "macos")]
+fn clear_editor_frame_json(bundle_id: &str) {
+    if let Some(p) = editor_frame_json_path(bundle_id) {
+        let _ = std::fs::remove_file(p);
+    }
+}
+
+/// Poll for `_truce_editor_frame.json` to appear (and be non-empty)
+/// after launch. The file is written at the end of the editor's
+/// first paint pass on iOS, so its presence proves at least one
+/// frame has rendered.
+///
+/// Errors when the editor doesn't render inside the timeout. The
+/// alternative — silently proceeding — masks the failure as a
+/// downstream "screenshot size mismatch" against the baseline.
+#[cfg(target_os = "macos")]
+fn wait_for_editor_frame_json(bundle_id: &str) -> Res {
+    // 30 s covers the cold-runner GHA case (AUv3 host bring-up +
+    // first frame can easily take 10–20 s on a fresh sim).
+    const TIMEOUT: Duration = Duration::from_secs(30);
     const POLL_INTERVAL: Duration = Duration::from_millis(150);
     let deadline = Instant::now() + TIMEOUT;
     loop {
         // Resolve the container fresh each iteration: `installd`
         // sometimes returns the path slightly before the Documents
-        // directory is populated, and a stale path from the
-        // previous install would lead us astray.
-        if let Ok(out) = Command::new("xcrun")
-            .args(["simctl", "get_app_container", "booted", bundle_id, "data"])
-            .output()
-            && out.status.success()
+        // directory is populated.
+        if let Some(frame_path) = editor_frame_json_path(bundle_id)
+            && let Ok(meta) = std::fs::metadata(&frame_path)
+            && meta.len() > 0
         {
-            let container = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if !container.is_empty() {
-                let frame_path = Path::new(&container).join("Documents/_truce_editor_frame.json");
-                if frame_path.exists() {
-                    return;
-                }
-            }
+            return Ok(());
         }
         if Instant::now() >= deadline {
-            return;
+            return Err(format!(
+                "editor never rendered: timed out after {}s waiting for \
+                 _truce_editor_frame.json in {bundle_id}'s container. The \
+                 AUv3 plugin likely failed to instantiate or its first \
+                 paint pass crashed. Check `xcrun simctl spawn booted log \
+                 show --predicate 'subsystem == \"{bundle_id}\"'` for clues.",
+                TIMEOUT.as_secs()
+            )
+            .into());
         }
         sleep(POLL_INTERVAL);
     }
