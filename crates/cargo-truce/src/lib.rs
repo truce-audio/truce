@@ -103,7 +103,7 @@ pub(crate) use util::{
 #[cfg(target_os = "windows")]
 pub(crate) use util::{
     cargo_rustc_bin, common_program_files, locate_cmake, locate_msvc_cl, locate_ninja,
-    locate_vcvars64, program_files, tmp_scripts, vs_install_paths, which_exe,
+    locate_vcvars64, locate_vcvarsall, program_files, tmp_scripts, vs_install_paths, which_exe,
 };
 
 use std::process::ExitCode;

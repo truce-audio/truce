@@ -192,3 +192,18 @@ pub(crate) fn locate_vcvars64() -> Option<PathBuf> {
     let vcvars = PathBuf::from(install).join(r"VC\Auxiliary\Build\vcvars64.bat");
     vcvars.exists().then_some(vcvars)
 }
+
+/// Locate `vcvarsall.bat` - the multi-arch entry point that accepts an
+/// argument like `x64`, `x64_arm64`, `arm64`, etc. Used by the cargo
+/// build wrapper to set the right MSVC env per target arch instead of
+/// relying on whichever Developer shell the user launched.
+#[cfg(target_os = "windows")]
+pub(crate) fn locate_vcvarsall() -> Option<PathBuf> {
+    for vs_install in vs_install_paths() {
+        let vcvars = vs_install.join(r"VC\Auxiliary\Build\vcvarsall.bat");
+        if vcvars.is_file() {
+            return Some(vcvars);
+        }
+    }
+    None
+}
