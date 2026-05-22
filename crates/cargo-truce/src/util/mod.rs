@@ -39,7 +39,8 @@ pub(crate) use codesign::{
 pub(crate) use locate::find_on_path;
 #[cfg(target_os = "windows")]
 pub(crate) use locate::{
-    locate_cmake, locate_msvc_cl, locate_ninja, locate_vcvars64, vs_install_paths, which_exe,
+    locate_cmake, locate_msvc_cl, locate_ninja, locate_vcvars64, locate_vcvarsall,
+    vs_install_paths, which_exe,
 };
 
 /// Path-aware wrappers around `std::fs`. `io::Error` alone doesn't include

@@ -13,6 +13,270 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 
+#[cfg(target_os = "windows")]
+mod msvc_env {
+    //! Cross-arch MSVC env handling for `cargo build --target *-pc-windows-msvc`.
+    //!
+    //! Two mechanisms layered together so a mismatched developer shell
+    //! never reaches `link.exe`:
+    //!
+    //! 1. **Preflight check** - parse `%LIB%` for the target arch's lib
+    //!    directory. If it isn't there, we know `link.exe` would pull
+    //!    the wrong-arch import libs and emit dozens of unresolved
+    //!    externals (CRT `exp2`/`sinh`/…, plus a `LNK4272` machine-type
+    //!    mismatch).
+    //!
+    //! 2. **vcvarsall subshell** - when the preflight fails but we can
+    //!    locate `vcvarsall.bat`, wrap the cargo invocation in a temp
+    //!    `.bat` that calls `vcvarsall.bat <arch>` first. The child
+    //!    cmd.exe gets the right `LIB`/`INCLUDE`/`PATH` regardless of
+    //!    the launching shell, so a dual-arch package build "just
+    //!    works" from a plain PowerShell prompt. When `vcvarsall.bat`
+    //!    isn't installed, we surface one actionable error instead of
+    //!    letting cargo fan out to a 56-line `LNK1120` wall.
+    use crate::locate_vcvarsall;
+    use std::path::PathBuf;
+
+    /// Lib subdirectory name MSVC uses for a Rust target triple's
+    /// import libraries (`<vs>\VC\Tools\MSVC\<ver>\lib\<arch>\…` and
+    /// `<Windows Kits>\10\lib\<ver>\um\<arch>\…`). Returns `None` for
+    /// triples we don't try to manage - those fall through to cargo's
+    /// normal behavior.
+    pub(super) fn target_lib_arch(triple: &str) -> Option<&'static str> {
+        match triple {
+            "x86_64-pc-windows-msvc" => Some("x64"),
+            "aarch64-pc-windows-msvc" => Some("arm64"),
+            _ => None,
+        }
+    }
+
+    /// Argument to pass to `vcvarsall.bat` to set the env for a given
+    /// host + target combination. Only the host/target pairs truce
+    /// supports are covered (x64 host, x64 or arm64 target; arm64
+    /// host, arm64 target).
+    pub(super) fn vcvarsall_arch_arg(host_arch: &str, target_arch: &str) -> Option<&'static str> {
+        match (host_arch, target_arch) {
+            ("x86_64", "x64") => Some("x64"),
+            ("x86_64", "arm64") => Some("x64_arm64"),
+            ("aarch64", "arm64") => Some("arm64"),
+            ("aarch64", "x64") => Some("arm64_x64"),
+            _ => None,
+        }
+    }
+
+    /// Return the host CPU arch as a Rust-target-style short string
+    /// (`"x86_64"` or `"aarch64"`). Used to pick the vcvarsall arg.
+    pub(super) fn host_arch() -> &'static str {
+        if cfg!(target_arch = "aarch64") {
+            "aarch64"
+        } else {
+            "x86_64"
+        }
+    }
+
+    /// True when at least one path in `lib_env` (`%LIB%`) has a path
+    /// component exactly equal to `arch` - i.e. one of the lib dirs
+    /// vcvars adds for that arch. Case-insensitive (Windows paths
+    /// are), and matches on whole-component equality so `arm64`
+    /// doesn't false-positive against `arm64ec`.
+    pub(super) fn lib_env_has_arch(lib_env: &str, arch: &str) -> bool {
+        let arch_lower = arch.to_lowercase();
+        lib_env.split(';').any(|seg| {
+            seg.split(['\\', '/'])
+                .any(|c| c.eq_ignore_ascii_case(&arch_lower))
+        })
+    }
+
+    /// Pretty-print the LIB env value for the error message, one path
+    /// per line, indented. Empty/missing → `"(empty)"`.
+    pub(super) fn format_lib_for_error(lib_env: &str) -> String {
+        if lib_env.is_empty() {
+            return "    (empty)".to_string();
+        }
+        lib_env
+            .split(';')
+            .filter(|s| !s.is_empty())
+            .map(|s| format!("    {s}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// Outcome of deciding how to run a cargo invocation for one
+    /// `--target *-pc-windows-msvc` triple. Returned by [`plan_for_target`].
+    #[cfg_attr(test, derive(Debug))]
+    pub(super) enum Plan {
+        /// Current env already matches; invoke cargo directly.
+        DirectOk,
+        /// Env doesn't match but we can fix it via `vcvarsall.bat`.
+        WrapVcvarsall {
+            vcvarsall: PathBuf,
+            arch_arg: &'static str,
+        },
+        /// Env doesn't match and we can't fix it; surface a clear error.
+        Unfixable { message: String },
+    }
+
+    pub(super) fn plan_for_target(triple: &str) -> Option<Plan> {
+        plan_for_target_with(triple, &std::env::var("LIB").unwrap_or_default(), host_arch(), locate_vcvarsall)
+    }
+
+    /// Plan resolution with injected env + host + vcvars locator, so unit
+    /// tests can drive every branch without touching the real
+    /// `LIB`/`vswhere` environment.
+    fn plan_for_target_with(
+        triple: &str,
+        lib_env: &str,
+        host: &str,
+        locator: fn() -> Option<PathBuf>,
+    ) -> Option<Plan> {
+        let arch = target_lib_arch(triple)?;
+        if lib_env_has_arch(lib_env, arch) {
+            return Some(Plan::DirectOk);
+        }
+        let Some(arch_arg) = vcvarsall_arch_arg(host, arch) else {
+            return Some(Plan::Unfixable {
+                message: format!(
+                    "cargo-truce: building for `{triple}` from a `{host}` host \
+                     isn't a supported vcvars combo. Launch a Developer shell \
+                     that targets {arch} manually."
+                ),
+            });
+        };
+        if let Some(vcvarsall) = locator() {
+            return Some(Plan::WrapVcvarsall { vcvarsall, arch_arg });
+        }
+        Some(Plan::Unfixable {
+            message: format!(
+                "cargo-truce: building for `{triple}` but the current `%LIB%` \
+                 doesn't contain an `{arch}` lib directory, and `vcvarsall.bat` \
+                 isn't installed so we can't fix it automatically.\n\
+                 \n\
+                 Either:\n  \
+                 - install \"MSVC v143 - VS 2022 C++ {arch_upper}/ARM64EC build tools\" \
+                 via the VS Installer (`cargo truce doctor` will then see it), or\n  \
+                 - launch a Developer PowerShell with the right arch and re-run:\n      \
+                 `Launch-VsDevShell.ps1 -Arch {arch} -HostArch {host_for_msg}`\n\
+                 \n\
+                 Current LIB:\n{lib_lines}",
+                arch_upper = arch.to_uppercase(),
+                host_for_msg = if host == "aarch64" { "arm64" } else { "x64" },
+                lib_lines = format_lib_for_error(lib_env),
+            ),
+        })
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        fn no_vcvars() -> Option<PathBuf> {
+            None
+        }
+
+        // Signature has to match the `fn() -> Option<PathBuf>` locator
+        // pointer plan_for_target_with takes, so the wrap is load-bearing.
+        #[allow(clippy::unnecessary_wraps)]
+        fn fake_vcvars() -> Option<PathBuf> {
+            Some(PathBuf::from(r"C:\fake\vcvarsall.bat"))
+        }
+
+        #[test]
+        fn lib_arch_for_supported_triples() {
+            assert_eq!(target_lib_arch("x86_64-pc-windows-msvc"), Some("x64"));
+            assert_eq!(target_lib_arch("aarch64-pc-windows-msvc"), Some("arm64"));
+            assert_eq!(target_lib_arch("x86_64-apple-darwin"), None);
+            assert_eq!(target_lib_arch("aarch64-unknown-linux-gnu"), None);
+        }
+
+        #[test]
+        fn vcvarsall_arg_picks_cross_compile_combo() {
+            assert_eq!(vcvarsall_arch_arg("x86_64", "x64"), Some("x64"));
+            assert_eq!(vcvarsall_arch_arg("x86_64", "arm64"), Some("x64_arm64"));
+            assert_eq!(vcvarsall_arch_arg("aarch64", "arm64"), Some("arm64"));
+            assert_eq!(vcvarsall_arch_arg("aarch64", "x64"), Some("arm64_x64"));
+            assert_eq!(vcvarsall_arch_arg("riscv64", "arm64"), None);
+        }
+
+        #[test]
+        fn lib_env_arch_match_is_case_insensitive() {
+            let lib = r"C:\Program Files (x86)\Windows Kits\10\Lib\10.0.26100.0\um\ARM64;\
+                        C:\VS\VC\Tools\MSVC\14.51\lib\arm64";
+            assert!(lib_env_has_arch(lib, "arm64"));
+            assert!(!lib_env_has_arch(lib, "x64"));
+        }
+
+        #[test]
+        fn lib_env_arch_match_rejects_wrong_arch() {
+            let lib = r"C:\Windows Kits\10\lib\10.0.26100.0\um\x86;C:\VS\lib\x86";
+            assert!(!lib_env_has_arch(lib, "arm64"));
+            assert!(!lib_env_has_arch(lib, "x64"));
+        }
+
+        #[test]
+        fn plan_direct_when_lib_matches_target() {
+            let lib = r"C:\Windows Kits\10\lib\10.0\um\arm64;C:\VS\lib\arm64";
+            let plan = plan_for_target_with(
+                "aarch64-pc-windows-msvc",
+                lib,
+                "x86_64",
+                no_vcvars,
+            );
+            assert!(matches!(plan, Some(Plan::DirectOk)));
+        }
+
+        #[test]
+        fn plan_wraps_in_vcvars_when_lib_mismatches_and_locator_finds_it() {
+            let lib = r"C:\Windows Kits\10\lib\10.0\um\x86;C:\VS\lib\x86";
+            let plan = plan_for_target_with(
+                "aarch64-pc-windows-msvc",
+                lib,
+                "x86_64",
+                fake_vcvars,
+            );
+            match plan {
+                Some(Plan::WrapVcvarsall { arch_arg, .. }) => {
+                    assert_eq!(arch_arg, "x64_arm64");
+                }
+                other => panic!("expected WrapVcvarsall, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn plan_unfixable_when_vcvars_missing() {
+            let lib = r"C:\Windows Kits\10\lib\10.0\um\x86;C:\VS\lib\x86";
+            let plan = plan_for_target_with(
+                "aarch64-pc-windows-msvc",
+                lib,
+                "x86_64",
+                no_vcvars,
+            );
+            match plan {
+                Some(Plan::Unfixable { message }) => {
+                    assert!(message.contains("aarch64-pc-windows-msvc"));
+                    assert!(message.contains("vcvarsall.bat"));
+                }
+                other => panic!("expected Unfixable, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn plan_skips_non_windows_msvc_triples() {
+            assert!(plan_for_target_with(
+                "x86_64-apple-darwin",
+                "",
+                "x86_64",
+                fake_vcvars,
+            )
+            .is_none());
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+use crate::tmp_scripts;
+#[cfg(target_os = "windows")]
+use crate::util::fs_ctx;
+
 use super::build_profile_name;
 
 /// Return true if `rustup` reports `triple` among its installed targets.
@@ -135,17 +399,10 @@ fn cargo_build_inner(
         ensure_rustup_target(triple)?;
     }
 
-    let mut cmd = Command::new("cargo");
-    cmd.arg("build");
-    match profile {
-        "debug" => {} // cargo's default profile, no flag needed
-        "release" => {
-            cmd.arg("--release");
-        }
-        custom => {
-            cmd.arg("--profile").arg(custom);
-        }
-    }
+    #[cfg(target_os = "windows")]
+    let msvc_plan = resolve_msvc_plan(&targets)?;
+
+    let mut cmd = build_cargo_command(profile);
     #[cfg(target_os = "macos")]
     cmd.env("MACOSX_DEPLOYMENT_TARGET", deployment_target);
     apply_target_cpu(&mut cmd, &targets);
@@ -163,11 +420,132 @@ fn cargo_build_inner(
     for arg in extra_args {
         cmd.arg(arg);
     }
+
+    #[cfg(target_os = "windows")]
+    if let Some((vcvarsall, arch_arg)) = msvc_plan {
+        return run_via_vcvarsall(&cmd, &vcvarsall, arch_arg, "cargo build failed");
+    }
+
     let status = cmd.status()?;
     if !status.success() {
         return Err("cargo build failed".into());
     }
     Ok(())
+}
+
+fn build_cargo_command(profile: &str) -> Command {
+    let mut cmd = Command::new("cargo");
+    cmd.arg("build");
+    match profile {
+        "debug" => {} // cargo's default profile, no flag needed
+        "release" => {
+            cmd.arg("--release");
+        }
+        custom => {
+            cmd.arg("--profile").arg(custom);
+        }
+    }
+    cmd
+}
+
+/// Walk the windows-msvc targets in this cargo invocation and decide
+/// whether to invoke cargo directly, wrap it in a `vcvarsall.bat`
+/// subshell, or bail with an actionable error. Returns the chosen
+/// `(vcvarsall, arch_arg)` for the wrap case; `None` means "run cargo
+/// directly" (either no windows-msvc target, or the env already
+/// matches).
+#[cfg(target_os = "windows")]
+fn resolve_msvc_plan(
+    targets: &[&str],
+) -> Result<Option<(std::path::PathBuf, &'static str)>, crate::CargoTruceError> {
+    use msvc_env::Plan;
+
+    let mut wrap: Option<(std::path::PathBuf, &'static str)> = None;
+    for triple in targets {
+        let Some(plan) = msvc_env::plan_for_target(triple) else {
+            continue;
+        };
+        match plan {
+            Plan::DirectOk => {}
+            Plan::WrapVcvarsall { vcvarsall, arch_arg } => match &wrap {
+                None => wrap = Some((vcvarsall, arch_arg)),
+                Some((_, prior_arg)) if *prior_arg == arch_arg => {}
+                Some((_, prior_arg)) => {
+                    return Err(format!(
+                        "cargo-truce: this cargo invocation mixes `--target` triples \
+                         that need different MSVC envs (`{prior_arg}` and `{arch_arg}`). \
+                         Each arch needs its own `vcvarsall.bat` call - split this \
+                         into one `cargo build` per arch."
+                    )
+                    .into());
+                }
+            },
+            Plan::Unfixable { message } => return Err(message.into()),
+        }
+    }
+    Ok(wrap)
+}
+
+/// Build a `.bat` that calls `vcvarsall.bat <arch_arg>` and then the
+/// cargo command, then execute it via `cmd /c`. Env vars set on `cargo`
+/// are inherited by `cmd.exe` and survive the vcvars call (vcvars only
+/// rewrites `LIB`/`INCLUDE`/`PATH`).
+#[cfg(target_os = "windows")]
+fn run_via_vcvarsall(
+    cargo: &Command,
+    vcvarsall: &std::path::Path,
+    arch_arg: &str,
+    failure_label: &str,
+) -> crate::Res {
+    use std::fmt::Write as _;
+
+    let mut bat = String::from("@echo off\r\n");
+    let _ = writeln!(
+        bat,
+        "call \"{}\" {arch_arg} >nul || exit /b 1\r",
+        vcvarsall.display(),
+    );
+    bat.push_str(&quote_command_for_bat(cargo));
+    bat.push_str("\r\n");
+
+    let bat_path = tmp_scripts().join(format!("truce_cargo_{arch_arg}.bat"));
+    fs_ctx::write(&bat_path, bat)?;
+
+    let mut driver = Command::new("cmd");
+    driver.arg("/c").arg(&bat_path);
+    // Preserve every env var the caller set on `cargo` (sccache wrapper,
+    // per-target RUSTFLAGS, user vars). vcvarsall rewrites only the
+    // MSVC-toolchain env vars, so these pass through to the cargo child.
+    for (k, v) in cargo.get_envs() {
+        match v {
+            Some(v) => driver.env(k, v),
+            None => driver.env_remove(k),
+        };
+    }
+    let status = driver.status()?;
+    if !status.success() {
+        return Err(failure_label.into());
+    }
+    Ok(())
+}
+
+/// Format a `Command` (program + args) as a single line suitable for a
+/// `.bat` file. Each arg is wrapped in double quotes. We never embed
+/// double-quotes in argv internally, so simple wrapping is sufficient
+/// and avoids the cmd.exe quoting maze.
+#[cfg(target_os = "windows")]
+fn quote_command_for_bat(cmd: &Command) -> String {
+    let mut out = String::new();
+    out.push('"');
+    out.push_str(&cmd.get_program().to_string_lossy());
+    out.push('"');
+    for arg in cmd.get_args() {
+        out.push(' ');
+        out.push('"');
+        out.push_str(&arg.to_string_lossy());
+        out.push('"');
+    }
+    out
 }
 
 /// Like `cargo_build`, but invokes `cargo rustc --bin <name>` for one
@@ -191,6 +569,7 @@ pub(crate) fn cargo_rustc_bin(
     for triple in &targets {
         ensure_rustup_target(triple)?;
     }
+    let msvc_plan = resolve_msvc_plan(&targets)?;
 
     let mut cmd = Command::new("cargo");
     cmd.arg("rustc");
@@ -220,6 +599,9 @@ pub(crate) fn cargo_rustc_bin(
         for a in link_args {
             cmd.arg(a);
         }
+    }
+    if let Some((vcvarsall, arch_arg)) = msvc_plan {
+        return run_via_vcvarsall(&cmd, &vcvarsall, arch_arg, "cargo rustc failed");
     }
     let status = cmd.status()?;
     if !status.success() {

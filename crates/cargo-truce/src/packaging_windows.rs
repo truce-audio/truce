@@ -105,6 +105,15 @@ pub(crate) fn cmd_package(
 ) -> Res {
     let opts = parse_args(args)?;
 
+    // Fail fast: `cargo truce package` ends with an Inno Setup run,
+    // and dual-arch builds can spend 20+ minutes before reaching it.
+    // Surface a missing toolchain now instead of after every cargo
+    // build, signtool, and AAX template step. `--no-installer` skips
+    // ISCC entirely, so the check is gated on that.
+    if !opts.no_installer {
+        require_iscc()?;
+    }
+
     let target_cpu = opts
         .target_cpu_arg
         .as_deref()
@@ -2347,11 +2356,25 @@ fn iss_uninstall_lines(
     }
 }
 
+/// Verify Inno Setup is installed before kicking off any builds. Used
+/// by `cmd_package` as a preflight; returns the same error `run_iscc`
+/// would produce later, just much earlier in the pipeline so the
+/// developer doesn't sit through a full dual-arch rebuild before
+/// learning ISCC is missing.
+fn require_iscc() -> Res {
+    if locate_iscc().is_some() {
+        return Ok(());
+    }
+    Err(ISCC_MISSING_MSG.into())
+}
+
+const ISCC_MISSING_MSG: &str =
+    "ISCC.exe not found. Install Inno Setup 6 from https://jrsoftware.org/isinfo.php, \
+     or pass --no-installer to skip installer generation. \
+     (`cargo truce doctor` will confirm once it's installed.)";
+
 fn run_iscc(iss_path: &Path) -> Res {
-    let iscc = locate_iscc().ok_or(
-        "ISCC.exe not found. Install Inno Setup 6 from https://jrsoftware.org/isinfo.php \
-         or pass --no-installer to skip installer generation.",
-    )?;
+    let iscc = locate_iscc().ok_or(ISCC_MISSING_MSG)?;
     eprintln!("  iscc: {}", iss_path.display());
     let status = Command::new(&iscc).arg(iss_path).status()?;
     if !status.success() {
@@ -2429,19 +2452,32 @@ pub(crate) fn doctor() {
     }
 }
 
-/// Look for an `arm64` lib directory under any VS MSVC toolchain version.
-/// Presence of the lib dir is a reliable signal that the "ARM64 build tools"
-/// component was installed. We don't require the cross-compiler binary to
-/// live in a specific path - cc/build will locate it via `vcvars_arm64.bat`
-/// when the Rust target triple requests it.
+/// Look for a *complete* ARM64 cross-compile toolchain under any VS MSVC
+/// version. The Clang/LLVM and sanitizer components both drop sparse
+/// `lib\arm64\` and `bin\HostArm64\arm64\` directories that contain only
+/// `clang_rt.*-aarch64.lib` and `llvm-symbolizer.exe` - so a
+/// dir-existence check alone reports "ARM64 ready" on a machine that
+/// can't actually cross-compile a single C call (no `msvcrt.lib`, no
+/// `cl.exe`, link fails with `LNK1104 cannot open file 'msvcrt.lib'`).
+///
+/// The real signal is either:
+/// - `bin\Hostx64\arm64\cl.exe` (x64 → arm64 cross-compiler), or
+/// - `lib\arm64\msvcrt.lib` (the ARM64 CRT import lib)
+///
+/// Both are dropped by the proper "MSVC v143/v145 - C++ ARM64/ARM64EC
+/// build tools" component and absent without it.
 fn has_arm64_msvc_toolchain() -> bool {
     for vs_root in crate::vs_install_paths() {
         let msvc_root = vs_root.join(r"VC\Tools\MSVC");
-        if let Ok(versions) = fs::read_dir(&msvc_root) {
-            for v in versions.flatten() {
-                if v.path().join(r"lib\arm64").is_dir() {
-                    return true;
-                }
+        let Ok(versions) = fs::read_dir(&msvc_root) else {
+            continue;
+        };
+        for v in versions.flatten() {
+            let root = v.path();
+            if root.join(r"bin\Hostx64\arm64\cl.exe").is_file()
+                || root.join(r"lib\arm64\msvcrt.lib").is_file()
+            {
+                return true;
             }
         }
     }
