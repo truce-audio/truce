@@ -50,9 +50,8 @@ mod tests {
     /// failure into a build failure.
     #[test]
     fn bridge_header_abi_define_matches_rust_constant() {
-        let parsed = parse_header_abi_define(BRIDGE_HEADER).expect(
-            "BRIDGE_HEADER must contain a `#define TRUCE_AAX_ABI_VERSION <N>` line",
-        );
+        let parsed = parse_header_abi_define(BRIDGE_HEADER)
+            .expect("BRIDGE_HEADER must contain a `#define TRUCE_AAX_ABI_VERSION <N>` line");
         assert_eq!(
             parsed, TRUCE_AAX_ABI_VERSION,
             "header `#define TRUCE_AAX_ABI_VERSION {parsed}` differs from Rust \

@@ -9,9 +9,8 @@ rendering pipelines.
 
 ## Why a separate crate
 
-Lets advanced users override the bundled font via Cargo's `[patch]`
-section instead of forking `truce-gui`, and keeps the font's binary
-payload + license file out of the framework's main crates.
+Keeps the font's binary payload + license file out of the
+framework's main crates.
 
 ## License
 
