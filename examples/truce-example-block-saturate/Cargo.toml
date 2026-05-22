@@ -1,5 +1,7 @@
 [package]
 name = "truce-example-block-saturate"
+# Internal-only - workspace demonstrations not for crates.io.
+publish = false
 version.workspace = true
 repository.workspace = true
 homepage.workspace = true
