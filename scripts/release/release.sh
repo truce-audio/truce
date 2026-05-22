@@ -173,7 +173,14 @@ fi
 echo
 echo "→ computing publish order from cargo metadata"
 
-ORDER="$(python3 - <<'PY'
+# Inline-Python topo sort over `cargo metadata`. Stashed in a
+# tempfile rather than fed inline via `$(python3 - <<'PY' …)` so
+# the script stays compatible with bash 3.2 (the system bash that
+# ships with macOS), which has a long-standing parser bug around
+# heredocs nested inside command substitution.
+TOPO_PY="$(mktemp -t truce-topo.XXXXXX.py)"
+trap 'rm -f "$TOPO_PY"' EXIT
+cat >"$TOPO_PY" <<'PY'
 import json
 import subprocess
 import sys
@@ -226,7 +233,8 @@ if remaining:
 
 print("\n".join(order))
 PY
-)"
+
+ORDER="$(python3 "$TOPO_PY")"
 
 if [[ -z "$ORDER" ]]; then
     echo "Error: no publishable crates found under crates/" >&2
