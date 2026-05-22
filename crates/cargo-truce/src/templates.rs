@@ -200,10 +200,11 @@ pub mod aax {
     pub const PARAMETERS_CPP: &str = include_str!("../templates/aax/TruceAAX_Parameters.cpp");
     pub const PARAMETERS_H: &str = include_str!("../templates/aax/TruceAAX_Parameters.h");
     pub const INFO_PLIST_IN: &str = include_str!("../templates/aax/Info.plist.in");
-    /// The C bridge header. Re-exported from `truce-aax` (the crate
-    /// that owns the C ABI) so the .h text lives in exactly one
-    /// place. `cargo truce install --aax` writes this string into
-    /// the scaffolded project's `src/` dir alongside the C++
-    /// template files.
-    pub const BRIDGE_HEADER: &str = ::truce_aax::BRIDGE_HEADER;
+    /// The C bridge header. Re-exported from `truce-aax-bridge`
+    /// (the tiny contract crate that owns both the header text and
+    /// the Rust ABI version constant) so the .h text lives in
+    /// exactly one place. `cargo truce install --aax` writes this
+    /// string into the scaffolded project's `src/` dir alongside
+    /// the C++ template files.
+    pub const BRIDGE_HEADER: &str = ::truce_aax_bridge::BRIDGE_HEADER;
 }

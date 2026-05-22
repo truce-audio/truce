@@ -37,23 +37,13 @@ use truce_params::{ParamFlags, ParamRange, Params};
 // C ABI types (must match truce_aax_bridge.h)
 // ---------------------------------------------------------------------------
 
-/// AAX bridge ABI version. Source of truth for the C ABI the
-/// Rust cdylib and the AAX C++ template agree on.
-///
-/// The header [`BRIDGE_HEADER`] mirrors this value as
-/// `#define TRUCE_AAX_ABI_VERSION`; a unit test below asserts the
-/// two stay in sync. Bumping requires editing both.
-pub const TRUCE_AAX_ABI_VERSION: u32 = 3;
-
-/// The C bridge header text, embedded at compile time.
-///
-/// This is the canonical artifact `truce-aax` exports for C++
-/// consumers: `cargo-truce` re-exposes it as
-/// `templates::aax::BRIDGE_HEADER` and writes it into scaffolded
-/// AAX projects so the C++ side can `#include "truce_aax_bridge.h"`.
-/// Living in this crate (the ABI owner) means no other crate has
-/// to reach across the workspace to read truce-aax's contract.
-pub const BRIDGE_HEADER: &str = include_str!("../include/truce_aax_bridge.h");
+// The C ABI contract — header text and version constant — lives
+// in the sibling `truce-aax-bridge` crate so `cargo-truce` can
+// consume it without pulling in our runtime stack (`truce-core`,
+// `truce-params`, `crossbeam-queue`). Re-exported here for source
+// compatibility with anything that imported
+// `truce_aax::TRUCE_AAX_ABI_VERSION` / `truce_aax::BRIDGE_HEADER`.
+pub use truce_aax_bridge::{BRIDGE_HEADER, TRUCE_AAX_ABI_VERSION};
 
 /// Wire values for [`TruceAaxParamInfo::range_type`]. The C++ shim
 /// switches on these to pick the matching `AAX_ITaperDelegate` for
@@ -1433,54 +1423,6 @@ pub unsafe fn _free_state(data: *mut u8, len: u32) {
 // See `cargo-truce/templates/aax/TruceAAX_Describe.cpp` for the
 // descriptor build.
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The C header mirrors `TRUCE_AAX_ABI_VERSION` as a
-    /// `#define`; the runtime check in the C++ template compares
-    /// the cdylib's `truce_aax_abi_version()` (which returns
-    /// [`TRUCE_AAX_ABI_VERSION`]) against the `#define`. If the
-    /// two ever drift, the template refuses the plugin at load
-    /// time. Catching the drift here turns a runtime Pro Tools
-    /// failure into a build failure.
-    #[test]
-    fn bridge_header_abi_define_matches_rust_constant() {
-        let parsed = parse_header_abi_define(BRIDGE_HEADER).expect(
-            "BRIDGE_HEADER must contain a `#define TRUCE_AAX_ABI_VERSION <N>` line",
-        );
-        assert_eq!(
-            parsed, TRUCE_AAX_ABI_VERSION,
-            "header `#define TRUCE_AAX_ABI_VERSION {parsed}` differs from Rust \
-             `TRUCE_AAX_ABI_VERSION = {TRUCE_AAX_ABI_VERSION}`. Update both in lock-step."
-        );
-    }
-
-    /// Extract `<N>` from the first `#define TRUCE_AAX_ABI_VERSION <N>u` line
-    /// (tolerates surrounding whitespace and a trailing `u`/`U` suffix).
-    fn parse_header_abi_define(contents: &str) -> Option<u32> {
-        for line in contents.lines() {
-            let line = line.trim();
-            let Some(rest) = line.strip_prefix("#define") else {
-                continue;
-            };
-            let Some(rest) = rest.trim_start().strip_prefix("TRUCE_AAX_ABI_VERSION") else {
-                continue;
-            };
-            let digits: String = rest
-                .trim_start()
-                .chars()
-                .take_while(char::is_ascii_digit)
-                .collect();
-            if digits.is_empty() {
-                continue;
-            }
-            return digits.parse::<u32>().ok();
-        }
-        None
-    }
-}
+// (The Rust-vs-`.h` ABI drift assertion lives in
+// `truce-aax-bridge`, the crate that owns both the header text
+// and the Rust constant. No need to duplicate it here.)

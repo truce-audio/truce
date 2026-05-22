@@ -43,15 +43,15 @@ truce-utils = { workspace = true }
 [dependencies.libloading]
 version = "0.9"
 
-# AAX bridge header (`truce_aax_bridge.h`) lives in `truce-aax`
-# itself - the crate that owns the C ABI. We re-expose it via
-# `templates::aax::BRIDGE_HEADER` so `cargo truce install --aax`
-# can drop the header into scaffolded projects without having a
-# second copy in this crate's `templates/` dir. AAX is only
-# packaged on macOS / Windows, so gate the dep to those targets
-# - on Linux this crate has no use for it.
+# AAX bridge header (`truce_aax_bridge.h`) + ABI version live in
+# the tiny `truce-aax-bridge` contract crate - depending on it
+# (rather than on the full `truce-aax` cdylib) keeps the CLI's
+# transitive graph from picking up `truce-core` / `truce-params` /
+# `crossbeam-queue` just to read a static string. Same pattern as
+# `truce-shim-types` for the AU v3 header. AAX is only packaged
+# on macOS / Windows, so the dep is gated to those targets.
 [target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
-truce-aax = { workspace = true }
+truce-aax-bridge = { workspace = true }
 
 # Post-link icon embed for the standalone host .exe lives in
 # `windows_manifest::embed_icon` and calls `BeginUpdateResource` /

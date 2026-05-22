@@ -711,7 +711,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tinytemplate",
  "toml 1.1.2+spec-1.1.0",
- "truce-aax",
+ "truce-aax-bridge",
  "truce-build",
  "truce-shim-types",
  "truce-utils",
@@ -6372,9 +6372,14 @@ name = "truce-aax"
 version = "0.48.7"
 dependencies = [
  "crossbeam-queue",
+ "truce-aax-bridge",
  "truce-core",
  "truce-params",
 ]
+
+[[package]]
+name = "truce-aax-bridge"
+version = "0.48.7"
 
 [[package]]
 name = "truce-au"

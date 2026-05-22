@@ -15,6 +15,7 @@ members = [
     "crates/truce-vst2",
     "crates/truce-lv2",
     "crates/truce-aax",
+    "crates/truce-aax-bridge",
     "crates/truce-test",
     "crates/truce-build",
     "crates/truce-loader",
@@ -107,6 +108,7 @@ truce-plugin = { version = "0.48.7", path = "crates/truce-plugin" }
 truce-vst2 = { version = "0.48.7", path = "crates/truce-vst2" }
 truce-lv2 = { version = "0.48.7", path = "crates/truce-lv2" }
 truce-aax = { version = "0.48.7", path = "crates/truce-aax" }
+truce-aax-bridge = { version = "0.48.7", path = "crates/truce-aax-bridge" }
 truce-test = { version = "0.48.7", path = "crates/truce-test" }
 truce-loader = { version = "0.48.7", path = "crates/truce-loader" }
 truce-derive = { version = "0.48.7", path = "crates/truce-derive" }
