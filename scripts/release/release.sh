@@ -231,6 +231,17 @@ remaining = [n for n in incoming if n not in order]
 if remaining:
     sys.exit(f"cycle: unresolved={remaining}")
 
+# `cargo-truce` is the CLI users `cargo install`; it scaffolds
+# plugins that pin against the rest of the workspace, so publishing
+# it before its sibling crates would create a window where
+# `cargo install cargo-truce && cargo truce new …` produces a
+# Cargo.toml whose `truce = "X.Y.Z"` pin can't yet resolve. Force
+# it to the tail of the publish list regardless of what cargo
+# metadata's topology suggests.
+if "cargo-truce" in order:
+    order.remove("cargo-truce")
+    order.append("cargo-truce")
+
 print("\n".join(order))
 PY
 
