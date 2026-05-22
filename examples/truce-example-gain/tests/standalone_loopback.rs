@@ -11,12 +11,20 @@
 //!   1. unity gain (default)            → output RMS ≈ input RMS
 //!   2. gain = -6.02 dB via `--state`   → output RMS ≈ 0.5 × input RMS
 //!
-//! Needs a working default audio output. Linux CI loads `snd-dummy`;
-//! macOS / Windows runners and most dev machines satisfy this via
-//! their stock `CoreAudio` / `WASAPI` / `PulseAudio` / `PipeWire`
-//! stack. The `standalone-playback` feature is on by default for
-//! this example, so `cargo build --workspace --all-targets` builds
-//! the bin and this test finds it under `target/<profile>/`.
+//! Needs a working default audio output. Linux CI sets the ALSA
+//! default PCM to `null`; macOS runners and most dev machines
+//! satisfy this via stock `CoreAudio` / `PulseAudio` / `PipeWire`.
+//! Skipped on Windows: GH-hosted Windows runners ship without an
+//! audio endpoint, and the canonical virtual-driver install (Scream
+//! via `pnputil`) hangs for tens of minutes on those runners. The
+//! bug this test guards against is Linux/ALSA-specific anyway, so
+//! Linux + macOS coverage is enough.
+//!
+//! The `standalone-playback` feature is on by default for this
+//! example, so `cargo build --workspace --all-targets` builds the
+//! bin and the test finds it under `target/<profile>/`.
+
+#![cfg(not(target_os = "windows"))]
 
 use std::env;
 use std::f32::consts::PI;
