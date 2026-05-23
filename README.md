@@ -148,10 +148,6 @@ truce::plugin! { logic: Gain, params: GainParams }
 > `f64`, and the format wrapper widens/narrows at the block
 > boundary. Same `impl PluginLogic` header on both precisions.
 
-A complete plugin with smoothed params, a GPU-rendered GUI knob, and
-the CLAP + VST3 + standalone defaults. Add `vst2`, `lv2`, `au`, or `aax`
-to your `[features].default` to ship more formats from the same code.
-
 ## Format Support
 
 By platform:

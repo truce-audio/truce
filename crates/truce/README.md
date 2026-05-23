@@ -53,12 +53,13 @@ the conventional pattern.
 
 ```toml
 [dependencies]
-truce = { git = "https://github.com/truce-audio/truce", tag = "vX.Y.Z", features = ["clap"] }
+truce = { version = "0.48", features = ["clap"] }
 ```
 
-(Replace `vX.Y.Z` with the latest release tag - see the
-[releases page](https://github.com/truce-audio/truce/releases). Use
-`branch = "main"` instead of `tag = ...` to track the bleeding edge.
+(Cargo's caret resolver expands `"0.48"` to `>=0.48.0, <0.49.0`, so
+you'll pick up every `0.48.x` patch release without re-editing. To
+track an unreleased checkout, swap the line for
+`truce = { git = "https://github.com/truce-audio/truce", branch = "main", features = ["clap"] }`.
 Or just run `cargo truce new` and let the scaffolder write the
 right pin for you.)
 

@@ -676,7 +676,10 @@ pub(crate) fn take_skipped() -> Vec<String> {
 }
 
 /// Run `codesign` with the given args. Prints a one-line success or
-/// failure summary per call (`  ✓ signed Truce Gain.vst3` / `  ✗ ...`).
+/// failure summary per call (`  [ OK ] signed Truce Gain.vst3` /
+/// `  [FAIL] failed to sign ...`), using the same colored ASCII tags
+/// as `cargo truce doctor` so package output stays consistent across
+/// commands.
 /// In quiet mode, the `replacing existing signature` chatter and verify
 /// output is captured and only printed on failure. `--verbose` inherits
 /// stderr so everything surfaces.
@@ -726,13 +729,16 @@ pub(crate) fn run_codesign(args: &[&OsStr], use_sudo: bool) -> crate::Res {
     };
 
     if status.success() {
-        eprintln!("  ✓ {verb_past} {target_label}");
+        eprintln!("  {} {verb_past} {target_label}", tag_ok());
         Ok(())
     } else {
         if !captured_stderr.is_empty() {
             eprintln!("{captured_stderr}");
         }
-        eprintln!("  ✗ failed to {verb_present} {target_label}");
+        eprintln!(
+            "  {} failed to {verb_present} {target_label}",
+            tag_fail()
+        );
         Err(crate::CargoTruceError::Codesign(format!(
             "failed to {verb_present} {target_label}"
         )))
