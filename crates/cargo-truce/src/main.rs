@@ -17,6 +17,24 @@ use std::process::ExitCode;
 use cargo_truce::scaffold::{FeatureSet, PluginKind, PluginSpec, Scaffolder, VendorInfo};
 
 fn main() -> ExitCode {
+    // Tell objc2 to reuse an already-registered Obj-C class with the
+    // same name instead of panicking. Required when multiple plugin
+    // dylibs (each containing its own copy of raw-window-metal's
+    // "RawWindowMetalLayer" subclass) load into the same host process
+    // - e.g. Pro Tools loading two AAX plugins built with truce. See
+    // raw-window-metal issue #29 and the `UNSAFE_OBJC2_ALLOW_CLASS_OVERRIDE`
+    // check in objc2's src/__macro_helpers/define_class.rs. The env
+    // var is read at compile time by objc2; setting it here means
+    // every `cargo` cargo-truce spawns picks it up, so plugin authors
+    // don't need to know it exists. Harmless on Linux / Windows (the
+    // env var is only consumed by objc2, which only builds on Apple).
+    //
+    // SAFETY: We're at process entry on the main thread, before any
+    // other thread can observe the environment.
+    unsafe {
+        std::env::set_var("UNSAFE_OBJC2_ALLOW_CLASS_OVERRIDE", "1");
+    }
+
     let args: Vec<String> = std::env::args().skip(1).filter(|a| a != "truce").collect();
 
     let cmd = args.first().map_or("help", std::string::String::as_str);

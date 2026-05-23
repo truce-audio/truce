@@ -419,8 +419,24 @@ void TruceAAX_Parameters::RenderAudio(
 // State (chunk) support
 // ---------------------------------------------------------------------------
 
+// The AAX standard control chunk ID. `AAX_CEffectParameters`'s
+// `GetChunkIDFromIndex(0)` already returns this value from the
+// SDK's default implementation, so we just need our chunk
+// handlers to honor the same gate. Without the gate, every chunk
+// Pro Tools probes for (preset 'pset', mode 'mode', ...) gets
+// our `save_state` blob, and the host's chunk table fills with
+// wrong-sized entries — `SMgr_PlugInInst::GetLiveSettings` then
+// trips a size-mismatch assertion when two plugins share a
+// track. Refusing unknown chunks via `AAX_ERROR_INVALID_CHUNK_ID`
+// keeps the host's chunk table truthful.
+constexpr AAX_CTypeID kTruceControlsChunkID = 'elck';
+
 AAX_Result TruceAAX_Parameters::GetChunkSize(AAX_CTypeID chunkID, uint32_t* oSize) const {
     if (!mRustCtx || !g_bridge_loaded) return AAX_ERROR_NULL_OBJECT;
+    if (chunkID != kTruceControlsChunkID) {
+        *oSize = 0;
+        return AAX_ERROR_INVALID_CHUNK_ID;
+    }
     // Serialize once into the pending cache; GetChunk drains it.
     uint8_t* data = nullptr;
     uint32_t len = g_bridge.save_state(mRustCtx, &data);
@@ -432,6 +448,9 @@ AAX_Result TruceAAX_Parameters::GetChunkSize(AAX_CTypeID chunkID, uint32_t* oSiz
 
 AAX_Result TruceAAX_Parameters::GetChunk(AAX_CTypeID chunkID, AAX_SPlugInChunk* oChunk) const {
     if (!mRustCtx || !g_bridge_loaded) return AAX_ERROR_NULL_OBJECT;
+    if (chunkID != kTruceControlsChunkID) {
+        return AAX_ERROR_INVALID_CHUNK_ID;
+    }
     // Prefer the blob cached by the immediately-preceding GetChunkSize
     // call. Fall back to a fresh serialize only if Pro Tools violates
     // the usual size-then-copy contract (defensive - shouldn't happen).
@@ -454,6 +473,9 @@ AAX_Result TruceAAX_Parameters::GetChunk(AAX_CTypeID chunkID, AAX_SPlugInChunk* 
 
 AAX_Result TruceAAX_Parameters::SetChunk(AAX_CTypeID chunkID, const AAX_SPlugInChunk* iChunk) {
     if (!mRustCtx || !g_bridge_loaded) return AAX_ERROR_NULL_OBJECT;
+    if (chunkID != kTruceControlsChunkID) {
+        return AAX_ERROR_INVALID_CHUNK_ID;
+    }
     g_bridge.load_state(mRustCtx, (const uint8_t*)iChunk->fData, iChunk->fSize);
     return AAX_SUCCESS;
 }

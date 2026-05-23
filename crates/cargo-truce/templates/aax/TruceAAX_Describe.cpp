@@ -141,6 +141,14 @@ static AAX_Result TruceDescribeOneConfig(
     if (!setupInfo.mMultiMonoSupport)
         err = properties->AddProperty(AAX_eProperty_Constraint_MultiMonoSupport, 0);
 
+    // (Chunks aren't declared via descriptor properties in AAX SDK
+    // 2.9 — the host enumerates them via virtual methods on the
+    // `AAX_CEffectParameters` instance. The base class already
+    // returns `GetNumberOfChunks() == 1` and
+    // `GetChunkIDFromIndex(0) == 'elck'`; our `GetChunkSize` /
+    // `GetChunk` / `SetChunk` overrides in `TruceAAX_Parameters.cpp`
+    // gate on that single ID.)
+
     err = compDesc->AddProcessProc_Native(
         AAX_CMonolithicParameters::StaticRenderAudio, properties);
     if (err != AAX_SUCCESS) return err;
