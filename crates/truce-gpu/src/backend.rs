@@ -1404,8 +1404,17 @@ impl RenderBackend for WgpuBackend {
             let (u0, v0, u1, v1, gw, gh, y_off, advance) = (
                 g.u0, g.v0, g.u1, g.v1, g.width, g.height, g.y_offset, g.advance,
             );
-            let gx = cursor_x;
-            let gy = y * s + ascent - y_off - gh;
+            // Snap the glyph quad to integer pixel positions on emit.
+            // Atlas texels and screen pixels are 1:1 (glyphs are
+            // rasterized at `phys_size`); the shared sampler is
+            // `FilterMode::Linear`, so a fractional `gx`/`gy` would
+            // produce per-output-pixel UV interpolation that mixes
+            // neighbouring atlas texels and smears the glyph. Snapping
+            // on emit (while `cursor_x` keeps full f32 advance) yields
+            // crisp glyphs with the kerning error capped at ±0.5px,
+            // invisible at UI text sizes.
+            let gx = cursor_x.round();
+            let gy = (y * s + ascent - y_off - gh).round();
 
             self.push_quad(
                 Vertex::glyph(gx, gy, c, u0, v0),
