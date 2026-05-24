@@ -106,11 +106,12 @@ struct GpuWindowHandler<P: Params> {
 impl<P: Params + 'static> WindowHandler for GpuWindowHandler<P> {
     fn on_frame(&mut self, _window: &mut Window) {
         if let Some(ref mut gpu) = self.gpu {
-            // Pick up host-driven scale changes (CLAP `set_scale`, VST3
-            // `IPlugViewContentScaleSupport`) that landed in the shared
-            // cell since the last frame. There is no Resized fallback
-            // here because the GPU path disallows host-driven resize
-            // (see on_event), so the shared cell is the only writer.
+            // Pick up scale changes that landed in the shared cell
+            // since the last frame - either from a host callback (CLAP
+            // `set_scale`, VST3 `IPlugViewContentScaleSupport`) or from
+            // the OS-driven `Resized` path (see on_event). Logical w×h
+            // is fixed (resize is disallowed per `Editor::can_resize`'s
+            // `false` default); only the logical→physical ratio moves.
             if let Some(cur_scale) = self.scale.take_change(&mut self.last_applied_scale) {
                 gpu.set_scale(cur_scale);
                 gpu.resize(self.current_size.0, self.current_size.1);
@@ -159,18 +160,17 @@ impl<P: Params + 'static> WindowHandler for GpuWindowHandler<P> {
             }
             Event::Window(win) => {
                 if let baseview::WindowEvent::Resized(info) = win {
-                    // Resize is intentionally disallowed: `Editor::can_resize`
-                    // and `Editor::set_size` use the trait defaults
-                    // (`false` / `false`), so hosts shouldn't drive a
-                    // resize. We pass the OS-reported scale through
-                    // `note_linux_scale_factor` to keep the cross-
-                    // backend Linux DPI cache populated, but
-                    // deliberately do not reconfigure the wgpu surface
-                    // or the inner `BuiltinEditor` - a user who drags
-                    // the host window across a DPI boundary accepts the
-                    // stretched/cropped output. Matches the
-                    // `truce-gui::BuiltinEditor` CPU path so the two
-                    // paths behave identically.
+                    // Logical resize is disallowed (`Editor::can_resize`
+                    // is `false`), but the OS-reported *scale* is
+                    // authoritative: on Windows the parent HWND queried
+                    // at `open()` time can report a different DPI than
+                    // the child surface baseview actually creates, and
+                    // on every platform dragging across a monitor
+                    // boundary needs to land on the new DPI. Write
+                    // through to the shared cell so `on_frame`'s
+                    // `take_change` path calls `set_scale` + `resize`
+                    // at the new scale; logical w×h stays put.
+                    self.scale.set(info.scale());
                     truce_gui::platform::note_linux_scale_factor(info.scale());
                 }
                 EventStatus::Ignored

@@ -554,12 +554,13 @@ impl<P: Params + 'static> baseview::WindowHandler for BuiltinWindowHandler<P> {
 
         let editor = unsafe { &mut *self.editor };
 
-        // Pick up host-driven scale changes (CLAP `set_scale`, VST3
-        // `IPlugViewContentScaleSupport`) that landed in the shared
-        // cell since the last frame. The OS-driven `Resized` path
-        // intentionally stays a no-op (resize is disallowed per
-        // `Editor::can_resize`'s `false` default), so this branch is
-        // the only way scale changes propagate.
+        // Pick up scale changes that landed in the shared cell since
+        // the last frame - either from a host callback (CLAP
+        // `set_scale`, VST3 `IPlugViewContentScaleSupport`) or from
+        // the OS-driven `Resized` path writing through `info.scale()`.
+        // Logical w×h is fixed (resize is disallowed per
+        // `Editor::can_resize`'s `false` default); only the
+        // logical→physical ratio moves through here.
         if let Some(cur_scale) = editor.scale.take_change(&mut self.last_applied_scale) {
             let (lw, lh) = editor.size();
             let phys_w = crate::platform::to_physical_px(lw, f64::from(cur_scale));
@@ -660,18 +661,19 @@ impl<P: Params + 'static> baseview::WindowHandler for BuiltinWindowHandler<P> {
                 baseview::EventStatus::Captured
             }
             baseview::Event::Window(baseview::WindowEvent::Resized(info)) => {
-                // Resize is intentionally disallowed: `Editor::can_resize`
-                // and `Editor::set_size` use the trait defaults
-                // (`false` / `false`), so hosts shouldn't drive a resize
-                // through the truce protocol. We still pass the OS-
-                // reported scale through `note_linux_scale_factor` so
-                // newly opened editors on the same process see the
-                // correct DPI from the cache, but we deliberately do
-                // not resize the CPU pixmap or wgpu blit surface - a
-                // user who drags the host window across a DPI boundary
-                // accepts the stretched/cropped output. Matches the
-                // `truce-gpu` `GpuEditor` posture so the two paths
-                // behave identically.
+                // Logical resize is disallowed (`Editor::can_resize` is
+                // `false`), but the OS-reported *scale* is authoritative:
+                // on Windows the parent HWND queried at `open()` time
+                // can report a different DPI than the child surface
+                // baseview actually creates, and on every platform
+                // dragging across a monitor boundary needs to land on
+                // the new DPI. Write through to the shared cell so
+                // `on_frame`'s `take_change` path rebuilds the CPU
+                // pixmap and reconfigures the wgpu surface at the new
+                // scale; logical w×h stays put. Matches the iced /
+                // egui / slint backends' Resized handlers.
+                let editor = unsafe { &mut *self.editor };
+                editor.scale.set(info.scale());
                 crate::platform::note_linux_scale_factor(info.scale());
                 baseview::EventStatus::Ignored
             }
