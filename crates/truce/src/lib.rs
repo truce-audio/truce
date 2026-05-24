@@ -62,8 +62,8 @@ mod prelude_impl {
     // signals it as an internal contract.
     pub use truce_core::{
         BusConfig, BusKind, BusLayout, ChannelConfig, Editor, Event, EventBody, EventList,
-        PluginCategory, PluginContext, PluginExport, PluginInfo, ProcessContext, ProcessStatus,
-        TransportInfo,
+        IntoEditor, PluginCategory, PluginContext, PluginExport, PluginInfo, ProcessContext,
+        ProcessStatus, TransportInfo,
     };
     pub use truce_derive::{ParamEnum, Params, State, plugin_info};
     // `PluginLogic` itself is *not* re-exported here - each prelude

@@ -1,5 +1,6 @@
 use truce::prelude::*;
 use truce_core::cast::len_u32;
+use truce_gui::IntoLayoutEditor;
 use truce_gui_types::layout::{GridLayout, dropdown, knob, widgets};
 
 // --- Arp pattern enum ---
@@ -336,17 +337,15 @@ impl PluginLogic for Arpeggio {
     }
 
     fn editor(&self) -> Box<dyn Editor> {
-        truce_gui::default_editor(
-            self.params.clone(),
-            GridLayout::build(vec![widgets(vec![
-                dropdown(P::Rate, "Rate"),
-                knob(P::Gate, "Gate"),
-                knob(P::Octaves, "Octaves"),
-                dropdown(P::Pattern, "Pattern"),
-            ])])
-            .with_cols(2)
-            .with_title("ARPEGGIO"),
-        )
+        GridLayout::build(vec![widgets(vec![
+            dropdown(P::Rate, "Rate"),
+            knob(P::Gate, "Gate"),
+            knob(P::Octaves, "Octaves"),
+            dropdown(P::Pattern, "Pattern"),
+        ])])
+        .with_cols(2)
+        .with_title("ARPEGGIO")
+        .into_editor(&self.params)
     }
 }
 

@@ -1,4 +1,5 @@
 use truce::prelude::*;
+use truce_gui::IntoLayoutEditor;
 use truce_gui_types::layout::{GridLayout, knob, widgets};
 
 // --- Parameters ---
@@ -122,14 +123,12 @@ impl PluginLogic for Transpose {
     }
 
     fn editor(&self) -> Box<dyn Editor> {
-        truce_gui::default_editor(
-            self.params.clone(),
-            GridLayout::build(vec![widgets(vec![
-                knob(P::Semitones, "Semitones"),
-                knob(P::Octave, "Octave"),
-            ])])
-            .with_title("TRANSPOSE"),
-        )
+        GridLayout::build(vec![widgets(vec![
+            knob(P::Semitones, "Semitones"),
+            knob(P::Octave, "Octave"),
+        ])])
+        .with_title("TRANSPOSE")
+        .into_editor(&self.params)
     }
 }
 

@@ -77,7 +77,7 @@ impl PluginLogic for GainSlint {
     }
 
     fn editor(&self) -> Box<dyn Editor> {
-        Box::new(SlintEditor::new(
+        SlintEditor::new(
             self.params.clone(),
             (176, 290),
             |state: PluginContext<GainParams>| -> SyncFn<GainParams> {
@@ -99,7 +99,8 @@ impl PluginLogic for GainSlint {
                     ui.set_meter_right(meter_display(state.get_meter(P::MeterRight)));
                 })
             },
-        ))
+        )
+        .into_editor()
     }
 }
 

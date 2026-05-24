@@ -16,6 +16,7 @@ mod biquad;
 use ::biquad::{Biquad, DirectForm2Transposed};
 use biquad::{StereoSample, high_shelf, low_shelf, peaking};
 use truce::prelude64::*;
+use truce_gui::IntoLayoutEditor;
 use truce_gui_types::layout::{GridLayout, knob, section, widgets};
 
 type StereoBiquad = DirectForm2Transposed<f64, StereoSample>;
@@ -268,37 +269,35 @@ impl PluginLogic for Eq {
     }
 
     fn editor(&self) -> Box<dyn Editor> {
-        truce_gui::default_editor(
-            self.params.clone(),
-            GridLayout::build(vec![
-                section(
-                    "LOW",
-                    vec![
-                        knob(P::LowFreq, "Freq"),
-                        knob(P::LowGain, "Gain"),
-                        knob(P::LowQ, "Q"),
-                    ],
-                ),
-                section(
-                    "MID",
-                    vec![
-                        knob(P::MidFreq, "Freq"),
-                        knob(P::MidGain, "Gain"),
-                        knob(P::MidQ, "Q"),
-                    ],
-                ),
-                section(
-                    "HIGH",
-                    vec![
-                        knob(P::HighFreq, "Freq"),
-                        knob(P::HighGain, "Gain"),
-                        knob(P::HighQ, "Q"),
-                    ],
-                ),
-                widgets(vec![knob(P::Output, "Output")]),
-            ])
-            .with_title("EQ"),
-        )
+        GridLayout::build(vec![
+            section(
+                "LOW",
+                vec![
+                    knob(P::LowFreq, "Freq"),
+                    knob(P::LowGain, "Gain"),
+                    knob(P::LowQ, "Q"),
+                ],
+            ),
+            section(
+                "MID",
+                vec![
+                    knob(P::MidFreq, "Freq"),
+                    knob(P::MidGain, "Gain"),
+                    knob(P::MidQ, "Q"),
+                ],
+            ),
+            section(
+                "HIGH",
+                vec![
+                    knob(P::HighFreq, "Freq"),
+                    knob(P::HighGain, "Gain"),
+                    knob(P::HighQ, "Q"),
+                ],
+            ),
+            widgets(vec![knob(P::Output, "Output")]),
+        ])
+        .with_title("EQ")
+        .into_editor(&self.params)
     }
 }
 

@@ -1,4 +1,5 @@
 use truce::prelude::*;
+use truce_gui::IntoLayoutEditor;
 use truce_gui_types::layout::{GridLayout, knob, meter, widgets, xy_pad};
 
 // --- Parameters ---
@@ -76,18 +77,16 @@ impl PluginLogic for Gain {
     }
 
     fn editor(&self) -> Box<dyn Editor> {
-        truce_gui::default_editor(
-            self.params.clone(),
-            GridLayout::build(vec![widgets(vec![
-                knob(P::Gain, "Gain"),
-                knob(P::Pan, "Pan"),
-                meter(&[P::MeterLeft, P::MeterRight], "Level")
-                    .at(2, 0)
-                    .rows(3),
-                xy_pad(P::Pan, P::Gain, "XY"),
-            ])])
-            .with_title("GAIN"),
-        )
+        GridLayout::build(vec![widgets(vec![
+            knob(P::Gain, "Gain"),
+            knob(P::Pan, "Pan"),
+            meter(&[P::MeterLeft, P::MeterRight], "Level")
+                .at(2, 0)
+                .rows(3),
+            xy_pad(P::Pan, P::Gain, "XY"),
+        ])])
+        .with_title("GAIN")
+        .into_editor(&self.params)
     }
 }
 

@@ -46,6 +46,12 @@ wgpu = { workspace = true, features = ["vulkan", "gles"] }
 
 # iOS UIKit + CoreGraphics bridging for the UIView host.
 [target.'cfg(target_os = "ios")'.dependencies]
+# iOS always rasterizes with the CPU backend (tiny-skia → CGImage →
+# UIView layer contents); the `gpu` wgpu path is desktop-only. So
+# truce-cpu is a hard dependency here regardless of the `cpu` / `gpu`
+# features a plugin picks — a gpu-only iOS build (e.g. an example that
+# sets `features = ["gpu"]`) still needs the CPU rasterizer.
+truce-cpu = { workspace = true }
 objc2 = "0.6"
 objc2-foundation = { version = "0.3", features = ["NSString", "NSGeometry"] }
 objc2-ui-kit = { version = "0.3", features = ["UIView", "UIScreen", "UIWindow"] }

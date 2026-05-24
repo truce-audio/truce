@@ -47,15 +47,18 @@ mod render_core;
 // glyph cache) live in the sibling `truce-cpu` crate so the CPU
 // rasterizer is a peer of `truce-gpu`'s `WgpuBackend` in the crate
 // graph. Re-exported under their historical `truce_gui::*` paths
-// when `cpu` is enabled so existing call sites keep working.
-#[cfg(feature = "cpu")]
+// so existing call sites keep working. Available whenever the `cpu`
+// feature is on *or* we're building for iOS — iOS always rasterizes
+// through `CpuBackend` (see `editor_ios`), independent of features,
+// so `truce-cpu` is a hard dep there.
+#[cfg(any(feature = "cpu", target_os = "ios"))]
 pub use truce_cpu::ColorExt;
-#[cfg(feature = "cpu")]
+#[cfg(any(feature = "cpu", target_os = "ios"))]
 pub use truce_cpu::CpuBackend;
-#[cfg(feature = "cpu")]
+#[cfg(any(feature = "cpu", target_os = "ios"))]
 pub use truce_cpu::font;
 // Internal sub-module path that `backend_cpu` used to occupy.
-#[cfg(feature = "cpu")]
+#[cfg(any(feature = "cpu", target_os = "ios"))]
 #[doc(hidden)]
 pub mod backend_cpu {
     pub use truce_cpu::CpuBackend;
@@ -127,6 +130,51 @@ pub fn default_editor<P: truce_params::Params + 'static>(
     #[cfg(all(feature = "cpu", not(feature = "gpu"), not(target_os = "ios")))]
     {
         Box::new(builtin)
+    }
+}
+
+/// Fluent shorthand for [`default_editor`]. Build a `GridLayout`,
+/// then close the `editor()` impl with `.into_editor(&self.params)`:
+///
+/// ```ignore
+/// fn editor(&self) -> Box<dyn truce_core::Editor> {
+///     GridLayout::build(vec![ /* widgets */ ])
+///         .with_title("GAIN")
+///         .into_editor(&self.params)
+/// }
+/// ```
+///
+/// Equivalent to `default_editor(self.params.clone(), layout)` - the
+/// `&Arc<P>` is cloned internally so the call site stays free of an
+/// explicit `.clone()`. Bring it into scope with
+/// `use truce_gui::IntoLayoutEditor;` (it can't ride along on
+/// `truce::prelude`, which deliberately doesn't depend on this crate).
+///
+/// The method name mirrors [`truce_core::IntoEditor::into_editor`] (the
+/// blanket "box a concrete editor" helper used by egui / iced / slint),
+/// so every `editor()` impl ends the same way - layout plugins just
+/// pass their params.
+///
+/// Same feature gating as [`default_editor`]: only compiled when a
+/// renderer feature (`cpu` / `gpu`) is on, or on iOS.
+#[cfg(any(feature = "cpu", feature = "gpu", target_os = "ios"))]
+pub trait IntoLayoutEditor {
+    /// Wrap this layout in truce's default editor, picking the
+    /// renderer from the active `truce-gui` feature. See
+    /// [`default_editor`].
+    fn into_editor<P: truce_params::Params + 'static>(
+        self,
+        params: &std::sync::Arc<P>,
+    ) -> Box<dyn truce_core::editor::Editor>;
+}
+
+#[cfg(any(feature = "cpu", feature = "gpu", target_os = "ios"))]
+impl IntoLayoutEditor for truce_gui_types::layout::GridLayout {
+    fn into_editor<P: truce_params::Params + 'static>(
+        self,
+        params: &std::sync::Arc<P>,
+    ) -> Box<dyn truce_core::editor::Editor> {
+        default_editor(params.clone(), self)
     }
 }
 

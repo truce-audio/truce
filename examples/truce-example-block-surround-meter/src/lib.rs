@@ -26,6 +26,7 @@
 
 use truce::prelude::*;
 use truce_core::bus::{BusLayout, ChannelConfig};
+use truce_gui::IntoLayoutEditor;
 use truce_gui_types::layout::{GridLayout, knob, meter, widgets};
 use truce_simd::{math, ops};
 
@@ -142,14 +143,12 @@ impl PluginLogic for SurroundMeter {
     }
 
     fn editor(&self) -> Box<dyn Editor> {
-        truce_gui::default_editor(
-            self.params.clone(),
-            GridLayout::build(vec![widgets(vec![
-                meter(&METER_IDS, "5.1").at(0, 0).rows(2),
-                knob(P::Trim, "Trim").at(0, 2),
-            ])])
-            .with_title("5.1 MTR"),
-        )
+        GridLayout::build(vec![widgets(vec![
+            meter(&METER_IDS, "5.1").at(0, 0).rows(2),
+            knob(P::Trim, "Trim").at(0, 2),
+        ])])
+        .with_title("5.1 MTR")
+        .into_editor(&self.params)
     }
 }
 

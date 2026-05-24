@@ -5,6 +5,7 @@
 // and narrows on the way out.
 use truce::prelude64::*;
 use truce_core::midi::norm_7bit;
+use truce_gui::IntoLayoutEditor;
 use truce_gui_types::layout::{GridLayout, dropdown, knob, section, widgets};
 
 mod voice;
@@ -205,29 +206,27 @@ impl PluginLogic for Synth {
     }
 
     fn editor(&self) -> Box<dyn Editor> {
-        truce_gui::default_editor(
-            self.params.clone(),
-            GridLayout::build(vec![
-                widgets(vec![
-                    dropdown(P::Waveform, "Wave").cols(2),
-                    knob(P::Volume, "Volume"),
-                ]),
-                section(
-                    "FILTER",
-                    vec![knob(P::Cutoff, "Cutoff"), knob(P::Resonance, "Reso")],
-                ),
-                section(
-                    "ENVELOPE",
-                    vec![
-                        knob(P::Attack, "Attack"),
-                        knob(P::Decay, "Decay"),
-                        knob(P::Sustain, "Sustain"),
-                        knob(P::Release, "Release"),
-                    ],
-                ),
-            ])
-            .with_title("TRUCE SYNTH"),
-        )
+        GridLayout::build(vec![
+            widgets(vec![
+                dropdown(P::Waveform, "Wave").cols(2),
+                knob(P::Volume, "Volume"),
+            ]),
+            section(
+                "FILTER",
+                vec![knob(P::Cutoff, "Cutoff"), knob(P::Resonance, "Reso")],
+            ),
+            section(
+                "ENVELOPE",
+                vec![
+                    knob(P::Attack, "Attack"),
+                    knob(P::Decay, "Decay"),
+                    knob(P::Sustain, "Sustain"),
+                    knob(P::Release, "Release"),
+                ],
+            ),
+        ])
+        .with_title("TRUCE SYNTH")
+        .into_editor(&self.params)
     }
 }
 

@@ -83,11 +83,10 @@ impl PluginLogic for GainEgui {
     }
 
     fn editor(&self) -> Box<dyn Editor> {
-        Box::new(
-            EguiEditor::new(self.params.clone(), (WINDOW_W, WINDOW_H), gain_ui)
-                .with_visuals(truce_egui::theme::dark())
-                .with_font(JETBRAINS_MONO),
-        )
+        EguiEditor::new(self.params.clone(), (WINDOW_W, WINDOW_H), gain_ui)
+            .with_visuals(truce_egui::theme::dark())
+            .with_font(JETBRAINS_MONO)
+            .into_editor()
     }
 }
 

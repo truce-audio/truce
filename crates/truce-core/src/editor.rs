@@ -150,6 +150,34 @@ pub trait Editor: Send {
     }
 }
 
+/// Fluent terminal for `editor()` impls: box any concrete editor into
+/// the `Box<dyn Editor>` the trait returns, dropping the `Box::new(…)`
+/// wrapper.
+///
+/// ```ignore
+/// fn editor(&self) -> Box<dyn Editor> {
+///     EguiEditor::new(self.params.clone(), (W, H), ui)
+///         .with_visuals(theme)
+///         .into_editor()
+/// }
+/// ```
+///
+/// Implemented for every [`Editor`] via a blanket impl and re-exported
+/// from every `truce::prelude*`, so it's in scope without an extra
+/// import - egui / iced / slint / hand-rolled editors all use it.
+/// Layout-only plugins use `truce_gui::IntoLayoutEditor` instead (its
+/// `into_editor` takes `&Arc<Params>` and picks the built-in renderer).
+pub trait IntoEditor {
+    /// Box this editor into a `Box<dyn Editor>`.
+    fn into_editor(self) -> Box<dyn Editor>;
+}
+
+impl<E: Editor + 'static> IntoEditor for E {
+    fn into_editor(self) -> Box<dyn Editor> {
+        Box::new(self)
+    }
+}
+
 /// Bridge between the editor and the host / plugin. Format wrappers
 /// (CLAP / VST3 / VST2 / AU / AAX / LV2) implement this trait - or
 /// build a [`ClosureBridge`] from per-method closures - and pass an
