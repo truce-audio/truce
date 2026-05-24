@@ -73,7 +73,22 @@ jobs:
         run: cargo build --workspace --all-targets
 
       - name: test
-        run: cargo test --workspace
+        run: cargo test --workspace -- --skip gui_screenshot
+
+      # Screenshot tests render through truce-gui, whose backend is
+      # feature-selected (`cpu` default / `gpu` opt-in). A single
+      # `cargo test --workspace` unifies features across the graph, so
+      # truce-example-eq's `gpu` opt-in would flip every cpu example
+      # onto the GpuEditor and break the cpu reference PNGs. Run them
+      # split by renderer instead — each invocation builds truce-gui
+      # with one backend, matching how the baselines are baked
+      # (`cargo truce screenshot -p <crate>`, per-crate). eq is the only
+      # crate enabling `truce-gui/gpu`, so excluding it yields a
+      # cpu-only build for everything else.
+      - name: screenshot tests (cpu)
+        run: cargo test --workspace --exclude truce-example-eq -- gui_screenshot
+      - name: screenshot tests (gpu)
+        run: cargo test -p truce-example-eq -- gui_screenshot
 
       # Ratio-based regression guard: gain_simd_fast must run at
       # least 5x faster than the naive gain shape on the same
