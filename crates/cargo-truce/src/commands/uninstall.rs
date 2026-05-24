@@ -4,7 +4,12 @@
 #[cfg(target_os = "macos")]
 use crate::Config;
 use crate::install_scope::{InstallScope, note_once, set_cli_install_scope};
-use crate::{PluginDef, Res, confirm_prompt, dirs, load_config, run_sudo};
+use crate::{PluginDef, Res, confirm_prompt, dirs, load_config};
+// `run_sudo` is macOS-only (Linux is always per-user, Windows uses
+// per-process UAC elevation rather than per-command sudo).
+#[cfg(target_os = "macos")]
+use crate::run_sudo;
+#[cfg(target_os = "macos")]
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -670,12 +675,29 @@ pub(crate) fn cmd_uninstall(args: &[String]) -> Res {
             removed_au = true;
         }
 
-        let result = if t.needs_sudo {
-            run_sudo("rm", &[OsStr::new("-rf"), t.path.as_os_str()])
-        } else {
-            fs::remove_dir_all(&t.path)
-                .or_else(|_| fs::remove_file(&t.path))
-                .map_err(std::convert::Into::into)
+        // `needs_sudo` only drives the macOS path: on Linux every
+        // scope is per-user, and on Windows the cargo-truce process
+        // is either elevated (direct fs ops succeed) or it isn't
+        // (the OS returns EACCES from `remove_*` and that surfaces
+        // unchanged).
+        let result: Res = {
+            #[cfg(target_os = "macos")]
+            {
+                if t.needs_sudo {
+                    run_sudo("rm", &[OsStr::new("-rf"), t.path.as_os_str()])
+                } else {
+                    fs::remove_dir_all(&t.path)
+                        .or_else(|_| fs::remove_file(&t.path))
+                        .map_err(Into::into)
+                }
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                let _ = t.needs_sudo;
+                fs::remove_dir_all(&t.path)
+                    .or_else(|_| fs::remove_file(&t.path))
+                    .map_err(Into::into)
+            }
         };
 
         let name = t.path.file_name().unwrap_or_default().to_string_lossy();

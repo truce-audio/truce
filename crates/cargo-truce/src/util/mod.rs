@@ -573,6 +573,10 @@ pub(crate) fn project_root() -> PathBuf {
     cwd
 }
 
+/// Run a command via `sudo`. macOS-only: Windows uses per-process UAC
+/// elevation, not per-command, and Linux installs are always per-user, so
+/// no other supported platform has a sensible analogue.
+#[cfg(target_os = "macos")]
 pub(crate) fn run_sudo(cmd: &str, args: &[&OsStr]) -> crate::Res {
     announce_sudo_once();
     let status = Command::new("sudo").arg(cmd).args(args).status()?;
@@ -587,6 +591,7 @@ pub(crate) fn run_sudo(cmd: &str, args: &[&OsStr]) -> crate::Res {
 /// Print a one-line "why" before the first `sudo` call of the run, so the
 /// user understands the password prompt that's about to appear. No-op on
 /// subsequent calls - sudo's own cred cache covers the rest of the install.
+#[cfg(target_os = "macos")]
 fn announce_sudo_once() {
     static ANNOUNCED: AtomicBool = AtomicBool::new(false);
     if !ANNOUNCED.swap(true, Ordering::Relaxed) {
@@ -760,6 +765,12 @@ pub(crate) fn run_silent(cmd: &str, args: &[&OsStr]) {
 }
 
 /// Return the project-local temp directory (`<target>/tmp/`), creating it if needed.
+///
+/// Every consumer (the macOS / Windows-only `tmp_manifests`,
+/// `tmp_scripts`, `tmp_aax_template`, `tmp_au_v3`, `tmp_lv2`, plus
+/// the macOS-only `reset_au`) is platform-gated, so the function is
+/// dead on Linux - gate it to keep the Linux build warning-free.
+#[cfg(any(target_os = "macos", target_os = "windows", test))]
 pub(crate) fn tmp_dir() -> PathBuf {
     let dir = truce_build::target_dir(&project_root()).join("tmp");
     let _ = fs::create_dir_all(&dir);
@@ -818,6 +829,12 @@ pub(crate) fn tmp_au_v3(bundle_id: &str) -> PathBuf {
 }
 
 /// `tmp/lv2/<bundle_id>/` - LV2 bundle staging directory.
+///
+/// macOS-only: the staging detour exists so `stage_lv2` can write into
+/// a user-owned scratch dir before `run_sudo` copies the finished
+/// bundle into the root-owned system LV2 path. Windows and Linux
+/// installers write straight into the destination.
+#[cfg(target_os = "macos")]
 pub(crate) fn tmp_lv2(bundle_id: &str) -> PathBuf {
     let dir = tmp_dir().join("lv2").join(bundle_id);
     let _ = fs::create_dir_all(&dir);

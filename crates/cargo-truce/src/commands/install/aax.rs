@@ -555,6 +555,12 @@ pub(crate) fn install_aax(_root: &Path, _p: &PluginDef, _config: &Config) -> Res
 /// Install a pre-built AAX bundle from `target/bundles/` to the
 /// system plug-ins directory. Expects [`emit_aax_bundle`] to have
 /// been called first.
+///
+/// Skips with a one-line note (rather than erroring) when the Avid
+/// installation root is missing - the AAX bundle is only ever
+/// scanned by Pro Tools / Media Composer, so dropping a `.aaxplugin`
+/// into a freshly-`mkdir`'d `Avid/Audio/Plug-Ins/` on a machine that
+/// never had those installed would just be junk in `Program Files`.
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(crate) fn install_aax(root: &Path, p: &PluginDef, _config: &Config) -> Res {
     let bundle_name = format!("{}.aaxplugin", p.file_stem());
@@ -575,6 +581,18 @@ pub(crate) fn install_aax(root: &Path, p: &PluginDef, _config: &Config) -> Res {
             p.crate_name,
         )
         .into());
+    }
+
+    // Pro Tools / Media Composer presence check. The Avid root is
+    // installed by those products and shared across every AAX plug-in;
+    // its absence is the cheapest proxy for "no host on this machine".
+    if !avid_root().exists() {
+        crate::log_skip(format!(
+            "AAX: skipped {} - Pro Tools / Media Composer not detected at {}.",
+            p.name,
+            avid_root().display(),
+        ));
+        return Ok(());
     }
 
     #[cfg(target_os = "macos")]
@@ -600,4 +618,17 @@ pub(crate) fn install_aax(root: &Path, p: &PluginDef, _config: &Config) -> Res {
     }
 
     Ok(())
+}
+
+/// Root of an Avid host install (Pro Tools / Media Composer). Used as
+/// the existence probe before [`install_aax`] writes a `.aaxplugin`
+/// into the shared `Audio/Plug-Ins/` subdir below it.
+#[cfg(target_os = "macos")]
+fn avid_root() -> std::path::PathBuf {
+    std::path::PathBuf::from("/Library/Application Support/Avid")
+}
+
+#[cfg(target_os = "windows")]
+fn avid_root() -> std::path::PathBuf {
+    common_program_files().join("Avid")
 }

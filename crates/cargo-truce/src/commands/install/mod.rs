@@ -6,8 +6,17 @@ use crate::install_scope::{InstallScope, effective_scope, note_once, set_cli_ins
 use crate::util::{fs_ctx, parse_target_cpu_arg};
 use crate::{
     Config, PluginDef, Res, deployment_target, detect_default_features, load_config, project_root,
-    run_sudo, tmp_lv2,
 };
+// `run_sudo` shells out to `/usr/bin/sudo` and is therefore macOS-only.
+// Windows admin elevation is per-process; the non-macOS install branches
+// below use `fs_ctx` directly and surface the OS-level EACCES if the user
+// isn't elevated for a system-scope write.
+//
+// `tmp_lv2` is only consumed by `install_lv2`'s macOS sudo-stage path
+// (Windows/Linux write straight into the destination), so it joins the
+// same cfg-gate to keep the non-macOS build clean.
+#[cfg(target_os = "macos")]
+use crate::{run_sudo, tmp_lv2};
 // CLAP / VST3 / VST2 read the cdylib from `release_lib` on non-macOS
 // targets only; on macOS those formats consume the bundle-bin produced
 // by the `clang -bundle` link step, so `release_lib` is unused there.
@@ -19,7 +28,11 @@ use crate::release_lib;
 use crate::tmp_manifests;
 #[cfg(target_os = "macos")]
 use crate::{codesign_bundle, dirs};
+// `OsStr` (run_sudo args) and `fs` (AU cache wipe, pre-install
+// remove_dir) are only touched from macOS-gated branches below.
+#[cfg(target_os = "macos")]
 use std::ffi::OsStr;
+#[cfg(target_os = "macos")]
 use std::fs;
 use std::path::Path;
 
@@ -462,13 +475,12 @@ pub(crate) fn install_clap(
 
     #[cfg(not(target_os = "macos"))]
     {
-        if scope.needs_sudo() {
-            run_sudo("mkdir", &[OsStr::new("-p"), clap_dir.as_os_str()])?;
-            run_sudo("cp", &[dylib.as_os_str(), bundle.as_os_str()])?;
-        } else {
-            fs_ctx::create_dir_all(&clap_dir)?;
-            fs_ctx::copy(&dylib, &bundle)?;
-        }
+        // Linux installs are always per-user; Windows system-scope
+        // writes succeed when the cargo-truce process is elevated and
+        // bubble an OS-level EACCES otherwise (Windows has no per-
+        // command sudo - elevation is per-process via UAC).
+        fs_ctx::create_dir_all(&clap_dir)?;
+        fs_ctx::copy(&dylib, &bundle)?;
     }
 
     crate::log_output(format!("CLAP: {}", bundle.display()));
@@ -672,17 +684,16 @@ fn install_vst2(root: &Path, p: &PluginDef, config: &Config, scope: InstallScope
 /// non-URI characters in filenames even when the on-disk files are valid.
 fn install_lv2(root: &Path, p: &PluginDef, _config: &Config, scope: InstallScope) -> Res {
     let lv2_dir = scope.lv2_dir();
+
+    // macOS system scope is the only path that needs the stage-then-
+    // copy-via-sudo dance: `/Library/Audio/Plug-Ins/LV2/` is root-
+    // owned, so the `stage_lv2`-internal `fs::write`s would EACCES if
+    // they ran against the live destination. Windows admin elevation
+    // is per-process (not per-command), and Linux installs are always
+    // per-user, so both can stage straight into the destination.
+    #[cfg(target_os = "macos")]
     if scope.needs_sudo() {
         run_sudo("mkdir", &[OsStr::new("-p"), lv2_dir.as_os_str()])?;
-    } else {
-        fs_ctx::create_dir_all(&lv2_dir)?;
-    }
-    // `stage_lv2` writes into `lv2_dir/<slug>.lv2/`. The system-scope
-    // path can be root-owned (e.g. /Library/Audio/Plug-Ins/LV2/),
-    // which means each fs::write inside `stage_lv2` would EACCES.
-    // Stage to a temp directory first, then move into place via
-    // `run_sudo` for the system path.
-    if scope.needs_sudo() {
         let staging = tmp_lv2(&p.bundle_id);
         let _ = fs::remove_dir_all(&staging);
         fs_ctx::create_dir_all(&staging)?;
@@ -706,20 +717,27 @@ fn install_lv2(root: &Path, p: &PluginDef, _config: &Config, scope: InstallScope
             ],
         )?;
         crate::log_output(format!("LV2:  {}", dst_bundle.display()));
-    } else {
-        crate::commands::package::stage::stage_lv2(
-            root,
-            p,
-            &lv2_dir,
-            &crate::application_identity(),
-            None,
-        )?;
-        let slug = crate::commands::package::stage::lv2_slug(&p.name);
-        crate::log_output(format!(
-            "LV2:  {}",
-            lv2_dir.join(format!("{slug}.lv2")).display()
-        ));
+        return Ok(());
     }
+
+    // User scope on macOS, and every scope on Windows / Linux: write
+    // straight into `lv2_dir`. Windows system-scope writes EACCES if
+    // the cargo-truce process isn't elevated; the OS error message
+    // surfaces unchanged.
+    fs_ctx::create_dir_all(&lv2_dir)?;
+    crate::commands::package::stage::stage_lv2(
+        root,
+        p,
+        &lv2_dir,
+        &crate::application_identity(),
+        None,
+    )?;
+    let slug = crate::commands::package::stage::lv2_slug(&p.name);
+    crate::log_output(format!(
+        "LV2:  {}",
+        lv2_dir.join(format!("{slug}.lv2")).display()
+    ));
+    let _ = scope;
     Ok(())
 }
 

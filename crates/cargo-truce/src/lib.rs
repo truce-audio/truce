@@ -44,10 +44,17 @@ pub(crate) use util::tmp_verify;
 pub(crate) use util::{
     cargo_build, cargo_build_debug, check_cmd, codesign_bundle, confirm_prompt,
     detect_default_features, find_on_path, is_debug_profile, log_output, log_skip, project_root,
-    read_standalone_bin_name, release_lib, run_sudo, set_build_profile, set_debug_profile,
-    set_target_cpu, tag_fail, tag_ok, tag_warn, take_outputs, take_skipped,
-    verify_shell_profile_declared, vprintln,
+    read_standalone_bin_name, release_lib, set_build_profile, set_debug_profile, set_target_cpu,
+    tag_fail, tag_ok, tag_warn, take_outputs, take_skipped, verify_shell_profile_declared,
+    vprintln,
 };
+// `run_sudo` shells out to `/usr/bin/sudo`, which only exists on macOS in
+// our supported targets. Windows admin elevation is per-process (UAC, not
+// per-command) and Linux installs are always per-user, so the helper has
+// no meaningful implementation off macOS - the cfg gate forces callers to
+// stay platform-aware rather than silently spawning a missing binary.
+#[cfg(target_os = "macos")]
+pub(crate) use util::run_sudo;
 // `tmp_dir` is the raw escape hatch - used by `reset_au` (macOS only)
 // to walk every subdir under `tmp/`. Most callers pick the typed
 // helper that matches their purpose (`tmp_manifests`, `tmp_lv2`, …).
@@ -58,8 +65,11 @@ pub(crate) use util::tmp_dir;
 // since the tarball pipeline doesn't shell out to platform tools.
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(crate) use util::tmp_manifests;
-// `tmp_lv2` is consumed by the cross-platform LV2 installer in
-// `commands::install::mod`, so it stays unconditionally re-exported.
+// `tmp_lv2` is consumed only by `install_lv2`'s macOS sudo-stage
+// path - Windows/Linux installers write straight into the destination
+// without staging, since neither needs the per-command privilege
+// escalation that drives the macOS detour.
+#[cfg(target_os = "macos")]
 pub(crate) use util::tmp_lv2;
 
 // `read_workspace_version` is consumed by all three packagers
