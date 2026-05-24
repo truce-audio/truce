@@ -14,6 +14,7 @@ edition = "2024"
 {{ if use_registry -}}
 truce = \{ version = "{version}" }
 truce-gui = \{ version = "{version}" }
+truce-gui-types = \{ version = "{version}" }
 truce-clap = \{ version = "{version}" }
 truce-vst3 = \{ version = "{version}" }
 {{ if has_standalone -}}
@@ -22,6 +23,7 @@ truce-standalone = \{ version = "{version}" }
 {{- else -}}
 truce = \{ git = "https://github.com/truce-audio/truce", tag = "{tag}" }
 truce-gui = \{ git = "https://github.com/truce-audio/truce", tag = "{tag}" }
+truce-gui-types = \{ git = "https://github.com/truce-audio/truce", tag = "{tag}" }
 truce-clap = \{ git = "https://github.com/truce-audio/truce", tag = "{tag}" }
 truce-vst3 = \{ git = "https://github.com/truce-audio/truce", tag = "{tag}" }
 {{ if has_standalone -}}

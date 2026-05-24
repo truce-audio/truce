@@ -733,7 +733,7 @@ fn open_output_stream<P: PluginExport>(
         inputs: Vec::with_capacity(channels),
         outputs: Vec::with_capacity(channels),
     };
-    let mut scratch: RawBufferScratch<<P as truce_core::plugin::Plugin>::Sample> =
+    let mut scratch: RawBufferScratch<<P as truce_core::plugin::PluginRuntime>::Sample> =
         RawBufferScratch::default();
 
     let stream = match sample_format {
@@ -1030,7 +1030,7 @@ fn audio_callback<P: PluginExport>(
     event_list: &mut EventList,
     output_events: &mut EventList,
     ptr_scratch: &mut CallbackPtrScratch,
-    scratch: &mut RawBufferScratch<<P as truce_core::plugin::Plugin>::Sample>,
+    scratch: &mut RawBufferScratch<<P as truce_core::plugin::PluginRuntime>::Sample>,
     #[cfg(feature = "playback")] playback: Option<&Arc<crate::playback::PlaybackSource>>,
     #[cfg(feature = "playback")] capture: Option<&crate::playback::CapturePusher>,
 ) {

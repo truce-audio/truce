@@ -127,15 +127,18 @@ impl PluginLogic for Saturate {
         ProcessStatus::Normal
     }
 
-    fn layout(&self) -> GridLayout {
-        GridLayout::build(vec![widgets(vec![
-            knob(P::Drive, "Drive").at(0, 0),
-            knob(P::Output, "Output").at(0, 1),
-            meter(&[P::MeterLeft, P::MeterRight], "Level")
-                .at(1, 0)
-                .rows(2),
-        ])])
-        .with_title("SATURATE")
+    fn editor(&self) -> Box<dyn Editor> {
+        truce_gui::default_editor(
+            self.params.clone(),
+            GridLayout::build(vec![widgets(vec![
+                knob(P::Drive, "Drive").at(0, 0),
+                knob(P::Output, "Output").at(0, 1),
+                meter(&[P::MeterLeft, P::MeterRight], "Level")
+                    .at(1, 0)
+                    .rows(2),
+            ])])
+            .with_title("SATURATE"),
+        )
     }
 }
 

@@ -204,27 +204,30 @@ impl PluginLogic for Synth {
         }
     }
 
-    fn layout(&self) -> GridLayout {
-        GridLayout::build(vec![
-            widgets(vec![
-                dropdown(P::Waveform, "Wave").cols(2),
-                knob(P::Volume, "Volume"),
-            ]),
-            section(
-                "FILTER",
-                vec![knob(P::Cutoff, "Cutoff"), knob(P::Resonance, "Reso")],
-            ),
-            section(
-                "ENVELOPE",
-                vec![
-                    knob(P::Attack, "Attack"),
-                    knob(P::Decay, "Decay"),
-                    knob(P::Sustain, "Sustain"),
-                    knob(P::Release, "Release"),
-                ],
-            ),
-        ])
-        .with_title("TRUCE SYNTH")
+    fn editor(&self) -> Box<dyn Editor> {
+        truce_gui::default_editor(
+            self.params.clone(),
+            GridLayout::build(vec![
+                widgets(vec![
+                    dropdown(P::Waveform, "Wave").cols(2),
+                    knob(P::Volume, "Volume"),
+                ]),
+                section(
+                    "FILTER",
+                    vec![knob(P::Cutoff, "Cutoff"), knob(P::Resonance, "Reso")],
+                ),
+                section(
+                    "ENVELOPE",
+                    vec![
+                        knob(P::Attack, "Attack"),
+                        knob(P::Decay, "Decay"),
+                        knob(P::Sustain, "Sustain"),
+                        knob(P::Release, "Release"),
+                    ],
+                ),
+            ])
+            .with_title("TRUCE SYNTH"),
+        )
     }
 }
 

@@ -52,7 +52,7 @@ use truce_core::cast::{len_u32, sample_count_usize};
 use truce_core::events::{Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
 use truce_core::info::PluginCategory;
-use truce_core::plugin::Plugin;
+use truce_core::plugin::PluginRuntime;
 use truce_core::process::ProcessContext;
 use truce_params::Params;
 
@@ -777,7 +777,8 @@ impl<P: PluginExport> PluginDriver<P> {
         // so `Plugin::Sample = f64` plugins (prelude64) get widening
         // scratch transparently. For `Sample = f32` it's still
         // zero-copy through the host f32 slices.
-        let mut scratch: RawBufferScratch<<P as Plugin>::Sample> = RawBufferScratch::default();
+        let mut scratch: RawBufferScratch<<P as PluginRuntime>::Sample> =
+            RawBufferScratch::default();
         scratch.ensure_capacity(in_bufs.len(), out_bufs.len(), self.block_size);
         let mut in_ptrs: Vec<*const f32> = Vec::with_capacity(in_bufs.len());
         let mut out_ptrs: Vec<*mut f32> = Vec::with_capacity(out_bufs.len());

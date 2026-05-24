@@ -180,12 +180,12 @@ impl PluginLogic for Tremolo {
         ProcessStatus::Normal
     }
 
-    fn custom_editor(&self) -> Option<Box<dyn Editor>> {
-        Some(Box::new(
+    fn editor(&self) -> Box<dyn Editor> {
+        Box::new(
             EguiEditor::new(self.params.clone(), (WINDOW_W, WINDOW_H), tremolo_ui)
                 .with_visuals(truce_egui::theme::dark())
                 .with_font(font::JETBRAINS_MONO),
-        ))
+        )
     }
 }
 

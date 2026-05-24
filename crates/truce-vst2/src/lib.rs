@@ -70,7 +70,7 @@ struct Vst2Instance<P: PluginExport> {
     ///
     /// Parameterised by `P::Sample`; widens/narrows host-`f32`
     /// buffers around `plugin.process()` for plugins on `prelude64`.
-    scratch: truce_core::buffer::RawBufferScratch<<P as truce_core::plugin::Plugin>::Sample>,
+    scratch: truce_core::buffer::RawBufferScratch<<P as truce_core::plugin::PluginRuntime>::Sample>,
     editor: Option<Box<dyn Editor>>,
     /// `AEffect` pointer, set by the C shim after creation. Used for host callbacks.
     aeffect_ptr: *mut std::ffi::c_void,

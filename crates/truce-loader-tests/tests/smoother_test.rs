@@ -5,7 +5,7 @@
 use std::sync::Arc;
 use truce_core::buffer::AudioBuffer;
 use truce_core::events::{Event, EventBody, EventList, TransportInfo};
-use truce_core::plugin::Plugin;
+use truce_core::plugin::PluginRuntime;
 use truce_core::process::{ProcessContext, ProcessStatus};
 use truce_derive::Params;
 use truce_gui::PluginLogic;
@@ -50,6 +50,22 @@ impl PluginLogic for SmootherPlugin {
         }
         ProcessStatus::Normal
     }
+
+    fn editor(&self) -> Box<dyn truce::prelude::Editor> {
+        // DSP-only test; the editor slot is never exercised. Return
+        // a stub so the trait requirement is satisfied.
+        Box::new(NoEditor)
+    }
+}
+
+struct NoEditor;
+impl truce::prelude::Editor for NoEditor {
+    fn size(&self) -> (u32, u32) {
+        (0, 0)
+    }
+    fn open(&mut self, _: truce_core::editor::RawWindowHandle, _: truce::prelude::PluginContext) {}
+    fn close(&mut self) {}
+    fn idle(&mut self) {}
 }
 
 #[test]

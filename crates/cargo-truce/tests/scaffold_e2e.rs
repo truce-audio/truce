@@ -569,16 +569,25 @@ fn walk_cargo_toml(dir: &Path, out: &mut Vec<PathBuf>) {
 /// unchanged). Scaffolded Cargo.tomls always use the single-line form,
 /// so a regex-less line scan suffices.
 fn rewrite_git_refs(content: &str, crates_dir: &str) -> String {
-    const NEEDLE: &str = r#"{ git = "https://github.com/truce-audio/truce""#;
+    const GIT_NEEDLE: &str = r#"{ git = "https://github.com/truce-audio/truce""#;
+    const VERSION_NEEDLE: &str = r#"{ version = ""#;
     let mut out = String::with_capacity(content.len());
     for line in content.lines() {
         let trimmed = line.trim_start();
-        if trimmed.starts_with('#') || !line.contains(NEEDLE) {
+        // Only rewrite truce-* lines (registry-form deps in scaffold
+        // templates that pin published versions on crates.io;
+        // unrelated `{ version = ... }` lines for other deps pass
+        // through). Comments pass through too so commented opt-in
+        // hints stay readable.
+        let is_truce_dep = trimmed
+            .split_once('=')
+            .is_some_and(|(key, _)| key.trim().starts_with("truce"));
+        if trimmed.starts_with('#') || !is_truce_dep {
             out.push_str(line);
             out.push('\n');
             continue;
         }
-        // Extract the key (the `truce-foo` in `truce-foo = { git = ... }`).
+        // Extract the key (the `truce-foo` in `truce-foo = { ... }`).
         let Some(eq_idx) = line.find('=') else {
             out.push_str(line);
             out.push('\n');
@@ -586,16 +595,48 @@ fn rewrite_git_refs(content: &str, crates_dir: &str) -> String {
         };
         let key = line[..eq_idx].trim();
         let replacement = format!(r#"{{ path = "{crates_dir}/{key}""#);
-        let mut rewritten = line.replacen(NEEDLE, &replacement, 1);
-        // Strip `, tag = "..."` if present - invalid on path deps.
-        // Scaffolds emit it immediately after the URL.
-        let needle = r#", tag = ""#;
-        if let Some(start) = rewritten.find(needle) {
-            let after = start + needle.len();
-            if let Some(end_quote) = rewritten[after..].find('"') {
-                rewritten.replace_range(start..=(after + end_quote), "");
+        let rewritten = if line.contains(GIT_NEEDLE) {
+            let mut rewritten = line.replacen(GIT_NEEDLE, &replacement, 1);
+            // Strip `, tag = "..."` if present - invalid on path deps.
+            // Scaffolds emit it immediately after the URL.
+            let needle = r#", tag = ""#;
+            if let Some(start) = rewritten.find(needle) {
+                let after = start + needle.len();
+                if let Some(end_quote) = rewritten[after..].find('"') {
+                    rewritten.replace_range(start..=(after + end_quote), "");
+                }
             }
-        }
+            rewritten
+        } else if let Some(start) = line.find(VERSION_NEEDLE) {
+            // Registry form: `truce-x = { version = "0.48.10" }`.
+            // Strip the `version = "..."` chunk and replace the
+            // `{` part with the path form. Path deps reject `version`.
+            let after_open = start + VERSION_NEEDLE.len();
+            let end_quote = line[after_open..]
+                .find('"')
+                .map_or(line.len(), |i| after_open + i + 1);
+            // Skip trailing comma / whitespace after the closing quote.
+            let trim_to = line[end_quote..]
+                .chars()
+                .take_while(|c| *c == ',' || c.is_whitespace())
+                .map(char::len_utf8)
+                .sum::<usize>();
+            let mut rewritten = String::with_capacity(line.len());
+            rewritten.push_str(&line[..start]);
+            rewritten.push_str(&replacement);
+            // Add `, ` only if the remainder isn't immediately the
+            // closing brace (i.e., there are other dep args).
+            let tail = &line[end_quote + trim_to..];
+            if tail.trim_start().starts_with('}') {
+                rewritten.push_str(tail);
+            } else {
+                rewritten.push_str(", ");
+                rewritten.push_str(tail);
+            }
+            rewritten
+        } else {
+            line.to_string()
+        };
         out.push_str(&rewritten);
         out.push('\n');
     }

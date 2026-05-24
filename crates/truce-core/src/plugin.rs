@@ -6,32 +6,31 @@ use crate::info::PluginInfo;
 use crate::process::{ProcessContext, ProcessStatus};
 use truce_params::sample::Sample;
 
-/// The format-facing plugin trait. **Plugin authors do NOT implement
-/// this directly.**
+/// The format-facing plugin runtime trait. **Plugin authors do NOT
+/// implement this directly.**
 ///
-/// `Plugin` is the surface every format wrapper (CLAP, VST3, VST2,
-/// LV2, AU, AAX) consumes. The `truce::plugin!` macro generates an
-/// `impl Plugin for __HotShellWrapper` from the user's
-/// `truce_plugin::PluginLogic` impl, bridging the GUI-aware user
-/// trait into this GUI-free format-wrapper surface so `truce-core`
-/// doesn't pull in `truce-gui` types.
+/// `PluginRuntime` is the surface every format wrapper (CLAP, VST3,
+/// VST2, LV2, AU, AAX) consumes. The `truce::plugin!` macro generates
+/// an `impl PluginRuntime for __HotShellWrapper` from the user's
+/// `truce_plugin::Plugin` impl (or `PluginLogic` via `plugin_logic!`),
+/// bridging the user-facing trait into this GUI-free format-wrapper
+/// surface so `truce-core` doesn't pull in `truce-gui` types.
 ///
 /// What plugin authors implement instead:
 ///
 /// ```ignore
-/// impl truce::prelude::PluginLogic for MyPlugin {
+/// impl truce::prelude::Plugin for MyPlugin {
 ///     fn reset(&mut self, sr: f64, bs: usize) { /* ... */ }
 ///     fn process(&mut self, /* ... */) -> ProcessStatus { /* ... */ }
-///     fn layout(&self) -> GridLayout { /* ... */ }
+///     fn editor(self: Arc<Self>) -> Box<dyn Editor> { /* ... */ }
 /// }
 ///
 /// truce::plugin! { logic: MyPlugin, params: MyPluginParams }
 /// ```
 ///
-/// The macro-emitted `impl Plugin` routes each method directly to the
-/// user's impl, except `editor()` which the macro builds from the
-/// user's `custom_editor` (preferred) or `layout` (built-in fallback).
-pub trait Plugin: Send + 'static {
+/// The macro-emitted `impl PluginRuntime` routes each method directly
+/// to the user's impl.
+pub trait PluginRuntime: Send + 'static {
     /// The plugin's chosen audio sample precision. Either `f32` (the
     /// default - matches host wire format for nearly all formats) or
     /// `f64` (for plugins whose DSP path runs in `f64` end-to-end:
@@ -63,8 +62,8 @@ pub trait Plugin: Send + 'static {
     /// memcpy per aliased channel per block (a few hundred KB/sec at
     /// audio rates) and lets plugin code stay format-agnostic.
     ///
-    /// `where Self: Sized` so a `dyn Plugin` trait object stays
-    /// dyn-compatible - the format wrappers consume `P: Plugin`
+    /// `where Self: Sized` so a `dyn PluginRuntime` trait object stays
+    /// dyn-compatible - the format wrappers consume `P: PluginRuntime`
     /// generically and call the method statically.
     #[must_use]
     fn supports_in_place() -> bool

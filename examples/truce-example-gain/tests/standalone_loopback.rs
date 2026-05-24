@@ -34,7 +34,7 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use hound::{SampleFormat, WavReader, WavSpec, WavWriter};
-use truce_core::plugin::Plugin as _;
+use truce_core::plugin::PluginRuntime as _;
 use truce_core::state::{serialize_state, shared_plugin_state_hash};
 use truce_example_gain::{GainParamsParamId, Plugin};
 

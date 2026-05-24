@@ -14,9 +14,15 @@ log = "0.4"
 # implementation (~30× faster than a hand-rolled table-free CRC32).
 crc32fast = "1.5"
 truce-core = { workspace = true }
-truce-gui = { workspace = true }
 truce-params = { workspace = true }
-truce-gpu = { workspace = true }
+# `truce-gui-types` is the type surface (layout / interaction /
+# render / theme / widgets) the canary fingerprint inspects across
+# the dylib boundary.
+truce-gui-types = { workspace = true }
+# `truce-plugin` carries the `PluginLogicCore` blanket and the
+# `PluginLogic` / `PluginLogic64` leaf traits the macro-generated
+# wrappers reference. Always required.
+truce-plugin = { workspace = true }
 
 [dependencies.libloading]
 version = "0.9"
@@ -37,7 +43,7 @@ optional = true
 [features]
 default = []
 shell = ["dep:libloading", "dep:parking_lot"]
-hot-debug = ["truce-gpu/hot-debug"]
+hot-debug = []
 
 [lints]
 workspace = true

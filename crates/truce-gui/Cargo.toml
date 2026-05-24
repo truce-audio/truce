@@ -11,6 +11,11 @@ description = "Built-in GUI for truce plugins"
 [dependencies]
 truce-core = { workspace = true }
 truce-font = { workspace = true }
+# `truce-gpu` provides `WgpuBackend`; `truce-gui`'s `GpuEditor`
+# wraps `BuiltinEditor` rendering through it. Dep direction flipped
+# so `truce-gui` is the user-facing one-stop renderer crate and
+# `truce-gpu` is an internal wgpu/lyon implementation detail.
+truce-gpu = { workspace = true }
 truce-gui-types = { workspace = true }
 truce-params = { workspace = true }
 truce-plugin = { workspace = true }

@@ -22,7 +22,7 @@ pub use editor::{Editor, PluginContext};
 pub use events::{Event, EventBody, EventList, PushError, SYSEX_POOL_PREALLOC, TransportInfo};
 pub use export::PluginExport;
 pub use info::{PluginCategory, PluginInfo};
-pub use plugin::Plugin;
+pub use plugin::PluginRuntime;
 pub use process::{ProcessContext, ProcessStatus};
 pub use transport::TransportSlot;
 

@@ -280,19 +280,11 @@ impl EditorScale {
 /// converse - a zero-logical caller can't multiply through to `0`
 /// before the round.
 ///
-/// Replaces a mix of truncating `(logical * scale) as u32` casts,
-/// `.round() as u32` without a min clamp, and the explicit
-/// `.round().max(1.0) as u32` form that landed in
-/// `truce-gui::backend_cpu` first. One helper, every site, identical
-/// pixel maths.
-// Logical pixel sizes are bounded by `u32::MAX / scale`; in practice
-// no editor exceeds 16384 logical pixels.
-#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-#[inline]
-#[must_use]
-pub fn to_physical_px(logical: u32, scale: f64) -> u32 {
-    (f64::from(logical.max(1)) * scale).round().max(1.0) as u32
-}
+/// Canonical definition lives in `truce-gui-types` so `truce-gpu`'s
+/// `WgpuBackend` can call it without a `truce-gui` dep (cycle); the
+/// re-export below preserves the historical `truce_gui::to_physical_px`
+/// path.
+pub use truce_gui_types::to_physical_px;
 
 /// Cached display scale factor on Linux, stored as f64 bits. Zero means unset.
 ///
@@ -372,91 +364,9 @@ fn win32_dpi_scale(hwnd: *mut std::ffi::c_void) -> f64 {
     }
 }
 
-#[cfg(target_os = "windows")]
-fn current_module_hinstance() -> Option<std::num::NonZeroIsize> {
-    unsafe extern "system" {
-        fn GetModuleHandleW(lpModuleName: *const u16) -> isize;
-    }
-    // SAFETY: `GetModuleHandleW(NULL)` is documented to return the running
-    // EXE's HMODULE without acquiring a refcount; no threading or aliasing
-    // concerns. Returns 0 only in pathological cases (kernel32 missing).
-    let hmodule = unsafe { GetModuleHandleW(std::ptr::null()) };
-    std::num::NonZeroIsize::new(hmodule)
-}
-
-/// Bridge a baseview raw-window-handle 0.5 to a wgpu-compatible
-/// `SurfaceTargetUnsafe` using rwh 0.6 types.
-///
-/// # Safety
-/// The window handle must be valid for the lifetime of the returned surface.
+/// Re-export of the canonical wgpu surface bridge, which now lives
+/// in `truce-gpu` next to `WgpuBackend`. The historical
+/// `truce_gui::platform::create_wgpu_surface` path keeps resolving
+/// for external callers (e.g. `truce-egui`, `truce-iced`).
 #[cfg(not(target_os = "ios"))]
-#[must_use]
-pub unsafe fn create_wgpu_surface(
-    instance: &wgpu::Instance,
-    window: &baseview::Window,
-) -> Option<wgpu::Surface<'static>> {
-    unsafe {
-        let rwh = window.raw_window_handle();
-        let surface_target = match rwh {
-            #[cfg(target_os = "macos")]
-            RwhRawWindowHandle::AppKit(handle) => {
-                let ns_view = handle.ns_view;
-                if ns_view.is_null() {
-                    return None;
-                }
-                let rwh6_window = wgpu::rwh::RawWindowHandle::AppKit(
-                    wgpu::rwh::AppKitWindowHandle::new(std::ptr::NonNull::new(ns_view)?),
-                );
-                let rwh6_display =
-                    wgpu::rwh::RawDisplayHandle::AppKit(wgpu::rwh::AppKitDisplayHandle::new());
-                wgpu::SurfaceTargetUnsafe::RawHandle {
-                    raw_display_handle: Some(rwh6_display),
-                    raw_window_handle: rwh6_window,
-                }
-            }
-            #[cfg(target_os = "windows")]
-            RwhRawWindowHandle::Win32(handle) => {
-                let hwnd = handle.hwnd;
-                if hwnd.is_null() {
-                    return None;
-                }
-                let mut win32 =
-                    wgpu::rwh::Win32WindowHandle::new(std::num::NonZeroIsize::new(hwnd as isize)?);
-                // wgpu's Vulkan backend requires `hinstance` to be set
-                // (`vkCreateWin32SurfaceKHR` rejects a null HINSTANCE).
-                // baseview leaves the rwh 0.5 `hinstance` field at null,
-                // so populate it here with the running module's HMODULE.
-                // DX12 didn't require this, which is why the egui 0.34
-                // migration's switch from DX12 to Vulkan exposed it.
-                win32.hinstance = current_module_hinstance();
-                let rwh6_window = wgpu::rwh::RawWindowHandle::Win32(win32);
-                let rwh6_display =
-                    wgpu::rwh::RawDisplayHandle::Windows(wgpu::rwh::WindowsDisplayHandle::new());
-                wgpu::SurfaceTargetUnsafe::RawHandle {
-                    raw_display_handle: Some(rwh6_display),
-                    raw_window_handle: rwh6_window,
-                }
-            }
-            #[cfg(target_os = "linux")]
-            RwhRawWindowHandle::Xlib(handle) => {
-                let RwhRawDisplayHandle::Xlib(display_handle) = window.raw_display_handle() else {
-                    return None;
-                };
-                let display_ptr = std::ptr::NonNull::new(display_handle.display);
-                let rwh6_window = wgpu::rwh::RawWindowHandle::Xlib(
-                    wgpu::rwh::XlibWindowHandle::new(handle.window),
-                );
-                let rwh6_display = wgpu::rwh::RawDisplayHandle::Xlib(
-                    wgpu::rwh::XlibDisplayHandle::new(display_ptr, display_handle.screen),
-                );
-                wgpu::SurfaceTargetUnsafe::RawHandle {
-                    raw_display_handle: Some(rwh6_display),
-                    raw_window_handle: rwh6_window,
-                }
-            }
-            _ => return None,
-        };
-
-        instance.create_surface_unsafe(surface_target).ok()
-    }
-}
+pub use truce_gpu::platform::create_wgpu_surface;

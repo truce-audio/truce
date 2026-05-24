@@ -44,8 +44,6 @@ use truce_core::events::EventList;
 use truce_core::process::{ProcessContext, ProcessStatus};
 use truce_core::state::StateLoadError;
 use truce_gui_types::interaction::WidgetRegion;
-use truce_gui_types::layout::GridLayout;
-use truce_gui_types::render::RenderBackend;
 use truce_gui_types::widgets::WidgetType;
 use truce_params::sample::Sample;
 
@@ -94,11 +92,12 @@ pub trait PluginLogicCore<S: Sample = f32>: Send + 'static {
     fn state_changed(&mut self);
     fn latency(&self) -> u32;
     fn tail(&self) -> u32;
-    fn layout(&self) -> GridLayout;
-    fn render(&self, backend: &mut dyn RenderBackend);
-    fn uses_custom_render(&self) -> bool;
-    fn hit_test(&self, widgets: &[WidgetRegion], x: f32, y: f32) -> Option<usize>;
-    fn custom_editor(&self) -> Option<Box<dyn Editor>>;
+    /// Construct the editor for this plugin. Required - there is no
+    /// auto-fallback. Layout-only plugins call
+    /// `truce_gui::default_editor(params, layout)` from here; custom-
+    /// renderer plugins construct their `EguiEditor` / `IcedEditor` /
+    /// `SlintEditor` / hand-rolled `Editor` directly.
+    fn editor(&self) -> Box<dyn Editor>;
 }
 
 // ---------------------------------------------------------------------------
@@ -201,45 +200,17 @@ macro_rules! plugin_logic_leaf_trait {
 
             // ---- GUI ----
 
-            /// Return the widget layout for the built-in GUI. Default:
-            /// empty layout. Plugins that supply a custom editor via
-            /// [`Self::custom_editor`] can leave this default.
-            fn layout(&self) -> $crate::__plugin_logic_deps::GridLayout {
-                $crate::__plugin_logic_deps::GridLayout::build(vec![])
-            }
-
-            /// Render the GUI into a backend. Default: no-op. Override
-            /// only for custom GPU/CPU rasterisation outside the
-            /// standard widget set; flip [`Self::uses_custom_render`]
-            /// to `true` when you do.
-            fn render(&self, _backend: &mut dyn $crate::__plugin_logic_deps::RenderBackend) {}
-
-            /// Whether this plugin overrides [`Self::render`]. The
-            /// shell uses the standard widget drawing from
-            /// [`Self::layout`] when this is `false`. Default: `false`.
-            fn uses_custom_render(&self) -> bool {
-                false
-            }
-
-            /// Hit test: which widget (if any) is at `(x, y)`?
-            /// Default: circular for knobs, rectangular for everything
-            /// else, meters skipped.
-            fn hit_test(
-                &self,
-                widgets: &[$crate::__plugin_logic_deps::WidgetRegion],
-                x: f32,
-                y: f32,
-            ) -> Option<usize> {
-                $crate::__plugin_logic_deps::default_hit_test(widgets, x, y)
-            }
-
-            /// Provide a custom [`Editor`] instead of the built-in
-            /// widget layout (egui, iced, slint, raw window handle).
-            /// The shell calls this first; if it returns `None`, falls
-            /// back to the built-in editor from [`Self::layout`].
-            fn custom_editor(&self) -> Option<Box<dyn $crate::__plugin_logic_deps::Editor>> {
-                None
-            }
+            /// Construct the editor for this plugin. Required.
+            ///
+            /// There is no auto-fallback - every plugin explicitly
+            /// names which renderer it wants. For the built-in
+            /// widget layout, call
+            /// `truce_gui::default_editor(params, layout)`; for
+            /// custom renderers, construct an `EguiEditor` /
+            /// `IcedEditor` / `SlintEditor` / hand-rolled `Editor`
+            /// here. The choice of renderer crate the plugin's
+            /// `Cargo.toml` pulls IS the choice of editor.
+            fn editor(&self) -> Box<dyn $crate::__plugin_logic_deps::Editor>;
         }
     };
 }
@@ -255,12 +226,6 @@ pub mod __plugin_logic_deps {
     pub use truce_core::events::EventList;
     pub use truce_core::process::{ProcessContext, ProcessStatus};
     pub use truce_core::state::StateLoadError;
-
-    pub use truce_gui_types::interaction::WidgetRegion;
-    pub use truce_gui_types::layout::GridLayout;
-    pub use truce_gui_types::render::RenderBackend;
-
-    pub use crate::default_hit_test;
 }
 
 plugin_logic_leaf_trait! {
@@ -274,10 +239,12 @@ plugin_logic_leaf_trait! {
     /// prelude keeps the audio buffer at `f32` and only switches the
     /// `param.read()` precision).
     ///
-    /// Only [`Self::reset`] and [`Self::process`] are required;
-    /// everything else has a default. Headless (no-GUI) plugins leave
-    /// `layout` / `render` / `custom_editor` at their defaults - the
-    /// format wrappers fall back to a minimal built-in editor.
+    /// Required: [`Self::reset`], [`Self::process`], [`Self::editor`].
+    /// Everything else has a default. The editor is constructed
+    /// explicitly - layout-only plugins typically call
+    /// `truce_gui::default_editor(self.params.clone(), self.layout())`
+    /// (where `layout()` is a plain inherent method on the plugin
+    /// struct, not part of the trait).
     pub trait PluginLogic<sample = f32>
 }
 
@@ -357,24 +324,8 @@ macro_rules! plugin_logic_bridge {
                 <Self as $leaf>::tail(self)
             }
 
-            fn layout(&self) -> GridLayout {
-                <Self as $leaf>::layout(self)
-            }
-
-            fn render(&self, backend: &mut dyn RenderBackend) {
-                <Self as $leaf>::render(self, backend);
-            }
-
-            fn uses_custom_render(&self) -> bool {
-                <Self as $leaf>::uses_custom_render(self)
-            }
-
-            fn hit_test(&self, widgets: &[WidgetRegion], x: f32, y: f32) -> Option<usize> {
-                <Self as $leaf>::hit_test(self, widgets, x, y)
-            }
-
-            fn custom_editor(&self) -> Option<Box<dyn Editor>> {
-                <Self as $leaf>::custom_editor(self)
+            fn editor(&self) -> Box<dyn Editor> {
+                <Self as $leaf>::editor(self)
             }
         }
     };

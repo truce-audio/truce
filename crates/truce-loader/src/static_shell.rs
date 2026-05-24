@@ -11,11 +11,11 @@ use truce_core::bus::BusLayout;
 use truce_core::editor::Editor;
 use truce_core::events::{EventBody, EventList};
 use truce_core::info::PluginInfo;
-use truce_core::plugin::Plugin;
+use truce_core::plugin::PluginRuntime;
 use truce_core::process::{ProcessContext, ProcessStatus};
-use truce_gui::PluginLogicCore;
 use truce_params::Params;
 use truce_params::sample::Sample;
+use truce_plugin::PluginLogicCore;
 
 // ---------------------------------------------------------------------------
 // StaticShell
@@ -69,27 +69,9 @@ impl<P: Params + Default + 'static, L: PluginLogicCore<S> + 'static, S: Sample>
     pub fn logic_ref_mut(&mut self) -> &mut L {
         &mut self.logic
     }
-
-    /// Try to get a custom editor from the plugin logic.
-    pub fn try_custom_editor(&self) -> Option<Box<dyn Editor>> {
-        self.logic.custom_editor()
-    }
-
-    /// Try to create a `BuiltinEditor` from the plugin's layout.
-    /// Returns `None` if the layout has zero size.
-    pub fn try_builtin_editor(&self) -> Option<truce_gui::editor::BuiltinEditor<P>> {
-        let layout = self.logic.layout();
-        if layout.width == 0 || layout.height == 0 {
-            return None;
-        }
-        Some(truce_gui::editor::BuiltinEditor::new_grid(
-            Arc::clone(&self.params),
-            layout,
-        ))
-    }
 }
 
-impl<P: Params + Default + 'static, L: PluginLogicCore<S> + 'static, S: Sample> Plugin
+impl<P: Params + Default + 'static, L: PluginLogicCore<S> + 'static, S: Sample> PluginRuntime
     for StaticShell<P, L, S>
 {
     type Sample = S;
@@ -172,22 +154,7 @@ impl<P: Params + Default + 'static, L: PluginLogicCore<S> + 'static, S: Sample> 
     }
 
     fn editor(&mut self) -> Option<Box<dyn Editor>> {
-        if let Some(editor) = self.logic.custom_editor() {
-            return Some(editor);
-        }
-        // iOS's `BuiltinEditor` already owns its UIView and the
-        // CAMetalLayer-backed wgpu surface, so no `GpuEditor` wrapper
-        // is needed on that platform.
-        #[cfg(target_os = "ios")]
-        {
-            self.try_builtin_editor()
-                .map(|e| Box::new(e) as Box<dyn Editor>)
-        }
-        #[cfg(not(target_os = "ios"))]
-        {
-            self.try_builtin_editor()
-                .map(|e| Box::new(truce_gpu::GpuEditor::new(e)) as Box<dyn Editor>)
-        }
+        Some(PluginLogicCore::editor(&self.logic))
     }
 
     fn latency(&self) -> u32 {
@@ -250,7 +217,7 @@ macro_rules! export_static {
             inner: $crate::static_shell::StaticShell<$params, $logic, Sample>,
         }
 
-        impl $crate::__macro_deps::truce_core::plugin::Plugin for __HotShellWrapper {
+        impl $crate::__macro_deps::truce_core::plugin::PluginRuntime for __HotShellWrapper {
             type Sample = Sample;
 
             fn supports_in_place() -> bool
@@ -265,7 +232,7 @@ macro_rules! export_static {
                 // `PluginLogicCore<Sample>` automatically. Sample
                 // resolves through the prelude alias in scope at the
                 // macro call site.
-                <$logic as $crate::__macro_deps::truce_gui::PluginLogicCore<Sample>>::supports_in_place()
+                <$logic as $crate::__macro_deps::truce_plugin::PluginLogicCore<Sample>>::supports_in_place()
             }
 
             fn info() -> $crate::__macro_deps::truce_core::info::PluginInfo
@@ -279,7 +246,7 @@ macro_rules! export_static {
             where
                 Self: Sized,
             {
-                <$logic as $crate::__macro_deps::truce_gui::PluginLogicCore<Sample>>::bus_layouts()
+                <$logic as $crate::__macro_deps::truce_plugin::PluginLogicCore<Sample>>::bus_layouts()
             }
 
             fn init(&mut self) {

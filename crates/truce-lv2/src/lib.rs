@@ -34,7 +34,7 @@ use truce_core::cast::len_u32;
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
 use truce_core::info::{PluginCategory, PluginInfo};
-use truce_core::plugin::Plugin;
+use truce_core::plugin::PluginRuntime;
 use truce_core::process::ProcessContext;
 use truce_core::state::shared_plugin_state_hash;
 use truce_core::wrapper::run_audio_block;
@@ -158,7 +158,7 @@ pub struct Lv2Instance<P: PluginExport> {
     /// host wire is always `f32`, and the scratch widens on input
     /// then narrows on output around `plugin.process()`. Same-precision
     /// (`f32`) plugins stay zero-copy.
-    scratch: RawBufferScratch<<P as Plugin>::Sample>,
+    scratch: RawBufferScratch<<P as PluginRuntime>::Sample>,
 
     /// Shared transport slot - audio thread writes each block. LV2 UIs
     /// are out-of-process so the UI side still reads `None`; this slot
@@ -630,14 +630,14 @@ macro_rules! export_lv2 {
             use std::ffi::{c_char, c_void};
             use std::sync::OnceLock;
 
-            use ::truce_lv2::__macro_deps::truce_core::plugin::Plugin;
+            use ::truce_lv2::__macro_deps::truce_core::plugin::PluginRuntime;
             use ::truce_lv2::{DescriptorHolder, LV2Descriptor, LV2Feature, Lv2Instance};
 
             static DESCRIPTOR: OnceLock<DescriptorHolder> = OnceLock::new();
 
             fn get_descriptor() -> &'static LV2Descriptor {
                 let holder = DESCRIPTOR.get_or_init(|| {
-                    let info = <$plugin_type as Plugin>::info();
+                    let info = <$plugin_type as PluginRuntime>::info();
                     DescriptorHolder::new(
                         &info,
                         instantiate,
@@ -710,7 +710,7 @@ macro_rules! export_lv2 {
 
             fn get_ui_descriptor() -> &'static Lv2UiDescriptor {
                 UI_DESCRIPTOR.get_or_init(|| {
-                    let info = <$plugin_type as Plugin>::info();
+                    let info = <$plugin_type as PluginRuntime>::info();
                     let uri_str = ::truce_lv2::ui_uri(&info);
                     let uri =
                         UI_URI.get_or_init(|| std::ffi::CString::new(uri_str).unwrap_or_default());

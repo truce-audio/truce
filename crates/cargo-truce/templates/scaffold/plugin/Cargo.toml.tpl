@@ -45,6 +45,10 @@ shell = ["truce/shell"]
 
 [dependencies]
 truce = \{ {dep_args | unescaped} }
+# Lightweight types for layout / theme / widget descriptions.
+truce-gui-types = \{ {dep_args | unescaped} }
+# Built-in renderer. Plugins that supply their own editor (egui /
+# iced / slint) can drop this dep.
 truce-gui = \{ {dep_args | unescaped} }
 truce-clap = \{ {dep_args | unescaped}, optional = true }
 truce-vst3 = \{ {dep_args | unescaped}, optional = true }

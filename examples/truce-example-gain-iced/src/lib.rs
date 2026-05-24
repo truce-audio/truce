@@ -166,15 +166,15 @@ impl PluginLogic for GainIced {
         ProcessStatus::Normal
     }
 
-    fn custom_editor(&self) -> Option<Box<dyn Editor>> {
-        Some(Box::new(
+    fn editor(&self) -> Box<dyn Editor> {
+        Box::new(
             IcedEditor::<GainParams, GainUi>::new(
                 Arc::new(GainParams::new()),
                 (WINDOW_W, WINDOW_H),
             )
             .with_meter_ids(vec![P::MeterLeft, P::MeterRight])
             .with_font("JetBrains Mono", font::JETBRAINS_MONO),
-        ))
+        )
     }
 }
 

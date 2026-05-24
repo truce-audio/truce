@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::plugin::Plugin;
+use crate::plugin::PluginRuntime;
 use truce_params::{ParamInfo, Params};
 
 /// Unified export trait for all plugin formats.
@@ -21,7 +21,7 @@ use truce_params::{ParamInfo, Params};
 /// All parameter mutation goes through the atomic-backed accessors on
 /// `&Params` - no `&mut Params` accessor is required, which keeps the
 /// trait usable while the editor holds an `Arc<Params>` reader.
-pub trait PluginExport: Plugin + Sized {
+pub trait PluginExport: PluginRuntime + Sized {
     type Params: Params;
 
     /// Construct a new instance of the plugin.

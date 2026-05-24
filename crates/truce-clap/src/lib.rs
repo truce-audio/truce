@@ -79,7 +79,7 @@ use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, Trans
 use truce_core::export::PluginExport;
 use truce_core::info::{PluginCategory, PluginInfo};
 use truce_core::midi::{decode_short_message, denorm_7bit, pitch_bend_to_bytes};
-use truce_core::plugin::Plugin;
+use truce_core::plugin::PluginRuntime;
 use truce_core::process::{ProcessContext, ProcessStatus};
 use truce_core::state;
 use truce_core::wrapper::run_audio_block_with;
@@ -199,19 +199,19 @@ struct ClapPluginData<P: PluginExport> {
     /// actually point into the host's per-block buffers; each
     /// `process` call rebuilds them and clears them on exit so no
     /// dangling pointer lives between blocks.
-    input_slices: Vec<&'static [<P as Plugin>::Sample]>,
-    output_slices: Vec<&'static mut [<P as Plugin>::Sample]>,
+    input_slices: Vec<&'static [<P as PluginRuntime>::Sample]>,
+    output_slices: Vec<&'static mut [<P as PluginRuntime>::Sample]>,
     /// Per-channel widening scratch. Empty when `P::Sample == f32`
     /// (slices point straight into host memory). When `P::Sample ==
     /// f64`, each channel's f32 host input is widened into the
     /// matching slot here and the slice in `input_slices` points
     /// there.
-    input_widen: Vec<Vec<<P as Plugin>::Sample>>,
+    input_widen: Vec<Vec<<P as PluginRuntime>::Sample>>,
     /// Per-channel narrowing scratch. Same shape: only used when
     /// `P::Sample == f64`, in which case the plugin writes here and
     /// the wrapper copies + casts back to the host's f32 output
     /// pointers after `process()` returns.
-    output_narrow: Vec<Vec<<P as Plugin>::Sample>>,
+    output_narrow: Vec<Vec<<P as PluginRuntime>::Sample>>,
     /// Cached pointers to host output channels, captured at slice
     /// build time so the post-`process` narrow loop can copy back
     /// without re-walking the CLAP bus structures.
@@ -2289,14 +2289,14 @@ macro_rules! export_clap {
             use ::clap_sys::plugin::{clap_plugin, clap_plugin_descriptor};
             use ::clap_sys::version::CLAP_VERSION;
 
-            use ::truce_clap::__macro_deps::truce_core::plugin::Plugin;
+            use ::truce_clap::__macro_deps::truce_core::plugin::PluginRuntime;
             use ::truce_clap::DescriptorHolder;
 
             static DESCRIPTOR: OnceLock<DescriptorHolder> = OnceLock::new();
 
             fn get_descriptor() -> &'static DescriptorHolder {
                 DESCRIPTOR.get_or_init(|| {
-                    let info = <$plugin_type as Plugin>::info();
+                    let info = <$plugin_type as PluginRuntime>::info();
                     DescriptorHolder::new(&info)
                 })
             }
@@ -2333,7 +2333,7 @@ macro_rules! export_clap {
                     return ptr::null();
                 }
                 let requested_id = CStr::from_ptr(plugin_id);
-                let info = <$plugin_type as Plugin>::info();
+                let info = <$plugin_type as PluginRuntime>::info();
                 let our_id = match std::ffi::CString::new(info.clap_id) {
                     Ok(s) => s,
                     Err(_) => return ptr::null(),

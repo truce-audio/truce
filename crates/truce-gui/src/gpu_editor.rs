@@ -2,21 +2,23 @@
 //!
 //! Creates a baseview child window with a wgpu surface. Each frame,
 //! delegates widget rendering to `BuiltinEditor::render_to()` through
-//! the GPU backend, then presents.
+//! the wgpu backend, then presents. Lives in `truce-gui` so the
+//! framework's user-facing renderer entry-point is a single crate;
+//! the wgpu primitives (`WgpuBackend`) stay an implementation detail
+//! in `truce-gpu`.
 
-#[cfg(feature = "hot-debug")]
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use baseview::{Event, EventStatus, Window, WindowHandler, WindowOpenOptions, WindowScalePolicy};
 
 use truce_core::editor::{Editor, EditorBridge, PluginContext, RawWindowHandle};
-use truce_gui::EditorScale;
-use truce_gui::editor::BuiltinEditor;
-use truce_gui::render::RenderBackend;
+use truce_gpu::WgpuBackend;
+use truce_gui_types::render::RenderBackend;
 use truce_params::Params;
 
-use crate::backend::WgpuBackend;
+use crate::EditorScale;
+use crate::editor::BuiltinEditor;
 use crate::platform::ParentWindow;
 
 /// GPU-accelerated editor.
@@ -27,7 +29,7 @@ use crate::platform::ParentWindow;
 pub struct GpuEditor<P: Params> {
     inner: Arc<Mutex<BuiltinEditor<P>>>,
     size: (u32, u32),
-    /// Live content-scale factor (a [`truce_gui::EditorScale`]).
+    /// Live content-scale factor (a [`EditorScale`]).
     /// `set_scale_factor` (host) writes here; the baseview handler
     /// reads it each frame and updates the `WgpuBackend` scale +
     /// reconfigures the surface when the value diverges from
@@ -54,14 +56,14 @@ impl<P: Params + 'static> GpuEditor<P> {
         Self {
             inner: Arc::new(Mutex::new(inner)),
             size,
-            scale: EditorScale::new(truce_gui::backing_scale()),
+            scale: EditorScale::new(crate::backing_scale()),
             window: None,
         }
     }
 
-    /// Create from a pre-existing shared reference.
-    /// Used by `HotEditor` to share the inner `BuiltinEditor` so it can
-    /// swap the layout on hot-reload while GPU rendering continues.
+    /// Create from a pre-existing shared reference. Reserved for
+    /// future hot-reload paths that want to swap the inner
+    /// `BuiltinEditor` while GPU rendering continues.
     ///
     /// # Panics
     ///
@@ -73,7 +75,7 @@ impl<P: Params + 'static> GpuEditor<P> {
         Self {
             inner,
             size,
-            scale: EditorScale::new(truce_gui::backing_scale()),
+            scale: EditorScale::new(crate::backing_scale()),
             window: None,
         }
     }
@@ -89,7 +91,7 @@ struct GpuWindowHandler<P: Params> {
     /// Canonical baseview → `InputEvent` translator. Handles cursor
     /// tracking, double-click synthesis, and line→pixel scroll
     /// conversion once for everyone.
-    translator: truce_gui::interaction::BaseviewTranslator,
+    translator: crate::interaction::BaseviewTranslator,
     /// Current logical size - used to detect hot-reload size changes.
     current_size: (u32, u32),
     /// Bridge handle, retained so we can drive `request_resize` from
@@ -118,24 +120,16 @@ impl<P: Params + 'static> WindowHandler for GpuWindowHandler<P> {
             }
 
             if let Ok(mut inner) = self.inner.lock() {
-                #[cfg(feature = "hot-debug")]
                 if !inner.has_context() {
                     static WARNED: AtomicBool = AtomicBool::new(false);
                     if !WARNED.swap(true, Ordering::Relaxed) {
-                        eprintln!("[truce-gpu] WARNING: on_frame called but inner has no context");
+                        log::warn!("[truce-gpu] on_frame called but inner has no context");
                     }
                 }
 
                 // Check if the inner editor's size changed (e.g. after hot reload).
                 let new_size = inner.size();
                 if new_size != self.current_size {
-                    hot_debug!(
-                        "[truce-gpu] size changed: {}x{} -> {}x{}",
-                        self.current_size.0,
-                        self.current_size.1,
-                        new_size.0,
-                        new_size.1,
-                    );
                     gpu.resize(new_size.0, new_size.1);
                     self.bridge.request_resize(new_size.0, new_size.1);
                     self.current_size = new_size;
@@ -171,7 +165,7 @@ impl<P: Params + 'static> WindowHandler for GpuWindowHandler<P> {
                     // `take_change` path calls `set_scale` + `resize`
                     // at the new scale; logical w×h stays put.
                     self.scale.set(info.scale());
-                    truce_gui::platform::note_linux_scale_factor(info.scale());
+                    crate::platform::note_linux_scale_factor(info.scale());
                 }
                 EventStatus::Ignored
             }
@@ -202,16 +196,11 @@ impl<P: Params + 'static> Editor for GpuEditor<P> {
         let system_scale = self.scale.get();
         let (lw, lh) = self.size; // logical points
 
-        hot_debug!("[truce-gpu] open() called, size={}x{}", lw, lh);
-
         let bridge = Arc::clone(context.bridge());
 
-        // Set up the inner editor's context for param access
+        // Set up the inner editor's context for param access.
         if let Ok(mut inner) = self.inner.lock() {
             inner.set_context(context);
-            hot_debug!("[truce-gpu] context set on inner editor");
-        } else {
-            hot_debug!("[truce-gpu] ERROR: failed to lock inner for set_context");
         }
 
         let inner = Arc::clone(&self.inner);
@@ -238,7 +227,7 @@ impl<P: Params + 'static> Editor for GpuEditor<P> {
                 GpuWindowHandler {
                     inner,
                     gpu,
-                    translator: truce_gui::interaction::BaseviewTranslator::default(),
+                    translator: crate::interaction::BaseviewTranslator::default(),
                     current_size: size,
                     bridge,
                     scale: scale_handle,
@@ -285,13 +274,9 @@ impl<P: Params + 'static> Editor for GpuEditor<P> {
         // `WgpuBackend::headless` target instead of a window-bound
         // one. Used by `truce_test::assert_screenshot::<P>()`.
         //
-        // The inner BuiltinEditor was already built against the
-        // plugin's `Arc<P>` (which is defaults for a fresh plugin),
-        // so the `params` arg is unused.
-        //
         // `EditorScale` falls back to `backing_scale()` for pre-open
         // / headless calls - 2.0 on Retina, 1.0 elsewhere - so the
-        // historical "fixed 2×" behavior is preserved on the macOS
+        // historical "fixed 2×" behaviour is preserved on the macOS
         // hosts where reference PNGs were originally baked.
         let mut inner = self.inner.lock().ok()?;
         let (lw, lh) = inner.size();
@@ -299,10 +284,10 @@ impl<P: Params + 'static> Editor for GpuEditor<P> {
         let mut backend = WgpuBackend::headless(lw, lh, scale)?;
         inner.render_to(&mut backend);
         let pixels = backend.read_pixels();
-        // Round (rather than truncate) so non-integer DPI scales produce
-        // the same physical resolution the WgpuBackend internally
-        // computed when sizing the headless target.
-        // Window dimensions stay below u32::MAX after scaling.
+        // Round (rather than truncate) so non-integer DPI scales
+        // produce the same physical resolution the WgpuBackend
+        // internally computed when sizing the headless target. Window
+        // dimensions stay below u32::MAX after scaling.
         #[allow(
             clippy::cast_possible_truncation,
             clippy::cast_sign_loss,

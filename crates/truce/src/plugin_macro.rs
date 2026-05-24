@@ -303,14 +303,14 @@ macro_rules! __plugin_hot_reload {
             }
         }
 
-        impl $crate::core::plugin::Plugin for __HotShellWrapper {
+        impl $crate::core::plugin::PluginRuntime for __HotShellWrapper {
             type Sample = Sample;
 
             fn supports_in_place() -> bool
             where
                 Self: Sized,
             {
-                <$logic as $crate::gui::PluginLogicCore<Sample>>::supports_in_place()
+                <$logic as $crate::__reexport::truce_plugin::PluginLogicCore<Sample>>::supports_in_place()
             }
 
             fn info() -> $crate::core::info::PluginInfo
@@ -332,7 +332,7 @@ macro_rules! __plugin_hot_reload {
                 // re-discovery anyway. Reloading the logic dylib
                 // can iterate DSP and GUI freely; bus layouts
                 // changes warrant a shell rebuild + DAW rescan.
-                <$logic as $crate::gui::PluginLogicCore<Sample>>::bus_layouts()
+                <$logic as $crate::__reexport::truce_plugin::PluginLogicCore<Sample>>::bus_layouts()
             }
 
             fn init(&mut self) {

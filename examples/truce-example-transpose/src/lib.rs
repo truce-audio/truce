@@ -121,12 +121,15 @@ impl PluginLogic for Transpose {
         ProcessStatus::Normal
     }
 
-    fn layout(&self) -> GridLayout {
-        GridLayout::build(vec![widgets(vec![
-            knob(P::Semitones, "Semitones"),
-            knob(P::Octave, "Octave"),
-        ])])
-        .with_title("TRANSPOSE")
+    fn editor(&self) -> Box<dyn Editor> {
+        truce_gui::default_editor(
+            self.params.clone(),
+            GridLayout::build(vec![widgets(vec![
+                knob(P::Semitones, "Semitones"),
+                knob(P::Octave, "Octave"),
+            ])])
+            .with_title("TRANSPOSE"),
+        )
     }
 }
 
@@ -206,9 +209,9 @@ mod tests {
     #[test]
     fn category_is_note_effect() {
         use truce_core::info::PluginCategory;
-        use truce_core::plugin::Plugin as PluginTrait;
+        use truce_core::plugin::PluginRuntime;
         assert_eq!(
-            <Plugin as PluginTrait>::info().category,
+            <Plugin as PluginRuntime>::info().category,
             PluginCategory::NoteEffect
         );
     }

@@ -85,26 +85,6 @@ mod test {
     }
 
     #[test]
-    fn compute_layout() {
-        let path = dylib_path();
-        if !path.exists() {
-            eprintln!("skipping: dylib not found");
-            return;
-        }
-
-        let loader: NativeLoader = NativeLoader::new(path, std::ptr::null());
-        let plugin = loader.plugin().expect("plugin should be loaded");
-
-        let layout = plugin.layout();
-        assert!(layout.width > 0);
-        assert!(layout.height > 0);
-        assert!(
-            !layout.widgets.is_empty(),
-            "layout should have at least one widget"
-        );
-    }
-
-    #[test]
     fn save_and_restore_state() {
         let path = dylib_path();
         if !path.exists() {

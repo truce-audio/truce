@@ -8,12 +8,15 @@ use std::ptr;
 use truce_core::buffer::AudioBuffer;
 use truce_core::events::{Event, EventBody, EventList, TransportInfo as Transport};
 use truce_core::process::{ProcessContext, ProcessStatus};
-use truce_gui::PluginLogicCore;
-use truce_gui::interaction::WidgetRegion;
-use truce_gui::layout::GridLayout;
-use truce_gui::render::RenderBackend;
-use truce_gui::theme::{Color, Theme};
+// Source canary types from `truce-gui-types` (the lightweight types
+// crate) and `truce-plugin` (the trait surface) so the canary - which
+// every shell needs - stays available even when `builtin-gui` is off
+// and the heavy `truce-gui` renderer crate is out of the dep graph.
+use truce_gui_types::interaction::WidgetRegion;
+use truce_gui_types::layout::GridLayout;
+use truce_gui_types::theme::{Color, Theme};
 use truce_params::sample::Sample;
+use truce_plugin::PluginLogicCore;
 
 /// ABI fingerprint. Compared between shell and dylib before loading.
 ///
@@ -227,38 +230,39 @@ impl<S: Sample> PluginLogicCore<S> for ProbePlugin {
         0xBBBB
     }
 
-    fn render(&self, _backend: &mut dyn RenderBackend) {}
-
-    fn uses_custom_render(&self) -> bool {
-        true
-    }
-
-    fn layout(&self) -> GridLayout {
-        let mut gl = GridLayout::build(vec![]);
-        gl.width = 0xDEAD;
-        gl.height = 0xBEEF;
-        gl
-    }
-
-    fn hit_test(&self, _w: &[WidgetRegion], _x: f32, _y: f32) -> Option<usize> {
-        Some(42)
-    }
-
-    fn custom_editor(&self) -> Option<Box<dyn truce_core::editor::Editor>> {
-        None
+    fn editor(&self) -> Box<dyn truce_core::editor::Editor> {
+        // The probe is never actually opened in a host; the vtable
+        // slot exists so the canary covers `editor()` ordering. Any
+        // stub Editor would do - panic-on-call keeps the size near
+        // zero and surfaces accidental dispatch.
+        struct UnreachableEditor;
+        impl truce_core::editor::Editor for UnreachableEditor {
+            fn size(&self) -> (u32, u32) {
+                unreachable!("probe editor was opened by accident")
+            }
+            fn open(
+                &mut self,
+                _: truce_core::editor::RawWindowHandle,
+                _: truce_core::editor::PluginContext,
+            ) {
+                unreachable!("probe editor was opened by accident")
+            }
+            fn close(&mut self) {}
+            fn idle(&mut self) {}
+        }
+        Box::new(UnreachableEditor)
     }
 }
 
 /// Verify a probe plugin returns the expected values.
 ///
 /// Coverage notes: methods exercised, in source-declaration order:
-/// `latency`, `tail`, `layout`, `hit_test`, `save_state` (default
-/// path), `uses_custom_render`, `custom_editor`, then `load_state` +
-/// `save_state` (echo path). 8 of `PluginLogicCore`'s 12 instance
+/// `latency`, `tail`, `save_state` (default path), then `load_state` +
+/// `save_state` (echo path). 4 of `PluginLogicCore`'s 8 instance
 /// methods covered. The four not exercised (`reset`, `process`,
-/// `render`, `state_changed`) would require constructing an
-/// `AudioBuffer` / `RenderBackend` mock, which is heavyweight enough
-/// to outweigh the marginal vtable-reorder detection benefit.
+/// `state_changed`, `editor`) would require constructing an
+/// `AudioBuffer` / opening a real window mock, heavyweight enough to
+/// outweigh the marginal vtable-reorder detection benefit.
 /// (Trait-object dispatch goes through a vtable whose slot order is
 /// rustc-internal and not stable; we don't depend on a particular
 /// layout. The goal here is just to call enough of the surface that
@@ -284,24 +288,8 @@ pub fn verify_probe<S: Sample>(probe: &mut dyn PluginLogicCore<S>) -> Result<(),
             actual: probe.tail(),
         });
     }
-    let layout = probe.layout();
-    if layout.width != 0xDEAD || layout.height != 0xBEEF {
-        return Err(ProbeError::Layout {
-            width: layout.width,
-            height: layout.height,
-        });
-    }
-    if probe.hit_test(&[], 0.0, 0.0) != Some(42) {
-        return Err(ProbeError::HitTest);
-    }
     if probe.save_state() != vec![0xCA, 0xFE] {
         return Err(ProbeError::SaveStateDefault);
-    }
-    if !probe.uses_custom_render() {
-        return Err(ProbeError::UsesCustomRender);
-    }
-    if probe.custom_editor().is_some() {
-        return Err(ProbeError::CustomEditor);
     }
     // Round-trip a sentinel through load_state → save_state to confirm
     // the load slot isn't swapped with another `&mut self` slot.
@@ -325,20 +313,9 @@ pub enum ProbeError {
     Latency { expected: u32, actual: u32 },
     /// `PluginLogicCore::tail` didn't return the canary value.
     Tail { expected: u32, actual: u32 },
-    /// `PluginLogicCore::layout` returned a `GridLayout` whose
-    /// width/height didn't match the canary's `0xDEAD × 0xBEEF`.
-    Layout { width: u32, height: u32 },
-    /// `PluginLogicCore::hit_test` didn't return `Some(42)`.
-    HitTest,
     /// `PluginLogicCore::save_state` default path didn't return
     /// the canary `[0xCA, 0xFE]`.
     SaveStateDefault,
-    /// `PluginLogicCore::uses_custom_render` returned `false` where
-    /// the canary expects `true`.
-    UsesCustomRender,
-    /// `PluginLogicCore::custom_editor` returned `Some` where the
-    /// canary expects `None`.
-    CustomEditor,
     /// `PluginLogicCore::load_state` itself failed (returned `Err`)
     /// for the canary sentinel.
     LoadStateFailed(truce_core::state::StateLoadError),
@@ -357,14 +334,7 @@ impl std::fmt::Display for ProbeError {
             Self::Tail { expected, actual } => {
                 write!(f, "tail: expected 0x{expected:X}, got 0x{actual:X}")
             }
-            Self::Layout { width, height } => write!(
-                f,
-                "layout: expected 0xDEAD×0xBEEF, got 0x{width:X}×0x{height:X}"
-            ),
-            Self::HitTest => f.write_str("hit_test: expected Some(42)"),
             Self::SaveStateDefault => f.write_str("save_state (default): expected [0xCA, 0xFE]"),
-            Self::UsesCustomRender => f.write_str("uses_custom_render: expected true"),
-            Self::CustomEditor => f.write_str("custom_editor: expected None"),
             Self::LoadStateFailed(e) => write!(f, "load_state probe: {e}"),
             Self::LoadSaveRoundTrip => f.write_str("load_state/save_state round-trip mismatch"),
         }

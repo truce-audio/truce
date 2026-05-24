@@ -10,7 +10,8 @@ description = "GPU rendering backend (wgpu) for truce plugins"
 
 [dependencies]
 truce-core = { workspace = true }
-truce-gui = { workspace = true }
+truce-font = { workspace = true }
+truce-gui-types = { workspace = true }
 truce-params = { workspace = true }
 wgpu = { workspace = true }
 bytemuck = { version = "1", features = ["derive"] }
@@ -18,11 +19,13 @@ pollster = "0.4"
 lyon_tessellation = "1"
 fontdue = "0.9"
 raw-window-handle = "0.5"
+log = "0.4"
 
 # baseview is the macOS/Windows/Linux windowing layer; iOS embeds
 # wgpu surfaces directly in a UIView attached to the AUv3 view
-# controller (see `truce-gui::editor_ios`), so the baseview-bound
-# editor here is gated off the iOS build.
+# controller, so the baseview-bound editor here is gated off the
+# iOS build. `truce-gpu` only uses baseview indirectly through
+# `WgpuBackend::from_window` (a baseview::Window parameter).
 [target.'cfg(not(target_os = "ios"))'.dependencies]
 baseview = { workspace = true }
 

@@ -208,7 +208,7 @@ struct AaxInstance<P: PluginExport> {
     ///
     /// Parameterised by `P::Sample`; widens/narrows host-`f32`
     /// buffers around `plugin.process()` for plugins on `prelude64`.
-    scratch: truce_core::buffer::RawBufferScratch<<P as truce_core::plugin::Plugin>::Sample>,
+    scratch: truce_core::buffer::RawBufferScratch<<P as truce_core::plugin::PluginRuntime>::Sample>,
     editor: Option<Box<dyn Editor>>,
     /// Shared transport slot: audio thread writes each block, editor reads.
     transport_slot: Arc<truce_core::TransportSlot>,

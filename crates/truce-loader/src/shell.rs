@@ -16,17 +16,16 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::Mutex as StdMutex;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use parking_lot::Mutex;
 use truce_core::buffer::AudioBuffer;
 use truce_core::bus::BusLayout;
-use truce_core::editor::{Editor, PluginContext, RawWindowHandle};
+use truce_core::editor::Editor;
 use truce_core::events::{EventBody, EventList};
 use truce_core::info::PluginInfo;
-use truce_core::plugin::Plugin;
+use truce_core::plugin::PluginRuntime;
 use truce_core::process::{ProcessContext, ProcessStatus};
 use truce_params::Params;
 use truce_params::sample::Sample;
@@ -116,7 +115,7 @@ impl<P: Params + 'static, S: Sample> HotShell<P, S> {
         }
     }
 
-    /// Try to get a custom editor from the loaded plugin.
+    /// Try to construct the loaded plugin's editor.
     ///
     /// Returns `None` if the loader mutex is held by the watcher thread
     /// for longer than [`GUI_LOCK_WAIT`] - i.e., a hot-reload is in
@@ -125,33 +124,14 @@ impl<P: Params + 'static, S: Sample> HotShell<P, S> {
     /// the alternative is a UI hang for the full reload window (codesign
     /// + dlopen + canary verify ≈ a few hundred ms on a 5–20 MB dylib).
     #[must_use]
-    pub fn try_custom_editor(&self) -> Option<Box<dyn Editor>> {
+    pub fn try_editor(&self) -> Option<Box<dyn Editor>> {
         let loader = self.loader.try_lock_for(GUI_LOCK_WAIT)?;
         let plugin = loader.plugin()?;
-        plugin.custom_editor()
-    }
-
-    /// Try to create a `BuiltinEditor` from the loaded plugin's layout.
-    /// Returns `None` if no plugin is loaded, the layout has zero size,
-    /// or the loader mutex was held longer than [`GUI_LOCK_WAIT`] (see
-    /// [`Self::try_custom_editor`] for the trade-off).
-    #[must_use]
-    pub fn try_builtin_editor(&self) -> Option<truce_gui::editor::BuiltinEditor<P>> {
-        let loader = self.loader.try_lock_for(GUI_LOCK_WAIT)?;
-        let plugin = loader.plugin()?;
-        let layout = plugin.layout();
-        if layout.width == 0 || layout.height == 0 {
-            return None;
-        }
-        drop(loader);
-        Some(truce_gui::editor::BuiltinEditor::new_grid(
-            Arc::clone(&self.params),
-            layout,
-        ))
+        Some(plugin.editor())
     }
 }
 
-impl<P: Params + 'static, S: Sample> Plugin for HotShell<P, S> {
+impl<P: Params + 'static, S: Sample> PluginRuntime for HotShell<P, S> {
     type Sample = S;
 
     fn info() -> PluginInfo
@@ -280,7 +260,7 @@ impl<P: Params + 'static, S: Sample> Plugin for HotShell<P, S> {
         };
         loader
             .plugin()
-            .map(truce_gui::PluginLogicCore::save_state)
+            .map(truce_plugin::PluginLogicCore::save_state)
             .unwrap_or_default()
     }
 
@@ -308,29 +288,7 @@ impl<P: Params + 'static, S: Sample> Plugin for HotShell<P, S> {
 
     fn editor(&mut self) -> Option<Box<dyn Editor>> {
         hot_debug!("[truce-hot] editor() called");
-
-        // Custom editor path (egui, iced)
-        if let Some(custom) = self.try_custom_editor() {
-            hot_debug!("[truce-hot] using custom editor");
-            return Some(Box::new(HotEditor::<P, S>::new_custom(custom)));
-        }
-
-        // Built-in editor path (layout + GPU). Shares `self.loader`
-        // with the audio path so the GUI and audio thread always render
-        // the same dylib version - a separate NativeLoader for the GUI
-        // could otherwise pick up a newer build than the audio thread is
-        // still processing through. The watcher uses `try_lock` so the
-        // audio thread keeps priority on the mutex.
-        let builtin = self.try_builtin_editor()?;
-        hot_debug!("[truce-hot] using builtin editor (GPU path)");
-        let inner = Arc::new(StdMutex::new(builtin));
-        let gpu = truce_gpu::GpuEditor::new_shared(Arc::clone(&inner));
-        Some(Box::new(HotEditor::new_builtin(
-            gpu,
-            &inner,
-            &self.loader,
-            &self.params,
-        )))
+        self.try_editor()
     }
 
     fn latency(&self) -> u32 {
@@ -353,243 +311,11 @@ impl<P: Params + 'static, S: Sample> Plugin for HotShell<P, S> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// HotEditor - wraps editors for GUI hot-reload
-// ---------------------------------------------------------------------------
-
-enum HotEditorInner<P: Params> {
-    /// Built-in GUI: swap `BuiltinEditor` inside shared mutex on reload.
-    /// GPU rendering continues seamlessly. The shared mutex is owned
-    /// by `gpu` and the watcher thread; `HotEditor` itself doesn't
-    /// need a third clone.
-    Builtin { gpu: truce_gpu::GpuEditor<P> },
-    /// Custom GUI (egui, iced): close/reopen on reload.
-    Custom { editor: Box<dyn Editor> },
-}
-
-struct HotEditor<P: Params, S: Sample = f32> {
-    kind: HotEditorInner<P>,
-    /// Background thread handle for the GUI reload watcher.
-    _watcher: Option<std::thread::JoinHandle<()>>,
-    /// Set to true when the editor is dropped so the watcher thread exits.
-    stop: Arc<AtomicBool>,
-    _sample: std::marker::PhantomData<fn() -> S>,
-}
-
-unsafe impl<P: Params, S: Sample> Send for HotEditor<P, S> {}
-
-impl<P: Params, S: Sample> Drop for HotEditor<P, S> {
-    fn drop(&mut self) {
-        self.stop.store(true, Ordering::Relaxed);
-        hot_debug!("[truce-gui-reload] stop flag set (editor dropped)");
-    }
-}
-
-impl<P: Params + 'static, S: Sample> HotEditor<P, S> {
-    fn new_builtin(
-        gpu: truce_gpu::GpuEditor<P>,
-        inner: &Arc<StdMutex<truce_gui::editor::BuiltinEditor<P>>>,
-        loader: &Arc<Mutex<NativeLoader<S>>>,
-        params: &Arc<P>,
-    ) -> Self {
-        let stop = Arc::new(AtomicBool::new(false));
-
-        // Spawn a background thread that watches for dylib changes
-        // and swaps the `BuiltinEditor` inside the shared mutex.
-        //
-        // The watcher shares the audio-path `NativeLoader` so the
-        // version the GUI renders is always the version the audio
-        // path is running.
-        //
-        // Lock contention with the audio thread is handled with
-        // `try_lock_for(50ms)` rather than `try_lock`. The audio
-        // thread holds the loader lock for the entire `process()`
-        // call (a few ms per buffer); a bare `try_lock` against a
-        // process-rate of ~344 Hz routinely misses, and under
-        // sustained audio load (large blocks, heavy DSP) the bare
-        // `try_lock` can starve indefinitely. 50 ms is large enough
-        // to wait through several audio buffers but small enough that
-        // the watcher tick still feels live.
-        //
-        // The 500 ms poll cadence is chunked into 50 ms stop-flag
-        // checks so that dropping the editor (Drop calls
-        // `stop_flag.store(true)`) wakes the watcher within ~50 ms
-        // instead of having to wait the full poll interval. Same
-        // shape as `loader::watch_loop`.
-        //
-        // The file watcher in `NativeLoader::spawn_watcher` is what
-        // actually drives reload; this thread only observes
-        // `load_counter` advances and rebuilds the GUI to match.
-        let inner_for_thread = Arc::clone(inner);
-        let params_for_thread = Arc::clone(params);
-        let loader_for_thread = Arc::clone(loader);
-        let stop_flag = Arc::clone(&stop);
-        let watcher = std::thread::Builder::new()
-            .name("truce-gui-reload".into())
-            .spawn(move || {
-                const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
-                const STOP_CHECK: std::time::Duration = std::time::Duration::from_millis(50);
-                const LOCK_WAIT: std::time::Duration = std::time::Duration::from_millis(50);
-
-                hot_debug!("[truce-gui-reload] watcher thread started");
-                // Both constants are sub-second; the u128 → u32 cast
-                // is bounded.
-                #[allow(clippy::cast_possible_truncation)]
-                let chunks = (POLL_INTERVAL.as_millis() / STOP_CHECK.as_millis()) as u32;
-
-                let mut last_seen_counter: u64 = 0;
-                if let Some(guard) = loader_for_thread.try_lock_for(LOCK_WAIT) {
-                    last_seen_counter = guard.load_counter();
-                }
-                loop {
-                    for _ in 0..chunks {
-                        std::thread::sleep(STOP_CHECK);
-                        if stop_flag.load(Ordering::Relaxed) {
-                            hot_debug!(
-                                "[truce-gui-reload] watcher thread stopping (editor dropped)"
-                            );
-                            return;
-                        }
-                    }
-
-                    // Wait briefly for the loader lock - the audio
-                    // thread holds it across each `process()` call,
-                    // and a bare `try_lock` would routinely miss
-                    // under sustained audio activity. 50 ms is big
-                    // enough to span multiple buffers but small
-                    // enough that the watcher tick still feels live.
-                    let Some(guard) = loader_for_thread.try_lock_for(LOCK_WAIT) else {
-                        hot_debug!("[truce-gui-reload] loader busy (audio holds lock); retrying");
-                        continue;
-                    };
-
-                    let mut new_layout = None;
-
-                    if guard.load_counter() != last_seen_counter {
-                        hot_debug!(
-                            "[truce-gui-reload] reload detected (counter {} → {}); resyncing GUI",
-                            last_seen_counter,
-                            guard.load_counter()
-                        );
-                        last_seen_counter = guard.load_counter();
-                        if let Some(plugin) = guard.plugin() {
-                            new_layout = Some(plugin.layout());
-                        }
-                    }
-
-                    // Release the loader lock before touching the
-                    // BuiltinEditor mutex so the audio thread can
-                    // resume process() the moment we hand the layout
-                    // off.
-                    drop(guard);
-
-                    if let Some(layout) = new_layout {
-                        hot_debug!(
-                            "[truce-gui-reload] layout: {}x{}",
-                            layout.width,
-                            layout.height
-                        );
-                        if layout.width == 0 || layout.height == 0 {
-                            hot_debug!("[truce-gui-reload] skipping: layout has zero size");
-                            continue;
-                        }
-                        let new_builtin = truce_gui::editor::BuiltinEditor::new_grid(
-                            Arc::clone(&params_for_thread),
-                            layout,
-                        );
-                        if let Ok(mut g) = inner_for_thread.lock() {
-                            let had_ctx = g.take_context();
-                            hot_debug!(
-                                "[truce-gui-reload] old editor had context: {}",
-                                had_ctx.is_some()
-                            );
-                            *g = new_builtin;
-                            if let Some(ctx) = had_ctx {
-                                g.set_context(ctx);
-                                hot_debug!("[truce-gui-reload] context restored on new editor");
-                            } else {
-                                hot_debug!("[truce-gui-reload] WARNING: no context to restore!");
-                            }
-                        } else {
-                            hot_debug!("[truce-gui-reload] ERROR: failed to lock inner mutex");
-                        }
-                    }
-                }
-            })
-            .ok();
-
-        Self {
-            kind: HotEditorInner::Builtin { gpu },
-            _watcher: watcher,
-            stop,
-            _sample: std::marker::PhantomData,
-        }
-    }
-
-    fn new_custom(editor: Box<dyn Editor>) -> Self {
-        // Custom editors don't get background reload (yet).
-        // Developer closes/reopens the window manually.
-        Self {
-            kind: HotEditorInner::Custom { editor },
-            _watcher: None,
-            stop: Arc::new(AtomicBool::new(false)),
-            _sample: std::marker::PhantomData,
-        }
-    }
-}
-
-impl<P: Params + 'static, S: Sample> Editor for HotEditor<P, S> {
-    fn size(&self) -> (u32, u32) {
-        match &self.kind {
-            HotEditorInner::Builtin { gpu, .. } => gpu.size(),
-            HotEditorInner::Custom { editor } => editor.size(),
-        }
-    }
-
-    fn open(&mut self, parent: RawWindowHandle, context: PluginContext) {
-        match &mut self.kind {
-            HotEditorInner::Builtin { gpu, .. } => gpu.open(parent, context),
-            HotEditorInner::Custom { editor } => editor.open(parent, context),
-        }
-    }
-
-    fn close(&mut self) {
-        match &mut self.kind {
-            HotEditorInner::Builtin { gpu, .. } => gpu.close(),
-            HotEditorInner::Custom { editor } => editor.close(),
-        }
-    }
-
-    fn idle(&mut self) {
-        match &mut self.kind {
-            HotEditorInner::Builtin { gpu, .. } => gpu.idle(),
-            HotEditorInner::Custom { editor } => editor.idle(),
-        }
-    }
-
-    fn can_resize(&self) -> bool {
-        match &self.kind {
-            HotEditorInner::Builtin { gpu, .. } => gpu.can_resize(),
-            HotEditorInner::Custom { editor } => editor.can_resize(),
-        }
-    }
-
-    fn state_changed(&mut self) {
-        match &mut self.kind {
-            HotEditorInner::Builtin { gpu, .. } => gpu.state_changed(),
-            HotEditorInner::Custom { editor } => editor.state_changed(),
-        }
-    }
-
-    fn screenshot(&mut self, params: Arc<dyn truce_params::Params>) -> Option<(Vec<u8>, u32, u32)> {
-        match &mut self.kind {
-            HotEditorInner::Builtin { gpu, .. } => gpu.screenshot(params),
-            HotEditorInner::Custom { editor } => editor.screenshot(params),
-        }
-    }
-}
-
 // Hot-reload is single-crate via `--features shell`, generated by
 // `truce::plugin!` in `truce/src/plugin_macro.rs`. `HotShell<P>` is
 // public-but-unadvertised because `__plugin_hot_reload!` wraps it via
-// `truce::__reexport::HotShell`.
+// `truce::__reexport::HotShell`. The shell now hands the format
+// wrapper whatever `PluginLogic::editor()` returns - no wrapper /
+// watcher / hot-swap is mediated by truce-loader. Editor-side
+// reload (swap-on-dylib-change while the window is open) is no
+// longer supported; reopening the editor picks up the new build.

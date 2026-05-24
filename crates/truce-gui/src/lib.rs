@@ -27,6 +27,12 @@ pub mod editor_ios;
 #[cfg(target_os = "ios")]
 pub use editor_ios as editor;
 pub mod font;
+// The wgpu-backed editor wraps `BuiltinEditor` to render through
+// `truce_gpu::WgpuBackend`. Lives here so the user-facing renderer
+// crate (truce-gui) is a one-stop dep for plugin authors; the wgpu
+// primitives stay an implementation detail in truce-gpu.
+#[cfg(not(target_os = "ios"))]
+pub mod gpu_editor;
 pub mod interaction;
 pub mod platform;
 mod render_core;
@@ -48,7 +54,42 @@ pub use truce_plugin::{PluginLogic, PluginLogic64, PluginLogicCore, default_hit_
 pub use truce_plugin::__plugin_logic_deps;
 
 pub use editor::BuiltinEditor;
+#[cfg(not(target_os = "ios"))]
+pub use gpu_editor::GpuEditor;
 pub use platform::{EditorScale, to_physical_px};
+
+/// Construct truce's default editor for a plugin's `editor()` impl.
+///
+/// Builds a [`BuiltinEditor`] from `params` + `layout` and (on
+/// non-iOS) wraps it in a [`GpuEditor`] for wgpu-backed rendering.
+/// On iOS, the `BuiltinEditor` ships directly because the `AUv3` view
+/// controller manages a CAMetalLayer-backed `UIView` itself.
+///
+/// Most layout-only plugins implement [`truce_plugin::PluginLogic::editor`] as:
+///
+/// ```ignore
+/// fn editor(&self) -> Box<dyn truce_core::Editor> {
+///     truce_gui::default_editor(
+///         self.params.clone(),
+///         GridLayout::build(vec![ /* widgets */ ]),
+///     )
+/// }
+/// ```
+#[must_use]
+pub fn default_editor<P: truce_params::Params + 'static>(
+    params: std::sync::Arc<P>,
+    layout: truce_gui_types::layout::GridLayout,
+) -> Box<dyn truce_core::editor::Editor> {
+    let builtin = BuiltinEditor::new_grid(params, layout);
+    #[cfg(target_os = "ios")]
+    {
+        Box::new(builtin)
+    }
+    #[cfg(not(target_os = "ios"))]
+    {
+        Box::new(GpuEditor::new(builtin))
+    }
+}
 
 /// Get the display scale factor used to size the next editor.
 ///

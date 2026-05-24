@@ -19,8 +19,8 @@ use lyon_tessellation::{
 use wgpu::util::DeviceExt;
 
 use truce_core::cast::len_u32;
-use truce_gui::render::{ImageId, RenderBackend};
-use truce_gui::theme::Color;
+use truce_gui_types::render::{ImageId, RenderBackend};
+use truce_gui_types::theme::Color;
 
 // ---------------------------------------------------------------------------
 // Vertex format
@@ -353,8 +353,8 @@ impl WgpuBackend {
         logical_h: u32,
         scale: f32,
     ) -> Option<Self> {
-        let width = truce_gui::to_physical_px(logical_w, f64::from(scale));
-        let height = truce_gui::to_physical_px(logical_h, f64::from(scale));
+        let width = truce_gui_types::to_physical_px(logical_w, f64::from(scale));
+        let height = truce_gui_types::to_physical_px(logical_h, f64::from(scale));
 
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
@@ -584,11 +584,9 @@ impl WgpuBackend {
         });
 
         // Font
-        let font = fontdue::Font::from_bytes(
-            truce_gui::font::JETBRAINS_MONO,
-            fontdue::FontSettings::default(),
-        )
-        .expect("failed to parse embedded font");
+        let font =
+            fontdue::Font::from_bytes(truce_font::JETBRAINS_MONO, fontdue::FontSettings::default())
+                .expect("failed to parse embedded font");
 
         Some(Self {
             device,
@@ -726,8 +724,8 @@ impl WgpuBackend {
         scale: f32,
     ) -> Option<Self> {
         let scale = scale.max(0.0);
-        let width = truce_gui::to_physical_px(max_logical_w, f64::from(scale));
-        let height = truce_gui::to_physical_px(max_logical_h, f64::from(scale));
+        let width = truce_gui_types::to_physical_px(max_logical_w, f64::from(scale));
+        let height = truce_gui_types::to_physical_px(max_logical_h, f64::from(scale));
 
         // Shader
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -898,11 +896,9 @@ impl WgpuBackend {
         // MSAA
         let msaa_texture = Self::create_msaa_view(&device, target_format, width, height);
 
-        let font = fontdue::Font::from_bytes(
-            truce_gui::font::JETBRAINS_MONO,
-            fontdue::FontSettings::default(),
-        )
-        .expect("failed to parse embedded font");
+        let font =
+            fontdue::Font::from_bytes(truce_font::JETBRAINS_MONO, fontdue::FontSettings::default())
+                .expect("failed to parse embedded font");
 
         Some(Self {
             device,
@@ -946,8 +942,8 @@ impl WgpuBackend {
     /// surface-owning constructors drive their own frame lifecycle.
     #[allow(clippy::cast_precision_loss)]
     pub fn begin_frame(&mut self, logical_w: u32, logical_h: u32) {
-        let phys_w = truce_gui::to_physical_px(logical_w, f64::from(self.scale));
-        let phys_h = truce_gui::to_physical_px(logical_h, f64::from(self.scale));
+        let phys_w = truce_gui_types::to_physical_px(logical_w, f64::from(self.scale));
+        let phys_h = truce_gui_types::to_physical_px(logical_h, f64::from(self.scale));
         self.vertices.clear();
         self.indices.clear();
         self.batches.clear();
@@ -1135,8 +1131,8 @@ impl WgpuBackend {
     /// was actually reconfigured.
     #[allow(clippy::cast_precision_loss)]
     pub fn resize(&mut self, logical_w: u32, logical_h: u32) -> bool {
-        let new_w = truce_gui::to_physical_px(logical_w, f64::from(self.scale));
-        let new_h = truce_gui::to_physical_px(logical_h, f64::from(self.scale));
+        let new_w = truce_gui_types::to_physical_px(logical_w, f64::from(self.scale));
+        let new_h = truce_gui_types::to_physical_px(logical_h, f64::from(self.scale));
         if new_w == self.width && new_h == self.height {
             return false;
         }
@@ -1429,7 +1425,15 @@ impl RenderBackend for WgpuBackend {
 
     fn text_width(&self, text: &str, size: f32) -> f32 {
         let phys_size = size * self.scale;
-        truce_gui::font::text_width_fontdue(text, phys_size) / self.scale
+        // Sum advance widths via the local fontdue instance. This used
+        // to delegate to `truce_gui::font::text_width_fontdue` (a
+        // glyph-cached version); doing the math inline keeps
+        // truce-gpu independent of truce-gui.
+        let phys: f32 = text
+            .chars()
+            .map(|ch| self.font.metrics(ch, phys_size).advance_width)
+            .sum();
+        phys / self.scale
     }
 
     fn register_image(&mut self, rgba: &[u8], width: u32, height: u32) -> ImageId {
@@ -1700,8 +1704,8 @@ impl WgpuBackend {
     #[allow(clippy::cast_precision_loss, clippy::too_many_lines)]
     #[must_use]
     pub fn headless(width: u32, height: u32, scale: f32) -> Option<Self> {
-        let phys_w = truce_gui::to_physical_px(width, f64::from(scale));
-        let phys_h = truce_gui::to_physical_px(height, f64::from(scale));
+        let phys_w = truce_gui_types::to_physical_px(width, f64::from(scale));
+        let phys_h = truce_gui_types::to_physical_px(height, f64::from(scale));
 
         let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
         desc.backends = wgpu::Backends::PRIMARY;
@@ -1921,11 +1925,9 @@ impl WgpuBackend {
             cache: None,
         });
 
-        let font = fontdue::Font::from_bytes(
-            truce_gui::font::JETBRAINS_MONO,
-            fontdue::FontSettings::default(),
-        )
-        .expect("failed to parse embedded font");
+        let font =
+            fontdue::Font::from_bytes(truce_font::JETBRAINS_MONO, fontdue::FontSettings::default())
+                .expect("failed to parse embedded font");
 
         Some(Self {
             device,
@@ -2116,11 +2118,9 @@ mod tests {
 
     #[test]
     fn glyph_atlas_shelf_packing() {
-        let font = fontdue::Font::from_bytes(
-            truce_gui::font::JETBRAINS_MONO,
-            fontdue::FontSettings::default(),
-        )
-        .unwrap();
+        let font =
+            fontdue::Font::from_bytes(truce_font::JETBRAINS_MONO, fontdue::FontSettings::default())
+                .unwrap();
         let mut atlas = GlyphAtlas::new();
 
         // Pack a few glyphs

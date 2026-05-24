@@ -113,12 +113,15 @@ impl PluginLogic for Widen {
         ProcessStatus::Normal
     }
 
-    fn layout(&self) -> GridLayout {
-        GridLayout::build(vec![widgets(vec![
-            knob(P::Width, "Width").at(0, 0),
-            meter(&[P::MeterLeft, P::MeterRight], "Level").at(1, 0),
-        ])])
-        .with_title("WIDEN")
+    fn editor(&self) -> Box<dyn Editor> {
+        truce_gui::default_editor(
+            self.params.clone(),
+            GridLayout::build(vec![widgets(vec![
+                knob(P::Width, "Width").at(0, 0),
+                meter(&[P::MeterLeft, P::MeterRight], "Level").at(1, 0),
+            ])])
+            .with_title("WIDEN"),
+        )
     }
 }
 

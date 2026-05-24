@@ -45,7 +45,13 @@
 #[doc(hidden)]
 pub mod __macro_deps {
     pub use truce_core;
-    pub use truce_gui;
+    // `truce_plugin` carries the `PluginLogicCore` blanket the
+    // `export_plugin!` / `export_static!` macros need to name
+    // (`<L as PluginLogicCore<Sample>>::supports_in_place()` etc.).
+    // Re-exported here so the macro can resolve it via
+    // `$crate::__macro_deps::truce_plugin` regardless of whether the
+    // caller has `truce-plugin` as a direct dep.
+    pub use truce_plugin;
     // `ProbePlugin` is a vtable-binding shim emitted into every
     // `export_plugin!` expansion as the `truce_vtable_probe` symbol.
     // It is not a public type; plugin authors never name it. Kept
@@ -73,7 +79,10 @@ pub use canary::AbiCanary;
 // Format wrappers and plugin authors reach the probe by dlopening
 // the `truce_vtable_probe` symbol the macro emits, not by `use` import.
 pub use safe_types::*;
-pub use truce_gui::{PluginLogic, PluginLogic64, PluginLogicCore};
+// Source the leaf + core traits directly from `truce-plugin` rather
+// than via the optional `truce-gui` re-export, so these names are
+// reachable regardless of whether the `builtin-gui` feature is on.
+pub use truce_plugin::{PluginLogic, PluginLogic64, PluginLogicCore};
 
 #[cfg(feature = "shell")]
 pub use loader::NativeLoader;
@@ -100,7 +109,7 @@ macro_rules! export_plugin {
             };
             // The plugin impls one of the leaf traits
             // (`PluginLogic` for f32 or `PluginLogic64` for f64); the
-            // blanket impl inside `truce-gui` gives it
+            // blanket impl inside `truce-plugin` gives it
             // `PluginLogicCore<Sample>` automatically, so the cast
             // here just picks the right vtable.
             Box::new(<$logic>::new(params))

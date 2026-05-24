@@ -2,7 +2,12 @@
 
 pub use truce_core as core;
 pub use truce_derive::{ParamEnum, Params, State};
-pub use truce_gui as gui;
+// `truce` is renderer-agnostic - it no longer re-exports `truce-gui`.
+// Plugins pick a renderer crate (truce-gui, truce-egui, truce-iced,
+// truce-slint) directly in their Cargo.toml and use it inside their
+// `PluginLogic::editor()` impl. The prelude below sources GUI types
+// from the lightweight `truce-gui-types` so layout / interaction /
+// theme remain available without dragging tiny-skia + baseview + wgpu.
 pub use truce_params as params;
 
 #[cfg(feature = "clap")]
@@ -18,6 +23,7 @@ mod plugin_macro;
 pub mod __reexport {
     pub use truce_derive::__truce_lv2_emit_root;
     pub use truce_loader::{export_plugin, export_static};
+    pub use truce_plugin;
 
     #[cfg(feature = "shell")]
     pub use truce_loader::shell::HotShell;
@@ -48,8 +54,14 @@ mod prelude_impl {
     // `pub type AudioBuffer<'a> = truce_core::buffer::AudioBuffer<'a, $sample>;`
     // so the `#[plugin_logic]`-rewritten user impl sees the right
     // buffer precision through scope resolution.
+    // `PluginRuntime` (the format-wrapper-facing trait, formerly
+    // `truce_core::Plugin`) is intentionally NOT re-exported here.
+    // It's implemented by the macro-generated wrapper, never by
+    // plugin authors; keeping it out of the prelude prevents the
+    // name collision with the new user-facing `Plugin` trait and
+    // signals it as an internal contract.
     pub use truce_core::{
-        BusConfig, BusKind, BusLayout, ChannelConfig, Editor, Event, EventBody, EventList, Plugin,
+        BusConfig, BusKind, BusLayout, ChannelConfig, Editor, Event, EventBody, EventList,
         PluginCategory, PluginContext, PluginExport, PluginInfo, ProcessContext, ProcessStatus,
         TransportInfo,
     };
@@ -58,9 +70,12 @@ mod prelude_impl {
     // chooses its own leaf trait (`PluginLogic` for f32, aliased
     // `PluginLogic64 as PluginLogic` for f64) so plugin authors write
     // `impl PluginLogic for X { ... }` without naming a precision.
-    pub use truce_gui::interaction::WidgetRegion;
-    pub use truce_gui::render::RenderBackend;
-    pub use truce_gui::theme::{Color, Theme};
+    // Source from `truce_gui_types` (types only, no rasterizer or
+    // windowing) so the prelude doesn't drag the heavy `truce_gui`
+    // crate in for plugins that just describe a layout.
+    pub use truce_gui_types::interaction::WidgetRegion;
+    pub use truce_gui_types::render::RenderBackend;
+    pub use truce_gui_types::theme::{Color, Theme};
     pub use truce_params::{
         BoolParam, EnumParam, FloatParam, IntParam, MeterSlot, ParamEnum, ParamFlags, ParamInfo,
         ParamRange, ParamUnit, Params, Smoother, SmoothingStyle,
@@ -92,7 +107,11 @@ macro_rules! define_prelude {
             /// precision-pinned leaf to `PluginLogic` so plugin
             /// authors write the same `impl PluginLogic for X { ... }`
             /// header regardless of which prelude they imported.
-            pub use truce_gui::$leaf as PluginLogic;
+            // `PluginLogic` lives in `truce_plugin`; sourcing it
+            // directly (rather than via the `truce_gui` re-export)
+            // means the prelude doesn't pin a dep on the renderer
+            // crate just to name the leaf trait.
+            pub use truce_plugin::$leaf as PluginLogic;
             pub use truce_params::$float_read as _;
             /// Audio sample type for this prelude.
             pub type Sample = $sample;

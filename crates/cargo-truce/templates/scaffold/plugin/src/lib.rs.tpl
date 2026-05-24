@@ -1,5 +1,5 @@
 use truce::prelude::*;
-use truce_gui::layout::\{GridLayout, knob, widgets};
+use truce_gui_types::layout::\{GridLayout, knob, widgets};
 
 {params_struct | unescaped}
 
@@ -23,10 +23,13 @@ impl PluginLogic for {struct_name} \{
 
 {process_body | unescaped}
 
-    fn layout(&self) -> truce_gui::layout::GridLayout \{
-        GridLayout::build(vec![widgets(vec![
-            {layout_knob | unescaped},
-        ])])
+    fn editor(&self) -> Box<dyn Editor> \{
+        truce_gui::default_editor(
+            self.params.clone(),
+            GridLayout::build(vec![widgets(vec![
+                {layout_knob | unescaped},
+            ])]),
+        )
     }
 }
 

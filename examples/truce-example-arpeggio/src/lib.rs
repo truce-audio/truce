@@ -335,15 +335,18 @@ impl PluginLogic for Arpeggio {
         ProcessStatus::Normal
     }
 
-    fn layout(&self) -> GridLayout {
-        GridLayout::build(vec![widgets(vec![
-            dropdown(P::Rate, "Rate"),
-            knob(P::Gate, "Gate"),
-            knob(P::Octaves, "Octaves"),
-            dropdown(P::Pattern, "Pattern"),
-        ])])
-        .with_cols(2)
-        .with_title("ARPEGGIO")
+    fn editor(&self) -> Box<dyn Editor> {
+        truce_gui::default_editor(
+            self.params.clone(),
+            GridLayout::build(vec![widgets(vec![
+                dropdown(P::Rate, "Rate"),
+                knob(P::Gate, "Gate"),
+                knob(P::Octaves, "Octaves"),
+                dropdown(P::Pattern, "Pattern"),
+            ])])
+            .with_cols(2)
+            .with_title("ARPEGGIO"),
+        )
     }
 }
 
@@ -384,9 +387,9 @@ mod tests {
     #[test]
     fn category_is_note_effect() {
         use truce_core::info::PluginCategory;
-        use truce_core::plugin::Plugin as PluginTrait;
+        use truce_core::plugin::PluginRuntime;
         assert_eq!(
-            <Plugin as PluginTrait>::info().category,
+            <Plugin as PluginRuntime>::info().category,
             PluginCategory::NoteEffect
         );
     }

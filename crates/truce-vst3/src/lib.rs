@@ -73,7 +73,7 @@ struct Vst3Instance<P: PluginExport> {
     /// the widening-scratch path (host wire is `f32`, plugin DSP is
     /// `f64`) transparently. Same-precision plugins (`prelude32`)
     /// stay zero-copy through the host pointers.
-    scratch: truce_core::buffer::RawBufferScratch<<P as truce_core::plugin::Plugin>::Sample>,
+    scratch: truce_core::buffer::RawBufferScratch<<P as truce_core::plugin::PluginRuntime>::Sample>,
     /// Cached `(id, range)` pairs sorted by id. Built once in
     /// `cb_create` from `params().param_infos()`. Hosts call
     /// `cb_param_normalize` / `cb_param_denormalize` extremely often

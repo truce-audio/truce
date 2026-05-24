@@ -124,8 +124,8 @@ impl PluginLogic for StateExample {
         self.state_load_count = self.state_load_count.saturating_add(1);
     }
 
-    fn custom_editor(&self) -> Option<Box<dyn Editor>> {
-        Some(Box::new(
+    fn editor(&self) -> Box<dyn Editor> {
+        Box::new(
             EguiEditor::with_ui(
                 self.params.clone(),
                 (WINDOW_W, WINDOW_H),
@@ -136,7 +136,7 @@ impl PluginLogic for StateExample {
             )
             .with_visuals(truce_egui::theme::dark())
             .with_font(font::JETBRAINS_MONO),
-        ))
+        )
     }
 }
 

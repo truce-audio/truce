@@ -12,7 +12,14 @@ categories = ["multimedia::audio"]
 
 [dependencies]
 truce-core = { workspace = true }
-truce-gui = { workspace = true }
+# `truce-gui-types` carries the lightweight layout / interaction /
+# render / theme types the prelude exports. `truce-plugin` carries
+# the `PluginLogic` leaf traits. Neither pulls a renderer - the
+# choice of renderer (truce-gui, truce-egui, truce-iced, truce-slint)
+# is a per-plugin Cargo dep, used inside the plugin's
+# `PluginLogic::editor()` impl.
+truce-gui-types = { workspace = true }
+truce-plugin = { workspace = true }
 truce-params = { workspace = true }
 truce-loader = { workspace = true }
 truce-derive = { workspace = true }
