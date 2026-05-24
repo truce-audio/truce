@@ -99,9 +99,10 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
         i += 1;
     }
 
-    // Scope resolution: CLI flag wins, otherwise OS default (user
-    // on every platform).
-    let scope = cli_scope.unwrap_or_else(InstallScope::os_default);
+    // Scope is resolved per-format inside `scope_for` / `effective_scope`:
+    // - explicit `--user` / `--system` wins (subject to hard upgrades);
+    // - no flag falls back to the per-(format, OS) default (user
+    //   everywhere except VST3 on Windows, which defaults to system).
 
     // In shell mode, `--debug` selects the *logic* profile. The
     // shell binary itself is always built into `target/shell/` via a
@@ -233,29 +234,31 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
     // --- Install ---
     //
     // Per-format scope is resolved through `effective_scope`, which
-    // silently downgrades AAX / AU v3 / Windows-VST2 to system scope
-    // and emits a one-line note (printed at most once per format).
+    // applies the per-(format, OS) default (when no CLI flag is set)
+    // and silently downgrades AAX / AU v3 / Windows-VST2 to system
+    // scope, emitting a one-line note (printed at most once per
+    // message via `note_once`).
     for p in &plugins {
         if clap {
-            let s = scope_for(Format::Clap, scope);
+            let s = scope_for(Format::Clap, cli_scope);
             install_clap(&root, p, &config, s)?;
         }
         if vst3 {
-            let s = scope_for(Format::Vst3, scope);
+            let s = scope_for(Format::Vst3, cli_scope);
             install_vst3(&root, p, &config, s)?;
         }
         if vst2 {
-            let s = scope_for(Format::Vst2, scope);
+            let s = scope_for(Format::Vst2, cli_scope);
             install_vst2(&root, p, &config, s)?;
         }
         if lv2 {
-            let s = scope_for(Format::Lv2, scope);
+            let s = scope_for(Format::Lv2, cli_scope);
             install_lv2(&root, p, &config, s)?;
         }
         if au2 {
             #[cfg(target_os = "macos")]
             {
-                let s = scope_for(Format::Au2, scope);
+                let s = scope_for(Format::Au2, cli_scope);
                 install_au(&root, p, &config, s)?;
             }
             // Non-macOS skip line was already pushed in the build phase.
@@ -266,7 +269,7 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
                 // AAX is always system-scope; the call to `scope_for`
                 // exists for the side-effect (one-line note when the
                 // user passed `--user`).
-                let _ = scope_for(Format::Aax, scope);
+                let _ = scope_for(Format::Aax, cli_scope);
                 install_aax(&root, p, &config)?;
             }
             // Non-macOS/Windows: build phase already pushed the single
@@ -279,7 +282,7 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
         {
             // AU v3 is always system-scope on macOS - emit the note
             // once before delegating to the (system-only) installer.
-            let _ = scope_for(Format::Au3, scope);
+            let _ = scope_for(Format::Au3, cli_scope);
             build_and_install_au_v3(&root, &config, &plugins, no_build)?;
         }
         #[cfg(not(target_os = "macos"))]
@@ -326,7 +329,10 @@ to release. Defaults to whichever formats are in the plugin's Cargo.toml
 default features (typically clap + vst3).
 
 Per-format scope is per-user by default; pass --system for the shared
-system directories. AAX and AU v3 are always system-scope.
+system directories. AAX and AU v3 are always system-scope. VST3 on
+Windows defaults to system scope (the directory every commercial host
+scans); pass --user for the per-user `%LOCALAPPDATA%\\Programs\\Common\\VST3`
+location.
 
 x86_64 builds default to `-C target-cpu=x86-64-v3` (AVX2 + FMA + BMI2)
 so `wide`'s compile-time SIMD dispatch picks the wider path. aarch64
@@ -344,7 +350,8 @@ Options:
   --ios            AUv3 on the booted iOS Simulator (ad-hoc-signed)
   --ios-device     AUv3 on a tethered iOS device (needs team ID +
                    provisioning profile in .cargo/config.toml [env])
-  --user           Install per-user (default).
+  --user           Install per-user (default; exception: VST3 on Windows
+                   defaults to system - pass --user to override).
   --system         Install system-wide (sudo / admin required).
   --shell          Build dynamic shells + per-plugin logic dylibs.
   --debug          Cargo dev profile (faster compile, slower DSP).
@@ -362,9 +369,11 @@ Options:
     );
 }
 
-/// Resolve the per-format effective scope and print the fallback note
-/// (once per `cargo truce` invocation) when `--user` had to be ignored.
-fn scope_for(format: Format, requested: InstallScope) -> InstallScope {
+/// Resolve the per-format effective scope and print the policy note
+/// (once per `cargo truce` invocation) when the user-visible result
+/// differs from a plain `--user`: a hard upgrade (AAX / AU v3 /
+/// Windows-VST2) or a per-(format, OS) default (Windows VST3).
+fn scope_for(format: Format, requested: Option<InstallScope>) -> InstallScope {
     let (effective, note) = effective_scope(format, requested);
     if let Some(msg) = note {
         note_once(msg);

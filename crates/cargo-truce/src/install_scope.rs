@@ -20,13 +20,6 @@ pub(crate) enum InstallScope {
 }
 
 impl InstallScope {
-    /// Default install scope for the current OS when no CLI flag is
-    /// set. User on every platform: avoids the password prompt in
-    /// the dev loop.
-    pub(crate) fn os_default() -> Self {
-        Self::User
-    }
-
     /// True when writing to this scope's plug-in directory needs
     /// elevated privileges. Drives whether install copies wrap in
     /// `run_sudo` (macOS) / fail-with-hint (Windows). Linux is
@@ -102,32 +95,61 @@ impl PkgScope {
     }
 }
 
-/// Resolve the requested scope for one format. AAX, AU v3, and
-/// (on Windows) VST2 silently fall back to system scope and return a
-/// note string the caller prints exactly once per `cargo truce`
-/// invocation via [`note_once`].
+/// Resolve the per-format scope.
+///
+/// `requested` is the raw CLI choice: `Some` when the developer
+/// passed `--user` / `--system`, `None` when they passed neither.
+///
+/// Two policies layered together:
+/// - **Hard upgrade** - AAX, AU v3, and (on Windows) VST2 are
+///   system-only. An explicit `--user` is downgraded to System with
+///   a note (printed once per `cargo truce` invocation via
+///   [`note_once`]).
+/// - **Default selection** - when `requested` is `None`, picks the
+///   per-(format, OS) default. Most combinations default to User to
+///   keep the dev loop password-free; the exception is VST3 on
+///   Windows, which defaults to System because that's the directory
+///   every commercial host scans by convention (the per-user
+///   `%LOCALAPPDATA%\Programs\Common\VST3` is supported but
+///   uncommon outside developer machines).
 pub(crate) fn effective_scope(
     format: Format,
-    requested: InstallScope,
+    requested: Option<InstallScope>,
 ) -> (InstallScope, Option<&'static str>) {
-    if requested == InstallScope::System {
-        return (InstallScope::System, None);
+    // Hard upgrades come first - they override both an explicit
+    // `--user` and the per-format default.
+    let hard_upgrade: Option<&'static str> = match format {
+        Format::Aax => Some("AAX is system-only; ignoring --user"),
+        Format::Au3 => Some("AU v3 is system-only; ignoring --user"),
+        Format::Vst2 if cfg!(target_os = "windows") => {
+            Some("VST2 on Windows is system-only; ignoring --user")
+        }
+        _ => None,
+    };
+    if let Some(msg) = hard_upgrade {
+        // Note only fires when the user *asked* for User and got
+        // overridden; staying silent when they passed --system or
+        // nothing keeps the install log uncluttered.
+        let note = if requested == Some(InstallScope::User) {
+            Some(msg)
+        } else {
+            None
+        };
+        return (InstallScope::System, note);
     }
-    match format {
-        Format::Aax => (
-            InstallScope::System,
-            Some("AAX is system-only; ignoring --user"),
-        ),
-        Format::Au3 => (
-            InstallScope::System,
-            Some("AU v3 is system-only; ignoring --user"),
-        ),
-        Format::Vst2 if cfg!(target_os = "windows") => (
-            InstallScope::System,
-            Some("VST2 on Windows is system-only; ignoring --user"),
-        ),
-        _ => (InstallScope::User, None),
+
+    if let Some(s) = requested {
+        return (s, None);
     }
+
+    // No explicit flag: per-(format, OS) default.
+    if cfg!(target_os = "windows") && format == Format::Vst3 {
+        return (
+            InstallScope::System,
+            Some("VST3 on Windows defaults to system scope; pass --user for per-user install"),
+        );
+    }
+    (InstallScope::User, None)
 }
 
 /// Set the CLI scope slot, rejecting a second flag with a different
