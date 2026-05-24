@@ -1,0 +1,19 @@
+[package]
+name = "truce-cpu"
+version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+edition.workspace = true
+license-file.workspace = true
+rust-version.workspace = true
+description = "CPU rendering backend (tiny-skia + fontdue) for truce plugins"
+
+[dependencies]
+truce-core = { workspace = true }
+truce-font = { workspace = true }
+truce-gui-types = { workspace = true }
+tiny-skia = "0.12"
+fontdue = "0.9"
+
+[lints]
+workspace = true

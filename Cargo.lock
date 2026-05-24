@@ -6421,6 +6421,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "truce-cpu"
+version = "0.48.10"
+dependencies = [
+ "fontdue",
+ "tiny-skia 0.12.0",
+ "truce-core",
+ "truce-font",
+ "truce-gui-types",
+]
+
+[[package]]
 name = "truce-derive"
 version = "0.48.11"
 dependencies = [
@@ -6885,7 +6896,6 @@ name = "truce-gui"
 version = "0.48.11"
 dependencies = [
  "baseview-truce",
- "fontdue",
  "log",
  "objc",
  "objc2 0.6.4",
@@ -6894,9 +6904,8 @@ dependencies = [
  "objc2-ui-kit 0.3.2",
  "pollster",
  "raw-window-handle 0.5.2",
- "tiny-skia 0.12.0",
  "truce-core",
- "truce-font",
+ "truce-cpu",
  "truce-gpu",
  "truce-gui-types",
  "truce-params",

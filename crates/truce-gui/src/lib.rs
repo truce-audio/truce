@@ -15,7 +15,6 @@
 // call.
 #![allow(clippy::too_many_arguments)]
 
-pub mod backend_cpu;
 pub mod blit;
 // baseview-bound editor is macOS / Windows / Linux only. iOS
 // embeds the editor in a UIView managed by the AUv3 view
@@ -26,7 +25,6 @@ pub mod editor;
 pub mod editor_ios;
 #[cfg(target_os = "ios")]
 pub use editor_ios as editor;
-pub mod font;
 // The wgpu-backed editor wraps `BuiltinEditor` to render through
 // `truce_gpu::WgpuBackend`. Lives here so the user-facing renderer
 // crate (truce-gui) is a one-stop dep for plugin authors; the wgpu
@@ -36,6 +34,20 @@ pub mod gpu_editor;
 pub mod interaction;
 pub mod platform;
 mod render_core;
+
+// `CpuBackend` (tiny-skia `RenderBackend` impl) + `font` (fontdue
+// glyph cache) live in the sibling `truce-cpu` crate so the CPU
+// rasterizer is a peer of `truce-gpu`'s `WgpuBackend` in the crate
+// graph. Re-exported under their historical `truce_gui::*` paths so
+// existing call sites keep working without an import sweep.
+pub use truce_cpu::ColorExt;
+pub use truce_cpu::CpuBackend;
+pub use truce_cpu::font;
+// Internal sub-module path that `backend_cpu` used to occupy.
+#[doc(hidden)]
+pub mod backend_cpu {
+    pub use truce_cpu::CpuBackend;
+}
 
 // Re-export the lightweight data + trait surface from `truce-gui-types`
 // so old `truce_gui::layout::*` / `truce_gui::widgets::*` /
@@ -105,33 +117,4 @@ pub fn backing_scale() -> f64 {
         return s;
     }
     platform::main_screen_scale()
-}
-
-// ---------------------------------------------------------------------------
-// tiny-skia conversions for the light `Color` type
-//
-// `truce-gui-types::theme::Color` doesn't pull in `tiny-skia` (the
-// whole point of the split). The conversion helpers live here so
-// the CPU backend and screenshot pipeline can call them without
-// reimplementing the f32→u8 saturation logic at each site.
-// ---------------------------------------------------------------------------
-
-/// Extension trait giving [`truce_gui_types::theme::Color`] the
-/// `to_skia` / `to_premultiplied` methods that used to live on the
-/// inherent impl, now relocated here so `truce-gui-types` stays
-/// rasterizer-free.
-pub trait ColorExt {
-    fn to_skia(&self) -> tiny_skia::Color;
-    fn to_premultiplied(&self) -> tiny_skia::PremultipliedColorU8;
-}
-
-impl ColorExt for truce_gui_types::theme::Color {
-    fn to_skia(&self) -> tiny_skia::Color {
-        tiny_skia::Color::from_rgba(self.r, self.g, self.b, self.a)
-            .unwrap_or(tiny_skia::Color::BLACK)
-    }
-
-    fn to_premultiplied(&self) -> tiny_skia::PremultipliedColorU8 {
-        self.to_skia().premultiply().to_color_u8()
-    }
 }
