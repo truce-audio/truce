@@ -9,10 +9,11 @@
 
 use tiny_skia::{Paint, PathBuilder, Pixmap, PixmapPaint, Stroke, Transform};
 use truce_core::cast::len_u32;
-
-use crate::ColorExt;
 use truce_gui_types::render::{ImageId, RenderBackend};
 use truce_gui_types::theme::Color;
+use truce_gui_types::to_physical_px;
+
+use crate::ColorExt;
 
 /// CPU-based rendering backend.
 ///
@@ -37,8 +38,8 @@ impl CpuBackend {
     #[must_use]
     pub fn new(logical_w: u32, logical_h: u32, scale: f32) -> Option<Self> {
         let scale = scale.max(0.0);
-        let phys_w = crate::platform::to_physical_px(logical_w, f64::from(scale));
-        let phys_h = crate::platform::to_physical_px(logical_h, f64::from(scale));
+        let phys_w = to_physical_px(logical_w, f64::from(scale));
+        let phys_h = to_physical_px(logical_h, f64::from(scale));
         Pixmap::new(phys_w, phys_h).map(|pixmap| Self {
             pixmap,
             scale,
@@ -52,8 +53,8 @@ impl CpuBackend {
     /// the current pixmap.
     pub fn resize(&mut self, logical_w: u32, logical_h: u32, scale: f32) -> bool {
         let scale = scale.max(0.0);
-        let phys_w = crate::platform::to_physical_px(logical_w, f64::from(scale));
-        let phys_h = crate::platform::to_physical_px(logical_h, f64::from(scale));
+        let phys_w = to_physical_px(logical_w, f64::from(scale));
+        let phys_h = to_physical_px(logical_h, f64::from(scale));
         if phys_w == self.pixmap.width() && phys_h == self.pixmap.height() {
             self.scale = scale;
             return false;

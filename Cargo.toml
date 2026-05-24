@@ -22,6 +22,7 @@ members = [
     "crates/truce-loader-tests",
     "crates/truce-derive",
     "crates/cargo-truce",
+    "crates/truce-cpu",
     "crates/truce-gpu",
     "crates/truce-egui",
     "crates/truce-iced",
