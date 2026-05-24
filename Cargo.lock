@@ -6422,7 +6422,7 @@ dependencies = [
 
 [[package]]
 name = "truce-cpu"
-version = "0.48.10"
+version = "0.48.11"
 dependencies = [
  "fontdue",
  "tiny-skia 0.12.0",

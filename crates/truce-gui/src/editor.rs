@@ -5,17 +5,26 @@
 //! and blitting. For GPU-accelerated rendering see the `truce-gpu`
 //! crate which provides `GpuEditor` wrapping this editor.
 
+#[cfg(feature = "cpu")]
 use std::ptr;
+use std::sync::Arc;
+#[cfg(feature = "cpu")]
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
 
 use truce_core::Float;
-use truce_core::editor::{Editor, PluginContext, PluginContextReadF32, RawWindowHandle};
+#[cfg(feature = "cpu")]
+use truce_core::editor::Editor;
+#[cfg(feature = "cpu")]
+use truce_core::editor::RawWindowHandle;
+use truce_core::editor::{PluginContext, PluginContextReadF32};
 use truce_params::Params;
 
+#[cfg(feature = "cpu")]
 use crate::backend_cpu::CpuBackend;
 use crate::interaction::{self, InputEvent, InteractionState, ParamEdit};
 use crate::layout::{GridLayout, Layout, PluginLayout};
+#[cfg(feature = "cpu")]
 use crate::platform::EditorScale;
 use crate::render::RenderBackend;
 use crate::render_core::{
@@ -33,15 +42,24 @@ pub struct BuiltinEditor<P: Params> {
     params: Arc<P>,
     layout: Layout,
     theme: Theme,
+    /// CPU pixmap rendering target. Only present when the `cpu`
+    /// feature is on; in `gpu`-only mode `BuiltinEditor` is wrapped
+    /// by `GpuEditor`, which renders through `WgpuBackend` directly
+    /// via [`Self::render_to`] without touching this field.
+    #[cfg(feature = "cpu")]
     backend: Option<CpuBackend>,
     interaction: InteractionState,
     context: Option<PluginContext>,
+    /// Active baseview window handle for the cpu-path `Editor`
+    /// impl. Only meaningful when `cpu` is on.
+    #[cfg(feature = "cpu")]
     window: Option<baseview::WindowHandle>,
     /// Weak-ish handle to the blit backend the window-handler
     /// materializes. The editor keeps the canonical `Arc` and the
     /// handler gets a clone. On close we take the `Option` out of
     /// the inner mutex - dropping the wgpu Surface synchronously -
     /// before asking baseview to tear the `NSView` down.
+    #[cfg(feature = "cpu")]
     blit_backend: Option<SharedBackend>,
     /// Set whenever something visible changes (param edited via the
     /// UI, host-driven state reload, explicit `request_repaint` by
@@ -55,13 +73,18 @@ pub struct BuiltinEditor<P: Params> {
     /// same order as `interaction.knob_regions`. Used to detect
     /// host-driven param changes (automation, preset recall) - if any
     /// live value drifts from the last-painted one, we force a
-    /// repaint even if the UI never received a direct edit.
+    /// repaint even if the UI never received a direct edit. Only
+    /// the cpu path's incremental render uses this signal.
+    #[cfg(feature = "cpu")]
     last_painted_values: Vec<f32>,
     /// Live content-scale factor (a [`crate::platform::EditorScale`]).
     /// `set_scale_factor` (host) writes the cell; the baseview
     /// handler holds a clone, compares against `last_applied_scale`
     /// each frame, and rebuilds the CPU pixmap + reconfigures the
-    /// wgpu surface when the value diverges.
+    /// wgpu surface when the value diverges. Only consumed by the
+    /// cpu path; in gpu-only mode `GpuEditor` has its own
+    /// `EditorScale` and this field is unused.
+    #[cfg(feature = "cpu")]
     scale: EditorScale,
 }
 
@@ -85,6 +108,8 @@ impl<P: Params + 'static> BuiltinEditor<P> {
         self.needs_repaint.store(true, Ordering::Release);
     }
 
+    /// Only consumed by the cpu Editor impl's render gate.
+    #[cfg(feature = "cpu")]
     fn take_needs_repaint(&self) -> bool {
         self.needs_repaint.swap(false, Ordering::AcqRel)
     }
@@ -94,6 +119,10 @@ impl<P: Params + 'static> BuiltinEditor<P> {
     /// render. A mismatch means an automation lane wrote a new value,
     /// a preset was recalled, or some other off-UI state change
     /// happened - force a repaint so the widget tracks it.
+    ///
+    /// Only used by the cpu blit path's incremental render gate;
+    /// the gpu path repaints every frame and skips this check.
+    #[cfg(feature = "cpu")]
     fn detect_host_param_changes(&mut self) {
         let regions = &self.interaction.knob_regions;
         if regions.len() != self.last_painted_values.len() {
@@ -111,7 +140,9 @@ impl<P: Params + 'static> BuiltinEditor<P> {
     }
 
     /// Snapshot the regions' normalized values for the next frame's
-    /// automation detection. Called after each render.
+    /// automation detection. Called after each render. Only used by
+    /// the cpu blit path.
+    #[cfg(feature = "cpu")]
     fn stash_painted_values(&mut self) {
         let regions = &self.interaction.knob_regions;
         // Resize-then-overwrite reuses the existing allocation
@@ -127,49 +158,34 @@ impl<P: Params + 'static> BuiltinEditor<P> {
     }
 
     pub fn new(params: Arc<P>, layout: PluginLayout) -> Self {
-        Self {
-            params,
-            layout: Layout::Rows(layout),
-            theme: Theme::dark(),
-            backend: None,
-            interaction: InteractionState::default(),
-            context: None,
-            window: None,
-            blit_backend: None,
-            needs_repaint: Arc::new(AtomicBool::new(false)),
-            last_painted_values: Vec::new(),
-            scale: EditorScale::new(crate::backing_scale()),
-        }
+        Self::with_layout_inner(params, Layout::Rows(layout))
     }
 
     pub fn new_with_layout(params: Arc<P>, layout: Layout) -> Self {
+        Self::with_layout_inner(params, layout)
+    }
+
+    pub fn new_grid(params: Arc<P>, layout: GridLayout) -> Self {
+        Self::with_layout_inner(params, Layout::Grid(layout))
+    }
+
+    fn with_layout_inner(params: Arc<P>, layout: Layout) -> Self {
         Self {
             params,
             layout,
             theme: Theme::dark(),
+            #[cfg(feature = "cpu")]
             backend: None,
             interaction: InteractionState::default(),
             context: None,
+            #[cfg(feature = "cpu")]
             window: None,
+            #[cfg(feature = "cpu")]
             blit_backend: None,
             needs_repaint: Arc::new(AtomicBool::new(false)),
+            #[cfg(feature = "cpu")]
             last_painted_values: Vec::new(),
-            scale: EditorScale::new(crate::backing_scale()),
-        }
-    }
-
-    pub fn new_grid(params: Arc<P>, layout: GridLayout) -> Self {
-        Self {
-            params,
-            layout: Layout::Grid(layout),
-            theme: Theme::dark(),
-            backend: None,
-            interaction: InteractionState::default(),
-            context: None,
-            window: None,
-            blit_backend: None,
-            needs_repaint: Arc::new(AtomicBool::new(false)),
-            last_painted_values: Vec::new(),
+            #[cfg(feature = "cpu")]
             scale: EditorScale::new(crate::backing_scale()),
         }
     }
@@ -182,11 +198,16 @@ impl<P: Params + 'static> BuiltinEditor<P> {
 
     /// Render the full UI to the internal CPU pixel buffer.
     ///
+    /// Only available when the `cpu` feature is on. In `gpu`-only
+    /// mode, render through [`Self::render_to`] with a
+    /// `truce_gpu::WgpuBackend` instead.
+    ///
     /// # Panics
     ///
     /// Panics if the lazy `CpuBackend::new` allocation fails (out of
     /// memory or zero dimensions). The backend is allocated on first
     /// render - subsequent calls reuse it.
+    #[cfg(feature = "cpu")]
     pub fn render(&mut self) {
         let (w, h) = (self.layout.width(), self.layout.height());
         let scale = self.scale.get_f32();
@@ -270,6 +291,8 @@ impl<P: Params + 'static> BuiltinEditor<P> {
     }
 
     /// Get the raw pixel data after rendering (RGBA premultiplied).
+    /// Only available when the `cpu` feature is on.
+    #[cfg(feature = "cpu")]
     #[must_use]
     pub fn pixel_data(&self) -> Option<&[u8]> {
         self.backend
@@ -298,6 +321,21 @@ impl<P: Params + 'static> BuiltinEditor<P> {
             Layout::Rows(pl) => self.interaction.build_regions(pl),
             Layout::Grid(gl) => self.interaction.build_regions_grid(gl),
         }
+    }
+
+    /// Editor logical size (width, height in points). Inherent
+    /// method so it stays callable when the `Editor` trait impl is
+    /// cfg'd out in gpu-only builds.
+    #[must_use]
+    pub fn size(&self) -> (u32, u32) {
+        (self.layout.width(), self.layout.height())
+    }
+
+    /// Notify the widget tree that plugin state was restored
+    /// (preset recall, undo, session load). Inherent for the same
+    /// reason as [`Self::size`] above.
+    pub fn state_changed(&mut self) {
+        self.request_repaint();
     }
 
     /// Render all widgets to an external `RenderBackend`.
@@ -405,7 +443,14 @@ pub fn update_interaction<P: Params + 'static>(editor: &mut BuiltinEditor<P>) {
 // On macOS + AAX: blits via CoreGraphics (CGImage → CALayer) to avoid Metal
 // autorelease crashes with multiple editor windows.
 // Otherwise: blits via wgpu fullscreen triangle.
+//
+// The whole section (window handler + Editor trait impl below) is
+// gated behind the `cpu` feature. In `gpu`-only mode the editor is
+// provided by `GpuEditor` (which wraps `BuiltinEditor::render_to`
+// through `truce_gpu::WgpuBackend`) and these wgpu-blit details
+// drop out of the compile.
 
+#[cfg(feature = "cpu")]
 fn create_wgpu_backend(window: &mut baseview::Window, phys_w: u32, phys_h: u32) -> BlitBackend {
     let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
     desc.backends = wgpu::Backends::PRIMARY;
@@ -474,6 +519,7 @@ fn create_wgpu_backend(window: &mut baseview::Window, phys_w: u32, phys_h: u32) 
 // device. `BuiltinEditor::close` does the same thing explicitly via
 // destructure - this declaration order keeps the implicit path safe
 // too.
+#[cfg(feature = "cpu")]
 struct BlitBackend {
     blit: crate::blit::BlitPipeline,
     surface_config: wgpu::SurfaceConfiguration,
@@ -482,6 +528,7 @@ struct BlitBackend {
     device: wgpu::Device,
 }
 
+#[cfg(feature = "cpu")]
 impl BlitBackend {
     /// Reconfigure the wgpu surface and blit texture for a new physical
     /// size. Used when `Editor::set_scale_factor` reports a host-driven
@@ -501,8 +548,10 @@ impl BlitBackend {
 /// `NSView`. Important on AAX where interleaving Metal teardown with
 /// baseview's close sequence inside Pro Tools' outer autorelease pool
 /// leaves stale refs in DFW container views.
+#[cfg(feature = "cpu")]
 type SharedBackend = Arc<Mutex<Option<BlitBackend>>>;
 
+#[cfg(feature = "cpu")]
 struct BuiltinWindowHandler<P: Params> {
     /// Raw pointer to the `BuiltinEditor` owned by the host. Valid only
     /// while `backend.lock()` returns `Some(_)`. `BuiltinEditor::close`
@@ -533,8 +582,10 @@ struct BuiltinWindowHandler<P: Params> {
 
 // SAFETY: The raw pointer is only accessed from the GUI thread.
 // baseview requires Send for WindowHandler.
+#[cfg(feature = "cpu")]
 unsafe impl<P: Params> Send for BuiltinWindowHandler<P> {}
 
+#[cfg(feature = "cpu")]
 impl<P: Params + 'static> baseview::WindowHandler for BuiltinWindowHandler<P> {
     fn on_frame(&mut self, _window: &mut baseview::Window) {
         // Lock the shared backend cell *before* deref'ing `self.editor`.
@@ -717,6 +768,7 @@ fn resolve_widget_type<P: Params>(
     }
 }
 
+#[cfg(feature = "cpu")]
 impl<P: Params + 'static> Editor for BuiltinEditor<P> {
     fn size(&self) -> (u32, u32) {
         (self.layout.width(), self.layout.height())

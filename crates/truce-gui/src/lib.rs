@@ -15,10 +15,16 @@
 // call.
 #![allow(clippy::too_many_arguments)]
 
+// `blit` (CPU pixmap → wgpu surface upload) is only needed for the
+// cpu path. Gated together with `truce-cpu`.
+#[cfg(feature = "cpu")]
 pub mod blit;
 // baseview-bound editor is macOS / Windows / Linux only. iOS
 // embeds the editor in a UIView managed by the AUv3 view
-// controller - see [`editor_ios`].
+// controller - see [`editor_ios`]. `BuiltinEditor` itself stays
+// available regardless of the `cpu` feature so the wgpu-only
+// `GpuEditor` can wrap it; the cpu-specific fields and Editor
+// trait impl inside this module are individually gated.
 #[cfg(not(target_os = "ios"))]
 pub mod editor;
 #[cfg(target_os = "ios")]
@@ -29,7 +35,7 @@ pub use editor_ios as editor;
 // `truce_gpu::WgpuBackend`. Lives here so the user-facing renderer
 // crate (truce-gui) is a one-stop dep for plugin authors; the wgpu
 // primitives stay an implementation detail in truce-gpu.
-#[cfg(not(target_os = "ios"))]
+#[cfg(all(feature = "gpu", not(target_os = "ios")))]
 pub mod gpu_editor;
 pub mod interaction;
 pub mod platform;
@@ -38,12 +44,16 @@ mod render_core;
 // `CpuBackend` (tiny-skia `RenderBackend` impl) + `font` (fontdue
 // glyph cache) live in the sibling `truce-cpu` crate so the CPU
 // rasterizer is a peer of `truce-gpu`'s `WgpuBackend` in the crate
-// graph. Re-exported under their historical `truce_gui::*` paths so
-// existing call sites keep working without an import sweep.
+// graph. Re-exported under their historical `truce_gui::*` paths
+// when `cpu` is enabled so existing call sites keep working.
+#[cfg(feature = "cpu")]
 pub use truce_cpu::ColorExt;
+#[cfg(feature = "cpu")]
 pub use truce_cpu::CpuBackend;
+#[cfg(feature = "cpu")]
 pub use truce_cpu::font;
 // Internal sub-module path that `backend_cpu` used to occupy.
+#[cfg(feature = "cpu")]
 #[doc(hidden)]
 pub mod backend_cpu {
     pub use truce_cpu::CpuBackend;
@@ -66,16 +76,21 @@ pub use truce_plugin::{PluginLogic, PluginLogic64, PluginLogicCore, default_hit_
 pub use truce_plugin::__plugin_logic_deps;
 
 pub use editor::BuiltinEditor;
-#[cfg(not(target_os = "ios"))]
+#[cfg(all(feature = "gpu", not(target_os = "ios")))]
 pub use gpu_editor::GpuEditor;
 pub use platform::{EditorScale, to_physical_px};
 
 /// Construct truce's default editor for a plugin's `editor()` impl.
 ///
-/// Builds a [`BuiltinEditor`] from `params` + `layout` and (on
-/// non-iOS) wraps it in a [`GpuEditor`] for wgpu-backed rendering.
-/// On iOS, the `BuiltinEditor` ships directly because the `AUv3` view
-/// controller manages a CAMetalLayer-backed `UIView` itself.
+/// Picks the renderer based on which feature is enabled:
+///
+/// - `gpu` (opt-in): wraps a [`BuiltinEditor`] in a [`GpuEditor`]
+///   that renders directly through `truce_gpu::WgpuBackend`.
+/// - `cpu` (default): returns a [`BuiltinEditor`] whose `Editor`
+///   impl rasterises to a tiny-skia pixmap and blits it to a wgpu
+///   surface.
+/// - iOS: always returns the iOS `BuiltinEditor` (UIView-hosted
+///   `CAMetalLayer`); the `gpu` feature has no effect on iOS.
 ///
 /// Most layout-only plugins implement [`truce_plugin::PluginLogic::editor`] as:
 ///
@@ -97,9 +112,20 @@ pub fn default_editor<P: truce_params::Params + 'static>(
     {
         Box::new(builtin)
     }
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(all(feature = "gpu", not(target_os = "ios")))]
     {
         Box::new(GpuEditor::new(builtin))
+    }
+    #[cfg(all(feature = "cpu", not(feature = "gpu"), not(target_os = "ios")))]
+    {
+        Box::new(builtin)
+    }
+    #[cfg(all(not(feature = "cpu"), not(feature = "gpu"), not(target_os = "ios")))]
+    {
+        let _ = builtin;
+        compile_error!(
+            "truce-gui needs at least one renderer feature: enable `cpu` (default) or `gpu`"
+        );
     }
 }
 

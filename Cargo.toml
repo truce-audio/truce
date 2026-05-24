@@ -113,6 +113,7 @@ truce-aax-bridge = { version = "0.48.11", path = "crates/truce-aax-bridge" }
 truce-test = { version = "0.48.11", path = "crates/truce-test" }
 truce-loader = { version = "0.48.11", path = "crates/truce-loader" }
 truce-derive = { version = "0.48.11", path = "crates/truce-derive" }
+truce-cpu = { version = "0.48.11", path = "crates/truce-cpu" }
 truce-gpu = { version = "0.48.11", path = "crates/truce-gpu" }
 truce-egui = { version = "0.48.11", path = "crates/truce-egui" }
 truce-iced = { version = "0.48.11", path = "crates/truce-iced" }

@@ -11,11 +11,11 @@ description = "Built-in GUI for truce plugins"
 [dependencies]
 truce-core = { workspace = true }
 # `truce-cpu` (tiny-skia + fontdue) and `truce-gpu` (wgpu) are the
-# two `RenderBackend` impls. `truce-gui` orchestrates them into
-# editor types - `BuiltinEditor` (cpu pixmap + wgpu blit) and
-# `GpuEditor` (direct wgpu rendering through `WgpuBackend`).
-truce-cpu = { workspace = true }
-truce-gpu = { workspace = true }
+# two `RenderBackend` impls. Both optional, gated by the `cpu`
+# (default) / `gpu` features so plugins that opt into one don't
+# pull the other's compile.
+truce-cpu = { workspace = true, optional = true }
+truce-gpu = { workspace = true, optional = true }
 truce-gui-types = { workspace = true }
 truce-params = { workspace = true }
 truce-plugin = { workspace = true }
@@ -38,6 +38,16 @@ objc2 = "0.6"
 objc2-foundation = { version = "0.3", features = ["NSString", "NSGeometry"] }
 objc2-ui-kit = { version = "0.3", features = ["UIView", "UIScreen", "UIWindow"] }
 objc2-quartz-core = { version = "0.3", features = ["CALayer", "CAMetalLayer"] }
+
+[features]
+# `cpu` is the default - tiny-skia software rasterizer with a wgpu
+# blit pipeline for surface presentation. `gpu` swaps in direct wgpu
+# rendering through `truce_gpu::WgpuBackend`; opting in via
+# `default-features = false, features = ["gpu"]` keeps truce-cpu
+# (and tiny-skia + fontdue) out of the dep tree.
+default = ["cpu"]
+cpu = ["dep:truce-cpu"]
+gpu = ["dep:truce-gpu"]
 
 [lints]
 workspace = true
