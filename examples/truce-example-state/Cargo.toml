@@ -40,7 +40,7 @@ truce-aax = { workspace = true, optional = true }
 truce-au = { workspace = true, optional = true }
 clap-sys = { version = "0.5", optional = true }
 truce-standalone = { workspace = true, features = ["gui"], optional = true }
-truce-gui = { workspace = true }
+truce-font = { workspace = true }
 truce-loader = { workspace = true }
 truce-egui = { workspace = true }
 egui = "0.34"

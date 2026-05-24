@@ -13,7 +13,7 @@ use truce_core::editor::PluginContext;
 use truce_egui::EguiEditor;
 use truce_egui::theme::{HEADER_BG, HEADER_TEXT};
 use truce_egui::widgets::{param_dropdown, param_knob};
-use truce_gui::font;
+use truce_font::JETBRAINS_MONO;
 
 const WINDOW_W: u32 = 270;
 const WINDOW_H: u32 = 162;
@@ -184,7 +184,7 @@ impl PluginLogic for Tremolo {
         Box::new(
             EguiEditor::new(self.params.clone(), (WINDOW_W, WINDOW_H), tremolo_ui)
                 .with_visuals(truce_egui::theme::dark())
-                .with_font(font::JETBRAINS_MONO),
+                .with_font(JETBRAINS_MONO),
         )
     }
 }

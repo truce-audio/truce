@@ -2,7 +2,7 @@
 //! vtable probe, and the shells (`HotShell<P, S>`, `StaticShell<P, L, S>`)
 //! that bridge the user-facing `truce_plugin::PluginLogic` /
 //! `truce_plugin::PluginLogic64` leaf traits onto
-//! [`truce_core::Plugin`] for format wrappers.
+//! [`truce_core::PluginRuntime`] for format wrappers.
 //!
 //! Plugin authors don't reach into this crate directly. They write
 //! `impl PluginLogic for MyPlugin` (the leaf trait is sample-pinned

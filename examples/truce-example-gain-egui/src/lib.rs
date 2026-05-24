@@ -3,7 +3,7 @@ use truce_core::editor::PluginContext;
 use truce_egui::EguiEditor;
 use truce_egui::theme::{HEADER_BG, HEADER_TEXT};
 use truce_egui::widgets::{level_meter, param_knob, param_xy_pad};
-use truce_gui::font;
+use truce_font::JETBRAINS_MONO;
 
 const WINDOW_W: u32 = 176;
 const WINDOW_H: u32 = 290;
@@ -86,7 +86,7 @@ impl PluginLogic for GainEgui {
         Box::new(
             EguiEditor::new(self.params.clone(), (WINDOW_W, WINDOW_H), gain_ui)
                 .with_visuals(truce_egui::theme::dark())
-                .with_font(font::JETBRAINS_MONO),
+                .with_font(JETBRAINS_MONO),
         )
     }
 }

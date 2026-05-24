@@ -103,7 +103,13 @@ truce-vst3 = { version = "0.48.11", path = "crates/truce-vst3" }
 truce-au = { version = "0.48.11", path = "crates/truce-au" }
 truce-standalone = { version = "0.48.11", path = "crates/truce-standalone" }
 truce-driver = { version = "0.48.11", path = "crates/truce-driver" }
-truce-gui = { version = "0.48.11", path = "crates/truce-gui" }
+# `default-features = false` at the workspace so members pick a
+# renderer feature (`cpu` / `gpu`) explicitly - lets one example
+# (truce-example-eq) opt into `gpu` while the rest use `cpu`, and
+# lets the renderer crates (truce-egui / -iced / -slint) build
+# truce-gui featureless for its types-only surface. External users
+# adding `truce-gui = "x"` still get the `cpu` default.
+truce-gui = { version = "0.48.11", path = "crates/truce-gui", default-features = false }
 truce-gui-types = { version = "0.48.11", path = "crates/truce-gui-types" }
 truce-plugin = { version = "0.48.11", path = "crates/truce-plugin" }
 truce-vst2 = { version = "0.48.11", path = "crates/truce-vst2" }

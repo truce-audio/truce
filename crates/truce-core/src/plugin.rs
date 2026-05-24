@@ -12,17 +12,17 @@ use truce_params::sample::Sample;
 /// `PluginRuntime` is the surface every format wrapper (CLAP, VST3,
 /// VST2, LV2, AU, AAX) consumes. The `truce::plugin!` macro generates
 /// an `impl PluginRuntime for __HotShellWrapper` from the user's
-/// `truce_plugin::Plugin` impl (or `PluginLogic` via `plugin_logic!`),
-/// bridging the user-facing trait into this GUI-free format-wrapper
-/// surface so `truce-core` doesn't pull in `truce-gui` types.
+/// `truce_plugin::PluginLogic` impl, bridging the user-facing trait
+/// into this GUI-free format-wrapper surface so `truce-core` doesn't
+/// pull in `truce-gui` types.
 ///
 /// What plugin authors implement instead:
 ///
 /// ```ignore
-/// impl truce::prelude::Plugin for MyPlugin {
+/// impl truce::prelude::PluginLogic for MyPlugin {
 ///     fn reset(&mut self, sr: f64, bs: usize) { /* ... */ }
 ///     fn process(&mut self, /* ... */) -> ProcessStatus { /* ... */ }
-///     fn editor(self: Arc<Self>) -> Box<dyn Editor> { /* ... */ }
+///     fn editor(&self) -> Box<dyn Editor> { /* ... */ }
 /// }
 ///
 /// truce::plugin! { logic: MyPlugin, params: MyPluginParams }

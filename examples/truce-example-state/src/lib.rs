@@ -12,7 +12,7 @@ use truce_core::custom_state::{State as StateTrait, StateBinding};
 use truce_core::editor::PluginContext;
 use truce_egui::theme::{HEADER_BG, HEADER_TEXT};
 use truce_egui::{EditorUi, EguiEditor};
-use truce_gui::font;
+use truce_font::JETBRAINS_MONO;
 
 const WINDOW_W: u32 = 320;
 const WINDOW_H: u32 = 120;
@@ -135,7 +135,7 @@ impl PluginLogic for StateExample {
                 },
             )
             .with_visuals(truce_egui::theme::dark())
-            .with_font(font::JETBRAINS_MONO),
+            .with_font(JETBRAINS_MONO),
         )
     }
 }

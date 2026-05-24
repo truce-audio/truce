@@ -1,12 +1,14 @@
-//! Built-in GPU-free GUI for truce plugins (heavyweight runtime).
+//! Built-in GUI for truce plugins.
 //!
-//! Uses a [`truce_gui_types::RenderBackend`] trait to abstract over
-//! rendering implementations. The default [`backend_cpu::CpuBackend`]
-//! uses tiny-skia for software rasterization. The non-runtime data
-//! types (layout, widget regions, interaction state, theme, render
-//! trait, plugin-logic trait) live in `truce-gui-types` and
-//! `truce-plugin`; this crate re-exports them so existing
-//! `truce_gui::...` paths keep working.
+//! Orchestrates the two `truce_gui_types::RenderBackend` impls into
+//! editor types: with the default `cpu` feature, `BuiltinEditor`
+//! rasterises widgets to a `truce_cpu::CpuBackend` (tiny-skia)
+//! pixmap and blits it to a wgpu surface; with the `gpu` feature,
+//! `GpuEditor` renders directly through `truce_gpu::WgpuBackend`.
+//! The non-runtime data types (layout, widget regions, interaction
+//! state, theme, render trait) live in `truce-gui-types` and the
+//! plugin traits in `truce-plugin`; this crate re-exports them so
+//! existing `truce_gui::...` paths keep working.
 
 // Widget-drawing helpers, `RenderBackend` trait methods, and interaction
 // dispatch all take many independent geometry / state / theme arguments.
@@ -84,7 +86,7 @@ pub use platform::{EditorScale, to_physical_px};
 ///
 /// Picks the renderer based on which feature is enabled:
 ///
-/// - `gpu` (opt-in): wraps a [`BuiltinEditor`] in a [`GpuEditor`]
+/// - `gpu` (opt-in): wraps a [`BuiltinEditor`] in a `GpuEditor`
 ///   that renders directly through `truce_gpu::WgpuBackend`.
 /// - `cpu` (default): returns a [`BuiltinEditor`] whose `Editor`
 ///   impl rasterises to a tiny-skia pixmap and blits it to a wgpu
@@ -102,6 +104,12 @@ pub use platform::{EditorScale, to_physical_px};
 ///     )
 /// }
 /// ```
+///
+/// Only compiled when a renderer feature (`cpu` or `gpu`) is on.
+/// Crates that depend on `truce-gui` purely for its types / platform
+/// helpers (e.g. `truce-egui`, `truce-iced`, `truce-slint`) can build
+/// it with neither feature and simply not call this function.
+#[cfg(any(feature = "cpu", feature = "gpu", target_os = "ios"))]
 #[must_use]
 pub fn default_editor<P: truce_params::Params + 'static>(
     params: std::sync::Arc<P>,
@@ -119,13 +127,6 @@ pub fn default_editor<P: truce_params::Params + 'static>(
     #[cfg(all(feature = "cpu", not(feature = "gpu"), not(target_os = "ios")))]
     {
         Box::new(builtin)
-    }
-    #[cfg(all(not(feature = "cpu"), not(feature = "gpu"), not(target_os = "ios")))]
-    {
-        let _ = builtin;
-        compile_error!(
-            "truce-gui needs at least one renderer feature: enable `cpu` (default) or `gpu`"
-        );
     }
 }
 

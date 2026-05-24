@@ -2,7 +2,7 @@
 const STATE_MAGIC: &[u8; 4] = b"OAST";
 const STATE_VERSION: u32 = 1;
 
-/// Reason a [`crate::Plugin::load_state`] /
+/// Reason a [`crate::PluginRuntime::load_state`] /
 /// `truce_plugin::PluginLogic::load_state` implementation failed to
 /// interpret the host-supplied extra-state blob. Format wrappers
 /// receive this on the audio-thread apply path and log it; hosts
@@ -76,7 +76,7 @@ pub struct DeserializedState {
 
 /// Apply a deserialized state to a plugin: write parameter values,
 /// snap smoothers, then hand the optional extra blob to
-/// [`crate::plugin::Plugin::load_state`].
+/// [`crate::plugin::PluginRuntime::load_state`].
 ///
 /// Format wrappers call this from the audio thread after popping a
 /// pending load off their per-instance handoff queue. The reason it
@@ -122,7 +122,7 @@ pub fn apply_state<P: crate::export::PluginExport>(plugin: &mut P, state: &Deser
 /// pre-restore values until the audio thread caught up.
 ///
 /// The extra blob still has to round-trip through the audio thread
-/// because [`crate::plugin::Plugin::load_state`] takes `&mut P`, which
+/// because [`crate::plugin::PluginRuntime::load_state`] takes `&mut P`, which
 /// would alias `process()`'s `&mut P` if called from the host thread.
 /// `restore_values` and `snap_smoothers` go through atomic interior
 /// mutability and are safe to call concurrently with `process()`.
@@ -223,7 +223,7 @@ use truce_params::Params;
 /// `Invalid` covers envelope-level failures (missing / wrong magic,
 /// version mismatch, plugin-ID mismatch, truncated body); `LoadState`
 /// covers a successfully-parsed envelope whose extra-state blob the
-/// plugin's [`crate::Plugin::load_state`] rejected. The caller
+/// plugin's [`crate::PluginRuntime::load_state`] rejected. The caller
 /// typically prints a diagnostic and proceeds with default params.
 #[derive(Debug)]
 pub enum RestoreError {

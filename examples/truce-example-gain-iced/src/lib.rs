@@ -23,7 +23,6 @@ const WINDOW_W: u32 = 176;
 const WINDOW_H: u32 = 290;
 
 use truce::prelude::*;
-use truce_gui::font;
 use truce_iced::{IcedEditor, IcedPlugin, IntoElement, Message, ParamCache, knob, meter, xy_pad};
 
 // --- Parameters ---
@@ -173,7 +172,7 @@ impl PluginLogic for GainIced {
                 (WINDOW_W, WINDOW_H),
             )
             .with_meter_ids(vec![P::MeterLeft, P::MeterRight])
-            .with_font("JetBrains Mono", font::JETBRAINS_MONO),
+            .with_font("JetBrains Mono", truce_font::JETBRAINS_MONO),
         )
     }
 }
