@@ -160,10 +160,14 @@ where
                 input_ctrl.clone(),
                 output_ctrl.clone(),
             );
-            // Plugin editors don't resize, so maximizing only stretches
-            // the child surface. Strip the maximize affordance - the
-            // Linux equivalent is `windowed_x11::pin_size` below.
-            crate::windowed_windows::disable_maximize(h.hwnd);
+            // Plugin editors don't resize, so maximizing / dragging
+            // only stretches the child surface. Lock the window to a
+            // fixed-size, close-only frame - the Linux size-locking
+            // equivalent is `windowed_x11::pin_size` below.
+            crate::windowed_windows::lock_window(h.hwnd);
+            // Title-bar / taskbar icon from the icon embedded in the
+            // packaged .exe (no-op in un-packaged dev builds).
+            crate::windowed_windows::set_window_icon(h.hwnd);
         }
 
         // Linux: plugin editors don't currently support resize, but

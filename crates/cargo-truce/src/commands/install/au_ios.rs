@@ -1262,8 +1262,6 @@ fn render_entitlements_plist(
 /// `description`. Keeps the About pane non-empty so App Store review
 /// doesn't flag the app as a stub.
 fn default_description(p: &PluginDef) -> String {
-    // MIDI is pronounced "middy", so it takes "a" not "an"; the other
-    // three kinds all start with a vowel sound.
     let (article, kind) = match p.category.as_str() {
         "instrument" => ("an", "instrument"),
         "midi" | "note_effect" => ("a", "MIDI processor"),
