@@ -160,6 +160,10 @@ where
                 input_ctrl.clone(),
                 output_ctrl.clone(),
             );
+            // Plugin editors don't resize, so maximizing only stretches
+            // the child surface. Strip the maximize affordance - the
+            // Linux equivalent is `windowed_x11::pin_size` below.
+            crate::windowed_windows::disable_maximize(h.hwnd);
         }
 
         // Linux: plugin editors don't currently support resize, but
