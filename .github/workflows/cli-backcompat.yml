@@ -110,6 +110,22 @@ jobs:
           key: cli-backcompat-${{ matrix.shape.id }}
           cache-bin: false
 
+      # Same Linux dep set the other CI workflows install. The
+      # scaffolded plugin pulls truce-standalone (cpal → alsa-sys
+      # needs libasound2-dev), truce-gui (X11 / wayland / fontconfig),
+      # and wgpu (Mesa / Vulkan). Without these, `cargo check` fails
+      # in alsa-sys's build script before reaching any Rust code.
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config \
+            libx11-dev libx11-xcb-dev libxcb1-dev libxcb-dri2-0-dev libxcb-icccm4-dev libxcursor-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev libxrandr-dev \
+            libgl1-mesa-dev libvulkan-dev mesa-vulkan-drivers \
+            libasound2-dev libjack-jackd2-dev \
+            libfontconfig1-dev libfreetype-dev
+
       # Restore the cargo-truce binary the setup job primed. On a
       # cache miss (new tag, cache propagation lag), the next step
       # installs the binary directly so this matrix is self-sufficient.
