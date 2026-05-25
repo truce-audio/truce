@@ -4,7 +4,7 @@ version.workspace = true
 repository.workspace = true
 homepage.workspace = true
 edition.workspace = true
-license-file.workspace = true
+license.workspace = true
 rust-version.workspace = true
 description = "Build-script helper for truce plugins with Slint GUIs. Bundles the truce widget library and JetBrains Mono so authors get a one-line build.rs."
 

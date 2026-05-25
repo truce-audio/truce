@@ -55,14 +55,15 @@ members = [
 [workspace.package]
 version = "0.49.0"
 edition = "2024"
-# Dual-license: Apache 2.0 for plug-in authors + end-user audio
-# software, with a permission-gated Framework License carve-out for
-# anyone redistributing truce as a commercial audio-plug-in
-# framework. The Apache-side is identical to standard Apache 2.0
-# (see LICENSE-APACHE); the carve-out is documented in LICENSE.
-# The compound is not a registered SPDX expression, so we ship via
-# `license-file` rather than `license =`.
-license-file = "LICENSE"
+# Dual-licensed under standard SPDX (Apache-2.0 OR MIT) so
+# enterprise compliance tooling auto-approves. Full Apache / MIT
+# texts live in LICENSE-APACHE and LICENSE-MIT. A permission-gated
+# Framework License carve-out applies to anyone redistributing
+# truce as a commercial audio-plug-in framework to third-party
+# developers — documented in ADDITIONAL_TERMS.md (referenced from
+# the README). The carve-out does not alter the standard dual-
+# license grant above for any other use.
+license = "Apache-2.0 OR MIT"
 rust-version = "1.92"
 description = "Build audio plugins in Rust. One codebase, every format."
 repository = "https://github.com/truce-audio/truce"

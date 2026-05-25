@@ -1,245 +1,27 @@
-Truce License
-==============
+truce License
+=============
 
-Copyright (c) 2025-2026 truce contributors
+truce is dual-licensed under either of:
 
-The truce framework (the "Software") is dual-licensed. Your rights
-depend on the kind of product you ship.
+  * Apache License, Version 2.0  (full text in LICENSE-APACHE,
+    also at <https://www.apache.org/licenses/LICENSE-2.0>)
 
-  - **For plug-in authors and end-user audio software:**
-    Apache License, Version 2.0, full text in LICENSE-APACHE.
-    No additional restrictions, no fees, no attribution beyond what
-    Apache 2.0 already requires. Most uses fall here.
+  * MIT License                  (full text in LICENSE-MIT,
+    also at <https://opensource.org/licenses/MIT>)
 
-  - **For free, OSI-licensed framework / SDK / developer-tool
-    projects built on top of truce:** also Apache License,
-    Version 2.0. The Section 2.1 exemption below restores the
-    Apache grant for non-commercial Framework Products that
-    publish their full source under an OSI-approved license and
-    are not part of a Commercial Offering. No separate permission
-    is required.
+at your option. The SPDX identifier is `Apache-2.0 OR MIT`. Build,
+ship, and sell **plug-ins, hosts, end-user audio software, and
+internal SDKs** under either license — no further permission, fee,
+splash screen, or revenue cap.
 
-  - **For commercial audio-plug-in frameworks built on truce:**
-    A separate Framework License is required, granted only by
-    written permission from the Licensor. See Section 2 below;
-    the request procedure is in Section 2.2.
+Additional terms apply if you intend to redistribute truce **as a
+commercial audio-plug-in framework** offered to third-party plug-in
+developers. See ADDITIONAL_TERMS.md for the boundary, the exemption
+for free / open-source frameworks, and the request procedure. Those
+terms do not affect the standard dual MIT / Apache-2.0 grant above
+for any other use.
 
-Read on for the precise boundary.
-
-
-1.  Author License — Apache 2.0
--------------------------------
-
-If your use of the Software falls outside the Framework License
-carve-out in Section 2, your rights under this Agreement are governed
-in full by the **Apache License, Version 2.0** (the "Apache License"),
-the text of which is reproduced in the file LICENSE-APACHE in this
-repository and also available at:
-
-  https://www.apache.org/licenses/LICENSE-2.0
-
-This includes — and is not limited to — building, modifying,
-selling, and redistributing the Software as part of:
-
-  - audio plug-ins conforming to CLAP, VST3, VST2, LV2, AU v2, AU v3,
-    AAX, or successor specifications;
-  - standalone audio applications, plug-in suites, host applications,
-    analyzers, validators, tuners, metering tools;
-  - hardware-vendor SDKs and runtimes that embed the Software as an
-    internal implementation detail (not exposed as part of a
-    developer-facing surface);
-  - personal-use scripting, prototyping, and research code;
-  - wrapper or helper libraries targeting a specific DSP technique,
-    GUI backend, or external dependency.
-
-Under the Apache License, your product may be commercial or
-non-commercial, open-source or closed-source. No royalty, splash
-screen, revenue cap, headcount cap, or registration is required. You
-get Apache 2.0's patent grant and patent retaliation protections.
-
-This is the only license you need for the use cases above. Most
-plug-in authors stop reading here.
-
-
-2.  Framework Products — Permission Required for Commercial Use
-----------------------------------------------------------------
-
-This Section applies only to **commercial** Framework Products.
-Free, OSI-licensed, non-commercial Framework Products are covered
-by the Section 2.1 exemption below and need no permission from the
-Licensor — they receive the full Apache License grant from
-Section 1.
-
-For commercial Framework Products: the Apache License grant in
-Section 1 does **not** extend to use of the Software in or as a
-Framework Product that is also a Commercial Offering (as defined
-in Section 2.1). A separate Framework License, granted only by
-written permission from the Licensor, is required for that use.
-
-A product is a "Framework Product" if both:
-
-  (i)  it is offered, distributed, sublicensed, or otherwise provided
-       to third-party developers as a means of building audio plug-ins
-       (as enumerated in Section 1) or DAW host integrations; and
-
-  (ii) the third-party developer's use of the product results in
-       audio software that the third-party developer distributes to
-       end users or to further developers.
-
-The following are **not** Framework Products, and their distribution
-is fully covered by the Apache License grant in Section 1:
-
-  - any audio plug-in, plug-in suite, host, analyzer, validator,
-    end-user audio application, or hardware product;
-  - any hardware-vendor SDK or runtime that includes the Software
-    as an internal implementation detail and does not expose the
-    Software as part of its public developer interface;
-  - any personal-use scripting layer, prototyping kit, or research
-    library;
-  - any wrapper or helper library targeting a specific DSP technique,
-    GUI backend, or external dependency, even if useful to other
-    plug-in authors as a transitive dependency.
-
-
-2.1  Exemption — Free, Open-Source Framework Products
------------------------------------------------------
-
-The permission requirement in Section 2 does **not** apply to a
-Framework Product that simultaneously satisfies all of the
-following conditions for the entire period of its distribution:
-
-  (a) The Framework Product's complete source code is published
-      and made freely accessible under an OSI-approved open-source
-      license. "OSI-approved" means a license appearing on the
-      Open Source Initiative's approved-licenses list at
-      https://opensource.org/licenses at the time of distribution.
-
-  (b) The Framework Product is offered to its third-party
-      developer users free of charge. Receiving voluntary
-      donations, patronage (e.g. GitHub Sponsors, Open
-      Collective, Patreon), or research / hobbyist grants for
-      the Framework Product is permitted under this exemption
-      provided no contributor receives those funds as
-      consideration for use of the Framework Product.
-
-  (c) The Framework Product is not a Commercial Offering.
-
-A "Commercial Offering" means any product, service, or
-arrangement that:
-
-  (i)   requires payment, subscription, license fee, royalty,
-        or other monetary consideration for access to, use of,
-        modification of, or distribution of the Framework
-        Product or its functionality;
-
-  (ii)  is dual-licensed by its publisher under commercial terms
-        in parallel with the open-source license referenced in
-        (a) above;
-
-  (iii) is bundled with, or used to gate access to, a paid
-        product, paid support contract, paid hosting service,
-        paid training, paid certification, or paid consulting
-        offering where the Framework Product itself (rather than
-        the paying customer's own audio software produced with
-        the Framework Product) is the primary value being sold;
-        or
-
-  (iv)  is offered to the public under any other arrangement
-        whose principal purpose is commercial advantage or
-        monetary compensation to the Framework Product's
-        publisher.
-
-Framework Products meeting (a)–(c) are licensed under the Apache
-License grant in Section 1 — no separate permission required.
-Authors of such Framework Products are encouraged (but not
-required) to notify the Licensor and may be listed in the
-project's ecosystem documentation.
-
-If a Framework Product subsequently becomes a Commercial
-Offering, the exemption ceases to apply from the date the
-Commercial Offering begins. Continued distribution of the
-Framework Product from that date requires a written Framework
-License under Section 2. Audio software already built with the
-Framework Product under the prior exemption is unaffected.
-
-The Licensor reserves the right to maintain a public list of
-Commercial Offerings the Licensor has determined to fall outside
-this exemption. Inclusion on or omission from such a list does
-not by itself extend or revoke the exemption — the license
-itself is the operative source of truth.
-
-
-2.2  Framework License Grants (Commercial)
-------------------------------------------
-
-The Licensor is under no obligation to grant a Framework License.
-When granted, the Licensor may impose any terms (including but not
-limited to attribution, contribution-back, scope limits, financial
-terms, revocation conditions, and time limits) as a condition of the
-grant. Past grants do not bind future decisions.
-
-Requests for a Framework License should be sent to
-`framework-licensing@truce.audio` (or initiated as a private
-discussion on the truce-audio GitHub organization, with the
-maintainers tagged, if email is inconvenient). A well-formed
-request describes:
-
-  (a) the product being built, its developer audience, and what
-      that audience receives from it;
-
-  (b) the role the Software plays inside the product — core,
-      one backend among several, internal implementation
-      detail, or otherwise;
-
-  (c) the distribution and commercialization model under which
-      the product reaches its third-party developers; and
-
-  (d) the proposed terms of the requested Framework License,
-      including any attribution, time, scope, or financial
-      terms the requester is willing to accept.
-
-The Licensor will acknowledge any well-formed request within
-two to four weeks of receipt. Acknowledgement is not a grant.
-The Licensor reserves the right to deny a request without
-detailed reasoning.
-
-If you are unsure whether your product is a Framework Product, or
-whether the Section 2.1 exemption applies to you, contact the
-Licensor before shipping. Ambiguities in the boundary between
-Sections 1 and 2 are to be resolved in favor of the Apache License
-grant in Section 1 unless the use is plainly within the Framework
-Product definition without satisfying the Section 2.1 exemption.
-
-
-3.  Trademarks
---------------
-
-The names "truce", "Truce", "truce-audio", any associated logos, and
-any successor identifiers are unregistered trademarks of the Licensor.
-This Agreement grants no license to these trademarks; the Apache
-License's trademark non-grant clause (Section 6) likewise applies and
-is preserved.
-
-You may factually refer to the Software by its name (e.g. "built with
-truce") and you may keep the project's name in vendored or forked
-source code as required by the Apache License's notice-preservation
-clause. You may not use the name to identify a forked, modified, or
-competing product, nor to suggest endorsement or sponsorship by the
-Licensor.
-
-
-4.  Definitions
----------------
-
-"Licensor" means the truce project maintainers, acting through the
-contact channels listed in the project README. Where a Framework
-License grant is required under Section 2, the grant must be in
-writing from a maintainer with authority to bind the project.
-
-"Framework Product" is defined in Section 2.
-
-"You" and "Your" have the meanings assigned in the Apache License.
-
-Apache License terms otherwise govern interpretation under Section 1.
-
-
+Contributions: unless you explicitly state otherwise, any
+contribution intentionally submitted for inclusion in the work by
+you, as defined in the Apache-2.0 license, shall be dual-licensed
+as above, without any additional terms or conditions.

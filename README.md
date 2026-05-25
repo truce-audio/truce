@@ -217,27 +217,27 @@ informed countless decisions here.
 
 ## License
 
-**Plug-in authors: Apache License 2.0.** Build, ship, sell, and
-modify your plug-ins without restriction — commercial or
-non-commercial, open- or closed-source, freely or however else.
-Full Apache 2.0 grant, full Apache 2.0 patent protection, no fees,
-no splash screen, no revenue cap. See [`LICENSE-APACHE`](LICENSE-APACHE).
+**Dual-licensed under [Apache-2.0](LICENSE-APACHE) or
+[MIT](LICENSE-MIT) at your option.** The SPDX identifier is
+`Apache-2.0 OR MIT` — pick whichever fits your project. Build,
+ship, and sell plug-ins, hosts, end-user audio software, and
+internal SDKs under either license. No fees, no splash screen, no
+revenue cap, no email needed.
 
-**Free and open-source frameworks on top of truce: also Apache
-License 2.0, no permission required.** If you're building a
-free, OSI-licensed framework / SDK / developer tool on top of
-truce, with full source publicly available and no paid offerings
-tied to it, the Section 2.1 exemption in
-[`LICENSE`](LICENSE) gives you the same Apache 2.0 grant as
-plug-in authors. Community frameworks, academic projects,
-research libraries, hobbyist tools — all welcome, no email
-needed. Voluntary sponsorship / donations are explicitly fine.
+Contributions are dual-licensed on the same terms unless you
+explicitly state otherwise (standard Apache-2.0 §5 inbound = outbound).
 
-**Commercial frameworks: separate Framework License required, by
-permission only.** The one carve-out: a Framework License is
-needed if you're using truce as the core of a **commercial**
-plug-in framework that you redistribute to other developers —
-anything sold, subscription-gated, dual-licensed commercially,
-or bundled into a paid offering. See [`LICENSE`](LICENSE) for the
-precise boundary and the permission process (Section 2.2).
+### Additional terms — commercial frameworks
+
+One carve-out, in [`ADDITIONAL_TERMS.md`](ADDITIONAL_TERMS.md):
+if you're using truce as the core of a **commercial** plug-in
+framework that you redistribute to other developers — anything sold,
+subscription-gated, dual-licensed commercially, or bundled into a
+paid offering — a separate Framework License is required, granted
+by permission. Free, OSI-licensed framework projects on top of
+truce are exempt and need no separate permission. Plug-in / host /
+end-user-app authors and internal-SDK use are unaffected.
+
+See [`ADDITIONAL_TERMS.md`](ADDITIONAL_TERMS.md) for the precise
+boundary, the exemption criteria, and the request procedure.
 

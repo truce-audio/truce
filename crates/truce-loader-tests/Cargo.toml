@@ -4,7 +4,7 @@ version.workspace = true
 repository.workspace = true
 homepage.workspace = true
 edition.workspace = true
-license-file.workspace = true
+license.workspace = true
 description = "Integration tests for truce-loader. Lives in its own crate so the test deps (umbrella `truce` + `truce-derive`) can be normal deps without forming a `truce <-> truce-loader` cycle in cargo metadata."
 # Internal-only — never published. The `release.sh` filter excludes
 # `publish = false` crates from the workspace publish set.
