@@ -11,6 +11,14 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
+  # Trim debug info in CI to keep target/ off the runner's disk ceiling.
+  # The fat `.a`/`.rlib` artifacts that blew past "No space left on device"
+  # were mostly DWARF; `line-tables-only` keeps file/line numbers in
+  # backtraces while dropping the bulk. CI-only — local dev keeps full
+  # symbols (no Cargo.toml change). The test profile inherits dev, but its
+  # `debug` key must be set explicitly to override.
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  CARGO_PROFILE_TEST_DEBUG: line-tables-only
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
