@@ -128,3 +128,19 @@ jobs:
           path: target/screenshots/
           if-no-files-found: ignore
           retention-days: 14
+
+  gui-window:
+    # Newest macOS on purpose: the baseview hitTest: crash was an AppKit
+    # isa-swizzling regression that only surfaced on a new OS. Tracking the
+    # latest image makes such OS-behaviour regressions fail here, pre-release.
+    name: gui hitTest (windowed, newest macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: macos-gui-window
+          cache-bin: false
+      - name: windowed hitTest smoke
+        run: ./scripts/gui-window-test.sh
