@@ -2,6 +2,22 @@
 
 Notable changes per release.
 
+## 0.49.5 (2026-05-26)
+
+- **The built-in GUI now defaults to the GPU (wgpu) renderer.**
+  `truce-gui`'s default feature flipped from `cpu` to `gpu`, so
+  `truce-gui = "0.49"` (default features) now pulls `truce-gpu` and
+  renders directly through wgpu. Opt back into the tiny-skia CPU
+  rasterizer with
+  `truce-gui = { version = "0.49", default-features = false, features = ["cpu"] }`.
+  Newly scaffolded projects (`cargo truce new`) now default to `gpu`
+  as well; switch a plugin to CPU by changing its `truce-gui` line's
+  `features = ["gpu"]` to `["cpu"]`.
+
+## 0.49.4 (2026-05-26)
+
+- Apply baseview patch that fixes crashes on macOS
+
 ## 0.49.2 (2026-05-25)
 
 - Housekeeping: minor README updates and safety fixes.

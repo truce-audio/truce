@@ -47,9 +47,15 @@ shell = ["truce/shell"]
 truce = \{ {dep_args | unescaped} }
 # Lightweight types for layout / theme / widget descriptions.
 truce-gui-types = \{ {dep_args | unescaped} }
-# Built-in renderer. Plugins that supply their own editor (egui /
-# iced / slint) can drop this dep.
-truce-gui = \{ {dep_args | unescaped} }
+# Built-in renderer. Defaults to the gpu backend (direct wgpu); for the
+# cpu backend (tiny-skia software rasterizer + wgpu blit) swap "gpu" ->
+# "cpu". Plugins that supply their own editor (egui / iced / slint) can
+# drop this dep.
+{{ if is_workspace -}}
+truce-gui = \{ workspace = true, features = ["gpu"] }
+{{- else -}}
+truce-gui = \{ {dep_args | unescaped}, default-features = false, features = ["gpu"] }
+{{- endif }}
 truce-clap = \{ {dep_args | unescaped}, optional = true }
 truce-vst3 = \{ {dep_args | unescaped}, optional = true }
 {{ if has_standalone -}}

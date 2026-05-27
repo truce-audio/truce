@@ -7,8 +7,9 @@ Built-in GUI runtime for truce plugins.
 Provides a complete widget toolkit that draws knobs, sliders, meters,
 dropdowns, and XY pads straight from your parameter layout — no custom
 editor code, no pixel math. The `BuiltinEditor` auto-generates a full UI
-from a `GridLayout`. By default it rasterises on the CPU with tiny-skia;
-opt into GPU rendering (wgpu) with the `gpu` feature.
+from a `GridLayout`. By default it renders on the GPU with wgpu; opt
+into CPU rendering (tiny-skia) with
+`default-features = false, features = ["cpu"]`.
 
 Windowing is handled through baseview. In CPU mode the tiny-skia pixmap
 is uploaded to a wgpu surface each frame for compositing; in GPU mode
@@ -20,9 +21,9 @@ editor types. The renderers themselves live in sibling crates, so a
 plugin only compiles the one it uses:
 
 - the CPU rasteriser (`CpuBackend`, tiny-skia + fontdue) lives in
-  [`truce-cpu`](../truce-cpu), pulled in by the default `cpu` feature;
+  [`truce-cpu`](../truce-cpu), pulled in by the `cpu` feature;
 - the GPU backend (`WgpuBackend`, wgpu) lives in
-  [`truce-gpu`](../truce-gpu), pulled in by the `gpu` feature.
+  [`truce-gpu`](../truce-gpu), pulled in by the default `gpu` feature.
 
 The lightweight trait + data surface (`GridLayout`, `RenderBackend`,
 `WidgetType`, `Theme`, …) lives in
@@ -34,7 +35,7 @@ stack.
 ## Key types
 
 - **`BuiltinEditor`** -- the main `Editor` implementation; auto-generates UI from params
-- **`GpuEditor`** (with the `gpu` feature) -- wraps `BuiltinEditor` to render through `truce_gpu::WgpuBackend`
+- **`GpuEditor`** (default, `gpu` feature) -- wraps `BuiltinEditor` to render through `truce_gpu::WgpuBackend`
 - **`default_editor()` / `IntoLayoutEditor`** -- turn a `GridLayout` into a `Box<dyn Editor>`, picking the renderer the active feature selects
 - **`CpuBackend`** (re-exported from `truce-cpu` with the `cpu` feature) -- the tiny-skia software rasterizer (the `RenderBackend` trait it implements lives in `truce-gui-types`)
 - **`BaseviewTranslator`** -- maps `baseview::Event`s into the

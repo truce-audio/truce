@@ -58,12 +58,13 @@ objc2-ui-kit = { version = "0.3", features = ["UIView", "UIScreen", "UIWindow"] 
 objc2-quartz-core = { version = "0.3", features = ["CALayer", "CAMetalLayer"] }
 
 [features]
-# `cpu` is the default - tiny-skia software rasterizer with a wgpu
-# blit pipeline for surface presentation. `gpu` swaps in direct wgpu
-# rendering through `truce_gpu::WgpuBackend`; opting in via
-# `default-features = false, features = ["gpu"]` keeps truce-cpu
-# (and tiny-skia + fontdue) out of the dep tree.
-default = ["cpu"]
+# `gpu` is the default - direct wgpu rendering through
+# `truce_gpu::WgpuBackend`. `cpu` swaps in the tiny-skia software
+# rasterizer with a wgpu blit pipeline for surface presentation; opt in
+# via `default-features = false, features = ["cpu"]` to keep truce-gpu
+# out of the dep tree. (iOS always uses the cpu rasterizer regardless of
+# this choice - see the iOS dependency note above.)
+default = ["gpu"]
 cpu = ["dep:truce-cpu"]
 gpu = ["dep:truce-gpu"]
 

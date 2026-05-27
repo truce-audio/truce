@@ -11,9 +11,12 @@ version = "0.1.0"
 edition = "2024"
 
 [workspace.dependencies]
+# truce-gui defaults to its cpu renderer; disable it here so each plugin
+# opts into a backend via `features = ["gpu"]` / `["cpu"]` (scaffolded
+# plugins default to gpu).
 {{ if use_registry -}}
 truce = \{ version = "{version}" }
-truce-gui = \{ version = "{version}" }
+truce-gui = \{ version = "{version}", default-features = false }
 truce-gui-types = \{ version = "{version}" }
 truce-clap = \{ version = "{version}" }
 truce-vst3 = \{ version = "{version}" }
@@ -22,7 +25,7 @@ truce-standalone = \{ version = "{version}" }
 {{ endif -}}
 {{- else -}}
 truce = \{ git = "https://github.com/truce-audio/truce", tag = "{tag}" }
-truce-gui = \{ git = "https://github.com/truce-audio/truce", tag = "{tag}" }
+truce-gui = \{ git = "https://github.com/truce-audio/truce", tag = "{tag}", default-features = false }
 truce-gui-types = \{ git = "https://github.com/truce-audio/truce", tag = "{tag}" }
 truce-clap = \{ git = "https://github.com/truce-audio/truce", tag = "{tag}" }
 truce-vst3 = \{ git = "https://github.com/truce-audio/truce", tag = "{tag}" }

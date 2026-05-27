@@ -1,10 +1,11 @@
 //! Built-in GUI for truce plugins.
 //!
 //! Orchestrates the two `truce_gui_types::RenderBackend` impls into
-//! editor types: with the default `cpu` feature, `BuiltinEditor`
-//! rasterises widgets to a `truce_cpu::CpuBackend` (tiny-skia)
-//! pixmap and blits it to a wgpu surface; with the `gpu` feature,
-//! `GpuEditor` renders directly through `truce_gpu::WgpuBackend`.
+//! editor types: with the default `gpu` feature, `GpuEditor`
+//! renders widgets directly through `truce_gpu::WgpuBackend`; with
+//! the `cpu` feature, `BuiltinEditor` rasterises to a
+//! `truce_cpu::CpuBackend` (tiny-skia) pixmap and blits it to a wgpu
+//! surface.
 //! The non-runtime data types (layout, widget regions, interaction
 //! state, theme, render trait) live in `truce-gui-types` and the
 //! plugin traits in `truce-plugin`; this crate re-exports them so
@@ -89,9 +90,9 @@ pub use platform::{EditorScale, to_physical_px};
 ///
 /// Picks the renderer based on which feature is enabled:
 ///
-/// - `gpu` (opt-in): wraps a [`BuiltinEditor`] in a `GpuEditor`
+/// - `gpu` (default): wraps a [`BuiltinEditor`] in a `GpuEditor`
 ///   that renders directly through `truce_gpu::WgpuBackend`.
-/// - `cpu` (default): returns a [`BuiltinEditor`] whose `Editor`
+/// - `cpu` (opt-in): returns a [`BuiltinEditor`] whose `Editor`
 ///   impl rasterises to a tiny-skia pixmap and blits it to a wgpu
 ///   surface.
 /// - iOS: always returns the iOS `BuiltinEditor` (UIView-hosted
