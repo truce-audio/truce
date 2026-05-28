@@ -1291,9 +1291,7 @@ pub unsafe fn _editor_open<P: PluginExport>(
         let params_for_plain = params.clone();
         let params_for_fmt = params.clone();
         let params_for_ctx = params.clone();
-        let params_for_state = params.clone();
         let pending_state_for_set = inst.pending_state.clone();
-        let plugin_id_hash_for_set = inst.plugin_id_hash;
         let transport_slot = inst.transport_slot.clone();
 
         let context = PluginContext::from_closures(
@@ -1328,14 +1326,18 @@ pub unsafe fn _editor_open<P: PluginExport>(
                     plugin.save_state()
                 }),
                 set_state: Box::new(move |bytes| {
-                    if let Some(deserialized) =
-                        state::deserialize_state(&bytes, plugin_id_hash_for_set)
-                    {
-                        // Apply params synchronously so the editor
-                        // sees the restore on its own thread.
-                        state::apply_params(&*params_for_state, &deserialized);
-                        let _ = pending_state_for_set.force_push(deserialized);
-                    }
+                    // The editor sends RAW custom-state bytes - exactly
+                    // what `save_state()` emits and `get_state` above
+                    // returns - NOT a full `serialize_state` envelope.
+                    // Route them to the plugin's `load_state` on the
+                    // audio thread via the same handoff queue the host
+                    // load path uses (the queue is what avoids aliasing
+                    // `process()`'s `&mut plugin`). No params ride along:
+                    // the editor mutates params through `set_param`.
+                    let _ = pending_state_for_set.force_push(state::DeserializedState {
+                        params: Vec::new(),
+                        extra: Some(bytes),
+                    });
                 }),
                 transport: Box::new(move || transport_slot.read()),
             },

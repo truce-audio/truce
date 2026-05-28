@@ -2,6 +2,14 @@
 
 Notable changes per release.
 
+## 0.49.13 (2026-05-28)
+
+- **VST2/AAX: extended the 0.49.9 `set_state` fix.** The same path that
+  dropped GUI-edited custom state in CLAP/VST3/AU was present in VST2
+  and AAX; they now route editor bytes to `load_state` like the others.
+  (LV2 is unaffected: its UI is out-of-process and never touches
+  `set_state` directly.)
+
 ## 0.49.12 (2026-05-28)
 
 - **`truce-slint`: fixed a panic on HiDPI displays after a resize event.**
