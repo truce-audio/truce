@@ -27,7 +27,8 @@ pub fn run<P: PluginExport>(opts: &Options) {
     // MIDI device input (if requested and available). On success
     // this spawns a background thread that pushes events into
     // `handles.pending`.
-    let _midi_guard = midi::MidiInputThread::start(opts, Arc::clone(&handles.pending));
+    let (_midi_guard, _midi_ctrl) =
+        midi::MidiInputThread::start(opts, Arc::clone(&handles.pending));
 
     let is_instrument = P::info().category != PluginCategory::Effect;
     vlog!("Plugin: {}", P::info().name);

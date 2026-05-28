@@ -34,6 +34,7 @@ use objc::runtime::{BOOL, Class, NO, Object, Sel, YES};
 use objc::{class, msg_send, sel, sel_impl};
 
 use crate::audio::{ChannelRoute, DeviceCache, InputController, OutputController};
+use crate::midi::{MidiChannel, MidiController};
 use crate::vlog;
 
 /// Heap-allocated state the Objective-C class points at via ivar.
@@ -58,6 +59,12 @@ struct MenuState {
     /// (instant) instead of enumerating cpal synchronously on the
     /// GUI thread.
     device_cache: DeviceCache,
+    /// MIDI device / channel control. `None`-as-feature: the MIDI
+    /// submenus are only built for plugins that take note input.
+    midi: MidiController,
+    /// MIDI-input device submenu - repopulated on open. Null when the
+    /// MIDI menu isn't built.
+    midi_input_menu: *mut Object,
 }
 
 /// Install the native menu bar.
@@ -71,6 +78,7 @@ pub fn install(
     channels: usize,
     input: &InputController,
     output: &OutputController,
+    midi: &MidiController,
 ) {
     unsafe {
         let app: *mut Object = msg_send![class!(NSApplication), sharedApplication];
@@ -84,7 +92,7 @@ pub fn install(
         // Audio menu and its action target.
         let plugin_menu_item = make_menu_item("Audio");
         let plugin_menu = make_menu("Audio");
-        let target = make_menu_target(input.clone(), output.clone());
+        let target = make_menu_target(input.clone(), output.clone(), midi.clone());
 
         // Mic toggle (⌘I) - only meaningful for effects.
         let mic_item = if is_effect {
@@ -174,6 +182,32 @@ pub fn install(
             let _: () = msg_send![plugin_menu, addItem: out_ch_item];
         }
 
+        // Separate "MIDI" top-level menu: input-device picker +
+        // channel filter. Built for every plugin (any can receive MIDI
+        // CC; instruments need note input). The input submenu is
+        // repopulated on open; the channel submenu is static and its
+        // checkmark is moved by the select action.
+        let midi_menu_item = make_menu_item("MIDI");
+        let midi_menu = make_menu("MIDI");
+
+        let midi_input_item = make_menu_item("MIDI Input");
+        let _: () = msg_send![midi_input_item, setTarget: target];
+        let midi_input_menu = make_menu("MIDI Input");
+        let _: () = msg_send![midi_input_item, setSubmenu: midi_input_menu];
+        let _: () = msg_send![midi_menu, addItem: midi_input_item];
+
+        let midi_sep: *mut Object = msg_send![class!(NSMenuItem), separatorItem];
+        let _: () = msg_send![midi_menu, addItem: midi_sep];
+
+        let midi_chan_item = make_menu_item("MIDI Channel");
+        let _: () = msg_send![midi_chan_item, setTarget: target];
+        let midi_chan_menu = make_menu("MIDI Channel");
+        populate_midi_channel_menu(midi_chan_menu, target, midi.channel());
+        let _: () = msg_send![midi_chan_item, setSubmenu: midi_chan_menu];
+        let _: () = msg_send![midi_menu, addItem: midi_chan_item];
+
+        let _: () = msg_send![midi_menu_item, setSubmenu: midi_menu];
+
         // Stash pointers in MenuState so menu-open delegates can
         // address the right submenu.
         update_menu_state(
@@ -182,6 +216,7 @@ pub fn install(
             output_item,
             input_dev_menu,
             output_dev_menu,
+            midi_input_menu,
             target,
         );
 
@@ -194,6 +229,8 @@ pub fn install(
             let _: () = msg_send![input_dev_menu, setDelegate: target];
         }
         let _: () = msg_send![output_dev_menu, setDelegate: target];
+        // The MIDI-input submenu repopulates its device list on open.
+        let _: () = msg_send![midi_input_menu, setDelegate: target];
 
         let _: () = msg_send![plugin_menu_item, setSubmenu: plugin_menu];
 
@@ -201,6 +238,7 @@ pub fn install(
         let main_menu = make_menu("");
         let _: () = msg_send![main_menu, addItem: app_menu_item];
         let _: () = msg_send![main_menu, addItem: plugin_menu_item];
+        let _: () = msg_send![main_menu, addItem: midi_menu_item];
         let _: () = msg_send![app, setMainMenu: main_menu];
     }
 }
@@ -431,6 +469,97 @@ unsafe fn update_channel_checkmarks(menu: *mut Object, selected_tag: i64) {
     }
 }
 
+/// Tag for the "None" row in the MIDI-input submenu. Distinct from the
+/// device rows (which use the default tag 0 and select by title).
+const MIDI_INPUT_NONE_TAG: i64 = -1;
+
+/// Rebuild the MIDI-input submenu: a "None" row (disconnect) followed
+/// by one row per available port. The active device (or "None") is
+/// checkmarked. Device rows select by title; "None" by its tag.
+unsafe fn populate_midi_input_menu(
+    menu: *mut Object,
+    target: *mut Object,
+    devices: &[String],
+    current: Option<&str>,
+) {
+    unsafe {
+        let _: () = msg_send![menu, removeAllItems];
+
+        let none = ns_string("None");
+        let empty = ns_string("");
+        let item: *mut Object = msg_send![class!(NSMenuItem), alloc];
+        let item: *mut Object = msg_send![
+            item,
+            initWithTitle: none
+            action: sel!(selectMidiInputAction:)
+            keyEquivalent: empty
+        ];
+        let _: () = msg_send![item, setTarget: target];
+        let _: () = msg_send![item, setTag: MIDI_INPUT_NONE_TAG];
+        let on: BOOL = if current.is_none() { YES } else { NO };
+        let _: () = msg_send![item, setState: i64::from(on)];
+        let _: () = msg_send![menu, addItem: item];
+
+        if devices.is_empty() {
+            return;
+        }
+        let sep: *mut Object = msg_send![class!(NSMenuItem), separatorItem];
+        let _: () = msg_send![menu, addItem: sep];
+        for name in devices {
+            let title = ns_string(name);
+            let empty = ns_string("");
+            let item: *mut Object = msg_send![class!(NSMenuItem), alloc];
+            let item: *mut Object = msg_send![
+                item,
+                initWithTitle: title
+                action: sel!(selectMidiInputAction:)
+                keyEquivalent: empty
+            ];
+            let _: () = msg_send![item, setTarget: target];
+            let on: BOOL = if current.is_some_and(|c| c == name.as_str()) {
+                YES
+            } else {
+                NO
+            };
+            let _: () = msg_send![item, setState: i64::from(on)];
+            let _: () = msg_send![menu, addItem: item];
+        }
+    }
+}
+
+/// Fill the MIDI-channel submenu: an "Omni" default then channels
+/// 1-16, each tagged with its `MidiChannel::encode()`. Checkmark on
+/// `current`.
+unsafe fn populate_midi_channel_menu(menu: *mut Object, target: *mut Object, current: MidiChannel) {
+    unsafe {
+        let _: () = msg_send![menu, removeAllItems];
+        let cur = i64::from(current.encode());
+        let action = sel!(selectMidiChannelAction:);
+
+        add_tagged_item(
+            menu,
+            target,
+            action,
+            "Omni (all channels)",
+            i64::from(MidiChannel::Omni.encode()),
+            cur,
+        );
+        let sep: *mut Object = msg_send![class!(NSMenuItem), separatorItem];
+        let _: () = msg_send![menu, addItem: sep];
+        for n in 0..16u8 {
+            let label = format!("Channel {}", n + 1);
+            add_tagged_item(
+                menu,
+                target,
+                action,
+                &label,
+                i64::from(MidiChannel::Channel(n).encode()),
+                cur,
+            );
+        }
+    }
+}
+
 unsafe fn ns_string(s: &str) -> *mut Object {
     let bytes = s.as_bytes();
     let cls = class!(NSString);
@@ -602,6 +731,47 @@ fn ensure_class() -> &'static Class {
             select_output_channels_action as extern "C" fn(&Object, Sel, *mut Object),
         );
 
+        // MIDI input device chosen. The "None" row (tag 1) disconnects;
+        // every other row carries a device name in its title.
+        extern "C" fn select_midi_input_action(this: &Object, _: Sel, sender: *mut Object) {
+            unsafe {
+                let Some(state) = state_from(this) else {
+                    return;
+                };
+                let tag: i64 = msg_send![sender, tag];
+                if tag == MIDI_INPUT_NONE_TAG {
+                    vlog!("midi input: none");
+                    state.midi.set_device(None);
+                } else if let Some(name) = item_title(sender) {
+                    vlog!("midi input: {name}");
+                    state.midi.set_device(Some(name));
+                }
+            }
+        }
+        decl.add_method(
+            sel!(selectMidiInputAction:),
+            select_midi_input_action as extern "C" fn(&Object, Sel, *mut Object),
+        );
+
+        // MIDI channel filter chosen (tag = MidiChannel::encode()).
+        extern "C" fn select_midi_channel_action(this: &Object, _: Sel, sender: *mut Object) {
+            unsafe {
+                let Some(state) = state_from(this) else {
+                    return;
+                };
+                let tag: i64 = msg_send![sender, tag];
+                let channel = MidiChannel::decode(u8::try_from(tag).unwrap_or(0xFF));
+                vlog!("midi channel: {channel:?}");
+                state.midi.set_channel(channel);
+                let menu: *mut Object = msg_send![sender, menu];
+                update_channel_checkmarks(menu, tag);
+            }
+        }
+        decl.add_method(
+            sel!(selectMidiChannelAction:),
+            select_midi_channel_action as extern "C" fn(&Object, Sel, *mut Object),
+        );
+
         // -(void) menuWillOpen:(NSMenu *)menu - refresh state for
         // the about-to-open menu. Dispatch by pointer comparison so
         // we know whether to refresh the mic checkmark or
@@ -640,6 +810,18 @@ fn ensure_class() -> &'static Class {
                         sel!(selectOutputDeviceAction:),
                     );
                     state.device_cache.refresh_async();
+                    return;
+                }
+
+                if !state.midi_input_menu.is_null() && menu == state.midi_input_menu {
+                    let names = crate::midi::list_midi_devices();
+                    let current = state.midi.current_name();
+                    populate_midi_input_menu(
+                        state.midi_input_menu,
+                        state.target,
+                        &names,
+                        current.as_deref(),
+                    );
                     return;
                 }
 
@@ -686,7 +868,11 @@ unsafe fn state_from<'a>(this: &Object) -> Option<&'a MenuState> {
     }
 }
 
-unsafe fn make_menu_target(input: InputController, output: OutputController) -> *mut Object {
+unsafe fn make_menu_target(
+    input: InputController,
+    output: OutputController,
+    midi: MidiController,
+) -> *mut Object {
     let cls = ensure_class();
     let target: *mut Object = msg_send![cls, alloc];
     let target: *mut Object = msg_send![target, init];
@@ -699,6 +885,8 @@ unsafe fn make_menu_target(input: InputController, output: OutputController) -> 
         output_device_menu: std::ptr::null_mut(),
         target: std::ptr::null_mut(),
         device_cache: DeviceCache::new(),
+        midi,
+        midi_input_menu: std::ptr::null_mut(),
     }));
     // SAFETY: `target` was just `alloc`+`init`'d above; it's a valid
     // TruceMenuTarget instance whose ivar layout we declared.
@@ -706,12 +894,14 @@ unsafe fn make_menu_target(input: InputController, output: OutputController) -> 
     target
 }
 
+#[allow(clippy::too_many_arguments)]
 unsafe fn update_menu_state(
     target: *mut Object,
     mic_item: *mut Object,
     output_item: *mut Object,
     input_device_menu: *mut Object,
     output_device_menu: *mut Object,
+    midi_input_menu: *mut Object,
     target_self: *mut Object,
 ) {
     unsafe {
@@ -724,6 +914,7 @@ unsafe fn update_menu_state(
         state.output_item = output_item;
         state.input_device_menu = input_device_menu;
         state.output_device_menu = output_device_menu;
+        state.midi_input_menu = midi_input_menu;
         state.target = target_self;
     }
 }

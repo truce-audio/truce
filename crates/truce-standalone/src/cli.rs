@@ -42,6 +42,10 @@ pub struct Options {
     pub sample_rate: Option<u32>,
     pub buffer_size: Option<u32>,
     pub midi_input: Option<String>,
+    /// MIDI channel filter spec (`omni`/`all`, or `1`-`16`). Parsed
+    /// into a `MidiChannel` when the MIDI thread starts; on Linux (no
+    /// native menu) this is the only way to pick a channel.
+    pub midi_channel: Option<String>,
     pub bpm: Option<f64>,
     pub state_path: Option<PathBuf>,
     /// Print status chatter (device picks, toggles, save / load
@@ -91,6 +95,8 @@ OPTIONS:
   --sample-rate <hz>        e.g. 44100, 48000, 96000
   --buffer <frames>         Audio buffer size (power of two recommended)
   --midi-input <name>       MIDI input device (substring match)
+  --midi-channel <spec>     MIDI channel filter: `omni` (all, default)
+                            or a channel `1`-`16`.
   --bpm <n>                 Transport BPM (default 120)
   --state <path>            Load plugin state from this file on launch
   -v, --verbose             Print status chatter (device picks, toggles,
@@ -199,6 +205,9 @@ pub fn parse() -> Result<Options, String> {
     let midi_input = args
         .opt_value_from_str::<_, String>("--midi-input")
         .map_err(|e| format!("--midi-input: {e}"))?;
+    let midi_channel = args
+        .opt_value_from_str::<_, String>("--midi-channel")
+        .map_err(|e| format!("--midi-channel: {e}"))?;
     let bpm = args
         .opt_value_from_str::<_, f64>("--bpm")
         .map_err(|e| format!("--bpm: {e}"))?;
@@ -243,6 +252,7 @@ pub fn parse() -> Result<Options, String> {
         sample_rate: sample_rate.or_else(|| env("SAMPLE_RATE").and_then(|s| s.parse().ok())),
         buffer_size: buffer_size.or_else(|| env("BUFFER").and_then(|s| s.parse().ok())),
         midi_input: midi_input.or_else(|| env("MIDI_INPUT")),
+        midi_channel: midi_channel.or_else(|| env("MIDI_CHANNEL")),
         bpm: bpm.or_else(|| env("BPM").and_then(|s| s.parse().ok())),
         state_path: state_path.or_else(|| env("STATE").map(PathBuf::from)),
         verbose: verbose
