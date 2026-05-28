@@ -298,6 +298,41 @@ mod tests {
         truce_test::assert_state_round_trip::<Plugin>();
     }
 
+    /// Pins the editor-bridge wire-format contract that the format
+    /// wrappers (`truce-clap` / `truce-vst3` / `truce-au`) depend on.
+    ///
+    /// The editor's `StateBinding::update` writes
+    /// `InstanceMemo::serialize()` bytes to the bridge's `set_state`.
+    /// Those are **raw custom-state** bytes - the same thing
+    /// `save_state` emits - and the wrapper must hand them straight to
+    /// `load_state`. They are deliberately *not* a `serialize_state`
+    /// host envelope (no `OAST` magic / version / plugin-id header).
+    ///
+    /// A wrapper that mistook this channel for the host channel and ran
+    /// the bytes through `deserialize_state` (the envelope parser) would
+    /// get `None` and silently drop every GUI edit - which is exactly
+    /// the bug this guards against. So we assert both halves: editor
+    /// bytes are rejected by the envelope parser, and accepted by
+    /// `load_state`.
+    #[test]
+    fn editor_bytes_feed_load_state_not_envelope() {
+        let mut p = make_plugin();
+        p.memo.label = "from editor".to_string();
+        let editor_bytes = p.memo.serialize(); // what StateBinding::update sends
+
+        // The envelope parser must reject these (magic check fails first,
+        // so the plugin-id argument is irrelevant - pass 0).
+        assert!(
+            truce_core::state::deserialize_state(&editor_bytes, 0).is_none(),
+            "editor custom-state bytes must NOT parse as a host state envelope"
+        );
+
+        // The correct sink consumes them directly.
+        let mut fresh = make_plugin();
+        fresh.load_state(&editor_bytes).unwrap();
+        assert_eq!(fresh.memo.label, "from editor");
+    }
+
     #[cfg(target_os = "macos")]
     #[test]
     fn gui_screenshot_macos() {
