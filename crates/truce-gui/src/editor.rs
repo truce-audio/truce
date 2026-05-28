@@ -86,6 +86,20 @@ pub struct BuiltinEditor<P: Params> {
     /// `EditorScale` and this field is unused.
     #[cfg(feature = "cpu")]
     scale: EditorScale,
+    /// Meter IDs referenced by the layout, collected once at
+    /// construction. Meters are display-only values written from the
+    /// audio thread (`PluginContext::get_meter`); they never move
+    /// through the param system, so the CPU repaint gate needs to poll
+    /// them explicitly to know when to redraw. Empty for layouts with
+    /// no meters - the poll then short-circuits.
+    #[cfg(feature = "cpu")]
+    meter_ids: Vec<u32>,
+    /// Meter values captured at the last repaint, parallel to
+    /// `meter_ids`. `detect_meter_changes` compares the live values
+    /// against these to flip the dirty bit only when a meter actually
+    /// moved (the gpu path repaints unconditionally and ignores this).
+    #[cfg(feature = "cpu")]
+    last_meter_values: Vec<f32>,
 }
 
 // SAFETY: `baseview::WindowHandle` holds a raw native window pointer
@@ -98,6 +112,33 @@ pub struct BuiltinEditor<P: Params> {
 // thread in practice. All other fields (`Arc<P>`, `Layout`, `Theme`,
 // `Option<CpuBackend>`, etc.) are themselves `Send`.
 unsafe impl<P: Params> Send for BuiltinEditor<P> {}
+
+/// Gather every meter ID referenced by a layout, in layout order. The
+/// CPU editor polls these each frame to decide when a meter moved and
+/// the surface needs a repaint.
+#[cfg(feature = "cpu")]
+fn collect_meter_ids(layout: &Layout) -> Vec<u32> {
+    let mut ids = Vec::new();
+    match layout {
+        Layout::Rows(pl) => {
+            for row in &pl.rows {
+                for knob in &row.knobs {
+                    if let Some(m) = &knob.meter_ids {
+                        ids.extend_from_slice(m);
+                    }
+                }
+            }
+        }
+        Layout::Grid(gl) => {
+            for widget in &gl.widgets {
+                if let Some(m) = &widget.meter_ids {
+                    ids.extend_from_slice(m);
+                }
+            }
+        }
+    }
+    ids
+}
 
 impl<P: Params + 'static> BuiltinEditor<P> {
     /// Request a repaint on the next idle tick. Call this if plugin
@@ -157,6 +198,30 @@ impl<P: Params + 'static> BuiltinEditor<P> {
         }
     }
 
+    /// Poll the layout's meters and flag a repaint when any value
+    /// moved since the last frame. Meters are display-only values the
+    /// audio thread reports through `PluginContext::get_meter`; they
+    /// don't flow through `detect_host_param_changes` (which only
+    /// inspects knob param regions), so without this the CPU gate would
+    /// freeze the meter until an unrelated repaint trigger (a knob drag,
+    /// host param churn) happened to fire. The gpu path repaints every
+    /// frame and skips this entirely.
+    #[cfg(feature = "cpu")]
+    #[allow(clippy::float_cmp)]
+    fn detect_meter_changes(&mut self) {
+        if self.meter_ids.is_empty() {
+            return;
+        }
+        let Some(ctx) = self.context.as_ref() else {
+            return;
+        };
+        let current: Vec<f32> = self.meter_ids.iter().map(|&id| ctx.get_meter(id)).collect();
+        if current != self.last_meter_values {
+            self.last_meter_values = current;
+            self.request_repaint();
+        }
+    }
+
     pub fn new(params: Arc<P>, layout: PluginLayout) -> Self {
         Self::with_layout_inner(params, Layout::Rows(layout))
     }
@@ -170,6 +235,8 @@ impl<P: Params + 'static> BuiltinEditor<P> {
     }
 
     fn with_layout_inner(params: Arc<P>, layout: Layout) -> Self {
+        #[cfg(feature = "cpu")]
+        let meter_ids = collect_meter_ids(&layout);
         Self {
             params,
             layout,
@@ -187,6 +254,10 @@ impl<P: Params + 'static> BuiltinEditor<P> {
             last_painted_values: Vec::new(),
             #[cfg(feature = "cpu")]
             scale: EditorScale::new(crate::backing_scale()),
+            #[cfg(feature = "cpu")]
+            meter_ids,
+            #[cfg(feature = "cpu")]
+            last_meter_values: Vec::new(),
         }
     }
 
@@ -629,6 +700,7 @@ impl<P: Params + 'static> baseview::WindowHandler for BuiltinWindowHandler<P> {
         // normal gate below still has the chance to short-circuit when
         // truly nothing moved.
         editor.detect_host_param_changes();
+        editor.detect_meter_changes();
         if !editor.take_needs_repaint() {
             return;
         }
