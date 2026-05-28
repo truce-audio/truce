@@ -2,6 +2,12 @@
 
 Notable changes per release.
 
+## 0.49.9 (2026-05-27)
+
+- **Fixed `#[derive(State)]` custom state not persisting when edited
+  from the GUI.** The CLAP, VST3, and AU editor `set_state` paths
+  silently dropped GUI edits; they now reach `load_state` correctly.
+
 ## 0.49.6 (2026-05-27)
 
 - **`truce-standalone`: the `gui` feature no longer pulls `truce-gpu`.**
