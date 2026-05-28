@@ -2,6 +2,13 @@
 
 Notable changes per release.
 
+## 0.49.12 (2026-05-28)
+
+- **`truce-slint`: fixed a panic on HiDPI displays after a resize event.**
+  The render buffer kept the pre-resize physical extents while slint's
+  window adopted the new ones, so the next frame tripped slint's
+  buffer-too-small check.
+
 ## 0.49.11 (2026-05-28)
 
 - **Standalone: fixed the macOS device menu** — the Input/Output Device

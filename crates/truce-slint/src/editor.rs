@@ -352,6 +352,8 @@ impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
                     self.surface_config.width = phys_w;
                     self.surface_config.height = phys_h;
                     self.surface.configure(&self.device, &self.surface_config);
+                    self.last_phys_w = phys_w;
+                    self.last_phys_h = phys_h;
 
                     if let Some(ref mut blit) = self.blit {
                         blit.resize(&self.device, phys_w, phys_h);
