@@ -1377,6 +1377,33 @@ mod tests {
     }
 
     #[test]
+    fn dropdown_anchor_survives_idle_rebuild() {
+        // Regression: the CPU `on_frame` runs `update_interaction`
+        // (which rebuilds regions) every frame, but gates `render`
+        // behind a repaint check. On an idle frame the rebuild ran
+        // without a following render, resetting `dropdown_anchor_y`
+        // to 0 and stranding the next dropdown popup at the top of
+        // the window. The rebuild must preserve the anchor.
+        let mut editor = make_editor();
+
+        // Simulate an idle frame: regions rebuilt, no render after.
+        update_interaction(&mut editor);
+
+        let (dx, dy) = dropdown_center(&editor);
+        editor.on_mouse_down(dx, dy);
+        editor.on_mouse_up(dx, dy);
+
+        let dd = editor.interaction.dropdown.as_ref().unwrap();
+        let region = &editor.interaction.knob_regions[dd.region_idx];
+        assert_eq!(dd.popup_rect.1, region.dropdown_anchor_y);
+        assert!(
+            dd.popup_rect.1 > region.y,
+            "popup_y {} fell back to the window top instead of anchoring below the button",
+            dd.popup_rect.1
+        );
+    }
+
+    #[test]
     fn dropdown_anchor_gap_stable_with_sections() {
         let editor_plain = make_editor();
         let editor_sections = make_editor_with_sections();

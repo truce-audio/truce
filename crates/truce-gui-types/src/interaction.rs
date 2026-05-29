@@ -238,6 +238,18 @@ impl InteractionState {
     // bounded by the editor's row width.
     #[allow(clippy::cast_precision_loss)]
     pub fn build_regions(&mut self, layout: &PluginLayout) {
+        // `dropdown_anchor_y` is filled in by the draw pass, not here.
+        // `update_interaction` rebuilds regions every frame, but the
+        // render that repopulates the anchor can be skipped (the macOS
+        // CPU path gates `render` behind a repaint check). Carry prior
+        // anchors over by index so an idle, non-rendering frame doesn't
+        // reset them to 0 and strand the next dropdown popup at the top
+        // of the window.
+        let prior_anchors: Vec<f32> = self
+            .knob_regions
+            .iter()
+            .map(|r| r.dropdown_anchor_y)
+            .collect();
         self.knob_regions.clear();
 
         let knob_size = layout.knob_size;
@@ -262,6 +274,7 @@ impl InteractionState {
                 let cy = y + knob_size / 2.0 - 5.0;
                 let radius = knob_size / 2.0 - 4.0;
 
+                let idx = self.knob_regions.len();
                 self.knob_regions.push(WidgetRegion {
                     param_id: knob_def.param_id,
                     widget_type: widget_kind_to_type(knob_def.widget),
@@ -273,7 +286,7 @@ impl InteractionState {
                     cy,
                     radius,
                     normalized_value: 0.0,
-                    dropdown_anchor_y: 0.0,
+                    dropdown_anchor_y: prior_anchors.get(idx).copied().unwrap_or(0.0),
                 });
                 col += span;
             }
@@ -492,6 +505,14 @@ impl InteractionState {
     // an editor's logical pixel range.
     #[allow(clippy::cast_precision_loss)]
     pub fn build_regions_grid(&mut self, layout: &GridLayout) {
+        // See `build_regions`: preserve `dropdown_anchor_y` across the
+        // per-frame rebuild so an idle frame that skips render doesn't
+        // strand the next dropdown popup at y = 0.
+        let prior_anchors: Vec<f32> = self
+            .knob_regions
+            .iter()
+            .map(|r| r.dropdown_anchor_y)
+            .collect();
         self.knob_regions.clear();
 
         let header_h = layout.header_height();
@@ -518,6 +539,7 @@ impl InteractionState {
             // correctly out of the box.
             let widget_type = widget_kind_to_type(gw.widget);
 
+            let idx = self.knob_regions.len();
             self.knob_regions.push(WidgetRegion {
                 param_id: gw.param_id,
                 widget_type,
@@ -529,7 +551,7 @@ impl InteractionState {
                 cy,
                 radius,
                 normalized_value: 0.0,
-                dropdown_anchor_y: 0.0,
+                dropdown_anchor_y: prior_anchors.get(idx).copied().unwrap_or(0.0),
             });
         }
     }
