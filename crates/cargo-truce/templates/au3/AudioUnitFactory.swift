@@ -190,9 +190,10 @@ class TruceAUAudioUnit: AUAudioUnit {
         presets.reserveCapacity(Int(g_num_factory_presets))
         for i in 0..<g_num_factory_presets {
             let desc = descriptors.advanced(by: Int(i)).pointee
-            presets.append(AUAudioUnitPreset(
-                number: Int(desc.number),
-                name: String(cString: desc.name)))
+            let preset = AUAudioUnitPreset()
+            preset.number = Int(desc.number)
+            preset.name = String(cString: desc.name)
+            presets.append(preset)
         }
         return presets
     }
