@@ -41,6 +41,7 @@ use truce_core::bus::BusLayout;
 use truce_core::denormal::DenormalGuard;
 use truce_core::editor::Editor;
 use truce_core::events::EventList;
+use truce_core::preset::FactoryPresetInfo;
 use truce_core::process::{ProcessContext, ProcessStatus};
 use truce_core::state::StateLoadError;
 use truce_gui_types::interaction::WidgetRegion;
@@ -89,6 +90,12 @@ pub trait PluginLogicCore<S: Sample = f32>: Send + 'static {
     /// Forwards whatever the user impl returns - typically a malformed
     /// blob error decoded by `bincode` / `serde` / similar.
     fn load_state(&mut self, data: &[u8]) -> Result<(), StateLoadError>;
+    #[must_use]
+    fn factory_presets_static() -> Vec<FactoryPresetInfo>
+    where
+        Self: Sized;
+    #[must_use]
+    fn load_factory_preset(&self, preset_number: i32) -> bool;
     fn state_changed(&mut self);
     fn latency(&self) -> u32;
     fn tail(&self) -> u32;
@@ -182,6 +189,28 @@ macro_rules! plugin_logic_leaf_trait {
                 Ok(())
             }
 
+            /// Static factory preset metadata exposed to hosts that
+            /// support native preset menus. Default: no host-visible
+            /// factory presets.
+            #[must_use]
+            fn factory_presets_static(
+            ) -> Vec<$crate::__plugin_logic_deps::FactoryPresetInfo>
+            where
+                Self: Sized,
+            {
+                Vec::new()
+            }
+
+            /// Apply a factory preset identified by its host-facing
+            /// number. Called from host/UI/state callbacks, not the
+            /// render callback. Implementations should update atomic
+            /// params or otherwise hand state off without blocking the
+            /// audio thread.
+            #[must_use]
+            fn load_factory_preset(&self, _preset_number: i32) -> bool {
+                false
+            }
+
             /// Called on the audio thread immediately after
             /// [`Self::load_state`] returns. Invalidate or recompute any
             /// caches the next `process()` reads. Default: no-op.
@@ -224,6 +253,7 @@ pub mod __plugin_logic_deps {
     pub use truce_core::bus::BusLayout;
     pub use truce_core::editor::Editor;
     pub use truce_core::events::EventList;
+    pub use truce_core::preset::FactoryPresetInfo;
     pub use truce_core::process::{ProcessContext, ProcessStatus};
     pub use truce_core::state::StateLoadError;
 }
@@ -310,6 +340,17 @@ macro_rules! plugin_logic_bridge {
 
             fn load_state(&mut self, data: &[u8]) -> Result<(), StateLoadError> {
                 <Self as $leaf>::load_state(self, data)
+            }
+
+            fn factory_presets_static() -> Vec<FactoryPresetInfo>
+            where
+                Self: Sized,
+            {
+                <Self as $leaf>::factory_presets_static()
+            }
+
+            fn load_factory_preset(&self, preset_number: i32) -> bool {
+                <Self as $leaf>::load_factory_preset(self, preset_number)
             }
 
             fn state_changed(&mut self) {

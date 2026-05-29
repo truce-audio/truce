@@ -12,6 +12,7 @@ use truce_core::editor::Editor;
 use truce_core::events::{EventBody, EventList};
 use truce_core::info::PluginInfo;
 use truce_core::plugin::PluginRuntime;
+use truce_core::preset::FactoryPresetInfo;
 use truce_core::process::{ProcessContext, ProcessStatus};
 use truce_params::Params;
 use truce_params::sample::Sample;
@@ -90,6 +91,13 @@ impl<P: Params + Default + 'static, L: PluginLogicCore<S> + 'static, S: Sample> 
         unreachable!("StaticShell::bus_layouts() should not be called statically")
     }
 
+    fn factory_presets_static() -> Vec<FactoryPresetInfo>
+    where
+        Self: Sized,
+    {
+        unreachable!("StaticShell::factory_presets_static() should not be called statically")
+    }
+
     fn init(&mut self) {}
 
     fn reset(&mut self, sample_rate: f64, max_block_size: usize) {
@@ -151,6 +159,10 @@ impl<P: Params + Default + 'static, L: PluginLogicCore<S> + 'static, S: Sample> 
         // succeeded so partial state still triggers a refresh.
         PluginLogicCore::state_changed(&mut self.logic);
         result
+    }
+
+    fn load_factory_preset(&self, preset_number: i32) -> bool {
+        self.logic.load_factory_preset(preset_number)
     }
 
     fn editor(&mut self) -> Option<Box<dyn Editor>> {
@@ -249,6 +261,14 @@ macro_rules! export_static {
                 <$logic as $crate::__macro_deps::truce_plugin::PluginLogicCore<Sample>>::bus_layouts()
             }
 
+            fn factory_presets_static(
+            ) -> Vec<$crate::__macro_deps::truce_core::preset::FactoryPresetInfo>
+            where
+                Self: Sized,
+            {
+                <$logic as $crate::__macro_deps::truce_plugin::PluginLogicCore<Sample>>::factory_presets_static()
+            }
+
             fn init(&mut self) {
                 self.inner.init();
             }
@@ -275,6 +295,10 @@ macro_rules! export_static {
                 data: &[u8],
             ) -> Result<(), $crate::__macro_deps::truce_core::state::StateLoadError> {
                 self.inner.load_state(data)
+            }
+
+            fn load_factory_preset(&self, preset_number: i32) -> bool {
+                self.inner.load_factory_preset(preset_number)
             }
 
             fn editor(

@@ -17,6 +17,8 @@ __attribute__((visibility("default"))) const AuPluginDescriptor *g_descriptor = 
 __attribute__((visibility("default"))) const AuCallbacks *g_callbacks = NULL;
 __attribute__((visibility("default"))) const AuParamDescriptor *g_param_descriptors = NULL;
 __attribute__((visibility("default"))) uint32_t g_num_params = 0;
+__attribute__((visibility("default"))) const AuFactoryPresetDescriptor *g_factory_preset_descriptors = NULL;
+__attribute__((visibility("default"))) uint32_t g_num_factory_presets = 0;
 
 static int g_registered = 0;
 
@@ -24,7 +26,9 @@ void truce_au_register(
     const AuPluginDescriptor *descriptor,
     const AuCallbacks *callbacks,
     const AuParamDescriptor *param_descriptors,
-    uint32_t num_params
+    uint32_t num_params,
+    const AuFactoryPresetDescriptor *factory_preset_descriptors,
+    uint32_t num_factory_presets
 ) {
     if (g_registered) return;
 
@@ -32,6 +36,8 @@ void truce_au_register(
     g_callbacks = callbacks;
     g_param_descriptors = param_descriptors;
     g_num_params = num_params;
+    g_factory_preset_descriptors = factory_preset_descriptors;
+    g_num_factory_presets = num_factory_presets;
     g_registered = 1;
 }
 

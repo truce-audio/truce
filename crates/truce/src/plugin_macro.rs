@@ -335,6 +335,13 @@ macro_rules! __plugin_hot_reload {
                 <$logic as $crate::__reexport::truce_plugin::PluginLogicCore<Sample>>::bus_layouts()
             }
 
+            fn factory_presets_static() -> Vec<$crate::core::preset::FactoryPresetInfo>
+            where
+                Self: Sized,
+            {
+                <$logic as $crate::__reexport::truce_plugin::PluginLogicCore<Sample>>::factory_presets_static()
+            }
+
             fn init(&mut self) {
                 self.inner.init();
             }
@@ -361,6 +368,10 @@ macro_rules! __plugin_hot_reload {
                 data: &[u8],
             ) -> Result<(), $crate::core::state::StateLoadError> {
                 self.inner.load_state(data)
+            }
+
+            fn load_factory_preset(&self, preset_number: i32) -> bool {
+                self.inner.load_factory_preset(preset_number)
             }
 
             fn editor(&mut self) -> Option<Box<dyn $crate::core::editor::Editor>> {

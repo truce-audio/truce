@@ -3,6 +3,7 @@ use crate::bus::BusLayout;
 use crate::editor::Editor;
 use crate::events::EventList;
 use crate::info::PluginInfo;
+use crate::preset::FactoryPresetInfo;
 use crate::process::{ProcessContext, ProcessStatus};
 use truce_params::sample::Sample;
 
@@ -125,6 +126,27 @@ pub trait PluginRuntime: Send + 'static {
     /// skew between session file and plugin build, etc).
     fn load_state(&mut self, _data: &[u8]) -> Result<(), crate::state::StateLoadError> {
         Ok(())
+    }
+
+    /// Static factory preset metadata exposed to hosts that support
+    /// native preset menus. Default: no host-visible factory presets.
+    #[must_use]
+    fn factory_presets_static() -> Vec<FactoryPresetInfo>
+    where
+        Self: Sized,
+    {
+        Vec::new()
+    }
+
+    /// Apply a factory preset identified by its host-facing number.
+    ///
+    /// This is called from host/UI/state callbacks, not from the audio
+    /// render callback. Implementations must still be safe to call while
+    /// rendering may be in flight: prefer atomic parameter writes and
+    /// lock-free handoff for any state the audio thread owns.
+    #[must_use]
+    fn load_factory_preset(&self, _preset_number: i32) -> bool {
+        false
     }
 
     /// GUI editor. Return None for headless plugins.

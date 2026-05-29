@@ -24,6 +24,8 @@ format wrappers or GUI backends.
 - **`Event` / `TransportInfo`** -- MIDI events and DAW transport state
 - **`BusConfig` / `BusLayout`** -- I/O channel configuration
 - **`PluginInfo` / `PluginCategory`** -- plugin metadata (name, ID, vendor, category)
+- **`FactoryPresetInfo`** -- host-visible factory preset metadata used by
+  wrappers that support native preset menus
 - **`PluginContextReadF32` / `PluginContextReadF64`** -- extension
   traits that route `state.get_param(...)` to the prelude's
   chosen precision (mirror of `FloatParamReadF{32,64}` for the

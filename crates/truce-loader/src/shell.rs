@@ -26,6 +26,7 @@ use truce_core::editor::Editor;
 use truce_core::events::{EventBody, EventList};
 use truce_core::info::PluginInfo;
 use truce_core::plugin::PluginRuntime;
+use truce_core::preset::FactoryPresetInfo;
 use truce_core::process::{ProcessContext, ProcessStatus};
 use truce_params::Params;
 use truce_params::sample::Sample;
@@ -146,6 +147,13 @@ impl<P: Params + 'static, S: Sample> PluginRuntime for HotShell<P, S> {
         Self: Sized,
     {
         unreachable!("HotShell::bus_layouts() should not be called statically")
+    }
+
+    fn factory_presets_static() -> Vec<FactoryPresetInfo>
+    where
+        Self: Sized,
+    {
+        unreachable!("HotShell::factory_presets_static() should not be called statically")
     }
 
     fn init(&mut self) {}
@@ -284,6 +292,15 @@ impl<P: Params + 'static, S: Sample> PluginRuntime for HotShell<P, S> {
         // refreshed caches - fire even on partial state.
         plugin.state_changed();
         result
+    }
+
+    fn load_factory_preset(&self, preset_number: i32) -> bool {
+        let Some(loader) = self.loader.try_lock_for(GUI_LOCK_WAIT) else {
+            return false;
+        };
+        loader
+            .plugin()
+            .is_some_and(|plugin| plugin.load_factory_preset(preset_number))
     }
 
     fn editor(&mut self) -> Option<Box<dyn Editor>> {

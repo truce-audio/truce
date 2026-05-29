@@ -20,6 +20,7 @@ an `au` Cargo feature.
 - `AudioComponent` (v2) and `AUAudioUnit` (v3) registration
 - Audio render block bridging + sample-rate / block-size lifecycle
 - Parameter tree construction from truce parameter metadata
+- AUv3 host-visible factory presets via `factoryPresets` / `currentPreset`
 - Plugin state serialization via `truce_core::state`
 - GUI view hosting via `NSViewController` (v2) / `AUViewController` (v3)
 - Effects (`aufx`), instruments (`aumu`), and MIDI processors (`aumi`)

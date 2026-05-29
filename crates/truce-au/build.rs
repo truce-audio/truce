@@ -108,6 +108,8 @@ fn main() {
     println!("cargo:rustc-link-arg-cdylib=-Wl,-exported_symbol,_g_callbacks");
     println!("cargo:rustc-link-arg-cdylib=-Wl,-exported_symbol,_g_param_descriptors");
     println!("cargo:rustc-link-arg-cdylib=-Wl,-exported_symbol,_g_num_params");
+    println!("cargo:rustc-link-arg-cdylib=-Wl,-exported_symbol,_g_factory_preset_descriptors");
+    println!("cargo:rustc-link-arg-cdylib=-Wl,-exported_symbol,_g_num_factory_presets");
 
     if is_macos {
         // AU v2 factory + v2 cocoa-view class-name lookup. Both

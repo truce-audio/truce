@@ -222,6 +222,15 @@ impl<S: Sample> PluginLogicCore<S> for ProbePlugin {
         *self.last_load_state.borrow_mut() = data.to_vec();
         Ok(())
     }
+    fn factory_presets_static() -> Vec<truce_core::preset::FactoryPresetInfo>
+    where
+        Self: Sized,
+    {
+        Vec::new()
+    }
+    fn load_factory_preset(&self, _preset_number: i32) -> bool {
+        false
+    }
     fn state_changed(&mut self) {}
     fn latency(&self) -> u32 {
         0xAAAA

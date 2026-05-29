@@ -43,8 +43,8 @@ use truce_core::wrapper::{
 use truce_params::{ParamFlags, ParamInfo, Params};
 
 use ffi::{
-    AuCallbacks, AuMidi2Event, AuMidiEvent, AuParamDescriptor, AuParamEvent, AuPluginDescriptor,
-    AuTransportSnapshot,
+    AuCallbacks, AuFactoryPresetDescriptor, AuMidi2Event, AuMidiEvent, AuParamDescriptor,
+    AuParamEvent, AuPluginDescriptor, AuTransportSnapshot,
 };
 
 // ---------------------------------------------------------------------------
@@ -577,6 +577,16 @@ unsafe extern "C" fn cb_state_free(data: *mut u8, _len: u32) {
     }
 }
 
+unsafe extern "C" fn cb_factory_preset_load<P: PluginExport>(
+    ctx: *mut std::ffi::c_void,
+    number: i32,
+) -> i32 {
+    run_extern_callback_with::<P, i32>("au", "load_factory_preset", 0, || unsafe {
+        let inst = &*ctx.cast::<AuInstance<P>>();
+        i32::from(inst.plugin.load_factory_preset(number))
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Output event callbacks (plugin → host MIDI)
 // ---------------------------------------------------------------------------
@@ -1059,7 +1069,10 @@ fn register_au_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
     // `Self::create().params().param_infos()` walk inside the trait
     // default - see `PluginExport::param_infos_static`.
     let param_infos = P::param_infos_static();
+    let factory_preset_infos = P::factory_presets_static();
     let mut param_descs: Vec<AuParamDescriptor> = Vec::with_capacity(param_infos.len());
+    let mut factory_preset_descs: Vec<AuFactoryPresetDescriptor> =
+        Vec::with_capacity(factory_preset_infos.len());
 
     for pi in &param_infos {
         let cs = truce_core::wrapper::ParamCStrings::from_info(pi);
@@ -1072,6 +1085,14 @@ fn register_au_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
             step_count: pi.range.step_count().map_or(0, std::num::NonZero::get),
             unit: cs.unit.into_raw(),
             group: cs.group.into_raw(),
+        });
+    }
+
+    for preset in &factory_preset_infos {
+        let name = CString::new(preset.name).unwrap_or_default();
+        factory_preset_descs.push(AuFactoryPresetDescriptor {
+            number: preset.number,
+            name: name.into_raw(),
         });
     }
 
@@ -1114,6 +1135,7 @@ fn register_au_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
         state_save: cb_state_save::<P>,
         state_load: cb_state_load::<P>,
         state_free: cb_state_free,
+        factory_preset_load: cb_factory_preset_load::<P>,
         output_event_count: cb_output_event_count::<P>,
         output_event_at: cb_output_event_at::<P>,
         output_sysex_count: cb_output_sysex_count::<P>,
@@ -1127,6 +1149,7 @@ fn register_au_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
     }));
 
     let param_descs = param_descs.leak();
+    let factory_preset_descs = factory_preset_descs.leak();
 
     unsafe {
         ffi::truce_au_register(
@@ -1134,6 +1157,8 @@ fn register_au_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
             std::ptr::from_ref::<AuCallbacks>(callbacks),
             param_descs.as_ptr(),
             len_u32(param_descs.len()),
+            factory_preset_descs.as_ptr(),
+            len_u32(factory_preset_descs.len()),
         );
     }
 }

@@ -129,6 +129,7 @@ class TruceAUAudioUnit: AUAudioUnit {
     private var _parameterTree: AUParameterTree?
     private var _sampleRate: Double = 44100.0
     private var _maxFrames: UInt32 = 1024
+    private var selectedFactoryPreset: AUAudioUnitPreset?
 
     override init(componentDescription: AudioComponentDescription,
                   options: AudioComponentInstantiationOptions = []) throws {
@@ -180,6 +181,40 @@ class TruceAUAudioUnit: AUAudioUnit {
     override var parameterTree: AUParameterTree? {
         get { _parameterTree }
         set { _parameterTree = newValue }
+    }
+
+    override var factoryPresets: [AUAudioUnitPreset]? {
+        guard g_num_factory_presets > 0,
+              let descriptors = g_factory_preset_descriptors else { return nil }
+        var presets: [AUAudioUnitPreset] = []
+        presets.reserveCapacity(Int(g_num_factory_presets))
+        for i in 0..<g_num_factory_presets {
+            let desc = descriptors.advanced(by: Int(i)).pointee
+            presets.append(AUAudioUnitPreset(
+                number: Int(desc.number),
+                name: String(cString: desc.name)))
+        }
+        return presets
+    }
+
+    override var currentPreset: AUAudioUnitPreset? {
+        get {
+            selectedFactoryPreset
+        }
+        set {
+            guard let preset = newValue else {
+                selectedFactoryPreset = nil
+                return
+            }
+
+            if preset.number >= 0 {
+                if applyFactoryPreset(number: Int32(preset.number), notifyHost: true) {
+                    selectedFactoryPreset = matchingFactoryPreset(number: preset.number) ?? preset
+                }
+            } else {
+                selectedFactoryPreset = nil
+            }
+        }
     }
 
     /// MIDI output ports exposed to the host. `aumi` (MIDI Processor)
@@ -242,6 +277,39 @@ class TruceAUAudioUnit: AUAudioUnit {
             var buf = [CChar](repeating: 0, count: 128)
             let len = cb.param_format_value(rawCtx, UInt32(p.address), Double(val), &buf, 128)
             return len > 0 ? String(cString: buf) : String(format: "%.2f", val)
+        }
+    }
+
+    private func matchingFactoryPreset(number: Int) -> AUAudioUnitPreset? {
+        factoryPresets?.first { $0.number == number }
+    }
+
+    private func intFromStateValue(_ value: Any?) -> Int? {
+        if let int = value as? Int { return int }
+        if let number = value as? NSNumber { return number.intValue }
+        return nil
+    }
+
+    private func applyFactoryPreset(number: Int32, notifyHost: Bool) -> Bool {
+        guard let ctx = rustCtx, let cb = g_callbacks else { return false }
+        let applied = cb.pointee.factory_preset_load(ctx, number)
+        guard applied != 0 else { return false }
+        refreshParameterTreeFromRust(notifyHost: notifyHost)
+        return true
+    }
+
+    private func refreshParameterTreeFromRust(notifyHost: Bool) {
+        guard let ctx = rustCtx, let cb = g_callbacks,
+              let tree = _parameterTree else { return }
+        isSyncingToHost = true
+        defer { isSyncingToHost = false }
+        for param in tree.allParameters {
+            let rustVal = AUValue(cb.pointee.param_get_value(ctx, UInt32(param.address)))
+            if notifyHost {
+                param.setValue(rustVal, originator: nil)
+            } else {
+                param.value = rustVal
+            }
         }
     }
 
@@ -528,19 +596,34 @@ class TruceAUAudioUnit: AUAudioUnit {
                 state["truce_state"] = Data(bytes: data, count: Int(len))
                 cb.pointee.state_free(data, len)
             }
+            if let preset = selectedFactoryPreset {
+                state["truce_factory_preset"] = preset.number
+            }
             return state
         }
         set {
             super.fullState = newValue
-            guard let blob = newValue?["truce_state"] as? Data,
-                  let ctx = rustCtx, let cb = g_callbacks else { return }
-            blob.withUnsafeBytes { ptr in
-                cb.pointee.state_load(ctx, ptr.baseAddress?.assumingMemoryBound(to: UInt8.self), UInt32(blob.count))
-            }
-            if let tree = _parameterTree {
-                for param in tree.allParameters {
-                    param.value = AUValue(g_callbacks!.pointee.param_get_value(ctx, UInt32(param.address)))
+            let presetNumber = intFromStateValue(newValue?["truce_factory_preset"])
+            if let blob = newValue?["truce_state"] as? Data,
+               let ctx = rustCtx, let cb = g_callbacks {
+                blob.withUnsafeBytes { ptr in
+                    cb.pointee.state_load(ctx, ptr.baseAddress?.assumingMemoryBound(to: UInt8.self), UInt32(blob.count))
                 }
+                refreshParameterTreeFromRust(notifyHost: false)
+                if let presetNumber = presetNumber {
+                    selectedFactoryPreset = matchingFactoryPreset(number: presetNumber)
+                } else {
+                    selectedFactoryPreset = nil
+                }
+                return
+            }
+
+            if let presetNumber = presetNumber {
+                if applyFactoryPreset(number: Int32(presetNumber), notifyHost: false) {
+                    selectedFactoryPreset = matchingFactoryPreset(number: presetNumber)
+                }
+            } else {
+                selectedFactoryPreset = nil
             }
         }
     }
