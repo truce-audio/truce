@@ -201,6 +201,13 @@ fn clang_bundle_single(
     for sym in exports {
         cmd.arg(format!("-Wl,-exported_symbol,{sym}"));
     }
+    // `-all_load` pulls every staticlib object into the link, then
+    // `-dead_strip` removes everything not reachable from the
+    // `-exported_symbol` roots. Without this the bundle ships every
+    // monomorphization and dep the staticlib brought in - roughly
+    // double the size of the equivalent cdylib (AU2 / AAX), whose
+    // rustc-driven link gets `-dead_strip` for free on apple-darwin.
+    cmd.arg("-Wl,-dead_strip");
     cmd.arg(staticlib);
     cmd.arg("-o").arg(out);
 

@@ -2,6 +2,14 @@
 
 Notable changes per release.
 
+## 0.49.16
+
+- **macOS packaging: CLAP/VST3/VST2 bundles are now ~half the size.**
+  The bundle-bin link path inherited `-all_load` without a matching
+  `-dead_strip`, so every staticlib object survived; AU/AAX cdylib
+  links got `-dead_strip` for free via rustc. Added `-dead_strip` to
+  the `clang -bundle` step.
+
 ## 0.49.15
 
 - **`truce-gui`: fixed a dropdown popup positioning bug.** The popup
