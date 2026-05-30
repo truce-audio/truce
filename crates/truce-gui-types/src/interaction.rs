@@ -443,21 +443,34 @@ impl InteractionState {
     /// Update the hovered option in the open dropdown popup.
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     pub fn dropdown_update_hover(&mut self, mx: f32, my: f32) {
+        let mut changed = false;
         if let Some(ref mut dd) = self.dropdown {
             let (px, py, pw, ph) = dd.popup_rect;
-            if mx >= px && mx <= px + pw && my >= py && my <= py + ph {
+            let new_hover = if mx >= px && mx <= px + pw && my >= py && my <= py + ph {
                 let item_h = 18.0f32;
                 let padding = 4.0f32;
                 let local_idx = ((my - py - padding) / item_h) as usize;
                 let abs_idx = dd.scroll_offset + local_idx;
-                dd.hover_option = if abs_idx < dd.options.len() && local_idx < dd.visible_count {
+                if abs_idx < dd.options.len() && local_idx < dd.visible_count {
                     Some(abs_idx)
                 } else {
                     None
-                };
+                }
             } else {
-                dd.hover_option = None;
+                None
+            };
+            if new_hover != dd.hover_option {
+                dd.hover_option = new_hover;
+                changed = true;
             }
+        }
+        // `hover_option` is internal to `DropdownState` - the editor's
+        // repaint gate only watches `hover_idx` (the widget-level
+        // hover) and the open/closed transition, so without this flag
+        // the popup only re-rasterizes when the mouse incidentally
+        // trips one of those triggers.
+        if changed {
+            self.needs_repaint = true;
         }
     }
 
@@ -484,10 +497,21 @@ impl InteractionState {
         clippy::cast_sign_loss
     )]
     pub fn dropdown_scroll(&mut self, delta: i32) {
+        let mut changed = false;
         if let Some(ref mut dd) = self.dropdown {
             let max_offset = dd.options.len().saturating_sub(dd.visible_count);
             let new_offset = (dd.scroll_offset as i32 + delta).clamp(0, max_offset as i32) as usize;
-            dd.scroll_offset = new_offset;
+            if new_offset != dd.scroll_offset {
+                dd.scroll_offset = new_offset;
+                changed = true;
+            }
+        }
+        // The CPU render gate consults `take_repaint_request`; without
+        // this flag a wheel-scroll updates state silently and the
+        // popup looks frozen until an unrelated event flips the bit.
+        // GPU path repaints every frame and doesn't depend on it.
+        if changed {
+            self.needs_repaint = true;
         }
     }
 
@@ -967,9 +991,17 @@ fn apply_popup_scroll_drag(y: f32, state: &mut InteractionState) {
     }
     let items_scrolled = (dy / item_h).round() as i32;
     let new_offset = start_scroll_offset as i32 + items_scrolled;
+    let mut changed = false;
     if let Some(dd) = state.dropdown.as_mut() {
         let max_offset = (dd.options.len() as i32 - dd.visible_count as i32).max(0);
-        dd.scroll_offset = new_offset.clamp(0, max_offset) as usize;
+        let clamped = new_offset.clamp(0, max_offset) as usize;
+        if clamped != dd.scroll_offset {
+            dd.scroll_offset = clamped;
+            changed = true;
+        }
+    }
+    if changed {
+        state.needs_repaint = true;
     }
 }
 
