@@ -12,7 +12,8 @@
 #![forbid(unsafe_code)]
 
 use proc_macro::TokenStream;
-use quote::quote;
+use proc_macro2::TokenStream as TokenStream2;
+use quote::{ToTokens, quote};
 use std::collections::HashSet;
 use syn::ext::IdentExt;
 use syn::{Data, DeriveInput, Expr, Fields, Lit, Type, TypePath, UnOp};
@@ -284,6 +285,19 @@ impl MeterField {
     }
 }
 
+/// A resolved `default = ...` expression plus the tokens to emit
+/// for it. `value` drives the derive's compile-time range / shape
+/// checks; `path_tokens` carries the original `std::f64::consts::*`
+/// path through to the generated `ParamInfo` so clippy lints like
+/// `approx_constant` see the path, not the resolved literal. For
+/// numeric literals `path_tokens` stays `None` and the f64 value
+/// gets quoted in the usual way.
+#[derive(Clone)]
+pub(crate) struct DefaultExpr {
+    pub(crate) value: f64,
+    pub(crate) path_tokens: Option<TokenStream2>,
+}
+
 /// Parsed `#[param(...)]` attributes.
 #[derive(Default)]
 pub(crate) struct ParamAttrs {
@@ -292,7 +306,7 @@ pub(crate) struct ParamAttrs {
     short_name: Option<String>,
     group: Option<String>,
     pub(crate) range: Option<String>,
-    pub(crate) default: Option<f64>,
+    pub(crate) default: Option<DefaultExpr>,
     pub(crate) unit: Option<String>,
     pub(crate) flags: Option<String>,
     smooth: Option<String>,
@@ -417,7 +431,21 @@ fn parse_param_attrs(field: &syn::Field) -> ParamAttrs {
                     // an `Expr::Unary(Neg, Lit::Int(1))`, not a literal).
                     let expr: Expr = meta.value()?.parse()?;
                     match parse_default_expr(&expr) {
-                        Some(v) => attrs.default = Some(v),
+                        Some(value) => {
+                            // Preserve the original token stream when the
+                            // user wrote a const path (e.g.
+                            // `std::f64::consts::SQRT_2`) so clippy
+                            // lints against the macro expansion see the
+                            // path, not the resolved literal. Numeric
+                            // literals keep the existing f64-formatting
+                            // pathway.
+                            let path_tokens = matches!(
+                                expr,
+                                Expr::Path(syn::ExprPath { qself: None, .. })
+                            )
+                            .then(|| expr.to_token_stream());
+                            attrs.default = Some(DefaultExpr { value, path_tokens });
+                        }
                         None => push_err(
                             &mut attrs,
                             syn::Error::new_spanned(
@@ -803,9 +831,19 @@ fn gen_param_info_literal(f: &ParamField) -> Option<proc_macro2::TokenStream> {
     let name = a.name.as_deref().unwrap_or("Unnamed");
     let short_name = a.short_name.as_deref().unwrap_or(name);
     let group = a.group.as_deref().unwrap_or("");
-    let default_plain = a.default.unwrap_or(0.0);
+    let default_plain: TokenStream2 = match a.default.as_ref() {
+        Some(DefaultExpr {
+            path_tokens: Some(t),
+            ..
+        }) => t.clone(),
+        Some(DefaultExpr { value, .. }) => {
+            let v = *value;
+            quote! { #v }
+        }
+        None => quote! { 0.0 },
+    };
 
-    if let Some(d) = a.default {
+    if let Some(d) = a.default.as_ref().map(|d| d.value) {
         // Integer round-trip exactness checks - an epsilon-based
         // comparison would silently accept fractional defaults like
         // `2.5` for an `Int` / `Enum` param. The `as i64` / `as u32`
@@ -895,7 +933,7 @@ fn gen_field_constructor(f: &ParamField) -> proc_macro2::TokenStream {
     // runs at construction time because `variant_count()` isn't
     // visible to the macro at expansion time without per-call
     // const-eval plumbing.
-    if let Some(d) = a.default {
+    if let Some(d) = a.default.as_ref().map(|d| d.value) {
         // Integer round-trip exactness checks - an epsilon-based
         // comparison would silently accept fractional defaults like
         // `2.5` for an `Int` / `Enum` param. The `as i64` / `as u32`

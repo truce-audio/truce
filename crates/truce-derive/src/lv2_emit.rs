@@ -71,7 +71,7 @@ pub(crate) fn write_struct_sidecar(
         // that, otherwise hosts read `lv2:default` from the TTL and
         // open the plugin at the range's minimum (e.g. gain at -60 dB)
         // while VST3 / standalone honour the runtime's 0.0.
-        let default = p.attrs.default.unwrap_or(0.0);
+        let default = p.attrs.default.as_ref().map_or(0.0, |d| d.value);
         let _ = writeln!(buf, "default = {default}");
         if let Some(u) = &p.attrs.unit {
             let _ = writeln!(buf, "unit = \"{}\"", toml_escape(u));

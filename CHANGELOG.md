@@ -2,6 +2,15 @@
 
 Notable changes per release.
 
+## 0.49.19
+
+- **`#[param(default = std::f64::consts::*)]` no longer trips
+  `clippy::approx_constant` in the macro expansion.** The 0.49.18
+  parser resolved the path to its `f64` value but `quote!` re-emitted
+  it as a literal. The derive now embeds the original path tokens
+  verbatim while keeping the resolved `f64` for the compile-time
+  range / shape checks.
+
 ## 0.49.18
 
 - **`#[param(default = ...)]` now accepts `std::f64::consts::*`.**
