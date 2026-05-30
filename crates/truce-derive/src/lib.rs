@@ -422,8 +422,9 @@ fn parse_param_attrs(field: &syn::Field) -> ParamAttrs {
                             &mut attrs,
                             syn::Error::new_spanned(
                                 &expr,
-                                "expected a numeric literal for `default` \
-                                 (e.g. `default = 0.5`, `default = 3`, `default = -1`)",
+                                "expected a numeric literal or `std::f64::consts::*` constant for \
+                                 `default` (e.g. `default = 0.5`, `default = -1`, \
+                                 `default = std::f64::consts::SQRT_2`)",
                             ),
                         ),
                     }
@@ -471,12 +472,12 @@ fn is_meter_slot(ty: &Type) -> bool {
 
 /// Coerce a `default = ...` attribute expression into an `f64`.
 ///
-/// `meta.value().parse::<Lit>()` rejects unary-negated literals
-/// (`-1`) because the negation is an `Expr::Unary`, not part of the
-/// literal token. Parse as `Expr` instead, then unwrap the standard
-/// shapes: bare int/float literals (positive) and `-int` / `-float`
-/// (negative). Anything more elaborate (`1 + 2`, `f()`) returns
-/// `None` so the caller can emit a `compile_error!`.
+/// Accepts numeric literals (positive and `-`-prefixed) and a
+/// whitelisted set of `std::f64::consts::*` paths (also
+/// `core::f64::consts::*` and bare `f64::consts::*`). Range and
+/// shape checks downstream want a concrete `f64`, so anything
+/// outside this shape returns `None` and the caller emits a
+/// `compile_error!`.
 //
 // `i64 as f64` is an at-compile-time literal default whose magnitude
 // is bounded by IntParam ranges; large enough to lose mantissa bits
@@ -499,6 +500,58 @@ fn parse_default_expr(expr: &Expr) -> Option<f64> {
             expr: inner,
             ..
         }) => parse_default_expr(inner).map(|v| -v),
+        Expr::Path(syn::ExprPath {
+            path, qself: None, ..
+        }) => std_f64_const(path),
+        _ => None,
+    }
+}
+
+/// Resolve a `[std::|core::]?f64::consts::NAME` path to its `f64`
+/// value. Returns `None` for any other shape so the caller can keep
+/// using the existing `compile_error!` for unsupported expressions.
+///
+/// Closed whitelist so the derive's downstream range / shape checks
+/// keep working with a concrete `f64` literal embedded in the
+/// expansion.
+fn std_f64_const(path: &syn::Path) -> Option<f64> {
+    let segs: Vec<String> = path
+        .segments
+        .iter()
+        .filter(|s| s.arguments.is_none())
+        .map(|s| s.ident.to_string())
+        .collect();
+    if segs.len() != path.segments.len() {
+        return None;
+    }
+    let prefix_ok = match segs.as_slice() {
+        [a, b, _] => a == "f64" && b == "consts",
+        [a, b, c, _] => (a == "std" || a == "core") && b == "f64" && c == "consts",
+        _ => false,
+    };
+    if !prefix_ok {
+        return None;
+    }
+    match segs.last()?.as_str() {
+        "PI" => Some(std::f64::consts::PI),
+        "TAU" => Some(std::f64::consts::TAU),
+        "E" => Some(std::f64::consts::E),
+        "SQRT_2" => Some(std::f64::consts::SQRT_2),
+        "FRAC_1_SQRT_2" => Some(std::f64::consts::FRAC_1_SQRT_2),
+        "FRAC_PI_2" => Some(std::f64::consts::FRAC_PI_2),
+        "FRAC_PI_3" => Some(std::f64::consts::FRAC_PI_3),
+        "FRAC_PI_4" => Some(std::f64::consts::FRAC_PI_4),
+        "FRAC_PI_6" => Some(std::f64::consts::FRAC_PI_6),
+        "FRAC_PI_8" => Some(std::f64::consts::FRAC_PI_8),
+        "FRAC_1_PI" => Some(std::f64::consts::FRAC_1_PI),
+        "FRAC_2_PI" => Some(std::f64::consts::FRAC_2_PI),
+        "FRAC_2_SQRT_PI" => Some(std::f64::consts::FRAC_2_SQRT_PI),
+        "LN_2" => Some(std::f64::consts::LN_2),
+        "LN_10" => Some(std::f64::consts::LN_10),
+        "LOG2_E" => Some(std::f64::consts::LOG2_E),
+        "LOG10_E" => Some(std::f64::consts::LOG10_E),
+        "LOG2_10" => Some(std::f64::consts::LOG2_10),
+        "LOG10_2" => Some(std::f64::consts::LOG10_2),
         _ => None,
     }
 }
@@ -1988,5 +2041,62 @@ mod snake_to_pascal_tests {
     fn all_underscores_falls_back_to_underscore() {
         // `___` would otherwise produce "" → Ident::new("") panic.
         assert_eq!(convert("___"), "_");
+    }
+}
+
+#[cfg(test)]
+mod parse_default_tests {
+    use super::parse_default_expr;
+
+    fn eval(src: &str) -> Option<f64> {
+        let expr: syn::Expr = syn::parse_str(src).expect("test input must parse as Expr");
+        parse_default_expr(&expr)
+    }
+
+    #[test]
+    fn numeric_literals() {
+        assert_eq!(eval("0.5"), Some(0.5));
+        assert_eq!(eval("3"), Some(3.0));
+        assert_eq!(eval("-1"), Some(-1.0));
+        assert_eq!(eval("-0.25"), Some(-0.25));
+        assert_eq!(eval("true"), Some(1.0));
+        assert_eq!(eval("false"), Some(0.0));
+    }
+
+    #[test]
+    fn std_f64_const_paths() {
+        // All three accepted prefixes resolve to the same value.
+        let pi = std::f64::consts::PI;
+        assert_eq!(eval("std::f64::consts::PI"), Some(pi));
+        assert_eq!(eval("core::f64::consts::PI"), Some(pi));
+        assert_eq!(eval("f64::consts::PI"), Some(pi));
+        // Negation composes with `Expr::Unary`.
+        assert_eq!(eval("-std::f64::consts::PI"), Some(-pi));
+        // A handful of others to confirm the table.
+        assert_eq!(eval("std::f64::consts::TAU"), Some(std::f64::consts::TAU));
+        assert_eq!(
+            eval("std::f64::consts::SQRT_2"),
+            Some(std::f64::consts::SQRT_2)
+        );
+        assert_eq!(
+            eval("std::f64::consts::FRAC_PI_2"),
+            Some(std::f64::consts::FRAC_PI_2)
+        );
+        assert_eq!(eval("std::f64::consts::LN_2"), Some(std::f64::consts::LN_2));
+    }
+
+    #[test]
+    fn rejected_shapes() {
+        // Unknown const ident under an accepted prefix.
+        assert_eq!(eval("std::f64::consts::DOES_NOT_EXIST"), None);
+        // Bare ident: ambiguous with crate-local consts, so not accepted.
+        assert_eq!(eval("PI"), None);
+        // Arbitrary crate path.
+        assert_eq!(eval("crate::FOO"), None);
+        // `f32::consts::*` is out of scope - the macro embeds `f64`.
+        assert_eq!(eval("std::f32::consts::PI"), None);
+        // Function calls and arithmetic expressions are not const-evaluated.
+        assert_eq!(eval("some_fn()"), None);
+        assert_eq!(eval("1 + 2"), None);
     }
 }
