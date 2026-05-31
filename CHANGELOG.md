@@ -2,6 +2,28 @@
 
 Notable changes per release.
 
+## 0.49.20
+
+- **GUI: discrete params now snap during drag and wheel.** `IntParam` /
+  `EnumParam` slider, knob, and XY-pad drags previously emitted
+  continuous normalized values; storage snapped on writeback but the
+  in-flight edit left UI and audio reads briefly out of phase.
+  `ParamSnapshot::snap_normalized` now snaps at emit time.
+- **GUI: dropdown A→B switch now repaints on the CPU renderer.** The
+  editor's repaint gate diffs `dropdown_is_open()` which stays `true`
+  across a close-then-open inside one click; `dropdown_close` and
+  `open_dropdown` now flag the dirty bit explicitly.
+- **Layout: labeled sections now start strictly below the previous
+  section's tallest widget.** Section breaks advanced `cursor_row` by
+  1, which packed the next section alongside a tall (`rows = N`) widget
+  from the prior section. Now advances past `max_occupied_row`.
+- **New `deg` unit.** `#[param(unit = "deg")]` (or `"°"`) prints e.g.
+  `180.0°`. `ParamUnit::Degrees` slots into the existing variant set.
+- **New example: `truce-example-gui-zoo`.** Passthrough plugin that
+  exercises every built-in widget kind across mixed spans and
+  positions, every `ParamUnit` variant, and the discrete-snap path.
+  Lives in `examples/` and is wired into desktop + iOS screenshot CI.
+
 ## 0.49.19
 
 - **`#[param(default = std::f64::consts::*)]` no longer trips
