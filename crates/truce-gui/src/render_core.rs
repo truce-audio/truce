@@ -31,6 +31,7 @@ pub(crate) struct EditorSnapshotClosures {
     pub get_options: Box<dyn Fn(u32) -> Vec<String>>,
     pub default_normalized: Box<dyn Fn(u32) -> f32>,
     pub next_discrete_normalized: Box<dyn Fn(u32) -> f32>,
+    pub snap_normalized: Box<dyn Fn(u32, f32) -> f32>,
     pub param_name: Box<dyn Fn(u32) -> String>,
     pub widget_type: Box<dyn Fn(u32) -> WidgetType>,
 }
@@ -45,6 +46,7 @@ impl EditorSnapshotClosures {
             get_options: &*self.get_options,
             default_normalized: &*self.default_normalized,
             next_discrete_normalized: &*self.next_discrete_normalized,
+            snap_normalized: &*self.snap_normalized,
             param_name: &*self.param_name,
             widget_type: &*self.widget_type,
         }
@@ -68,6 +70,7 @@ pub(crate) fn build_snapshot_closures<P: Params + 'static>(
     let p_opts = Arc::clone(&p);
     let p_default = Arc::clone(&p);
     let p_next = Arc::clone(&p);
+    let p_snap = Arc::clone(&p);
     let p_name = Arc::clone(&p);
     let p_wtype = Arc::clone(&p);
 
@@ -137,6 +140,17 @@ pub(crate) fn build_snapshot_closures<P: Params + 'static>(
         let next = if plain >= max { 0.0 } else { plain + 1.0 };
         f32::from_f64(info.range.normalize(next))
     });
+    let snap_normalized: Box<dyn Fn(u32, f32) -> f32> = Box::new(move |id, norm| {
+        // `Discrete` / `Enum` ranges round in `denormalize`; round-
+        // tripping through normalize gives the snapped normalized.
+        // `Linear` / `Logarithmic` round-trip is the identity so
+        // continuous params are unaffected.
+        let Some(info) = p_snap.param_infos().iter().find(|i| i.id == id).copied() else {
+            return norm;
+        };
+        let plain = info.range.denormalize(f64::from(norm));
+        f32::from_f64(info.range.normalize(plain))
+    });
     let param_name: Box<dyn Fn(u32) -> String> = Box::new(move |id| {
         p_name
             .param_infos()
@@ -162,6 +176,7 @@ pub(crate) fn build_snapshot_closures<P: Params + 'static>(
         get_options,
         default_normalized,
         next_discrete_normalized,
+        snap_normalized,
         param_name,
         widget_type,
     }

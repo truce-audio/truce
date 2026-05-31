@@ -55,6 +55,7 @@ pub enum ParamUnit {
     Percent,
     Semitones,
     Pan,
+    Degrees,
 }
 
 impl ParamUnit {
@@ -68,6 +69,7 @@ impl ParamUnit {
             Self::Seconds => "s",
             Self::Percent => "%",
             Self::Semitones => "st",
+            Self::Degrees => "°",
             Self::Pan | Self::None => "",
         }
     }

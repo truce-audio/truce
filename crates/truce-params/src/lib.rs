@@ -85,6 +85,13 @@ pub fn format_param_value(info: &ParamInfo, value: f64) -> String {
                 format!("{value:.1} st")
             }
         }
+        ParamUnit::Degrees => {
+            if is_int {
+                format!("{int_value}°")
+            } else {
+                format!("{value:.1}°")
+            }
+        }
         ParamUnit::Pan => {
             // Convention: pan params are normalized to [-1.0, 1.0]. Round
             // to nearest integer percent first so the dead-zone test and

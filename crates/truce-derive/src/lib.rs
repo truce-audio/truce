@@ -744,6 +744,7 @@ fn parse_unit_tokens(unit: &str) -> proc_macro2::TokenStream {
         "%" => quote! { ::truce::params::ParamUnit::Percent },
         "st" => quote! { ::truce::params::ParamUnit::Semitones },
         "pan" => quote! { ::truce::params::ParamUnit::Pan },
+        "deg" | "°" => quote! { ::truce::params::ParamUnit::Degrees },
         "" | "none" => quote! { ::truce::params::ParamUnit::None },
         // Loud compile-error rather than silent fallback - typos like
         // `"hz "` (trailing space) or `"DB"` (uppercase) shouldn't map
@@ -751,7 +752,7 @@ fn parse_unit_tokens(unit: &str) -> proc_macro2::TokenStream {
         // "0.5 Hz" in the host.
         other => {
             let msg =
-                format!("unknown unit `{other}` - supported: dB, Hz, ms, s, %, st, pan, none");
+                format!("unknown unit `{other}` - supported: dB, Hz, ms, s, %, st, pan, deg, none");
             quote! { compile_error!(#msg) }
         }
     }

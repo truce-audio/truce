@@ -38,6 +38,13 @@ pub struct ParamSnapshot<'a> {
     /// advance. Wraps around at the end of the range.
     pub next_discrete_normalized: &'a dyn Fn(u32) -> f32,
 
+    /// Quantize a normalized value to the param's nearest representable
+    /// step. For `IntParam` / `EnumParam` this snaps to integer steps;
+    /// continuous (`FloatParam`) ranges return the input unchanged.
+    /// Called from drag / wheel paths so emitted `ParamEdit::Set` events
+    /// already carry the snapped value.
+    pub snap_normalized: &'a dyn Fn(u32, f32) -> f32,
+
     /// Parameter display name. Used as a fallback label when a layout
     /// entry did not supply its own (e.g. XY-pad axis names).
     pub param_name: &'a dyn Fn(u32) -> String,

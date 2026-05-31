@@ -485,7 +485,16 @@ impl InteractionState {
     /// immediate-reopen click landing on the same button without
     /// having to read `self.dropdown` *before* closing.
     pub fn dropdown_close(&mut self) -> Option<usize> {
-        self.dropdown.take().map(|dd| dd.region_idx)
+        let closed = self.dropdown.take().map(|dd| dd.region_idx);
+        if closed.is_some() {
+            // The editor's repaint gate watches `dropdown_is_open()`,
+            // which stays `true` across an A->B switch (close-then-open
+            // inside one event). Flag the dirty bit explicitly so the
+            // CPU renderer repaints when only the popup identity
+            // changes.
+            self.needs_repaint = true;
+        }
+        closed
     }
 
     /// Scroll the dropdown popup by `delta` items (positive = down, negative = up).
@@ -650,7 +659,7 @@ pub fn dispatch_in(
                     } else {
                         None
                     };
-                    apply_drag(pointer_id, x, y, y_id, state, &mut edits);
+                    apply_drag(pointer_id, x, y, y_id, snapshot, state, &mut edits);
                 } else {
                     // Hover / dropdown-hover are single-cursor concepts;
                     // skip for genuine multi-touch pointers so a second
@@ -766,7 +775,8 @@ pub fn dispatch_in(
                         let param_id = state.knob_regions[idx].param_id;
                         let norm = (snapshot.get_param)(param_id);
                         let step = dy / KNOB_PIXELS_PER_UNIT;
-                        let new_norm = (norm + step).clamp(0.0, 1.0);
+                        let new_norm =
+                            (snapshot.snap_normalized)(param_id, (norm + step).clamp(0.0, 1.0));
                         edits.push(ParamEdit::Begin { id: param_id });
                         edits.push(ParamEdit::Set {
                             id: param_id,
@@ -958,6 +968,10 @@ fn open_dropdown(
         scroll_offset,
         visible_count,
     });
+    // Matches `dropdown_close`: flag the dirty bit so the popup paints
+    // even if the editor's repaint gate only saw `dropdown_is_open()`
+    // toggle on (it diff-checks open/closed but not popup identity).
+    state.needs_repaint = true;
 }
 
 /// Touch scroll-drag on the open dropdown popup. Maps vertical
@@ -1010,12 +1024,19 @@ fn apply_drag(
     x: f32,
     y: f32,
     y_id_for_xy: Option<u32>,
+    snapshot: &ParamSnapshot<'_>,
     state: &InteractionState,
     edits: &mut Vec<ParamEdit>,
 ) {
     let Some(drag) = state.drag_for(pointer_id) else {
         return;
     };
+    // `snap_normalized` rounds to integer steps for `Discrete` / `Enum`
+    // ranges; continuous params round-trip the identity. Without it
+    // the editor's writeback path snaps in storage but the emitted
+    // edit still carries the unsnapped value, which left mid-drag UI
+    // and audio reads out of phase.
+    let snap = |id, n: f32| (snapshot.snap_normalized)(id, n);
     match drag.widget_type {
         WidgetType::XYPad => {
             let pad_margin = 4.0;
@@ -1030,12 +1051,12 @@ fn apply_drag(
 
             edits.push(ParamEdit::Set {
                 id: drag.param_id,
-                normalized: norm_x,
+                normalized: snap(drag.param_id, norm_x),
             });
             if let Some(y_id) = y_id_for_xy {
                 edits.push(ParamEdit::Set {
                     id: y_id,
-                    normalized: norm_y,
+                    normalized: snap(y_id, norm_y),
                 });
             }
         }
@@ -1043,7 +1064,7 @@ fn apply_drag(
             if let Some((pid, new_norm)) = state.update_slider_drag(pointer_id, x) {
                 edits.push(ParamEdit::Set {
                     id: pid,
-                    normalized: f32::from_f64(new_norm),
+                    normalized: snap(pid, f32::from_f64(new_norm)),
                 });
             }
         }
@@ -1051,7 +1072,7 @@ fn apply_drag(
             if let Some((pid, new_norm)) = state.update_drag(pointer_id, y) {
                 edits.push(ParamEdit::Set {
                     id: pid,
-                    normalized: f32::from_f64(new_norm),
+                    normalized: snap(pid, f32::from_f64(new_norm)),
                 });
             }
         }

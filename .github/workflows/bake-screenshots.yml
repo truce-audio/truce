@@ -81,6 +81,7 @@ env:
     truce-example-fundsp-reverb-worker
     truce-example-fundsp-reverb-simple
     truce-example-transpose
+    truce-example-gui-zoo
 
 jobs:
   linux:

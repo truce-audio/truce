@@ -811,8 +811,7 @@ impl GridLayout {
             for &(break_idx, label) in breaks {
                 if break_idx == i {
                     if any_emitted || cursor_col > 0 {
-                        let max_occupied_row =
-                            occupied.iter().map(|&(_, r)| r).max().unwrap_or(0);
+                        let max_occupied_row = occupied.iter().map(|&(_, r)| r).max().unwrap_or(0);
                         cursor_row = (cursor_row + 1).max(max_occupied_row + 1);
                         cursor_col = 0;
                     }

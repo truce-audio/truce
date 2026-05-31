@@ -45,27 +45,51 @@ pub enum Mode {
 
 #[derive(Params)]
 pub struct ZooParams {
-    // -- Knobs (1x1 default, plus wide + tall variants) --
-    #[param(name = "K1", range = "linear(0, 1)")]
+    // -- Knobs (mixed ranges, units, and defaults so the zoo exercises
+    // every range parser + unit formatter path) --
+    // `Percent` formatter multiplies by 100; range must stay [0, 1].
+    #[param(name = "Mix", range = "linear(0, 1)", default = 0.5, unit = "%")]
     pub k1: FloatParam,
-    #[param(name = "K2", range = "linear(0, 1)")]
+    #[param(name = "Gain", range = "linear(-60, 6)", default = 0, unit = "dB")]
     pub k2: FloatParam,
-    #[param(name = "K3", range = "linear(0, 1)")]
+    #[param(name = "Freq", range = "log(20, 20000)", default = 1000, unit = "Hz")]
     pub k3: FloatParam,
-    #[param(name = "K4", range = "linear(0, 1)")]
+    #[param(name = "Drive", range = "linear(0, 1)", default = 0.25)]
     pub k4: FloatParam,
-    #[param(name = "Wide", range = "linear(0, 1)")]
+    #[param(name = "Pan", range = "linear(-1, 1)", default = 0, unit = "pan")]
     pub k_wide: FloatParam,
-    #[param(name = "Tall", range = "linear(0, 1)")]
+    #[param(name = "Depth", range = "linear(0, 1)", default = 0.75)]
     pub k_tall: FloatParam,
-    #[param(name = "Big", range = "linear(0, 1)")]
+    // Exercises the `deg` unit. Default lands at center of 0..360.
+    #[param(name = "Phase", range = "linear(0, 360)", default = 180, unit = "deg")]
     pub k_big: FloatParam,
+    // Filler 1x1 knobs - auto-flow drops these into the 3x2 hole to
+    // the right of KBig (cols 3-5, rows 1-2) so the wide / tall /
+    // big variants don't leave a giant blank patch on row 1-2.
+    // `default = std::f64::consts::PI` exercises the 0.49.18 / 0.49.19
+    // const-path parser. PI ≈ 3.14 lands inside the log(0.1, 20) Q range.
+    #[param(name = "Q", range = "log(0.1, 20)", default = std::f64::consts::PI)]
+    pub k5: FloatParam,
+    #[param(name = "Pitch", range = "discrete(-12, 12)", default = 0, unit = "st")]
+    pub k6: IntParam,
+    #[param(name = "Time", range = "linear(0, 1000)", default = 200, unit = "ms")]
+    pub k7: FloatParam,
+    #[param(name = "Trim", range = "linear(-12, 12)", default = 0, unit = "dB")]
+    pub k8: FloatParam,
+    #[param(name = "Release", range = "linear(0, 10)", default = 1.5, unit = "s")]
+    pub k9: FloatParam,
+    #[param(name = "Hi", range = "linear(0, 1)", default = 0.66)]
+    pub k10: FloatParam,
 
-    // -- Sliders (float, int, and a wide variant) --
-    #[param(name = "Float", range = "linear(0, 100)", unit = "%")]
+    // -- Sliders (float, int, a knob between, and a wide variant) --
+    #[param(name = "Float", range = "linear(0, 1)", unit = "%")]
     pub s_float: FloatParam,
     #[param(name = "Int", range = "discrete(0, 10)")]
     pub s_int: IntParam,
+    // Mid-row knob - inserted between the slim sliders and the wide
+    // slider to exercise mixed-widget-kind row layout.
+    #[param(name = "Mid", range = "linear(0, 1)", default = 0.5)]
+    pub k_mid: FloatParam,
     #[param(name = "Wide", range = "linear(-60, 6)", unit = "dB")]
     pub s_wide: FloatParam,
 
@@ -75,19 +99,33 @@ pub struct ZooParams {
     #[param(name = "Off")]
     pub t_off: BoolParam,
 
-    // -- Selector (cycle) + Dropdown (popup) --
+    // -- Selector (cycle) + Dropdowns (default + wide) --
     #[param(name = "Shape")]
     pub shape: EnumParam<Shape>,
     #[param(name = "Mode")]
     pub mode: EnumParam<Mode>,
+    #[param(name = "Mode Wide")]
+    pub mode_wide: EnumParam<Mode>,
 
-    // -- Meters: single-channel and stereo pair --
+    // -- Meters: single-channel, stereo pair, and a 6-channel bus --
     #[meter]
     pub m_in: MeterSlot,
     #[meter]
     pub m_l: MeterSlot,
     #[meter]
     pub m_r: MeterSlot,
+    #[meter]
+    pub m_6a: MeterSlot,
+    #[meter]
+    pub m_6b: MeterSlot,
+    #[meter]
+    pub m_6c: MeterSlot,
+    #[meter]
+    pub m_6d: MeterSlot,
+    #[meter]
+    pub m_6e: MeterSlot,
+    #[meter]
+    pub m_6f: MeterSlot,
 }
 
 pub struct Zoo {
@@ -126,12 +164,19 @@ impl PluginLogic for Zoo {
         }
 
         // Drive meters from the output peak (passthrough, so in == out).
-        // Meters animate when audio flows; the zoo is also a meter-
-        // rendering test.
+        // The 6-channel bus meter gets stepped fractions of the peak so
+        // each channel renders at a different height even when only one
+        // input channel is feeding signal.
         if buffer.num_output_channels() >= 1 {
             let p = buffer.output_peak(0);
             context.set_meter(P::MIn, p);
             context.set_meter(P::ML, p);
+            context.set_meter(P::M6a, p);
+            context.set_meter(P::M6b, p * 0.83);
+            context.set_meter(P::M6c, p * 0.66);
+            context.set_meter(P::M6d, p * 0.5);
+            context.set_meter(P::M6e, p * 0.33);
+            context.set_meter(P::M6f, p * 0.17);
         }
         if buffer.num_output_channels() >= 2 {
             context.set_meter(P::MR, buffer.output_peak(1));
@@ -152,6 +197,14 @@ impl PluginLogic for Zoo {
                     knob(P::KWide, "2x1").cols(2),
                     knob(P::KTall, "1x2").rows(2),
                     knob(P::KBig, "2x2").cols(2).rows(2),
+                    // Auto-flow drops these six into cols 3-5 of rows
+                    // 1-2, filling the gap to the right of KBig.
+                    knob(P::K5, "1x1"),
+                    knob(P::K6, "1x1"),
+                    knob(P::K7, "1x1"),
+                    knob(P::K8, "1x1"),
+                    knob(P::K9, "1x1"),
+                    knob(P::K10, "1x1"),
                 ],
             ),
             section(
@@ -159,6 +212,7 @@ impl PluginLogic for Zoo {
                 vec![
                     slider(P::SFloat, "Float"),
                     slider(P::SInt, "Int"),
+                    knob(P::KMid, "Mid"),
                     slider(P::SWide, "Wide").cols(2),
                 ],
             ),
@@ -170,17 +224,27 @@ impl PluginLogic for Zoo {
                     selector(P::Shape, "Cycle").cols(2),
                 ],
             ),
-            section("Dropdown", vec![dropdown(P::Mode, "Popup").cols(2)]),
+            section(
+                "Dropdown",
+                vec![
+                    dropdown(P::Mode, "Popup").cols(2),
+                    dropdown(P::ModeWide, "Wide").cols(4),
+                ],
+            ),
             section(
                 "Meters",
                 vec![
                     meter(&[P::MIn], "Input").rows(2),
                     meter(&[P::ML, P::MR], "L / R").rows(2),
+                    meter(&[P::M6a, P::M6b, P::M6c, P::M6d, P::M6e, P::M6f], "6ch")
+                        .cols(2)
+                        .rows(2),
                 ],
             ),
             section(
                 "XY Pad",
                 vec![
+                    xy_pad(P::K5, P::K6, "1x1").cols(1).rows(1),
                     xy_pad(P::K1, P::K2, "2x2"),
                     xy_pad(P::K3, P::K4, "3x3").cols(3).rows(3),
                 ],
