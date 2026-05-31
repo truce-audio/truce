@@ -802,11 +802,18 @@ impl GridLayout {
 
         // Second pass: auto-place widgets.
         for (i, w) in self.widgets.iter_mut().enumerate() {
-            // Check for section breaks at this widget index.
+            // Check for section breaks at this widget index. A break
+            // advances past any previously-occupied row so a new
+            // section starts strictly below the prior section's
+            // tallest widget. Bumping by just 1 lets a section pack
+            // alongside a tall widget from the prior section (the
+            // 1x2 KTall + sliders case in the GUI zoo).
             for &(break_idx, label) in breaks {
                 if break_idx == i {
                     if any_emitted || cursor_col > 0 {
-                        cursor_row += 1;
+                        let max_occupied_row =
+                            occupied.iter().map(|&(_, r)| r).max().unwrap_or(0);
+                        cursor_row = (cursor_row + 1).max(max_occupied_row + 1);
                         cursor_col = 0;
                     }
                     self.sections.push((cursor_row, label));

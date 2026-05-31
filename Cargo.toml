@@ -50,6 +50,7 @@ members = [
     "examples/truce-example-gain-slint",
     "examples/truce-example-fundsp-reverb-worker",
     "examples/truce-example-fundsp-reverb-simple",
+    "examples/truce-example-gui-zoo",
 ]
 
 [workspace.package]

@@ -6784,6 +6784,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "truce-example-gui-zoo"
+version = "0.49.19"
+dependencies = [
+ "clap-sys",
+ "truce",
+ "truce-aax",
+ "truce-au",
+ "truce-clap",
+ "truce-core",
+ "truce-gui",
+ "truce-gui-types",
+ "truce-loader",
+ "truce-lv2",
+ "truce-params",
+ "truce-standalone",
+ "truce-test",
+ "truce-vst2",
+ "truce-vst3",
+]
+
+[[package]]
 name = "truce-example-state"
 version = "0.49.19"
 dependencies = [
