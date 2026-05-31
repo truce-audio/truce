@@ -2,3 +2,4 @@
 .DS_STORE
 .cargo/config.toml
 **/*.pyc
+**/*.swp
