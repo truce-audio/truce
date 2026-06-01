@@ -348,6 +348,19 @@ windows_icon = "static/truce-minimal.ico"
 macos_icon = "static/truce-minimal.icns"
 ios_icon_set = "static/truce-minimal.appiconset"
 
+[[plugin]]
+name = "Truce GUI Zoo (egui)"
+bundle_id = "gui-zoo-egui"
+crate = "truce-example-gui-zoo-egui"
+category = "effect"
+fourcc = "TZeg"
+au3_subtype = "TZe3"
+au_tag = "Effects"
+au3_name = "Truce GUI Zoo egui (AUv3)"
+windows_icon = "static/truce-minimal.ico"
+macos_icon = "static/truce-minimal.icns"
+ios_icon_set = "static/truce-minimal.appiconset"
+
 # Suite installer wrapping every example above. `cargo truce package`
 # (no flags) produces both per-plugin installers and this suite installer.
 # Pass `--no-per-plugin` for suite-only output, `--no-suite` to drop it.

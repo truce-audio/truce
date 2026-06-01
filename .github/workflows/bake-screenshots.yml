@@ -82,6 +82,7 @@ env:
     truce-example-fundsp-reverb-simple
     truce-example-transpose
     truce-example-gui-zoo
+    truce-example-gui-zoo-egui
 
 jobs:
   linux:

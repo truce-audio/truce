@@ -201,7 +201,8 @@ jobs:
               truce-example-fundsp-reverb-worker \
               truce-example-fundsp-reverb-simple \
               truce-example-transpose \
-              truce-example-gui-zoo; do
+              truce-example-gui-zoo \
+              truce-example-gui-zoo-egui; do
             short=${crate#truce-example-}
             short_under=${short//-/_}
             echo "=== $crate ==="
@@ -214,7 +215,7 @@ jobs:
               --out "examples/$crate/screenshots/${short_under}_container_ios.png" \
               -p "$crate" || fail=$((fail + 1))
           done
-          echo "container-mode regressions: $fail / 12"
+          echo "container-mode regressions: $fail / 13"
           exit $fail
 
       # `--check` writes each freshly-rendered PNG to
