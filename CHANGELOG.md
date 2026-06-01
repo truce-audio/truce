@@ -2,6 +2,14 @@
 
 Notable changes per release.
 
+## 0.49.22
+
+- **New example: `truce-example-dasp-bitcrusher`.** Showcases
+  `dasp_sample::Sample` bit-depth round-tripping for 8-bit / 16-bit
+  quantization, with a sample-and-hold downsampler.
+- **`truce-example-gui-zoo-iced`: added a Dropdown section** exercising
+  the `param_dropdown` alias added in 0.49.21.
+
 ## 0.49.21
 
 - **`truce-egui`: int sliders now snap and show plain integers.**
