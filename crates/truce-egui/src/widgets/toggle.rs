@@ -15,7 +15,9 @@ pub fn param_toggle<P: ?Sized>(
     let id = id.into();
     let is_on = state.get_param(id) > 0.5;
 
-    let desired = egui::vec2(60.0, 30.0);
+    // Height matches `param_selector` so a row mixing the two
+    // bottom-anchors its labels on the same baseline.
+    let desired = egui::vec2(60.0, 40.0);
     let (rect, response) = ui.allocate_exact_size(desired, egui::Sense::click());
 
     if response.clicked() {
@@ -26,11 +28,12 @@ pub fn param_toggle<P: ?Sized>(
     if ui.is_rect_visible(rect) {
         let painter = ui.painter_at(rect);
 
-        // Switch track
+        // Switch track centered on the same y as `param_selector`'s
+        // box (`top + 14`) so a row mixing them lines up vertically.
         let track_h = 16.0;
         let track_w = 32.0;
         let track_rect = egui::Rect::from_center_size(
-            egui::pos2(rect.center().x, rect.top() + track_h / 2.0 + 2.0),
+            egui::pos2(rect.center().x, rect.top() + 14.0),
             egui::vec2(track_w, track_h),
         );
 

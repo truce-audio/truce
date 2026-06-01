@@ -51,6 +51,7 @@ members = [
     "examples/truce-example-fundsp-reverb-worker",
     "examples/truce-example-fundsp-reverb-simple",
     "examples/truce-example-gui-zoo",
+    "examples/truce-example-gui-zoo-egui",
 ]
 
 [workspace.package]
