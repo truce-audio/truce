@@ -34,6 +34,7 @@ jobs:
         with:
           components: rustfmt
       - run: cargo fmt --all -- --check
+      - run: cargo fmt --all --manifest-path crates/truce-slint/Cargo.toml -- --check
 
   test:
     name: ubuntu-24.04 (stable)
@@ -97,6 +98,20 @@ jobs:
         run: cargo test --workspace --exclude truce-example-eq -- gui_screenshot
       - name: screenshot tests (gpu)
         run: cargo test -p truce-example-eq -- gui_screenshot
+
+      # truce-slint lives in a sub-workspace (skia-bindings `links`
+      # collision with truce-vizia in the main workspace - see
+      # crates/truce-slint/Cargo.toml). `--workspace` above doesn't
+      # reach into it, so mirror the gates here against the sub-
+      # workspace's own manifest.
+      - name: clippy (truce-slint sub-workspace)
+        run: cargo clippy --manifest-path crates/truce-slint/Cargo.toml --workspace --all-targets -- -D warnings
+      - name: build (truce-slint sub-workspace)
+        run: cargo build --manifest-path crates/truce-slint/Cargo.toml --workspace --all-targets
+      - name: test (truce-slint sub-workspace)
+        run: cargo test --manifest-path crates/truce-slint/Cargo.toml --workspace -- --skip gui_screenshot
+      - name: screenshot tests (truce-slint sub-workspace)
+        run: cargo test --manifest-path crates/truce-slint/Cargo.toml --workspace -- gui_screenshot
 
       # Ratio-based regression guard: gain_simd_fast must run at
       # least 5x faster than the naive gain shape on the same

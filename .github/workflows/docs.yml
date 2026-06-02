@@ -52,6 +52,13 @@ jobs:
       - name: cargo doc
         run: cargo doc --workspace --no-deps
 
+      # truce-slint sub-workspace (skia-bindings `links` collision -
+      # see crates/truce-slint/Cargo.toml). Render its docs into the
+      # same target/doc tree so the published rustdoc still links
+      # cross-crate.
+      - name: cargo doc (truce-slint sub-workspace)
+        run: cargo doc --manifest-path crates/truce-slint/Cargo.toml --workspace --no-deps --target-dir target
+
       - name: redirect index.html → truce
         if: github.event_name != 'pull_request'
         run: echo '<meta http-equiv="refresh" content="0; url=truce/">' > target/doc/index.html

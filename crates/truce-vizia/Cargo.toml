@@ -1,0 +1,39 @@
+[package]
+name = "truce-vizia"
+version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Vizia-based GUI backend for truce audio plugins."
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+truce-core = { workspace = true }
+truce-params = { workspace = true }
+truce-font = { workspace = true }
+
+# vizia 0.4.0 on crates.io ships the winit backend only; the
+# `baseview` feature (and the vizia_baseview crate) live in vizia's
+# main branch but aren't in the published umbrella. Pin to a
+# specific main-branch rev for reproducibility. The workspace-level
+# `[patch."https://github.com/vizia/baseview"]` redirects
+# vizia_baseview's baseview dep to our baseview-truce fork so
+# vizia-backed plugins pick up the AAX / Pro Tools teardown fix.
+vizia = { git = "https://github.com/vizia/vizia.git", rev = "24c47433098fcc8e29668a22fcb71771807d86d6", default-features = false, features = ["baseview"] }
+# raw-window-handle 0.5 matches what baseview-truce + vizia_baseview
+# expose publicly. The platform.rs newtype bridges truce-core's own
+# `RawWindowHandle` enum to rwh's `HasRawWindowHandle` trait.
+raw-window-handle = "0.5"
+log = "0.4"
+# vizia 0.4 ships its renderer through `skia-safe`; the headless
+# screenshot path drives `BackendContext::draw` against a CPU-backed
+# raster surface from this crate. Version pin tracks whatever
+# vizia_core resolves to so both ends operate on the same Skia API.
+skia-safe = "0.97"
+
+[lints]
+workspace = true

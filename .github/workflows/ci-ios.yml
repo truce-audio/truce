@@ -76,12 +76,22 @@ jobs:
             -p truce-example-eq \
             -p truce-example-gain-egui \
             -p truce-example-arpeggio \
-            -p truce-example-gain-slint \
             -p truce-example-tremolo \
             -p truce-example-state \
             -p truce-example-fundsp-reverb-worker \
             -p truce-example-fundsp-reverb-simple \
             -p truce-example-transpose \
+            --target aarch64-apple-ios-sim \
+            --release --no-default-features --features au
+
+      # Slint examples live in the truce-slint sub-workspace; mirror
+      # the iOS-sim pre-build there so the simctl install step below
+      # finds a freshly-built dylib for each slint crate.
+      - name: Build framework dylib (simulator slice, slint sub-workspace)
+        run: |
+          cargo build --manifest-path crates/truce-slint/Cargo.toml \
+            -p truce-example-gain-slint \
+            -p truce-example-gui-zoo-slint \
             --target aarch64-apple-ios-sim \
             --release --no-default-features --features au
 
@@ -195,7 +205,6 @@ jobs:
               truce-example-eq \
               truce-example-gain-egui \
               truce-example-arpeggio \
-              truce-example-gain-slint \
               truce-example-tremolo \
               truce-example-state \
               truce-example-fundsp-reverb-worker \
@@ -203,7 +212,6 @@ jobs:
               truce-example-transpose \
               truce-example-gui-zoo \
               truce-example-gui-zoo-egui \
-              truce-example-gui-zoo-slint \
               truce-example-dasp-bitcrusher; do
             short=${crate#truce-example-}
             short_under=${short//-/_}
@@ -217,7 +225,36 @@ jobs:
               --out "examples/$crate/screenshots/${short_under}_container_ios.png" \
               -p "$crate" || fail=$((fail + 1))
           done
-          echo "container-mode regressions: $fail / 15"
+          echo "container-mode regressions: $fail / 13"
+          exit $fail
+
+      # Slint examples live in the truce-slint sub-workspace; re-run
+      # the same container-screenshot diff loop with cargo-truce
+      # invoked from inside the sub-workspace so the truce.toml + Cargo
+      # metadata there resolves the slint crates.
+      - name: iOS container screenshots (slint sub-workspace)
+        id: ios_diff_slint
+        run: |
+          set +e
+          fail=0
+          CARGO_TRUCE="$PWD/target/debug/cargo-truce"
+          cd crates/truce-slint
+          for crate in \
+              truce-example-gain-slint \
+              truce-example-gui-zoo-slint; do
+            short=${crate#truce-example-}
+            short_under=${short//-/_}
+            echo "=== $crate ==="
+            xcrun simctl shutdown truce-ci 2>/dev/null || true
+            xcrun simctl boot truce-ci
+            xcrun simctl bootstatus truce-ci
+            "$CARGO_TRUCE" screenshot --ios \
+              --crop-mode container \
+              --check \
+              --out "examples/$crate/screenshots/${short_under}_container_ios.png" \
+              -p "$crate" || fail=$((fail + 1))
+          done
+          echo "slint container-mode regressions: $fail / 2"
           exit $fail
 
       # `--check` writes each freshly-rendered PNG to
@@ -227,11 +264,13 @@ jobs:
       # baseline if the change was intentional. `if: failure()` keeps
       # successful runs from uploading 11 redundant PNGs.
       - name: Upload rendered screenshots (on failure)
-        if: failure() && (steps.ios_diff.outcome == 'failure' || steps.ios_smoke.outcome == 'failure')
+        if: failure() && (steps.ios_diff.outcome == 'failure' || steps.ios_diff_slint.outcome == 'failure' || steps.ios_smoke.outcome == 'failure')
         uses: actions/upload-artifact@v4
         with:
           name: ios-failed-screenshots
-          path: target/screenshots/*_ios.png
+          path: |
+            target/screenshots/*_ios.png
+            crates/truce-slint/target/screenshots/*_ios.png
           if-no-files-found: ignore
           retention-days: 14
 

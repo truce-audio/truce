@@ -1,12 +1,12 @@
 [package]
 name = "truce-slint-build"
-version.workspace = true
-repository.workspace = true
-homepage.workspace = true
-edition.workspace = true
-license.workspace = true
-rust-version.workspace = true
+version = "0.49.23"
+edition = "2024"
+license = "Apache-2.0 OR MIT"
+rust-version = "1.92"
 description = "Build-script helper for truce plugins with Slint GUIs. Bundles the truce widget library and JetBrains Mono so authors get a one-line build.rs."
+repository = "https://github.com/truce-audio/truce"
+homepage = "https://github.com/truce-audio/truce"
 
 # Ship the bundled widget sources so the published crate works
 # out-of-tree. JetBrains Mono comes in via `truce-font` rather than
@@ -20,7 +20,7 @@ include = [
 
 [dependencies]
 slint-build = "=1.15.1"
-truce-font = { workspace = true }
+truce-font = { version = "0.49.23", path = "../../truce-font" }
 
 [lints]
 workspace = true

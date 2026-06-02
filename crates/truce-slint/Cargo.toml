@@ -1,17 +1,44 @@
+# truce-slint lives in its own Cargo workspace because slint's
+# `skia-safe` pin (^0.90) clashes with vizia_core's (^0.93) under
+# cargo's `links = "skia"` rule. The parent truce workspace carries
+# truce-vizia + the vizia gain example, so adding truce-slint there
+# would break resolution. End-user plugins pull one or the other,
+# never both - they hit no conflict. Only OUR repo, which carries
+# examples for both backends, needs the split.
+#
+# Path deps point back into the parent workspace (`../<crate>`).
+# `cargo publish` strips `path` and embeds the registry `version`,
+# so the explicit `version = "..."` pins are load-bearing for
+# publish. bump.sh sweeps this file alongside the parent workspace.
+[workspace]
+members = [
+    ".",
+    "build",
+    "examples/truce-example-gain-slint",
+    "examples/truce-example-gui-zoo-slint",
+]
+resolver = "2"
+
+[workspace.lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("cargo-clippy"))'] }
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+
 [package]
 name = "truce-slint"
-version.workspace = true
-repository.workspace = true
-homepage.workspace = true
-edition.workspace = true
-license.workspace = true
-rust-version.workspace = true
+version = "0.49.23"
+edition = "2024"
+license = "Apache-2.0 OR MIT"
+rust-version = "1.92"
 description = "Slint-based GUI backend for truce audio plugins"
+repository = "https://github.com/truce-audio/truce"
+homepage = "https://github.com/truce-audio/truce"
 
 [dependencies]
-truce-core = { workspace = true }
-truce-gui = { workspace = true }
-truce-params = { workspace = true }
+truce-core = { version = "0.49.23", path = "../truce-core" }
+truce-gui = { version = "0.49.23", path = "../truce-gui", default-features = false }
+truce-params = { version = "0.49.23", path = "../truce-params" }
 slint = { version = "=1.15.1", default-features = false, features = ["compat-1-2", "renderer-software", "std"] }
 raw-window-handle = "0.5"
 bytemuck = { version = "1", features = ["derive"] }
@@ -24,8 +51,8 @@ log = "0.4"
 # we haven't wired up here yet. Non-iOS targets keep the full
 # stack; iOS gets the lightweight stub editor in `editor_ios.rs`.
 [target.'cfg(not(target_os = "ios"))'.dependencies]
-baseview = { workspace = true }
-wgpu = { workspace = true }
+baseview = { package = "baseview-truce", version = "0.1.1-truce.5" }
+wgpu = { version = "29", default-features = false, features = ["wgsl"] }
 pollster = "0.4"
 
 [target.'cfg(target_os = "macos")'.dependencies]

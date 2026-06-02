@@ -1,5 +1,5 @@
 [package]
-name = "truce-example-gain-slint"
+name = "truce-example-gui-zoo-vizia"
 # Internal-only - workspace demonstrations not for crates.io.
 publish = false
 version.workspace = true
@@ -8,18 +8,18 @@ homepage.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "Example gain plugin with Slint GUI"
+description = "Vizia GUI zoo: exercises every truce-vizia widget."
 
 [lib]
 crate-type = ["cdylib", "staticlib", "rlib"]
 
 [[bin]]
-name = "truce-example-gain-slint-standalone"
+name = "truce-example-gui-zoo-vizia-standalone"
 path = "src/main.rs"
 required-features = ["standalone"]
 
 [features]
-default = ["clap", "vst3", "lv2", "au", "aax"]
+default = ["clap", "vst3", "lv2", "au"]
 clap = ["dep:truce-clap", "dep:clap-sys"]
 vst3 = ["dep:truce-vst3"]
 vst2 = ["dep:truce-vst2"]
@@ -38,16 +38,12 @@ truce-vst3 = { workspace = true, optional = true }
 truce-vst2 = { workspace = true, optional = true }
 truce-aax = { workspace = true, optional = true }
 truce-au = { workspace = true, optional = true }
+truce-lv2 = { workspace = true, optional = true }
 clap-sys = { version = "0.5", optional = true }
 truce-standalone = { workspace = true, features = ["gui"], optional = true }
+truce-font = { workspace = true }
 truce-loader = { workspace = true }
-truce-slint = { workspace = true }
-slint = { version = "=1.15.1", default-features = false, features = ["compat-1-2", "renderer-software", "std"] }
-
-truce-lv2 = { workspace = true, optional = true }
-
-[build-dependencies]
-truce-slint-build = { workspace = true }
+truce-vizia = { workspace = true }
 
 [dev-dependencies]
 truce-test = { workspace = true }

@@ -1,0 +1,50 @@
+# truce-slint sub-workspace project configuration.
+#
+# Parallels the root truce.toml. The slint example crates live in
+# their own Cargo workspace (skia-bindings `links` collision with
+# vizia in the parent workspace - see crates/truce-slint/Cargo.toml
+# for the rationale), so `cargo truce` invoked from inside this
+# directory finds these plugin entries instead of the parent's.
+# Vendor / packaging metadata is duplicated here because cargo-truce
+# reads it from whichever truce.toml the project_root walk finds.
+[vendor]
+name = "Truce"
+id = "com.truce"
+url = "https://github.com/truce-audio/truce"
+au_manufacturer = "Trce"
+
+[macos.packaging]
+notarize = true
+welcome_html = "../../static/truce-welcome.html"
+
+[windows.packaging]
+installer_icon = "../../static/truce-minimal.ico"
+welcome_bmp = "../../static/truce-welcome.bmp"
+
+[[plugin]]
+name = "Truce Gain Slint"
+bundle_id = "gain-slint"
+crate = "truce-example-gain-slint"
+category = "effect"
+fourcc = "TGsl"
+au3_subtype = "TGs3"
+au_tag = "Effects"
+aax_category = "Dynamics"
+au3_name = "Truce Gain Slint (AUv3)"
+windows_icon = "../../static/truce-minimal.ico"
+macos_icon = "../../static/truce-minimal.icns"
+ios_icon_set = "../../static/truce-minimal.appiconset"
+ios_url = "https://truce.audio/"
+
+[[plugin]]
+name = "Truce GUI Zoo (slint)"
+bundle_id = "gui-zoo-slint"
+crate = "truce-example-gui-zoo-slint"
+category = "effect"
+fourcc = "TZsl"
+au3_subtype = "TZs3"
+au_tag = "Effects"
+au3_name = "Truce GUI Zoo slint (AUv3)"
+windows_icon = "../../static/truce-minimal.ico"
+macos_icon = "../../static/truce-minimal.icns"
+ios_icon_set = "../../static/truce-minimal.appiconset"

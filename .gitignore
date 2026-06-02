@@ -1,4 +1,5 @@
 /target
+crates/*/target
 .DS_STORE
 .cargo/config.toml
 **/*.pyc
