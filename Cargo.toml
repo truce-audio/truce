@@ -158,7 +158,12 @@ wgpu = { version = "29", default-features = false, features = ["wgsl"] }
 # `use baseview::*` in the GUI crates compiling unchanged. GUI crates
 # consume this via `baseview = { workspace = true }` so the registry
 # pin lives in exactly one place.
-baseview = { package = "baseview-truce", version = "0.1.1-truce.4" }
+#
+# `truce.5` bumped `keyboard-types` 0.6 -> 0.7 (matches vizia's pin -
+# downstream `truce-vizia` `[patch]`es baseview to this fork) and
+# renamed `[lib].name` to `baseview` (lets the patch link without a
+# wrapper shim).
+baseview = { package = "baseview-truce", version = "0.1.1-truce.5" }
 
 # Custom profile for shell-mode (hot-reload) builds. `cargo truce
 # install --shell` invokes `cargo build --profile shell --features

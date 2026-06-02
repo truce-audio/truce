@@ -19,7 +19,7 @@ egui-wgpu = { version = "0.34", default-features = false }
 wgpu = { workspace = true }
 pollster = "0.4"
 raw-window-handle = "0.5"
-keyboard-types = "0.6"
+keyboard-types = "0.7"
 log = "0.4"
 
 # baseview is desktop-only. iOS uses the in-tree editor_ios.rs which

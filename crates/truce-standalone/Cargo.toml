@@ -23,7 +23,7 @@ truce-gui = { workspace = true, optional = true }
 truce-gpu = { workspace = true, optional = true }
 baseview = { workspace = true, optional = true }
 raw-window-handle = { version = "0.5", optional = true }
-keyboard-types = { version = "0.6", optional = true }
+keyboard-types = { version = "0.7", optional = true }
 
 # Linux/X11 size-hint helper for `gui`-enabled standalone hosts.
 # Plugin editors don't expose resize yet, so we pin WM min == max
