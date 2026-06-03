@@ -64,6 +64,7 @@ jobs:
             libx11-dev libx11-xcb-dev libxcb1-dev libxcb-dri2-0-dev libxcb-icccm4-dev libxcursor-dev \
             libxkbcommon-dev libxkbcommon-x11-dev libxrandr-dev \
             libgl1-mesa-dev libegl1-mesa-dev libvulkan-dev mesa-vulkan-drivers \
+            libgl1-mesa-dri libglx-mesa0 \
             libwayland-dev \
             libasound2-dev libjack-jackd2-dev \
             libfontconfig1-dev libfreetype-dev \
@@ -208,12 +209,24 @@ jobs:
             exit 1
           fi
 
+      # vizia's editor opens a GLX-backed OpenGL surface through
+      # baseview's X11 GL path - pluginval's "Open editor whilst
+      # processing" probe instantiates the editor for real, so the
+      # default `xvfb-run` (no GLX extension; no GPU underneath)
+      # panics in `baseview::x11::visual_info::FBConfig`. Run Xvfb
+      # with `+extension GLX +iglx` and force Mesa onto llvmpipe via
+      # `LIBGL_ALWAYS_SOFTWARE=1` so the editor gets a software-
+      # rendered GL context instead. truce-slint skips this dance
+      # because its editor renders through CPU-backed Skia and
+      # never asks for a GL context.
       - name: Install + validate (truce-vizia sub-workspace)
         run: |
           set -e -o pipefail
           cd crates/truce-vizia
           "$GITHUB_WORKSPACE/target/debug/cargo-truce" install --user --clap --vst3 -p truce-example-gain-vizia
-          xvfb-run -a "$GITHUB_WORKSPACE/target/debug/cargo-truce" validate --clap --pluginval -p truce-example-gain-vizia 2>&1 | tee validate-vizia.log
+          LIBGL_ALWAYS_SOFTWARE=1 \
+          xvfb-run -a -s "-screen 0 1920x1080x24 +extension GLX +iglx +extension RANDR" \
+            "$GITHUB_WORKSPACE/target/debug/cargo-truce" validate --clap --pluginval -p truce-example-gain-vizia 2>&1 | tee validate-vizia.log
           if grep -E "SKIP|not found" validate-vizia.log >/dev/null; then
             echo "::error::vizia validate skipped a step — failing"
             exit 1
