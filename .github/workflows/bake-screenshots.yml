@@ -179,6 +179,7 @@ jobs:
           path: |
             examples/*/screenshots/*_linux.png
             crates/truce-slint/examples/*/screenshots/*_linux.png
+            crates/truce-vizia/examples/*/screenshots/*_linux.png
           if-no-files-found: error
           retention-days: 30
 
