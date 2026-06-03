@@ -2,6 +2,17 @@
 
 Notable changes per release.
 
+## 0.50.0
+
+- **New GUI backend: `truce-vizia`.** Param-bound widgets, headless
+  screenshot, JetBrains Mono. Desktop only (no iOS yet).
+- **New examples: `truce-example-gain-vizia`,
+  `truce-example-gui-zoo-vizia`.**
+
+## 0.49.23
+
+- **`keyboard-types` 0.6 -> 0.7** workspace-wide.
+
 ## 0.49.22
 
 - **New example: `truce-example-dasp-bitcrusher`.** Showcases
