@@ -366,10 +366,20 @@ jobs:
           # code path in libglvnd). Mirror baseview's actual call so
           # the gate fails for the same reason baseview would, with
           # diagnostics in hand instead of a panic in the validator.
+          # Smoke mirrors baseview-truce-vizia's exact FBConfig
+          # attribute list (see baseview/src/wrappers/glx.rs
+          # `get_fb_attribs`) - including
+          # `GLX_FRAMEBUFFER_SRGB_CAPABLE_ARB = 1` from vizia's
+          # `GlConfig::default()`. Different attribute sets get
+          # different FBConfig matches, so a generic smoke could pass
+          # while baseview's call still fails.
           cat > /tmp/glx_smoke.c <<'EOF'
           #include <GL/glx.h>
           #include <X11/Xlib.h>
           #include <stdio.h>
+          #ifndef GLX_FRAMEBUFFER_SRGB_CAPABLE_ARB
+          #define GLX_FRAMEBUFFER_SRGB_CAPABLE_ARB 0x20B2
+          #endif
           int main(void) {
               Display *d = XOpenDisplay(NULL);
               if (!d) { fprintf(stderr, "XOpenDisplay failed\n"); return 1; }
@@ -381,18 +391,35 @@ jobs:
                   GLX_RED_SIZE, 8, GLX_GREEN_SIZE, 8, GLX_BLUE_SIZE, 8, GLX_ALPHA_SIZE, 8,
                   GLX_DEPTH_SIZE, 24, GLX_STENCIL_SIZE, 8,
                   GLX_DOUBLEBUFFER, 1,
+                  GLX_FRAMEBUFFER_SRGB_CAPABLE_ARB, 1,
                   0
               };
               int n = 0;
               GLXFBConfig *cfg = glXChooseFBConfig(d, DefaultScreen(d), attrs, &n);
-              fprintf(stderr, "glXChooseFBConfig returned %d FBConfig(s)\n", n);
+              fprintf(stderr, "glXChooseFBConfig (sRGB) returned %d FBConfig(s)\n", n);
               if (cfg) XFree(cfg);
-              return (n > 0) ? 0 : 2;
+              if (n > 0) return 0;
+              // Re-probe without sRGB so we can tell *which* attribute
+              // is the blocker - llvmpipe via the dummy driver is the
+              // most common culprit for missing sRGB-capable visuals.
+              attrs[24] = 0;  // clobber the sRGB pair, leaving only the rest
+              cfg = glXChooseFBConfig(d, DefaultScreen(d), attrs, &n);
+              fprintf(stderr, "glXChooseFBConfig (no sRGB) returned %d FBConfig(s)\n", n);
+              if (cfg) XFree(cfg);
+              return (n > 0) ? 3 : 2;
           }
           EOF
           cc -o /tmp/glx_smoke /tmp/glx_smoke.c -lGL -lX11
-          if ! /tmp/glx_smoke; then
-            echo "::error::glXChooseFBConfig found zero FBConfigs - baseview will panic the same way"
+          set +e
+          /tmp/glx_smoke; smoke_rc=$?
+          set -e
+          if [ "$smoke_rc" -eq 3 ]; then
+            echo "::error::FBConfigs exist but none are sRGB-capable; baseview's GlConfig::default() {srgb:true} can't match"
+            echo "This is the root cause of the pluginval editor panic."
+          elif [ "$smoke_rc" -ne 0 ]; then
+            echo "::error::glXChooseFBConfig found zero FBConfigs even without sRGB - baseview will panic the same way"
+          fi
+          if [ "$smoke_rc" -ne 0 ]; then
             echo "--- vendor JSON files ---"
             ls -la /usr/share/glvnd/egl_vendor.d/ /usr/lib/x86_64-linux-gnu/GL/glx/*.json 2>/dev/null || true
             echo "--- Mesa GLX provider ---"
@@ -411,6 +438,22 @@ jobs:
           __GLX_VENDOR_LIBRARY_NAME: mesa
         run: |
           set -e -o pipefail
+          # Confirm the GLX smoke still passes from inside *this*
+          # step's env, not just the previous step's bash. If a CI
+          # shim is stripping LIBGL/DISPLAY between steps, we'd see
+          # zero FBConfigs here even though the gate succeeded.
+          echo "--- in-step GLX smoke + env dump ---"
+          env | grep -E "^(DISPLAY|LIBGL|__GLX|LD_LIBRARY_PATH|LD_PRELOAD)" || true
+          /tmp/glx_smoke || {
+            echo "::error::env didn't survive between Xorg-setup and validate step"
+            exit 1
+          }
+          # Dump what pluginval is actually linked against - if it
+          # bundles libGL or pins LD_LIBRARY_PATH at runtime, it
+          # might bypass our Mesa vendor entirely.
+          echo "--- pluginval ldd ---"
+          ldd "$(command -v pluginval)" 2>&1 | grep -E "libGL|libGLX|libEGL" || true
+
           cd crates/truce-vizia
           "$GITHUB_WORKSPACE/target/debug/cargo-truce" install --user --clap --vst3 -p truce-example-gain-vizia
           "$GITHUB_WORKSPACE/target/debug/cargo-truce" validate --clap --pluginval -p truce-example-gain-vizia 2>&1 | tee validate-vizia.log
