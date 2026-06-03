@@ -11,18 +11,18 @@ use std::os::raw::c_char;
 use std::slice;
 
 use truce_core::cast::{len_u32, sample_pos_i64};
+use truce_core::chunked_process::{ChunkedProcess, process_chunked};
 use truce_core::editor::{ClosureBridge, Editor, PluginContext, RawWindowHandle, SendPtr};
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
 use truce_core::info::PluginCategory;
 use truce_core::midi::decode_short_message;
-use truce_core::process::ProcessContext;
 use truce_core::state;
 use truce_core::wrapper::{
     default_io_channels, log_missing_bus_layout, run_audio_block, run_extern_callback_with,
     run_register,
 };
-use truce_params::Params;
+use truce_params::{ParamInfo, ParamRange, Params};
 
 use ffi::{Vst3Callbacks, Vst3MidiEvent, Vst3ParamDescriptor, Vst3PluginDescriptor};
 use std::sync::Arc;
@@ -50,6 +50,17 @@ struct Vst3Instance<P: PluginExport> {
     params_arc: Arc<P::Params>,
     event_list: EventList,
     output_events: EventList,
+    /// Per-sub-block scratch for `chunked_process::process_chunked`.
+    /// Pre-allocated to the same capacity as `event_list`.
+    sub_event_scratch: EventList,
+    /// Full param-info cache for the chunker's `is_chunked(id)`
+    /// lookup. Built once at `cb_create`; static for the life of
+    /// the instance.
+    param_infos: Vec<ParamInfo>,
+    /// `min_subblock_samples` from `truce.toml`'s `[automation]`
+    /// table. Read at instance construction and passed to
+    /// `chunked_process::process_chunked` every block.
+    min_subblock_samples: u32,
     plugin_id_hash: u64,
     sample_rate: f64,
     /// Max block size declared by the host in `setupProcessing`.
@@ -81,7 +92,7 @@ struct Vst3Instance<P: PluginExport> {
     /// per call would heap-allocate on a tight host read path. Ranges
     /// are static for the life of the plugin instance, so caching is
     /// safe.
-    param_ranges: Vec<(u32, truce_params::ParamRange)>,
+    param_ranges: Vec<(u32, ParamRange)>,
     editor: Option<Box<dyn Editor>>,
     /// Shared transport slot: audio thread writes each block, editor reads.
     transport_slot: Arc<truce_core::TransportSlot>,
@@ -126,12 +137,9 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
     let mut plugin = P::create();
     plugin.init();
     let info = P::info();
-    let mut param_ranges: Vec<(u32, truce_params::ParamRange)> = plugin
-        .params()
-        .param_infos()
-        .into_iter()
-        .map(|i| (i.id, i.range))
-        .collect();
+    let param_infos: Vec<ParamInfo> = plugin.params().param_infos();
+    let mut param_ranges: Vec<(u32, ParamRange)> =
+        param_infos.iter().map(|i| (i.id, i.range)).collect();
     // Sort by id so `binary_search_by_key` works in the hot lookups.
     param_ranges.sort_by_key(|(id, _)| *id);
     let params_arc = plugin.params_arc();
@@ -142,6 +150,9 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
         params_arc,
         event_list: EventList::with_capacity(EVENT_LIST_PREALLOC),
         output_events: EventList::with_capacity(EVENT_LIST_PREALLOC),
+        sub_event_scratch: EventList::with_capacity(EVENT_LIST_PREALLOC),
+        param_infos,
+        min_subblock_samples: info.automation.min_subblock_samples,
         plugin_id_hash: state::shared_plugin_state_hash(&info),
         sample_rate: 44100.0,
         // 8192 covers the largest block sizes mainstream DAWs / validators
@@ -314,12 +325,15 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
             P::supports_in_place(),
         );
 
-        // Apply sample-accurate parameter changes.
+        // Queue sample-accurate parameter changes. `set_plain` is
+        // deferred to the chunker's per-sub-block apply pass so
+        // smoothers see `set_target` at the event's sample rather
+        // than at the head of the audio block. See
+        // `truce-docs/docs/internal/parameter-dependent-chunking.md`.
         // The C++ shim sends plain (denormalized) values.
         if !param_changes.is_null() && num_param_changes > 0 {
             let changes = slice::from_raw_parts(param_changes, num_param_changes as usize);
             for pc in changes {
-                inst.plugin.params().set_plain(pc.id, pc.value);
                 inst.event_list.push(Event {
                     // VST3 delivers sampleOffset as int32; per-block
                     // offsets are non-negative and bounded by block size.
@@ -363,15 +377,25 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
 
         inst.output_events.clear();
         inst.transport_slot.write(&transport);
-        let mut context = ProcessContext::new(
-            &transport,
-            inst.sample_rate,
-            num_frames,
-            &mut inst.output_events,
-        );
 
-        inst.plugin
-            .process(&mut audio_buffer, &inst.event_list, &mut context);
+        let mut transport_snap = transport;
+        let chunk_args = ChunkedProcess {
+            events: &inst.event_list,
+            sub_event_scratch: &mut inst.sub_event_scratch,
+            transport: &mut transport_snap,
+            sample_rate: inst.sample_rate,
+            output_events: &mut inst.output_events,
+            params_fn: None,
+            meters_fn: None,
+            param_infos: &inst.param_infos,
+            min_subblock_samples: inst.min_subblock_samples,
+        };
+        process_chunked(
+            &mut inst.plugin,
+            inst.params_arc.as_ref() as &dyn Params,
+            &mut audio_buffer,
+            chunk_args,
+        );
         // End the `audio_buffer` borrow before reaching back into scratch.
         let _ = audio_buffer;
         // For `f64` plugins the scratch holds the rendered output -

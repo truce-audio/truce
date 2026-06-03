@@ -24,11 +24,11 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
 use truce_core::buffer::RawBufferScratch;
 use truce_core::cast::{sample_count_usize, sample_rate_u32};
+use truce_core::chunked_process::{ChunkedProcess, process_chunked};
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList};
 use truce_core::export::PluginExport;
 use truce_core::info::PluginCategory;
-use truce_core::process::ProcessContext;
-use truce_params::Params;
+use truce_params::{ParamInfo, Params};
 
 use crate::cli::Options;
 use crate::transport::Transport;
@@ -977,6 +977,21 @@ fn open_output_stream<P: PluginExport>(
     let mut input_bufs: Vec<Vec<f32>> = Vec::with_capacity(channels);
     let mut event_list = EventList::with_capacity(EVENT_LIST_PREALLOC);
     let mut output_events = EventList::with_capacity(EVENT_LIST_PREALLOC);
+    let mut sub_event_scratch = EventList::with_capacity(EVENT_LIST_PREALLOC);
+    // Cached for `chunked_process::process_chunked`. Built once at
+    // callback setup; static for the lifetime of the cpal stream.
+    // `plugin_a` is locked once here (stream setup, not audio thread)
+    // to pull `param_infos` + the `params_arc` clone the chunker uses
+    // as its `&dyn Params` handle. The chunker can't call
+    // `plugin.params()` itself because process_chunked already holds
+    // `&mut plugin` for the duration of the `process()` calls.
+    let (param_infos, params_arc) = {
+        let p = plugin_a
+            .lock()
+            .expect("plugin mutex poisoned at audio setup");
+        (p.params().param_infos(), p.params_arc())
+    };
+    let min_subblock_samples = P::info().automation.min_subblock_samples;
     // Raw-pointer arrays + `RawBufferScratch` reused across callbacks.
     // The pointer arrays mirror `input_bufs` / `channel_bufs` each
     // block; the scratch wraps the raw->slice conversion plus the
@@ -1010,6 +1025,10 @@ fn open_output_stream<P: PluginExport>(
                         &mut input_bufs,
                         &mut event_list,
                         &mut output_events,
+                        &mut sub_event_scratch,
+                        &param_infos,
+                        &params_arc,
+                        min_subblock_samples,
                         &mut ptr_scratch,
                         &mut scratch,
                         #[cfg(feature = "playback")]
@@ -1285,6 +1304,10 @@ fn audio_callback<P: PluginExport>(
     input_bufs: &mut Vec<Vec<f32>>,
     event_list: &mut EventList,
     output_events: &mut EventList,
+    sub_event_scratch: &mut EventList,
+    param_infos: &[ParamInfo],
+    params_arc: &Arc<P::Params>,
+    min_subblock_samples: u32,
     ptr_scratch: &mut CallbackPtrScratch,
     scratch: &mut RawBufferScratch<<P as truce_core::plugin::PluginRuntime>::Sample>,
     #[cfg(feature = "playback")] playback: Option<&Arc<crate::playback::PlaybackSource>>,
@@ -1427,9 +1450,24 @@ fn audio_callback<P: PluginExport>(
     };
 
     let transport_info = transport.tick_audio(num_frames);
-    let mut context = ProcessContext::new(&transport_info, sample_rate, num_frames, output_events);
-
-    plugin.process(&mut audio_buffer, event_list, &mut context);
+    let mut transport_snap = transport_info;
+    let chunk_args = ChunkedProcess {
+        events: event_list,
+        sub_event_scratch,
+        transport: &mut transport_snap,
+        sample_rate,
+        output_events,
+        params_fn: None,
+        meters_fn: None,
+        param_infos,
+        min_subblock_samples,
+    };
+    process_chunked(
+        &mut *plugin,
+        params_arc.as_ref() as &dyn Params,
+        &mut audio_buffer,
+        chunk_args,
+    );
     let _ = audio_buffer;
     // Narrow rendered f64 output back to host f32 when the plugin's
     // `Sample = f64`. No-op for `f32` plugins.

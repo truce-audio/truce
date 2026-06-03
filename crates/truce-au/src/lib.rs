@@ -27,20 +27,20 @@ use truce_core::editor::Editor;
 // AppKit/UiKit variants don't exist on Linux/Windows. Importing them
 // from a non-apple module would also trigger the unused-import lint
 // there.
+use truce_core::chunked_process::{ChunkedProcess, process_chunked};
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 use truce_core::editor::{ClosureBridge, PluginContext, RawWindowHandle, SendPtr};
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
 use truce_core::info::PluginCategory;
 use truce_core::midi::{decode_short_message, pitch_bend_to_bytes};
-use truce_core::process::ProcessContext;
 use truce_core::state;
 use truce_core::ump::{SysExAssembler, SysExFeed, decode_ump_channel_voice_2};
 use truce_core::wrapper::{
     default_io_channels, log_missing_bus_layout, run_audio_block, run_extern_callback_with,
     run_register,
 };
-use truce_params::{ParamFlags, Params};
+use truce_params::{ParamFlags, ParamInfo, Params};
 
 use ffi::{
     AuCallbacks, AuMidi2Event, AuMidiEvent, AuParamDescriptor, AuPluginDescriptor,
@@ -71,6 +71,12 @@ struct AuInstance<P: PluginExport> {
     tail_cache: AtomicU32,
     event_list: EventList,
     output_events: EventList,
+    /// Per-sub-block scratch for `chunked_process::process_chunked`.
+    sub_event_scratch: EventList,
+    /// Cached param-info table for the chunker's split predicate.
+    param_infos: Vec<ParamInfo>,
+    /// `min_subblock_samples` from `truce.toml`'s `[automation]`.
+    min_subblock_samples: u32,
     /// Per-instance UMP `SysEx` reassembler. AU v3 hosts deliver
     /// long `SysEx` payloads as a chain of `SysEx`-7 (6-byte) or
     /// `SysEx`-8 (13-byte) UMPs; the assembler concatenates them
@@ -150,6 +156,7 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
     let mut plugin = P::create();
     plugin.init();
     let info = P::info();
+    let param_infos = plugin.params().param_infos();
     let params_arc = plugin.params_arc();
     let latency_cache = AtomicU32::new(plugin.latency());
     let tail_cache = AtomicU32::new(plugin.tail());
@@ -160,6 +167,9 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
         tail_cache,
         event_list: EventList::with_capacity(EVENT_LIST_PREALLOC),
         output_events: EventList::with_capacity(EVENT_LIST_PREALLOC),
+        sub_event_scratch: EventList::with_capacity(EVENT_LIST_PREALLOC),
+        param_infos,
+        min_subblock_samples: info.automation.min_subblock_samples,
         sysex_assembler: SysExAssembler::with_capacity(SYSEX_POOL_PREALLOC),
         plugin_id_hash: state::shared_plugin_state_hash(&info),
         sample_rate: 44100.0,
@@ -347,15 +357,25 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
         };
         inst.output_events.clear();
         inst.transport_slot.write(&transport);
-        let mut context = ProcessContext::new(
-            &transport,
-            inst.sample_rate,
-            num_frames,
-            &mut inst.output_events,
-        );
 
-        inst.plugin
-            .process(&mut audio_buffer, &inst.event_list, &mut context);
+        let mut transport_snap = transport;
+        let chunk_args = ChunkedProcess {
+            events: &inst.event_list,
+            sub_event_scratch: &mut inst.sub_event_scratch,
+            transport: &mut transport_snap,
+            sample_rate: inst.sample_rate,
+            output_events: &mut inst.output_events,
+            params_fn: None,
+            meters_fn: None,
+            param_infos: &inst.param_infos,
+            min_subblock_samples: inst.min_subblock_samples,
+        };
+        process_chunked(
+            &mut inst.plugin,
+            inst.params_arc.as_ref() as &dyn Params,
+            &mut audio_buffer,
+            chunk_args,
+        );
         let _ = audio_buffer;
         // Narrow rendered f64 output back to host f32 when needed.
         // No-op for `f32` plugins.

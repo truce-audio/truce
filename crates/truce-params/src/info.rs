@@ -38,10 +38,19 @@ pub enum ParamValueKind {
 bitflags::bitflags! {
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub struct ParamFlags: u32 {
-        const AUTOMATABLE = 0b0001;
-        const HIDDEN      = 0b0010;
-        const READONLY    = 0b0100;
-        const IS_BYPASS   = 0b1000;
+        const AUTOMATABLE = 0b0_0001;
+        const HIDDEN      = 0b0_0010;
+        const READONLY    = 0b0_0100;
+        const IS_BYPASS   = 0b0_1000;
+        /// This parameter participates in sample-accurate sub-block
+        /// chunking: a `ParamChange` event targeting it splits the
+        /// audio block at its `sample_offset`. Defaults on; cleared
+        /// by `#[param(chunk = false)]` on expensive-to-retarget
+        /// params (FFT sizes, lookahead, etc.) where the per-event
+        /// fixed cost of subdividing the block outweighs the
+        /// sample-accuracy win. Read by
+        /// `truce_core::chunked_process::is_split_event`.
+        const CHUNKED     = 0b1_0000;
     }
 }
 

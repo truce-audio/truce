@@ -26,6 +26,39 @@ pub use manifest::{BundleEntry, BundleManifest, host_triple};
 pub struct Config {
     pub vendor: VendorConfig,
     pub plugin: Vec<PluginDef>,
+    /// Optional `[automation]` table - tunes the sample-accurate
+    /// chunking layer. Absent -> `AutomationConfig::default()`. See
+    /// `truce-docs/docs/internal/parameter-dependent-chunking.md`.
+    #[serde(default)]
+    pub automation: AutomationConfig,
+}
+
+/// Sample-accurate automation chunking tunables.
+///
+/// Read by every format wrapper at instantiate time and passed to
+/// `truce_core::chunked_process::process_chunked` to drive the
+/// sub-block splitting decision.
+#[derive(Deserialize, Debug, Clone, Copy)]
+#[serde(default)]
+pub struct AutomationConfig {
+    /// Smallest sub-block size in samples. Sub-blocks shorter than
+    /// this are coalesced with the next event (the smoother target
+    /// is set at `block_start` instead of at the event sample).
+    /// Default 32 fits typical SIMD widths and avoids paying per-block
+    /// fixed costs on dense automation. Set to 1 for "true" sample
+    /// accuracy. Set above the host's max block size to disable
+    /// splitting entirely (the chunker still runs, but never finds a
+    /// split point and falls back to one `process()` call per block,
+    /// equivalent to the pre-chunking behavior).
+    pub min_subblock_samples: u32,
+}
+
+impl Default for AutomationConfig {
+    fn default() -> Self {
+        Self {
+            min_subblock_samples: 32,
+        }
+    }
 }
 
 #[derive(Deserialize, Debug)]

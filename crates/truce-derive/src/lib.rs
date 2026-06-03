@@ -176,6 +176,7 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
     let aax_name = opt_str(&plugin.aax_name);
     let lv2_name = opt_str(&plugin.lv2_name);
     let mute_preview_output = plugin.mute_preview_output;
+    let min_subblock_samples = config.automation.min_subblock_samples;
 
     // `include_bytes!` registers `truce.toml` as a build-time dependency
     // through the compiler's normal dep-info tracking. Without it, edits
@@ -209,6 +210,9 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
                 aax_name: #aax_name,
                 lv2_name: #lv2_name,
                 mute_preview_output: #mute_preview_output,
+                automation: ::truce::core::info::AutomationConfig {
+                    min_subblock_samples: #min_subblock_samples,
+                },
             }
         }
     };
@@ -309,6 +313,13 @@ pub(crate) struct ParamAttrs {
     pub(crate) default: Option<DefaultExpr>,
     pub(crate) unit: Option<String>,
     pub(crate) flags: Option<String>,
+    /// Set by `#[param(chunk = false)]` on parameters too expensive
+    /// to retarget mid-block (FFT sizes, oversampling factors,
+    /// lookahead spans). `None` means "use the default" (`true`).
+    /// Drives the `ParamFlags::CHUNKED` bit in
+    /// `gen_param_info_literal`. See the
+    /// `parameter-dependent-chunking.md` design doc.
+    pub(crate) chunk: Option<bool>,
     smooth: Option<String>,
     format_fn: Option<String>,
     parse_fn: Option<String>,
@@ -439,11 +450,9 @@ fn parse_param_attrs(field: &syn::Field) -> ParamAttrs {
                             // path, not the resolved literal. Numeric
                             // literals keep the existing f64-formatting
                             // pathway.
-                            let path_tokens = matches!(
-                                expr,
-                                Expr::Path(syn::ExprPath { qself: None, .. })
-                            )
-                            .then(|| expr.to_token_stream());
+                            let path_tokens =
+                                matches!(expr, Expr::Path(syn::ExprPath { qself: None, .. }))
+                                    .then(|| expr.to_token_stream());
                             attrs.default = Some(DefaultExpr { value, path_tokens });
                         }
                         None => push_err(
@@ -462,12 +471,27 @@ fn parse_param_attrs(field: &syn::Field) -> ParamAttrs {
                 "smooth" => take_str_into(&mut attrs.smooth, &mut attrs.errors, "smooth")?,
                 "format" => take_str_into(&mut attrs.format_fn, &mut attrs.errors, "format")?,
                 "parse" => take_str_into(&mut attrs.parse_fn, &mut attrs.errors, "parse")?,
+                "chunk" => {
+                    let value: Lit = meta.value()?.parse()?;
+                    match value {
+                        Lit::Bool(lit) => attrs.chunk = Some(lit.value),
+                        other => push_err(
+                            &mut attrs,
+                            syn::Error::new_spanned(
+                                other,
+                                "`#[param(chunk = ...)]` expects a bool literal (e.g. \
+                                 `chunk = false` for params too expensive to retarget mid-block)",
+                            ),
+                        ),
+                    }
+                }
                 other => {
                     push_err(
                         &mut attrs,
                         meta.error(format!(
                             "unknown `#[param]` key `{other}` (expected one of: id, name, \
-                             short_name, group, range, default, unit, flags, smooth, format, parse)",
+                             short_name, group, range, default, unit, flags, smooth, format, \
+                             parse, chunk)",
                         )),
                     );
                 }
@@ -887,10 +911,21 @@ fn gen_param_info_literal(f: &ParamField) -> Option<proc_macro2::TokenStream> {
         quote! { ::truce::params::ParamUnit::None }
     };
 
-    let flags = if let Some(fl) = &a.flags {
+    // The explicit-flags path lets a plugin pass `flags = "hidden |
+    // bypass"` to override AUTOMATABLE; OR in CHUNKED on the default
+    // path (and on the explicit path unless the plugin opted out via
+    // `chunk = false`) so the wrapper-side chunker treats every param
+    // as a split point by default. See the
+    // `parameter-dependent-chunking.md` design doc.
+    let base_flags = if let Some(fl) = &a.flags {
         parse_flags_tokens(fl)
     } else {
         quote! { ::truce::params::ParamFlags::AUTOMATABLE }
+    };
+    let flags = if a.chunk.unwrap_or(true) {
+        quote! { (#base_flags).union(::truce::params::ParamFlags::CHUNKED) }
+    } else {
+        base_flags
     };
 
     let kind = match f.kind {

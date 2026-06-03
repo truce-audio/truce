@@ -51,6 +51,10 @@ truce-lv2 = { workspace = true, optional = true }
 
 [dev-dependencies]
 truce-test = { workspace = true }
+# `truce-driver` is the offline-render harness `truce-test::driver!`
+# wraps. The `chunker_perf` integration test uses `truce_driver::Script`
+# directly to script per-block automation densities.
+truce-driver = { workspace = true }
 hound = "3"
 
 [lints]

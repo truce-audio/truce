@@ -58,6 +58,43 @@ pub struct PluginInfo {
     /// is never what they want.
     #[doc(hidden)]
     pub mute_preview_output: bool,
+
+    /// Sample-accurate automation chunking tunables. Read by the
+    /// `chunked_process::process_chunked` helper that every format
+    /// wrapper routes `process()` through. Populated by
+    /// `truce::plugin_info!()` from `truce.toml`'s `[automation]`
+    /// table; defaults to [`AutomationConfig::DEFAULT`] when the
+    /// table is absent.
+    pub automation: AutomationConfig,
+}
+
+/// Sample-accurate chunking tunables baked into [`PluginInfo`] at
+/// compile time. Mirrors `truce_build::AutomationConfig` (the
+/// derive-time view of the same TOML key) but lives in `truce-core`
+/// so wrappers can read it without a `truce-build` dep.
+///
+/// See `truce-docs/docs/internal/parameter-dependent-chunking.md`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AutomationConfig {
+    /// Smallest sub-block size in samples. The chunker only splits
+    /// the audio block at split-eligible events whose `sample_offset`
+    /// is at least `block_start + min_subblock_samples` past the
+    /// current sub-block start; closer events are coalesced. Default
+    /// 32 (set via [`AutomationConfig::DEFAULT`]).
+    pub min_subblock_samples: u32,
+}
+
+impl AutomationConfig {
+    /// Default used when `truce.toml` omits the `[automation]` table.
+    pub const DEFAULT: Self = Self {
+        min_subblock_samples: 32,
+    };
+}
+
+impl Default for AutomationConfig {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
 }
 
 /// Resolve a format's display-name override. Each wrapper picks its

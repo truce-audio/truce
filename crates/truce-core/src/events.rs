@@ -448,6 +448,16 @@ impl EventList {
         self.events.is_empty()
     }
 
+    /// Mutable access to the underlying event slice. Used by
+    /// `chunked_process` to shift the `sample_offset` of outbound
+    /// events back to host-block-relative coordinates after a
+    /// sub-block; should not be needed by plugin or wrapper code
+    /// outside the chunker.
+    #[doc(hidden)]
+    pub fn events_mut(&mut self) -> &mut [Event] {
+        &mut self.events
+    }
+
     /// Current `SysEx` pool usage in bytes. Mainly useful in tests
     /// and for plug-in code that wants to surface "headroom
     /// remaining" in an editor.

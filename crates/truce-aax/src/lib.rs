@@ -20,18 +20,18 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use truce_core::bus::BusLayout;
 use truce_core::cast::{len_u32, sample_pos_i64};
+use truce_core::chunked_process::{ChunkedProcess, process_chunked};
 use truce_core::editor::{ClosureBridge, Editor, PluginContext, RawWindowHandle, SendPtr};
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
 use truce_core::info::PluginCategory;
 use truce_core::midi::{decode_short_message, pitch_bend_to_bytes};
-use truce_core::process::ProcessContext;
 use truce_core::state;
 use truce_core::wrapper::{
     default_io_channels, first_bus_layout, log_missing_bus_layout, run_audio_block,
     run_extern_callback_with, run_register,
 };
-use truce_params::{ParamFlags, ParamRange, Params};
+use truce_params::{ParamFlags, ParamInfo, ParamRange, Params};
 
 // ---------------------------------------------------------------------------
 // C ABI types (must match truce_aax_bridge.h)
@@ -192,6 +192,12 @@ struct AaxInstance<P: PluginExport> {
     tail_cache: AtomicU32,
     event_list: EventList,
     output_events: EventList,
+    /// Per-sub-block scratch for `chunked_process::process_chunked`.
+    sub_event_scratch: EventList,
+    /// Cached param-info table for the chunker's split predicate.
+    param_infos: Vec<ParamInfo>,
+    /// `min_subblock_samples` from `truce.toml`'s `[automation]`.
+    min_subblock_samples: u32,
     plugin_id_hash: u64,
     sample_rate: f64,
     /// Max block size declared by AAX in `EffectInit` (delivered
@@ -691,6 +697,7 @@ pub unsafe fn _create<P: PluginExport>() -> *mut std::ffi::c_void {
     let mut plugin = P::create();
     plugin.init();
     let info = P::info();
+    let param_infos = plugin.params().param_infos();
     let params_arc = plugin.params_arc();
     let latency_cache = AtomicU32::new(plugin.latency());
     let tail_cache = AtomicU32::new(plugin.tail());
@@ -701,6 +708,9 @@ pub unsafe fn _create<P: PluginExport>() -> *mut std::ffi::c_void {
         tail_cache,
         event_list: EventList::with_capacity(EVENT_LIST_PREALLOC),
         output_events: EventList::with_capacity(EVENT_LIST_PREALLOC),
+        sub_event_scratch: EventList::with_capacity(EVENT_LIST_PREALLOC),
+        param_infos,
+        min_subblock_samples: info.automation.min_subblock_samples,
         plugin_id_hash: state::shared_plugin_state_hash(&info),
         sample_rate: 44100.0,
         max_block_size: 8192,
@@ -841,15 +851,25 @@ pub unsafe fn _process<P: PluginExport>(
             };
             inst.output_events.clear();
             inst.transport_slot.write(&transport);
-            let mut context = ProcessContext::new(
-                &transport,
-                inst.sample_rate,
-                num_frames,
-                &mut inst.output_events,
-            );
 
-            inst.plugin
-                .process(&mut buffer, &inst.event_list, &mut context);
+            let mut transport_snap = transport;
+            let chunk_args = ChunkedProcess {
+                events: &inst.event_list,
+                sub_event_scratch: &mut inst.sub_event_scratch,
+                transport: &mut transport_snap,
+                sample_rate: inst.sample_rate,
+                output_events: &mut inst.output_events,
+                params_fn: None,
+                meters_fn: None,
+                param_infos: &inst.param_infos,
+                min_subblock_samples: inst.min_subblock_samples,
+            };
+            process_chunked(
+                &mut inst.plugin,
+                inst.params_arc.as_ref() as &dyn Params,
+                &mut buffer,
+                chunk_args,
+            );
             let _ = buffer;
             // Narrow rendered f64 output back to host f32 when needed.
             // No-op for `f32` plugins.

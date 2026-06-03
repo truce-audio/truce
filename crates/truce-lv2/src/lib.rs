@@ -31,11 +31,11 @@ use std::sync::Arc;
 
 use truce_core::buffer::RawBufferScratch;
 use truce_core::cast::len_u32;
+use truce_core::chunked_process::{ChunkedProcess, process_chunked};
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
 use truce_core::info::{PluginCategory, PluginInfo};
 use truce_core::plugin::PluginRuntime;
-use truce_core::process::ProcessContext;
 use truce_core::state::shared_plugin_state_hash;
 use truce_core::wrapper::run_audio_block;
 use truce_params::{ParamInfo, Params};
@@ -143,6 +143,15 @@ pub struct Lv2Instance<P: PluginExport> {
 
     event_list: EventList,
     output_events: EventList,
+    /// Per-sub-block scratch for `chunked_process::process_chunked`.
+    sub_event_scratch: EventList,
+    /// Cached `Arc<P::Params>` handed to the chunker as its
+    /// `&dyn Params` handle for `set_plain` calls. Pulled once at
+    /// instantiate.
+    params_arc: std::sync::Arc<P::Params>,
+    /// `min_subblock_samples` from `truce.toml`'s `[automation]`
+    /// table. Cached from `PluginInfo` at instantiate.
+    min_subblock_samples: u32,
 
     urid_map: UridMap,
 
@@ -226,6 +235,8 @@ pub unsafe fn instantiate<P: PluginExport>(
         let layout = derive_port_layout::<P>(&plugin);
         let info = P::info();
         let param_infos = plugin.params().param_infos();
+        let params_arc = plugin.params_arc();
+        let min_subblock_samples = info.automation.min_subblock_samples;
 
         let control_port_count = layout.num_params as usize;
         let audio_in_count = layout.num_audio_in as usize;
@@ -256,6 +267,9 @@ pub unsafe fn instantiate<P: PluginExport>(
 
             event_list: EventList::with_capacity(EVENT_LIST_PREALLOC),
             output_events: EventList::with_capacity(EVENT_LIST_PREALLOC),
+            sub_event_scratch: EventList::with_capacity(EVENT_LIST_PREALLOC),
+            params_arc,
+            min_subblock_samples,
 
             urid_map,
 
@@ -388,7 +402,11 @@ pub unsafe fn run<P: PluginExport>(handle: *mut Lv2Instance<P>, n_samples: u32) 
                 inst.last_control[i] = Some(v);
                 let pid = inst.param_infos[i].id;
                 let plain = f64::from(v);
-                inst.plugin.params().set_plain(pid, plain);
+                // `set_plain` is deferred to the chunker's apply pass;
+                // see `truce-docs/docs/internal/parameter-dependent-chunking.md`.
+                // LV2 control-port reads land at sample 0 of the block
+                // so the chunker applies them on entry to the first
+                // sub-block, equivalent to the prior eager behaviour.
                 inst.event_list.push(Event {
                     sample_offset: 0,
                     body: EventBody::ParamChange {
@@ -468,9 +486,24 @@ pub unsafe fn run<P: PluginExport>(handle: *mut Lv2Instance<P>, n_samples: u32) 
                 P::supports_in_place(),
             );
             inst.transport_slot.write(&transport);
-            let mut ctx =
-                ProcessContext::new(&transport, inst.sample_rate, n, &mut inst.output_events);
-            let _ = inst.plugin.process(&mut audio, &inst.event_list, &mut ctx);
+            let mut transport_snap = transport;
+            let chunk_args = ChunkedProcess {
+                events: &inst.event_list,
+                sub_event_scratch: &mut inst.sub_event_scratch,
+                transport: &mut transport_snap,
+                sample_rate: inst.sample_rate,
+                output_events: &mut inst.output_events,
+                params_fn: None,
+                meters_fn: None,
+                param_infos: &inst.param_infos,
+                min_subblock_samples: inst.min_subblock_samples,
+            };
+            let _ = process_chunked(
+                &mut inst.plugin,
+                inst.params_arc.as_ref() as &dyn Params,
+                &mut audio,
+                chunk_args,
+            );
             // End the `audio` borrow before reaching back into `scratch`.
             let _ = audio;
             // Narrow rendered output back to host f32 pointers when
@@ -780,6 +813,7 @@ mod uri_consistency_tests {
             aax_name: None,
             lv2_name: None,
             mute_preview_output: false,
+            automation: truce_core::info::AutomationConfig::DEFAULT,
         }
     }
 

@@ -74,13 +74,14 @@ use truce_core::Float;
 use truce_core::buffer::AudioBuffer;
 use truce_core::bus::ChannelConfig;
 use truce_core::cast::{len_u32, size_of_u32};
+use truce_core::chunked_process::{ChunkedProcess, process_chunked};
 use truce_core::editor::{ClosureBridge, Editor, PluginContext, RawWindowHandle, SendPtr};
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
 use truce_core::info::{PluginCategory, PluginInfo};
 use truce_core::midi::{decode_short_message, denorm_7bit, pitch_bend_to_bytes};
 use truce_core::plugin::PluginRuntime;
-use truce_core::process::{ProcessContext, ProcessStatus};
+use truce_core::process::ProcessStatus;
 use truce_core::state;
 use truce_core::wrapper::run_audio_block_with;
 use truce_params::Params;
@@ -146,14 +147,22 @@ struct ClapPluginData<P: PluginExport> {
     event_list: EventList,
     /// Re-usable output event list for the process context.
     output_events: EventList,
+    /// Per-sub-block scratch the chunker writes rebased events into
+    /// while walking the audio block. Pre-allocated to the same
+    /// capacity as `event_list` so steady-state operation stays
+    /// allocation-free.
+    sub_event_scratch: EventList,
     /// Cached parameter infos (built once at init).
     param_infos: Vec<ParamInfo>,
     /// Current sample rate.
     sample_rate: f64,
     /// Current max block size.
     max_block_size: usize,
-    /// Cached plugin info.
-    _info: PluginInfo,
+    /// Cached plugin info. Read by the chunker each block for
+    /// `automation.min_subblock_samples` and otherwise unused; the
+    /// rest of the wrapper consumes `PluginInfo` from the C ABI
+    /// surface we build at registration.
+    info: PluginInfo,
     /// Pre-hashed plugin ID for state serialization.
     plugin_id_hash: u64,
     /// GUI editor (created by the plugin, if it implements `editor()`).
@@ -616,12 +625,12 @@ unsafe fn convert_input_events<P: PluginExport>(
                         continue;
                     }
                     let param_event = &*header.cast::<clap_event_param_value>();
-                    // CLAP param values are plain values.
-                    // Apply to the params immediately AND push a ParamChange event
-                    // so the plugin's process() can react to it.
-                    data.plugin
-                        .params()
-                        .set_plain(param_event.param_id, param_event.value);
+                    // `set_plain` is deferred to the per-sub-block
+                    // `apply_pending_events` pass in
+                    // `chunked_process::process_chunked` - that way
+                    // the smoother sees `set_target` at the event's
+                    // sample, not at the head of the audio block.
+                    // See `truce-docs/docs/internal/parameter-dependent-chunking.md`.
                     data.event_list.push(Event {
                         sample_offset,
                         body: EventBody::ParamChange {
@@ -967,16 +976,30 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
         // Publish transport to the editor slot before the plugin runs.
         data.transport_slot.write(&transport);
 
-        let mut context = ProcessContext::new(
-            &transport,
-            data.sample_rate,
-            num_frames,
-            &mut data.output_events,
+        // Sample-accurate parameter chunking: split the audio block
+        // at every chunkable param-change / transport event, deferring
+        // the `set_plain` apply to the sub-block boundary the event
+        // sits on. On blocks with no chunkable events this runs
+        // `plugin.process` exactly once - the splitting machinery is
+        // inert. See `chunked_process` for the per-sub-block contract.
+        let mut transport_snap = transport;
+        let chunk_args = ChunkedProcess {
+            events: &data.event_list,
+            sub_event_scratch: &mut data.sub_event_scratch,
+            transport: &mut transport_snap,
+            sample_rate: data.sample_rate,
+            output_events: &mut data.output_events,
+            params_fn: None,
+            meters_fn: None,
+            param_infos: &data.param_infos,
+            min_subblock_samples: data.info.automation.min_subblock_samples,
+        };
+        let status = process_chunked(
+            &mut data.plugin,
+            data.params_arc.as_ref() as &dyn Params,
+            &mut audio_buffer,
+            chunk_args,
         );
-
-        let status = data
-            .plugin
-            .process(&mut audio_buffer, &data.event_list, &mut context);
 
         // Narrow + copy back to host f32 outputs if the plugin ran
         // in f64. No-op when `P::Sample == f32`: the plugin wrote
@@ -1391,6 +1414,19 @@ unsafe extern "C" fn params_flush<P: PluginExport>(
         // params_flush is a non-audio-thread param sweep; no state-load
         // race possible here, so the drain flag stays false.
         convert_input_events::<P>(data, in_events, false, false);
+        // `flush` doesn't enter `process()`, so the chunker's deferred
+        // `set_plain` apply pass never runs. Apply `ParamChange` events
+        // synchronously here so host-thread param sweeps (preset
+        // recalls, host automation while transport is stopped, the
+        // clap-validator `state-reproducibility-flush` check) take
+        // effect. Mirrors what the audio-thread chunker does inside
+        // `apply_pending_events`.
+        let params = data.params_arc.as_ref() as &dyn Params;
+        for ev in data.event_list.iter() {
+            if let EventBody::ParamChange { id, value } = ev.body {
+                params.set_plain(id, value);
+            }
+        }
         flush_gui_changes::<P>(data, out_events);
     }
 }
@@ -2222,10 +2258,11 @@ pub unsafe fn create_plugin_instance<P: PluginExport>(
         tail_cache,
         event_list: EventList::with_capacity(EVENT_LIST_PREALLOC),
         output_events: EventList::with_capacity(EVENT_LIST_PREALLOC),
+        sub_event_scratch: EventList::with_capacity(EVENT_LIST_PREALLOC),
         param_infos,
         sample_rate: 44100.0,
         max_block_size: 1024,
-        _info: info,
+        info,
         plugin_id_hash,
         editor: None,
         gui_created: false,

@@ -1,5 +1,6 @@
 pub mod buffer;
 pub mod bus;
+pub mod chunked_process;
 pub mod custom_state;
 pub mod denormal;
 pub mod editor;
@@ -21,7 +22,7 @@ pub use bus::{BusConfig, BusKind, BusLayout, ChannelConfig};
 pub use editor::{Editor, IntoEditor, PluginContext};
 pub use events::{Event, EventBody, EventList, PushError, SYSEX_POOL_PREALLOC, TransportInfo};
 pub use export::PluginExport;
-pub use info::{PluginCategory, PluginInfo};
+pub use info::{AutomationConfig, PluginCategory, PluginInfo};
 pub use plugin::PluginRuntime;
 pub use process::{ProcessContext, ProcessStatus};
 pub use transport::TransportSlot;

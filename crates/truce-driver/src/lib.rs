@@ -49,11 +49,11 @@ use truce_core::buffer::RawBufferScratch;
 #[cfg(feature = "wav")]
 use truce_core::cast::sample_rate_u32;
 use truce_core::cast::{len_u32, sample_count_usize};
+use truce_core::chunked_process::{ChunkedProcess, process_chunked};
 use truce_core::events::{Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
 use truce_core::info::PluginCategory;
 use truce_core::plugin::PluginRuntime;
-use truce_core::process::ProcessContext;
 use truce_params::Params;
 
 // ---------------------------------------------------------------------------
@@ -771,6 +771,14 @@ impl<P: PluginExport> PluginDriver<P> {
         // does the `EVENT_LIST_PREALLOC` reservation, so re-constructing
         // it per block re-allocates on the first push.
         let mut output_events_block = EventList::default();
+        // Per-sub-block scratch + cached static info so the offline
+        // render routes through the same `chunked_process` helper the
+        // format wrappers use. Tests scripting `set_param` at known
+        // offsets get the same deferred-apply behavior live hosts see.
+        let mut sub_event_scratch = EventList::default();
+        let param_infos = plugin.params().param_infos();
+        let params_arc = plugin.params_arc();
+        let min_subblock_samples = P::info().automation.min_subblock_samples;
 
         // Routes the offline-render loop through the same
         // `RawBufferScratch::build` helper every format wrapper uses,
@@ -856,14 +864,25 @@ impl<P: PluginExport> PluginDriver<P> {
                 ..Default::default()
             };
             output_events_block.clear();
-            let mut ctx = ProcessContext::new(
-                &transport_info,
-                self.sample_rate,
-                block_len,
-                &mut output_events_block,
-            );
 
-            plugin.process(&mut audio, &event_list, &mut ctx);
+            let mut transport_snap = transport_info;
+            let chunk_args = ChunkedProcess {
+                events: &event_list,
+                sub_event_scratch: &mut sub_event_scratch,
+                transport: &mut transport_snap,
+                sample_rate: self.sample_rate,
+                output_events: &mut output_events_block,
+                params_fn: None,
+                meters_fn: None,
+                param_infos: &param_infos,
+                min_subblock_samples,
+            };
+            process_chunked(
+                &mut plugin,
+                params_arc.as_ref() as &dyn Params,
+                &mut audio,
+                chunk_args,
+            );
             let _ = audio;
             // Narrow rendered f64 output back into the f32 `out_bufs`
             // when the plugin's `Sample = f64`. No-op otherwise.

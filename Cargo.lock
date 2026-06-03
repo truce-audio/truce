@@ -4605,6 +4605,7 @@ dependencies = [
  "truce-au",
  "truce-clap",
  "truce-core",
+ "truce-driver",
  "truce-gui",
  "truce-gui-types",
  "truce-loader",
