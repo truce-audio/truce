@@ -143,6 +143,46 @@ jobs:
             exit 1
           fi
 
+      # Sub-workspace install + validate + package smoke. Same shape
+      # as the parent-workspace gain pass above, but invoked from
+      # inside each sub-workspace so `cargo-truce` reads its sibling
+      # `truce.toml`. The sub-workspaces aren't reachable from the
+      # parent's `cargo-truce` plugin list, so each gets its own
+      # install / validate / package round-trip. Package uses
+      # `--no-sign` (no PACE) + `--no-notarize` (skip Apple
+      # notarization) because CI has no Developer ID; Apple codesign
+      # still runs ad-hoc against the default `TRUCE_SIGNING_IDENTITY`
+      # of `-`.
+      - name: Install + validate (truce-slint sub-workspace)
+        run: |
+          set -e -o pipefail
+          cd crates/truce-slint
+          "$GITHUB_WORKSPACE/target/debug/cargo-truce" install --user --clap --vst3 -p truce-example-gain-slint
+          "$GITHUB_WORKSPACE/target/debug/cargo-truce" validate --clap --pluginval -p truce-example-gain-slint 2>&1 | tee validate-slint.log
+          if grep -E "SKIP|not found" validate-slint.log >/dev/null; then
+            echo "::error::slint validate skipped a step — failing"
+            exit 1
+          fi
+
+      - name: Install + validate (truce-vizia sub-workspace)
+        run: |
+          set -e -o pipefail
+          cd crates/truce-vizia
+          "$GITHUB_WORKSPACE/target/debug/cargo-truce" install --user --clap --vst3 -p truce-example-gain-vizia
+          "$GITHUB_WORKSPACE/target/debug/cargo-truce" validate --clap --pluginval -p truce-example-gain-vizia 2>&1 | tee validate-vizia.log
+          if grep -E "SKIP|not found" validate-vizia.log >/dev/null; then
+            echo "::error::vizia validate skipped a step — failing"
+            exit 1
+          fi
+
+      - name: Package (truce-slint + truce-vizia sub-workspaces)
+        run: |
+          set -e -o pipefail
+          cd crates/truce-slint
+          "$GITHUB_WORKSPACE/target/debug/cargo-truce" package -p truce-example-gain-slint --formats clap,vst3 --no-sign --no-notarize
+          cd ../truce-vizia
+          "$GITHUB_WORKSPACE/target/debug/cargo-truce" package -p truce-example-gain-vizia --formats clap,vst3 --no-sign --no-notarize
+
       - name: upload failing screenshots
         if: failure()
         uses: actions/upload-artifact@v4

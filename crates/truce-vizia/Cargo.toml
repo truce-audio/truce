@@ -85,11 +85,13 @@ vizia = { git = "https://github.com/vizia/vizia.git", rev = "24c47433098fcc8e296
 # `RawWindowHandle` enum to rwh's `HasRawWindowHandle` trait.
 raw-window-handle = "0.5"
 log = "0.4"
-# vizia 0.4 ships its renderer through `skia-safe`; the headless
-# screenshot path drives `BackendContext::draw` against a CPU-backed
-# raster surface from this crate. Version pin tracks whatever
-# vizia_core resolves to so both ends operate on the same Skia API.
-skia-safe = "0.97"
+# `skia-safe` is *not* declared here. vizia_core re-exports it as
+# `vizia::vg`; pulling it in twice (once directly here, once through
+# vizia) makes cargo emit two copies of the `skia-bindings` native
+# archive into the example crate's `staticlib`, which then trips
+# `clang -bundle`'s duplicate-symbol detector on every harfbuzz /
+# OpenType object (`hb_parse_double`, `_hb_ot_var_normalize_coords`,
+# ...). The screenshot path consumes the re-export.
 
 [lints]
 workspace = true

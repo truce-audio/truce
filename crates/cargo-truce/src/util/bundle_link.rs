@@ -167,6 +167,18 @@ fn clang_bundle_single(
         MacArch::Arm64 => "arm64",
         MacArch::X86_64 => "x86_64",
     };
+    // Some C-dep chains (notably skia-bindings, which carries a full
+    // harfbuzz inside libskia.a) end up bundled into the rustc-emitted
+    // staticlib *twice*: once via the depending rlib's embedded native
+    // archive and once via the staticlib's own native-dep pass. The
+    // duplicate members are byte-identical, but `-Wl,-all_load` below
+    // pulls every member and clang errors on the resulting hundreds of
+    // duplicate symbols before `-dead_strip` ever runs. Dedup the
+    // archive ahead of time; the `_deduped` binding keeps the temp
+    // dir alive for the clang invocation and the cleanup runs on its
+    // `Drop`.
+    let deduped = dedupe_archive_members(staticlib)?;
+    let staticlib = deduped.path();
     let mut cmd = Command::new("clang");
     cmd.args([
         "-bundle",
@@ -223,4 +235,136 @@ fn clang_bundle_single(
         .into());
     }
     Ok(())
+}
+
+/// Self-cleaning wrapper around the deduplicated archive. Holds the
+/// temp dir we extracted into so the cleanup happens after clang
+/// finishes consuming the archive.
+struct DedupedArchive {
+    archive_path: PathBuf,
+    temp_dir: PathBuf,
+}
+
+impl DedupedArchive {
+    fn path(&self) -> &Path {
+        &self.archive_path
+    }
+}
+
+impl Drop for DedupedArchive {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.temp_dir);
+    }
+}
+
+/// Extract `staticlib`'s members into a temp directory then recompose
+/// a fresh archive containing only the *latest* member at each name.
+///
+/// `ar -x` on macOS overwrites same-named files on extract, so the
+/// extracted directory naturally holds one file per unique member
+/// name. `ar -qc` then assembles those files into a clean archive
+/// suitable for `clang -bundle -all_load`.
+///
+/// Why this exists: some sys-crate chains (skia-bindings carrying a
+/// full harfbuzz inside libskia.a is the live example) end up bundled
+/// into the rustc-emitted staticlib *twice* - once via the depending
+/// rlib's embedded native archive and once via the staticlib's own
+/// native-dep pass. The duplicate members are byte-identical, so the
+/// "keep the most recent extraction" rule never loses anything we
+/// care about; it only drops the redundant second copy.
+fn dedupe_archive_members(staticlib: &Path) -> Result<DedupedArchive, crate::CargoTruceError> {
+    let parent = staticlib
+        .parent()
+        .ok_or_else(|| -> crate::CargoTruceError {
+            format!(
+                "staticlib path has no parent directory: {}",
+                staticlib.display()
+            )
+            .into()
+        })?;
+    let stem = staticlib
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("staticlib");
+    // Append PID so concurrent installs (rare but possible: `cargo
+    // truce install -p A -p B` against the same workspace) don't
+    // collide on the same temp dir.
+    let temp_dir = parent.join(format!("{stem}.dedup-{}", std::process::id()));
+    if temp_dir.exists() {
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+    std::fs::create_dir_all(&temp_dir)?;
+
+    let extract = Command::new("ar")
+        .arg("-x")
+        .arg(staticlib)
+        .current_dir(&temp_dir)
+        .output()
+        .map_err(|e| -> crate::CargoTruceError {
+            format!("invoking ar -x for archive dedupe: {e}").into()
+        })?;
+    if !extract.status.success() {
+        return Err(format!(
+            "ar -x failed for {}:\n{}",
+            staticlib.display(),
+            String::from_utf8_lossy(&extract.stderr),
+        )
+        .into());
+    }
+
+    let mut members: Vec<PathBuf> = Vec::new();
+    for entry in std::fs::read_dir(&temp_dir)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_file() {
+            continue;
+        }
+        let path = entry.path();
+        // Skip the symbol-table index member. macOS ar extracts it as
+        // `__.SYMDEF` (or `__.SYMDEF SORTED`) but won't accept it back
+        // on append - and we don't need to, `-rcs` below regenerates
+        // the table from the object members.
+        if path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.starts_with("__.SYMDEF"))
+        {
+            continue;
+        }
+        members.push(path);
+    }
+    if members.is_empty() {
+        return Err(format!(
+            "ar -x produced no object members from {} - archive may be empty or corrupt",
+            staticlib.display()
+        )
+        .into());
+    }
+
+    let archive_path = parent.join(format!("{stem}.dedup-{}.a", std::process::id()));
+    if archive_path.exists() {
+        let _ = std::fs::remove_file(&archive_path);
+    }
+    // `-rcs`: replace (`-r`) + create-if-missing (`-c`) + write symbol
+    // table (`-s`). One pass; no separate `ranlib` step.
+    let mut compose = Command::new("ar");
+    compose.arg("-rcs").arg(&archive_path);
+    for m in &members {
+        compose.arg(m);
+    }
+    let composed = compose.output().map_err(|e| -> crate::CargoTruceError {
+        format!("invoking ar -rcs for archive dedupe: {e}").into()
+    })?;
+    if !composed.status.success() {
+        return Err(format!(
+            "ar -rcs failed for {}:\n{}",
+            archive_path.display(),
+            String::from_utf8_lossy(&composed.stderr),
+        )
+        .into());
+    }
+
+    Ok(DedupedArchive {
+        archive_path,
+        temp_dir,
+    })
 }

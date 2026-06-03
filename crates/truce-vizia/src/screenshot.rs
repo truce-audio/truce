@@ -8,12 +8,17 @@
 //! surface-agnostic, so swapping in a raster surface gives the same
 //! pixels minus the GL upload.
 
-use skia_safe::{AlphaType, ColorType, ImageInfo, surfaces};
+// `vizia::vg` is `vizia_core::vg`, which is itself `pub use
+// skia_safe::*` - one transitive dep chain instead of two parallel
+// ones, so cargo doesn't emit duplicate `skia-bindings` native
+// objects into the cdylib's staticlib output. See the comment on
+// vizia in `truce-vizia/Cargo.toml`.
 use truce_core::editor::PluginContext;
 use truce_params::Params;
 use vizia::backend::{BackendContext, WindowDescription};
 use vizia::context::WindowState;
 use vizia::prelude::*;
+use vizia::vg::{AlphaType, ColorType, ImageInfo, surfaces};
 
 use crate::editor::SetupFn;
 use crate::param_lens::ParamLens;

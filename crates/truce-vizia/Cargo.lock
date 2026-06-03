@@ -3097,7 +3097,6 @@ version = "0.51.0"
 dependencies = [
  "log",
  "raw-window-handle 0.5.2",
- "skia-safe",
  "truce-core",
  "truce-font",
  "truce-params",
