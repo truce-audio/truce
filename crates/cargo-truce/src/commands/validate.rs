@@ -543,20 +543,39 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
         }
     }
 
-    // VST2 binary smoke (no industry validator; this is ours)
+    // VST2 binary smoke (no industry validator; this is ours).
+    // Two reasons to silently skip without printing a header:
+    //   - the smoke source ships only in the truce framework repo,
+    //     so plugin authors invoking `cargo truce validate` from
+    //     their own crate would otherwise see an empty "VST2 binary
+    //     smoke" section followed by a stale path complaint;
+    //   - on non-macOS the smoke binary's `dlfcn.h` shape doesn't
+    //     port, so there's nothing to run either.
+    // `--vst2` was explicit only when the user actually asked - if
+    // they did and the source isn't reachable, fail loudly.
     if run_vst2 {
-        eprintln!("\nVST2 binary smoke\n");
-        #[cfg(target_os = "macos")]
-        {
-            failures += validate_vst2_macos(&plugins);
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            eprintln!("  Skipping: VST2 binary smoke is currently macOS-only.");
-            let _ = &plugins;
-            if vst2_explicit {
-                failures += 1;
+        let smoke_src_present = cfg!(target_os = "macos")
+            && project_root()
+                .join("crates/truce-vst2/validate/binary_smoke.c")
+                .exists();
+        if smoke_src_present {
+            eprintln!("\nVST2 binary smoke\n");
+            #[cfg(target_os = "macos")]
+            {
+                failures += validate_vst2_macos(&plugins);
             }
+            #[cfg(not(target_os = "macos"))]
+            let _ = &plugins;
+        } else if vst2_explicit {
+            eprintln!("\nVST2 binary smoke\n");
+            #[cfg(target_os = "macos")]
+            eprintln!("  source missing at crates/truce-vst2/validate/binary_smoke.c");
+            #[cfg(not(target_os = "macos"))]
+            eprintln!("  VST2 binary smoke is currently macOS-only");
+            failures += 1;
+            let _ = &plugins;
+        } else {
+            let _ = &plugins;
         }
     }
 
@@ -689,15 +708,19 @@ fn find_pluginrunner() -> Option<String> {
 /// `VSTPluginMain` returns a well-formed `AEffect`. macOS-only because
 /// the smoke binary uses `dlfcn.h` and we hardcode `.dylib` here.
 /// Returns the failure count.
+///
+/// The smoke source is a truce-vst2 dev artifact that only exists
+/// inside the framework's own repo. Downstream plugin authors don't
+/// have it and shouldn't be told about it - if the file is missing
+/// we silently treat the smoke test as not applicable.
 #[cfg(target_os = "macos")]
 fn validate_vst2_macos(plugins: &[&PluginDef]) -> usize {
     let root = project_root();
     let test_src = root.join("crates/truce-vst2/validate/binary_smoke.c");
     if !test_src.exists() {
-        eprintln!(
-            "  Skipping: smoke source missing at {}.",
-            test_src.display()
-        );
+        // No noise: the smoke source only ships with truce itself.
+        // For every other consumer of `cargo truce validate` this
+        // step has nothing to do.
         return 0;
     }
 
