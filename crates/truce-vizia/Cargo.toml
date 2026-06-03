@@ -58,7 +58,7 @@ baseview = { git = "https://github.com/truce-audio/baseview.git", branch = "base
 
 [package]
 name = "truce-vizia"
-version = "0.49.23"
+version = "0.50.0"
 edition = "2024"
 license = "Apache-2.0 OR MIT"
 rust-version = "1.92"
@@ -70,9 +70,9 @@ homepage = "https://github.com/truce-audio/truce"
 crate-type = ["rlib"]
 
 [dependencies]
-truce-core = { version = "0.49.23", path = "../truce-core" }
-truce-params = { version = "0.49.23", path = "../truce-params" }
-truce-font = { version = "0.49.23", path = "../truce-font" }
+truce-core = { version = "0.50.0", path = "../truce-core" }
+truce-params = { version = "0.50.0", path = "../truce-params" }
+truce-font = { version = "0.50.0", path = "../truce-font" }
 
 # vizia 0.4.0 on crates.io ships the winit backend only; the
 # `baseview` feature (and the vizia_baseview crate) live in vizia's
