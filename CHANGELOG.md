@@ -2,6 +2,11 @@
 
 Notable changes per release.
 
+## 0.51.0
+
+- **`truce-iced`: `with_font(bytes)` matches egui / vizia.** Family
+  name is now read from the TTF (was `with_font(family, bytes)`).
+
 ## 0.50.0
 
 - **New GUI backend: `truce-vizia`.** Param-bound widgets, headless
