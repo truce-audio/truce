@@ -39,6 +39,11 @@ pub(crate) fn cmd_package_linux(args: &[String], selection: &SuiteSelection) -> 
         match args[i].as_str() {
             "" => {}
             "--no-build" => no_build = true,
+            // No-op on Linux (no codesign / notarisation step to
+            // skip) but accepted silently so cross-platform CI
+            // matrices can pass the same `--no-sign --no-notarize`
+            // flags to every OS without per-platform branches.
+            "--no-sign" | "--no-pace-sign" | "--no-notarize" => {}
             "--target" => {
                 i += 1;
                 let v = args.get(i).ok_or("--target requires a value")?;

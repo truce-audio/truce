@@ -198,19 +198,13 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-  # Sub-workspace install + validate + package round-trip for slint
-  # and vizia. Split out from `test` because:
-  #   - skia-bindings + vizia compile times push the job toward the
-  #     30-minute GHA soft cap; failures here shouldn't block the fast
-  #     gate;
-  #   - vizia's editor needs a real Xorg + Mesa GLX stack (xvfb's
-  #     built-in GLX module advertises no FBConfigs), which is
-  #     heavyweight runner setup the rest of `test` shouldn't pay for.
-  # Mirrors the macOS `gui-window` and bake-screenshots split: each
-  # gets its own runner, its own apt install, and its own validator
-  # cache key.
-  sub-workspaces:
-    name: ubuntu-24.04 (sub-workspaces)
+  # Slint sub-workspace install + validate + package. Stays on the
+  # standard `ubuntu-24.04` runner because slint's editor renders
+  # through CPU-backed Skia and never opens a GL context - the
+  # headless software-GL trap that bites vizia (see the
+  # `sub-workspaces-vizia` job below) doesn't apply here.
+  sub-workspaces-slint:
+    name: ubuntu-24.04 (truce-slint sub-workspace)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -219,7 +213,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          key: ubuntu-24.04-sub-workspaces
+          key: ubuntu-24.04-sub-workspaces-slint
           cache-bin: false
 
       - name: Linux system deps
@@ -273,8 +267,6 @@ jobs:
       - name: Build cargo-truce
         run: cargo build -p cargo-truce
 
-      # truce-slint's editor renders through CPU-backed Skia and
-      # doesn't open a GL context - `xvfb-run` is enough.
       - name: Install + validate (truce-slint sub-workspace)
         run: |
           set -e -o pipefail
@@ -286,19 +278,86 @@ jobs:
             exit 1
           fi
 
-      # vizia's editor opens a GLX-backed OpenGL surface through
-      # baseview's X11 GL path. pluginval's "Open editor whilst
-      # processing" probe instantiates the editor for real, which
-      # needs a `glXChooseFBConfig`-friendly GL stack - software-
-      # only Xvfb / Xorg-dummy never advertise FBConfigs (verified
-      # against Mesa + llvmpipe + dummy-driver: the GL context can
-      # be created but zero FBConfigs are exposed). Pass
-      # `--skip-gui-tests` so pluginval runs every non-editor probe
-      # (cold/warm open, plugin info, processing, state, …) which
-      # is what we actually wanted to cover here. The editor itself
-      # is exercised in real DAWs on Linux hosts with GPUs;
-      # clap-validator's `Open editor whilst processing` lands in
-      # the 4-skipped pile every CI run for the same reason.
+      - name: Package (truce-slint sub-workspace)
+        run: |
+          set -e -o pipefail
+          cd crates/truce-slint
+          "$GITHUB_WORKSPACE/target/debug/cargo-truce" package -p truce-example-gain-slint --formats clap,vst3 --no-sign --no-notarize
+
+  # Vizia sub-workspace install + validate + package. Kept in its
+  # own job (separate from `sub-workspaces-slint`) so the heavy
+  # skia-bindings + vizia compile times don't push either job toward
+  # the 30-minute soft cap. Pluginval's "Open editor whilst
+  # processing" probe is skipped via `--skip-gui-tests` because
+  # `ubuntu-24.04`'s headless software-GL stack returns zero
+  # FBConfigs from `glXChooseFBConfig` - baseview's editor needs a
+  # real GLX implementation (GPU or NVIDIA software ICD) to
+  # construct a window context. Same fallback the Windows variant
+  # uses for the same reason.
+  sub-workspaces-vizia:
+    name: ubuntu-24.04 (truce-vizia sub-workspace)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ubuntu-24.04-sub-workspaces-vizia
+          cache-bin: false
+
+      - name: Linux system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config \
+            libx11-dev libx11-xcb-dev libxcb1-dev libxcb-dri2-0-dev libxcb-icccm4-dev libxcursor-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev libxrandr-dev \
+            libgl1-mesa-dev libegl1-mesa-dev libvulkan-dev mesa-vulkan-drivers \
+            libwayland-dev \
+            libasound2-dev libjack-jackd2-dev \
+            libfontconfig1-dev libfreetype-dev \
+            xvfb
+
+      - name: Cache pluginval
+        id: cache-pluginval
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/bin/pluginval
+          key: pluginval-linux-1.0.4
+
+      - name: Download pluginval
+        if: steps.cache-pluginval.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/.local/bin
+          curl -fsSL -o /tmp/pluginval.zip \
+            https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_Linux.zip
+          unzip -oq /tmp/pluginval.zip -d /tmp/pluginval-bin
+          install -m 755 /tmp/pluginval-bin/pluginval ~/.local/bin/pluginval
+
+      - name: Cache clap-validator
+        id: cache-clap-validator
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/clap-validator
+          key: clap-validator-linux-2026-05-09
+
+      - name: Install clap-validator
+        if: steps.cache-clap-validator.outputs.cache-hit != 'true'
+        run: cargo install --locked --git https://github.com/free-audio/clap-validator clap-validator
+
+      - name: Validators on PATH
+        run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Pre-flight — validators present
+        run: |
+          command -v clap-validator
+          command -v pluginval
+
+      - name: Build cargo-truce
+        run: cargo build -p cargo-truce
+
       - name: Install + validate (truce-vizia sub-workspace)
         run: |
           set -e -o pipefail
@@ -310,10 +369,8 @@ jobs:
             exit 1
           fi
 
-      - name: Package (truce-slint + truce-vizia sub-workspaces)
+      - name: Package (truce-vizia sub-workspace)
         run: |
           set -e -o pipefail
-          cd crates/truce-slint
-          "$GITHUB_WORKSPACE/target/debug/cargo-truce" package -p truce-example-gain-slint --formats clap,vst3 --no-sign --no-notarize
-          cd ../truce-vizia
+          cd crates/truce-vizia
           "$GITHUB_WORKSPACE/target/debug/cargo-truce" package -p truce-example-gain-vizia --formats clap,vst3 --no-sign --no-notarize

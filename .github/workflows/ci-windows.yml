@@ -233,13 +233,23 @@ jobs:
             exit 1
           fi
 
+      # Same `--skip-gui-tests` rationale as the Linux vizia step.
+      # baseview's Windows GL path (`baseview/src/gl/win.rs:194`)
+      # hard-requires `WGL_ACCELERATION_ARB = WGL_FULL_ACCELERATION_ARB`;
+      # `windows-latest` runners have no GPU and Microsoft's GDI
+      # software GL advertises as `WGL_GENERIC_ACCELERATION_ARB`, so
+      # `wglChoosePixelFormatARB` returns zero formats and the
+      # editor probe panics the same way it does under software Mesa
+      # on Linux. macOS escapes the same trap because Apple's
+      # NSOpenGLPixelFormat fallback always advertises a usable
+      # format; that step doesn't pass `--skip-gui-tests`.
       - name: Install + validate (truce-vizia sub-workspace)
         shell: bash
         run: |
           set -e -o pipefail
           cd crates/truce-vizia
           "$GITHUB_WORKSPACE/target/debug/cargo-truce.exe" install --user --clap --vst3 -p truce-example-gain-vizia
-          "$GITHUB_WORKSPACE/target/debug/cargo-truce.exe" validate --clap --pluginval -p truce-example-gain-vizia 2>&1 | tee validate-vizia.log
+          "$GITHUB_WORKSPACE/target/debug/cargo-truce.exe" validate --clap --pluginval --skip-gui-tests -p truce-example-gain-vizia 2>&1 | tee validate-vizia.log
           if grep -E "SKIP|not found" validate-vizia.log >/dev/null; then
             echo "::error::vizia validate skipped a step — failing"
             exit 1
