@@ -26,7 +26,6 @@ members = [
     "crates/truce-gpu",
     "crates/truce-egui",
     "crates/truce-iced",
-    "crates/truce-vizia",
     "crates/truce-shim-types",
     "crates/truce-simd",
     "crates/truce-font",
@@ -46,13 +45,11 @@ members = [
     "examples/truce-example-tremolo",
     "examples/truce-example-state",
     "examples/truce-example-gain-iced",
-    "examples/truce-example-gain-vizia",
     "examples/truce-example-fundsp-reverb-worker",
     "examples/truce-example-fundsp-reverb-simple",
     "examples/truce-example-gui-zoo",
     "examples/truce-example-gui-zoo-egui",
     "examples/truce-example-gui-zoo-iced",
-    "examples/truce-example-gui-zoo-vizia",
     "examples/truce-example-dasp-bitcrusher",
 ]
 
@@ -128,7 +125,6 @@ truce-cpu = { version = "0.49.23", path = "crates/truce-cpu" }
 truce-gpu = { version = "0.49.23", path = "crates/truce-gpu" }
 truce-egui = { version = "0.49.23", path = "crates/truce-egui" }
 truce-iced = { version = "0.49.23", path = "crates/truce-iced" }
-truce-vizia = { version = "0.49.23", path = "crates/truce-vizia" }
 truce-simd = { version = "0.49.23", path = "crates/truce-simd" }
 truce-font = { version = "0.49.23", path = "crates/truce-font" }
 truce-build = { version = "0.49.23", path = "crates/truce-build" }
@@ -157,20 +153,10 @@ wgpu = { version = "29", default-features = false, features = ["wgsl"] }
 # consume this via `baseview = { workspace = true }` so the registry
 # pin lives in exactly one place.
 #
-# `truce.5` bumped `keyboard-types` 0.6 -> 0.7 (matches vizia's pin -
-# downstream `truce-vizia` `[patch]`es baseview to this fork) and
-# renamed `[lib].name` to `baseview` (lets the patch link without a
-# wrapper shim).
-baseview = { package = "baseview-truce", version = "0.1.1-truce.6" }
-
-# Redirect vizia_baseview's git baseview dep through baseview-truce.
-# vizia_baseview pins `baseview = { git = "https://github.com/vizia/baseview", rev = "..." }`;
-# `baseview-truce 0.1.1-truce.5` sets `[lib].name = "baseview"` so
-# rustc sees the substituted crate as `baseview` and vizia_baseview's
-# `use baseview::*` resolves. This is what lets vizia-backed plugins
-# pick up the AAX / Pro Tools teardown fix the same as every other
-# truce GUI backend.
-[patch."https://github.com/vizia/baseview"]
+# Vizia's git-pinned baseview rev lives outside this workspace in
+# `crates/truce-vizia/` (its own Cargo workspace). Whatever patch
+# wiring vizia ends up needing belongs there, not here - keeping the
+# parent lockfile + iOS bake free of the vizia mess.
 baseview = { package = "baseview-truce", version = "0.1.1-truce.6" }
 
 # Custom profile for shell-mode (hot-reload) builds. `cargo truce

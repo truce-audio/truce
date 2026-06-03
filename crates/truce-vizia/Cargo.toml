@@ -1,28 +1,76 @@
+# truce-vizia lives in its own Cargo workspace, parallel to
+# truce-slint. The split exists because vizia hard-pins
+# `https://github.com/vizia/baseview.git` at a rev that has no
+# `cfg(target_os = "ios")` `platform` impl, and the workspace-level
+# `[patch]` that should redirect it to `baseview-truce` is silently
+# inert (cargo doesn't apply registry patches whose package name
+# doesn't match the consumer's requested name - vizia asks for
+# `baseview`, our published fork is `baseview-truce`). Isolating
+# vizia here keeps the iOS bake, the parent Cargo.lock, and the
+# parent `[patch]` table from being contaminated by vizia's pin.
+#
+# Path deps point back into the parent workspace (`../<crate>`).
+# `cargo publish` strips `path` and embeds the registry `version`,
+# so the explicit `version = "..."` pins are load-bearing for
+# publish. `scripts/release/bump.sh` sweeps this file alongside the
+# parent workspace.
+[workspace]
+members = [
+    ".",
+    "examples/truce-example-gain-vizia",
+    "examples/truce-example-gui-zoo-vizia",
+]
+resolver = "2"
+
+[workspace.lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("cargo-clippy"))'] }
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+
+# Intended substitution: route vizia_baseview's git baseview dep
+# through baseview-truce so vizia plugins pick up the AAX / Pro Tools
+# teardown fix every other GUI backend already gets.
+#
+# Currently inert: cargo's `[patch]` substitution looks the replacement
+# up by the *consumer's* requested package name. vizia asks for
+# `baseview` (`baseview = { git = "https://github.com/vizia/baseview.git" }`)
+# but baseview-truce is published with `[package].name = "baseview-truce"`
+# (only the `[lib].name` is `baseview`). cargo emits no diagnostic when
+# the rename mismatches a registry substitute - the patch is silently
+# ignored and vizia_baseview keeps linking the upstream baseview.
+#
+# Kept documented so the moment the rename problem is resolved (either
+# a vizia fork that depends on baseview-truce directly, or a
+# `truce-audio/baseview` branch published with `[package].name =
+# "baseview"`) the substitution can be tested by just deleting this
+# comment block.
+[patch."https://github.com/vizia/baseview.git"]
+baseview = { package = "baseview-truce", version = "0.1.1-truce.6" }
+
 [package]
 name = "truce-vizia"
-version.workspace = true
-repository.workspace = true
-homepage.workspace = true
-edition.workspace = true
-license.workspace = true
-rust-version.workspace = true
+version = "0.49.23"
+edition = "2024"
+license = "Apache-2.0 OR MIT"
+rust-version = "1.92"
 description = "Vizia-based GUI backend for truce audio plugins."
+repository = "https://github.com/truce-audio/truce"
+homepage = "https://github.com/truce-audio/truce"
 
 [lib]
 crate-type = ["rlib"]
 
 [dependencies]
-truce-core = { workspace = true }
-truce-params = { workspace = true }
-truce-font = { workspace = true }
+truce-core = { version = "0.49.23", path = "../truce-core" }
+truce-params = { version = "0.49.23", path = "../truce-params" }
+truce-font = { version = "0.49.23", path = "../truce-font" }
 
 # vizia 0.4.0 on crates.io ships the winit backend only; the
 # `baseview` feature (and the vizia_baseview crate) live in vizia's
 # main branch but aren't in the published umbrella. Pin to a
-# specific main-branch rev for reproducibility. The workspace-level
-# `[patch."https://github.com/vizia/baseview"]` redirects
-# vizia_baseview's baseview dep to our baseview-truce fork so
-# vizia-backed plugins pick up the AAX / Pro Tools teardown fix.
+# specific main-branch rev for reproducibility. See the workspace
+# `[patch]` block above for the (currently inert) baseview redirect.
 vizia = { git = "https://github.com/vizia/vizia.git", rev = "24c47433098fcc8e29668a22fcb71771807d86d6", default-features = false, features = ["baseview"] }
 # raw-window-handle 0.5 matches what baseview-truce + vizia_baseview
 # expose publicly. The platform.rs newtype bridges truce-core's own

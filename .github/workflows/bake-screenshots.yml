@@ -82,17 +82,20 @@ env:
     truce-example-transpose
     truce-example-gui-zoo
     truce-example-gui-zoo-egui
-    truce-example-gain-vizia
     truce-example-gui-zoo-iced
-    truce-example-gui-zoo-vizia
     truce-example-dasp-bitcrusher
-  # Slint examples live in the truce-slint sub-workspace (skia
-  # collision with vizia in the main workspace), so they're baked
-  # with `cargo-truce` invoked from inside crates/truce-slint/ where
-  # the sub-workspace's truce.toml + Cargo.toml resolve them.
+  # Slint + vizia examples live in their own Cargo sub-workspaces
+  # under `crates/<name>/` (skia-bindings `links` collision for slint;
+  # vizia's hard-pinned baseview rev for vizia - see the respective
+  # `crates/<name>/Cargo.toml` headers). They're baked with
+  # `cargo-truce` invoked from inside the sub-workspace directory so
+  # its truce.toml + Cargo.toml resolve the plugin entries.
   SLINT_CRATES: >-
     truce-example-gain-slint
     truce-example-gui-zoo-slint
+  VIZIA_CRATES: >-
+    truce-example-gain-vizia
+    truce-example-gui-zoo-vizia
 
 jobs:
   linux:
@@ -156,6 +159,20 @@ jobs:
             echo "::endgroup::"
           done
 
+      - name: Bake vizia screenshots (sub-workspace)
+        run: |
+          set -euo pipefail
+          CARGO_TRUCE="$PWD/target/release/cargo-truce"
+          cd crates/truce-vizia
+          for crate in $VIZIA_CRATES; do
+            short="${crate#truce-example-}"
+            short="${short//-/_}"
+            out="examples/${crate}/screenshots/${short}_default_linux.png"
+            echo "::group::Baking crates/truce-vizia/$out"
+            "$CARGO_TRUCE" screenshot -p "$crate" --out "$out"
+            echo "::endgroup::"
+          done
+
       - uses: actions/upload-artifact@v4
         with:
           name: baked-screenshots-linux
@@ -212,12 +229,27 @@ jobs:
             echo "::endgroup::"
           done
 
+      - name: Bake vizia screenshots (sub-workspace)
+        run: |
+          set -euo pipefail
+          CARGO_TRUCE="$PWD/target/release/cargo-truce"
+          cd crates/truce-vizia
+          for crate in $VIZIA_CRATES; do
+            short="${crate#truce-example-}"
+            short="${short//-/_}"
+            out="examples/${crate}/screenshots/${short}_default_macos.png"
+            echo "::group::Baking crates/truce-vizia/$out"
+            "$CARGO_TRUCE" screenshot -p "$crate" --out "$out"
+            echo "::endgroup::"
+          done
+
       - uses: actions/upload-artifact@v4
         with:
           name: baked-screenshots-macos
           path: |
             examples/*/screenshots/*_macos.png
             crates/truce-slint/examples/*/screenshots/*_macos.png
+            crates/truce-vizia/examples/*/screenshots/*_macos.png
           if-no-files-found: error
           retention-days: 30
 
@@ -276,12 +308,33 @@ jobs:
             Pop-Location
           }
 
+      - name: Bake vizia screenshots (sub-workspace)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $cargoTruce = Join-Path $PWD "target/release/cargo-truce.exe"
+          $crates = $env:VIZIA_CRATES -split '\s+' | Where-Object { $_ }
+          Push-Location crates/truce-vizia
+          try {
+            foreach ($crate in $crates) {
+              $short = ($crate -replace '^truce-example-', '') -replace '-', '_'
+              $out = "examples/$crate/screenshots/${short}_default_windows.png"
+              Write-Host "::group::Baking crates/truce-vizia/$out"
+              & $cargoTruce screenshot -p $crate --out $out
+              if ($LASTEXITCODE -ne 0) { throw "screenshot failed for $crate (exit $LASTEXITCODE)" }
+              Write-Host "::endgroup::"
+            }
+          } finally {
+            Pop-Location
+          }
+
       - uses: actions/upload-artifact@v4
         with:
           name: baked-screenshots-windows
           path: |
             examples/*/screenshots/*_windows.png
             crates/truce-slint/examples/*/screenshots/*_windows.png
+            crates/truce-vizia/examples/*/screenshots/*_windows.png
           if-no-files-found: error
           retention-days: 30
 
@@ -322,6 +375,16 @@ jobs:
       # dep build cost separately in each per-crate `install_one_screenshot`
       # below. After this step, the `cargo build` inside each install is
       # a fast fingerprint-only no-op.
+      #
+      # vizia plugins are *not* iterated here at all: they live in the
+      # truce-vizia sub-workspace (see crates/truce-vizia/Cargo.toml's
+      # header for the rationale - vizia's pinned baseview rev has no
+      # iOS `platform` impl and our `[patch]` is inert because of a
+      # registry/git rename mismatch). They don't ship to iOS either
+      # way, so the sub-workspace is omitted from the iOS bake until
+      # the patch is wired up by either a vizia fork that depends on
+      # baseview-truce directly, or a `truce-audio/baseview` branch
+      # published with `[package].name = "baseview"`.
       - name: Pre-build iOS plugin slices
         run: |
           set -euo pipefail

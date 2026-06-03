@@ -114,28 +114,34 @@ sed_inplace() {
 echo "→ editing Cargo.toml"
 sed_inplace "s/\"$CURRENT\"/\"$NEW\"/g" Cargo.toml
 
-# `truce-slint` lives in a separate Cargo workspace under
-# `crates/truce-slint/` because slint and vizia can't share one
-# `skia-bindings` (cargo's `links` rule). Its Cargo.tomls (lib +
-# build helper + per-example) carry their own `[package].version`
-# plus path-dep `version` pins to other `truce-*` crates - all of
-# those must move in lockstep with the parent workspace. The sed
-# is applied to every `Cargo.toml` under the sub-workspace.
-while IFS= read -r -d '' subtoml; do
-    echo "→ editing $subtoml"
-    sed_inplace "s/\"$CURRENT\"/\"$NEW\"/g" "$subtoml"
-done < <(find crates/truce-slint -name Cargo.toml -not -path '*/target/*' -print0)
+# `truce-slint` and `truce-vizia` live in their own Cargo workspaces
+# under `crates/<name>/` (slint: skia-bindings collision; vizia:
+# pinned baseview rev with no iOS impl + an inert `[patch]` we don't
+# want infecting the parent lockfile - see each sub-workspace's
+# Cargo.toml header). Each carries its own `[package].version` plus
+# path-dep `version` pins to other `truce-*` crates - all of those
+# must move in lockstep with the parent workspace. The sed is
+# applied to every `Cargo.toml` under each sub-workspace.
+for sub in crates/truce-slint crates/truce-vizia; do
+    [[ -f "$sub/Cargo.toml" ]] || continue
+    while IFS= read -r -d '' subtoml; do
+        echo "→ editing $subtoml"
+        sed_inplace "s/\"$CURRENT\"/\"$NEW\"/g" "$subtoml"
+    done < <(find "$sub" -name Cargo.toml -not -path '*/target/*' -print0)
+done
 
 # Refresh Cargo.lock ----------------------------------------------------------
 
 echo "→ refreshing Cargo.lock ($CARGO check --workspace)"
 "$CARGO" check --workspace
 
-# Same for the truce-slint sub-workspace's lock.
-if [[ -f crates/truce-slint/Cargo.toml ]]; then
-    echo "→ refreshing crates/truce-slint/Cargo.lock"
-    "$CARGO" check --manifest-path crates/truce-slint/Cargo.toml
-fi
+# Same for each sub-workspace's lock.
+for sub in crates/truce-slint crates/truce-vizia; do
+    if [[ -f "$sub/Cargo.toml" ]]; then
+        echo "→ refreshing $sub/Cargo.lock"
+        "$CARGO" check --manifest-path "$sub/Cargo.toml"
+    fi
+done
 
 # Commit ----------------------------------------------------------------------
 
@@ -147,12 +153,14 @@ fi
 
 echo "→ committing on $(git rev-parse --abbrev-ref HEAD)"
 git add Cargo.toml Cargo.lock
-if [[ -f crates/truce-slint/Cargo.toml ]]; then
-    git add crates/truce-slint/Cargo.lock
-    while IFS= read -r -d '' subtoml; do
-        git add "$subtoml"
-    done < <(find crates/truce-slint -name Cargo.toml -not -path '*/target/*' -print0)
-fi
+for sub in crates/truce-slint crates/truce-vizia; do
+    if [[ -f "$sub/Cargo.toml" ]]; then
+        [[ -f "$sub/Cargo.lock" ]] && git add "$sub/Cargo.lock"
+        while IFS= read -r -d '' subtoml; do
+            git add "$subtoml"
+        done < <(find "$sub" -name Cargo.toml -not -path '*/target/*' -print0)
+    fi
+done
 git commit -m "Release v$NEW"
 
 echo
