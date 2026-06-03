@@ -359,16 +359,50 @@ jobs:
           export LIBGL_ALWAYS_SOFTWARE=1
           export __GLX_VENDOR_LIBRARY_NAME=mesa
           echo "--- glxinfo -B ---"
-          if ! glxinfo -B; then
-            echo "::error::glxinfo failed - Mesa GLX vendor not registered with Xorg :99"
+          glxinfo -B || true
+          # glxinfo's exit code lies on Xvfb / dummy-driver setups:
+          # it can print a GL renderer string while
+          # `glXChooseFBConfig` still returns zero configs (different
+          # code path in libglvnd). Mirror baseview's actual call so
+          # the gate fails for the same reason baseview would, with
+          # diagnostics in hand instead of a panic in the validator.
+          cat > /tmp/glx_smoke.c <<'EOF'
+          #include <GL/glx.h>
+          #include <X11/Xlib.h>
+          #include <stdio.h>
+          int main(void) {
+              Display *d = XOpenDisplay(NULL);
+              if (!d) { fprintf(stderr, "XOpenDisplay failed\n"); return 1; }
+              int attrs[] = {
+                  GLX_X_RENDERABLE, 1,
+                  GLX_X_VISUAL_TYPE, GLX_TRUE_COLOR,
+                  GLX_DRAWABLE_TYPE, GLX_WINDOW_BIT,
+                  GLX_RENDER_TYPE, GLX_RGBA_BIT,
+                  GLX_RED_SIZE, 8, GLX_GREEN_SIZE, 8, GLX_BLUE_SIZE, 8, GLX_ALPHA_SIZE, 8,
+                  GLX_DEPTH_SIZE, 24, GLX_STENCIL_SIZE, 8,
+                  GLX_DOUBLEBUFFER, 1,
+                  0
+              };
+              int n = 0;
+              GLXFBConfig *cfg = glXChooseFBConfig(d, DefaultScreen(d), attrs, &n);
+              fprintf(stderr, "glXChooseFBConfig returned %d FBConfig(s)\n", n);
+              if (cfg) XFree(cfg);
+              return (n > 0) ? 0 : 2;
+          }
+          EOF
+          cc -o /tmp/glx_smoke /tmp/glx_smoke.c -lGL -lX11
+          if ! /tmp/glx_smoke; then
+            echo "::error::glXChooseFBConfig found zero FBConfigs - baseview will panic the same way"
             echo "--- vendor JSON files ---"
             ls -la /usr/share/glvnd/egl_vendor.d/ /usr/lib/x86_64-linux-gnu/GL/glx/*.json 2>/dev/null || true
+            echo "--- Mesa GLX provider ---"
+            find /usr/lib/x86_64-linux-gnu -name 'libGLX_mesa*' -o -name 'libglx*' 2>/dev/null
+            echo "--- Xorg-loaded modules (from log) ---"
+            sudo grep -E "(LoadModule|module .* loaded|GLX)" /tmp/xorg-dummy.log | head -40 || true
             echo "--- Xorg log tail ---"
-            sudo tail -100 /tmp/xorg-dummy.log
+            sudo tail -150 /tmp/xorg-dummy.log
             exit 1
           fi
-          echo "--- FBConfigs (head) ---"
-          glxinfo | grep -A2 "GLX Visuals\|fbconfig" | head -30 || true
 
       - name: Install + validate (truce-vizia sub-workspace)
         env:
