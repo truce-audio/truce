@@ -4,9 +4,9 @@
 
 use crate::format::Format;
 use crate::install_scope::InstallScope;
-use crate::{PluginDef, Res, dirs, load_config, tag_warn};
 #[cfg(target_os = "macos")]
-use crate::{deployment_target, project_root, tmp_verify};
+use crate::tmp_verify;
+use crate::{PluginDef, Res, dirs, load_config, tag_warn};
 #[cfg(target_os = "macos")]
 use std::fs;
 use std::path::Path;
@@ -164,9 +164,6 @@ fn warn_on_au_collision(au_type: &str, subtype: &str, manufacturer: &str, expect
     eprintln!("        macOS will pick one at load time; the rest are shadowed.");
 }
 
-// `vst2_explicit` is only consulted on non-macOS (the smoke validator
-// always runs on macOS), so the assignments are dead on the macOS build.
-#[cfg_attr(target_os = "macos", allow(unused_variables, unused_assignments))]
 #[allow(clippy::too_many_lines)]
 pub(crate) fn cmd_validate(args: &[String]) -> Res {
     let config = load_config()?;
@@ -175,7 +172,6 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
     let mut run_auval_v3 = false;
     let mut run_pluginval = false;
     let mut run_clap = false;
-    let mut run_vst2 = false;
     let mut run_aax = false;
     // Track explicit per-format flags so a missing validator counts as a
     // failure for CI (`--clap`, `--pluginval`, …) but stays a warning for
@@ -185,7 +181,6 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
     let mut auval_v3_explicit = false;
     let mut pluginval_explicit = false;
     let mut clap_explicit = false;
-    let mut vst2_explicit = false;
     let mut aax_explicit = false;
     let mut plugin_filter: Option<String> = None;
 
@@ -208,10 +203,6 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
                 run_clap = true;
                 clap_explicit = true;
             }
-            "--vst2" => {
-                run_vst2 = true;
-                vst2_explicit = true;
-            }
             "--aax" => {
                 run_aax = true;
                 aax_explicit = true;
@@ -221,7 +212,6 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
                 run_auval_v3 = true;
                 run_pluginval = true;
                 run_clap = true;
-                run_vst2 = true;
                 run_aax = true;
             }
             "-p" => {
@@ -235,12 +225,11 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
         }
         i += 1;
     }
-    if !run_auval && !run_auval_v3 && !run_pluginval && !run_clap && !run_vst2 && !run_aax {
+    if !run_auval && !run_auval_v3 && !run_pluginval && !run_clap && !run_aax {
         run_auval = true;
         run_auval_v3 = true;
         run_pluginval = true;
         run_clap = true;
-        run_vst2 = true;
         run_aax = true;
     }
 
@@ -543,41 +532,12 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
         }
     }
 
-    // VST2 binary smoke (no industry validator; this is ours).
-    // Two reasons to silently skip without printing a header:
-    //   - the smoke source ships only in the truce framework repo,
-    //     so plugin authors invoking `cargo truce validate` from
-    //     their own crate would otherwise see an empty "VST2 binary
-    //     smoke" section followed by a stale path complaint;
-    //   - on non-macOS the smoke binary's `dlfcn.h` shape doesn't
-    //     port, so there's nothing to run either.
-    // `--vst2` was explicit only when the user actually asked - if
-    // they did and the source isn't reachable, fail loudly.
-    if run_vst2 {
-        let smoke_src_present = cfg!(target_os = "macos")
-            && project_root()
-                .join("crates/truce-vst2/validate/binary_smoke.c")
-                .exists();
-        if smoke_src_present {
-            eprintln!("\nVST2 binary smoke\n");
-            #[cfg(target_os = "macos")]
-            {
-                failures += validate_vst2_macos(&plugins);
-            }
-            #[cfg(not(target_os = "macos"))]
-            let _ = &plugins;
-        } else if vst2_explicit {
-            eprintln!("\nVST2 binary smoke\n");
-            #[cfg(target_os = "macos")]
-            eprintln!("  source missing at crates/truce-vst2/validate/binary_smoke.c");
-            #[cfg(not(target_os = "macos"))]
-            eprintln!("  VST2 binary smoke is currently macOS-only");
-            failures += 1;
-            let _ = &plugins;
-        } else {
-            let _ = &plugins;
-        }
-    }
+    // VST2's binary-surface smoke (dlopen + AEffect probe) used to
+    // live here under `--vst2`. It moved to a regular cargo
+    // integration test (`crates/truce-vst2/tests/binary_smoke.rs`) -
+    // the C harness is a framework-internal asset and plugin authors
+    // running `cargo truce validate` against their own crate should
+    // never see references to it.
 
     eprintln!();
     if failures > 0 {
@@ -591,7 +551,7 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
 fn print_help() {
     eprintln!(
         "\
-Usage: cargo truce validate [--auval] [--auval3] [--pluginval] [--clap] [--vst2]
+Usage: cargo truce validate [--auval] [--auval3] [--pluginval] [--clap]
                             [--aax] [--all] [-p <crate>]
 
 Run validation tools on installed plugins. With no flag, runs every
@@ -602,7 +562,6 @@ Options:
   --auval3         AU v3 validation via auval (macOS).
   --pluginval      VST3 validation via pluginval.
   --clap           CLAP validation via clap-validator.
-  --vst2           VST2 dlopen + AEffect smoke (macOS).
   --aax            AAX validation via pluginrunner (Pro Tools
                    Developer's CommandLineTools, macOS / Windows).
   --all            Run every available validator (default).
@@ -701,124 +660,6 @@ fn find_pluginrunner() -> Option<String> {
         }
     }
     None
-}
-
-/// Build each plugin as a VST2 dylib, dlopen it via the C smoke binary
-/// at `crates/truce-vst2/validate/binary_smoke.c`, and verify
-/// `VSTPluginMain` returns a well-formed `AEffect`. macOS-only because
-/// the smoke binary uses `dlfcn.h` and we hardcode `.dylib` here.
-/// Returns the failure count.
-///
-/// The smoke source is a truce-vst2 dev artifact that only exists
-/// inside the framework's own repo. Downstream plugin authors don't
-/// have it and shouldn't be told about it - if the file is missing
-/// we silently treat the smoke test as not applicable.
-#[cfg(target_os = "macos")]
-fn validate_vst2_macos(plugins: &[&PluginDef]) -> usize {
-    let root = project_root();
-    let test_src = root.join("crates/truce-vst2/validate/binary_smoke.c");
-    if !test_src.exists() {
-        // No noise: the smoke source only ships with truce itself.
-        // For every other consumer of `cargo truce validate` this
-        // step has nothing to do.
-        return 0;
-    }
-
-    let test_bin = truce_build::target_dir(&root).join("vst2_binary_smoke");
-    let cc_status = match Command::new("cc")
-        .args(["-o", test_bin.to_str().unwrap(), test_src.to_str().unwrap()])
-        .status()
-    {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("  Skipping: failed to invoke cc: {e}");
-            return 0;
-        }
-    };
-    if !cc_status.success() {
-        eprintln!("  Skipping: cc failed to build the smoke binary.");
-        return 0;
-    }
-
-    let mut failures = 0;
-    for p in plugins {
-        // Cross-scope collision check first - visible regardless of
-        // whether the smoke binary builds. Two installed `.vst` bundles
-        // are valid on disk but only one will be loaded by any given
-        // host scan.
-        let user_path = InstallScope::User
-            .vst2_dir()
-            .join(format!("{}.vst", p.file_stem()));
-        let system_path = InstallScope::System
-            .vst2_dir()
-            .join(format!("{}.vst", p.file_stem()));
-        warn_on_scope_collision(Format::Vst2, &user_path, &system_path);
-
-        eprint!("  {} ... ", p.name);
-        let build = Command::new("cargo")
-            .args([
-                "build",
-                "--release",
-                "-p",
-                &p.crate_name,
-                "--no-default-features",
-                "--features",
-                "vst2",
-            ])
-            .env("MACOSX_DEPLOYMENT_TARGET", deployment_target())
-            .output();
-        let build = match build {
-            Ok(o) => o,
-            Err(e) => {
-                eprintln!("BUILD ERROR ({e})");
-                failures += 1;
-                continue;
-            }
-        };
-        if !build.status.success() {
-            eprintln!("BUILD FAILED");
-            eprint!("{}", String::from_utf8_lossy(&build.stderr));
-            failures += 1;
-            continue;
-        }
-
-        let dylib =
-            truce_build::target_dir(&root).join(format!("release/lib{}.dylib", p.dylib_stem()));
-        // AU type tag is the same code path that drives plugin-kind
-        // detection elsewhere: `aumu` → synth, `aumi` → MIDI/note
-        // effect, anything else → audio effect.
-        let kind_flag: Option<&str> = match p.resolved_au_type() {
-            "aumu" => Some("--synth"),
-            "aumi" => Some("--midi-effect"),
-            _ => None,
-        };
-        let mut cmd = Command::new(test_bin.to_str().unwrap());
-        cmd.arg(dylib.to_str().unwrap());
-        if let Some(flag) = kind_flag {
-            cmd.arg(flag);
-        }
-        match cmd.output() {
-            Ok(out) => {
-                let stdout = String::from_utf8_lossy(&out.stdout);
-                if out.status.success() {
-                    if let Some(line) = stdout.lines().last() {
-                        eprintln!("{line}");
-                    } else {
-                        eprintln!("PASS");
-                    }
-                } else {
-                    eprintln!("FAIL");
-                    eprint!("{stdout}");
-                    failures += 1;
-                }
-            }
-            Err(e) => {
-                eprintln!("INVOKE ERROR ({e})");
-                failures += 1;
-            }
-        }
-    }
-    failures
 }
 
 /// Pull the test counts out of clap-validator's summary line, e.g.
