@@ -183,6 +183,11 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
     let mut clap_explicit = false;
     let mut aax_explicit = false;
     let mut plugin_filter: Option<String> = None;
+    // Forwarded to pluginval. Lets CI skip the editor-instantiation
+    // probe on hosts where the GL stack can't satisfy a real plugin
+    // editor's `glXChooseFBConfig` call (headless Linux runners with
+    // no GPU + software-only Xorg/Xvfb don't advertise FBConfigs).
+    let mut skip_gui_tests = false;
 
     let mut i = 0;
     while i < args.len() {
@@ -213,6 +218,9 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
                 run_pluginval = true;
                 run_clap = true;
                 run_aax = true;
+            }
+            "--skip-gui-tests" => {
+                skip_gui_tests = true;
             }
             "-p" => {
                 plugin_filter = Some(crate::util::arg_value(args, &mut i, "-p")?.to_string());
@@ -383,14 +391,17 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
                     continue;
                 };
                 eprint!("  {} ... ", p.name);
-                let output = Command::new(&pv)
-                    .args([
-                        "--validate",
-                        validate_path.to_str().unwrap(),
-                        "--strictness-level",
-                        "10",
-                    ])
-                    .output()?;
+                let mut cmd = Command::new(&pv);
+                cmd.args([
+                    "--validate",
+                    validate_path.to_str().unwrap(),
+                    "--strictness-level",
+                    "10",
+                ]);
+                if skip_gui_tests {
+                    cmd.arg("--skip-gui-tests");
+                }
+                let output = cmd.output()?;
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 if stdout.contains("SUCCESS") || output.status.success() {
@@ -552,7 +563,8 @@ fn print_help() {
     eprintln!(
         "\
 Usage: cargo truce validate [--auval] [--auval3] [--pluginval] [--clap]
-                            [--aax] [--all] [-p <crate>]
+                            [--aax] [--all] [--skip-gui-tests]
+                            [-p <crate>]
 
 Run validation tools on installed plugins. With no flag, runs every
 available validator.
@@ -565,6 +577,10 @@ Options:
   --aax            AAX validation via pluginrunner (Pro Tools
                    Developer's CommandLineTools, macOS / Windows).
   --all            Run every available validator (default).
+  --skip-gui-tests Forwarded to pluginval as `--skip-gui-tests`. Use
+                   on headless Linux CI without a GPU: the editor
+                   probe needs FBConfigs the software-only GL stack
+                   doesn't advertise.
   -p <crate>       Validate only the plugin with this cargo crate name.
   -h, --help       Show this message"
     );
