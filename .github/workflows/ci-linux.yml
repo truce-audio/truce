@@ -65,7 +65,7 @@ jobs:
             libxkbcommon-dev libxkbcommon-x11-dev libxrandr-dev \
             libgl1-mesa-dev libegl1-mesa-dev libvulkan-dev mesa-vulkan-drivers \
             libgl1-mesa-dri libglx-mesa0 mesa-utils \
-            xserver-xorg-core xserver-xorg-video-dummy x11-xserver-utils \
+            xserver-xorg-core xserver-xorg-video-dummy x11-utils \
             libwayland-dev \
             libasound2-dev libjack-jackd2-dev \
             libfontconfig1-dev libfreetype-dev \
