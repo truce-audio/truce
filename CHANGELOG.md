@@ -2,6 +2,18 @@
 
 Notable changes per release.
 
+## 0.52.0
+
+- **Sample-accurate parameter automation.** Param changes apply at
+  their `sample_offset` instead of the start of the block; smoothers
+  start ramping at the event sample. On by default. Tune via
+  `[automation] min_subblock_samples` in `truce.toml` or opt out
+  per-param with `#[param(chunk = false)]`.
+- **`cargo truce install` / `package`: dedupes duplicate archive
+  members during macOS bundle link.** Fixes the `clang -bundle`
+  duplicate-symbol failure plugins with `skia-bindings` (vizia)
+  could hit.
+
 ## 0.51.0
 
 - **`truce-iced`: `with_font(bytes)` matches egui / vizia.** Family
