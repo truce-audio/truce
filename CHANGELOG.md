@@ -5,8 +5,7 @@ Notable changes per release.
 ## 0.52.0
 
 - **New GUI backend: `truce-vizia`.** Param-bound widgets, headless
-  screenshot, JetBrains Mono. Desktop only (no iOS, no Windows
-  ARM64).
+  screenshot. Desktop only (no iOS, no Windows ARM64).
 - **New examples: `truce-example-gain-vizia`,
   `truce-example-gui-zoo-vizia`.**
 - **Sample-accurate parameter automation.** Param changes apply at
