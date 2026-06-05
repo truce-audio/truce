@@ -95,9 +95,14 @@ impl PluginLogic for Saturate {
             }
         } else {
             // Slow path: per-sample drive + output envelopes.
+            // `read_into` advances each smoother by exactly `n`;
+            // `read_block::<MAX_BLOCK>` would advance by MAX_BLOCK
+            // and step the value at the next block edge.
             let n = buffer.num_samples().min(MAX_BLOCK);
-            let drive_db = self.params.drive.read_block::<MAX_BLOCK>();
-            let output_db = self.params.output.read_block::<MAX_BLOCK>();
+            let mut drive_db = [0.0_f32; MAX_BLOCK];
+            let mut output_db = [0.0_f32; MAX_BLOCK];
+            self.params.drive.read_into(&mut drive_db[..n]);
+            self.params.output.read_into(&mut output_db[..n]);
             let mut drive_lin_buf = [0.0_f32; MAX_BLOCK];
             let mut output_lin_buf = [0.0_f32; MAX_BLOCK];
             math::db_to_linear_block(&mut drive_lin_buf[..n], &drive_db[..n]);

@@ -13,7 +13,7 @@
 //!
 //! All ops here are pure math. No atomics, no parameter reads, no
 //! audio-thread allocation. They're meant to be the inner-loop
-//! complement to a `truce_params::FloatParam::read_block::<N>()` /
+//! complement to a `truce_params::FloatParam::read_into(&mut buf)` /
 //! `truce_core::AudioBuffer::chunks_mut::<N>()` driver in
 //! `process()`.
 

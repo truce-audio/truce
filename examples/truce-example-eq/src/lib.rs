@@ -201,28 +201,41 @@ impl PluginLogic for Eq {
 
         // Walk the buffer in `MAX_BLOCK`-sized chunks. Hosts can hand
         // us blocks larger than `MAX_BLOCK` (1024 / 2048 are common
-        // DAW buffer sizes), so a single `read_block::<MAX_BLOCK>()`
-        // would only cover the head of the buffer and leave the tail
-        // pass-through / stale.
+        // DAW buffer sizes), so a single fill wouldn't cover the
+        // whole buffer. Scratch arrays hoist out of the loop so we
+        // pay one stack-allocation rather than ten per iteration.
+        let mut low_freq = [0.0_f64; MAX_BLOCK];
+        let mut low_gain = [0.0_f64; MAX_BLOCK];
+        let mut low_q = [0.0_f64; MAX_BLOCK];
+        let mut mid_freq = [0.0_f64; MAX_BLOCK];
+        let mut mid_gain = [0.0_f64; MAX_BLOCK];
+        let mut mid_q = [0.0_f64; MAX_BLOCK];
+        let mut high_freq = [0.0_f64; MAX_BLOCK];
+        let mut high_gain = [0.0_f64; MAX_BLOCK];
+        let mut high_q = [0.0_f64; MAX_BLOCK];
+        let mut output = [0.0_f64; MAX_BLOCK];
+
         let mut offset = 0;
         while offset < total {
             let n = (total - offset).min(MAX_BLOCK);
 
-            // Block-read every smoothed shape param in one atomic-pair
-            // each (10 pairs total) instead of one pair per param per
-            // sample. Coefficient updates still happen per sample so a
-            // fast knob sweep stays click-free; only the smoother
-            // traffic moves out of the inner loop.
-            let low_freq = self.params.low_freq.read_block::<MAX_BLOCK>();
-            let low_gain = self.params.low_gain.read_block::<MAX_BLOCK>();
-            let low_q = self.params.low_q.read_block::<MAX_BLOCK>();
-            let mid_freq = self.params.mid_freq.read_block::<MAX_BLOCK>();
-            let mid_gain = self.params.mid_gain.read_block::<MAX_BLOCK>();
-            let mid_q = self.params.mid_q.read_block::<MAX_BLOCK>();
-            let high_freq = self.params.high_freq.read_block::<MAX_BLOCK>();
-            let high_gain = self.params.high_gain.read_block::<MAX_BLOCK>();
-            let high_q = self.params.high_q.read_block::<MAX_BLOCK>();
-            let output = self.params.output.read_block::<MAX_BLOCK>();
+            // Slice-based read advances each smoother by exactly `n`
+            // - one atomic-pair per param (10 pairs total) regardless
+            // of chunk length, vs one pair per param per sample if we
+            // called `.read()` in the inner loop. Coefficient updates
+            // still happen per sample so a fast knob sweep stays
+            // click-free; only the smoother traffic moves out of the
+            // inner loop.
+            self.params.low_freq.read_into(&mut low_freq[..n]);
+            self.params.low_gain.read_into(&mut low_gain[..n]);
+            self.params.low_q.read_into(&mut low_q[..n]);
+            self.params.mid_freq.read_into(&mut mid_freq[..n]);
+            self.params.mid_gain.read_into(&mut mid_gain[..n]);
+            self.params.mid_q.read_into(&mut mid_q[..n]);
+            self.params.high_freq.read_into(&mut high_freq[..n]);
+            self.params.high_gain.read_into(&mut high_gain[..n]);
+            self.params.high_q.read_into(&mut high_q[..n]);
+            self.params.output.read_into(&mut output[..n]);
 
             for i in 0..n {
                 let idx = offset + i;

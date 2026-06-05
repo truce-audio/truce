@@ -216,9 +216,24 @@ impl Smoother {
     #[allow(clippy::cast_possible_truncation)]
     #[inline]
     pub fn next_block<const N: usize>(&self, target: f64) -> [f32; N] {
+        let mut out = [0.0_f32; N];
+        self.next_into(target, &mut out);
+        out
+    }
+
+    /// Advance the smoother by `out.len()` samples in one call,
+    /// writing each intermediate value to `out`. Slice-based variant
+    /// of [`Self::next_block`] - same single-atomic-pair amortization,
+    /// runtime length. Use this when the chunk size depends on
+    /// `process()`'s actual block (the common case for plugins
+    /// chunking the host's buffer into a `MAX_BLOCK` ladder); the
+    /// const-generic `next_block::<N>` always advances by `N` even
+    /// when the caller only consumes a shorter prefix.
+    #[allow(clippy::cast_possible_truncation)]
+    #[inline]
+    pub fn next_into(&self, target: f64, out: &mut [f32]) {
         let mut current = self.current.load();
         let coeff = self.coeff.load();
-        let mut out = [0.0_f32; N];
 
         match self.style {
             SmoothingStyle::None => {
@@ -230,7 +245,7 @@ impl Smoother {
                 // Threshold matches `next()`'s per-step floor. Hoisted
                 // out of the loop because it depends only on `target`.
                 let threshold = (target.abs() * 1e-6).max(1e-8);
-                for slot in &mut out {
+                for slot in out.iter_mut() {
                     let diff = target - current;
                     if diff.abs() < threshold {
                         current = target;
@@ -248,8 +263,8 @@ impl Smoother {
             SmoothingStyle::Exponential(_) => {
                 // Standard one-pole exponential. `current` is a local
                 // (no atomic), so LLVM keeps it in a register and the
-                // body auto-vectorizes for large enough N.
-                for slot in &mut out {
+                // body auto-vectorizes for large enough slices.
+                for slot in out.iter_mut() {
                     current += coeff * (target - current);
                     *slot = current as f32;
                 }
@@ -257,7 +272,6 @@ impl Smoother {
         }
 
         self.current.store(current);
-        out
     }
 }
 
@@ -352,6 +366,43 @@ mod tests {
             block[N - 1],
             after
         );
+    }
+
+    #[test]
+    fn next_into_matches_next_block_prefix() {
+        // `next_into(&mut [_; n])` must produce the same per-sample
+        // sequence as `next_block::<N>` for `i < n`, and must advance
+        // the smoother by exactly `n` steps. Regression guard for the
+        // bug that motivated `next_into`: callers chunking the host
+        // buffer into a `MAX_BLOCK`-sized ladder were calling
+        // `next_block::<MAX_BLOCK>` and consuming only `n` samples,
+        // which silently advanced the smoother by `MAX_BLOCK` and
+        // stepped the value at the next block boundary.
+        const FULL: usize = 64;
+        const PARTIAL: usize = 17;
+
+        let reference = Smoother::new(SmoothingStyle::Exponential(20.0));
+        reference.set_sample_rate(48_000.0);
+        reference.snap(0.0);
+        let block = reference.next_block::<FULL>(1.0);
+
+        let mut buf = [0.0_f32; FULL];
+        let partial = Smoother::new(SmoothingStyle::Exponential(20.0));
+        partial.set_sample_rate(48_000.0);
+        partial.snap(0.0);
+        partial.next_into(1.0, &mut buf[..PARTIAL]);
+
+        for i in 0..PARTIAL {
+            let diff = (buf[i] - block[i]).abs();
+            assert!(diff < 1e-6, "i={i}, into={}, block={}", buf[i], block[i]);
+        }
+
+        // Next sample from `partial` must equal `block[PARTIAL]` —
+        // i.e. the smoother is positioned at sample PARTIAL, not at
+        // sample FULL.
+        let next = partial.next(1.0);
+        let diff = (next - block[PARTIAL]).abs();
+        assert!(diff < 1e-6, "next={next}, expected={}", block[PARTIAL]);
     }
 
     #[test]

@@ -6,7 +6,7 @@
 //! 1. **`smoother_traffic`** - measures the atomic-load/store cost of
 //!    reading a smoothed parameter the old way (per-sample
 //!    [`FloatParam::read`]) vs. the new way
-//!    ([`FloatParam::read_block::<N>`]) across N ∈ {8, 16, 32, 64, 128}.
+//!    ([`FloatParam::read_into`]) across N ∈ {8, 16, 32, 64, 128}.
 //!    Doubles as the empirical input that picks the default `N` in
 //!    plugin examples.
 //!
@@ -14,7 +14,7 @@
 //!    plugin". Pre-vec walks samples in the outer loop with
 //!    per-sample atomics and a per-channel scalar multiply (the
 //!    shape today's examples ship). Post-vec uses
-//!    [`AudioBuffer::chunks_mut`] + [`FloatParam::read_block`] +
+//!    [`AudioBuffer::chunks_mut`] + [`FloatParam::read_into`] +
 //!    [`truce_simd::ops::mul_block`].
 //!
 //! 3. **`simd_ops_scalar_vs_wide`** - apples-to-apples for the
@@ -98,45 +98,52 @@ fn bench_smoother_traffic(c: &mut Criterion) {
     }
 
     // Per-block path (one atomic load + one atomic store regardless
-    // of N).
+    // of N). `read_into` is the runtime-length form on the same
+    // underlying primitive as the now-deprecated `read_block::<N>`;
+    // numbers transfer 1:1.
     g.throughput(Throughput::Elements(8));
-    g.bench_function(BenchmarkId::new("read_block", 8), |b| {
+    g.bench_function(BenchmarkId::new("read_into", 8), |b| {
         let p = make_param();
+        let mut buf = [0.0_f32; 8];
         b.iter(|| {
-            let arr = p.read_block::<8>();
-            black_box(arr);
+            p.read_into(&mut buf);
+            black_box(&buf);
         });
     });
     g.throughput(Throughput::Elements(16));
-    g.bench_function(BenchmarkId::new("read_block", 16), |b| {
+    g.bench_function(BenchmarkId::new("read_into", 16), |b| {
         let p = make_param();
+        let mut buf = [0.0_f32; 16];
         b.iter(|| {
-            let arr = p.read_block::<16>();
-            black_box(arr);
+            p.read_into(&mut buf);
+            black_box(&buf);
         });
     });
     g.throughput(Throughput::Elements(32));
-    g.bench_function(BenchmarkId::new("read_block", 32), |b| {
+    g.bench_function(BenchmarkId::new("read_into", 32), |b| {
         let p = make_param();
+        let mut buf = [0.0_f32; 32];
         b.iter(|| {
-            let arr = p.read_block::<32>();
-            black_box(arr);
+            p.read_into(&mut buf);
+            black_box(&buf);
         });
     });
     g.throughput(Throughput::Elements(64));
-    g.bench_function(BenchmarkId::new("read_block", 64), |b| {
+    g.bench_function(BenchmarkId::new("read_into", 64), |b| {
         let p = make_param();
+        let mut buf = [0.0_f32; 64];
         b.iter(|| {
-            let arr = p.read_block::<64>();
-            black_box(arr);
+            p.read_into(&mut buf);
+            black_box(&buf);
         });
     });
     g.throughput(Throughput::Elements(128));
-    g.bench_function(BenchmarkId::new("read_block", 128), |b| {
+    g.bench_function(BenchmarkId::new("read_into", 128), |b| {
         let p = make_param();
+        let mut buf = [0.0_f32; 128];
         b.iter(|| {
-            let arr = p.read_block::<128>();
-            black_box(arr);
+            p.read_into(&mut buf);
+            black_box(&buf);
         });
     });
 
@@ -191,8 +198,10 @@ fn post_vec_gain(inp: &[Vec<f32>], out: &mut [Vec<f32>], gain_p: &FloatParam, pa
     // per-sample atomic round-trips (pre_vec) into 2 atomic pairs
     // total. The per-block envelope arrays live on the stack -
     // 4 KB for FRAMES=512, fine.
-    let gain_db = gain_p.read_block::<FRAMES>();
-    let pan = pan_p.read_block::<FRAMES>();
+    let mut gain_db = [0.0_f32; FRAMES];
+    let mut pan = [0.0_f32; FRAMES];
+    gain_p.read_into(&mut gain_db);
+    pan_p.read_into(&mut pan);
 
     // Pre-compute per-channel gain envelopes once. db_to_linear is
     // a transcendental and stays scalar; the per-channel split is
@@ -367,7 +376,8 @@ fn post_vec_trim(inp: &[Vec<f32>], out: &mut [Vec<f32>], trim_p: &FloatParam) {
     let mut output_refs: Vec<&mut [f32]> = out.iter_mut().map(Vec::as_mut_slice).collect();
     let mut buf = AudioBuffer::from_slices_checked(&input_refs[..], &mut output_refs[..], FRAMES);
     // One block read of the smoother. Same envelope feeds every channel.
-    let g_env = trim_p.read_block::<FRAMES>();
+    let mut g_env = [0.0_f32; FRAMES];
+    trim_p.read_into(&mut g_env);
     let mut chunks = buf.chunks_mut::<POST_VEC_N>();
     while let Some(chunk) = chunks.next() {
         match chunk {
@@ -507,8 +517,10 @@ fn simd_slow_gain_process(
     // examples/truce-example-block-gain, including the
     // math::db_to_linear_block precompute (Phase 9).
     let n = buf.num_samples();
-    let gain_db = gain_p.read_block::<FRAMES>();
-    let pan = pan_p.read_block::<FRAMES>();
+    let mut gain_db = [0.0_f32; FRAMES];
+    let mut pan = [0.0_f32; FRAMES];
+    gain_p.read_into(&mut gain_db);
+    pan_p.read_into(&mut pan);
 
     let mut lin = [0.0_f32; FRAMES];
     math::db_to_linear_block(&mut lin[..n], &gain_db[..n]);

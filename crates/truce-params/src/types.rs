@@ -91,6 +91,17 @@ impl FloatParam {
         self.smoother.next_block::<N>(target)
     }
 
+    /// Internal: advance the smoother by `out.len()` samples,
+    /// writing each step to `out`. Plugin authors reach this through
+    /// [`FloatParamReadF32::read_into`] /
+    /// [`FloatParamReadF64::read_into`] in the prelude.
+    #[doc(hidden)]
+    #[inline]
+    pub fn raw_smoothed_next_into(&self, out: &mut [f32]) {
+        let target = self.value.load();
+        self.smoother.next_into(target, out);
+    }
+
     /// Internal: advance the smoother by `n_samples` and return only
     /// the final value. Plugin authors reach this through
     /// [`FloatParamReadF32::read_after`] /
@@ -187,14 +198,47 @@ pub trait FloatParamReadF32 {
     #[must_use]
     fn read(&self) -> f32;
 
-    /// Advance the smoother by `N` samples in one call, returning the
-    /// per-sample values as a stack array. One atomic load and one
-    /// atomic store regardless of `N`, vs. one of each *per sample*
-    /// for [`Self::read`]; pulls smoother traffic out of the hot
-    /// inner loop. Pair with `AudioBuffer::chunks_mut` (in
-    /// `truce-core`) to drive an N-sample chunked DSP loop.
+    /// Advance the smoother by exactly `N` samples in one call,
+    /// returning the per-sample values as a stack array.
+    ///
+    /// **Deprecated in favour of [`Self::read_into`]**, which takes a
+    /// runtime-length slice and so always advances the smoother by
+    /// the number of samples the caller actually consumes. The
+    /// const-`N` shape is a silent footgun: a `total.min(MAX_BLOCK)`
+    /// chunk ladder pulls `N` samples from the smoother every iteration
+    /// but only consumes `n ≤ N`, leaving the smoother `N - n` samples
+    /// ahead - audible as clicks at every block boundary on delay,
+    /// LFO-rate, and any other timing-sensitive smoothed param.
+    /// `read_into(&mut scratch[..N])` is the same code shape with the
+    /// hazard removed.
     #[must_use]
+    #[deprecated(
+        since = "0.53.0",
+        note = "use `read_into(&mut scratch[..n])` instead; \
+                `read_block::<N>` advances the smoother by N regardless \
+                of how many samples the caller consumes, which steps the \
+                value at the next block boundary when the host's block \
+                size isn't a multiple of N"
+    )]
     fn read_block<const N: usize>(&self) -> [f32; N];
+
+    /// Fill `out` with the next `out.len()` smoothed samples; advance
+    /// the smoother by `out.len()` (not by the slice's capacity).
+    /// Same one atomic load + one atomic store amortization as
+    /// [`Self::read_block`]; runtime length instead of const-generic
+    /// `N`. The right primitive when chunking `process()`'s block
+    /// dynamically:
+    ///
+    /// ```ignore
+    /// let mut delay = [0.0_f32; MAX_BLOCK];
+    /// while offset < total {
+    ///     let n = (total - offset).min(MAX_BLOCK);
+    ///     self.params.delay.read_into(&mut delay[..n]);
+    ///     // ... consume delay[..n] for n samples ...
+    ///     offset += n;
+    /// }
+    /// ```
+    fn read_into(&self, out: &mut [f32]);
 
     /// Advance the smoother by `n_samples` in one call, returning
     /// only the final value. Use for **block-rate** DSP - hard
@@ -224,11 +268,20 @@ pub trait FloatParamReadF32 {
 pub trait FloatParamReadF64 {
     #[must_use]
     fn read(&self) -> f64;
-    /// f64 view of [`FloatParamReadF32::read_block`]; the smoother
-    /// itself stores `f32` internally, so this is a per-element
-    /// widen on top of the same one-atomic-pair fast path.
+    /// f64 view of [`FloatParamReadF32::read_block`]; same
+    /// deprecation rationale - use [`Self::read_into`] for any
+    /// runtime-length chunk.
     #[must_use]
+    #[deprecated(
+        since = "0.53.0",
+        note = "use `read_into(&mut scratch[..n])` instead; \
+                `read_block::<N>` advances the smoother by N regardless \
+                of how many samples the caller consumes"
+    )]
     fn read_block<const N: usize>(&self) -> [f64; N];
+    /// f64 view of [`FloatParamReadF32::read_into`]; one widen per
+    /// slot on top of the same one-atomic-pair fast path.
+    fn read_into(&self, out: &mut [f64]);
     /// f64 view of [`FloatParamReadF32::read_after`]; one widen
     /// on top of the same one-atomic-pair fast path.
     #[must_use]
@@ -248,6 +301,11 @@ impl FloatParamReadF32 for FloatParam {
     #[inline]
     fn read_block<const N: usize>(&self) -> [f32; N] {
         self.raw_smoothed_next_block::<N>()
+    }
+
+    #[inline]
+    fn read_into(&self, out: &mut [f32]) {
+        self.raw_smoothed_next_into(out);
     }
 
     #[inline]
@@ -280,6 +338,26 @@ impl FloatParamReadF64 for FloatParam {
             out[i] = f64::from(v);
         }
         out
+    }
+
+    #[inline]
+    fn read_into(&self, out: &mut [f64]) {
+        // Reuse the f32 fill via a transient stack scratch sized to
+        // the largest chunk a plugin typically passes (cap to 1024 -
+        // beyond that the caller almost certainly wants `read` per
+        // sample). The widen is the same per-slot widen the const-N
+        // `read_block::<N>` already does.
+        const SCRATCH: usize = 1024;
+        let mut scratch = [0.0_f32; SCRATCH];
+        let mut remaining = out;
+        while !remaining.is_empty() {
+            let take = remaining.len().min(SCRATCH);
+            self.raw_smoothed_next_into(&mut scratch[..take]);
+            for (dst, &src) in remaining[..take].iter_mut().zip(&scratch[..take]) {
+                *dst = f64::from(src);
+            }
+            remaining = &mut remaining[take..];
+        }
     }
 
     #[inline]

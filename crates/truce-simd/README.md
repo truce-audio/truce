@@ -28,7 +28,7 @@ math::db_to_linear_block(out, src);              // vectorized dB -> lin
 
 All ops are pure math - no atomics, no parameter reads, no
 audio-thread allocation. They're the inner-loop complement to a
-`truce_params::FloatParam::read_block::<N>()` /
+`truce_params::FloatParam::read_into(&mut buf)` /
 `truce_core::AudioBuffer::chunks_mut::<N>()` driver. See the
 [block-gain example](https://github.com/truce-audio/truce/tree/main/examples/truce-example-block-gain)
 for the canonical fast-path / slow-path shape.

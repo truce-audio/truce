@@ -360,7 +360,7 @@ pub enum ChunkItem<'b, S: Sample, const N: usize> {
         /// at. Use this when indexing into a precomputed envelope
         /// array - `chunks_mut` iterates channel-major, so the
         /// envelope (typically read once per audio block via
-        /// `read_block::<num_samples>()`) is shared across all
+        /// `read_into(&mut env[..num_samples])`) is shared across all
         /// channel passes.
         sample: usize,
         /// Read-only N-sample input slice.
