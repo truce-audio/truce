@@ -2,6 +2,19 @@
 
 Notable changes per release.
 
+## 0.53.0
+
+- **New `FloatParam::read_into(&mut [f32])` smoother API.** Slice-based
+  block read; advances the smoother by exactly `out.len()`. Same
+  one-atomic-pair amortization as `read_block`, runtime length.
+- **Deprecated `FloatParam::read_block::<N>()`.** Always advanced by `N`
+  regardless of consumed samples, silently stepping the smoothed value
+  at the next block boundary whenever the host's block size wasn't a
+  multiple of `N`. Audible as clicks on delay / LFO-rate / any
+  timing-sensitive smoothed param. `read_into(&mut scratch[..n])` is
+  the same code shape with the hazard removed.
+- **Examples migrated** (`block-gain`, `block-saturate`, `eq`).
+
 ## 0.52.0
 
 - **New GUI backend: `truce-vizia`.** Param-bound widgets, headless
