@@ -1041,14 +1041,29 @@ fn register_vst3_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
     let url = CString::new(info.url).unwrap_or_default();
     let version = CString::new(info.version).unwrap_or_default();
     let category = CString::new("Audio Module Class").unwrap_or_default();
-    let subcategories = CString::new(match info.category {
-        PluginCategory::Instrument => "Instrument|Synth",
-        PluginCategory::NoteEffect => "Fx|Event",
-        PluginCategory::Effect => "Fx",
-        PluginCategory::Analyzer => "Fx|Analyzer",
-        PluginCategory::Tool => "Fx|Tools",
-    })
-    .unwrap_or_default();
+    // VST3 "Plugin Type Categories": Cubase (and other VST3 hosts)
+    // route plugins into submenus based on a `<primary>|<secondary>`
+    // pair from the SDK's published vocabulary. `Fx` alone advertises
+    // the plug-in as "an effect of unspecified kind" and falls back
+    // to the "Other" bucket; a secondary token like `Delay`, `Reverb`,
+    // `EQ`, `Modulation`, etc. routes to the matching submenu.
+    //
+    // The Analyzer / NoteEffect / Tool categories already carry their
+    // own implicit secondary token (`Fx|Analyzer`, `Fx|Event`,
+    // `Fx|Tools`). For instruments and generic effects, the secondary
+    // is opt-in via `truce.toml`'s `vst3_subcategory`. When unset the
+    // wrapper ships the bare primary so the plug-in still loads, just
+    // unbucketed.
+    let subcategory_str = match (info.category, info.vst3_subcategory) {
+        (PluginCategory::Instrument, Some(sub)) => format!("Instrument|{sub}"),
+        (PluginCategory::Instrument, None) => "Instrument|Synth".to_string(),
+        (PluginCategory::Effect, Some(sub)) => format!("Fx|{sub}"),
+        (PluginCategory::Effect, None) => "Fx".to_string(),
+        (PluginCategory::NoteEffect, _) => "Fx|Event".to_string(),
+        (PluginCategory::Analyzer, _) => "Fx|Analyzer".to_string(),
+        (PluginCategory::Tool, _) => "Fx|Tools".to_string(),
+    };
+    let subcategories = CString::new(subcategory_str).unwrap_or_default();
 
     // NoteEffect plugins (arpeggiators, chord generators) emit MIDI
     // back to the host. Instruments could in principle, but it's rare

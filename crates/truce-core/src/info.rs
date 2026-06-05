@@ -23,6 +23,15 @@ pub struct PluginInfo {
     /// AAX plugin category string (e.g. "EQ", "Dynamics", "Reverb").
     /// Maps to `AAX_ePlugInCategory` constants.
     pub aax_category: Option<&'static str>,
+    /// VST3 "Plugin Type Categories" secondary token. The wrapper
+    /// emits this after the primary token (`Fx|<sub>`,
+    /// `Instrument|<sub>`) so hosts like Cubase route to the right
+    /// submenu. Values from the VST3 SDK list: `Delay`, `Distortion`,
+    /// `Dynamics`, `EQ`, `Filter`, `Mastering`, `Modulation`,
+    /// `Pitch Shift`, `Restoration`, `Reverb`, `Analyzer`, `Tools`,
+    /// `Surround`. Optional; when `None` only the primary token is
+    /// emitted and Cubase will fall back to "Other".
+    pub vst3_subcategory: Option<&'static str>,
 
     /// Per-format display-name overrides, populated by
     /// `truce::plugin_info!()` from the matching `truce.toml` keys.

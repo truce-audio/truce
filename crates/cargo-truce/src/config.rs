@@ -615,6 +615,7 @@ mod suite_tests {
                 au_type: None,
                 au_subtype: None,
                 aax_category: None,
+                vst3_subcategory: None,
                 vst3_name: None,
                 clap_name: None,
                 vst2_name: None,

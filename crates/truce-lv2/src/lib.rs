@@ -805,6 +805,7 @@ mod uri_consistency_tests {
             au_manufacturer: *b"Vend",
             aax_id: None,
             aax_category: None,
+            vst3_subcategory: None,
             vst3_name: None,
             clap_name: None,
             vst2_name: None,

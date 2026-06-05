@@ -2,6 +2,13 @@
 
 Notable changes per release.
 
+## 0.54.0
+
+- **New `vst3_subcategory` `truce.toml` key.** Emits the secondary
+  VST3 "Plugin Type Categories" token (`Fx|Delay`, `Fx|Reverb`,
+  `Instrument|Synth`, …). Without it, Cubase buckets the plugin
+  under "Other". Optional; opt-in per plugin.
+
 ## 0.53.0
 
 - **New `FloatParam::read_into(&mut [f32])` smoother API.** Slice-based

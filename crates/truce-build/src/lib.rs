@@ -106,6 +106,18 @@ pub struct PluginDef {
     pub au_subtype: Option<String>,
     #[serde(default)]
     pub aax_category: Option<String>,
+    /// VST3 "Plugin Type Categories" secondary token. The wrapper
+    /// emits this after the primary token (`Fx|<sub>`,
+    /// `Instrument|<sub>`) so hosts like Cubase can route the
+    /// plugin into the right submenu instead of falling back to
+    /// "Other". Values from the VST3 SDK's published list — common
+    /// effects: `Delay`, `Distortion`, `Dynamics`, `EQ`, `Filter`,
+    /// `Mastering`, `Modulation`, `Pitch Shift`, `Restoration`,
+    /// `Reverb`, `Analyzer`, `Tools`, `Surround`. Optional; when
+    /// omitted the wrapper ships just the primary token (and Cubase
+    /// will bucket the plugin under "Other").
+    #[serde(default)]
+    pub vst3_subcategory: Option<String>,
     // Per-format display-name overrides. Surface a different plugin
     // name in a specific host's plugin browser without changing
     // `name` (which other formats and the bundle path continue to

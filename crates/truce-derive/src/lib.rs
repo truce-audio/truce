@@ -158,6 +158,11 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
     } else {
         quote! { None }
     };
+    let vst3_subcategory = if let Some(sub) = &plugin.vst3_subcategory {
+        quote! { Some(#sub) }
+    } else {
+        quote! { None }
+    };
 
     // Per-format display-name overrides. Empty strings are normalized
     // to `None` here so format wrappers don't need to repeat the
@@ -202,6 +207,7 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
                 au_manufacturer: ::truce::core::info::fourcc(#au_manufacturer.as_bytes()),
                 aax_id: None,
                 aax_category: #aax_category,
+                vst3_subcategory: #vst3_subcategory,
                 vst3_name: #vst3_name,
                 clap_name: #clap_name,
                 vst2_name: #vst2_name,
