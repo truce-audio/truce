@@ -60,6 +60,14 @@ jobs:
       - name: cargo doc (truce-slint sub-workspace)
         run: cargo doc --manifest-path crates/truce-slint/Cargo.toml --workspace --no-deps --target-dir target
 
+      # truce-vizia sub-workspace (vizia's hard-pinned baseview rev +
+      # cargo's cross-name `[patch]` rule, see
+      # crates/truce-vizia/Cargo.toml). Same target dir for cross-crate
+      # linking. `RUSTDOCFLAGS: -D warnings` (workflow-wide) covers
+      # rustdoc lints here too.
+      - name: cargo doc (truce-vizia sub-workspace)
+        run: cargo doc --manifest-path crates/truce-vizia/Cargo.toml --workspace --no-deps --target-dir target
+
       - name: redirect index.html → truce
         if: github.event_name != 'pull_request'
         run: echo '<meta http-equiv="refresh" content="0; url=truce/">' > target/doc/index.html
