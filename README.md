@@ -97,7 +97,7 @@ a companion repo porting the audio-effect implementations from Reiss
 to truce.
 
 [**truce-analyzer**](https://github.com/truce-audio/truce-analyzer),
-a real-time spectrum analyzer with diff overlay for debugging/reverse-engineering plugins:
+a real-time spectrum analyzer with diff overlay for debugging/reverse-engineering plugins.
 
 ## Minimal Example
 
