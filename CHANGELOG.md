@@ -10,6 +10,13 @@ Notable changes per release.
   offset, and the chunker subdivides the audio block at each
   automation point. AU v2 stays block-rate (its
   `AudioUnitSetParameter` API carries no sample-offset).
+- **LV2: sample-accurate parameter automation.** The TTL now
+  advertises each parameter as a `patch:writable` `lv2:Parameter`,
+  and the wrapper decodes host-emitted `patch:Set` Objects from
+  the input atom sequence into per-sample `ParamChange` events
+  (the atom event's `time_frames` becomes the within-block
+  `sample_offset`). The legacy `lv2:ControlPort` path stays so
+  older LV2 hosts still update params at block rate.
 
 ## 0.54.0
 

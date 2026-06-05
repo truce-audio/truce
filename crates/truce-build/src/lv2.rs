@@ -259,6 +259,14 @@ fn render_plugin_ttl(b: &Lv2Bundle, layout: &Layout, so_name: &str) -> String {
     let _ = writeln!(f, "@prefix state: <http://lv2plug.in/ns/ext/state#> .");
     let _ = writeln!(f, "@prefix ui:    <http://lv2plug.in/ns/extensions/ui#> .");
     let _ = writeln!(f, "@prefix pprop: <http://lv2plug.in/ns/ext/port-props#> .");
+    // LV2 1.18+ parameter API: each plugin parameter becomes an
+    // `lv2:Parameter` declared as `patch:writable` from the input
+    // atom port, and hosts deliver per-sample updates as
+    // `patch:Set` messages in the atom sequence (each event's
+    // `time_frames` is the within-block sample offset). This sits
+    // alongside the legacy `lv2:ControlPort` path for hosts that
+    // haven't migrated.
+    let _ = writeln!(f, "@prefix patch: <http://lv2plug.in/ns/ext/patch#> .");
     let _ = writeln!(f);
 
     let category = category_as_lv2(b.category);
@@ -285,6 +293,15 @@ fn render_plugin_ttl(b: &Lv2Bundle, layout: &Layout, so_name: &str) -> String {
         let _ = writeln!(f, "    ui:ui <{}> ;", b.ui_uri);
     }
 
+    // Advertise every parameter as `patch:writable` so hosts that
+    // speak the LV2 1.18+ patch API deliver updates as `patch:Set`
+    // messages on the input atom port (with sample-accurate timing
+    // via the atom event's `time_frames`). The legacy control-port
+    // path remains for hosts that haven't migrated.
+    for p in &b.params {
+        let _ = writeln!(f, "    patch:writable <{}#p_{}> ;", b.uri, p.id);
+    }
+
     let total_ports = layout.total();
     if total_ports > 0 {
         let _ = write!(f, "    lv2:port");
@@ -298,6 +315,37 @@ fn render_plugin_ttl(b: &Lv2Bundle, layout: &Layout, so_name: &str) -> String {
     } else {
         let _ = writeln!(f, "    .");
     }
+
+    // One `lv2:Parameter` block per truce param. Each carries the
+    // human-readable label, an `rdfs:range` of `atom:Float` so hosts
+    // know to send `patch:Set` payloads as f32 atoms, and the
+    // min/max/default in plain units. The Parameter URI is
+    // `<plugin_uri>#p_<id>`; the runtime interns the same string at
+    // instantiate time to build its property-URID → param-id table.
+    for p in &b.params {
+        let _ = writeln!(f);
+        let _ = writeln!(f, "<{}#p_{}>", b.uri, p.id);
+        let _ = writeln!(f, "    a lv2:Parameter ;");
+        let _ = writeln!(f, "    rdfs:label \"{}\" ;", escape_turtle(&p.name));
+        let _ = writeln!(f, "    rdfs:range atom:Float ;");
+        let _ = writeln!(f, "    lv2:minimum {} ;", p.range.min());
+        let _ = writeln!(f, "    lv2:maximum {} ;", p.range.max());
+        let _ = writeln!(f, "    lv2:default {} ;", p.default_plain);
+        if let Some(unit) = lv2_unit(p.unit) {
+            let _ = writeln!(f, "    units:unit units:{unit} ;");
+        }
+        match p.range {
+            Lv2Range::Discrete { .. } => {
+                let _ = writeln!(f, "    lv2:portProperty lv2:integer ;");
+            }
+            Lv2Range::Enum { .. } => {
+                let _ = writeln!(f, "    lv2:portProperty lv2:integer, lv2:enumeration ;");
+            }
+            _ => {}
+        }
+        let _ = writeln!(f, "    .");
+    }
+
     f
 }
 
@@ -331,7 +379,13 @@ fn emit_port(f: &mut String, index: u32, b: &Lv2Bundle, layout: &Layout, param_s
         // arriving MIDI bytes.
         let _ = writeln!(f, "        a lv2:InputPort, atom:AtomPort ;");
         let _ = writeln!(f, "        atom:bufferType atom:Sequence ;");
-        let _ = writeln!(f, "        atom:supports midi:MidiEvent, time:Position ;");
+        // `patch:Message` lets hosts deliver `patch:Set` parameter
+        // updates here with sample-accurate timing - see the
+        // `patch:writable` block above for the per-param URI list.
+        let _ = writeln!(
+            f,
+            "        atom:supports midi:MidiEvent, time:Position, patch:Message ;"
+        );
         if !layout.accepts_midi_in {
             let _ = writeln!(f, "        lv2:designation lv2:control ;");
         }

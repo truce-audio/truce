@@ -41,7 +41,7 @@ use truce_core::wrapper::run_audio_block;
 use truce_params::{ParamInfo, Params};
 
 use crate::atom::AtomSequenceReader;
-use crate::urid::UridMap;
+use crate::urid::{Urid, UridMap};
 
 // ---------------------------------------------------------------------------
 // Port layout
@@ -154,6 +154,17 @@ pub struct Lv2Instance<P: PluginExport> {
     min_subblock_samples: u32,
 
     urid_map: UridMap,
+    /// Per-parameter URID → param-id mapping for the LV2 1.18 patch
+    /// API. The host delivers parameter updates as `patch:Set` Objects
+    /// whose `patch:property` is the parameter's interned URI; we look
+    /// it up here to recover the truce `ParamInfo::id`. Built once at
+    /// `instantiate()` by interning `<plugin_uri>#p_<id>` for every
+    /// parameter - same string the TTL emits for the corresponding
+    /// `lv2:Parameter` block (see `truce-build/src/lv2.rs`). A 0 URID
+    /// (host didn't expose URID:map) leaves the table empty and the
+    /// `patch:Set` path stays inert; the legacy control-port path
+    /// still works.
+    param_urid_to_id: Vec<(Urid, u32)>,
 
     /// Reused per-block scratch for `RawBufferScratch::build`. Lives
     /// here so the slice / per-channel-copy storage survives across
@@ -246,6 +257,24 @@ pub unsafe fn instantiate<P: PluginExport>(
 
         let urid_map = UridMap::from_features(features);
 
+        // Build the per-param URID lookup the patch:Set decoder uses.
+        // String must match the `<plugin_uri>#p_<id>` URI the TTL emits
+        // for each `lv2:Parameter` block (see truce-build/src/lv2.rs).
+        // Skipped when the host doesn't expose URID:map - the patch
+        // path then stays inert and only the legacy control-port path
+        // contributes parameter updates.
+        let plugin_uri = truce_build::lv2::plugin_uri(info.url, info.bundle_id);
+        let mut param_urid_to_id: Vec<(Urid, u32)> = Vec::with_capacity(param_infos.len());
+        if urid_map.has_map() {
+            for pi in &param_infos {
+                let uri = format!("{plugin_uri}#p_{}", pi.id);
+                let urid = urid_map.intern(&uri);
+                if urid != 0 {
+                    param_urid_to_id.push((urid, pi.id));
+                }
+            }
+        }
+
         let instance = Box::new(Lv2Instance::<P> {
             plugin,
             sample_rate,
@@ -272,6 +301,7 @@ pub unsafe fn instantiate<P: PluginExport>(
             min_subblock_samples,
 
             urid_map,
+            param_urid_to_id,
 
             scratch: RawBufferScratch::default(),
 
@@ -417,13 +447,40 @@ pub unsafe fn run<P: PluginExport>(handle: *mut Lv2Instance<P>, n_samples: u32) 
             }
         }
 
-        // Decode MIDI + time:Position from the input atom sequence port. The
-        // port is always declared so every plugin type (effects included)
-        // can receive host transport; MIDI events are only parsed when the
-        // plugin's category opts in.
+        // Decode MIDI + time:Position + patch:Set from the input atom
+        // sequence port. The port is always declared so every plugin
+        // type (effects included) can receive host transport and
+        // sample-accurate parameter automation; MIDI events are only
+        // parsed when the plugin's category opts in.
         let mut transport = TransportInfo::default();
         if !inst.atom_in_port.is_null() {
             let reader = AtomSequenceReader::new(inst.atom_in_port, &inst.urid_map);
+
+            // LV2 1.18+ host-→-plugin parameter automation. Each
+            // `patch:Set` Object's `patch:property` identifies the
+            // target parameter (looked up against the per-instance
+            // URID → param-id table built at instantiate); the
+            // event's `time_frames` becomes the within-block
+            // `sample_offset`. The chunker downstream splits the
+            // audio block at each emitted ParamChange.
+            //
+            // Coexists with the legacy control-port path below: if a
+            // host writes both (e.g. mirrors automation onto the
+            // control port at sample 0), the smoother sees two
+            // set_target calls for the same value - harmless.
+            if !inst.param_urid_to_id.is_empty() {
+                reader.for_each_patch_set(|sample_offset, property, value| {
+                    if let Some(&(_, pid)) =
+                        inst.param_urid_to_id.iter().find(|(u, _)| *u == property)
+                    {
+                        inst.event_list.push(Event {
+                            sample_offset,
+                            body: EventBody::ParamChange { id: pid, value },
+                        });
+                    }
+                });
+            }
+
             if inst.layout.accepts_midi_in {
                 reader.for_each_midi(|sample_offset, bytes| {
                     // SysEx is delivered as a single MIDI atom whose

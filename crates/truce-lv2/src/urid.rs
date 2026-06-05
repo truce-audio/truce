@@ -42,6 +42,16 @@ pub struct UridMap {
     pub time_beats_per_minute: Urid,
     pub time_frame: Urid,
     pub time_speed: Urid,
+    // LV2 1.18+ patch:* vocabulary - the host-→-plugin parameter
+    // automation path. Hosts wrap each parameter update as a
+    // `patch:Set` Object whose `patch:property` is the parameter's
+    // URID and whose `patch:value` is the new value (an atom-typed
+    // primitive, typically `atom:Float`). The atom event's
+    // `time_frames` carries the within-block sample offset.
+    pub patch_set: Urid,
+    pub patch_property: Urid,
+    pub patch_value: Urid,
+    pub patch_subject: Urid,
     /// Raw map pointers preserved so `state` and dynamic code paths can
     /// intern additional URIs on demand (still on main thread).
     handle: *mut c_void,
@@ -122,7 +132,20 @@ impl UridMap {
         out.time_beats_per_minute = out.intern("http://lv2plug.in/ns/ext/time#beatsPerMinute");
         out.time_frame = out.intern("http://lv2plug.in/ns/ext/time#frame");
         out.time_speed = out.intern("http://lv2plug.in/ns/ext/time#speed");
+        out.patch_set = out.intern("http://lv2plug.in/ns/ext/patch#Set");
+        out.patch_property = out.intern("http://lv2plug.in/ns/ext/patch#property");
+        out.patch_value = out.intern("http://lv2plug.in/ns/ext/patch#value");
+        out.patch_subject = out.intern("http://lv2plug.in/ns/ext/patch#subject");
         out
+    }
+
+    /// True when the host exposed a URID:map feature. False forces
+    /// `intern()` to return 0 for every URI; callers can short-circuit
+    /// URID-keyed lookups in that case (e.g. skip the patch:Set
+    /// decoder, since its property URIDs all hash to 0).
+    #[must_use]
+    pub fn has_map(&self) -> bool {
+        self.map_fn.is_some()
     }
 
     /// Intern a URI string. Returns 0 if URID:map is unavailable.

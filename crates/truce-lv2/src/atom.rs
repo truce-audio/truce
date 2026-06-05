@@ -92,6 +92,71 @@ impl<'a> AtomSequenceReader<'a> {
         }
     }
 
+    /// Walk the sequence, calling `f(sample_offset, property_urid, value)`
+    /// for every `patch:Set` Object whose `patch:value` can be decoded
+    /// as a numeric atom. The host emits one such Object per parameter
+    /// update; `time_frames` on the event header carries the within-block
+    /// sample offset for sample-accurate automation.
+    ///
+    /// # Safety
+    /// `self.seq` must be valid for the duration of the call.
+    pub fn for_each_patch_set(&self, mut f: impl FnMut(u32, Urid, f64)) {
+        if self.seq.is_null() || self.urid.patch_set == 0 {
+            return;
+        }
+        unsafe {
+            self.walk(|frame, ev_type, body_ptr, body_bytes| {
+                if ev_type != self.urid.atom_blank && ev_type != self.urid.atom_object {
+                    return;
+                }
+                // LV2_Atom_Object_Body: { id: Urid; otype: Urid; props… }
+                let header_size = core::mem::size_of::<Urid>() * 2;
+                if body_bytes < header_size {
+                    return;
+                }
+                let otype = *body_ptr.add(core::mem::size_of::<Urid>()).cast::<Urid>();
+                if otype != self.urid.patch_set {
+                    return;
+                }
+                let mut property: Option<Urid> = None;
+                let mut value: Option<f64> = None;
+                let mut offset = header_size;
+                let prop_header_min =
+                    core::mem::size_of::<Urid>() * 2 + core::mem::size_of::<Atom>();
+                while offset + prop_header_min <= body_bytes {
+                    let key = *body_ptr.add(offset).cast::<Urid>();
+                    let value_header = body_ptr.add(offset + core::mem::size_of::<Urid>() * 2);
+                    let value_atom = *value_header.cast::<Atom>();
+                    let value_data = value_header.add(core::mem::size_of::<Atom>());
+                    let value_size = value_atom.size as usize;
+                    let entry_total = prop_header_min + value_size;
+                    let padded = (entry_total + 7) & !7;
+                    if key == self.urid.patch_property
+                        && value_atom.type_ != 0
+                        && value_size >= core::mem::size_of::<Urid>()
+                    {
+                        property = Some(*value_data.cast::<Urid>());
+                    } else if key == self.urid.patch_value
+                        && let Some(v) =
+                            self.read_atom_number(value_atom.type_, value_data, value_size)
+                        && v.is_finite()
+                    {
+                        value = Some(v);
+                    }
+                    if padded == 0 {
+                        break;
+                    }
+                    offset += padded;
+                }
+                if let (Some(prop), Some(v)) = (property, value) {
+                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                    let frame_u32 = frame.max(0) as u32;
+                    f(frame_u32, prop, v);
+                }
+            });
+        }
+    }
+
     /// Walk the sequence and update `info` from the last `time:Position`
     /// object encountered. Returns `true` if at least one such event was
     /// found.
@@ -888,5 +953,96 @@ mod tests {
                 decoded[2].body
             ),
         }
+    }
+
+    /// Build a single `patch:Set` Object atom event by hand (mirroring
+    /// the layout a host like Ardour writes), pass it through
+    /// `for_each_patch_set`, and verify the property URID + value +
+    /// sample offset round-trip.
+    ///
+    /// Independent codec-level regression guard for the LV2 1.18+
+    /// parameter automation path. A future refactor of the property
+    /// walker (or a clippy auto-fix on the loop bookkeeping)
+    /// shouldn't silently lose `patch:property` recognition.
+    #[test]
+    fn patch_set_roundtrip() {
+        let mut urid = test_urid_map();
+        urid.patch_set = 200;
+        urid.patch_property = 201;
+        urid.patch_value = 202;
+        urid.patch_subject = 203;
+        let target_property: Urid = 9001;
+
+        let mut buf = vec![0u8; 4096];
+        let seq = buf.as_mut_ptr().cast::<AtomSequence>();
+        unsafe {
+            (*seq).atom.size = len_u32(buf.len() - core::mem::size_of::<Atom>());
+            (*seq).atom.type_ = urid.atom_sequence;
+            (*seq).body.unit = 0;
+            (*seq).body.pad = 0;
+        }
+
+        // Event layout:
+        //   AtomEventHeader { time_frames: 432, body: { size, type=atom_object } }
+        //   ObjectBody       { id: 0, otype: patch_set }
+        //   Property         { key: patch_property, ctx: 0, atom { size=4, type=atom_int } } + i32
+        //   Property         { key: patch_value,    ctx: 0, atom { size=4, type=atom_float } } + f32
+        let prop_header = core::mem::size_of::<Urid>() * 2 + core::mem::size_of::<Atom>();
+        let prop_total = prop_header + 4;
+        let prop_padded = (prop_total + 7) & !7;
+        let obj_body_size = core::mem::size_of::<Urid>() * 2 + prop_padded * 2;
+        let event_size = core::mem::size_of::<AtomEventHeader>() + obj_body_size;
+        let event_padded = (event_size + 7) & !7;
+
+        unsafe {
+            let body_offset =
+                core::mem::size_of::<Atom>() + core::mem::size_of::<AtomSequenceBody>();
+            let event_ptr = buf.as_mut_ptr().add(body_offset).cast::<AtomEventHeader>();
+            (*event_ptr).time_frames = 432;
+            (*event_ptr).body.size = len_u32(obj_body_size);
+            (*event_ptr).body.type_ = urid.atom_object;
+
+            let obj_body = buf
+                .as_mut_ptr()
+                .add(body_offset + core::mem::size_of::<AtomEventHeader>());
+            // Object body header: id (0) + otype (patch_set).
+            *obj_body.cast::<Urid>() = 0;
+            *obj_body.add(core::mem::size_of::<Urid>()).cast::<Urid>() = urid.patch_set;
+
+            let mut prop = obj_body.add(core::mem::size_of::<Urid>() * 2);
+            // patch:property = target_property (atom:Int)
+            *prop.cast::<Urid>() = urid.patch_property;
+            *prop.add(core::mem::size_of::<Urid>()).cast::<Urid>() = 0;
+            let atom_hdr = prop.add(core::mem::size_of::<Urid>() * 2).cast::<Atom>();
+            (*atom_hdr).size = 4;
+            (*atom_hdr).type_ = urid.atom_int;
+            *prop.add(prop_header).cast::<i32>() = target_property.cast_signed();
+            prop = prop.add(prop_padded);
+
+            // patch:value = 0.625 (atom:Float)
+            *prop.cast::<Urid>() = urid.patch_value;
+            *prop.add(core::mem::size_of::<Urid>()).cast::<Urid>() = 0;
+            let atom_hdr = prop.add(core::mem::size_of::<Urid>() * 2).cast::<Atom>();
+            (*atom_hdr).size = 4;
+            (*atom_hdr).type_ = urid.atom_float;
+            *prop.add(prop_header).cast::<f32>() = 0.625;
+
+            // Set the sequence atom.size = body header + first event padded.
+            let total = core::mem::size_of::<AtomSequenceBody>() + event_padded;
+            (*seq).atom.size = len_u32(total);
+        }
+
+        let reader = AtomSequenceReader::new(seq.cast_const(), &urid);
+        let mut seen: Vec<(u32, Urid, f64)> = Vec::new();
+        reader.for_each_patch_set(|sample_offset, property, value| {
+            seen.push((sample_offset, property, value));
+        });
+        assert_eq!(seen.len(), 1, "exactly one patch:Set decoded");
+        assert_eq!(seen[0].0, 432, "sample_offset = event.time_frames");
+        assert_eq!(seen[0].1, target_property, "patch:property recovered");
+        assert!(
+            (seen[0].2 - 0.625).abs() < 1e-9,
+            "patch:value f32 recovered"
+        );
     }
 }
