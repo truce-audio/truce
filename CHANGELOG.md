@@ -13,6 +13,12 @@ Notable changes per release.
   multiple of `N`. Audible as clicks on delay / LFO-rate / any
   timing-sensitive smoothed param. `read_into(&mut scratch[..n])` is
   the same code shape with the hazard removed.
+- **New `truce_simd::math64` module.** f64 mirror of `truce_simd::math`
+  (`db_to_linear_block`, `linear_to_db_block`, `exp2_block`,
+  `log2_block`, `tanh_block`). `wide::f64x4` lanes.
+- **`eq` example uses SIMD math64.** Output stage dB → linear runs
+  through `math64::db_to_linear_block` instead of scalar `f64::powf`
+  per sample.
 - **Examples migrated** (`block-gain`, `block-saturate`, `eq`).
 
 ## 0.52.0

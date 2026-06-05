@@ -32,6 +32,7 @@ shell = ["truce/shell"]
 truce = { workspace = true }
 truce-core = { workspace = true }
 truce-params = { workspace = true }
+truce-simd = { workspace = true }
 # Cookbook biquad filters. 0.6 split the trait into `<C, T>` with
 # minimal bounds on T (Copy + Add + Sub + Zero), which lets the
 # local `biquad.rs` newtype `wide::f64x2` for parallel-channel

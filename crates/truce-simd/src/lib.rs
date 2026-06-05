@@ -20,6 +20,7 @@
 #![allow(clippy::module_name_repetitions)]
 
 pub mod math;
+pub mod math64;
 pub mod ops;
 pub mod ops64;
 

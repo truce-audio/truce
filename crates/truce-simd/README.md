@@ -26,6 +26,10 @@ math::tanh_block(out, src);                      // vectorized tanh
 math::db_to_linear_block(out, src);              // vectorized dB -> lin
 ```
 
+`f64` precision (`prelude64` plugins) get the same surface under
+`truce_simd::ops64` / `truce_simd::math64`. Same op names, `&mut [f64]`
+slices, `wide::f64x4` lanes; chunk granularity is 4 vs 8 for f32.
+
 All ops are pure math - no atomics, no parameter reads, no
 audio-thread allocation. They're the inner-loop complement to a
 `truce_params::FloatParam::read_into(&mut buf)` /

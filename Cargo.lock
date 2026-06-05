@@ -4542,6 +4542,7 @@ dependencies = [
  "truce-loader",
  "truce-lv2",
  "truce-params",
+ "truce-simd",
  "truce-standalone",
  "truce-test",
  "truce-vst2",

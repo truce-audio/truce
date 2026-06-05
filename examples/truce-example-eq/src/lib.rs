@@ -214,6 +214,7 @@ impl PluginLogic for Eq {
         let mut high_gain = [0.0_f64; MAX_BLOCK];
         let mut high_q = [0.0_f64; MAX_BLOCK];
         let mut output = [0.0_f64; MAX_BLOCK];
+        let mut out_lin = [0.0_f64; MAX_BLOCK];
 
         let mut offset = 0;
         while offset < total {
@@ -236,6 +237,13 @@ impl PluginLogic for Eq {
             self.params.high_gain.read_into(&mut high_gain[..n]);
             self.params.high_q.read_into(&mut high_q[..n]);
             self.params.output.read_into(&mut output[..n]);
+
+            // Vectorize the output dB → linear conversion once per
+            // chunk. f64::powf is opaque to LLVM's autovectorizer;
+            // truce_simd::math64::db_to_linear_block routes through
+            // wide::f64x4's native `exp`, so the per-sample inner
+            // loop just reads a precomputed linear gain.
+            truce_simd::math64::db_to_linear_block(&mut out_lin[..n], &output[..n]);
 
             for i in 0..n {
                 let idx = offset + i;
@@ -268,7 +276,7 @@ impl PluginLogic for Eq {
                     sample = band.run(sample);
                 }
                 let (l, r) = sample.to_lr();
-                let out_gain = db_to_linear(output[i]);
+                let out_gain = out_lin[i];
                 buffer.io(0).1[idx] = l * out_gain;
                 if stereo {
                     buffer.io(1).1[idx] = r * out_gain;
