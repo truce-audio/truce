@@ -53,6 +53,21 @@ impl PluginKind {
         }
     }
 
+    /// Default VST3 secondary subcategory baked into the scaffolded
+    /// `truce.toml`. Without it, hosts like Cubase bucket the plug-in
+    /// under "Other". The user is expected to tighten this to the
+    /// actual effect kind (`Delay`, `Reverb`, `Distortion`, …) once
+    /// the DSP shape is settled; `Tools` is the safe placeholder for
+    /// generic effects. `NoteEffect` / Midi plug-ins get a value too,
+    /// but `truce-vst3` overrides them to `Fx|Event` regardless.
+    #[must_use]
+    pub fn vst3_subcategory(self) -> &'static str {
+        match self {
+            Self::Instrument => "Synth",
+            Self::Effect | Self::Midi => "Tools",
+        }
+    }
+
     /// `PluginLogic::bus_layouts()` method body for non-stereo
     /// kinds. Empty string for stereo (the trait default), so
     /// the scaffold doesn't emit a redundant override.

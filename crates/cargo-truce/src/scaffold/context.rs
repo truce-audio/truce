@@ -148,6 +148,7 @@ pub(crate) struct TruceTomlPlugin {
     pub category: &'static str,
     pub fourcc: String,
     pub au_tag: &'static str,
+    pub vst3_subcategory: &'static str,
 }
 
 #[derive(Serialize)]
@@ -180,6 +181,7 @@ impl TruceTomlContext {
                     category: p.kind.category(),
                     fourcc: fourcc_map[&p.name].clone(),
                     au_tag: p.kind.au_tag(),
+                    vst3_subcategory: p.kind.vst3_subcategory(),
                 }
             })
             .collect();
