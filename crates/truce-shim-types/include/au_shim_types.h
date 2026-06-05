@@ -64,6 +64,21 @@ typedef struct {
     uint32_t words[4];
 } AuMidi2Event;
 
+/* Host-side parameter automation event. The AU v3 shim decodes
+ * AURenderEvent.parameter / .parameterRamp entries into this shape
+ * (one row per host event), with `sample_offset` relative to the
+ * start of the current render block. The Rust process callback
+ * converts each row into an `EventBody::ParamChange` with the same
+ * offset so the per-sample chunker splits the audio block at each
+ * automation point. AU v2 has no per-sample parameter automation
+ * in its API (`AudioUnitSetParameter` carries no sample-offset), so
+ * the v2 shim passes `NULL`/`0` for this array. */
+typedef struct {
+    uint32_t sample_offset;
+    uint32_t param_id;
+    float value;
+} AuParamEvent;
+
 /* Transport snapshot filled by the AU v2 / v3 shim from
  * HostCallbackInfo (v2) or AUAudioUnit.musicalContextBlock +
  * transportStateBlock (v3). Fields default to 0 / false when the host
@@ -95,6 +110,7 @@ typedef struct {
                     uint32_t num_frames,
                     const AuMidiEvent *events, uint32_t num_events,
                     const AuMidi2Event *events2, uint32_t num_events2,
+                    const AuParamEvent *param_events, uint32_t num_param_events,
                     const AuTransportSnapshot *transport);
     uint32_t (*param_count)(void *ctx);
     /* Per-param descriptors are read from `g_param_descriptors`

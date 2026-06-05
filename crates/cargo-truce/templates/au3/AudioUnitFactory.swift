@@ -266,6 +266,7 @@ class TruceAUAudioUnit: AUAudioUnit {
         outPtrs: UnsafeMutablePointer<UnsafeMutablePointer<Float>?>,
         midiBuf: UnsafeMutablePointer<AuMidiEvent>,
         midi2Buf: UnsafeMutablePointer<AuMidi2Event>,
+        paramBuf: UnsafeMutablePointer<AuParamEvent>,
         transportBuf: UnsafeMutablePointer<AuTransportSnapshot>,
         sysexOutScratch: UnsafeMutablePointer<UInt8>,
         sysexOutScratchCap: Int,
@@ -280,9 +281,10 @@ class TruceAUAudioUnit: AUAudioUnit {
         }
         var numMidi: UInt32 = 0
         var numMidi2: UInt32 = 0
+        var numParam: UInt32 = 0
         let bufStart = Int64(timestamp.pointee.mSampleTime)
         var ev = events
-        while let event = ev, numMidi < 256 && numMidi2 < 256 {
+        while let event = ev, numMidi < 256 && numMidi2 < 256 && numParam < 256 {
             let head = event.pointee.head
             if head.eventType == .MIDI {
                 let m = event.pointee.MIDI
@@ -312,8 +314,26 @@ class TruceAUAudioUnit: AUAudioUnit {
                 numMidi += midiAdded
                 numMidi2 += midi2Added
             } else if head.eventType == .parameter || head.eventType == .parameterRamp {
-                cb.pointee.param_set_value(ctx, UInt32(event.pointee.parameter.parameterAddress),
-                                           Double(event.pointee.parameter.value))
+                // Decode .parameter / .parameterRamp into AuParamEvent
+                // with the proper within-block sample offset so the
+                // Rust chunker can split the audio block at each
+                // automation point. Ramp events get treated as a step
+                // at the ramp's start (eventSampleTime); the plugin's
+                // own smoother handles the actual interpolation. This
+                // matches truce-vst3's step-at-point treatment of VST3
+                // parameter queues.
+                //
+                // `eventSampleTime` is absolute (host timeline);
+                // subtract `bufStart` to get a within-block offset
+                // and clamp to [0, frameCount - 1] for safety.
+                let absTime = event.pointee.parameter.eventSampleTime
+                let relOffset = max(0, absTime - bufStart)
+                let clamped = UInt32(min(relOffset, Int64(frameCount - 1)))
+                paramBuf[Int(numParam)] = AuParamEvent(
+                    sample_offset: clamped,
+                    param_id: UInt32(event.pointee.parameter.parameterAddress),
+                    value: event.pointee.parameter.value)
+                numParam += 1
             }
             ev = UnsafePointer(head.next)
         }
@@ -382,6 +402,7 @@ class TruceAUAudioUnit: AUAudioUnit {
         cb.pointee.process(ctx, inPtrs, outPtrs, numIn, numOut,
                            frameCount, midiBuf, numMidi,
                            midi2Buf, numMidi2,
+                           paramBuf, numParam,
                            transportBuf)
 
         // Drain plug-in → host MIDI output. AU v3 hosts expose a
@@ -449,6 +470,13 @@ class TruceAUAudioUnit: AUAudioUnit {
         let outPtrs = UnsafeMutablePointer<UnsafeMutablePointer<Float>?>.allocate(capacity: 32)
         let midiBuf = UnsafeMutablePointer<AuMidiEvent>.allocate(capacity: 256)
         let midi2Buf = UnsafeMutablePointer<AuMidi2Event>.allocate(capacity: 256)
+        // Per-block scratch for host-side parameter automation
+        // events. AURenderEvent's `.parameter` / `.parameterRamp`
+        // entries land here with a within-block `sample_offset` so
+        // the Rust chunker splits the audio block at each
+        // automation point. 256 slots matches the MIDI scratches;
+        // typical hosts emit at most a handful per block.
+        let paramBuf = UnsafeMutablePointer<AuParamEvent>.allocate(capacity: 256)
         let transportBuf = UnsafeMutablePointer<AuTransportSnapshot>.allocate(capacity: 1)
         // Scratch for output SysEx framing: each plug-in event
         // becomes `0xF0` + inner + `0xF7` in this buffer before
@@ -477,6 +505,7 @@ class TruceAUAudioUnit: AUAudioUnit {
                 outputData: outputData, events: events, pull: pull,
                 inPtrs: inPtrs, outPtrs: outPtrs, midiBuf: midiBuf,
                 midi2Buf: midi2Buf,
+                paramBuf: paramBuf,
                 transportBuf: transportBuf,
                 sysexOutScratch: sysexOutScratch,
                 sysexOutScratchCap: sysexOutScratchCap,

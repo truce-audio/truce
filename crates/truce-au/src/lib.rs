@@ -43,7 +43,7 @@ use truce_core::wrapper::{
 use truce_params::{ParamFlags, ParamInfo, Params};
 
 use ffi::{
-    AuCallbacks, AuMidi2Event, AuMidiEvent, AuParamDescriptor, AuPluginDescriptor,
+    AuCallbacks, AuMidi2Event, AuMidiEvent, AuParamDescriptor, AuParamEvent, AuPluginDescriptor,
     AuTransportSnapshot,
 };
 
@@ -227,6 +227,8 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
     num_events: u32,
     events2: *const AuMidi2Event,
     num_events2: u32,
+    param_events: *const AuParamEvent,
+    num_param_events: u32,
     transport_ptr: *const AuTransportSnapshot,
 ) {
     let nf = num_frames as usize;
@@ -315,6 +317,32 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
                 }
             }
         }
+
+        // Host-side parameter automation. The AU v3 Swift shim
+        // decodes `AURenderEvent.parameter` / `.parameterRamp`
+        // entries into `AuParamEvent` rows with within-block
+        // sample offsets; convert each into an
+        // `EventBody::ParamChange` so the chunker
+        // (`process_chunked` below) splits the audio block at the
+        // automation point. Ramps are treated as a step at the
+        // ramp's start - the plugin's own smoother handles the
+        // actual interpolation, matching truce-vst3's treatment of
+        // VST3 parameter queues. The v2 path passes
+        // `param_events = NULL, num_param_events = 0` because AU v2
+        // has no per-sample automation API at the format boundary.
+        if !param_events.is_null() && num_param_events > 0 {
+            let pe_slice = slice::from_raw_parts(param_events, num_param_events as usize);
+            for pe in pe_slice {
+                inst.event_list.push(Event {
+                    sample_offset: pe.sample_offset,
+                    body: EventBody::ParamChange {
+                        id: pe.param_id,
+                        value: f64::from(pe.value),
+                    },
+                });
+            }
+        }
+
         inst.event_list.sort();
 
         // Build AudioBuffer from raw pointers, reusing the per-instance scratch.

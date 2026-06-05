@@ -1116,10 +1116,15 @@ static OSStatus au_v2_render(void *self_,
     /* AU v2 hosts deliver MIDI exclusively through the legacy
      * `MusicDeviceMIDIEvent` path (3-byte MIDI 1.0); they don't have a
      * MIDIEventList equivalent. Forward NULL / 0 for the MIDI 2.0
-     * UMP array so the Rust event-decoder skips it. */
+     * UMP array so the Rust event-decoder skips it. Same story for
+     * the parameter-automation array - AU v2's `AudioUnitSetParameter`
+     * has no sample-offset slot, so per-sample ramps don't exist at
+     * the v2 format boundary; param changes land synchronously
+     * through `param_set_value` instead. */
     g_callbacks->process(inst->rustCtx, inPtrs, outPtrs,
                          numIn, numOut, inFrameCount,
                          inst->midiBuffer, inst->midiCount,
+                         NULL, 0,
                          NULL, 0,
                          &transport);
     inst->midiCount = 0;

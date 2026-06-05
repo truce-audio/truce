@@ -2,6 +2,15 @@
 
 Notable changes per release.
 
+## 0.55.0
+
+- **AU v3: sample-accurate parameter automation.** The Swift shim
+  now decodes `AURenderEvent.parameter` / `.parameterRamp` into
+  per-sample `ParamChange` events with the proper within-block
+  offset, and the chunker subdivides the audio block at each
+  automation point. AU v2 stays block-rate (its
+  `AudioUnitSetParameter` API carries no sample-offset).
+
 ## 0.54.0
 
 - **New `vst3_subcategory` `truce.toml` key.** Emits the secondary

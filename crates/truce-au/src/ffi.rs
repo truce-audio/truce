@@ -82,6 +82,8 @@ pub struct AuCallbacks {
         num_events: u32,
         events2: *const AuMidi2Event,
         num_events2: u32,
+        param_events: *const AuParamEvent,
+        num_param_events: u32,
         transport: *const AuTransportSnapshot,
     ),
 
@@ -191,6 +193,30 @@ pub struct AuMidi2Event {
     /// Types 0x3 (SysEx-7), 0x4 (MIDI 2.0 CV), and 0x5 (data 128
     /// / SysEx-8) are decoded; 0x0 / 0x1 / 0x2 are reserved.
     pub words: [u32; 4],
+}
+
+/// Host-side parameter automation event. The AU v3 Swift shim
+/// decodes `AURenderEvent.parameter` / `.parameterRamp` entries
+/// into this shape (one row per host event) with `sample_offset`
+/// relative to the start of the current render block. The Rust
+/// `process` callback converts each row into an
+/// `EventBody::ParamChange` so the chunker splits the audio block
+/// at each automation point. AU v2's `AudioUnitSetParameter`
+/// carries no sample-offset, so the v2 shim passes `NULL` / `0`
+/// for the array and parameter updates land synchronously through
+/// `param_set_value` instead.
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct AuParamEvent {
+    /// Sample offset within the current block.
+    pub sample_offset: u32,
+    /// Plugin parameter ID (matches the `id` from `#[derive(Params)]`'s
+    /// generated `*ParamId` enum and `AuParamDescriptor::id`).
+    pub param_id: u32,
+    /// Plain value. AU represents parameter values as `AUValue`
+    /// (a `float`); the Rust side widens to `f64` when building
+    /// the `EventBody::ParamChange`.
+    pub value: f32,
 }
 
 /// Transport snapshot filled by the shim from `HostCallbackInfo` (AU v2)

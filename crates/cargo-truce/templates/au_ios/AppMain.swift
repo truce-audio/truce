@@ -890,6 +890,14 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
                             UInt32(n),
                             midiBuf.baseAddress, UInt32(self.midiInScratch.count),
                             nil, 0,
+                            // No host-side parameter automation in the
+                            // iOS container app's preview engine - the
+                            // app is its own "host" and parameter
+                            // changes come via the AUParameterTree
+                            // observer (synchronous, no per-sample
+                            // timing). Pass nil/0 like the AU v2
+                            // shim does.
+                            nil, 0,
                             nil)
                     }
                 }
@@ -1150,6 +1158,10 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
                     0, 0,
                     UInt32(n),
                     midiBuf.baseAddress, UInt32(self.midiInScratch.count),
+                    nil, 0,
+                    // See the matching nil/0 in the audio-output
+                    // render path above re: no host-side parameter
+                    // automation in the container app.
                     nil, 0,
                     nil)
             }
