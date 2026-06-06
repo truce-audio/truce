@@ -170,8 +170,7 @@ pub struct Vst3Callbacks {
     /// `canResize` is false) is handled host-side here: for fixed
     /// editors we snap to the editor's current size and still
     /// return `kResultOk`.
-    pub gui_check_size_constraint:
-        unsafe extern "C" fn(ctx: *mut c_void, w: *mut u32, h: *mut u32),
+    pub gui_check_size_constraint: unsafe extern "C" fn(ctx: *mut c_void, w: *mut u32, h: *mut u32),
     /// `IPlugView::onSize`. Host commits a new size; delegate to
     /// `Editor::set_size`. Width / height are in physical pixels;
     /// the Rust side scales to logical using the cached host

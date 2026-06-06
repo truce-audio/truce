@@ -1,6 +1,9 @@
 #include "TruceAAX_GUI.h"
 #include "TruceAAX_Parameters.h"
 
+#include "AAX_IViewContainer.h"
+#include "AAX_Point.h"
+
 #include <cstring>
 #include <cstdio>
 #include <sstream>
@@ -174,6 +177,23 @@ void TruceAAX_GUI::CB_ReleaseParam(void* aax_ctx, uint32_t param_id) {
 }
 
 int TruceAAX_GUI::CB_RequestResize(void* aax_ctx, uint32_t w, uint32_t h) {
-    // AAX resize is complex; skip for now
-    return 0;
+    // Push the editor's requested size to Pro Tools via
+    // AAX_IViewContainer::SetViewSize. The host then resizes the
+    // outer plugin window and our embedded NSView / HWND child
+    // resizes with it via the autoresize mask wired up in the Rust
+    // editor.open() path. Returns 1 on success to satisfy the
+    // Editor trait's request_resize contract; 0 on any failure
+    // (no view, host without a container, AAX rejected the size).
+    auto* gui = static_cast<TruceAAX_GUI*>(aax_ctx);
+    if (!gui || !gui->mViewOpen) {
+        return 0;
+    }
+    AAX_IViewContainer* container = gui->GetViewContainer();
+    if (!container) {
+        return 0;
+    }
+    AAX_Point size;
+    size.horz = (float)w;
+    size.vert = (float)h;
+    return container->SetViewSize(size) == AAX_SUCCESS ? 1 : 0;
 }

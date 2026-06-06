@@ -207,9 +207,7 @@ where
         // the `Resized` event flows back to `editor.set_size` via
         // `on_event` below.
         #[cfg(target_os = "linux")]
-        if !editor_can_resize
-            && let RwhHandle::Xlib(h) = window.raw_window_handle()
-        {
+        if !editor_can_resize && let RwhHandle::Xlib(h) = window.raw_window_handle() {
             crate::windowed_x11::pin_size(window.raw_display_handle(), &h);
         }
 
@@ -223,9 +221,7 @@ where
         // this point - going via the populated `ns_window` slot
         // avoids that timing trap.
         #[cfg(target_os = "macos")]
-        if editor_can_resize
-            && let RwhHandle::AppKit(h) = window.raw_window_handle()
-        {
+        if editor_can_resize && let RwhHandle::AppKit(h) = window.raw_window_handle() {
             // SAFETY: ns_window is a live NSWindow * baseview owns
             // and has just finished initialising
             // (`makeKeyAndOrderFront` ran before this closure).
@@ -234,11 +230,7 @@ where
             unsafe { crate::windowed_macos::make_resizable(h.ns_window) };
         }
 
-        let ctx = synthesize_editor_context::<P>(
-            &plugin,
-            &transport,
-            Arc::clone(&pending_resize),
-        );
+        let ctx = synthesize_editor_context::<P>(&plugin, &transport, Arc::clone(&pending_resize));
         editor.open(truce_parent, ctx);
 
         StandaloneHandler {

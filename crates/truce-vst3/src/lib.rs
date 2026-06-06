@@ -862,9 +862,7 @@ unsafe extern "C" fn cb_gui_set_content_scale<P: PluginExport>(
 
 /// `IPlugView::canResize` callback. Returns 1 / 0 mapping to
 /// `kResultOk` / `kResultFalse` on the shim side.
-unsafe extern "C" fn cb_gui_can_resize<P: PluginExport>(
-    ctx: *mut std::ffi::c_void,
-) -> i32 {
+unsafe extern "C" fn cb_gui_can_resize<P: PluginExport>(ctx: *mut std::ffi::c_void) -> i32 {
     unsafe {
         if ctx.is_null() {
             return 0;
@@ -912,12 +910,11 @@ unsafe extern "C" fn cb_gui_check_size_constraint<P: PluginExport>(
 }
 
 /// `IPlugView::onSize` callback. Host committed a new size;
-/// delegate to `Editor::set_size` after scaling physical -> logical.
-unsafe extern "C" fn cb_gui_set_size<P: PluginExport>(
-    ctx: *mut std::ffi::c_void,
-    w: u32,
-    h: u32,
-) {
+/// delegate to `Editor::set_size` after scaling physical -> logical
+/// and clamping against the editor's min/max/aspect (some hosts
+/// skip the pre-flight `checkSizeConstraint` round-trip and call
+/// `onSize` with raw drag values).
+unsafe extern "C" fn cb_gui_set_size<P: PluginExport>(ctx: *mut std::ffi::c_void, w: u32, h: u32) {
     unsafe {
         if ctx.is_null() || w == 0 || h == 0 {
             return;
@@ -928,6 +925,7 @@ unsafe extern "C" fn cb_gui_set_size<P: PluginExport>(
             && editor.can_resize()
         {
             let (lw, lh) = phys_to_logical(w, h, host_scale);
+            let (lw, lh) = clamp_logical_to_editor(lw, lh, editor.as_ref());
             editor.set_size(lw, lh);
         }
     }
@@ -963,11 +961,7 @@ fn logical_to_phys(lw: u32, lh: u32, host_scale: f64) -> (u32, u32) {
 /// requested logical size. Mirrors the CLAP wrapper's
 /// `clamp_logical_size` so the two wrappers respect editor
 /// constraints identically.
-fn clamp_logical_to_editor(
-    w: u32,
-    h: u32,
-    editor: &dyn truce_core::editor::Editor,
-) -> (u32, u32) {
+fn clamp_logical_to_editor(w: u32, h: u32, editor: &dyn truce_core::editor::Editor) -> (u32, u32) {
     let (min_w, min_h) = editor.min_size();
     let (max_w, max_h) = editor.max_size();
     let mut w = w.clamp(min_w.max(1), max_w);
@@ -1041,19 +1035,14 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                         // through the shim's component (rather
                         // than holding a plug view pointer) avoids
                         // UAF across host editor recreations.
-                        let host_scale =
-                            (*ctx_raw.as_ptr().cast::<Vst3Instance<P>>()).host_scale;
+                        let host_scale = (*ctx_raw.as_ptr().cast::<Vst3Instance<P>>()).host_scale;
                         // VST3 hosts speak physical points;
                         // `Editor` speaks logical.
                         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                         let pw = (f64::from(w) * host_scale).round() as u32;
                         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                         let ph = (f64::from(h) * host_scale).round() as u32;
-                        ffi::truce_vst3_request_resize(
-                            ctx_raw.as_ptr().cast_mut(),
-                            pw,
-                            ph,
-                        ) != 0
+                        ffi::truce_vst3_request_resize(ctx_raw.as_ptr().cast_mut(), pw, ph) != 0
                     }),
                     get_param: Box::new(move |id| params_for_get.get_normalized(id).unwrap_or(0.0)),
                     get_param_plain: Box::new(move |id| {

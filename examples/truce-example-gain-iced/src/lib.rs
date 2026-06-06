@@ -13,7 +13,7 @@
 use std::sync::Arc;
 
 use iced::widget::{Column, Row, container, text};
-use iced::{Element, Font, Length, alignment};
+use iced::{Alignment, Element, Font, Length, alignment};
 
 const JETBRAINS_MONO: Font = Font {
     family: iced::font::Family::Name("JetBrains Mono"),
@@ -81,30 +81,48 @@ impl IcedPlugin<GainParams> for GainUi {
         })
         .into();
 
-        // Left column: knobs, XY pad
-        let left: Element<'a, Message<GainMsg>> = Column::new()
-            .push(
-                Row::new()
-                    .push(knob(P::Gain, params).label("Gain").size(60.0).el())
-                    .push(knob(P::Pan, params).label("Pan").size(60.0).el())
-                    .spacing(gap)
-                    .align_y(alignment::Vertical::Center),
-            )
+        // Control column on the left: knob row (fixed height,
+        // centred horizontally so the two knobs stay grouped
+        // under the XY pad) over an XY pad that stretches to
+        // fill the remaining area in both axes.
+        // The knob row is wrapped in a `container` so it can
+        // span the column width and centre its content -
+        // `iced::widget::Row` exposes `align_y` (cross-axis) but
+        // not `align_x`, so centring the children horizontally
+        // needs a container with `.align_x(Center)`.
+        let knob_row: Element<'a, Message<GainMsg>> = container(
+            Row::new()
+                .push(knob(P::Gain, params).label("Gain").size(60.0).el())
+                .push(knob(P::Pan, params).label("Pan").size(60.0).el())
+                .spacing(gap)
+                .align_y(alignment::Vertical::Center),
+        )
+        .width(Length::Fill)
+        .align_x(Alignment::Center)
+        .into();
+
+        let controls: Element<'a, Message<GainMsg>> = Column::new()
+            .push(knob_row)
             .push(
                 xy_pad(P::Pan, P::Gain, params)
                     .label("Pan / Gain")
-                    .size(130.0)
+                    .fill()
                     .el(),
             )
             .spacing(gap)
+            .width(Length::Fill)
+            .height(Length::Fill)
             .into();
 
-        // Body: left column + meter spanning full height
+        // Body: control column on the left takes the remaining
+        // width; meter pinned to the right at its natural width,
+        // stretching vertically.
         let body: Element<'a, Message<GainMsg>> = Row::new()
-            .push(left)
+            .push(controls)
             .push(
                 meter(&[P::MeterLeft, P::MeterRight], params)
-                    .size(16.0, 222.0)
+                    .width(Length::Fixed(16.0))
+                    .fill()
                     .el(),
             )
             .spacing(gap)
@@ -169,6 +187,16 @@ impl PluginLogic for GainIced {
         IcedEditor::<GainParams, GainUi>::new(Arc::new(GainParams::new()), (WINDOW_W, WINDOW_H))
             .with_meter_ids(vec![P::MeterLeft, P::MeterRight])
             .with_font(truce_font::JETBRAINS_MONO)
+            // Header strip + content area; iced's existing
+            // `Length::Fill` columns let widgets stretch
+            // naturally as the window grows.
+            .resizable(true)
+            // 176 px = two 60 px knobs + 10 px gap + 16 px meter +
+            // 10 px column gap + 10 px padding on each side; the
+            // smallest width where the XY pad column matches the
+            // knob row above.
+            .min_size((176, 260))
+            .max_size((1200, 900))
             .into_editor()
     }
 }

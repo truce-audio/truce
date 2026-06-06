@@ -149,6 +149,15 @@ pub struct AuCallbacks {
     pub gui_get_size: unsafe extern "C" fn(ctx: *mut c_void, w: *mut u32, h: *mut u32),
     pub gui_open: unsafe extern "C" fn(ctx: *mut c_void, parent: *mut c_void),
     pub gui_close: unsafe extern "C" fn(ctx: *mut c_void),
+    /// `1` if the editor opted into host-driven resize. The AU v3
+    /// Swift shim consults this to decide whether to propagate the
+    /// host's bounds change to `gui_set_size` from
+    /// `viewDidLayoutSubviews`.
+    pub gui_can_resize: unsafe extern "C" fn(ctx: *mut c_void) -> i32,
+    /// Host -> plugin `set_size`. The AU v3 Swift shim calls this
+    /// when its parent view's bounds change (host drag-resize) and
+    /// the editor opted into resize.
+    pub gui_set_size: unsafe extern "C" fn(ctx: *mut c_void, w: u32, h: u32),
 }
 
 /// A MIDI event passed across the Rust ↔ `ObjC` boundary in both

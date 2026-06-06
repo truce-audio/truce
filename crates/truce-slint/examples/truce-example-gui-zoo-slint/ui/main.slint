@@ -166,8 +166,13 @@ export component ZooUi inherits Window {
             Text { text: "XY Pads"; font-size: 11px; color: #bfbfc8; }
             HorizontalLayout {
                 spacing: 20px;
+                // Explicit `width` + `height` (label height + 2 px
+                // spacing on top of a square pad) so the zoo shows
+                // square pads at the three sizes; XYPad's own
+                // preferred-* lets it stretch when neither is set.
                 XYPad {
                     width: 80px;
+                    height: 92px;
                     label: "small";
                     value-x <=> root.xy-small-x;
                     value-y <=> root.xy-small-y;
@@ -176,6 +181,7 @@ export component ZooUi inherits Window {
                 }
                 XYPad {
                     width: 130px;
+                    height: 142px;
                     label: "med";
                     value-x <=> root.xy-med-x;
                     value-y <=> root.xy-med-y;
@@ -184,6 +190,7 @@ export component ZooUi inherits Window {
                 }
                 XYPad {
                     width: 200px;
+                    height: 212px;
                     label: "big";
                     value-x <=> root.xy-big-x;
                     value-y <=> root.xy-big-y;

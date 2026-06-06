@@ -263,6 +263,7 @@ pub unsafe fn instantiate_ui<P: PluginExport>(
             controller,
             transport_slot.clone(),
             parsed.touch,
+            parsed.resize,
         );
 
         // Record the editor's preferred size BEFORE `open()` - hosts that
@@ -513,9 +514,102 @@ unsafe fn decode_notify_atom<P: PluginExport>(
 
 /// # Safety
 /// `uri` must be null or a valid null-terminated C string.
-pub unsafe fn ui_extension_data(_uri: *const c_char) -> *const c_void {
-    // Nothing additional (Idle / Show / Resize extensions TBD).
+pub unsafe fn ui_extension_data<P: PluginExport>(uri: *const c_char) -> *const c_void {
+    if uri.is_null() {
+        return std::ptr::null();
+    }
+    let cstr = unsafe { CStr::from_ptr(uri) };
+    if cstr.to_bytes() == LV2_UI__RESIZE.as_bytes() {
+        // Host → UI direction of `ui:resize`: the host calls the
+        // returned `Lv2UiResize::ui_resize` with the new container
+        // size whenever its plugin frame is resized. The handle
+        // it passes is the `Lv2UiHandle` we returned from
+        // `instantiate_ui`, which is a `*mut Lv2UiInstance<P>`.
+        return ui_resize_iface::<P>();
+    }
     std::ptr::null()
+}
+
+/// Per-`P` static `Lv2UiResize` interface returned from
+/// `ui_extension_data`. Rust forbids generic statics, so we lazily
+/// leak one heap-allocated table per concrete `P` and cache the
+/// resulting pointer in a process-wide `TypeId` map. The map is
+/// touched at most once per plugin type per process; subsequent
+/// `extension_data` lookups read the cached pointer.
+fn ui_resize_iface<P: PluginExport>() -> *const c_void {
+    use std::any::TypeId;
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    static CACHE: OnceLock<Mutex<HashMap<TypeId, usize>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut map = cache.lock().expect("ui_resize cache poisoned");
+    let entry = map.entry(TypeId::of::<P>()).or_insert_with(|| {
+        let iface = Box::leak(Box::new(Lv2UiResize {
+            handle: std::ptr::null_mut(),
+            ui_resize: Some(ui_resize_dispatch::<P>),
+        }));
+        std::ptr::from_ref(iface) as usize
+    });
+    *entry as *const c_void
+}
+
+/// Host → UI resize callback. The host passes the `LV2UI_Handle` it
+/// got from `instantiate_ui` (a `*mut Lv2UiInstance<P>`). We forward
+/// the new size to the editor after clamping it to the editor's
+/// declared min / max / aspect-ratio constraints.
+///
+/// Returns `0` on success per the LV2 spec; non-zero on error.
+unsafe extern "C" fn ui_resize_dispatch<P: PluginExport>(
+    handle: *mut c_void,
+    width: i32,
+    height: i32,
+) -> i32 {
+    if handle.is_null() || width <= 0 || height <= 0 {
+        return 1;
+    }
+    unsafe {
+        let inst = &mut *handle.cast::<Lv2UiInstance<P>>();
+        let Some(editor) = inst.editor.as_mut() else {
+            return 1;
+        };
+        #[allow(clippy::cast_sign_loss)]
+        let (req_w, req_h) = (width as u32, height as u32);
+        let (cw, ch) = clamp_logical_to_editor(req_w, req_h, editor.as_ref());
+        editor.set_size(cw, ch);
+    }
+    0
+}
+
+/// Clamp a host-requested logical size against the editor's
+/// `min_size` / `max_size` / `aspect_ratio` declarations. Mirrors the
+/// helpers in `truce-clap`, `truce-vst3`, and `truce-au` so the
+/// formats enforce identical constraints; the LV2 spec leaves
+/// validation up to the UI, and without this a host like Reaper
+/// will happily push the editor past its declared minimum.
+fn clamp_logical_to_editor(w: u32, h: u32, editor: &dyn Editor) -> (u32, u32) {
+    let (min_w, min_h) = editor.min_size();
+    let (max_w, max_h) = editor.max_size();
+    let mut w = w.clamp(min_w.max(1), max_w);
+    let mut h = h.clamp(min_h.max(1), max_h);
+    if let Some((num, denom)) = editor.aspect_ratio()
+        && num > 0
+        && denom > 0
+    {
+        let num64 = u64::from(num);
+        let denom64 = u64::from(denom);
+        let h_implied = (u64::from(w) * denom64 / num64).clamp(1, u64::from(u32::MAX));
+        #[allow(clippy::cast_possible_truncation)]
+        let h_implied_u32 = h_implied as u32;
+        if h_implied_u32 >= min_h.max(1) && h_implied_u32 <= max_h {
+            h = h_implied_u32;
+        } else {
+            let w_implied = (u64::from(h) * num64 / denom64).clamp(1, u64::from(u32::MAX));
+            #[allow(clippy::cast_possible_truncation)]
+            let w_implied_u32 = w_implied as u32;
+            w = w_implied_u32.clamp(min_w.max(1), max_w);
+        }
+    }
+    (w, h)
 }
 
 // ---------------------------------------------------------------------------
@@ -860,6 +954,7 @@ unsafe fn install_child_cursor_update(parent: *mut c_void) {
 // below - owned-arg avoids forcing the caller to lend them across
 // the closure-building scope.
 #[allow(clippy::needless_pass_by_value)]
+#[allow(clippy::too_many_arguments)]
 fn build_editor_context<P: PluginExport>(
     params: Arc<P::Params>,
     slots: &[ParamSlot],
@@ -868,6 +963,7 @@ fn build_editor_context<P: PluginExport>(
     controller: Lv2UiController,
     transport_slot: Arc<TransportSlot>,
     touch: Option<&'static Lv2UiTouch>,
+    resize: Option<&'static Lv2UiResize>,
 ) -> PluginContext {
     // Clone slot metadata into each closure - small vec, cheap.
     let slots_for_set: Vec<(u32, u32, truce_params::ParamRange)> = slots
@@ -917,6 +1013,14 @@ fn build_editor_context<P: PluginExport>(
     let touch_fn = touch.and_then(|t| t.touch);
     let touch_handle = touch.map_or(0, |t| t.handle as usize);
 
+    // `ui:resize` (UI → host push). Resolve fn ptr + handle once so the
+    // closure stays cheap and avoids deref-through-option per call.
+    // `None` collapses the closure into a no-op (host doesn't expose the
+    // feature, e.g. jalv); editors can still call `request_resize` and
+    // we'll just report failure.
+    let host_resize_fn = resize.and_then(|r| r.ui_resize);
+    let host_resize_handle = resize.map_or(0, |r| r.handle as usize);
+
     PluginContext::from_closures(
         ClosureBridge {
             begin_edit: Box::new(move |id: u32| {
@@ -934,7 +1038,19 @@ fn build_editor_context<P: PluginExport>(
                 };
                 unsafe { func(touch_handle as *mut c_void, *port_index, false) };
             }),
-            request_resize: Box::new(|_w: u32, _h: u32| false),
+            request_resize: Box::new(move |w: u32, h: u32| {
+                // Push the editor's requested size to the host via
+                // the captured `ui:resize` feature. LV2 takes
+                // `int32_t`; editor dimensions are bounded by
+                // display size, well below `i32::MAX`. The host
+                // returns 0 on success.
+                let Some(func) = host_resize_fn else {
+                    return false;
+                };
+                #[allow(clippy::cast_possible_wrap)]
+                let (iw, ih) = (w as i32, h as i32);
+                unsafe { func(host_resize_handle as *mut c_void, iw, ih) == 0 }
+            }),
             set_param: Box::new(move |id: u32, normalized: f64| {
                 let Some((_, port_index, range)) =
                     slots_for_set.iter().find(|(pid, _, _)| *pid == id)
@@ -985,7 +1101,7 @@ pub fn ui_descriptor<P: PluginExport>(uri: &'static CStr) -> Lv2UiDescriptor {
         instantiate: instantiate_ui_tramp::<P>,
         cleanup: cleanup_ui_tramp::<P>,
         port_event: port_event_tramp::<P>,
-        extension_data: ui_extension_data_tramp,
+        extension_data: ui_extension_data_tramp::<P>,
     }
 }
 
@@ -1029,6 +1145,6 @@ unsafe extern "C" fn port_event_tramp<P: PluginExport>(
     }
 }
 
-unsafe extern "C" fn ui_extension_data_tramp(uri: *const c_char) -> *const c_void {
-    unsafe { ui_extension_data(uri) }
+unsafe extern "C" fn ui_extension_data_tramp<P: PluginExport>(uri: *const c_char) -> *const c_void {
+    unsafe { ui_extension_data::<P>(uri) }
 }

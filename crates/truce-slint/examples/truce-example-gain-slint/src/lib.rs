@@ -100,6 +100,16 @@ impl PluginLogic for GainSlint {
                 })
             },
         )
+        // Header strip + body fill. Slint's `.slint` markup uses
+        // anchored layout (top: 0; bottom: 0) which re-runs every
+        // frame at the new window dimensions.
+        .resizable(true)
+        // 176 px = two 60 px knobs + 10 px gap + 16 px meter +
+        // 10 px column gap + 10 px padding on each side; the
+        // smallest width where the XY pad column matches the
+        // knob row above.
+        .min_size((176, 240))
+        .max_size((1200, 900))
         .into_editor()
     }
 }

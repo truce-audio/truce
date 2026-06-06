@@ -149,6 +149,17 @@ typedef struct {
     void (*gui_get_size)(void *ctx, uint32_t *w, uint32_t *h);
     void (*gui_open)(void *ctx, void *parent);
     void (*gui_close)(void *ctx);
+    /* Whether the editor advertised `can_resize() == true`. The AU
+     * v3 Swift shim consults this in `viewDidLayoutSubviews` to
+     * decide whether to propagate the host's bounds change to the
+     * editor via `gui_set_size`. AU v2 hosts don't have a
+     * matching mechanism today; that wiring is tracked
+     * separately. */
+    int32_t (*gui_can_resize)(void *ctx);
+    /* Host-driven set_size. The Swift v3 shim calls this when the
+     * host's container view changes our bounds (drag-resize). w/h
+     * are in logical points. */
+    void (*gui_set_size)(void *ctx, uint32_t w, uint32_t h);
 } AuCallbacks;
 
 // Globals shared between v2 and v3 shims.

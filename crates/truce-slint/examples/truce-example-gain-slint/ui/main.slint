@@ -19,13 +19,19 @@ export component GainUi inherits Window {
     background: #1f1f24;
     default-font-family: "JetBrains Mono";
 
+    // No `alignment: start` here - that pins children at the
+    // top using only their preferred sizes, which would keep
+    // the body packed at the top-left when the host enlarges
+    // the editor. With the default `stretch` alignment the
+    // header stays at its fixed 30 px (vertical-stretch: 0)
+    // and the body layout below claims the remaining height.
     VerticalLayout {
         spacing: 0px;
-        alignment: start;
 
-        // Header - 30px, matches egui/iced
+        // Header - 30 px tall, full width.
         Rectangle {
             height: 30px;
+            vertical-stretch: 0;
             background: #14141a;
 
             Text {
@@ -38,52 +44,62 @@ export component GainUi inherits Window {
             }
         }
 
-        // Content area with 10px padding
-        VerticalLayout {
-            padding-left: 10px;
-            padding-right: 10px;
-            padding-top: 10px;
-            padding-bottom: 10px;
+        // Body: fills the rest of the window in both axes.
+        HorizontalLayout {
+            padding: 10px;
+            spacing: 10px;
+            vertical-stretch: 1;
 
-            HorizontalLayout {
+            // Left column takes the remaining width. The knob
+            // row stays at its preferred height; the XY pad
+            // below it grows to fill the rest of the column in
+            // both axes.
+            VerticalLayout {
                 spacing: 10px;
+                horizontal-stretch: 1;
 
-                VerticalLayout {
+                HorizontalLayout {
                     spacing: 10px;
+                    vertical-stretch: 0;
+                    // Center the two fixed-width knobs in the
+                    // row so they stay grouped under the XY pad
+                    // as the editor widens.
+                    alignment: center;
 
-                    HorizontalLayout {
-                        spacing: 10px;
-
-                        Knob {
-                            label: "Gain";
-                            value <=> root.gain;
-                            value-text: root.gain-text;
-                            changed(v) => { root.gain-changed(v); }
-                        }
-
-                        Knob {
-                            label: "Pan";
-                            value <=> root.pan;
-                            value-text: root.pan-text;
-                            changed(v) => { root.pan-changed(v); }
-                        }
+                    Knob {
+                        label: "Gain";
+                        value <=> root.gain;
+                        value-text: root.gain-text;
+                        changed(v) => { root.gain-changed(v); }
                     }
 
-                    XYPad {
-                        width: 130px;
-                        label: "Pan / Gain";
-                        value-x <=> root.pan;
-                        value-y <=> root.gain;
-                        changed-x(v) => { root.pan-changed(v); }
-                        changed-y(v) => { root.gain-changed(v); }
+                    Knob {
+                        label: "Pan";
+                        value <=> root.pan;
+                        value-text: root.pan-text;
+                        changed(v) => { root.pan-changed(v); }
                     }
                 }
 
-                Meter {
-                    height: 222px;
-                    level-left: root.meter-left;
-                    level-right: root.meter-right;
+                XYPad {
+                    label: "Pan / Gain";
+                    value-x <=> root.pan;
+                    value-y <=> root.gain;
+                    // Claim the remaining vertical space in the
+                    // right column so the pad grows with the
+                    // editor window.
+                    vertical-stretch: 1;
+                    horizontal-stretch: 1;
+                    changed-x(v) => { root.pan-changed(v); }
+                    changed-y(v) => { root.gain-changed(v); }
                 }
+            }
+
+            // Meter on the right, fixed 16 px wide band; stretches
+            // vertically with the editor.
+            Meter {
+                level-left: root.meter-left;
+                level-right: root.meter-right;
             }
         }
     }

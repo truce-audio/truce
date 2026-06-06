@@ -4,8 +4,14 @@ export component Meter inherits Rectangle {
     in property <float> level-left: 0.0;
     in property <float> level-right: 0.0;
 
-    width: 16px;
-    height: 100px;
+    // `preferred-*` (not `width: 16px`) so a parent layout can
+    // stretch the meter vertically with the editor window. The
+    // width stays a fixed visual band via `min-width` /
+    // `max-width`.
+    min-width: 16px;
+    max-width: 16px;
+    preferred-width: 16px;
+    preferred-height: 100px;
 
     // Meter bars
     HorizontalLayout {

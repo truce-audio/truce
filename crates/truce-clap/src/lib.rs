@@ -2097,8 +2097,13 @@ unsafe extern "C" fn gui_set_size<P: PluginExport>(
             // Host passes physical points; truce works in logical.
             // Divide by the host-applied scale before handing to
             // the editor so `set_size` receives the same units
-            // `size()` returns.
-            let (lw, lh) = scale_physical_to_logical(width, height, data.host_scale);
+            // `size()` returns. Also clamp against the editor's
+            // min/max/aspect - some hosts (Reaper) skip the
+            // pre-flight `gui_adjust_size` and call `gui_set_size`
+            // with raw drag dimensions, which leaves the editor
+            // surface below `min_size` and clips content.
+            let req = scale_physical_to_logical(width, height, data.host_scale);
+            let (lw, lh) = clamp_logical_size(req.0, req.1, editor.as_ref());
             editor.set_size(lw, lh)
         } else {
             let mut current_w: u32 = 0;

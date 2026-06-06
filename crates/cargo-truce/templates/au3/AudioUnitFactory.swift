@@ -712,9 +712,36 @@ class AudioUnitFactory: AUViewController, AUAudioUnitFactory {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        propagateHostResize()
         centerGUI()
     }
     #endif
+
+    /// When the host's container view changes our bounds (drag-
+    /// resize), forward to `gui_set_size` so the editor follows.
+    /// No-op when the editor opted out of resize - in that case
+    /// `centerGUI` keeps the inner container at its original size.
+    private func propagateHostResize() {
+        guard guiSetUp,
+              let ctx = myCtx,
+              let cb = g_callbacks,
+              cb.pointee.gui_can_resize(ctx) != 0
+        else { return }
+        let hostW = self.view.bounds.width
+        let hostH = self.view.bounds.height
+        guard hostW > 0, hostH > 0,
+              (hostW, hostH) != (guiPtSize.width, guiPtSize.height)
+        else { return }
+        let newW = UInt32(max(1, hostW.rounded()))
+        let newH = UInt32(max(1, hostH.rounded()))
+        cb.pointee.gui_set_size(ctx, newW, newH)
+        guiPtSize = NSSize(width: CGFloat(newW), height: CGFloat(newH))
+        // Update the inner container's frame so the editor's NSView
+        // has the right outer bounds when its `on_frame` picks up
+        // the pending-size cell. `centerGUI` below repositions to
+        // origin (0, 0) since the new size matches the host's.
+        guiContainer?.frame = NSRect(origin: .zero, size: guiPtSize)
+    }
 
     private func teardownGUI() {
         // Close the GUI when the host hides the plugin window.

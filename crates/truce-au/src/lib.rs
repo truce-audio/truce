@@ -700,6 +700,79 @@ unsafe extern "C" fn cb_gui_has_editor<P: PluginExport>(ctx: *mut std::ffi::c_vo
     }
 }
 
+/// Used by the AU v3 Swift shim in `viewDidLayoutSubviews` to
+/// decide whether to forward host bounds changes to the editor,
+/// and by the AU v2 `uiViewForAudioUnit:withSize:` path to pick
+/// between the host's `preferredSize` and the editor's natural
+/// size. Returns 1 / 0 mapping to "yes / no resizable".
+unsafe extern "C" fn cb_gui_can_resize<P: PluginExport>(ctx: *mut std::ffi::c_void) -> i32 {
+    unsafe {
+        if ctx.is_null() {
+            return 0;
+        }
+        let inst = &*ctx.cast::<AuInstance<P>>();
+        i32::from(inst.editor.as_ref().is_some_and(|e| e.can_resize()))
+    }
+}
+
+/// Host-driven `set_size`. The AU v2 Cocoa view's
+/// `setFrameSize:` / superview-frame observer calls this when the
+/// host resizes its outer container; the AU v3 Swift shim calls
+/// it from `viewDidLayoutSubviews`. Clamps to the editor's
+/// `min_size` / `max_size` / `aspect_ratio` so a host dragging
+/// below the editor's floor doesn't clip widgets (mirrors the
+/// CLAP and VST3 wrappers).
+unsafe extern "C" fn cb_gui_set_size<P: PluginExport>(ctx: *mut std::ffi::c_void, w: u32, h: u32) {
+    unsafe {
+        if ctx.is_null() || w == 0 || h == 0 {
+            return;
+        }
+        let inst = &mut *ctx.cast::<AuInstance<P>>();
+        if let Some(ref mut editor) = inst.editor
+            && editor.can_resize()
+        {
+            let (cw, ch) = clamp_logical_to_editor(w, h, editor.as_ref());
+            editor.set_size(cw, ch);
+        }
+    }
+}
+
+/// Clamp a requested logical size to the editor's `min_size` /
+/// `max_size` / `aspect_ratio`. Mirrors the helpers that live in
+/// the CLAP and VST3 wrappers - kept local rather than in
+/// truce-core because it's the wrapper's job to honour host-side
+/// constraints, not the trait's.
+fn clamp_logical_to_editor(w: u32, h: u32, editor: &dyn truce_core::editor::Editor) -> (u32, u32) {
+    let (min_w, min_h) = editor.min_size();
+    let (max_w, max_h) = editor.max_size();
+    let mut w = w.clamp(min_w.max(1), max_w);
+    let mut h = h.clamp(min_h.max(1), max_h);
+    if let Some((num, denom)) = editor.aspect_ratio()
+        && num > 0
+        && denom > 0
+    {
+        let num64 = u64::from(num);
+        let denom64 = u64::from(denom);
+        let h_implied = (u64::from(w) * denom64 / num64).clamp(1, u64::from(u32::MAX));
+        #[allow(clippy::cast_possible_truncation)]
+        let h_implied_u32 = h_implied as u32;
+        if h_implied_u32 >= min_h.max(1) && h_implied_u32 <= max_h {
+            h = h_implied_u32;
+        } else {
+            let w_implied = (u64::from(h) * num64 / denom64).clamp(1, u64::from(u32::MAX));
+            #[allow(clippy::cast_possible_truncation)]
+            let w_implied_u32 = w_implied as u32;
+            w = w_implied_u32.clamp(min_w.max(1), max_w);
+            let h_final = (u64::from(w) * denom64 / num64).clamp(1, u64::from(u32::MAX));
+            #[allow(clippy::cast_possible_truncation)]
+            {
+                h = (h_final as u32).clamp(min_h.max(1), max_h);
+            }
+        }
+    }
+    (w, h)
+}
+
 unsafe extern "C" fn cb_gui_get_size<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     w: *mut u32,
@@ -813,7 +886,30 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                     end_edit: Box::new(move |_id| {
                         let _ = ctx_for_end;
                     }),
-                    request_resize: Box::new(|_w, _h| false),
+                    request_resize: Box::new(move |w, h| {
+                        // AU v2 has no host-driven resize API: the
+                        // host observes the plug-in's NSView frame
+                        // via AppKit and updates its container in
+                        // response. So `ctx.request_resize` here
+                        // routes back into the editor's own
+                        // `set_size`, which resizes the baseview
+                        // NSView; AppKit propagates the frame
+                        // change to the host as a notification.
+                        //
+                        // SAFETY: `ctx_raw` points at the live
+                        // `AuInstance<P>`. The closure runs on the
+                        // GUI thread, same as `cb_gui_open` which
+                        // installed it. `editor.set_size` on the
+                        // existing backends writes to an atomic
+                        // cell only - no aliasing UB even if the
+                        // editor's own `update()` holds a borrow
+                        // higher up the stack.
+                        if w == 0 || h == 0 {
+                            return false;
+                        }
+                        let inst = &mut *ctx_raw.as_ptr().cast_mut().cast::<AuInstance<P>>();
+                        inst.editor.as_mut().is_some_and(|e| e.set_size(w, h))
+                    }),
                     get_param: Box::new(move |id| params_for_get.get_normalized(id).unwrap_or(0.0)),
                     get_param_plain: Box::new(move |id| {
                         params_for_plain.get_plain(id).unwrap_or(0.0)
@@ -1004,6 +1100,8 @@ fn register_au_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
         gui_get_size: cb_gui_get_size::<P>,
         gui_open: cb_gui_open::<P>,
         gui_close: cb_gui_close::<P>,
+        gui_can_resize: cb_gui_can_resize::<P>,
+        gui_set_size: cb_gui_set_size::<P>,
     }));
 
     let param_descs = param_descs.leak();

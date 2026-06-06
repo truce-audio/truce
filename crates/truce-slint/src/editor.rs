@@ -9,6 +9,7 @@
 use std::iter;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use baseview::{Event, EventStatus, Window, WindowHandler, WindowOpenOptions, WindowScalePolicy};
 use slint::platform::software_renderer::{MinimalSoftwareWindow, PremultipliedRgbaColor};
@@ -93,6 +94,39 @@ pub struct SlintEditor<P: Params + ?Sized> {
     /// blit pipeline when the value diverges from `last_applied_scale`.
     scale: EditorScale,
     window: Option<baseview::WindowHandle>,
+    /// Pending logical size shared with the baseview handler. Packed
+    /// as `(width << 32) | height`. `Editor::set_size` writes here;
+    /// the handler's `on_frame` picks the change up and runs the
+    /// same `set_size` / `surface.configure` / blit-resize sequence
+    /// the `WindowEvent::Resized` branch uses for OS-driven drags.
+    /// `0` is the sentinel "no resize pending."
+    pending_size: Arc<AtomicU64>,
+    /// Resize-capability + constraints surfaced through the `Editor`
+    /// trait. Defaults to `can_resize = true`; opt out with
+    /// `.resizable(false)`. Constraints feed CLAP
+    /// `gui_get_resize_hints` and VST3 `checkSizeConstraint` so
+    /// hosts honour the editor's limits.
+    can_resize: bool,
+    min_size: (u32, u32),
+    max_size: (u32, u32),
+    aspect_ratio: Option<(u32, u32)>,
+    prefers_pow2: bool,
+}
+
+/// Pack a `(width, height)` into a single `u64` for the
+/// `pending_size` `AtomicU64` handoff to the baseview handler. `0`
+/// in both halves is the sentinel "no resize pending."
+#[inline]
+fn pack_size(size: (u32, u32)) -> u64 {
+    (u64::from(size.0) << 32) | u64::from(size.1)
+}
+
+#[inline]
+fn unpack_size(packed: u64) -> (u32, u32) {
+    #[allow(clippy::cast_possible_truncation)]
+    {
+        ((packed >> 32) as u32, (packed & 0xFFFF_FFFF) as u32)
+    }
 }
 
 // SAFETY: `baseview::WindowHandle` holds a raw native window pointer
@@ -123,7 +157,49 @@ impl<P: Params + 'static> SlintEditor<P> {
             setup: Arc::new(setup),
             scale: EditorScale::new(truce_gui::backing_scale()),
             window: None,
+            pending_size: Arc::new(AtomicU64::new(0)),
+            can_resize: true,
+            min_size: (1, 1),
+            max_size: (u32::MAX, u32::MAX),
+            aspect_ratio: None,
+            prefers_pow2: false,
         }
+    }
+
+    /// Opt out of host-driven resizing. Slint editors default to
+    /// resizable because the markup re-flows for free; pass
+    /// `false` for plugins that ship a deliberately fixed-size GUI.
+    #[must_use]
+    pub fn resizable(mut self, resizable: bool) -> Self {
+        self.can_resize = resizable;
+        self
+    }
+
+    /// Minimum logical-point dimensions surfaced to the wrappers.
+    #[must_use]
+    pub fn min_size(mut self, min: (u32, u32)) -> Self {
+        self.min_size = min;
+        self
+    }
+
+    /// Maximum logical-point dimensions surfaced to the wrappers.
+    #[must_use]
+    pub fn max_size(mut self, max: (u32, u32)) -> Self {
+        self.max_size = max;
+        self
+    }
+
+    /// Lock the aspect ratio as `(numerator, denominator)`.
+    #[must_use]
+    pub fn aspect_ratio(mut self, ratio: Option<(u32, u32)>) -> Self {
+        self.aspect_ratio = ratio;
+        self
+    }
+
+    #[must_use]
+    pub fn prefers_pow2(mut self, prefers: bool) -> Self {
+        self.prefers_pow2 = prefers;
+        self
     }
 }
 
@@ -156,10 +232,46 @@ struct SlintWindowHandler<P: Params + ?Sized> {
     last_phys_h: u32,
     /// Last known cursor position in logical points.
     last_pos: LogicalPosition,
+    /// Shared with the parent `SlintEditor`. `Editor::set_size`
+    /// writes a packed `(w, h)` here; `on_frame` swaps it back to
+    /// `0` and applies the same resize sequence the
+    /// `WindowEvent::Resized` branch runs for OS-driven drags.
+    pending_size: Arc<AtomicU64>,
 }
 
 impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
-    fn on_frame(&mut self, _window: &mut Window) {
+    fn on_frame(&mut self, window: &mut Window) {
+        // Pick up host-driven `set_size` requests posted to the
+        // shared `pending_size` cell since the last frame. Calls
+        // `window.resize` (which on Linux / Win32 fires a
+        // `Resized` event the existing branch handles, idempotently
+        // on macOS where the call only mutates the NSView frame)
+        // then reconfigures the slint window + wgpu surface + blit
+        // inline so the next render lands at the new size.
+        let pending = unpack_size(self.pending_size.swap(0, Ordering::Acquire));
+        if pending.0 > 0 && pending.1 > 0 && pending != (self.width, self.height) {
+            let scale = f64::from(self.last_applied_scale);
+            let phys_w = truce_gui::to_physical_px(pending.0, scale);
+            let phys_h = truce_gui::to_physical_px(pending.1, scale);
+            window.resize(baseview::Size::new(
+                f64::from(pending.0),
+                f64::from(pending.1),
+            ));
+            self.slint_window
+                .set_size(slint::WindowSize::Physical(PhysicalSize::new(
+                    phys_w, phys_h,
+                )));
+            self.surface_config.width = phys_w.max(1);
+            self.surface_config.height = phys_h.max(1);
+            self.surface.configure(&self.device, &self.surface_config);
+            if let Some(ref mut blit) = self.blit {
+                blit.resize(&self.device, phys_w, phys_h);
+            }
+            self.width = pending.0;
+            self.height = pending.1;
+            self.last_phys_w = phys_w;
+            self.last_phys_h = phys_h;
+        }
         // Pick up host-driven scale changes (CLAP `set_scale`, VST3
         // `IPlugViewContentScaleSupport`) that landed in the shared
         // cell since the last frame. The Resized path applies its own
@@ -377,6 +489,11 @@ impl<P: Params + 'static> Editor for SlintEditor<P> {
         platform::ensure_platform();
 
         let (lw, lh) = self.size;
+        // Reset the resize-handoff cell so a stale `set_size` from
+        // before this open() doesn't immediately re-resize the
+        // freshly-built window.
+        self.pending_size.store(0, Ordering::Relaxed);
+        let pending_size_handle = Arc::clone(&self.pending_size);
         // Refresh shared scale from the parent window - on macOS the
         // parent's NSWindow may live on a non-main display whose
         // `backingScaleFactor` differs from `NSScreen.mainScreen`'s.
@@ -493,6 +610,7 @@ impl<P: Params + 'static> Editor for SlintEditor<P> {
                     last_phys_w: phys_w,
                     last_phys_h: phys_h,
                     last_pos: LogicalPosition::default(),
+                    pending_size: pending_size_handle,
                 }
             },
         );
@@ -506,6 +624,41 @@ impl<P: Params + 'static> Editor for SlintEditor<P> {
         // / wgpu surface / blit pipeline. The trait's default no-op
         // would silently swallow host scale changes here.
         self.scale.set(factor);
+    }
+
+    fn can_resize(&self) -> bool {
+        self.can_resize
+    }
+
+    fn min_size(&self) -> (u32, u32) {
+        self.min_size
+    }
+
+    fn max_size(&self) -> (u32, u32) {
+        self.max_size
+    }
+
+    fn aspect_ratio(&self) -> Option<(u32, u32)> {
+        self.aspect_ratio
+    }
+
+    fn prefers_pow2(&self) -> bool {
+        self.prefers_pow2
+    }
+
+    fn set_size(&mut self, width: u32, height: u32) -> bool {
+        if width == 0 || height == 0 {
+            return false;
+        }
+        self.size = (width, height);
+        // Hand the new logical size to the live baseview handler;
+        // it picks the change up at the top of `on_frame` and runs
+        // the same `slint_window.set_size` + `surface.configure` +
+        // `blit.resize` sequence the `WindowEvent::Resized` branch
+        // uses for OS-driven drags.
+        self.pending_size
+            .store(pack_size((width, height)), Ordering::Release);
+        true
     }
 
     fn close(&mut self) {

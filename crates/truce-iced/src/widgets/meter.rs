@@ -18,8 +18,8 @@ use crate::theme;
 pub struct MeterWidget<'a, M> {
     values: Vec<f32>,
     label: Option<&'a str>,
-    width: f32,
-    height: f32,
+    width: Length,
+    height: Length,
     font: iced::Font,
     _phantom: PhantomData<M>,
 }
@@ -31,8 +31,8 @@ impl<'a, M: Clone + Debug + 'static> MeterWidget<'a, M> {
         Self {
             values,
             label: None,
-            width: 16.0,
-            height: 80.0,
+            width: Length::Fixed(16.0),
+            height: Length::Fixed(80.0),
             font: params.font(),
             _phantom: PhantomData,
         }
@@ -44,10 +44,39 @@ impl<'a, M: Clone + Debug + 'static> MeterWidget<'a, M> {
         self
     }
 
+    /// Set explicit width and height in logical pixels. Use
+    /// [`Self::width`] / [`Self::height`] / [`Self::fill`] when the
+    /// meter should stretch with the surrounding layout.
     #[must_use]
     pub fn size(mut self, width: f32, height: f32) -> Self {
+        self.width = Length::Fixed(width);
+        self.height = Length::Fixed(height);
+        self
+    }
+
+    /// Replace the meter's width with an iced [`Length`] (e.g.
+    /// `Length::Fixed(16.0)` for a narrow band, `Length::Fill` to
+    /// claim the row's remaining width).
+    #[must_use]
+    pub fn width(mut self, width: Length) -> Self {
         self.width = width;
+        self
+    }
+
+    /// Replace the meter's height with an iced [`Length`].
+    /// `Length::Fill` lets the meter stretch vertically with the
+    /// editor window.
+    #[must_use]
+    pub fn height(mut self, height: Length) -> Self {
         self.height = height;
+        self
+    }
+
+    /// Shortcut for `.height(Length::Fill)` so the meter
+    /// stretches vertically with its parent layout.
+    #[must_use]
+    pub fn fill(mut self) -> Self {
+        self.height = Length::Fill;
         self
     }
 
@@ -59,19 +88,17 @@ impl<'a, M: Clone + Debug + 'static> MeterWidget<'a, M> {
 
     #[must_use]
     pub fn into_element(self) -> Element<'a, Message<M>> {
-        let total_h = self.height;
         // `label` and `font` are accepted on the builder for API symmetry
         // with knob/dropdown but the meter currently renders bars only -
         // text labels are drawn by the surrounding layout, not the canvas.
         let _ = (self.label, self.font);
         let program = MeterProgram {
             values: self.values,
-            meter_height: self.height,
         };
 
         Canvas::new(program)
-            .width(Length::Fixed(self.width))
-            .height(Length::Fixed(total_h))
+            .width(self.width)
+            .height(self.height)
             .into()
     }
 }
@@ -86,7 +113,6 @@ impl<'a, M: Clone + Debug + 'static> From<MeterWidget<'a, M>> for Element<'a, Me
 
 struct MeterProgram {
     values: Vec<f32>,
-    meter_height: f32,
 }
 
 impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for MeterProgram {
@@ -109,13 +135,17 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for MeterProgram {
         let total_gap = bar_gap * (channels as f32 - 1.0).max(0.0);
         let bar_w = ((bounds.width - total_gap) / channels as f32).max(4.0);
 
+        // Drive the bar height off `bounds.height` (not a cached
+        // builder value) so `Length::Fill` makes the meter
+        // stretch vertically with its parent layout.
+        let meter_h = bounds.height;
         for (i, &value) in self.values.iter().enumerate() {
             let x = i as f32 * (bar_w + bar_gap);
             let display = meter_display(value);
-            let fill_h = (display * self.meter_height).clamp(0.0, self.meter_height);
+            let fill_h = (display * meter_h).clamp(0.0, meter_h);
 
             // Background
-            let bg = Path::rectangle(Point::new(x, 0.0), Size::new(bar_w, self.meter_height));
+            let bg = Path::rectangle(Point::new(x, 0.0), Size::new(bar_w, meter_h));
             frame.fill(&bg, iced::Color::from_rgb(0.165, 0.165, 0.188));
 
             // Fill (blue, red when clipping)
@@ -125,10 +155,8 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for MeterProgram {
                 } else {
                     theme::KNOB_FILL
                 };
-                let bar = Path::rectangle(
-                    Point::new(x, self.meter_height - fill_h),
-                    Size::new(bar_w, fill_h),
-                );
+                let bar =
+                    Path::rectangle(Point::new(x, meter_h - fill_h), Size::new(bar_w, fill_h));
                 frame.fill(&bar, color);
             }
         }

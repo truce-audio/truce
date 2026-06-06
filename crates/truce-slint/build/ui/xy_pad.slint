@@ -9,12 +9,24 @@ export component XYPad inherits VerticalLayout {
     callback changed-x(float);
     callback changed-y(float);
 
-    width: 120px;
+    // `preferred-*` lets a parent layout stretch the pad in both
+    // axes. `min-*` keeps the pad usable when the editor window
+    // shrinks to its minimum size.
+    min-width: 80px;
+    min-height: 90px;
+    preferred-width: 120px;
+    preferred-height: 132px;
     spacing: 2px;
 
     pad := Rectangle {
-        width: root.width;
-        height: root.width;
+        // No explicit `width`/`height` - the parent
+        // `VerticalLayout` gives the pad the full width and any
+        // vertical space the label below doesn't claim, which
+        // lets the pad grow with the editor window. The
+        // `vertical-stretch: 1` makes the pad the one item that
+        // absorbs extra height (the label keeps its text
+        // height).
+        vertical-stretch: 1;
         background: #2e2e38;
         border-color: #737373;
         border-width: 1px;
@@ -73,9 +85,10 @@ export component XYPad inherits VerticalLayout {
         }
     }
 
-    // Label
+    // Label - `VerticalLayout` already takes the row's full
+    // width, so an explicit `width: root.width` would form a
+    // binding loop (width <-> layout-info).
     Text {
-        width: root.width;
         text: root.label;
         font-size: 10px;
         color: #8c8c99;

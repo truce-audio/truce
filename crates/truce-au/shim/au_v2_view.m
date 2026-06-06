@@ -39,6 +39,85 @@
 #define TRUCE_AU_VIEW_FACTORY_NAME TruceAUCocoaViewProxy
 #endif
 
+/// Resizable container the host parents the editor into. The
+/// host (Logic, REAPER's AU support, AUM via AUv3 bridge) resizes
+/// our outer view by calling `setFrameSize:` directly when its
+/// own bounds change. AppKit doesn't fire any plugin-friendly
+/// notification on that path, so we override here and forward to
+/// the editor's `gui_set_size`. Plugins whose editor opted out of
+/// resize get an `autoresizingMask = NSViewNotSizable` and `setFrameSize:`
+/// is a no-op beyond AppKit's default - the host's outer
+/// container will stretch but our view stays at its original size.
+@interface TruceAuResizableContainer : NSView
+@property(nonatomic, assign) void *rustCtx;
+@property(nonatomic, assign) const AuCallbacks *callbacks;
+@property(nonatomic, assign) BOOL canResize;
+@property(nonatomic, weak) NSView *observedSuperview;
+@end
+
+@implementation TruceAuResizableContainer
+- (void)setFrameSize:(NSSize)newSize {
+    [super setFrameSize:newSize];
+    if (!self.canResize || self.rustCtx == NULL || self.callbacks == NULL) return;
+    uint32_t w = (uint32_t)MAX(1.0, round(newSize.width));
+    uint32_t h = (uint32_t)MAX(1.0, round(newSize.height));
+    self.callbacks->gui_set_size(self.rustCtx, w, h);
+}
+
+/// REAPER and Logic resize the plugin's outer window but never
+/// call `setFrameSize:` on the embedded AU view (the AU v2
+/// contract historically treated the view as fixed-size). Observe
+/// the superview's frame instead and follow the host's outer
+/// dimensions manually when the editor opts in.
+/// `viewDidMoveToSuperview` is the canonical hook for installing
+/// / uninstalling the observer.
+- (void)viewDidMoveToSuperview {
+    [super viewDidMoveToSuperview];
+    if (self.observedSuperview) {
+        [self.observedSuperview setPostsFrameChangedNotifications:NO];
+        [[NSNotificationCenter defaultCenter]
+            removeObserver:self
+                      name:NSViewFrameDidChangeNotification
+                    object:self.observedSuperview];
+        self.observedSuperview = nil;
+    }
+    if (self.canResize && self.superview) {
+        self.observedSuperview = self.superview;
+        [self.superview setPostsFrameChangedNotifications:YES];
+        [[NSNotificationCenter defaultCenter]
+            addObserver:self
+               selector:@selector(superviewFrameDidChange:)
+                   name:NSViewFrameDidChangeNotification
+                 object:self.superview];
+        // Match the host's current size immediately - it may have
+        // resized the superview before we installed the observer.
+        [self resizeToSuperview];
+    }
+}
+
+- (void)superviewFrameDidChange:(NSNotification *)note {
+    [self resizeToSuperview];
+}
+
+- (void)resizeToSuperview {
+    if (!self.superview) return;
+    NSSize target = self.superview.bounds.size;
+    if (target.width <= 0 || target.height <= 0) return;
+    if (NSEqualSizes(target, self.frame.size)) return;
+    [self setFrameSize:target];
+}
+
+- (void)dealloc {
+    if (self.observedSuperview) {
+        [self.observedSuperview setPostsFrameChangedNotifications:NO];
+        [[NSNotificationCenter defaultCenter]
+            removeObserver:self
+                      name:NSViewFrameDidChangeNotification
+                    object:self.observedSuperview];
+    }
+}
+@end
+
 @interface TRUCE_AU_VIEW_FACTORY_NAME : NSObject <AUCocoaUIBase>
 @end
 
@@ -65,12 +144,43 @@
 
     if (!cb->gui_has_editor(ctx)) return nil;
 
+    BOOL canResize = cb->gui_can_resize(ctx) != 0;
+
+    // AU v2 hosts may drive resize by re-calling this method with
+    // a new `preferredSize` and discarding the old view (the
+    // `setFrameSize:` / superview-observer path covers hosts that
+    // resize the existing view in-place). Honour `preferredSize`
+    // when the editor opted in; otherwise stick with the editor's
+    // natural size.
+    //
+    // Inform the editor of the new size BEFORE `gui_open` so the
+    // newly-opened editor starts at the requested dimensions -
+    // otherwise the first frame paints at the old size and only
+    // catches up on the next `on_frame` tick.
     uint32_t w = 0, h = 0;
-    cb->gui_get_size(ctx, &w, &h);
+    if (canResize && preferredSize.width > 0 && preferredSize.height > 0) {
+        w = (uint32_t)round(preferredSize.width);
+        h = (uint32_t)round(preferredSize.height);
+        cb->gui_set_size(ctx, w, h);
+    } else {
+        cb->gui_get_size(ctx, &w, &h);
+    }
     if (w == 0 || h == 0) return nil;
 
     NSRect frame = NSMakeRect(0, 0, w, h);
-    NSView *container = [[NSView alloc] initWithFrame:frame];
+    TruceAuResizableContainer *container =
+        [[TruceAuResizableContainer alloc] initWithFrame:frame];
+    container.rustCtx = ctx;
+    container.callbacks = cb;
+    container.canResize = canResize;
+    // Belt-and-braces: autoresizingMask catches hosts that do
+    // drive resize via `setFrameSize:` on the existing view, while
+    // the superview-frame observer (installed in
+    // `viewDidMoveToSuperview`) catches hosts that resize the
+    // outer container without notifying the embedded view.
+    if (canResize) {
+        container.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+    }
     cb->gui_open(ctx, (__bridge void *)container);
     return container;
 }

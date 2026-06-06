@@ -177,6 +177,19 @@ where
     make_plugin: Box<dyn Fn(Arc<P>) -> M + Send + Sync>,
     meter_ids: Vec<u32>,
     baseview_window: Option<baseview::WindowHandle>,
+    /// Pending logical size shared with the baseview handler.
+    /// Packed as `(width << 32) | height`; `0` is the "no resize
+    /// pending" sentinel. `Editor::set_size` writes here so the
+    /// handler's `on_frame` can call `baseview::Window::resize`
+    /// (which sets the NSView/HWND/X11 frame on the underlying
+    /// platform window) and reconfigure the wgpu surface in one
+    /// place. Without this handoff the wgpu surface gets the new
+    /// size but the platform window stays at its original
+    /// dimensions, so the editor renders into a viewport but the
+    /// host only paints the un-resized rectangle (visible on
+    /// standalone as an editor that fills the original area only
+    /// while the outer window grew around it).
+    pending_size: Arc<std::sync::atomic::AtomicU64>,
     /// Resize-capability flag exposed via `Editor::can_resize`. iced
     /// editors default to `true` since the widget tree reflows for
     /// free; plugins that ship a fixed-size GUI opt out with
@@ -243,6 +256,7 @@ impl<P: Params + 'static> IcedEditor<P, AutoPlugin> {
             make_plugin,
             meter_ids,
             baseview_window: None,
+            pending_size: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             can_resize: true,
             min_size: (1, 1),
             max_size: (u32::MAX, u32::MAX),
@@ -264,6 +278,7 @@ impl<P: Params + 'static, M: IcedPlugin<P> + 'static> IcedEditor<P, M> {
             make_plugin: Box::new(|p| M::new(p)),
             meter_ids: Vec::new(),
             baseview_window: None,
+            pending_size: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             can_resize: true,
             min_size: (1, 1),
             max_size: (u32::MAX, u32::MAX),
@@ -713,6 +728,42 @@ fn iced_interaction_to_cursor(interaction: iced::mouse::Interaction) -> baseview
 impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBaseviewHandler<P, M> {
     fn on_frame(&mut self, window: &mut baseview::Window) {
         let editor = unsafe { &mut *self.editor };
+        // Pick up host-driven `set_size` requests since the last
+        // frame. Without this the wgpu surface would be at the new
+        // size but the platform window stays at the original
+        // dimensions, so the editor visibly fills only the old
+        // rect inside a larger host frame.
+        let packed = editor
+            .pending_size
+            .swap(0, std::sync::atomic::Ordering::Acquire);
+        if packed != 0 {
+            #[allow(clippy::cast_possible_truncation)]
+            let new_w = (packed >> 32) as u32;
+            #[allow(clippy::cast_possible_truncation)]
+            let new_h = (packed & 0xFFFF_FFFF) as u32;
+            if new_w > 0 && new_h > 0 {
+                window.resize(baseview::Size::new(f64::from(new_w), f64::from(new_h)));
+                if let Some(ref mut runtime) = editor.runtime {
+                    runtime.size = (new_w, new_h);
+                    if let Some(ref mut render) = runtime.render {
+                        let scale = editor.scale.get();
+                        let pw = truce_gui::to_physical_px(new_w, scale);
+                        let ph = truce_gui::to_physical_px(new_h, scale);
+                        #[allow(clippy::cast_possible_truncation)]
+                        let scale_f32 = scale as f32;
+                        render.viewport = iced_graphics::Viewport::with_physical_size(
+                            Size::new(pw, ph),
+                            scale_f32,
+                        );
+                        render.surface_config.width = pw;
+                        render.surface_config.height = ph;
+                        render
+                            .surface
+                            .configure(&render.device, &render.surface_config);
+                    }
+                }
+            }
+        }
         if let Some(ref mut runtime) = editor.runtime {
             runtime.tick();
             if let Some(ref render) = runtime.render {
@@ -833,6 +884,11 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
 
     fn open(&mut self, parent: truce_core::editor::RawWindowHandle, context: PluginContext) {
         let (w, h) = self.size;
+        // Drop any stale `set_size` that fired before this
+        // `open()` so the handler doesn't immediately re-resize
+        // the freshly-built window to a previous request.
+        self.pending_size
+            .store(0, std::sync::atomic::Ordering::Relaxed);
 
         // Create the plugin model. The closure is `Fn`, not `FnOnce`,
         // so destroy/recreate cycles (CLAP `gui_destroy` / `gui_create`,
@@ -969,24 +1025,20 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
     }
 
     fn set_size(&mut self, width: u32, height: u32) -> bool {
-        self.size = (width, height);
-        if let Some(ref mut runtime) = self.runtime {
-            runtime.size = (width, height);
-            if let Some(ref mut render) = runtime.render {
-                let scale = self.scale.get();
-                let pw = truce_gui::to_physical_px(width, scale);
-                let ph = truce_gui::to_physical_px(height, scale);
-                #[allow(clippy::cast_possible_truncation)] // display DPI; bounded
-                let scale_f32 = scale as f32;
-                render.viewport =
-                    iced_graphics::Viewport::with_physical_size(Size::new(pw, ph), scale_f32);
-                render.surface_config.width = pw;
-                render.surface_config.height = ph;
-                render
-                    .surface
-                    .configure(&render.device, &render.surface_config);
-            }
+        if width == 0 || height == 0 {
+            return false;
         }
+        self.size = (width, height);
+        // Hand the new logical size to the live baseview handler;
+        // its `on_frame` reads the cell and runs the unified
+        // `baseview::Window::resize` + iced viewport + wgpu
+        // surface reconfigure sequence in one place. The handler
+        // also exists when the editor isn't open, but the cell
+        // gets reset to `0` in `open()` to drop any stale write.
+        self.pending_size.store(
+            (u64::from(width) << 32) | u64::from(height),
+            std::sync::atomic::Ordering::Release,
+        );
         true
     }
 

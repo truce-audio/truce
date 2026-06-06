@@ -77,13 +77,20 @@ impl PluginLogic for Gain {
     }
 
     fn editor(&self) -> Box<dyn Editor> {
+        // Meter pinned to column 0 spanning three rows; the knob
+        // row sits at the top-right and the XY pad fills the rest
+        // of the right area. `truce-gui`'s built-in `GridLayout`
+        // doesn't reflow on host-driven resize yet (Phase 3.1 is
+        // pending), so this layout is currently fixed-size; the
+        // arrangement matches the other gain examples for visual
+        // parity.
         GridLayout::build(vec![widgets(vec![
-            knob(P::Gain, "Gain"),
-            knob(P::Pan, "Pan"),
+            knob(P::Gain, "Gain").at(0, 0),
+            knob(P::Pan, "Pan").at(1, 0),
+            xy_pad(P::Pan, P::Gain, "XY").at(0, 1),
             meter(&[P::MeterLeft, P::MeterRight], "Level")
                 .at(2, 0)
                 .rows(3),
-            xy_pad(P::Pan, P::Gain, "XY"),
         ])])
         .with_title("GAIN")
         .into_editor(&self.params)

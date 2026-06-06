@@ -123,6 +123,11 @@ fn gain_view(cx: &mut Context, lens: ParamLens<GainParams>) {
             })
             .width(Pixels(130.0))
             .height(Auto);
+            // XY pad: fixed 130x130 today because vizia's resize
+            // path is upstream-blocked on a `vizia_baseview`
+            // patch. Once that lands the pad will swap to
+            // `Stretch(1.0)` for both axes so it scales with the
+            // editor window.
             param_xy_pad(
                 cx,
                 lens.clone(),
@@ -135,10 +140,10 @@ fn gain_view(cx: &mut Context, lens: ParamLens<GainParams>) {
         })
         .width(Auto)
         .height(Auto)
-        // Gap sized so knob cell (~80px) + gap + xy-pad cell (~146px)
-        // sums to the meter's 240px, lining up the pad's bottom edge
-        // with the meter's.
         .vertical_gap(Pixels(13.0));
+
+        // Meter on the right, lined up with the control column's
+        // overall height.
         level_meter(
             cx,
             lens_for_meter.clone(),
