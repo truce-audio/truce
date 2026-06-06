@@ -2,6 +2,24 @@
 
 Notable changes per release.
 
+## 0.57.0
+
+- **Resizable editors.** Every GUI backend opts in with
+  `.resizable(true).min_size((a, b)).max_size((a, b))` on the
+  editor / layout, and the CLAP, VST3, AU, and LV2 wrappers
+  round-trip host requests to it. Logical points everywhere
+  except the built-in grid, which takes `(cols, rows)` cell
+  counts (it snaps to whole cells anyway). Vizia plugin-form
+  `set_size` is a known gap.
+- **Widget reflow on resize.** Iced / slint / vizia meters and
+  XY pads stretch to fill their cells under host resize; gain
+  examples center their knob row at any editor width. Vizia XY
+  pad label moved to bottom to match the other backends. Visible
+  in every backend's `gain` and `gui-zoo` example variants.
+- **`baseview-truce 0.1.1-truce.8`.** Adds the macOS
+  `setFrameSize:` `Resized` event + OpenGL drawable resize that
+  host-driven editor resize depends on. To upstream to baseview.
+
 ## 0.56.0
 
 - **`truce-vizia`: `param_knob` layout matches the other backends.**
@@ -657,12 +675,11 @@ re-editing.
 - **MIDI 2.0 over LV2.** LV2 Atom carries MIDI 1.0 byte streams,
   so plugins emitting MIDI 2.0 channel-voice, per-note, or
   ParamChange events drop those messages when loaded as LV2.
-- **Resizable GUIs.** Editors today report a fixed size; CLAP's
-  `gui_can_resize` returns `false` and the VST3 / AU / LV2
-  paths assume a static frame. Host-driven resize negotiation
-  (`gui_adjust_size` / `gui_set_size`, `IPlugViewContentScaleSupport`,
-  AU view-frame change notifications, LV2 ui:resize) needs to be
-  wired through truce-gui so user code can opt in.
+- **`truce-vizia` resize.** Vizia editors are fixed-size in
+  plugin form: `ViziaEditor::set_size` is a no-op because
+  `vizia::WindowHandle` exposes no resize entry point callable
+  from outside its event loop. Unblocks when `vizia_baseview`
+  upstream adds a window-event resize variant + handler.
 - **Bring-your-own iOS container.** `cargo truce install --ios`
   always emits the bundled Swift container template (title, Play,
   status, hamburger overlay). Plug-ins that need a bespoke shell
