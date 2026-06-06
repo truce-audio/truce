@@ -458,7 +458,6 @@ pub fn param_xy_pad<P: Params + 'static>(
     let lens_for_up = lens.clone();
 
     VStack::new(cx, move |cx| {
-        Label::new(cx, label_text);
         ZStack::new(cx, move |cx| {
             Element::new(cx)
                 .class("truce-xy-pad-dot")
@@ -510,6 +509,7 @@ pub fn param_xy_pad<P: Params + 'static>(
             lens_for_up.end_edit(x_u32);
             lens_for_up.end_edit(y_u32);
         });
+        Label::new(cx, label_text);
     })
     .class("truce-xy-pad-cell")
     .width(Auto)
