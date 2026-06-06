@@ -4927,7 +4927,7 @@ dependencies = [
 
 [[package]]
 name = "truce"
-version = "0.55.0"
+version = "0.56.0"
 dependencies = [
  "truce-core",
  "truce-derive",
@@ -4939,7 +4939,7 @@ dependencies = [
 
 [[package]]
 name = "truce-aax"
-version = "0.55.0"
+version = "0.56.0"
 dependencies = [
  "crossbeam-queue",
  "truce-aax-bridge",
@@ -4949,11 +4949,11 @@ dependencies = [
 
 [[package]]
 name = "truce-aax-bridge"
-version = "0.55.0"
+version = "0.56.0"
 
 [[package]]
 name = "truce-au"
-version = "0.55.0"
+version = "0.56.0"
 dependencies = [
  "cc",
  "crossbeam-queue",
@@ -4964,7 +4964,7 @@ dependencies = [
 
 [[package]]
 name = "truce-build"
-version = "0.55.0"
+version = "0.56.0"
 dependencies = [
  "serde",
  "toml 1.1.2+spec-1.1.0",
@@ -4972,7 +4972,7 @@ dependencies = [
 
 [[package]]
 name = "truce-clap"
-version = "0.55.0"
+version = "0.56.0"
 dependencies = [
  "clap-sys",
  "crossbeam-queue",
@@ -4982,7 +4982,7 @@ dependencies = [
 
 [[package]]
 name = "truce-core"
-version = "0.55.0"
+version = "0.56.0"
 dependencies = [
  "png 0.18.1",
  "truce-params",
@@ -4991,7 +4991,7 @@ dependencies = [
 
 [[package]]
 name = "truce-cpu"
-version = "0.55.0"
+version = "0.56.0"
 dependencies = [
  "fontdue",
  "tiny-skia 0.12.0",
@@ -5002,7 +5002,7 @@ dependencies = [
 
 [[package]]
 name = "truce-derive"
-version = "0.55.0"
+version = "0.56.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5015,7 +5015,7 @@ dependencies = [
 
 [[package]]
 name = "truce-driver"
-version = "0.55.0"
+version = "0.56.0"
 dependencies = [
  "truce-core",
  "truce-params",
@@ -5023,7 +5023,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-gain-slint"
-version = "0.55.0"
+version = "0.56.0"
 dependencies = [
  "clap-sys",
  "slint",
@@ -5045,7 +5045,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-gui-zoo-slint"
-version = "0.55.0"
+version = "0.56.0"
 dependencies = [
  "clap-sys",
  "slint",
@@ -5067,11 +5067,11 @@ dependencies = [
 
 [[package]]
 name = "truce-font"
-version = "0.55.0"
+version = "0.56.0"
 
 [[package]]
 name = "truce-gui"
-version = "0.55.0"
+version = "0.56.0"
 dependencies = [
  "baseview-truce",
  "log",
@@ -5092,7 +5092,7 @@ dependencies = [
 
 [[package]]
 name = "truce-gui-types"
-version = "0.55.0"
+version = "0.56.0"
 dependencies = [
  "objc2 0.6.4",
  "truce-core",
@@ -5100,7 +5100,7 @@ dependencies = [
 
 [[package]]
 name = "truce-loader"
-version = "0.55.0"
+version = "0.56.0"
 dependencies = [
  "crc32fast",
  "libloading 0.9.0",
@@ -5114,7 +5114,7 @@ dependencies = [
 
 [[package]]
 name = "truce-lv2"
-version = "0.55.0"
+version = "0.56.0"
 dependencies = [
  "objc",
  "truce-build",
@@ -5124,14 +5124,14 @@ dependencies = [
 
 [[package]]
 name = "truce-params"
-version = "0.55.0"
+version = "0.56.0"
 dependencies = [
  "bitflags 2.12.1",
 ]
 
 [[package]]
 name = "truce-plugin"
-version = "0.55.0"
+version = "0.56.0"
 dependencies = [
  "truce-core",
  "truce-gui-types",
@@ -5140,11 +5140,11 @@ dependencies = [
 
 [[package]]
 name = "truce-shim-types"
-version = "0.55.0"
+version = "0.56.0"
 
 [[package]]
 name = "truce-slint"
-version = "0.55.0"
+version = "0.56.0"
 dependencies = [
  "baseview-truce",
  "bytemuck",
@@ -5164,7 +5164,7 @@ dependencies = [
 
 [[package]]
 name = "truce-slint-build"
-version = "0.55.0"
+version = "0.56.0"
 dependencies = [
  "slint-build",
  "truce-font",
@@ -5172,7 +5172,7 @@ dependencies = [
 
 [[package]]
 name = "truce-standalone"
-version = "0.55.0"
+version = "0.56.0"
 dependencies = [
  "baseview-truce",
  "cpal",
@@ -5193,7 +5193,7 @@ dependencies = [
 
 [[package]]
 name = "truce-test"
-version = "0.55.0"
+version = "0.56.0"
 dependencies = [
  "png 0.18.1",
  "toml 1.1.2+spec-1.1.0",
@@ -5205,11 +5205,11 @@ dependencies = [
 
 [[package]]
 name = "truce-utils"
-version = "0.55.0"
+version = "0.56.0"
 
 [[package]]
 name = "truce-vst2"
-version = "0.55.0"
+version = "0.56.0"
 dependencies = [
  "cc",
  "crossbeam-queue",
@@ -5219,7 +5219,7 @@ dependencies = [
 
 [[package]]
 name = "truce-vst3"
-version = "0.55.0"
+version = "0.56.0"
 dependencies = [
  "cc",
  "crossbeam-queue",
