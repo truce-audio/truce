@@ -93,10 +93,13 @@ pub struct EguiEditor<P: Params + ?Sized> {
     ui: Arc<Mutex<Box<dyn EditorUi<P>>>>,
     visuals: Option<egui::Visuals>,
     font: Option<&'static [u8]>,
-    /// Resize-capability flag exposed via `Editor::can_resize`. egui
-    /// editors default to `true` since the panel API reflows for
-    /// free; plugins that ship a fixed-size GUI (and don't want
-    /// hosts painting resize handles) opt out with `.resizable(false)`.
+    /// Resize-capability flag exposed via `Editor::can_resize`.
+    /// Defaults to `false`; egui plugins that have been designed
+    /// with a flexible panel layout (and want hosts to draw
+    /// resize handles) opt in with `.resizable(true)`. The
+    /// default keeps every existing fixed-size plugin pinned to
+    /// its built dimensions instead of silently following an
+    /// autoresize-driven parent `NSView` grow.
     can_resize: bool,
     /// Optional min/max/aspect constraints reported through the
     /// `Editor::min_size` / `max_size` / `aspect_ratio` trait
@@ -147,7 +150,7 @@ impl<P: Params + 'static> EguiEditor<P> {
             scale: EditorScale::new(truce_gui::backing_scale()),
             window: None,
             context: None,
-            can_resize: true,
+            can_resize: false,
             min_size: (1, 1),
             max_size: (u32::MAX, u32::MAX),
             aspect_ratio: None,
@@ -167,7 +170,7 @@ impl<P: Params + 'static> EguiEditor<P> {
             scale: EditorScale::new(truce_gui::backing_scale()),
             window: None,
             context: None,
-            can_resize: true,
+            can_resize: false,
             min_size: (1, 1),
             max_size: (u32::MAX, u32::MAX),
             aspect_ratio: None,
@@ -756,11 +759,20 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
         let parent_wrapper = ParentWindow(parent);
         let handler_ctx = typed_ctx.clone();
         let scale_handle = self.scale.clone();
-        // Reset the pending-size cell to the editor's current size so a
-        // stale `set_size` from before this open() doesn't immediately
-        // re-resize the freshly built window.
-        self.pending_size
-            .store(pack_size(self.size), Ordering::Relaxed);
+        // Clear the pending-size cell so a stale `set_size` from
+        // before this `open()` doesn't immediately re-resize the
+        // freshly built window. Storing 0 (not `pack_size(self.size)`)
+        // because `on_frame` gates the resize branch on
+        // `pending.0 > 0 && pending.1 > 0` - a 0 value is the "no
+        // pending" sentinel, while storing the natural size here
+        // would fight the host's autoresize: after a host-driven
+        // grow, baseview's `setFrameSize:` override updates
+        // `self.size` to the new parent bounds, but the cached
+        // pending stays at the natural size, so the next `on_frame`
+        // would call `window.resize(natural)` and shrink the child
+        // back. With 0 the cell only carries genuine `set_size`
+        // requests.
+        self.pending_size.store(0, Ordering::Relaxed);
         let pending_size = self.pending_size.clone();
 
         let window = baseview::Window::open_parented(
