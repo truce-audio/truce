@@ -127,25 +127,6 @@ pub struct BuiltinEditor<P: Params> {
 // `Option<CpuBackend>`, etc.) are themselves `Send`.
 unsafe impl<P: Params> Send for BuiltinEditor<P> {}
 
-/// Compute the `(width, height)` the supplied grid would produce
-/// at the given `(cols, rows)` extent. Used by `Editor::min_size`
-/// / `max_size` to report the full snap envelope on both axes.
-///
-/// The grid is cloned (cheap - widgets are `Clone`) and the clone's
-/// `cols` / `rows` are swapped. The original layout is left
-/// untouched; only the editor's host-set path mutates `self.layout`.
-#[cfg(feature = "cpu")]
-fn grid_size_at_cols_rows(
-    gl: &truce_gui_types::layout::GridLayout,
-    cols: u32,
-    rows: u32,
-) -> (u32, u32) {
-    let mut probe = gl.clone();
-    probe.cols = cols.max(1);
-    probe.rows = rows.max(1);
-    probe.compute_size()
-}
-
 /// Gather every meter ID referenced by a layout, in layout order. The
 /// CPU editor polls these each frame to decide when a meter moved and
 /// the surface needs a repaint.
@@ -975,30 +956,14 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
 
     fn min_size(&self) -> (u32, u32) {
         match &self.layout {
-            Layout::Grid(gl) => grid_size_at_cols_rows(gl, gl.min_cols, gl.min_rows),
+            Layout::Grid(gl) => gl.min_snapped_size(),
             Layout::Rows(_) => self.size(),
         }
     }
 
     fn max_size(&self) -> (u32, u32) {
         match &self.layout {
-            Layout::Grid(gl) => {
-                // `u32::MAX` means "no cap"; clamp to 64 on each
-                // axis - well past any plugin window a host would
-                // render, and small enough that the layout math
-                // doesn't overflow.
-                let col_cap = if gl.max_cols == u32::MAX {
-                    64
-                } else {
-                    gl.max_cols.max(1)
-                };
-                let row_cap = if gl.max_rows == u32::MAX {
-                    64
-                } else {
-                    gl.max_rows.max(1)
-                };
-                grid_size_at_cols_rows(gl, col_cap, row_cap)
-            }
+            Layout::Grid(gl) => gl.max_snapped_size(),
             Layout::Rows(_) => self.size(),
         }
     }

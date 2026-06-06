@@ -247,16 +247,13 @@ impl PluginLogic for Zoo {
         // size; `max_cols(12)` caps the horizontal stretch at a
         // size the layout still reads as a single screen.
         .resizable(true)
-        .min_cols(4)
-        .max_cols(12)
-        // Vertical resize: the zoo's natural row count is whatever
-        // auto-flow + the explicit XY pad / 6-channel meter / Mode
-        // dropdowns demand. We let `refit_rows` grow the grid up to
-        // 24 cell-rows of trailing space (well past the natural
-        // bottom) and bottom out at 6 - shrinking further would
-        // clip the larger explicitly-positioned widgets.
-        .min_rows(6)
-        .max_rows(24)
+        // Cell-count bounds on (cols, rows). Same call shape as the
+        // egui / iced / slint / vizia editors; unit is cells.
+        // 4 cols / 6 rows is the floor (the explicit XY pad, 6-ch
+        // meter, and Mode dropdowns would clip below that);
+        // 12 cols / 24 rows caps the stretch.
+        .min_size((4, 6))
+        .max_size((12, 24))
         .into_editor(&self.params)
     }
 }

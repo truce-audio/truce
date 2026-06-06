@@ -569,19 +569,22 @@ pub struct GridLayout {
     /// this via `Editor::can_resize`; `false` (default) keeps the
     /// layout at its built `cols` for fixed-size plugins.
     pub resizable: bool,
-    /// Minimum column count host-driven resize is allowed to snap
-    /// to. Set via [`Self::min_cols`]; default `1`.
-    pub min_cols: u32,
-    /// Maximum column count host-driven resize is allowed to snap
-    /// to. Set via [`Self::max_cols`]; default `u32::MAX`
-    /// (effectively unbounded - users can still set a real cap).
-    pub max_cols: u32,
-    /// Minimum row count `refit_rows` is allowed to snap to.
-    /// Default `1`.
-    pub min_rows: u32,
-    /// Maximum row count `refit_rows` is allowed to snap to.
-    /// Default `u32::MAX`.
-    pub max_rows: u32,
+    /// Lower clamp on host-driven resize requests, as `(cols, rows)`
+    /// cell counts. Surfaced via `Editor::min_size` (converted to
+    /// logical points by `compute_size` at the requested cell
+    /// extent). Defaults to `(1, 1)`.
+    ///
+    /// The call shape (`.min_size((a, b))`) mirrors `truce-egui` /
+    /// `truce-iced` / `truce-slint` / `truce-vizia` so cross-backend
+    /// `editor()` impls stay symmetric; the *unit* is different
+    /// because the grid is fundamentally cell-snapped (pixels
+    /// without a cell boundary would just be rounded to one anyway).
+    pub min_size: (u32, u32),
+    /// Upper clamp on host-driven resize requests, as `(cols, rows)`
+    /// cell counts. Defaults to `(u32::MAX, u32::MAX)` - effectively
+    /// unbounded. Same units + call-shape contract as
+    /// [`Self::min_size`].
+    pub max_size: (u32, u32),
     /// Declared row extent. `compute_size` takes the larger of
     /// this and the widgets' rightmost row edge, the same way
     /// `cols` works on the width axis - so `refit_rows` can grow
@@ -651,10 +654,8 @@ impl GridLayout {
             width: 0,
             height: 0,
             resizable: false,
-            min_cols: 1,
-            max_cols: u32::MAX,
-            min_rows: 1,
-            max_rows: u32::MAX,
+            min_size: (1, 1),
+            max_size: (u32::MAX, u32::MAX),
             rows: 1,
             original_widgets: widgets,
             original_breaks: breaks,
@@ -755,52 +756,54 @@ impl GridLayout {
         self
     }
 
-    /// Minimum column count `refit_cols` is allowed to snap to.
-    /// Default `1`. Use this to keep the editor wide enough for the
-    /// widest explicitly-positioned widget so column drops don't
-    /// clip content.
+    /// Lower clamp on host-driven resize requests, as
+    /// `(min_cols, min_rows)` - **cell counts, not pixels**.
+    /// Default `(1, 1)`. Set this to keep the editor wide enough
+    /// for the widest explicitly-positioned widget so column drops
+    /// don't clip content, and tall enough for the bottommost
+    /// widget's row.
+    ///
+    /// Call shape mirrors `truce-egui` / `truce-iced` /
+    /// `truce-slint` / `truce-vizia`'s `min_size` (single tuple
+    /// builder) so cross-backend `editor()` impls stay symmetric;
+    /// the unit is cells because the grid is fundamentally
+    /// cell-snapped. `Editor::min_size` reports the corresponding
+    /// pixel size so hosts still see logical-point bounds.
     #[must_use]
-    pub fn min_cols(mut self, n: u32) -> Self {
-        self.min_cols = n.max(1);
+    pub fn min_size(mut self, cells: (u32, u32)) -> Self {
+        self.min_size = (cells.0.max(1), cells.1.max(1));
         self
     }
 
-    /// Maximum column count `refit_cols` is allowed to snap to.
-    /// Default `u32::MAX`. Cap this when the layout looks awkward
-    /// past a certain horizontal stretch.
+    /// Upper clamp on host-driven resize requests, as
+    /// `(max_cols, max_rows)` - cell counts, not pixels. Default
+    /// `(u32::MAX, u32::MAX)`. Cap this when the layout looks
+    /// awkward past a certain stretch on either axis.
+    ///
+    /// Same units / call-shape contract as [`Self::min_size`].
     #[must_use]
-    pub fn max_cols(mut self, n: u32) -> Self {
-        self.max_cols = n.max(1);
+    pub fn max_size(mut self, cells: (u32, u32)) -> Self {
+        self.max_size = (cells.0.max(1), cells.1.max(1));
         self
     }
 
-    /// Pin the natural row extent. Same role on the height axis
-    /// as [`Self::with_cols`] on the width axis: the layout's
-    /// height is the larger of this and the rightmost row edge
-    /// across all widgets, so the editor reserves N cell rows of
-    /// vertical space even when the widgets don't fill them all.
+    /// Pin the natural row extent (in **cells**, not pixels). Same
+    /// role on the height axis as [`Self::with_cols`] on the width
+    /// axis: the layout's height is the larger of this and the
+    /// rightmost row edge across all widgets, so the editor reserves
+    /// N cell rows of vertical space even when the widgets don't
+    /// fill them all.
+    ///
+    /// Distinct from [`Self::min_size`] / [`Self::max_size`]
+    /// (resize *bounds* in logical points): `with_rows` declares the
+    /// *natural* row count the editor opens at, while `min_size` /
+    /// `max_size` clamp how far the host can resize away from that.
     #[must_use]
     pub fn with_rows(mut self, rows: u32) -> Self {
         self.rows = rows.max(1);
         let (w, h) = self.compute_size();
         self.width = w;
         self.height = h;
-        self
-    }
-
-    /// Minimum row count `refit_rows` is allowed to snap to.
-    /// Default `1`.
-    #[must_use]
-    pub fn min_rows(mut self, n: u32) -> Self {
-        self.min_rows = n.max(1);
-        self
-    }
-
-    /// Maximum row count `refit_rows` is allowed to snap to.
-    /// Default `u32::MAX`.
-    #[must_use]
-    pub fn max_rows(mut self, n: u32) -> Self {
-        self.max_rows = n.max(1);
         self
     }
 
@@ -824,10 +827,10 @@ impl GridLayout {
             self.height = h;
             return (w, h);
         }
-        // Same `compute_size` overhead the height formula uses:
-        //   h = header + 2*PADDING + rows*(cell_size + GAP)
-        //         - GAP + section_count*GRID_SECTION_H + bottom_label_h
-        let section_count = self.sections.len() as f32;
+        // Solve `compute_size`'s height formula for `rows`:
+        //   h = header + 2*PADDING + rows*(cell_size + GAP) - GAP
+        //         + section_count*GRID_SECTION_H + bottom_label_h
+        let section_count = f32::from(u16::try_from(self.sections.len()).unwrap_or(u16::MAX));
         let bottom_label_h = 22.0;
         let overhead = self.header_height()
             + GRID_PADDING * 2.0
@@ -836,7 +839,7 @@ impl GridLayout {
             - GRID_GAP;
         let usable = (target_h as f32 - overhead).max(0.0);
         let raw = (usable / step).round();
-        let new_rows = (raw.max(1.0) as u32).clamp(self.min_rows.max(1), self.max_rows.max(1));
+        let new_rows = (raw.max(1.0) as u32).clamp(self.min_size.1.max(1), self.max_size.1.max(1));
         self.rows = new_rows;
         // Auto-flow doesn't care about `rows` (it's purely a
         // bookkeeping value for `compute_size`'s height), so we
@@ -846,6 +849,44 @@ impl GridLayout {
         self.width = w;
         self.height = h;
         (w, h)
+    }
+
+    /// `Editor::min_size` value: the pixel size of the layout at
+    /// the smallest allowed `(cols, rows)` extent declared by
+    /// [`Self::min_size`]. Hosts see this via the format-specific
+    /// resize-hint RPC (CLAP `gui_get_resize_hints`, VST3
+    /// `checkSizeConstraint`, etc.).
+    #[must_use]
+    pub fn min_snapped_size(&self) -> (u32, u32) {
+        let mut probe = self.clone();
+        probe.cols = self.min_size.0.max(1);
+        probe.rows = self.min_size.1.max(1);
+        probe.flow_and_size();
+        (probe.width, probe.height)
+    }
+
+    /// `Editor::max_size` value. `u32::MAX` per axis means "no
+    /// cap" and probes at 64 cells - well past any plugin window
+    /// a host would render, and small enough that the layout math
+    /// doesn't overflow.
+    #[must_use]
+    pub fn max_snapped_size(&self) -> (u32, u32) {
+        let cap = 64u32;
+        let cols = if self.max_size.0 == u32::MAX {
+            cap
+        } else {
+            self.max_size.0.max(1)
+        };
+        let rows = if self.max_size.1 == u32::MAX {
+            cap
+        } else {
+            self.max_size.1.max(1)
+        };
+        let mut probe = self.clone();
+        probe.cols = cols;
+        probe.rows = rows;
+        probe.flow_and_size();
+        (probe.width, probe.height)
     }
 
     /// Reflow against a column count derived from the requested
@@ -885,7 +926,7 @@ impl GridLayout {
         }
         let numerator = target_w as f32 + GRID_GAP - GRID_PADDING * 2.0;
         let raw = (numerator / step).round();
-        let new_cols = (raw.max(1.0) as u32).clamp(self.min_cols.max(1), self.max_cols.max(1));
+        let new_cols = (raw.max(1.0) as u32).clamp(self.min_size.0.max(1), self.max_size.0.max(1));
         self.cols = new_cols;
         self.flow_and_size();
         (self.width, self.height)
@@ -1121,10 +1162,8 @@ impl From<PluginLayout> for GridLayout {
             width: 0,
             height: 0,
             resizable: false,
-            min_cols: 1,
-            max_cols: u32::MAX,
-            min_rows: 1,
-            max_rows: u32::MAX,
+            min_size: (1, 1),
+            max_size: (u32::MAX, u32::MAX),
             rows: 1,
             // PluginLayout drives placement from `rows` directly,
             // so widgets are already explicitly positioned. The
@@ -1196,11 +1235,9 @@ mod tests {
         let mut g = GridLayout::build(vec![widgets(auto_widgets(8))])
             .with_cols(2)
             .resizable(true)
-            .min_cols(1)
-            .max_cols(8);
+            .max_size((8, u32::MAX));
         let natural_w = g.width;
-        // Ask for double the natural width: cols should land at 4.
-        let (new_w, _new_h) = g.refit_cols(natural_w * 2);
+        let (new_w, _) = g.refit_cols(natural_w * 2);
         assert_eq!(g.cols, 4);
         assert!(new_w > natural_w);
     }
@@ -1210,27 +1247,23 @@ mod tests {
         let mut g = GridLayout::build(vec![widgets(auto_widgets(8))])
             .with_cols(4)
             .resizable(true)
-            .min_cols(2)
-            .max_cols(4);
-        let _ = g.refit_cols(10); // tiny request
+            .min_size((2, 1))
+            .max_size((4, u32::MAX));
+        let _ = g.refit_cols(10);
         assert_eq!(g.cols, 2, "min_cols clamp");
-        let _ = g.refit_cols(10_000); // huge request
+        let _ = g.refit_cols(10_000);
         assert_eq!(g.cols, 4, "max_cols clamp");
     }
 
     #[test]
     fn refit_cols_reflows_widget_positions() {
         // 4 auto-positioned knobs in a 4-column grid sit in a
-        // single row; switching to 2 cols should pack them into
-        // 2 rows of 2.
+        // single row; clamping to 1 col packs them into 4 rows.
         let mut g = GridLayout::build(vec![widgets(auto_widgets(4))])
             .with_cols(4)
             .resizable(true)
-            .min_cols(1)
-            .max_cols(4);
-        let _ = g.refit_cols(40); // forces cols → 1 via clamp
-        // After refit, every widget should sit in column 0 at
-        // distinct rows 0..=3.
+            .max_size((1, u32::MAX));
+        let _ = g.refit_cols(40);
         let mut rows: Vec<u32> = g.widgets.iter().map(|w| w.row).collect();
         rows.sort_unstable();
         assert_eq!(rows, vec![0, 1, 2, 3]);
@@ -1242,14 +1275,12 @@ mod tests {
         let mut g = GridLayout::build(vec![widgets(auto_widgets(4))])
             .with_cols(4)
             .resizable(true)
-            .min_rows(1)
-            .max_rows(8);
+            .max_size((u32::MAX, 8));
         let natural_h = g.height;
-        // Ask for double the natural height: rows should grow well past 1.
         let (_, new_h) = g.refit_rows(natural_h * 2);
         assert!(
             g.rows > 1,
-            "rows should grow under a doubled-height request; got {}",
+            "rows should grow under doubled height; got {}",
             g.rows
         );
         assert!(new_h > natural_h);
@@ -1260,11 +1291,11 @@ mod tests {
         let mut g = GridLayout::build(vec![widgets(auto_widgets(4))])
             .with_cols(4)
             .resizable(true)
-            .min_rows(2)
-            .max_rows(4);
-        let _ = g.refit_rows(10); // tiny request
+            .min_size((1, 2))
+            .max_size((u32::MAX, 4));
+        let _ = g.refit_rows(10);
         assert_eq!(g.rows, 2, "min_rows clamp");
-        let _ = g.refit_rows(10_000); // huge request
+        let _ = g.refit_rows(10_000);
         assert_eq!(g.rows, 4, "max_rows clamp");
     }
 }

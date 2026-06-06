@@ -102,14 +102,14 @@ impl PluginLogic for Gain {
         // snaps from there.
         .with_cols(3)
         .resizable(true)
-        .min_cols(3)
-        .max_cols(8)
-        // Vertical resize: the meter at col 2 spans 3 rows, so the
-        // natural row extent is 3. Allow growing to 6 cell-rows
-        // (extra trailing space below the widgets) - shrinking past
-        // 3 would clip the meter.
-        .min_rows(3)
-        .max_rows(6)
+        // Cell-count bounds on (cols, rows). Call shape matches the
+        // other backends' `min_size` / `max_size` builders; the unit
+        // is cells because the grid snaps to whole cells anyway.
+        // 3 cols / 3 rows is the floor (the meter at col 2 spans 3
+        // rows, so dropping below 3 would clip it); 8 / 6 caps the
+        // stretch at a size the layout still reads as tight.
+        .min_size((3, 3))
+        .max_size((8, 6))
         .into_editor(&self.params)
     }
 }
