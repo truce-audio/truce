@@ -34,8 +34,10 @@ use crate::param_lens::ParamLens;
 /// dropdown popup overflows / shows an arrow.
 pub const BASE_CSS: &str = include_str!("base.css");
 
-/// Single labelled knob cell: knob on top, name label below, current
-/// formatted value at the bottom.
+/// Single labelled knob cell: knob on top, current formatted value
+/// in the middle, name label at the bottom. Matches the layout the
+/// built-in / egui / iced / slint backends use - the value sits
+/// close to the knob arc that drove it.
 ///
 /// Fixed at 48×48px. The inner head is pinned to 44×44 in
 /// [`BASE_CSS`] to work around a vizia layout bug (default
@@ -101,10 +103,10 @@ pub fn param_knob<P: Params + 'static>(
                 // during drag.
                 value_signal.set(snapped);
             });
-        Label::new(cx, label_text);
         Label::new(cx, display)
             .width(Pixels(value_slot_w))
             .class("truce-knob-value");
+        Label::new(cx, label_text);
     })
     .class("truce-knob")
     .width(Auto)
