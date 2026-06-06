@@ -40,6 +40,62 @@ pub unsafe fn make_resizable(ns_window: *mut std::ffi::c_void) {
     let _: () = unsafe { msg_send![window, setStyleMask: new_mask] };
 }
 
+/// Tag every subview of the standalone `NSWindow`'s content view with
+/// `NSViewWidthSizable | NSViewHeightSizable` so `AppKit` auto-resizes
+/// the editor's embedded child view when the user drags the
+/// standalone window's edge. baseview-truce's `setFrameSize:`
+/// override then fires a `Resized` event that the editor's own
+/// `WindowHandler` (`vizia_baseview`'s `Application::handle_event`,
+/// egui's / iced's / slint's `on_event`) translates into a wgpu /
+/// skia surface reconfigure + root-entity size update.
+///
+/// Without this the editor's child stays at its constructed size
+/// while the window grows around it - exactly the visual the user
+/// sees with vizia, whose `Editor::set_size` is a no-op pending
+/// vizia upstream exposing a resize entry point on `WindowHandle`.
+///
+/// # Safety
+///
+/// Must run on the main thread and only after baseview has finished
+/// adding its child view to the `NSWindow`'s content view. The
+/// caller is responsible for ensuring `ns_window` is a live
+/// Objective-C pointer.
+pub unsafe fn install_subview_autoresize(ns_view: *mut std::ffi::c_void) {
+    // Cocoa autoresizing-mask bit flags. `NSViewWidthSizable`
+    // (`2`) makes the view's width flex with its superview;
+    // `NSViewHeightSizable` (`16`) does the same for height.
+    const NSVIEW_WIDTH_SIZABLE: u64 = 2;
+    const NSVIEW_HEIGHT_SIZABLE: u64 = 16;
+    if ns_view.is_null() {
+        return;
+    }
+    // The caller hands us baseview's standalone `NSView` (not the
+    // `NSWindow`). `Window::open_blocking` sets baseview's view as
+    // the `NSWindow.contentView` *after* the build closure returns
+    // - while we're inside the build closure, the `NSWindow`'s
+    // contentView is still its default vanilla view, so walking
+    // `[ns_window contentView].subviews` finds nothing. baseview's
+    // own view, however, is already the parent of the editor's
+    // child by the time `editor.open()` returns (baseview's
+    // `open_parented` calls `parent_view.addSubview(&new_ns_view)`
+    // synchronously). Walking *that* view's subviews finds the
+    // editor's NSView reliably.
+    let parent = ns_view.cast::<Object>();
+    let subviews: *mut Object = unsafe { msg_send![parent, subviews] };
+    if subviews.is_null() {
+        return;
+    }
+    let count: usize = unsafe { msg_send![subviews, count] };
+    let mask = NSVIEW_WIDTH_SIZABLE | NSVIEW_HEIGHT_SIZABLE;
+    for i in 0..count {
+        let child: *mut Object = unsafe { msg_send![subviews, objectAtIndex: i] };
+        if child.is_null() {
+            continue;
+        }
+        let _: () = unsafe { msg_send![child, setAutoresizingMask: mask] };
+    }
+}
+
 /// `CGFloat` is `f64` on 64-bit Apple platforms (which is everything
 /// truce targets - `aarch64` and `x86_64`). Mirror the layout
 /// `AppKit` uses for `NSRect` / `NSSize` instead of pulling in a

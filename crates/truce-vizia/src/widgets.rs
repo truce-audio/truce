@@ -380,7 +380,7 @@ pub fn level_meter<P: Params + 'static>(
     cx: &mut Context,
     lens: ParamLens<P>,
     meter_ids: &[impl Into<u32> + Copy],
-    height: f32,
+    height: impl Into<Units>,
 ) {
     let signals: Vec<Signal<f32>> = meter_ids.iter().map(|id| lens.meter_signal(*id)).collect();
     let channels = signals.len().max(1);
@@ -409,7 +409,11 @@ pub fn level_meter<P: Params + 'static>(
         }
     })
     .class("truce-meter")
-    .height(Pixels(height))
+    // `height` is `Units`: `Pixels(240.0)` for a fixed band,
+    // `Stretch(1.0)` to fill whatever vertical space the parent
+    // layout hands the meter. Bar geometry is already percentage-
+    // and stretch-based internally so the meter resizes cleanly.
+    .height(height.into())
     .width(Pixels(width))
     .horizontal_gap(Pixels(2.0))
     .alignment(Alignment::BottomCenter);
@@ -421,10 +425,13 @@ pub fn level_meter<P: Params + 'static>(
 /// lens (`begin_edit` / `set` / `end_edit` via `automate`-style
 /// gestures the host honours as user automation).
 ///
-/// `w` / `h` are the pad's pixel size; the dot is 8x8 and stays
-/// fully inside the pad's bounds. The y-axis is inverted from
-/// vizia's screen coordinates so higher param values sit at the
-/// *top* of the pad - the convention every other backend follows.
+/// `w` / `h` are `Units`: `Pixels(130.0)` for a fixed square,
+/// `Stretch(1.0)` to fill whatever the parent layout hands the pad.
+/// The dot is 8x8 and tracks the runtime pad bounds via percentage
+/// positioning + a pixel-level translate that centres the dot on
+/// the value point; the y-axis is inverted from vizia's screen
+/// coordinates so higher param values sit at the *top* of the pad -
+/// the convention every other backend follows.
 #[allow(clippy::cast_possible_truncation, clippy::similar_names)]
 pub fn param_xy_pad<P: Params + 'static>(
     cx: &mut Context,
@@ -432,12 +439,28 @@ pub fn param_xy_pad<P: Params + 'static>(
     x_id: impl Into<u32> + Copy,
     y_id: impl Into<u32> + Copy,
     label: &str,
-    w: f32,
-    h: f32,
+    w: impl Into<Units>,
+    h: impl Into<Units>,
 ) {
     let x_u32: u32 = x_id.into();
     let y_u32: u32 = y_id.into();
     let label_text = label.to_string();
+    let pad_w = w.into();
+    let pad_h = h.into();
+    // Outer cell mirrors `Stretch(_)` so the inner ZStack has
+    // stretch space to fill; for `Pixels(_)` we keep `Auto` so the
+    // cell auto-fits the pad + label like the pre-stretch API did
+    // (caller still gets an `N x (pad_h + label_h)` cell).
+    let outer_w = if matches!(pad_w, Units::Stretch(_)) {
+        pad_w
+    } else {
+        Units::Auto
+    };
+    let outer_h = if matches!(pad_h, Units::Stretch(_)) {
+        pad_h
+    } else {
+        Units::Auto
+    };
     // Shared per-param signals: dragging the pad updates these and
     // every other widget bound to `x_id` / `y_id` (knobs, sliders,
     // dropdowns, other pads) follows automatically through the
@@ -446,12 +469,21 @@ pub fn param_xy_pad<P: Params + 'static>(
     let y_norm = lens.value_signal(y_id);
     let is_dragging = Signal::new(false);
 
-    // Dot position derived from the normalised x/y signals. Vizia's
-    // coordinate system puts the origin at the top-left, so invert
-    // the y axis to keep "higher values = up" - matches the egui /
-    // iced / slint backends' XY pads.
-    let dot_left = Memo::new(move |_| Pixels(x_norm.get() * (w - 8.0)));
-    let dot_top = Memo::new(move |_| Pixels((1.0 - y_norm.get()) * (h - 8.0)));
+    // Dot position via percentage of the pad's runtime bounds so the
+    // dot follows live `Stretch(_)` resizing. The `.left` /
+    // `.top` modifiers anchor the dot's top-left corner at the
+    // computed percentage; a reactive `.translate` shifts the dot
+    // left / up by `value * 8 px` so its right / bottom edge stays
+    // inside the pad at value=1 (rather than spilling 8 px past).
+    // Net effect: dot's left edge sits at `0` for value=0 and at
+    // `100% - 8 px` for value=1, matching the previous fixed-pixel
+    // math but expressed in runtime-bounds terms.
+    let dot_left = Memo::new(move |_| Percentage(x_norm.get() * 100.0));
+    let dot_top = Memo::new(move |_| Percentage((1.0 - y_norm.get()) * 100.0));
+    let dot_translate = Memo::new(move |_| Translate {
+        x: LengthOrPercentage::Length(Length::px(-x_norm.get() * 8.0)),
+        y: LengthOrPercentage::Length(Length::px(-(1.0 - y_norm.get()) * 8.0)),
+    });
 
     let lens_for_down = lens.clone();
     let lens_for_move = lens.clone();
@@ -466,11 +498,12 @@ pub fn param_xy_pad<P: Params + 'static>(
                 .corner_radius(Percentage(50.0))
                 .position_type(PositionType::Absolute)
                 .left(dot_left)
-                .top(dot_top);
+                .top(dot_top)
+                .translate(dot_translate);
         })
         .class("truce-xy-pad")
-        .width(Pixels(w))
-        .height(Pixels(h))
+        .width(pad_w)
+        .height(pad_h)
         .on_mouse_down(move |cx, button| {
             if button != MouseButton::Left {
                 return;
@@ -512,8 +545,8 @@ pub fn param_xy_pad<P: Params + 'static>(
         Label::new(cx, label_text);
     })
     .class("truce-xy-pad-cell")
-    .width(Auto)
-    .height(Auto)
+    .width(outer_w)
+    .height(outer_h)
     .vertical_gap(Pixels(2.0))
     .alignment(Alignment::TopCenter);
 }

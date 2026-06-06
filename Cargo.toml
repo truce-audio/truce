@@ -157,16 +157,7 @@ wgpu = { version = "29", default-features = false, features = ["wgsl"] }
 # `crates/truce-vizia/` (its own Cargo workspace). Whatever patch
 # wiring vizia ends up needing belongs there, not here - keeping the
 # parent lockfile + iOS bake free of the vizia mess.
-baseview = { package = "baseview-truce", version = "0.1.1-truce.6" }
-
-# Local patch for in-progress baseview-truce changes (currently the
-# `setFrameSize:` override that fires `Resized` events when AppKit
-# mutates the NSView frame outside `viewDidChangeBackingProperties:`'s
-# scale-change path - parent-autoresize, host-driven `setFrameSize:`,
-# our own `Window::resize`). Drop the patch when the new version is
-# published.
-[patch.crates-io]
-baseview-truce = { path = "../baseview" }
+baseview = { package = "baseview-truce", version = "0.1.1-truce.8" }
 
 # Custom profile for shell-mode (hot-reload) builds. `cargo truce
 # install --shell` invokes `cargo build --profile shell --features
