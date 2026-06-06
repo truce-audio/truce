@@ -212,6 +212,9 @@ struct Vst3Callbacks {
     void (*gui_open)(void*, void*);
     void (*gui_close)(void*);
     void (*gui_set_content_scale)(void*, double);
+    int32_t (*gui_can_resize)(void*);
+    void (*gui_check_size_constraint)(void*, uint32_t*, uint32_t*);
+    void (*gui_set_size)(void*, uint32_t, uint32_t);
 };
 
 // ---------------------------------------------------------------------------
@@ -365,6 +368,9 @@ struct PClassInfo {
 
 struct TruceComponentCOM; // forward declaration
 class TruceComponent;     // forward declaration for ctx mapping
+struct TrucePlugView;     // forward decl - full def lives below in the
+                          // GUI section; TruceComponent only needs a
+                          // pointer to it for the `plugView` field.
 
 // Global ctx→component mapping for extern "C" host-notification callbacks
 static constexpr int kMaxInstances = 64;
@@ -381,10 +387,18 @@ public:
     bool inPerformEdit;       // feedback guard: skip setParamNormalized during performEdit
     bool stateLoaded;         // true after setState() has run (or on first process if no state chunk)
     void* deferredParent;     // stashed parent view if editor attached before state loaded
+    // Live plug view created by `createView()`. Set there, nulled in
+    // `pv_release` when refcount -> 0. `truce_vst3_request_resize`
+    // dereferences via this slot rather than holding a `TrucePlugView*`
+    // in a Rust closure - hosts that release and re-create the view
+    // (Cubase theme change, Live dock/undock) would otherwise leave
+    // a dangling pointer in the closure.
+    TrucePlugView* plugView;
 
     TruceComponent() : ctx(nullptr), sampleRate(44100), maxFrames(1024),
                        componentHandler(nullptr), inPerformEdit(false),
-                       stateLoaded(false), deferredParent(nullptr) {
+                       stateLoaded(false), deferredParent(nullptr),
+                       plugView(nullptr) {
         if (g_cb) {
             ctx = g_cb->create();
             if (ctx) {
@@ -1031,6 +1045,13 @@ struct TrucePlugView {
     int32_t refCount;
     void* ctx;              // Rust plugin context
     TruceComponent* comp;   // owning component (for state-loaded check)
+    // Stored by `pv_setFrame` (host hands the plug-view its
+    // `IPlugFrame*`). Used by `truce_vst3_request_resize` to drive
+    // the plugin -> host resize request. Nulled when the view is
+    // released so a stale frame pointer can't survive a view
+    // re-creation across theme change / dock-undock in Cubase /
+    // Live.
+    void* frame;
 };
 
 static TrucePlugView* pv_from_scale(void* s) {
@@ -1057,7 +1078,17 @@ static uint32 pv_addRef(void* s) { return ++((TrucePlugView*)s)->refCount; }
 static uint32 pv_release(void* s) {
     auto* pv = (TrucePlugView*)s;
     if (--pv->refCount <= 0) {
-        if (pv->comp) pv->comp->deferredParent = nullptr;
+        if (pv->comp) {
+            pv->comp->deferredParent = nullptr;
+            // Null the component's pointer to this view so
+            // `truce_vst3_request_resize` doesn't dereference a
+            // freed plug-view between the host releasing the
+            // editor and creating a new one. `pv->comp` is the
+            // component lifetime, longer than the plug view's.
+            if (pv->comp->plugView == pv) {
+                pv->comp->plugView = nullptr;
+            }
+        }
         free(pv);
         return 0;
     }
@@ -1122,25 +1153,81 @@ static tresult pv_getSize(void* s, void* rect) {
     }
     return kResultFalse;
 }
-static tresult pv_stub_false(void*) { return kResultFalse; }
 static tresult pv_stub1(void*, float) { return kResultFalse; }
 static tresult pv_stub2(void*, char16, int16_t, int16_t) { return kResultFalse; }
-static tresult pv_stub3(void*, void*) { return kResultFalse; }
 static tresult pv_stub4(void*, int8) { return kResultFalse; }
+
+// `IPlugView::onSize`. Host commits a new size; delegate to Rust
+// so the editor's `set_size` runs. VST3 doesn't have a
+// "no thanks, paint at the old size" path on onSize (the host has
+// already committed), so we always return kResultOk regardless of
+// what `Editor::set_size` says.
+static tresult pv_onSize(void* s, void* rect) {
+    auto* pv = (TrucePlugView*)s;
+    auto* r = (ViewRect*)rect;
+    if (g_cb && pv->ctx && g_cb->gui_set_size && r) {
+        int32 w = r->right - r->left;
+        int32 h = r->bottom - r->top;
+        if (w > 0 && h > 0) {
+            g_cb->gui_set_size(pv->ctx, (uint32_t)w, (uint32_t)h);
+        }
+    }
+    return kResultOk;
+}
+
+// `IPlugView::setFrame`. Host hands the plug-view its frame; we
+// stash the pointer so `truce_vst3_request_resize` can drive a
+// plugin-initiated resize through it.
+static tresult pv_setFrame(void* s, void* frame) {
+    auto* pv = (TrucePlugView*)s;
+    pv->frame = frame;
+    return kResultOk;
+}
+
+// `IPlugView::canResize`. Returns kResultTrue when the editor
+// opts in to host-driven resize, kResultFalse otherwise.
+static tresult pv_canResize(void* s) {
+    auto* pv = (TrucePlugView*)s;
+    if (!g_cb || !pv->ctx || !g_cb->gui_can_resize) return kResultFalse;
+    return g_cb->gui_can_resize(pv->ctx) != 0 ? kResultOk : kResultFalse;
+}
+
+// `IPlugView::checkSizeConstraint`. CLAMP the requested rect to
+// the editor's bounds; always return kResultOk because VST3
+// defines kResultFalse as "rect unrecoverable", not "I'd prefer
+// not". Ableton Live calls this even after `canResize ==
+// kResultFalse`; for fixed editors we snap to the editor's
+// current size, matching JUCE's pattern.
+static tresult pv_checkSizeConstraint(void* s, void* rect) {
+    auto* pv = (TrucePlugView*)s;
+    auto* r = (ViewRect*)rect;
+    if (!r || !g_cb || !pv->ctx) return kResultOk;
+    int32 w = r->right - r->left;
+    int32 h = r->bottom - r->top;
+    if (w <= 0 || h <= 0) return kResultOk;
+    if (g_cb->gui_check_size_constraint) {
+        uint32_t uw = (uint32_t)w;
+        uint32_t uh = (uint32_t)h;
+        g_cb->gui_check_size_constraint(pv->ctx, &uw, &uh);
+        r->right = r->left + (int32)uw;
+        r->bottom = r->top + (int32)uh;
+    }
+    return kResultOk;
+}
 
 static IPlugViewVtbl g_plugview_vtbl = {
     pv_queryInterface, pv_addRef, pv_release,
     pv_isPlatformTypeSupported,
     pv_attached, pv_removed,
-    pv_stub1,      // onWheel
-    pv_stub2,      // onKeyDown
-    pv_stub2,      // onKeyUp
+    pv_stub1,            // onWheel
+    pv_stub2,            // onKeyDown
+    pv_stub2,            // onKeyUp
     pv_getSize,
-    pv_stub3,      // onSize
-    pv_stub4,      // onFocus
-    pv_stub3,      // setFrame
-    pv_stub_false, // canResize
-    pv_stub3,      // checkSizeConstraint
+    pv_onSize,
+    pv_stub4,            // onFocus
+    pv_setFrame,
+    pv_canResize,
+    pv_checkSizeConstraint,
 };
 
 // ---------------------------------------------------------------------------
@@ -1264,6 +1351,14 @@ void* TruceComponent::createView(FIDString /*name*/) {
     pv->refCount = 1;
     pv->ctx = ctx;
     pv->comp = this;
+    pv->frame = nullptr;
+    // Track the live plug view on the component so
+    // `truce_vst3_request_resize` can find it without holding a
+    // raw pointer in a Rust closure. Replacing an earlier
+    // outstanding view is fine: VST3 hosts use one editor at a
+    // time, and the most-recently-created is the one
+    // request_resize should target.
+    plugView = pv;
     return pv;
 }
 
@@ -1686,6 +1781,36 @@ void truce_vst3_end_edit(void* ctx, uint32_t id) {
     if (!comp || !comp->componentHandler) return;
     auto endEdit = (tresult (*)(void*, uint32))(*(void***)comp->componentHandler)[5];
     endEdit(comp->componentHandler, id);
+}
+
+// Plugin -> host resize request. Walk ctx -> TruceComponent ->
+// TrucePlugView -> IPlugFrame*, then call IPlugFrame::resizeView.
+//
+// IPlugFrame vtable layout (FUnknown + one virtual):
+//   [0] queryInterface
+//   [1] addRef
+//   [2] release
+//   [3] resizeView(IPlugView*, ViewRect*)
+//
+// Encoded as the index constant so a future Steinberg extension to
+// FUnknown can be caught by a one-line change here rather than a
+// magic `[3]` hidden in vtable arithmetic.
+static constexpr int32_t kPlugFrameResizeViewIndex = 3;
+
+int32_t truce_vst3_request_resize(void* ctx, uint32_t w, uint32_t h) {
+    auto* comp = ctx_lookup(ctx);
+    if (!comp || !comp->plugView) return 0;
+    auto* pv = comp->plugView;
+    if (!pv->frame) return 0;
+    ViewRect rect;
+    rect.left = 0;
+    rect.top = 0;
+    rect.right = (int32)w;
+    rect.bottom = (int32)h;
+    using ResizeViewFn = tresult (*)(void*, void*, ViewRect*);
+    auto resizeView = (ResizeViewFn)(*(void***)pv->frame)[kPlugFrameResizeViewIndex];
+    tresult result = resizeView(pv->frame, pv, &rect);
+    return result == kResultOk ? 1 : 0;
 }
 
 } // extern "C"

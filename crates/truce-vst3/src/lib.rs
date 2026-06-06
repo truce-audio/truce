@@ -860,6 +860,144 @@ unsafe extern "C" fn cb_gui_set_content_scale<P: PluginExport>(
     }
 }
 
+/// `IPlugView::canResize` callback. Returns 1 / 0 mapping to
+/// `kResultOk` / `kResultFalse` on the shim side.
+unsafe extern "C" fn cb_gui_can_resize<P: PluginExport>(
+    ctx: *mut std::ffi::c_void,
+) -> i32 {
+    unsafe {
+        if ctx.is_null() {
+            return 0;
+        }
+        let inst = &*ctx.cast::<Vst3Instance<P>>();
+        i32::from(inst.editor.as_ref().is_some_and(|e| e.can_resize()))
+    }
+}
+
+/// `IPlugView::checkSizeConstraint` callback. Clamps the
+/// requested physical width / height in place against the
+/// editor's `min_size` / `max_size` / `aspect_ratio`. For
+/// fixed-size editors snaps to the editor's current size (JUCE's
+/// Ableton-Live workaround pattern).
+unsafe extern "C" fn cb_gui_check_size_constraint<P: PluginExport>(
+    ctx: *mut std::ffi::c_void,
+    w: *mut u32,
+    h: *mut u32,
+) {
+    unsafe {
+        if ctx.is_null() || w.is_null() || h.is_null() {
+            return;
+        }
+        let inst = &*ctx.cast::<Vst3Instance<P>>();
+        let Some(ref editor) = inst.editor else {
+            return;
+        };
+        let host_scale = inst.host_scale;
+        if editor.can_resize() {
+            // Physical -> logical, clamp, logical -> physical.
+            let (lw, lh) = phys_to_logical(*w, *h, host_scale);
+            let (lw, lh) = clamp_logical_to_editor(lw, lh, editor.as_ref());
+            let (pw, ph) = logical_to_phys(lw, lh, host_scale);
+            *w = pw;
+            *h = ph;
+        } else {
+            // Snap to current size; host-side Live quirk handled
+            // identically by JUCE.
+            let (cw, ch) = editor.size();
+            let (pw, ph) = logical_to_phys(cw, ch, host_scale);
+            *w = pw;
+            *h = ph;
+        }
+    }
+}
+
+/// `IPlugView::onSize` callback. Host committed a new size;
+/// delegate to `Editor::set_size` after scaling physical -> logical.
+unsafe extern "C" fn cb_gui_set_size<P: PluginExport>(
+    ctx: *mut std::ffi::c_void,
+    w: u32,
+    h: u32,
+) {
+    unsafe {
+        if ctx.is_null() || w == 0 || h == 0 {
+            return;
+        }
+        let inst = &mut *ctx.cast::<Vst3Instance<P>>();
+        let host_scale = inst.host_scale;
+        if let Some(ref mut editor) = inst.editor
+            && editor.can_resize()
+        {
+            let (lw, lh) = phys_to_logical(w, h, host_scale);
+            editor.set_size(lw, lh);
+        }
+    }
+}
+
+/// Convert physical pixels (what the VST3 host speaks) to logical
+/// points (what `Editor` works in). Identity when `host_scale` is
+/// 1.0 or invalid.
+fn phys_to_logical(pw: u32, ph: u32, host_scale: f64) -> (u32, u32) {
+    if host_scale <= 0.0 || (host_scale - 1.0).abs() < f64::EPSILON {
+        return (pw, ph);
+    }
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let lw = (f64::from(pw) / host_scale).round() as u32;
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let lh = (f64::from(ph) / host_scale).round() as u32;
+    (lw.max(1), lh.max(1))
+}
+
+/// Inverse of `phys_to_logical`.
+fn logical_to_phys(lw: u32, lh: u32, host_scale: f64) -> (u32, u32) {
+    if host_scale <= 0.0 || (host_scale - 1.0).abs() < f64::EPSILON {
+        return (lw, lh);
+    }
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let pw = (f64::from(lw) * host_scale).round() as u32;
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let ph = (f64::from(lh) * host_scale).round() as u32;
+    (pw.max(1), ph.max(1))
+}
+
+/// Apply `min_size` / `max_size` and `aspect_ratio` to a
+/// requested logical size. Mirrors the CLAP wrapper's
+/// `clamp_logical_size` so the two wrappers respect editor
+/// constraints identically.
+fn clamp_logical_to_editor(
+    w: u32,
+    h: u32,
+    editor: &dyn truce_core::editor::Editor,
+) -> (u32, u32) {
+    let (min_w, min_h) = editor.min_size();
+    let (max_w, max_h) = editor.max_size();
+    let mut w = w.clamp(min_w.max(1), max_w);
+    let mut h = h.clamp(min_h.max(1), max_h);
+    if let Some((num, denom)) = editor.aspect_ratio()
+        && num > 0
+        && denom > 0
+    {
+        let num64 = u64::from(num);
+        let denom64 = u64::from(denom);
+        let h_implied = (u64::from(w) * denom64 / num64).clamp(1, u64::from(u32::MAX));
+        #[allow(clippy::cast_possible_truncation)]
+        let h_implied_u32 = h_implied as u32;
+        if h_implied_u32 >= min_h.max(1) && h_implied_u32 <= max_h {
+            h = h_implied_u32;
+        } else {
+            let w_implied = (u64::from(h) * num64 / denom64).clamp(1, u64::from(u32::MAX));
+            #[allow(clippy::cast_possible_truncation)]
+            let w_implied_u32 = w_implied as u32;
+            w = w_implied_u32.clamp(min_w.max(1), max_w);
+            let h_final = (u64::from(w) * denom64 / num64).clamp(1, u64::from(u32::MAX));
+            #[allow(clippy::cast_possible_truncation)]
+            {
+                h = (h_final as u32).clamp(min_h.max(1), max_h);
+            }
+        }
+    }
+    (w, h)
+}
+
 unsafe extern "C" fn cb_gui_open<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     parent: *mut std::ffi::c_void,
@@ -893,7 +1031,30 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                     end_edit: Box::new(move |id| {
                         ffi::truce_vst3_end_edit(ctx_raw.as_ptr().cast_mut(), id);
                     }),
-                    request_resize: Box::new(|_w, _h| false),
+                    request_resize: Box::new(move |w, h| {
+                        // SAFETY: `ctx_raw` is the live
+                        // `Vst3Instance` pointer the shim holds in
+                        // its ctx -> TruceComponent table. The
+                        // closure runs on the GUI thread, same as
+                        // `cb_gui_set_content_scale` which is the
+                        // only writer of `host_scale`. Routing
+                        // through the shim's component (rather
+                        // than holding a plug view pointer) avoids
+                        // UAF across host editor recreations.
+                        let host_scale =
+                            (*ctx_raw.as_ptr().cast::<Vst3Instance<P>>()).host_scale;
+                        // VST3 hosts speak physical points;
+                        // `Editor` speaks logical.
+                        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                        let pw = (f64::from(w) * host_scale).round() as u32;
+                        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                        let ph = (f64::from(h) * host_scale).round() as u32;
+                        ffi::truce_vst3_request_resize(
+                            ctx_raw.as_ptr().cast_mut(),
+                            pw,
+                            ph,
+                        ) != 0
+                    }),
                     get_param: Box::new(move |id| params_for_get.get_normalized(id).unwrap_or(0.0)),
                     get_param_plain: Box::new(move |id| {
                         params_for_plain.get_plain(id).unwrap_or(0.0)
@@ -1111,6 +1272,9 @@ fn register_vst3_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
         gui_open: cb_gui_open::<P>,
         gui_close: cb_gui_close::<P>,
         gui_set_content_scale: cb_gui_set_content_scale::<P>,
+        gui_can_resize: cb_gui_can_resize::<P>,
+        gui_check_size_constraint: cb_gui_check_size_constraint::<P>,
+        gui_set_size: cb_gui_set_size::<P>,
     }));
 
     // Unify with the `Box::leak(Box::new(...))` shape above so every

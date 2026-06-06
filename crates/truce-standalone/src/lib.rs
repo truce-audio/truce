@@ -46,6 +46,9 @@ pub mod windowed;
 #[cfg(all(target_os = "macos", feature = "gui"))]
 pub mod menu_macos;
 
+#[cfg(all(target_os = "macos", feature = "gui"))]
+pub mod windowed_macos;
+
 #[cfg(all(target_os = "windows", feature = "gui"))]
 pub mod menu_windows;
 

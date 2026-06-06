@@ -94,11 +94,9 @@ where
         return;
     };
     let (lw, lh) = editor.size();
-    // Only consulted inside the per-OS cfg blocks below (lock vs.
-    // free outer frame). On macOS neither block applies; gate the
-    // binding too so the macOS build doesn't trip
-    // `unused_variables`.
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    // Consulted inside the per-OS cfg blocks below: Linux/Windows
+    // skip the lock-window pin, macOS ORs the
+    // `NSWindowStyleMaskResizable` bit into baseview's style mask.
     let editor_can_resize = editor.can_resize();
 
     // Logical-points size handoff between the editor (via the
@@ -215,6 +213,27 @@ where
             crate::windowed_x11::pin_size(window.raw_display_handle(), &h);
         }
 
+        // macOS: baseview-truce creates its NSWindow with `Titled |
+        // Closable | Miniaturizable` only - no resize affordance.
+        // When the editor opts into resize, OR in
+        // `NSWindowStyleMaskResizable` so the edge-drag behaviour
+        // becomes available. Use the rwh `ns_window` field
+        // directly: baseview calls `setContentView:` after the
+        // build closure runs, so `[ns_view window]` returns nil at
+        // this point - going via the populated `ns_window` slot
+        // avoids that timing trap.
+        #[cfg(target_os = "macos")]
+        if editor_can_resize
+            && let RwhHandle::AppKit(h) = window.raw_window_handle()
+        {
+            // SAFETY: ns_window is a live NSWindow * baseview owns
+            // and has just finished initialising
+            // (`makeKeyAndOrderFront` ran before this closure).
+            // We're on the main thread - `open_blocking` only runs
+            // its builder on the thread that owns the event loop.
+            unsafe { crate::windowed_macos::make_resizable(h.ns_window) };
+        }
+
         let ctx = synthesize_editor_context::<P>(
             &plugin,
             &transport,
@@ -297,20 +316,35 @@ where
 {
     fn on_frame(&mut self, window: &mut Window) {
         // Editor drives its own frame loop inside its child window;
-        // the only thing we do here is honour pending resize requests
-        // posted by the editor through the `request_resize` closure.
+        // the standalone outer handler does two things here:
+        //  (1) honour pending resize requests posted by the editor
+        //      through the `request_resize` closure;
+        //  (2) poll the OS window size and forward user-driven
+        //      edge drags to `editor.set_size`. baseview-truce
+        //      0.1.1-truce.6 only emits `WindowEvent::Resized` for
+        //      DPI changes, never for user drags, so detection
+        //      lives here.
         let packed = self.pending_resize.swap(0, Ordering::Acquire);
         if packed != 0 {
             let (w, h) = unpack_size(packed);
             if (w, h) != self.current_size && w > 0 && h > 0 {
                 window.resize(baseview::Size::new(f64::from(w), f64::from(h)));
                 self.current_size = (w, h);
-                // The OS-side `Resized` event that follows will
-                // re-confirm `editor.set_size`; suppress the
-                // round-trip by writing the editor here too so the
-                // event handler's diff check is a no-op.
                 self.editor.set_size(w, h);
             }
+        }
+        // OS-driven user resize poll (macOS only - other platforms
+        // emit `WindowEvent::Resized` for user drags via `on_event`).
+        #[cfg(target_os = "macos")]
+        if let RwhHandle::AppKit(h) = window.raw_window_handle()
+            && let Some(os_size) =
+                unsafe { crate::windowed_macos::content_logical_size(h.ns_window) }
+            && os_size != self.current_size
+            && os_size.0 > 0
+            && os_size.1 > 0
+        {
+            self.current_size = os_size;
+            self.editor.set_size(os_size.0, os_size.1);
         }
     }
 

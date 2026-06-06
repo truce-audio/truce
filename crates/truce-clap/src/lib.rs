@@ -2095,9 +2095,9 @@ unsafe extern "C" fn gui_set_size<P: PluginExport>(
         };
         if editor.can_resize() {
             // Host passes physical points; truce works in logical.
-            // Divide by the host-applied scale before handing to the
-            // editor so `set_size` receives the same units `size()`
-            // returns.
+            // Divide by the host-applied scale before handing to
+            // the editor so `set_size` receives the same units
+            // `size()` returns.
             let (lw, lh) = scale_physical_to_logical(width, height, data.host_scale);
             editor.set_size(lw, lh)
         } else {

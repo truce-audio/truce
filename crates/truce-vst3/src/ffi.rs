@@ -160,6 +160,23 @@ pub struct Vst3Callbacks {
     /// can remember the host scale (used for physical-pixel size
     /// reporting on Windows/Linux) and forward it to the editor.
     pub gui_set_content_scale: unsafe extern "C" fn(ctx: *mut c_void, scale: f64),
+    /// `IPlugView::canResize`. Returns `1` for `kResultTrue` if the
+    /// editor advertised `can_resize() == true`, else `0`.
+    pub gui_can_resize: unsafe extern "C" fn(ctx: *mut c_void) -> i32,
+    /// `IPlugView::checkSizeConstraint`. Clamps the requested
+    /// physical width / height in place to the editor's
+    /// min / max / aspect constraints. Returns `1` for `kResultOk`.
+    /// The Ableton-Live behaviour (host calls this even when
+    /// `canResize` is false) is handled host-side here: for fixed
+    /// editors we snap to the editor's current size and still
+    /// return `kResultOk`.
+    pub gui_check_size_constraint:
+        unsafe extern "C" fn(ctx: *mut c_void, w: *mut u32, h: *mut u32),
+    /// `IPlugView::onSize`. Host commits a new size; delegate to
+    /// `Editor::set_size`. Width / height are in physical pixels;
+    /// the Rust side scales to logical using the cached host
+    /// content-scale before handing to the editor.
+    pub gui_set_size: unsafe extern "C" fn(ctx: *mut c_void, w: u32, h: u32),
 }
 
 unsafe extern "C" {
@@ -182,4 +199,14 @@ unsafe extern "C" {
 
     /// Notify host: end editing a parameter (mouse-up).
     pub fn truce_vst3_end_edit(ctx: *mut std::ffi::c_void, id: u32);
+
+    /// Plugin -> host resize request. Looks up the owning
+    /// component via the ctx mapping, walks to the live plug view's
+    /// stored `IPlugFrame*`, and calls `IPlugFrame::resizeView`.
+    /// Returns `1` on success; `0` when no live view / frame is
+    /// available (e.g. editor closed) or when the host refused.
+    /// Routes through the component (not the plug view) so that
+    /// view re-creation between calls (Cubase theme change, Live
+    /// dock/undock) doesn't leave a stale pointer in the closure.
+    pub fn truce_vst3_request_resize(ctx: *mut std::ffi::c_void, w: u32, h: u32) -> i32;
 }

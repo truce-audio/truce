@@ -12,6 +12,12 @@ pub struct EguiRenderer {
     egui_rpass: egui_wgpu::Renderer,
     width: u32,
     height: u32,
+    /// Adapter-reported `max_texture_dimension_2d`. `resize`
+    /// clamps requested physical width / height against this so a
+    /// 4K-display drag-resize doesn't trip `surface.configure`'s
+    /// validation panic (which on macOS unwinds into the host's
+    /// callback and aborts the DAW).
+    max_texture_dim: u32,
 }
 
 impl EguiRenderer {
@@ -43,15 +49,27 @@ impl EguiRenderer {
         }))
         .ok()?;
 
+        // `downlevel_defaults` caps `max_texture_dimension_2d` at
+        // 2048, which on a Retina (2x) display means the editor
+        // can't physically exceed 1024 logical points per axis
+        // before `surface.configure` panics with a validation
+        // error. Take the adapter's actual reported limits
+        // instead - Apple Silicon Metal reports 8192 / 16384, x86
+        // discrete GPUs typically 8192+, even iGPUs are usually
+        // 4096+. This is the same shape JUCE / nih-plug use:
+        // trust what the adapter says, then clamp resize requests
+        // against it in `resize()` below as belt-and-braces.
+        let adapter_limits = adapter.limits();
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("truce-egui"),
             required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::downlevel_defaults(),
+            required_limits: adapter_limits.clone(),
             experimental_features: wgpu::ExperimentalFeatures::default(),
             memory_hints: wgpu::MemoryHints::Performance,
             trace: wgpu::Trace::Off,
         }))
         .ok()?;
+        let max_texture_dim = adapter_limits.max_texture_dimension_2d;
 
         let surface_caps = surface.get_capabilities(&adapter);
         let surface_format = surface_caps
@@ -87,6 +105,7 @@ impl EguiRenderer {
             egui_rpass,
             width,
             height,
+            max_texture_dim,
         })
     }
 
@@ -133,6 +152,7 @@ impl EguiRenderer {
             // reported limits so we never artificially cap below
             // what the device can do.
             let required_limits = adapter.limits();
+            let max_texture_dim = required_limits.max_texture_dimension_2d;
             let (device, queue) =
                 pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
                     label: Some("truce-egui-aax"),
@@ -187,6 +207,7 @@ impl EguiRenderer {
                 egui_rpass,
                 width,
                 height,
+                max_texture_dim,
             })
         }
     }
@@ -277,11 +298,17 @@ impl EguiRenderer {
         }
     }
 
-    /// Resize the surface.
+    /// Resize the surface. Clamps against the adapter-reported
+    /// `max_texture_dimension_2d` so a wide drag-resize on a high-
+    /// DPI display can't trip `surface.configure`'s validation
+    /// panic (which previously unwound through Reaper's CLAP
+    /// callback as a foreign C++ exception and aborted the host).
     pub fn resize(&mut self, width: u32, height: u32) {
         if width == 0 || height == 0 {
             return;
         }
+        let width = width.min(self.max_texture_dim);
+        let height = height.min(self.max_texture_dim);
         self.width = width;
         self.height = height;
         self.surface_config.width = width;

@@ -313,6 +313,28 @@ struct EguiWindowHandler<P: Params + ?Sized> {
 }
 
 impl<P: Params + ?Sized> EguiWindowHandler<P> {
+    /// Apply a pending resize: `NSView` frame (baseview's
+    /// `Window::resize`) first, then the wgpu surface. Reverse
+    /// order would leave the surface oversized vs. the layer that
+    /// hosts it for a frame and Metal could draw against an
+    /// undersized drawable.
+    fn apply_resize(
+        window: &mut Window,
+        renderer: Option<&mut EguiRenderer>,
+        new_size: (u32, u32),
+        scale: f64,
+    ) {
+        window.resize(baseview::Size::new(
+            f64::from(new_size.0),
+            f64::from(new_size.1),
+        ));
+        if let Some(renderer) = renderer {
+            let phys_w = truce_gui::to_physical_px(new_size.0, scale);
+            let phys_h = truce_gui::to_physical_px(new_size.1, scale);
+            renderer.resize(phys_w, phys_h);
+        }
+    }
+
     // `(u32, u32)` editor sizes widen to `f32` for egui's screen rect.
     // Editor sizes are bounded by display dimensions, well below 2^23.
     #[allow(clippy::cast_precision_loss)]
@@ -380,19 +402,36 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
         // here even though the OS-level resize happens via
         // `window.resize`. Linux/Win32 backends *do* fire `Resized`,
         // but reapplying the surface config is idempotent.
+        //
+        // Skip the draw on a resize frame so AppKit's deferred
+        // relayout (scheduled by `view.setNeedsDisplay` inside
+        // `Window::resize`) can settle before we paint. Without the
+        // skip, the egui draw races against AppKit's layout pass and
+        // can land an NSException through Reaper's main-thread
+        // callback (Metal layer mid-resize). The next `on_frame` tick
+        // picks up the freshly-sized surface.
         let pending = unpack_size(self.pending_size.load(Ordering::Relaxed));
         if pending != self.size && pending.0 > 0 && pending.1 > 0 {
+            // Skip the draw on a resize frame so AppKit's deferred
+            // relayout (scheduled by `view.setNeedsDisplay` inside
+            // `Window::resize`) settles before we paint, and
+            // bracket the macOS-side work in an autoreleasepool so
+            // AppKit autoreleased objects from `setFrameSize` drain
+            // before the next call rather than accumulating into
+            // the host's main-thread pool.
+            let new_size = pending;
             let scale = self.scale.get();
-            let phys_w = truce_gui::to_physical_px(pending.0, scale);
-            let phys_h = truce_gui::to_physical_px(pending.1, scale);
-            window.resize(baseview::Size::new(
-                f64::from(pending.0),
-                f64::from(pending.1),
-            ));
-            if let Some(renderer) = self.renderer.as_mut() {
-                renderer.resize(phys_w, phys_h);
+            #[cfg(target_os = "macos")]
+            {
+                let renderer = self.renderer.as_mut();
+                objc::rc::autoreleasepool(|| {
+                    Self::apply_resize(window, renderer, new_size, scale);
+                });
             }
-            self.size = pending;
+            #[cfg(not(target_os = "macos"))]
+            Self::apply_resize(window, self.renderer.as_mut(), new_size, scale);
+            self.size = new_size;
+            return;
         }
         self.run_frame();
     }
