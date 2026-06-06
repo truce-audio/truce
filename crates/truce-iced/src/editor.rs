@@ -177,6 +177,17 @@ where
     make_plugin: Box<dyn Fn(Arc<P>) -> M + Send + Sync>,
     meter_ids: Vec<u32>,
     baseview_window: Option<baseview::WindowHandle>,
+    /// Resize-capability flag exposed via `Editor::can_resize`. iced
+    /// editors default to `true` since the widget tree reflows for
+    /// free; plugins that ship a fixed-size GUI opt out with
+    /// `.resizable(false)`.
+    can_resize: bool,
+    /// Constraints exposed through the `Editor` trait so format
+    /// wrappers can hand the host honest bounds.
+    min_size: (u32, u32),
+    max_size: (u32, u32),
+    aspect_ratio: Option<(u32, u32)>,
+    prefers_pow2: bool,
 }
 
 // SAFETY: `baseview::WindowHandle` holds a raw native window pointer
@@ -232,6 +243,11 @@ impl<P: Params + 'static> IcedEditor<P, AutoPlugin> {
             make_plugin,
             meter_ids,
             baseview_window: None,
+            can_resize: true,
+            min_size: (1, 1),
+            max_size: (u32::MAX, u32::MAX),
+            aspect_ratio: None,
+            prefers_pow2: false,
         }
     }
 }
@@ -248,6 +264,11 @@ impl<P: Params + 'static, M: IcedPlugin<P> + 'static> IcedEditor<P, M> {
             make_plugin: Box::new(|p| M::new(p)),
             meter_ids: Vec::new(),
             baseview_window: None,
+            can_resize: true,
+            min_size: (1, 1),
+            max_size: (u32::MAX, u32::MAX),
+            aspect_ratio: None,
+            prefers_pow2: false,
         }
     }
 
@@ -269,6 +290,46 @@ impl<P: Params + 'static, M: IcedPlugin<P> + 'static> IcedEditor<P, M> {
     #[must_use]
     pub fn with_meter_ids(mut self, ids: Vec<impl Into<u32>>) -> Self {
         self.meter_ids = ids.into_iter().map(std::convert::Into::into).collect();
+        self
+    }
+
+    /// Opt out of host-driven resizing. iced editors default to
+    /// resizable because the widget tree reflows for free; pass
+    /// `false` here for plugins that ship a deliberately fixed-size
+    /// GUI and don't want hosts painting resize handles.
+    #[must_use]
+    pub fn resizable(mut self, resizable: bool) -> Self {
+        self.can_resize = resizable;
+        self
+    }
+
+    /// Minimum logical-point dimensions the editor accepts. Surfaced
+    /// to CLAP `gui_get_resize_hints` and VST3 `checkSizeConstraint`.
+    #[must_use]
+    pub fn min_size(mut self, min: (u32, u32)) -> Self {
+        self.min_size = min;
+        self
+    }
+
+    /// Maximum logical-point dimensions the editor accepts.
+    #[must_use]
+    pub fn max_size(mut self, max: (u32, u32)) -> Self {
+        self.max_size = max;
+        self
+    }
+
+    /// Lock the aspect ratio as `(numerator, denominator)`. Pass
+    /// `None` (the default) for free resizing.
+    #[must_use]
+    pub fn aspect_ratio(mut self, ratio: Option<(u32, u32)>) -> Self {
+        self.aspect_ratio = ratio;
+        self
+    }
+
+    /// Hint that the renderer prefers power-of-two surface sizes.
+    #[must_use]
+    pub fn prefers_pow2(mut self, prefers: bool) -> Self {
+        self.prefers_pow2 = prefers;
         self
     }
 }
@@ -864,7 +925,23 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
     }
 
     fn can_resize(&self) -> bool {
-        true
+        self.can_resize
+    }
+
+    fn min_size(&self) -> (u32, u32) {
+        self.min_size
+    }
+
+    fn max_size(&self) -> (u32, u32) {
+        self.max_size
+    }
+
+    fn aspect_ratio(&self) -> Option<(u32, u32)> {
+        self.aspect_ratio
+    }
+
+    fn prefers_pow2(&self) -> bool {
+        self.prefers_pow2
     }
 
     fn screenshot(

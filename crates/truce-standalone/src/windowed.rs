@@ -9,7 +9,9 @@
 //! can be translated into MIDI note events and `SPACE` / `S` /
 //! `Z` / `X` hotkeys drive transport / state / octave-shift.
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crossbeam_queue::ArrayQueue;
 
@@ -92,6 +94,20 @@ where
         return;
     };
     let (lw, lh) = editor.size();
+    // Only consulted inside the per-OS cfg blocks below (lock vs.
+    // free outer frame). On macOS neither block applies; gate the
+    // binding too so the macOS build doesn't trip
+    // `unused_variables`.
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    let editor_can_resize = editor.can_resize();
+
+    // Logical-points size handoff between the editor (via the
+    // `request_resize` closure) and the outer baseview window handler.
+    // Packed as `(width << 32) | height`; sentinel `0` means "no
+    // resize pending". Polled at the top of `on_frame` so a request
+    // posted from inside the editor's own event loop lands on the
+    // outer window within one frame.
+    let pending_resize = Arc::new(AtomicU64::new(0));
 
     let window_opts = WindowOpenOptions {
         title: P::info().name.to_string(),
@@ -171,31 +187,45 @@ where
                 output_ctrl.clone(),
                 midi_ctrl.clone(),
             );
-            // Plugin editors don't resize, so maximizing / dragging
-            // only stretches the child surface. Lock the window to a
-            // fixed-size, close-only frame - the Linux size-locking
-            // equivalent is `windowed_x11::pin_size` below.
-            crate::windowed_windows::lock_window(h.hwnd);
+            // Fixed-size editors get the window locked to a
+            // close-only frame so maximizing / dragging doesn't
+            // stretch the child surface. Resizable editors keep
+            // the full Windows non-client frame; the `Resized`
+            // event flows back to `editor.set_size` via `on_event`.
+            // Linux equivalent: `windowed_x11::pin_size` below.
+            if !editor_can_resize {
+                crate::windowed_windows::lock_window(h.hwnd);
+            }
             // Title-bar / taskbar icon from the icon embedded in the
             // packaged .exe (no-op in un-packaged dev builds).
             crate::windowed_windows::set_window_icon(h.hwnd);
         }
 
-        // Linux: plugin editors don't currently support resize, but
-        // X11 window managers happily let the user drag the outer
-        // baseview frame. Pin min == max size hints so resize grips
-        // disappear. Must run after the window is mapped (above) and
-        // before the editor sizes its child to the parent.
+        // Linux: when the editor doesn't opt into resize, X11 window
+        // managers happily let the user drag the outer baseview
+        // frame even though the child editor surface can't follow.
+        // Pin min == max size hints so resize grips disappear in
+        // that case; resizable editors leave the WM in charge and
+        // the `Resized` event flows back to `editor.set_size` via
+        // `on_event` below.
         #[cfg(target_os = "linux")]
-        if let RwhHandle::Xlib(h) = window.raw_window_handle() {
+        if !editor_can_resize
+            && let RwhHandle::Xlib(h) = window.raw_window_handle()
+        {
             crate::windowed_x11::pin_size(window.raw_display_handle(), &h);
         }
 
-        let ctx = synthesize_editor_context::<P>(&plugin, &transport);
+        let ctx = synthesize_editor_context::<P>(
+            &plugin,
+            &transport,
+            Arc::clone(&pending_resize),
+        );
         editor.open(truce_parent, ctx);
 
         StandaloneHandler {
-            _editor: editor,
+            editor,
+            pending_resize,
+            current_size: (lw, lh),
             plugin,
             pending,
             transport,
@@ -218,7 +248,20 @@ struct StandaloneHandler<P: PluginExport + 'static>
 where
     P::Params: 'static,
 {
-    _editor: Box<dyn Editor>,
+    /// Owned for drop-order: the editor's child window must close
+    /// before the outer one. Also actively driven by `on_frame` /
+    /// `on_event` for the resize round-trip.
+    editor: Box<dyn Editor>,
+    /// Shared with the editor's `request_resize` closure. Polled
+    /// every `on_frame` tick; non-zero values are popped and
+    /// applied via `Window::resize`.
+    pending_resize: Arc<AtomicU64>,
+    /// Last logical size we know the outer baseview window holds.
+    /// Used to suppress duplicate `Window::resize` calls on
+    /// already-applied targets, and as the baseline for the
+    /// `Resized` event -> `editor.set_size` propagation so the
+    /// editor only sees real OS-driven changes.
+    current_size: (u32, u32),
     plugin: Arc<Mutex<P>>,
     pending: Arc<ArrayQueue<MidiEvent>>,
     transport: Transport,
@@ -252,8 +295,23 @@ impl<P: PluginExport + 'static> WindowHandler for StandaloneHandler<P>
 where
     P::Params: 'static,
 {
-    fn on_frame(&mut self, _window: &mut Window) {
-        // Editor drives its own frame loop inside its child window.
+    fn on_frame(&mut self, window: &mut Window) {
+        // Editor drives its own frame loop inside its child window;
+        // the only thing we do here is honour pending resize requests
+        // posted by the editor through the `request_resize` closure.
+        let packed = self.pending_resize.swap(0, Ordering::Acquire);
+        if packed != 0 {
+            let (w, h) = unpack_size(packed);
+            if (w, h) != self.current_size && w > 0 && h > 0 {
+                window.resize(baseview::Size::new(f64::from(w), f64::from(h)));
+                self.current_size = (w, h);
+                // The OS-side `Resized` event that follows will
+                // re-confirm `editor.set_size`; suppress the
+                // round-trip by writing the editor here too so the
+                // event handler's diff check is a no-op.
+                self.editor.set_size(w, h);
+            }
+        }
     }
 
     // The Linux `_exit` extern lives inline with its single caller
@@ -261,6 +319,29 @@ where
     // from the API name; hence the function-level allow.
     #[allow(clippy::items_after_statements)]
     fn on_event(&mut self, _window: &mut Window, event: Event) -> EventStatus {
+        // OS-driven resize (user dragged the window edge): forward to
+        // the editor so the child surface follows the outer frame.
+        // `current_size` suppresses the round-trip when the resize
+        // originated from our own `request_resize` path - in that
+        // case `on_frame` already called `editor.set_size`.
+        if let Event::Window(baseview::WindowEvent::Resized(info)) = &event {
+            let phys = info.physical_size();
+            let scale = info.scale();
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let (lw, lh) = if scale > 0.0 {
+                (
+                    (f64::from(phys.width) / scale).round() as u32,
+                    (f64::from(phys.height) / scale).round() as u32,
+                )
+            } else {
+                (phys.width, phys.height)
+            };
+            if (lw, lh) != self.current_size && lw > 0 && lh > 0 {
+                self.current_size = (lw, lh);
+                self.editor.set_size(lw, lh);
+            }
+        }
+
         // On Linux X11 + NVIDIA, letting baseview unwind the parent
         // window normally crashes inside `XCloseDisplay` - the
         // driver's Xlib extension cleanup callback segfaults during
@@ -497,6 +578,24 @@ fn pick_save_path<P: PluginExport>(plugin_slug: &str) -> Option<std::path::PathB
     Some(path)
 }
 
+/// Pack `(width, height)` into a single `u64` for the
+/// `pending_resize` `AtomicU64` handoff between the editor closure
+/// and the outer `StandaloneHandler`. Sentinel value `0` (both
+/// halves zero) means "no resize pending."
+#[inline]
+fn pack_size(size: (u32, u32)) -> u64 {
+    (u64::from(size.0) << 32) | u64::from(size.1)
+}
+
+/// Inverse of `pack_size`.
+#[inline]
+fn unpack_size(packed: u64) -> (u32, u32) {
+    #[allow(clippy::cast_possible_truncation)]
+    {
+        ((packed >> 32) as u32, (packed & 0xFFFF_FFFF) as u32)
+    }
+}
+
 /// macOS uses Cmd (`meta`); Linux/Windows use Ctrl.
 fn is_mod_pressed(mods: Modifiers) -> bool {
     if cfg!(target_os = "macos") {
@@ -512,6 +611,7 @@ fn is_mod_pressed(mods: Modifiers) -> bool {
 fn synthesize_editor_context<P: PluginExport>(
     plugin: &Arc<Mutex<P>>,
     transport: &Transport,
+    pending_resize: Arc<AtomicU64>,
 ) -> PluginContext
 where
     P::Params: 'static,
@@ -542,7 +642,13 @@ where
                 params_write.set_normalized(id, norm);
             }),
             end_edit: Box::new(|_id| {}),
-            request_resize: Box::new(|_w, _h| false),
+            request_resize: Box::new(move |w, h| {
+                if w == 0 || h == 0 {
+                    return false;
+                }
+                pending_resize.store(pack_size((w, h)), Ordering::Release);
+                true
+            }),
             get_param: Box::new(move |id| params_read.get_normalized(id).unwrap_or(0.0)),
             get_param_plain: Box::new(move |id| params_plain.get_plain(id).unwrap_or(0.0)),
             format_param: Box::new(move |id| {
