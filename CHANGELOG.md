@@ -2,6 +2,13 @@
 
 Notable changes per release.
 
+## 0.56.0
+
+- **`truce-vizia`: `param_knob` layout matches the other backends.**
+  Reordered the cell as knob → value → name; previously the name
+  label sat between the knob and the value, which inverted the
+  cross-backend convention.
+
 ## 0.55.0
 
 - **AU v3: sample-accurate parameter automation.** The Swift shim
