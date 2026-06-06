@@ -10,8 +10,8 @@ use truce_font::JETBRAINS_MONO;
 // area, growing with the window. Pickable defaults; the meter
 // stretches vertically with the window while the knob row + XY
 // pad stay at their natural sizes.
-const WINDOW_W: u32 = 240;
-const WINDOW_H: u32 = 320;
+const WINDOW_W: u32 = 176;
+const WINDOW_H: u32 = 290;
 // Two 60 px knobs + 10 px gap = 130 px; plus a 16 px meter,
 // 10 px meter-to-column gap, and 10 px padding on each side =
 // 176 px - the smallest width where the XY pad column matches
