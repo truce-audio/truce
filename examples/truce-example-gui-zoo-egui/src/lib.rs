@@ -9,8 +9,7 @@ use truce_core::editor::PluginContext;
 use truce_egui::EguiEditor;
 use truce_egui::theme::{HEADER_BG, HEADER_TEXT};
 use truce_egui::widgets::{
-    level_meter, param_dropdown, param_knob, param_selector, param_slider, param_toggle,
-    param_xy_pad,
+    level_meter, param_dropdown, param_knob, param_slider, param_toggle, param_xy_pad,
 };
 use truce_font::JETBRAINS_MONO;
 
@@ -19,14 +18,6 @@ use std::sync::Arc;
 
 const WINDOW_W: u32 = 700;
 const WINDOW_H: u32 = 900;
-
-#[derive(ParamEnum)]
-pub enum Shape {
-    Sine,
-    Triangle,
-    Square,
-    Sawtooth,
-}
 
 #[derive(ParamEnum)]
 pub enum Mode {
@@ -85,9 +76,7 @@ pub struct ZooParams {
     #[param(name = "Off")]
     pub t_off: BoolParam,
 
-    // -- Selector + dropdowns --
-    #[param(name = "Shape")]
-    pub shape: EnumParam<Shape>,
+    // -- Dropdowns --
     #[param(name = "Mode")]
     pub mode: EnumParam<Mode>,
     #[param(name = "Mode Wide")]
@@ -229,14 +218,11 @@ fn zoo_ui(ui: &mut egui::Ui, state: &PluginContext<ZooParams>) {
                         });
                     });
 
-                    section(ui, "Toggles & Selector");
+                    section(ui, "Toggles");
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing = egui::vec2(20.0, 0.0);
                         param_toggle(ui, state, P::TOn, "On");
                         param_toggle(ui, state, P::TOff, "Off");
-                        // `step_count` for `param_selector` is the
-                        // number of options; matches `Shape` variants.
-                        param_selector(ui, state, P::Shape, "Shape", 4);
                     });
 
                     section(ui, "Dropdowns");

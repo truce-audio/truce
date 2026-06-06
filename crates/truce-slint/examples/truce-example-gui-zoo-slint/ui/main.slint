@@ -1,4 +1,4 @@
-import { Knob, Meter, ParamSlider, Toggle, Selector, Dropdown, XYPad } from "@truce";
+import { Knob, Meter, ParamSlider, Toggle, Dropdown, XYPad } from "@truce";
 import "JetBrainsMono-Regular.ttf";
 
 export component ZooUi inherits Window {
@@ -58,12 +58,6 @@ export component ZooUi inherits Window {
 
     in-out property <bool> t-off;
     callback t-off-toggled(bool);
-
-    // --- Selector (enum index) ---
-    in-out property <int> shape-index;
-    in property <int> shape-count: 4;
-    in property <string> shape-text;
-    callback shape-changed(int);
 
     // --- Dropdown (enum index, popup-style) ---
     in-out property <int> mode-index;
@@ -145,12 +139,11 @@ export component ZooUi inherits Window {
                 ParamSlider { width: 220px; label: "Wide (dB)"; value <=> root.s-wide; value-text: root.s-wide-text; changed(v) => { root.s-wide-changed(v); } }
             }
 
-            Text { text: "Toggles & Selector"; font-size: 11px; color: #bfbfc8; }
+            Text { text: "Toggles"; font-size: 11px; color: #bfbfc8; }
             HorizontalLayout {
                 spacing: 20px;
                 Toggle { label: "On"; checked <=> root.t-on; toggled(v) => { root.t-on-toggled(v); } }
                 Toggle { label: "Off"; checked <=> root.t-off; toggled(v) => { root.t-off-toggled(v); } }
-                Selector { label: "Shape"; index <=> root.shape-index; count: root.shape-count; text: root.shape-text; changed(v) => { root.shape-changed(v); } }
             }
 
             Text { text: "Dropdown"; font-size: 11px; color: #bfbfc8; }

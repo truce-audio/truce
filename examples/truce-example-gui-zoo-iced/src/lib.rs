@@ -24,18 +24,10 @@ const HEADER_TEXT: iced::Color = iced::Color::from_rgb(0.75, 0.75, 0.80);
 use truce::prelude::*;
 use truce_iced::{
     IcedEditor, IcedPlugin, IntoElement, Message, ParamCache, knob, meter, param_dropdown,
-    param_selector, param_slider, param_toggle, xy_pad,
+    param_slider, param_toggle, xy_pad,
 };
 
 use ZooParamsParamId as P;
-
-#[derive(ParamEnum)]
-pub enum Shape {
-    Sine,
-    Triangle,
-    Square,
-    Sawtooth,
-}
 
 #[derive(ParamEnum)]
 pub enum Mode {
@@ -92,10 +84,6 @@ pub struct ZooParams {
     pub t_on: BoolParam,
     #[param(name = "Off")]
     pub t_off: BoolParam,
-
-    // -- Selector --
-    #[param(name = "Shape")]
-    pub shape: EnumParam<Shape>,
 
     // -- Dropdown --
     #[param(name = "Mode")]
@@ -189,15 +177,10 @@ impl IcedPlugin<ZooParams> for ZooUi {
         let toggles_row: Element<'a, Message<ZooMsg>> = Row::new()
             .push(param_toggle(P::TOn, params).label("On").el())
             .push(param_toggle(P::TOff, params).label("Off").el())
-            .push(param_selector(P::Shape, params).label("Shape").el())
             .spacing(20.0)
             .align_y(alignment::Vertical::Bottom)
             .into();
 
-        // `param_dropdown` is an alias for `param_selector` in
-        // `truce-iced`, so this renders identically to the selector
-        // above - the section demonstrates the API surface for
-        // plugin authors writing against the egui / CPU shape.
         let dropdown_row: Element<'a, Message<ZooMsg>> = Row::new()
             .push(param_dropdown(P::Mode, params).label("Mode").el())
             .spacing(20.0)
@@ -244,7 +227,7 @@ impl IcedPlugin<ZooParams> for ZooUi {
             .push(knobs_row)
             .push(section_label("Sliders"))
             .push(sliders_row)
-            .push(section_label("Toggles & Selector"))
+            .push(section_label("Toggles"))
             .push(toggles_row)
             .push(section_label("Dropdown"))
             .push(dropdown_row)

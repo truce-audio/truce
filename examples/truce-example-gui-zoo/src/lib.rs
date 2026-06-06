@@ -5,23 +5,13 @@
 
 use truce::prelude::*;
 use truce_gui::IntoLayoutEditor;
-use truce_gui_types::layout::{
-    GridLayout, dropdown, knob, meter, section, selector, slider, toggle, xy_pad,
-};
+use truce_gui_types::layout::{GridLayout, dropdown, knob, meter, section, slider, toggle, xy_pad};
 
 use ZooParamsParamId as P;
 use std::sync::Arc;
 
-// Enums driving the selector / dropdown widgets. The dropdown's enum
-// is intentionally long enough to exercise the popup's scroll path.
-
-#[derive(ParamEnum)]
-pub enum Shape {
-    Sine,
-    Triangle,
-    Square,
-    Sawtooth,
-}
+// Enums driving the dropdown widgets. `Mode` is intentionally long
+// enough to exercise the popup's scroll path.
 
 #[derive(ParamEnum)]
 pub enum Mode {
@@ -99,9 +89,7 @@ pub struct ZooParams {
     #[param(name = "Off")]
     pub t_off: BoolParam,
 
-    // -- Selector (cycle) + Dropdowns (default + wide) --
-    #[param(name = "Shape")]
-    pub shape: EnumParam<Shape>,
+    // -- Dropdowns (default + wide) --
     #[param(name = "Mode")]
     pub mode: EnumParam<Mode>,
     #[param(name = "Mode Wide")]
@@ -217,12 +205,8 @@ impl PluginLogic for Zoo {
                 ],
             ),
             section(
-                "Toggles & Selector",
-                vec![
-                    toggle(P::TOn, "On"),
-                    toggle(P::TOff, "Off"),
-                    selector(P::Shape, "Cycle").cols(2),
-                ],
+                "Toggles",
+                vec![toggle(P::TOn, "On"), toggle(P::TOff, "Off")],
             ),
             section(
                 "Dropdown",
