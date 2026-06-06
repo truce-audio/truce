@@ -94,6 +94,20 @@ impl PluginLogic for GainVizia {
         ViziaEditor::new(self.params.clone(), (WINDOW_W, WINDOW_H), gain_view)
             .with_stylesheet(widgets::BASE_CSS)
             .with_font(JETBRAINS_MONO)
+            // Host-drag resize: the wrapper installs the
+            // `WidthSizable | HeightSizable` autoresize mask, the
+            // host's drag handle grows the parent NSView, baseview's
+            // `setFrameSize:` override fires `Resized`, and
+            // vizia_baseview's `Resized` handler reconfigures its
+            // skia surface + calls `cx.set_window_size`, which
+            // re-runs vizia's layout engine against the new root
+            // dimensions. CLAP `gui_set_size` / VST3 `IPlugView::onSize`
+            // round-trips that don't accompany a parent resize are a
+            // no-op pending the vizia_baseview upstream resize-API
+            // patch tracked in `crates/truce-vizia/src/editor.rs`.
+            .resizable(true)
+            .min_size((176, 240))
+            .max_size((1200, 900))
             .into_editor()
     }
 }
@@ -103,54 +117,52 @@ fn gain_view(cx: &mut Context, lens: ParamLens<GainParams>) {
     let lens_for_meter = lens.clone();
     HStack::new(cx, move |cx| {
         VStack::new(cx, move |cx| {
+            // Knob row: take the column width so we have room to
+            // centre the knobs as the editor grows, but pack the
+            // knobs themselves at their natural width (no
+            // Stretch-wrapping each cell). `alignment: center`
+            // keeps the pair grouped under the XY pad below
+            // instead of letting them drift apart with the column
+            // - matches the egui / iced / slint gain examples.
             HStack::new(cx, |cx| {
-                // Wrap each knob in a Stretch-width HStack so the two
-                // cells split the row equally. The row width matches
-                // the Pan / Gain pad below (130px) so the knob row
-                // aligns visually with the pad's left and right edges.
-                HStack::new(cx, |cx| {
-                    param_knob(cx, lens.clone(), P::Gain, "Gain");
-                })
-                .width(Stretch(1.0))
-                .height(Auto)
-                .alignment(Alignment::Center);
-                HStack::new(cx, |cx| {
-                    param_knob(cx, lens.clone(), P::Pan, "Pan");
-                })
-                .width(Stretch(1.0))
-                .height(Auto)
-                .alignment(Alignment::Center);
+                param_knob(cx, lens.clone(), P::Gain, "Gain");
+                param_knob(cx, lens.clone(), P::Pan, "Pan");
             })
-            .width(Pixels(130.0))
-            .height(Auto);
-            // XY pad: fixed 130x130 today because vizia's resize
-            // path is upstream-blocked on a `vizia_baseview`
-            // patch. Once that lands the pad will swap to
-            // `Stretch(1.0)` for both axes so it scales with the
-            // editor window.
+            .width(Stretch(1.0))
+            .height(Auto)
+            .horizontal_gap(Pixels(10.0))
+            .alignment(Alignment::TopCenter);
+            // XY pad stretches in both axes so it fills the column
+            // below the (fixed-height) knob row as the editor
+            // window grows.
             param_xy_pad(
                 cx,
                 lens.clone(),
                 P::Pan,
                 P::Gain,
                 "Pan / Gain",
-                130.0,
-                130.0,
+                Stretch(1.0),
+                Stretch(1.0),
             );
         })
-        .width(Auto)
-        .height(Auto)
+        .width(Stretch(1.0))
+        .height(Stretch(1.0))
         .vertical_gap(Pixels(13.0));
 
-        // Meter on the right, lined up with the control column's
-        // overall height.
+        // Meter on the right: narrow band, stretches vertically
+        // with the editor frame.
         level_meter(
             cx,
             lens_for_meter.clone(),
             &[P::MeterLeft, P::MeterRight],
-            240.0,
+            Stretch(1.0),
         );
     })
+    // Outer row fills the editor; stretch children inside (knob
+    // column, XY pad, meter) divide the remaining space relative
+    // to each other.
+    .width(Stretch(1.0))
+    .height(Stretch(1.0))
     .padding(Pixels(10.0))
     .horizontal_gap(Pixels(10.0))
     .alignment(Alignment::TopLeft);

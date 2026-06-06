@@ -237,6 +237,26 @@ impl PluginLogic for Zoo {
         .with_cols(6)
         .with_title("GUI ZOO")
         .with_subtitle("widget reference")
+        // Auto-flow + a wide column range = the zoo is a good
+        // resize demo: as the host snaps the width to whole-cell
+        // increments, `GridLayout::refit_cols` reflows the
+        // AUTO-positioned widgets in each `section(...)` into
+        // more / fewer columns. `min_cols(4)` keeps the
+        // explicitly-spanned `KBig` / `ModeWide` / `M6` widgets
+        // and the 3x3 XY pad from getting clipped at the smallest
+        // size; `max_cols(12)` caps the horizontal stretch at a
+        // size the layout still reads as a single screen.
+        .resizable(true)
+        .min_cols(4)
+        .max_cols(12)
+        // Vertical resize: the zoo's natural row count is whatever
+        // auto-flow + the explicit XY pad / 6-channel meter / Mode
+        // dropdowns demand. We let `refit_rows` grow the grid up to
+        // 24 cell-rows of trailing space (well past the natural
+        // bottom) and bottom out at 6 - shrinking further would
+        // clip the larger explicitly-positioned widgets.
+        .min_rows(6)
+        .max_rows(24)
         .into_editor(&self.params)
     }
 }

@@ -77,13 +77,14 @@ impl PluginLogic for Gain {
     }
 
     fn editor(&self) -> Box<dyn Editor> {
-        // Meter pinned to column 0 spanning three rows; the knob
-        // row sits at the top-right and the XY pad fills the rest
-        // of the right area. `truce-gui`'s built-in `GridLayout`
-        // doesn't reflow on host-driven resize yet (Phase 3.1 is
-        // pending), so this layout is currently fixed-size; the
-        // arrangement matches the other gain examples for visual
-        // parity.
+        // Knob row at top-left, XY pad below them, meter pinned to
+        // column 2 spanning three rows. With `.resizable(true)`,
+        // host-driven resize snaps to a whole-cell width and
+        // reflows the grid via `GridLayout::refit_cols`: auto-flow
+        // widgets repack into the new column count and the height
+        // re-computes from the new layout. The explicit `.at(...)`
+        // placements stay put, so `min_cols(3)` keeps the meter's
+        // column reachable at any host-allowed size.
         GridLayout::build(vec![widgets(vec![
             knob(P::Gain, "Gain").at(0, 0),
             knob(P::Pan, "Pan").at(1, 0),
@@ -93,6 +94,22 @@ impl PluginLogic for Gain {
                 .rows(3),
         ])])
         .with_title("GAIN")
+        // `build()` derives `cols` from the widest section's widget
+        // count (4 for this layout: knob + knob + xy_pad + meter),
+        // which is wider than the rightmost widget edge (col 2 -
+        // span 1 = 3 cols). Pin to 3 explicitly so the natural
+        // size is tight to the actual content and `refit_cols`
+        // snaps from there.
+        .with_cols(3)
+        .resizable(true)
+        .min_cols(3)
+        .max_cols(8)
+        // Vertical resize: the meter at col 2 spans 3 rows, so the
+        // natural row extent is 3. Allow growing to 6 cell-rows
+        // (extra trailing space below the widgets) - shrinking past
+        // 3 would clip the meter.
+        .min_rows(3)
+        .max_rows(6)
         .into_editor(&self.params)
     }
 }

@@ -10,6 +10,8 @@ use std::ptr;
 use std::sync::Arc;
 #[cfg(feature = "cpu")]
 use std::sync::Mutex;
+#[cfg(feature = "cpu")]
+use std::sync::atomic::AtomicU64;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use truce_core::Float;
@@ -100,6 +102,18 @@ pub struct BuiltinEditor<P: Params> {
     /// moved (the gpu path repaints unconditionally and ignores this).
     #[cfg(feature = "cpu")]
     last_meter_values: Vec<f32>,
+    /// Host-driven resize handoff. `Editor::set_size` snaps the
+    /// requested width to a whole number of `cell_size + gap`
+    /// steps, reflows the grid via `GridLayout::refit_cols`, and
+    /// packs the resulting `(w, h)` here. `on_frame` drains the
+    /// cell at the top of each tick and applies the size to the
+    /// CPU pixmap, wgpu surface, interaction regions, and the
+    /// baseview window itself - same handoff shape the egui / iced
+    /// / slint editors use. `0` is the "no pending resize"
+    /// sentinel; an unchanged editor pays one atomic load per
+    /// frame.
+    #[cfg(feature = "cpu")]
+    pending_size: Arc<AtomicU64>,
 }
 
 // SAFETY: `baseview::WindowHandle` holds a raw native window pointer
@@ -112,6 +126,25 @@ pub struct BuiltinEditor<P: Params> {
 // thread in practice. All other fields (`Arc<P>`, `Layout`, `Theme`,
 // `Option<CpuBackend>`, etc.) are themselves `Send`.
 unsafe impl<P: Params> Send for BuiltinEditor<P> {}
+
+/// Compute the `(width, height)` the supplied grid would produce
+/// at the given `(cols, rows)` extent. Used by `Editor::min_size`
+/// / `max_size` to report the full snap envelope on both axes.
+///
+/// The grid is cloned (cheap - widgets are `Clone`) and the clone's
+/// `cols` / `rows` are swapped. The original layout is left
+/// untouched; only the editor's host-set path mutates `self.layout`.
+#[cfg(feature = "cpu")]
+fn grid_size_at_cols_rows(
+    gl: &truce_gui_types::layout::GridLayout,
+    cols: u32,
+    rows: u32,
+) -> (u32, u32) {
+    let mut probe = gl.clone();
+    probe.cols = cols.max(1);
+    probe.rows = rows.max(1);
+    probe.compute_size()
+}
 
 /// Gather every meter ID referenced by a layout, in layout order. The
 /// CPU editor polls these each frame to decide when a meter moved and
@@ -258,6 +291,8 @@ impl<P: Params + 'static> BuiltinEditor<P> {
             meter_ids,
             #[cfg(feature = "cpu")]
             last_meter_values: Vec::new(),
+            #[cfg(feature = "cpu")]
+            pending_size: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -537,10 +572,19 @@ fn create_wgpu_backend(window: &mut baseview::Window, phys_w: u32, phys_h: u32) 
     }))
     .expect("no suitable GPU adapter");
 
+    // `downlevel_defaults` caps `max_texture_dimension_2d` at 2048
+    // - on Retina (2x), that means the editor can't physically exceed
+    // 1024 logical points per axis before `surface.configure` panics
+    // with a validation error. Use the adapter's actual limits so a
+    // resizable layout (e.g. the GUI zoo) can grow to its declared
+    // `max_cols` / `max_rows` envelope without tripping the cap, then
+    // belt-and-braces clamp resize requests in `BlitBackend::resize`.
+    let adapter_limits = adapter.limits();
+    let max_texture_dim = adapter_limits.max_texture_dimension_2d;
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("truce-gui"),
         required_features: wgpu::Features::empty(),
-        required_limits: wgpu::Limits::downlevel_defaults(),
+        required_limits: adapter_limits,
         experimental_features: wgpu::ExperimentalFeatures::default(),
         memory_hints: wgpu::MemoryHints::Performance,
         trace: wgpu::Trace::Off,
@@ -555,11 +599,18 @@ fn create_wgpu_backend(window: &mut baseview::Window, phys_w: u32, phys_h: u32) 
         .copied()
         .unwrap_or(caps.formats[0]);
 
+    // Same belt-and-braces clamp as `BlitBackend::resize` applies on
+    // subsequent reconfigures: a host could open the editor at a
+    // logical * DPI size that already exceeds `max_texture_dim`
+    // (e.g. a fixed-size editor on a 3x display whose physical
+    // dimensions are over the device cap).
+    let init_w = phys_w.clamp(1, max_texture_dim);
+    let init_h = phys_h.clamp(1, max_texture_dim);
     let surface_config = wgpu::SurfaceConfiguration {
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
         format,
-        width: phys_w,
-        height: phys_h,
+        width: init_w,
+        height: init_h,
         present_mode: wgpu::PresentMode::AutoVsync,
         desired_maximum_frame_latency: 2,
         alpha_mode: wgpu::CompositeAlphaMode::Auto,
@@ -571,7 +622,7 @@ fn create_wgpu_backend(window: &mut baseview::Window, phys_w: u32, phys_h: u32) 
     // physical pixels (see CpuBackend's scale handling). With texture
     // and surface at the same physical size, the full-screen-triangle
     // blit samples 1:1 - no stretch, no Retina blur.
-    let blit = crate::blit::BlitPipeline::new(&device, format, phys_w, phys_h);
+    let blit = crate::blit::BlitPipeline::new(&device, format, init_w, init_h);
 
     BlitBackend {
         blit,
@@ -579,6 +630,7 @@ fn create_wgpu_backend(window: &mut baseview::Window, phys_w: u32, phys_h: u32) 
         surface,
         queue,
         device,
+        max_texture_dim,
     }
 }
 
@@ -597,6 +649,13 @@ struct BlitBackend {
     surface: wgpu::Surface<'static>,
     queue: wgpu::Queue,
     device: wgpu::Device,
+    /// Adapter-reported `max_texture_dimension_2d`. `resize` clamps
+    /// each axis against this before `surface.configure` so a host-
+    /// or DPI-driven resize past the device's texture cap can't
+    /// trip a wgpu validation panic (which unwinds out of the
+    /// editor on the host's UI thread and aborts the standalone /
+    /// the DAW).
+    max_texture_dim: u32,
 }
 
 #[cfg(feature = "cpu")]
@@ -606,8 +665,10 @@ impl BlitBackend {
     /// DPI change - the logical editor size doesn't change, but the
     /// physical pixmap and surface need to grow / shrink to match.
     fn resize(&mut self, phys_w: u32, phys_h: u32) {
-        self.surface_config.width = phys_w.max(1);
-        self.surface_config.height = phys_h.max(1);
+        let phys_w = phys_w.clamp(1, self.max_texture_dim);
+        let phys_h = phys_h.clamp(1, self.max_texture_dim);
+        self.surface_config.width = phys_w;
+        self.surface_config.height = phys_h;
         self.surface.configure(&self.device, &self.surface_config);
         self.blit.resize(&self.device, phys_w, phys_h);
     }
@@ -658,7 +719,7 @@ unsafe impl<P: Params> Send for BuiltinWindowHandler<P> {}
 
 #[cfg(feature = "cpu")]
 impl<P: Params + 'static> baseview::WindowHandler for BuiltinWindowHandler<P> {
-    fn on_frame(&mut self, _window: &mut baseview::Window) {
+    fn on_frame(&mut self, window: &mut baseview::Window) {
         // Lock the shared backend cell *before* deref'ing `self.editor`.
         // `BuiltinEditor::close` calls `drop(guard.take())` on the same
         // mutex before returning; the host then drops the editor. So
@@ -676,12 +737,46 @@ impl<P: Params + 'static> baseview::WindowHandler for BuiltinWindowHandler<P> {
 
         let editor = unsafe { &mut *self.editor };
 
+        // Pick up host-driven `set_size` requests posted to the
+        // shared `pending_size` cell since the last frame. The
+        // editor's `set_size` has already snapped to a whole
+        // column count and reflowed the grid via
+        // `GridLayout::refit_cols`; here we rebuild the CPU pixmap
+        // at the new logical size, reconfigure the wgpu blit
+        // surface to the new physical extent, refresh the
+        // interaction-region cache against the post-reflow widget
+        // layout, and resize the baseview window itself so the
+        // host's outer container follows. Same handoff pattern the
+        // egui / iced / slint editors use.
+        let pending = editor.pending_size.swap(0, Ordering::Acquire);
+        if pending != 0 {
+            #[allow(clippy::cast_possible_truncation)]
+            let new_w = (pending >> 32) as u32;
+            #[allow(clippy::cast_possible_truncation)]
+            let new_h = (pending & 0xFFFF_FFFF) as u32;
+            if new_w > 0 && new_h > 0 {
+                let scale = editor.scale.get();
+                let scale_f32 = editor.scale.get_f32();
+                let phys_w = crate::platform::to_physical_px(new_w, scale);
+                let phys_h = crate::platform::to_physical_px(new_h, scale);
+                editor.backend = CpuBackend::new(new_w, new_h, scale_f32);
+                if let Some(backend) = guard.as_mut() {
+                    backend.resize(phys_w, phys_h);
+                }
+                match &editor.layout {
+                    Layout::Rows(pl) => editor.interaction.build_regions(pl),
+                    Layout::Grid(gl) => editor.interaction.build_regions_grid(gl),
+                }
+                window.resize(baseview::Size::new(f64::from(new_w), f64::from(new_h)));
+                editor.request_repaint();
+            }
+        }
+
         // Pick up scale changes that landed in the shared cell since
         // the last frame - either from a host callback (CLAP
         // `set_scale`, VST3 `IPlugViewContentScaleSupport`) or from
         // the OS-driven `Resized` path writing through `info.scale()`.
-        // Logical w×h is fixed (resize is disallowed per
-        // `Editor::can_resize`'s `false` default); only the
+        // Logical w×h is fixed when resize is disallowed; only the
         // logical→physical ratio moves through here.
         if let Some(cur_scale) = editor.scale.take_change(&mut self.last_applied_scale) {
             let (lw, lh) = editor.size();
@@ -784,20 +879,37 @@ impl<P: Params + 'static> baseview::WindowHandler for BuiltinWindowHandler<P> {
                 baseview::EventStatus::Captured
             }
             baseview::Event::Window(baseview::WindowEvent::Resized(info)) => {
-                // Logical resize is disallowed (`Editor::can_resize` is
-                // `false`), but the OS-reported *scale* is authoritative:
-                // on Windows the parent HWND queried at `open()` time
-                // can report a different DPI than the child surface
-                // baseview actually creates, and on every platform
-                // dragging across a monitor boundary needs to land on
-                // the new DPI. Write through to the shared cell so
-                // `on_frame`'s `take_change` path rebuilds the CPU
-                // pixmap and reconfigures the wgpu surface at the new
-                // scale; logical w×h stays put. Matches the iced /
-                // egui / slint backends' Resized handlers.
+                // Two things can flow through `Resized`:
+                //  - A backing-scale change (monitor-boundary drag,
+                //    host calling `set_scale_factor`): logical w×h is
+                //    invariant, only `info.scale()` matters.
+                //  - A logical resize via the autoresize cascade
+                //    (host grows the parent NSView with our child
+                //    tagged `WidthSizable | HeightSizable`, or the
+                //    standalone window grows around us). For
+                //    resizable editors we route the new bounds into
+                //    `set_size` so the grid reflows; fixed-size
+                //    editors stay pinned.
                 let editor = unsafe { &mut *self.editor };
                 editor.scale.set(info.scale());
                 crate::platform::note_linux_scale_factor(info.scale());
+                if editor.can_resize() {
+                    let phys = info.physical_size();
+                    let scale = info.scale();
+                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                    let (lw, lh) = if scale > 0.0 {
+                        (
+                            (f64::from(phys.width) / scale).round() as u32,
+                            (f64::from(phys.height) / scale).round() as u32,
+                        )
+                    } else {
+                        (phys.width, phys.height)
+                    };
+                    let (cur_w, cur_h) = editor.size();
+                    if (lw, lh) != (cur_w, cur_h) && lw > 0 && lh > 0 {
+                        editor.set_size(lw, lh);
+                    }
+                }
                 baseview::EventStatus::Ignored
             }
             _ => baseview::EventStatus::Ignored,
@@ -852,8 +964,78 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
         self.request_repaint();
     }
 
+    fn can_resize(&self) -> bool {
+        match &self.layout {
+            Layout::Grid(gl) => gl.resizable,
+            // `PluginLayout` (the older row-based layout) doesn't
+            // have a reflow path yet; pin it until that lands.
+            Layout::Rows(_) => false,
+        }
+    }
+
+    fn min_size(&self) -> (u32, u32) {
+        match &self.layout {
+            Layout::Grid(gl) => grid_size_at_cols_rows(gl, gl.min_cols, gl.min_rows),
+            Layout::Rows(_) => self.size(),
+        }
+    }
+
+    fn max_size(&self) -> (u32, u32) {
+        match &self.layout {
+            Layout::Grid(gl) => {
+                // `u32::MAX` means "no cap"; clamp to 64 on each
+                // axis - well past any plugin window a host would
+                // render, and small enough that the layout math
+                // doesn't overflow.
+                let col_cap = if gl.max_cols == u32::MAX {
+                    64
+                } else {
+                    gl.max_cols.max(1)
+                };
+                let row_cap = if gl.max_rows == u32::MAX {
+                    64
+                } else {
+                    gl.max_rows.max(1)
+                };
+                grid_size_at_cols_rows(gl, col_cap, row_cap)
+            }
+            Layout::Rows(_) => self.size(),
+        }
+    }
+
+    fn set_size(&mut self, width: u32, height: u32) -> bool {
+        if width == 0 || height == 0 || !self.can_resize() {
+            return false;
+        }
+        let Layout::Grid(ref mut gl) = self.layout else {
+            return false;
+        };
+        // Snap each axis to a whole cell step independently:
+        // width drives the column count (auto-flow widgets reflow,
+        // explicit widgets stay put), height drives the row count
+        // (purely a bookkeeping value `compute_size` uses to grow
+        // the grid past the bottommost widget with empty trailing
+        // space). The wider snap *then* the taller snap so the
+        // final cached `(width, height)` includes both axes.
+        gl.refit_cols(width);
+        let (new_w, new_h) = gl.refit_rows(height);
+        self.pending_size.store(
+            (u64::from(new_w) << 32) | u64::from(new_h),
+            Ordering::Release,
+        );
+        // Flip the dirty bit so a quiescent editor (no automation,
+        // no UI edits) still wakes up the `on_frame` repaint gate
+        // and picks up the new size on the next tick.
+        self.request_repaint();
+        true
+    }
+
     fn open(&mut self, parent: RawWindowHandle, context: PluginContext) {
         let (w, h) = self.size();
+        // Drop any stale `set_size` that fired before this `open()`
+        // so the next frame doesn't immediately re-resize the
+        // freshly-built window to a previous request.
+        self.pending_size.store(0, Ordering::Relaxed);
         // Refresh the shared scale from the parent window - on macOS
         // this is the live `[NSWindow backingScaleFactor]`, on
         // Windows the per-monitor DPI from the parent HWND. Any
@@ -1002,6 +1184,7 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
                 surface_config,
                 queue,
                 device,
+                max_texture_dim: _,
             } = backend;
             drop(surface_config);
             drop(blit);

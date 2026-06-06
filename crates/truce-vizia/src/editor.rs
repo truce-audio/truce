@@ -42,6 +42,28 @@ pub struct ViziaEditor<P: Params + ?Sized> {
     /// Optional embedded font bytes. Most plugins pass
     /// `truce_font::JETBRAINS_MONO`.
     font: Option<&'static [u8]>,
+    /// Resize-capability flag surfaced via `Editor::can_resize`.
+    /// Defaults to `false` so existing plugins stay pinned to their
+    /// built size. Plugins designed with a flexible vizia widget
+    /// tree opt in with `.resizable(true)`.
+    ///
+    /// When `true`, host-driven resize works on macOS via the
+    /// wrapper's `WidthSizable | HeightSizable` autoresize mask +
+    /// `baseview-truce`'s `setFrameSize:` `Resized` patch +
+    /// `vizia_baseview`'s existing `Resized` handler (which
+    /// reconfigures the skia surface and calls `cx.set_window_size`).
+    /// Wrapper-driven `editor.set_size` (CLAP `gui_set_size`, VST3
+    /// `IPlugView::onSize`) is currently a no-op pending a
+    /// `vizia_baseview` upstream patch that exposes a resize entry
+    /// point on `WindowHandle`.
+    can_resize: bool,
+    /// Lower clamp on host-driven resize requests, in logical
+    /// points. Surfaced via `Editor::min_size` so CLAP
+    /// `gui_get_resize_hints` and VST3 `checkSizeConstraint` see
+    /// honest bounds.
+    min_size: (u32, u32),
+    /// Upper clamp on host-driven resize requests.
+    max_size: (u32, u32),
     window: Option<vizia::WindowHandle>,
 }
 
@@ -69,6 +91,9 @@ impl<P: Params + 'static> ViziaEditor<P> {
             setup: Arc::new(setup),
             stylesheets: Vec::new(),
             font: None,
+            can_resize: false,
+            min_size: (1, 1),
+            max_size: (u32::MAX, u32::MAX),
             window: None,
         }
     }
@@ -93,12 +118,74 @@ impl<P: Params + 'static> ViziaEditor<P> {
         self.font = Some(font_bytes);
         self
     }
+
+    /// Opt into host-driven resize. Defaults to `false`: existing
+    /// plugins stay pinned to their built dimensions. When `true`,
+    /// the host's drag handles grow / shrink the parent `NSView` (or
+    /// HWND / X11 window); the autoresize chain + baseview's
+    /// `Resized` event drive vizia's layout engine to reflow widgets
+    /// that use stretch sizing.
+    #[must_use]
+    pub fn resizable(mut self, value: bool) -> Self {
+        self.can_resize = value;
+        self
+    }
+
+    /// Lower clamp on host-driven resize requests, in logical
+    /// points. Defaults to `(1, 1)`. Surfaced through
+    /// `Editor::min_size` to CLAP `gui_get_resize_hints` and VST3
+    /// `checkSizeConstraint`.
+    #[must_use]
+    pub fn min_size(mut self, size: (u32, u32)) -> Self {
+        self.min_size = size;
+        self
+    }
+
+    /// Upper clamp on host-driven resize requests. Defaults to
+    /// `(u32::MAX, u32::MAX)`. Surfaced through `Editor::max_size`.
+    #[must_use]
+    pub fn max_size(mut self, size: (u32, u32)) -> Self {
+        self.max_size = size;
+        self
+    }
 }
 
 impl<P: Params + 'static> Editor for ViziaEditor<P> {
     fn size(&self) -> (u32, u32) {
         self.size
     }
+
+    fn can_resize(&self) -> bool {
+        self.can_resize
+    }
+
+    fn min_size(&self) -> (u32, u32) {
+        self.min_size
+    }
+
+    fn max_size(&self) -> (u32, u32) {
+        self.max_size
+    }
+
+    // `set_size` (host → editor push) intentionally left at the
+    // trait default `|_, _| false`. vizia's `WindowHandle` doesn't
+    // expose a resize entry point that we could call from outside
+    // its event loop, and posting a custom event into the running
+    // vizia context isn't enough on its own - we'd also need
+    // `vizia_baseview` to translate it into a baseview
+    // `Window::resize` + skia surface reconfigure + `cx.set_window_size`
+    // call (the equivalent of `Application::apply_user_scale` in
+    // `vizia_baseview`'s `application.rs`, which is currently only
+    // triggered by `WindowEvent::SetUserScale`).
+    //
+    // Host-drag resize on macOS still works because the wrapper's
+    // `WidthSizable | HeightSizable` autoresize mask grows the
+    // baseview child NSView, baseview-truce's `setFrameSize:`
+    // override fires `Resized`, and `vizia_baseview`'s existing
+    // `Resized` handler does the surface + `cx.set_window_size`
+    // dance. CLAP `gui_set_size` / VST3 `IPlugView::onSize` round
+    // trips that don't also resize the parent `NSView` won't apply
+    // until a vizia upstream patch lands.
 
     fn screenshot(
         &mut self,

@@ -17,5 +17,12 @@ clap-sys = "0.5"
 # thread is the only one that ever holds `&mut Plugin`.
 crossbeam-queue = "0.3"
 
+# macOS-only: anchor the editor's child NSView to the parent's
+# top in unflipped Cocoa coordinates so the editor doesn't render
+# in the bottom-left of any extra plugin-window space Reaper
+# leaves around it. Pure `msg_send!` against AppKit.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc = "0.2"
+
 [lints]
 workspace = true

@@ -2017,7 +2017,90 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
         let handle = RawWindowHandle::X11(parent_ptr as u64);
 
         editor.open(handle, context);
+        // baseview attaches its child NSView at the parent's
+        // `(0, 0)`. NSView's coordinate system is unflipped, so
+        // `(0, 0)` is the parent's bottom-left - which renders the
+        // editor anchored to the bottom-left of Reaper's plugin
+        // area when Reaper opens the window at a size larger than
+        // the editor's natural dimensions (the common case for
+        // backends whose `editor.set_size` doesn't actually apply,
+        // e.g. vizia: Reaper falls back to a default plugin-window
+        // size and our child sits in the corner of all that extra
+        // space). Re-anchor the child to the parent's top so
+        // every backend lands flush at the top, and use
+        // `MinYMargin | MaxXMargin` so any future host-driven
+        // parent resize keeps it there instead of dragging it
+        // back down.
+        #[cfg(target_os = "macos")]
+        anchor_child_to_top(parent_ptr);
         true
+    }
+}
+
+/// Move every direct subview of `parent` so its top edge sits at
+/// the parent's top in unflipped Cocoa coordinates (where
+/// `origin.y = 0` is the bottom edge). Pinning is via the
+/// autoresize mask `NSViewMinYMargin | NSViewMaxXMargin`, which
+/// keeps the gap between child-bottom and parent-bottom flexible
+/// (so a taller parent grows the empty space below the child, not
+/// above it) and the gap between child-right and parent-right
+/// flexible (so a wider parent grows the empty space to the right
+/// of the child). The child stays at its built size; `AppKit` just
+/// repositions it as the parent resizes.
+///
+/// Mirrors `truce-lv2`'s `anchor_child_to_top` (the non-resizable
+/// arm of `anchor_child_for_resize`). No `objc` dep needed in
+/// truce-clap until the autoresize-mask install path comes back -
+/// we use a local `class!`-free `msg_send!` via `objc2_app_kit`
+/// types instead.
+#[cfg(target_os = "macos")]
+unsafe fn anchor_child_to_top(parent: *mut c_void) {
+    use objc::runtime::Object;
+    use objc::{msg_send, sel, sel_impl};
+    // Cocoa autoresizing-mask bit flags.
+    const NSVIEW_MIN_Y_MARGIN: u64 = 8;
+    const NSVIEW_MAX_X_MARGIN: u64 = 4;
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct NsPoint {
+        x: f64,
+        y: f64,
+    }
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct NsSize {
+        width: f64,
+        height: f64,
+    }
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct NsRect {
+        origin: NsPoint,
+        size: NsSize,
+    }
+    if parent.is_null() {
+        return;
+    }
+    let parent_obj = parent.cast::<Object>();
+    let parent_frame: NsRect = msg_send![parent_obj, frame];
+    let subviews: *mut Object = msg_send![parent_obj, subviews];
+    if subviews.is_null() {
+        return;
+    }
+    let count: usize = msg_send![subviews, count];
+    for i in 0..count {
+        let child: *mut Object = msg_send![subviews, objectAtIndex: i];
+        if child.is_null() {
+            continue;
+        }
+        let child_frame: NsRect = msg_send![child, frame];
+        let new_origin = NsPoint {
+            x: child_frame.origin.x,
+            y: parent_frame.size.height - child_frame.size.height,
+        };
+        let _: () = msg_send![child, setFrameOrigin: new_origin];
+        let _: () =
+            msg_send![child, setAutoresizingMask: NSVIEW_MIN_Y_MARGIN | NSVIEW_MAX_X_MARGIN];
     }
 }
 

@@ -246,22 +246,46 @@ fn zoo_view(cx: &mut Context, lens: ParamLens<ZooParams>) {
 
             section(cx, "Meters");
             HStack::new(cx, |cx| {
-                level_meter(cx, lens.clone(), &[P::MIn], 140.0);
-                level_meter(cx, lens.clone(), &[P::ML, P::MR], 140.0);
+                level_meter(cx, lens.clone(), &[P::MIn], Pixels(140.0));
+                level_meter(cx, lens.clone(), &[P::ML, P::MR], Pixels(140.0));
                 level_meter(
                     cx,
                     lens.clone(),
                     &[P::M6a, P::M6b, P::M6c, P::M6d, P::M6e, P::M6f],
-                    140.0,
+                    Pixels(140.0),
                 );
             })
             .class("zoo-section-row");
 
             section(cx, "XY Pads");
             HStack::new(cx, |cx| {
-                param_xy_pad(cx, lens.clone(), P::KMix, P::KGain, "small", 80.0, 80.0);
-                param_xy_pad(cx, lens.clone(), P::KFreq, P::KQ, "med", 130.0, 130.0);
-                param_xy_pad(cx, lens.clone(), P::KPan, P::KPhase, "big", 200.0, 200.0);
+                param_xy_pad(
+                    cx,
+                    lens.clone(),
+                    P::KMix,
+                    P::KGain,
+                    "small",
+                    Pixels(80.0),
+                    Pixels(80.0),
+                );
+                param_xy_pad(
+                    cx,
+                    lens.clone(),
+                    P::KFreq,
+                    P::KQ,
+                    "med",
+                    Pixels(130.0),
+                    Pixels(130.0),
+                );
+                param_xy_pad(
+                    cx,
+                    lens.clone(),
+                    P::KPan,
+                    P::KPhase,
+                    "big",
+                    Pixels(200.0),
+                    Pixels(200.0),
+                );
             })
             .class("zoo-section-row");
         })

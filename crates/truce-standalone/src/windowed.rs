@@ -233,6 +233,25 @@ where
         let ctx = synthesize_editor_context::<P>(&plugin, &transport, Arc::clone(&pending_resize));
         editor.open(truce_parent, ctx);
 
+        // After `editor.open()` reparents baseview's child under
+        // the standalone's NSView, tag the child with
+        // `NSViewWidthSizable | NSViewHeightSizable` so AppKit
+        // grows it when the standalone NSWindow grows. We pass
+        // `h.ns_view` (baseview's standalone view) rather than
+        // `h.ns_window`: `Window::open_blocking` doesn't run
+        // `setContentView:` on the NSWindow until *after* this
+        // build closure returns, so `[ns_window contentView]`
+        // here is the NSWindow's default vanilla view (with no
+        // subviews). baseview's view, however, is already the
+        // parent of the editor's child by the time `editor.open()`
+        // returns.
+        #[cfg(target_os = "macos")]
+        if editor_can_resize && let RwhHandle::AppKit(h) = window.raw_window_handle() {
+            // SAFETY: `editor.open()` just finished embedding the
+            // child view; we're on the main thread.
+            unsafe { crate::windowed_macos::install_subview_autoresize(h.ns_view) };
+        }
+
         StandaloneHandler {
             editor,
             pending_resize,
@@ -344,7 +363,7 @@ where
     // (see comment block below) so the rationale doesn't get orphaned
     // from the API name; hence the function-level allow.
     #[allow(clippy::items_after_statements)]
-    fn on_event(&mut self, _window: &mut Window, event: Event) -> EventStatus {
+    fn on_event(&mut self, window: &mut Window, event: Event) -> EventStatus {
         // OS-driven resize (user dragged the window edge): forward to
         // the editor so the child surface follows the outer frame.
         // `current_size` suppresses the round-trip when the resize
@@ -364,7 +383,25 @@ where
             };
             if (lw, lh) != self.current_size && lw > 0 && lh > 0 {
                 self.current_size = (lw, lh);
-                self.editor.set_size(lw, lh);
+                let accepted = self.editor.set_size(lw, lh);
+                // Snap the outer standalone window to the editor's
+                // post-clamp / post-snap size. truce-gui's
+                // `BuiltinEditor` clamps to `min_cols` / `max_cols`,
+                // so when the user drags past the editor's bounds
+                // the editor stops growing but without this snap
+                // the outer NSWindow would keep going - leaving
+                // empty space around a clamped editor. egui / iced
+                // / slint take the new size verbatim, so the snap
+                // is a no-op for them. Vizia's `set_size` returns
+                // `false`; we leave the outer alone in that case
+                // so the autoresize cascade still works.
+                if accepted {
+                    let (ew, eh) = self.editor.size();
+                    if (ew, eh) != (lw, lh) && ew > 0 && eh > 0 {
+                        self.current_size = (ew, eh);
+                        window.resize(baseview::Size::new(f64::from(ew), f64::from(eh)));
+                    }
+                }
             }
         }
 
