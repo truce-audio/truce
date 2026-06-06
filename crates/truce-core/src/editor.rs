@@ -107,6 +107,39 @@ pub trait Editor: Send {
         false
     }
 
+    /// Minimum size the editor can render at, in logical points.
+    /// Defaults to `(1, 1)`. Wrappers consult this for CLAP's
+    /// `gui_get_resize_hints` and VST3's `checkSizeConstraint`.
+    /// Ignored when `can_resize()` returns `false`.
+    fn min_size(&self) -> (u32, u32) {
+        (1, 1)
+    }
+
+    /// Maximum size the editor can render at, in logical points.
+    /// Defaults to `(u32::MAX, u32::MAX)`. Same wrapper consumers
+    /// as `min_size`.
+    fn max_size(&self) -> (u32, u32) {
+        (u32::MAX, u32::MAX)
+    }
+
+    /// Aspect-ratio constraint as `(numerator, denominator)`, or
+    /// `None` for free resizing. CLAP, VST3, AU v3, and standalone
+    /// honour this; VST2 / LV2 / AAX silently ignore. Integer pair
+    /// (not `f64`) avoids the Cubase-9 aspect-rounding quirk JUCE
+    /// special-cases.
+    fn aspect_ratio(&self) -> Option<(u32, u32)> {
+        None
+    }
+
+    /// Hint that the renderer prefers power-of-two surface sizes
+    /// (some GPU-backed editors). Maps onto CLAP's
+    /// `clap_gui_resize_hints.preserve_aspect_ratio` /
+    /// `aspect_ratio_width` siblings; ignored on formats without
+    /// an equivalent.
+    fn prefers_pow2(&self) -> bool {
+        false
+    }
+
     /// Host notifies the editor of a new content scale factor.
     ///
     /// DPI/scale is a host→plugin concept: on VST3 Windows the host

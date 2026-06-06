@@ -1677,7 +1677,9 @@ use clap_sys::ext::gui::CLAP_WINDOW_API_COCOA;
 use clap_sys::ext::gui::CLAP_WINDOW_API_WIN32;
 #[cfg(target_os = "linux")]
 use clap_sys::ext::gui::CLAP_WINDOW_API_X11;
-use clap_sys::ext::gui::{CLAP_EXT_GUI, clap_gui_resize_hints, clap_plugin_gui, clap_window};
+use clap_sys::ext::gui::{
+    CLAP_EXT_GUI, clap_gui_resize_hints, clap_host_gui, clap_plugin_gui, clap_window,
+};
 
 unsafe extern "C" fn gui_is_api_supported<P: PluginExport>(
     _plugin: *const clap_plugin,
@@ -1946,7 +1948,32 @@ unsafe fn gui_set_parent_inner<P: PluginExport>(
                     let _ = gui_changes3.push(GuiParamChange::GestureEnd(id));
                     request_flush3();
                 }),
-                request_resize: Box::new(|_w, _h| false),
+                request_resize: Box::new({
+                    let host_ptr = SendPtr::new(data.host);
+                    let host_scale_for_resize = data.host_scale;
+                    move |lw, lh| {
+                        // Host expects physical points; editor speaks
+                        // logical. Same scale-up the wrappers use for
+                        // `gui_get_size`.
+                        let (pw, ph) = scale_logical_to_physical(lw, lh, host_scale_for_resize);
+                        let host = host_ptr.as_ptr();
+                        if host.is_null() {
+                            return false;
+                        }
+                        let Some(get_ext) = (*host).get_extension else {
+                            return false;
+                        };
+                        let host_gui_ptr =
+                            get_ext(host, CLAP_EXT_GUI.as_ptr()).cast::<clap_host_gui>();
+                        if host_gui_ptr.is_null() {
+                            return false;
+                        }
+                        let Some(req) = (*host_gui_ptr).request_resize else {
+                            return false;
+                        };
+                        req(host, pw, ph)
+                    }
+                }),
                 get_param: Box::new(move |id| params_for_get.get_normalized(id).unwrap_or(0.0)),
                 get_param_plain: Box::new(move |id| params_for_plain.get_plain(id).unwrap_or(0.0)),
                 format_param: Box::new(move |id| {
@@ -2002,17 +2029,34 @@ unsafe extern "C" fn gui_hide<P: PluginExport>(_plugin: *const clap_plugin) -> b
     true
 }
 
-/// Stub: we report a fixed-size GUI so `can_resize` is `false` and the
-/// host is documented to ignore this. Some hosts (Bitwig) probe-call
-/// every gui_* function pointer at metadata-scan time as a "is this a
-/// real GUI?" sanity check and treat any `None` slot as "broken/no GUI"
-/// rather than per-spec "feature unsupported". Wiring a defensive stub
-/// keeps the edit button visible without changing observable behaviour.
+/// Reports horizontal/vertical/aspect-ratio constraints from the
+/// editor. Returns `false` when the editor isn't resizable (Bitwig's
+/// probe-call still gets a meaningful `false`, not a `None` slot).
 unsafe extern "C" fn gui_get_resize_hints<P: PluginExport>(
-    _plugin: *const clap_plugin,
-    _hints: *mut clap_gui_resize_hints,
+    plugin: *const clap_plugin,
+    hints: *mut clap_gui_resize_hints,
 ) -> bool {
-    false
+    unsafe {
+        let data = data_from_plugin::<P>(plugin);
+        let Some(editor) = data.editor.as_ref() else {
+            return false;
+        };
+        if !editor.can_resize() {
+            return false;
+        }
+        if hints.is_null() {
+            return false;
+        }
+        let (aw, ah) = editor.aspect_ratio().unwrap_or((0, 0));
+        *hints = clap_gui_resize_hints {
+            can_resize_horizontally: true,
+            can_resize_vertically: true,
+            preserve_aspect_ratio: editor.aspect_ratio().is_some(),
+            aspect_ratio_width: aw,
+            aspect_ratio_height: ah,
+        };
+        true
+    }
 }
 
 /// Stub: floating windows aren't supported (`is_api_supported` rejects
@@ -2035,50 +2079,137 @@ unsafe extern "C" fn gui_suggest_title<P: PluginExport>(
 ) {
 }
 
-/// Host asks "is this size OK?". Per spec only meaningful when
-/// `can_resize` returns true, but Bitwig (and some other strict CLAP
-/// hosts) treats a `None` `set_size` as "this plugin has no real
-/// GUI" and silently hides the edit button - even when `get_size`,
-/// `set_parent`, `is_api_supported` etc. are all wired. For
-/// fixed-size editors we report `true` only when the host's
-/// requested size matches `get_size`'s response; otherwise `false`
-/// so a resize-aware host knows we can't honour the new size.
+/// Host commits a new size. When the editor opts into resizing,
+/// delegate to `Editor::set_size`; otherwise accept only the
+/// editor's current fixed size (Bitwig probe-quirk - see
+/// `gui_get_resize_hints` rationale).
 unsafe extern "C" fn gui_set_size<P: PluginExport>(
     plugin: *const clap_plugin,
     width: u32,
     height: u32,
 ) -> bool {
     unsafe {
-        let mut current_w: u32 = 0;
-        let mut current_h: u32 = 0;
-        if !gui_get_size::<P>(plugin, &raw mut current_w, &raw mut current_h) {
+        let data = data_from_plugin::<P>(plugin);
+        let Some(editor) = data.editor.as_mut() else {
             return false;
+        };
+        if editor.can_resize() {
+            // Host passes physical points; truce works in logical.
+            // Divide by the host-applied scale before handing to the
+            // editor so `set_size` receives the same units `size()`
+            // returns.
+            let (lw, lh) = scale_physical_to_logical(width, height, data.host_scale);
+            editor.set_size(lw, lh)
+        } else {
+            let mut current_w: u32 = 0;
+            let mut current_h: u32 = 0;
+            if !gui_get_size::<P>(plugin, &raw mut current_w, &raw mut current_h) {
+                return false;
+            }
+            width == current_w && height == current_h
         }
-        width == current_w && height == current_h
     }
 }
 
-/// Host hints "I'd like a window of size (w, h); please clamp to
-/// the nearest size you can render at". Pairs with `set_size` to
-/// satisfy strict-CLAP hosts (Bitwig) that pre-flight the GUI by
-/// negotiating sizes before allowing the edit button. We snap to
-/// the editor's reported size since the built-in renderer doesn't
-/// support arbitrary host-driven sizes today.
+/// Host asks "what's the nearest size you can render at?". CLAP
+/// defines this as "clamp to acceptable", not "reject if not exact".
+/// Resizable editors clamp to `min_size` / `max_size` and apply the
+/// `aspect_ratio` constraint; fixed-size editors snap to current.
 unsafe extern "C" fn gui_adjust_size<P: PluginExport>(
     plugin: *const clap_plugin,
     width: *mut u32,
     height: *mut u32,
 ) -> bool {
     unsafe {
-        let mut current_w: u32 = 0;
-        let mut current_h: u32 = 0;
-        if !gui_get_size::<P>(plugin, &raw mut current_w, &raw mut current_h) {
+        let data = data_from_plugin::<P>(plugin);
+        let Some(editor) = data.editor.as_ref() else {
             return false;
+        };
+        if editor.can_resize() {
+            let req = scale_physical_to_logical(*width, *height, data.host_scale);
+            let (lw, lh) = clamp_logical_size(req.0, req.1, editor.as_ref());
+            // Convert clamped logical back to physical for the host.
+            let (pw, ph) = scale_logical_to_physical(lw, lh, data.host_scale);
+            *width = pw;
+            *height = ph;
+            true
+        } else {
+            let mut current_w: u32 = 0;
+            let mut current_h: u32 = 0;
+            if !gui_get_size::<P>(plugin, &raw mut current_w, &raw mut current_h) {
+                return false;
+            }
+            *width = current_w;
+            *height = current_h;
+            true
         }
-        *width = current_w;
-        *height = current_h;
-        true
     }
+}
+
+/// Apply `min_size` / `max_size` and the optional `aspect_ratio`
+/// to a requested logical size. JUCE's pattern: derive the other
+/// axis from one, fall back to the other axis if that violates
+/// bounds. `u64` arithmetic for the multiplication so a hypothetical
+/// `(u32::MAX, 1)` aspect doesn't overflow before the clamp lands.
+fn clamp_logical_size(w: u32, h: u32, editor: &dyn truce_core::editor::Editor) -> (u32, u32) {
+    let (min_w, min_h) = editor.min_size();
+    let (max_w, max_h) = editor.max_size();
+    let mut w = w.clamp(min_w.max(1), max_w);
+    let mut h = h.clamp(min_h.max(1), max_h);
+    if let Some((num, denom)) = editor.aspect_ratio()
+        && num > 0
+        && denom > 0
+    {
+        let num64 = u64::from(num);
+        let denom64 = u64::from(denom);
+        // Derive height from width: h_implied = w * denom / num.
+        let h_implied = (u64::from(w) * denom64 / num64).clamp(1, u64::from(u32::MAX));
+        #[allow(clippy::cast_possible_truncation)]
+        let h_implied_u32 = h_implied as u32;
+        if h_implied_u32 >= min_h.max(1) && h_implied_u32 <= max_h {
+            h = h_implied_u32;
+        } else {
+            // Width-from-height fallback.
+            let w_implied = (u64::from(h) * num64 / denom64).clamp(1, u64::from(u32::MAX));
+            #[allow(clippy::cast_possible_truncation)]
+            let w_implied_u32 = w_implied as u32;
+            w = w_implied_u32.clamp(min_w.max(1), max_w);
+            // Re-derive height from the clamped width to preserve
+            // aspect after the secondary clamp.
+            let h_final = (u64::from(w) * denom64 / num64).clamp(1, u64::from(u32::MAX));
+            #[allow(clippy::cast_possible_truncation)]
+            {
+                h = (h_final as u32).clamp(min_h.max(1), max_h);
+            }
+        }
+    }
+    (w, h)
+}
+
+/// Convert physical points (what the host passes in resize APIs)
+/// to logical points (what `Editor` works in). CLAP host scale is
+/// 1.0 when the host hasn't called `set_scale`.
+fn scale_physical_to_logical(pw: u32, ph: u32, host_scale: f64) -> (u32, u32) {
+    if host_scale <= 0.0 || (host_scale - 1.0).abs() < f64::EPSILON {
+        return (pw, ph);
+    }
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let lw = (f64::from(pw) / host_scale).round() as u32;
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let lh = (f64::from(ph) / host_scale).round() as u32;
+    (lw.max(1), lh.max(1))
+}
+
+/// Inverse of `scale_physical_to_logical`.
+fn scale_logical_to_physical(lw: u32, lh: u32, host_scale: f64) -> (u32, u32) {
+    if host_scale <= 0.0 || (host_scale - 1.0).abs() < f64::EPSILON {
+        return (lw, lh);
+    }
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let pw = (f64::from(lw) * host_scale).round() as u32;
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let ph = (f64::from(lh) * host_scale).round() as u32;
+    (pw.max(1), ph.max(1))
 }
 
 fn make_gui_extension<P: PluginExport>() -> clap_plugin_gui {

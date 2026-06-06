@@ -93,6 +93,19 @@ pub struct EguiEditor<P: Params + ?Sized> {
     ui: Arc<Mutex<Box<dyn EditorUi<P>>>>,
     visuals: Option<egui::Visuals>,
     font: Option<&'static [u8]>,
+    /// Resize-capability flag exposed via `Editor::can_resize`. egui
+    /// editors default to `true` since the panel API reflows for
+    /// free; plugins that ship a fixed-size GUI (and don't want
+    /// hosts painting resize handles) opt out with `.resizable(false)`.
+    can_resize: bool,
+    /// Optional min/max/aspect constraints reported through the
+    /// `Editor::min_size` / `max_size` / `aspect_ratio` trait
+    /// methods so CLAP `gui_get_resize_hints` and VST3
+    /// `checkSizeConstraint` can hand the host honest bounds.
+    min_size: (u32, u32),
+    max_size: (u32, u32),
+    aspect_ratio: Option<(u32, u32)>,
+    prefers_pow2: bool,
     /// Live content-scale factor (a [`truce_gui::EditorScale`]). The
     /// editor writes here from `set_scale_factor`; the baseview
     /// handler holds a clone and applies surface/renderer
@@ -134,6 +147,11 @@ impl<P: Params + 'static> EguiEditor<P> {
             scale: EditorScale::new(truce_gui::backing_scale()),
             window: None,
             context: None,
+            can_resize: true,
+            min_size: (1, 1),
+            max_size: (u32::MAX, u32::MAX),
+            aspect_ratio: None,
+            prefers_pow2: false,
         }
     }
 
@@ -149,6 +167,11 @@ impl<P: Params + 'static> EguiEditor<P> {
             scale: EditorScale::new(truce_gui::backing_scale()),
             window: None,
             context: None,
+            can_resize: true,
+            min_size: (1, 1),
+            max_size: (u32::MAX, u32::MAX),
+            aspect_ratio: None,
+            prefers_pow2: false,
         }
     }
 
@@ -191,6 +214,50 @@ impl<P: Params + 'static> EguiEditor<P> {
     #[must_use]
     pub fn with_visuals(mut self, visuals: egui::Visuals) -> Self {
         self.visuals = Some(visuals);
+        self
+    }
+
+    /// Opt out of host-driven resizing. egui editors default to
+    /// resizable because the panel layout reflows for free; pass
+    /// `false` here for plugins that ship a deliberately fixed-size
+    /// GUI and don't want hosts painting resize handles.
+    #[must_use]
+    pub fn resizable(mut self, resizable: bool) -> Self {
+        self.can_resize = resizable;
+        self
+    }
+
+    /// Minimum logical-point dimensions the editor accepts. Surfaced
+    /// to CLAP `gui_get_resize_hints` and VST3 `checkSizeConstraint`.
+    #[must_use]
+    pub fn min_size(mut self, min: (u32, u32)) -> Self {
+        self.min_size = min;
+        self
+    }
+
+    /// Maximum logical-point dimensions the editor accepts. Same
+    /// wrapper consumers as `min_size`.
+    #[must_use]
+    pub fn max_size(mut self, max: (u32, u32)) -> Self {
+        self.max_size = max;
+        self
+    }
+
+    /// Lock the aspect ratio as `(numerator, denominator)`. Pass
+    /// `(4, 3)` for a 4:3 lock; pass `None` (the default) for free
+    /// resizing.
+    #[must_use]
+    pub fn aspect_ratio(mut self, ratio: Option<(u32, u32)>) -> Self {
+        self.aspect_ratio = ratio;
+        self
+    }
+
+    /// Hint that the renderer prefers power-of-two surface sizes.
+    /// Only the CLAP wrapper threads this through today; other
+    /// formats ignore.
+    #[must_use]
+    pub fn prefers_pow2(mut self, prefers: bool) -> Self {
+        self.prefers_pow2 = prefers;
         self
     }
 
@@ -725,7 +792,23 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
     }
 
     fn can_resize(&self) -> bool {
-        true
+        self.can_resize
+    }
+
+    fn min_size(&self) -> (u32, u32) {
+        self.min_size
+    }
+
+    fn max_size(&self) -> (u32, u32) {
+        self.max_size
+    }
+
+    fn aspect_ratio(&self) -> Option<(u32, u32)> {
+        self.aspect_ratio
+    }
+
+    fn prefers_pow2(&self) -> bool {
+        self.prefers_pow2
     }
 
     fn set_scale_factor(&mut self, factor: f64) {
