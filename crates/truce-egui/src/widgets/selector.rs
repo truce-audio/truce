@@ -10,6 +10,7 @@ use truce_core::editor::{PluginContext, PluginContextReadF32};
 ///
 /// `step_count` is the number of discrete steps (e.g., 3 for an enum
 /// with 3 variants). If 0, cycles in 0.1 increments.
+#[deprecated(since = "0.56.0", note = "use `param_dropdown` instead")]
 pub fn param_selector<P: ?Sized>(
     ui: &mut egui::Ui,
     state: &PluginContext<P>,

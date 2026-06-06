@@ -12,8 +12,7 @@ use truce::prelude::*;
 use truce_font::JETBRAINS_MONO;
 use truce_vizia::vizia::prelude::*;
 use truce_vizia::widgets::{
-    self, level_meter, param_dropdown, param_knob, param_selector, param_slider, param_toggle,
-    param_xy_pad,
+    self, level_meter, param_dropdown, param_knob, param_slider, param_toggle, param_xy_pad,
 };
 use truce_vizia::{ParamLens, ViziaEditor};
 
@@ -51,14 +50,6 @@ const ZOO_CSS: &str = r"
 
 fn section(cx: &mut Context, title: &str) {
     Label::new(cx, title.to_string()).class("zoo-section-title");
-}
-
-#[derive(ParamEnum)]
-pub enum Shape {
-    Sine,
-    Triangle,
-    Square,
-    Sawtooth,
 }
 
 #[derive(ParamEnum)]
@@ -118,9 +109,7 @@ pub struct ZooParams {
     #[param(name = "Off")]
     pub t_off: BoolParam,
 
-    // -- Selector + dropdowns --
-    #[param(name = "Shape")]
-    pub shape: EnumParam<Shape>,
+    // -- Dropdowns --
     #[param(name = "Mode")]
     pub mode: EnumParam<Mode>,
     #[param(name = "Mode Wide")]
@@ -242,12 +231,6 @@ fn zoo_view(cx: &mut Context, lens: ParamLens<ZooParams>) {
             HStack::new(cx, |cx| {
                 param_toggle(cx, lens.clone(), P::TOn, "On");
                 param_toggle(cx, lens.clone(), P::TOff, "Off");
-            })
-            .class("zoo-section-row");
-
-            section(cx, "Selector");
-            HStack::new(cx, |cx| {
-                param_selector(cx, lens.clone(), P::Shape, "Shape", 4);
             })
             .class("zoo-section-row");
 

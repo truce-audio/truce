@@ -48,16 +48,17 @@ pub fn param_toggle<M: Clone + Debug + 'static>(
     ToggleWidget::new(id.into(), params)
 }
 
-/// Create a selector (pick list) bound to an enum parameter.
-pub fn param_selector<M: Clone + Debug + 'static>(
+/// Create a dropdown (pick list) bound to an enum parameter.
+pub fn param_dropdown<M: Clone + Debug + 'static>(
     id: impl Into<u32>,
     params: &ParamCache<impl Params>,
 ) -> SelectorWidget<'_, M> {
     SelectorWidget::new(id.into(), params)
 }
 
-/// Alias for [`param_selector`].
-pub fn param_dropdown<M: Clone + Debug + 'static>(
+/// Deprecated alias for [`param_dropdown`].
+#[deprecated(since = "0.56.0", note = "use `param_dropdown` instead")]
+pub fn param_selector<M: Clone + Debug + 'static>(
     id: impl Into<u32>,
     params: &ParamCache<impl Params>,
 ) -> SelectorWidget<'_, M> {

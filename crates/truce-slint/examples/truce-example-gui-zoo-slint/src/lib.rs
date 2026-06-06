@@ -15,14 +15,6 @@ slint::include_modules!();
 use ZooParamsParamId as P;
 
 #[derive(ParamEnum)]
-pub enum Shape {
-    Sine,
-    Triangle,
-    Square,
-    Sawtooth,
-}
-
-#[derive(ParamEnum)]
 pub enum Mode {
     #[name = "Mode A"]
     A,
@@ -77,10 +69,6 @@ pub struct ZooParams {
     pub t_on: BoolParam,
     #[param(name = "Off")]
     pub t_off: BoolParam,
-
-    // -- Selector --
-    #[param(name = "Shape")]
-    pub shape: EnumParam<Shape>,
 
     // -- Dropdown --
     #[param(name = "Mode")]
@@ -180,19 +168,8 @@ impl PluginLogic for ZooSlint {
                 let s = state.clone();
                 ui.on_t_off_toggled(move |v| s.automate(P::TOff, if v { 1.0 } else { 0.0 }));
 
-                // Selector (1) - integer-index callback. Map index ->
-                // normalized via `discrete_norm` for the 4-variant Shape.
-                let s = state.clone();
-                ui.on_shape_changed(move |idx| {
-                    // `Shape` has 4 variants; `idx` arrives 0..=3.
-                    #[allow(clippy::cast_sign_loss)]
-                    let i = idx.max(0) as usize;
-                    let norm = truce_core::cast::discrete_norm(i, 4);
-                    s.automate(P::Shape, norm);
-                });
-
-                // Dropdown (Mode) - same pattern as the selector but
-                // with 8 variants.
+                // Dropdown (Mode) - integer-index callback. Map index
+                // -> normalized via `discrete_norm` for the 8-variant Mode.
                 let s = state.clone();
                 ui.on_mode_changed(move |idx| {
                     #[allow(clippy::cast_sign_loss)]
@@ -250,14 +227,6 @@ impl PluginLogic for ZooSlint {
                     // Toggles.
                     ui.set_t_on(state.get_param(P::TOn) > 0.5);
                     ui.set_t_off(state.get_param(P::TOff) > 0.5);
-
-                    // Selector - 4-variant `Shape`. `discrete_index`
-                    // returns 0..=3, fits in i32.
-                    let norm = f64::from(state.get_param(P::Shape));
-                    #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
-                    let idx = truce_core::cast::discrete_index(norm, 4) as i32;
-                    ui.set_shape_index(idx);
-                    ui.set_shape_text(slint::SharedString::from(state.format_param(P::Shape)));
 
                     // Dropdown - 8-variant `Mode`.
                     let norm = f64::from(state.get_param(P::Mode));

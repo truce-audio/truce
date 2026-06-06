@@ -8,6 +8,17 @@ Notable changes per release.
   Reordered the cell as knob → value → name; previously the name
   label sat between the knob and the value, which inverted the
   cross-backend convention.
+- **`gui-zoo` examples no longer showcase the selector widget.**
+  Step one of deprecating `selector` in favour of `dropdown`: the
+  five gui-zoo variants (built-in / egui / iced / slint / vizia)
+  now exercise dropdown only.
+- **`selector` / `param_selector` widgets deprecated.** Marked
+  `#[deprecated(since = "0.56.0")]` across `truce-gui-types`,
+  `truce-egui`, `truce-iced`, and `truce-vizia`; the slint
+  `Selector` element gets the same notice in its widget library
+  header (slint markup has no attribute equivalent). Use the
+  corresponding `dropdown` / `param_dropdown` / `Dropdown`
+  instead.
 
 ## 0.55.0
 

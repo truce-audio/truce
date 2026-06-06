@@ -109,6 +109,7 @@ impl KnobDef {
     }
 
     /// Selector (click-to-cycle for enum params).
+    #[deprecated(since = "0.56.0", note = "use `dropdown` instead")]
     pub fn selector(param_id: impl Into<u32>, label: &'static str) -> Self {
         Self {
             param_id: param_id.into(),
@@ -318,6 +319,7 @@ impl GridWidget {
         }
     }
 
+    #[deprecated(since = "0.56.0", note = "use `dropdown` instead")]
     pub fn selector(param_id: impl Into<u32>, label: &'static str) -> Self {
         Self {
             col: AUTO,
@@ -444,6 +446,8 @@ pub fn toggle(param_id: impl Into<u32>, label: &'static str) -> GridWidget {
 }
 
 /// Click-to-cycle selector widget.
+#[deprecated(since = "0.56.0", note = "use `dropdown` instead")]
+#[allow(deprecated)]
 pub fn selector(param_id: impl Into<u32>, label: &'static str) -> GridWidget {
     GridWidget::selector(param_id, label)
 }

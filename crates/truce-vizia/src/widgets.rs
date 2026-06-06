@@ -207,6 +207,7 @@ pub fn param_toggle<P: Params + 'static>(
 /// Horizontal row of radio buttons - one per discrete step - acting
 /// as an "either/or" selector for an `EnumParam` or stepped
 /// `IntParam`. `count` is the number of options.
+#[deprecated(since = "0.56.0", note = "use `param_dropdown` instead")]
 pub fn param_selector<P: Params + 'static>(
     cx: &mut Context,
     lens: ParamLens<P>,
