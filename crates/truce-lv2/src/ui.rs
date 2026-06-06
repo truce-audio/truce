@@ -288,36 +288,56 @@ pub unsafe fn instantiate_ui<P: PluginExport>(
         let handle = RawWindowHandle::X11(parent_ptr as u64);
         editor.open(handle, ctx);
 
-        // Ask the host to match our preferred size via the `ui:resize`
-        // extension (optional - not every host provides it, but Reaper
-        // honors it, and without it the UI floats inside a default-sized
-        // window with large empty margins).
-        if let Some(resize) = parsed.resize
-            && let Some(func) = resize.ui_resize
-        {
-            // LV2 ui:resize takes int32_t; editor dimensions in u32
-            // are bounded by display size, well below i32::MAX.
-            #[allow(clippy::cast_possible_wrap)]
-            let (w, h) = (pref_w as i32, pref_h as i32);
-            func(resize.handle, w, h);
-        }
+        // For fixed-size editors, push our preferred dimensions to the
+        // host both through `ui:resize` and (on macOS) by setting the
+        // parent NSView's frame directly. Hosts that honour `ui:resize`
+        // (Reaper, Ardour) re-size the outer plugin window to match;
+        // the macOS belt-and-braces is for hosts that don't.
+        //
+        // For resizable editors we deliberately skip both pushes:
+        // forcing the parent down to the natural size leaves the
+        // host's outer window blank around a small editor (Reaper's
+        // FX window on macOS opens at whatever size the user last
+        // dragged it to; if we shrink the parent NSView to (176, 290)
+        // it sits in the bottom-left of an otherwise-empty Reaper
+        // frame). Accepting the host's existing parent size and
+        // letting `anchor_child_for_resize` + autoresize-mask carry
+        // the rest means the editor fills whatever container the
+        // host opens.
+        if !editor.can_resize() {
+            if let Some(resize) = parsed.resize
+                && let Some(func) = resize.ui_resize
+            {
+                // LV2 ui:resize takes int32_t; editor dimensions in u32
+                // are bounded by display size, well below i32::MAX.
+                #[allow(clippy::cast_possible_wrap)]
+                let (w, h) = (pref_w as i32, pref_h as i32);
+                func(resize.handle, w, h);
+            }
 
-        // On macOS we also resize the host-supplied parent NSView directly,
-        // as a belt-and-braces backup for hosts that don't honor
-        // `ui:resize`. Reaper on macOS reads the parent's frame after
-        // `instantiate` returns.
-        #[cfg(target_os = "macos")]
-        resize_ns_view(parent_ptr, pref_w, pref_h);
+            #[cfg(target_os = "macos")]
+            resize_ns_view(parent_ptr, pref_w, pref_h);
+        }
 
         // baseview attached its child at frame origin `(0, 0)`. NSView
         // is unflipped by default, so `(0, 0)` is the parent's
         // bottom-left, which renders the editor anchored to the bottom
         // of the host's plugin window. Reposition the child so its
-        // top edge sits at the parent's top edge, and tag the
-        // autoresizing mask so subsequent host-driven parent resizes
-        // keep it pinned there.
+        // top edge sits at the parent's top edge, and pick an
+        // autoresize mask that matches whether the editor opts into
+        // host-driven resize:
+        //
+        // - fixed-size editors get `MinYMargin | MaxXMargin` so the
+        //   child stays pinned at the parent's top-left as the host
+        //   resizes around it (and never gets stretched).
+        // - resizable editors get `WidthSizable | HeightSizable`
+        //   (plus a `(0, 0)` origin so the child fills the parent
+        //   from its bottom-left in unflipped coords) so the child
+        //   grows in lock-step with the host's parent NSView. The
+        //   editor's `Resized` event fires off the resulting frame
+        //   change, which is what drives wgpu surface reconfigure.
         #[cfg(target_os = "macos")]
-        anchor_child_to_top(parent_ptr);
+        anchor_child_for_resize(parent_ptr, editor.can_resize());
 
         // `editor.open()` just added baseview's child NSView under the
         // host's parent. Install a `cursorUpdate:` handler on that child so
@@ -792,33 +812,46 @@ unsafe fn fit_win32_parent_to_child(parent: *mut c_void) {
     }
 }
 
-/// Reposition every direct subview of `parent` so its top edge sits
-/// at the parent's top edge, and pin it there under future parent
-/// resizes via `autoresizingMask = NSViewMinYMargin | NSViewMaxXMargin`.
+/// Reposition every direct subview of `parent` so it tracks the host's
+/// parent `NSView` correctly. `NSView` is unflipped by default, so an
+/// attached child at frame origin `(0, 0)` lands at the parent's
+/// bottom-left in Cocoa coordinates - baseview creates its child at
+/// `(0, 0)` and leaves the autoresizing mask at `NSViewNotSizable`,
+/// so without this fixup the editor renders anchored to the bottom of
+/// the host's plugin window.
 ///
-/// `NSView` is unflipped by default, so an attached child at frame
-/// origin `(0, 0)` lands at the parent's bottom-left in Cocoa
-/// coordinates. baseview creates its child at `(0, 0)` and leaves the
-/// autoresizing mask at `NSViewNotSizable`, so without this fixup the
-/// editor renders anchored to the bottom of the host's plugin window.
-/// X11 and Win32 use top-left origins natively and don't need the
-/// equivalent step.
+/// - `resizable = false`: position the child so its top edge sits at
+///   the parent's top, and pin it there via
+///   `NSViewMinYMargin | NSViewMaxXMargin`. The child's frame stays
+///   fixed under future parent resizes.
+/// - `resizable = true`: snap the child to `(0, 0)` and resize it to
+///   fill the parent, then tag `NSViewWidthSizable | NSViewHeightSizable`
+///   so the child grows / shrinks in lock-step with future parent
+///   resizes. baseview's `Resized` event fires off the resulting frame
+///   change, which is what drives wgpu surface reconfigure.
+///
+/// X11 and Win32 use top-left origins natively and have their own
+/// resize paths (`fit_win32_parent_to_child` on Windows, the
+/// `LV2UI_Resize` extension on X11).
 #[cfg(target_os = "macos")]
-unsafe fn anchor_child_to_top(parent: *mut c_void) {
+unsafe fn anchor_child_for_resize(parent: *mut c_void, resizable: bool) {
     use objc::runtime::Object;
     use objc::{msg_send, sel, sel_impl};
 
     #[repr(C)]
+    #[derive(Clone, Copy)]
     struct NSPoint {
         x: f64,
         y: f64,
     }
     #[repr(C)]
+    #[derive(Clone, Copy)]
     struct NSSize {
         width: f64,
         height: f64,
     }
     #[repr(C)]
+    #[derive(Clone, Copy)]
     struct NSRect {
         origin: NSPoint,
         size: NSSize,
@@ -829,8 +862,12 @@ unsafe fn anchor_child_to_top(parent: *mut c_void) {
     // parent-bottom flexible; `NSViewMaxXMargin` keeps the gap between
     // child-right and parent-right flexible. Together they anchor the
     // child to the parent's top-left in unflipped NSView coordinates.
-    const NSVIEW_MIN_Y_MARGIN: u64 = 8;
+    // `NSViewWidthSizable` / `NSViewHeightSizable` instead grow the
+    // child's frame to match the parent's width / height.
+    const NSVIEW_WIDTH_SIZABLE: u64 = 2;
     const NSVIEW_MAX_X_MARGIN: u64 = 4;
+    const NSVIEW_MIN_Y_MARGIN: u64 = 8;
+    const NSVIEW_HEIGHT_SIZABLE: u64 = 16;
 
     if parent.is_null() {
         return;
@@ -847,14 +884,29 @@ unsafe fn anchor_child_to_top(parent: *mut c_void) {
         if child.is_null() {
             continue;
         }
-        let child_frame: NSRect = msg_send![child, frame];
-        let new_origin = NSPoint {
-            x: child_frame.origin.x,
-            y: parent_frame.size.height - child_frame.size.height,
-        };
-        let _: () = msg_send![child, setFrameOrigin: new_origin];
-        let _: () =
-            msg_send![child, setAutoresizingMask: NSVIEW_MIN_Y_MARGIN | NSVIEW_MAX_X_MARGIN];
+        if resizable {
+            // Fill the parent. Origin `(0, 0)` is the bottom-left in
+            // unflipped coords - it doesn't matter visually because
+            // the child immediately covers the entire parent. The
+            // `WidthSizable | HeightSizable` mask keeps it filling
+            // when the host resizes its parent NSView.
+            let new_frame = NSRect {
+                origin: NSPoint { x: 0.0, y: 0.0 },
+                size: parent_frame.size,
+            };
+            let _: () = msg_send![child, setFrame: new_frame];
+            let _: () =
+                msg_send![child, setAutoresizingMask: NSVIEW_WIDTH_SIZABLE | NSVIEW_HEIGHT_SIZABLE];
+        } else {
+            let child_frame: NSRect = msg_send![child, frame];
+            let new_origin = NSPoint {
+                x: child_frame.origin.x,
+                y: parent_frame.size.height - child_frame.size.height,
+            };
+            let _: () = msg_send![child, setFrameOrigin: new_origin];
+            let _: () =
+                msg_send![child, setAutoresizingMask: NSVIEW_MIN_Y_MARGIN | NSVIEW_MAX_X_MARGIN];
+        }
     }
 }
 

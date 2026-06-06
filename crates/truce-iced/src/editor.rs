@@ -190,10 +190,12 @@ where
     /// standalone as an editor that fills the original area only
     /// while the outer window grew around it).
     pending_size: Arc<std::sync::atomic::AtomicU64>,
-    /// Resize-capability flag exposed via `Editor::can_resize`. iced
-    /// editors default to `true` since the widget tree reflows for
-    /// free; plugins that ship a fixed-size GUI opt out with
-    /// `.resizable(false)`.
+    /// Resize-capability flag exposed via `Editor::can_resize`.
+    /// Defaults to `false`; iced plugins that have been designed
+    /// with a flexible widget tree opt in with `.resizable(true)`.
+    /// The default keeps every existing fixed-size plugin pinned
+    /// to its built dimensions instead of silently following an
+    /// autoresize-driven parent `NSView` grow.
     can_resize: bool,
     /// Constraints exposed through the `Editor` trait so format
     /// wrappers can hand the host honest bounds.
@@ -257,7 +259,7 @@ impl<P: Params + 'static> IcedEditor<P, AutoPlugin> {
             meter_ids,
             baseview_window: None,
             pending_size: Arc::new(std::sync::atomic::AtomicU64::new(0)),
-            can_resize: true,
+            can_resize: false,
             min_size: (1, 1),
             max_size: (u32::MAX, u32::MAX),
             aspect_ratio: None,
@@ -279,7 +281,7 @@ impl<P: Params + 'static, M: IcedPlugin<P> + 'static> IcedEditor<P, M> {
             meter_ids: Vec::new(),
             baseview_window: None,
             pending_size: Arc::new(std::sync::atomic::AtomicU64::new(0)),
-            can_resize: true,
+            can_resize: false,
             min_size: (1, 1),
             max_size: (u32::MAX, u32::MAX),
             aspect_ratio: None,

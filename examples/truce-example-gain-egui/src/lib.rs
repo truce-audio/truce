@@ -102,13 +102,20 @@ impl PluginLogic for GainEgui {
     }
 
     fn editor(&self) -> Box<dyn Editor> {
-        EguiEditor::new(self.params.clone(), (WINDOW_W, WINDOW_H), gain_ui)
+        let editor = EguiEditor::new(self.params.clone(), (WINDOW_W, WINDOW_H), gain_ui)
             .with_visuals(truce_egui::theme::dark())
-            .with_font(JETBRAINS_MONO)
+            .with_font(JETBRAINS_MONO);
+        // iOS hosts present a fixed-size view and the iOS
+        // `EguiEditor` doesn't expose the resize builder methods;
+        // skip the resize wiring there. Desktop hosts opt into
+        // host-driven resize via `.resizable(true)` + min / max
+        // clamps.
+        #[cfg(not(target_os = "ios"))]
+        let editor = editor
             .resizable(true)
             .min_size((MIN_W, MIN_H))
-            .max_size((MAX_W, MAX_H))
-            .into_editor()
+            .max_size((MAX_W, MAX_H));
+        editor.into_editor()
     }
 }
 

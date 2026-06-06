@@ -102,8 +102,8 @@ pub struct SlintEditor<P: Params + ?Sized> {
     /// `0` is the sentinel "no resize pending."
     pending_size: Arc<AtomicU64>,
     /// Resize-capability + constraints surfaced through the `Editor`
-    /// trait. Defaults to `can_resize = true`; opt out with
-    /// `.resizable(false)`. Constraints feed CLAP
+    /// trait. Defaults to `can_resize = false`; opt in with
+    /// `.resizable(true)`. Constraints feed CLAP
     /// `gui_get_resize_hints` and VST3 `checkSizeConstraint` so
     /// hosts honour the editor's limits.
     can_resize: bool,
@@ -158,7 +158,7 @@ impl<P: Params + 'static> SlintEditor<P> {
             scale: EditorScale::new(truce_gui::backing_scale()),
             window: None,
             pending_size: Arc::new(AtomicU64::new(0)),
-            can_resize: true,
+            can_resize: false,
             min_size: (1, 1),
             max_size: (u32::MAX, u32::MAX),
             aspect_ratio: None,
