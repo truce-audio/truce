@@ -82,6 +82,28 @@ impl<P: Params + 'static> SlintEditor<P> {
             inner: Arc::new(Mutex::new(None)),
         }
     }
+
+    /// No-op on iOS: the AU v3 / `UIView` container owns sizing,
+    /// and the plugin's `gui_get_size` is queried once at present
+    /// time. Kept for source compatibility with the desktop
+    /// `SlintEditor::resizable` so plugin authors don't need a
+    /// `#[cfg(not(target_os = "ios"))]` on every call.
+    #[must_use]
+    pub fn resizable(self, _resizable: bool) -> Self {
+        self
+    }
+
+    /// No-op on iOS. See [`Self::resizable`].
+    #[must_use]
+    pub fn min_size(self, _min: (u32, u32)) -> Self {
+        self
+    }
+
+    /// No-op on iOS. See [`Self::resizable`].
+    #[must_use]
+    pub fn max_size(self, _max: (u32, u32)) -> Self {
+        self
+    }
 }
 
 impl<P: Params + 'static> Editor for SlintEditor<P> {
