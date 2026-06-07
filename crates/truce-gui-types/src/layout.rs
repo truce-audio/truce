@@ -753,6 +753,14 @@ impl GridLayout {
     #[must_use]
     pub fn resizable(mut self, value: bool) -> Self {
         self.resizable = value;
+        // `compute_size` reads `resizable` to decide whether the
+        // declared `cols`/`rows` extend the natural size past the
+        // flowed content, so refresh the cached dimensions - keeps
+        // the result independent of where `.resizable()` lands in the
+        // builder chain.
+        let (w, h) = self.compute_size();
+        self.width = w;
+        self.height = h;
         self
     }
 
@@ -967,34 +975,40 @@ impl GridLayout {
     )]
     #[must_use]
     pub fn compute_size(&self) -> (u32, u32) {
-        // Width takes the larger of: the rightmost widget edge and
-        // the declared column count. For explicitly-positioned
-        // layouts (every widget pinned via `.at(col, row)`) the
-        // rightmost edge is fixed - so without the `max(self.cols)`
-        // arm `refit_cols` would change the column count but the
-        // resulting width wouldn't actually grow, and the editor
-        // would visibly stop snapping past the rightmost widget's
-        // column. Plugin authors are expected to call
-        // `.with_cols(N)` at build time when they want the natural
-        // (pre-resize) size to be narrower than the section's
-        // widget count would otherwise produce.
+        // The natural size always tracks the flowed widget extent so
+        // a fixed-size editor is exactly as wide/tall as its content.
+        //
+        // For *resizable* layouts we additionally let the declared
+        // `cols`/`rows` extend the size past that extent: an
+        // explicitly-positioned layout has a fixed rightmost edge, so
+        // without this arm `refit_cols`/`refit_rows` would bump the
+        // declared count but the size wouldn't actually grow and the
+        // editor would visibly stop snapping past the last widget.
+        //
+        // Gating on `resizable` matters because `cols` is the widest
+        // section's widget *count*, which overcounts columns whenever
+        // widgets stack (explicit `.at` rows) or a spanning widget
+        // wraps early - e.g. two knobs stacked in col 0 plus a meter
+        // in col 1 is 3 widgets but only 2 columns. Applying the
+        // `max` unconditionally padded every such fixed-size built-in
+        // with a phantom trailing column.
         let max_widget_col = self
             .widgets
             .iter()
             .map(|w| w.col + w.col_span)
             .max()
             .unwrap_or(1);
-        let max_col = max_widget_col.max(self.cols);
         let max_widget_row = self
             .widgets
             .iter()
             .map(|w| w.row + w.row_span)
             .max()
             .unwrap_or(1);
-        // Same `max(self.rows, ...)` trick as the width axis: lets
-        // `refit_rows` grow the grid past the bottommost widget's
-        // row with empty trailing space.
-        let max_row = max_widget_row.max(self.rows);
+        let (max_col, max_row) = if self.resizable {
+            (max_widget_col.max(self.cols), max_widget_row.max(self.rows))
+        } else {
+            (max_widget_col, max_widget_row)
+        };
         let section_count = self.sections.len() as f32;
 
         let w = GRID_PADDING * 2.0 + max_col as f32 * (self.cell_size + GRID_GAP) - GRID_GAP;
@@ -1284,6 +1298,66 @@ mod tests {
             g.rows
         );
         assert!(new_h > natural_h);
+    }
+
+    #[test]
+    fn fixed_size_natural_width_matches_flowed_content() {
+        // block-drywet shape: 3 widgets but only 2 columns occupied
+        // (two knobs stacked in col 0, a meter spanning 2 rows in
+        // col 1). The widest-section widget *count* is 3, so the old
+        // unconditional `max(self.cols)` padded the window with a
+        // phantom trailing column. A fixed-size layout must be
+        // exactly as wide as its flowed content.
+        let g = GridLayout::build(vec![widgets(vec![
+            GridWidget::knob(0u32, "Drive").at(0, 0),
+            GridWidget::knob(1u32, "Mix").at(0, 1),
+            GridWidget::meter(&[2u32, 3u32], "Level").at(1, 0).rows(2),
+        ])])
+        .with_title("DRY/WET");
+        let max_widget_col = g
+            .widgets
+            .iter()
+            .map(|w| w.col + w.col_span)
+            .max()
+            .unwrap();
+        let content_w =
+            (GRID_PADDING * 2.0 + max_widget_col as f32 * (g.cell_size + GRID_GAP) - GRID_GAP) as u32;
+        assert_eq!(
+            g.width, content_w,
+            "fixed-size natural width must hug the flowed content, no phantom columns"
+        );
+    }
+
+    #[test]
+    fn resizable_natural_width_still_extends_to_declared_cols() {
+        // The resize affordance is preserved: an opted-in resizable
+        // layout still lets `cols` extend the width past the flowed
+        // extent so `refit_cols` has room to snap into.
+        let g = GridLayout::build(vec![widgets(auto_widgets(2))])
+            .with_cols(4)
+            .resizable(true);
+        assert_eq!(g.cols, 4);
+        let two_col_w =
+            (GRID_PADDING * 2.0 + 2.0 * (g.cell_size + GRID_GAP) - GRID_GAP) as u32;
+        assert!(
+            g.width > two_col_w,
+            "resizable layout keeps declared-cols width extension"
+        );
+    }
+
+    #[test]
+    fn refit_rows_round_trips_through_the_header() {
+        // Resizing a titled layout to its own natural height must be
+        // a no-op: `refit_rows` has to subtract the same header band
+        // `compute_size` adds.
+        let mut g = GridLayout::build(vec![widgets(auto_widgets(4))])
+            .with_cols(4)
+            .with_title("T")
+            .resizable(true)
+            .max_size((u32::MAX, 8));
+        let nat_h = g.height;
+        let (_, snapped) = g.refit_rows(nat_h);
+        assert_eq!(snapped, nat_h, "resize to natural height must round-trip");
     }
 
     #[test]
