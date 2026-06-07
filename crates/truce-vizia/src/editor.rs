@@ -42,27 +42,12 @@ pub struct ViziaEditor<P: Params + ?Sized> {
     /// Optional embedded font bytes. Most plugins pass
     /// `truce_font::JETBRAINS_MONO`.
     font: Option<&'static [u8]>,
-    /// Resize-capability flag surfaced via `Editor::can_resize`.
-    /// Defaults to `false` so existing plugins stay pinned to their
-    /// built size. Plugins designed with a flexible vizia widget
-    /// tree opt in with `.resizable(true)`.
-    ///
-    /// When `true`, host-driven resize works on macOS via the
-    /// wrapper's `WidthSizable | HeightSizable` autoresize mask +
-    /// `baseview-truce`'s `setFrameSize:` `Resized` patch +
-    /// `vizia_baseview`'s existing `Resized` handler (which
-    /// reconfigures the skia surface and calls `cx.set_window_size`).
-    /// Wrapper-driven `editor.set_size` (CLAP `gui_set_size`, VST3
-    /// `IPlugView::onSize`) is currently a no-op pending a
-    /// `vizia_baseview` upstream patch that exposes a resize entry
-    /// point on `WindowHandle`.
-    can_resize: bool,
-    /// Lower clamp on host-driven resize requests, in logical
-    /// points. Surfaced via `Editor::min_size` so CLAP
-    /// `gui_get_resize_hints` and VST3 `checkSizeConstraint` see
-    /// honest bounds.
+    /// Lower clamp retained from the builder. Currently unused for
+    /// host enforcement (vizia editors are fixed-size on every
+    /// platform - see [`Editor::can_resize`]); kept so the
+    /// `.min_size()` / `.max_size()` builders stay API-stable.
     min_size: (u32, u32),
-    /// Upper clamp on host-driven resize requests.
+    /// Upper clamp retained from the builder. See [`Self::min_size`].
     max_size: (u32, u32),
     window: Option<vizia::WindowHandle>,
 }
@@ -91,7 +76,6 @@ impl<P: Params + 'static> ViziaEditor<P> {
             setup: Arc::new(setup),
             stylesheets: Vec::new(),
             font: None,
-            can_resize: false,
             min_size: (1, 1),
             max_size: (u32::MAX, u32::MAX),
             window: None,
@@ -119,15 +103,16 @@ impl<P: Params + 'static> ViziaEditor<P> {
         self
     }
 
-    /// Opt into host-driven resize. Defaults to `false`: existing
-    /// plugins stay pinned to their built dimensions. When `true`,
-    /// the host's drag handles grow / shrink the parent `NSView` (or
-    /// HWND / X11 window); the autoresize chain + baseview's
-    /// `Resized` event drive vizia's layout engine to reflow widgets
-    /// that use stretch sizing.
+    /// **Currently a no-op** — vizia editors are fixed-size on every
+    /// platform. `vizia_baseview` exposes no resize entry point we can
+    /// drive from `Editor::set_size`, so host/user resize can't be
+    /// followed; advertising it just lets the host grow the window while
+    /// vizia stays put, leaving uninitialised pixels in the exposed gap.
+    /// Kept (accepting and ignoring `value`) so existing plugin code and
+    /// the `.min_size()` / `.max_size()` builders stay API-stable; will
+    /// gain real behaviour if a `vizia_baseview` resize entry point lands.
     #[must_use]
-    pub fn resizable(mut self, value: bool) -> Self {
-        self.can_resize = value;
+    pub fn resizable(self, _value: bool) -> Self {
         self
     }
 
@@ -156,7 +141,14 @@ impl<P: Params + 'static> Editor for ViziaEditor<P> {
     }
 
     fn can_resize(&self) -> bool {
-        self.can_resize
+        // Fixed-size on every platform. `vizia_baseview` exposes no
+        // resize entry point, so `set_size` can't be applied; reporting
+        // resizable would let the host/WM grow the outer window while
+        // vizia stays put, leaving uninitialised pixels in the exposed
+        // gap. Reporting `false` makes every format pin the window
+        // instead (VST3 `canResize` -> 0, CLAP no resize hints,
+        // standalone `pin_size`).
+        false
     }
 
     fn min_size(&self) -> (u32, u32) {
