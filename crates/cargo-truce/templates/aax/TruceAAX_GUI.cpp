@@ -2,7 +2,7 @@
 #include "TruceAAX_Parameters.h"
 
 #include "AAX_IViewContainer.h"
-#include "AAX_Point.h"
+#include "AAX_GUITypes.h"
 
 #include <cstring>
 #include <cstdio>
