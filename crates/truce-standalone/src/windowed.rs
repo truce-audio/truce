@@ -321,6 +321,24 @@ where
     _capture: Option<crate::playback::CaptureSink>,
 }
 
+/// Resize the outer standalone window so its client area becomes
+/// `(w, h)` logical points. On Windows the height is padded by the
+/// menu-bar band first: baseview's `Window::resize` is menu-blind and
+/// would otherwise clip the editor child by the menu height on every
+/// resize (see [`crate::windowed_windows::menu_reserve_logical`]).
+/// Every platform then goes through baseview's deferred resize, which
+/// is the only re-entrancy-safe way to resize from inside an event
+/// handler.
+fn resize_outer_window(window: &mut Window, w: u32, h: u32) {
+    #[cfg(target_os = "windows")]
+    let h = h + if let RwhHandle::Win32(handle) = window.raw_window_handle() {
+        crate::windowed_windows::menu_reserve_logical(handle.hwnd)
+    } else {
+        0
+    };
+    window.resize(baseview::Size::new(f64::from(w), f64::from(h)));
+}
+
 impl<P: PluginExport + 'static> WindowHandler for StandaloneHandler<P>
 where
     P::Params: 'static,
@@ -339,7 +357,7 @@ where
         if packed != 0 {
             let (w, h) = unpack_size(packed);
             if (w, h) != self.current_size && w > 0 && h > 0 {
-                window.resize(baseview::Size::new(f64::from(w), f64::from(h)));
+                resize_outer_window(window, w, h);
                 self.current_size = (w, h);
                 self.editor.set_size(w, h);
             }
@@ -399,7 +417,7 @@ where
                     let (ew, eh) = self.editor.size();
                     if (ew, eh) != (lw, lh) && ew > 0 && eh > 0 {
                         self.current_size = (ew, eh);
-                        window.resize(baseview::Size::new(f64::from(ew), f64::from(eh)));
+                        resize_outer_window(window, ew, eh);
                     }
                 }
             }

@@ -1301,6 +1301,11 @@ mod tests {
     }
 
     #[test]
+    #[allow(
+        clippy::cast_precision_loss,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss
+    )]
     fn fixed_size_natural_width_matches_flowed_content() {
         // block-drywet shape: 3 widgets but only 2 columns occupied
         // (two knobs stacked in col 0, a meter spanning 2 rows in
@@ -1314,14 +1319,9 @@ mod tests {
             GridWidget::meter(&[2u32, 3u32], "Level").at(1, 0).rows(2),
         ])])
         .with_title("DRY/WET");
-        let max_widget_col = g
-            .widgets
-            .iter()
-            .map(|w| w.col + w.col_span)
-            .max()
-            .unwrap();
-        let content_w =
-            (GRID_PADDING * 2.0 + max_widget_col as f32 * (g.cell_size + GRID_GAP) - GRID_GAP) as u32;
+        let max_widget_col = g.widgets.iter().map(|w| w.col + w.col_span).max().unwrap();
+        let content_w = (GRID_PADDING * 2.0 + max_widget_col as f32 * (g.cell_size + GRID_GAP)
+            - GRID_GAP) as u32;
         assert_eq!(
             g.width, content_w,
             "fixed-size natural width must hug the flowed content, no phantom columns"
@@ -1329,6 +1329,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     fn resizable_natural_width_still_extends_to_declared_cols() {
         // The resize affordance is preserved: an opted-in resizable
         // layout still lets `cols` extend the width past the flowed
@@ -1337,12 +1338,45 @@ mod tests {
             .with_cols(4)
             .resizable(true);
         assert_eq!(g.cols, 4);
-        let two_col_w =
-            (GRID_PADDING * 2.0 + 2.0 * (g.cell_size + GRID_GAP) - GRID_GAP) as u32;
+        let two_col_w = (GRID_PADDING * 2.0 + 2.0 * (g.cell_size + GRID_GAP) - GRID_GAP) as u32;
         assert!(
             g.width > two_col_w,
             "resizable layout keeps declared-cols width extension"
         );
+    }
+
+    #[test]
+    fn set_size_feedback_loop_is_stable() {
+        // Reproduce the Windows resize path: set_size runs
+        // refit_cols THEN refit_rows, then the editor resizes the
+        // window to the result, which re-enters set_size with that
+        // size. A stable loop must converge (no per-resize drift /
+        // clip). titled => header band is in play.
+        let mut g = GridLayout::build(vec![widgets(auto_widgets(4))])
+            .with_cols(4)
+            .with_title("T")
+            .resizable(true)
+            .max_size((8, 8));
+
+        // simulate one user drag to an arbitrary larger size
+        g.refit_cols(600);
+        let (mut w, mut h) = g.refit_rows(400);
+
+        // now feed the editor's own size back in, repeatedly, the way
+        // window.resize -> Resized -> set_size does on Windows.
+        for i in 0..5 {
+            g.refit_cols(w);
+            let (w2, h2) = g.refit_rows(h);
+            assert_eq!(
+                (w2, h2),
+                (w, h),
+                "feedback iteration {i} drifted: {:?} -> {:?}",
+                (w, h),
+                (w2, h2)
+            );
+            w = w2;
+            h = h2;
+        }
     }
 
     #[test]
