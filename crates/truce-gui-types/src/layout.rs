@@ -253,6 +253,12 @@ pub const GRID_PADDING: f32 = 10.0;
 pub const GRID_HEADER_H: f32 = 21.0;
 pub const GRID_SECTION_H: f32 = 14.0;
 
+/// Slack added before flooring a requested size to a whole cell count
+/// in `refit_cols` / `refit_rows`. Large enough to absorb float error
+/// on an exactly cell-aligned request (so it doesn't drop a column),
+/// far smaller than one cell so it never rounds a partial cell up.
+const SNAP_EPS: f32 = 1e-3;
+
 /// A widget placed in a grid layout.
 #[derive(Clone, Debug)]
 pub struct GridWidget {
@@ -846,17 +852,28 @@ impl GridLayout {
             + bottom_label_h
             - GRID_GAP;
         let usable = (target_h as f32 - overhead).max(0.0);
-        let raw = (usable / step).round();
+        // Floor (not round) so the snapped height never exceeds the
+        // request - see `refit_cols` for why overshoot makes the window
+        // creep in hosts that skip `gui_adjust_size`.
+        let raw = (usable / step + SNAP_EPS).floor();
         let new_rows = (raw.max(1.0) as u32).clamp(self.min_size.1.max(1), self.max_size.1.max(1));
         self.rows = new_rows;
         // Auto-flow doesn't care about `rows` (it's purely a
         // bookkeeping value for `compute_size`'s height), so we
         // skip the full `flow_and_size` round-trip and just
-        // re-read the size.
-        let (w, h) = self.compute_size();
-        self.width = w;
-        self.height = h;
-        (w, h)
+        // re-read the grid height. Report the requested height as the
+        // canvas (see `refit_cols`); preserve the canvas width the
+        // preceding `refit_cols` set rather than snapping it back to the
+        // cell-aligned grid width, and clamp to `max_size` so the editor
+        // stays self-enforcing regardless of host/WM behaviour.
+        let (_, grid_h) = self.compute_size();
+        self.height = if self.max_size.1 == u32::MAX {
+            target_h.max(grid_h)
+        } else {
+            let max_h = self.max_snapped_size().1;
+            target_h.clamp(grid_h, max_h)
+        };
+        (self.width, self.height)
     }
 
     /// Logical-point size of one resize step on either axis -
@@ -945,10 +962,36 @@ impl GridLayout {
             return (w, h);
         }
         let numerator = target_w as f32 + GRID_GAP - GRID_PADDING * 2.0;
-        let raw = (numerator / step).round();
+        // Floor (not round) so the snapped width never *exceeds* the
+        // requested width. Rounding up reports a window bigger than the
+        // host asked for; hosts that skip `gui_adjust_size` and call
+        // `set_size` with raw drag dimensions (e.g. Reaper) then grow
+        // their frame to fit, which feeds an even larger drag size back
+        // in - the window creeps/grows without bound. The small epsilon
+        // absorbs float error so an exactly cell-aligned width (the
+        // standalone case, where WM resize-increment hints already
+        // deliver aligned sizes) still lands on the intended column.
+        let raw = (numerator / step + SNAP_EPS).floor();
         let new_cols = (raw.max(1.0) as u32).clamp(self.min_size.0.max(1), self.max_size.0.max(1));
         self.cols = new_cols;
         self.flow_and_size();
+        // Report the *requested* width as the canvas, not the cell-aligned
+        // grid width. Flooring `cols` above guarantees the grid is never
+        // wider than the request, so the leftover (canvas - grid) is
+        // right-edge margin the renderer clears to the background. This
+        // makes the editor fill the host's window exactly (no creep, no
+        // uninitialised-pixel gap in hosts that keep their frame at an
+        // un-quantised size), while the clamp below keeps the editor
+        // self-enforcing: it never reports/fills past `max_size` even when
+        // a host or WM ignores our size hints / skips the wrapper clamp
+        // (the standalone hands raw drag sizes straight to `set_size`).
+        let grid_w = self.width; // grid at the clamped column count (>= min)
+        self.width = if self.max_size.0 == u32::MAX {
+            target_w.max(grid_w)
+        } else {
+            let max_w = self.max_snapped_size().0;
+            target_w.clamp(grid_w, max_w)
+        };
         (self.width, self.height)
     }
 
