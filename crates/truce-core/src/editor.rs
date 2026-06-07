@@ -122,6 +122,18 @@ pub trait Editor: Send {
         (u32::MAX, u32::MAX)
     }
 
+    /// Logical-point granularity for interactive resize, or `None`
+    /// for free (pixel-precise) resizing. The standalone X11 host
+    /// maps this onto WM resize increments (`PResizeInc`) so the
+    /// window manager snaps edge-drags to whole cells - the same
+    /// mechanism terminal emulators use to snap to character cells.
+    /// The snap counts from [`Self::min_size`], which is already
+    /// cell-aligned, so every allowed size lands on a boundary.
+    /// Ignored when `can_resize()` returns `false`.
+    fn size_increment(&self) -> Option<(u32, u32)> {
+        None
+    }
+
     /// Aspect-ratio constraint as `(numerator, denominator)`, or
     /// `None` for free resizing. CLAP, VST3, AU v3, and standalone
     /// honour this; VST2 / LV2 / AAX silently ignore. Integer pair

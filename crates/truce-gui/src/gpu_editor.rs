@@ -106,7 +106,7 @@ struct GpuWindowHandler<P: Params> {
 }
 
 impl<P: Params + 'static> WindowHandler for GpuWindowHandler<P> {
-    fn on_frame(&mut self, _window: &mut Window) {
+    fn on_frame(&mut self, window: &mut Window) {
         if let Some(ref mut gpu) = self.gpu {
             // Pick up scale changes that landed in the shared cell
             // since the last frame - either from a host callback (CLAP
@@ -127,10 +127,22 @@ impl<P: Params + 'static> WindowHandler for GpuWindowHandler<P> {
                     }
                 }
 
-                // Check if the inner editor's size changed (e.g. after hot reload).
+                // Pick up a size change from the inner editor - either a
+                // host/user-driven `set_size` (the standalone's outer
+                // `Resized` or this window's own `Resized` below both call
+                // it) or a hot-reload rebuild. Reconfigure the GPU surface,
+                // grow this child window so it follows its outer container
+                // (mirrors `BuiltinWindowHandler`), and ask the host to
+                // resize the outer frame. On a user drag the outer is
+                // already at this size, so `request_resize` is deduped by
+                // the standalone and doesn't fight the WM.
                 let new_size = inner.size();
                 if new_size != self.current_size {
                     gpu.resize(new_size.0, new_size.1);
+                    window.resize(baseview::Size::new(
+                        f64::from(new_size.0),
+                        f64::from(new_size.1),
+                    ));
                     self.bridge.request_resize(new_size.0, new_size.1);
                     self.current_size = new_size;
                 }
@@ -154,18 +166,42 @@ impl<P: Params + 'static> WindowHandler for GpuWindowHandler<P> {
             }
             Event::Window(win) => {
                 if let baseview::WindowEvent::Resized(info) = win {
-                    // Logical resize is disallowed (`Editor::can_resize`
-                    // is `false`), but the OS-reported *scale* is
-                    // authoritative: on Windows the parent HWND queried
-                    // at `open()` time can report a different DPI than
-                    // the child surface baseview actually creates, and
-                    // on every platform dragging across a monitor
-                    // boundary needs to land on the new DPI. Write
+                    // The OS-reported *scale* is authoritative: on Windows
+                    // the parent HWND queried at `open()` time can report a
+                    // different DPI than the child surface baseview actually
+                    // creates, and on every platform dragging across a
+                    // monitor boundary needs to land on the new DPI. Write
                     // through to the shared cell so `on_frame`'s
-                    // `take_change` path calls `set_scale` + `resize`
-                    // at the new scale; logical w×h stays put.
+                    // `take_change` path calls `set_scale` + `resize`.
                     self.scale.set(info.scale());
                     crate::platform::note_linux_scale_factor(info.scale());
+
+                    // When the editor opts into resize, route the new
+                    // logical bounds into the inner editor's `set_size` so
+                    // the grid reflows. In a plugin host this `Resized` is
+                    // the only resize signal (the host drives our child
+                    // view directly); the standalone also calls `set_size`
+                    // via the outer window, but this is harmless there -
+                    // the size already matches and `set_size` is a no-op.
+                    // `on_frame` then resizes the GPU surface + window.
+                    if let Ok(mut inner) = self.inner.lock()
+                        && inner.can_resize()
+                    {
+                        let phys = info.physical_size();
+                        let scale = info.scale();
+                        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                        let (lw, lh) = if scale > 0.0 {
+                            (
+                                (f64::from(phys.width) / scale).round() as u32,
+                                (f64::from(phys.height) / scale).round() as u32,
+                            )
+                        } else {
+                            (phys.width, phys.height)
+                        };
+                        if (lw, lh) != inner.size() && lw > 0 && lh > 0 {
+                            inner.set_size(lw, lh);
+                        }
+                    }
                 }
                 EventStatus::Ignored
             }
@@ -183,6 +219,36 @@ impl<P: Params + 'static> Editor for GpuEditor<P> {
         // Read live size from the inner editor so hot-reload changes
         // are reflected when the host queries our size.
         self.inner.lock().map_or(self.size, |g| g.size())
+    }
+
+    // Resize delegates to the inner `BuiltinEditor`, which owns the
+    // grid reflow + cell-snap logic. Without these the GPU editor would
+    // fall back to the trait defaults (`can_resize() == false`) and
+    // hosts / the standalone would pin the window. The actual surface +
+    // child-window resize happens in `GpuWindowHandler::on_frame` once
+    // `set_size` changes the inner editor's reported size.
+    fn can_resize(&self) -> bool {
+        self.inner.lock().is_ok_and(|g| g.can_resize())
+    }
+
+    fn set_size(&mut self, width: u32, height: u32) -> bool {
+        self.inner
+            .lock()
+            .is_ok_and(|mut g| g.set_size(width, height))
+    }
+
+    fn min_size(&self) -> (u32, u32) {
+        self.inner.lock().map_or((1, 1), |g| g.min_size())
+    }
+
+    fn max_size(&self) -> (u32, u32) {
+        self.inner
+            .lock()
+            .map_or((u32::MAX, u32::MAX), |g| g.max_size())
+    }
+
+    fn size_increment(&self) -> Option<(u32, u32)> {
+        self.inner.lock().ok().and_then(|g| g.size_increment())
     }
 
     fn open(&mut self, parent: RawWindowHandle, context: PluginContext) {

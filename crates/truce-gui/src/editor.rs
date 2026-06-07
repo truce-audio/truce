@@ -418,6 +418,91 @@ impl<P: Params + 'static> BuiltinEditor<P> {
         (self.layout.width(), self.layout.height())
     }
 
+    /// Whether the editor supports host/user-driven resize. Inherent
+    /// for the same reason as [`Self::size`]: the GPU editor wraps this
+    /// type and delegates to it in gpu-only builds where the `Editor`
+    /// trait impl is cfg'd out.
+    #[must_use]
+    pub fn can_resize(&self) -> bool {
+        match &self.layout {
+            Layout::Grid(gl) => gl.resizable,
+            // `PluginLayout` (the older row-based layout) doesn't have a
+            // reflow path yet; pin it until that lands.
+            Layout::Rows(_) => false,
+        }
+    }
+
+    /// Minimum logical size in points. Inherent (see [`Self::size`]).
+    #[must_use]
+    pub fn min_size(&self) -> (u32, u32) {
+        match &self.layout {
+            Layout::Grid(gl) => gl.min_snapped_size(),
+            Layout::Rows(_) => self.size(),
+        }
+    }
+
+    /// Maximum logical size in points. Inherent (see [`Self::size`]).
+    #[must_use]
+    pub fn max_size(&self) -> (u32, u32) {
+        match &self.layout {
+            Layout::Grid(gl) => gl.max_snapped_size(),
+            Layout::Rows(_) => self.size(),
+        }
+    }
+
+    /// Cell-step resize increment, or `None` when not resizable.
+    /// Inherent (see [`Self::size`]).
+    #[must_use]
+    pub fn size_increment(&self) -> Option<(u32, u32)> {
+        match &self.layout {
+            // Both axes snap on the same cell step. Only resizable
+            // grids advertise it; `Rows` layouts are pinned.
+            Layout::Grid(gl) if gl.resizable => {
+                let step = gl.resize_step();
+                Some((step, step))
+            }
+            _ => None,
+        }
+    }
+
+    /// Snap a requested logical size to whole cells, reflow the grid,
+    /// and post the result for the next frame. Returns `true` when
+    /// accepted. Inherent (see [`Self::size`]).
+    pub fn set_size(&mut self, width: u32, height: u32) -> bool {
+        if width == 0 || height == 0 || !self.can_resize() {
+            return false;
+        }
+        let Layout::Grid(ref mut gl) = self.layout else {
+            return false;
+        };
+        // Snap each axis to a whole cell step independently:
+        // width drives the column count (auto-flow widgets reflow,
+        // explicit widgets stay put), height drives the row count
+        // (purely a bookkeeping value `compute_size` uses to grow
+        // the grid past the bottommost widget with empty trailing
+        // space). The wider snap *then* the taller snap so the
+        // final cached `(width, height)` includes both axes.
+        gl.refit_cols(width);
+        let (new_w, new_h) = gl.refit_rows(height);
+        // The CPU backend's `BuiltinWindowHandler` reads `pending_size`
+        // to drive its surface/window resize. The GPU wrapper instead
+        // polls `size()` each frame, so the cell only exists (and only
+        // needs writing) in cpu builds; the reflow above is the part
+        // both paths share.
+        #[cfg(feature = "cpu")]
+        self.pending_size.store(
+            (u64::from(new_w) << 32) | u64::from(new_h),
+            Ordering::Release,
+        );
+        #[cfg(not(feature = "cpu"))]
+        let _ = (new_w, new_h);
+        // Flip the dirty bit so a quiescent editor (no automation,
+        // no UI edits) still wakes up the `on_frame` repaint gate
+        // and picks up the new size on the next tick.
+        self.request_repaint();
+        true
+    }
+
     /// Notify the widget tree that plugin state was restored
     /// (preset recall, undo, session load). Inherent for the same
     /// reason as [`Self::size`] above.
@@ -653,6 +738,30 @@ impl BlitBackend {
         self.surface.configure(&self.device, &self.surface_config);
         self.blit.resize(&self.device, phys_w, phys_h);
     }
+
+    /// Reconfigure only the swapchain surface to a new physical size,
+    /// leaving the blit texture (the CPU pixmap source) untouched.
+    ///
+    /// The surface must track the window's *real* physical extent so it
+    /// always covers it. That extent is set by the WM (X11, now
+    /// cell-snapped via resize-increment hints) or the host, and is not
+    /// bit-identical to `to_physical_px(logical, scale)` - sizing the
+    /// surface from the logical value instead leaves the window's
+    /// trailing edge showing whatever is behind it. The blit's
+    /// fullscreen-triangle pass samples its texture across the whole
+    /// surface, so surface != texture size just rescales the image to
+    /// fill - no gap. Called from the `Resized` handler, where the
+    /// window's actual physical size is authoritative.
+    fn configure_surface(&mut self, phys_w: u32, phys_h: u32) {
+        let phys_w = phys_w.clamp(1, self.max_texture_dim);
+        let phys_h = phys_h.clamp(1, self.max_texture_dim);
+        if self.surface_config.width == phys_w && self.surface_config.height == phys_h {
+            return;
+        }
+        self.surface_config.width = phys_w;
+        self.surface_config.height = phys_h;
+        self.surface.configure(&self.device, &self.surface_config);
+    }
 }
 
 /// Shared ownership of the blit backend between `BuiltinEditor` and the
@@ -791,13 +900,43 @@ impl<P: Params + 'static> baseview::WindowHandler for BuiltinWindowHandler<P> {
                 device,
                 queue,
                 surface,
+                surface_config,
                 blit,
                 ..
             } = backend;
             blit.update(queue, pixels);
-            let (wgpu::CurrentSurfaceTexture::Success(frame)
-            | wgpu::CurrentSurfaceTexture::Suboptimal(frame)) = surface.get_current_texture()
-            else {
+            // Acquire a swapchain frame, recovering from a stale surface.
+            // After a window resize on X11/Vulkan the surface goes
+            // `Outdated` and stays that way until it is reconfigured -
+            // even reconfiguring to the *same* size clears the flag, so a
+            // plain skip-the-frame leaves the editor frozen on its
+            // pre-resize image with the desktop showing through the newly
+            // exposed area. On `Outdated` / `Lost` / `Validation` we
+            // reconfigure (`surface_config` already holds the correct
+            // physical size) and retry; `Timeout` / `Occluded` are
+            // transient, so we skip this frame and try again next tick.
+            let mut acquired = None;
+            for _ in 0..2 {
+                match surface.get_current_texture() {
+                    wgpu::CurrentSurfaceTexture::Success(frame)
+                    | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
+                        acquired = Some(frame);
+                        break;
+                    }
+                    wgpu::CurrentSurfaceTexture::Outdated
+                    | wgpu::CurrentSurfaceTexture::Lost
+                    | wgpu::CurrentSurfaceTexture::Validation => {
+                        surface.configure(device, surface_config);
+                    }
+                    wgpu::CurrentSurfaceTexture::Timeout
+                    | wgpu::CurrentSurfaceTexture::Occluded => return,
+                }
+            }
+            let Some(frame) = acquired else {
+                // Couldn't recover the swapchain this tick - ask for
+                // another frame so we retry next on_frame rather than
+                // freezing until some unrelated edit flips the dirty bit.
+                editor.request_repaint();
                 return;
             };
             let view = frame
@@ -843,7 +982,7 @@ impl<P: Params + 'static> baseview::WindowHandler for BuiltinWindowHandler<P> {
         // the backend cell is the synchronization point with
         // `BuiltinEditor::close`. If the cell is `None`, the editor
         // pointer is no longer guaranteed valid and we must not deref.
-        let Ok(guard) = self.backend.lock() else {
+        let Ok(mut guard) = self.backend.lock() else {
             return baseview::EventStatus::Ignored;
         };
         if guard.is_none() {
@@ -874,8 +1013,8 @@ impl<P: Params + 'static> baseview::WindowHandler for BuiltinWindowHandler<P> {
                 let editor = unsafe { &mut *self.editor };
                 editor.scale.set(info.scale());
                 crate::platform::note_linux_scale_factor(info.scale());
+                let phys = info.physical_size();
                 if editor.can_resize() {
-                    let phys = info.physical_size();
                     let scale = info.scale();
                     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                     let (lw, lh) = if scale > 0.0 {
@@ -891,6 +1030,32 @@ impl<P: Params + 'static> baseview::WindowHandler for BuiltinWindowHandler<P> {
                         editor.set_size(lw, lh);
                     }
                 }
+                // Keep the swapchain covering the window's *actual*
+                // physical size. The WM (X11 resize-increment snap) or
+                // host sets that size, and it isn't bit-identical to the
+                // `to_physical_px(logical)` the `on_frame` resize paths
+                // configure the surface to - so without this the trailing
+                // edge of the window shows whatever is behind it. Driving
+                // the surface from the authoritative `info.physical_size()`
+                // here closes that gap; the blit scales the pixmap to fill.
+                if phys.width > 0
+                    && phys.height > 0
+                    && let Some(backend) = guard.as_mut()
+                {
+                    backend.configure_surface(phys.width, phys.height);
+                }
+                // Always repaint on a `Resized`, even when the logical
+                // size is unchanged. Our own `set_size` -> `on_frame`
+                // resize is asynchronous on X11: `on_frame` reconfigures
+                // the surface and presents one frame *before* the
+                // `ConfigureNotify` actually grows the child window, then
+                // clears the dirty bit. The trailing `Resized` that
+                // reports the now-grown window carries a logical size
+                // that already matches `editor.size()`, so without this
+                // the gate short-circuits and the freshly exposed region
+                // is never painted - it shows whatever was behind the
+                // window until the next unrelated repaint.
+                editor.request_repaint();
                 baseview::EventStatus::Ignored
             }
             _ => baseview::EventStatus::Ignored,
@@ -945,54 +1110,28 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
         self.request_repaint();
     }
 
+    // These forward to the inherent methods of the same name (inherent
+    // methods win method resolution, so `self.foo()` is not recursive).
+    // The logic lives inherently so the gpu-only `GpuEditor` wrapper can
+    // reach it when this `Editor` impl is cfg'd out.
     fn can_resize(&self) -> bool {
-        match &self.layout {
-            Layout::Grid(gl) => gl.resizable,
-            // `PluginLayout` (the older row-based layout) doesn't
-            // have a reflow path yet; pin it until that lands.
-            Layout::Rows(_) => false,
-        }
+        self.can_resize()
     }
 
     fn min_size(&self) -> (u32, u32) {
-        match &self.layout {
-            Layout::Grid(gl) => gl.min_snapped_size(),
-            Layout::Rows(_) => self.size(),
-        }
+        self.min_size()
     }
 
     fn max_size(&self) -> (u32, u32) {
-        match &self.layout {
-            Layout::Grid(gl) => gl.max_snapped_size(),
-            Layout::Rows(_) => self.size(),
-        }
+        self.max_size()
+    }
+
+    fn size_increment(&self) -> Option<(u32, u32)> {
+        self.size_increment()
     }
 
     fn set_size(&mut self, width: u32, height: u32) -> bool {
-        if width == 0 || height == 0 || !self.can_resize() {
-            return false;
-        }
-        let Layout::Grid(ref mut gl) = self.layout else {
-            return false;
-        };
-        // Snap each axis to a whole cell step independently:
-        // width drives the column count (auto-flow widgets reflow,
-        // explicit widgets stay put), height drives the row count
-        // (purely a bookkeeping value `compute_size` uses to grow
-        // the grid past the bottommost widget with empty trailing
-        // space). The wider snap *then* the taller snap so the
-        // final cached `(width, height)` includes both axes.
-        gl.refit_cols(width);
-        let (new_w, new_h) = gl.refit_rows(height);
-        self.pending_size.store(
-            (u64::from(new_w) << 32) | u64::from(new_h),
-            Ordering::Release,
-        );
-        // Flip the dirty bit so a quiescent editor (no automation,
-        // no UI edits) still wakes up the `on_frame` repaint gate
-        // and picks up the new size on the next tick.
-        self.request_repaint();
-        true
+        self.set_size(width, height)
     }
 
     fn open(&mut self, parent: RawWindowHandle, context: PluginContext) {

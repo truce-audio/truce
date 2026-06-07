@@ -859,6 +859,18 @@ impl GridLayout {
         (w, h)
     }
 
+    /// Logical-point size of one resize step on either axis -
+    /// `cell_size + GRID_GAP`, the same `step` `refit_cols` /
+    /// `refit_rows` snap to. Both axes share it. Drives the
+    /// standalone X11 host's WM resize-increment hint so edge-drags
+    /// snap to whole cells. Floors at 1 so a degenerate step never
+    /// produces a zero increment.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    #[must_use]
+    pub fn resize_step(&self) -> u32 {
+        (self.cell_size + GRID_GAP).round().max(1.0) as u32
+    }
+
     /// `Editor::min_size` value: the pixel size of the layout at
     /// the smallest allowed `(cols, rows)` extent declared by
     /// [`Self::min_size`]. Hosts see this via the format-specific

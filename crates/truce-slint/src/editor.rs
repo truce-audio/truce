@@ -328,9 +328,32 @@ impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
 
         blit.update(&self.queue, &self.rgba_buf);
 
-        let (wgpu::CurrentSurfaceTexture::Success(frame)
-        | wgpu::CurrentSurfaceTexture::Suboptimal(frame)) = self.surface.get_current_texture()
-        else {
+        // Acquire a swapchain frame, recovering from a stale surface.
+        // After a window resize on X11/Vulkan the surface reports
+        // `Outdated` and stays that way until it is reconfigured - even
+        // reconfiguring to the same size clears the flag, so a plain
+        // skip-the-frame would freeze the editor on its pre-resize image
+        // with the desktop showing through the newly exposed area. On
+        // `Outdated` / `Lost` / `Validation` we reconfigure and retry;
+        // `Timeout` / `Occluded` are transient, so we skip this frame.
+        let mut acquired = None;
+        for _ in 0..2 {
+            match self.surface.get_current_texture() {
+                wgpu::CurrentSurfaceTexture::Success(frame)
+                | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
+                    acquired = Some(frame);
+                    break;
+                }
+                wgpu::CurrentSurfaceTexture::Outdated
+                | wgpu::CurrentSurfaceTexture::Lost
+                | wgpu::CurrentSurfaceTexture::Validation => {
+                    self.surface.configure(&self.device, &self.surface_config);
+                }
+                wgpu::CurrentSurfaceTexture::Timeout
+                | wgpu::CurrentSurfaceTexture::Occluded => return,
+            }
+        }
+        let Some(frame) = acquired else {
             return;
         };
         let view = frame

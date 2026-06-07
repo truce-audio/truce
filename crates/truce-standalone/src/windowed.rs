@@ -256,6 +256,8 @@ where
             editor,
             pending_resize,
             current_size: (lw, lh),
+            #[cfg(target_os = "linux")]
+            size_hints_scale: 0.0,
             plugin,
             pending,
             transport,
@@ -292,6 +294,13 @@ where
     /// `Resized` event -> `editor.set_size` propagation so the
     /// editor only sees real OS-driven changes.
     current_size: (u32, u32),
+    /// Scale factor the X11 WM min/max size hints were last computed
+    /// at, or `0.0` if they haven't been set yet. The editor's
+    /// min/max bounds are logical, so the physical-pixel hints the WM
+    /// enforces have to be recomputed whenever the backing scale moves
+    /// (e.g. dragging across monitors). Linux-only; unused elsewhere.
+    #[cfg(target_os = "linux")]
+    size_hints_scale: f64,
     plugin: Arc<Mutex<P>>,
     pending: Arc<ArrayQueue<MidiEvent>>,
     transport: Transport,
@@ -390,6 +399,56 @@ where
         if let Event::Window(baseview::WindowEvent::Resized(info)) = &event {
             let phys = info.physical_size();
             let scale = info.scale();
+            // Hand the editor's logical min/max bounds and cell-step
+            // increment to the X11 WM as physical-pixel size hints so
+            // it clamps interactive edge-drags to the editor's bounds
+            // and snaps them to whole cells itself. This replaces the
+            // old client-side snap-back (removed below for Linux) that
+            // ran away by fighting the WM's resize grab. The bounds /
+            // increment are logical and the hints physical, so
+            // recompute whenever the backing scale moves;
+            // `size_hints_scale` gates the redundant calls.
+            // `scale` is written verbatim from `info.scale()`, never
+            // through accumulating arithmetic, so bit-equality is the
+            // right gate - an epsilon check would miss a legitimate
+            // host scale change. Same rationale as
+            // `EditorScale::take_change`.
+            #[cfg(target_os = "linux")]
+            #[allow(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                clippy::float_cmp
+            )]
+            if self.editor.can_resize()
+                && scale > 0.0
+                && scale != self.size_hints_scale
+                && let RwhHandle::Xlib(h) = window.raw_window_handle()
+            {
+                let to_phys = |v: u32| -> u32 {
+                    // `u32::MAX` is the trait's "unbounded" sentinel;
+                    // map it to 0 so `set_resize_hints` omits the cap
+                    // on that axis instead of overflowing the multiply.
+                    if v == u32::MAX {
+                        0
+                    } else {
+                        (f64::from(v) * scale).round() as u32
+                    }
+                };
+                let (min_w, min_h) = self.editor.min_size();
+                let (max_w, max_h) = self.editor.max_size();
+                let (inc_w, inc_h) = self.editor.size_increment().unwrap_or((0, 0));
+                crate::windowed_x11::set_resize_hints(
+                    window.raw_display_handle(),
+                    &h,
+                    to_phys(min_w),
+                    to_phys(min_h),
+                    to_phys(max_w),
+                    to_phys(max_h),
+                    to_phys(inc_w),
+                    to_phys(inc_h),
+                );
+                self.size_hints_scale = scale;
+            }
             #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
             let (lw, lh) = if scale > 0.0 {
                 (
@@ -413,6 +472,23 @@ where
                 // is a no-op for them. Vizia's `set_size` returns
                 // `false`; we leave the outer alone in that case
                 // so the autoresize cascade still works.
+                //
+                // NOT on Linux/X11: issuing `configure_window` from
+                // inside the handling of the window's own
+                // `ConfigureNotify` fights the WM's interactive
+                // resize grab. The grid snaps to whole columns on
+                // nearly every drag tick, so `(ew, eh) != (lw, lh)`
+                // is true almost always and the echo fires
+                // continuously; grab-rebaselining WMs (mutter, kwin)
+                // fold each injected size into the grab and the
+                // window runs away ("huge while dragging"). macOS
+                // already lives with `set_size`-only here (the child
+                // follows via `NSViewWidthSizable` autoresize); on
+                // Linux the editor's own `on_frame` resizes the child
+                // surface to the snapped size, so it still follows -
+                // we just let the WM own the outer frame during the
+                // drag and accept a thin margin at the clamp bounds.
+                #[cfg(not(target_os = "linux"))]
                 if accepted {
                     let (ew, eh) = self.editor.size();
                     if (ew, eh) != (lw, lh) && ew > 0 && eh > 0 {
@@ -420,6 +496,8 @@ where
                         resize_outer_window(window, ew, eh);
                     }
                 }
+                #[cfg(target_os = "linux")]
+                let _ = accepted;
             }
         }
 

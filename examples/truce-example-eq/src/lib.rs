@@ -318,6 +318,15 @@ impl PluginLogic for Eq {
             widgets(vec![knob(P::Output, "Output")]),
         ])
         .with_title("EQ")
+        .resizable(true)
+        // Cell-count bounds on (cols, rows) - the grid snaps to whole
+        // cells, so bounds are in cells, not pixels. Floor of 3 cols
+        // keeps each section's three knobs on one row (dropping below
+        // would wrap them); 9 cols lets the three sections widen out
+        // side by side. 3..8 rows caps the vertical stretch where the
+        // layout still reads as tight.
+        .min_size((3, 3))
+        .max_size((9, 8))
         .into_editor(&self.params)
     }
 }
