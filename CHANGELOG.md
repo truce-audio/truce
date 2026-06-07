@@ -11,11 +11,8 @@ Notable changes per release.
   except the built-in grid, which takes `(cols, rows)` cell
   counts (it snaps to whole cells anyway). Vizia plugin-form
   `set_size` is a known gap.
-- **Widget reflow on resize.** Iced / slint / vizia meters and
-  XY pads stretch to fill their cells under host resize; gain
-  examples center their knob row at any editor width. Vizia XY
-  pad label moved to bottom to match the other backends. Visible
-  in every backend's `gain` and `gui-zoo` example variants.
+- **`truce-vizia`: XY pad label moved to bottom.** Matches the
+  other backends.
 - **`baseview-truce 0.1.1-truce.8`.** Adds the macOS
   `setFrameSize:` `Resized` event + OpenGL drawable resize that
   host-driven editor resize depends on. To upstream to baseview.
