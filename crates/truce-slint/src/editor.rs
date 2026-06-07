@@ -349,8 +349,9 @@ impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
                 | wgpu::CurrentSurfaceTexture::Validation => {
                     self.surface.configure(&self.device, &self.surface_config);
                 }
-                wgpu::CurrentSurfaceTexture::Timeout
-                | wgpu::CurrentSurfaceTexture::Occluded => return,
+                wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
+                    return;
+                }
             }
         }
         let Some(frame) = acquired else {

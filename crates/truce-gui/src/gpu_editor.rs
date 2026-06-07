@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 
 use baseview::{Event, EventStatus, Window, WindowHandler, WindowOpenOptions, WindowScalePolicy};
 
-use truce_core::editor::{Editor, EditorBridge, PluginContext, RawWindowHandle};
+use truce_core::editor::{Editor, PluginContext, RawWindowHandle};
 use truce_gpu::WgpuBackend;
 use truce_gui_types::render::RenderBackend;
 use truce_params::Params;
@@ -92,11 +92,9 @@ struct GpuWindowHandler<P: Params> {
     /// tracking, double-click synthesis, and line→pixel scroll
     /// conversion once for everyone.
     translator: crate::interaction::BaseviewTranslator,
-    /// Current logical size - used to detect hot-reload size changes.
+    /// Current logical size - used to detect host/user-driven resizes
+    /// so the GPU surface + child window follow.
     current_size: (u32, u32),
-    /// Bridge handle, retained so we can drive `request_resize` from
-    /// the render loop when hot-reload changes the editor's size.
-    bridge: Arc<dyn EditorBridge>,
     /// Shared with the parent `GpuEditor`; written by `set_scale_factor`
     /// (host). `on_frame` compares against `last_applied_scale` and
     /// reconfigures the wgpu surface + MSAA target via
@@ -127,15 +125,19 @@ impl<P: Params + 'static> WindowHandler for GpuWindowHandler<P> {
                     }
                 }
 
-                // Pick up a size change from the inner editor - either a
-                // host/user-driven `set_size` (the standalone's outer
-                // `Resized` or this window's own `Resized` below both call
-                // it) or a hot-reload rebuild. Reconfigure the GPU surface,
-                // grow this child window so it follows its outer container
-                // (mirrors `BuiltinWindowHandler`), and ask the host to
-                // resize the outer frame. On a user drag the outer is
-                // already at this size, so `request_resize` is deduped by
-                // the standalone and doesn't fight the WM.
+                // Pick up a size change from the inner editor (a
+                // host/user-driven `set_size`: the standalone's outer
+                // `Resized` or this window's own `Resized` below). Resize
+                // the GPU surface and this child window so the content
+                // follows - mirrors `BuiltinWindowHandler`.
+                //
+                // Deliberately NO `bridge.request_resize` here: this runs
+                // on baseview's render thread, and in a plugin host
+                // echoing a resize request back while the host is mid-
+                // resize creates a feedback loop (host resize -> set_size
+                // -> here -> request_resize -> host resize -> ...) that
+                // hangs the host. The host/WM already owns the outer
+                // frame size during a drag; we only follow it.
                 let new_size = inner.size();
                 if new_size != self.current_size {
                     gpu.resize(new_size.0, new_size.1);
@@ -143,7 +145,6 @@ impl<P: Params + 'static> WindowHandler for GpuWindowHandler<P> {
                         f64::from(new_size.0),
                         f64::from(new_size.1),
                     ));
-                    self.bridge.request_resize(new_size.0, new_size.1);
                     self.current_size = new_size;
                 }
 
@@ -262,8 +263,6 @@ impl<P: Params + 'static> Editor for GpuEditor<P> {
         let system_scale = self.scale.get();
         let (lw, lh) = self.size; // logical points
 
-        let bridge = Arc::clone(context.bridge());
-
         // Set up the inner editor's context for param access.
         if let Ok(mut inner) = self.inner.lock() {
             inner.set_context(context);
@@ -295,7 +294,6 @@ impl<P: Params + 'static> Editor for GpuEditor<P> {
                     gpu,
                     translator: crate::interaction::BaseviewTranslator::default(),
                     current_size: size,
-                    bridge,
                     scale: scale_handle,
                     last_applied_scale: scale,
                 }

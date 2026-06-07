@@ -52,13 +52,21 @@ pub fn param_xy_pad<P: ?Sized>(
         // Background (matches iced SURFACE)
         painter.rect_filled(pad_rect, 0.0, crate::theme::SURFACE);
 
-        // Border
+        // Border. Inset by half a pixel so the 1px stroke stays inside
+        // `painter_at(rect)`'s clip: egui's clip rect is max-exclusive,
+        // so a line exactly on `pad_rect.right()` - which is the column's
+        // right edge when the pad fills the available width - gets cut,
+        // leaving the right border invisible. (Left/top sit on the
+        // inclusive min edge and the bottom is inset by `LABEL_H`, so
+        // only the right edge is affected, but inset all four for an
+        // even border.)
         let bc = egui::Color32::from_rgb(115, 115, 115);
         let bs = egui::Stroke::new(1.0, bc);
-        painter.line_segment([pad_rect.left_top(), pad_rect.right_top()], bs);
-        painter.line_segment([pad_rect.right_top(), pad_rect.right_bottom()], bs);
-        painter.line_segment([pad_rect.right_bottom(), pad_rect.left_bottom()], bs);
-        painter.line_segment([pad_rect.left_bottom(), pad_rect.left_top()], bs);
+        let b = pad_rect.shrink(0.5);
+        painter.line_segment([b.left_top(), b.right_top()], bs);
+        painter.line_segment([b.right_top(), b.right_bottom()], bs);
+        painter.line_segment([b.right_bottom(), b.left_bottom()], bs);
+        painter.line_segment([b.left_bottom(), b.left_top()], bs);
 
         // Crosshair position
         let dot_x = pad_rect.left() + pad_rect.width() * vx;
