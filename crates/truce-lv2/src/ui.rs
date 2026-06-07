@@ -304,20 +304,19 @@ pub unsafe fn instantiate_ui<P: PluginExport>(
         // letting `anchor_child_for_resize` + autoresize-mask carry
         // the rest means the editor fills whatever container the
         // host opens.
-        if !editor.can_resize() {
-            if let Some(resize) = parsed.resize
-                && let Some(func) = resize.ui_resize
-            {
-                // LV2 ui:resize takes int32_t; editor dimensions in u32
-                // are bounded by display size, well below i32::MAX.
-                #[allow(clippy::cast_possible_wrap)]
-                let (w, h) = (pref_w as i32, pref_h as i32);
-                func(resize.handle, w, h);
-            }
-
-            #[cfg(target_os = "macos")]
-            resize_ns_view(parent_ptr, pref_w, pref_h);
+        if !editor.can_resize()
+            && let Some(resize) = parsed.resize
+            && let Some(func) = resize.ui_resize
+        {
+            // LV2 ui:resize takes int32_t; editor dimensions in u32
+            // are bounded by display size, well below i32::MAX.
+            #[allow(clippy::cast_possible_wrap)]
+            let (w, h) = (pref_w as i32, pref_h as i32);
+            func(resize.handle, w, h);
         }
+
+        #[cfg(target_os = "macos")]
+        resize_ns_view(parent_ptr, pref_w, pref_h);
 
         // baseview attached its child at frame origin `(0, 0)`. NSView
         // is unflipped by default, so `(0, 0)` is the parent's

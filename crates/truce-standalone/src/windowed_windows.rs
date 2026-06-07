@@ -23,11 +23,12 @@ use std::ffi::c_void;
 
 use windows_sys::Win32::Foundation::HWND;
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    GWL_STYLE, GetSystemMetrics, GetWindowLongW, ICON_BIG, ICON_SMALL, IMAGE_ICON, LR_DEFAULTSIZE,
-    LR_SHARED, LoadImageW, SM_CXSMICON, SM_CYSMICON, SWP_FRAMECHANGED, SWP_NOMOVE, SWP_NOSIZE,
-    SWP_NOZORDER, SendMessageW, SetWindowLongW, SetWindowPos, WM_SETICON, WS_MAXIMIZEBOX,
-    WS_MINIMIZEBOX, WS_SIZEBOX,
+    GWL_STYLE, GetMenu, GetSystemMetrics, GetWindowLongW, ICON_BIG, ICON_SMALL, IMAGE_ICON,
+    LR_DEFAULTSIZE, LR_SHARED, LoadImageW, SM_CXSMICON, SM_CYMENU, SM_CYSMICON, SWP_FRAMECHANGED,
+    SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SendMessageW, SetWindowLongW, SetWindowPos, WM_SETICON,
+    WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_SIZEBOX,
 };
 
 /// Resource name of the embedded app-icon group. `cargo truce`'s
@@ -127,6 +128,52 @@ pub fn set_window_icon(hwnd: *mut c_void) {
         if !small.is_null() {
             SendMessageW(hwnd, WM_SETICON, ICON_SMALL as usize, small as isize);
         }
+    }
+}
+
+/// Extra **logical** height to add to a requested window height so
+/// baseview's `Window::resize` leaves room for the menu bar. Returns
+/// `0` when the window has no menu.
+///
+/// baseview computes the outer window size with `AdjustWindowRectEx(..,
+/// bMenu = FALSE, ..)`, so it never reserves the `SM_CYMENU` band the
+/// menu bar steals from the client area - undoing the one-shot
+/// reservation [`crate::menu_windows`] installs at startup and
+/// clipping the editor child by the menu-bar height on every
+/// programmatic resize. We can't `SetWindowPos` ourselves from inside
+/// an event handler (baseview already holds its handler `RefCell`
+/// borrow, and the synchronous `WM_SIZE` would re-enter and panic -
+/// the very reason baseview defers its own resizes). Instead we pad
+/// the height handed to baseview's deferred resize by the menu band:
+/// the menu eats the padding, leaving the intended client area.
+///
+/// The padding is the physical `SM_CYMENU` (matching
+/// `menu_windows::grow_window_for_menu`) converted back to logical
+/// points, since baseview re-multiplies by the window scale.
+///
+/// Must run on the window's thread (the main thread).
+// `GetSystemMetrics` returns a non-negative menu height; the ceil'd
+// logical value stays tiny.
+#[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+pub fn menu_reserve_logical(hwnd: *mut c_void) -> u32 {
+    if hwnd.is_null() {
+        return 0;
+    }
+    let hwnd = hwnd as HWND;
+
+    // SAFETY: `hwnd` is the live baseview window on its own thread;
+    // these are read-only metric / state queries with no re-entrancy.
+    unsafe {
+        if GetMenu(hwnd).is_null() {
+            return 0;
+        }
+        let menu_px = GetSystemMetrics(SM_CYMENU);
+        if menu_px <= 0 {
+            return 0;
+        }
+        let dpi = GetDpiForWindow(hwnd);
+        let scale = if dpi == 0 { 1.0 } else { f64::from(dpi) / 96.0 };
+        (f64::from(menu_px) / scale).ceil() as u32
     }
 }
 
