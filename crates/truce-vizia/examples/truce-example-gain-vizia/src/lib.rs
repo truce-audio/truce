@@ -91,23 +91,17 @@ impl PluginLogic for GainVizia {
     }
 
     fn editor(&self) -> Box<dyn Editor> {
+        // Resize stays off for vizia plugins until `vizia_baseview`
+        // upstream adds a window-event resize entry point. Today
+        // `ViziaEditor::set_size` records the new logical size but
+        // can't push it into the running vizia event loop, so a
+        // host calling `gui_set_size` updates the editor's reported
+        // size without a visual change. The other backends (egui,
+        // iced, slint, built-in) opt in; vizia follows once the
+        // upstream patch lands.
         ViziaEditor::new(self.params.clone(), (WINDOW_W, WINDOW_H), gain_view)
             .with_stylesheet(widgets::BASE_CSS)
             .with_font(JETBRAINS_MONO)
-            // Host-drag resize: the wrapper installs the
-            // `WidthSizable | HeightSizable` autoresize mask, the
-            // host's drag handle grows the parent NSView, baseview's
-            // `setFrameSize:` override fires `Resized`, and
-            // vizia_baseview's `Resized` handler reconfigures its
-            // skia surface + calls `cx.set_window_size`, which
-            // re-runs vizia's layout engine against the new root
-            // dimensions. CLAP `gui_set_size` / VST3 `IPlugView::onSize`
-            // round-trips that don't accompany a parent resize are a
-            // no-op pending the vizia_baseview upstream resize-API
-            // patch tracked in `crates/truce-vizia/src/editor.rs`.
-            .resizable(true)
-            .min_size((176, 240))
-            .max_size((1200, 900))
             .into_editor()
     }
 }

@@ -672,11 +672,11 @@ re-editing.
 - **MIDI 2.0 over LV2.** LV2 Atom carries MIDI 1.0 byte streams,
   so plugins emitting MIDI 2.0 channel-voice, per-note, or
   ParamChange events drop those messages when loaded as LV2.
-- **`truce-vizia` resize.** Vizia editors are fixed-size in
-  plugin form: `ViziaEditor::set_size` is a no-op because
-  `vizia::WindowHandle` exposes no resize entry point callable
-  from outside its event loop. Unblocks when `vizia_baseview`
-  upstream adds a window-event resize variant + handler.
+- **`truce-vizia` resize.** Programmatic host-driven resize
+  (`gui_set_size` without an accompanying parent-`NSView` change)
+  records the new logical size on the editor but produces no
+  visual change. Unblocks when `vizia_baseview` upstream adds a
+  window-event resize variant + handler.
 - **Bring-your-own iOS container.** `cargo truce install --ios`
   always emits the bundled Swift container template (title, Play,
   status, hamburger overlay). Plug-ins that need a bespoke shell

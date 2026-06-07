@@ -159,25 +159,29 @@ impl<P: Params + 'static> Editor for ViziaEditor<P> {
         self.max_size
     }
 
-    // `set_size` (host → editor push) intentionally left at the
-    // trait default `|_, _| false`. vizia's `WindowHandle` doesn't
-    // expose a resize entry point that we could call from outside
-    // its event loop, and posting a custom event into the running
-    // vizia context isn't enough on its own - we'd also need
-    // `vizia_baseview` to translate it into a baseview
-    // `Window::resize` + skia surface reconfigure + `cx.set_window_size`
-    // call (the equivalent of `Application::apply_user_scale` in
-    // `vizia_baseview`'s `application.rs`, which is currently only
-    // triggered by `WindowEvent::SetUserScale`).
-    //
-    // Host-drag resize on macOS still works because the wrapper's
-    // `WidthSizable | HeightSizable` autoresize mask grows the
-    // baseview child NSView, baseview-truce's `setFrameSize:`
-    // override fires `Resized`, and `vizia_baseview`'s existing
-    // `Resized` handler does the surface + `cx.set_window_size`
-    // dance. CLAP `gui_set_size` / VST3 `IPlugView::onSize` round
-    // trips that don't also resize the parent `NSView` won't apply
-    // until a vizia upstream patch lands.
+    fn set_size(&mut self, w: u32, h: u32) -> bool {
+        if !self.can_resize() || w == 0 || h == 0 {
+            return false;
+        }
+        // Clamp to the plugin's declared bounds and record the new
+        // logical size so subsequent `Editor::size()` reads (and the
+        // standalone's outer-window snap) see honest values. The
+        // actual surface update arrives through the macOS autoresize
+        // cascade: when the parent `NSView` grows, baseview-truce's
+        // `setFrameSize:` override fires `Resized` and
+        // `vizia_baseview`'s existing handler reconfigures skia +
+        // calls `cx.set_window_size`. We accept the request (returning
+        // `true`) under all callers so the contract matches the other
+        // backends; a host that calls `gui_set_size` without also
+        // resizing the parent `NSView` will see this method succeed
+        // but won't see a visual change until the cascade arrives, or
+        // until a `vizia_baseview` upstream patch exposes a
+        // window-event resize entry point.
+        let w = w.clamp(self.min_size.0.max(1), self.max_size.0.max(1));
+        let h = h.clamp(self.min_size.1.max(1), self.max_size.1.max(1));
+        self.size = (w, h);
+        true
+    }
 
     fn screenshot(
         &mut self,
