@@ -11,8 +11,28 @@ Notable changes per release.
   except the built-in grid, which takes `(cols, rows)` cell
   counts (it snaps to whole cells anyway). Vizia plugin-form
   `set_size` is a known gap.
+- **New `Editor` trait methods.** `size_increment() ->
+  Option<(u32, u32)>` (interactive-resize granularity in logical
+  points; the X11 standalone maps it onto `PResizeInc` so
+  window-edge drags snap), `aspect_ratio() -> Option<(u32, u32)>`
+  (`(num, denom)`; CLAP / VST3 / AU v3 / standalone honour it,
+  VST2 / LV2 / AAX silently ignore), and `prefers_pow2() -> bool`
+  (renderer wants power-of-two surface sizes). All have defaults
+  so existing plugins compile unchanged. Matching builder methods
+  on every editor type; iOS variants are no-op stubs.
 - **`truce-vizia`: XY pad label moved to bottom.** Matches the
   other backends.
+- **`truce-iced` widgets: `meter` and `xy_pad` accept `.width(Length)`,
+  `.height(Length)`, `.fill()`.** Lets the widget stretch with the
+  parent column / row instead of using a fixed pixel size.
+- **`truce-vizia` widgets: `level_meter` height and `xy_pad`
+  `w` / `h` now take `impl Into<Units>`.** Pass `Pixels(n)` for a
+  fixed size, `Stretch(1.0)` to fill the parent layout. Breaking
+  for callers passing `f32` directly: wrap in `Pixels(_)`.
+- **`truce-slint` widgets: `Meter` and `XYPad` use `preferred-*` +
+  `min-*` / `max-*` sizing.** A parent `VerticalLayout` /
+  `HorizontalLayout` can stretch them; the floor sizes keep the
+  widgets usable at the editor's `min_size`.
 - **`baseview-truce 0.1.1-truce.8`.** Adds the macOS
   `setFrameSize:` `Resized` event + OpenGL drawable resize that
   host-driven editor resize depends on. To upstream to baseview.
