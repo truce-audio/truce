@@ -1039,12 +1039,15 @@ fn apply_drag(
     let snap = |id, n: f32| (snapshot.snap_normalized)(id, n);
     match drag.widget_type {
         WidgetType::XYPad => {
+            // Geometry must match `draw_xy_pad` exactly or the dot
+            // tracks the cursor at the wrong pace. The X axis label is
+            // drawn *below* the widget (outside `region_h`), so the pad
+            // fills the full height minus margins - no label reserve.
             let pad_margin = 4.0;
-            let label_h = 18.0;
             let pad_x = drag.region_x + pad_margin;
             let pad_w = drag.region_w - pad_margin * 2.0;
             let pad_y_start = drag.region_y + pad_margin;
-            let pad_h = drag.region_h - pad_margin * 2.0 - label_h;
+            let pad_h = drag.region_h - pad_margin * 2.0;
 
             let norm_x = ((x - pad_x) / pad_w).clamp(0.0, 1.0);
             let norm_y = (1.0 - (y - pad_y_start) / pad_h).clamp(0.0, 1.0);
