@@ -605,6 +605,16 @@ class AudioUnitFactory: AUViewController, AUAudioUnitFactory {
     private var guiContainer: NSView?
     private var guiPtSize: NSSize = .zero
     private var paramSyncTimer: Timer?
+    /// Latch flipped after the host's first `viewDidLayout` pass.
+    /// On first layout Logic Pro lays our `view` out at its plug-in
+    /// pane size (typically wider than the editor's natural), and
+    /// propagating that to `gui_set_size` makes the editor canvas
+    /// grow to fill - widgets stay at natural cell positions but
+    /// the empty trailing space looks "stretched". Skipping the
+    /// first layout keeps the editor at its built natural size on
+    /// open; subsequent layouts (genuine user resize) still
+    /// propagate.
+    private var didInitialLayout = false
 
     override func loadView() {
         // Query editor size using a temporary Rust context.
@@ -684,24 +694,6 @@ class AudioUnitFactory: AUViewController, AUAudioUnitFactory {
         cb.pointee.gui_get_size(ctx, &w, &h)
         guard w > 0, h > 0 else { return }
 
-        // On first open Logic Pro has already laid out our `view`
-        // (via the autoresize mask on `loadView`'s NSView) at the
-        // plug-in pane's size by the time `setupGUIIfReady` runs.
-        // If that size is bigger than the editor's natural, mount
-        // the editor at the host's bounds so its wgpu surface gets
-        // configured at the right physical size - otherwise the
-        // surface is at natural size and Logic stretches it to the
-        // bigger displayed bounds (the "blurry / stretched on first
-        // load, fine after close+reopen" symptom; reopen sees the
-        // editor's last-remembered size which already matches).
-        if cb.pointee.gui_can_resize(ctx) != 0 {
-            let hostW = UInt32(max(1, self.view.bounds.width.rounded()))
-            let hostH = UInt32(max(1, self.view.bounds.height.rounded()))
-            if hostW > w || hostH > h {
-                cb.pointee.gui_set_size(ctx, hostW, hostH)
-                cb.pointee.gui_get_size(ctx, &w, &h)
-            }
-        }
         // w/h are in logical points - use directly.
         guiPtSize = NSSize(width: CGFloat(w), height: CGFloat(h))
         logger.info("setupGUI: \(w)x\(h) view=\(self.view.frame.width)x\(self.view.frame.height)")
@@ -730,7 +722,11 @@ class AudioUnitFactory: AUViewController, AUAudioUnitFactory {
 
     override func viewDidLayout() {
         super.viewDidLayout()
-        propagateHostResize()
+        if didInitialLayout {
+            propagateHostResize()
+        } else {
+            didInitialLayout = true
+        }
         centerGUI()
     }
     #else
@@ -741,7 +737,11 @@ class AudioUnitFactory: AUViewController, AUAudioUnitFactory {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        propagateHostResize()
+        if didInitialLayout {
+            propagateHostResize()
+        } else {
+            didInitialLayout = true
+        }
         centerGUI()
     }
     #endif
