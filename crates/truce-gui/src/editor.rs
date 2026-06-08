@@ -300,9 +300,25 @@ impl<P: Params + 'static> BuiltinEditor<P> {
         let scale = self.scale.get_f32();
         let owned = self.build_snapshot_closures();
         let snapshot = owned.as_snapshot();
-        let backend = self
-            .backend
-            .get_or_insert_with(|| CpuBackend::new(w, h, scale).expect("Failed to create backend"));
+        // `Pixmap::new` returns `None` for zero / unrepresentable
+        // physical dimensions, which can happen when a host probes
+        // `gui_get_size` against an unreasonable scale or when an
+        // edge-case `set_size` makes it through with extreme
+        // values. Previously this site unwrapped, which turned a
+        // recoverable rendering miss into a Rust panic that the
+        // VST3 `extern "C"` boundary couldn't catch - Cubase then
+        // hit it as an uncaught exception and aborted. Skip the
+        // frame instead; the next `on_frame` tick will retry once
+        // dimensions settle.
+        let backend = if let Some(ref mut b) = self.backend {
+            b
+        } else {
+            let Some(b) = CpuBackend::new(w, h, scale) else {
+                log::warn!("CpuBackend allocation failed for {w}x{h} @ {scale}x; skipping frame");
+                return;
+            };
+            self.backend.insert(b)
+        };
         render_widgets_impl(
             &self.layout,
             &self.theme,
