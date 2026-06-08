@@ -239,6 +239,32 @@ struct SlintWindowHandler<P: Params + ?Sized> {
     pending_size: Arc<AtomicU64>,
 }
 
+/// Wraps the live handler so a wgpu init failure at `open()` time
+/// degrades to a no-op instead of a panic. The open closure runs on
+/// baseview's window thread; an `.expect()` there unwinds across
+/// baseview's FFI boundary and aborts the host process (a DAW crash).
+/// Returning `Dead` leaves the editor blank but keeps the host alive,
+/// matching how iced/egui tolerate a failed surface.
+enum SlintHandler<P: Params + ?Sized> {
+    Live(Box<SlintWindowHandler<P>>),
+    Dead,
+}
+
+impl<P: Params + ?Sized + 'static> WindowHandler for SlintHandler<P> {
+    fn on_frame(&mut self, window: &mut Window) {
+        if let Self::Live(handler) = self {
+            handler.on_frame(window);
+        }
+    }
+
+    fn on_event(&mut self, window: &mut Window, event: Event) -> EventStatus {
+        match self {
+            Self::Live(handler) => handler.on_event(window, event),
+            Self::Dead => EventStatus::Ignored,
+        }
+    }
+}
+
 impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
     fn on_frame(&mut self, window: &mut Window) {
         // Pick up host-driven `set_size` requests posted to the
@@ -546,31 +572,50 @@ impl<P: Params + 'static> Editor for SlintEditor<P> {
                 // set_platform is per-thread, so re-register here.
                 platform::ensure_platform();
 
-                // Create wgpu surface
+                // Create wgpu surface. Any failure here returns a
+                // `Dead` handler rather than panicking - the open
+                // closure runs on baseview's thread, so a panic would
+                // unwind across its FFI boundary and crash the host.
                 let instance =
                     wgpu::Instance::new(truce_gui::platform::editor_instance_descriptor());
 
-                let surface = unsafe { platform::create_wgpu_surface(&instance, window) }
-                    .expect("failed to create wgpu surface");
+                let Some(surface) = (unsafe { platform::create_wgpu_surface(&instance, window) })
+                else {
+                    log::error!("truce-slint: failed to create wgpu surface; editor disabled");
+                    return SlintHandler::Dead;
+                };
 
-                let adapter =
-                    pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+                let adapter = match pollster::block_on(instance.request_adapter(
+                    &wgpu::RequestAdapterOptions {
                         power_preference: wgpu::PowerPreference::HighPerformance,
                         compatible_surface: Some(&surface),
                         force_fallback_adapter: false,
-                    }))
-                    .expect("no suitable GPU adapter");
+                    },
+                )) {
+                    Ok(adapter) => adapter,
+                    Err(e) => {
+                        log::error!("truce-slint: no suitable GPU adapter ({e}); editor disabled");
+                        return SlintHandler::Dead;
+                    }
+                };
 
                 let (device, queue) =
-                    pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+                    match pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
                         label: Some("truce-slint"),
                         required_features: wgpu::Features::empty(),
                         required_limits: wgpu::Limits::downlevel_defaults(),
                         experimental_features: wgpu::ExperimentalFeatures::default(),
                         memory_hints: wgpu::MemoryHints::Performance,
                         trace: wgpu::Trace::Off,
-                    }))
-                    .expect("failed to create wgpu device");
+                    })) {
+                        Ok(dq) => dq,
+                        Err(e) => {
+                            log::error!(
+                                "truce-slint: failed to create wgpu device ({e}); editor disabled"
+                            );
+                            return SlintHandler::Dead;
+                        }
+                    };
 
                 let caps = surface.get_capabilities(&adapter);
                 let format = caps
@@ -615,7 +660,7 @@ impl<P: Params + 'static> Editor for SlintEditor<P> {
                 // to slint_window via create_window_adapter().
                 let sync_fn = setup(typed_ctx.clone());
 
-                SlintWindowHandler::<P> {
+                SlintHandler::Live(Box::new(SlintWindowHandler::<P> {
                     slint_window,
                     sync_fn,
                     state: typed_ctx,
@@ -634,7 +679,7 @@ impl<P: Params + 'static> Editor for SlintEditor<P> {
                     last_phys_h: phys_h,
                     last_pos: LogicalPosition::default(),
                     pending_size: pending_size_handle,
-                }
+                }))
             },
         );
 
