@@ -186,7 +186,21 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
 unsafe extern "C" fn cb_destroy<P: PluginExport>(ctx: *mut std::ffi::c_void) {
     unsafe {
         if !ctx.is_null() {
-            drop(Box::from_raw(ctx.cast::<AuInstance<P>>()));
+            // Wrap the drop in `catch_unwind`: dropping the
+            // `AuInstance` cascades into the editor's `Drop`,
+            // which tears down wgpu surfaces / `NSView` /
+            // baseview / runloop timers. A panic anywhere in
+            // that chain propagates across this `extern "C"`
+            // boundary as UB - in practice the host catches it
+            // as an Objective-C exception, `objc_exception_rethrow`
+            // can't recover, and `std::terminate` aborts the host
+            // (the REAPER / Cubase quit-time SIGABRT pattern).
+            // Catching here keeps the host alive; the process is
+            // going away anyway so swallowing is fine.
+            let raw = ctx.cast::<AuInstance<P>>();
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                drop(Box::from_raw(raw));
+            }));
         }
     }
 }
@@ -960,8 +974,16 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
 unsafe extern "C" fn cb_gui_close<P: PluginExport>(ctx: *mut std::ffi::c_void) {
     unsafe {
         let inst = &mut *ctx.cast::<AuInstance<P>>();
-        if let Some(ref mut editor) = inst.editor {
-            editor.close();
+        if let Some(editor) = inst.editor.as_mut() {
+            // Same boundary-protection as `cb_destroy`: any panic
+            // during `editor.close()` (wgpu surface drop, baseview
+            // window close, NSView removal) would otherwise cross
+            // the FFI line and become an unhandled ObjC exception
+            // in the host.
+            let editor_ptr: *mut dyn truce_core::editor::Editor = editor.as_mut();
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                (*editor_ptr).close();
+            }));
         }
         // Keep the editor alive - just closed, not dropped.
         //
