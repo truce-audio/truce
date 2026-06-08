@@ -36,9 +36,7 @@ impl EguiRenderer {
         if width == 0 || height == 0 {
             return None;
         }
-        let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
-        desc.backends = wgpu::Backends::PRIMARY;
-        let instance = wgpu::Instance::new(desc);
+        let instance = wgpu::Instance::new(truce_gui::platform::editor_instance_descriptor());
 
         let surface = unsafe { crate::platform::create_wgpu_surface(&instance, window)? };
 
