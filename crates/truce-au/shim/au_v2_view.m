@@ -60,10 +60,7 @@
     // Non-resizable editor: pin the container to the editor's
     // natural size so a host that calls `setFrameSize:` with its
     // own default (e.g. Ableton's macOS AU v2 host) can't shrink
-    // the container below the editor child it carries. Without
-    // this pin, `[super setFrameSize:]` resizes the container and
-    // the editor's child overflows the parent bounds, clipping the
-    // top of the layout.
+    // the container below the editor child it carries.
     if (!self.canResize) {
         if (self.rustCtx != NULL && self.callbacks != NULL) {
             uint32_t natW = 0, natH = 0;
@@ -76,72 +73,19 @@
         [super setFrameSize:newSize];
         return;
     }
-    if (self.rustCtx == NULL || self.callbacks == NULL) {
-        [super setFrameSize:newSize];
-        return;
-    }
-    uint32_t w = (uint32_t)MAX(1.0, round(newSize.width));
-    uint32_t h = (uint32_t)MAX(1.0, round(newSize.height));
-    self.callbacks->gui_set_size(self.rustCtx, w, h);
-    // Re-query: the editor may have clamped against its
-    // `min_size` / `max_size` or snapped to a cell boundary (the
-    // built-in `GridLayout` does), so its actual size can differ
-    // from `newSize`.
-    uint32_t actW = 0, actH = 0;
-    self.callbacks->gui_get_size(self.rustCtx, &actW, &actH);
-    NSSize fitted = (actW > 0 && actH > 0)
-        ? NSMakeSize((CGFloat)actW, (CGFloat)actH)
-        : newSize;
-    [super setFrameSize:fitted];
-    // Synchronously resize the baseview child NSView to match.
-    // The built-in editor's `set_size` schedules its baseview
-    // resize through an async `pending_size` cell drained by
-    // `on_frame`, so without this the child stays at its old
-    // frame for at least one frame after we accept the host's
-    // request - rendering as an empty strip inside the container
-    // until the baseview tick catches up. Driving setFrameSize:
-    // on the child here is also picked up by baseview-truce's
-    // own setFrameSize: override (which posts a Resized event the
-    // editor handles) so the editor's surface reconfigures in
-    // the same callstack.
-    for (NSView *child in self.subviews) {
-        if (!NSEqualSizes(child.frame.size, fitted)) {
-            [child setFrameSize:fitted];
-        }
-    }
-    // Ableton (and likely other hosts that don't observe AU view
-    // frame changes) leaves the surrounding plug-in window at the
-    // size it picked, which renders as an empty strip on whichever
-    // edges the host's request exceeded our snapped size. Drag the
-    // host's content view + NSWindow to match so the visible
-    // window matches the editor's surface. Skip when the host
-    // already asked for our size to avoid a re-entrancy loop -
-    // resizing the window triggers another `setFrameSize:` on us
-    // through the autoresize cascade.
-    if (!NSEqualSizes(fitted, newSize)) {
-        NSView *superview = self.superview;
-        if (superview) {
-            NSSize current = superview.bounds.size;
-            if (!NSEqualSizes(current, fitted)) {
-                [superview setFrameSize:fitted];
-            }
-        }
-        NSWindow *win = self.window;
-        if (win) {
-            NSRect content = NSMakeRect(0, 0, fitted.width, fitted.height);
-            NSRect target = [win frameRectForContentRect:content];
-            NSRect current = win.frame;
-            // Anchor the window to its current top-left (Cocoa
-            // unflipped origin is bottom-left, so adjust by the
-            // height delta) - matches the natural "resize from
-            // the bottom-right" feel of host-driven resizes.
-            CGFloat topY = NSMaxY(current);
-            target.origin = NSMakePoint(current.origin.x, topY - target.size.height);
-            if (!NSEqualRects(target, current)) {
-                [win setFrame:target display:YES];
-            }
-        }
-    }
+    // Resizable editor: super-call only. Don't propagate
+    // `newSize` to `gui_set_size` - AU v2 has no standardised
+    // host-driven resize API, so Logic (and other hosts) call
+    // `setFrameSize:` here to position the embedded view into
+    // their plug-in pane (whatever size that happens to be), NOT
+    // to request the plug-in resize. Treating it as a resize
+    // request snaps the editor to its `max_size` because the host
+    // pane is typically much bigger than the editor's natural
+    // size. The editor stays at the size it reported via
+    // `gui_get_size`; the host's pane shows it at that size (the
+    // user may see empty space around it depending on the host's
+    // layout).
+    [super setFrameSize:newSize];
 }
 
 /// REAPER and Logic resize the plugin's outer window but never
@@ -169,9 +113,15 @@
                selector:@selector(superviewFrameDidChange:)
                    name:NSViewFrameDidChangeNotification
                  object:self.superview];
-        // Match the host's current size immediately - it may have
-        // resized the superview before we installed the observer.
-        [self resizeToSuperview];
+        // No initial `resizeToSuperview` sync. Logic Pro's AU v2
+        // host parents us into a plug-in pane that's much bigger
+        // than the editor's natural size; immediately filling it
+        // snaps the editor to its `max_size` instead of opening at
+        // the natural size the plug-in author intended. The
+        // observer above still picks up *future* superview frame
+        // changes (user-drag resize in hosts that propagate it),
+        // and our `setFrameSize:` override still services hosts
+        // that drive resize through the embedded view directly.
     }
 }
 
@@ -226,32 +176,26 @@
 
     BOOL canResize = cb->gui_can_resize(ctx) != 0;
 
-    // AU v2 hosts may drive resize by re-calling this method with
-    // a new `preferredSize` and discarding the old view (the
-    // `setFrameSize:` / superview-observer path covers hosts that
-    // resize the existing view in-place). Honour `preferredSize`
-    // when the editor opted in; otherwise stick with the editor's
-    // natural size.
-    //
-    // Inform the editor of the new size BEFORE `gui_open` so the
-    // newly-opened editor starts at the requested dimensions -
-    // otherwise the first frame paints at the old size and only
-    // catches up on the next `on_frame` tick.
+    // `preferredSize` per Apple's AUCocoaUIView spec is *the
+    // maximum the host can accommodate*, not the desired size.
+    // Logic Pro passes its full available plug-in pane (1000+
+    // pixels) here; treating it as a target snaps the editor
+    // straight to host-max instead of opening at the plug-in's
+    // natural size. Read our natural size from `gui_get_size`
+    // first, then only push `gui_set_size` when the natural is
+    // *bigger* than the host's max (i.e. to shrink, not grow).
     uint32_t w = 0, h = 0;
-    if (canResize && preferredSize.width > 0 && preferredSize.height > 0) {
-        cb->gui_set_size(ctx,
-            (uint32_t)round(preferredSize.width),
-            (uint32_t)round(preferredSize.height));
-    }
-    // Always read back the editor's actual stored size. For
-    // resizable editors this picks up the post-clamp / post-snap
-    // dimensions (the editor may have rounded `preferredSize`
-    // down to a cell boundary or clamped against `min_size` /
-    // `max_size`); for fixed-size editors it's the natural size.
-    // Using `preferredSize` verbatim would size the container
-    // wider / taller than the editor's child, leaving the child
-    // clipped.
     cb->gui_get_size(ctx, &w, &h);
+    if (canResize && preferredSize.width > 0 && preferredSize.height > 0) {
+        uint32_t maxW = (uint32_t)round(preferredSize.width);
+        uint32_t maxH = (uint32_t)round(preferredSize.height);
+        if (w > maxW || h > maxH) {
+            uint32_t reqW = w > maxW ? maxW : w;
+            uint32_t reqH = h > maxH ? maxH : h;
+            cb->gui_set_size(ctx, reqW, reqH);
+            cb->gui_get_size(ctx, &w, &h);
+        }
+    }
     if (w == 0 || h == 0) return nil;
 
     NSRect frame = NSMakeRect(0, 0, w, h);

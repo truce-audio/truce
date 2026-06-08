@@ -627,9 +627,19 @@ class AudioUnitFactory: AUViewController, AUAudioUnitFactory {
         #if os(macOS)
         v.wantsLayer = true
         v.layer?.backgroundColor = CGColor(red: 0.15, green: 0.15, blue: 0.15, alpha: 1)
+        // Without an autoresize mask, Logic Pro's bigger plug-in
+        // container leaves our view pinned at its initial natural
+        // size and `viewDidLayoutSubviews` never fires (our bounds
+        // never change). Width / height sizable makes the view
+        // follow the host container; `propagateHostResize` then
+        // sees `bounds != guiPtSize` and calls `gui_set_size`, and
+        // the inner `guiContainer` follows because it inherits the
+        // mask too (set on the container in `setupGUIIfReady`).
+        v.autoresizingMask = [.width, .height]
         #else
         // UIView always has a backing layer; set the BG directly.
         v.backgroundColor = UIColor(red: 0.15, green: 0.15, blue: 0.15, alpha: 1)
+        v.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         #endif
         self.view = v
         self.preferredContentSize = size
@@ -674,6 +684,24 @@ class AudioUnitFactory: AUViewController, AUAudioUnitFactory {
         cb.pointee.gui_get_size(ctx, &w, &h)
         guard w > 0, h > 0 else { return }
 
+        // On first open Logic Pro has already laid out our `view`
+        // (via the autoresize mask on `loadView`'s NSView) at the
+        // plug-in pane's size by the time `setupGUIIfReady` runs.
+        // If that size is bigger than the editor's natural, mount
+        // the editor at the host's bounds so its wgpu surface gets
+        // configured at the right physical size - otherwise the
+        // surface is at natural size and Logic stretches it to the
+        // bigger displayed bounds (the "blurry / stretched on first
+        // load, fine after close+reopen" symptom; reopen sees the
+        // editor's last-remembered size which already matches).
+        if cb.pointee.gui_can_resize(ctx) != 0 {
+            let hostW = UInt32(max(1, self.view.bounds.width.rounded()))
+            let hostH = UInt32(max(1, self.view.bounds.height.rounded()))
+            if hostW > w || hostH > h {
+                cb.pointee.gui_set_size(ctx, hostW, hostH)
+                cb.pointee.gui_get_size(ctx, &w, &h)
+            }
+        }
         // w/h are in logical points - use directly.
         guiPtSize = NSSize(width: CGFloat(w), height: CGFloat(h))
         logger.info("setupGUI: \(w)x\(h) view=\(self.view.frame.width)x\(self.view.frame.height)")
@@ -702,6 +730,7 @@ class AudioUnitFactory: AUViewController, AUAudioUnitFactory {
 
     override func viewDidLayout() {
         super.viewDidLayout()
+        propagateHostResize()
         centerGUI()
     }
     #else
@@ -735,11 +764,20 @@ class AudioUnitFactory: AUViewController, AUAudioUnitFactory {
         let newW = UInt32(max(1, hostW.rounded()))
         let newH = UInt32(max(1, hostH.rounded()))
         cb.pointee.gui_set_size(ctx, newW, newH)
-        guiPtSize = NSSize(width: CGFloat(newW), height: CGFloat(newH))
-        // Update the inner container's frame so the editor's NSView
-        // has the right outer bounds when its `on_frame` picks up
-        // the pending-size cell. `centerGUI` below repositions to
-        // origin (0, 0) since the new size matches the host's.
+        // Re-query: the editor may have clamped the request against
+        // its `min_size` / `max_size` (the built-in `GridLayout`
+        // does), so the stored size differs from `(newW, newH)`.
+        // Using the requested values for `guiPtSize` makes
+        // `centerGUI` mis-position the inner container: when host
+        // bounds are *smaller* than the editor's min, the container
+        // would be set to host bounds while the editor's actual
+        // surface stays at min, leaving its bottom-left at the
+        // host's bottom-left and the layout's TOP (GAIN header)
+        // clipping off the host's top edge.
+        var actW: UInt32 = 0, actH: UInt32 = 0
+        cb.pointee.gui_get_size(ctx, &actW, &actH)
+        guiPtSize = NSSize(width: CGFloat(max(1, actW)),
+                           height: CGFloat(max(1, actH)))
         guiContainer?.frame = NSRect(origin: .zero, size: guiPtSize)
     }
 
@@ -760,8 +798,30 @@ class AudioUnitFactory: AUViewController, AUAudioUnitFactory {
         guard let container = guiContainer, guiPtSize.width > 0 else { return }
         let hostW = self.view.bounds.width
         let hostH = self.view.bounds.height
+        // Horizontal: center the editor when the host's view is
+        // wider; clamp to 0 so the LEFT edge stays visible when the
+        // host is narrower (better to clip the right edge than the
+        // left where labels sit).
         let x = max(0, (hostW - guiPtSize.width) / 2)
+        // Vertical: anchor to the TOP of the host view in unflipped
+        // Cocoa coordinates. `(host - gui)` is positive when the
+        // editor fits (centers vertically by symmetry) and negative
+        // when the editor is taller than the host (e.g. Logic's UI
+        // zoom shrinks the host below our editor's `min_size`); in
+        // that case `(host - gui)` is negative, so `y` ends up
+        // below 0 and the editor's TOP edge sits at the host's TOP
+        // edge with the BOTTOM clipping off-screen. Without this,
+        // `max(0, ...)` pinned the bottom-left to the host's bottom-
+        // left and the GAIN header at the layout's top fell off the
+        // top edge of the visible plug-in window.
+        #if os(macOS)
+        let y = hostH - guiPtSize.height
+        #else
+        // UIKit uses flipped coords (origin top-left): the natural
+        // anchor for "top" is already y = 0, so the `max(0, ...)`
+        // clamp keeps the top visible.
         let y = max(0, (hostH - guiPtSize.height) / 2)
+        #endif
         container.frame = NSRect(x: x, y: y,
                                  width: guiPtSize.width, height: guiPtSize.height)
     }
