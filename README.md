@@ -182,6 +182,7 @@ platform contract; every other format is unviable there.
 - **Cross-platform** — macOS, Windows, Linux, plus iOS via AU v3 with the same Rust DSP, params, and editor
 - **Hot reload** — edit DSP/layout, rebuild, hear changes without restarting the DAW
 - **Flexible GUI frameworks** — Built-in widgets, egui, iced, slint, vizia (desktop only, no Windows ARM64), or raw window handle
+- **Resizable editors** — `.resizable(true).min_size(_).max_size(_)` on any backend, round-tripped through CLAP `gui_set_size`, VST3 `IPlugView::onSize`, AU view-frame change, and LV2 `ui:resize`
 - **Declarative params** — `#[derive(Params)]` + `#[param(...)]` with smoothing, ranges, units, sample-accurate automation by default
 - **`truce::plugin!`** — one macro generates all format exports + GUI + state serialization
 - **`cargo truce`** — scaffold, build, install, validate, package; `doctor` reports environment health
