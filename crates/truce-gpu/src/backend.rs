@@ -663,9 +663,7 @@ impl WgpuBackend {
         scale: f32,
     ) -> Option<Self> {
         unsafe {
-            let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
-            desc.backends = wgpu::Backends::PRIMARY;
-            let instance = wgpu::Instance::new(desc);
+            let instance = wgpu::Instance::new(crate::platform::editor_instance_descriptor());
 
             let surface = crate::platform::create_wgpu_surface(&instance, window)?;
             Self::from_surface(&instance, surface, logical_w, logical_h, scale)

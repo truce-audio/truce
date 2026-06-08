@@ -624,9 +624,7 @@ pub fn update_interaction<P: Params + 'static>(editor: &mut BuiltinEditor<P>) {
 
 #[cfg(feature = "cpu")]
 fn create_wgpu_backend(window: &mut baseview::Window, phys_w: u32, phys_h: u32) -> BlitBackend {
-    let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
-    desc.backends = wgpu::Backends::PRIMARY;
-    let instance = wgpu::Instance::new(desc);
+    let instance = wgpu::Instance::new(crate::platform::editor_instance_descriptor());
 
     let surface = unsafe { crate::platform::create_wgpu_surface(&instance, window) }
         .expect("failed to create wgpu surface");

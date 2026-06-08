@@ -26,6 +26,40 @@ fn current_module_hinstance() -> Option<std::num::NonZeroIsize> {
     std::num::NonZeroIsize::new(hmodule)
 }
 
+/// wgpu backends for an editor surface embedded in a host-owned
+/// child window. Mirror of `truce_gui::platform::editor_wgpu_backends`
+/// (truce-gpu can't depend on truce-gui without a dep cycle). Windows
+/// is DX12 (the only backend feature compiled in on Windows), macOS
+/// is Metal, Linux keeps `PRIMARY`. Keep the two copies in sync.
+#[must_use]
+pub fn editor_wgpu_backends() -> wgpu::Backends {
+    #[cfg(target_os = "windows")]
+    {
+        wgpu::Backends::DX12
+    }
+    #[cfg(target_os = "macos")]
+    {
+        wgpu::Backends::METAL
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        wgpu::Backends::PRIMARY
+    }
+}
+
+/// `wgpu::InstanceDescriptor` for editor surfaces, pinning the DX12
+/// shader compiler to **FXC**. Mirror of
+/// `truce_gui::platform::editor_instance_descriptor` - see it for why
+/// the wgpu-29 DX12 default (dynamic DXC) breaks inside Pro Tools.
+/// Keep the two copies in sync.
+#[must_use]
+pub fn editor_instance_descriptor() -> wgpu::InstanceDescriptor {
+    let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
+    desc.backends = editor_wgpu_backends();
+    desc.backend_options.dx12.shader_compiler = wgpu::Dx12Compiler::Fxc;
+    desc
+}
+
 /// Bridge a baseview raw-window-handle 0.5 to a wgpu-compatible
 /// `SurfaceTargetUnsafe` using rwh 0.6 types.
 ///

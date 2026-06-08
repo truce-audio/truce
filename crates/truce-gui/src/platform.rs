@@ -376,6 +376,46 @@ fn current_module_hinstance() -> Option<std::num::NonZeroIsize> {
     std::num::NonZeroIsize::new(hmodule)
 }
 
+/// wgpu backends to use for an editor that presents into a
+/// host-owned child window. macOS is Metal-only; Windows is DX12
+/// (the only backend feature truce-gui/truce-gpu compile in on
+/// Windows - see their `Cargo.toml`); Linux keeps `PRIMARY`.
+#[must_use]
+pub fn editor_wgpu_backends() -> wgpu::Backends {
+    #[cfg(target_os = "windows")]
+    {
+        wgpu::Backends::DX12
+    }
+    #[cfg(target_os = "macos")]
+    {
+        wgpu::Backends::METAL
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        wgpu::Backends::PRIMARY
+    }
+}
+
+/// `wgpu::InstanceDescriptor` for editor surfaces, with the DX12
+/// shader compiler pinned to **FXC**.
+///
+/// wgpu 29 defaults DX12 to a dynamically-loaded **DXC**
+/// (`dxcompiler.dll`). When a host process has already loaded its own
+/// incompatible `dxcompiler.dll` - Pro Tools does - wgpu's
+/// `DxcCreateInstance` returns `E_NOINTERFACE` and the *entire* DX12
+/// backend fails to initialise, leaving the instance with zero
+/// adapters: a blank editor (egui / built-in) or a panic on the
+/// `.expect` (slint). FXC (`d3dcompiler_47.dll`, always present on
+/// Windows, never conflicts) sidesteps it. wgpu 0.19 (iced)
+/// defaulted to FXC, which is why iced was never affected.
+#[must_use]
+pub fn editor_instance_descriptor() -> wgpu::InstanceDescriptor {
+    let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
+    desc.backends = editor_wgpu_backends();
+    desc.backend_options.dx12.shader_compiler = wgpu::Dx12Compiler::Fxc;
+    desc
+}
+
 /// Bridge a baseview raw-window-handle 0.5 to a wgpu-compatible
 /// `SurfaceTargetUnsafe` using rwh 0.6 types.
 ///

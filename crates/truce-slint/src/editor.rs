@@ -547,9 +547,8 @@ impl<P: Params + 'static> Editor for SlintEditor<P> {
                 platform::ensure_platform();
 
                 // Create wgpu surface
-                let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
-                desc.backends = wgpu::Backends::PRIMARY;
-                let instance = wgpu::Instance::new(desc);
+                let instance =
+                    wgpu::Instance::new(truce_gui::platform::editor_instance_descriptor());
 
                 let surface = unsafe { platform::create_wgpu_surface(&instance, window) }
                     .expect("failed to create wgpu surface");

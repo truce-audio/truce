@@ -4,6 +4,22 @@ Notable changes per release.
 
 ## 0.57.0
 
+- **Windows: wgpu editors pin the DX12 shader compiler to FXC.**
+  Fixes a blank editor (egui, built-in `GpuEditor`) and a host
+  crash (Slint) in Pro Tools. wgpu 29 defaults DX12 to a
+  dynamically-loaded **DXC** (`dxcompiler.dll`); when the host
+  process has already loaded its own incompatible `dxcompiler.dll`
+  (Pro Tools does), `DxcCreateInstance` returns `E_NOINTERFACE`
+  and the *entire* DX12 backend fails to initialise - the wgpu
+  instance ends up with zero adapters, so surface creation fails
+  (white editor, or a panic on Slint's `.expect`). The
+  `truce-gpu`, `truce-gui`, `truce-egui`, and `truce-slint` editor
+  instances now request `Dx12Compiler::Fxc` (`d3dcompiler_47.dll`,
+  always present on Windows, never conflicts). iced (wgpu 0.19,
+  FXC by default) and vizia (OpenGL) were never affected. The
+  Windows editor instances also narrow to `Backends::DX12` (the
+  only backend feature compiled in on Windows). Offscreen/headless
+  screenshot paths are unchanged.
 - **AAX: fix Pro Tools scan hang on Windows.** AAX registration
   is now lazy - triggered by the first `truce_aax_get_descriptor`
   query - instead of running from a `.CRT$XCU` library-load static
