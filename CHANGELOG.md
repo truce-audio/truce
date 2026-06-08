@@ -2,6 +2,32 @@
 
 Notable changes per release.
 
+## 0.57.1
+
+- **AU v2 editor clipped in Ableton (macOS).** Ableton was
+  embedding the AU v2 view at a frame smaller than the editor's
+  natural size, which left the editor's top edge (the title
+  header and knob row) clipped off the visible plug-in window.
+  The AU v2 shim now pins the container to the editor's
+  `gui_get_size` regardless of what the host requests, so the
+  full editor is visible in every host.
+- **AU v3 resize wired up on macOS.** Logic Pro's host-driven
+  resize now propagates to the editor (was a no-op before). The
+  editor's first layout pass stays at natural size so opening the
+  plug-in doesn't snap to Logic's full pane; subsequent layouts
+  (real user resize) reflow the editor.
+- **Host crash on quit (REAPER, Cubase).** A Rust panic in the
+  editor's teardown chain (wgpu surface drop, `NSView` close)
+  previously propagated across the AU FFI boundary as an
+  unhandled Obj-C exception and aborted the host on quit. The AU
+  v2 `destroy` / `gui_close` callbacks now swallow panics at the
+  boundary - host stays alive through quit.
+- **Cubase crash with built-in editor.** A pixmap allocation
+  failure in the built-in `GridLayout` editor was panicking
+  inside `render`, which surfaced as a host crash in Cubase.
+  The allocation path now logs and skips the frame instead;
+  the next frame retries.
+
 ## 0.57.0
 
 - **Windows: wgpu editors pin the DX12 shader compiler to FXC.**
