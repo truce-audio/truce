@@ -4,6 +4,16 @@ Notable changes per release.
 
 ## 0.57.0
 
+- **AAX: fix Pro Tools scan hang on Windows.** AAX registration
+  is now lazy - triggered by the first `truce_aax_get_descriptor`
+  query - instead of running from a `.CRT$XCU` library-load static
+  initializer. On Windows the AAX shim `LoadLibraryA`s the cdylib
+  from inside `GetEffectDescriptions` during scanning, so the old
+  initializer ran plugin construction (via `has_editor_static`'s
+  default `create().editor()`, which can touch user32 in editor
+  setup) *under the Windows loader lock* and hung the scan. Now
+  mirrors how VST3/CLAP register lazily on their first host entry
+  point. No API change.
 - **Resizable editors.** Every GUI backend opts in with
   `.resizable(true).min_size((a, b)).max_size((a, b))` on the
   editor / layout, and the CLAP, VST3, AU, and LV2 wrappers

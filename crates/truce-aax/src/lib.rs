@@ -277,12 +277,33 @@ fn resolved_plugin_name(info: &truce_core::info::PluginInfo) -> &'static str {
     truce_core::info::resolve_name_override(info.aax_name, info.name)
 }
 
+/// Idempotent registration trigger called from the C ABI entry
+/// points (`truce_aax_get_descriptor` / `truce_aax_get_param_info`).
+///
+/// Registration is deliberately *lazy* - it runs on the first host
+/// query rather than from a library-load static initializer. On
+/// Windows the AAX C++ shim `LoadLibraryA`s this Rust DLL from inside
+/// `GetEffectDescriptions`, which Pro Tools calls during plug-in
+/// scanning. A `.CRT$XCU` static initializer would therefore run
+/// `register_aax` *under the Windows loader lock*, and that path
+/// constructs the plugin (via `has_editor_static`'s default) and can
+/// touch user32 (`GetDpiForSystem` in editor setup) - heavy work and
+/// a Win32 call under the loader lock, which hangs the scan. Deferring
+/// to the first `get_descriptor` call (made after `LoadLibraryA`
+/// returns and the loader lock is released) keeps the loader-lock
+/// window empty, mirroring how VST3/CLAP register lazily on their
+/// first host entry point.
+#[inline]
+pub fn ensure_registered<P: PluginExport>() {
+    if INFO.get().is_none() {
+        register_aax::<P>();
+    }
+}
+
 pub fn register_aax<P: PluginExport>() {
-    // The AAX shim's `extern "C" fn init()` static initializer
-    // (`.init_array` / `__mod_init_func` / `.CRT$XCU`) calls this
-    // function. A panic crossing that boundary aborts the host
-    // process - wrap the body so a plugin-author misconfiguration
-    // logs cleanly and leaves INFO unset (host sees no plugin).
+    // A panic crossing the C ABI boundary aborts the host process -
+    // wrap the body so a plugin-author misconfiguration logs cleanly
+    // and leaves INFO unset (host sees no plugin).
     run_register::<P>("AAX", || {
         let Some(layout) = first_bus_layout::<P>() else {
             log_missing_bus_layout::<P>("AAX");
@@ -443,18 +464,13 @@ macro_rules! export_aax {
         mod _aax_entry {
             use super::*;
 
-            // Force registration on library load
-            #[used]
-            #[cfg_attr(target_os = "linux", unsafe(link_section = ".init_array"))]
-            #[cfg_attr(target_os = "macos", unsafe(link_section = "__DATA,__mod_init_func"))]
-            #[cfg_attr(target_os = "windows", unsafe(link_section = ".CRT$XCU"))]
-            static INIT: extern "C" fn() = {
-                extern "C" fn init() {
-                    ::truce_aax::register_aax::<$plugin_type>();
-                }
-                init
-            };
-
+            // Registration is lazy: the first `get_descriptor` /
+            // `get_param_info` query triggers it. This deliberately
+            // avoids a library-load static initializer
+            // (`.CRT$XCU` / `.init_array` / `__mod_init_func`) - on
+            // Windows that would run plugin construction under the
+            // loader lock during Pro Tools' scan and hang. See
+            // `truce_aax::ensure_registered`.
             #[unsafe(no_mangle)]
             pub extern "C" fn truce_aax_abi_version() -> u32 {
                 ::truce_aax::TRUCE_AAX_ABI_VERSION
@@ -463,6 +479,7 @@ macro_rules! export_aax {
             pub unsafe extern "C" fn truce_aax_get_descriptor(
                 out: *mut ::truce_aax::TruceAaxDescriptor,
             ) {
+                ::truce_aax::ensure_registered::<$plugin_type>();
                 ::truce_aax::_get_descriptor(out);
             }
             #[unsafe(no_mangle)]
@@ -470,6 +487,7 @@ macro_rules! export_aax {
                 index: u32,
                 out: *mut ::truce_aax::TruceAaxParamInfo,
             ) {
+                ::truce_aax::ensure_registered::<$plugin_type>();
                 ::truce_aax::_get_param_info(index, out);
             }
             #[unsafe(no_mangle)]

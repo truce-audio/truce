@@ -107,10 +107,12 @@ pub fn log_missing_bus_layout<P: PluginExport>(format: &str) {
 
 /// Run a `register_*` body under [`std::panic::catch_unwind`].
 ///
-/// Format wrappers' `register_*` entry points are called from
-/// `extern "C" fn init` static initializers (`.init_array` /
-/// `__mod_init_func` / `.CRT$XCU`) emitted by the export macros. A
-/// panic that escapes those entry points crosses an `extern "C"`
+/// Format wrappers' `register_*` entry points run during plugin
+/// registration - some from `extern "C" fn init` static
+/// initializers (`.init_array` / `__mod_init_func` / `.CRT$XCU`),
+/// others lazily on the first host query (AAX, to keep the Windows
+/// loader-lock window empty during Pro Tools' scan). A panic that
+/// escapes them crosses an `extern "C"`
 /// boundary and aborts the host process - a `panic = "abort"`
 /// configuration would do the same. Catching the unwind here turns
 /// any panic during registration into a logged diagnostic plus
