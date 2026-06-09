@@ -358,13 +358,27 @@ impl<P: Params + ?Sized> EguiWindowHandler<P> {
         }
 
         let ppp = self.last_applied_scale;
-        let (lw, lh) = self.size; // logical points
+        let (lw, lh) = self.size; // host-window logical points
+
+        // Expose the true window size so a plugin's `ui()` can scale from it
+        // without reading the zoom-adjusted `ctx.screen_rect()`.
+        crate::set_actual_window_size(&self.egui_ctx, self.size);
+
+        // Feed egui a `screen_rect` divided by the active zoom factor so the
+        // layout coordinate system stays consistent when a plugin applies
+        // `ctx.set_zoom_factor` (zoom-from-base scaling). egui itself
+        // rescales `screen_rect` by `old_zoom / new_zoom` on zoom-change
+        // frames; matching that here keeps the size stable instead of
+        // oscillating. With the default zoom of 1.0 this equals `self.size`.
+        let zoom = self.egui_ctx.zoom_factor().max(0.01);
+        #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
+        let layout_size = egui::vec2(
+            (lw as f32 / zoom).round().max(1.0),
+            (lh as f32 / zoom).round().max(1.0),
+        );
 
         let mut raw_input = egui::RawInput {
-            screen_rect: Some(egui::Rect::from_min_size(
-                egui::Pos2::ZERO,
-                egui::vec2(lw as f32, lh as f32),
-            )),
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, layout_size)),
             time: Some(self.start_time.elapsed().as_secs_f64()),
             modifiers: self.modifiers,
             events: std::mem::take(&mut self.pending_events),

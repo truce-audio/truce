@@ -40,3 +40,28 @@ pub use editor::{EditorUi, EguiEditor};
 
 #[cfg(target_os = "ios")]
 pub use editor_ios::{EditorUi, EguiEditor};
+
+fn actual_window_size_id() -> egui::Id {
+    egui::Id::new("truce_egui_actual_window_size")
+}
+
+/// Stash the true OS window size (logical points) in egui ctx data so a
+/// plugin's `ui()` can read it back via [`actual_window_size`].
+///
+/// This exists because the editor feeds `screen_rect = self.size / zoom`
+/// to egui (so layout is consistent when a plugin applies
+/// `ctx.set_zoom_factor`). A plugin that scales its UI from the window size
+/// therefore cannot recover the real window size from `ctx.screen_rect()`
+/// alone — egui also transiently rescales `screen_rect` on zoom-change
+/// frames. Reading this out-of-band value avoids that resize feedback loop.
+pub fn set_actual_window_size(ctx: &egui::Context, size: (u32, u32)) {
+    ctx.data_mut(|data| data.insert_temp(actual_window_size_id(), size));
+}
+
+/// The true OS window size (logical points) as stored by the editor each
+/// frame. See [`set_actual_window_size`]. Returns `None` before the first
+/// frame has run.
+#[must_use]
+pub fn actual_window_size(ctx: &egui::Context) -> Option<(u32, u32)> {
+    ctx.data(|data| data.get_temp(actual_window_size_id()))
+}
