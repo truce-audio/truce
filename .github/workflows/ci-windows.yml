@@ -86,6 +86,10 @@ jobs:
         run: cargo clippy --manifest-path crates/truce-gpu-examples/Cargo.toml --workspace --all-targets -- -D warnings
       - name: build (truce-gpu-examples sub-workspace)
         run: cargo build --manifest-path crates/truce-gpu-examples/Cargo.toml --workspace --all-targets
+      - name: test (truce-gpu-examples sub-workspace)
+        run: cargo test --manifest-path crates/truce-gpu-examples/Cargo.toml --workspace -- --skip gui_screenshot
+      - name: screenshot tests (truce-gpu-examples sub-workspace)
+        run: cargo test --manifest-path crates/truce-gpu-examples/Cargo.toml --workspace -- gui_screenshot
 
       # Ratio-based regression guard: gain_simd_fast must run at
       # least 5x faster than the naive gain shape on the same
