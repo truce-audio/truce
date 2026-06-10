@@ -2,6 +2,31 @@
 
 Notable changes per release.
 
+## 0.57.2
+
+- **CLAP editor clipped above the host's pane in REAPER.** The
+  layout's top edge (header / first row) was drifting off the
+  visible plug-in pane as the canvas grew. Editors now stay
+  pinned to the top of the pane at every size. Applies to every
+  GUI backend (built-in, egui, iced, slint, vizia).
+- **LV2 editor opened at host's default size instead of natural.**
+  Resizable LV2 plug-ins (GUI Zoo, etc.) used to take whatever
+  pane size the host defaulted to. The wrapper now hints the
+  editor's preferred size on open; hosts that honor it (REAPER,
+  Ardour) start the pane at natural. User-drag resize from the
+  host's window still works.
+- **GPU editors use the device's actual wgpu limits.** Every
+  wgpu-backed renderer (built-in GPU, egui, iced, slint) now
+  requests `adapter.limits()` instead of
+  `wgpu::Limits::downlevel_defaults()`. The downlevel cap of
+  2048 px per axis was clipping tall Retina canvases and
+  crashing the host; modern GPUs report 8192+ and the layout
+  renders at full size instead.
+- **AU class-name collision warnings cleaned up.** Multiple
+  installed Truce AU plug-ins no longer log
+  `TruceAuFixedContainer is implemented in both ...` on host
+  launch.
+
 ## 0.57.1
 
 - **AU v2 editor clipped in Ableton (macOS).** Ableton was
