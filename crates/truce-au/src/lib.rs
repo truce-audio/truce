@@ -913,30 +913,52 @@ unsafe extern "C" fn cb_gui_open<P: PluginExport>(
                     end_edit: Box::new(move |_id| {
                         let _ = ctx_for_end;
                     }),
-                    request_resize: Box::new(move |w, h| {
-                        // AU v2 has no host-driven resize API: the
-                        // host observes the plug-in's NSView frame
-                        // via AppKit and updates its container in
-                        // response. So `ctx.request_resize` here
-                        // routes back into the editor's own
-                        // `set_size`, which resizes the baseview
-                        // NSView; AppKit propagates the frame
-                        // change to the host as a notification.
-                        //
-                        // SAFETY: `ctx_raw` points at the live
-                        // `AuInstance<P>`. The closure runs on the
-                        // GUI thread, same as `cb_gui_open` which
-                        // installed it. `editor.set_size` on the
-                        // existing backends writes to an atomic
-                        // cell only - no aliasing UB even if the
-                        // editor's own `update()` holds a borrow
-                        // higher up the stack.
-                        if w == 0 || h == 0 {
-                            return false;
-                        }
-                        let inst = &mut *ctx_raw.as_ptr().cast_mut().cast::<AuInstance<P>>();
-                        inst.editor.as_mut().is_some_and(|e| e.set_size(w, h))
-                    }),
+                    request_resize: {
+                        // AU v2 has no host-driven resize protocol. When the
+                        // plugin requests a new size (e.g. the product's size
+                        // menu), resize the editor and then grow the host's
+                        // container so the window follows - JUCE's AU holder
+                        // resizes the parented NSView the same way. Without
+                        // this the editor changes size but the host window
+                        // stays put, leaving the UI mis-sized in its pane
+                        // (REAPER especially).
+                        #[cfg(target_os = "macos")]
+                        let parent_for_resize = SendPtr::new(parent.cast_const());
+                        let ctx_for_resize = ctx_raw;
+                        Box::new(move |w, h| {
+                            if w == 0 || h == 0 {
+                                return false;
+                            }
+                            // SAFETY: `ctx_for_resize` points at the live
+                            // `AuInstance<P>`; the closure runs on the GUI
+                            // thread, same as the `cb_gui_open` that installed
+                            // it.
+                            let inst =
+                                &mut *ctx_for_resize.as_ptr().cast_mut().cast::<AuInstance<P>>();
+                            let Some(editor) = inst.editor.as_mut() else {
+                                return false;
+                            };
+                            let old_size = editor.size();
+                            if !editor.set_size(w, h) {
+                                return false;
+                            }
+                            #[cfg(target_os = "macos")]
+                            {
+                                if truce_au_v2_resize_editor_view(
+                                    parent_for_resize.as_ptr().cast_mut(),
+                                    w,
+                                    h,
+                                ) == 0
+                                {
+                                    // Host refused / raised: roll the editor
+                                    // back so UI and window stay consistent.
+                                    let _ = editor.set_size(old_size.0, old_size.1);
+                                    return false;
+                                }
+                            }
+                            true
+                        })
+                    },
                     get_param: Box::new(move |id| params_for_get.get_normalized(id).unwrap_or(0.0)),
                     get_param_plain: Box::new(move |id| {
                         params_for_plain.get_plain(id).unwrap_or(0.0)
@@ -1028,6 +1050,11 @@ unsafe extern "C" {
     fn truce_au_v2_host_set_param(ctx: *mut std::ffi::c_void, param_id: u32, value: f32);
     fn truce_au_v2_host_begin_param_gesture(ctx: *mut std::ffi::c_void, param_id: u32);
     fn truce_au_v2_host_end_param_gesture(ctx: *mut std::ffi::c_void, param_id: u32);
+    // Plugin-initiated resize: resizes the host container our editor was
+    // parented into so the window follows the editor's new size. `parent` is
+    // the view handed to `gui_open`. Returns 0 on failure (host raised).
+    fn truce_au_v2_resize_editor_view(parent: *mut std::ffi::c_void, width: u32, height: u32)
+    -> i32;
 }
 
 // ---------------------------------------------------------------------------

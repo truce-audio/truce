@@ -20,6 +20,7 @@
 
 @import AppKit;
 @import AudioToolbox;
+@import QuartzCore;
 #import <AudioUnit/AUCocoaUIView.h>
 
 #include "au_shim_types.h"
@@ -116,6 +117,50 @@
 }
 
 @end
+
+/// Plugin-initiated resize for AU v2 (the product's size menu, or any
+/// `request_resize`). AU v2 has no host-driven resize protocol, so the only
+/// way to make the host window follow the editor's new size is to resize the
+/// NSView the host parented us into - this mirrors how JUCE's AU holder
+/// resizes its host container. `viewPtr` is the container returned from
+/// `uiViewForAudioUnit` (handed back from Rust). Grow the host container (our
+/// superview) so the window tracks, then our container, then the hosted editor
+/// child to fill it. Wrapped in `@try` because resizing a host-owned superview
+/// can raise through AppKit on some hosts; a raise reports failure so the Rust
+/// side rolls the editor size back.
+int32_t truce_au_v2_resize_editor_view(void *viewPtr, uint32_t width, uint32_t height) {
+    if (!viewPtr || width == 0 || height == 0) {
+        return 0;
+    }
+
+    NSView *view = (__bridge NSView *)viewPtr;
+    NSSize size = NSMakeSize((CGFloat)width, (CGFloat)height);
+    int32_t ok = 1;
+
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    @try {
+        NSView *superview = [view superview];
+        if (superview) {
+            NSRect superFrame = [superview frame];
+            superFrame.size = size;
+            [superview setFrame:superFrame];
+        }
+        NSRect frame = [view frame];
+        frame.size = size;
+        [view setFrame:frame];
+        for (NSView *child in [view subviews]) {
+            [child setFrame:[view bounds]];
+        }
+        [view layoutSubtreeIfNeeded];
+    } @catch (NSException *exception) {
+        ok = 0;
+        NSLog(@"Truce AU v2 resize failed: %@ %@", [exception name], [exception reason]);
+    }
+    [CATransaction commit];
+
+    return ok;
+}
 
 // Stringify the class name for the v2 shim's `kAudioUnitProperty_CocoaUI`
 // response. Two-step macro so the argument is expanded before stringification.
