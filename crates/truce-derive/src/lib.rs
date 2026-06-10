@@ -252,7 +252,7 @@ pub(crate) struct ParamField {
     pub(crate) ident: syn::Ident,
     pub(crate) kind: ParamKind,
     pub(crate) attrs: ParamAttrs,
-    /// For `EnumParam`<T>, the inner type T.
+    /// For `EnumParam<T>`, the inner type `T`.
     enum_type: Option<syn::Type>,
 }
 
@@ -274,7 +274,7 @@ pub(crate) struct NestedField {
     pub(crate) ident: syn::Ident,
     /// Field type, retained so the derive can call associated
     /// functions on it without an instance - specifically
-    /// [`Params::param_infos_static`] for the registration-time
+    /// `Params::param_infos_static` for the registration-time
     /// "no temp plugin" path.
     pub(crate) ty: syn::Type,
 }

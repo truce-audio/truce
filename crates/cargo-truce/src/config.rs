@@ -75,10 +75,10 @@ pub(crate) struct WindowsConfig {
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 pub(crate) struct WindowsPackagingConfig {
     /// Publisher name shown in the installer and Apps & Features.
-    /// Defaults to [vendor].name when absent.
+    /// Defaults to `[vendor].name` when absent.
     pub(crate) publisher: Option<String>,
     /// Publisher URL shown in the installer.
-    /// Defaults to [vendor].url when absent.
+    /// Defaults to `[vendor].url` when absent.
     pub(crate) publisher_url: Option<String>,
     /// Installer-window icon (.ico, relative to workspace root).
     pub(crate) installer_icon: Option<String>,
