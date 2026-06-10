@@ -1863,6 +1863,7 @@ dependencies = [
  "truce-lv2",
  "truce-params",
  "truce-standalone",
+ "truce-test",
  "truce-vst2",
  "truce-vst3",
 ]
@@ -1993,6 +1994,18 @@ dependencies = [
  "truce-params",
  "windows-sys 0.61.2",
  "x11-dl",
+]
+
+[[package]]
+name = "truce-test"
+version = "0.57.1"
+dependencies = [
+ "png",
+ "toml",
+ "truce-build",
+ "truce-core",
+ "truce-driver",
+ "truce-params",
 ]
 
 [[package]]

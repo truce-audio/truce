@@ -96,6 +96,13 @@ env:
   VIZIA_CRATES: >-
     truce-example-gain-vizia
     truce-example-gui-zoo-vizia
+  # truce-gpu-examples sub-workspace exists so the GPU example's
+  # `truce-gui/gpu` feature request can't unify across the parent
+  # workspace and silently flip every CPU screenshot baseline to
+  # the GPU renderer. iOS bake is skipped: the example crate is
+  # desktop-only.
+  GPU_EXAMPLES_CRATES: >-
+    truce-example-gui-zoo-gpu
 
 jobs:
   linux:
@@ -173,6 +180,20 @@ jobs:
             echo "::endgroup::"
           done
 
+      - name: Bake gpu-examples screenshots (sub-workspace)
+        run: |
+          set -euo pipefail
+          CARGO_TRUCE="$PWD/target/release/cargo-truce"
+          cd crates/truce-gpu-examples
+          for crate in $GPU_EXAMPLES_CRATES; do
+            short="${crate#truce-example-}"
+            short="${short//-/_}"
+            out="${crate}/screenshots/${short}_default_linux.png"
+            echo "::group::Baking crates/truce-gpu-examples/$out"
+            "$CARGO_TRUCE" screenshot -p "$crate" --out "$out"
+            echo "::endgroup::"
+          done
+
       - uses: actions/upload-artifact@v4
         with:
           name: baked-screenshots-linux
@@ -180,6 +201,7 @@ jobs:
             examples/*/screenshots/*_linux.png
             crates/truce-slint/examples/*/screenshots/*_linux.png
             crates/truce-vizia/examples/*/screenshots/*_linux.png
+            crates/truce-gpu-examples/*/screenshots/*_linux.png
           if-no-files-found: error
           retention-days: 30
 
@@ -244,6 +266,20 @@ jobs:
             echo "::endgroup::"
           done
 
+      - name: Bake gpu-examples screenshots (sub-workspace)
+        run: |
+          set -euo pipefail
+          CARGO_TRUCE="$PWD/target/release/cargo-truce"
+          cd crates/truce-gpu-examples
+          for crate in $GPU_EXAMPLES_CRATES; do
+            short="${crate#truce-example-}"
+            short="${short//-/_}"
+            out="${crate}/screenshots/${short}_default_macos.png"
+            echo "::group::Baking crates/truce-gpu-examples/$out"
+            "$CARGO_TRUCE" screenshot -p "$crate" --out "$out"
+            echo "::endgroup::"
+          done
+
       - uses: actions/upload-artifact@v4
         with:
           name: baked-screenshots-macos
@@ -251,6 +287,7 @@ jobs:
             examples/*/screenshots/*_macos.png
             crates/truce-slint/examples/*/screenshots/*_macos.png
             crates/truce-vizia/examples/*/screenshots/*_macos.png
+            crates/truce-gpu-examples/*/screenshots/*_macos.png
           if-no-files-found: error
           retention-days: 30
 
@@ -329,6 +366,26 @@ jobs:
             Pop-Location
           }
 
+      - name: Bake gpu-examples screenshots (sub-workspace)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $cargoTruce = Join-Path $PWD "target/release/cargo-truce.exe"
+          $crates = $env:GPU_EXAMPLES_CRATES -split '\s+' | Where-Object { $_ }
+          Push-Location crates/truce-gpu-examples
+          try {
+            foreach ($crate in $crates) {
+              $short = ($crate -replace '^truce-example-', '') -replace '-', '_'
+              $out = "$crate/screenshots/${short}_default_windows.png"
+              Write-Host "::group::Baking crates/truce-gpu-examples/$out"
+              & $cargoTruce screenshot -p $crate --out $out
+              if ($LASTEXITCODE -ne 0) { throw "screenshot failed for $crate (exit $LASTEXITCODE)" }
+              Write-Host "::endgroup::"
+            }
+          } finally {
+            Pop-Location
+          }
+
       - uses: actions/upload-artifact@v4
         with:
           name: baked-screenshots-windows
@@ -336,6 +393,7 @@ jobs:
             examples/*/screenshots/*_windows.png
             crates/truce-slint/examples/*/screenshots/*_windows.png
             crates/truce-vizia/examples/*/screenshots/*_windows.png
+            crates/truce-gpu-examples/*/screenshots/*_windows.png
           if-no-files-found: error
           retention-days: 30
 

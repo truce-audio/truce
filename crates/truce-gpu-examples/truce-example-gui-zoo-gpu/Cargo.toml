@@ -47,5 +47,8 @@ truce-gui-types = { version = "0.57.1", path = "../../truce-gui-types" }
 truce-gui = { version = "0.57.1", path = "../../truce-gui", default-features = false, features = ["gpu"] }
 truce-loader = { version = "0.57.1", path = "../../truce-loader" }
 
+[dev-dependencies]
+truce-test = { version = "0.57.1", path = "../../truce-test" }
+
 [lints]
 workspace = true
