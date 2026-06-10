@@ -50,6 +50,14 @@ fn main() {
             .collect()
     };
     let view_factory_name = format!("TruceAUCocoaViewProxy_{sanitized}");
+    // `TruceAuFixedContainer` is the NSView the AU v2 host parents
+    // the editor into. Same reason as the factory above: every
+    // installed `.component` ends up in one host process; without
+    // a per-plugin suffix libobjc dedupes the class and the loser's
+    // bundle silently breaks. The Bitcrusher / Fundsp Reverb /
+    // Gain / GUI Zoo collisions REAPER warns about all flow through
+    // this one class.
+    let fixed_container_name = format!("TruceAuFixedContainer_{sanitized}");
 
     let mut build = cc::Build::new();
     build.file("shim/au_shim_common.c");
@@ -77,6 +85,10 @@ fn main() {
     }
     if is_macos {
         build.define("TRUCE_AU_VIEW_FACTORY_NAME", view_factory_name.as_str());
+        build.define(
+            "TRUCE_AU_FIXED_CONTAINER_NAME",
+            fixed_container_name.as_str(),
+        );
     }
 
     build.compile("au_shim");

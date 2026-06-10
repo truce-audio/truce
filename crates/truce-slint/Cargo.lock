@@ -4976,6 +4976,7 @@ version = "0.57.1"
 dependencies = [
  "clap-sys",
  "crossbeam-queue",
+ "log",
  "objc",
  "truce-core",
  "truce-params",

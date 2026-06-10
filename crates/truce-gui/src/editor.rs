@@ -824,21 +824,6 @@ unsafe impl<P: Params> Send for BuiltinWindowHandler<P> {}
 #[cfg(feature = "cpu")]
 impl<P: Params + 'static> BuiltinWindowHandler<P> {
     fn on_frame_inner(&mut self, window: &mut baseview::Window) {
-        // Once-per-second pulse to confirm baseview is driving us.
-        {
-            use std::sync::atomic::{AtomicU64, Ordering};
-            use std::time::{SystemTime, UNIX_EPOCH};
-            static LAST_TICK_MS: AtomicU64 = AtomicU64::new(0);
-            let now_ms = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|d| d.as_millis() as u64)
-                .unwrap_or(0);
-            let last = LAST_TICK_MS.load(Ordering::Relaxed);
-            if now_ms.saturating_sub(last) >= 1000 {
-                LAST_TICK_MS.store(now_ms, Ordering::Relaxed);
-                eprintln!("[on_frame] tick");
-            }
-        }
         // Lock the shared backend cell *before* deref'ing `self.editor`.
         // `BuiltinEditor::close` calls `drop(guard.take())` on the same
         // mutex before returning; the host then drops the editor. So
@@ -1133,7 +1118,7 @@ impl<P: Params + 'static> baseview::WindowHandler for BuiltinWindowHandler<P> {
             } else {
                 "unknown panic".to_string()
             };
-            eprintln!("[truce-debug] PANIC in on_frame: {msg}");
+            log::error!("BuiltinWindowHandler::on_frame panic swallowed: {msg}");
         }
     }
 
@@ -1153,7 +1138,7 @@ impl<P: Params + 'static> baseview::WindowHandler for BuiltinWindowHandler<P> {
             } else {
                 "unknown panic".to_string()
             };
-            eprintln!("[truce-debug] PANIC in on_event: {msg}");
+            log::error!("BuiltinWindowHandler::on_event panic swallowed: {msg}");
             baseview::EventStatus::Ignored
         })
     }

@@ -105,23 +105,6 @@ struct GpuWindowHandler<P: Params> {
 
 impl<P: Params + 'static> GpuWindowHandler<P> {
     fn on_frame_inner(&mut self, window: &mut Window) {
-        // Once-per-second pulse to confirm baseview drives the GPU
-        // handler (the path gain actually uses when the workspace
-        // builds with truce-gui/gpu feature unified in).
-        {
-            use std::sync::atomic::{AtomicU64, Ordering};
-            use std::time::{SystemTime, UNIX_EPOCH};
-            static LAST_TICK_MS: AtomicU64 = AtomicU64::new(0);
-            let now_ms = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|d| d.as_millis() as u64)
-                .unwrap_or(0);
-            let last = LAST_TICK_MS.load(Ordering::Relaxed);
-            if now_ms.saturating_sub(last) >= 1000 {
-                LAST_TICK_MS.store(now_ms, Ordering::Relaxed);
-                eprintln!("[gpu_on_frame] tick");
-            }
-        }
         #[cfg(target_os = "macos")]
         {
             use raw_window_handle::HasRawWindowHandle;
@@ -195,7 +178,7 @@ impl<P: Params + 'static> WindowHandler for GpuWindowHandler<P> {
             } else {
                 "unknown panic".to_string()
             };
-            eprintln!("[gpu_on_frame] PANIC swallowed: {msg}");
+            log::error!("GpuWindowHandler::on_frame panic swallowed: {msg}");
         }
     }
 

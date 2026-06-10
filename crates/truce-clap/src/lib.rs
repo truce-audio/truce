@@ -1867,7 +1867,7 @@ unsafe extern "C" fn gui_set_parent<P: PluginExport>(
                 } else {
                     "unknown panic".to_string()
                 };
-                eprintln!("[truce-clap] gui_set_parent panicked: {msg}");
+                log::error!("clap gui_set_parent panic swallowed: {msg}");
                 false
             }
         }
@@ -2106,7 +2106,6 @@ unsafe fn anchor_child_to_top(parent: *mut c_void) {
         size: NsSize,
     }
     if parent.is_null() {
-        eprintln!("[truce-debug] anchor_child_to_top: parent is null");
         return;
     }
     let parent_obj = parent.cast::<Object>();

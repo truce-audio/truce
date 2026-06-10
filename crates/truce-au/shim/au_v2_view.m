@@ -38,6 +38,9 @@
 // of the workspace cdylibs working for unit tests.
 #define TRUCE_AU_VIEW_FACTORY_NAME TruceAUCocoaViewProxy
 #endif
+#ifndef TRUCE_AU_FIXED_CONTAINER_NAME
+#define TRUCE_AU_FIXED_CONTAINER_NAME TruceAuFixedContainer
+#endif
 
 /// Fixed-size container the host parents the editor into. AU v2
 /// has no standardised host-driven resize protocol, and the major
@@ -46,12 +49,12 @@
 /// pinning the container to the editor's natural size from
 /// `gui_get_size` and ignoring any attempt by the host to resize
 /// us. Use AU v3 (or CLAP / VST3 / LV2) for resizable editors.
-@interface TruceAuFixedContainer : NSView
+@interface TRUCE_AU_FIXED_CONTAINER_NAME : NSView
 @property(nonatomic, assign) void *rustCtx;
 @property(nonatomic, assign) const AuCallbacks *callbacks;
 @end
 
-@implementation TruceAuFixedContainer
+@implementation TRUCE_AU_FIXED_CONTAINER_NAME
 - (void)setFrameSize:(NSSize)newSize {
     // Pin to the editor's natural size. Any host call to resize
     // us (Logic embedding into its plug-in pane, Ableton's frame
@@ -104,8 +107,8 @@
     (void)preferredSize;
 
     NSRect frame = NSMakeRect(0, 0, w, h);
-    TruceAuFixedContainer *container =
-        [[TruceAuFixedContainer alloc] initWithFrame:frame];
+    TRUCE_AU_FIXED_CONTAINER_NAME *container =
+        [[TRUCE_AU_FIXED_CONTAINER_NAME alloc] initWithFrame:frame];
     container.rustCtx = ctx;
     container.callbacks = cb;
     cb->gui_open(ctx, (__bridge void *)container);
