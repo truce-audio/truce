@@ -207,6 +207,16 @@ impl<P: Params + 'static> Editor for ViziaEditor<P> {
         let font = self.font;
         let typed_ctx = context.with_params(self.params.clone());
 
+        // Capture the parent NSView pointer (macOS only) as `usize`
+        // so vizia's `on_idle` closure can move it across the `Send`
+        // bound. The pointer is an opaque AppKit handle, not a Rust
+        // resource, and is only dereferenced on the GUI thread.
+        #[cfg(target_os = "macos")]
+        let parent_for_reanchor: usize = match parent {
+            RawWindowHandle::AppKit(ptr) => ptr as usize,
+            _ => 0,
+        };
+
         let parent_wrapper = ParentWindow(parent);
 
         let app = Application::new(move |cx| {
@@ -261,6 +271,21 @@ impl<P: Params + 'static> Editor for ViziaEditor<P> {
             cx.start_timer(timer);
         })
         .inner_size((lw, lh));
+
+        // Per-frame re-anchor on macOS: pin every child NSView of the
+        // host's plug-in pane to the parent's top so a canvas that
+        // grows under host/user resize doesn't drift its top edge
+        // above the visible area (clipping the editor's header /
+        // first row). No-op on other platforms.
+        #[cfg(target_os = "macos")]
+        let app = {
+            let ptr = parent_for_reanchor;
+            app.on_idle(move |_cx| {
+                truce_gui_utils::reanchor_all_children_to_top(
+                    ptr as *mut std::ffi::c_void,
+                );
+            })
+        };
 
         let window = app.open_parented(&parent_wrapper);
         self.window = Some(window);

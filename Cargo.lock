@@ -4707,6 +4707,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "truce-example-gui-zoo-gpu"
+version = "0.57.1"
+dependencies = [
+ "clap-sys",
+ "truce",
+ "truce-aax",
+ "truce-au",
+ "truce-clap",
+ "truce-core",
+ "truce-gui",
+ "truce-gui-types",
+ "truce-loader",
+ "truce-lv2",
+ "truce-params",
+ "truce-standalone",
+ "truce-vst2",
+ "truce-vst3",
+]
+
+[[package]]
 name = "truce-example-gui-zoo-iced"
 version = "0.57.1"
 dependencies = [
@@ -4853,6 +4873,7 @@ dependencies = [
  "truce-cpu",
  "truce-gpu",
  "truce-gui-types",
+ "truce-gui-utils",
  "truce-params",
  "truce-plugin",
  "wgpu 29.0.3",
@@ -4864,6 +4885,14 @@ version = "0.57.1"
 dependencies = [
  "objc2 0.6.4",
  "truce-core",
+]
+
+[[package]]
+name = "truce-gui-utils"
+version = "0.57.1"
+dependencies = [
+ "objc",
+ "raw-window-handle 0.5.2",
 ]
 
 [[package]]

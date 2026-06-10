@@ -103,8 +103,30 @@ struct GpuWindowHandler<P: Params> {
     last_applied_scale: f32,
 }
 
-impl<P: Params + 'static> WindowHandler for GpuWindowHandler<P> {
-    fn on_frame(&mut self, window: &mut Window) {
+impl<P: Params + 'static> GpuWindowHandler<P> {
+    fn on_frame_inner(&mut self, window: &mut Window) {
+        // Once-per-second pulse to confirm baseview drives the GPU
+        // handler (the path gain actually uses when the workspace
+        // builds with truce-gui/gpu feature unified in).
+        {
+            use std::sync::atomic::{AtomicU64, Ordering};
+            use std::time::{SystemTime, UNIX_EPOCH};
+            static LAST_TICK_MS: AtomicU64 = AtomicU64::new(0);
+            let now_ms = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            let last = LAST_TICK_MS.load(Ordering::Relaxed);
+            if now_ms.saturating_sub(last) >= 1000 {
+                LAST_TICK_MS.store(now_ms, Ordering::Relaxed);
+                eprintln!("[gpu_on_frame] tick");
+            }
+        }
+        #[cfg(target_os = "macos")]
+        {
+            use raw_window_handle::HasRawWindowHandle;
+            crate::platform::reanchor_to_superview_top(window.raw_window_handle());
+        }
         if let Some(ref mut gpu) = self.gpu {
             // Pick up scale changes that landed in the shared cell
             // since the last frame - either from a host callback (CLAP
@@ -151,6 +173,29 @@ impl<P: Params + 'static> WindowHandler for GpuWindowHandler<P> {
                 inner.render_to(gpu);
             }
             gpu.present();
+        }
+    }
+}
+
+impl<P: Params + 'static> WindowHandler for GpuWindowHandler<P> {
+    fn on_frame(&mut self, window: &mut Window) {
+        // Catch panics at the FFI boundary. baseview drives this via
+        // an `extern "C-unwind"` AppKit override; without the catch
+        // a Rust panic (e.g. wgpu validation on an overflow) is
+        // re-thrown as an ObjC exception and `NSApplication run`
+        // terminates the host.
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.on_frame_inner(window);
+        }));
+        if let Err(e) = result {
+            let msg = if let Some(s) = e.downcast_ref::<&str>() {
+                s.to_string()
+            } else if let Some(s) = e.downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "unknown panic".to_string()
+            };
+            eprintln!("[gpu_on_frame] PANIC swallowed: {msg}");
         }
     }
 

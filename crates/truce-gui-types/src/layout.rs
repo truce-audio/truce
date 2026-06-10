@@ -1168,12 +1168,17 @@ impl GridLayout {
 /// `offsets[r]` is the total vertical shift (from section labels) for row `r`.
 #[must_use]
 pub fn compute_section_offsets(layout: &GridLayout) -> Vec<f32> {
+    // Hard cap so a degenerate widget row can't request a multi-gigabyte
+    // allocation here and abort the process. Real plugins live well under
+    // 64 rows.
+    const MAX_ROW_CAP: u32 = 4096;
     let max_row = layout
         .widgets
         .iter()
-        .map(|w| w.row + w.row_span)
+        .map(|w| w.row.saturating_add(w.row_span))
         .max()
-        .unwrap_or(1);
+        .unwrap_or(1)
+        .min(MAX_ROW_CAP);
     let mut offsets = vec![0.0f32; max_row as usize + 1];
     let mut cumulative = 0.0;
 

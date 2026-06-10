@@ -17,6 +17,7 @@ truce-core = { workspace = true }
 truce-cpu = { workspace = true, optional = true }
 truce-gpu = { workspace = true, optional = true }
 truce-gui-types = { workspace = true }
+truce-gui-utils = { workspace = true }
 truce-params = { workspace = true }
 truce-plugin = { workspace = true }
 raw-window-handle = "0.5"

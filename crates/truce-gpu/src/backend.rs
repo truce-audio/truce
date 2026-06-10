@@ -353,9 +353,6 @@ impl WgpuBackend {
         logical_h: u32,
         scale: f32,
     ) -> Option<Self> {
-        let width = truce_gui_types::to_physical_px(logical_w, f64::from(scale));
-        let height = truce_gui_types::to_physical_px(logical_h, f64::from(scale));
-
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
             compatible_surface: Some(&surface),
@@ -363,10 +360,17 @@ impl WgpuBackend {
         }))
         .ok()?;
 
+        // Request what the adapter actually supports rather than the
+        // fixed `downlevel_defaults` cap (2048 max texture dim). On a
+        // desktop GPU that's typically 8192-16384, which is needed for
+        // any editor whose Retina-physical canvas exceeds 2048px on
+        // either axis (the GUI Zoo's tall layouts). The defensive
+        // clamp below still guards against requesting a surface
+        // larger than whatever the device ended up granting.
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("truce-gpu"),
             required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::downlevel_defaults(),
+            required_limits: adapter.limits(),
             experimental_features: wgpu::ExperimentalFeatures::default(),
             memory_hints: wgpu::MemoryHints::Performance,
             trace: wgpu::Trace::Off,
@@ -374,6 +378,12 @@ impl WgpuBackend {
         .ok()?;
         let device = Arc::new(device);
         let queue = Arc::new(queue);
+
+        let max_dim = device.limits().max_texture_dimension_2d.max(1);
+        let width =
+            truce_gui_types::to_physical_px(logical_w, f64::from(scale)).clamp(1, max_dim);
+        let height =
+            truce_gui_types::to_physical_px(logical_h, f64::from(scale)).clamp(1, max_dim);
 
         // Prefer `Rgba8Unorm` so the surface format matches
         // `read_pixels` and the headless screenshot path; fall back to
@@ -1129,8 +1139,15 @@ impl WgpuBackend {
     /// was actually reconfigured.
     #[allow(clippy::cast_precision_loss)]
     pub fn resize(&mut self, logical_w: u32, logical_h: u32) -> bool {
-        let new_w = truce_gui_types::to_physical_px(logical_w, f64::from(self.scale));
-        let new_h = truce_gui_types::to_physical_px(logical_h, f64::from(self.scale));
+        // Cap each axis at the adapter's reported max texture dim
+        // (we request `Limits::downlevel_defaults()` so the cap is
+        // 2048 on every device that path supports). Without this a
+        // tall layout on a Retina display can ask for a surface
+        // larger than the cap and trip a wgpu validation panic which
+        // unwinds across the host's FFI boundary and aborts REAPER.
+        let max_dim = self.device.limits().max_texture_dimension_2d.max(1);
+        let new_w = truce_gui_types::to_physical_px(logical_w, f64::from(self.scale)).clamp(1, max_dim);
+        let new_h = truce_gui_types::to_physical_px(logical_h, f64::from(self.scale)).clamp(1, max_dim);
         if new_w == self.width && new_h == self.height {
             return false;
         }

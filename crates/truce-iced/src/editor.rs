@@ -729,6 +729,15 @@ fn iced_interaction_to_cursor(interaction: iced::mouse::Interaction) -> baseview
 
 impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBaseviewHandler<P, M> {
     fn on_frame(&mut self, window: &mut baseview::Window) {
+        // Re-anchor each frame so the child NSView's origin tracks
+        // size changes against the host's plug-in pane - without it
+        // the canvas drifts off-anchor as it grows, clipping the
+        // layout's top off the visible area in CLAP hosts (REAPER).
+        #[cfg(target_os = "macos")]
+        {
+            use raw_window_handle::HasRawWindowHandle;
+            truce_gui::platform::reanchor_to_superview_top(window.raw_window_handle());
+        }
         let editor = unsafe { &mut *self.editor };
         // Pick up host-driven `set_size` requests since the last
         // frame. Without this the wgpu surface would be at the new

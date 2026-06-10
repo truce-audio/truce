@@ -1,0 +1,16 @@
+[package]
+name = "truce-gui-utils"
+description = "Cross-backend host-side helpers for truce GUI backends (macOS NSView anchoring, etc)."
+version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc = "0.2"
+raw-window-handle = "0.5"

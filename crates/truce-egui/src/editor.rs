@@ -399,6 +399,15 @@ impl<P: Params + ?Sized> EguiWindowHandler<P> {
 
 impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
     fn on_frame(&mut self, window: &mut Window) {
+        // Re-anchor each frame so the child NSView's origin tracks
+        // size changes against the host's plug-in pane - without it
+        // the canvas drifts off-anchor as it grows, clipping the
+        // layout's top off the visible area in CLAP hosts (REAPER).
+        #[cfg(target_os = "macos")]
+        {
+            use raw_window_handle::HasRawWindowHandle;
+            truce_gui::platform::reanchor_to_superview_top(window.raw_window_handle());
+        }
         // Pick up host-driven `set_size` requests since the last frame.
         // baseview's macOS `Window::resize` doesn't synthesise a
         // `Resized` event, so the wgpu surface has to be reconfigured

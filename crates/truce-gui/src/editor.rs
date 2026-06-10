@@ -822,8 +822,23 @@ struct BuiltinWindowHandler<P: Params> {
 unsafe impl<P: Params> Send for BuiltinWindowHandler<P> {}
 
 #[cfg(feature = "cpu")]
-impl<P: Params + 'static> baseview::WindowHandler for BuiltinWindowHandler<P> {
-    fn on_frame(&mut self, window: &mut baseview::Window) {
+impl<P: Params + 'static> BuiltinWindowHandler<P> {
+    fn on_frame_inner(&mut self, window: &mut baseview::Window) {
+        // Once-per-second pulse to confirm baseview is driving us.
+        {
+            use std::sync::atomic::{AtomicU64, Ordering};
+            use std::time::{SystemTime, UNIX_EPOCH};
+            static LAST_TICK_MS: AtomicU64 = AtomicU64::new(0);
+            let now_ms = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            let last = LAST_TICK_MS.load(Ordering::Relaxed);
+            if now_ms.saturating_sub(last) >= 1000 {
+                LAST_TICK_MS.store(now_ms, Ordering::Relaxed);
+                eprintln!("[on_frame] tick");
+            }
+        }
         // Lock the shared backend cell *before* deref'ing `self.editor`.
         // `BuiltinEditor::close` calls `drop(guard.take())` on the same
         // mutex before returning; the host then drops the editor. So
@@ -874,6 +889,28 @@ impl<P: Params + 'static> baseview::WindowHandler for BuiltinWindowHandler<P> {
                 window.resize(baseview::Size::new(f64::from(new_w), f64::from(new_h)));
                 editor.request_repaint();
             }
+        }
+
+        // Re-anchor on every frame so any host-driven drift of the
+        // child `NSView`'s origin gets corrected before the next
+        // paint. The wrapper installs `MinYMargin | MaxXMargin`
+        // (via `anchor_child_to_top`) on the child, which keeps the
+        // child top-anchored across *parent-driven* resizes - but
+        // both the editor resizing itself (via `window.resize`
+        // above) and the host reseating the child via its own
+        // `setFrameOrigin:` call (REAPER's plug-in framework does
+        // this) bypass AppKit's autoresize math. The result is a
+        // child whose top edge drifts off the host pane and the
+        // editor's GAIN header / knob row clip above the visible
+        // area while the canvas's empty trailing space + bottom
+        // labels show inside. Running every frame is cheap - it's
+        // one Cocoa frame query and a no-op short-circuit when
+        // already anchored - and is the cleanest place to assert
+        // the invariant the wrapper expects.
+        #[cfg(target_os = "macos")]
+        {
+            use raw_window_handle::HasRawWindowHandle;
+            crate::platform::reanchor_to_superview_top(window.raw_window_handle());
         }
 
         // Pick up scale changes that landed in the shared cell since
@@ -964,7 +1001,7 @@ impl<P: Params + 'static> baseview::WindowHandler for BuiltinWindowHandler<P> {
         }
     }
 
-    fn on_event(
+    fn on_event_inner(
         &mut self,
         window: &mut baseview::Window,
         event: baseview::Event,
@@ -1074,6 +1111,51 @@ impl<P: Params + 'static> baseview::WindowHandler for BuiltinWindowHandler<P> {
             }
             _ => baseview::EventStatus::Ignored,
         }
+    }
+}
+
+#[cfg(feature = "cpu")]
+impl<P: Params + 'static> baseview::WindowHandler for BuiltinWindowHandler<P> {
+    fn on_frame(&mut self, window: &mut baseview::Window) {
+        // Catch panics at the FFI boundary. baseview calls us through
+        // an `extern "C-unwind"` AppKit override; an unwinding Rust
+        // panic becomes an ObjC exception and `NSApplication run`
+        // rethrows it, terminating the host. Swallow the panic and
+        // log it so the host stays alive.
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.on_frame_inner(window);
+        }));
+        if let Err(e) = result {
+            let msg = if let Some(s) = e.downcast_ref::<&str>() {
+                s.to_string()
+            } else if let Some(s) = e.downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "unknown panic".to_string()
+            };
+            eprintln!("[truce-debug] PANIC in on_frame: {msg}");
+        }
+    }
+
+    fn on_event(
+        &mut self,
+        window: &mut baseview::Window,
+        event: baseview::Event,
+    ) -> baseview::EventStatus {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.on_event_inner(window, event)
+        }));
+        result.unwrap_or_else(|e| {
+            let msg = if let Some(s) = e.downcast_ref::<&str>() {
+                s.to_string()
+            } else if let Some(s) = e.downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "unknown panic".to_string()
+            };
+            eprintln!("[truce-debug] PANIC in on_event: {msg}");
+            baseview::EventStatus::Ignored
+        })
     }
 }
 

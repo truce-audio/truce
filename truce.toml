@@ -351,6 +351,20 @@ macos_icon = "static/truce-minimal.icns"
 ios_icon_set = "static/truce-minimal.appiconset"
 
 [[plugin]]
+name = "Truce GUI Zoo GPU"
+bundle_id = "gui-zoo-gpu"
+crate = "truce-example-gui-zoo-gpu"
+category = "effect"
+fourcc = "TZgp"
+au3_subtype = "TZgp"
+au_tag = "Effects"
+vst3_subcategory = "Tools"
+au3_name = "Truce GUI Zoo GPU (AUv3)"
+windows_icon = "static/truce-minimal.ico"
+macos_icon = "static/truce-minimal.icns"
+ios_icon_set = "static/truce-minimal.appiconset"
+
+[[plugin]]
 name = "Truce GUI Zoo (egui)"
 bundle_id = "gui-zoo-egui"
 crate = "truce-example-gui-zoo-egui"

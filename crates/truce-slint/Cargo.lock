@@ -5086,6 +5086,7 @@ dependencies = [
  "truce-core",
  "truce-cpu",
  "truce-gui-types",
+ "truce-gui-utils",
  "truce-params",
  "truce-plugin",
  "wgpu",
@@ -5097,6 +5098,14 @@ version = "0.57.1"
 dependencies = [
  "objc2 0.6.4",
  "truce-core",
+]
+
+[[package]]
+name = "truce-gui-utils"
+version = "0.57.1"
+dependencies = [
+ "objc",
+ "raw-window-handle 0.5.2",
 ]
 
 [[package]]

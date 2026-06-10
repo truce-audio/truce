@@ -173,6 +173,13 @@ pub fn main_screen_scale() -> f64 {
     win32_dpi_scale(std::ptr::null_mut())
 }
 
+// `reanchor_to_superview_top` and `reanchor_all_children_to_top`
+// live in the `truce-gui-utils` crate so backends that don't pull
+// `truce-gui` (vizia) can still get at them. Re-exported here for
+// existing `truce_gui::platform::...` call sites.
+pub use truce_gui_utils::{reanchor_all_children_to_top, reanchor_to_superview_top};
+
+
 /// Shared, mutable editor scale factor.
 ///
 /// Single source of truth for the live content-scale of an open plugin
