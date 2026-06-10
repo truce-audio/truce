@@ -2,19 +2,43 @@
 //! embed a wgpu-backed (or CALayer-backed) child view into a
 //! DAW-provided parent window.
 //!
-//! Currently macOS-only: the helpers pin an embedded NSView's top
+//! Currently macOS-only: the helpers pin an embedded `NSView`'s top
 //! edge to its superview's top edge across host-driven resizes.
 //! Linux/Windows hosts manage child-window positioning natively, so
 //! these helpers are no-ops there.
 
 #![allow(clippy::module_name_repetitions)]
 
+#[cfg(target_os = "macos")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct NsPoint {
+    x: f64,
+    y: f64,
+}
+
+#[cfg(target_os = "macos")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct NsSize {
+    width: f64,
+    height: f64,
+}
+
+#[cfg(target_os = "macos")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct NsRect {
+    origin: NsPoint,
+    size: NsSize,
+}
+
 /// Re-anchor the editor's `NSView` to the **top** of its superview
 /// in unflipped Cocoa coordinates.
 ///
 /// The CLAP / LV2 / AU shims set the child's autoresize mask to
 /// `NSViewMinYMargin | NSViewMaxXMargin` so the parent-resize
-/// cascade keeps the child pinned. AppKit's autoresize math only
+/// cascade keeps the child pinned. `AppKit`'s autoresize math only
 /// runs when the *parent* resizes, though - resizing the *child*
 /// (via `baseview::Window::resize` / `setFrameSize:`) leaves the
 /// origin alone, which silently drifts the child off-anchor: a
@@ -35,25 +59,6 @@ pub fn reanchor_to_superview_top(handle: raw_window_handle::RawWindowHandle) {
     };
     if view_ptr.is_null() {
         return;
-    }
-
-    #[repr(C)]
-    #[derive(Clone, Copy)]
-    struct NsSize {
-        width: f64,
-        height: f64,
-    }
-    #[repr(C)]
-    #[derive(Clone, Copy)]
-    struct NsPoint {
-        x: f64,
-        y: f64,
-    }
-    #[repr(C)]
-    #[derive(Clone, Copy)]
-    struct NsRect {
-        origin: NsPoint,
-        size: NsSize,
     }
 
     unsafe {
@@ -89,24 +94,7 @@ pub fn reanchor_to_superview_top(_handle: raw_window_handle::RawWindowHandle) {}
 pub fn reanchor_all_children_to_top(parent: *mut std::ffi::c_void) {
     use objc::runtime::Object;
     use objc::{msg_send, sel, sel_impl};
-    #[repr(C)]
-    #[derive(Clone, Copy)]
-    struct NsPoint {
-        x: f64,
-        y: f64,
-    }
-    #[repr(C)]
-    #[derive(Clone, Copy)]
-    struct NsSize {
-        width: f64,
-        height: f64,
-    }
-    #[repr(C)]
-    #[derive(Clone, Copy)]
-    struct NsRect {
-        origin: NsPoint,
-        size: NsSize,
-    }
+
     if parent.is_null() {
         return;
     }

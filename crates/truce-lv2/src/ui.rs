@@ -288,24 +288,20 @@ pub unsafe fn instantiate_ui<P: PluginExport>(
         let handle = RawWindowHandle::X11(parent_ptr as u64);
         editor.open(handle, ctx);
 
-        // For fixed-size editors, push our preferred dimensions to the
-        // host both through `ui:resize` and (on macOS) by setting the
-        // parent NSView's frame directly. Hosts that honour `ui:resize`
-        // (Reaper, Ardour) re-size the outer plugin window to match;
-        // the macOS belt-and-braces is for hosts that don't.
-        //
-        // For resizable editors we deliberately skip both pushes:
-        // forcing the parent down to the natural size leaves the
-        // host's outer window blank around a small editor (Reaper's
-        // FX window on macOS opens at whatever size the user last
-        // dragged it to; if we shrink the parent NSView to (176, 290)
-        // it sits in the bottom-left of an otherwise-empty Reaper
-        // frame). Accepting the host's existing parent size and
-        // letting `anchor_child_for_resize` + autoresize-mask carry
-        // the rest means the editor fills whatever container the
-        // host opens.
-        if !editor.can_resize()
-            && let Some(resize) = parsed.resize
+        // Push our natural size to the host through `ui:resize` so the
+        // outer plug-in pane opens at the editor's `editor.size()`
+        // rather than at whatever the host's container defaults to.
+        // Applies to both fixed-size and resizable editors:
+        // - Fixed: host pane sizes to natural, the editor renders 1:1.
+        // - Resizable: host pane *starts* at natural; user-drag of
+        //   the host pane comes back through `ui_resize_dispatch`
+        //   (`ui_resize_iface`) which calls `editor.set_size`. The
+        //   host RPC replaces the old "let the autoresize cascade
+        //   pull the editor up to host pane size" strategy, which
+        //   on hosts that opened a large default pane (REAPER's LV2
+        //   runner) made the editor land at `max_size` on open with
+        //   the top of the layout clipped off the visible area.
+        if let Some(resize) = parsed.resize
             && let Some(func) = resize.ui_resize
         {
             // LV2 ui:resize takes int32_t; editor dimensions in u32
@@ -335,6 +331,14 @@ pub unsafe fn instantiate_ui<P: PluginExport>(
         //   grows in lock-step with the host's parent NSView. The
         //   editor's `Resized` event fires off the resulting frame
         //   change, which is what drives wgpu surface reconfigure.
+        //   REAPER's LV2 runner on macOS doesn't call back through
+        //   `ui_resize_dispatch` when the user drags the FX window,
+        //   so the autoresize cascade is what carries user-driven
+        //   resize for now. The new `ui:resize(natural)` push above
+        //   ensures the *initial* pane size is the editor's natural,
+        //   so the cascade only kicks in once the user actually
+        //   resizes - the GUI Zoo no longer opens stretched to the
+        //   host's default pane.
         #[cfg(target_os = "macos")]
         anchor_child_for_resize(parent_ptr, editor.can_resize());
 
@@ -827,7 +831,13 @@ unsafe fn fit_win32_parent_to_child(parent: *mut c_void) {
 ///   fill the parent, then tag `NSViewWidthSizable | NSViewHeightSizable`
 ///   so the child grows / shrinks in lock-step with future parent
 ///   resizes. baseview's `Resized` event fires off the resulting frame
-///   change, which is what drives wgpu surface reconfigure.
+///   change, which is what drives wgpu surface reconfigure. REAPER's
+///   LV2 runner on macOS doesn't fire `ui_resize_dispatch` from the
+///   host side when the user drags the FX window, so this cascade is
+///   what carries user-driven resize. The `ui:resize(natural)` push
+///   in `instantiate_ui` makes the host open its pane at the editor's
+///   natural size so the cascade only stretches the canvas once the
+///   user actually resizes.
 ///
 /// X11 and Win32 use top-left origins natively and have their own
 /// resize paths (`fit_win32_parent_to_child` on Windows, the

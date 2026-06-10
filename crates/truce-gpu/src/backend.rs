@@ -380,10 +380,8 @@ impl WgpuBackend {
         let queue = Arc::new(queue);
 
         let max_dim = device.limits().max_texture_dimension_2d.max(1);
-        let width =
-            truce_gui_types::to_physical_px(logical_w, f64::from(scale)).clamp(1, max_dim);
-        let height =
-            truce_gui_types::to_physical_px(logical_h, f64::from(scale)).clamp(1, max_dim);
+        let width = truce_gui_types::to_physical_px(logical_w, f64::from(scale)).clamp(1, max_dim);
+        let height = truce_gui_types::to_physical_px(logical_h, f64::from(scale)).clamp(1, max_dim);
 
         // Prefer `Rgba8Unorm` so the surface format matches
         // `read_pixels` and the headless screenshot path; fall back to
@@ -1144,8 +1142,10 @@ impl WgpuBackend {
         // are adapter-native, but a host that ignores `gui_set_size`
         // could still hand us a logical*scale request past the cap.
         let max_dim = self.device.limits().max_texture_dimension_2d.max(1);
-        let new_w = truce_gui_types::to_physical_px(logical_w, f64::from(self.scale)).clamp(1, max_dim);
-        let new_h = truce_gui_types::to_physical_px(logical_h, f64::from(self.scale)).clamp(1, max_dim);
+        let new_w =
+            truce_gui_types::to_physical_px(logical_w, f64::from(self.scale)).clamp(1, max_dim);
+        let new_h =
+            truce_gui_types::to_physical_px(logical_h, f64::from(self.scale)).clamp(1, max_dim);
         if new_w == self.width && new_h == self.height {
             return false;
         }

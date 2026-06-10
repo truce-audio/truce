@@ -262,4 +262,3 @@ truce::plugin! {
     logic: Zoo,
     params: ZooParams,
 }
-

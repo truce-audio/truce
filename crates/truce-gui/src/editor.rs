@@ -986,6 +986,10 @@ impl<P: Params + 'static> BuiltinWindowHandler<P> {
         }
     }
 
+    // Mirrors the by-value `WindowHandler::on_event` signature it's
+    // called from; pedantic clippy can't tell that the `match event`
+    // arms only bind `Copy` fields.
+    #[allow(clippy::needless_pass_by_value)]
     fn on_event_inner(
         &mut self,
         window: &mut baseview::Window,
