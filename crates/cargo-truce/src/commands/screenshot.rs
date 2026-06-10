@@ -38,7 +38,7 @@ use std::time::{Duration, Instant};
 /// scale)`. Returns 0 on success, non-zero on failure (logged to
 /// stderr by the plugin side). `scale` is the render scale
 /// (default 2.0); `<= 0` falls back to
-/// [`truce_core::screenshot::DEFAULT_SCREENSHOT_SCALE`] inside the
+/// `truce_core::screenshot::DEFAULT_SCREENSHOT_SCALE` inside the
 /// plugin.
 ///
 /// The cdylib has no link-time signature to cross-check against, so

@@ -281,9 +281,7 @@ impl<P: Params + 'static> Editor for ViziaEditor<P> {
         let app = {
             let ptr = parent_for_reanchor;
             app.on_idle(move |_cx| {
-                truce_gui_utils::reanchor_all_children_to_top(
-                    ptr as *mut std::ffi::c_void,
-                );
+                truce_gui_utils::reanchor_all_children_to_top(ptr as *mut std::ffi::c_void);
             })
         };
 

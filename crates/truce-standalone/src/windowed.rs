@@ -334,7 +334,7 @@ where
 /// `(w, h)` logical points. On Windows the height is padded by the
 /// menu-bar band first: baseview's `Window::resize` is menu-blind and
 /// would otherwise clip the editor child by the menu height on every
-/// resize (see [`crate::windowed_windows::menu_reserve_logical`]).
+/// resize (see `crate::windowed_windows::menu_reserve_logical`).
 /// Every platform then goes through baseview's deferred resize, which
 /// is the only re-entrancy-safe way to resize from inside an event
 /// handler.

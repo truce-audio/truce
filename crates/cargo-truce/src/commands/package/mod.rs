@@ -240,7 +240,7 @@ const PKG_FORMAT_META: [(PkgFormat, PkgFormatMeta); 8] = [
 
 impl PkgFormat {
     /// Comma-separated list parser. Each token is fed through
-    /// [`PkgFormat::from_str`] (the `FromStr` impl above), so an
+    /// `PkgFormat::from_str` (the `FromStr` impl above), so an
     /// unknown token surfaces a "unknown format: …" error rather
     /// than a generic parse failure.
     #[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]

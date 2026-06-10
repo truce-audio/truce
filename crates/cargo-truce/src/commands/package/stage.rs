@@ -479,7 +479,7 @@ pub(crate) fn stage_aax(
 /// Stage an AU v3 `.app` bundle into the staging directory for pkgbuild.
 ///
 /// Reads from `target/bundles/{Plugin}.app/` - the fully-signed output
-/// of [`emit_au_v3_bundle`] - and copies it into the staging tree.
+/// of `emit_au_v3_bundle` - and copies it into the staging tree.
 /// The bundle is already signed + has its embedded framework, so this
 /// is a pure copy.
 #[cfg(target_os = "macos")]

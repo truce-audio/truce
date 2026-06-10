@@ -289,7 +289,7 @@ unsafe fn make_toggle_item(
 }
 
 /// Add the standard App-menu items. macOS does NOT auto-fill the
-/// app name here - we have to spell out "Quit <App>" ourselves.
+/// app name here - we have to spell out `Quit <App>` ourselves.
 unsafe fn add_app_menu_items(menu: *mut Object, app_name: &str) {
     unsafe {
         let title = ns_string(&format!("Quit {app_name}"));

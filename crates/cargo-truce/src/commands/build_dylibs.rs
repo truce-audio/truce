@@ -50,7 +50,7 @@ impl BuildFormat {
         }
     }
 
-    /// Human-facing name used in the "Building <label>..." banner.
+    /// Human-facing name used in the `Building <label>...` banner.
     pub(crate) fn label(self) -> &'static str {
         match self {
             BuildFormat::Clap => "CLAP",

@@ -123,7 +123,7 @@ pub(crate) fn path_str(path: &Path) -> &str {
 /// past the consumed slot. Used by every per-subcommand arg loop in
 /// `cargo-truce` (`build`/`install`/`uninstall`/`run`/`screenshot`/
 /// `validate`/`package`/Windows-packaging) so the
-/// "<flag> requires a value" error message stays uniform.
+/// `<flag> requires a value` error message stays uniform.
 pub(crate) fn arg_value<'a>(
     args: &'a [String],
     i: &mut usize,

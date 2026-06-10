@@ -24,7 +24,7 @@ use truce_core::editor::for_test_params;
 /// pixels.
 ///
 /// Internal entry point for the headless screenshot render. Plugin
-/// tests reach this via [`truce_test::assert_screenshot`].
+/// tests reach this via `truce_test::assert_screenshot`.
 ///
 /// Returns `None` when no wgpu adapter is available (CI runners
 /// without a GPU, headless VMs). Lets the caller fall back to a CPU

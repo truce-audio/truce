@@ -11,6 +11,12 @@ rust-version.workspace = true
 [lints]
 workspace = true
 
+[dependencies]
+# `RawWindowHandle` appears in the public function signature on every
+# platform (the non-macOS stub is a no-op but still takes the type),
+# so this dep stays unconditional. `objc` is only needed for the
+# macOS impl, so it's behind a target gate below.
+raw-window-handle = "0.5"
+
 [target.'cfg(target_os = "macos")'.dependencies]
 objc = "0.2"
-raw-window-handle = "0.5"
