@@ -124,7 +124,7 @@ if missing_forced:
 main_order = [n for n in main_order if n not in forced_order] + forced_order
 
 # ---------------------------------------------------------------------------
-# Sub-workspaces (truce-slint, truce-vizia)
+# Sub-workspaces (truce-slint, truce-vizia, truce-gpu-examples)
 #
 # Each sub-workspace declares its own `[workspace]`, so the main
 # `cargo metadata` doesn't see them. Iterate explicitly. Their lib
@@ -144,6 +144,10 @@ SUB_WORKSPACES = [
     # (baseview-less, won't compile). Plugins that want vizia pull
     # `truce-vizia` from this repo via `git = "..."` for now; revisit
     # when vizia upstream tags a baseview-bearing release.
+    #
+    # `crates/truce-gpu-examples` is also omitted: its top-level
+    # workspace is virtual (no library to publish) and its only
+    # member is an internal example crate (`publish = false`).
 ]
 
 sub_lines = []

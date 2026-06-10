@@ -146,12 +146,15 @@ DRIFT="$(awk -v want="$WS_VERSION" '
 # into the main workspace. They're not in [workspace.dependencies] so
 # the awk above misses them; sweep each sub-workspace manifest here.
 #
-# `crates/truce-vizia/Cargo.toml` is intentionally NOT in this list:
-# truce-vizia isn't published (vizia upstream hasn't tagged a release
-# with the `baseview` feature, so crates.io rejects the git-only dep).
-# See `scripts/release/topo.py`'s `SUB_WORKSPACES` for the longer
-# explanation. bump.sh still keeps that manifest's version in sync;
-# the release-time drift gate just doesn't fail loud about it.
+# `crates/truce-vizia/Cargo.toml` and `crates/truce-gpu-examples/
+# Cargo.toml` are intentionally NOT in this list. truce-vizia isn't
+# published (vizia upstream hasn't tagged a release with the
+# `baseview` feature, so crates.io rejects the git-only dep);
+# truce-gpu-examples has no publishable library (virtual workspace,
+# its only member is an internal `publish = false` example). See
+# `scripts/release/topo.py`'s `SUB_WORKSPACES` for the longer
+# explanation. bump.sh still keeps those manifests' versions in sync;
+# the release-time drift gate just doesn't fail loud about them.
 for sub_manifest in \
     crates/truce-slint/Cargo.toml \
     crates/truce-slint/build/Cargo.toml; do

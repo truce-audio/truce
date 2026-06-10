@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 # Run `cargo truce <args>` in the main workspace and in every truce sub-
-# workspace (currently `crates/truce-vizia` and `crates/truce-slint`).
-# Each sub-workspace has its own `truce.toml` because vizia / slint pin
-# incompatible skia-bindings revs and can't share a Cargo workspace with
-# the main truce build.
+# workspace (currently `crates/truce-vizia`, `crates/truce-slint`, and
+# `crates/truce-gpu-examples`). Each sub-workspace has its own
+# `truce.toml`. vizia / slint live in their own workspaces because they
+# pin incompatible skia-bindings revs and can't share a Cargo workspace
+# with the main truce build; truce-gpu-examples is split out because its
+# `truce-gui/gpu` feature request would unify across the parent
+# workspace and silently flip every CPU screenshot test to the GPU
+# renderer.
 #
 # Usage: recursive-cargo-truce.sh <cargo-truce-args>
 # Examples:
@@ -48,6 +52,7 @@ Runs 'cargo truce <args>' in the main workspace and in each sub-workspace.
 Sub-workspaces:
   crates/truce-slint
   crates/truce-vizia
+  crates/truce-gpu-examples
 EOF
     exit 64
 fi
@@ -56,6 +61,7 @@ workspaces=(
     "$root_dir"
     "$root_dir/crates/truce-slint"
     "$root_dir/crates/truce-vizia"
+    "$root_dir/crates/truce-gpu-examples"
 )
 
 overall_status=0

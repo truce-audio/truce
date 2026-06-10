@@ -68,6 +68,13 @@ jobs:
       - name: cargo doc (truce-vizia sub-workspace)
         run: cargo doc --manifest-path crates/truce-vizia/Cargo.toml --workspace --no-deps --target-dir target
 
+      # truce-gpu-examples sub-workspace (split out so its
+      # `truce-gui/gpu` feature request can't unify across the parent
+      # workspace and flip CPU screenshot tests to GPU - see
+      # crates/truce-gpu-examples/Cargo.toml).
+      - name: cargo doc (truce-gpu-examples sub-workspace)
+        run: cargo doc --manifest-path crates/truce-gpu-examples/Cargo.toml --workspace --no-deps --target-dir target
+
       - name: redirect index.html → truce
         if: github.event_name != 'pull_request'
         run: echo '<meta http-equiv="refresh" content="0; url=truce/">' > target/doc/index.html

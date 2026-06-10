@@ -1,0 +1,24 @@
+# truce-gpu-examples lives in its own Cargo workspace so its
+# `truce-gui/gpu` feature request can't leak into the parent
+# workspace's CPU-only examples via cargo feature unification.
+# Without the split, every plug-in built alongside a GPU example
+# (e.g. `truce-example-arpeggio`'s screenshot test) silently
+# switched from `BuiltinEditor` to `GpuEditor` and broke pixel-exact
+# baselines. End-user plug-ins pick CPU *or* GPU per their own
+# `truce-gui` features; only this repo, which carries both
+# rendering paths exercised, needs the isolation.
+#
+# Path deps point back into the parent workspace (`../<crate>`).
+# `cargo publish` strips `path` and embeds the registry `version`,
+# so the explicit `version = "..."` pins are load-bearing for
+# publish. `scripts/release/bump.sh` sweeps this file alongside
+# the parent workspace.
+[workspace]
+members = ["truce-example-gui-zoo-gpu"]
+resolver = "2"
+
+[workspace.lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("cargo-clippy"))'] }
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
