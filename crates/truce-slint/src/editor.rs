@@ -612,7 +612,7 @@ impl<P: Params + 'static> Editor for SlintEditor<P> {
                     match pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
                         label: Some("truce-slint"),
                         required_features: wgpu::Features::empty(),
-                        required_limits: wgpu::Limits::downlevel_defaults(),
+                        required_limits: adapter.limits(),
                         experimental_features: wgpu::ExperimentalFeatures::default(),
                         memory_hints: wgpu::MemoryHints::Performance,
                         trace: wgpu::Trace::Off,

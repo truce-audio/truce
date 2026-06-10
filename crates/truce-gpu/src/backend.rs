@@ -1139,12 +1139,10 @@ impl WgpuBackend {
     /// was actually reconfigured.
     #[allow(clippy::cast_precision_loss)]
     pub fn resize(&mut self, logical_w: u32, logical_h: u32) -> bool {
-        // Cap each axis at the adapter's reported max texture dim
-        // (we request `Limits::downlevel_defaults()` so the cap is
-        // 2048 on every device that path supports). Without this a
-        // tall layout on a Retina display can ask for a surface
-        // larger than the cap and trip a wgpu validation panic which
-        // unwinds across the host's FFI boundary and aborts REAPER.
+        // Belt-and-braces: cap each axis at whatever the adapter
+        // granted us in `from_surface`. The required_limits passed in
+        // are adapter-native, but a host that ignores `gui_set_size`
+        // could still hand us a logical*scale request past the cap.
         let max_dim = self.device.limits().max_texture_dimension_2d.max(1);
         let new_w = truce_gui_types::to_physical_px(logical_w, f64::from(self.scale)).clamp(1, max_dim);
         let new_h = truce_gui_types::to_physical_px(logical_h, f64::from(self.scale)).clamp(1, max_dim);
@@ -1771,7 +1769,7 @@ impl WgpuBackend {
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("truce-gpu-headless"),
             required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::downlevel_defaults(),
+            required_limits: adapter.limits(),
             experimental_features: wgpu::ExperimentalFeatures::default(),
             memory_hints: wgpu::MemoryHints::Performance,
             trace: wgpu::Trace::Off,
@@ -2223,7 +2221,7 @@ mod tests {
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("standalone-test"),
             required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::downlevel_defaults(),
+            required_limits: adapter.limits(),
             experimental_features: wgpu::ExperimentalFeatures::default(),
             memory_hints: wgpu::MemoryHints::Performance,
             trace: wgpu::Trace::Off,
