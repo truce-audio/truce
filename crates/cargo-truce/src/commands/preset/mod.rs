@@ -27,7 +27,9 @@ use crate::preset_codec::{PresetFormat, aupreset_xml, decode, fourcc_int, vstpre
 use crate::util::fs_ctx;
 use crate::{Config, PluginDef, Res, load_config, project_root};
 
-use truce_build::presets::{AuthoredPreset, ParamAnnotation, read_presets_dir, render_preset_toml};
+use truce_build::presets::{
+    AuthoredPreset, ParamAnnotation, ParamNameMap, read_presets_dir, render_preset_toml,
+};
 use truce_utils::preset::PresetMeta;
 use truce_utils::presets::{PresetStore, mint_uuid};
 use truce_utils::state::{deserialize_state, hash_plugin_id, serialize_state, vst3_cid};
@@ -133,7 +135,8 @@ impl PluginCtx<'_> {
         if !dir.is_dir() {
             return Ok(Vec::new());
         }
-        read_presets_dir(&dir, true).map_err(Into::into)
+        let names = ParamNameMap::from_annotations(&self.annotations());
+        read_presets_dir(&dir, true, Some(&names)).map_err(Into::into)
     }
 }
 
@@ -298,7 +301,8 @@ fn read_native(ctx: &PluginCtx<'_>, path: &Path) -> Result<PresetParts, crate::C
         .ok_or_else(|| format!("unsupported preset extension: {}", path.display()))?;
 
     if format == PresetFormat::AuthoredToml {
-        let authored = truce_build::presets::read_single_preset(path)?;
+        let names = ParamNameMap::from_annotations(&ctx.annotations());
+        let authored = truce_build::presets::read_single_preset(path, Some(&names))?;
         return Ok((authored.meta, authored.params, authored.extra));
     }
 

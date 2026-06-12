@@ -58,6 +58,9 @@ pub(crate) fn write_struct_sidecar(
     for p in params {
         buf.push_str("[[param]]\n");
         let _ = writeln!(buf, "id = {}", p.id());
+        // The Rust field identifier: the stable, bare-TOML-safe key
+        // `.preset` files resolve param names through.
+        let _ = writeln!(buf, "field = \"{}\"", toml_escape(&p.ident.to_string()));
         let name = p.attrs.name.clone().unwrap_or_else(|| p.ident.to_string());
         let _ = writeln!(buf, "name = \"{}\"", toml_escape(&name));
         let _ = writeln!(buf, "kind = \"{}\"", param_kind_str(p.kind));

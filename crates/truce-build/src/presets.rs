@@ -84,6 +84,12 @@ struct PresetFile {
 /// level is the conventional category layout but deeper nesting is
 /// tolerated).
 ///
+/// `[params]` keys are either numeric param ids or Rust field
+/// identifiers (`cutoff = 8200.0`); named keys resolve through
+/// `names`, built from the `derive(Params)` sidecars. Pass `None`
+/// to accept numeric keys only (named keys then error with a
+/// build-the-plugin hint).
+///
 /// `stamp_missing_uuids` controls what happens to a preset authored
 /// without a `uuid` field: `true` (the install pipeline) generates
 /// one and prepends it to the source file, so the identity is minted
@@ -98,6 +104,7 @@ struct PresetFile {
 pub fn read_presets_dir(
     dir: &Path,
     stamp_missing_uuids: bool,
+    names: Option<&ParamNameMap>,
 ) -> Result<Vec<AuthoredPreset>, String> {
     let mut files = Vec::new();
     collect_preset_files(dir, &mut files, 0)
@@ -106,7 +113,7 @@ pub fn read_presets_dir(
 
     let mut presets = Vec::with_capacity(files.len());
     for path in files {
-        presets.push(read_preset_file(dir, &path, stamp_missing_uuids)?);
+        presets.push(read_preset_file(dir, &path, stamp_missing_uuids, names)?);
     }
 
     // Library-level validation: identities and per-category display
@@ -173,6 +180,7 @@ fn read_preset_file(
     root: &Path,
     path: &Path,
     stamp_missing_uuids: bool,
+    names: Option<&ParamNameMap>,
 ) -> Result<AuthoredPreset, String> {
     let ctx = |e: &dyn std::fmt::Display| format!("{}: {e}", path.display());
     let content = std::fs::read_to_string(path).map_err(|e| ctx(&e))?;
@@ -194,12 +202,26 @@ fn read_preset_file(
 
     let mut params = Vec::with_capacity(parsed.params.len());
     for (key, value) in &parsed.params {
-        let id: u32 = key.parse().map_err(|_| {
-            format!(
-                "{}: param key \"{key}\" is not a numeric param id",
-                path.display()
-            )
-        })?;
+        // Numeric keys are ids and need no schema; anything else is
+        // a Rust field identifier resolved through the sidecars.
+        let id: u32 = if key.bytes().all(|b| b.is_ascii_digit()) && !key.is_empty() {
+            key.parse()
+                .map_err(|_| format!("{}: param id \"{key}\" out of range", path.display()))?
+        } else {
+            match names {
+                Some(map) if !map.is_empty() => map
+                    .resolve(key)
+                    .map_err(|e| format!("{}: {e}", path.display()))?,
+                _ => {
+                    return Err(format!(
+                        "{}: param \"{key}\" is a name, but no param manifest is \
+                         available - build the plugin once (`cargo build -p <crate>`) \
+                         so the derive sidecars exist, or use the numeric id",
+                        path.display()
+                    ));
+                }
+            }
+        };
         let plain = match value {
             toml::Value::Float(f) => *f,
             toml::Value::Integer(i) => {
@@ -219,6 +241,13 @@ fn read_preset_file(
                 ));
             }
         };
+        if params.iter().any(|(existing, _)| *existing == id) {
+            return Err(format!(
+                "{}: param {id} is set twice (a name and an id can refer to \
+                 the same param)",
+                path.display()
+            ));
+        }
         params.push((id, plain));
     }
 
@@ -278,17 +307,24 @@ fn read_preset_file(
 ///
 /// Same per-file surface as [`read_presets_dir`]; a missing uuid is
 /// an error (single-file reads never stamp).
-pub fn read_single_preset(path: &Path) -> Result<AuthoredPreset, String> {
+pub fn read_single_preset(
+    path: &Path,
+    names: Option<&ParamNameMap>,
+) -> Result<AuthoredPreset, String> {
     let root = path.parent().map(Path::to_path_buf).unwrap_or_default();
     // The parent dir doubles as the walk root so no directory-derived
     // category applies - explicit `category` still does.
-    read_preset_file(&root, path, false)
+    read_preset_file(&root, path, false, names)
 }
 
-/// Display info for one param, used to annotate generated `.preset`
-/// TOML with human-readable comments.
+/// Per-param info from the `derive(Params)` sidecars: the Rust
+/// field identifier (the canonical `.preset` key), the display
+/// name, and the unit (the latter two used for generated comments).
 #[derive(Debug, Clone)]
 pub struct ParamAnnotation {
+    /// Rust field identifier (`cutoff`). Empty for sidecars written
+    /// before the field line existed; rebuild the plugin to refresh.
+    pub field: String,
     pub name: String,
     pub unit: String,
 }
@@ -338,6 +374,7 @@ pub fn read_param_annotations(
             out.insert(
                 id,
                 ParamAnnotation {
+                    field: field("field"),
                     name: field("name"),
                     unit: field("unit"),
                 },
@@ -345,6 +382,92 @@ pub fn read_param_annotations(
         }
     }
     out
+}
+
+/// Resolves `.preset` param keys written as Rust field identifiers
+/// (`cutoff = 8200.0`) to param ids. Built from the same sidecar
+/// annotations the comment generator uses; names are authoring
+/// sugar only - the wire format stores ids.
+#[derive(Debug, Default)]
+pub struct ParamNameMap {
+    entries: std::collections::BTreeMap<String, NameBinding>,
+}
+
+#[derive(Debug)]
+enum NameBinding {
+    Id(u32),
+    /// The same field identifier appears in more than one nested
+    /// params struct with different ids - unusable as a key.
+    Ambiguous(Vec<u32>),
+}
+
+impl ParamNameMap {
+    #[must_use]
+    pub fn from_annotations(
+        annotations: &std::collections::BTreeMap<u32, ParamAnnotation>,
+    ) -> Self {
+        let mut entries: std::collections::BTreeMap<String, NameBinding> =
+            std::collections::BTreeMap::new();
+        for (&id, a) in annotations {
+            if a.field.is_empty() {
+                continue;
+            }
+            match entries.entry(a.field.clone()) {
+                std::collections::btree_map::Entry::Vacant(e) => {
+                    e.insert(NameBinding::Id(id));
+                }
+                std::collections::btree_map::Entry::Occupied(mut e) => match e.get_mut() {
+                    NameBinding::Id(first) if *first != id => {
+                        let first = *first;
+                        e.insert(NameBinding::Ambiguous(vec![first, id]));
+                    }
+                    NameBinding::Ambiguous(ids) if !ids.contains(&id) => ids.push(id),
+                    _ => {}
+                },
+            }
+        }
+        Self { entries }
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Resolve one `[params]` key to an id.
+    ///
+    /// # Errors
+    ///
+    /// Unknown names (with near-miss suggestions) and ambiguous
+    /// names (with the candidate ids) return a human-readable
+    /// message; callers prefix the file path.
+    pub fn resolve(&self, key: &str) -> Result<u32, String> {
+        match self.entries.get(key) {
+            Some(NameBinding::Id(id)) => Ok(*id),
+            Some(NameBinding::Ambiguous(ids)) => Err(format!(
+                "param \"{key}\" is ambiguous (ids {ids:?} across nested params structs); \
+                 use the numeric id"
+            )),
+            None => {
+                let mut close: Vec<&str> = self
+                    .entries
+                    .keys()
+                    .filter(|k| {
+                        k.starts_with(key)
+                            || key.starts_with(k.as_str())
+                            || k.to_lowercase() == key.to_lowercase()
+                    })
+                    .map(String::as_str)
+                    .collect();
+                close.truncate(3);
+                if close.is_empty() {
+                    Err(format!("unknown param \"{key}\""))
+                } else {
+                    Err(format!("unknown param \"{key}\" (did you mean {close:?}?)"))
+                }
+            }
+        }
+    }
 }
 
 /// Render a canonical `.preset` TOML file - the inverse of
@@ -398,10 +521,18 @@ pub fn render_preset_toml(
     }
 
     if !params.is_empty() {
+        // Field-identifier keys when the sidecars provide them (and
+        // the name maps back to exactly this id); ids otherwise.
+        let names = ParamNameMap::from_annotations(annotations);
         out.push_str("\n[params]\n");
         for (id, value) in params {
-            let _ = write!(out, "{id} = {value}");
-            if let Some(a) = annotations.get(id) {
+            let annotation = annotations.get(id);
+            let key = annotation
+                .map(|a| a.field.as_str())
+                .filter(|f| !f.is_empty() && names.resolve(f) == Ok(*id))
+                .map_or_else(|| id.to_string(), str::to_string);
+            let _ = write!(out, "{key} = {value}");
+            if let Some(a) = annotation {
                 if a.unit.is_empty() {
                     let _ = write!(out, "   # {}", a.name);
                 } else {
@@ -451,7 +582,7 @@ extra = "aGk="
         )
         .unwrap();
 
-        let presets = read_presets_dir(&dir, false).unwrap();
+        let presets = read_presets_dir(&dir, false, None).unwrap();
         assert_eq!(presets.len(), 1);
         let p = &presets[0];
         assert_eq!(p.meta.name, "Bright Saw");
@@ -475,15 +606,15 @@ extra = "aGk="
         let file = dir.join("init.preset");
         std::fs::write(&file, "name = \"Init\"\n").unwrap();
 
-        assert!(read_presets_dir(&dir, false).is_err());
+        assert!(read_presets_dir(&dir, false, None).is_err());
 
-        let first = read_presets_dir(&dir, true).unwrap();
+        let first = read_presets_dir(&dir, true, None).unwrap();
         let stamped = first[0].meta.uuid.clone();
         assert_eq!(stamped.len(), 36);
         assert_eq!(&stamped[14..15], "4");
 
         // Second read sees the same identity from the rewritten file.
-        let second = read_presets_dir(&dir, false).unwrap();
+        let second = read_presets_dir(&dir, false, None).unwrap();
         assert_eq!(second[0].meta.uuid, stamped);
         assert_eq!(second[0].meta.name, "Init");
 
@@ -503,7 +634,7 @@ extra = "aGk="
             "name = \"B\"\nuuid = \"u\"\ndefault = true\n",
         )
         .unwrap();
-        let err = read_presets_dir(&dir, false).unwrap_err();
+        let err = read_presets_dir(&dir, false, None).unwrap_err();
         assert!(err.contains("duplicate preset uuid"));
 
         std::fs::write(
@@ -511,7 +642,7 @@ extra = "aGk="
             "name = \"B\"\nuuid = \"v\"\ndefault = true\n",
         )
         .unwrap();
-        let err = read_presets_dir(&dir, false).unwrap_err();
+        let err = read_presets_dir(&dir, false, None).unwrap_err();
         assert!(err.contains("default = true"));
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -533,23 +664,105 @@ extra = "aGk="
         annotations.insert(
             1,
             ParamAnnotation {
+                field: "cutoff".into(),
                 name: "Cutoff".into(),
                 unit: "Hz".into(),
             },
         );
         let toml = render_preset_toml(&meta, &[(0, 1.0), (1, 8200.0)], b"xs", &annotations);
-        assert!(toml.contains("# Cutoff (Hz)"));
+        assert!(toml.contains("cutoff = 8200   # Cutoff (Hz)"));
         std::fs::create_dir_all(dir.join("lead")).unwrap();
         std::fs::write(dir.join("lead/pulled.preset"), &toml).unwrap();
 
-        let presets = read_presets_dir(&dir, false).unwrap();
+        let names = ParamNameMap::from_annotations(&annotations);
+        let presets = read_presets_dir(&dir, false, Some(&names)).unwrap();
         let p = &presets[0];
         assert_eq!(p.meta.uuid, "u-render");
         assert_eq!(p.meta.name, "Pulled \"Lead\"");
         assert_eq!(p.meta.category, "lead"); // directory-derived
-        assert_eq!(p.params, vec![(0, 1.0), (1, 8200.0)]);
+        let mut params = p.params.clone();
+        params.sort_by_key(|(id, _)| *id);
+        assert_eq!(params, vec![(0, 1.0), (1, 8200.0)]);
         assert_eq!(p.extra, b"xs");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn resolves_field_name_keys() {
+        let mut annotations = std::collections::BTreeMap::new();
+        let a = |field: &str, name: &str| ParamAnnotation {
+            field: field.into(),
+            name: name.into(),
+            unit: String::new(),
+        };
+        annotations.insert(0, a("waveform", "Waveform"));
+        annotations.insert(1, a("cutoff", "Filter Cutoff"));
+        annotations.insert(2, a("attack", "Attack"));
+        annotations.insert(3, a("attack", "Attack (sub)")); // nested twin
+        let names = ParamNameMap::from_annotations(&annotations);
+
+        let dir = temp_lib("names");
+        std::fs::write(
+            dir.join("a.preset"),
+            "name = \"A\"\nuuid = \"u\"\n[params]\ncutoff = 8200.0\n0 = 1\n",
+        )
+        .unwrap();
+        let presets = read_presets_dir(&dir, false, Some(&names)).unwrap();
+        let mut params = presets[0].params.clone();
+        params.sort_by_key(|(id, _)| *id);
+        assert_eq!(params, vec![(0, 1.0), (1, 8200.0)]);
+
+        // Unknown name errors with a suggestion.
+        std::fs::write(
+            dir.join("a.preset"),
+            "name = \"A\"\nuuid = \"u\"\n[params]\ncutof = 1.0\n",
+        )
+        .unwrap();
+        let err = read_presets_dir(&dir, false, Some(&names)).unwrap_err();
+        assert!(err.contains("did you mean"), "{err}");
+
+        // Ambiguous nested field errors with the candidates.
+        std::fs::write(
+            dir.join("a.preset"),
+            "name = \"A\"\nuuid = \"u\"\n[params]\nattack = 0.1\n",
+        )
+        .unwrap();
+        let err = read_presets_dir(&dir, false, Some(&names)).unwrap_err();
+        assert!(err.contains("ambiguous"), "{err}");
+
+        // Name + id double-setting the same param errors.
+        std::fs::write(
+            dir.join("a.preset"),
+            "name = \"A\"\nuuid = \"u\"\n[params]\ncutoff = 1.0\n1 = 2.0\n",
+        )
+        .unwrap();
+        let err = read_presets_dir(&dir, false, Some(&names)).unwrap_err();
+        assert!(err.contains("set twice"), "{err}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn render_uses_field_keys() {
+        let mut annotations = std::collections::BTreeMap::new();
+        annotations.insert(
+            1,
+            ParamAnnotation {
+                field: "cutoff".into(),
+                name: "Filter Cutoff".into(),
+                unit: "Hz".into(),
+            },
+        );
+        let meta = truce_utils::preset::PresetMeta {
+            uuid: "u".into(),
+            name: "N".into(),
+            ..Default::default()
+        };
+        let toml = render_preset_toml(&meta, &[(1, 8200.0), (5, 0.5)], &[], &annotations);
+        assert!(
+            toml.contains("cutoff = 8200   # Filter Cutoff (Hz)"),
+            "{toml}"
+        );
+        assert!(toml.contains("5 = 0.5"), "{toml}"); // no annotation -> id key
     }
 
     #[test]
@@ -560,8 +773,8 @@ extra = "aGk="
             "name = \"A\"\nuuid = \"u\"\n[params]\ncutoff = 1.0\n",
         )
         .unwrap();
-        let err = read_presets_dir(&dir, false).unwrap_err();
-        assert!(err.contains("not a numeric param id"));
+        let err = read_presets_dir(&dir, false, None).unwrap_err();
+        assert!(err.contains("no param manifest is"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

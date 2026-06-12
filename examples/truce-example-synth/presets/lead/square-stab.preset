@@ -5,11 +5,11 @@ comment = "Short plucky square, good for 16ths"
 tags = ["lead", "square", "pluck"]
 
 [params]
-0 = 2        # square
-1 = 4500.0   # cutoff Hz
-2 = 0.5      # resonance
-3 = 0.002    # attack s
-4 = 0.15     # decay s
-5 = 0.2      # sustain
-6 = 0.12     # release s
-7 = -7.0     # volume dB
+waveform = 2   # square
+cutoff = 4500.0   # Hz
+resonance = 0.5
+attack = 0.002   # s
+decay = 0.15   # s
+sustain = 0.2
+release = 0.12   # s
+volume = -7.0   # dB

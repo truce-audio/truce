@@ -146,7 +146,13 @@ pub(crate) fn load_factory_presets(
         return Ok(None);
     }
 
-    let authored = truce_build::presets::read_presets_dir(&dir, true)?;
+    let annotations = truce_build::presets::read_param_annotations(
+        &truce_build::target_dir(root)
+            .join("lv2-meta")
+            .join(&p.crate_name),
+    );
+    let names = truce_build::presets::ParamNameMap::from_annotations(&annotations);
+    let authored = truce_build::presets::read_presets_dir(&dir, true, Some(&names))?;
     if authored.is_empty() {
         return Ok(None);
     }

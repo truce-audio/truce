@@ -2,10 +2,12 @@
 
 Notable changes per release.
 
-## Unreleased
+## 0.58.0
 
 - **Presets.** Drop a `presets/` directory of `.preset` TOML
-  files next to a plugin crate and `cargo truce install` ships
+  files next to a plugin crate (params keyed by your `Params`
+  struct's field names, resolved through the derive sidecars;
+  numeric ids also accepted) and `cargo truce install` ships
   them as factory presets in every format: CLAP (native files +
   the preset-discovery / preset-load extensions), AU v2/v3
   (factory list in Logic / GarageBand), VST3 (`.vstpreset` in
