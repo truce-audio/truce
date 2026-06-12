@@ -13,9 +13,6 @@
 //! `sample_offset = 0` (VST2, AAX, LV2 in v1, AU until ramp decoding
 //! lands) the loop runs once per block and the splitting machinery
 //! is inert.
-//!
-//! Design rationale and per-format coverage notes live in
-//! `truce-docs/docs/internal/parameter-dependent-chunking.md`.
 
 use truce_params::{ParamFlags, ParamInfo, Params};
 

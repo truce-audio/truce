@@ -81,8 +81,6 @@ pub struct PluginInfo {
 /// compile time. Mirrors `truce_build::AutomationConfig` (the
 /// derive-time view of the same TOML key) but lives in `truce-core`
 /// so wrappers can read it without a `truce-build` dep.
-///
-/// See `truce-docs/docs/internal/parameter-dependent-chunking.md`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AutomationConfig {
     /// Smallest sub-block size in samples. The chunker only splits

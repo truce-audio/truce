@@ -432,8 +432,8 @@ pub unsafe fn run<P: PluginExport>(handle: *mut Lv2Instance<P>, n_samples: u32) 
                 inst.last_control[i] = Some(v);
                 let pid = inst.param_infos[i].id;
                 let plain = f64::from(v);
-                // `set_plain` is deferred to the chunker's apply pass;
-                // see `truce-docs/docs/internal/parameter-dependent-chunking.md`.
+                // `set_plain` is deferred to the chunker's apply pass
+                // so smoothers see `set_target` at the event's sample.
                 // LV2 control-port reads land at sample 0 of the block
                 // so the chunker applies them on entry to the first
                 // sub-block, equivalent to the prior eager behaviour.
