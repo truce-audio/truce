@@ -2,7 +2,7 @@
 
 Notable changes per release.
 
-## Unreleased
+## 1.0.0
 
 - **Presets.** Drop a `presets/` directory of `.preset` TOML
   files next to a plugin crate and `cargo truce install` ships
