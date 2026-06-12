@@ -5,11 +5,11 @@ comment = "Classic bright sawtooth lead"
 tags = ["lead", "saw", "bright"]
 
 [params]
-0 = 1        # saw
-1 = 9500.0   # cutoff Hz
-2 = 0.35     # resonance
-3 = 0.005    # attack s
-4 = 0.08     # decay s
-5 = 0.6      # sustain
-6 = 0.25     # release s
-7 = -6.0     # volume dB
+waveform = 1   # saw
+cutoff = 9500.0   # Hz
+resonance = 0.35
+attack = 0.005   # s
+decay = 0.08   # s
+sustain = 0.6
+release = 0.25   # s
+volume = -6.0   # dB

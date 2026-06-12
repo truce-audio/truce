@@ -6,14 +6,27 @@
 use std::collections::HashSet;
 use std::path::Path;
 
-use truce_build::presets::read_presets_dir;
+use truce_build::presets::{ParamNameMap, read_param_annotations, read_presets_dir};
 use truce_example_synth::SynthParams;
 use truce_params::Params;
 use truce_utils::state::deserialize_state;
 
 fn library() -> Vec<truce_build::presets::AuthoredPreset> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("presets");
-    read_presets_dir(&dir, false).expect("factory preset library parses")
+    // The same sidecar-derived name map `cargo truce install` uses;
+    // written by `derive(Params)` during this crate's own build.
+    let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let annotations = read_param_annotations(
+        &truce_build::target_dir(&workspace_root)
+            .join("lv2-meta")
+            .join("truce-example-synth"),
+    );
+    let names = ParamNameMap::from_annotations(&annotations);
+    assert!(
+        !names.is_empty(),
+        "param sidecars missing - build the crate first"
+    );
+    read_presets_dir(&dir, false, Some(&names)).expect("factory preset library parses")
 }
 
 #[test]

@@ -5,11 +5,11 @@ comment = "Airy triangle pad with a long tail"
 tags = ["pad", "airy"]
 
 [params]
-0 = 3        # triangle
-1 = 6000.0   # cutoff Hz
-2 = 0.15     # resonance
-3 = 0.9      # attack s
-4 = 0.5      # decay s
-5 = 0.8      # sustain
-6 = 2.5      # release s
-7 = -9.0     # volume dB
+waveform = 3   # triangle
+cutoff = 6000.0   # Hz
+resonance = 0.15
+attack = 0.9   # s
+decay = 0.5   # s
+sustain = 0.8
+release = 2.5   # s
+volume = -9.0   # dB

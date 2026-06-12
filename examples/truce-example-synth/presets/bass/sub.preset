@@ -5,11 +5,11 @@ comment = "Clean sine sub bass"
 tags = ["bass", "sub", "sine"]
 
 [params]
-0 = 0        # sine
-1 = 800.0    # cutoff Hz
-2 = 0.05     # resonance
-3 = 0.005    # attack s
-4 = 0.12     # decay s
-5 = 0.9      # sustain
-6 = 0.18     # release s
-7 = -5.0     # volume dB
+waveform = 0   # sine
+cutoff = 800.0   # Hz
+resonance = 0.05
+attack = 0.005   # s
+decay = 0.12   # s
+sustain = 0.9
+release = 0.18   # s
+volume = -5.0   # dB

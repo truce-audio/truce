@@ -5,11 +5,11 @@ default = true
 
 [params]
 # waveform: 0 Sine, 1 Saw, 2 Square, 3 Triangle
-0 = 1
-1 = 8000.0   # cutoff Hz
-2 = 0.0      # resonance
-3 = 0.01     # attack s
-4 = 0.1      # decay s
-5 = 0.7      # sustain
-6 = 0.3      # release s
-7 = -6.0     # volume dB
+waveform = 1
+cutoff = 8000.0   # Hz
+resonance = 0.0
+attack = 0.01   # s
+decay = 0.1   # s
+sustain = 0.7
+release = 0.3   # s
+volume = -6.0   # dB
