@@ -147,7 +147,15 @@ pub(crate) fn vs_install_paths() -> Vec<PathBuf> {
         return Vec::new();
     }
     let out = Command::new(&vswhere)
-        .args(["-all", "-property", "installationPath", "-format", "value"])
+        .args([
+            "-all",
+            "-products",
+            "*",
+            "-property",
+            "installationPath",
+            "-format",
+            "value",
+        ])
         .output();
     match out {
         Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout)
@@ -172,6 +180,8 @@ pub(crate) fn locate_vcvars64() -> Option<PathBuf> {
     let out = Command::new(&vswhere)
         .args([
             "-latest",
+            "-products",
+            "*",
             "-requires",
             "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
             "-property",
