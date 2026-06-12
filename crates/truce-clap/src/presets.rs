@@ -217,40 +217,39 @@ unsafe extern "C" fn provider_init<P: PluginExport>(
     };
     // Only existing directories are declared: hosts (clap-validator
     // enforces this) treat a declared location they can't stat as a
-    // crawl error, not as "empty".
-    if let Some(root) = factory_preset_root()
-        && !declare_dir(
+    // crawl error, not as "empty". The user root is not created
+    // here - it appears when the first user preset is saved
+    // (`PresetStore::save` creates it), and hosts pick it up on
+    // their next plugin rescan. Same posture as Surge XT's provider.
+    //
+    // A host rejecting a declaration is not fatal: the remaining
+    // locations (and a zero-location provider) are still valid.
+    // clap-validator rejects spec-compliant Windows paths outright
+    // (it requires a leading '/', while the CLAP header says FILE
+    // locations are OS paths where '\' works on Windows), so
+    // treating rejection as an init failure would kill the whole
+    // provider there.
+    if let Some(root) = factory_preset_root() {
+        declare_dir(
             handle.indexer,
             declare_location,
             &root,
             c"Factory",
             CLAP_PRESET_DISCOVERY_IS_FACTORY_CONTENT,
-        )
-    {
-        return false;
+        );
     }
     let info = P::info();
-    if let Some(root) = user_preset_root(info.vendor, info.name) {
-        // Create the user root up front: hosts cache the declared
-        // location list, so a root that only appears when the first
-        // user preset is saved would stay invisible until a full
-        // plugin rescan. An existing-but-empty directory crawls to
-        // zero presets, which is exactly right.
-        if std::fs::create_dir_all(&root).is_ok()
-            && !declare_dir(
-                handle.indexer,
-                declare_location,
-                &root,
-                c"User",
-                CLAP_PRESET_DISCOVERY_IS_USER_CONTENT,
-            )
-        {
-            return false;
-        }
+    if let Some(root) = user_preset_root(info.vendor, info.name)
+        && root.is_dir()
+    {
+        declare_dir(
+            handle.indexer,
+            declare_location,
+            &root,
+            c"User",
+            CLAP_PRESET_DISCOVERY_IS_USER_CONTENT,
+        );
     }
-    // Zero declared locations (no factory presets, unresolvable /
-    // uncreatable user root) is a valid, empty provider - not an
-    // init failure.
     true
 }
 
