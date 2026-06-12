@@ -487,9 +487,18 @@ pub(crate) fn cmd_validate(args: &[String]) -> Res {
                 let validate_path = installed.clone();
 
                 eprint!("  {} ... ", p.name);
-                let output = Command::new(&cv)
-                    .args(["validate", &validate_path.to_string_lossy()])
-                    .output()?;
+                let mut cmd = Command::new(&cv);
+                cmd.args(["validate", &validate_path.to_string_lossy()]);
+                // clap-validator requires location paths to start
+                // with '/', but the CLAP header defines FILE
+                // locations as OS paths ('\' separators work on
+                // Windows) - so spec-compliant Windows paths can
+                // never pass its preset-discovery tests (Surge XT
+                // fails them identically). Skip those tests here
+                // until the validator accepts Windows paths.
+                #[cfg(target_os = "windows")]
+                cmd.args(["--test-filter", "preset-discovery", "--invert-filter"]);
+                let output = cmd.output()?;
 
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 let stderr = String::from_utf8_lossy(&output.stderr);
