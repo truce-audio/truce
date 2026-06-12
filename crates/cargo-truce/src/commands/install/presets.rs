@@ -32,8 +32,10 @@ use crate::{run_sudo, tmp_manifests};
 #[cfg(target_os = "macos")]
 use std::ffi::OsStr;
 
-use base64::Engine as _;
-
+// The `.aupreset` emitters only run from the macOS-gated AU install.
+use crate::preset_codec::vstpreset_bytes;
+#[cfg(target_os = "macos")]
+use crate::preset_codec::{aupreset_xml, fourcc_int};
 use truce_utils::preset::{PRESET_FILE_EXT, PresetMeta, write_preset_file};
 use truce_utils::{safe_filename, state};
 
@@ -84,6 +86,19 @@ pub(crate) struct FactoryPresets {
 /// when the plugin has no preset library: no `[plugin.presets]` in
 /// truce.toml and no `presets/` directory next to the crate. An
 /// explicit `[plugin.presets]` with a missing directory is an error.
+/// The plugin's authored-library directory (`presets/` next to the
+/// crate, or the `[plugin.presets]` override), whether or not it
+/// exists yet. `None` when the crate dir can't be located.
+pub(crate) fn authored_presets_dir(root: &Path, p: &PluginDef) -> Option<PathBuf> {
+    let manifest = crate::util::locate_plugin_manifest(root, &p.crate_name)?;
+    let crate_dir = manifest.parent()?;
+    let dir = p
+        .presets
+        .as_ref()
+        .map_or("presets", |c| c.factory_dir.as_str());
+    Some(crate_dir.join(dir))
+}
+
 pub(crate) fn load_factory_presets(
     root: &Path,
     p: &PluginDef,
@@ -91,7 +106,7 @@ pub(crate) fn load_factory_presets(
 ) -> Result<Option<FactoryPresets>, crate::CargoTruceError> {
     let configured_dir = p.presets.as_ref().map(|c| c.factory_dir.clone());
 
-    let Some(manifest) = crate::util::locate_plugin_manifest(root, &p.crate_name) else {
+    let Some(dir) = authored_presets_dir(root, p) else {
         if configured_dir.is_some() {
             return Err(format!(
                 "[plugin.presets] set for \"{}\" but its crate dir could not be located",
@@ -101,8 +116,6 @@ pub(crate) fn load_factory_presets(
         }
         return Ok(None);
     };
-    let crate_dir = manifest.parent().unwrap_or(root);
-    let dir = crate_dir.join(configured_dir.as_deref().unwrap_or("presets"));
 
     if !dir.is_dir() {
         if configured_dir.is_some() {
@@ -307,42 +320,11 @@ fn vst3_presets_root(scope: InstallScope) -> Option<PathBuf> {
 /// the plugin name - the same resolution the format wrappers apply
 /// at registration, so preset directories match the name hosts
 /// group presets under.
-fn resolved_name<'a>(name_override: Option<&'a str>, name: &'a str) -> &'a str {
+pub(crate) fn resolved_name<'a>(name_override: Option<&'a str>, name: &'a str) -> &'a str {
     match name_override {
         Some(n) if !n.is_empty() => n,
         _ => name,
     }
-}
-
-/// Serialize one `.vstpreset`: the Steinberg container with a single
-/// `Comp` chunk holding the canonical state envelope (the same bytes
-/// `truce-vst3`'s component `setState` consumes).
-///
-/// Layout: `"VST3"` magic, `i32` version, 32 ASCII hex chars of the
-/// class ID, `i64` offset to the chunk list, the chunk data, then a
-/// `"List"` section of `(id, offset, size)` entries - all integers
-/// little-endian, per the VST3 SDK's `PresetFile` implementation.
-fn vstpreset_bytes(class_id: &[u8; 16], blob: &[u8]) -> Vec<u8> {
-    use std::fmt::Write as _;
-
-    const HEADER_LEN: usize = 48;
-    let mut out = Vec::with_capacity(HEADER_LEN + blob.len() + 36);
-    out.extend_from_slice(b"VST3");
-    out.extend_from_slice(&1i32.to_le_bytes());
-    let mut hex = String::with_capacity(32);
-    for b in class_id {
-        let _ = write!(hex, "{b:02X}");
-    }
-    out.extend_from_slice(hex.as_bytes());
-    let list_offset = HEADER_LEN + blob.len();
-    out.extend_from_slice(&(list_offset as u64).to_le_bytes());
-    out.extend_from_slice(blob);
-    out.extend_from_slice(b"List");
-    out.extend_from_slice(&1i32.to_le_bytes());
-    out.extend_from_slice(b"Comp");
-    out.extend_from_slice(&(HEADER_LEN as u64).to_le_bytes());
-    out.extend_from_slice(&(blob.len() as u64).to_le_bytes());
-    out
 }
 
 /// Emit `.aupreset` plists into the AU preset location
@@ -400,58 +382,6 @@ pub(crate) fn emit_au_presets(
     Ok(())
 }
 
-/// Pack a 4-char code into the integer representation `.aupreset`
-/// plists carry (`'aufx'` → big-endian u32).
-#[cfg(target_os = "macos")]
-fn fourcc_int(code: &str) -> Result<u32, crate::CargoTruceError> {
-    let bytes = code.as_bytes();
-    let four: [u8; 4] = bytes
-        .try_into()
-        .map_err(|_| format!("four-char code \"{code}\" is not exactly 4 bytes"))?;
-    Ok(u32::from_be_bytes(four))
-}
-
-/// Render one `.aupreset` XML plist. The standard identity keys let
-/// hosts match the preset to the component; the state itself rides
-/// the `truce_state` key - the slot `truce-au`'s `ClassInfo` property
-/// handler reads (and writes) the canonical envelope through.
-#[cfg(target_os = "macos")]
-fn aupreset_xml(au_type: u32, subtype: u32, manufacturer: u32, name: &str, blob: &[u8]) -> String {
-    // 0x0001_0000: matches both the AudioComponents version in the
-    // installed Info.plist and the registration descriptor.
-    const AU_VERSION: u32 = 0x0001_0000;
-    format!(
-        r#"<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>manufacturer</key>
-    <integer>{manufacturer}</integer>
-    <key>name</key>
-    <string>{}</string>
-    <key>subtype</key>
-    <integer>{subtype}</integer>
-    <key>truce_state</key>
-    <data>{}</data>
-    <key>type</key>
-    <integer>{au_type}</integer>
-    <key>version</key>
-    <integer>{AU_VERSION}</integer>
-</dict>
-</plist>
-"#,
-        xml_escape(name),
-        base64::engine::general_purpose::STANDARD.encode(blob),
-    )
-}
-
-#[cfg(target_os = "macos")]
-fn xml_escape(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-}
-
 /// Emit LV2 preset TTLs into a staged / installed `.lv2` bundle:
 /// one `presets/<stem>.ttl` per preset plus the `manifest.ttl`
 /// entries referencing them. Runs against the writable bundle (the
@@ -490,57 +420,4 @@ pub(crate) fn emit_lv2_presets(fp: &FactoryPresets, bundle: &Path, plugin_uri: &
         presets_dir.display()
     ));
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn vstpreset_layout_is_parseable() {
-        let cid = [0xABu8; 16];
-        let blob = vec![7u8; 10];
-        let bytes = vstpreset_bytes(&cid, &blob);
-
-        assert_eq!(&bytes[0..4], b"VST3");
-        assert_eq!(i32::from_le_bytes(bytes[4..8].try_into().unwrap()), 1);
-        assert_eq!(&bytes[8..40], "AB".repeat(16).as_bytes());
-        let list_offset =
-            usize::try_from(u64::from_le_bytes(bytes[40..48].try_into().unwrap())).unwrap();
-        assert_eq!(&bytes[48..58], &blob[..]);
-        assert_eq!(&bytes[list_offset..list_offset + 4], b"List");
-        let count = i32::from_le_bytes(bytes[list_offset + 4..list_offset + 8].try_into().unwrap());
-        assert_eq!(count, 1);
-        assert_eq!(&bytes[list_offset + 8..list_offset + 12], b"Comp");
-        let comp_offset = u64::from_le_bytes(
-            bytes[list_offset + 12..list_offset + 20]
-                .try_into()
-                .unwrap(),
-        );
-        let comp_size = u64::from_le_bytes(
-            bytes[list_offset + 20..list_offset + 28]
-                .try_into()
-                .unwrap(),
-        );
-        assert_eq!(comp_offset, 48);
-        assert_eq!(comp_size, blob.len() as u64);
-        assert_eq!(bytes.len(), list_offset + 28);
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn aupreset_contains_identity_and_state() {
-        let xml = aupreset_xml(
-            fourcc_int("aufx").unwrap(),
-            fourcc_int("TGan").unwrap(),
-            fourcc_int("Trce").unwrap(),
-            "Bright & Saw",
-            b"BLOB",
-        );
-        assert!(xml.contains("<integer>1635083896</integer>")); // 'aufx'
-        assert!(xml.contains("Bright &amp; Saw"));
-        let encoded = base64::engine::general_purpose::STANDARD.encode(b"BLOB");
-        assert!(xml.contains(&format!("<data>{encoded}</data>")));
-        assert!(xml.contains("<key>truce_state</key>"));
-    }
 }

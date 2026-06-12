@@ -16,6 +16,19 @@ Notable changes per release.
   factory list. Optional `[plugin.presets]` `factory_dir`
   override; missing preset uuids are stamped into the source
   files at install.
+- **Preset management API.** `truce_core::presets::PresetStore`:
+  enumerate across factory / user / pack scopes with uuid dedup
+  (user-proximate copy wins), load, save (same-name saves keep the
+  uuid), rename, recategorise, delete; `truce-preset://` URI
+  parser; uuids minted for hand-assembled files on first read.
+- **`cargo truce preset` CLI.** `list`, `init`, `convert` (any
+  format pair via the shared state envelope; truce plugins only),
+  `import` (native file -> authored library, or `.zip` pack ->
+  user pack directory), `export` (library -> per-format pack zip),
+  and `pull [--watch]` - the in-DAW authoring loop: save presets
+  with the host's own UI and pull converts them into `.preset`
+  TOML with param names annotated from the derive sidecars;
+  same-name pulls update in place, preserving the uuid.
 - **AU v3 factory presets.** The appex's Swift bridge implements
   `factoryPresets` / `currentPreset`, backed by the preset library
   bundled into the embedded framework's `Resources/Presets/`.

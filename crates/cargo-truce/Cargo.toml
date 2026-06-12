@@ -41,6 +41,10 @@ truce-shim-types = { workspace = true }
 truce-build = { workspace = true }
 truce-utils = { workspace = true }
 base64 = { workspace = true }
+# `cargo truce preset`: decode host-saved `.aupreset` files (Logic
+# writes binary plists) and read/write preset packs.
+plist = "1"
+zip = { version = "8", default-features = false, features = ["deflate"] }
 
 [dependencies.libloading]
 version = "0.9"
