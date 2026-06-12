@@ -9,6 +9,7 @@ pub mod export;
 pub mod info;
 pub mod midi;
 pub mod plugin;
+pub mod presets;
 pub mod process;
 pub mod screenshot;
 pub mod state;

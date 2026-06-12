@@ -158,6 +158,19 @@ pub struct AuCallbacks {
     /// when its parent view's bounds change (host drag-resize) and
     /// the editor opted into resize.
     pub gui_set_size: unsafe extern "C" fn(ctx: *mut c_void, w: u32, h: u32),
+
+    /// Number of factory presets bundled into the component
+    /// (`Contents/Resources/Presets/*.trucepreset`). `0` makes the
+    /// shim report `kAudioUnitProperty_FactoryPresets` as invalid.
+    /// Fields from here on are append-only - see `au_shim_types.h`.
+    pub factory_preset_count: unsafe extern "C" fn(ctx: *mut c_void) -> u32,
+    /// UTF-8 display name of the index-th factory preset. The
+    /// returned pointer is owned by the Rust side and valid for the
+    /// process lifetime.
+    pub factory_preset_name: unsafe extern "C" fn(ctx: *mut c_void, index: u32) -> *const c_char,
+    /// Load the index-th factory preset - the same apply path as
+    /// `state_load`. Returns 1 on success.
+    pub factory_preset_load: unsafe extern "C" fn(ctx: *mut c_void, index: u32) -> i32,
 }
 
 /// A MIDI event passed across the Rust ↔ `ObjC` boundary in both

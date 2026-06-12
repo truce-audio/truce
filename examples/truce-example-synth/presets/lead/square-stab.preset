@@ -1,0 +1,15 @@
+uuid = "1c8d2f4a-66e9-4c25-8e2b-93b7a05c44d1"
+name = "Square Stab"
+author = "Truce"
+comment = "Short plucky square, good for 16ths"
+tags = ["lead", "square", "pluck"]
+
+[params]
+0 = 2        # square
+1 = 4500.0   # cutoff Hz
+2 = 0.5      # resonance
+3 = 0.002    # attack s
+4 = 0.15     # decay s
+5 = 0.2      # sustain
+6 = 0.12     # release s
+7 = -7.0     # volume dB

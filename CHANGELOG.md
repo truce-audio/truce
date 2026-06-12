@@ -2,6 +2,31 @@
 
 Notable changes per release.
 
+## Unreleased
+
+- **Factory presets (phase 1).** A `presets/` directory of
+  `.preset` TOML files next to a plugin crate is emitted as
+  native preset files at `cargo truce install`: CLAP
+  (`.trucepreset` + runtime preset-discovery / preset-load
+  extensions), VST3 (`.vstpreset` in the spec's OS preset
+  locations), AU v2 (`kAudioUnitProperty_FactoryPresets` +
+  `PresentPreset` recall in the shim, plus `.aupreset` files
+  under `Library/Audio/Presets`), LV2 (`pset:Preset` TTL in the
+  bundle). The library's `default = true` preset leads the AU
+  factory list. Optional `[plugin.presets]` `factory_dir`
+  override; missing preset uuids are stamped into the source
+  files at install.
+- **AU v3 factory presets.** The appex's Swift bridge implements
+  `factoryPresets` / `currentPreset`, backed by the preset library
+  bundled into the embedded framework's `Resources/Presets/`.
+- **Host-facing preset files are named after the display name**
+  (`Bright Saw.vstpreset`, not `bright-saw.vstpreset`) - hosts
+  label filesystem presets by file name. Duplicate display names
+  within a category are now an install error.
+- **`cargo truce install --au2 --debug` installed a stale
+  release dylib.** The AU installer now resolves the build
+  profile like every other format.
+
 ## 0.57.2
 
 - **CLAP editor clipped above the host's pane in REAPER.** The

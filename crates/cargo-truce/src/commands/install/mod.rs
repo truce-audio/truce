@@ -43,6 +43,9 @@ pub(crate) mod aax;
 pub(crate) mod au_ios;
 #[cfg(target_os = "macos")]
 pub(crate) mod au_v3;
+pub(crate) mod presets;
+
+use presets::FactoryPresets;
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use aax::install_aax;
@@ -252,13 +255,17 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
     // scope, emitting a one-line note (printed at most once per
     // message via `note_once`).
     for p in &plugins {
+        // Parsed once per plugin; each format re-envelopes the same
+        // canonical state blobs into its native preset files.
+        let factory_presets = presets::load_factory_presets(&root, p, &config)?;
+        let fp = factory_presets.as_ref();
         if clap {
             let s = scope_for(Format::Clap, cli_scope);
-            install_clap(&root, p, &config, s)?;
+            install_clap(&root, p, &config, s, fp)?;
         }
         if vst3 {
             let s = scope_for(Format::Vst3, cli_scope);
-            install_vst3(&root, p, &config, s)?;
+            install_vst3(&root, p, &config, s, fp)?;
         }
         if vst2 {
             let s = scope_for(Format::Vst2, cli_scope);
@@ -266,13 +273,13 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
         }
         if lv2 {
             let s = scope_for(Format::Lv2, cli_scope);
-            install_lv2(&root, p, &config, s)?;
+            install_lv2(&root, p, &config, s, fp)?;
         }
         if au2 {
             #[cfg(target_os = "macos")]
             {
                 let s = scope_for(Format::Au2, cli_scope);
-                install_au(&root, p, &config, s)?;
+                install_au(&root, p, &config, s, fp)?;
             }
             // Non-macOS skip line was already pushed in the build phase.
         }
@@ -400,6 +407,7 @@ pub(crate) fn install_clap(
     p: &PluginDef,
     config: &Config,
     scope: InstallScope,
+    factory_presets: Option<&FactoryPresets>,
 ) -> Res {
     #[cfg(not(target_os = "macos"))]
     let dylib = release_lib(root, &format!("{}_clap", p.dylib_stem()));
@@ -466,6 +474,18 @@ pub(crate) fn install_clap(
             fs_ctx::copy(&plist_tmp, contents.join("Info.plist"))?;
         }
 
+        // Presets are part of the bundle's sealed Resources - they
+        // must land before codesign or the signature won't cover
+        // them.
+        if let Some(fp) = factory_presets {
+            presets::emit_trucepreset_tree(
+                fp,
+                &contents.join("Resources/Presets"),
+                scope.needs_sudo(),
+                &format!("{}-clap", p.bundle_id),
+            )?;
+        }
+
         codesign_bundle(
             bundle.to_str().unwrap(),
             &crate::application_identity(),
@@ -483,12 +503,32 @@ pub(crate) fn install_clap(
         fs_ctx::copy(&dylib, &bundle)?;
     }
 
+    #[cfg(not(target_os = "macos"))]
+    if let Some(fp) = factory_presets {
+        // The `.clap` is a single file here, so presets land in a
+        // `<stem>.presets/` sibling directory; the wrapper's
+        // discovery provider derives the same path from its own
+        // dylib location at scan time.
+        presets::emit_trucepreset_tree(
+            fp,
+            &clap_dir.join(format!("{}.presets", p.file_stem())),
+            scope.needs_sudo(),
+            &format!("{}-clap", p.bundle_id),
+        )?;
+    }
+
     crate::log_output(format!("CLAP: {}", bundle.display()));
     Ok(())
 }
 
 #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
-fn install_vst3(root: &Path, p: &PluginDef, config: &Config, scope: InstallScope) -> Res {
+fn install_vst3(
+    root: &Path,
+    p: &PluginDef,
+    config: &Config,
+    scope: InstallScope,
+    factory_presets: Option<&FactoryPresets>,
+) -> Res {
     #[cfg(not(target_os = "macos"))]
     let dylib = release_lib(root, &format!("{}_vst3", p.dylib_stem()));
     #[cfg(target_os = "macos")]
@@ -567,6 +607,12 @@ fn install_vst3(root: &Path, p: &PluginDef, config: &Config, scope: InstallScope
         fs_ctx::create_dir_all(&arch_dir)?;
         fs_ctx::copy(&dylib, &dst)?;
         crate::log_output(format!("VST3: {}", bundle.display()));
+    }
+
+    // The VST3 spec has no in-bundle preset location - hosts scan
+    // the per-OS preset directories, so the files land there.
+    if let Some(fp) = factory_presets {
+        presets::emit_vst3_presets(fp, p, config, scope)?;
     }
 
     Ok(())
@@ -682,8 +728,16 @@ fn install_vst2(root: &Path, p: &PluginDef, config: &Config, scope: InstallScope
 /// so that Turtle IRI references (`lv2:binary <...>`) don't need percent
 /// encoding. Some LV2 hosts reject bundles whose TTL has spaces or other
 /// non-URI characters in filenames even when the on-disk files are valid.
-fn install_lv2(root: &Path, p: &PluginDef, _config: &Config, scope: InstallScope) -> Res {
+fn install_lv2(
+    root: &Path,
+    p: &PluginDef,
+    config: &Config,
+    scope: InstallScope,
+    factory_presets: Option<&FactoryPresets>,
+) -> Res {
     let lv2_dir = scope.lv2_dir();
+    let lv2_plugin_uri =
+        truce_build::lv2::plugin_uri(config.vendor.url.as_deref().unwrap_or(""), &p.bundle_id);
 
     // macOS system scope is the only path that needs the stage-then-
     // copy-via-sudo dance: `/Library/Audio/Plug-Ins/LV2/` is root-
@@ -706,6 +760,11 @@ fn install_lv2(root: &Path, p: &PluginDef, _config: &Config, scope: InstallScope
         )?;
         let slug = crate::commands::package::stage::lv2_slug(&p.name);
         let staged_bundle = staging.join(format!("{slug}.lv2"));
+        // Presets join the bundle while it's still in user-writable
+        // staging; the sudo copy below carries them along.
+        if let Some(fp) = factory_presets {
+            presets::emit_lv2_presets(fp, &staged_bundle, &lv2_plugin_uri)?;
+        }
         let dst_bundle = lv2_dir.join(format!("{slug}.lv2"));
         run_sudo("rm", &[OsStr::new("-rf"), dst_bundle.as_os_str()])?;
         run_sudo(
@@ -733,18 +792,27 @@ fn install_lv2(root: &Path, p: &PluginDef, _config: &Config, scope: InstallScope
         None,
     )?;
     let slug = crate::commands::package::stage::lv2_slug(&p.name);
-    crate::log_output(format!(
-        "LV2:  {}",
-        lv2_dir.join(format!("{slug}.lv2")).display()
-    ));
+    let dst_bundle = lv2_dir.join(format!("{slug}.lv2"));
+    if let Some(fp) = factory_presets {
+        presets::emit_lv2_presets(fp, &dst_bundle, &lv2_plugin_uri)?;
+    }
+    crate::log_output(format!("LV2:  {}", dst_bundle.display()));
     let _ = scope;
     Ok(())
 }
 
 #[cfg(target_os = "macos")]
-fn install_au(root: &Path, p: &PluginDef, config: &Config, scope: InstallScope) -> Res {
-    let dylib =
-        truce_build::target_dir(root).join(format!("release/lib{}_au.dylib", p.dylib_stem()));
+fn install_au(
+    root: &Path,
+    p: &PluginDef,
+    config: &Config,
+    scope: InstallScope,
+    factory_presets: Option<&FactoryPresets>,
+) -> Res {
+    // Profile-aware like every other format - hardcoding `release/`
+    // here used to make `--debug` silently re-install a stale release
+    // build.
+    let dylib = crate::release_lib(root, &format!("{}_au", p.dylib_stem()));
     if !dylib.exists() {
         return Err(format!("Missing: {}", dylib.display()).into());
     }
@@ -829,12 +897,32 @@ fn install_au(root: &Path, p: &PluginDef, config: &Config, scope: InstallScope) 
     } else {
         fs_ctx::copy(&plist_tmp, &info_plist)?;
     }
+
+    // The shim's kAudioUnitProperty_FactoryPresets handler enumerates
+    // these at runtime. Part of the sealed bundle - must precede
+    // codesign.
+    if let Some(fp) = factory_presets {
+        presets::emit_trucepreset_tree(
+            fp,
+            &contents.join("Resources/Presets"),
+            scope.needs_sudo(),
+            &format!("{}-au-bundle", p.bundle_id),
+        )?;
+    }
+
     codesign_bundle(
         &bundle_str,
         &crate::application_identity(),
         scope.needs_sudo(),
     )?;
     crate::log_output(format!("AU:   {}", bundle.display()));
+
+    // `.aupreset` files live outside the component bundle (the
+    // `Library/Audio/Presets` walk hosts do), so they don't interact
+    // with the codesign seal above.
+    if let Some(fp) = factory_presets {
+        presets::emit_au_presets(fp, p, config, scope)?;
+    }
     Ok(())
 }
 

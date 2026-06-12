@@ -537,10 +537,61 @@ class TruceAUAudioUnit: AUAudioUnit {
             blob.withUnsafeBytes { ptr in
                 cb.pointee.state_load(ctx, ptr.baseAddress?.assumingMemoryBound(to: UInt8.self), UInt32(blob.count))
             }
-            if let tree = _parameterTree {
-                for param in tree.allParameters {
-                    param.value = AUValue(g_callbacks!.pointee.param_get_value(ctx, UInt32(param.address)))
-                }
+            syncParameterTreeFromRust()
+        }
+    }
+
+    /// Push the Rust side's current parameter values into the AU
+    /// parameter tree so host UIs reflect a state / preset load.
+    private func syncParameterTreeFromRust() {
+        guard let ctx = rustCtx, let cb = g_callbacks, let tree = _parameterTree else { return }
+        for param in tree.allParameters {
+            param.value = AUValue(cb.pointee.param_get_value(ctx, UInt32(param.address)))
+        }
+    }
+
+    // MARK: Factory presets
+
+    /// Backed by the `.trucepreset` files `cargo truce install`
+    /// bundles into the framework's `Resources/Presets/` - the same
+    /// library the AU v2 component serves through
+    /// `kAudioUnitProperty_FactoryPresets`.
+    override var factoryPresets: [AUAudioUnitPreset]? {
+        guard let ctx = rustCtx, let cb = g_callbacks else { return nil }
+        let n = cb.pointee.factory_preset_count(ctx)
+        guard n > 0 else { return nil }
+        return (0..<n).map { i in
+            let preset = AUAudioUnitPreset()
+            preset.number = Int(i)
+            if let cName = cb.pointee.factory_preset_name(ctx, i) {
+                preset.name = String(cString: cName)
+            }
+            return preset
+        }
+    }
+
+    private var _currentPreset: AUAudioUnitPreset?
+    override var currentPreset: AUAudioUnitPreset? {
+        get { _currentPreset }
+        set {
+            guard let preset = newValue else {
+                _currentPreset = nil
+                return
+            }
+            if preset.number >= 0 {
+                // Factory preset - the same apply path session
+                // restore takes. A failed load (bad index, missing
+                // file) leaves the current preset unchanged.
+                guard let ctx = rustCtx, let cb = g_callbacks,
+                      cb.pointee.factory_preset_load(ctx, UInt32(preset.number)) != 0
+                else { return }
+                syncParameterTreeFromRust()
+                _currentPreset = preset
+            } else {
+                // User preset: replay the host-stored document state.
+                guard let state = try? presetState(for: preset) else { return }
+                fullStateForDocument = state
+                _currentPreset = preset
             }
         }
     }

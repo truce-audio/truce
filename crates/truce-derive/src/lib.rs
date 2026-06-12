@@ -134,11 +134,7 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
             _ => "aufx",
         });
 
-    let plugin_id = format!(
-        "{}.{}",
-        config.vendor.id,
-        plugin.name.to_lowercase().replace(' ', "")
-    );
+    let plugin_id = truce_build::plugin_id(&config.vendor.id, &plugin.name);
 
     let Some(resolved_fourcc) = plugin.fourcc.as_ref().or(plugin.au_subtype.as_ref()) else {
         return syn::Error::new(

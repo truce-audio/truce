@@ -160,6 +160,22 @@ typedef struct {
      * host's container view changes our bounds (drag-resize). w/h
      * are in logical points. */
     void (*gui_set_size)(void *ctx, uint32_t w, uint32_t h);
+    /* Factory presets, backing kAudioUnitProperty_FactoryPresets.
+     * Sourced from the .trucepreset files `cargo truce install`
+     * bundles into the component's Contents/Resources/Presets/.
+     * `count == 0` means none shipped; the shim then reports the
+     * property as invalid (matching AUs without factory presets).
+     * `factory_preset_name` returns a UTF-8 string owned by the
+     * Rust side, valid for the process lifetime.
+     *
+     * Fields are append-only past this point: the v3 appex shim
+     * can be compiled against a newer header than the plugin
+     * binary's struct, so earlier offsets must never shift. */
+    uint32_t (*factory_preset_count)(void *ctx);
+    const char *(*factory_preset_name)(void *ctx, uint32_t index);
+    /* Load the index-th factory preset into the plugin - the same
+     * apply path as state_load. Returns 1 on success. */
+    int32_t (*factory_preset_load)(void *ctx, uint32_t index);
 } AuCallbacks;
 
 // Globals shared between v2 and v3 shims.

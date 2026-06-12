@@ -11,6 +11,7 @@
 //! the `truce-core` / `truce-params` types so this module stays in
 //! `truce-build` (a tiny dep that `truce-derive` already pulls in).
 
+use base64::Engine as _;
 use std::collections::HashSet;
 use std::fmt::Write as _;
 
@@ -529,6 +530,71 @@ fn lv2_unit(u: Lv2Unit) -> Option<&'static str> {
 
 fn escape_turtle(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+/// The URI of one factory preset: `<plugin_uri>#preset-<uuid>`.
+/// Fragment-anchored on the plugin URI (rather than path-derived
+/// like lilv's user presets) so the identity tracks the preset's
+/// uuid, not its on-disk location.
+#[must_use]
+pub fn preset_uri(plugin_uri: &str, uuid: &str) -> String {
+    format!("{plugin_uri}#preset-{uuid}")
+}
+
+/// Render the `manifest.ttl` entry for one factory preset. Appended
+/// to the derive-emitted manifest at install time (the proc macro
+/// renders the manifest without knowledge of the `presets/`
+/// directory).
+#[must_use]
+pub fn render_preset_manifest_entry(plugin_uri: &str, uuid: &str, ttl_rel_path: &str) -> String {
+    let mut f = String::new();
+    let _ = writeln!(f);
+    let _ = writeln!(f, "<{}>", preset_uri(plugin_uri, uuid));
+    let _ = writeln!(f, "    a pset:Preset ;");
+    let _ = writeln!(f, "    lv2:appliesTo <{plugin_uri}> ;");
+    let _ = writeln!(f, "    rdfs:seeAlso <{ttl_rel_path}> .");
+    f
+}
+
+/// Prefix block the preset manifest entries need. Appended once
+/// before the first [`render_preset_manifest_entry`] (the derive-
+/// emitted manifest doesn't declare `pset:`).
+pub const PRESET_MANIFEST_PREFIXES: &str =
+    "\n@prefix pset: <http://lv2plug.in/ns/ext/presets#> .\n";
+
+/// Render one factory preset's TTL file.
+///
+/// Truce params are LV2 *parameters* (patch properties), not control
+/// ports, so the preset's content is the canonical state envelope
+/// delivered through the LV2 State extension: a `state:state` block
+/// whose single property is the same `urn:truce:state-blob` chunk the
+/// runtime's `save()` stores. lilv maps the `xsd:base64Binary`
+/// literal back to an `atom:Chunk` on restore, which is exactly what
+/// `truce-lv2`'s `restore()` retrieves.
+#[must_use]
+pub fn render_preset_ttl(plugin_uri: &str, uuid: &str, label: &str, state_blob: &[u8]) -> String {
+    let mut f = String::new();
+    let _ = writeln!(f, "@prefix lv2:   <http://lv2plug.in/ns/lv2core#> .");
+    let _ = writeln!(f, "@prefix pset:  <http://lv2plug.in/ns/ext/presets#> .");
+    let _ = writeln!(
+        f,
+        "@prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> ."
+    );
+    let _ = writeln!(f, "@prefix state: <http://lv2plug.in/ns/ext/state#> .");
+    let _ = writeln!(f, "@prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .");
+    let _ = writeln!(f);
+    let _ = writeln!(f, "<{}>", preset_uri(plugin_uri, uuid));
+    let _ = writeln!(f, "    a pset:Preset ;");
+    let _ = writeln!(f, "    lv2:appliesTo <{plugin_uri}> ;");
+    let _ = writeln!(f, "    rdfs:label \"{}\" ;", escape_turtle(label));
+    let _ = writeln!(f, "    state:state [");
+    let _ = writeln!(
+        f,
+        "        <urn:truce:state-blob> \"{}\"^^xsd:base64Binary",
+        base64::engine::general_purpose::STANDARD.encode(state_blob)
+    );
+    let _ = writeln!(f, "    ] .");
+    f
 }
 
 #[cfg(test)]

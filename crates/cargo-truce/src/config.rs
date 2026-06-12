@@ -624,6 +624,7 @@ mod suite_tests {
                 aax_name: None,
                 lv2_name: None,
                 mute_preview_output: false,
+                presets: None,
             },
             au3_subtype: None,
             au_tag: default_au_tag(),

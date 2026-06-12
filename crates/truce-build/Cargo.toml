@@ -11,6 +11,8 @@ description = "Build-time helper that reads truce.toml and emits plugin metadata
 [dependencies]
 toml = { workspace = true }
 serde = { version = "1", features = ["derive"] }
+truce-utils = { workspace = true }
+base64 = { workspace = true }
 
 [lints]
 workspace = true

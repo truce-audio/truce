@@ -12,7 +12,25 @@ use std::path::{Path, PathBuf};
 
 pub mod lv2;
 pub mod manifest;
+pub mod presets;
 pub use manifest::{BundleEntry, BundleManifest, host_triple};
+
+/// The canonical plugin ID string baked into `PluginInfo::clap_id` /
+/// `PluginInfo::vst3_id` by `truce::plugin_info!()`. Shared between
+/// `truce-derive` (compile-time expansion) and `cargo-truce` (which
+/// needs the same string at install time to stamp state-envelope
+/// hashes into emitted preset files). **The derivation is part of the
+/// state wire contract** - every saved session and preset embeds
+/// `hash_plugin_id(plugin_id(...))`, so changing this invalidates
+/// them all.
+#[must_use]
+pub fn plugin_id(vendor_id: &str, plugin_name: &str) -> String {
+    format!(
+        "{}.{}",
+        vendor_id,
+        plugin_name.to_lowercase().replace(' ', "")
+    )
+}
 
 /// Derive-time view of `truce.toml`.
 ///
@@ -146,6 +164,24 @@ pub struct PluginDef {
     /// hosts ignore this flag; they own their own output graph.
     #[serde(default)]
     pub mute_preview_output: bool,
+    /// Optional `[plugin.presets]` table - factory-preset opt-in.
+    /// When absent, the install pipeline still picks up a `presets/`
+    /// directory next to the plugin crate if one exists.
+    #[serde(default)]
+    pub presets: Option<PresetsConfig>,
+}
+
+/// `[plugin.presets]` - factory-preset emission settings.
+#[derive(Deserialize, Debug)]
+pub struct PresetsConfig {
+    /// Directory of authored `.preset` TOML files, relative to the
+    /// plugin's crate directory. Defaults to `presets`.
+    #[serde(default = "default_presets_dir")]
+    pub factory_dir: String,
+}
+
+fn default_presets_dir() -> String {
+    "presets".to_string()
 }
 
 /// Resolve cargo's effective target directory for a given workspace root.

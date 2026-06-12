@@ -1,0 +1,15 @@
+uuid = "03c5d7e9-8b14-4e82-bf06-6a91c2d4587e"
+name = "Sub"
+author = "Truce"
+comment = "Clean sine sub bass"
+tags = ["bass", "sub", "sine"]
+
+[params]
+0 = 0        # sine
+1 = 800.0    # cutoff Hz
+2 = 0.05     # resonance
+3 = 0.005    # attack s
+4 = 0.12     # decay s
+5 = 0.9      # sustain
+6 = 0.18     # release s
+7 = -5.0     # volume dB

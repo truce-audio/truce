@@ -40,6 +40,7 @@ png = "0.18"
 truce-shim-types = { workspace = true }
 truce-build = { workspace = true }
 truce-utils = { workspace = true }
+base64 = { workspace = true }
 
 [dependencies.libloading]
 version = "0.9"

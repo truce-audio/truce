@@ -140,6 +140,10 @@ truce-utils = { version = "0.57.2", path = "crates/truce-utils" }
 # onto incompatible wgpu major versions.
 thiserror = "2"
 toml = "1"
+# Plist `<data>` payloads, LV2 `xsd:base64Binary` literals, and the
+# `.preset` TOML `extra` field. Build-time crates only - truce-utils
+# and the runtime wrappers stay base64-free.
+base64 = "0.22"
 # wgpu's default features include `webgpu` (browser) and `webgl`
 # (browser GLES fallback). Plugins ship as native dylibs in DAWs,
 # never the browser, so opt out of those. Only `wgsl` (the shader

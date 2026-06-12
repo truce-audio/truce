@@ -21,6 +21,8 @@ pub mod __macro_deps {
     pub use truce_core;
 }
 
+pub mod presets;
+
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::marker::PhantomData;
 use std::mem::transmute;
@@ -52,8 +54,15 @@ use clap_sys::ext::params::{
     clap_plugin_params,
 };
 use clap_sys::ext::params::{CLAP_PARAM_RESCAN_VALUES, clap_host_params};
+use clap_sys::ext::preset_load::{
+    CLAP_EXT_PRESET_LOAD, CLAP_EXT_PRESET_LOAD_COMPAT, clap_host_preset_load,
+    clap_plugin_preset_load,
+};
 use clap_sys::ext::state::{CLAP_EXT_STATE, clap_plugin_state};
 use clap_sys::ext::tail::{CLAP_EXT_TAIL, clap_plugin_tail};
+use clap_sys::factory::preset_discovery::{
+    CLAP_PRESET_DISCOVERY_LOCATION_FILE, clap_preset_discovery_location_kind,
+};
 use clap_sys::fixedpoint::{CLAP_BEATTIME_FACTOR, CLAP_SECTIME_FACTOR};
 use clap_sys::host::clap_host;
 use clap_sys::id::{CLAP_INVALID_ID, clap_id};
@@ -1562,6 +1571,65 @@ fn make_state_extension<P: PluginExport>() -> clap_plugin_state {
 }
 
 // ---------------------------------------------------------------------------
+// Extension: preset-load
+// ---------------------------------------------------------------------------
+
+/// `CLAP_EXT_PRESET_LOAD.from_location`: read a `.trucepreset` file
+/// the discovery provider surfaced and apply its embedded state
+/// envelope - the same host-thread-apply + audio-thread-handoff path
+/// `state_load` takes, so preset recall and session restore are one
+/// code path from here down.
+unsafe extern "C" fn preset_load_from_location<P: PluginExport>(
+    plugin: *const clap_plugin,
+    location_kind: clap_preset_discovery_location_kind,
+    location: *const c_char,
+    load_key: *const c_char,
+) -> bool {
+    unsafe {
+        if location_kind != CLAP_PRESET_DISCOVERY_LOCATION_FILE || location.is_null() {
+            return false;
+        }
+        let Ok(path) = CStr::from_ptr(location).to_str() else {
+            return false;
+        };
+        let data = data_from_plugin::<P>(plugin);
+
+        let Some(deserialized) =
+            truce_core::presets::load_preset_file(std::path::Path::new(path), data.plugin_id_hash)
+        else {
+            return false;
+        };
+
+        state::apply_params(&*data.params_arc, &deserialized);
+        let _ = data.pending_state.force_push(deserialized);
+        if let Some(ref mut editor) = data.editor {
+            editor.state_changed();
+        }
+
+        // Tell the host the preset landed so it can update its
+        // preset chrome (Bitwig's preset name display reads this).
+        if !data.host.is_null()
+            && let Some(get_ext) = (*data.host).get_extension
+        {
+            let host_ext =
+                get_ext(data.host, CLAP_EXT_PRESET_LOAD.as_ptr()).cast::<clap_host_preset_load>();
+            if !host_ext.is_null()
+                && let Some(loaded) = (*host_ext).loaded
+            {
+                loaded(data.host, location_kind, location, load_key);
+            }
+        }
+        true
+    }
+}
+
+fn make_preset_load_extension<P: PluginExport>() -> clap_plugin_preset_load {
+    clap_plugin_preset_load {
+        from_location: Some(preset_load_from_location::<P>),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Extension: audio_ports
 // ---------------------------------------------------------------------------
 
@@ -2356,6 +2424,7 @@ fn make_gui_extension<P: PluginExport>() -> clap_plugin_gui {
 struct Extensions<P: PluginExport> {
     params: clap_plugin_params,
     state: clap_plugin_state,
+    preset_load: clap_plugin_preset_load,
     audio_ports: clap_plugin_audio_ports,
     note_ports: clap_plugin_note_ports,
     gui: clap_plugin_gui,
@@ -2383,6 +2452,7 @@ impl<P: PluginExport> Extensions<P> {
         Self {
             params: make_params_extension::<P>(),
             state: make_state_extension::<P>(),
+            preset_load: make_preset_load_extension::<P>(),
             audio_ports: make_audio_ports_extension::<P>(),
             note_ports: make_note_ports_extension::<P>(),
             gui: make_gui_extension::<P>(),
@@ -2439,6 +2509,9 @@ unsafe extern "C" fn clap_plugin_get_extension<P: PluginExport>(
         }
         if ext_id == CLAP_EXT_STATE {
             return (&raw const extensions.state).cast::<c_void>();
+        }
+        if ext_id == CLAP_EXT_PRESET_LOAD || ext_id == CLAP_EXT_PRESET_LOAD_COMPAT {
+            return (&raw const extensions.preset_load).cast::<c_void>();
         }
         if ext_id == CLAP_EXT_AUDIO_PORTS {
             return (&raw const extensions.audio_ports).cast::<c_void>();
@@ -2570,6 +2643,9 @@ macro_rules! export_clap {
             use ::clap_sys::factory::plugin_factory::{
                 CLAP_PLUGIN_FACTORY_ID, clap_plugin_factory,
             };
+            use ::clap_sys::factory::preset_discovery::{
+                CLAP_PRESET_DISCOVERY_FACTORY_ID, CLAP_PRESET_DISCOVERY_FACTORY_ID_COMPAT,
+            };
             use ::clap_sys::host::clap_host;
             use ::clap_sys::plugin::{clap_plugin, clap_plugin_descriptor};
             use ::clap_sys::version::CLAP_VERSION;
@@ -2630,9 +2706,13 @@ macro_rules! export_clap {
                 ::truce_clap::create_plugin_instance::<$plugin_type>(descriptor, host)
             }
 
-            unsafe extern "C" fn entry_init(_plugin_path: *const c_char) -> bool {
+            unsafe extern "C" fn entry_init(plugin_path: *const c_char) -> bool {
                 // Force descriptor initialization.
                 let _ = get_descriptor();
+                // Remember where the host loaded us from - the preset
+                // discovery factory derives the factory-preset
+                // location from it.
+                ::truce_clap::presets::set_plugin_path(plugin_path);
                 true
             }
 
@@ -2644,10 +2724,15 @@ macro_rules! export_clap {
                 }
                 let id = CStr::from_ptr(factory_id);
                 if id == CLAP_PLUGIN_FACTORY_ID {
-                    &FACTORY as *const clap_plugin_factory as *const c_void
-                } else {
-                    ptr::null()
+                    return &FACTORY as *const clap_plugin_factory as *const c_void;
                 }
+                if id == CLAP_PRESET_DISCOVERY_FACTORY_ID
+                    || id == CLAP_PRESET_DISCOVERY_FACTORY_ID_COMPAT
+                {
+                    return ::truce_clap::presets::discovery_factory::<$plugin_type>()
+                        as *const c_void;
+                }
+                ptr::null()
             }
 
             #[unsafe(no_mangle)]

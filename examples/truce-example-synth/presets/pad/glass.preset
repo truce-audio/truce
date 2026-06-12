@@ -1,0 +1,15 @@
+uuid = "7f1e0b9c-2d58-4a37-a6c4-50d3b8e72f19"
+name = "Glass"
+author = "Truce"
+comment = "Airy triangle pad with a long tail"
+tags = ["pad", "airy"]
+
+[params]
+0 = 3        # triangle
+1 = 6000.0   # cutoff Hz
+2 = 0.15     # resonance
+3 = 0.9      # attack s
+4 = 0.5      # decay s
+5 = 0.8      # sustain
+6 = 2.5      # release s
+7 = -9.0     # volume dB

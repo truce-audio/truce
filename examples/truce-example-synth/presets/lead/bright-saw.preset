@@ -1,0 +1,15 @@
+uuid = "9a2f6c1e-3b44-4f1d-9b7a-1de0c4a51b22"
+name = "Bright Saw"
+author = "Truce"
+comment = "Classic bright sawtooth lead"
+tags = ["lead", "saw", "bright"]
+
+[params]
+0 = 1        # saw
+1 = 9500.0   # cutoff Hz
+2 = 0.35     # resonance
+3 = 0.005    # attack s
+4 = 0.08     # decay s
+5 = 0.6      # sustain
+6 = 0.25     # release s
+7 = -6.0     # volume dB

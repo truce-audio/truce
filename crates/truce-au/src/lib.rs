@@ -10,8 +10,8 @@ use std::ffi::CString;
 use std::os::raw::c_char;
 use std::slice;
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, OnceLock};
 
 // `Float::from_f64` is only invoked from the macOS-only `set_param`
 // closure in `cb_gui_open` (the AU v2 host notifier path). Gate the
@@ -578,6 +578,155 @@ unsafe extern "C" fn cb_state_free(data: *mut u8, _len: u32) {
 }
 
 // ---------------------------------------------------------------------------
+// Factory presets (kAudioUnitProperty_FactoryPresets backing)
+// ---------------------------------------------------------------------------
+
+/// One bundled factory preset: the display name handed to the shim
+/// (C-string, lives for the process) plus the file to load.
+struct FactoryPresetEntry {
+    name: CString,
+    path: std::path::PathBuf,
+}
+
+/// Lazily-enumerated factory presets from the component bundle's
+/// `Contents/Resources/Presets/`. One static per shared library, like
+/// the registration statics: an AU dylib ships exactly one plugin
+/// type, so the single `OnceLock` never sees a second
+/// monomorphization. Empty when the bundle ships no presets (or when
+/// the dylib isn't inside a component bundle, e.g. the AU v3 appex
+/// layout - the shim then reports the property as invalid).
+static FACTORY_PRESETS: OnceLock<Vec<FactoryPresetEntry>> = OnceLock::new();
+
+fn factory_presets<P: PluginExport>() -> &'static [FactoryPresetEntry] {
+    FACTORY_PRESETS.get_or_init(|| {
+        let Some(root) = component_presets_root::<P>() else {
+            return Vec::new();
+        };
+        let info = P::info();
+        let mut refs = truce_core::presets::enumerate_scope(
+            &root,
+            truce_core::presets::PresetScope::Factory,
+            info.vendor,
+            info.name,
+        );
+        // The library's `default = true` preset leads the list: hosts
+        // treat factory preset 0 as the de-facto initial sound. The
+        // stable sort keeps the walk's alphabetical order behind it.
+        refs.sort_by_key(|preset| !preset.default);
+        refs.into_iter()
+            .filter_map(|preset| {
+                // Hosts show the factory list flat; keep the category
+                // visible the way the LV2 labels do.
+                let display = match &preset.category {
+                    Some(category) => format!("{category}/{}", preset.name),
+                    None => preset.name.clone(),
+                };
+                Some(FactoryPresetEntry {
+                    name: CString::new(display).ok()?,
+                    path: preset.path,
+                })
+            })
+            .collect()
+    })
+}
+
+/// Mirrors the layout `<libc/dlfcn.h>` defines; bound directly like
+/// the `malloc` / `free` externs above to keep the crate free of a
+/// libc dependency. Field names keep dlfcn's `dli_` prefix so they
+/// line up with the C declaration they shadow.
+#[repr(C)]
+#[allow(clippy::struct_field_names)]
+struct DlInfo {
+    dli_fname: *const c_char,
+    dli_fbase: *mut std::ffi::c_void,
+    dli_sname: *const c_char,
+    dli_saddr: *mut std::ffi::c_void,
+}
+
+unsafe extern "C" {
+    fn dladdr(addr: *const std::ffi::c_void, info: *mut DlInfo) -> i32;
+}
+
+/// Resolve the `Resources/Presets/` directory of the bundle this
+/// code lives in, via `dladdr` on one of our own functions. Two
+/// layouts exist:
+///
+/// - AU v2 component: `<X>.component/Contents/MacOS/<X>` with presets
+///   in `Contents/Resources/Presets/` (two levels up).
+/// - AU v3 framework: `<F>.framework/Versions/A/<F>` with presets in
+///   `Versions/A/Resources/Presets/` (one level up).
+fn component_presets_root<P: PluginExport>() -> Option<std::path::PathBuf> {
+    let mut info = DlInfo {
+        dli_fname: std::ptr::null(),
+        dli_fbase: std::ptr::null_mut(),
+        dli_sname: std::ptr::null(),
+        dli_saddr: std::ptr::null_mut(),
+    };
+    let probe = cb_factory_preset_count::<P> as *const std::ffi::c_void;
+    // SAFETY: `probe` is a function in this image; `dladdr` only
+    // writes into the out-struct on success.
+    if unsafe { dladdr(probe, &raw mut info) } == 0 || info.dli_fname.is_null() {
+        return None;
+    }
+    // SAFETY: `dli_fname` is a NUL-terminated path owned by dyld.
+    let exe = unsafe { std::ffi::CStr::from_ptr(info.dli_fname) };
+    let exe = std::path::Path::new(exe.to_str().ok()?);
+    let parent = exe.parent()?;
+    [parent.parent()?, parent]
+        .into_iter()
+        .map(|dir| dir.join("Resources/Presets"))
+        .find(|root| root.is_dir())
+}
+
+unsafe extern "C" fn cb_factory_preset_count<P: PluginExport>(_ctx: *mut std::ffi::c_void) -> u32 {
+    run_extern_callback_with::<P, u32>("au", "factory_preset_count", 0, || {
+        len_u32(factory_presets::<P>().len())
+    })
+}
+
+unsafe extern "C" fn cb_factory_preset_name<P: PluginExport>(
+    _ctx: *mut std::ffi::c_void,
+    index: u32,
+) -> *const c_char {
+    run_extern_callback_with::<P, *const c_char>(
+        "au",
+        "factory_preset_name",
+        std::ptr::null(),
+        || {
+            factory_presets::<P>()
+                .get(index as usize)
+                .map_or(std::ptr::null(), |entry| entry.name.as_ptr())
+        },
+    )
+}
+
+unsafe extern "C" fn cb_factory_preset_load<P: PluginExport>(
+    ctx: *mut std::ffi::c_void,
+    index: u32,
+) -> i32 {
+    run_extern_callback_with::<P, i32>("au", "factory_preset_load", 0, || unsafe {
+        let inst = &mut *ctx.cast::<AuInstance<P>>();
+        let Some(entry) = factory_presets::<P>().get(index as usize) else {
+            return 0;
+        };
+        let Some(deserialized) =
+            truce_core::presets::load_preset_file(&entry.path, inst.plugin_id_hash)
+        else {
+            return 0;
+        };
+        // Same apply path as cb_state_load: params synchronously on
+        // the host thread, full state through the audio-thread
+        // handoff, editor notified.
+        state::apply_params(&*inst.params_arc, &deserialized);
+        let _ = inst.pending_state.force_push(deserialized);
+        if let Some(ref mut editor) = inst.editor {
+            editor.state_changed();
+        }
+        1
+    })
+}
+
+// ---------------------------------------------------------------------------
 // Output event callbacks (plugin → host MIDI)
 // ---------------------------------------------------------------------------
 
@@ -1124,6 +1273,9 @@ fn register_au_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
         gui_close: cb_gui_close::<P>,
         gui_can_resize: cb_gui_can_resize::<P>,
         gui_set_size: cb_gui_set_size::<P>,
+        factory_preset_count: cb_factory_preset_count::<P>,
+        factory_preset_name: cb_factory_preset_name::<P>,
+        factory_preset_load: cb_factory_preset_load::<P>,
     }));
 
     let param_descs = param_descs.leak();

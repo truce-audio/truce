@@ -425,7 +425,7 @@ pub(crate) fn read_workspace_version(root: &Path) -> Result<String, crate::Cargo
 /// Resolve a plugin crate's `Cargo.toml` path via `cargo metadata`.
 /// Used by `detect_default_features` to find the manifest in
 /// workspace layouts where plugins live in arbitrary subdirectories.
-fn locate_plugin_manifest(project_root: &Path, crate_name: &str) -> Option<PathBuf> {
+pub(crate) fn locate_plugin_manifest(project_root: &Path, crate_name: &str) -> Option<PathBuf> {
     let out = Command::new("cargo")
         .args([
             "metadata",

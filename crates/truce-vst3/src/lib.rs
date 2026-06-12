@@ -1114,21 +1114,6 @@ fn resolved_plugin_name(info: &truce_core::info::PluginInfo) -> &'static str {
     truce_core::info::resolve_name_override(info.vst3_name, info.name)
 }
 
-fn vst3_cid(id: &str) -> [u8; 16] {
-    // FNV-1a-128, per http://www.isthe.com/chongo/tech/comp/fnv/.
-    // Standard constants - DAWs persist this CID as the plugin's identity in
-    // saved sessions, so the algorithm and constants must stay stable across
-    // releases.
-    const FNV_OFFSET_BASIS: u128 = 0x6C62_272E_07BB_0142_62B8_2175_6295_C58D;
-    const FNV_PRIME: u128 = 0x0000_0000_0100_0000_0000_0000_0000_013B;
-    let mut hash = FNV_OFFSET_BASIS;
-    for byte in id.bytes() {
-        hash ^= u128::from(byte);
-        hash = hash.wrapping_mul(FNV_PRIME);
-    }
-    hash.to_le_bytes()
-}
-
 pub fn register_vst3<P: PluginExport>() {
     // Called from the export macro's `extern "C" fn init()` static
     // initializer. Catch any panic so it doesn't cross the FFI
@@ -1227,7 +1212,7 @@ fn register_vst3_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
         url: url.into_raw(),
         email: std::ptr::null(),
         version: version.into_raw(),
-        cid: vst3_cid(info.vst3_id),
+        cid: state::vst3_cid(info.vst3_id),
         category: category.into_raw(),
         subcategories: subcategories.into_raw(),
         num_inputs,

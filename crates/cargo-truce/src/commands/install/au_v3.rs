@@ -122,7 +122,16 @@ fn build_au_v3_for_plugin(
     crate::vprintln!("Building AU v3 ({})...", p.name);
 
     let lipo_dst = build_rust_framework_dylib(root, p, archs, dt, reuse_au_artifacts)?;
-    assemble_framework_bundle(&fw_build, &fw_name, &lipo_dst, p, config, sign_id)?;
+    let factory_presets = super::presets::load_factory_presets(root, p, config)?;
+    assemble_framework_bundle(
+        &fw_build,
+        &fw_name,
+        &lipo_dst,
+        p,
+        config,
+        sign_id,
+        factory_presets.as_ref(),
+    )?;
     write_xcode_project_files(&build_dir, &fw_build, p, config, team_id, &fw_name)?;
     let xcodebuild_app = run_xcodebuild_for_plugin(&build_dir, archs, p)?;
     embed_framework_into_app(&xcodebuild_app, &final_app, &fw_build, &fw_name)?;
@@ -207,10 +216,24 @@ fn assemble_framework_bundle(
     p: &PluginDef,
     config: &Config,
     sign_id: &str,
+    factory_presets: Option<&super::presets::FactoryPresets>,
 ) -> Res {
     let fw_dir = fw_build.join(format!("{fw_name}.framework/Versions/A"));
     fs_ctx::create_dir_all(fw_dir.join("Resources"))?;
     fs_ctx::copy(lipo_dst, fw_dir.join(fw_name))?;
+
+    // The Swift `factoryPresets` bridge enumerates these through the
+    // Rust `factory_preset_*` callbacks at runtime (the dylib locates
+    // its own framework's Resources). Written before the framework
+    // sign below so the seal covers them.
+    if let Some(fp) = factory_presets {
+        super::presets::emit_trucepreset_tree(
+            fp,
+            &fw_dir.join("Resources/Presets"),
+            false,
+            &format!("{}-au3", p.bundle_id),
+        )?;
+    }
 
     let status = Command::new("install_name_tool")
         .args([

@@ -39,6 +39,14 @@ typedef struct {
     // the factory list" per Apple convention.
     AUPreset currentPreset;
 
+    // kAudioUnitProperty_FactoryPresets table, built lazily from the
+    // Rust factory_preset_* callbacks. Entry names stay retained until
+    // Close; GetProperty hands out a CFArray of borrowed AUPreset
+    // pointers into this table (AUBase convention: the host releases
+    // the array, the AU owns the entries).
+    AUPreset *factoryPresets;
+    uint32_t factoryPresetCount;
+
     // Internal output buffers
     float *outputBuffers[32];
     UInt32 outputBufferSize; // in frames
@@ -251,6 +259,32 @@ static MIDIPacket *append_or_flush_retry(MIDIPacketList *pktList,
 }
 
 // ---------------------------------------------------------------------------
+// Factory presets
+// ---------------------------------------------------------------------------
+
+// Build (once) the AUPreset table the factory-presets property serves.
+// Returns the entry count; 0 means the plugin ships no factory presets
+// and callers report kAudioUnitProperty_FactoryPresets as invalid.
+static uint32_t ensure_factory_presets(TruceAUv2 *inst) {
+    if (inst->factoryPresets) return inst->factoryPresetCount;
+    if (!g_callbacks || !inst->rustCtx || !g_callbacks->factory_preset_count)
+        return 0;
+    uint32_t n = g_callbacks->factory_preset_count(inst->rustCtx);
+    if (n == 0) return 0;
+    AUPreset *table = (AUPreset *)calloc(n, sizeof(AUPreset));
+    if (!table) return 0;
+    for (uint32_t i = 0; i < n; i++) {
+        const char *name = g_callbacks->factory_preset_name(inst->rustCtx, i);
+        table[i].presetNumber = (SInt32)i;
+        table[i].presetName = CFStringCreateWithCString(
+            NULL, name ? name : "Preset", kCFStringEncodingUTF8);
+    }
+    inst->factoryPresets = table;
+    inst->factoryPresetCount = n;
+    return n;
+}
+
+// ---------------------------------------------------------------------------
 // Open / Close
 // ---------------------------------------------------------------------------
 
@@ -299,6 +333,15 @@ static OSStatus au_v2_close(void *self_) {
     if (inst->currentPreset.presetName) {
         CFRelease(inst->currentPreset.presetName);
         inst->currentPreset.presetName = NULL;
+    }
+    if (inst->factoryPresets) {
+        for (uint32_t i = 0; i < inst->factoryPresetCount; i++) {
+            if (inst->factoryPresets[i].presetName) {
+                CFRelease(inst->factoryPresets[i].presetName);
+            }
+        }
+        free(inst->factoryPresets);
+        inst->factoryPresets = NULL;
     }
     free(inst);
     return noErr;
@@ -392,6 +435,14 @@ static OSStatus au_v2_get_property_info(void *self_, AudioUnitPropertyID prop,
         case kAudioUnitProperty_PresentPreset:
             if (scope != kAudioUnitScope_Global) return kAudioUnitErr_InvalidScope;
             size = sizeof(AUPreset); writable = true; break;
+        case kAudioUnitProperty_FactoryPresets: {
+            if (scope != kAudioUnitScope_Global) return kAudioUnitErr_InvalidScope;
+            // AUs with no factory presets don't expose the property at
+            // all - that's what hosts (and auval) expect.
+            if (ensure_factory_presets((TruceAUv2 *)self_) == 0)
+                return kAudioUnitErr_InvalidProperty;
+            size = sizeof(CFArrayRef); break;
+        }
         case kAudioUnitProperty_Latency:
             if (scope != kAudioUnitScope_Global) return kAudioUnitErr_InvalidScope;
             size = sizeof(Float64); break;
@@ -684,6 +735,24 @@ static OSStatus au_v2_get_property(void *self_, AudioUnitPropertyID prop,
             return noErr;
         }
 
+        case kAudioUnitProperty_FactoryPresets: {
+            if (scope != kAudioUnitScope_Global) return kAudioUnitErr_InvalidScope;
+            if (!g_callbacks || !inst->rustCtx) return kAudioUnitErr_Uninitialized;
+            uint32_t n = ensure_factory_presets(inst);
+            if (n == 0) return kAudioUnitErr_InvalidProperty;
+            if (*ioSize < sizeof(CFArrayRef)) return kAudioUnitErr_InvalidPropertyValue;
+            // Borrowed-pointer array (no CF callbacks): the host
+            // releases the array, the entries stay ours until Close.
+            CFMutableArrayRef arr = CFArrayCreateMutable(NULL, n, NULL);
+            if (!arr) return kAudioUnitErr_InvalidProperty;
+            for (uint32_t i = 0; i < n; i++) {
+                CFArrayAppendValue(arr, &inst->factoryPresets[i]);
+            }
+            *(CFArrayRef *)outData = arr;
+            *ioSize = sizeof(CFArrayRef);
+            return noErr;
+        }
+
         case kAudioUnitProperty_ClassInfo: {
             // State save: build a CFDictionary using Apple's standard
             // preset keys. The "name" slot carries the current preset
@@ -859,6 +928,18 @@ static OSStatus au_v2_set_property(void *self_, AudioUnitPropertyID prop,
             if (!inData || inSize < sizeof(AUPreset))
                 return kAudioUnitErr_InvalidPropertyValue;
             const AUPreset *src = (const AUPreset *)inData;
+            // Factory recall: a non-negative number selects from the
+            // factory table and applies through the same state path
+            // session restore uses. Validate + load before mutating
+            // currentPreset so a bad index leaves state untouched.
+            if (src->presetNumber >= 0) {
+                uint32_t n = ensure_factory_presets(inst);
+                if (!g_callbacks || !inst->rustCtx ||
+                    (uint32_t)src->presetNumber >= n ||
+                    !g_callbacks->factory_preset_load(
+                        inst->rustCtx, (uint32_t)src->presetNumber))
+                    return kAudioUnitErr_InvalidPropertyValue;
+            }
             // Release the old name and retain the incoming one. The
             // host owns its copy independently of ours.
             if (inst->currentPreset.presetName) {
@@ -868,6 +949,11 @@ static OSStatus au_v2_set_property(void *self_, AudioUnitPropertyID prop,
             inst->currentPreset.presetNumber = src->presetNumber;
             if (src->presetName) {
                 inst->currentPreset.presetName = (CFStringRef)CFRetain(src->presetName);
+            } else if (src->presetNumber >= 0) {
+                // Hosts may pass just the number; fall back to the
+                // table's canonical name so ClassInfo keeps a name.
+                inst->currentPreset.presetName = (CFStringRef)CFRetain(
+                    inst->factoryPresets[src->presetNumber].presetName);
             }
             notify_listeners(inst, kAudioUnitProperty_PresentPreset,
                              kAudioUnitScope_Global, 0);

@@ -47,6 +47,8 @@ truce-lv2 = { workspace = true, optional = true }
 
 [dev-dependencies]
 truce-test = { workspace = true }
+truce-build = { workspace = true }
+truce-utils = { workspace = true }
 
 [lints]
 workspace = true
