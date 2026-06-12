@@ -18,7 +18,8 @@ Notable changes per release.
   `list` / `init`. Underneath, `truce_core::presets::PresetStore`
   manages factory / user / pack scopes with uuid identity, so
   renames never break host references and user copies override
-  factory ones.
+  factory ones. `[plugin.presets]` `user_dir` optionally replaces
+  the `truce/<vendor>/<plugin>` part of the user-scope path.
 - **`cargo truce install --au2 --debug` installed a stale
   release dylib.** The AU installer now resolves the build
   profile like every other format.

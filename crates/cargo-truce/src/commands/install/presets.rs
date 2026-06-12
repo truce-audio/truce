@@ -99,11 +99,29 @@ pub(crate) fn authored_presets_dir(root: &Path, p: &PluginDef) -> Option<PathBuf
     Some(crate_dir.join(dir))
 }
 
+/// Reject an unusable `[plugin.presets]` `user_dir` loudly at tool
+/// time. The runtime resolver falls back to the default path
+/// silently (it can't error mid-host-scan); the CLI is where the
+/// author hears about the mistake.
+pub(crate) fn validate_user_dir(p: &PluginDef) -> Res {
+    if let Some(raw) = p.presets.as_ref().and_then(|c| c.user_dir.as_deref())
+        && truce_utils::presets::sanitize_preset_user_dir(raw).is_none()
+    {
+        return Err(format!(
+            "[plugin.presets] user_dir \"{raw}\" is not a usable relative path \
+             (needs at least one valid segment; `..` is rejected)"
+        )
+        .into());
+    }
+    Ok(())
+}
+
 pub(crate) fn load_factory_presets(
     root: &Path,
     p: &PluginDef,
     config: &Config,
 ) -> Result<Option<FactoryPresets>, crate::CargoTruceError> {
+    validate_user_dir(p)?;
     let configured_dir = p.presets.as_ref().map(|c| c.factory_dir.clone());
 
     let Some(dir) = authored_presets_dir(root, p) else {

@@ -66,53 +66,109 @@ pub struct PresetRef {
 /// serves every plugin format; third-party packs drop into a
 /// `packs/<pack-name>/` subdirectory of it.
 ///
-/// - macOS: `~/Library/Audio/Presets/truce/<vendor>/<plugin>/`
-/// - Windows: `%APPDATA%\truce\<vendor>\<plugin>\presets\`
-/// - Linux: `$XDG_DATA_HOME/truce/<vendor>/<plugin>/presets/`
-///   (`~/.local/share/...` when `XDG_DATA_HOME` is unset)
+/// `user_dir` is the optional `[plugin.presets]` `user_dir`
+/// override from `truce.toml`. When `None` (or unusable - see
+/// [`sanitize_preset_user_dir`]), the default subpath is
+/// `truce/<vendor>/<plugin>`, with a trailing `presets` directory
+/// on Windows / Linux. Where the path resolves per OS:
+///
+/// | OS | default | with `user_dir = "Acme/MySynth"` |
+/// |---|---|---|
+/// | macOS | `~/Library/Audio/Presets/truce/<vendor>/<plugin>/` | `~/Library/Audio/Presets/Acme/MySynth/` |
+/// | Windows | `%APPDATA%\truce\<vendor>\<plugin>\presets\` | `%APPDATA%\Acme\MySynth\` |
+/// | Linux | `$XDG_DATA_HOME/truce/<vendor>/<plugin>/presets/` | `$XDG_DATA_HOME/truce/Acme/MySynth/` |
+///
+/// (`$XDG_DATA_HOME` falls back to `~/.local/share` when unset.)
+/// The override replaces the whole default subpath and no `presets`
+/// suffix is appended - except on Linux, where it stays under the
+/// `truce/` namespace: `$XDG_DATA_HOME` is a flat root shared by
+/// every app, unlike macOS's preset-specific directory or the
+/// per-vendor `%APPDATA%` convention.
 ///
 /// Returns `None` when the relevant home / app-data environment
 /// variable is missing (sandboxed or otherwise degenerate hosts);
 /// callers skip the user scope in that case.
 #[must_use]
-pub fn user_preset_root(vendor: &str, plugin_name: &str) -> Option<PathBuf> {
-    let vendor = safe_filename(vendor);
-    let plugin = safe_filename(plugin_name);
+pub fn user_preset_root(
+    vendor: &str,
+    plugin_name: &str,
+    user_dir: Option<&str>,
+) -> Option<PathBuf> {
+    let override_subpath = user_dir.and_then(sanitize_preset_user_dir);
+    let has_override = override_subpath.is_some();
+    let subpath = override_subpath.unwrap_or_else(|| {
+        PathBuf::from("truce")
+            .join(safe_filename(vendor))
+            .join(safe_filename(plugin_name))
+    });
 
     #[cfg(target_os = "macos")]
     {
         let home = std::env::var_os("HOME")?;
+        let _ = has_override;
         Some(
             PathBuf::from(home)
-                .join("Library/Audio/Presets/truce")
-                .join(vendor)
-                .join(plugin),
+                .join("Library/Audio/Presets")
+                .join(subpath),
         )
     }
     #[cfg(target_os = "windows")]
     {
         let appdata = std::env::var_os("APPDATA")?;
-        Some(
-            PathBuf::from(appdata)
-                .join("truce")
-                .join(vendor)
-                .join(plugin)
-                .join("presets"),
-        )
+        let mut root = PathBuf::from(appdata).join(subpath);
+        if !has_override {
+            root.push("presets");
+        }
+        Some(root)
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         let data_home = std::env::var_os("XDG_DATA_HOME")
             .map(PathBuf::from)
             .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))?;
-        Some(
-            data_home
-                .join("truce")
-                .join(vendor)
-                .join(plugin)
-                .join("presets"),
-        )
+        let mut root = data_home;
+        if has_override {
+            root.push("truce");
+        }
+        root.push(subpath);
+        if !has_override {
+            root.push("presets");
+        }
+        Some(root)
     }
+}
+
+/// Sanitize a `[plugin.presets]` `user_dir` override into a safe
+/// relative subpath. The value is author-controlled text that lands
+/// in filesystem paths, so it's interpreted strictly:
+///
+/// - split on `/` and `\`, each segment run through
+///   [`safe_filename`] (drive colons, reserved characters, leading /
+///   trailing dots all collapse);
+/// - empty and `.` segments are dropped, which also neutralises
+///   leading separators (absolute paths);
+/// - any `..` segment rejects the whole override.
+///
+/// Returns `None` for an unusable value - resolvers fall back to
+/// the default subpath, and `cargo truce` validates the field
+/// loudly at install / preset time.
+#[must_use]
+pub fn sanitize_preset_user_dir(raw: &str) -> Option<PathBuf> {
+    let mut out = PathBuf::new();
+    for segment in raw.split(['/', '\\']) {
+        let segment = segment.trim();
+        if segment.is_empty() || segment == "." {
+            continue;
+        }
+        if segment == ".." {
+            return None;
+        }
+        let safe = safe_filename(segment);
+        if !safe.is_empty() {
+            out.push(safe);
+        }
+    }
+    (!out.as_os_str().is_empty()).then_some(out)
 }
 
 /// Build the stable preset URI:
@@ -350,17 +406,25 @@ pub struct PresetStore {
 
 impl PresetStore {
     /// A store for the given plugin identity. The user root resolves
-    /// from the per-OS environment; the factory root (inside the
-    /// installed bundle) is format-specific, so callers that have one
-    /// add it via [`Self::with_factory_root`].
+    /// from the per-OS environment, honouring the optional
+    /// `[plugin.presets]` `user_dir` override (see
+    /// [`user_preset_root`] for where the path lands per OS); the
+    /// factory root (inside the installed bundle) is format-specific,
+    /// so callers that have one add it via
+    /// [`Self::with_factory_root`].
     #[must_use]
-    pub fn new(vendor: &str, plugin_name: &str, plugin_id_hash: u64) -> Self {
+    pub fn new(
+        vendor: &str,
+        plugin_name: &str,
+        plugin_id_hash: u64,
+        user_dir: Option<&str>,
+    ) -> Self {
         Self {
             vendor: vendor.to_string(),
             plugin_name: plugin_name.to_string(),
             plugin_id_hash,
             factory_root: None,
-            user_root: user_preset_root(vendor, plugin_name),
+            user_root: user_preset_root(vendor, plugin_name, user_dir),
         }
     }
 
@@ -664,7 +728,7 @@ mod tests {
     fn store(name: &str) -> (PresetStore, PathBuf, PathBuf) {
         let user = temp_dir(&format!("{name}-user"));
         let factory = temp_dir(&format!("{name}-factory"));
-        let store = PresetStore::new("Acme", "Synth", 42)
+        let store = PresetStore::new("Acme", "Synth", 42, None)
             .with_user_root(&user)
             .with_factory_root(&factory);
         (store, user, factory)
@@ -725,6 +789,46 @@ mod tests {
         assert!(load_preset_file(&path, hash ^ 1).is_none());
 
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn sanitize_user_dir_rules() {
+        let ok = |raw: &str, want: &str| {
+            assert_eq!(
+                sanitize_preset_user_dir(raw),
+                Some(PathBuf::from(want)),
+                "{raw}"
+            );
+        };
+        ok("Acme/MySynth", "Acme/MySynth");
+        ok("Acme\\MySynth", "Acme/MySynth"); // windows separators
+        ok("/Acme/MySynth/", "Acme/MySynth"); // absolute neutralised
+        ok("Acme/./MySynth", "Acme/MySynth"); // `.` dropped
+        ok("C:/Acme", "C/Acme"); // drive colon collapses
+        ok(" Acme / My Synth ", "Acme/My Synth"); // trimmed, spaces kept
+
+        assert_eq!(sanitize_preset_user_dir("../escape"), None);
+        assert_eq!(sanitize_preset_user_dir("a/../b"), None);
+        assert_eq!(sanitize_preset_user_dir(""), None);
+        assert_eq!(sanitize_preset_user_dir("///"), None);
+        // `safe_filename` trims dot runs, leaving no usable segment.
+        assert_eq!(sanitize_preset_user_dir("..."), None);
+    }
+
+    #[test]
+    fn user_root_honours_override() {
+        let default = user_preset_root("Acme", "My Synth", None).unwrap();
+        let overridden = user_preset_root("Acme", "My Synth", Some("AcmeAudio/Synth")).unwrap();
+        let unusable = user_preset_root("Acme", "My Synth", Some("../nope")).unwrap();
+
+        assert!(
+            default.ends_with("truce/Acme/My Synth")
+                || default.ends_with("truce/Acme/My Synth/presets")
+        );
+        assert!(overridden.to_string_lossy().contains("AcmeAudio"));
+        assert!(overridden.ends_with("AcmeAudio/Synth"));
+        // Unusable override falls back to the default path.
+        assert_eq!(unusable, default);
     }
 
     #[test]

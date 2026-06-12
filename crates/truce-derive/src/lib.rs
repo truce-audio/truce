@@ -169,6 +169,7 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
             _ => quote! { None },
         }
     };
+    let preset_user_dir = opt_str(&plugin.presets.as_ref().and_then(|c| c.user_dir.clone()));
     let vst3_name = opt_str(&plugin.vst3_name);
     let clap_name = opt_str(&plugin.clap_name);
     let vst2_name = opt_str(&plugin.vst2_name);
@@ -204,6 +205,7 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
                 aax_id: None,
                 aax_category: #aax_category,
                 vst3_subcategory: #vst3_subcategory,
+                preset_user_dir: #preset_user_dir,
                 vst3_name: #vst3_name,
                 clap_name: #clap_name,
                 vst2_name: #vst2_name,

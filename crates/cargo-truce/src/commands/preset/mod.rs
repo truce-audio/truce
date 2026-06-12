@@ -120,7 +120,12 @@ impl PluginCtx<'_> {
     }
 
     fn store(&self) -> PresetStore {
-        PresetStore::new(&self.config.vendor.name, &self.p.name, self.plugin_id_hash)
+        PresetStore::new(
+            &self.config.vendor.name,
+            &self.p.name,
+            self.plugin_id_hash,
+            self.p.presets.as_ref().and_then(|c| c.user_dir.as_deref()),
+        )
     }
 
     fn library(&self) -> Result<Vec<AuthoredPreset>, crate::CargoTruceError> {
@@ -171,6 +176,7 @@ fn ctx<'a>(
     filter: Option<&str>,
 ) -> Result<PluginCtx<'a>, crate::CargoTruceError> {
     let p = single_plugin(config, filter)?;
+    crate::commands::install::presets::validate_user_dir(p)?;
     let clap_id = truce_build::plugin_id(&config.vendor.id, &p.name);
     Ok(PluginCtx {
         p,

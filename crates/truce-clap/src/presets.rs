@@ -239,7 +239,7 @@ unsafe extern "C" fn provider_init<P: PluginExport>(
         );
     }
     let info = P::info();
-    if let Some(root) = user_preset_root(info.vendor, info.name)
+    if let Some(root) = user_preset_root(info.vendor, info.name, info.preset_user_dir)
         && root.is_dir()
     {
         declare_dir(

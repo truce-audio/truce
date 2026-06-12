@@ -46,6 +46,14 @@ pub struct PluginInfo {
     /// displayed label comes from the appex `Info.plist`'s `AUNAME`
     /// (which `cargo truce install --au3` populates from `au3_name`),
     /// not from `g_descriptor->name`.
+    /// `[plugin.presets]` `user_dir` from `truce.toml`: replaces the
+    /// `truce/<vendor>/<plugin>` subpath of the user-scope preset
+    /// root. `truce_utils::presets::user_preset_root` documents
+    /// where the path resolves on each OS. Effectively permanent
+    /// once a plugin ships - changing it orphans previously saved
+    /// user presets and packs.
+    pub preset_user_dir: Option<&'static str>,
+
     pub vst3_name: Option<&'static str>,
     pub clap_name: Option<&'static str>,
     pub vst2_name: Option<&'static str>,

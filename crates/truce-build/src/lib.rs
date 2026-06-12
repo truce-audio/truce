@@ -177,6 +177,16 @@ pub struct PresetsConfig {
     /// plugin's crate directory. Defaults to `presets`.
     #[serde(default = "default_presets_dir")]
     pub factory_dir: String,
+    /// Optional override for the `truce/<vendor>/<plugin>` subpath
+    /// of the user-scope preset root (e.g. `"Acme/MySynth"`).
+    /// Relative segments only; `..` is rejected. Resolves to
+    /// `~/Library/Audio/Presets/<user_dir>/` on macOS,
+    /// `%APPDATA%\<user_dir>\` on Windows, and
+    /// `$XDG_DATA_HOME/truce/<user_dir>/` on Linux. Pick once,
+    /// before first release: changing it later orphans saved user
+    /// presets.
+    #[serde(default)]
+    pub user_dir: Option<String>,
 }
 
 fn default_presets_dir() -> String {
