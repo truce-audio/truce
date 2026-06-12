@@ -328,8 +328,7 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
         // Queue sample-accurate parameter changes. `set_plain` is
         // deferred to the chunker's per-sub-block apply pass so
         // smoothers see `set_target` at the event's sample rather
-        // than at the head of the audio block. See
-        // `truce-docs/docs/internal/parameter-dependent-chunking.md`.
+        // than at the head of the audio block.
         // The C++ shim sends plain (denormalized) values.
         if !param_changes.is_null() && num_param_changes > 0 {
             let changes = slice::from_raw_parts(param_changes, num_param_changes as usize);

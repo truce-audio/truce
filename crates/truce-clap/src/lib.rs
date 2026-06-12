@@ -651,7 +651,6 @@ unsafe fn convert_input_events<P: PluginExport>(
                     // `chunked_process::process_chunked` - that way
                     // the smoother sees `set_target` at the event's
                     // sample, not at the head of the audio block.
-                    // See `truce-docs/docs/internal/parameter-dependent-chunking.md`.
                     data.event_list.push(Event {
                         sample_offset,
                         body: EventBody::ParamChange {

@@ -45,8 +45,7 @@ pub struct Config {
     pub vendor: VendorConfig,
     pub plugin: Vec<PluginDef>,
     /// Optional `[automation]` table - tunes the sample-accurate
-    /// chunking layer. Absent -> `AutomationConfig::default()`. See
-    /// `truce-docs/docs/internal/parameter-dependent-chunking.md`.
+    /// chunking layer. Absent -> `AutomationConfig::default()`.
     #[serde(default)]
     pub automation: AutomationConfig,
 }
