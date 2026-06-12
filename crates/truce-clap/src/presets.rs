@@ -215,29 +215,43 @@ unsafe extern "C" fn provider_init<P: PluginExport>(
     let Some(declare_location) = indexer.declare_location else {
         return false;
     };
-    let mut declared_any = false;
-    if let Some(root) = factory_preset_root() {
-        declared_any |= declare_dir(
+    // Only existing directories are declared: hosts (clap-validator
+    // enforces this) treat a declared location they can't stat as a
+    // crawl error, not as "empty".
+    if let Some(root) = factory_preset_root()
+        && !declare_dir(
             handle.indexer,
             declare_location,
             &root,
             c"Factory",
             CLAP_PRESET_DISCOVERY_IS_FACTORY_CONTENT,
-        );
+        )
+    {
+        return false;
     }
     let info = P::info();
     if let Some(root) = user_preset_root(info.vendor, info.name) {
-        declared_any |= declare_dir(
-            handle.indexer,
-            declare_location,
-            &root,
-            c"User",
-            CLAP_PRESET_DISCOVERY_IS_USER_CONTENT,
-        );
+        // Create the user root up front: hosts cache the declared
+        // location list, so a root that only appears when the first
+        // user preset is saved would stay invisible until a full
+        // plugin rescan. An existing-but-empty directory crawls to
+        // zero presets, which is exactly right.
+        if std::fs::create_dir_all(&root).is_ok()
+            && !declare_dir(
+                handle.indexer,
+                declare_location,
+                &root,
+                c"User",
+                CLAP_PRESET_DISCOVERY_IS_USER_CONTENT,
+            )
+        {
+            return false;
+        }
     }
-    // A provider with zero locations is useless to the host; telling
-    // it init failed lets it skip the provider entirely.
-    declared_any
+    // Zero declared locations (no factory presets, unresolvable /
+    // uncreatable user root) is a valid, empty provider - not an
+    // init failure.
+    true
 }
 
 fn declare_dir(

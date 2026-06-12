@@ -50,7 +50,7 @@ fn main() -> ExitCode {
         },
         // Build/install commands - forwarded to the engine in lib.rs.
         "install" | "build" | "package" | "uninstall" | "run" | "screenshot" | "status"
-        | "reset-au" | "reset-aax" | "validate" | "doctor" | "log-stream-au" => {
+        | "reset-au" | "reset-aax" | "validate" | "doctor" | "log-stream-au" | "preset" => {
             cargo_truce::run(&args)
         }
 
@@ -220,6 +220,13 @@ Build / Install / Package:
                    (renamed/deleted plugins still on the system)
       --dry-run    Show what would be uninstalled without deleting
       --yes        Skip confirmation prompt
+
+Presets:
+  preset <list|init|convert|import|export|pull> [...]
+      Preset library management, format conversion, and the in-DAW
+      authoring round-trip (`pull` harvests host-saved presets into
+      the crate's presets/ library). `cargo truce preset --help`
+      for the full surface.
 
 Validation / Inspection:
   validate [--auval] [--auval3] [--pluginval] [--clap] [--vst2] [--all] [-p <crate>]

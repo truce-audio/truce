@@ -18,6 +18,9 @@
 //! - [`preset`] - the `.trucepreset` container (metadata + state
 //!   envelope), written at install time and read by format wrappers
 //!   during host preset scans.
+//! - [`presets`] - the preset *library*: scope roots, discovery
+//!   walk, and the `PresetStore` management API (re-exported as
+//!   `truce_core::presets`).
 //! - [`slugify`] - ASCII-safe filesystem / IRI slug used by the LV2
 //!   staging path and runtime bundle-name derivation.
 //! - [`safe_filename`] - case-preserving sanitizer for plugin
@@ -33,6 +36,7 @@
 pub mod cast;
 pub mod midi;
 pub mod preset;
+pub mod presets;
 pub mod shell_sidecar;
 pub mod state;
 

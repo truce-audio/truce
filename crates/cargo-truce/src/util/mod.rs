@@ -66,8 +66,6 @@ pub(crate) mod fs_ctx {
         fs::create_dir_all(path).map_err(|e| format!("mkdir -p {}: {e}", path.display()).into())
     }
 
-    // Both used only by AAX template + AU v3 staging on macOS / Windows.
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
     pub(crate) fn write(
         path: impl AsRef<Path>,
         contents: impl AsRef<[u8]>,
@@ -78,7 +76,9 @@ pub(crate) mod fs_ctx {
 
     /// Write only if the target file is missing or its bytes differ. On a
     /// no-op, the file's mtime stays put - important for tools like cmake
-    /// that rebuild based on mtime comparisons.
+    /// that rebuild based on mtime comparisons. Only the AAX template
+    /// and AU v3 staging (macOS / Windows) need the mtime-preserving
+    /// variant today.
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     pub(crate) fn write_if_changed(
         path: impl AsRef<Path>,

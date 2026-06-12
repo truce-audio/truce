@@ -11,6 +11,7 @@ pub(crate) mod dirs;
 mod error;
 mod format;
 mod install_scope;
+pub(crate) mod preset_codec;
 pub mod scaffold;
 mod templates;
 mod util;
@@ -154,6 +155,7 @@ pub fn run(args: &[String]) -> ExitCode {
         "reset-au" => commands::reset_au::cmd_reset_au(&args[1..]),
         "reset-aax" => commands::reset_aax::cmd_reset_aax(&args[1..]),
         "validate" => commands::validate::cmd_validate(&args[1..]),
+        "preset" => commands::preset::cmd_preset(&args[1..]),
         "doctor" => commands::doctor::cmd_doctor(&args[1..]),
         "log-stream-au" => commands::log_stream_au::cmd_log_stream_au(&args[1..]),
         other => Err(format!("unknown command: {other:?}").into()),

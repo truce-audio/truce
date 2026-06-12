@@ -25,7 +25,6 @@
 use base64::Engine as _;
 use serde::Deserialize;
 use std::collections::BTreeMap;
-use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use truce_utils::preset::PresetMeta;
@@ -186,7 +185,7 @@ fn read_preset_file(
                 path.display()
             ));
         }
-        let uuid = generate_uuid_v4();
+        let uuid = truce_utils::presets::mint_uuid();
         std::fs::write(path, format!("uuid = \"{uuid}\"\n{content}")).map_err(|e| ctx(&e))?;
         uuid
     } else {
@@ -271,34 +270,152 @@ fn read_preset_file(
     })
 }
 
-/// Generate a UUIDv4-shaped identifier from `std`'s process-seeded
-/// `SipHash` entropy plus the wall clock. Uniqueness-grade (the only
-/// property preset identity needs), not cryptographic.
-fn generate_uuid_v4() -> String {
-    use std::hash::{BuildHasher, Hasher};
-    let mix = |salt: u64| {
-        let mut h = std::collections::hash_map::RandomState::new().build_hasher();
-        h.write_u64(salt);
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| u64::from(d.subsec_nanos()));
-        h.finish() ^ nanos.rotate_left(17)
-    };
-    let mut bytes = [0u8; 16];
-    bytes[..8].copy_from_slice(&mix(0x9e37_79b9).to_le_bytes());
-    bytes[8..].copy_from_slice(&mix(0x85eb_ca6b).to_le_bytes());
-    // RFC 4122 version (4) and variant (10x) bits.
-    bytes[6] = (bytes[6] & 0x0f) | 0x40;
-    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+/// Parse a single `.preset` file outside a library walk (the
+/// `cargo truce preset convert` input path). The category falls back
+/// to the parent directory name like the library walk does.
+///
+/// # Errors
+///
+/// Same per-file surface as [`read_presets_dir`]; a missing uuid is
+/// an error (single-file reads never stamp).
+pub fn read_single_preset(path: &Path) -> Result<AuthoredPreset, String> {
+    let root = path.parent().map(Path::to_path_buf).unwrap_or_default();
+    // The parent dir doubles as the walk root so no directory-derived
+    // category applies - explicit `category` still does.
+    read_preset_file(&root, path, false)
+}
 
-    let mut out = String::with_capacity(36);
-    for (i, b) in bytes.iter().enumerate() {
-        if matches!(i, 4 | 6 | 8 | 10) {
-            out.push('-');
+/// Display info for one param, used to annotate generated `.preset`
+/// TOML with human-readable comments.
+#[derive(Debug, Clone)]
+pub struct ParamAnnotation {
+    pub name: String,
+    pub unit: String,
+}
+
+/// Read the param-name / unit table from the `derive(Params)`
+/// sidecars at `<target>/lv2-meta/<crate>/*.params.toml`. Returns an
+/// empty map when the plugin hasn't been built yet (annotations are
+/// a nicety, not a requirement). Sidecars exist per params struct,
+/// including helpers; ids are unique within a plugin, so a plain
+/// union suffices.
+#[must_use]
+pub fn read_param_annotations(
+    sidecar_dir: &Path,
+) -> std::collections::BTreeMap<u32, ParamAnnotation> {
+    let mut out = std::collections::BTreeMap::new();
+    let Ok(entries) = std::fs::read_dir(sidecar_dir) else {
+        return out;
+    };
+    for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("toml") {
+            continue;
         }
-        let _ = write!(out, "{b:02x}");
+        let Ok(content) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(doc) = content.parse::<toml::Table>() else {
+            continue;
+        };
+        let Some(params) = doc.get("param").and_then(toml::Value::as_array) else {
+            continue;
+        };
+        for p in params {
+            let Some(id) = p
+                .get("id")
+                .and_then(toml::Value::as_integer)
+                .and_then(|i| u32::try_from(i).ok())
+            else {
+                continue;
+            };
+            let field = |key: &str| {
+                p.get(key)
+                    .and_then(toml::Value::as_str)
+                    .unwrap_or_default()
+                    .to_string()
+            };
+            out.insert(
+                id,
+                ParamAnnotation {
+                    name: field("name"),
+                    unit: field("unit"),
+                },
+            );
+        }
     }
     out
+}
+
+/// Render a canonical `.preset` TOML file - the inverse of
+/// [`read_presets_dir`]'s per-file parse. Used by
+/// `cargo truce preset pull` / `import` to materialize host-saved
+/// presets into the authored library, with param lines annotated
+/// from `annotations` when available.
+///
+/// `meta.category` is written as an explicit field only when
+/// non-empty; callers placing the file inside a category directory
+/// clear it to keep the directory-derived convention.
+#[must_use]
+pub fn render_preset_toml(
+    meta: &PresetMeta,
+    params: &[(u32, f64)],
+    extra: &[u8],
+    annotations: &std::collections::BTreeMap<u32, ParamAnnotation>,
+) -> String {
+    use base64::Engine as _;
+    use std::fmt::Write as _;
+
+    let mut out = String::new();
+    let mut field = |key: &str, value: &str| {
+        if !value.is_empty() {
+            let _ = writeln!(out, "{key} = \"{}\"", toml_escape(value));
+        }
+    };
+    field("uuid", &meta.uuid);
+    field("name", &meta.name);
+    field("category", &meta.category);
+    field("author", &meta.author);
+    field("comment", &meta.comment);
+    if !meta.tags.is_empty() {
+        let tags = meta
+            .tags
+            .iter()
+            .map(|t| format!("\"{}\"", toml_escape(t)))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let _ = writeln!(out, "tags = [{tags}]");
+    }
+    if meta.default {
+        out.push_str("default = true\n");
+    }
+    if !extra.is_empty() {
+        let _ = writeln!(
+            out,
+            "extra = \"{}\"",
+            base64::engine::general_purpose::STANDARD.encode(extra)
+        );
+    }
+
+    if !params.is_empty() {
+        out.push_str("\n[params]\n");
+        for (id, value) in params {
+            let _ = write!(out, "{id} = {value}");
+            if let Some(a) = annotations.get(id) {
+                if a.unit.is_empty() {
+                    let _ = write!(out, "   # {}", a.name);
+                } else {
+                    let _ = write!(out, "   # {} ({})", a.name, a.unit);
+                }
+            }
+            out.push('\n');
+        }
+    }
+    out
+}
+
+fn toml_escape(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
 #[cfg(test)]
@@ -397,6 +514,41 @@ extra = "aGk="
         let err = read_presets_dir(&dir, false).unwrap_err();
         assert!(err.contains("default = true"));
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn render_round_trips_through_parser() {
+        let dir = temp_lib("render");
+        let meta = truce_utils::preset::PresetMeta {
+            uuid: "u-render".into(),
+            name: "Pulled \"Lead\"".into(),
+            category: String::new(),
+            author: "DAW".into(),
+            comment: String::new(),
+            tags: vec!["pulled".into()],
+            default: false,
+        };
+        let mut annotations = std::collections::BTreeMap::new();
+        annotations.insert(
+            1,
+            ParamAnnotation {
+                name: "Cutoff".into(),
+                unit: "Hz".into(),
+            },
+        );
+        let toml = render_preset_toml(&meta, &[(0, 1.0), (1, 8200.0)], b"xs", &annotations);
+        assert!(toml.contains("# Cutoff (Hz)"));
+        std::fs::create_dir_all(dir.join("lead")).unwrap();
+        std::fs::write(dir.join("lead/pulled.preset"), &toml).unwrap();
+
+        let presets = read_presets_dir(&dir, false).unwrap();
+        let p = &presets[0];
+        assert_eq!(p.meta.uuid, "u-render");
+        assert_eq!(p.meta.name, "Pulled \"Lead\"");
+        assert_eq!(p.meta.category, "lead"); // directory-derived
+        assert_eq!(p.params, vec![(0, 1.0), (1, 8200.0)]);
+        assert_eq!(p.extra, b"xs");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

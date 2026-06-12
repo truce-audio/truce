@@ -4966,8 +4966,10 @@ dependencies = [
 name = "truce-build"
 version = "0.57.2"
 dependencies = [
+ "base64",
  "serde",
  "toml 1.1.2+spec-1.1.0",
+ "truce-utils",
 ]
 
 [[package]]
