@@ -4,38 +4,21 @@ Notable changes per release.
 
 ## Unreleased
 
-- **Factory presets (phase 1).** A `presets/` directory of
-  `.preset` TOML files next to a plugin crate is emitted as
-  native preset files at `cargo truce install`: CLAP
-  (`.trucepreset` + runtime preset-discovery / preset-load
-  extensions), VST3 (`.vstpreset` in the spec's OS preset
-  locations), AU v2 (`kAudioUnitProperty_FactoryPresets` +
-  `PresentPreset` recall in the shim, plus `.aupreset` files
-  under `Library/Audio/Presets`), LV2 (`pset:Preset` TTL in the
-  bundle). The library's `default = true` preset leads the AU
-  factory list. Optional `[plugin.presets]` `factory_dir`
-  override; missing preset uuids are stamped into the source
-  files at install.
-- **Preset management API.** `truce_core::presets::PresetStore`:
-  enumerate across factory / user / pack scopes with uuid dedup
-  (user-proximate copy wins), load, save (same-name saves keep the
-  uuid), rename, recategorise, delete; `truce-preset://` URI
-  parser; uuids minted for hand-assembled files on first read.
-- **`cargo truce preset` CLI.** `list`, `init`, `convert` (any
-  format pair via the shared state envelope; truce plugins only),
-  `import` (native file -> authored library, or `.zip` pack ->
-  user pack directory), `export` (library -> per-format pack zip),
-  and `pull [--watch]` - the in-DAW authoring loop: save presets
-  with the host's own UI and pull converts them into `.preset`
-  TOML with param names annotated from the derive sidecars;
-  same-name pulls update in place, preserving the uuid.
-- **AU v3 factory presets.** The appex's Swift bridge implements
-  `factoryPresets` / `currentPreset`, backed by the preset library
-  bundled into the embedded framework's `Resources/Presets/`.
-- **Host-facing preset files are named after the display name**
-  (`Bright Saw.vstpreset`, not `bright-saw.vstpreset`) - hosts
-  label filesystem presets by file name. Duplicate display names
-  within a category are now an install error.
+- **Presets.** Drop a `presets/` directory of `.preset` TOML
+  files next to a plugin crate and `cargo truce install` ships
+  them as factory presets in every format: CLAP (native files +
+  the preset-discovery / preset-load extensions), AU v2/v3
+  (factory list in Logic / GarageBand), VST3 (`.vstpreset` in
+  the OS preset locations), LV2 (`pset:Preset` TTL). Every
+  container wraps the same state envelope as session recall,
+  which also powers the new `cargo truce preset` CLI: `convert`
+  between any two formats, `pull` to turn presets saved in your
+  DAW into library files (uuid-stable updates, param-name
+  comments), `import` / `export` for pack zips, and
+  `list` / `init`. Underneath, `truce_core::presets::PresetStore`
+  manages factory / user / pack scopes with uuid identity, so
+  renames never break host references and user copies override
+  factory ones.
 - **`cargo truce install --au2 --debug` installed a stale
   release dylib.** The AU installer now resolves the build
   profile like every other format.

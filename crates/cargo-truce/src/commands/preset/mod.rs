@@ -82,8 +82,8 @@ Presets, VST3 Presets, ~/.lv2, the truce user root) for presets
 belonging to the plugin, and converts them into the authored library.
 A library preset with the same display name is updated in place
 (keeping its uuid; regenerating the file drops hand-written
-comments); pass --new to always create instead. --watch rescans
-every 2 seconds - save in your DAW, watch presets land in git."
+comments); pass --new to always create instead, or --watch to
+keep rescanning until interrupted."
     );
 }
 
