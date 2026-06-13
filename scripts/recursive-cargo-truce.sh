@@ -43,6 +43,20 @@ else
     cargo_bin="cargo"
 fi
 
+# Keep colored output through the `tee` pipe below. cargo, rustc, and
+# cargo-truce all disable ANSI when stdout isn't a TTY, and the pipe to
+# `tee` is not one - so a direct run is colored but this wrapper's was
+# plain. Force color on when *our* own stdout is a real terminal (leave
+# it off for a redirected / piped run so files don't fill with escape
+# codes). `CARGO_TERM_COLOR` covers cargo + the rustc it drives;
+# `CLICOLOR_FORCE` covers cargo-truce's own output (clicolors spec).
+# Respect either if the caller already set it.
+if [[ -t 1 ]]; then
+    : "${CARGO_TERM_COLOR:=always}"
+    : "${CLICOLOR_FORCE:=1}"
+    export CARGO_TERM_COLOR CLICOLOR_FORCE
+fi
+
 if [[ $# -eq 0 ]]; then
     cat >&2 <<EOF
 usage: $(basename "$0") <cargo-truce-args>
