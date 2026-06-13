@@ -5,7 +5,7 @@
 
 use super::PkgFormat;
 use super::stage::{
-    generate_distribution_xml, stage_aax, stage_au2, stage_au3, stage_clap, stage_lv2,
+    generate_distribution_xml, stage_aax, stage_au2, stage_au3, stage_clap, stage_lv2_packaged,
     stage_standalone, stage_vst2, stage_vst3, write_format_scripts,
 };
 use crate::commands::build_dylibs::BuildFormat;
@@ -171,7 +171,14 @@ fn stage_components_only(root: &Path, p: &PluginDef, o: &PackageOpts) -> Res {
             ),
             PkgFormat::Vst3 => stage_vst3(root, p, o.config, &staging, None),
             PkgFormat::Vst2 => stage_vst2(root, p, o.config, &staging, None).map(|_| ()),
-            PkgFormat::Lv2 => stage_lv2(root, p, &staging, &crate::application_identity(), None),
+            PkgFormat::Lv2 => stage_lv2_packaged(
+                root,
+                p,
+                o.config,
+                &staging,
+                &crate::application_identity(),
+                None,
+            ),
             PkgFormat::Au2 => stage_au2(root, p, o.config, &staging),
             PkgFormat::Au3 => stage_au3(root, p, o.config, &staging),
             PkgFormat::Aax => stage_aax(root, p, o.config, &staging, o.universal, o.no_pace_sign),
@@ -780,7 +787,14 @@ fn package_one_plugin(root: &Path, p: &PluginDef, dist_dir: &Path, o: &PackageOp
             ),
             PkgFormat::Vst3 => stage_vst3(root, p, o.config, &staging, None),
             PkgFormat::Vst2 => stage_vst2(root, p, o.config, &staging, None).map(|_| ()),
-            PkgFormat::Lv2 => stage_lv2(root, p, &staging, &crate::application_identity(), None),
+            PkgFormat::Lv2 => stage_lv2_packaged(
+                root,
+                p,
+                o.config,
+                &staging,
+                &crate::application_identity(),
+                None,
+            ),
             PkgFormat::Au2 => stage_au2(root, p, o.config, &staging),
             PkgFormat::Au3 => stage_au3(root, p, o.config, &staging),
             PkgFormat::Aax => stage_aax(root, p, o.config, &staging, o.universal, o.no_pace_sign),

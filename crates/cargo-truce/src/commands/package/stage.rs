@@ -3,6 +3,7 @@
 
 #[cfg(target_os = "macos")]
 use super::PkgFormat;
+use crate::commands::install::presets;
 #[cfg(target_os = "macos")]
 use crate::install_scope::PkgScope;
 #[cfg(target_os = "macos")]
@@ -98,6 +99,31 @@ pub(crate) fn stage_lv2(
     Ok(())
 }
 
+/// Package wrapper: stage the LV2 bundle, then append its factory
+/// preset TTLs + `manifest.ttl` entries. `stage_lv2` itself stays
+/// preset-free because `install` emits LV2 presets onto its own copy
+/// (a double-emit would duplicate manifest entries); only packaging
+/// layers them in here. The TTLs sit outside the signed inner Mach-O,
+/// so emitting after staging is safe.
+#[cfg(target_os = "macos")]
+pub(crate) fn stage_lv2_packaged(
+    root: &Path,
+    p: &PluginDef,
+    config: &Config,
+    staging: &Path,
+    identity: &str,
+    target: Option<&str>,
+) -> Res {
+    stage_lv2(root, p, staging, identity, target)?;
+    if let Some(fp) = presets::load_factory_presets(root, p, config)? {
+        let bundle = staging.join(format!("{}.lv2", lv2_slug(&p.name)));
+        let uri =
+            truce_build::lv2::plugin_uri(config.vendor.url.as_deref().unwrap_or(""), &p.bundle_id);
+        presets::emit_lv2_presets(&fp, &bundle, &uri)?;
+    }
+    Ok(())
+}
+
 /// Stage a CLAP bundle into the staging directory. `target` selects
 /// which `target/<triple>/release/` to read from (`None` = host's
 /// `target/release/`).
@@ -155,12 +181,32 @@ pub(crate) fn stage_clap(
             vendor_id = config.vendor.id,
         );
         fs::write(bundle.join("Contents/Info.plist"), &plist)?;
+        // Presets are part of the bundle's sealed Resources - emit
+        // before codesign so the signature covers them.
+        if let Some(fp) = presets::load_factory_presets(root, p, config)? {
+            presets::emit_trucepreset_tree(
+                &fp,
+                &bundle.join("Contents/Resources/Presets"),
+                false,
+                &format!("{}-clap", p.bundle_id),
+            )?;
+        }
         codesign_bundle(bundle.to_str().unwrap(), identity, false)?;
     }
 
     #[cfg(not(target_os = "macos"))]
     {
         fs::copy(&dylib, &bundle)?;
+        // Single-file `.clap`; presets land in a `<stem>.presets/`
+        // sibling, where the discovery provider looks.
+        if let Some(fp) = presets::load_factory_presets(root, p, config)? {
+            presets::emit_trucepreset_tree(
+                &fp,
+                &staging.join(format!("{}.presets", p.file_stem())),
+                false,
+                &format!("{}-clap", p.bundle_id),
+            )?;
+        }
         codesign_bundle(bundle.to_str().unwrap(), identity, false)?;
     }
 
@@ -424,6 +470,16 @@ pub(crate) fn stage_au2(root: &Path, p: &PluginDef, config: &Config, staging: &P
         au_tag = p.au_tag,
     );
     fs::write(bundle.join("Contents/Info.plist"), &plist)?;
+    // The shim's kAudioUnitProperty_FactoryPresets handler enumerates
+    // these from the sealed bundle - emit before codesign.
+    if let Some(fp) = presets::load_factory_presets(root, p, config)? {
+        presets::emit_trucepreset_tree(
+            &fp,
+            &bundle.join("Contents/Resources/Presets"),
+            false,
+            &format!("{}-au-bundle", p.bundle_id),
+        )?;
+    }
     codesign_bundle(
         bundle.to_str().unwrap(),
         &crate::application_identity(),
