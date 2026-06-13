@@ -4,12 +4,17 @@ Notable changes per release.
 
 ## 0.58.2
 
-- **Standalone presets.** The standalone host loads library
-  presets: `--preset <uri|name>` on launch (windowed, headless,
-  and offline render), `--list-presets`, and `--presets-dir` for
-  the factory root. Cmd+S now quicksaves a `.trucepreset` to the
-  user scope instead of a bare state file; `--state` still loads
-  either.
+- **Standalone presets.** The standalone host browses and saves
+  library presets: a native Presets menu (macOS / Windows) with
+  Load, Previous / Next, Save, and Save As, plus Cmd/Ctrl+S and
+  Cmd/Ctrl+Shift+S shortcuts (the only preset control on Linux).
+  Save overwrites the loaded user preset in place; off a factory
+  preset it routes to Save As so the destination is explicit. The
+  menu re-reads the library on open, so saves appear without a
+  relaunch. Factory presets ship in the packaged app and in
+  `cargo truce run`. Load at launch via `--preset <uri|name>`
+  (windowed, headless, offline), list with `--list-presets`;
+  `--state` still loads a preset or a legacy state blob.
 
 ## 0.58.1
 
