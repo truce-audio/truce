@@ -73,6 +73,15 @@ struct MenuState {
     /// MIDI-input device submenu - repopulated on open. Null when the
     /// MIDI menu isn't built.
     midi_input_menu: *mut Object,
+    /// The Presets menu - identified on open to refresh its children.
+    presets_menu: *mut Object,
+    /// Presets > Load submenu - re-enumerated on each open so saves
+    /// appear without a relaunch.
+    preset_load_menu: *mut Object,
+    /// The "Save Preset" item - its title is rewritten on open to
+    /// show the file Save will write (or `Save Preset...` when Save
+    /// will open a dialog).
+    preset_save_item: *mut Object,
 }
 
 /// Install the native menu bar.
@@ -239,16 +248,18 @@ pub fn install(
 
         let _: () = msg_send![plugin_menu_item, setSubmenu: plugin_menu];
 
-        // Presets menu - Load submenu + Previous / Next / Save. The
-        // entry list is a static snapshot (see `PresetController`);
-        // the items act through the same target.
+        // Presets menu - Load submenu + Previous / Next / Save /
+        // Save As. The Load list and the Save title are refreshed on
+        // open (`menuWillOpen`); items act through the same target.
         let presets_menu_item = make_menu_item("Presets");
         let presets_menu = make_menu("Presets");
+        // Delegate so `menuWillOpen:` fires for this menu.
+        let _: () = msg_send![presets_menu, setDelegate: target];
 
         let load_item = make_menu_item("Load");
         let _: () = msg_send![load_item, setTarget: target];
         let load_menu = make_menu("Load");
-        populate_preset_load_menu(load_menu, target, presets.entries());
+        populate_preset_load_menu(load_menu, target, &presets.entries());
         let _: () = msg_send![load_item, setSubmenu: load_menu];
         let _: () = msg_send![presets_menu, addItem: load_item];
 
@@ -261,13 +272,17 @@ pub fn install(
 
         let save_sep: *mut Object = msg_send![class!(NSMenuItem), separatorItem];
         let _: () = msg_send![presets_menu, addItem: save_sep];
-        // No key equivalent: Cmd-S is already handled by the window's
-        // own key handler (`quicksave_preset`); a menu item with the
-        // same shortcut would shadow it.
+        // No key equivalents: Cmd-S / Cmd-Shift-S are handled by the
+        // window's own key handler; a menu item with the same
+        // shortcut would shadow it. The title is set on open.
         let save_item = make_toggle_item("Save Preset", "", sel!(savePresetAction:), target);
         let _: () = msg_send![presets_menu, addItem: save_item];
+        let save_as_item =
+            make_toggle_item("Save Preset As...", "", sel!(saveAsPresetAction:), target);
+        let _: () = msg_send![presets_menu, addItem: save_as_item];
 
         let _: () = msg_send![presets_menu_item, setSubmenu: presets_menu];
+        set_preset_menu(target, presets_menu, load_menu, save_item);
 
         // Main menu - the one NSApp draws.
         let main_menu = make_menu("");
@@ -343,9 +358,9 @@ unsafe fn add_app_menu_items(menu: *mut Object, app_name: &str) {
 /// Replace the contents of `menu` with a fresh device list. Items
 /// fire `action` on `target`; the chosen item gets a checkmark
 /// when its title matches `current`.
-/// Fill the Presets > Load submenu, one tagged item per entry
-/// (tag = index into `PresetController::entries`). `loadPresetAction:`
-/// reads the tag. Empty libraries get a disabled placeholder.
+/// Fill the Presets > Load submenu, one item per entry titled with
+/// its display label; `loadPresetAction:` dispatches by that title.
+/// Empty libraries get a disabled placeholder.
 unsafe fn populate_preset_load_menu(
     menu: *mut Object,
     target: *mut Object,
@@ -365,7 +380,7 @@ unsafe fn populate_preset_load_menu(
         let _: () = msg_send![menu, addItem: item];
         return;
     }
-    for (i, entry) in entries.iter().enumerate() {
+    for entry in entries {
         let title = unsafe { ns_string(&entry.label) };
         let item: *mut Object = msg_send![class!(NSMenuItem), alloc];
         let item: *mut Object = msg_send![
@@ -375,7 +390,6 @@ unsafe fn populate_preset_load_menu(
             keyEquivalent: empty
         ];
         let _: () = msg_send![item, setTarget: target];
-        let _: () = msg_send![item, setTag: i64::try_from(i).unwrap_or(0)];
         let _: () = msg_send![menu, addItem: item];
     }
 }
@@ -897,6 +911,24 @@ fn ensure_class() -> &'static Class {
                     return;
                 }
 
+                // Presets menu: re-enumerate the library (saves this
+                // session appear) and retitle Save to its target file.
+                if !state.presets_menu.is_null() && menu == state.presets_menu {
+                    if !state.preset_load_menu.is_null() {
+                        let _: () = msg_send![state.preset_load_menu, removeAllItems];
+                        populate_preset_load_menu(
+                            state.preset_load_menu,
+                            state.target,
+                            &state.presets.entries(),
+                        );
+                    }
+                    if !state.preset_save_item.is_null() {
+                        let title = ns_string(&state.presets.save_menu_title());
+                        let _: () = msg_send![state.preset_save_item, setTitle: title];
+                    }
+                    return;
+                }
+
                 // Settings menu (any other we delegate) - refresh the
                 // toggle checkmarks.
                 if !state.mic_item.is_null() {
@@ -924,15 +956,16 @@ fn ensure_class() -> &'static Class {
             noop_action as extern "C" fn(&Object, Sel, *mut Object),
         );
 
-        // Preset: a Load-submenu item chosen (tag = entry index).
+        // Preset: a Load-submenu item chosen. Dispatch by the item's
+        // title (its display label) so re-enumeration can't desync a
+        // stale index.
         extern "C" fn load_preset_action(this: &Object, _: Sel, sender: *mut Object) {
             unsafe {
                 let Some(state) = state_from(this) else {
                     return;
                 };
-                let tag: i64 = msg_send![sender, tag];
-                if let Ok(index) = usize::try_from(tag) {
-                    let _ = state.presets.load_index(index);
+                if let Some(label) = item_title(sender) {
+                    state.presets.load_by_label(&label);
                 }
             }
         }
@@ -967,7 +1000,8 @@ fn ensure_class() -> &'static Class {
             prev_preset_action as extern "C" fn(&Object, Sel, *mut Object),
         );
 
-        // Preset: quicksave the current state to the user scope.
+        // Preset: save the current state - overwrites the loaded
+        // user preset, or routes to Save As for factory / none.
         extern "C" fn save_preset_action(this: &Object, _: Sel, _sender: *mut Object) {
             unsafe {
                 if let Some(state) = state_from(this) {
@@ -978,6 +1012,19 @@ fn ensure_class() -> &'static Class {
         decl.add_method(
             sel!(savePresetAction:),
             save_preset_action as extern "C" fn(&Object, Sel, *mut Object),
+        );
+
+        // Preset: save under a chosen name / location.
+        extern "C" fn save_as_preset_action(this: &Object, _: Sel, _sender: *mut Object) {
+            unsafe {
+                if let Some(state) = state_from(this) {
+                    state.presets.save_as();
+                }
+            }
+        }
+        decl.add_method(
+            sel!(saveAsPresetAction:),
+            save_as_preset_action as extern "C" fn(&Object, Sel, *mut Object),
         );
 
         decl.register();
@@ -1017,6 +1064,9 @@ unsafe fn make_menu_target(
         device_cache: DeviceCache::new(),
         midi,
         midi_input_menu: std::ptr::null_mut(),
+        presets_menu: std::ptr::null_mut(),
+        preset_load_menu: std::ptr::null_mut(),
+        preset_save_item: std::ptr::null_mut(),
     }));
     // SAFETY: `target` was just `alloc`+`init`'d above; it's a valid
     // TruceMenuTarget instance whose ivar layout we declared.
@@ -1046,5 +1096,25 @@ unsafe fn update_menu_state(
         state.output_device_menu = output_device_menu;
         state.midi_input_menu = midi_input_menu;
         state.target = target_self;
+    }
+}
+
+/// Record the Presets menu's pointers so `menuWillOpen:` can
+/// re-enumerate the Load submenu and refresh the Save title.
+unsafe fn set_preset_menu(
+    target: *mut Object,
+    presets_menu: *mut Object,
+    preset_load_menu: *mut Object,
+    preset_save_item: *mut Object,
+) {
+    unsafe {
+        let state_ptr: *mut c_void = *(*target).get_ivar(STATE_IVAR);
+        if state_ptr.is_null() {
+            return;
+        }
+        let state = &mut *state_ptr.cast::<MenuState>();
+        state.presets_menu = presets_menu;
+        state.preset_load_menu = preset_load_menu;
+        state.preset_save_item = preset_save_item;
     }
 }

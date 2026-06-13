@@ -49,12 +49,13 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CheckMenuItem, CreateMenu, CreatePopupMenu, DeleteMenu, DrawMenuBar,
     GetMenuItemCount, GetMenuStringW, GetSystemMetrics, GetWindowRect, HMENU, MF_BYCOMMAND,
     MF_BYPOSITION, MF_CHECKED, MF_GRAYED, MF_POPUP, MF_SEPARATOR, MF_STRING, MF_UNCHECKED,
-    SM_CYMENU, SWP_NOMOVE, SWP_NOZORDER, SetMenu, SetWindowPos, WM_COMMAND, WM_INITMENUPOPUP,
-    WM_NCDESTROY,
+    ModifyMenuW, SM_CYMENU, SWP_NOMOVE, SWP_NOZORDER, SetMenu, SetWindowPos, WM_COMMAND,
+    WM_INITMENUPOPUP, WM_NCDESTROY,
 };
 
 use crate::audio::{self, ChannelRoute, InputController, OutputController};
 use crate::midi::{self, MidiChannel, MidiController};
+use crate::presets::PresetController;
 use crate::vlog;
 
 /// Command ID for the mic-input toggle.
@@ -90,6 +91,17 @@ const MENU_CMD_MIDI_INPUT_END: u16 = 0xC5FF;
 const MENU_CMD_MIDI_CHANNEL_BASE: u16 = 0xC600;
 const MENU_CMD_MIDI_CHANNEL_END: u16 = 0xC6FF;
 
+/// Preset commands. Previous / Next / Save are fixed; the Load
+/// submenu items occupy a range, command ID `BASE + index` into
+/// `PresetController::entries` (libraries beyond the range are
+/// truncated in the menu, logged at build).
+const MENU_CMD_PRESET_PREV: u16 = 0xC701;
+const MENU_CMD_PRESET_NEXT: u16 = 0xC702;
+const MENU_CMD_PRESET_SAVE: u16 = 0xC703;
+const MENU_CMD_PRESET_SAVE_AS: u16 = 0xC704;
+const MENU_CMD_PRESET_LOAD_BASE: u16 = 0xC800;
+const MENU_CMD_PRESET_LOAD_END: u16 = 0xC8FF;
+
 /// Subclass cookie. Picked to be visually distinct in a debugger;
 /// any `usize` works as long as it's unique within the window.
 const SUBCLASS_ID: usize = 0x7472_7563; // 'truc'
@@ -119,6 +131,15 @@ struct MenuState {
     midi: MidiController,
     hmenu_midi_input: HMENU,
     hmenu_midi_channel: HMENU,
+    /// Preset library handle backing the Presets menu.
+    presets: PresetController,
+    /// The Presets popup - matched on `WM_INITMENUPOPUP` to refresh
+    /// its children.
+    hmenu_presets: HMENU,
+    /// The Presets > Load submenu - re-enumerated on each open so
+    /// saves appear without a relaunch; also read by `get_menu_string`
+    /// to dispatch a Load click by its label.
+    hmenu_preset_load: HMENU,
 }
 
 /// Install the native menu bar.
@@ -126,6 +147,7 @@ struct MenuState {
 /// `is_effect` controls whether mic-input and input-device items
 /// appear - input-side controls are useless for instruments and
 /// analyzers since the runner feeds them silence.
+#[allow(clippy::too_many_arguments)]
 pub fn install(
     hwnd: *mut c_void,
     _app_name: &str,
@@ -134,6 +156,7 @@ pub fn install(
     input: InputController,
     output: OutputController,
     midi: MidiController,
+    presets: PresetController,
 ) {
     if hwnd.is_null() {
         return;
@@ -272,6 +295,8 @@ pub fn install(
             plugin_label.as_ptr(),
         );
 
+        let (hmenu_presets, hmenu_preset_load) = build_presets_menu(menu_bar, &presets);
+
         SetMenu(hwnd, menu_bar);
         DrawMenuBar(hwnd);
 
@@ -294,8 +319,109 @@ pub fn install(
             midi,
             hmenu_midi_input: midi_input_menu,
             hmenu_midi_channel: midi_channel_menu,
+            presets,
+            hmenu_presets,
+            hmenu_preset_load,
         }));
         SetWindowSubclass(hwnd, Some(subclass_proc), SUBCLASS_ID, state as usize);
+    }
+}
+
+/// Build the Presets popup (Load submenu + Previous / Next / Save /
+/// Save As) and attach it to `menu_bar`. Returns
+/// `(presets_popup, load_submenu)` so the subclass proc can refresh
+/// them on open. Both are null if creation failed.
+unsafe fn build_presets_menu(menu_bar: HMENU, presets: &PresetController) -> (HMENU, HMENU) {
+    unsafe {
+        let presets_menu = CreatePopupMenu();
+        if presets_menu.is_null() {
+            return (std::ptr::null_mut(), std::ptr::null_mut());
+        }
+        let load_menu = CreatePopupMenu();
+        if !load_menu.is_null() {
+            populate_preset_load(load_menu, &presets.entries());
+            let load_label = wide("Load");
+            AppendMenuW(
+                presets_menu,
+                MF_POPUP,
+                load_menu as usize,
+                load_label.as_ptr(),
+            );
+        }
+        AppendMenuW(presets_menu, MF_SEPARATOR, 0, std::ptr::null());
+        let prev_label = wide("Previous Preset");
+        AppendMenuW(
+            presets_menu,
+            MF_STRING,
+            MENU_CMD_PRESET_PREV as usize,
+            prev_label.as_ptr(),
+        );
+        let next_label = wide("Next Preset");
+        AppendMenuW(
+            presets_menu,
+            MF_STRING,
+            MENU_CMD_PRESET_NEXT as usize,
+            next_label.as_ptr(),
+        );
+        AppendMenuW(presets_menu, MF_SEPARATOR, 0, std::ptr::null());
+        // No accelerator hint: Ctrl+S / Ctrl+Shift+S are dispatched by
+        // the window's own key handler. The Save title is set on open.
+        let save_label = wide("Save Preset");
+        AppendMenuW(
+            presets_menu,
+            MF_STRING,
+            MENU_CMD_PRESET_SAVE as usize,
+            save_label.as_ptr(),
+        );
+        let save_as_label = wide("Save Preset As...");
+        AppendMenuW(
+            presets_menu,
+            MF_STRING,
+            MENU_CMD_PRESET_SAVE_AS as usize,
+            save_as_label.as_ptr(),
+        );
+        let presets_label = wide("Presets");
+        AppendMenuW(
+            menu_bar,
+            MF_POPUP,
+            presets_menu as usize,
+            presets_label.as_ptr(),
+        );
+        (presets_menu, load_menu)
+    }
+}
+
+/// Fill (or refill) the Load submenu, one item per entry titled with
+/// its display label and command ID `BASE + index`. Dispatch reads
+/// the clicked item's label, so the index only has to stay unique.
+/// Entries beyond the command-ID range are dropped (logged).
+unsafe fn populate_preset_load(load_menu: HMENU, entries: &[crate::presets::PresetMenuEntry]) {
+    unsafe {
+        let count = GetMenuItemCount(load_menu);
+        for _ in 0..count {
+            DeleteMenu(load_menu, 0, MF_BYPOSITION);
+        }
+        let cap = usize::from(MENU_CMD_PRESET_LOAD_END - MENU_CMD_PRESET_LOAD_BASE) + 1;
+        if entries.is_empty() {
+            let none = wide("(no presets)");
+            AppendMenuW(load_menu, MF_STRING | MF_GRAYED, 0, none.as_ptr());
+            return;
+        }
+        if entries.len() > cap {
+            vlog!(
+                "presets: showing first {cap} of {} in the Load menu",
+                entries.len()
+            );
+        }
+        for (i, entry) in entries.iter().take(cap).enumerate() {
+            let label = wide(&entry.label);
+            AppendMenuW(
+                load_menu,
+                MF_STRING,
+                MENU_CMD_PRESET_LOAD_BASE as usize + i,
+                label.as_ptr(),
+            );
+        }
     }
 }
 
@@ -379,6 +505,32 @@ unsafe extern "system" fn subclass_proc(
                         u32::from(MENU_CMD_OUTPUT),
                         MF_BYCOMMAND | flag,
                     );
+                    return 0;
+                }
+
+                // Preset Load item: dispatch by the clicked item's
+                // label (re-enumeration may have shifted indices).
+                if (MENU_CMD_PRESET_LOAD_BASE..=MENU_CMD_PRESET_LOAD_END).contains(&cmd_id) {
+                    if let Some(label) = get_menu_string(state.hmenu_preset_load, u32::from(cmd_id))
+                    {
+                        state.presets.load_by_label(&label);
+                    }
+                    return 0;
+                }
+                if cmd_id == MENU_CMD_PRESET_PREV {
+                    state.presets.step(-1);
+                    return 0;
+                }
+                if cmd_id == MENU_CMD_PRESET_NEXT {
+                    state.presets.step(1);
+                    return 0;
+                }
+                if cmd_id == MENU_CMD_PRESET_SAVE {
+                    state.presets.save();
+                    return 0;
+                }
+                if cmd_id == MENU_CMD_PRESET_SAVE_AS {
+                    state.presets.save_as();
                     return 0;
                 }
 
@@ -496,6 +648,20 @@ unsafe extern "system" fn subclass_proc(
                     repopulate_midi_input_menu(popup, &names, current.as_deref());
                 } else if !state.hmenu_midi_channel.is_null() && popup == state.hmenu_midi_channel {
                     repopulate_midi_channel_menu(popup, state.midi.channel());
+                } else if !state.hmenu_presets.is_null() && popup == state.hmenu_presets {
+                    // Re-enumerate the library (saves this session
+                    // appear) and retitle Save to its target file.
+                    if !state.hmenu_preset_load.is_null() {
+                        populate_preset_load(state.hmenu_preset_load, &state.presets.entries());
+                    }
+                    let save_title = wide(&state.presets.save_menu_title());
+                    ModifyMenuW(
+                        state.hmenu_presets,
+                        u32::from(MENU_CMD_PRESET_SAVE),
+                        MF_BYCOMMAND | MF_STRING,
+                        MENU_CMD_PRESET_SAVE as usize,
+                        save_title.as_ptr(),
+                    );
                 } else if popup == state.hmenu_plugin {
                     if state.has_mic_item {
                         let on = state.input.is_enabled();

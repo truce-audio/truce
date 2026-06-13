@@ -162,12 +162,11 @@ where
         // Mic Input toggle and Input Device picker for non-effects
         // (input is silent for instruments / analyzers without
         // input routing).
+        let preset_ctrl =
+            crate::presets::PresetController::new::<P>(Arc::clone(&plugin), presets_dir.clone());
+
         #[cfg(target_os = "macos")]
         {
-            let preset_ctrl = crate::presets::PresetController::new::<P>(
-                Arc::clone(&plugin),
-                presets_dir.clone(),
-            );
             crate::menu_macos::install(
                 P::info().name,
                 is_effect,
@@ -194,6 +193,7 @@ where
                 input_ctrl.clone(),
                 output_ctrl.clone(),
                 midi_ctrl.clone(),
+                preset_ctrl.clone(),
             );
             // Fixed-size editors get the window locked to a
             // close-only frame so maximizing / dragging doesn't
@@ -268,13 +268,14 @@ where
             current_size: (lw, lh),
             #[cfg(target_os = "linux")]
             size_hints_scale: 0.0,
-            plugin,
+            _plugin: plugin,
             pending,
             transport,
             input_ctrl,
             output_ctrl,
             is_effect,
             octave_offset: 0,
+            presets: preset_ctrl,
             _midi_thread: midi_thread,
             _midi_ctrl: midi_ctrl,
             #[cfg(feature = "playback")]
@@ -311,7 +312,10 @@ where
     /// (e.g. dragging across monitors). Linux-only; unused elsewhere.
     #[cfg(target_os = "linux")]
     size_hints_scale: f64,
-    plugin: Arc<Mutex<P>>,
+    /// Held for the window's lifetime so the plugin outlives the
+    /// audio stream and the preset controller's clones; not read
+    /// directly (preset actions go through `presets`).
+    _plugin: Arc<Mutex<P>>,
     pending: Arc<ArrayQueue<MidiEvent>>,
     transport: Transport,
     /// Toggle handle for mic input (sends to the worker thread
@@ -324,6 +328,8 @@ where
     /// shortcut.
     is_effect: bool,
     octave_offset: i8,
+    /// Preset library handle - Save / Save As keyboard shortcuts.
+    presets: crate::presets::PresetController,
     /// Keeps the MIDI hot-plug thread alive for the lifetime of the
     /// window; dropped when the window closes.
     _midi_thread: MidiInputThread,
@@ -565,9 +571,15 @@ where
     P::Params: 'static,
 {
     fn handle_keyboard(&mut self, kb: &keyboard_types::KeyboardEvent) -> EventStatus {
-        // Ctrl-S / Cmd-S → quicksave the current state as a preset
+        // Ctrl/Cmd-S → quicksave; add Shift for Save As (name +
+        // location, with overwrite confirmation where the OS panel
+        // provides one).
         if kb.state == KeyState::Down && kb.code == Code::KeyS && is_mod_pressed(kb.modifiers) {
-            self.quicksave_preset();
+            if kb.modifiers.contains(Modifiers::SHIFT) {
+                self.presets.save_as();
+            } else {
+                self.presets.save();
+            }
             return EventStatus::Captured;
         }
 
@@ -656,26 +668,6 @@ where
             return EventStatus::Captured;
         }
         EventStatus::Ignored
-    }
-
-    /// Quicksave the live plugin state as a user-scope preset.
-    /// Cmd-S is a no-ceremony dump: it mints an "Untitled <ts>"
-    /// `.trucepreset` in the per-OS user root, where it shows up in
-    /// `--list-presets` and in any DAW that loads the same plugin.
-    /// A named save belongs to the (deferred) preset menu.
-    fn quicksave_preset(&self) {
-        // Saving only touches the user scope, so the factory root is
-        // irrelevant here - `store::<P>(None)` resolves the user root
-        // from `P::info()` alone.
-        let store = crate::presets::store::<P>(None);
-        let ts = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_secs());
-        let meta = truce_utils::preset::PresetMeta {
-            name: format!("Untitled {ts}"),
-            ..Default::default()
-        };
-        crate::presets::save_user::<P>(&store, &self.plugin, meta);
     }
 }
 
