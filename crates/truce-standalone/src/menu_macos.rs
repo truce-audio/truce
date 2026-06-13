@@ -40,12 +40,15 @@ use objc::{class, msg_send, sel, sel_impl};
 
 use crate::audio::{ChannelRoute, DeviceCache, InputController, OutputController};
 use crate::midi::{MidiChannel, MidiController};
+use crate::presets::PresetController;
 use crate::vlog;
 
 /// Heap-allocated state the Objective-C class points at via ivar.
 struct MenuState {
     input: InputController,
     output: OutputController,
+    /// Preset library handle backing the Presets menu.
+    presets: PresetController,
     /// Mic-toggle item - checkmark refreshed on Plugin-menu open.
     /// Null for instrument plugins (item not added).
     mic_item: *mut Object,
@@ -84,6 +87,7 @@ pub fn install(
     input: &InputController,
     output: &OutputController,
     midi: &MidiController,
+    presets: &PresetController,
 ) {
     unsafe {
         let app: *mut Object = msg_send![class!(NSApplication), sharedApplication];
@@ -97,7 +101,7 @@ pub fn install(
         // Settings menu (audio + MIDI) and its action target.
         let plugin_menu_item = make_menu_item("Settings");
         let plugin_menu = make_menu("Settings");
-        let target = make_menu_target(input.clone(), output.clone(), midi.clone());
+        let target = make_menu_target(input.clone(), output.clone(), midi.clone(), presets.clone());
 
         // Mic toggle (⌘I) - only meaningful for effects.
         let mic_item = if is_effect {
@@ -235,10 +239,41 @@ pub fn install(
 
         let _: () = msg_send![plugin_menu_item, setSubmenu: plugin_menu];
 
+        // Presets menu - Load submenu + Previous / Next / Save. The
+        // entry list is a static snapshot (see `PresetController`);
+        // the items act through the same target.
+        let presets_menu_item = make_menu_item("Presets");
+        let presets_menu = make_menu("Presets");
+
+        let load_item = make_menu_item("Load");
+        let _: () = msg_send![load_item, setTarget: target];
+        let load_menu = make_menu("Load");
+        populate_preset_load_menu(load_menu, target, presets.entries());
+        let _: () = msg_send![load_item, setSubmenu: load_menu];
+        let _: () = msg_send![presets_menu, addItem: load_item];
+
+        let nav_sep: *mut Object = msg_send![class!(NSMenuItem), separatorItem];
+        let _: () = msg_send![presets_menu, addItem: nav_sep];
+        let prev_item = make_toggle_item("Previous Preset", "[", sel!(prevPresetAction:), target);
+        let _: () = msg_send![presets_menu, addItem: prev_item];
+        let next_item = make_toggle_item("Next Preset", "]", sel!(nextPresetAction:), target);
+        let _: () = msg_send![presets_menu, addItem: next_item];
+
+        let save_sep: *mut Object = msg_send![class!(NSMenuItem), separatorItem];
+        let _: () = msg_send![presets_menu, addItem: save_sep];
+        // No key equivalent: Cmd-S is already handled by the window's
+        // own key handler (`quicksave_preset`); a menu item with the
+        // same shortcut would shadow it.
+        let save_item = make_toggle_item("Save Preset", "", sel!(savePresetAction:), target);
+        let _: () = msg_send![presets_menu, addItem: save_item];
+
+        let _: () = msg_send![presets_menu_item, setSubmenu: presets_menu];
+
         // Main menu - the one NSApp draws.
         let main_menu = make_menu("");
         let _: () = msg_send![main_menu, addItem: app_menu_item];
         let _: () = msg_send![main_menu, addItem: plugin_menu_item];
+        let _: () = msg_send![main_menu, addItem: presets_menu_item];
         let _: () = msg_send![app, setMainMenu: main_menu];
     }
 }
@@ -308,6 +343,43 @@ unsafe fn add_app_menu_items(menu: *mut Object, app_name: &str) {
 /// Replace the contents of `menu` with a fresh device list. Items
 /// fire `action` on `target`; the chosen item gets a checkmark
 /// when its title matches `current`.
+/// Fill the Presets > Load submenu, one tagged item per entry
+/// (tag = index into `PresetController::entries`). `loadPresetAction:`
+/// reads the tag. Empty libraries get a disabled placeholder.
+unsafe fn populate_preset_load_menu(
+    menu: *mut Object,
+    target: *mut Object,
+    entries: &[crate::presets::PresetMenuEntry],
+) {
+    let empty = unsafe { ns_string("") };
+    if entries.is_empty() {
+        let title = unsafe { ns_string("(no presets)") };
+        let item: *mut Object = msg_send![class!(NSMenuItem), alloc];
+        let item: *mut Object = msg_send![
+            item,
+            initWithTitle: title
+            action: sel!(noopAction:)
+            keyEquivalent: empty
+        ];
+        let _: () = msg_send![item, setEnabled: NO];
+        let _: () = msg_send![menu, addItem: item];
+        return;
+    }
+    for (i, entry) in entries.iter().enumerate() {
+        let title = unsafe { ns_string(&entry.label) };
+        let item: *mut Object = msg_send![class!(NSMenuItem), alloc];
+        let item: *mut Object = msg_send![
+            item,
+            initWithTitle: title
+            action: sel!(loadPresetAction:)
+            keyEquivalent: empty
+        ];
+        let _: () = msg_send![item, setTarget: target];
+        let _: () = msg_send![item, setTag: i64::try_from(i).unwrap_or(0)];
+        let _: () = msg_send![menu, addItem: item];
+    }
+}
+
 unsafe fn populate_device_menu(
     menu: *mut Object,
     target: *mut Object,
@@ -852,6 +924,62 @@ fn ensure_class() -> &'static Class {
             noop_action as extern "C" fn(&Object, Sel, *mut Object),
         );
 
+        // Preset: a Load-submenu item chosen (tag = entry index).
+        extern "C" fn load_preset_action(this: &Object, _: Sel, sender: *mut Object) {
+            unsafe {
+                let Some(state) = state_from(this) else {
+                    return;
+                };
+                let tag: i64 = msg_send![sender, tag];
+                if let Ok(index) = usize::try_from(tag) {
+                    let _ = state.presets.load_index(index);
+                }
+            }
+        }
+        decl.add_method(
+            sel!(loadPresetAction:),
+            load_preset_action as extern "C" fn(&Object, Sel, *mut Object),
+        );
+
+        // Preset: step to the next entry, wrapping.
+        extern "C" fn next_preset_action(this: &Object, _: Sel, _sender: *mut Object) {
+            unsafe {
+                if let Some(state) = state_from(this) {
+                    state.presets.step(1);
+                }
+            }
+        }
+        decl.add_method(
+            sel!(nextPresetAction:),
+            next_preset_action as extern "C" fn(&Object, Sel, *mut Object),
+        );
+
+        // Preset: step to the previous entry, wrapping.
+        extern "C" fn prev_preset_action(this: &Object, _: Sel, _sender: *mut Object) {
+            unsafe {
+                if let Some(state) = state_from(this) {
+                    state.presets.step(-1);
+                }
+            }
+        }
+        decl.add_method(
+            sel!(prevPresetAction:),
+            prev_preset_action as extern "C" fn(&Object, Sel, *mut Object),
+        );
+
+        // Preset: quicksave the current state to the user scope.
+        extern "C" fn save_preset_action(this: &Object, _: Sel, _sender: *mut Object) {
+            unsafe {
+                if let Some(state) = state_from(this) {
+                    state.presets.save();
+                }
+            }
+        }
+        decl.add_method(
+            sel!(savePresetAction:),
+            save_preset_action as extern "C" fn(&Object, Sel, *mut Object),
+        );
+
         decl.register();
     });
     Class::get("TruceMenuTarget").unwrap()
@@ -872,6 +1000,7 @@ unsafe fn make_menu_target(
     input: InputController,
     output: OutputController,
     midi: MidiController,
+    presets: PresetController,
 ) -> *mut Object {
     let cls = ensure_class();
     let target: *mut Object = msg_send![cls, alloc];
@@ -879,6 +1008,7 @@ unsafe fn make_menu_target(
     let state = Box::into_raw(Box::new(MenuState {
         input,
         output,
+        presets,
         mic_item: std::ptr::null_mut(),
         output_item: std::ptr::null_mut(),
         input_device_menu: std::ptr::null_mut(),

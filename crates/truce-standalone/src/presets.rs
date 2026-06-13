@@ -174,3 +174,197 @@ fn scope_label(scope: PresetScope) -> &'static str {
         PresetScope::Pack => "pack",
     }
 }
+
+// ---------------------------------------------------------------------------
+// PresetController - the native menu's type-erased handle
+// ---------------------------------------------------------------------------
+
+/// One row in the preset menu: a display label and the uri to load.
+pub struct PresetMenuEntry {
+    pub label: String,
+    pub uri: String,
+}
+
+/// A `Clone`, plugin-type-erased handle the native menus
+/// (`menu_macos` / `menu_windows`) store and act on - the preset
+/// analogue of `InputController` / `OutputController`. All the
+/// `P`-specific work (store construction, locking, applying) is
+/// captured in closures at build time, so the menu code stays
+/// generic-free. The entry list is a snapshot taken at construction;
+/// presets saved during the session don't appear until relaunch
+/// (dynamic re-enumeration would need menu repopulation on open,
+/// deferred). Main-thread only - the native menu never crosses
+/// threads, so the closures need no `Send`/`Sync` bound.
+#[derive(Clone)]
+pub struct PresetController {
+    inner: std::rc::Rc<PresetControllerInner>,
+}
+
+struct PresetControllerInner {
+    entries: Vec<PresetMenuEntry>,
+    current: std::cell::Cell<Option<usize>>,
+    load: Box<dyn Fn(&str) -> bool>,
+    save: Box<dyn Fn()>,
+}
+
+impl PresetController {
+    /// Build a controller for `plugin`, snapshotting the library and
+    /// capturing the load / save operations. `presets_dir` is the
+    /// `--presets-dir` factory-root override (else the store finds
+    /// the installed bundle).
+    #[must_use]
+    pub fn new<P: PluginExport>(plugin: Arc<Mutex<P>>, presets_dir: Option<PathBuf>) -> Self {
+        let entries = store::<P>(presets_dir.as_deref())
+            .enumerate()
+            .into_iter()
+            .map(|p| PresetMenuEntry {
+                label: match &p.category {
+                    Some(c) => format!("{c} / {}", p.name),
+                    None => p.name.clone(),
+                },
+                uri: p.uri,
+            })
+            .collect();
+
+        let load_plugin = Arc::clone(&plugin);
+        // Move `presets_dir` into the load closure (its last use) so
+        // the controller owns the factory-root override for its life.
+        let load = Box::new(move |uri: &str| {
+            load_into(&store::<P>(presets_dir.as_deref()), &load_plugin, uri)
+        });
+
+        let save = Box::new(move || {
+            let ts = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs());
+            let meta = truce_utils::preset::PresetMeta {
+                name: format!("Untitled {ts}"),
+                ..Default::default()
+            };
+            // Saving only touches the user scope; factory root is
+            // irrelevant, so `None`.
+            save_user::<P>(&store::<P>(None), &plugin, meta);
+        });
+
+        Self {
+            inner: std::rc::Rc::new(PresetControllerInner {
+                entries,
+                current: std::cell::Cell::new(None),
+                load,
+                save,
+            }),
+        }
+    }
+
+    #[must_use]
+    pub fn entries(&self) -> &[PresetMenuEntry] {
+        &self.inner.entries
+    }
+
+    /// Load the preset at `index`; updates the current-selection
+    /// cursor on success. Out-of-range is a no-op.
+    #[must_use]
+    pub fn load_index(&self, index: usize) -> bool {
+        let Some(entry) = self.inner.entries.get(index) else {
+            return false;
+        };
+        if (self.inner.load)(&entry.uri) {
+            self.inner.current.set(Some(index));
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Step the selection by `delta`, wrapping, and load it. First
+    /// use (no current selection) starts at the first / last entry.
+    pub fn step(&self, delta: i32) {
+        let n = self.inner.entries.len();
+        if n == 0 {
+            return;
+        }
+        let next = match self.inner.current.get() {
+            Some(cur) => {
+                #[allow(
+                    clippy::cast_possible_wrap,
+                    clippy::cast_possible_truncation,
+                    clippy::cast_sign_loss
+                )]
+                let idx = (cur as i32 + delta).rem_euclid(n as i32) as usize;
+                idx
+            }
+            None if delta < 0 => n - 1,
+            None => 0,
+        };
+        let _ = self.load_index(next);
+    }
+
+    pub fn save(&self) {
+        (self.inner.save)();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    fn controller(labels: &[&str], log: Rc<RefCell<Vec<String>>>) -> PresetController {
+        let entries = labels
+            .iter()
+            .map(|l| PresetMenuEntry {
+                label: (*l).to_string(),
+                uri: format!("truce-preset://v/p/{l}"),
+            })
+            .collect();
+        PresetController {
+            inner: Rc::new(PresetControllerInner {
+                entries,
+                current: std::cell::Cell::new(None),
+                load: Box::new(move |uri: &str| {
+                    log.borrow_mut().push(uri.to_string());
+                    true
+                }),
+                save: Box::new(|| {}),
+            }),
+        }
+    }
+
+    #[test]
+    fn load_index_bounds_and_cursor() {
+        let log = Rc::new(RefCell::new(Vec::new()));
+        let c = controller(&["a", "b", "c"], Rc::clone(&log));
+        assert!(c.load_index(1));
+        assert!(!c.load_index(9));
+        assert_eq!(*log.borrow(), vec!["truce-preset://v/p/b"]);
+    }
+
+    #[test]
+    fn step_wraps_both_directions() {
+        let log = Rc::new(RefCell::new(Vec::new()));
+        let c = controller(&["a", "b", "c"], Rc::clone(&log));
+        c.step(1);
+        c.step(1);
+        c.step(-1);
+        c.step(-1);
+        assert_eq!(
+            *log.borrow(),
+            vec![
+                "truce-preset://v/p/a",
+                "truce-preset://v/p/b",
+                "truce-preset://v/p/a",
+                "truce-preset://v/p/c",
+            ]
+        );
+    }
+
+    #[test]
+    fn step_on_empty_is_noop() {
+        let log = Rc::new(RefCell::new(Vec::new()));
+        let c = controller(&[], Rc::clone(&log));
+        c.step(1);
+        c.step(-1);
+        assert!(log.borrow().is_empty());
+    }
+}

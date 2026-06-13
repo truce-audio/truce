@@ -81,11 +81,6 @@ pub(crate) struct FactoryPresets {
     presets: Vec<EmittablePreset>,
 }
 
-/// Load and canonicalise the plugin's factory presets, stamping
-/// missing uuids back into the authored files. Returns `Ok(None)`
-/// when the plugin has no preset library: no `[plugin.presets]` in
-/// truce.toml and no `presets/` directory next to the crate. An
-/// explicit `[plugin.presets]` with a missing directory is an error.
 /// The plugin's authored-library directory (`presets/` next to the
 /// crate, or the `[plugin.presets]` override), whether or not it
 /// exists yet. `None` when the crate dir can't be located.
@@ -116,6 +111,11 @@ pub(crate) fn validate_user_dir(p: &PluginDef) -> Res {
     Ok(())
 }
 
+/// Load and canonicalise the plugin's factory presets, stamping
+/// missing uuids back into the authored files. Returns `Ok(None)`
+/// when the plugin has no preset library: no `[plugin.presets]` in
+/// truce.toml and no `presets/` directory next to the crate. An
+/// explicit `[plugin.presets]` with a missing directory is an error.
 pub(crate) fn load_factory_presets(
     root: &Path,
     p: &PluginDef,
@@ -257,6 +257,51 @@ pub(crate) fn emit_trucepreset_tree(
         dest_root.display()
     ));
     Ok(())
+}
+
+/// Emit `p`'s factory presets into the location a standalone host at
+/// `exec_path` resolves at runtime (`truce_standalone::presets::
+/// installed_factory_root`): `<App>.app/Contents/Resources/Presets`
+/// on macOS, a sibling `<bin>.presets/` directory otherwise. No-op
+/// when the plugin ships no authored library. Shared by
+/// `cargo truce run` (dev loop) and `stage_standalone` (packaging),
+/// so the run-staged binary and the installed app find factory
+/// presets through the same path - no `--presets-dir` needed.
+pub(crate) fn emit_standalone_factory(
+    root: &Path,
+    p: &PluginDef,
+    config: &Config,
+    exec_path: &Path,
+) -> Res {
+    let Some(fp) = load_factory_presets(root, p, config)? else {
+        return Ok(());
+    };
+    let dest = standalone_factory_root(exec_path);
+    emit_trucepreset_tree(&fp, &dest, false, &format!("{}-standalone", p.bundle_id))
+}
+
+/// The factory-preset directory for a staged standalone executable,
+/// mirroring `installed_factory_root` on the standalone side so both
+/// agree without a shared constant across the crate boundary.
+fn standalone_factory_root(exec_path: &Path) -> PathBuf {
+    // macOS `.app`: .../Contents/MacOS/<bin> -> .../Contents/Resources/Presets
+    #[cfg(target_os = "macos")]
+    if let Some(macos) = exec_path.parent()
+        && macos.file_name() == Some(OsStr::new("MacOS"))
+        && let Some(contents) = macos.parent()
+    {
+        return contents.join("Resources/Presets");
+    }
+    // Bare binary (Linux / Windows, and the macOS run fallback):
+    // sibling `<stem>.presets/`.
+    let stem = exec_path.file_stem().map_or_else(
+        || "plugin".to_string(),
+        |s| s.to_string_lossy().into_owned(),
+    );
+    exec_path
+        .parent()
+        .unwrap_or(Path::new("."))
+        .join(format!("{stem}.presets"))
 }
 
 /// Emit `.vstpreset` files into the OS preset location hosts scan.

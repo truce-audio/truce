@@ -590,6 +590,11 @@ pub(crate) fn stage_standalone(root: &Path, p: &PluginDef, config: &Config, stag
 
     write_standalone_info_plist(&staged_app, p, &bin_stem, &config.vendor, icon_present)?;
 
+    // Factory presets into Contents/Resources/Presets, before
+    // codesign so the seal covers them. The installed app resolves
+    // them through its own `installed_factory_root`.
+    crate::commands::install::presets::emit_standalone_factory(root, p, config, &exe_dst)?;
+
     codesign_bundle(
         staged_app.to_str().unwrap(),
         &crate::application_identity(),

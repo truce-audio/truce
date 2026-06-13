@@ -128,6 +128,13 @@ pub(crate) fn cmd_run(args: &[String]) -> Res {
                 crate::windows_manifest::embed_icon(&staged, icon)?;
             }
         }
+
+        // Stage the plugin's factory presets next to the just-staged
+        // binary so the standalone resolves them through its own
+        // `installed_factory_root` - the dev loop gets factory presets
+        // without an install and without a `--presets-dir` flag.
+        let exec_path = exec_path_inside_stage(&staged, &bin_stem);
+        super::install::presets::emit_standalone_factory(&root, plugin, &config, &exec_path)?;
     }
 
     if !staged.exists() {

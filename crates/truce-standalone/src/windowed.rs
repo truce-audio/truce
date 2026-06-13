@@ -132,6 +132,9 @@ where
     #[cfg(feature = "playback")]
     let capture = audio_handles.capture.take();
 
+    // Owned copy for the `move` editor closure - `opts` is a borrow
+    // that can't escape into it.
+    let presets_dir = opts.presets_dir.clone();
     Window::open_blocking(window_opts, move |window| {
         let truce_parent = match window.raw_window_handle() {
             RwhHandle::AppKit(h) => RawWindowHandle::AppKit(h.ns_view),
@@ -160,14 +163,21 @@ where
         // (input is silent for instruments / analyzers without
         // input routing).
         #[cfg(target_os = "macos")]
-        crate::menu_macos::install(
-            P::info().name,
-            is_effect,
-            channels,
-            &input_ctrl,
-            &output_ctrl,
-            &midi_ctrl,
-        );
+        {
+            let preset_ctrl = crate::presets::PresetController::new::<P>(
+                Arc::clone(&plugin),
+                presets_dir.clone(),
+            );
+            crate::menu_macos::install(
+                P::info().name,
+                is_effect,
+                channels,
+                &input_ctrl,
+                &output_ctrl,
+                &midi_ctrl,
+                &preset_ctrl,
+            );
+        }
 
         // Windows: same idea, but the menu bar lives inside the
         // window's non-client area, so the install path also grows
