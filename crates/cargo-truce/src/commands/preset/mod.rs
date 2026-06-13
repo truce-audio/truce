@@ -121,6 +121,16 @@ impl PluginCtx<'_> {
         truce_build::presets::read_param_annotations(&sidecars)
     }
 
+    /// `id -> lv2:symbol` from the build sidecar, for LV2 preset
+    /// `pset:value` port entries. Empty when the plugin hasn't been
+    /// built since `symbols.toml` landed.
+    fn symbols(&self) -> BTreeMap<u32, String> {
+        let sidecars = truce_build::target_dir(&self.root)
+            .join("lv2-meta")
+            .join(&self.p.crate_name);
+        truce_build::presets::read_param_symbols(&sidecars)
+    }
+
     fn store(&self) -> PresetStore {
         PresetStore::new(
             &self.config.vendor.name,
@@ -379,7 +389,12 @@ fn encode_native(
             } else {
                 format!("{}/{}", meta.category, meta.name)
             };
-            truce_build::lv2::render_preset_ttl(&uri, &meta.uuid, &label, &blob).into_bytes()
+            let symbols = ctx.symbols();
+            let ports: Vec<(String, f64)> = params
+                .iter()
+                .filter_map(|(id, v)| symbols.get(id).map(|sym| (sym.clone(), *v)))
+                .collect();
+            truce_build::lv2::render_preset_ttl(&uri, &meta.uuid, &label, &blob, &ports).into_bytes()
         }
         PresetFormat::AuthoredToml => {
             render_preset_toml(&meta, params, extra, &ctx.annotations()).into_bytes()
@@ -603,6 +618,9 @@ fn cmd_export(args: &[String]) -> Res {
     let mut zip = zip::ZipWriter::new(file);
     let options = zip::write::SimpleFileOptions::default();
     let zip_err = |e: zip::result::ZipError| format!("{out}: {e}");
+    // `id -> lv2:symbol` for the LV2 presets' `pset:value` port entries
+    // (read once for the whole pack).
+    let symbols = ctx.symbols();
 
     for preset in &presets {
         let blob = preset.state_blob(ctx.plugin_id_hash);
@@ -648,8 +666,16 @@ fn cmd_export(args: &[String]) -> Res {
         } else {
             format!("{}/{}", preset.meta.category, preset.meta.name)
         };
+        let ports: Vec<(String, f64)> = deserialize_state(&blob, ctx.plugin_id_hash)
+            .map_or_else(Vec::new, |s| {
+                s.params
+                    .iter()
+                    .filter_map(|(id, v)| symbols.get(id).map(|sym| (sym.clone(), *v)))
+                    .collect()
+            });
         zip.write_all(
-            truce_build::lv2::render_preset_ttl(&uri, &preset.meta.uuid, &label, &blob).as_bytes(),
+            truce_build::lv2::render_preset_ttl(&uri, &preset.meta.uuid, &label, &blob, &ports)
+                .as_bytes(),
         )?;
     }
     zip.finish().map_err(zip_err)?;

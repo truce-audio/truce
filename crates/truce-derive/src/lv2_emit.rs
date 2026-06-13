@@ -189,6 +189,16 @@ pub(crate) fn emit_root_impl(input: TokenStream) -> TokenStream {
     let _ = std::fs::write(sidecar_dir.join("plugin.ttl"), &plugin_ttl);
     let _ = std::fs::write(sidecar_dir.join("so_name.txt"), &bin_name);
 
+    // Persist the resolved `id -> lv2:symbol` table so the install-time
+    // preset emitter can write `lv2:port` / `pset:value` entries with
+    // the exact symbols this manifest declared (collision resolution
+    // needs the full param list, which only exists here).
+    let symbols = truce_build::lv2::resolved_param_symbols(&bundle.params);
+    let _ = std::fs::write(
+        sidecar_dir.join("symbols.toml"),
+        truce_build::presets::render_param_symbols(&symbols),
+    );
+
     TokenStream::new()
 }
 

@@ -23,6 +23,14 @@ Notable changes per release.
   bigger than the editor anyway, the GUI now sits centered instead of
   pinned to a corner, and the freed space is painted black rather than
   showing glitched leftovers.
+- **LV2 presets now apply in REAPER.** Selecting an LV2 factory preset
+  in REAPER listed it but didn't change anything. LV2 presets now carry
+  each parameter as a control-port value (`pset:value`), not only an
+  opaque `state:state` blob, so port-based hosts apply them through the
+  control ports — which updates the editor, the host's own parameter
+  display, and the DSP together. State restore also gained a base64
+  fallback for hosts that hand back the preset's `xsd:base64Binary`
+  literal undecoded (REAPER) instead of as a raw chunk.
 
 ## 0.58.1
 

@@ -638,10 +638,8 @@ pub unsafe fn extension_data<P: PluginExport>(uri: *const c_char) -> *const c_vo
             return ptr::null();
         };
         if uri == state::LV2_STATE__INTERFACE_URI {
-            eprintln!("truce-lv2: extension_data({uri:?}) -> State interface (save/restore)");
             return ptr::from_ref(state::state_interface::<P>()).cast::<c_void>();
         }
-        eprintln!("truce-lv2: extension_data({uri:?}) -> not provided");
         ptr::null()
     }
 }

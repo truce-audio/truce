@@ -466,6 +466,24 @@ fn emit_control_port(f: &mut String, index: u32, p: &Lv2Param, symbol: &str) {
     }
 }
 
+/// Public, id-paired view of [`resolve_param_symbols`]: the exact
+/// `lv2:symbol` the manifest assigns each control port, paired with its
+/// truce param id, in declaration order. The derive macro persists this
+/// to `lv2-meta/<pkg>/symbols.toml` (via
+/// [`crate::presets::render_param_symbols`]) so the install-time preset
+/// emitter can turn a preset's param ids into `lv2:port` / `pset:value`
+/// entries that port-based hosts (REAPER) apply through the control
+/// ports - which also refreshes the host's param display and notifies
+/// the UI, unlike a `state:state`-only preset.
+#[must_use]
+pub fn resolved_param_symbols(params: &[Lv2Param]) -> Vec<(u32, String)> {
+    params
+        .iter()
+        .map(|p| p.id)
+        .zip(resolve_param_symbols(params))
+        .collect()
+}
+
 fn resolve_param_symbols(params: &[Lv2Param]) -> Vec<String> {
     let mut out = Vec::with_capacity(params.len());
     let mut seen: HashSet<String> = HashSet::with_capacity(params.len());
@@ -564,15 +582,31 @@ pub const PRESET_MANIFEST_PREFIXES: &str =
 
 /// Render one factory preset's TTL file.
 ///
-/// Truce params are LV2 *parameters* (patch properties), not control
-/// ports, so the preset's content is the canonical state envelope
-/// delivered through the LV2 State extension: a `state:state` block
-/// whose single property is the same `urn:truce:state-blob` chunk the
-/// runtime's `save()` stores. lilv maps the `xsd:base64Binary`
-/// literal back to an `atom:Chunk` on restore, which is exactly what
-/// `truce-lv2`'s `restore()` retrieves.
+/// The preset carries the same param values two ways, because hosts
+/// apply LV2 presets differently:
+/// - `state:state` - the canonical state envelope (the
+///   `urn:truce:state-blob` chunk `save()` stores) as an
+///   `xsd:base64Binary` literal. lilv hosts (Ardour, Carla, jalv) map
+///   it back to an `atom:Chunk` and hand it to `restore()`.
+/// - `lv2:port` / `pset:value` - the per-control-port plain values in
+///   `port_values` (`(symbol, value)`, symbols from
+///   [`resolved_param_symbols`]). Port-based hosts (REAPER) apply
+///   presets through the control ports, which is the *only* path that
+///   also refreshes the host's own param display and pushes
+///   `port_event`s to the (separate-instance) UI. A `state:state`-only
+///   preset left REAPER's editor showing stale values.
+///
+/// `port_values` may be empty (e.g. when symbols aren't available);
+/// the preset then degrades to `state:state` only, which still works
+/// on lilv hosts.
 #[must_use]
-pub fn render_preset_ttl(plugin_uri: &str, uuid: &str, label: &str, state_blob: &[u8]) -> String {
+pub fn render_preset_ttl(
+    plugin_uri: &str,
+    uuid: &str,
+    label: &str,
+    state_blob: &[u8],
+    port_values: &[(String, f64)],
+) -> String {
     let mut f = String::new();
     let _ = writeln!(f, "@prefix lv2:   <http://lv2plug.in/ns/lv2core#> .");
     let _ = writeln!(f, "@prefix pset:  <http://lv2plug.in/ns/ext/presets#> .");
@@ -587,6 +621,14 @@ pub fn render_preset_ttl(plugin_uri: &str, uuid: &str, label: &str, state_blob: 
     let _ = writeln!(f, "    a pset:Preset ;");
     let _ = writeln!(f, "    lv2:appliesTo <{plugin_uri}> ;");
     let _ = writeln!(f, "    rdfs:label \"{}\" ;", escape_turtle(label));
+    // Repeating the `lv2:port` predicate (one blank node per port) is
+    // valid Turtle and how lilv itself serialises port presets.
+    for (symbol, value) in port_values {
+        let _ = writeln!(f, "    lv2:port [");
+        let _ = writeln!(f, "        lv2:symbol \"{}\" ;", escape_turtle(symbol));
+        let _ = writeln!(f, "        pset:value {}", fmt_pset_value(*value));
+        let _ = writeln!(f, "    ] ;");
+    }
     let _ = writeln!(f, "    state:state [");
     let _ = writeln!(
         f,
@@ -595,6 +637,17 @@ pub fn render_preset_ttl(plugin_uri: &str, uuid: &str, label: &str, state_blob: 
     );
     let _ = writeln!(f, "    ] .");
     f
+}
+
+/// Format a plain param value for a `pset:value` literal: always with
+/// a decimal point so it reads as a number (not an `xsd:integer`),
+/// matching how the control ports' `lv2:default` would be parsed.
+fn fmt_pset_value(v: f64) -> String {
+    if v.is_finite() && v.fract() == 0.0 {
+        format!("{v:.1}")
+    } else {
+        format!("{v}")
+    }
 }
 
 #[cfg(test)]

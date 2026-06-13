@@ -324,9 +324,12 @@ mod tests {
             "u-1",
             "pad/Glass",
             &blob,
+            &[("cutoff".to_string(), 8000.0), ("reso".to_string(), 0.5)],
         );
         let decoded = decode(PresetFormat::Lv2, ttl.as_bytes()).unwrap();
         assert_eq!(decoded.name, "pad/Glass");
+        // The `state:state` blob still round-trips even with port
+        // values present (the decoder reads the chunk, ignoring ports).
         assert_eq!(decoded.blob, blob);
     }
 

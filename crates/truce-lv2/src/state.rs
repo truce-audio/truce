@@ -104,7 +104,6 @@ unsafe extern "C" fn save_cb<P: PluginExport>(
     _features: *const *const crate::types::LV2Feature,
 ) -> u32 {
     unsafe {
-        eprintln!("truce-lv2: save() called (instance={instance:p})");
         if instance.is_null() {
             return 0;
         }
@@ -115,14 +114,7 @@ unsafe extern "C" fn save_cb<P: PluginExport>(
 
         let key = inst.urid_map.intern(TRUCE_STATE_KEY_URI);
         let chunk_urid = inst.urid_map.atom_chunk;
-        eprintln!(
-            "truce-lv2: save() storing {} param(s), blob={} bytes, key urid={key}, \
-             atom:Chunk urid={chunk_urid}",
-            ids.len(),
-            blob.len()
-        );
         if key == 0 || chunk_urid == 0 {
-            eprintln!("truce-lv2: save() ABORT - host could not map key or atom:Chunk URID");
             return 0;
         }
         let flags = LV2_STATE_IS_POD | LV2_STATE_IS_PORTABLE;
@@ -146,15 +138,12 @@ unsafe extern "C" fn restore_cb<P: PluginExport>(
     _features: *const *const crate::types::LV2Feature,
 ) -> u32 {
     unsafe {
-        eprintln!("truce-lv2: restore() called (instance={instance:p})");
         if instance.is_null() {
             return 0;
         }
         let inst = &mut *instance.cast::<Lv2Instance<P>>();
         let key = inst.urid_map.intern(TRUCE_STATE_KEY_URI);
-        eprintln!("truce-lv2: restore() interned key {TRUCE_STATE_KEY_URI:?} -> urid {key}");
         if key == 0 {
-            eprintln!("truce-lv2: restore() ABORT - host could not map the state-blob key URID");
             return 0;
         }
         let mut size = 0usize;
@@ -167,21 +156,7 @@ unsafe extern "C" fn restore_cb<P: PluginExport>(
             &raw mut type_,
             &raw mut state_flags,
         );
-        eprintln!(
-            "truce-lv2: restore() retrieve -> data={data:p} size={size} type_urid={type_} \
-             (atom:Chunk urid={}) flags={state_flags}",
-            inst.urid_map.atom_chunk
-        );
         if data.is_null() || size == 0 {
-            // This is the usual "preset shows but doesn't apply" symptom:
-            // the host invoked restore() but handed back no value for our
-            // state-blob key. Means the host didn't carry the preset's
-            // `state:state` block into the retrieve closure (REAPER's LV2
-            // host doesn't apply `state:state` presets the way lilv does).
-            eprintln!(
-                "truce-lv2: restore() ABORT - host returned no '{TRUCE_STATE_KEY_URI}' value; \
-                 the preset's state:state block was not delivered to restore()"
-            );
             return 0;
         }
         let slice = core::slice::from_raw_parts(data.cast::<u8>(), size);
@@ -192,35 +167,15 @@ unsafe extern "C" fn restore_cb<P: PluginExport>(
         // *text* (a string literal, not atom:Chunk, often NUL-padded) -
         // so when the raw bytes aren't our envelope, strip anything
         // outside the base64 alphabet and decode before retrying.
-        let raw = deserialize_state(slice, inst.plugin_id_hash);
-        let used_fallback = raw.is_none();
-        let state = raw.or_else(|| decode_base64_envelope(slice, inst.plugin_id_hash));
-        match state {
-            Some(state) => {
-                let n = state.params.len();
-                inst.plugin.params().restore_values(&state.params);
-                inst.plugin.params().snap_smoothers();
-                eprintln!(
-                    "truce-lv2: restore() applied {n} param value(s){}; extra_state={}",
-                    if used_fallback {
-                        " (via base64-text fallback)"
-                    } else {
-                        ""
-                    },
-                    state.extra.is_some()
-                );
-                if let Some(extra) = state.extra
-                    && let Err(e) = inst.plugin.load_state(&extra)
-                {
-                    eprintln!("truce: lv2 load_state failed: {e}");
-                }
-            }
-            None => {
-                eprintln!(
-                    "truce-lv2: restore() ABORT - deserialize_state failed even after base64 \
-                     fallback (plugin_id_hash {} mismatch or corrupt blob), size={size}",
-                    inst.plugin_id_hash
-                );
+        let state = deserialize_state(slice, inst.plugin_id_hash)
+            .or_else(|| decode_base64_envelope(slice, inst.plugin_id_hash));
+        if let Some(state) = state {
+            inst.plugin.params().restore_values(&state.params);
+            inst.plugin.params().snap_smoothers();
+            if let Some(extra) = state.extra
+                && let Err(e) = inst.plugin.load_state(&extra)
+            {
+                eprintln!("truce: lv2 load_state failed: {e}");
             }
         }
         LV2_STATE_SUCCESS

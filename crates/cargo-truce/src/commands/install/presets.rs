@@ -47,6 +47,12 @@ pub(crate) struct EmittablePreset {
     blob: Vec<u8>,
     /// Source file stem; per-format files reuse it.
     stem: String,
+    /// Per-control-port plain values `(lv2:symbol, value)` decoded from
+    /// `blob`, for the LV2 preset's `pset:value` entries. Empty when
+    /// the `symbols.toml` sidecar is missing (plugin not rebuilt since
+    /// this landed) or the blob can't be decoded; the LV2 preset then
+    /// falls back to `state:state` only.
+    lv2_ports: Vec<(String, f64)>,
 }
 
 impl EmittablePreset {
@@ -146,12 +152,13 @@ pub(crate) fn load_factory_presets(
         return Ok(None);
     }
 
-    let annotations = truce_build::presets::read_param_annotations(
-        &truce_build::target_dir(root)
-            .join("lv2-meta")
-            .join(&p.crate_name),
-    );
+    let sidecar_dir = truce_build::target_dir(root)
+        .join("lv2-meta")
+        .join(&p.crate_name);
+    let annotations = truce_build::presets::read_param_annotations(&sidecar_dir);
     let names = truce_build::presets::ParamNameMap::from_annotations(&annotations);
+    // `id -> lv2:symbol` for the LV2 preset's `pset:value` port entries.
+    let symbols = truce_build::presets::read_param_symbols(&sidecar_dir);
     let authored = truce_build::presets::read_presets_dir(&dir, true, Some(&names))?;
     if authored.is_empty() {
         return Ok(None);
@@ -160,10 +167,24 @@ pub(crate) fn load_factory_presets(
     let hash = state::hash_plugin_id(&truce_build::plugin_id(&config.vendor.id, &p.name));
     let presets = authored
         .into_iter()
-        .map(|a| EmittablePreset {
-            blob: a.state_blob(hash),
-            meta: a.meta,
-            stem: a.stem,
+        .map(|a| {
+            let blob = a.state_blob(hash);
+            // Decode the envelope's plain param values and pair each
+            // with its control-port symbol. `state:state` still carries
+            // the full envelope; this is the redundant port-value path
+            // that port-based hosts (REAPER) apply through.
+            let lv2_ports = state::deserialize_state(&blob, hash).map_or_else(Vec::new, |s| {
+                s.params
+                    .iter()
+                    .filter_map(|(id, v)| symbols.get(id).map(|sym| (sym.clone(), *v)))
+                    .collect()
+            });
+            EmittablePreset {
+                blob,
+                meta: a.meta,
+                stem: a.stem,
+                lv2_ports,
+            }
         })
         .collect();
     Ok(Some(FactoryPresets { presets }))
@@ -469,7 +490,13 @@ pub(crate) fn emit_lv2_presets(fp: &FactoryPresets, bundle: &Path, plugin_uri: &
             // visible the way subdirectories do it elsewhere.
             format!("{}/{}", pr.meta.category, pr.meta.name)
         };
-        let ttl = truce_build::lv2::render_preset_ttl(plugin_uri, &pr.meta.uuid, &label, &pr.blob);
+        let ttl = truce_build::lv2::render_preset_ttl(
+            plugin_uri,
+            &pr.meta.uuid,
+            &label,
+            &pr.blob,
+            &pr.lv2_ports,
+        );
         fs_ctx::write(presets_dir.join(&file_name), &ttl)?;
         manifest_additions.push_str(&truce_build::lv2::render_preset_manifest_entry(
             plugin_uri,
