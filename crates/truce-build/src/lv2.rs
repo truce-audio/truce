@@ -466,7 +466,7 @@ fn emit_control_port(f: &mut String, index: u32, p: &Lv2Param, symbol: &str) {
     }
 }
 
-/// Public, id-paired view of [`resolve_param_symbols`]: the exact
+/// Public, id-paired view of `resolve_param_symbols`: the exact
 /// `lv2:symbol` the manifest assigns each control port, paired with its
 /// truce param id, in declaration order. The derive macro persists this
 /// to `lv2-meta/<pkg>/symbols.toml` (via
