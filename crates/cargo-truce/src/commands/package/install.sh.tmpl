@@ -159,6 +159,36 @@ install_bundle() {
     do_copy "$src" "$dst"
 }
 
+# Copy the CLAP `<stem>.presets/` sibling next to the installed `.clap`.
+# We own this directory, so a full replace (via do_copy) is safe.
+install_clap_presets() {
+    src="$1"   # e.g. clap/Foo.presets
+    if ! format_selected "clap"; then return 0; fi
+    if [ ! -e "$src" ]; then return 0; fi
+    base="$(basename "$src")"
+    dst="$(dest_dir clap)/${base}"
+    echo "    -> clap presets: $dst"
+    do_copy "$src" "$dst"
+}
+
+# Merge factory VST3 presets into the shared preset folder. The dir is
+# shared with the user's own saved presets, so this overwrites only our
+# files and NEVER wipes the directory (no rm -rf, unlike do_copy).
+install_vst3_presets() {
+    src="$1"   # e.g. vst3-presets/Vendor/Plugin
+    if ! format_selected "vst3"; then return 0; fi
+    if [ ! -d "$src" ]; then return 0; fi
+    rel="${src#vst3-presets/}"            # Vendor/Plugin
+    dst="$(dest_dir vst3)/presets/${rel}"
+    echo "    -> vst3 presets: $dst"
+    if [ "$DRY_RUN" -eq 1 ]; then
+        echo "    (dry-run) merge $src -> $dst"
+        return
+    fi
+    $SUDO mkdir -p "$dst"
+    $SUDO cp -rf "$src/." "$dst/"
+}
+
 install_standalone() {
     src="$1"     # path inside the tarball
     bin_name="$2"
