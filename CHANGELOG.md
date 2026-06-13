@@ -2,6 +2,10 @@
 
 Notable changes per release.
 
+## 0.58.1
+
+- **Pin `time` to 0.3.47.** 0.3.48 was yanked from crates.io.
+
 ## 0.58.0
 
 - **Presets.** Drop a `presets/` directory of `.preset` TOML
