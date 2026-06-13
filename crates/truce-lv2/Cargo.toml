@@ -12,6 +12,11 @@ description = "LV2 format wrapper for truce"
 truce-core = { workspace = true }
 truce-params = { workspace = true }
 truce-build = { workspace = true }
+# Preset TTLs store the state envelope as an `xsd:base64Binary`
+# literal; lilv-based hosts decode it to a raw `atom:Chunk` before
+# calling `restore()`, but REAPER hands the base64 text back verbatim,
+# so `restore()` decodes it itself (see `state::restore_cb`).
+base64 = { workspace = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc = "0.2"

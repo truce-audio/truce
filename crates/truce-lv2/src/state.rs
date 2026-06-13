@@ -7,8 +7,10 @@
 
 use std::ffi::{CString, c_char, c_void};
 
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use truce_core::export::PluginExport;
-use truce_core::state::{deserialize_state, serialize_state};
+use truce_core::state::{DeserializedState, deserialize_state, serialize_state};
 use truce_params::Params;
 
 use crate::Lv2Instance;
@@ -77,6 +79,23 @@ pub(crate) fn state_interface<P: PluginExport>() -> &'static Lv2StateInterface {
     &<Holder<P>>::IFACE
 }
 
+/// Fallback decode for hosts that hand `restore()` the preset's
+/// `^^xsd:base64Binary` literal as text instead of mapping it back to
+/// a raw `atom:Chunk`. lilv-based hosts (Ardour, Carla, jalv) decode
+/// it for us; REAPER does not - it returns the base64 string itself,
+/// usually NUL-padded. Strip everything outside the base64 alphabet,
+/// decode, and deserialize against the plugin-ID hash. `None` if the
+/// bytes aren't valid base64 or the decoded blob isn't our envelope.
+fn decode_base64_envelope(slice: &[u8], plugin_id_hash: u64) -> Option<DeserializedState> {
+    let cleaned: Vec<u8> = slice
+        .iter()
+        .copied()
+        .filter(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'/' | b'='))
+        .collect();
+    let bytes = BASE64.decode(&cleaned).ok()?;
+    deserialize_state(&bytes, plugin_id_hash)
+}
+
 unsafe extern "C" fn save_cb<P: PluginExport>(
     instance: *mut c_void,
     store: StoreFn,
@@ -85,6 +104,7 @@ unsafe extern "C" fn save_cb<P: PluginExport>(
     _features: *const *const crate::types::LV2Feature,
 ) -> u32 {
     unsafe {
+        eprintln!("truce-lv2: save() called (instance={instance:p})");
         if instance.is_null() {
             return 0;
         }
@@ -95,7 +115,14 @@ unsafe extern "C" fn save_cb<P: PluginExport>(
 
         let key = inst.urid_map.intern(TRUCE_STATE_KEY_URI);
         let chunk_urid = inst.urid_map.atom_chunk;
+        eprintln!(
+            "truce-lv2: save() storing {} param(s), blob={} bytes, key urid={key}, \
+             atom:Chunk urid={chunk_urid}",
+            ids.len(),
+            blob.len()
+        );
         if key == 0 || chunk_urid == 0 {
+            eprintln!("truce-lv2: save() ABORT - host could not map key or atom:Chunk URID");
             return 0;
         }
         let flags = LV2_STATE_IS_POD | LV2_STATE_IS_PORTABLE;
@@ -119,12 +146,15 @@ unsafe extern "C" fn restore_cb<P: PluginExport>(
     _features: *const *const crate::types::LV2Feature,
 ) -> u32 {
     unsafe {
+        eprintln!("truce-lv2: restore() called (instance={instance:p})");
         if instance.is_null() {
             return 0;
         }
         let inst = &mut *instance.cast::<Lv2Instance<P>>();
         let key = inst.urid_map.intern(TRUCE_STATE_KEY_URI);
+        eprintln!("truce-lv2: restore() interned key {TRUCE_STATE_KEY_URI:?} -> urid {key}");
         if key == 0 {
+            eprintln!("truce-lv2: restore() ABORT - host could not map the state-blob key URID");
             return 0;
         }
         let mut size = 0usize;
@@ -137,17 +167,60 @@ unsafe extern "C" fn restore_cb<P: PluginExport>(
             &raw mut type_,
             &raw mut state_flags,
         );
+        eprintln!(
+            "truce-lv2: restore() retrieve -> data={data:p} size={size} type_urid={type_} \
+             (atom:Chunk urid={}) flags={state_flags}",
+            inst.urid_map.atom_chunk
+        );
         if data.is_null() || size == 0 {
+            // This is the usual "preset shows but doesn't apply" symptom:
+            // the host invoked restore() but handed back no value for our
+            // state-blob key. Means the host didn't carry the preset's
+            // `state:state` block into the retrieve closure (REAPER's LV2
+            // host doesn't apply `state:state` presets the way lilv does).
+            eprintln!(
+                "truce-lv2: restore() ABORT - host returned no '{TRUCE_STATE_KEY_URI}' value; \
+                 the preset's state:state block was not delivered to restore()"
+            );
             return 0;
         }
         let slice = core::slice::from_raw_parts(data.cast::<u8>(), size);
-        if let Some(state) = deserialize_state(slice, inst.plugin_id_hash) {
-            inst.plugin.params().restore_values(&state.params);
-            inst.plugin.params().snap_smoothers();
-            if let Some(extra) = state.extra
-                && let Err(e) = inst.plugin.load_state(&extra)
-            {
-                eprintln!("truce: lv2 load_state failed: {e}");
+        // Hosts that decode the preset's `^^xsd:base64Binary` literal
+        // into a raw `atom:Chunk` (lilv: Ardour, Carla, jalv) hand us
+        // the envelope bytes directly, so they deserialize as-is.
+        // REAPER does NOT decode the literal - it returns the base64
+        // *text* (a string literal, not atom:Chunk, often NUL-padded) -
+        // so when the raw bytes aren't our envelope, strip anything
+        // outside the base64 alphabet and decode before retrying.
+        let raw = deserialize_state(slice, inst.plugin_id_hash);
+        let used_fallback = raw.is_none();
+        let state = raw.or_else(|| decode_base64_envelope(slice, inst.plugin_id_hash));
+        match state {
+            Some(state) => {
+                let n = state.params.len();
+                inst.plugin.params().restore_values(&state.params);
+                inst.plugin.params().snap_smoothers();
+                eprintln!(
+                    "truce-lv2: restore() applied {n} param value(s){}; extra_state={}",
+                    if used_fallback {
+                        " (via base64-text fallback)"
+                    } else {
+                        ""
+                    },
+                    state.extra.is_some()
+                );
+                if let Some(extra) = state.extra
+                    && let Err(e) = inst.plugin.load_state(&extra)
+                {
+                    eprintln!("truce: lv2 load_state failed: {e}");
+                }
+            }
+            None => {
+                eprintln!(
+                    "truce-lv2: restore() ABORT - deserialize_state failed even after base64 \
+                     fallback (plugin_id_hash {} mismatch or corrupt blob), size={size}",
+                    inst.plugin_id_hash
+                );
             }
         }
         LV2_STATE_SUCCESS
@@ -157,3 +230,48 @@ unsafe extern "C" fn restore_cb<P: PluginExport>(
 // Quiet unused-import for future generic symbol lookups.
 const _: Option<CString> = None;
 const _: Option<*const c_char> = None;
+
+#[cfg(test)]
+mod tests {
+    use base64::Engine as _;
+
+    use super::{BASE64, decode_base64_envelope};
+    use truce_core::state::serialize_state;
+
+    // REAPER hands `restore()` the preset's `xsd:base64Binary` literal
+    // as undecoded base64 *text* (often NUL-terminated) rather than the
+    // raw `atom:Chunk` bytes lilv produces. The fallback must recover
+    // the envelope from that text.
+    #[test]
+    fn base64_text_envelope_round_trips() {
+        let hash = 0x1234_5678_9abc_def0_u64;
+        let ids = [1_u32, 2, 3];
+        let values = [0.25_f64, -6.0, 8000.0];
+        let blob = serialize_state(hash, &ids, &values, &[]);
+
+        // Mimic REAPER: base64 text of the blob, NUL-padded.
+        let mut text = BASE64.encode(&blob).into_bytes();
+        text.push(0);
+
+        let state = decode_base64_envelope(&text, hash).expect("base64 fallback should decode");
+        assert_eq!(state.params, vec![(1, 0.25), (2, -6.0), (3, 8000.0)]);
+        assert!(state.extra.is_none());
+    }
+
+    // A different plugin's preset (hash mismatch) must be rejected, not
+    // silently applied to the wrong plugin.
+    #[test]
+    fn base64_fallback_rejects_foreign_plugin_hash() {
+        let hash = 0xAAAA_BBBB_CCCC_DDDD_u64;
+        let blob = serialize_state(hash, &[7_u32], &[1.0_f64], &[]);
+        let text = BASE64.encode(&blob).into_bytes();
+        assert!(decode_base64_envelope(&text, hash ^ 1).is_none());
+    }
+
+    // Non-base64 garbage must not panic or false-positive.
+    #[test]
+    fn base64_fallback_rejects_garbage() {
+        assert!(decode_base64_envelope(b"not base64 !!!", 0).is_none());
+        assert!(decode_base64_envelope(&[], 0).is_none());
+    }
+}
