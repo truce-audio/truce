@@ -516,22 +516,30 @@ impl PresetStore {
         }
     }
 
-    /// Resolve a preset by full `truce-preset://` URI or bare uuid.
-    /// URIs for a different vendor / plugin return `None`.
+    /// Resolve a preset by `truce-preset://` URI, bare uuid, or
+    /// display name. A URI for a different vendor / plugin returns
+    /// `None`. Name matching is a fallback after uuid (names are
+    /// unique per category by library validation; on a cross-category
+    /// name clash the first in enumeration order wins).
     #[must_use]
-    pub fn find(&self, uri_or_uuid: &str) -> Option<PresetRef> {
-        let uuid = if let Some((vendor, plugin, uuid)) = parse_preset_uri(uri_or_uuid) {
+    pub fn find(&self, sel: &str) -> Option<PresetRef> {
+        let uuid = if let Some((vendor, plugin, uuid)) = parse_preset_uri(sel) {
             if vendor != safe_filename(&self.vendor) || plugin != safe_filename(&self.plugin_name) {
                 return None;
             }
             uuid
         } else {
-            uri_or_uuid
+            sel
         };
         if uuid.is_empty() {
             return None;
         }
-        self.enumerate().into_iter().find(|p| p.uuid == uuid)
+        let presets = self.enumerate();
+        presets
+            .iter()
+            .find(|p| p.uuid == uuid)
+            .or_else(|| presets.iter().find(|p| p.name == sel))
+            .cloned()
     }
 
     /// Load a preset's state, validating it against this plugin's
@@ -912,6 +920,12 @@ mod tests {
 
         let state = store.load(&saved.uri).unwrap();
         assert_eq!(state.params, vec![(0, 0.5), (1, 440.0)]);
+
+        // find resolves by uri, uuid, and display name.
+        assert_eq!(store.find(&saved.uri).unwrap().uuid, saved.uuid);
+        assert_eq!(store.find(&saved.uuid).unwrap().uuid, saved.uuid);
+        assert_eq!(store.find("My Lead").unwrap().uuid, saved.uuid);
+        assert!(store.find("nonexistent").is_none());
 
         // Same (category, name) saves in place, keeping the uuid.
         let resaved = store

@@ -10,6 +10,7 @@ description = "Standalone host wrapper for truce plugins"
 
 [dependencies]
 truce-core = { workspace = true }
+truce-utils = { workspace = true }
 truce-params = { workspace = true }
 truce-driver = { workspace = true, optional = true }
 cpal = "0.17"

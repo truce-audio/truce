@@ -37,6 +37,7 @@ pub mod midi;
 pub mod offline;
 #[cfg(feature = "playback")]
 pub mod playback;
+pub mod presets;
 pub mod state;
 pub mod transport;
 
@@ -222,6 +223,10 @@ where
     }
     if opts.list_midi {
         midi::list_midi();
+        return;
+    }
+    if opts.list_presets {
+        presets::print_list::<P>(opts.presets_dir.as_deref());
         return;
     }
 

@@ -25,7 +25,7 @@ vst2 = ["dep:truce-vst2"]
 lv2 = ["dep:truce-lv2"]
 aax = ["dep:truce-aax"]
 au = ["dep:truce-au"]
-standalone = ["dep:truce-standalone"]
+standalone = ["dep:truce-standalone", "truce-standalone/playback"]
 shell = ["truce/shell"]
 
 [dependencies]

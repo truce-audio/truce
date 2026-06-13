@@ -48,6 +48,18 @@ pub struct Options {
     pub midi_channel: Option<String>,
     pub bpm: Option<f64>,
     pub state_path: Option<PathBuf>,
+    /// `--preset <uri|name>`: load a library preset on launch,
+    /// resolved through the same uri/uuid/name matching the CLI
+    /// uses. Applied at the same lifecycle point as `state_path`.
+    pub preset: Option<String>,
+    /// `--list-presets`: print every preset across all scopes and
+    /// exit, the standalone analogue of `cargo truce preset list`.
+    pub list_presets: bool,
+    /// `--presets-dir <dir>`: factory-preset root, set by
+    /// `cargo truce run` from the plugin's authored library so the
+    /// dev loop sees factory presets without an install. Rarely
+    /// typed by hand.
+    pub presets_dir: Option<PathBuf>,
     /// Print status chatter (device picks, toggles, save / load
     /// confirmations, transport state). Off by default; set with
     /// `--verbose` / `-v`. Errors and `--list-*` output ignore
@@ -98,7 +110,10 @@ OPTIONS:
   --midi-channel <spec>     MIDI channel filter: `omni` (all, default)
                             or a channel `1`-`16`.
   --bpm <n>                 Transport BPM (default 120)
-  --state <path>            Load plugin state from this file on launch
+  --state <path>            Load plugin state or a preset from a file
+                            on launch (.trucepreset or a saved state blob)
+  --preset <uri|name>       Load a library preset on launch
+  --list-presets            List the plugin's presets and exit
   -v, --verbose             Print status chatter (device picks, toggles,
                             save/load notices, transport state). Errors
                             and --list-* output always print.
@@ -214,6 +229,13 @@ pub fn parse() -> Result<Options, String> {
     let state_path = args
         .opt_value_from_str::<_, PathBuf>("--state")
         .map_err(|e| format!("--state: {e}"))?;
+    let preset = args
+        .opt_value_from_str::<_, String>("--preset")
+        .map_err(|e| format!("--preset: {e}"))?;
+    let list_presets = args.contains("--list-presets");
+    let presets_dir = args
+        .opt_value_from_str::<_, PathBuf>("--presets-dir")
+        .map_err(|e| format!("--presets-dir: {e}"))?;
     #[cfg(feature = "playback")]
     let input_file = args
         .opt_value_from_str::<_, PathBuf>("--input-file")
@@ -255,6 +277,9 @@ pub fn parse() -> Result<Options, String> {
         midi_channel: midi_channel.or_else(|| env("MIDI_CHANNEL")),
         bpm: bpm.or_else(|| env("BPM").and_then(|s| s.parse().ok())),
         state_path: state_path.or_else(|| env("STATE").map(PathBuf::from)),
+        preset: preset.or_else(|| env("PRESET")),
+        list_presets,
+        presets_dir: presets_dir.or_else(|| env("PRESETS_DIR").map(PathBuf::from)),
         verbose: verbose
             || env("VERBOSE").is_some_and(|s| matches!(s.trim(), "1" | "true" | "on" | "yes")),
         #[cfg(feature = "playback")]

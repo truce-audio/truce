@@ -563,6 +563,12 @@ pub fn start_audio<P: PluginExport>(opts: &Options) -> Result<AudioHandles<P>, B
         if let Some(path) = opts.state_path.as_deref() {
             crate::state::load_into(&mut p, path);
         }
+        // `--preset` layers on top of `--state` (both pre-snap so
+        // the first block sees restored values), resolved through
+        // the same store `--list-presets` uses.
+        if let Some(sel) = opts.preset.as_deref() {
+            crate::presets::apply_on_launch::<P>(opts.presets_dir.as_deref(), &mut p, sel);
+        }
         p.params().snap_smoothers();
         p
     }));

@@ -555,9 +555,9 @@ where
     P::Params: 'static,
 {
     fn handle_keyboard(&mut self, kb: &keyboard_types::KeyboardEvent) -> EventStatus {
-        // Ctrl-S / Cmd-S → save state
+        // Ctrl-S / Cmd-S → quicksave the current state as a preset
         if kb.state == KeyState::Down && kb.code == Code::KeyS && is_mod_pressed(kb.modifiers) {
-            self.save_state_via_picker();
+            self.quicksave_preset();
             return EventStatus::Captured;
         }
 
@@ -648,93 +648,25 @@ where
         EventStatus::Ignored
     }
 
-    /// Snapshot the plugin (params + custom state) and write it to a
-    /// user-picked path. Same envelope every other host format
-    /// produces, so the resulting `.pluginstate` file round-trips
-    /// into CLAP / VST3 / AU / a future
-    /// `--state foo.pluginstate` standalone launch.
-    ///
-    /// On macOS / Windows the path comes from a native save
-    /// dialog; on Linux we fall back to a default
-    /// `<data_local_dir>/truce/<slug>/quicksave-<ts>.pluginstate` path
-    /// because `rfd`'s Linux backend (xdg-portal) drags
-    /// `wayland-sys` into the dep tree, which would force every
-    /// truce-using project on a typical Linux dev machine to
-    /// install Wayland system headers just to `cargo check`.
-    /// Linux gets a real picker once we find a wayland-free
-    /// backend (or once that dep tree thins out).
-    fn save_state_via_picker(&self) {
-        let Ok(plugin) = self.plugin.lock() else {
-            eprintln!("could not lock plugin to save state");
-            return;
+    /// Quicksave the live plugin state as a user-scope preset.
+    /// Cmd-S is a no-ceremony dump: it mints an "Untitled <ts>"
+    /// `.trucepreset` in the per-OS user root, where it shows up in
+    /// `--list-presets` and in any DAW that loads the same plugin.
+    /// A named save belongs to the (deferred) preset menu.
+    fn quicksave_preset(&self) {
+        // Saving only touches the user scope, so the factory root is
+        // irrelevant here - `store::<P>(None)` resolves the user root
+        // from `P::info()` alone.
+        let store = crate::presets::store::<P>(None);
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        let meta = truce_utils::preset::PresetMeta {
+            name: format!("Untitled {ts}"),
+            ..Default::default()
         };
-        let blob = truce_core::state::snapshot_plugin(&*plugin);
-        let param_count = plugin.params().param_infos().len();
-        // Drop the plugin lock before we open the dialog - the
-        // audio thread acquires this mutex on every block, and a
-        // few-second dialog wait is enough to glitch playback.
-        drop(plugin);
-
-        let plugin_slug = truce_core::slugify(P::info().name);
-        let Some(path) = pick_save_path::<P>(&plugin_slug) else {
-            return; // user cancelled, or no fallback dir on Linux
-        };
-        match std::fs::write(&path, &blob) {
-            Ok(()) => vlog!(
-                "state saved: {} ({param_count} params, {} bytes)",
-                path.display(),
-                blob.len(),
-            ),
-            Err(e) => eprintln!("write {}: {e}", path.display()),
-        }
+        crate::presets::save_user::<P>(&store, &self.plugin, meta);
     }
-}
-
-/// Plugin-name → filesystem-friendly slug. Lowercase, ASCII
-/// Resolve a destination path for Cmd-S. Native dialog on macOS /
-/// Windows; default-path fallback on Linux. Returns `None` if the
-/// user cancels (native picker) or if `data_local_dir` /
-/// `mkdir -p` fails (Linux fallback).
-#[cfg(any(target_os = "macos", target_os = "windows"))]
-fn pick_save_path<P: PluginExport>(plugin_slug: &str) -> Option<std::path::PathBuf> {
-    // Default to <data_local_dir>/truce/<slug>/ if it exists,
-    // otherwise the home dir. User can navigate elsewhere from the
-    // dialog. `<plugin>.pluginstate` is the suggested filename.
-    let initial_dir = dirs::data_local_dir()
-        .map(|d| d.join("truce").join(plugin_slug))
-        .filter(|p| p.exists())
-        .or_else(dirs::home_dir);
-    let mut dialog = rfd::FileDialog::new()
-        .set_title(format!("Save state for {}", P::info().name))
-        .add_filter(".pluginstate file", &["pluginstate"])
-        .set_file_name(format!("{plugin_slug}.pluginstate"));
-    if let Some(dir) = initial_dir {
-        dialog = dialog.set_directory(dir);
-    }
-    dialog.save_file()
-}
-
-#[cfg(not(any(target_os = "macos", target_os = "windows")))]
-// `P` unused on this branch (no native picker), but kept for signature
-// parity with the macOS/Windows variant so the call site's turbofish works.
-#[allow(clippy::extra_unused_type_parameters)]
-fn pick_save_path<P: PluginExport>(plugin_slug: &str) -> Option<std::path::PathBuf> {
-    let dir = dirs::data_local_dir()?.join("truce").join(plugin_slug);
-    if let Err(e) = std::fs::create_dir_all(&dir) {
-        eprintln!("mkdir {}: {e}", dir.display());
-        return None;
-    }
-    let ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .ok()?
-        .as_secs();
-    let path = dir.join(format!("quicksave-{ts}.pluginstate"));
-    eprintln!(
-        "native save dialog not yet wired on Linux - \
-         saving to {}",
-        path.display()
-    );
-    Some(path)
 }
 
 /// Pack `(width, height)` into a single `u64` for the

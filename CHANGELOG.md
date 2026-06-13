@@ -2,6 +2,15 @@
 
 Notable changes per release.
 
+## 0.58.2
+
+- **Standalone presets.** The standalone host loads library
+  presets: `--preset <uri|name>` on launch (windowed, headless,
+  and offline render), `--list-presets`, and `--presets-dir` for
+  the factory root. Cmd+S now quicksaves a `.trucepreset` to the
+  user scope instead of a bare state file; `--state` still loads
+  either.
+
 ## 0.58.1
 
 - **Pin `time` to 0.3.47.** 0.3.48 was yanked from crates.io.

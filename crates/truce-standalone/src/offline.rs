@@ -99,6 +99,16 @@ where
     if let Some(path) = opts.state_path.as_deref() {
         driver = driver.state_file(path);
     }
+    // `--preset` applies through the driver's setup hook (full
+    // envelope, same as windowed / headless), independent of the
+    // `state_file` path above.
+    if let Some(sel) = opts.preset.clone() {
+        let presets_dir = opts.presets_dir.clone();
+        driver = driver.setup(move |plugin, _ctx| {
+            let store = crate::presets::store::<P>(presets_dir.as_deref());
+            crate::presets::apply_selected(&store, plugin, &sel);
+        });
+    }
 
     let result = driver.run();
     result

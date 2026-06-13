@@ -9,10 +9,29 @@ use truce_core::export::PluginExport;
 
 use crate::vlog;
 
-/// Read `path` and apply it to `plugin` via the canonical state
-/// envelope. Logs a single line on success, a single line on each
-/// failure mode (read error vs envelope mismatch). Never panics -
-/// state load is a convenience, not a hard prereq for processing.
+/// Apply state bytes to `plugin`, accepting either a bare state
+/// envelope (the legacy `.pluginstate` save) or a `.trucepreset`
+/// container (metadata + the same envelope). A preset is a strict
+/// superset of a bare blob, so the reader sniffs the container
+/// magic and unwraps it; everything else is treated as a raw
+/// envelope. This is the deprecation reader change: `.pluginstate`
+/// is no longer written, but stays loadable forever.
+fn restore_any<P: PluginExport>(
+    plugin: &mut P,
+    bytes: &[u8],
+) -> Result<(), truce_core::state::RestoreError> {
+    if let Some((_, envelope)) = truce_utils::preset::parse_preset_file(bytes) {
+        truce_core::state::restore_plugin(plugin, &envelope)
+    } else {
+        truce_core::state::restore_plugin(plugin, bytes)
+    }
+}
+
+/// Read `path` and apply it to `plugin`. Accepts `.trucepreset`
+/// containers and bare `.pluginstate` envelopes alike. Logs a
+/// single line on success, a single line on each failure mode
+/// (read error vs envelope mismatch). Never panics - state load is
+/// a convenience, not a hard prereq for processing.
 pub fn load_into<P: PluginExport>(plugin: &mut P, path: &Path) {
     let bytes = match std::fs::read(path) {
         Ok(b) => b,
@@ -21,7 +40,7 @@ pub fn load_into<P: PluginExport>(plugin: &mut P, path: &Path) {
             return;
         }
     };
-    match truce_core::state::restore_plugin(plugin, &bytes) {
+    match restore_any(plugin, &bytes) {
         Ok(()) => vlog!("loaded state from {}", path.display()),
         Err(truce_core::state::RestoreError::Invalid) => eprintln!(
             "{} doesn't look like a state file for {} \
