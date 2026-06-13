@@ -20,9 +20,9 @@ checksum = "366ffbaa4442f4684d91e2cd7c5ea7c4ed8add41959a31447066e279e432b618"
 
 [[package]]
 name = "accesskit"
-version = "0.24.0"
+version = "0.24.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5351dcebb14b579ccab05f288596b2ae097005be7ee50a7c3d4ca9d0d5a66f6a"
+checksum = "d3b7f7f85a7e5f68090000ed7622545829afd484d210358702ae4cb97dd0c320"
 dependencies = [
  "uuid",
 ]
@@ -375,7 +375,7 @@ dependencies = [
 
 [[package]]
 name = "cargo-truce"
-version = "0.58.0"
+version = "0.58.1"
 dependencies = [
  "base64",
  "hound",
@@ -402,9 +402,9 @@ checksum = "37b2a672a2cb129a2e41c10b1224bb368f9f37a2b16b612598138befd7b37eb5"
 
 [[package]]
 name = "cc"
-version = "1.2.63"
+version = "1.2.64"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "556e016178bb5662a08681bbe0f00f8e17631781a4dfc8c45e466e4b185ec27f"
+checksum = "dad887fd958be91b5098c0248def011f4523ab786cd411be668777e55063501f"
 dependencies = [
  "find-msvc-tools",
  "jobserver",
@@ -837,6 +837,9 @@ name = "deranged"
 version = "0.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7cd812cc2bc1d69d4764bd80df88b4317eaef9e773c75226407d9bc0876b211c"
+dependencies = [
+ "powerfmt",
+]
 
 [[package]]
 name = "dirs"
@@ -1926,13 +1929,12 @@ dependencies = [
 
 [[package]]
 name = "js-sys"
-version = "0.3.99"
+version = "0.3.102"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "142bc4740e452c1e57ade0cbc129f139c9093e354346f0872ef985f4f5cf5f11"
+checksum = "03d04c30968dffe80775bd4d7fb676131cd04a1fb46d2686dbffbaec2d9dfd31"
 dependencies = [
  "cfg-if",
  "futures-util",
- "once_cell",
  "wasm-bindgen",
 ]
 
@@ -2168,9 +2170,9 @@ dependencies = [
 
 [[package]]
 name = "memchr"
-version = "2.8.1"
+version = "2.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6b947ae49db0d222b1dbc6b113ce7248a3fc3a6ca21b696717bfc000ba4484d8"
+checksum = "88904434abc2901f197fe8cc55f0445e7ded921dba5911dad2e2b39b48e663c4"
 
 [[package]]
 name = "memmap2"
@@ -3247,6 +3249,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "read-fonts"
+version = "0.39.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c4ed38b89c2c77ff968c524145ad65fb010f38af5c7a224b53b81d47ac2daa81"
+dependencies = [
+ "bytemuck",
+ "font-types 0.11.3",
+]
+
+[[package]]
 name = "realfft"
 version = "3.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3295,9 +3307,9 @@ dependencies = [
 
 [[package]]
 name = "regex"
-version = "1.12.3"
+version = "1.12.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e10754a14b9137dd7b1e3e5b0493cc9171fdd105e0ab477f51b72e7f3ac0e276"
+checksum = "f1292b7759ae1cb9ec195452d1390a074f0cd8541ab7a5a8c31cd6db45d4a6ba"
 dependencies = [
  "aho-corasick",
  "memchr",
@@ -3318,9 +3330,9 @@ dependencies = [
 
 [[package]]
 name = "regex-syntax"
-version = "0.8.10"
+version = "0.8.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
+checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "renderdoc-sys"
@@ -3626,6 +3638,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "skrifa"
+version = "0.42.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0c34617370ae968efb7161bb2beb517d9084659aae19e24b89e3db25b46e4564"
+dependencies = [
+ "bytemuck",
+ "read-fonts 0.39.2",
+]
+
+[[package]]
 name = "slab"
 version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3642,9 +3664,9 @@ dependencies = [
 
 [[package]]
 name = "smallvec"
-version = "1.15.1"
+version = "1.15.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
+checksum = "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90"
 
 [[package]]
 name = "smithay-client-toolkit"
@@ -3793,11 +3815,11 @@ checksum = "0193cc4331cfd2f3d2011ef287590868599a2f33c3e69bc22c1a3d3acf9e02fb"
 
 [[package]]
 name = "swash"
-version = "0.2.7"
+version = "0.2.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "842f3cd369c2ba38966204f983eaa5e54a8e84a7d7159ed36ade2b6c335aae64"
+checksum = "0811b01ca2c4e8718760713911feaf4675c24f94e50530a015ec646cfb622f7c"
 dependencies = [
- "skrifa 0.40.0",
+ "skrifa 0.42.1",
  "yazi",
  "zeno",
 ]
@@ -4090,11 +4112,12 @@ dependencies = [
 
 [[package]]
 name = "time"
-version = "0.3.48"
+version = "0.3.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fc1aa89044e7786ffb2ec017acb22cb7de5b0be46d0f21aea2b224b8561e5db2"
+checksum = "743bd48c283afc0388f9b8827b976905fb217ad9e647fae3a379a9283c4def2c"
 dependencies = [
  "deranged",
+ "itoa",
  "num-conv",
  "powerfmt",
  "serde_core",
@@ -4104,15 +4127,15 @@ dependencies = [
 
 [[package]]
 name = "time-core"
-version = "0.1.9"
+version = "0.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9e1c906769ad99c88eaa54e728060edef082f8e358ff32030cb7c7d315e81109"
+checksum = "7694e1cfe791f8d31026952abf09c69ca6f6fa4e1a1229e18988f06a04a12dca"
 
 [[package]]
 name = "time-macros"
-version = "0.2.28"
+version = "0.2.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9d3bfe86347f0cc659f586f01e26303ccd32418f26f30c7b0309b3ca3a07d695"
+checksum = "2e70e4c5a0e0a8a4823ad65dfe1a6930e4f4d756dcd9dd7939022b5e8c501215"
 dependencies = [
  "num-conv",
  "time-core",
@@ -4302,7 +4325,7 @@ dependencies = [
 
 [[package]]
 name = "truce"
-version = "0.58.0"
+version = "0.58.1"
 dependencies = [
  "truce-clap",
  "truce-core",
@@ -4318,7 +4341,7 @@ dependencies = [
 
 [[package]]
 name = "truce-aax"
-version = "0.58.0"
+version = "0.58.1"
 dependencies = [
  "crossbeam-queue",
  "truce-aax-bridge",
@@ -4328,11 +4351,11 @@ dependencies = [
 
 [[package]]
 name = "truce-aax-bridge"
-version = "0.58.0"
+version = "0.58.1"
 
 [[package]]
 name = "truce-au"
-version = "0.58.0"
+version = "0.58.1"
 dependencies = [
  "cc",
  "crossbeam-queue",
@@ -4343,7 +4366,7 @@ dependencies = [
 
 [[package]]
 name = "truce-build"
-version = "0.58.0"
+version = "0.58.1"
 dependencies = [
  "base64",
  "serde",
@@ -4353,7 +4376,7 @@ dependencies = [
 
 [[package]]
 name = "truce-clap"
-version = "0.58.0"
+version = "0.58.1"
 dependencies = [
  "clap-sys",
  "crossbeam-queue",
@@ -4365,7 +4388,7 @@ dependencies = [
 
 [[package]]
 name = "truce-core"
-version = "0.58.0"
+version = "0.58.1"
 dependencies = [
  "png",
  "truce-params",
@@ -4374,7 +4397,7 @@ dependencies = [
 
 [[package]]
 name = "truce-cpu"
-version = "0.58.0"
+version = "0.58.1"
 dependencies = [
  "fontdue",
  "tiny-skia 0.12.0",
@@ -4385,7 +4408,7 @@ dependencies = [
 
 [[package]]
 name = "truce-derive"
-version = "0.58.0"
+version = "0.58.1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4398,7 +4421,7 @@ dependencies = [
 
 [[package]]
 name = "truce-driver"
-version = "0.58.0"
+version = "0.58.1"
 dependencies = [
  "hound",
  "truce-core",
@@ -4407,7 +4430,7 @@ dependencies = [
 
 [[package]]
 name = "truce-egui"
-version = "0.58.0"
+version = "0.58.1"
 dependencies = [
  "baseview-truce",
  "egui",
@@ -4427,7 +4450,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-arpeggio"
-version = "0.58.0"
+version = "0.58.1"
 dependencies = [
  "clap-sys",
  "truce",
@@ -4448,7 +4471,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-block-drywet"
-version = "0.58.0"
+version = "0.58.1"
 dependencies = [
  "clap-sys",
  "truce",
@@ -4470,7 +4493,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-block-gain"
-version = "0.58.0"
+version = "0.58.1"
 dependencies = [
  "clap-sys",
  "truce",
@@ -4492,7 +4515,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-block-gate"
-version = "0.58.0"
+version = "0.58.1"
 dependencies = [
  "clap-sys",
  "truce",
@@ -4514,7 +4537,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-block-saturate"
-version = "0.58.0"
+version = "0.58.1"
 dependencies = [
  "clap-sys",
  "truce",
@@ -4536,7 +4559,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-block-surround-meter"
-version = "0.58.0"
+version = "0.58.1"
 dependencies = [
  "clap-sys",
  "truce",
@@ -4558,7 +4581,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-block-widen"
-version = "0.58.0"
+version = "0.58.1"
 dependencies = [
  "clap-sys",
  "truce",
@@ -4580,7 +4603,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-dasp-bitcrusher"
-version = "0.58.0"
+version = "0.58.1"
 dependencies = [
  "clap-sys",
  "dasp_sample",
@@ -4602,7 +4625,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-eq"
-version = "0.58.0"
+version = "0.58.1"
 dependencies = [
  "biquad",
  "clap-sys",
@@ -4627,7 +4650,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-fundsp-reverb-simple"
-version = "0.58.0"
+version = "0.58.1"
 dependencies = [
  "clap-sys",
  "fundsp",
@@ -4649,7 +4672,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-fundsp-reverb-worker"
-version = "0.58.0"
+version = "0.58.1"
 dependencies = [
  "clap-sys",
  "crossbeam-queue",
@@ -4672,7 +4695,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-gain"
-version = "0.58.0"
+version = "0.58.1"
 dependencies = [
  "clap-sys",
  "hound",
@@ -4695,7 +4718,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-gain-egui"
-version = "0.58.0"
+version = "0.58.1"
 dependencies = [
  "clap-sys",
  "egui",
@@ -4717,7 +4740,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-gain-iced"
-version = "0.58.0"
+version = "0.58.1"
 dependencies = [
  "clap-sys",
  "iced",
@@ -4739,7 +4762,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-gui-zoo"
-version = "0.58.0"
+version = "0.58.1"
 dependencies = [
  "clap-sys",
  "truce",
@@ -4760,7 +4783,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-gui-zoo-egui"
-version = "0.58.0"
+version = "0.58.1"
 dependencies = [
  "clap-sys",
  "egui",
@@ -4782,7 +4805,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-gui-zoo-iced"
-version = "0.58.0"
+version = "0.58.1"
 dependencies = [
  "clap-sys",
  "iced",
@@ -4804,7 +4827,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-state"
-version = "0.58.0"
+version = "0.58.1"
 dependencies = [
  "clap-sys",
  "egui",
@@ -4826,7 +4849,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-synth"
-version = "0.58.0"
+version = "0.58.1"
 dependencies = [
  "clap-sys",
  "truce",
@@ -4849,7 +4872,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-transpose"
-version = "0.58.0"
+version = "0.58.1"
 dependencies = [
  "clap-sys",
  "truce",
@@ -4870,7 +4893,7 @@ dependencies = [
 
 [[package]]
 name = "truce-example-tremolo"
-version = "0.58.0"
+version = "0.58.1"
 dependencies = [
  "clap-sys",
  "egui",
@@ -4892,11 +4915,11 @@ dependencies = [
 
 [[package]]
 name = "truce-font"
-version = "0.58.0"
+version = "0.58.1"
 
 [[package]]
 name = "truce-gpu"
-version = "0.58.0"
+version = "0.58.1"
 dependencies = [
  "baseview-truce",
  "bytemuck",
@@ -4914,7 +4937,7 @@ dependencies = [
 
 [[package]]
 name = "truce-gui"
-version = "0.58.0"
+version = "0.58.1"
 dependencies = [
  "baseview-truce",
  "log",
@@ -4937,7 +4960,7 @@ dependencies = [
 
 [[package]]
 name = "truce-gui-types"
-version = "0.58.0"
+version = "0.58.1"
 dependencies = [
  "objc2 0.6.4",
  "truce-core",
@@ -4945,7 +4968,7 @@ dependencies = [
 
 [[package]]
 name = "truce-gui-utils"
-version = "0.58.0"
+version = "0.58.1"
 dependencies = [
  "objc",
  "raw-window-handle 0.5.2",
@@ -4953,7 +4976,7 @@ dependencies = [
 
 [[package]]
 name = "truce-iced"
-version = "0.58.0"
+version = "0.58.1"
 dependencies = [
  "baseview-truce",
  "iced",
@@ -4973,7 +4996,7 @@ dependencies = [
 
 [[package]]
 name = "truce-loader"
-version = "0.58.0"
+version = "0.58.1"
 dependencies = [
  "crc32fast",
  "libloading 0.9.0",
@@ -4987,7 +5010,7 @@ dependencies = [
 
 [[package]]
 name = "truce-loader-tests"
-version = "0.58.0"
+version = "0.58.1"
 dependencies = [
  "truce",
  "truce-core",
@@ -4999,7 +5022,7 @@ dependencies = [
 
 [[package]]
 name = "truce-lv2"
-version = "0.58.0"
+version = "0.58.1"
 dependencies = [
  "objc",
  "truce-build",
@@ -5009,14 +5032,14 @@ dependencies = [
 
 [[package]]
 name = "truce-params"
-version = "0.58.0"
+version = "0.58.1"
 dependencies = [
  "bitflags 2.13.0",
 ]
 
 [[package]]
 name = "truce-plugin"
-version = "0.58.0"
+version = "0.58.1"
 dependencies = [
  "truce-core",
  "truce-gui-types",
@@ -5025,11 +5048,11 @@ dependencies = [
 
 [[package]]
 name = "truce-shim-types"
-version = "0.58.0"
+version = "0.58.1"
 
 [[package]]
 name = "truce-simd"
-version = "0.58.0"
+version = "0.58.1"
 dependencies = [
  "criterion",
  "truce-core",
@@ -5039,7 +5062,7 @@ dependencies = [
 
 [[package]]
 name = "truce-standalone"
-version = "0.58.0"
+version = "0.58.1"
 dependencies = [
  "baseview-truce",
  "cpal",
@@ -5063,7 +5086,7 @@ dependencies = [
 
 [[package]]
 name = "truce-test"
-version = "0.58.0"
+version = "0.58.1"
 dependencies = [
  "png",
  "toml",
@@ -5075,11 +5098,11 @@ dependencies = [
 
 [[package]]
 name = "truce-utils"
-version = "0.58.0"
+version = "0.58.1"
 
 [[package]]
 name = "truce-vst2"
-version = "0.58.0"
+version = "0.58.1"
 dependencies = [
  "cc",
  "crossbeam-queue",
@@ -5089,7 +5112,7 @@ dependencies = [
 
 [[package]]
 name = "truce-vst3"
-version = "0.58.0"
+version = "0.58.1"
 dependencies = [
  "cc",
  "crossbeam-queue",
@@ -5177,9 +5200,9 @@ checksum = "ebc1c04c71510c7f702b52b7c350734c9ff1295c464a03335b00bb84fc54f853"
 
 [[package]]
 name = "uuid"
-version = "1.23.2"
+version = "1.23.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d258b83ceec21034727ecee8c382cfa6c3e133699b0742c64571814fb420c9f7"
+checksum = "144d6b123cef80b301b8f72a9e2ca4370ddec21950d0a103dd22c437006d2db7"
 
 [[package]]
 name = "vello_common"
@@ -5231,9 +5254,9 @@ checksum = "ccf3ec651a847eb01de73ccad15eb7d99f80485de043efb2f370cd654f4ea44b"
 
 [[package]]
 name = "wasip2"
-version = "1.0.3+wasi-0.2.9"
+version = "1.0.4+wasi-0.2.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "20064672db26d7cdc89c7798c48a0fdfac8213434a1186e5ef29fd560ae223d6"
+checksum = "b67efb37e106e55ce722a510d6b5f9c17f083e5fc79afc2badeb12cc313d9487"
 dependencies = [
  "wit-bindgen 0.57.1",
 ]
@@ -5249,9 +5272,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen"
-version = "0.2.122"
+version = "0.2.125"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3ed04576f974d2b2fba0f38c51dbc5518011e38c36bf1143164be765528fd409"
+checksum = "8ddb3f79143bced6de84270411622a2699cee572fc0875aeaf1e7867cf9fca1a"
 dependencies = [
  "cfg-if",
  "once_cell",
@@ -5262,9 +5285,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-futures"
-version = "0.4.72"
+version = "0.4.75"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9473dbd2991ae90b6291c3c32c30c6187ac49aa32f9905d1cce280ec1e110b0f"
+checksum = "503b14d284f2c8dac03b819967e155ea753f573586193b2b2c95990cb5d69280"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
@@ -5272,9 +5295,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-macro"
-version = "0.2.122"
+version = "0.2.125"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "916151b09da36bd82f6615cbf3a419e2f0ba23a03c6160e8e92eb6bd4aa1dec6"
+checksum = "4e21a184b13fb19e157296e2c46056aec9092264fab83e4ba59e68c61b323c3d"
 dependencies = [
  "quote",
  "wasm-bindgen-macro-support",
@@ -5282,9 +5305,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-macro-support"
-version = "0.2.122"
+version = "0.2.125"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "299047362ccbfce148b67ab7e73349f77748e00c8296f9542adfad2ad82c5c5e"
+checksum = "fecefd9c35bd935a20fc3fc344b5f29138961e4f47fb03297d88f2587afb5ebd"
 dependencies = [
  "bumpalo",
  "proc-macro2",
@@ -5295,9 +5318,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-shared"
-version = "0.2.122"
+version = "0.2.125"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9a929b2c61f11ba3e9bc35b50c1f25cb38e0e892c0c231ae2b8cf78d5dad4437"
+checksum = "23939e44bb9a5d7576fa2b563dc2e136628f1224e88a8deed09e04858b77871f"
 dependencies = [
  "unicode-ident",
 ]
@@ -5487,9 +5510,9 @@ dependencies = [
 
 [[package]]
 name = "web-sys"
-version = "0.3.99"
+version = "0.3.102"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6d621441cfc37b84979402712047321980c178f299193a3589d05b99e8763436"
+checksum = "a6430a72df5eb332242960fe84b3002a241163998241eb596d4f739b9757061d"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
@@ -6637,18 +6660,18 @@ checksum = "6df3dc4292935e51816d896edcd52aa30bc297907c26167fec31e2b0c6a32524"
 
 [[package]]
 name = "zerocopy"
-version = "0.8.50"
+version = "0.8.52"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3b065d4f0e55f82fae73202e189638116a87c55ab6b8e6c2721e13dd9d854ad1"
+checksum = "ce1022995ff5ff5d841ad7d994facc23098cd40152f2c1d11cd607c6f530653f"
 dependencies = [
  "zerocopy-derive",
 ]
 
 [[package]]
 name = "zerocopy-derive"
-version = "0.8.50"
+version = "0.8.52"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b631b19d36a892ab55420c92dbc83ccd79274f25be714855d3074aa71cab639"
+checksum = "1ae7f38b72ec2a254e2b87ef277cf2cd4fb97cbebf944faa6f33354da0867930"
 dependencies = [
  "proc-macro2",
  "quote",
