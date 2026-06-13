@@ -5200,6 +5200,7 @@ dependencies = [
  "truce-core",
  "truce-gui",
  "truce-params",
+ "truce-utils",
  "windows-sys 0.61.2",
  "x11-dl",
 ]

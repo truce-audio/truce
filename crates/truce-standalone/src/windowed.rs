@@ -221,6 +221,19 @@ where
             crate::windowed_x11::pin_size(window.raw_display_handle(), &h);
         }
 
+        // Linux: paint the outer window black so any area the editor
+        // child doesn't cover reads as opaque black instead of
+        // glitched server memory. Matters when a resizable editor is
+        // maximized past its max bounds (the WM ignores max size hints
+        // in the maximized state), leaving a margin around the clamped
+        // child; harmless for pinned fixed-size editors, which never
+        // expose a margin. Set unconditionally - it's a one-time
+        // persistent attribute the server fills from on every resize.
+        #[cfg(target_os = "linux")]
+        if let RwhHandle::Xlib(h) = window.raw_window_handle() {
+            crate::windowed_x11::set_background_black(window.raw_display_handle(), &h);
+        }
+
         // macOS: baseview-truce creates its NSWindow with `Titled |
         // Closable | Miniaturizable` only - no resize affordance.
         // When the editor opts into resize, OR in

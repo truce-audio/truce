@@ -87,6 +87,56 @@ pub fn pin_size(display_handle: RawDisplayHandle, window_handle: &XlibWindowHand
     }
 }
 
+/// Give the outer baseview window an opaque-black background so the
+/// X server auto-fills any region the editor child doesn't cover.
+///
+/// baseview-truce creates the outer window on a 32-bit ARGB visual
+/// with no `background_pixel` set, so its background is `None`: when a
+/// resizable editor is maximized past its own max bounds (the WM
+/// ignores max size hints in the maximized state) the uncovered margin
+/// around the clamped editor child shows uninitialised server memory -
+/// the "glitched outer area". Setting a solid background pixel makes
+/// the server clear newly exposed parent regions to that pixel on every
+/// future resize, with no per-frame work on our side.
+///
+/// The pixel is `0xFF00_0000`: alpha `0xFF` (opaque) over RGB `0` on a
+/// 32-bit ARGB visual, and the top byte falls outside every channel
+/// mask on a 24-bit `TrueColor` visual so it still reads as plain black
+/// there. Plain `0` would be *transparent* black under a compositor on
+/// the 32-bit visual, which is the glitch we're trying to avoid.
+///
+/// No-op if the display handle is not Xlib or libX11 fails to load.
+/// Must be called on the thread that owns the baseview event loop;
+/// Xlib calls are not thread-safe on a display the loop also uses.
+pub fn set_background_black(display_handle: RawDisplayHandle, window_handle: &XlibWindowHandle) {
+    let RawDisplayHandle::Xlib(display) = display_handle else {
+        return;
+    };
+    let display_ptr = display.display.cast::<xlib::Display>();
+    if display_ptr.is_null() {
+        return;
+    }
+    let Ok(lib) = xlib::Xlib::open() else {
+        return;
+    };
+    let window_id = xlib::Window::from(window_handle.window);
+
+    // SAFETY: `display_ptr` / `window_id` come from baseview, which
+    // owns the X connection and window for the lifetime of the event
+    // loop, and we run on that loop's thread.
+    unsafe {
+        // Persistent window attribute: once set, the server clears
+        // every future expose (including the maximize-driven resize)
+        // to this pixel, so one call at window creation is enough.
+        (lib.XSetWindowBackground)(display_ptr, window_id, 0xFF00_0000);
+        // Repaint the current frame so the background takes effect now
+        // rather than only on the next expose. Child windows obscure
+        // the parent, so this never blacks out the editor surface.
+        (lib.XClearWindow)(display_ptr, window_id);
+        (lib.XFlush)(display_ptr);
+    }
+}
+
 /// Set the outer window's WM min/max size range and resize
 /// increment, all in **physical pixels**, so the window manager
 /// clamps interactive edge-drags to the editor's bounds and snaps
