@@ -482,7 +482,7 @@ impl<P: Params + 'static> BuiltinEditor<P> {
     }
 
     /// Whether the standalone host may maximize the window. Inherent
-    /// (see [`Self::size`]) so the gpu-only [`GpuEditor`] wrapper can
+    /// (see [`Self::size`]) so the gpu-only `GpuEditor` wrapper can
     /// reach it when this `Editor` impl is cfg'd out. Sourced from the
     /// grid's `.maximizable()` (default `false`); `Rows` layouts are
     /// fixed-size and never maximizable, and the value is moot there
