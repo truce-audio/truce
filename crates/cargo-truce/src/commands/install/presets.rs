@@ -333,6 +333,33 @@ fn standalone_factory_root(exec_path: &Path) -> PathBuf {
 /// the directory. Hosts match presets to the plugin via the class ID
 /// in the file header; the vendor / plugin directory names follow the
 /// reported factory vendor and display name for the spec-defined walk.
+/// The VST3 preset payload as `(<Vendor>/<Plugin>/<file>.vstpreset
+/// -> bytes)` relative paths, for packaging. Unlike [`emit_vst3_presets`]
+/// (which writes straight to the OS preset root), this returns the tree
+/// so a platform installer can carry it as its own component / file
+/// set and place it at install time - VST3 presets live outside the
+/// plugin bundle, so they can't ride inside the staged `.vst3`.
+pub(crate) fn vst3_preset_payload(
+    fp: &FactoryPresets,
+    p: &PluginDef,
+    config: &Config,
+) -> Vec<(PathBuf, Vec<u8>)> {
+    let dir = PathBuf::from(safe_filename(&config.vendor.name)).join(safe_filename(resolved_name(
+        p.vst3_name.as_deref(),
+        &p.name,
+    )));
+    let cid = state::vst3_cid(&truce_build::plugin_id(&config.vendor.id, &p.name));
+    fp.presets
+        .iter()
+        .map(|pr| {
+            (
+                dir.join(pr.display_rel_path("vstpreset")),
+                vstpreset_bytes(&cid, &pr.blob),
+            )
+        })
+        .collect()
+}
+
 pub(crate) fn emit_vst3_presets(
     fp: &FactoryPresets,
     p: &PluginDef,

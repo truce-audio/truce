@@ -124,6 +124,57 @@ pub(crate) fn stage_lv2_packaged(
     Ok(())
 }
 
+/// Build a standalone pkg component for an out-of-bundle preset
+/// payload: stage `payload` (relative path -> bytes) under a private
+/// pkgroot, then `pkgbuild` it with `install_location` as the target.
+/// Used for VST3 presets, which install to the OS preset folder rather
+/// than the plugin bundle. Produces `<file_stem>-<label>.pkg` in
+/// `components_dir`. No `--scripts`: the preset dir is shared with
+/// user / host presets, so the component only adds its own files (BOM
+/// removal on upgrade leaves user presets untouched) and never wipes.
+#[cfg(target_os = "macos")]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn build_preset_component(
+    staging: &Path,
+    components_dir: &Path,
+    file_stem: &str,
+    pkg_id: &str,
+    label: &str,
+    install_location: &str,
+    version: &str,
+    payload: &[(PathBuf, Vec<u8>)],
+) -> Res {
+    let root = staging.join(format!("_presetroot_{label}"));
+    let _ = fs::remove_dir_all(&root);
+    for (rel, bytes) in payload {
+        let dst = root.join(rel);
+        if let Some(parent) = dst.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&dst, bytes)?;
+    }
+    let component_pkg = components_dir.join(format!("{file_stem}-{label}.pkg"));
+    let status = Command::new("pkgbuild")
+        .args([
+            "--root",
+            root.to_str().unwrap(),
+            "--install-location",
+            install_location,
+            "--identifier",
+            pkg_id,
+            "--version",
+            version,
+            "--ownership",
+            "preserve",
+            component_pkg.to_str().unwrap(),
+        ])
+        .status()?;
+    if !status.success() {
+        return Err(format!("pkgbuild failed for {file_stem} {label}").into());
+    }
+    Ok(())
+}
+
 /// Stage a CLAP bundle into the staging directory. `target` selects
 /// which `target/<triple>/release/` to read from (`None` = host's
 /// `target/release/`).
@@ -724,11 +775,31 @@ pub(crate) fn write_standalone_info_plist(
 
 /// Generate the distribution.xml for the macOS .pkg installer.
 #[cfg(target_os = "macos")]
+/// A standalone pkg component carrying out-of-bundle payload (VST3
+/// presets install to the OS preset folder, not the plugin bundle).
+/// Threaded into `distribution.xml` alongside the format components.
+#[cfg(target_os = "macos")]
+pub(crate) struct ExtraComponent {
+    /// pkg-id suffix, e.g. `vst3presets`.
+    pub suffix: String,
+    /// File-name + choice segment, e.g. `VST3-Presets`.
+    pub label: String,
+    /// Choice description shown in Installer.app.
+    pub description: String,
+    /// `true` when the payload's install-location is user-relocatable
+    /// (the VST3 preset root is, like the VST3 bundle) - drives the
+    /// per-scope `auth` attribute like a non-system-only format.
+    pub user_viable: bool,
+}
+
+#[cfg(target_os = "macos")]
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn generate_distribution_xml(
     plugin_name: &str,
     vendor_id: &str,
     bundle_id: &str,
     formats: &[PkgFormat],
+    extras: &[ExtraComponent],
     version: &str,
     resources: Option<&MacosPackagingConfig>,
     scope: PkgScope,
@@ -783,6 +854,37 @@ pub(crate) fn generate_distribution_xml(
         <pkg-ref id="{pkg_id}"{pkg_ref_auth}/>
     </choice>
 "#
+        );
+        let _ = writeln!(
+            pkg_refs,
+            "    <pkg-ref id=\"{pkg_id}\" version=\"{version}\">{component_file}</pkg-ref>"
+        );
+    }
+
+    // Out-of-bundle components (VST3 presets). Same choice / pkg-ref
+    // shape as a format; `user_viable` mirrors a non-system-only
+    // format's auth treatment so a `--user` install relocates the
+    // preset payload to `~` cleanly.
+    for ec in extras {
+        let pkg_id = format!("{vendor_id}.{bundle_id}.{}", ec.suffix);
+        let component_file = format!("{plugin_name}-{}.pkg", ec.label);
+        let is_system_only = !ec.user_viable;
+        let pkg_ref_auth = match (scope, is_system_only) {
+            (PkgScope::User | PkgScope::Ask, true) => " auth=\"Root\"",
+            (PkgScope::User, false) => " auth=\"None\"",
+            (PkgScope::Ask | PkgScope::System, _) => "",
+        };
+        let _ = writeln!(choices_outline, "        <line choice=\"{}\"/>", ec.suffix);
+        let _ = write!(
+            choices,
+            r#"
+    <choice id="{id}" title="{label}" description="{desc}">
+        <pkg-ref id="{pkg_id}"{pkg_ref_auth}/>
+    </choice>
+"#,
+            id = ec.suffix,
+            label = ec.label,
+            desc = ec.description,
         );
         let _ = writeln!(
             pkg_refs,

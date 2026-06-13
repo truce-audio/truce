@@ -5,10 +5,12 @@
 
 use super::PkgFormat;
 use super::stage::{
-    generate_distribution_xml, stage_aax, stage_au2, stage_au3, stage_clap, stage_lv2_packaged,
-    stage_standalone, stage_vst2, stage_vst3, write_format_scripts,
+    ExtraComponent, build_preset_component, generate_distribution_xml, stage_aax, stage_au2,
+    stage_au3, stage_clap, stage_lv2_packaged, stage_standalone, stage_vst2, stage_vst3,
+    write_format_scripts,
 };
 use crate::commands::build_dylibs::BuildFormat;
+use crate::commands::install::presets;
 use crate::install_scope::PkgScope;
 use crate::{
     CLAP_EXPORTS, Config, MacArch, PluginDef, Res, VST2_EXPORTS, VST3_EXPORTS,
@@ -206,6 +208,9 @@ fn stage_components_only(root: &Path, p: &PluginDef, o: &PackageOpts) -> Res {
         let scripts_dir = write_format_scripts(&staging, fmt, &fmt.bundle_name(p))?;
         run_pkgbuild_for_format(p, fmt, &staging, &components_dir, &scripts_dir, o)?;
     }
+    // VST3 presets ride as their own component; the suite distribution
+    // picks it up via `vst3_preset_descriptor`.
+    build_vst3_preset_component(root, p, o, &staging, &components_dir)?;
     Ok(())
 }
 
@@ -260,10 +265,18 @@ fn package_one_suite(
     // per-format pkg-ref names (`{plugin_name}-{format}.pkg`) the
     // existing per-plugin pipeline emits.
     let suite_version = suite.def.version.as_deref().unwrap_or(o.version);
+    // Per-member VST3 preset descriptors, aligned with `suite.plugins`.
+    // The component .pkgs were built by `stage_components_only`.
+    let extras_by_plugin: Vec<Vec<ExtraComponent>> = suite
+        .plugins
+        .iter()
+        .map(|p| vst3_preset_descriptor(root, p, o).map(|d| d.into_iter().collect()))
+        .collect::<Result<_, _>>()?;
     let dist_xml = generate_suite_distribution_xml(
         suite,
         &o.config.vendor.id,
         o.formats,
+        &extras_by_plugin,
         suite_version,
         Some(&o.config.macos.packaging),
         o.effective_scope,
@@ -325,7 +338,7 @@ fn package_one_suite(
     // dropped every <pkg-ref> and productbuild emitted a 2 KB metadata-
     // only .pkg that opens in Installer.app and reports "can't find the
     // data needed for installation".
-    let expected: Vec<String> = suite
+    let mut expected: Vec<String> = suite
         .plugins
         .iter()
         .flat_map(|plugin| {
@@ -334,6 +347,13 @@ fn package_one_suite(
                 .map(move |fmt| format!("{}-{}.pkg", plugin.file_stem(), fmt.label()))
         })
         .collect();
+    for (plugin, extras) in suite.plugins.iter().zip(&extras_by_plugin) {
+        expected.extend(
+            extras
+                .iter()
+                .map(|ec| format!("{}-{}.pkg", plugin.file_stem(), ec.label)),
+        );
+    }
     super::verify::assert_pkg_contains_components(&pkg_path, &expected)?;
 
     if o.config.macos.packaging.notarize && !o.no_notarize {
@@ -352,6 +372,7 @@ fn generate_suite_distribution_xml(
     suite: &crate::config::ResolvedSuite<'_>,
     vendor_id: &str,
     formats: &[PkgFormat],
+    extras_by_plugin: &[Vec<ExtraComponent>],
     version: &str,
     resources: Option<&crate::config::MacosPackagingConfig>,
     scope: crate::install_scope::PkgScope,
@@ -367,12 +388,19 @@ fn generate_suite_distribution_xml(
     // hierarchy; <choice> elements themselves must be flat siblings at
     // the top level. Nesting them silently drops the inner pkg-refs and
     // productbuild produces an empty (~2 KB) installer with no payload.
-    for plugin in &suite.plugins {
+    for (plugin, extras) in suite.plugins.iter().zip(extras_by_plugin) {
         let outer_id = sanitize_id(&plugin.bundle_id);
         let _ = writeln!(outline, "        <line choice=\"{outer_id}\">");
         for fmt in formats {
             let inner_id = format!("{outer_id}-{}", fmt.pkg_id_suffix());
             let _ = writeln!(outline, "            <line choice=\"{inner_id}\"/>");
+        }
+        for ec in extras {
+            let _ = writeln!(
+                outline,
+                "            <line choice=\"{outer_id}-{}\"/>",
+                ec.suffix
+            );
         }
         let _ = writeln!(outline, "        </line>");
 
@@ -413,6 +441,37 @@ fn generate_suite_distribution_xml(
         <pkg-ref id="{pkg_id}"{pkg_ref_auth}/>
     </choice>
 "#
+            );
+            let _ = writeln!(
+                pkg_refs,
+                "    <pkg-ref id=\"{pkg_id}\" version=\"{version}\">{component_file}</pkg-ref>"
+            );
+        }
+
+        for ec in extras {
+            let inner_id = format!("{outer_id}-{}", ec.suffix);
+            let pkg_id = format!("{vendor_id}.{}.{}", plugin.bundle_id, ec.suffix);
+            let component_file = format!("{}-{}.pkg", plugin.file_stem(), ec.label);
+            let is_system_only = !ec.user_viable;
+            let pkg_ref_auth = match (scope, is_system_only) {
+                (
+                    crate::install_scope::PkgScope::User | crate::install_scope::PkgScope::Ask,
+                    true,
+                ) => " auth=\"Root\"",
+                (crate::install_scope::PkgScope::User, false) => " auth=\"None\"",
+                (
+                    crate::install_scope::PkgScope::Ask | crate::install_scope::PkgScope::System,
+                    _,
+                ) => "",
+            };
+            let _ = write!(
+                choices,
+                r#"    <choice id="{inner_id}" title="{label}" description="{desc}">
+        <pkg-ref id="{pkg_id}"{pkg_ref_auth}/>
+    </choice>
+"#,
+                label = ec.label,
+                desc = ec.description,
             );
             let _ = writeln!(
                 pkg_refs,
@@ -761,6 +820,73 @@ struct PackageOpts<'a> {
 /// (2 through 7) - splitting them into separate helpers would inflate
 /// the boilerplate without surfacing any reuse, since `cmd_package_macos`
 /// is the only caller.
+/// A preset file tree as `(relative path -> bytes)`.
+type PresetPayload = Vec<(PathBuf, Vec<u8>)>;
+
+/// The VST3 preset payload for `p`, or `None` when VST3 isn't selected
+/// or the plugin ships no presets.
+fn vst3_preset_payload_for(
+    root: &Path,
+    p: &PluginDef,
+    o: &PackageOpts,
+) -> Result<Option<PresetPayload>, crate::CargoTruceError> {
+    if !o.formats.contains(&PkgFormat::Vst3) {
+        return Ok(None);
+    }
+    let Some(fp) = presets::load_factory_presets(root, p, o.config)? else {
+        return Ok(None);
+    };
+    let payload = presets::vst3_preset_payload(&fp, p, o.config);
+    Ok((!payload.is_empty()).then_some(payload))
+}
+
+/// The distribution descriptor for `p`'s VST3 preset component (the
+/// pkg itself is built by [`build_vst3_preset_component`] /
+/// `stage_components_only`). `None` when there's nothing to ship.
+fn vst3_preset_descriptor(
+    root: &Path,
+    p: &PluginDef,
+    o: &PackageOpts,
+) -> Result<Option<ExtraComponent>, crate::CargoTruceError> {
+    Ok(
+        vst3_preset_payload_for(root, p, o)?.map(|_| ExtraComponent {
+            suffix: "vst3presets".to_string(),
+            label: "VST3-Presets".to_string(),
+            description: "VST3 factory presets.".to_string(),
+            user_viable: true,
+        }),
+    )
+}
+
+/// Build the VST3-presets pkg component into `components_dir` and
+/// return its descriptor, or `None` when nothing to ship.
+fn build_vst3_preset_component(
+    root: &Path,
+    p: &PluginDef,
+    o: &PackageOpts,
+    staging: &Path,
+    components_dir: &Path,
+) -> Result<Option<ExtraComponent>, crate::CargoTruceError> {
+    let Some(payload) = vst3_preset_payload_for(root, p, o)? else {
+        return Ok(None);
+    };
+    let Some(ec) = vst3_preset_descriptor(root, p, o)? else {
+        return Ok(None);
+    };
+    let pkg_id = format!("{}.{}.{}", o.config.vendor.id, p.bundle_id, ec.suffix);
+    build_preset_component(
+        staging,
+        components_dir,
+        &p.file_stem(),
+        &pkg_id,
+        &ec.label,
+        "/Library/Audio/Presets",
+        o.version,
+        &payload,
+    )?;
+    Ok(Some(ec))
+}
+
 fn package_one_plugin(root: &Path, p: &PluginDef, dist_dir: &Path, o: &PackageOpts) -> Res {
     eprintln!("\nPackaging: {}", p.name);
 
@@ -837,6 +963,11 @@ fn package_one_plugin(root: &Path, p: &PluginDef, dist_dir: &Path, o: &PackageOp
         let scripts_dir = write_format_scripts(&staging, fmt, &fmt.bundle_name(p))?;
         run_pkgbuild_for_format(p, fmt, &staging, &components_dir, &scripts_dir, o)?;
     }
+    // Out-of-bundle VST3 presets ship as their own component.
+    let extras: Vec<ExtraComponent> =
+        build_vst3_preset_component(root, p, o, &staging, &components_dir)?
+            .into_iter()
+            .collect();
 
     // Step 4: Generate distribution.xml. Pass the sanitized
     // file stem (not `p.name`) so the `<pkg-ref>` URLs match the
@@ -850,6 +981,7 @@ fn package_one_plugin(root: &Path, p: &PluginDef, dist_dir: &Path, o: &PackageOp
         &o.config.vendor.id,
         &p.bundle_id,
         o.formats,
+        &extras,
         o.version,
         Some(&o.config.macos.packaging),
         o.effective_scope,
@@ -892,11 +1024,16 @@ fn package_one_plugin(root: &Path, p: &PluginDef, dist_dir: &Path, o: &PackageOp
     // distribution.xml class of bug where productbuild reports
     // success but drops the payload (e.g. nested <choice> elements
     // ignore their pkg-refs and produce a 2 KB metadata-only .pkg).
-    let expected: Vec<String> = o
+    let mut expected: Vec<String> = o
         .formats
         .iter()
         .map(|fmt| format!("{}-{}.pkg", p.file_stem(), fmt.label()))
         .collect();
+    expected.extend(
+        extras
+            .iter()
+            .map(|ec| format!("{}-{}.pkg", p.file_stem(), ec.label)),
+    );
     super::verify::assert_pkg_contains_components(&pkg_path, &expected)?;
 
     // Step 7: Notarize + staple
