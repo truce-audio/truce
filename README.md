@@ -83,6 +83,29 @@ opt-in per plugin via `Cargo.toml` features. On Windows, `cargo truce
 install` must be run from an Administrator command prompt (plugin
 directories are system-wide).
 
+## Presets
+
+Drop a `presets/` directory of `.preset` TOML files next to your crate and
+`cargo truce install` ships them to every format's native preset system —
+CLAP preset-discovery, the AU factory list in Logic, `.vstpreset`, LV2
+`pset:Preset`. `cargo truce preset` is the authoring toolbox on top:
+
+```sh
+cargo truce preset list                   # every preset across factory / user / pack scopes
+cargo truce preset pull                    # harvest presets you saved in your DAW into the library
+cargo truce preset convert in.aupreset out.vstpreset   # re-envelope between any two formats
+cargo truce preset import pack.zip         # a native preset file or a pack zip into your library
+cargo truce preset export pack.zip         # your library out as a shareable per-format pack
+cargo truce preset init                    # stamp uuids into hand-authored .preset files
+```
+
+Your DAW's own "Save Preset" is the authoring frontend: dial in a sound,
+save it in the host, then `pull` converts it into a `.preset` — uuid-stable,
+so re-pulling the same name updates in place instead of duplicating. The
+standalone host (`cargo truce run`) also has a native Presets menu for
+browsing and saving. Full reference at
+[truce.audio/docs/guide/presets](https://truce.audio/docs/guide/presets/).
+
 ## Examples
 
 A suite of example plugins ship in-tree to cover the basics — gain,
