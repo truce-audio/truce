@@ -1,8 +1,8 @@
 //! Pixel buffer → wgpu surface blit pipeline.
 //!
 //! Uploads an RGBA pixel buffer to a GPU texture, then draws it to the
-//! surface at its **native** pixel size, top-left anchored, with the
-//! rest of the surface left black. When the surface matches the texture
+//! surface at its **native** pixel size, centred, with the rest of the
+//! surface left black. When the surface matches the texture
 //! (the usual case, and every resizable editor once `set_size` catches
 //! up) that quad is the whole surface, identical to a plain fullscreen
 //! blit. When the surface is *larger* than the texture - a fixed-size
@@ -13,7 +13,7 @@
 
 const BLIT_SHADER: &str = r"
 // `scale` = texture_size / surface_size: the fraction of the surface
-// the native-size texture covers, anchored at the top-left.
+// the native-size texture covers, centred within it.
 struct Params {
     scale: vec2<f32>,
     _pad: vec2<f32>,
@@ -36,11 +36,11 @@ fn vs_main(@builtin(vertex_index) idx: u32) -> VertexOutput {
     );
     let u = unit[idx];
     var out: VertexOutput;
-    // Top-left of the surface is NDC (-1, 1); the quad spans `scale`
-    // of the surface from there (downward / rightward).
+    // Centred: the quad spans [-scale, +scale] of NDC on each axis, so
+    // the leftover surface is split evenly into the letterbox margins.
     out.position = vec4(
-        -1.0 + u.x * 2.0 * params.scale.x,
-         1.0 - u.y * 2.0 * params.scale.y,
+        params.scale.x * (2.0 * u.x - 1.0),
+        params.scale.y * (1.0 - 2.0 * u.y),
         0.0,
         1.0,
     );
@@ -207,8 +207,8 @@ impl BlitPipeline {
     }
 
     /// Draw the texture to a render target sized `(surf_w, surf_h)`
-    /// physical pixels. The texture is drawn at its native size in the
-    /// top-left; any surface area beyond it is cleared to black
+    /// physical pixels. The texture is drawn at its native size,
+    /// centred; any surface area beyond it is cleared to black
     /// (letterbox). When the surface matches the texture this is a
     /// plain fullscreen blit.
     // Window dimensions are a few thousand px at most - far below

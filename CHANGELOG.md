@@ -31,6 +31,13 @@ Notable changes per release.
   display, and the DSP together. State restore also gained a base64
   fallback for hosts that hand back the preset's `xsd:base64Binary`
   literal undecoded (REAPER) instead of as a raw chunk.
+- **Fixed-size LV2 editors no longer stretch in REAPER.** REAPER
+  resizes an embedded LV2 X11 editor to fill its FX window, which
+  bilinear-upscaled a non-resizable GUI (the built-in synth, etc.) into
+  a blurry mess. The built-in editor now renders at its native size,
+  centered, with black letterbox margins instead of stretching, and the
+  wrapper pins the editor to its natural size at open. Resizable editors
+  are unaffected.
 
 ## 0.58.1
 

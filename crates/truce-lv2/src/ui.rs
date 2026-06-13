@@ -612,13 +612,7 @@ unsafe extern "C" fn ui_resize_dispatch<P: PluginExport>(
         #[allow(clippy::cast_sign_loss)]
         let (req_w, req_h) = (width as u32, height as u32);
         let (cw, ch) = clamp_logical_to_editor(req_w, req_h, editor.as_ref());
-        let accepted = editor.set_size(cw, ch);
-        eprintln!(
-            "truce-lv2: ui_resize_dispatch host={width}x{height} -> clamped {cw}x{ch} \
-             (can_resize={}, set_size accepted={accepted}, editor.size now {:?})",
-            editor.can_resize(),
-            editor.size(),
-        );
+        editor.set_size(cw, ch);
     }
     0
 }
@@ -853,7 +847,6 @@ fn fit_x11_parent_to_child(parent: *mut c_void, w: u32, h: u32) {
         return;
     }
     let Ok(lib) = xlib::Xlib::open() else {
-        eprintln!("truce-lv2: fit_x11: libX11 failed to load");
         return;
     };
     // The host's `xcb_window_t` is numerically the Xlib `Window` id.
@@ -866,17 +859,9 @@ fn fit_x11_parent_to_child(parent: *mut c_void, w: u32, h: u32) {
     unsafe {
         let display = (lib.XOpenDisplay)(std::ptr::null());
         if display.is_null() {
-            eprintln!("truce-lv2: fit_x11: XOpenDisplay failed");
             return;
         }
-
         let child = x11_first_child(&lib, display, parent_id);
-        eprintln!(
-            "truce-lv2: fit_x11: target natural {w}x{h}; BEFORE parent={:?} child={:?}",
-            x11_geom(&lib, display, parent_id),
-            child.map(|c| x11_geom(&lib, display, c)),
-        );
-
         (lib.XResizeWindow)(display, parent_id, w, h);
         // baseview's editor window is the parent's (only) child; REAPER
         // may have already stretched it, so pin it back too. Resizing
@@ -886,13 +871,6 @@ fn fit_x11_parent_to_child(parent: *mut c_void, w: u32, h: u32) {
             (lib.XResizeWindow)(display, c, w, h);
         }
         (lib.XFlush)(display);
-        (lib.XSync)(display, 0);
-
-        eprintln!(
-            "truce-lv2: fit_x11: AFTER  parent={:?} child={:?}",
-            x11_geom(&lib, display, parent_id),
-            child.map(|c| x11_geom(&lib, display, c)),
-        );
         (lib.XCloseDisplay)(display);
     }
 }
@@ -931,40 +909,6 @@ unsafe fn x11_first_child(
         }
         first
     }
-}
-
-/// `(x, y, w, h)` geometry of a window, or `None` on failure. For
-/// diagnostics.
-#[cfg(all(unix, not(target_os = "macos")))]
-unsafe fn x11_geom(
-    lib: &xlib::Xlib,
-    display: *mut xlib::Display,
-    win: xlib::Window,
-) -> Option<(i32, i32, u32, u32)> {
-    let mut root: xlib::Window = 0;
-    let mut x = 0;
-    let mut y = 0;
-    let mut w = 0;
-    let mut h = 0;
-    let mut border = 0;
-    let mut depth = 0;
-    unsafe {
-        if (lib.XGetGeometry)(
-            display,
-            win,
-            &raw mut root,
-            &raw mut x,
-            &raw mut y,
-            &raw mut w,
-            &raw mut h,
-            &raw mut border,
-            &raw mut depth,
-        ) == 0
-        {
-            return None;
-        }
-    }
-    Some((x, y, w, h))
 }
 
 /// Reposition every direct subview of `parent` so it tracks the host's

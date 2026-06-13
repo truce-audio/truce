@@ -394,7 +394,8 @@ fn encode_native(
                 .iter()
                 .filter_map(|(id, v)| symbols.get(id).map(|sym| (sym.clone(), *v)))
                 .collect();
-            truce_build::lv2::render_preset_ttl(&uri, &meta.uuid, &label, &blob, &ports).into_bytes()
+            truce_build::lv2::render_preset_ttl(&uri, &meta.uuid, &label, &blob, &ports)
+                .into_bytes()
         }
         PresetFormat::AuthoredToml => {
             render_preset_toml(&meta, params, extra, &ctx.annotations()).into_bytes()
@@ -666,8 +667,8 @@ fn cmd_export(args: &[String]) -> Res {
         } else {
             format!("{}/{}", preset.meta.category, preset.meta.name)
         };
-        let ports: Vec<(String, f64)> = deserialize_state(&blob, ctx.plugin_id_hash)
-            .map_or_else(Vec::new, |s| {
+        let ports: Vec<(String, f64)> =
+            deserialize_state(&blob, ctx.plugin_id_hash).map_or_else(Vec::new, |s| {
                 s.params
                     .iter()
                     .filter_map(|(id, v)| symbols.get(id).map(|sym| (sym.clone(), *v)))
