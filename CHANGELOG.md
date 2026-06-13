@@ -4,17 +4,15 @@ Notable changes per release.
 
 ## 0.58.2
 
-- **Standalone presets.** The standalone host browses and saves
-  library presets: a native Presets menu (macOS / Windows) with
-  Load, Previous / Next, Save, and Save As, plus Cmd/Ctrl+S and
-  Cmd/Ctrl+Shift+S shortcuts (the only preset control on Linux).
-  Save overwrites the loaded user preset in place; off a factory
-  preset it routes to Save As so the destination is explicit. The
-  menu re-reads the library on open, so saves appear without a
-  relaunch. Factory presets ship in the packaged app and in
-  `cargo truce run`. Load at launch via `--preset <uri|name>`
-  (windowed, headless, offline), list with `--list-presets`;
-  `--state` still loads a preset or a legacy state blob.
+- **Standalone presets.** A Presets menu in the standalone host
+  (macOS / Windows): pick a preset from Load, step through them
+  with Previous / Next, and Save / Save As your own. Save (Cmd/Ctrl+S)
+  updates the preset you're editing; Save As (Cmd/Ctrl+Shift+S)
+  names a new one. On a factory preset Save is grayed and points
+  you to Save As, so you never overwrite a stock sound by accident.
+  Presets you save show up in the menu right away, and they land
+  where your DAW reads them. Linux drives it all from the
+  shortcuts. Launch straight into a sound with `--preset <name>`.
 
 ## 0.58.1
 
