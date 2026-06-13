@@ -78,9 +78,9 @@ struct MenuState {
     /// Presets > Load submenu - re-enumerated on each open so saves
     /// appear without a relaunch.
     preset_load_menu: *mut Object,
-    /// The "Save Preset" item - its title is rewritten on open to
-    /// show the file Save will write (or `Save Preset...` when Save
-    /// will open a dialog).
+    /// The "Save Preset" item - on open its title shows the file
+    /// Save will write, and it's grayed out unless an editable
+    /// preset is loaded to overwrite.
     preset_save_item: *mut Object,
 }
 
@@ -253,8 +253,11 @@ pub fn install(
         // open (`menuWillOpen`); items act through the same target.
         let presets_menu_item = make_menu_item("Presets");
         let presets_menu = make_menu("Presets");
-        // Delegate so `menuWillOpen:` fires for this menu.
+        // Delegate so `menuWillOpen:` fires for this menu. Manage
+        // enabled state ourselves (autoenable would re-enable Save
+        // since the target responds to its action).
         let _: () = msg_send![presets_menu, setDelegate: target];
+        let _: () = msg_send![presets_menu, setAutoenablesItems: NO];
 
         let load_item = make_menu_item("Load");
         let _: () = msg_send![load_item, setTarget: target];
@@ -925,6 +928,14 @@ fn ensure_class() -> &'static Class {
                     if !state.preset_save_item.is_null() {
                         let title = ns_string(&state.presets.save_menu_title());
                         let _: () = msg_send![state.preset_save_item, setTitle: title];
+                        // Gray Save out unless an editable preset is
+                        // loaded; Save As stays the way forward.
+                        let enabled: BOOL = if state.presets.save_enabled() {
+                            YES
+                        } else {
+                            NO
+                        };
+                        let _: () = msg_send![state.preset_save_item, setEnabled: enabled];
                     }
                     return;
                 }

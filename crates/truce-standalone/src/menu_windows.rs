@@ -47,10 +47,10 @@ use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows_sys::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CheckMenuItem, CreateMenu, CreatePopupMenu, DeleteMenu, DrawMenuBar,
-    GetMenuItemCount, GetMenuStringW, GetSystemMetrics, GetWindowRect, HMENU, MF_BYCOMMAND,
-    MF_BYPOSITION, MF_CHECKED, MF_GRAYED, MF_POPUP, MF_SEPARATOR, MF_STRING, MF_UNCHECKED,
-    ModifyMenuW, SM_CYMENU, SWP_NOMOVE, SWP_NOZORDER, SetMenu, SetWindowPos, WM_COMMAND,
-    WM_INITMENUPOPUP, WM_NCDESTROY,
+    EnableMenuItem, GetMenuItemCount, GetMenuStringW, GetSystemMetrics, GetWindowRect, HMENU,
+    MF_BYCOMMAND, MF_BYPOSITION, MF_CHECKED, MF_ENABLED, MF_GRAYED, MF_POPUP, MF_SEPARATOR,
+    MF_STRING, MF_UNCHECKED, ModifyMenuW, SM_CYMENU, SWP_NOMOVE, SWP_NOZORDER, SetMenu,
+    SetWindowPos, WM_COMMAND, WM_INITMENUPOPUP, WM_NCDESTROY,
 };
 
 use crate::audio::{self, ChannelRoute, InputController, OutputController};
@@ -661,6 +661,18 @@ unsafe extern "system" fn subclass_proc(
                         MF_BYCOMMAND | MF_STRING,
                         MENU_CMD_PRESET_SAVE as usize,
                         save_title.as_ptr(),
+                    );
+                    // Gray Save out unless an editable preset is
+                    // loaded; Save As stays the way forward.
+                    let save_flag = if state.presets.save_enabled() {
+                        MF_ENABLED
+                    } else {
+                        MF_GRAYED
+                    };
+                    EnableMenuItem(
+                        state.hmenu_presets,
+                        u32::from(MENU_CMD_PRESET_SAVE),
+                        MF_BYCOMMAND | save_flag,
                     );
                 } else if popup == state.hmenu_plugin {
                     if state.has_mic_item {

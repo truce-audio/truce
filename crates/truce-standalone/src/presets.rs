@@ -291,11 +291,13 @@ impl PresetController {
         }
     }
 
-    /// The full "Save Preset" menu-item title, reflecting what Save
-    /// will do right now: overwriting the loaded user preset shows
-    /// its file (`Save Preset (Glass.trucepreset)`); otherwise Save
-    /// opens a dialog, so the title is the plain `Save Preset...`.
-    /// The menus refresh this each time the Presets menu opens.
+    /// The full "Save Preset" menu-item title: overwriting the loaded
+    /// user preset shows its file (`Save Preset (Glass.trucepreset)`);
+    /// otherwise Save has nothing to overwrite (it's disabled - see
+    /// [`save_enabled`]) so the title is the plain `Save Preset`. The
+    /// menus refresh this each time the Presets menu opens.
+    ///
+    /// [`save_enabled`]: Self::save_enabled
     #[must_use]
     pub fn save_menu_title(&self) -> String {
         match self.current_editable() {
@@ -304,8 +306,18 @@ impl PresetController {
                 safe_filename(&name),
                 truce_utils::preset::PRESET_FILE_EXT
             ),
-            None => "Save Preset...".to_string(),
+            None => "Save Preset".to_string(),
         }
+    }
+
+    /// Whether the Save item should be enabled: only when an editable
+    /// user preset is loaded for it to overwrite. With a read-only
+    /// factory / pack preset (or nothing) loaded, Save would just
+    /// fall through to Save As, so the menus gray it out and nudge
+    /// toward Save As instead.
+    #[must_use]
+    pub fn save_enabled(&self) -> bool {
+        self.current_editable().is_some()
     }
 
     /// The loaded preset's name iff it's an editable (user-scope)
