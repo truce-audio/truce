@@ -145,6 +145,126 @@ pub fn set_background_black(display_handle: RawDisplayHandle, window_handle: &Xl
     }
 }
 
+/// Centre the editor's child window inside the outer window whenever
+/// the outer is larger than the child (e.g. a resizable editor clamped
+/// at its `max_size` while the WM has maximized the outer frame).
+///
+/// The editor backend owns the child's *size* - it resizes its baseview
+/// child window in response to `editor.set_size`; we only adjust its
+/// *origin*. We read the live geometry of both the outer window and its
+/// (single) child via the server rather than trusting `editor.size()`,
+/// so the centring is correct regardless of how the backend clamped,
+/// and `XMoveWindow` only fires when the origin actually changes (so
+/// calling this every frame is cheap - no redundant requests / repaints
+/// when nothing moved). With the outer painted black by
+/// [`set_background_black`], the freed margin around the centred child
+/// reads as an even black border instead of a one-sided gap.
+///
+/// No-op if the display handle is not Xlib, libX11 fails to load, the
+/// window has no child yet, or the server geometry queries fail. Must
+/// be called on the thread that owns the baseview event loop.
+pub fn center_child(display_handle: RawDisplayHandle, outer_handle: &XlibWindowHandle) {
+    let RawDisplayHandle::Xlib(display) = display_handle else {
+        return;
+    };
+    let display_ptr = display.display.cast::<xlib::Display>();
+    if display_ptr.is_null() {
+        return;
+    }
+    let Ok(lib) = xlib::Xlib::open() else {
+        return;
+    };
+    let outer_id = xlib::Window::from(outer_handle.window);
+
+    // SAFETY: `display_ptr` / `outer_id` come from baseview, which owns
+    // the X connection and window for the lifetime of the event loop,
+    // and we run on that loop's thread. `XQueryTree` allocates the
+    // child array, which we `XFree` before returning on every path.
+    unsafe {
+        let Some((_, _, outer_w, outer_h)) = win_geometry(&lib, display_ptr, outer_id) else {
+            return;
+        };
+
+        let mut root: xlib::Window = 0;
+        let mut parent: xlib::Window = 0;
+        let mut children: *mut xlib::Window = std::ptr::null_mut();
+        let mut n_children: c_uint = 0;
+        let ok = (lib.XQueryTree)(
+            display_ptr,
+            outer_id,
+            &raw mut root,
+            &raw mut parent,
+            &raw mut children,
+            &raw mut n_children,
+        );
+        if ok == 0 || n_children == 0 || children.is_null() {
+            if !children.is_null() {
+                (lib.XFree)(children.cast());
+            }
+            return;
+        }
+        // The editor is the outer window's only child (baseview parents
+        // it directly under our window in `editor.open`). If a backend
+        // ever nests more, the first / bottom-most is still the editor
+        // surface; centre that.
+        let child = *children;
+        (lib.XFree)(children.cast());
+
+        let Some((cur_x, cur_y, child_w, child_h)) = win_geometry(&lib, display_ptr, child) else {
+            return;
+        };
+
+        // Even margins; never negative (a child larger than the outer
+        // pins to the top-left, same as the un-centred default).
+        let x = ((i64::from(outer_w) - i64::from(child_w)) / 2).max(0);
+        let y = ((i64::from(outer_h) - i64::from(child_h)) / 2).max(0);
+        let x = c_int::try_from(x).unwrap_or(0);
+        let y = c_int::try_from(y).unwrap_or(0);
+        if x == cur_x && y == cur_y {
+            return;
+        }
+        (lib.XMoveWindow)(display_ptr, child, x, y);
+        (lib.XFlush)(display_ptr);
+    }
+}
+
+/// Read a window's geometry as `(x, y, width, height)`, with `x`/`y`
+/// relative to its parent. `None` if the server rejects the query or
+/// returns a degenerate size. Caller must hold the event-loop thread
+/// and a valid `display`/`window`.
+unsafe fn win_geometry(
+    lib: &xlib::Xlib,
+    display: *mut xlib::Display,
+    window: xlib::Window,
+) -> Option<(c_int, c_int, c_uint, c_uint)> {
+    let mut root: xlib::Window = 0;
+    let mut x: c_int = 0;
+    let mut y: c_int = 0;
+    let mut width: c_uint = 0;
+    let mut height: c_uint = 0;
+    let mut border: c_uint = 0;
+    let mut depth: c_uint = 0;
+    // SAFETY: forwarded from the caller's contract - valid display /
+    // window on the event-loop thread; all out-params are stack locals.
+    let ok = unsafe {
+        (lib.XGetGeometry)(
+            display,
+            window,
+            &raw mut root,
+            &raw mut x,
+            &raw mut y,
+            &raw mut width,
+            &raw mut height,
+            &raw mut border,
+            &raw mut depth,
+        )
+    };
+    if ok == 0 || width == 0 || height == 0 {
+        return None;
+    }
+    Some((x, y, width, height))
+}
+
 /// Remove the maximize affordance from the outer window via Motif WM
 /// hints, leaving move / resize / minimize / close intact.
 ///
@@ -166,6 +286,15 @@ pub fn set_background_black(display_handle: RawDisplayHandle, window_handle: &Xl
 /// Must be called on the thread that owns the baseview event loop;
 /// Xlib calls are not thread-safe on a display the loop also uses.
 pub fn disable_maximize(display_handle: RawDisplayHandle, window_handle: &XlibWindowHandle) {
+    // Motif `PropMotifWmHints` field/bit values (from `Xm/MwmUtil.h`,
+    // which we don't link against - they're stable wire constants).
+    // MWM_FUNC_MAXIMIZE is `1 << 4`; deliberately omitted from the mask.
+    const MWM_HINTS_FUNCTIONS: c_ulong = 1 << 0;
+    const MWM_FUNC_RESIZE: c_ulong = 1 << 1;
+    const MWM_FUNC_MOVE: c_ulong = 1 << 2;
+    const MWM_FUNC_MINIMIZE: c_ulong = 1 << 3;
+    const MWM_FUNC_CLOSE: c_ulong = 1 << 5;
+
     let RawDisplayHandle::Xlib(display) = display_handle else {
         return;
     };
@@ -177,15 +306,6 @@ pub fn disable_maximize(display_handle: RawDisplayHandle, window_handle: &XlibWi
         return;
     };
     let window_id = xlib::Window::from(window_handle.window);
-
-    // Motif `PropMotifWmHints` field/bit values (from `Xm/MwmUtil.h`,
-    // which we don't link against - they're stable wire constants).
-    const MWM_HINTS_FUNCTIONS: c_ulong = 1 << 0;
-    const MWM_FUNC_RESIZE: c_ulong = 1 << 1;
-    const MWM_FUNC_MOVE: c_ulong = 1 << 2;
-    const MWM_FUNC_MINIMIZE: c_ulong = 1 << 3;
-    // MWM_FUNC_MAXIMIZE is `1 << 4`; deliberately omitted from the mask.
-    const MWM_FUNC_CLOSE: c_ulong = 1 << 5;
 
     // The property is five longs: flags, functions, decorations,
     // input_mode, status. We touch only `functions` (gated by the

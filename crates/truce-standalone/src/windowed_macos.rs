@@ -97,32 +97,36 @@ pub unsafe fn disable_zoom(ns_window: *mut std::ffi::c_void) {
     let _: () = unsafe { msg_send![window, setCollectionBehavior: new_behavior] };
 }
 
-/// Tag every subview of the standalone `NSWindow`'s content view with
-/// `NSViewWidthSizable | NSViewHeightSizable` so `AppKit` auto-resizes
-/// the editor's embedded child view when the user drags the
-/// standalone window's edge. baseview-truce's `setFrameSize:`
-/// override then fires a `Resized` event that the editor's own
-/// `WindowHandler` (`vizia_baseview`'s `Application::handle_event`,
-/// egui's / iced's / slint's `on_event`) translates into a wgpu /
-/// skia surface reconfigure + root-entity size update.
+/// Give the editor's embedded child view a flexible margin on every
+/// side so `AppKit` keeps it **centred** (at a fixed size) as the
+/// standalone window grows, instead of stretching it to fill.
 ///
-/// Without this the editor's child stays at its constructed size
-/// while the window grows around it - exactly the visual the user
-/// sees with vizia, whose `Editor::set_size` is a no-op pending
-/// vizia upstream exposing a resize entry point on `WindowHandle`.
+/// Pairs with [`layout_child_centered`]: this sets the autoresizing
+/// behaviour once at open so the child stays centred smoothly during a
+/// live edge-drag between our per-frame layouts; `layout_child_centered`
+/// then updates the child's actual *size* (and re-centres) whenever the
+/// editor clamps or follows a resize. The old behaviour
+/// (`NSViewWidthSizable | NSViewHeightSizable`) stretched the child to
+/// fill, so a clamped editor (bounded `max_size`) left its surface in
+/// the top-left with the grown area beside it; centring distributes
+/// that freed space evenly, matching the Linux `center_child` path.
 ///
 /// # Safety
 ///
 /// Must run on the main thread and only after baseview has finished
 /// adding its child view to the `NSWindow`'s content view. The
-/// caller is responsible for ensuring `ns_window` is a live
+/// caller is responsible for ensuring `ns_view` is a live
 /// Objective-C pointer.
-pub unsafe fn install_subview_autoresize(ns_view: *mut std::ffi::c_void) {
-    // Cocoa autoresizing-mask bit flags. `NSViewWidthSizable`
-    // (`2`) makes the view's width flex with its superview;
-    // `NSViewHeightSizable` (`16`) does the same for height.
-    const NSVIEW_WIDTH_SIZABLE: u64 = 2;
-    const NSVIEW_HEIGHT_SIZABLE: u64 = 16;
+pub unsafe fn install_subview_centering(ns_view: *mut std::ffi::c_void) {
+    // Cocoa autoresizing-mask flags for fixed-size centring: a
+    // flexible margin on each side (`NSViewMinXMargin = 1`,
+    // `MaxXMargin = 4`, `MinYMargin = 8`, `MaxYMargin = 32`) lets
+    // AppKit split the superview's growth across all four margins,
+    // holding the view centred without resizing it.
+    const NSVIEW_MIN_X_MARGIN: u64 = 1;
+    const NSVIEW_MAX_X_MARGIN: u64 = 4;
+    const NSVIEW_MIN_Y_MARGIN: u64 = 8;
+    const NSVIEW_MAX_Y_MARGIN: u64 = 32;
     if ns_view.is_null() {
         return;
     }
@@ -143,7 +147,8 @@ pub unsafe fn install_subview_autoresize(ns_view: *mut std::ffi::c_void) {
         return;
     }
     let count: usize = unsafe { msg_send![subviews, count] };
-    let mask = NSVIEW_WIDTH_SIZABLE | NSVIEW_HEIGHT_SIZABLE;
+    let mask =
+        NSVIEW_MIN_X_MARGIN | NSVIEW_MAX_X_MARGIN | NSVIEW_MIN_Y_MARGIN | NSVIEW_MAX_Y_MARGIN;
     for i in 0..count {
         let child: *mut Object = unsafe { msg_send![subviews, objectAtIndex: i] };
         if child.is_null() {
@@ -151,6 +156,73 @@ pub unsafe fn install_subview_autoresize(ns_view: *mut std::ffi::c_void) {
         }
         let _: () = unsafe { msg_send![child, setAutoresizingMask: mask] };
     }
+}
+
+/// Size the editor's child view to `(child_w, child_h)` logical points
+/// and centre it within an `(outer_w, outer_h)` content area. Called
+/// each frame from the macOS resize poll so the child tracks the
+/// editor's clamped/followed size and sits centred when the window is
+/// larger than it. No-op when the child is already at that frame, so
+/// per-frame calls don't thrash `AppKit`.
+///
+/// Origin is clamped non-negative: a child larger than the content
+/// area pins to the bottom-left rather than going off-screen (the
+/// equivalent of Linux `center_child`'s top-left clamp; `AppKit`'s
+/// y-axis is bottom-up, but the margins are symmetric so it reads the
+/// same).
+///
+/// # Safety
+///
+/// Must run on the main thread; `ns_view` must be the live baseview
+/// standalone `NSView` whose first subview is the editor's child.
+pub unsafe fn layout_child_centered(
+    ns_view: *mut std::ffi::c_void,
+    child_w: u32,
+    child_h: u32,
+    outer_w: u32,
+    outer_h: u32,
+) {
+    if ns_view.is_null() {
+        return;
+    }
+    let parent = ns_view.cast::<Object>();
+    let subviews: *mut Object = unsafe { msg_send![parent, subviews] };
+    if subviews.is_null() {
+        return;
+    }
+    let count: usize = unsafe { msg_send![subviews, count] };
+    if count == 0 {
+        return;
+    }
+    let child: *mut Object = unsafe { msg_send![subviews, objectAtIndex: 0usize] };
+    if child.is_null() {
+        return;
+    }
+
+    let cw = f64::from(child_w);
+    let ch = f64::from(child_h);
+    let x = ((f64::from(outer_w) - cw) / 2.0).max(0.0);
+    let y = ((f64::from(outer_h) - ch) / 2.0).max(0.0);
+
+    let current: NsRect = unsafe { msg_send![child, frame] };
+    // Exact compare is fine: both sides are whole-point values we set /
+    // AppKit echoes back, never accumulated arithmetic.
+    #[allow(clippy::float_cmp)]
+    if current.origin.x == x
+        && current.origin.y == y
+        && current.size.width == cw
+        && current.size.height == ch
+    {
+        return;
+    }
+    let frame = NsRect {
+        origin: NsPoint { x, y },
+        size: NsSize {
+            width: cw,
+            height: ch,
+        },
+    };
+    let _: () = unsafe { msg_send![child, setFrame: frame] };
 }
 
 /// `CGFloat` is `f64` on 64-bit Apple platforms (which is everything

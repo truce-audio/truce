@@ -287,23 +287,23 @@ where
         let ctx = synthesize_editor_context::<P>(&plugin, &transport, Arc::clone(&pending_resize));
         editor.open(truce_parent, ctx);
 
-        // After `editor.open()` reparents baseview's child under
-        // the standalone's NSView, tag the child with
-        // `NSViewWidthSizable | NSViewHeightSizable` so AppKit
-        // grows it when the standalone NSWindow grows. We pass
-        // `h.ns_view` (baseview's standalone view) rather than
-        // `h.ns_window`: `Window::open_blocking` doesn't run
-        // `setContentView:` on the NSWindow until *after* this
-        // build closure returns, so `[ns_window contentView]`
-        // here is the NSWindow's default vanilla view (with no
-        // subviews). baseview's view, however, is already the
-        // parent of the editor's child by the time `editor.open()`
-        // returns.
+        // After `editor.open()` reparents baseview's child under the
+        // standalone's NSView, give the child flexible margins so
+        // AppKit keeps it centred (not stretched) when the NSWindow
+        // grows past the editor; `on_frame`'s `layout_child_centered`
+        // then drives its actual size. We pass `h.ns_view` (baseview's
+        // standalone view) rather than `h.ns_window`:
+        // `Window::open_blocking` doesn't run `setContentView:` on the
+        // NSWindow until *after* this build closure returns, so
+        // `[ns_window contentView]` here is the NSWindow's default
+        // vanilla view (with no subviews). baseview's view, however,
+        // is already the parent of the editor's child by the time
+        // `editor.open()` returns.
         #[cfg(target_os = "macos")]
         if editor_can_resize && let RwhHandle::AppKit(h) = window.raw_window_handle() {
             // SAFETY: `editor.open()` just finished embedding the
             // child view; we're on the main thread.
-            unsafe { crate::windowed_macos::install_subview_autoresize(h.ns_view) };
+            unsafe { crate::windowed_macos::install_subview_centering(h.ns_view) };
         }
 
         StandaloneHandler {
@@ -442,7 +442,42 @@ where
             && os_size.1 > 0
         {
             self.current_size = os_size;
-            self.editor.set_size(os_size.0, os_size.1);
+            let accepted = self.editor.set_size(os_size.0, os_size.1);
+            // Centre the child at the editor's actual rendered size.
+            // Accepting backends (builtin clamps, egui/iced/slint take
+            // it verbatim) report it via `editor.size()`; vizia's
+            // `set_size` is a no-op, so fall back to filling the window
+            // (its child follows through baseview's `setFrameSize:`).
+            let (cw, ch) = if accepted {
+                self.editor.size()
+            } else {
+                os_size
+            };
+            // SAFETY: `editor.set_size` has returned, so the child view
+            // is settled; `h.ns_view` is the live baseview view and
+            // we're on the main thread.
+            unsafe {
+                crate::windowed_macos::layout_child_centered(
+                    h.ns_view, cw, ch, os_size.0, os_size.1,
+                );
+            }
+        }
+
+        // Re-centre the editor child within the outer window when the
+        // outer is larger than the (clamped) editor - the maximize /
+        // past-max-size case. Linux only: Windows snaps the outer back
+        // to the editor size on every drag (the `not(linux)` branch in
+        // `on_event`), so its window is never larger than the editor;
+        // macOS centres via the autoresize layout installed at open.
+        // Gated on `can_resize` because fixed-size editors are pinned
+        // to their exact geometry (`pin_size`) and never leave a
+        // margin. `center_child` no-ops when nothing moved, so calling
+        // it each frame is cheap.
+        #[cfg(target_os = "linux")]
+        if self.editor.can_resize()
+            && let RwhHandle::Xlib(h) = window.raw_window_handle()
+        {
+            crate::windowed_x11::center_child(window.raw_display_handle(), &h);
         }
     }
 
