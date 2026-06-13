@@ -260,6 +260,12 @@ impl<P: Params + 'static> Editor for GpuEditor<P> {
         self.inner.lock().is_ok_and(|g| g.can_resize())
     }
 
+    fn can_maximize(&self) -> bool {
+        // `false` (the trait default) when the inner lock is poisoned,
+        // matching `Editor::can_maximize`'s default.
+        self.inner.lock().is_ok_and(|g| g.can_maximize())
+    }
+
     fn set_size(&mut self, width: u32, height: u32) -> bool {
         self.inner
             .lock()

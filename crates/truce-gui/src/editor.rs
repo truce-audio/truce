@@ -481,6 +481,20 @@ impl<P: Params + 'static> BuiltinEditor<P> {
         }
     }
 
+    /// Whether the standalone host may maximize the window. Inherent
+    /// (see [`Self::size`]) so the gpu-only [`GpuEditor`] wrapper can
+    /// reach it when this `Editor` impl is cfg'd out. Sourced from the
+    /// grid's `.maximizable()` (default `false`); `Rows` layouts are
+    /// fixed-size and never maximizable, and the value is moot there
+    /// anyway since `can_resize` is `false`.
+    #[must_use]
+    pub fn can_maximize(&self) -> bool {
+        match &self.layout {
+            Layout::Grid(gl) => gl.maximizable,
+            Layout::Rows(_) => false,
+        }
+    }
+
     /// Snap a requested logical size to whole cells, reflow the grid,
     /// and post the result for the next frame. Returns `true` when
     /// accepted. Inherent (see [`Self::size`]).
@@ -1201,6 +1215,10 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
     // reach it when this `Editor` impl is cfg'd out.
     fn can_resize(&self) -> bool {
         self.can_resize()
+    }
+
+    fn can_maximize(&self) -> bool {
+        self.can_maximize()
     }
 
     fn min_size(&self) -> (u32, u32) {

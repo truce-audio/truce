@@ -575,6 +575,14 @@ pub struct GridLayout {
     /// this via `Editor::can_resize`; `false` (default) keeps the
     /// layout at its built `cols` for fixed-size plugins.
     pub resizable: bool,
+    /// Whether the standalone host may maximize the window. Editors
+    /// honour this via `Editor::can_maximize`; `false` (default)
+    /// removes the maximize affordance so maximizing can't grow the
+    /// window past the grid's `max_size` into an empty margin. Only
+    /// meaningful for `resizable` layouts - a fixed-size layout is
+    /// pinned regardless. Opt in with `.maximizable(true)` for layouts
+    /// that render correctly at any size.
+    pub maximizable: bool,
     /// Lower clamp on host-driven resize requests, as `(cols, rows)`
     /// cell counts. Surfaced via `Editor::min_size` (converted to
     /// logical points by `compute_size` at the requested cell
@@ -660,6 +668,7 @@ impl GridLayout {
             width: 0,
             height: 0,
             resizable: false,
+            maximizable: false,
             min_size: (1, 1),
             max_size: (u32::MAX, u32::MAX),
             rows: 1,
@@ -767,6 +776,20 @@ impl GridLayout {
         let (w, h) = self.compute_size();
         self.width = w;
         self.height = h;
+        self
+    }
+
+    /// Opt into the standalone host's maximize button. Defaults to
+    /// `false`: maximize is removed on a `resizable` layout so it can't
+    /// grow the window past the grid's `max_size` and leave an empty
+    /// margin around the clamped editor (edge-drag resize within bounds
+    /// is unaffected). Pass `true` for layouts that render correctly at
+    /// any size. Only the standalone host consults this (plugin formats
+    /// let the DAW own the window frame), and only when
+    /// `resizable(true)`.
+    #[must_use]
+    pub fn maximizable(mut self, value: bool) -> Self {
+        self.maximizable = value;
         self
     }
 
@@ -1236,6 +1259,7 @@ impl From<PluginLayout> for GridLayout {
             width: 0,
             height: 0,
             resizable: false,
+            maximizable: false,
             min_size: (1, 1),
             max_size: (u32::MAX, u32::MAX),
             rows: 1,

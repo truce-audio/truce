@@ -13,6 +13,16 @@ Notable changes per release.
   Presets you save show up in the menu right away, and they land
   where your DAW reads them. Linux drives it all from the
   shortcuts. Launch straight into a sound with `--preset <name>`.
+- **`.maximizable(true)` to allow window maximize in the standalone.**
+  Resizable editors can no longer be maximized by default — maximizing
+  would grow the window past the editor's `max_size` and leave an
+  empty margin around the clamped GUI. Opt back in with
+  `.maximizable(true)` (built-in grid, egui, iced, slint) for editors
+  that render at any size; the underlying `Editor::can_maximize` hook
+  drives it on Linux / macOS / Windows. When a window does end up
+  bigger than the editor anyway, the GUI now sits centered instead of
+  pinned to a corner, and the freed space is painted black rather than
+  showing glitched leftovers.
 
 ## 0.58.1
 

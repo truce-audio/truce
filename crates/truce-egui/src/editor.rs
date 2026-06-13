@@ -101,6 +101,12 @@ pub struct EguiEditor<P: Params + ?Sized> {
     /// its built dimensions instead of silently following an
     /// autoresize-driven parent `NSView` grow.
     can_resize: bool,
+    /// Whether the standalone host may maximize the window, exposed
+    /// via `Editor::can_maximize`. Defaults to `false`; only consulted
+    /// for resizable editors (a fixed-size editor is pinned anyway).
+    /// Opt in with `.maximizable(true)` for editors that render
+    /// correctly at any size.
+    can_maximize: bool,
     /// Optional min/max/aspect constraints reported through the
     /// `Editor::min_size` / `max_size` / `aspect_ratio` trait
     /// methods so CLAP `gui_get_resize_hints` and VST3
@@ -151,6 +157,7 @@ impl<P: Params + 'static> EguiEditor<P> {
             window: None,
             context: None,
             can_resize: false,
+            can_maximize: false,
             min_size: (1, 1),
             max_size: (u32::MAX, u32::MAX),
             aspect_ratio: None,
@@ -171,6 +178,7 @@ impl<P: Params + 'static> EguiEditor<P> {
             window: None,
             context: None,
             can_resize: false,
+            can_maximize: false,
             min_size: (1, 1),
             max_size: (u32::MAX, u32::MAX),
             aspect_ratio: None,
@@ -227,6 +235,18 @@ impl<P: Params + 'static> EguiEditor<P> {
     #[must_use]
     pub fn resizable(mut self, resizable: bool) -> Self {
         self.can_resize = resizable;
+        self
+    }
+
+    /// Opt into the standalone host's maximize button. Defaults to
+    /// `false` (maximize is removed for resizable editors so the window
+    /// can't grow past the editor's bounds into an empty margin); pass
+    /// `true` for editors that render correctly at any size. Only the
+    /// standalone host consults this (plugin formats let the DAW own
+    /// the window frame), and only when `resizable(true)`.
+    #[must_use]
+    pub fn maximizable(mut self, maximizable: bool) -> Self {
+        self.can_maximize = maximizable;
         self
     }
 
@@ -853,6 +873,10 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
 
     fn can_resize(&self) -> bool {
         self.can_resize
+    }
+
+    fn can_maximize(&self) -> bool {
+        self.can_maximize
     }
 
     fn min_size(&self) -> (u32, u32) {

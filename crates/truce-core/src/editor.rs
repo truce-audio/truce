@@ -118,14 +118,15 @@ pub trait Editor: Send {
     /// value, since the standalone pins min == max, which already
     /// blocks it.
     ///
-    /// Defaults to `true`: a resizable editor keeps the maximize
-    /// affordance. Override to `false` for editors with a bounded
-    /// [`Self::max_size`], where maximizing would jump the window past
-    /// the editor's max and leave an unpainted margin around the
-    /// clamped surface; disabling maximize keeps the window within the
-    /// edge-drag bounds the WM already enforces.
+    /// Defaults to `false`: the standalone host removes the maximize
+    /// affordance from resizable editors, so the window stays within
+    /// the edge-drag bounds the WM already enforces and can't jump past
+    /// the editor's [`Self::max_size`] into an unpainted margin around
+    /// the clamped surface. Override to `true` for editors that render
+    /// correctly at arbitrary size (typically an unbounded `max_size`)
+    /// and want the maximize affordance.
     fn can_maximize(&self) -> bool {
-        true
+        false
     }
 
     /// Minimum size the editor can render at, in logical points.

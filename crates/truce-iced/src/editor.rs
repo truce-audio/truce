@@ -197,6 +197,11 @@ where
     /// to its built dimensions instead of silently following an
     /// autoresize-driven parent `NSView` grow.
     can_resize: bool,
+    /// Whether the standalone host may maximize the window, exposed
+    /// via `Editor::can_maximize`. Defaults to `false`; only consulted
+    /// for resizable editors. Opt in with `.maximizable(true)` for
+    /// editors that render correctly at any size.
+    can_maximize: bool,
     /// Constraints exposed through the `Editor` trait so format
     /// wrappers can hand the host honest bounds.
     min_size: (u32, u32),
@@ -260,6 +265,7 @@ impl<P: Params + 'static> IcedEditor<P, AutoPlugin> {
             baseview_window: None,
             pending_size: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             can_resize: false,
+            can_maximize: false,
             min_size: (1, 1),
             max_size: (u32::MAX, u32::MAX),
             aspect_ratio: None,
@@ -282,6 +288,7 @@ impl<P: Params + 'static, M: IcedPlugin<P> + 'static> IcedEditor<P, M> {
             baseview_window: None,
             pending_size: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             can_resize: false,
+            can_maximize: false,
             min_size: (1, 1),
             max_size: (u32::MAX, u32::MAX),
             aspect_ratio: None,
@@ -317,6 +324,17 @@ impl<P: Params + 'static, M: IcedPlugin<P> + 'static> IcedEditor<P, M> {
     #[must_use]
     pub fn resizable(mut self, resizable: bool) -> Self {
         self.can_resize = resizable;
+        self
+    }
+
+    /// Opt into the standalone host's maximize button. Defaults to
+    /// `false` (maximize is removed for resizable editors so the window
+    /// can't grow past the editor's bounds into an empty margin); pass
+    /// `true` for editors that render correctly at any size. Only the
+    /// standalone host consults this, and only when `resizable(true)`.
+    #[must_use]
+    pub fn maximizable(mut self, maximizable: bool) -> Self {
+        self.can_maximize = maximizable;
         self
     }
 
@@ -993,6 +1011,10 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
 
     fn can_resize(&self) -> bool {
         self.can_resize
+    }
+
+    fn can_maximize(&self) -> bool {
+        self.can_maximize
     }
 
     fn min_size(&self) -> (u32, u32) {
