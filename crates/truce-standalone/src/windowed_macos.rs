@@ -40,6 +40,63 @@ pub unsafe fn make_resizable(ns_window: *mut std::ffi::c_void) {
     let _: () = unsafe { msg_send![window, setStyleMask: new_mask] };
 }
 
+/// Disable maximize (zoom) and native fullscreen on the standalone
+/// `NSWindow` while keeping it edge-drag resizable.
+///
+/// Two things make a Mac window "maximize": the green title-bar
+/// button, which on modern macOS toggles native fullscreen (Option-
+/// click zooms instead), and the window's collection behaviour, which
+/// gates the fullscreen path and the View ▸ Enter Full Screen menu /
+/// `⌃⌘F`. We disable the zoom button (`setEnabled:NO` on
+/// `NSWindowZoomButton`, which also kills the double-click-titlebar
+/// zoom) and switch the collection behaviour to `FullScreenNone`, so
+/// neither the button nor the shortcut can grow the window past the
+/// editor's `max_size` and leave an unpainted margin. Edge-drag resize
+/// (the `Resizable` mask `make_resizable` added) is untouched.
+///
+/// Call after [`make_resizable`]; both target the same `NSWindow`.
+/// Linux equivalent: `windowed_x11::disable_maximize`; Windows:
+/// `windowed_windows::disable_maximize`.
+///
+/// # Safety
+///
+/// Must run on the main thread and only after baseview has finished
+/// its `NSWindow` initialisation. The caller is responsible for
+/// ensuring `ns_window` is a live Objective-C pointer.
+pub unsafe fn disable_zoom(ns_window: *mut std::ffi::c_void) {
+    // `NSWindowButton` selector value for the green zoom button
+    // (`NSWindowZoomButton = 2`).
+    const NS_WINDOW_ZOOM_BUTTON: u64 = 2;
+    // `NSWindowCollectionBehavior` bits: `FullScreenPrimary = 1 << 7`
+    // and `FullScreenAuxiliary = 1 << 8` are the two that opt a window
+    // into native fullscreen; `FullScreenNone = 1 << 9` forbids it.
+    const NS_FULLSCREEN_PRIMARY: u64 = 1 << 7;
+    const NS_FULLSCREEN_AUXILIARY: u64 = 1 << 8;
+    const NS_FULLSCREEN_NONE: u64 = 1 << 9;
+    if ns_window.is_null() {
+        return;
+    }
+    let window = ns_window.cast::<Object>();
+
+    // Grey out + disable the green button (covers click and the
+    // title-bar double-click zoom gesture). The button can be nil on
+    // a borderless window; baseview's is `Titled`, so it exists, but
+    // guard anyway.
+    let zoom_button: *mut Object =
+        unsafe { msg_send![window, standardWindowButton: NS_WINDOW_ZOOM_BUTTON] };
+    if !zoom_button.is_null() {
+        let _: () = unsafe { msg_send![zoom_button, setEnabled: false] };
+    }
+
+    // Forbid native fullscreen so `⌃⌘F` / the View menu can't bypass
+    // the disabled button. Clear any fullscreen-enabling bits first,
+    // then set `FullScreenNone`.
+    let behavior: u64 = unsafe { msg_send![window, collectionBehavior] };
+    let new_behavior =
+        (behavior & !(NS_FULLSCREEN_PRIMARY | NS_FULLSCREEN_AUXILIARY)) | NS_FULLSCREEN_NONE;
+    let _: () = unsafe { msg_send![window, setCollectionBehavior: new_behavior] };
+}
+
 /// Tag every subview of the standalone `NSWindow`'s content view with
 /// `NSViewWidthSizable | NSViewHeightSizable` so `AppKit` auto-resizes
 /// the editor's embedded child view when the user drags the

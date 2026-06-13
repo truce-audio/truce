@@ -76,6 +76,55 @@ pub fn lock_window(hwnd: *mut c_void) {
     }
 }
 
+/// Disable maximize on `hwnd` while keeping it resizable: clear
+/// `WS_MAXIMIZEBOX` but leave `WS_SIZEBOX` (the resize border) and
+/// `WS_MINIMIZEBOX` in place. For a resizable editor that opts out of
+/// maximize, this stops the window jumping past the editor's
+/// `max_size` (via the maximize button or a title-bar double-click)
+/// and leaving an unpainted margin around the clamped child surface.
+///
+/// Because Win32 renders the maximize glyph greyed (not hidden)
+/// whenever `WS_MINIMIZEBOX` is still set - the same quirk
+/// [`lock_window`] documents - the button stays visible but disabled,
+/// which is the intended "maximize off, minimize on" frame for a
+/// resizable window. Linux equivalent: `windowed_x11::disable_maximize`
+/// (Motif `MWM_FUNC_MAXIMIZE`); macOS: `windowed_macos::disable_zoom`.
+/// No-op if the handle is null or `WS_MAXIMIZEBOX` is already clear.
+///
+/// Must run on the thread that owns the baseview window (the main
+/// thread).
+// `WS_MAXIMIZEBOX as i32`: a single `u32` bit flag (0x0001_0000) that
+// fits in `i32` without wrapping; the cast matches `GetWindowLongW`'s
+// `LONG` return type, same as `lock_window`.
+#[allow(clippy::cast_possible_wrap)]
+pub fn disable_maximize(hwnd: *mut c_void) {
+    if hwnd.is_null() {
+        return;
+    }
+    let hwnd = hwnd as HWND;
+
+    // SAFETY: `hwnd` is the live baseview window handle and we're on
+    // the event-loop thread. Same style-word read/modify/write +
+    // `SWP_FRAMECHANGED` repaint as `lock_window`.
+    unsafe {
+        let style = GetWindowLongW(hwnd, GWL_STYLE);
+        let cleared = style & !(WS_MAXIMIZEBOX as i32);
+        if cleared == style {
+            return;
+        }
+        SetWindowLongW(hwnd, GWL_STYLE, cleared);
+        SetWindowPos(
+            hwnd,
+            std::ptr::null_mut(),
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED,
+        );
+    }
+}
+
 /// Give `hwnd` the app icon embedded in the running `.exe`.
 ///
 /// `cargo truce package` embeds the plugin's `[[plugin]].windows_icon`

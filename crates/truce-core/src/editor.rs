@@ -107,6 +107,27 @@ pub trait Editor: Send {
         false
     }
 
+    /// Whether the editor permits the standalone window to be
+    /// maximized (the WM maximize button / double-click-titlebar
+    /// maximize / macOS zoom-and-fullscreen / Windows maximize box).
+    ///
+    /// Standalone-only: in CLAP / VST3 / AU the host owns the window
+    /// frame, so this is ignored there (same as `size_increment`'s
+    /// WM-snap note). Subordinate to [`Self::can_resize`] - a
+    /// non-resizable editor can never be maximized regardless of this
+    /// value, since the standalone pins min == max, which already
+    /// blocks it.
+    ///
+    /// Defaults to `true`: a resizable editor keeps the maximize
+    /// affordance. Override to `false` for editors with a bounded
+    /// [`Self::max_size`], where maximizing would jump the window past
+    /// the editor's max and leave an unpainted margin around the
+    /// clamped surface; disabling maximize keeps the window within the
+    /// edge-drag bounds the WM already enforces.
+    fn can_maximize(&self) -> bool {
+        true
+    }
+
     /// Minimum size the editor can render at, in logical points.
     /// Defaults to `(1, 1)`. Wrappers consult this for CLAP's
     /// `gui_get_resize_hints` and VST3's `checkSizeConstraint`.

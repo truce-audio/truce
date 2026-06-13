@@ -1,6 +1,6 @@
-//! Linux/X11 helpers for the outer baseview window's WM size hints.
+//! Linux/X11 helpers for the outer baseview window's WM frame.
 //!
-//! Two modes:
+//! Size hints:
 //! - [`pin_size`] locks min == max to the current geometry for
 //!   editors that don't support resize, so the WM hides resize grips
 //!   and rejects resize requests entirely.
@@ -12,8 +12,16 @@
 //!   re-entrancy-safe way to do it: pushing `configure_window` back
 //!   from inside the window's own `ConfigureNotify` handler fights
 //!   the WM's resize grab and the window runs away.
+//!
+//! Frame appearance / functions:
+//! - [`set_background_black`] gives the outer window an opaque-black
+//!   background so uncovered regions read as black, not glitched.
+//! - [`disable_maximize`] clears the Motif `MWM_FUNC_MAXIMIZE` bit so
+//!   the WM drops the maximize affordance for resizable editors that
+//!   don't opt into it. Best-effort: floating WMs (mutter, kwin,
+//!   xfwm) honour `_MOTIF_WM_HINTS`; tiling WMs (i3, sway) ignore it.
 
-use std::os::raw::{c_int, c_uint};
+use std::os::raw::{c_int, c_uchar, c_uint, c_ulong};
 
 use raw_window_handle::{RawDisplayHandle, XlibWindowHandle};
 use x11_dl::xlib;
@@ -133,6 +141,88 @@ pub fn set_background_black(display_handle: RawDisplayHandle, window_handle: &Xl
         // rather than only on the next expose. Child windows obscure
         // the parent, so this never blacks out the editor surface.
         (lib.XClearWindow)(display_ptr, window_id);
+        (lib.XFlush)(display_ptr);
+    }
+}
+
+/// Remove the maximize affordance from the outer window via Motif WM
+/// hints, leaving move / resize / minimize / close intact.
+///
+/// Sets `_MOTIF_WM_HINTS` with `MWM_HINTS_FUNCTIONS` and a functions
+/// mask of everything *except* `MWM_FUNC_MAXIMIZE`, which tells the WM
+/// to drop the maximize button and ignore maximize requests
+/// (double-click titlebar, the window menu's "Maximize") while still
+/// allowing interactive edge-drag resize. For a resizable editor with
+/// a bounded `max_size` this is what stops the window jumping past the
+/// editor's max and leaving an unpainted margin; the
+/// [`set_resize_hints`] cap handles edge-drags, this handles maximize.
+///
+/// Best-effort. Floating WMs (mutter, kwin, xfwm, openbox) honour
+/// `_MOTIF_WM_HINTS`; tiling WMs (i3, sway, dwm) ignore it and size
+/// the window to the tile regardless - there's no portable client-side
+/// way to forbid that. No-op if the display handle is not Xlib, if
+/// libX11 fails to load, or if interning the atom fails.
+///
+/// Must be called on the thread that owns the baseview event loop;
+/// Xlib calls are not thread-safe on a display the loop also uses.
+pub fn disable_maximize(display_handle: RawDisplayHandle, window_handle: &XlibWindowHandle) {
+    let RawDisplayHandle::Xlib(display) = display_handle else {
+        return;
+    };
+    let display_ptr = display.display.cast::<xlib::Display>();
+    if display_ptr.is_null() {
+        return;
+    }
+    let Ok(lib) = xlib::Xlib::open() else {
+        return;
+    };
+    let window_id = xlib::Window::from(window_handle.window);
+
+    // Motif `PropMotifWmHints` field/bit values (from `Xm/MwmUtil.h`,
+    // which we don't link against - they're stable wire constants).
+    const MWM_HINTS_FUNCTIONS: c_ulong = 1 << 0;
+    const MWM_FUNC_RESIZE: c_ulong = 1 << 1;
+    const MWM_FUNC_MOVE: c_ulong = 1 << 2;
+    const MWM_FUNC_MINIMIZE: c_ulong = 1 << 3;
+    // MWM_FUNC_MAXIMIZE is `1 << 4`; deliberately omitted from the mask.
+    const MWM_FUNC_CLOSE: c_ulong = 1 << 5;
+
+    // The property is five longs: flags, functions, decorations,
+    // input_mode, status. We touch only `functions` (gated by the
+    // `MWM_HINTS_FUNCTIONS` flag); `decorations` is left untouched
+    // because we don't set `MWM_HINTS_DECORATIONS`, so the full title
+    // bar / border stays.
+    let hints: [c_ulong; 5] = [
+        MWM_HINTS_FUNCTIONS,
+        MWM_FUNC_RESIZE | MWM_FUNC_MOVE | MWM_FUNC_MINIMIZE | MWM_FUNC_CLOSE,
+        0,
+        0,
+        0,
+    ];
+
+    // SAFETY: `display_ptr` / `window_id` come from baseview, which
+    // owns the X connection and window for the lifetime of the event
+    // loop, and we run on that loop's thread. The atom name is a
+    // NUL-terminated C string literal; `hints` outlives the
+    // `XChangeProperty` call that copies it.
+    unsafe {
+        let atom = (lib.XInternAtom)(display_ptr, c"_MOTIF_WM_HINTS".as_ptr(), xlib::False);
+        if atom == 0 {
+            return;
+        }
+        // Property type is the same atom as the name, format 32, five
+        // elements. On 64-bit Xlib a format-32 element is a `long`, so
+        // `[c_ulong; 5]` is the correct in-memory shape.
+        (lib.XChangeProperty)(
+            display_ptr,
+            window_id,
+            atom,
+            atom,
+            32,
+            xlib::PropModeReplace,
+            hints.as_ptr().cast::<c_uchar>(),
+            5,
+        );
         (lib.XFlush)(display_ptr);
     }
 }

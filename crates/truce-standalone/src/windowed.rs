@@ -98,6 +98,13 @@ where
     // skip the lock-window pin, macOS ORs the
     // `NSWindowStyleMaskResizable` bit into baseview's style mask.
     let editor_can_resize = editor.can_resize();
+    // A resizable editor that opts out of maximize gets the WM
+    // maximize affordance stripped (per-OS blocks below). Read once
+    // here for the same borrow reason as `editor_can_resize` - the
+    // cfg blocks run while `editor` is otherwise tied up. Only
+    // meaningful when `editor_can_resize`; a non-resizable editor is
+    // already pinned to a fixed size.
+    let editor_can_maximize = editor.can_maximize();
 
     // Logical-points size handoff between the editor (via the
     // `request_resize` closure) and the outer baseview window handler.
@@ -203,6 +210,11 @@ where
             // Linux equivalent: `windowed_x11::pin_size` below.
             if !editor_can_resize {
                 crate::windowed_windows::lock_window(h.hwnd);
+            } else if !editor_can_maximize {
+                // Resizable but maximize opted out: keep the resize
+                // border + minimize, drop only the maximize box so the
+                // window can't jump past the editor's max_size.
+                crate::windowed_windows::disable_maximize(h.hwnd);
             }
             // Title-bar / taskbar icon from the icon embedded in the
             // packaged .exe (no-op in un-packaged dev builds).
@@ -219,6 +231,18 @@ where
         #[cfg(target_os = "linux")]
         if !editor_can_resize && let RwhHandle::Xlib(h) = window.raw_window_handle() {
             crate::windowed_x11::pin_size(window.raw_display_handle(), &h);
+        }
+
+        // Linux: a resizable editor that opts out of maximize gets the
+        // Motif maximize function stripped so the WM drops the maximize
+        // button / double-click-titlebar maximize. Edge-drag resize
+        // (clamped by `set_resize_hints` on the first `Resized`) stays.
+        #[cfg(target_os = "linux")]
+        if editor_can_resize
+            && !editor_can_maximize
+            && let RwhHandle::Xlib(h) = window.raw_window_handle()
+        {
+            crate::windowed_x11::disable_maximize(window.raw_display_handle(), &h);
         }
 
         // Linux: paint the outer window black so any area the editor
@@ -251,6 +275,13 @@ where
             // We're on the main thread - `open_blocking` only runs
             // its builder on the thread that owns the event loop.
             unsafe { crate::windowed_macos::make_resizable(h.ns_window) };
+            // Strip zoom + native fullscreen when the editor opts out
+            // of maximize, after the resizable bit is set (the zoom
+            // button only becomes active on a resizable window).
+            if !editor_can_maximize {
+                // SAFETY: same live `ns_window`, same main thread.
+                unsafe { crate::windowed_macos::disable_zoom(h.ns_window) };
+            }
         }
 
         let ctx = synthesize_editor_context::<P>(&plugin, &transport, Arc::clone(&pending_resize));
