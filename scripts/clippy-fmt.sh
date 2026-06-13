@@ -15,6 +15,15 @@ set -uo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root_dir="$(cd "$script_dir/.." && pwd)"
 
+# Under WSL the workspace lives on a Windows drive, where the native
+# `cargo.exe` toolchain builds far faster than the Linux one (and
+# matches what the user actually ships). Prefer it when present, but
+# fall back to plain `cargo` on real Linux / macOS where it's absent.
+cargo="cargo"
+if command -v cargo.exe >/dev/null 2>&1; then
+    cargo="cargo.exe"
+fi
+
 workspaces=(
     "$root_dir"
     "$root_dir/crates/truce-slint"
@@ -28,7 +37,7 @@ for ws in "${workspaces[@]}"; do
     label="${label#/}"
     [[ -z "$label" ]] && label="(main)"
     printf '\n=== clippy --fix [%s] ===\n' "$label"
-    if ! ( cd "$ws" && cargo clippy --fix --allow-dirty \
+    if ! ( cd "$ws" && "$cargo" clippy --fix --allow-dirty \
         --all-features --all-targets ); then
         rc=$?
         printf '[FAIL] clippy %s (exit %d)\n' "$label" "$rc" >&2
@@ -36,7 +45,7 @@ for ws in "${workspaces[@]}"; do
         continue
     fi
     printf '\n=== fmt [%s] ===\n' "$label"
-    if ! ( cd "$ws" && cargo fmt ); then
+    if ! ( cd "$ws" && "$cargo" fmt ); then
         rc=$?
         printf '[FAIL] fmt %s (exit %d)\n' "$label" "$rc" >&2
         overall_status=$rc
