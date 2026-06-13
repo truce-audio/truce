@@ -91,18 +91,17 @@ const VSTPRESET_HEADER_LEN: usize = 48;
 /// `truce-vst3`'s component `setState` consumes).
 ///
 /// Layout: `"VST3"` magic, `i32` version, 32 ASCII hex chars of the
-/// class ID, `i64` offset to the chunk list, the chunk data, then a
-/// `"List"` section of `(id, offset, size)` entries - all integers
-/// little-endian, per the VST3 SDK's `PresetFile` implementation.
+/// class ID (see [`encode_class_id`]), `i64` offset to the chunk
+/// list, the chunk data, then a `"List"` section of `(id, offset,
+/// size)` entries - all integers little-endian, per the VST3 SDK's
+/// `PresetFile` implementation.
 pub(crate) fn vstpreset_bytes(class_id: &[u8; 16], blob: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(VSTPRESET_HEADER_LEN + blob.len() + 36);
     out.extend_from_slice(b"VST3");
     out.extend_from_slice(&1i32.to_le_bytes());
-    let mut hex = String::with_capacity(32);
-    for b in class_id {
-        let _ = write!(hex, "{b:02X}");
-    }
-    out.extend_from_slice(hex.as_bytes());
+    // The host that loads this file is the one we're installing for
+    // (presets are emitted locally), so match its platform.
+    out.extend_from_slice(encode_class_id(class_id, cfg!(target_os = "windows")).as_bytes());
     let list_offset = VSTPRESET_HEADER_LEN + blob.len();
     out.extend_from_slice(&(list_offset as u64).to_le_bytes());
     out.extend_from_slice(blob);
@@ -112,6 +111,31 @@ pub(crate) fn vstpreset_bytes(class_id: &[u8; 16], blob: &[u8]) -> Vec<u8> {
     out.extend_from_slice(&(VSTPRESET_HEADER_LEN as u64).to_le_bytes());
     out.extend_from_slice(&(blob.len() as u64).to_le_bytes());
     out
+}
+
+/// Hex-encode the 16-byte class ID into the 32-char header string the
+/// way the host will read it back. The SDK's `PresetFile` writes
+/// `FUID::toString(classID)` and hosts decode with `FUID::fromString`,
+/// so we must reproduce that platform-dependent ordering or the host
+/// recovers a different TUID than the plugin's factory reports and
+/// rejects the file ("...doesn't appear to be for this plugin").
+///
+/// On macOS/Linux it is a straight per-byte hex dump. On Windows the
+/// SDK is `COM_COMPATIBLE`: `toString` reinterprets the first eight
+/// bytes as a little-endian Windows GUID (`Data1` u32, `Data2` /
+/// `Data3` u16), reversing bytes 0..4, 4..6 and 6..8; bytes 8..16 stay
+/// in order. `truce`'s factory reports the raw FNV bytes on every
+/// platform, so the file's class string is genuinely platform-specific
+/// - which is fine, presets are emitted per-install on the target.
+fn encode_class_id(class_id: &[u8; 16], com_compatible: bool) -> String {
+    const RAW: [usize; 16] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+    const GUID: [usize; 16] = [3, 2, 1, 0, 5, 4, 7, 6, 8, 9, 10, 11, 12, 13, 14, 15];
+    let order = if com_compatible { GUID } else { RAW };
+    let mut hex = String::with_capacity(32);
+    for i in order {
+        let _ = write!(hex, "{:02X}", class_id[i]);
+    }
+    hex
 }
 
 /// Extract the `Comp` chunk (the canonical envelope) from a
@@ -298,6 +322,23 @@ mod tests {
         assert_eq!(&bytes[0..4], b"VST3");
         assert_eq!(&bytes[8..40], "AB".repeat(16).as_bytes());
         assert_eq!(&bytes[48..58], &blob[..]);
+    }
+
+    #[test]
+    fn class_id_encoding_matches_fuid_tostring() {
+        // 0x00..0x0F so each byte is distinguishable.
+        let cid: [u8; 16] = std::array::from_fn(|i| i as u8);
+        // Non-COM: straight per-byte dump.
+        assert_eq!(
+            encode_class_id(&cid, false),
+            "000102030405060708090A0B0C0D0E0F"
+        );
+        // COM_COMPATIBLE: first 8 bytes reordered as a little-endian
+        // Windows GUID (Data1 u32, Data2/Data3 u16), tail unchanged.
+        assert_eq!(
+            encode_class_id(&cid, true),
+            "030201000504070608090A0B0C0D0E0F"
+        );
     }
 
     #[test]
