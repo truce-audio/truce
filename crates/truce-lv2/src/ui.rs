@@ -49,6 +49,9 @@ use crate::atom::AtomSequenceReader;
 use crate::types::LV2Feature;
 use crate::urid::UridMap;
 
+#[cfg(all(unix, not(target_os = "macos")))]
+use x11_dl::xlib;
+
 pub type Lv2UiHandle = *mut c_void;
 pub type Lv2UiController = *mut c_void;
 
@@ -361,6 +364,17 @@ pub unsafe fn instantiate_ui<P: PluginExport>(
         #[cfg(target_os = "windows")]
         fit_win32_parent_to_child(parent_ptr);
 
+        // X11: REAPER ignores `ui:resize` at instantiate here too and
+        // (unlike Windows) stretches the embedded child to its pane,
+        // which bilinear-upscales a fixed-size editor's surface (blurry
+        // GUI). For a non-resizable editor, pin the host's parent and
+        // baseview's child back to the editor's natural size so it
+        // renders 1:1. Resizable editors are left to grow with the host.
+        #[cfg(all(unix, not(target_os = "macos")))]
+        if !editor.can_resize() {
+            fit_x11_parent_to_child(parent_ptr, pref_w, pref_h);
+        }
+
         // Set widget out-param. Strict X11UI / CocoaUI hosts want the
         // child window / view we created; pragmatic ones (Ardour,
         // Jalv, Reaper) accept the parent.
@@ -598,7 +612,13 @@ unsafe extern "C" fn ui_resize_dispatch<P: PluginExport>(
         #[allow(clippy::cast_sign_loss)]
         let (req_w, req_h) = (width as u32, height as u32);
         let (cw, ch) = clamp_logical_to_editor(req_w, req_h, editor.as_ref());
-        editor.set_size(cw, ch);
+        let accepted = editor.set_size(cw, ch);
+        eprintln!(
+            "truce-lv2: ui_resize_dispatch host={width}x{height} -> clamped {cw}x{ch} \
+             (can_resize={}, set_size accepted={accepted}, editor.size now {:?})",
+            editor.can_resize(),
+            editor.size(),
+        );
     }
     0
 }
@@ -813,6 +833,138 @@ unsafe fn fit_win32_parent_to_child(parent: *mut c_void) {
             SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
         );
     }
+}
+
+/// X11 analog of [`fit_win32_parent_to_child`] for hosts that ignore
+/// `ui:resize` at instantiate and stretch the embedded child to their
+/// pane (REAPER). Pins the host's parent window *and* baseview's child
+/// window to `(w, h)` - the editor's natural size - so a fixed-size
+/// editor's surface renders 1:1 instead of being bilinear-upscaled to
+/// the host's pane (the blurry GUI). Only called for non-resizable
+/// editors; resizable ones keep host-driven growth.
+///
+/// The LV2 UI is handed only an `xcb_window_t` (no display handle), so
+/// we open our own short-lived X connection - cross-client window
+/// resizes are valid X11. No-op if libX11 can't be dlopened or the
+/// window id looks invalid.
+#[cfg(all(unix, not(target_os = "macos")))]
+fn fit_x11_parent_to_child(parent: *mut c_void, w: u32, h: u32) {
+    if parent.is_null() || w == 0 || h == 0 {
+        return;
+    }
+    let Ok(lib) = xlib::Xlib::open() else {
+        eprintln!("truce-lv2: fit_x11: libX11 failed to load");
+        return;
+    };
+    // The host's `xcb_window_t` is numerically the Xlib `Window` id.
+    let parent_id = parent as usize as xlib::Window;
+
+    // SAFETY: we open and exclusively own this display connection for
+    // the duration of the call and close it before returning. Operating
+    // on window ids owned by another X client is well-defined; X
+    // serialises requests across connections.
+    unsafe {
+        let display = (lib.XOpenDisplay)(std::ptr::null());
+        if display.is_null() {
+            eprintln!("truce-lv2: fit_x11: XOpenDisplay failed");
+            return;
+        }
+
+        let child = x11_first_child(&lib, display, parent_id);
+        eprintln!(
+            "truce-lv2: fit_x11: target natural {w}x{h}; BEFORE parent={:?} child={:?}",
+            x11_geom(&lib, display, parent_id),
+            child.map(|c| x11_geom(&lib, display, c)),
+        );
+
+        (lib.XResizeWindow)(display, parent_id, w, h);
+        // baseview's editor window is the parent's (only) child; REAPER
+        // may have already stretched it, so pin it back too. Resizing
+        // it re-fires baseview's `Resized`, which reconfigures the wgpu
+        // surface to the natural size and re-renders crisply.
+        if let Some(c) = child {
+            (lib.XResizeWindow)(display, c, w, h);
+        }
+        (lib.XFlush)(display);
+        (lib.XSync)(display, 0);
+
+        eprintln!(
+            "truce-lv2: fit_x11: AFTER  parent={:?} child={:?}",
+            x11_geom(&lib, display, parent_id),
+            child.map(|c| x11_geom(&lib, display, c)),
+        );
+        (lib.XCloseDisplay)(display);
+    }
+}
+
+/// First (only) child of `parent`, or `None`. Caller holds a live
+/// display on its own thread.
+#[cfg(all(unix, not(target_os = "macos")))]
+unsafe fn x11_first_child(
+    lib: &xlib::Xlib,
+    display: *mut xlib::Display,
+    parent: xlib::Window,
+) -> Option<xlib::Window> {
+    let mut root: xlib::Window = 0;
+    let mut parent_ret: xlib::Window = 0;
+    let mut children: *mut xlib::Window = std::ptr::null_mut();
+    let mut n: std::os::raw::c_uint = 0;
+    unsafe {
+        if (lib.XQueryTree)(
+            display,
+            parent,
+            &raw mut root,
+            &raw mut parent_ret,
+            &raw mut children,
+            &raw mut n,
+        ) == 0
+        {
+            return None;
+        }
+        let first = if n > 0 && !children.is_null() {
+            Some(*children)
+        } else {
+            None
+        };
+        if !children.is_null() {
+            (lib.XFree)(children.cast());
+        }
+        first
+    }
+}
+
+/// `(x, y, w, h)` geometry of a window, or `None` on failure. For
+/// diagnostics.
+#[cfg(all(unix, not(target_os = "macos")))]
+unsafe fn x11_geom(
+    lib: &xlib::Xlib,
+    display: *mut xlib::Display,
+    win: xlib::Window,
+) -> Option<(i32, i32, u32, u32)> {
+    let mut root: xlib::Window = 0;
+    let mut x = 0;
+    let mut y = 0;
+    let mut w = 0;
+    let mut h = 0;
+    let mut border = 0;
+    let mut depth = 0;
+    unsafe {
+        if (lib.XGetGeometry)(
+            display,
+            win,
+            &raw mut root,
+            &raw mut x,
+            &raw mut y,
+            &raw mut w,
+            &raw mut h,
+            &raw mut border,
+            &raw mut depth,
+        ) == 0
+        {
+            return None;
+        }
+    }
+    Some((x, y, w, h))
 }
 
 /// Reposition every direct subview of `parent` so it tracks the host's

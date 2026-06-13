@@ -3041,10 +3041,12 @@ dependencies = [
 name = "truce-lv2"
 version = "0.58.1"
 dependencies = [
+ "base64",
  "objc",
  "truce-build",
  "truce-core",
  "truce-params",
+ "x11-dl",
 ]
 
 [[package]]

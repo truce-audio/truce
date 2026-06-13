@@ -994,7 +994,13 @@ impl<P: Params + 'static> BuiltinWindowHandler<P> {
                 .create_view(&wgpu::TextureViewDescriptor::default());
             let mut encoder =
                 device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
-            blit.render(&mut encoder, &view);
+            blit.render(
+                queue,
+                &mut encoder,
+                &view,
+                surface_config.width,
+                surface_config.height,
+            );
             queue.submit(std::iter::once(encoder.finish()));
             frame.present();
         }
@@ -1307,6 +1313,7 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
                         device,
                         queue,
                         surface,
+                        surface_config,
                         blit,
                         ..
                     } = &mut backend;
@@ -1322,7 +1329,13 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
                             device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                                 label: None,
                             });
-                        blit.render(&mut encoder, &view);
+                        blit.render(
+                            queue,
+                            &mut encoder,
+                            &view,
+                            surface_config.width,
+                            surface_config.height,
+                        );
                         queue.submit(std::iter::once(encoder.finish()));
                         frame.present();
                     }

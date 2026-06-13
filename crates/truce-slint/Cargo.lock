@@ -5134,6 +5134,7 @@ dependencies = [
  "truce-build",
  "truce-core",
  "truce-params",
+ "x11-dl",
 ]
 
 [[package]]

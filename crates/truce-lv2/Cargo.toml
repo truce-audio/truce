@@ -21,5 +21,12 @@ base64 = { workspace = true }
 [target.'cfg(target_os = "macos")'.dependencies]
 objc = "0.2"
 
+# X11 size fix-ups for the embedded UI under hosts that don't honour
+# `ui:resize` (REAPER): pin a non-resizable editor's parent + child to
+# the editor's natural size so the host can't stretch the surface.
+# `x11-dl` is dlopen-based, so no link-time X11 dependency.
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+x11-dl = "2"
+
 [lints]
 workspace = true
