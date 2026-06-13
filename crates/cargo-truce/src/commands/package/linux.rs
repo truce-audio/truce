@@ -20,6 +20,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use super::{PkgFormat, SuiteSelection};
+use crate::commands::install::presets;
 use crate::config::{Config, PluginDef, ResolvedSuite};
 use crate::{CargoTruceError, Res, load_config, project_root, read_workspace_version};
 use truce_build::BundleManifest;
@@ -266,7 +267,8 @@ fn build_per_plugin_tarball(ctx: &TarballCtx<'_>, plugin: &PluginDef) -> Res {
     let stem = format!("{}-{}-linux-{}", plugin.crate_name, ctx.version, ctx.arch);
     let staging = plugin_stage_dir(ctx.root, &plugin.bundle_id, ctx.arch)?;
 
-    let plugin_summary = stage_plugin_payload(plugin, &staging, ctx.bundles_dir, ctx.manifest)?;
+    let plugin_summary =
+        stage_plugin_payload(ctx.root, ctx.config, plugin, &staging, ctx.bundles_dir, ctx.manifest)?;
     let install_paths = expected_tarball_paths(&stem, &[&plugin_summary]);
     write_install_sh(&staging, ctx.config, &[plugin_summary], None)?;
     write_readme(&staging, ctx.config, ctx.version, &[plugin], None)?;
@@ -301,6 +303,8 @@ fn build_suite_tarball(ctx: &TarballCtx<'_>, suite: &ResolvedSuite<'_>) -> Res {
     let mut summaries = Vec::with_capacity(suite.plugins.len());
     for plugin in &suite.plugins {
         summaries.push(stage_plugin_payload(
+            ctx.root,
+            ctx.config,
             plugin,
             &staging,
             ctx.bundles_dir,
@@ -368,6 +372,14 @@ struct PluginSummary {
     /// Standalone executable name relative to the tarball's
     /// `standalone/` directory, if any.
     standalone: Option<String>,
+    /// Tarball-relative path of the CLAP `<stem>.presets/` sibling
+    /// directory, when the plugin ships factory presets and CLAP is
+    /// staged. install.sh copies it next to the `.clap`.
+    clap_presets: Option<String>,
+    /// Tarball-relative path of this plugin's VST3 preset tree
+    /// (`vst3-presets/<Vendor>/<Plugin>`), when staged. install.sh
+    /// *merges* it into the shared `~/.vst3/presets` folder.
+    vst3_presets: Option<String>,
 }
 
 struct BundleEntry {
@@ -387,6 +399,8 @@ struct BundleEntry {
 /// error rather than a silent skip - empty plugin payloads ship
 /// broken tarballs.
 fn stage_plugin_payload(
+    root: &Path,
+    config: &Config,
     plugin: &PluginDef,
     staging: &Path,
     bundles_dir: &Path,
@@ -433,6 +447,54 @@ fn stage_plugin_payload(
         });
     }
 
+    // Factory presets, emitted at stage time (the build manifest only
+    // tracks the bundles themselves). CLAP gets a `<stem>.presets/`
+    // sibling, LV2 presets go inside the staged bundle, and VST3
+    // presets stage as a loose tree install.sh merges into the shared
+    // `~/.vst3/presets` folder.
+    let mut clap_presets = None;
+    let mut vst3_presets = None;
+    if let Some(fp) = presets::load_factory_presets(root, plugin, config)? {
+        for b in &bundles {
+            match b.format {
+                "clap" => {
+                    let dir = format!("{}.presets", plugin.file_stem());
+                    presets::emit_trucepreset_tree(
+                        &fp,
+                        &staging.join("clap").join(&dir),
+                        false,
+                        &format!("{}-clap", plugin.bundle_id),
+                    )?;
+                    clap_presets = Some(format!("clap/{dir}"));
+                }
+                "lv2" => {
+                    let uri = truce_build::lv2::plugin_uri(
+                        config.vendor.url.as_deref().unwrap_or(""),
+                        &plugin.bundle_id,
+                    );
+                    presets::emit_lv2_presets(&fp, &staging.join("lv2").join(&b.name), &uri)?;
+                }
+                "vst3" => {
+                    let payload = presets::vst3_preset_payload(&fp, plugin, config);
+                    if let Some((first, _)) = payload.first() {
+                        // All entries share the `<Vendor>/<Plugin>` prefix.
+                        let plugin_dir: PathBuf = first.iter().take(2).collect();
+                        for (rel, bytes) in &payload {
+                            let dst = staging.join("vst3-presets").join(rel);
+                            if let Some(parent) = dst.parent() {
+                                fs::create_dir_all(parent)?;
+                            }
+                            fs::write(&dst, bytes)?;
+                        }
+                        vst3_presets =
+                            Some(format!("vst3-presets/{}", plugin_dir.display()));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
     // Standalone - when the plugin has the `standalone` feature in
     // its default features, `cargo truce run` stages a binary or
     // .app under `target/bundles/<Plugin>.standalone[.app]`. On
@@ -456,6 +518,8 @@ fn stage_plugin_payload(
         display_name: plugin.name.clone(),
         bundles,
         standalone,
+        clap_presets,
+        vst3_presets,
     })
 }
 
@@ -579,6 +643,12 @@ fn format_plugin_case(p: &PluginSummary) -> String {
             format = b.format,
             name = b.name,
         );
+    }
+    if let Some(src) = &p.clap_presets {
+        let _ = writeln!(s, "        install_clap_presets \"{src}\"");
+    }
+    if let Some(src) = &p.vst3_presets {
+        let _ = writeln!(s, "        install_vst3_presets \"{src}\"");
     }
     if let Some(bin) = &p.standalone {
         let _ = writeln!(
