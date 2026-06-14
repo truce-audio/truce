@@ -181,10 +181,31 @@ pub(crate) fn cmd_package_linux(args: &[String], selection: &SuiteSelection) -> 
             .collect::<Result<_, _>>()?
     };
 
+    // The standalone host is a `[[bin]]`, not a cdylib, so the
+    // `cargo truce build` in the build phase above never produces it
+    // (`build_flag_for_format` returns `None` for it). macOS/Windows
+    // `package` build the standalone inline; Linux historically relied on
+    // a prior `cargo truce run` having staged it. Build it here too so a
+    // clean `package` (CI, with no prior `run`) still ships it - but only
+    // when `standalone` is *explicitly* requested, so a bare `cargo truce
+    // package` over a suite of effect-only plugins doesn't error trying
+    // to build a standalone bin they don't have. Without `--formats` we
+    // keep the old behaviour: stage a `run`-staged binary if present.
+    let build_standalone = formats
+        .as_ref()
+        .is_some_and(|f| f.contains(&PkgFormat::Standalone));
+
     for (triple, bundles_dir, manifest) in &plans {
         let arch = arch_from_triple(triple);
         if plans.len() > 1 {
             eprintln!("Target: {triple}");
+        }
+
+        if !no_build && build_standalone {
+            let cross = (triple.as_str() != truce_build::host_triple()).then_some(triple.as_str());
+            for plugin in &selected_plugins {
+                build_standalone_binary(&root, plugin, cross, bundles_dir)?;
+            }
         }
 
         let ctx = TarballCtx {
@@ -612,6 +633,60 @@ fn stage_standalone_payload(
 fn standalone_binary_name(plugin: &PluginDef) -> String {
     crate::read_standalone_bin_name(&plugin.crate_name)
         .unwrap_or_else(|| format!("{}-standalone", plugin.crate_name))
+}
+
+/// Build `plugin`'s standalone `[[bin]]` (`--features standalone`) and
+/// drop the release ELF where [`stage_standalone_payload`] looks for it
+/// (`<bundles_dir>/<file_stem>.standalone`). Mirrors what `cargo truce
+/// run` builds, but without launching anything - so `package` ships the
+/// standalone on a clean checkout the same way macOS/Windows do.
+/// `cross` is the target triple for a `--target` build, or `None` for a
+/// host build (the CI / common case).
+fn build_standalone_binary(
+    root: &Path,
+    plugin: &PluginDef,
+    cross: Option<&str>,
+    bundles_dir: &Path,
+) -> Res {
+    let bin_stem = standalone_binary_name(plugin);
+    eprintln!("Building {} standalone...", plugin.name);
+
+    let mut args: Vec<String> = vec![
+        "-p".into(),
+        plugin.crate_name.clone(),
+        "--features".into(),
+        "standalone".into(),
+    ];
+    if let Some(triple) = cross {
+        args.push("--target".into());
+        args.push(triple.to_string());
+    }
+    let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    // `package` always builds release (it never flips the debug flag).
+    crate::cargo_build(&[], &arg_refs, "")?;
+
+    // Cargo writes the bin under `target/release/` (host) or
+    // `target/<triple>/release/` (cross).
+    let release = match cross {
+        Some(triple) => truce_build::target_dir(root).join(triple).join("release"),
+        None => truce_build::target_dir(root).join("release"),
+    };
+    let built = release.join(&bin_stem);
+    if !built.exists() {
+        return Err(format!(
+            "standalone binary not found at {} after build. Does {} declare \
+             a [[bin]] named '{bin_stem}' gated on the `standalone` feature?",
+            built.display(),
+            plugin.crate_name,
+        )
+        .into());
+    }
+
+    fs::create_dir_all(bundles_dir)?;
+    let dst = bundles_dir.join(format!("{}.standalone", plugin.file_stem()));
+    fs::copy(&built, &dst)?;
+    set_executable(&dst)?;
+    Ok(())
 }
 
 /// Render `install.sh` from the embedded template.
