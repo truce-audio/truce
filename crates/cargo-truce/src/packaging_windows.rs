@@ -219,6 +219,10 @@ pub(crate) fn cmd_package(
             let staged = stage_plugin(&root, p, &formats, &staging, arch)?;
             all_signable.extend(staged.signable);
         }
+        // Factory presets (arch-independent, not signed). Staged here
+        // so all output modes carry them; the per-plugin `render_iss`
+        // below references them via the returned flags.
+        let presets = stage_windows_presets(&root, &config, p, &formats, &archs, &staging)?;
 
         if !opts.no_sign {
             // PACE-sign every AAX bundle (one per arch). PACE wraps the binary;
@@ -259,7 +263,7 @@ pub(crate) fn cmd_package(
         }
 
         let iss = render_iss(
-            &config, p, &formats, &archs, &staging, &version, &dist_dir, scope,
+            &config, p, &formats, &archs, &staging, &version, &dist_dir, scope, presets,
         );
         let iss_path = staging.join("installer.iss");
         fs::write(&iss_path, &iss)?;
@@ -917,6 +921,141 @@ fn stage_lv2(
     Ok(dst_dll)
 }
 
+/// Which factory-preset payloads were staged, to drive the extra
+/// `[Files]` entries in `render_iss`.
+#[derive(Default, Clone, Copy)]
+struct WindowsPresets {
+    /// CLAP `<stem>.presets/` sibling staged under `clap-presets/`.
+    clap: bool,
+    /// VST3 `.vstpreset` tree staged under `vst3-presets/`.
+    vst3: bool,
+}
+
+/// Emit `p`'s factory presets into the Windows staging tree, once
+/// (presets are arch-independent). CLAP gets a `<stem>.presets/`
+/// sibling, LV2 presets go inside each arch's staged bundle, and VST3
+/// presets stage as a loose `<Vendor>/<Plugin>/` tree the installer
+/// merges into the shared VST3 Presets folder. No-op when the plugin
+/// ships no preset library.
+fn stage_windows_presets(
+    root: &Path,
+    config: &Config,
+    p: &PluginDef,
+    formats: &[PkgFormat],
+    archs: &[TargetArch],
+    staging: &Path,
+) -> std::result::Result<WindowsPresets, crate::CargoTruceError> {
+    use crate::commands::install::presets;
+
+    let Some(fp) = presets::load_factory_presets(root, p, config)? else {
+        return Ok(WindowsPresets::default());
+    };
+    let mut out = WindowsPresets::default();
+
+    if formats.contains(&PkgFormat::Clap) {
+        let dir = staging
+            .join("clap-presets")
+            .join(format!("{}.presets", p.file_stem()));
+        presets::emit_trucepreset_tree(&fp, &dir, false, &format!("{}-clap", p.bundle_id))?;
+        out.clap = true;
+    }
+    if formats.contains(&PkgFormat::Lv2) {
+        let slug = crate::commands::package::stage::lv2_slug(&p.name);
+        let uri =
+            truce_build::lv2::plugin_uri(config.vendor.url.as_deref().unwrap_or(""), &p.bundle_id);
+        for arch in archs {
+            let bundle = staging
+                .join("lv2")
+                .join(arch.tag())
+                .join(format!("{slug}.lv2"));
+            if bundle.is_dir() {
+                presets::emit_lv2_presets(&fp, &bundle, &uri)?;
+            }
+        }
+    }
+    if formats.contains(&PkgFormat::Vst3) {
+        let payload = presets::vst3_preset_payload(&fp, p, config);
+        out.vst3 = !payload.is_empty();
+        for (rel, bytes) in &payload {
+            let dst = staging.join("vst3-presets").join(rel);
+            if let Some(parent) = dst.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&dst, bytes)?;
+        }
+    }
+    Ok(out)
+}
+
+/// Whether a plugin's CLAP / VST3 preset payloads are present in its
+/// staging dir (emitted by [`stage_windows_presets`]). Lets the suite
+/// renderer pick them up without threading per-plugin flags through.
+fn detect_windows_presets(p: &PluginDef, staging: &Path) -> WindowsPresets {
+    WindowsPresets {
+        clap: staging
+            .join("clap-presets")
+            .join(format!("{}.presets", p.file_stem()))
+            .is_dir(),
+        vst3: staging.join("vst3-presets").is_dir(),
+    }
+}
+
+/// `[Files]` entries for the staged presets: the CLAP `<stem>.presets/`
+/// sibling and the VST3 preset tree. LV2 presets ride inside the
+/// `.lv2` bundle's own entry, so they need none here. Inno `[Files]`
+/// merges into the destination (it never wipes), so dropping the VST3
+/// tree into the shared preset folder leaves user presets intact.
+/// `component_prefix` namespaces the `Components:` clause for suite
+/// installers (`<plugin>\clap`); `None` for the per-plugin installer.
+fn iss_preset_files(
+    p: &PluginDef,
+    staging: &Path,
+    scope: PkgScope,
+    presets: WindowsPresets,
+    component_prefix: Option<&str>,
+) -> String {
+    let comp = |suffix: &str| -> String {
+        match component_prefix {
+            Some(prefix) => format!("{prefix}\\{suffix}"),
+            None => suffix.to_string(),
+        }
+    };
+    let mut out = String::new();
+    if presets.clap {
+        let src = staging
+            .join("clap-presets")
+            .join(format!("{}.presets", p.file_stem()))
+            .join("*");
+        let name = iss_escape(&p.file_stem());
+        let dest = format!("{}\\CLAP\\{name}.presets", scoped_cf(scope));
+        out.push_str(&iss_dual_dest(
+            &iss_escape_path(&src),
+            &dest,
+            &comp("clap"),
+            None,
+            /* is_dir = */ true,
+        ));
+    }
+    if presets.vst3 {
+        let src = staging.join("vst3-presets").join("*");
+        // System scope -> %PROGRAMDATA%, otherwise the user's Documents,
+        // mirroring the runtime VST3 preset root.
+        let dest = if matches!(scope, PkgScope::System) {
+            "{commonappdata}\\VST3 Presets"
+        } else {
+            "{userdocs}\\VST3 Presets"
+        };
+        out.push_str(&iss_dual_dest(
+            &iss_escape_path(&src),
+            dest,
+            &comp("vst3"),
+            None,
+            /* is_dir = */ true,
+        ));
+    }
+    out
+}
+
 /// Build/stage the AAX bundle for one architecture. Returns
 /// `Some((wrapper_binary, resources_dylib))` on success so both get
 /// Authenticode-signed, or `None` when the arch can't be staged (today,
@@ -1235,6 +1374,7 @@ fn render_iss(
     version: &str,
     dist_dir: &Path,
     scope: PkgScope,
+    presets: WindowsPresets,
 ) -> String {
     let publisher = config
         .windows
@@ -1387,6 +1527,10 @@ fn render_iss(
             setup.push_str(&block);
         }
     }
+    // Factory presets (arch-independent): CLAP sibling + VST3 tree.
+    setup.push_str(&iss_preset_files(
+        p, staging, scope, presets, /* component_prefix = */ None,
+    ));
     setup.push_str("\r\n");
 
     // [Icons] - Start Menu shortcut for the standalone host. Other
@@ -1628,6 +1772,16 @@ fn render_suite_iss(
                 setup.push_str(&block);
             }
         }
+        // Factory presets staged for this member (CLAP sibling + VST3
+        // tree); LV2 presets ride inside the `.lv2` bundle above.
+        let presets = detect_windows_presets(plugin, &plugin_staging);
+        setup.push_str(&iss_preset_files(
+            plugin,
+            &plugin_staging,
+            scope,
+            presets,
+            Some(&prefix),
+        ));
     }
     setup.push_str("\r\n");
 

@@ -267,8 +267,14 @@ fn build_per_plugin_tarball(ctx: &TarballCtx<'_>, plugin: &PluginDef) -> Res {
     let stem = format!("{}-{}-linux-{}", plugin.crate_name, ctx.version, ctx.arch);
     let staging = plugin_stage_dir(ctx.root, &plugin.bundle_id, ctx.arch)?;
 
-    let plugin_summary =
-        stage_plugin_payload(ctx.root, ctx.config, plugin, &staging, ctx.bundles_dir, ctx.manifest)?;
+    let plugin_summary = stage_plugin_payload(
+        ctx.root,
+        ctx.config,
+        plugin,
+        &staging,
+        ctx.bundles_dir,
+        ctx.manifest,
+    )?;
     let install_paths = expected_tarball_paths(&stem, &[&plugin_summary]);
     write_install_sh(&staging, ctx.config, &[plugin_summary], None)?;
     write_readme(&staging, ctx.config, ctx.version, &[plugin], None)?;
@@ -486,8 +492,7 @@ fn stage_plugin_payload(
                             }
                             fs::write(&dst, bytes)?;
                         }
-                        vst3_presets =
-                            Some(format!("vst3-presets/{}", plugin_dir.display()));
+                        vst3_presets = Some(format!("vst3-presets/{}", plugin_dir.display()));
                     }
                 }
                 _ => {}
