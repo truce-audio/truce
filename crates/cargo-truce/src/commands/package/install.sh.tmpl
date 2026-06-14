@@ -189,6 +189,23 @@ install_vst3_presets() {
     $SUDO cp -rf "$src/." "$dst/"
 }
 
+# Copy the standalone's `<bin>.presets/` sibling next to the installed
+# binary - the path the standalone resolves factory presets from at
+# runtime. We own this directory, so a full replace (via do_copy) is safe.
+install_standalone_presets() {
+    src="$1"        # e.g. standalone/foo.presets
+    bin_name="$2"
+    if ! format_selected "standalone"; then return 0; fi
+    if [ ! -e "$src" ]; then return 0; fi
+    if [ "$SCOPE" = "system" ]; then
+        dst="$SYSTEM_BIN_DIR/${bin_name}.presets"
+    else
+        dst="$USER_BIN_DIR/${bin_name}.presets"
+    fi
+    echo "    -> standalone presets: $dst"
+    do_copy "$src" "$dst"
+}
+
 install_standalone() {
     src="$1"     # path inside the tarball
     bin_name="$2"

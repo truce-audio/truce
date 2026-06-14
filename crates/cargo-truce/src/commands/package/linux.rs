@@ -386,6 +386,12 @@ struct PluginSummary {
     /// (`vst3-presets/<Vendor>/<Plugin>`), when staged. install.sh
     /// *merges* it into the shared `~/.vst3/presets` folder.
     vst3_presets: Option<String>,
+    /// Tarball-relative path of the standalone `<bin>.presets/` sibling
+    /// (`standalone/<bin>.presets`), when the plugin ships factory
+    /// presets and a standalone is staged. install.sh copies it next to
+    /// the installed binary - where the standalone resolves factory
+    /// presets at runtime.
+    standalone_presets: Option<String>,
 }
 
 struct BundleEntry {
@@ -506,6 +512,20 @@ fn stage_plugin_payload(
     // Linux it's a bare ELF; pick that up if present.
     let standalone = stage_standalone_payload(plugin, staging, bundles_dir)?;
 
+    // Factory presets for the standalone ride as a sibling
+    // `<bin>.presets/` next to the staged binary - the same path the
+    // installed standalone resolves at runtime (`standalone_factory_root`,
+    // shared with macOS and `cargo truce run`). `emit_standalone_factory`
+    // is a no-op when the plugin ships no library.
+    let standalone_presets = if let Some(bin) = &standalone {
+        let exe = staging.join("standalone").join(bin);
+        presets::emit_standalone_factory(root, plugin, config, &exe)?;
+        let dir = staging.join("standalone").join(format!("{bin}.presets"));
+        dir.is_dir().then(|| format!("standalone/{bin}.presets"))
+    } else {
+        None
+    };
+
     if bundles.is_empty() && standalone.is_none() {
         return Err(format!(
             "no bundles or standalone for {} in {}. \
@@ -525,6 +545,7 @@ fn stage_plugin_payload(
         standalone,
         clap_presets,
         vst3_presets,
+        standalone_presets,
     })
 }
 
@@ -660,6 +681,9 @@ fn format_plugin_case(p: &PluginSummary) -> String {
             s,
             "        install_standalone \"standalone/{bin}\" \"{bin}\""
         );
+        if let Some(src) = &p.standalone_presets {
+            let _ = writeln!(s, "        install_standalone_presets \"{src}\" \"{bin}\"");
+        }
     }
     s.push_str("        ;;");
     s

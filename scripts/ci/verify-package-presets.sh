@@ -25,6 +25,9 @@ DIST="target/dist"
 VENDOR="Truce"
 PLUGIN="Truce Synth"
 EXPECT_VST3=6
+# Standalone factory presets ride as a `<bin>.presets/` sibling next to
+# the installed binary - the path the standalone resolves at runtime.
+STANDALONE_BIN="truce-example-synth-standalone"
 
 pass() { echo "  ok: $1"; }
 fail() { echo "FAIL: $1" >&2; exit 1; }
@@ -54,7 +57,9 @@ case "$OS" in
     grep -q "clap/$PLUGIN.presets/.*\.trucepreset" <<<"$list" || fail "no CLAP presets in tarball"
     grep -q 'lv2/.*\.lv2/presets/.*\.ttl'          <<<"$list" || fail "no LV2 preset TTLs in tarball"
     grep -q "vst3-presets/$VENDOR/$PLUGIN/.*\.vstpreset" <<<"$list" || fail "no VST3 presets in tarball"
-    pass "Linux tarball carries CLAP + LV2 + VST3 presets"
+    grep -q "standalone/$STANDALONE_BIN.presets/.*\.trucepreset" <<<"$list" \
+      || fail "no standalone presets in tarball"
+    pass "Linux tarball carries CLAP + LV2 + VST3 + standalone presets"
 
     # Layer B: install into a throwaway HOME with a pre-seeded user
     # preset to prove the VST3 merge never wipes the user's own files.
@@ -71,7 +76,11 @@ case "$OS" in
     got=$(find "$fake/.vst3/presets/$VENDOR/$PLUGIN" -name '*.vstpreset' ! -name 'mine.vstpreset' | wc -l)
     [ "$got" -eq "$EXPECT_VST3" ] || fail "expected $EXPECT_VST3 factory VST3 presets installed, got $got"
     test -d "$fake/.clap/$PLUGIN.presets" || fail "CLAP preset sibling not installed"
-    pass "Linux install merged $got VST3 presets; user's preset survived"
+    sa_presets="$fake/.local/bin/$STANDALONE_BIN.presets"
+    test -d "$sa_presets" || fail "standalone preset sibling not installed next to binary"
+    [ "$(find "$sa_presets" -name '*.trucepreset' | wc -l)" -gt 0 ] \
+      || fail "standalone preset sibling has no .trucepreset files"
+    pass "Linux install merged $got VST3 presets; standalone + CLAP presets landed; user's preset survived"
     ;;
 
   windows)
@@ -89,7 +98,16 @@ case "$OS" in
     test -f "$docs/mine.vstpreset" || fail "install WIPED the user preset (VST3 merge unsafe!)"
     got=$(find "$docs" -name '*.vstpreset' ! -name 'mine.vstpreset' | wc -l)
     [ "$got" -eq "$EXPECT_VST3" ] || fail "expected $EXPECT_VST3 factory VST3 presets installed, got $got"
-    pass "Windows install merged $got VST3 presets; user's preset survived"
+
+    # Standalone presets land as a `<bin>.presets/` sibling next to the
+    # installed .exe in {app} (= {autopf}\<Vendor>\<Plugin>; per-user
+    # /CURRENTUSER resolves {autopf} to %LOCALAPPDATA%\Programs).
+    app="$(cygpath -u "$LOCALAPPDATA")/Programs/$VENDOR/$PLUGIN"
+    sa_presets="$app/$STANDALONE_BIN.presets"
+    test -d "$sa_presets" || fail "standalone preset sibling not installed next to .exe ($sa_presets)"
+    [ "$(find "$sa_presets" -name '*.trucepreset' | wc -l)" -gt 0 ] \
+      || fail "standalone preset sibling has no .trucepreset files"
+    pass "Windows install merged $got VST3 presets; standalone presets landed next to .exe; user's preset survived"
     ;;
 
   *)

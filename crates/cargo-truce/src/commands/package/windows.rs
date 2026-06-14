@@ -926,14 +926,18 @@ struct WindowsPresets {
     clap: bool,
     /// VST3 `.vstpreset` tree staged under `vst3-presets/`.
     vst3: bool,
+    /// Standalone `<bin_stem>.presets/` sibling staged under
+    /// `standalone-presets/`, installed next to the `.exe` in `{app}`.
+    standalone: bool,
 }
 
 /// Emit `p`'s factory presets into the Windows staging tree, once
 /// (presets are arch-independent). CLAP gets a `<stem>.presets/`
-/// sibling, LV2 presets go inside each arch's staged bundle, and VST3
+/// sibling, LV2 presets go inside each arch's staged bundle, VST3
 /// presets stage as a loose `<Vendor>/<Plugin>/` tree the installer
-/// merges into the shared VST3 Presets folder. No-op when the plugin
-/// ships no preset library.
+/// merges into the shared VST3 Presets folder, and the standalone gets
+/// a `<bin_stem>.presets/` sibling the installer drops next to its
+/// `.exe`. No-op when the plugin ships no preset library.
 fn stage_windows_presets(
     root: &Path,
     config: &Config,
@@ -981,6 +985,22 @@ fn stage_windows_presets(
             fs::write(&dst, bytes)?;
         }
     }
+    if formats.contains(&PkgFormat::Standalone) {
+        // The installed standalone resolves factory presets from a
+        // sibling `<bin_stem>.presets/` next to its `.exe`
+        // (`standalone_factory_root`). Stage that tree under a
+        // placeholder exe path so the directory name matches exactly
+        // what `emit_standalone_factory` writes for `cargo truce run`
+        // and the macOS bundle - the installer then drops it into
+        // `{app}` beside the real `.exe`.
+        let bin_stem = crate::read_standalone_bin_name(&p.crate_name)
+            .unwrap_or_else(|| format!("{}-standalone", p.crate_name));
+        let placeholder_exe = staging
+            .join("standalone-presets")
+            .join(format!("{bin_stem}.exe"));
+        presets::emit_standalone_factory(root, p, config, &placeholder_exe)?;
+        out.standalone = true;
+    }
     Ok(out)
 }
 
@@ -988,17 +1008,24 @@ fn stage_windows_presets(
 /// staging dir (emitted by [`stage_windows_presets`]). Lets the suite
 /// renderer pick them up without threading per-plugin flags through.
 fn detect_windows_presets(p: &PluginDef, staging: &Path) -> WindowsPresets {
+    let bin_stem = crate::read_standalone_bin_name(&p.crate_name)
+        .unwrap_or_else(|| format!("{}-standalone", p.crate_name));
     WindowsPresets {
         clap: staging
             .join("clap-presets")
             .join(format!("{}.presets", p.file_stem()))
             .is_dir(),
         vst3: staging.join("vst3-presets").is_dir(),
+        standalone: staging
+            .join("standalone-presets")
+            .join(format!("{bin_stem}.presets"))
+            .is_dir(),
     }
 }
 
 /// `[Files]` entries for the staged presets: the CLAP `<stem>.presets/`
-/// sibling and the VST3 preset tree. LV2 presets ride inside the
+/// sibling, the VST3 preset tree, and the standalone
+/// `<bin_stem>.presets/` sibling. LV2 presets ride inside the
 /// `.lv2` bundle's own entry, so they need none here. Inno `[Files]`
 /// merges into the destination (it never wipes), so dropping the VST3
 /// tree into the shared preset folder leaves user presets intact.
@@ -1046,6 +1073,27 @@ fn iss_preset_files(
             &iss_escape_path(&src),
             dest,
             &comp("vst3"),
+            None,
+            /* is_dir = */ true,
+        ));
+    }
+    if presets.standalone {
+        // Factory presets ride next to the `.exe` in `{app}` as a
+        // sibling `<bin_stem>.presets/` - the exact path the installed
+        // standalone resolves at runtime. Gated under the `standalone`
+        // component so a custom install that drops the standalone also
+        // drops its presets.
+        let bin_stem = crate::read_standalone_bin_name(&p.crate_name)
+            .unwrap_or_else(|| format!("{}-standalone", p.crate_name));
+        let src = staging
+            .join("standalone-presets")
+            .join(format!("{bin_stem}.presets"))
+            .join("*");
+        let dest = format!("{{app}}\\{}.presets", iss_escape(&bin_stem));
+        out.push_str(&iss_dual_dest(
+            &iss_escape_path(&src),
+            &dest,
+            &comp("standalone"),
             None,
             /* is_dir = */ true,
         ));
