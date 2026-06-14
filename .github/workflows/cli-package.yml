@@ -28,9 +28,10 @@ concurrency:
 # location with a pre-seeded *user* preset to prove the VST3 merge
 # never wipes a user's own presets.
 #
-# AAX and AU v3 are skipped via `--formats clap,vst3,vst2{,au2,lv2}`:
+# AAX and AU v3 are skipped via `--formats clap,vst3,vst2,standalone{,au2,lv2}`:
 # AAX needs the Avid SDK + PACE eden, AU v3 needs a real Developer ID
-# for the appex extension sandbox to load.
+# for the appex extension sandbox to load. `standalone` is included so
+# the standalone factory-preset packaging is exercised on every OS.
 jobs:
   macos:
     name: package (macos-14)
@@ -52,8 +53,8 @@ jobs:
       # account + an app-specific password / notary keychain profile,
       # neither of which is wired up in CI. The pkg still gets a
       # codesign pass against the ad-hoc identity (`-`).
-      - name: cargo truce package --formats clap,vst3,vst2,au2 --no-notarize
-        run: ./target/debug/cargo-truce package --formats clap,vst3,vst2,au2 --no-notarize -p truce-example-synth
+      - name: cargo truce package --formats clap,vst3,vst2,au2,standalone --no-notarize
+        run: ./target/debug/cargo-truce package --formats clap,vst3,vst2,au2,standalone --no-notarize -p truce-example-synth
 
       - name: Verify .pkg produced
         run: |
@@ -101,8 +102,8 @@ jobs:
       - name: Build cargo-truce
         run: cargo build -p cargo-truce
 
-      - name: cargo truce package --formats clap,vst3,vst2,lv2
-        run: ./target/debug/cargo-truce package --formats clap,vst3,vst2,lv2 -p truce-example-synth
+      - name: cargo truce package --formats clap,vst3,vst2,lv2,standalone
+        run: ./target/debug/cargo-truce package --formats clap,vst3,vst2,lv2,standalone -p truce-example-synth
 
       - name: Verify tarball produced
         run: |
@@ -150,9 +151,9 @@ jobs:
       # No Authenticode signing: TRUCE_CERT_SHA1 / TRUCE_PFX_PATH /
       # TRUCE_AZURE_ACCOUNT are unset, so `sign_files` short-circuits.
       # The installer comes out unsigned but valid.
-      - name: cargo truce package --formats clap,vst3,vst2
+      - name: cargo truce package --formats clap,vst3,vst2,standalone
         shell: bash
-        run: ./target/debug/cargo-truce.exe package --formats clap,vst3,vst2 -p truce-example-synth
+        run: ./target/debug/cargo-truce.exe package --formats clap,vst3,vst2,standalone -p truce-example-synth
 
       - name: Verify installer produced
         shell: bash

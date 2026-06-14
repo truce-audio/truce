@@ -47,7 +47,11 @@ case "$OS" in
     n=$(grep -c '\.vstpreset$' <<<"$files" || true)
     [ "$n" -eq "$EXPECT_VST3" ] || fail "expected $EXPECT_VST3 .vstpreset, found $n"
     ls "$exp"/x/*VST3-Presets.pkg >/dev/null 2>&1 || fail "no VST3-Presets component in .pkg"
-    pass "macOS .pkg carries CLAP/AU presets + $n VST3 presets (component present)"
+    # Standalone factory presets ride inside the `.app` bundle at
+    # `Contents/Resources/Presets/` (the path the installed app resolves).
+    grep -qE '\.app/Contents/Resources/Presets/.*\.trucepreset' <<<"$files" \
+      || fail "no standalone .app presets in .pkg"
+    pass "macOS .pkg carries CLAP/AU + $n VST3 + standalone presets (component present)"
     ;;
 
   linux)
