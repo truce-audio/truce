@@ -114,13 +114,35 @@ showing the egui / iced / Slint / Vizia backends. See
 [truce.audio/docs/examples](https://truce.audio/docs/examples/) for the full
 table with screenshots.
 
+<p align="center">
+  <img src="examples/truce-example-eq/screenshots/eq_default_macos.png" height="200" alt="EQ" />
+  <img src="examples/truce-example-arpeggio/screenshots/arpeggio_default_macos.png" height="200" alt="Arpeggiator" />
+  <img src="examples/truce-example-gain/screenshots/gain_default_macos.png" height="200" alt="Gain" />
+  <img src="examples/truce-example-synth/screenshots/synth_default_macos.png" height="200" alt="Synth" />
+  <img src="examples/truce-example-transpose/screenshots/transpose_default_macos.png" height="200" alt="Transpose" />
+  <img src="examples/truce-example-tremolo/screenshots/tremolo_default_macos.png" height="200" alt="Tremolo" />
+</p>
+
 [**reiss-mcpherson-effects**](https://github.com/truce-audio/reiss-mcpherson-effects/),
 a companion repo porting the audio-effect implementations from Reiss
 & McPherson's *Audio Effects: Theory, Implementation and Application*
 to truce.
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/truce-audio/reiss-mcpherson-effects/main/screenshots/reiss-mcpherson-compressor.png" height="160" alt="Compressor" />
+  <img src="https://raw.githubusercontent.com/truce-audio/reiss-mcpherson-effects/main/screenshots/reiss-mcpherson-delay.png" height="160" alt="Delay" />
+  <img src="https://raw.githubusercontent.com/truce-audio/reiss-mcpherson-effects/main/screenshots/reiss-mcpherson-phaser.png" height="160" alt="Phaser" />
+  <img src="https://raw.githubusercontent.com/truce-audio/reiss-mcpherson-effects/main/screenshots/reiss-mcpherson-chorus.png" height="160" alt="Chorus" />
+  <img src="https://raw.githubusercontent.com/truce-audio/reiss-mcpherson-effects/main/screenshots/reiss-mcpherson-wahwah.png" height="160" alt="Wah-wah" />
+  <img src="https://raw.githubusercontent.com/truce-audio/reiss-mcpherson-effects/main/screenshots/reiss-mcpherson-flanger.png" height="160" alt="Flanger" />
+</p>
+
 [**truce-analyzer**](https://github.com/truce-audio/truce-analyzer),
 a real-time spectrum analyzer with diff overlay for debugging/reverse-engineering plugins.
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/truce-audio/truce-analyzer/main/screenshots/analyzer_diff_macos.png" width="760" alt="truce-analyzer diff overlay" />
+</p>
 
 ## Minimal Example
 
@@ -203,16 +225,15 @@ platform contract; every other format is unviable there.
 
 - **7 plugin formats** from one codebase (CLAP, VST3 default; VST2, LV2, AU v2, AU v3, AAX opt-in)
 - **Cross-platform** — macOS, Windows, Linux, plus iOS via AU v3 with the same Rust DSP, params, and editor
-- **Hot reload** — edit DSP/layout, rebuild, hear changes without restarting the DAW
+- **Presets** — factory presets from a directory of TOML files, shipped to every format's native preset system at install; `cargo truce preset` converts between formats and pulls presets saved in your DAW back into the library
 - **Flexible GUI frameworks** — Built-in widgets, egui, iced, slint, vizia (desktop only, no Windows ARM64), or raw window handle
 - **Resizable editors** — `.resizable(true).min_size(_).max_size(_)` on any backend, round-tripped through CLAP `gui_set_size`, VST3 `IPlugView::onSize`, AU view-frame change, and LV2 `ui:resize`
 - **Declarative params** — `#[derive(Params)]` + `#[param(...)]` with smoothing, ranges, units, sample-accurate automation by default
-- **Presets** — factory presets from a directory of TOML files, shipped to every format's native preset system at install; `cargo truce preset` converts between formats and pulls presets saved in your DAW back into the library
 - **`truce::plugin!`** — one macro generates all format exports + GUI + state serialization
-- **`cargo truce`** — scaffold, build, install, validate, package; `doctor` reports environment health
-- **`cargo truce package`** — signed distributable installers on both platforms (`.pkg` with notarization on macOS; Inno Setup `.exe` with Authenticode on Windows)
+- **`cargo truce`** — scaffold, build, install, validate, and package; `doctor` reports environment health, and `package` produces signed distributable installers (`.pkg` with notarization on macOS; Inno Setup `.exe` with Authenticode on Windows)
 - **Thread-safe params** — atomic storage, lock-free access from any thread
-- **Automated tests** — render, state, params, GUI screenshots, binary validation
+- **Hot reload** — edit DSP/layout, rebuild, hear changes without restarting the DAW
+- **Automated tests** — audio, render, state, params, GUI screenshots
 - **Automated validation** — `cargo truce validate` runs auval, pluginval, and clap-validator in one command
 
 ## Documentation
