@@ -1,6 +1,8 @@
 //! `cargo truce doctor` - environment diagnostics: Rust toolchain, code
 //! signing tools, AAX SDK, installed plugins.
 
+#[cfg(target_os = "windows")]
+use crate::commands::package::windows;
 use crate::format::Format;
 use crate::install_scope::InstallScope;
 #[cfg(target_os = "macos")]
@@ -13,9 +15,7 @@ use crate::{
     tag_info, tag_ok, tag_warn,
 };
 #[cfg(target_os = "windows")]
-use crate::{
-    common_program_files, locate_cmake, locate_msvc_cl, locate_ninja, packaging_windows, which_exe,
-};
+use crate::{common_program_files, locate_cmake, locate_msvc_cl, locate_ninja, which_exe};
 use std::env;
 use std::ffi::OsStr;
 use std::fs;
@@ -161,7 +161,7 @@ pub(crate) fn cmd_doctor(args: &[String]) -> Res {
 
         eprintln!();
         eprintln!("  Packaging (Windows)");
-        packaging_windows::doctor();
+        windows::doctor();
     }
 
     // Compilers

@@ -18,18 +18,16 @@ mod util;
 
 pub use error::CargoTruceError;
 
-#[cfg(target_os = "windows")]
-mod packaging_windows;
+// The Windows packager + its DPI/icon manifest helper now live under
+// `commands::package::{windows, windows_manifest}` (alongside the
+// macOS / Linux packagers), so they no longer need a crate-root `mod`
+// or a `PkgFormat` re-export - `windows.rs` reaches `super::PkgFormat`
+// like its siblings.
 
-#[cfg(target_os = "windows")]
-mod windows_manifest;
-
-// Re-exports needed by `packaging_windows`. Cfg-gated so the imports
-// don't show as dead on macOS / Linux builds.
+// Crate-root re-export of the AAX template builder, used by the
+// Windows packager. Cfg-gated so it isn't dead on macOS / Linux.
 #[cfg(target_os = "windows")]
 pub(crate) use commands::install::aax::build_aax_template;
-#[cfg(target_os = "windows")]
-pub(crate) use commands::package::PkgFormat;
 #[cfg(target_os = "macos")]
 pub(crate) use config::installer_identity;
 pub(crate) use config::{
@@ -110,7 +108,7 @@ pub(crate) use util::{
 
 // Windows-only: VS / MSVC / cmake / ninja discovery + Program Files
 // path helpers, used by `commands::{doctor, install, install::aax}`
-// and `packaging_windows`.
+// and `commands::package::windows`.
 #[cfg(target_os = "windows")]
 pub(crate) use util::{
     cargo_rustc_bin, common_program_files, locate_cmake, locate_msvc_cl, locate_ninja,

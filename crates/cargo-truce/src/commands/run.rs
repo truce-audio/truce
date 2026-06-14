@@ -118,14 +118,14 @@ pub(crate) fn cmd_run(args: &[String]) -> Res {
         // consistent with the eventual installed artefact.
         #[cfg(target_os = "windows")]
         {
-            crate::windows_manifest::embed_dpi_manifest(&staged)?;
+            crate::commands::package::windows_manifest::embed_dpi_manifest(&staged)?;
             let icon = plugin
                 .windows_icon
                 .as_ref()
                 .map(|s| project_root().join(s))
                 .filter(|p| p.exists());
             if let Some(icon) = &icon {
-                crate::windows_manifest::embed_icon(&staged, icon)?;
+                crate::commands::package::windows_manifest::embed_icon(&staged, icon)?;
             }
         }
 

@@ -19,12 +19,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use super::PkgFormat;
 use crate::install_scope::{PkgScope, note_once};
 use crate::{
-    Config, PkgFormat, PluginDef, Res, build_aax_template, cargo_build, detect_default_features,
-    load_config, project_root, read_workspace_version, release_lib_for_target,
-    resolve_aax_sdk_path, rustup_has_target, tag_info, tag_ok, tag_warn, tmp_aax_template,
-    tmp_manifests,
+    Config, PluginDef, Res, build_aax_template, cargo_build, detect_default_features, load_config,
+    project_root, read_workspace_version, release_lib_for_target, resolve_aax_sdk_path,
+    rustup_has_target, tag_info, tag_ok, tag_warn, tmp_aax_template, tmp_manifests,
 };
 
 // ---------------------------------------------------------------------------
@@ -99,10 +99,7 @@ impl TargetArch {
 // ---------------------------------------------------------------------------
 
 #[allow(clippy::too_many_lines)]
-pub(crate) fn cmd_package(
-    args: &[String],
-    selection: &crate::commands::package::SuiteSelection,
-) -> Res {
+pub(crate) fn cmd_package_windows(args: &[String], selection: &super::SuiteSelection) -> Res {
     let opts = parse_args(args)?;
 
     // Fail fast: `cargo truce package` ends with an Inno Setup run,
@@ -286,7 +283,7 @@ pub(crate) fn cmd_package(
         // Inno Setup's bootstrap is ~700 KB on its own; any installer
         // with actual payload should be well above the 50 KB floor.
         // Catches `.iss` regressions that compress to nothing.
-        crate::commands::package::verify::assert_min_size(&installer)?;
+        super::verify::assert_min_size(&installer)?;
 
         if !opts.no_sign {
             sign_files(std::slice::from_ref(&installer))?;
@@ -803,9 +800,9 @@ fn stage_standalone(
     fs::create_dir_all(&dst_dir)?;
     let dst = dst_dir.join(&exe_name);
     fs::copy(&built, &dst)?;
-    crate::windows_manifest::embed_dpi_manifest(&dst)?;
+    super::windows_manifest::embed_dpi_manifest(&dst)?;
     if let Some(icon) = plugin_windows_icon(p, root) {
-        crate::windows_manifest::embed_icon(&dst, &icon)?;
+        super::windows_manifest::embed_icon(&dst, &icon)?;
     }
     Ok(dst)
 }
@@ -877,7 +874,7 @@ fn stage_lv2(
     staging: &Path,
     arch: TargetArch,
 ) -> std::result::Result<PathBuf, crate::CargoTruceError> {
-    use crate::commands::package::stage::lv2_slug;
+    use super::stage::lv2_slug;
 
     let dll = release_lib_for_target(
         root,
@@ -960,7 +957,7 @@ fn stage_windows_presets(
         out.clap = true;
     }
     if formats.contains(&PkgFormat::Lv2) {
-        let slug = crate::commands::package::stage::lv2_slug(&p.name);
+        let slug = super::stage::lv2_slug(&p.name);
         let uri =
             truce_build::lv2::plugin_uri(config.vendor.url.as_deref().unwrap_or(""), &p.bundle_id);
         for arch in archs {
@@ -1713,7 +1710,7 @@ fn package_one_suite(
         .into());
     }
 
-    crate::commands::package::verify::assert_min_size(&installer)?;
+    super::verify::assert_min_size(&installer)?;
 
     if !no_sign {
         sign_files(std::slice::from_ref(&installer))?;
@@ -2035,7 +2032,7 @@ fn component_install_size(
             .max()
             .unwrap_or(0),
         PkgFormat::Lv2 => {
-            use crate::commands::package::stage::lv2_slug;
+            use super::stage::lv2_slug;
             let slug = lv2_slug(&p.name);
             archs
                 .iter()
@@ -2267,7 +2264,7 @@ fn iss_files_block(
             // `%APPDATA%`. `cargo truce uninstall --lv2` reads the
             // same paths via `InstallScope::lv2_dir`, so packager and
             // uninstaller need to agree here.
-            use crate::commands::package::stage::lv2_slug;
+            use super::stage::lv2_slug;
             let slug = lv2_slug(&p.name);
             let src_dir = staging
                 .join("lv2")
@@ -2512,7 +2509,7 @@ fn iss_uninstall_lines(
             // sweep hits the same path the install wrote to. `lv2_slug`
             // already handles non-ASCII / separator chars, so the raw
             // `plugin_name` is the right input here.
-            use crate::commands::package::stage::lv2_slug;
+            use super::stage::lv2_slug;
             let slug = lv2_slug(plugin_name);
             let lv2_root = match scope {
                 PkgScope::System => "{commoncf}\\LV2",

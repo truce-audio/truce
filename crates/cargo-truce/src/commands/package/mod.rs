@@ -1,8 +1,8 @@
 //! `cargo truce package` - build, sign, and create installers.
 //!
 //! Top-level dispatch + the format-flag parsing shared between the macOS
-//! `.pkg` pipeline (`macos.rs`) and the Windows Inno Setup pipeline
-//! (`packaging_windows`).
+//! `.pkg` pipeline (`macos.rs`), the Linux tarball pipeline (`linux.rs`),
+//! and the Windows Inno Setup pipeline (`windows.rs`).
 
 use crate::CargoTruceError;
 #[cfg(target_os = "macos")]
@@ -20,6 +20,14 @@ pub(crate) mod macos;
 // gates which `cmd_package_*` is invoked at runtime.
 #[allow(dead_code)]
 pub(crate) mod linux;
+
+// Windows packager + its DPI/icon manifest helper. Gated on
+// `windows` because both pull in `windows_sys` APIs that don't exist
+// on other targets (unlike the pure-std `linux` module).
+#[cfg(target_os = "windows")]
+pub(crate) mod windows;
+#[cfg(target_os = "windows")]
+pub(crate) mod windows_manifest;
 
 /// Composable selection flags shared across platforms. Parsed once at
 /// top-level and passed down to the per-platform packagers so each
@@ -83,7 +91,7 @@ pub(crate) fn extract_suite_selection(
 }
 
 /// Parsed format flags for the package command.
-/// Used by both `cmd_package_macos` and `packaging_windows::cmd_package`.
+/// Used by both `cmd_package_macos` and `windows::cmd_package_windows`.
 #[derive(Clone, PartialEq)]
 pub(crate) enum PkgFormat {
     Clap,
@@ -357,7 +365,7 @@ pub(crate) fn cmd_package(args: &[String]) -> Res {
     let (selection, args) = extract_suite_selection(args)?;
     #[cfg(target_os = "windows")]
     {
-        crate::packaging_windows::cmd_package(&args, &selection)
+        windows::cmd_package_windows(&args, &selection)
     }
     #[cfg(target_os = "macos")]
     {

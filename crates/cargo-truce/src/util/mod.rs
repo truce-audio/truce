@@ -695,8 +695,8 @@ pub(crate) fn take_skipped() -> Vec<String> {
 /// stays visible to the user.
 ///
 /// macOS-only: `codesign` is an Apple tool. CLAP / VST3 / LV2 on
-/// Linux are unsigned `.so` files; Windows signs via `signtool` in
-/// `packaging_windows`, not through here. The cross-platform
+/// Linux are unsigned `.so` files; Windows signs via `signtool` in the
+/// Windows packager, not through here. The cross-platform
 /// `codesign_bundle` wrapper short-circuits on non-macOS, so callers
 /// never reach this function on other platforms.
 #[cfg(target_os = "macos")]
