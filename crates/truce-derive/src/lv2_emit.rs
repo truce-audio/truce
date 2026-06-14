@@ -66,6 +66,14 @@ pub(crate) fn write_struct_sidecar(
         let _ = writeln!(buf, "kind = \"{}\"", param_kind_str(p.kind));
         if let Some(r) = &p.attrs.range {
             let _ = writeln!(buf, "range = \"{}\"", toml_escape(r));
+        } else if matches!(p.kind, crate::ParamKind::Enum)
+            && let Some(ty) = p.enum_type()
+            && let Some(seg) = type_last_segment(ty)
+        {
+            // No explicit `enum(N)`: record the enum's bare type name so
+            // the aggregator can resolve its variant count from the
+            // `<Enum>.enum.toml` sidecar `derive(ParamEnum)` wrote.
+            let _ = writeln!(buf, "enum_type = \"{}\"", toml_escape(&seg));
         }
         // Always emit `default` so the LV2 TTL matches the runtime
         // `ParamInfo::default_plain`. The runtime falls back to `0.0`
@@ -97,6 +105,26 @@ pub(crate) fn write_struct_sidecar(
         }
     }
     let _ = std::fs::write(out_dir.join(format!("{struct_name}.params.toml")), buf);
+}
+
+/// Record a `ParamEnum`'s variant count in a sidecar so the LV2
+/// aggregator can resolve `EnumParam<T>` ports that carry no explicit
+/// `#[param(range = "enum(N)")]`. `derive(ParamEnum)` is the only place
+/// the variant count is known at proc-macro time (it counts the enum's
+/// arms); the params sidecar records the bare enum type name, and
+/// `parse_param_entry` reads the count back from `<Enum>.enum.toml`.
+/// Without this the fallback range collapsed to `enum(0)`, rendering an
+/// invalid `lv2:maximum 0` / `lv2:default 1` port that REAPER rejects.
+/// Best-effort, mirroring [`write_struct_sidecar`].
+pub(crate) fn write_enum_sidecar(enum_name: &syn::Ident, variant_count: usize) {
+    let Some(out_dir) = sidecar_dir() else {
+        return;
+    };
+    if std::fs::create_dir_all(&out_dir).is_err() {
+        return;
+    }
+    let buf = format!("count = {variant_count}\n");
+    let _ = std::fs::write(out_dir.join(format!("{enum_name}.enum.toml")), buf);
 }
 
 /// Implementation of `__truce_lv2_emit_root!(<params_type>)`. Walks
@@ -231,7 +259,8 @@ fn aggregate(
 
     if let Some(toml::Value::Array(arr)) = toml.get("param") {
         for entry in arr {
-            let p = parse_param_entry(entry).map_err(|e| format!("{}: {e}", path.display()))?;
+            let p = parse_param_entry(entry, sidecar_dir)
+                .map_err(|e| format!("{}: {e}", path.display()))?;
             params.push(p);
         }
     }
@@ -254,7 +283,7 @@ fn aggregate(
     Ok(())
 }
 
-fn parse_param_entry(v: &toml::Value) -> Result<Lv2Param, String> {
+fn parse_param_entry(v: &toml::Value, sidecar_dir: &std::path::Path) -> Result<Lv2Param, String> {
     let id = v
         .get("id")
         .and_then(toml::Value::as_integer)
@@ -276,7 +305,8 @@ fn parse_param_entry(v: &toml::Value) -> Result<Lv2Param, String> {
         .unwrap_or(f64::NAN);
     let unit = v.get("unit").and_then(|x| x.as_str()).unwrap_or("");
     let flags = v.get("flags").and_then(|x| x.as_str()).unwrap_or("");
-    let range = parse_range_value(range_str, kind)?;
+    let enum_type = v.get("enum_type").and_then(|x| x.as_str()).unwrap_or("");
+    let range = parse_range_value(range_str, kind, enum_type, sidecar_dir)?;
     // Match `truce-derive::gen_param_info_literal`'s implicit default
     // (`a.default.unwrap_or(0.0)`) so the LV2 TTL agrees with the
     // ParamInfo VST3 / standalone read at runtime. The defensive
@@ -303,7 +333,12 @@ fn toml_value_to_f64(v: &toml::Value) -> Option<f64> {
     }
 }
 
-fn parse_range_value(s: &str, kind: &str) -> Result<truce_build::lv2::Lv2Range, String> {
+fn parse_range_value(
+    s: &str,
+    kind: &str,
+    enum_type: &str,
+    sidecar_dir: &std::path::Path,
+) -> Result<truce_build::lv2::Lv2Range, String> {
     use truce_build::lv2::Lv2Range;
     if let Some(inner) = s.strip_prefix("linear(").and_then(|x| x.strip_suffix(')')) {
         let (lo, hi) = parse_pair_f64(inner)?;
@@ -329,9 +364,35 @@ fn parse_range_value(s: &str, kind: &str) -> Result<truce_build::lv2::Lv2Range, 
     }
     match kind {
         "Bool" => Ok(Lv2Range::Discrete { min: 0.0, max: 1.0 }),
-        "Enum" => Ok(Lv2Range::Enum { count: 0 }),
+        // A range-less `EnumParam<T>`: recover the variant count from
+        // the `<T>.enum.toml` sidecar `derive(ParamEnum)` wrote. Falling
+        // back to `count: 0` here is what produced the invalid
+        // `lv2:maximum 0` / `lv2:default 1` port REAPER rejected, so only
+        // do so when the sidecar is genuinely unresolvable (e.g. a
+        // cross-crate enum) - the TTL renderer clamps the default into
+        // range to keep even that case loadable.
+        "Enum" => Ok(Lv2Range::Enum {
+            count: enum_variant_count(enum_type, sidecar_dir).unwrap_or(0),
+        }),
         _ => Err(format!("unrecognised range `{s}`")),
     }
+}
+
+/// Look up a `ParamEnum`'s variant count from the `<Enum>.enum.toml`
+/// sidecar `derive(ParamEnum)` writes. `None` when the type name is
+/// empty (no `enum_type` recorded) or the sidecar is absent (e.g. the
+/// enum lives in another crate, which the aggregator can't reach).
+fn enum_variant_count(enum_type: &str, sidecar_dir: &std::path::Path) -> Option<u32> {
+    if enum_type.is_empty() {
+        return None;
+    }
+    let path = sidecar_dir.join(format!("{enum_type}.enum.toml"));
+    let content = std::fs::read_to_string(path).ok()?;
+    let table: toml::Table = content.parse().ok()?;
+    table
+        .get("count")
+        .and_then(toml::Value::as_integer)
+        .and_then(|c| u32::try_from(c).ok())
 }
 
 fn parse_pair_f64(s: &str) -> Result<(f64, f64), String> {

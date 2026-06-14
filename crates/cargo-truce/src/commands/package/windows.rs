@@ -2153,10 +2153,11 @@ fn files_all_check_gated(fmt: &PkgFormat, universal: bool, scope: PkgScope) -> b
         // arch-gated when universal. In `--system`/`--user` the iss_admin_only
         // emitter drops the IsAdminInstallMode check, so single-arch is bare.
         PkgFormat::Vst2 => universal || matches!(scope, PkgScope::Ask),
-        // LV2 is a bundle (directory). Same gating shape as VST3 - only
-        // arch-gate when universal; the host picks the matching dll
-        // out of the bundle at load time.
-        PkgFormat::Lv2 => universal,
+        // LV2 is a bundle (directory). Arch-gated when universal, and in
+        // `--ask` every entry also carries an `IsAdminInstallMode` check
+        // (admin → `{commoncf}\LV2`, per-user → `{userappdata}\LV2`), so
+        // like VST2 it's fully check-gated in that mode too.
+        PkgFormat::Lv2 => universal || matches!(scope, PkgScope::Ask),
         // Host-arch only (single arch dir staged), so no per-arch Check.
         // Only gated in `--ask` (on IsAdminInstallMode).
         PkgFormat::Aax => matches!(scope, PkgScope::Ask),
@@ -2304,39 +2305,19 @@ fn iss_files_block(
             )
         }
         PkgFormat::Lv2 => {
-            // LV2 bundle (directory). Per the LV2 filesystem-hierarchy
-            // spec, Windows hosts scan `%COMMONPROGRAMFILES%\LV2` for
-            // system-scope installs and `%APPDATA%\LV2` for user-scope.
-            // CLAP/VST3 share `%LOCALAPPDATA%\Programs\Common` for
-            // user-scope per their own specs - LV2 specifically uses
-            // `%APPDATA%`. `cargo truce uninstall --lv2` reads the
-            // same paths via `InstallScope::lv2_dir`, so packager and
-            // uninstaller need to agree here.
             use super::stage::lv2_slug;
             let slug = lv2_slug(&p.name);
-            let src_dir = staging
+            let src_glob = staging
                 .join("lv2")
                 .join(arch.tag())
-                .join(format!("{slug}.lv2"));
-            let src_glob = src_dir.join("*");
-            let src_quoted = iss_escape_path(&src_glob);
-            let lv2_root = match scope {
-                PkgScope::System => "{commoncf}\\LV2",
-                PkgScope::User => "{userappdata}\\LV2",
-                // `{autoappdata}` resolves to `{commonappdata}` in
-                // admin mode and `{userappdata}` per-user - the LV2
-                // host's expectation. Inno picks the right side at
-                // install time based on `PrivilegesRequired` /
-                // `PrivilegesRequiredOverridesAllowed`.
-                PkgScope::Ask => "{autoappdata}\\LV2",
-            };
-            let dest = format!("{lv2_root}\\{slug}.lv2");
-            iss_dual_dest(
-                &src_quoted,
-                &dest,
+                .join(format!("{slug}.lv2"))
+                .join("*");
+            iss_lv2_files(
+                &iss_escape_path(&src_glob),
+                &slug,
                 &comp("lv2"),
+                scope,
                 arch_check,
-                /* is_dir = */ true,
             )
         }
         PkgFormat::Aax => {
@@ -2455,6 +2436,51 @@ fn scoped_programs(scope: PkgScope) -> &'static str {
 /// One line covers all three scopes - Inno's `{auto*}` constants handle
 /// the `--ask` branching for us, so we no longer need a pair of
 /// `IsAdminInstallMode`-gated entries.
+/// `[Files]` entries for an LV2 bundle's `<slug>.lv2/` directory.
+///
+/// LV2's filesystem spec puts system installs in `%COMMONPROGRAMFILES%\LV2`
+/// (`{commoncf}`) and per-user installs in `%APPDATA%\LV2`
+/// (`{userappdata}`). Those CROSS Inno's auto* pairing
+/// (`commoncf`↔`usercf`, `commonappdata`↔`userappdata`), so there's no
+/// single `{auto*}` constant for "commoncf when admin, userappdata when
+/// per-user". `{autoappdata}` is the trap: in admin mode it resolves to
+/// `{commonappdata}` = `C:\ProgramData\LV2`, which no LV2 host scans
+/// (REAPER's default is `%APPDATA%\LV2` + `%COMMONPROGRAMFILES%\LV2`), so
+/// the plugin would install but never show up. In `--ask` mode we
+/// therefore emit two `IsAdminInstallMode`-gated entries rather than
+/// trust one constant. `cargo truce uninstall --lv2` and
+/// [`iss_uninstall_lines`] mirror these roots.
+fn iss_lv2_files(
+    src_quoted: &str,
+    slug: &str,
+    component: &str,
+    scope: PkgScope,
+    arch_check: Option<&str>,
+) -> String {
+    let dest_in = |root: &str| format!("{root}\\LV2\\{slug}.lv2");
+    let entry = |dest: &str, check: Option<&str>| {
+        iss_dual_dest(src_quoted, dest, component, check, /* is_dir = */ true)
+    };
+    match scope {
+        PkgScope::System => entry(&dest_in("{commoncf}"), arch_check),
+        PkgScope::User => entry(&dest_in("{userappdata}"), arch_check),
+        PkgScope::Ask => {
+            // Combine the admin-mode gate with the per-arch `Check:` (if
+            // any) so universal installs still drop only the matching arch.
+            let gate = |base: &str| match arch_check {
+                Some(c) => format!("{base} and {c}"),
+                None => base.to_string(),
+            };
+            let admin = entry(&dest_in("{commoncf}"), Some(&gate("IsAdminInstallMode")));
+            let user = entry(
+                &dest_in("{userappdata}"),
+                Some(&gate("not IsAdminInstallMode")),
+            );
+            format!("{admin}{user}")
+        }
+    }
+}
+
 fn iss_dual_dest(
     src_quoted: &str,
     dest: &str,
@@ -2559,16 +2585,22 @@ fn iss_uninstall_lines(
             // `plugin_name` is the right input here.
             use super::stage::lv2_slug;
             let slug = lv2_slug(plugin_name);
-            let lv2_root = match scope {
-                PkgScope::System => "{commoncf}\\LV2",
-                PkgScope::User => "{userappdata}\\LV2",
-                PkgScope::Ask => "{autoappdata}\\LV2",
-            };
-            let path = format!("{lv2_root}\\{slug}.lv2");
             let component = comp("lv2");
-            vec![format!(
-                "Type: filesandordirs; Name: \"{path}\"; Components: {component}"
-            )]
+            let sweep = |root: &str| {
+                format!(
+                    "Type: filesandordirs; Name: \"{root}\\LV2\\{slug}.lv2\"; Components: {component}"
+                )
+            };
+            match scope {
+                PkgScope::System => vec![sweep("{commoncf}")],
+                PkgScope::User => vec![sweep("{userappdata}")],
+                // Mirror the two-rooted `--ask` install: the bundle
+                // lands in `{commoncf}` (admin) or `{userappdata}`
+                // (per-user). Sweep both - a non-existent path is a
+                // harmless no-op, and it spares us threading
+                // `IsAdminInstallMode` through `[UninstallDelete]`.
+                PkgScope::Ask => vec![sweep("{commoncf}"), sweep("{userappdata}")],
+            }
         }
         PkgFormat::Aax => {
             // AAX is system-rooted regardless of scope (`iss_admin_only`

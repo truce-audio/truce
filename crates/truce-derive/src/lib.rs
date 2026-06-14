@@ -265,6 +265,12 @@ impl ParamField {
             .id
             .expect("ParamField::id called before the auto-assignment block ran")
     }
+
+    /// The inner `T` of an `EnumParam<T>`, used by the LV2 sidecar
+    /// writer to record which enum a range-less enum param refers to.
+    pub(crate) fn enum_type(&self) -> Option<&syn::Type> {
+        self.enum_type.as_ref()
+    }
 }
 
 /// A nested Params field (delegates to inner struct).
@@ -1822,6 +1828,12 @@ pub fn derive_param_enum(input: TokenStream) -> TokenStream {
     }
 
     let count = variants.len();
+
+    // Record the variant count so the LV2 aggregator can resolve
+    // `EnumParam<#enum_name>` ports that carry no explicit
+    // `#[param(range = "enum(N)")]`. The count is only knowable here, at
+    // the enum's own derive; the params sidecar references it by name.
+    lv2_emit::write_enum_sidecar(enum_name, count);
 
     let variant_idents: Vec<_> = variants.iter().map(|v| &v.ident).collect();
 

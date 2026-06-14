@@ -131,13 +131,23 @@ impl Lv2Range {
     }
 }
 
+impl Lv2Param {
+    /// The `lv2:default` to emit, clamped into `[min, max]`. LV2 hosts
+    /// (REAPER's lilv loader in particular) reject a port whose default
+    /// falls outside its declared range, so an unresolved enum count or
+    /// a stray `#[param(default = ...)]` can never produce an
+    /// unloadable plugin - it just opens at the clamped value.
+    fn clamped_default(&self) -> f64 {
+        self.default_plain.clamp(self.range.min(), self.range.max())
+    }
+}
+
 /// Layout indices used to lay out LV2 ports in the TTL.
 struct Layout {
     audio_in: u32,
     audio_out: u32,
     num_params: u32,
     num_meters: u32,
-    accepts_midi_in: bool,
     has_midi_out: bool,
 }
 
@@ -182,7 +192,6 @@ pub fn render_ttls(bundle: &Lv2Bundle, so_name: &str) -> (String, String) {
         audio_out: bundle.audio_out,
         num_params: u32::try_from(bundle.params.len()).unwrap_or(u32::MAX),
         num_meters: u32::try_from(bundle.meter_ids.len()).unwrap_or(u32::MAX),
-        accepts_midi_in: bundle.accepts_midi_in,
         has_midi_out: bundle.has_midi_out,
     };
     let manifest = render_manifest(bundle, &layout, "plugin.ttl", so_name);
@@ -331,7 +340,7 @@ fn render_plugin_ttl(b: &Lv2Bundle, layout: &Layout, so_name: &str) -> String {
         let _ = writeln!(f, "    rdfs:range atom:Float ;");
         let _ = writeln!(f, "    lv2:minimum {} ;", p.range.min());
         let _ = writeln!(f, "    lv2:maximum {} ;", p.range.max());
-        let _ = writeln!(f, "    lv2:default {} ;", p.default_plain);
+        let _ = writeln!(f, "    lv2:default {} ;", p.clamped_default());
         if let Some(unit) = lv2_unit(p.unit) {
             let _ = writeln!(f, "    units:unit units:{unit} ;");
         }
@@ -387,9 +396,15 @@ fn emit_port(f: &mut String, index: u32, b: &Lv2Bundle, layout: &Layout, param_s
             f,
             "        atom:supports midi:MidiEvent, time:Position, patch:Message ;"
         );
-        if !layout.accepts_midi_in {
-            let _ = writeln!(f, "        lv2:designation lv2:control ;");
-        }
+        // The single atom input is the plugin's control/event input, so
+        // designate it `lv2:control` for EVERY plugin type. The LV2 atom
+        // spec defines this designation as "which port MIDI should be
+        // sent to" - omitting it on instruments (the previous
+        // `!accepts_midi_in` guard) left synths with no designated MIDI
+        // input, which REAPER rejects when scanning an `lv2:InstrumentPlugin`.
+        // Effects already carried it; this just extends it to instruments
+        // and note effects.
+        let _ = writeln!(f, "        lv2:designation lv2:control ;");
         let _ = writeln!(f, "        lv2:index {index} ;");
         let _ = writeln!(f, "        lv2:symbol \"midi_in\" ;");
         let _ = writeln!(f, "        lv2:name \"MIDI In\" ;");
@@ -432,7 +447,7 @@ fn emit_control_port(f: &mut String, index: u32, p: &Lv2Param, symbol: &str) {
     let _ = writeln!(f, "        lv2:name \"{}\" ;", escape_turtle(&p.name));
     let _ = writeln!(f, "        lv2:minimum {} ;", p.range.min());
     let _ = writeln!(f, "        lv2:maximum {} ;", p.range.max());
-    let _ = writeln!(f, "        lv2:default {} ;", p.default_plain);
+    let _ = writeln!(f, "        lv2:default {} ;", p.clamped_default());
     if let Some(unit) = lv2_unit(p.unit) {
         let _ = writeln!(f, "        units:unit units:{unit} ;");
     }
@@ -686,5 +701,83 @@ mod tests {
             "https://example.com/lv2/my-gain#ui"
         );
         assert_eq!(ui_uri("", "my-gain"), "urn:truce:my-gain#ui");
+    }
+
+    fn bundle(category: Lv2Category, accepts_midi_in: bool, params: Vec<Lv2Param>) -> Lv2Bundle {
+        let (audio_in, audio_out) = match category {
+            Lv2Category::Instrument | Lv2Category::NoteEffect => (0, 2),
+            _ => (2, 2),
+        };
+        Lv2Bundle {
+            plugin_name: "Test".into(),
+            vendor: "Vendor".into(),
+            url: "https://example.com".into(),
+            uri: plugin_uri("https://example.com", "test"),
+            ui_uri: ui_uri("https://example.com", "test"),
+            category,
+            audio_in,
+            audio_out,
+            accepts_midi_in,
+            has_midi_out: false,
+            params,
+            meter_ids: vec![],
+            has_ui: false,
+        }
+    }
+
+    fn enum_param() -> Lv2Param {
+        Lv2Param {
+            id: 0,
+            name: "Waveform".into(),
+            default_plain: 1.0,
+            range: Lv2Range::Enum { count: 4 },
+            unit: Lv2Unit::None,
+            flags: Lv2Flags::default(),
+        }
+    }
+
+    /// The atom input port is the control/event input for EVERY plugin
+    /// type, so it must carry `lv2:designation lv2:control` - including
+    /// instruments, whose MIDI input is exactly the port the spec says
+    /// this designation names. A regression here is what stopped REAPER
+    /// from loading the LV2 synth.
+    #[test]
+    fn instrument_midi_input_is_designated_control() {
+        let (_manifest, ttl) = render_ttls(&bundle(Lv2Category::Instrument, true, vec![]), "x.so");
+        // Isolate the `midi_in` input atom port block and assert the
+        // designation rides on it.
+        let block = ttl
+            .split("lv2:symbol \"midi_in\"")
+            .next()
+            .and_then(|head| head.rsplit("a lv2:InputPort, atom:AtomPort").next())
+            .expect("midi_in input port present");
+        assert!(
+            block.contains("lv2:designation lv2:control"),
+            "instrument midi_in must be designated lv2:control:\n{ttl}"
+        );
+    }
+
+    #[test]
+    fn effect_midi_input_is_designated_control() {
+        let (_manifest, ttl) = render_ttls(&bundle(Lv2Category::Effect, false, vec![]), "x.so");
+        assert!(ttl.contains("lv2:designation lv2:control"));
+    }
+
+    /// A range-less enum resolves to a concrete count upstream; here we
+    /// pin that the rendered port is valid (`minimum <= default <= maximum`)
+    /// so no host rejects it (the `enum(0)` bug rendered `maximum 0` with
+    /// `default 1`).
+    #[test]
+    fn enum_port_default_within_range() {
+        let (_m, ttl) = render_ttls(
+            &bundle(Lv2Category::Effect, false, vec![enum_param()]),
+            "x.so",
+        );
+        assert!(ttl.contains("lv2:maximum 3"), "enum(4) -> max 3:\n{ttl}");
+        assert!(ttl.contains("lv2:default 1"));
+        // And the clamp guards an out-of-range default.
+        let mut p = enum_param();
+        p.default_plain = 99.0;
+        assert!((p.clamped_default() - 3.0).abs() < f64::EPSILON);
     }
 }
