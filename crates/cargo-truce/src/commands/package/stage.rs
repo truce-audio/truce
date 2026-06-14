@@ -777,19 +777,19 @@ pub(crate) fn write_standalone_info_plist(
 #[cfg(target_os = "macos")]
 /// A standalone pkg component carrying out-of-bundle payload (VST3
 /// presets install to the OS preset folder, not the plugin bundle).
-/// Threaded into `distribution.xml` alongside the format components.
+/// It needs its own pkg because the install-location differs from the
+/// bundle, but it isn't a separate user choice: its `<pkg-ref>` rides
+/// inside `parent`'s `<choice>`, so it installs whenever that format
+/// does, and inherits that format's `auth` treatment.
 #[cfg(target_os = "macos")]
 pub(crate) struct ExtraComponent {
     /// pkg-id suffix, e.g. `vst3presets`.
     pub suffix: String,
-    /// File-name + choice segment, e.g. `VST3-Presets`.
+    /// File-name segment, e.g. `VST3-Presets` (the component pkg is
+    /// `<plugin>-<label>.pkg`).
     pub label: String,
-    /// Choice description shown in Installer.app.
-    pub description: String,
-    /// `true` when the payload's install-location is user-relocatable
-    /// (the VST3 preset root is, like the VST3 bundle) - drives the
-    /// per-scope `auth` attribute like a non-system-only format.
-    pub user_viable: bool,
+    /// The format whose `<choice>` this component rides inside.
+    pub parent: PkgFormat,
 }
 
 #[cfg(target_os = "macos")]
@@ -846,50 +846,41 @@ pub(crate) fn generate_distribution_xml(
             (PkgScope::Ask | PkgScope::System, _) => "",
         };
 
+        // Out-of-bundle components ride inside this format's choice
+        // rather than as their own: VST3 presets install whenever VST3
+        // does. They stay a separate *pkg* (their install-location is
+        // the OS preset folder, not the bundle) but not a separate
+        // user-facing choice. Same auth as the parent format.
+        let mut extra_refs = String::new();
+        for ec in extras.iter().filter(|e| e.parent == *fmt) {
+            let ex_id = format!("{vendor_id}.{bundle_id}.{}", ec.suffix);
+            let _ = writeln!(
+                extra_refs,
+                "        <pkg-ref id=\"{ex_id}\"{pkg_ref_auth}/>"
+            );
+        }
+
         let _ = writeln!(choices_outline, "        <line choice=\"{id}\"/>");
         let _ = write!(
             choices,
             r#"
     <choice id="{id}" title="{label}" description="{desc}"{enabled_attr}>
         <pkg-ref id="{pkg_id}"{pkg_ref_auth}/>
-    </choice>
+{extra_refs}    </choice>
 "#
         );
         let _ = writeln!(
             pkg_refs,
             "    <pkg-ref id=\"{pkg_id}\" version=\"{version}\">{component_file}</pkg-ref>"
         );
-    }
-
-    // Out-of-bundle components (VST3 presets). Same choice / pkg-ref
-    // shape as a format; `user_viable` mirrors a non-system-only
-    // format's auth treatment so a `--user` install relocates the
-    // preset payload to `~` cleanly.
-    for ec in extras {
-        let pkg_id = format!("{vendor_id}.{bundle_id}.{}", ec.suffix);
-        let component_file = format!("{plugin_name}-{}.pkg", ec.label);
-        let is_system_only = !ec.user_viable;
-        let pkg_ref_auth = match (scope, is_system_only) {
-            (PkgScope::User | PkgScope::Ask, true) => " auth=\"Root\"",
-            (PkgScope::User, false) => " auth=\"None\"",
-            (PkgScope::Ask | PkgScope::System, _) => "",
-        };
-        let _ = writeln!(choices_outline, "        <line choice=\"{}\"/>", ec.suffix);
-        let _ = write!(
-            choices,
-            r#"
-    <choice id="{id}" title="{label}" description="{desc}">
-        <pkg-ref id="{pkg_id}"{pkg_ref_auth}/>
-    </choice>
-"#,
-            id = ec.suffix,
-            label = ec.label,
-            desc = ec.description,
-        );
-        let _ = writeln!(
-            pkg_refs,
-            "    <pkg-ref id=\"{pkg_id}\" version=\"{version}\">{component_file}</pkg-ref>"
-        );
+        for ec in extras.iter().filter(|e| e.parent == *fmt) {
+            let ex_id = format!("{vendor_id}.{bundle_id}.{}", ec.suffix);
+            let ex_file = format!("{plugin_name}-{}.pkg", ec.label);
+            let _ = writeln!(
+                pkg_refs,
+                "    <pkg-ref id=\"{ex_id}\" version=\"{version}\">{ex_file}</pkg-ref>"
+            );
+        }
     }
 
     let welcome = resources

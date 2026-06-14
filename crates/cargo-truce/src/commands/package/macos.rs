@@ -395,13 +395,6 @@ fn generate_suite_distribution_xml(
             let inner_id = format!("{outer_id}-{}", fmt.pkg_id_suffix());
             let _ = writeln!(outline, "            <line choice=\"{inner_id}\"/>");
         }
-        for ec in extras {
-            let _ = writeln!(
-                outline,
-                "            <line choice=\"{outer_id}-{}\"/>",
-                ec.suffix
-            );
-        }
         let _ = writeln!(outline, "        </line>");
 
         // Per-plugin parent: empty choice that only exists so the
@@ -435,48 +428,37 @@ fn generate_suite_distribution_xml(
                     _,
                 ) => "",
             };
+            // Out-of-bundle components (VST3 presets) ride inside the
+            // matching format's choice, not their own - install with
+            // VST3, same auth, separate pkg only because the install
+            // location differs.
+            let mut extra_refs = String::new();
+            for ec in extras.iter().filter(|e| e.parent == *fmt) {
+                let ex_id = format!("{vendor_id}.{}.{}", plugin.bundle_id, ec.suffix);
+                let _ = writeln!(
+                    extra_refs,
+                    "        <pkg-ref id=\"{ex_id}\"{pkg_ref_auth}/>"
+                );
+            }
             let _ = write!(
                 choices,
                 r#"    <choice id="{inner_id}" title="{label}" description="{desc}"{enabled_attr}>
         <pkg-ref id="{pkg_id}"{pkg_ref_auth}/>
-    </choice>
+{extra_refs}    </choice>
 "#
             );
             let _ = writeln!(
                 pkg_refs,
                 "    <pkg-ref id=\"{pkg_id}\" version=\"{version}\">{component_file}</pkg-ref>"
             );
-        }
-
-        for ec in extras {
-            let inner_id = format!("{outer_id}-{}", ec.suffix);
-            let pkg_id = format!("{vendor_id}.{}.{}", plugin.bundle_id, ec.suffix);
-            let component_file = format!("{}-{}.pkg", plugin.file_stem(), ec.label);
-            let is_system_only = !ec.user_viable;
-            let pkg_ref_auth = match (scope, is_system_only) {
-                (
-                    crate::install_scope::PkgScope::User | crate::install_scope::PkgScope::Ask,
-                    true,
-                ) => " auth=\"Root\"",
-                (crate::install_scope::PkgScope::User, false) => " auth=\"None\"",
-                (
-                    crate::install_scope::PkgScope::Ask | crate::install_scope::PkgScope::System,
-                    _,
-                ) => "",
-            };
-            let _ = write!(
-                choices,
-                r#"    <choice id="{inner_id}" title="{label}" description="{desc}">
-        <pkg-ref id="{pkg_id}"{pkg_ref_auth}/>
-    </choice>
-"#,
-                label = ec.label,
-                desc = ec.description,
-            );
-            let _ = writeln!(
-                pkg_refs,
-                "    <pkg-ref id=\"{pkg_id}\" version=\"{version}\">{component_file}</pkg-ref>"
-            );
+            for ec in extras.iter().filter(|e| e.parent == *fmt) {
+                let ex_id = format!("{vendor_id}.{}.{}", plugin.bundle_id, ec.suffix);
+                let ex_file = format!("{}-{}.pkg", plugin.file_stem(), ec.label);
+                let _ = writeln!(
+                    pkg_refs,
+                    "    <pkg-ref id=\"{ex_id}\" version=\"{version}\">{ex_file}</pkg-ref>"
+                );
+            }
         }
     }
 
@@ -852,8 +834,7 @@ fn vst3_preset_descriptor(
         vst3_preset_payload_for(root, p, o)?.map(|_| ExtraComponent {
             suffix: "vst3presets".to_string(),
             label: "VST3-Presets".to_string(),
-            description: "VST3 factory presets.".to_string(),
-            user_viable: true,
+            parent: PkgFormat::Vst3,
         }),
     )
 }
