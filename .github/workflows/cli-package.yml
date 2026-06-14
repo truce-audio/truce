@@ -21,6 +21,13 @@ concurrency:
 #   Linux   -> tarball + install.sh
 #   Windows -> Inno Setup .exe (unsigned: no signtool creds in CI)
 #
+# Packages `truce-example-synth` (which ships six factory presets) so
+# each run also verifies preset packaging via
+# `scripts/ci/verify-package-presets.sh`: the installer must carry the
+# presets, and on Linux / Windows the script installs into a throwaway
+# location with a pre-seeded *user* preset to prove the VST3 merge
+# never wipes a user's own presets.
+#
 # AAX and AU v3 are skipped via `--formats clap,vst3,vst2{,au2,lv2}`:
 # AAX needs the Avid SDK + PACE eden, AU v3 needs a real Developer ID
 # for the appex extension sandbox to load.
@@ -46,18 +53,23 @@ jobs:
       # neither of which is wired up in CI. The pkg still gets a
       # codesign pass against the ad-hoc identity (`-`).
       - name: cargo truce package --formats clap,vst3,vst2,au2 --no-notarize
-        run: ./target/debug/cargo-truce package --formats clap,vst3,vst2,au2 --no-notarize -p truce-example-gain
+        run: ./target/debug/cargo-truce package --formats clap,vst3,vst2,au2 --no-notarize -p truce-example-synth
 
       - name: Verify .pkg produced
         run: |
           set -e
           ls -la target/dist/
-          test -f target/dist/truce-example-gain-*-macos.pkg
+          test -f target/dist/truce-example-synth-*-macos.pkg
+
+      # The synth ships factory presets; assert the .pkg carries them
+      # (CLAP/AU in-bundle + the dedicated VST3-Presets component).
+      - name: Verify presets in the .pkg
+        run: bash scripts/ci/verify-package-presets.sh macos
 
       - name: Upload .pkg artifact
         uses: actions/upload-artifact@v4
         with:
-          name: truce-example-gain-macos.pkg
+          name: truce-example-synth-macos.pkg
           path: target/dist/*.pkg
           if-no-files-found: error
           retention-days: 14
@@ -90,18 +102,24 @@ jobs:
         run: cargo build -p cargo-truce
 
       - name: cargo truce package --formats clap,vst3,vst2,lv2
-        run: ./target/debug/cargo-truce package --formats clap,vst3,vst2,lv2 -p truce-example-gain
+        run: ./target/debug/cargo-truce package --formats clap,vst3,vst2,lv2 -p truce-example-synth
 
       - name: Verify tarball produced
         run: |
           set -e
           ls -la target/dist/
-          test -f target/dist/truce-example-gain-*-linux-*.tar.gz
+          test -f target/dist/truce-example-synth-*-linux-*.tar.gz
+
+      # Assert the tarball carries CLAP/LV2/VST3 presets, then install
+      # into a throwaway HOME with a pre-seeded user preset to prove the
+      # VST3 merge never wipes a user's own presets.
+      - name: Verify presets in the tarball
+        run: bash scripts/ci/verify-package-presets.sh linux
 
       - name: Upload tarball artifact
         uses: actions/upload-artifact@v4
         with:
-          name: truce-example-gain-linux.tar.gz
+          name: truce-example-synth-linux.tar.gz
           path: target/dist/*.tar.gz
           if-no-files-found: error
           retention-days: 14
@@ -134,19 +152,25 @@ jobs:
       # The installer comes out unsigned but valid.
       - name: cargo truce package --formats clap,vst3,vst2
         shell: bash
-        run: ./target/debug/cargo-truce.exe package --formats clap,vst3,vst2 -p truce-example-gain
+        run: ./target/debug/cargo-truce.exe package --formats clap,vst3,vst2 -p truce-example-synth
 
       - name: Verify installer produced
         shell: bash
         run: |
           set -e
           ls -la target/dist/
-          ls target/dist/truce-example-gain-*-windows.exe
+          ls target/dist/truce-example-synth-*-windows.exe
+
+      # Silent per-user install with a pre-seeded user preset; assert
+      # the VST3 factory presets land AND the user's preset survives.
+      - name: Verify presets in the installer
+        shell: bash
+        run: bash scripts/ci/verify-package-presets.sh windows
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
-          name: truce-example-gain-windows.exe
+          name: truce-example-synth-windows.exe
           path: target/dist/*.exe
           if-no-files-found: error
           retention-days: 14
