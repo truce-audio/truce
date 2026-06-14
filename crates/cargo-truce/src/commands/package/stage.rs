@@ -929,7 +929,10 @@ pub(crate) fn generate_distribution_xml(
 /// root from a prior admin install) blocks the new payload with
 /// `Permission denied` during the relink step. AU v2 additionally
 /// gets a `postinstall` that clears the AU cache so Logic / Garage-
-/// Band re-scan and pick up the new bundle.
+/// Band re-scan and pick up the new bundle; AU v3 gets one that
+/// registers its app-extension with `pluginkit` (see
+/// [`AU3_REGISTER_POSTINSTALL`]) - without it the component lists in
+/// hosts but won't open.
 ///
 /// The preinstall reads `$2` (the resolved install destination -
 /// already accounts for `enable_currentUserHome` relocation) and
@@ -940,11 +943,51 @@ pub(crate) fn generate_distribution_xml(
 /// leftovers and fails loudly with an actionable message otherwise
 /// (so the developer doing `cargo truce package --user` after a
 /// `--system` round sees what to clean up).
+/// AU v3 postinstall: register the app-extension with `pluginkit` for
+/// the logged-in user. pkg scripts run as root, but `pluginkit`, `pkd`,
+/// and the AU cache are per-user, so the work runs as the console user
+/// via `launchctl asuser`. `$2` is the install
+/// destination (e.g. `/Applications`). `pluginkit -a` no-ops while
+/// `pkd` is mid-respawn, hence the retry loop (mirrors
+/// `install_au_v3`). No console user (CI / SSH / login window) -> skip;
+/// the appex registers on next login when `pkd` scans `/Applications`.
+#[cfg(target_os = "macos")]
+const AU3_REGISTER_POSTINSTALL: &str = r#"#!/bin/bash
+set -u
+APP="$2/{{BUNDLE}}"
+APPEX="$APP/Contents/PlugIns/AUExt.appex"
+APPEX_ID="{{APPEX_ID}}"
+uid=$(stat -f %u /dev/console 2>/dev/null || true)
+user=$(stat -f %Su /dev/console 2>/dev/null || true)
+if [ -z "${uid:-}" ] || [ "$user" = "root" ] || [ ! -d "$APPEX" ]; then
+    exit 0
+fi
+home=$(eval echo "~$user")
+asuser() { launchctl asuser "$uid" sudo -u "$user" "$@"; }
+LSREG=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+"$LSREG" -f -R "$APP" >/dev/null 2>&1 || true
+killall -9 pkd 2>/dev/null || true
+killall -9 AudioComponentRegistrar 2>/dev/null || true
+rm -rf "$home/Library/Caches/AudioUnitCache" 2>/dev/null || true
+sleep 2
+i=0
+while [ "$i" -lt 8 ]; do
+    asuser pluginkit -a "$APPEX" >/dev/null 2>&1 || true
+    if asuser pluginkit -m -i "$APPEX_ID" 2>/dev/null | grep -q "$APPEX_ID"; then
+        break
+    fi
+    sleep 1
+    i=$((i + 1))
+done
+exit 0
+"#;
+
 #[cfg(target_os = "macos")]
 pub(crate) fn write_format_scripts(
     staging: &Path,
     fmt: &PkgFormat,
     bundle_name: &str,
+    appex_id: Option<&str>,
 ) -> std::result::Result<PathBuf, crate::CargoTruceError> {
     let scripts_dir = staging.join(format!("{}_scripts", fmt.pkg_id_suffix()));
     let _ = fs::remove_dir_all(&scripts_dir);
@@ -991,6 +1034,25 @@ pub(crate) fn write_format_scripts(
              rm -f ~/Library/Preferences/com.apple.audio.InfoHelper.plist 2>/dev/null || true\n\
              exit 0\n",
         )?;
+        Command::new("chmod")
+            .args(["+x", postinstall.to_str().unwrap()])
+            .status()?;
+    }
+
+    // AU v3 is an app-extension: dropping the `.app` into `/Applications`
+    // isn't enough, the appex has to be registered with `pluginkit` or
+    // hosts get a component that lists but won't open. `cargo truce
+    // install --au3` registers it directly; the installer has to do the
+    // same from its postinstall - which is the wrinkle, since pkg
+    // scripts run as root while pluginkit + the AU cache are per-user.
+    if *fmt == PkgFormat::Au3
+        && let Some(appex_id) = appex_id
+    {
+        let postinstall = scripts_dir.join("postinstall");
+        let script = AU3_REGISTER_POSTINSTALL
+            .replace("{{BUNDLE}}", &escaped_bundle)
+            .replace("{{APPEX_ID}}", appex_id);
+        fs::write(&postinstall, script)?;
         Command::new("chmod")
             .args(["+x", postinstall.to_str().unwrap()])
             .status()?;

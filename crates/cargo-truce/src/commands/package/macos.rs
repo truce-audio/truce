@@ -205,7 +205,9 @@ fn stage_components_only(root: &Path, p: &PluginDef, o: &PackageOpts) -> Res {
     let _ = fs::remove_dir_all(&components_dir);
     fs::create_dir_all(&components_dir)?;
     for fmt in o.formats {
-        let scripts_dir = write_format_scripts(&staging, fmt, &fmt.bundle_name(p))?;
+        let appex_id = (*fmt == PkgFormat::Au3).then(|| au3_appex_id(o.config, p));
+        let scripts_dir =
+            write_format_scripts(&staging, fmt, &fmt.bundle_name(p), appex_id.as_deref())?;
         run_pkgbuild_for_format(p, fmt, &staging, &components_dir, &scripts_dir, o)?;
     }
     // VST3 presets ride as their own component; the suite distribution
@@ -802,6 +804,17 @@ struct PackageOpts<'a> {
 /// (2 through 7) - splitting them into separate helpers would inflate
 /// the boilerplate without surfacing any reuse, since `cmd_package_macos`
 /// is the only caller.
+/// AU v3 app-extension bundle id, matching what the build's pbxproj
+/// stamps and `install_au_v3` registers - so the installer postinstall
+/// registers the same identifier.
+fn au3_appex_id(config: &Config, p: &PluginDef) -> String {
+    format!(
+        "com.{}.{}.v3.ext",
+        config.vendor.id.trim_start_matches("com."),
+        p.bundle_id
+    )
+}
+
 /// A preset file tree as `(relative path -> bytes)`.
 type PresetPayload = Vec<(PathBuf, Vec<u8>)>;
 
@@ -941,7 +954,9 @@ fn package_one_plugin(root: &Path, p: &PluginDef, dist_dir: &Path, o: &PackageOp
     fs::create_dir_all(&components_dir)?;
 
     for fmt in o.formats {
-        let scripts_dir = write_format_scripts(&staging, fmt, &fmt.bundle_name(p))?;
+        let appex_id = (*fmt == PkgFormat::Au3).then(|| au3_appex_id(o.config, p));
+        let scripts_dir =
+            write_format_scripts(&staging, fmt, &fmt.bundle_name(p), appex_id.as_deref())?;
         run_pkgbuild_for_format(p, fmt, &staging, &components_dir, &scripts_dir, o)?;
     }
     // Out-of-bundle VST3 presets ship as their own component.
