@@ -115,12 +115,12 @@ showing the egui / iced / Slint / Vizia backends. See
 table with screenshots.
 
 <p align="center">
-  <img src="examples/truce-example-eq/screenshots/eq_default_macos.png" height="200" alt="EQ" />
-  <img src="examples/truce-example-arpeggio/screenshots/arpeggio_default_macos.png" height="200" alt="Arpeggiator" />
-  <img src="examples/truce-example-gain/screenshots/gain_default_macos.png" height="200" alt="Gain" />
-  <img src="examples/truce-example-synth/screenshots/synth_default_macos.png" height="200" alt="Synth" />
-  <img src="examples/truce-example-transpose/screenshots/transpose_default_macos.png" height="200" alt="Transpose" />
-  <img src="examples/truce-example-tremolo/screenshots/tremolo_default_macos.png" height="200" alt="Tremolo" />
+  <a href="examples/truce-example-eq"><img src="examples/truce-example-eq/screenshots/eq_default_macos.png" height="200" alt="EQ" /></a>
+  <a href="examples/truce-example-arpeggio"><img src="examples/truce-example-arpeggio/screenshots/arpeggio_default_macos.png" height="200" alt="Arpeggiator" /></a>
+  <a href="examples/truce-example-gain"><img src="examples/truce-example-gain/screenshots/gain_default_macos.png" height="200" alt="Gain" /></a>
+  <a href="examples/truce-example-synth"><img src="examples/truce-example-synth/screenshots/synth_default_macos.png" height="200" alt="Synth" /></a>
+  <a href="examples/truce-example-transpose"><img src="examples/truce-example-transpose/screenshots/transpose_default_macos.png" height="200" alt="Transpose" /></a>
+  <a href="examples/truce-example-tremolo"><img src="examples/truce-example-tremolo/screenshots/tremolo_default_macos.png" height="200" alt="Tremolo" /></a>
 </p>
 
 [**reiss-mcpherson-effects**](https://github.com/truce-audio/reiss-mcpherson-effects/),
@@ -129,19 +129,19 @@ a companion repo porting the audio-effect implementations from Reiss
 to truce.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/truce-audio/reiss-mcpherson-effects/main/screenshots/reiss-mcpherson-compressor.png" height="160" alt="Compressor" />
-  <img src="https://raw.githubusercontent.com/truce-audio/reiss-mcpherson-effects/main/screenshots/reiss-mcpherson-delay.png" height="160" alt="Delay" />
-  <img src="https://raw.githubusercontent.com/truce-audio/reiss-mcpherson-effects/main/screenshots/reiss-mcpherson-phaser.png" height="160" alt="Phaser" />
-  <img src="https://raw.githubusercontent.com/truce-audio/reiss-mcpherson-effects/main/screenshots/reiss-mcpherson-chorus.png" height="160" alt="Chorus" />
-  <img src="https://raw.githubusercontent.com/truce-audio/reiss-mcpherson-effects/main/screenshots/reiss-mcpherson-wahwah.png" height="160" alt="Wah-wah" />
-  <img src="https://raw.githubusercontent.com/truce-audio/reiss-mcpherson-effects/main/screenshots/reiss-mcpherson-flanger.png" height="160" alt="Flanger" />
+  <a href="https://github.com/truce-audio/reiss-mcpherson-effects/tree/main/plugins/reiss-mcpherson-compressor"><img src="https://raw.githubusercontent.com/truce-audio/reiss-mcpherson-effects/main/screenshots/reiss-mcpherson-compressor.png" height="160" alt="Compressor" /></a>
+  <a href="https://github.com/truce-audio/reiss-mcpherson-effects/tree/main/plugins/reiss-mcpherson-delay"><img src="https://raw.githubusercontent.com/truce-audio/reiss-mcpherson-effects/main/screenshots/reiss-mcpherson-delay.png" height="160" alt="Delay" /></a>
+  <a href="https://github.com/truce-audio/reiss-mcpherson-effects/tree/main/plugins/reiss-mcpherson-phaser"><img src="https://raw.githubusercontent.com/truce-audio/reiss-mcpherson-effects/main/screenshots/reiss-mcpherson-phaser.png" height="160" alt="Phaser" /></a>
+  <a href="https://github.com/truce-audio/reiss-mcpherson-effects/tree/main/plugins/reiss-mcpherson-chorus"><img src="https://raw.githubusercontent.com/truce-audio/reiss-mcpherson-effects/main/screenshots/reiss-mcpherson-chorus.png" height="160" alt="Chorus" /></a>
+  <a href="https://github.com/truce-audio/reiss-mcpherson-effects/tree/main/plugins/reiss-mcpherson-wahwah"><img src="https://raw.githubusercontent.com/truce-audio/reiss-mcpherson-effects/main/screenshots/reiss-mcpherson-wahwah.png" height="160" alt="Wah-wah" /></a>
+  <a href="https://github.com/truce-audio/reiss-mcpherson-effects/tree/main/plugins/reiss-mcpherson-flanger"><img src="https://raw.githubusercontent.com/truce-audio/reiss-mcpherson-effects/main/screenshots/reiss-mcpherson-flanger.png" height="160" alt="Flanger" /></a>
 </p>
 
 [**truce-analyzer**](https://github.com/truce-audio/truce-analyzer),
 a real-time spectrum analyzer with diff overlay for debugging/reverse-engineering plugins.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/truce-audio/truce-analyzer/main/screenshots/analyzer_diff_macos.png" width="760" alt="truce-analyzer diff overlay" />
+  <a href="https://github.com/truce-audio/truce-analyzer"><img src="https://raw.githubusercontent.com/truce-audio/truce-analyzer/main/screenshots/analyzer_diff_macos.png" width="760" alt="truce-analyzer diff overlay" /></a>
 </p>
 
 ## Minimal Example
