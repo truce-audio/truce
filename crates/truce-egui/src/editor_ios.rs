@@ -15,6 +15,7 @@
 
 use std::sync::{Arc, Mutex};
 
+use objc2::ffi::{objc_release, objc_retain};
 use objc2::msg_send;
 use objc2::runtime::{AnyClass, AnyObject, AnyProtocol, Bool, ClassBuilder, Sel};
 use objc2::sel;
@@ -254,7 +255,7 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
         unsafe {
             if !inner.display_link.is_null() {
                 let _: () = msg_send![inner.display_link, invalidate];
-                let _: () = msg_send![inner.display_link, release];
+                release_obj(inner.display_link);
             }
             if !inner.child_view.is_null() {
                 // Reclaim the Arc the view's ivar holds.
@@ -434,7 +435,7 @@ unsafe fn install_editor_view<P: Params + 'static>(
         if link.is_null() {
             return (view, layer, std::ptr::null_mut(), leaked);
         }
-        let _: () = msg_send![link, retain];
+        retain_obj(link);
         let run_loop_cls = AnyClass::get(c"NSRunLoop").expect("NSRunLoop missing");
         let main: *mut AnyObject = msg_send![run_loop_cls, mainRunLoop];
         let mode: *const AnyObject = NSRunLoopCommonModes;
@@ -442,6 +443,17 @@ unsafe fn install_editor_view<P: Params + 'static>(
 
         (view, layer, link, leaked)
     }
+}
+
+unsafe fn retain_obj(obj: *mut AnyObject) {
+    unsafe {
+        let retained = objc_retain(obj);
+        debug_assert_eq!(retained, obj, "objc_retain returned a different object");
+    }
+}
+
+unsafe fn release_obj(obj: *mut AnyObject) {
+    unsafe { objc_release(obj) }
 }
 
 unsafe fn borrow_inner_arc<P: Params + 'static>(
