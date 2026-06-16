@@ -43,6 +43,7 @@ members = [
     "examples/truce-example-transpose",
     "examples/truce-example-arpeggio",
     "examples/truce-example-gain-egui",
+    "examples/truce-example-gain-egui-aspect",
     "examples/truce-example-tremolo",
     "examples/truce-example-state",
     "examples/truce-example-gain-iced",

@@ -4739,6 +4739,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "truce-example-gain-egui-aspect"
+version = "0.58.3"
+dependencies = [
+ "clap-sys",
+ "egui",
+ "truce",
+ "truce-aax",
+ "truce-au",
+ "truce-clap",
+ "truce-core",
+ "truce-egui",
+ "truce-font",
+ "truce-loader",
+ "truce-lv2",
+ "truce-params",
+ "truce-standalone",
+ "truce-test",
+ "truce-vst2",
+ "truce-vst3",
+]
+
+[[package]]
 name = "truce-example-gain-iced"
 version = "0.58.3"
 dependencies = [

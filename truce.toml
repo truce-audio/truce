@@ -247,6 +247,21 @@ macos_icon = "static/truce-minimal.icns"
 ios_icon_set = "static/truce-minimal.appiconset"
 
 [[plugin]]
+name = "Truce Gain Egui Aspect"
+bundle_id = "gain-egui-aspect"
+crate = "truce-example-gain-egui-aspect"
+category = "effect"
+fourcc = "TGeA"
+au3_subtype = "TeA3"
+au_tag = "Effects"
+aax_category = "Dynamics"
+vst3_subcategory = "Tools"
+au3_name = "Truce Gain Egui Aspect (AUv3)"
+windows_icon = "static/truce-minimal.ico"
+macos_icon = "static/truce-minimal.icns"
+ios_icon_set = "static/truce-minimal.appiconset"
+
+[[plugin]]
 name = "Truce Arpeggio"
 bundle_id = "arpeggio"
 crate = "truce-example-arpeggio"
