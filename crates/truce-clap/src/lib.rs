@@ -2329,10 +2329,19 @@ unsafe extern "C" fn gui_adjust_size<P: PluginExport>(
 }
 
 /// Apply `min_size` / `max_size` and the optional `aspect_ratio`
-/// to a requested logical size. JUCE's pattern: derive the other
-/// axis from one, fall back to the other axis if that violates
-/// bounds. `u64` arithmetic for the multiplication so a hypothetical
-/// `(u32::MAX, 1)` aspect doesn't overflow before the clamp lands.
+/// to a requested logical size.
+///
+/// With an aspect ratio set, the constraint has to know *which axis the
+/// user dragged*. Deriving the other axis from a single fixed one (say
+/// height-from-width) silently swallows a drag on the opposite edge:
+/// dragging the vertical edge leaves the width unchanged, so the same
+/// height is re-derived and the window doesn't move — only horizontal and
+/// corner drags keep the aspect. Comparing the request against the
+/// editor's current size (`editor.size()`, the size being resized *from*)
+/// tells us which axis actually moved; that axis drives the other, so any
+/// edge preserves the aspect. `u64` arithmetic for the multiplication so a
+/// hypothetical `(u32::MAX, 1)` aspect doesn't overflow before the clamp
+/// lands.
 fn clamp_logical_size(w: u32, h: u32, editor: &dyn truce_core::editor::Editor) -> (u32, u32) {
     let (min_w, min_h) = editor.min_size();
     let (max_w, max_h) = editor.max_size();
@@ -2344,24 +2353,35 @@ fn clamp_logical_size(w: u32, h: u32, editor: &dyn truce_core::editor::Editor) -
     {
         let num64 = u64::from(num);
         let denom64 = u64::from(denom);
-        // Derive height from width: h_implied = w * denom / num.
-        let h_implied = (u64::from(w) * denom64 / num64).clamp(1, u64::from(u32::MAX));
-        #[allow(clippy::cast_possible_truncation)]
-        let h_implied_u32 = h_implied as u32;
-        if h_implied_u32 >= min_h.max(1) && h_implied_u32 <= max_h {
-            h = h_implied_u32;
-        } else {
-            // Width-from-height fallback.
+        // The axis that moved furthest from the current size is the one the
+        // user dragged; derive the other from it. A tie / no movement (e.g.
+        // the host echoing a size back) falls to the width branch.
+        let (cur_w, cur_h) = editor.size();
+        if h.abs_diff(cur_h) > w.abs_diff(cur_w) {
+            // Vertical edge dragged: width follows the height, then re-derive
+            // height from the bounds-clamped width to stay on-ratio.
             let w_implied = (u64::from(h) * num64 / denom64).clamp(1, u64::from(u32::MAX));
             #[allow(clippy::cast_possible_truncation)]
-            let w_implied_u32 = w_implied as u32;
-            w = w_implied_u32.clamp(min_w.max(1), max_w);
-            // Re-derive height from the clamped width to preserve
-            // aspect after the secondary clamp.
+            {
+                w = (w_implied as u32).clamp(min_w.max(1), max_w);
+            }
             let h_final = (u64::from(w) * denom64 / num64).clamp(1, u64::from(u32::MAX));
             #[allow(clippy::cast_possible_truncation)]
             {
                 h = (h_final as u32).clamp(min_h.max(1), max_h);
+            }
+        } else {
+            // Horizontal edge dragged (or a tie): height follows the width,
+            // then re-derive width from the clamped height to stay on-ratio.
+            let h_implied = (u64::from(w) * denom64 / num64).clamp(1, u64::from(u32::MAX));
+            #[allow(clippy::cast_possible_truncation)]
+            {
+                h = (h_implied as u32).clamp(min_h.max(1), max_h);
+            }
+            let w_final = (u64::from(h) * num64 / denom64).clamp(1, u64::from(u32::MAX));
+            #[allow(clippy::cast_possible_truncation)]
+            {
+                w = (w_final as u32).clamp(min_w.max(1), max_w);
             }
         }
     }
@@ -2744,4 +2764,82 @@ macro_rules! export_clap {
             };
         }
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use truce_core::editor::{Editor, PluginContext, RawWindowHandle};
+
+    /// Minimal editor stub: only the bounds/aspect/size hooks
+    /// `clamp_logical_size` reads carry meaning; the rest are unused.
+    struct StubEditor {
+        size: (u32, u32),
+        min: (u32, u32),
+        max: (u32, u32),
+        aspect: Option<(u32, u32)>,
+    }
+
+    impl Editor for StubEditor {
+        fn size(&self) -> (u32, u32) {
+            self.size
+        }
+        fn open(&mut self, _parent: RawWindowHandle, _context: PluginContext) {}
+        fn close(&mut self) {}
+        fn min_size(&self) -> (u32, u32) {
+            self.min
+        }
+        fn max_size(&self) -> (u32, u32) {
+            self.max
+        }
+        fn aspect_ratio(&self) -> Option<(u32, u32)> {
+            self.aspect
+        }
+    }
+
+    fn stub(size: (u32, u32), aspect: Option<(u32, u32)>) -> StubEditor {
+        StubEditor {
+            size,
+            min: (320, 240),
+            max: (u32::MAX, u32::MAX),
+            aspect,
+        }
+    }
+
+    #[test]
+    fn no_aspect_clamps_each_axis_to_bounds() {
+        let e = stub((640, 480), None);
+        assert_eq!(clamp_logical_size(800, 600, &e), (800, 600));
+        assert_eq!(clamp_logical_size(100, 100, &e), (320, 240));
+    }
+
+    #[test]
+    fn vertical_edge_drag_derives_width_from_height() {
+        // Resizing from 640x480, the user dragged only the height to 600. The
+        // old height-from-width rule swallowed this (returned 480); the
+        // dragged-axis rule grows the width to keep 4:3.
+        let e = stub((640, 480), Some((4, 3)));
+        assert_eq!(clamp_logical_size(640, 600, &e), (800, 600));
+    }
+
+    #[test]
+    fn horizontal_edge_drag_derives_height_from_width() {
+        let e = stub((640, 480), Some((4, 3)));
+        assert_eq!(clamp_logical_size(800, 480, &e), (800, 600));
+    }
+
+    #[test]
+    fn corner_drag_follows_the_larger_delta() {
+        // width +160 vs height +120: width dominates, height follows it.
+        let e = stub((640, 480), Some((4, 3)));
+        assert_eq!(clamp_logical_size(800, 600, &e), (800, 600));
+    }
+
+    #[test]
+    fn result_stays_on_ratio_and_within_bounds() {
+        let e = stub((640, 480), Some((16, 9)));
+        let (w, h) = clamp_logical_size(640, 800, &e);
+        assert!((i64::from(w) * 9 - i64::from(h) * 16).abs() <= 16);
+        assert!(w >= 320 && h >= 240);
+    }
 }
