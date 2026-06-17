@@ -15,8 +15,8 @@ const WINDOW_W: u32 = 200;
 const WINDOW_H: u32 = 300;
 const MIN_W: u32 = 180;
 const MIN_H: u32 = 270;
-const MAX_W: u32 = 600;
-const MAX_H: u32 = 900;
+const MAX_W: u32 = 400;
+const MAX_H: u32 = 600;
 // Layout constants shared between width measurements and the
 // render pass.
 const METER_W: f32 = 16.0;

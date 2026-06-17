@@ -40,7 +40,9 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use truce_core::Float;
 use truce_core::TransportSlot;
 use truce_core::cast::{len_u32, size_of_u32};
-use truce_core::editor::{ClosureBridge, Editor, PluginContext, RawWindowHandle, SendPtr};
+use truce_core::editor::{
+    ClosureBridge, Editor, PluginContext, RawWindowHandle, SendPtr, fit_logical_size,
+};
 use truce_core::events::TransportInfo;
 use truce_core::export::PluginExport;
 use truce_params::Params;
@@ -611,42 +613,10 @@ unsafe extern "C" fn ui_resize_dispatch<P: PluginExport>(
         };
         #[allow(clippy::cast_sign_loss)]
         let (req_w, req_h) = (width as u32, height as u32);
-        let (cw, ch) = clamp_logical_to_editor(req_w, req_h, editor.as_ref());
+        let (cw, ch) = fit_logical_size(req_w, req_h, editor.as_ref());
         editor.set_size(cw, ch);
     }
     0
-}
-
-/// Clamp a host-requested logical size against the editor's
-/// `min_size` / `max_size` / `aspect_ratio` declarations. Mirrors the
-/// helpers in `truce-clap`, `truce-vst3`, and `truce-au` so the
-/// formats enforce identical constraints; the LV2 spec leaves
-/// validation up to the UI, and without this a host like Reaper
-/// will happily push the editor past its declared minimum.
-fn clamp_logical_to_editor(w: u32, h: u32, editor: &dyn Editor) -> (u32, u32) {
-    let (min_w, min_h) = editor.min_size();
-    let (max_w, max_h) = editor.max_size();
-    let mut w = w.clamp(min_w.max(1), max_w);
-    let mut h = h.clamp(min_h.max(1), max_h);
-    if let Some((num, denom)) = editor.aspect_ratio()
-        && num > 0
-        && denom > 0
-    {
-        let num64 = u64::from(num);
-        let denom64 = u64::from(denom);
-        let h_implied = (u64::from(w) * denom64 / num64).clamp(1, u64::from(u32::MAX));
-        #[allow(clippy::cast_possible_truncation)]
-        let h_implied_u32 = h_implied as u32;
-        if h_implied_u32 >= min_h.max(1) && h_implied_u32 <= max_h {
-            h = h_implied_u32;
-        } else {
-            let w_implied = (u64::from(h) * num64 / denom64).clamp(1, u64::from(u32::MAX));
-            #[allow(clippy::cast_possible_truncation)]
-            let w_implied_u32 = w_implied as u32;
-            w = w_implied_u32.clamp(min_w.max(1), max_w);
-        }
-    }
-    (w, h)
 }
 
 // ---------------------------------------------------------------------------
