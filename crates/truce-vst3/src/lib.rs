@@ -12,7 +12,9 @@ use std::slice;
 
 use truce_core::cast::{len_u32, sample_pos_i64};
 use truce_core::chunked_process::{ChunkedProcess, process_chunked};
-use truce_core::editor::{ClosureBridge, Editor, PluginContext, RawWindowHandle, SendPtr};
+use truce_core::editor::{
+    ClosureBridge, Editor, PluginContext, RawWindowHandle, SendPtr, fit_logical_size,
+};
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
 use truce_core::info::PluginCategory;
@@ -893,7 +895,7 @@ unsafe extern "C" fn cb_gui_check_size_constraint<P: PluginExport>(
         if editor.can_resize() {
             // Physical -> logical, clamp, logical -> physical.
             let (lw, lh) = phys_to_logical(*w, *h, host_scale);
-            let (lw, lh) = clamp_logical_to_editor(lw, lh, editor.as_ref());
+            let (lw, lh) = fit_logical_size(lw, lh, editor.as_ref());
             let (pw, ph) = logical_to_phys(lw, lh, host_scale);
             *w = pw;
             *h = ph;
@@ -924,7 +926,7 @@ unsafe extern "C" fn cb_gui_set_size<P: PluginExport>(ctx: *mut std::ffi::c_void
             && editor.can_resize()
         {
             let (lw, lh) = phys_to_logical(w, h, host_scale);
-            let (lw, lh) = clamp_logical_to_editor(lw, lh, editor.as_ref());
+            let (lw, lh) = fit_logical_size(lw, lh, editor.as_ref());
             editor.set_size(lw, lh);
         }
     }
@@ -954,41 +956,6 @@ fn logical_to_phys(lw: u32, lh: u32, host_scale: f64) -> (u32, u32) {
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let ph = (f64::from(lh) * host_scale).round() as u32;
     (pw.max(1), ph.max(1))
-}
-
-/// Apply `min_size` / `max_size` and `aspect_ratio` to a
-/// requested logical size. Mirrors the CLAP wrapper's
-/// `clamp_logical_size` so the two wrappers respect editor
-/// constraints identically.
-fn clamp_logical_to_editor(w: u32, h: u32, editor: &dyn truce_core::editor::Editor) -> (u32, u32) {
-    let (min_w, min_h) = editor.min_size();
-    let (max_w, max_h) = editor.max_size();
-    let mut w = w.clamp(min_w.max(1), max_w);
-    let mut h = h.clamp(min_h.max(1), max_h);
-    if let Some((num, denom)) = editor.aspect_ratio()
-        && num > 0
-        && denom > 0
-    {
-        let num64 = u64::from(num);
-        let denom64 = u64::from(denom);
-        let h_implied = (u64::from(w) * denom64 / num64).clamp(1, u64::from(u32::MAX));
-        #[allow(clippy::cast_possible_truncation)]
-        let h_implied_u32 = h_implied as u32;
-        if h_implied_u32 >= min_h.max(1) && h_implied_u32 <= max_h {
-            h = h_implied_u32;
-        } else {
-            let w_implied = (u64::from(h) * num64 / denom64).clamp(1, u64::from(u32::MAX));
-            #[allow(clippy::cast_possible_truncation)]
-            let w_implied_u32 = w_implied as u32;
-            w = w_implied_u32.clamp(min_w.max(1), max_w);
-            let h_final = (u64::from(w) * denom64 / num64).clamp(1, u64::from(u32::MAX));
-            #[allow(clippy::cast_possible_truncation)]
-            {
-                h = (h_final as u32).clamp(min_h.max(1), max_h);
-            }
-        }
-    }
-    (w, h)
 }
 
 unsafe extern "C" fn cb_gui_open<P: PluginExport>(

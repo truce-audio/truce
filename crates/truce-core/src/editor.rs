@@ -613,3 +613,140 @@ impl<P: ?Sized> PluginContextReadF64 for PluginContext<P> {
         self.bridge.get_param_plain(id.into())
     }
 }
+
+/// Constrain a host-requested logical size to an editor's
+/// [`Editor::min_size`] / [`Editor::max_size`] / [`Editor::aspect_ratio`].
+/// Shared by every format wrapper so they enforce identical constraints.
+///
+/// With an aspect ratio set, fit the *largest on-ratio rectangle that fits
+/// inside* the requested box: derive height from width and keep it if it
+/// fits, otherwise the width is the limiting axis and height drives it. The
+/// result is `<=` the request on both axes, so the editor surface never
+/// exceeds the host window and can never clip - whatever odd size a host
+/// hands us (some skip an aspect pre-flight and pass raw drag dimensions),
+/// the worst case is an on-ratio letterbox inside the window. The rule is a
+/// pure function of `(w, h)` - no "which edge moved" guess - so a drag can't
+/// make the chosen axis flip and judder. `u64` arithmetic for the
+/// multiplication so a hypothetical `(u32::MAX, 1)` aspect doesn't overflow
+/// before the clamp lands.
+#[must_use]
+pub fn fit_logical_size(w: u32, h: u32, editor: &dyn Editor) -> (u32, u32) {
+    let (min_w, min_h) = editor.min_size();
+    let (max_w, max_h) = editor.max_size();
+    let mut w = w.clamp(min_w.max(1), max_w);
+    let mut h = h.clamp(min_h.max(1), max_h);
+    if let Some((num, denom)) = editor.aspect_ratio()
+        && num > 0
+        && denom > 0
+    {
+        let num64 = u64::from(num);
+        let denom64 = u64::from(denom);
+        let h_from_w = (u64::from(w) * denom64 / num64).clamp(1, u64::from(u32::MAX));
+        if h_from_w <= u64::from(h) {
+            // Width is the limiting axis: shrink height onto the ratio.
+            #[allow(clippy::cast_possible_truncation)]
+            {
+                h = (h_from_w as u32).clamp(min_h.max(1), max_h);
+            }
+        } else {
+            // Height is the limiting axis: shrink width onto the ratio.
+            let w_from_h = (u64::from(h) * num64 / denom64).clamp(1, u64::from(u32::MAX));
+            #[allow(clippy::cast_possible_truncation)]
+            {
+                w = (w_from_h as u32).clamp(min_w.max(1), max_w);
+            }
+        }
+    }
+    (w, h)
+}
+
+#[cfg(test)]
+mod fit_tests {
+    use super::{Editor, PluginContext, RawWindowHandle, fit_logical_size};
+
+    /// Minimal editor stub: only the bounds/aspect hooks
+    /// `fit_logical_size` reads carry meaning; the rest are unused.
+    struct StubEditor {
+        min: (u32, u32),
+        max: (u32, u32),
+        aspect: Option<(u32, u32)>,
+    }
+
+    impl Editor for StubEditor {
+        fn size(&self) -> (u32, u32) {
+            self.min
+        }
+        fn open(&mut self, _parent: RawWindowHandle, _context: PluginContext) {}
+        fn close(&mut self) {}
+        fn min_size(&self) -> (u32, u32) {
+            self.min
+        }
+        fn max_size(&self) -> (u32, u32) {
+            self.max
+        }
+        fn aspect_ratio(&self) -> Option<(u32, u32)> {
+            self.aspect
+        }
+    }
+
+    fn stub(aspect: Option<(u32, u32)>) -> StubEditor {
+        StubEditor {
+            min: (320, 240),
+            max: (u32::MAX, u32::MAX),
+            aspect,
+        }
+    }
+
+    #[test]
+    fn no_aspect_clamps_each_axis_to_bounds() {
+        let e = stub(None);
+        assert_eq!(fit_logical_size(800, 600, &e), (800, 600));
+        assert_eq!(fit_logical_size(100, 100, &e), (320, 240));
+    }
+
+    #[test]
+    fn tall_box_is_width_bound() {
+        // A box taller than 4:3 fits the full width; height shrinks onto
+        // the ratio so the result never overflows the box.
+        let e = stub(Some((4, 3)));
+        assert_eq!(fit_logical_size(640, 800, &e), (640, 480));
+    }
+
+    #[test]
+    fn wide_box_is_height_bound() {
+        // A box wider than 4:3 fits the full height; width shrinks instead.
+        let e = stub(Some((4, 3)));
+        assert_eq!(fit_logical_size(800, 480, &e), (640, 480));
+    }
+
+    #[test]
+    fn on_ratio_box_is_unchanged() {
+        let e = stub(Some((4, 3)));
+        assert_eq!(fit_logical_size(800, 600, &e), (800, 600));
+    }
+
+    #[test]
+    fn fit_never_exceeds_the_requested_box() {
+        // The no-clip invariant: for any box at or above `min_size`, the
+        // aspect fit stays inside it on both axes, so the editor surface
+        // can never overflow the host window. `min` is on the 16:9 ratio so
+        // the fit also stays exactly on-ratio right down to the corner.
+        let e = StubEditor {
+            min: (320, 180),
+            max: (u32::MAX, u32::MAX),
+            aspect: Some((16, 9)),
+        };
+        for &(w, h) in &[
+            (640, 800),
+            (800, 480),
+            (1000, 1000),
+            (321, 900),
+            (1920, 300),
+        ] {
+            let (rw, rh) = fit_logical_size(w, h, &e);
+            assert!(rw <= w && rh <= h, "{rw}x{rh} exceeds box {w}x{h}");
+            assert!((i64::from(rw) * 9 - i64::from(rh) * 16).abs() <= 16);
+            assert!(rw >= 320 && rh >= 180);
+        }
+    }
+}
