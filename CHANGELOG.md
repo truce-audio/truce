@@ -5,6 +5,8 @@ Notable changes per release.
 ## 0.58.4
 
 - **Aspect-ratio editor resize fixes.** Aspect-locked editors stay on-ratio inside the host window without clipping or juddering across CLAP, VST3, AU, and LV2; corner drags track the ratio smoothly and LV2 honors the aspect ratio and `max_size`.
+- **Skip rendering while the editor is occluded or detached (macOS).** A minimized or fully-covered window can't present, so every rendered frame queued a GPU drawable that never drained. Editors now bail before rendering when the host window is occluded or has no window attached, across every GUI backend (built-in CPU / GPU, egui, iced, slint). ([#126](https://github.com/truce-audio/truce/pull/126), by [@tothepoweroftom](https://github.com/tothepoweroftom))
+- **`TRUCE_AZURE_ENDPOINT` for Windows code signing.** The Azure Trusted Signing endpoint was hardcoded to East US; set this to sign through another region's endpoint. Defaults to the previous value. ([#128](https://github.com/truce-audio/truce/pull/128), by [@tothepoweroftom](https://github.com/tothepoweroftom))
 
 ## 0.58.3
 
