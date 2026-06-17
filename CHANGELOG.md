@@ -4,7 +4,7 @@ Notable changes per release.
 
 ## 0.58.4
 
-- **Aspect-ratio editor resize fixes.** Aspect-locked editors now stay on-ratio inside the host window without clipping (CLAP, VST3, AU, LV2); CLAP editors resize from any edge instead of swallowing single-edge drags; VST3 corner drags no longer judder; LV2 honors the aspect ratio and `max_size`.
+- **Aspect-ratio editor resize fixes.** Aspect-locked editors stay on-ratio inside the host window without clipping or juddering across CLAP, VST3, AU, and LV2; corner drags track the ratio smoothly and LV2 honors the aspect ratio and `max_size`.
 
 ## 0.58.3
 

@@ -671,94 +671,13 @@ pub fn fit_size(
     (w, h)
 }
 
-/// Fit a size that arrived from an interactive resize *drag*. Where
-/// [`fit_size`] fits the largest on-ratio box *inside* the request (right
-/// for reactively filling a host-owned container), this keeps the aspect
-/// ratio by deriving the axis the user *didn't* drag from the one they did -
-/// so a pure horizontal or vertical edge drag still resizes an aspect-locked
-/// editor instead of being swallowed. Only a *single-edge* drag (the host
-/// pins the other axis, so its delta from `current` is exactly zero) takes
-/// this path. A corner drag - both edges moving - falls back to [`fit_size`]:
-/// deriving one axis from the other there would oscillate, because the fit
-/// inflates one axis past the cursor and next frame that axis reads as
-/// shrinking, flipping the guess. Fitting inside the cursor is monotonic, so
-/// the on-ratio window just tracks the corner.
-///
-/// On the single-edge path the dragged axis is kept verbatim and only the
-/// *other* axis is derived; the dragged axis is re-derived solely when the
-/// other one hit a bound. So feeding the result straight back in is a no-op
-/// (`fit(fit(x)) == fit(x)`), which matters because a host echoes the adopted
-/// size back as a fresh `set_size` - a re-derive-both rule drifts a pixel per
-/// echo and judders.
-///
-/// With an aspect ratio the result can exceed the request on the derived
-/// axis. In a drag-commit path the caller must let the host adopt the
-/// returned size (a preflight the host honours, or a resize-request hook),
-/// or the host window letterboxes around the editor.
-#[must_use]
-pub fn fit_dragged_size(
-    w: u32,
-    h: u32,
-    current: (u32, u32),
-    min: (u32, u32),
-    max: (u32, u32),
-    aspect: Option<(u32, u32)>,
-) -> (u32, u32) {
-    let (min_w, min_h) = min;
-    let (max_w, max_h) = max;
-    let mut w = w.clamp(min_w.max(1), max_w);
-    let mut h = h.clamp(min_h.max(1), max_h);
-    let Some((num64, denom64)) = ratio64(aspect) else {
-        return (w, h);
-    };
-    let (cur_w, cur_h) = current;
-    let moved_w = w != cur_w;
-    let moved_h = h != cur_h;
-    if moved_w && moved_h {
-        // Corner drag: fit the largest on-ratio box inside the cursor.
-        return fit_size(w, h, min, max, aspect);
-    }
-    if moved_h {
-        // Vertical edge dragged: keep the height, derive the width. Only when
-        // the width hit a bound is the height pulled back onto the ratio.
-        let (dw, bounded) = derive_width(h, min_w, max_w, num64, denom64);
-        w = dw;
-        if bounded {
-            h = derive_height(w, min_h, max_h, num64, denom64).0;
-        }
-    } else {
-        // Horizontal edge dragged (or no movement): keep the width, derive
-        // the height; re-derive the width only if the height hit a bound.
-        let (dh, bounded) = derive_height(w, min_h, max_h, num64, denom64);
-        h = dh;
-        if bounded {
-            w = derive_width(h, min_w, max_w, num64, denom64).0;
-        }
-    }
-    (w, h)
-}
-
-/// [`fit_dragged_size`] reading bounds, aspect, and the current size
-/// straight off an editor.
-#[must_use]
-pub fn fit_dragged_logical_size(w: u32, h: u32, editor: &dyn Editor) -> (u32, u32) {
-    fit_dragged_size(
-        w,
-        h,
-        editor.size(),
-        editor.min_size(),
-        editor.max_size(),
-        editor.aspect_ratio(),
-    )
-}
-
 /// Clamp a host-committed size to the editor's `[min, max]` bounds only,
 /// leaving the aspect ratio untouched so the editor fills the host window
-/// exactly. The commit-time counterpart to [`fit_dragged_logical_size`]:
-/// on-ratio shaping already happened during the host's drag negotiation
-/// (a preflight such as VST3 `checkSizeConstraint`), so re-fitting onto the
-/// ratio here would only floor the editor a pixel under the window and leave
-/// an unpainted letterbox line. The `max` clamp keeps the surface inside the
+/// exactly. The commit-time counterpart to [`fit_logical_size`]: on-ratio
+/// shaping already happened during the host's drag negotiation (a preflight
+/// such as VST3 `checkSizeConstraint`), so re-fitting onto the ratio here
+/// would only floor the editor a pixel under the window and leave an
+/// unpainted letterbox line. The `max` clamp keeps the surface inside the
 /// window; the `min` clamp upholds the editor's "can't render smaller than
 /// this" floor even when a host hands over a too-small box.
 #[must_use]
@@ -799,7 +718,7 @@ fn derive_width(h: u32, min_w: u32, max_w: u32, num64: u64, denom64: u64) -> (u3
 
 #[cfg(test)]
 mod fit_tests {
-    use super::{Editor, PluginContext, RawWindowHandle, fit_dragged_size, fit_logical_size};
+    use super::{Editor, PluginContext, RawWindowHandle, fit_logical_size};
 
     /// Minimal editor stub: only the bounds/aspect hooks
     /// `fit_logical_size` reads carry meaning; the rest are unused.
@@ -885,84 +804,5 @@ mod fit_tests {
             assert!((i64::from(rw) * 9 - i64::from(rh) * 16).abs() <= 16);
             assert!(rw >= 320 && rh >= 180);
         }
-    }
-
-    #[test]
-    fn dragging_vertical_edge_grows_both_axes() {
-        // The regression this guards: at 640x480 (4:3), dragging the bottom
-        // edge taller leaves the width untouched. `fit_size` would re-derive
-        // the height back down and swallow the drag; the dragged-axis fit
-        // grows the width to follow the height.
-        let (min, max, aspect) = ((320, 240), (u32::MAX, u32::MAX), Some((4, 3)));
-        assert_eq!(
-            fit_dragged_size(640, 600, (640, 480), min, max, aspect),
-            (800, 600)
-        );
-    }
-
-    #[test]
-    fn dragging_horizontal_edge_grows_both_axes() {
-        let (min, max, aspect) = ((320, 240), (u32::MAX, u32::MAX), Some((4, 3)));
-        assert_eq!(
-            fit_dragged_size(800, 480, (640, 480), min, max, aspect),
-            (800, 600)
-        );
-    }
-
-    #[test]
-    fn corner_drag_fits_inside_the_cursor() {
-        // Both edges moved: it's a corner drag, so neither axis is "the
-        // dragged one". Fit the largest on-ratio box inside the cursor box
-        // rather than inflating one axis past it (which would oscillate).
-        let (min, max, aspect) = ((320, 240), (u32::MAX, u32::MAX), Some((4, 3)));
-        assert_eq!(
-            fit_dragged_size(800, 800, (640, 480), min, max, aspect),
-            (800, 600)
-        );
-    }
-
-    #[test]
-    fn corner_drag_does_not_oscillate() {
-        // The judder regression: feed a corner drag, then feed the adopted
-        // size back as the new `current` with the cursor a hair further out.
-        // The dragged-axis guess used to inflate one axis past the cursor, so
-        // the next frame read it as shrinking and flipped. Fit-inside is
-        // monotonic: each step is >= the last on both axes, never reversing.
-        let (min, max, aspect) = ((320, 240), (u32::MAX, u32::MAX), Some((4, 3)));
-        let mut cur = (640, 480);
-        for &(w, h) in &[(700, 560), (720, 600), (760, 610), (800, 660)] {
-            let next = fit_dragged_size(w, h, cur, min, max, aspect);
-            assert!(
-                next.0 >= cur.0 && next.1 >= cur.1,
-                "{next:?} reversed from {cur:?}"
-            );
-            cur = next;
-        }
-    }
-
-    #[test]
-    fn dragged_fit_is_idempotent() {
-        // A host echoes the adopted size back as a fresh `set_size`; feeding
-        // the result in again must be a fixed point or the window drifts a
-        // pixel per echo and judders. Exercise an off-ratio size (1066 is not
-        // a clean 4:3 width) where a re-derive-both rule would creep.
-        let (min, max, aspect) = ((320, 240), (u32::MAX, u32::MAX), Some((4, 3)));
-        let once = fit_dragged_size(1066, 800, (640, 480), min, max, aspect);
-        let twice = fit_dragged_size(once.0, once.1, once, min, max, aspect);
-        assert_eq!(once, twice);
-    }
-
-    #[test]
-    fn dragged_fit_clamps_to_bounds() {
-        // No aspect: each axis clamps independently, current size is moot.
-        let (min, max) = ((320, 240), (1280, 960));
-        assert_eq!(
-            fit_dragged_size(100, 100, (640, 480), min, max, None),
-            (320, 240)
-        );
-        assert_eq!(
-            fit_dragged_size(9999, 9999, (640, 480), min, max, None),
-            (1280, 960)
-        );
     }
 }
