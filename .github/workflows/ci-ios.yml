@@ -75,6 +75,7 @@ jobs:
             -p truce-example-synth \
             -p truce-example-eq \
             -p truce-example-gain-egui \
+            -p truce-example-gain-egui-aspect \
             -p truce-example-arpeggio \
             -p truce-example-tremolo \
             -p truce-example-state \
@@ -204,6 +205,7 @@ jobs:
               truce-example-synth \
               truce-example-eq \
               truce-example-gain-egui \
+              truce-example-gain-egui-aspect \
               truce-example-arpeggio \
               truce-example-tremolo \
               truce-example-state \
@@ -225,7 +227,7 @@ jobs:
               --out "examples/$crate/screenshots/${short_under}_container_ios.png" \
               -p "$crate" || fail=$((fail + 1))
           done
-          echo "container-mode regressions: $fail / 13"
+          echo "container-mode regressions: $fail / 14"
           exit $fail
 
       # Slint examples live in the truce-slint sub-workspace; re-run

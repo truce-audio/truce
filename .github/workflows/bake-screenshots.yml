@@ -73,6 +73,7 @@ env:
     truce-example-block-widen
     truce-example-block-surround-meter
     truce-example-gain-egui
+    truce-example-gain-egui-aspect
     truce-example-arpeggio
     truce-example-gain-iced
     truce-example-tremolo
