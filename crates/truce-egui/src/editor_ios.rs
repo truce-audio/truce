@@ -124,6 +124,18 @@ impl<P: Params + 'static> EguiEditor<P> {
     pub fn max_size(self, _max: (u32, u32)) -> Self {
         self
     }
+
+    /// No-op on iOS. See [`Self::resizable`].
+    #[must_use]
+    pub fn aspect_ratio(self, _ratio: Option<(u32, u32)>) -> Self {
+        self
+    }
+
+    /// No-op on iOS. See [`Self::resizable`].
+    #[must_use]
+    pub fn prefers_pow2(self, _prefers: bool) -> Self {
+        self
+    }
 }
 
 impl<P: Params + 'static> Editor for EguiEditor<P> {
