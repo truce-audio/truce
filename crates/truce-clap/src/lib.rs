@@ -24,6 +24,7 @@ pub mod __macro_deps {
 pub mod presets;
 
 use std::ffi::{CStr, CString, c_char, c_void};
+use std::io::Write;
 use std::marker::PhantomData;
 use std::mem::transmute;
 use std::ptr;
@@ -85,7 +86,7 @@ use truce_core::bus::ChannelConfig;
 use truce_core::cast::{len_u32, size_of_u32};
 use truce_core::chunked_process::{ChunkedProcess, process_chunked};
 use truce_core::editor::{
-    ClosureBridge, Editor, PluginContext, RawWindowHandle, SendPtr, fit_dragged_logical_size,
+    ClosureBridge, Editor, PluginContext, RawWindowHandle, SendPtr, fit_logical_size,
 };
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
@@ -1879,6 +1880,7 @@ unsafe extern "C" fn gui_get_size<P: PluginExport>(
         let data = data_from_plugin::<P>(plugin);
         if let Some(ref editor) = data.editor {
             let (w, h) = editor.size();
+            trace_resize("get", (w, h), (w, h));
             // Like VST3, the CLAP spec describes gui size as pixels, but
             // macOS AppKit handles Retina backing automatically. On macOS
             // we report logical points and let the host / OS scale; on
@@ -2239,6 +2241,19 @@ unsafe extern "C" fn gui_suggest_title<P: PluginExport>(
 ) {
 }
 
+/// TEMPORARY diagnostic. Appends a resize event to `/tmp/truce-resize.log`.
+/// Unconditional so it survives a host plugin subprocess. Remove once the
+/// REAPER drag fight is fixed. UI thread only.
+fn trace_resize(tag: &str, a: (u32, u32), b: (u32, u32)) {
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/tmp/truce-resize.log")
+    {
+        let _ = writeln!(f, "clap-{tag}: {a:?} -> {b:?}");
+    }
+}
+
 /// Ask the host to resize its window to a logical size via
 /// `clap_host_gui.request_resize`. Returns false when the host
 /// doesn't expose the gui extension. Logical-to-physical scaling
@@ -2279,26 +2294,28 @@ unsafe extern "C" fn gui_set_size<P: PluginExport>(
         };
         if editor.can_resize() {
             // Host passes physical points; truce works in logical.
-            // Divide by the host-applied scale before handing to
-            // the editor so `set_size` receives the same units
-            // `size()` returns. The dragged-axis fit derives the
-            // un-dragged axis from the dragged one, so a single-edge
-            // drag stays on-ratio and below `min_size` content can't
-            // clip - even for hosts (Reaper) that skip the pre-flight
-            // `gui_adjust_size` and pass raw drag dimensions.
+            // Divide by the host-applied scale before handing to the
+            // editor so `set_size` receives the same units `size()`
+            // returns. Fit the largest on-ratio box *inside* the request:
+            // a pure function of the request (no `current` dependence), so
+            // it can't oscillate when a host re-asserts a pinned axis every
+            // frame (Reaper caps the editor height at its FX-window content
+            // height and reverts any grow past it).
             let req = scale_physical_to_logical(width, height, data.host_scale);
-            let (lw, lh) = fit_dragged_logical_size(req.0, req.1, editor.as_ref());
+            let cur = editor.size();
+            let (lw, lh) = fit_logical_size(req.0, req.1, editor.as_ref());
+            trace_resize("set cur", cur, req);
             let accepted = editor.set_size(lw, lh);
-            // The dragged-axis fit can land off the host's box on either
-            // axis: smaller (below `min_size`, or a host that skipped the
-            // pre-flight) or larger (the derived axis grew past the drag).
-            // Ask the host to resize its window to the size we adopted so
-            // the editor neither clips nor letterboxes. The fit is
-            // idempotent, so the host's echoed `set_size` agrees and doesn't
-            // recurse.
+            // The fit is `<=` the request, so this only ever asks the host to
+            // shrink its window onto the on-ratio size (which hosts honour) -
+            // never to grow past a pinned axis. Idempotent, so the host's
+            // echoed `set_size` agrees and the exchange settles.
             let adopted = editor.size();
             if accepted && adopted != req {
+                trace_resize("set->request", req, adopted);
                 request_host_resize(data.host, data.host_scale, adopted.0, adopted.1);
+            } else {
+                trace_resize("set->keep", req, adopted);
             }
             accepted
         } else {
@@ -2328,7 +2345,8 @@ unsafe extern "C" fn gui_adjust_size<P: PluginExport>(
         };
         if editor.can_resize() {
             let req = scale_physical_to_logical(*width, *height, data.host_scale);
-            let (lw, lh) = fit_dragged_logical_size(req.0, req.1, editor.as_ref());
+            let (lw, lh) = fit_logical_size(req.0, req.1, editor.as_ref());
+            trace_resize("adjust", req, (lw, lh));
             // Convert clamped logical back to physical for the host.
             let (pw, ph) = scale_logical_to_physical(lw, lh, data.host_scale);
             *width = pw;

@@ -673,28 +673,21 @@ pub fn fit_size(
 
 /// Fit a size that arrived from an interactive resize *drag*. Where
 /// [`fit_size`] fits the largest on-ratio box *inside* the request (right
-/// for reactively filling a host-owned container), this keeps the aspect
-/// ratio by deriving the axis the user *didn't* drag from the one they did -
-/// so a pure horizontal or vertical edge drag still resizes an aspect-locked
-/// editor instead of being swallowed. Only a *single-edge* drag (the host
-/// pins the other axis, so its delta from `current` is exactly zero) takes
-/// this path. A corner drag - both edges moving - falls back to [`fit_size`]:
-/// deriving one axis from the other there would oscillate, because the fit
-/// inflates one axis past the cursor and next frame that axis reads as
-/// shrinking, flipping the guess. Fitting inside the cursor is monotonic, so
-/// the on-ratio window just tracks the corner.
+/// for reactively filling a host-owned container, or a host that re-asserts
+/// the raw cursor every frame), this keeps the aspect ratio by deriving the
+/// axis the user *didn't* drag from the one they did - so a single-edge drag
+/// still resizes an aspect-locked editor instead of being swallowed, and the
+/// derived axis can grow past the cursor box. Used only by callers that drive
+/// the host window to the returned size via a resize-request hook (CLAP's
+/// `request_resize`); hosts that honour the grow then track the editor.
 ///
-/// On the single-edge path the dragged axis is kept verbatim and only the
-/// *other* axis is derived; the dragged axis is re-derived solely when the
-/// other one hit a bound. So feeding the result straight back in is a no-op
-/// (`fit(fit(x)) == fit(x)`), which matters because a host echoes the adopted
-/// size back as a fresh `set_size` - a re-derive-both rule drifts a pixel per
-/// echo and judders.
-///
-/// With an aspect ratio the result can exceed the request on the derived
-/// axis. In a drag-commit path the caller must let the host adopt the
-/// returned size (a preflight the host honours, or a resize-request hook),
-/// or the host window letterboxes around the editor.
+/// The dragged axis is whichever moved furthest from `current` (a single edge
+/// pins the other at exactly its current value; a corner drag picks the
+/// dominant edge). The dragged axis is kept verbatim and only the other is
+/// derived; the dragged axis is re-derived solely when the derived one hit a
+/// bound. So feeding the result straight back in is a no-op
+/// (`fit(fit(x)) == fit(x)`), which matters because the host echoes the
+/// adopted size back as a fresh `set_size`.
 #[must_use]
 pub fn fit_dragged_size(
     w: u32,
@@ -712,23 +705,19 @@ pub fn fit_dragged_size(
         return (w, h);
     };
     let (cur_w, cur_h) = current;
-    let moved_w = w != cur_w;
-    let moved_h = h != cur_h;
-    if moved_w && moved_h {
-        // Corner drag: fit the largest on-ratio box inside the cursor.
-        return fit_size(w, h, min, max, aspect);
-    }
-    if moved_h {
-        // Vertical edge dragged: keep the height, derive the width. Only when
-        // the width hit a bound is the height pulled back onto the ratio.
+    if h.abs_diff(cur_h) > w.abs_diff(cur_w) {
+        // Height moved furthest (vertical edge, or a height-led corner drag):
+        // keep the height, derive the width. Re-derive the height only when
+        // the width hit a bound, to stay on-ratio there.
         let (dw, bounded) = derive_width(h, min_w, max_w, num64, denom64);
         w = dw;
         if bounded {
             h = derive_height(w, min_h, max_h, num64, denom64).0;
         }
     } else {
-        // Horizontal edge dragged (or no movement): keep the width, derive
-        // the height; re-derive the width only if the height hit a bound.
+        // Width moved furthest (horizontal edge, tie, or a width-led corner):
+        // keep the width, derive the height; re-derive the width only if the
+        // height hit a bound.
         let (dh, bounded) = derive_height(w, min_h, max_h, num64, denom64);
         h = dh;
         if bounded {
@@ -910,34 +899,28 @@ mod fit_tests {
     }
 
     #[test]
-    fn corner_drag_fits_inside_the_cursor() {
-        // Both edges moved: it's a corner drag, so neither axis is "the
-        // dragged one". Fit the largest on-ratio box inside the cursor box
-        // rather than inflating one axis past it (which would oscillate).
+    fn corner_drag_follows_dominant_axis() {
+        // Both edges moved; the dominant one (height here: +320 vs +160) leads
+        // and the other axis is derived on-ratio. The derived width exceeds the
+        // cursor box - the caller drives the host window to it via request_resize.
         let (min, max, aspect) = ((320, 240), (u32::MAX, u32::MAX), Some((4, 3)));
         assert_eq!(
             fit_dragged_size(800, 800, (640, 480), min, max, aspect),
-            (800, 600)
+            (1066, 800)
         );
     }
 
     #[test]
-    fn corner_drag_does_not_oscillate() {
-        // The judder regression: feed a corner drag, then feed the adopted
-        // size back as the new `current` with the cursor a hair further out.
-        // The dragged-axis guess used to inflate one axis past the cursor, so
-        // the next frame read it as shrinking and flipped. Fit-inside is
-        // monotonic: each step is >= the last on both axes, never reversing.
+    fn horizontal_drag_with_incidental_height_change_still_grows() {
+        // The REAPER regression: a host that skips the preflight passes raw
+        // drag dims where the dragged (width) axis moves a lot and the other
+        // axis drifts a pixel. The width still leads, so height grows on-ratio
+        // and the editor fills the widened window instead of letterboxing.
         let (min, max, aspect) = ((320, 240), (u32::MAX, u32::MAX), Some((4, 3)));
-        let mut cur = (640, 480);
-        for &(w, h) in &[(700, 560), (720, 600), (760, 610), (800, 660)] {
-            let next = fit_dragged_size(w, h, cur, min, max, aspect);
-            assert!(
-                next.0 >= cur.0 && next.1 >= cur.1,
-                "{next:?} reversed from {cur:?}"
-            );
-            cur = next;
-        }
+        assert_eq!(
+            fit_dragged_size(900, 481, (640, 480), min, max, aspect),
+            (900, 675)
+        );
     }
 
     #[test]
