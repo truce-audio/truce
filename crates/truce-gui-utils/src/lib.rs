@@ -84,6 +84,56 @@ pub fn reanchor_to_superview_top(handle: raw_window_handle::RawWindowHandle) {
 #[cfg(not(target_os = "macos"))]
 pub fn reanchor_to_superview_top(_handle: raw_window_handle::RawWindowHandle) {}
 
+/// Whether a GUI backend's per-frame `on_frame` should skip all work
+/// this tick.
+///
+/// Returns `true` when the editor's `NSView` is detached from any
+/// window - the editor was torn down but baseview's frame timer is
+/// still firing (notably AU, which may not call `gui_close`) - or
+/// when the host window is not visible (minimized or fully occluded).
+///
+/// Skipping occluded frames is the load-bearing part: a non-visible
+/// window can't present, so any frame a backend renders queues a GPU
+/// drawable that can't be drained, and they pile up unbounded (tens of
+/// GB of wired memory) until the window returns to front. The
+/// `NSWindowOcclusionStateVisible` bit is the authoritative early
+/// signal, so this must be called first thing in `on_frame`.
+///
+/// macOS-only; always `false` elsewhere - Linux/Windows hosts manage
+/// visibility natively and don't exhibit the pile-up.
+#[cfg(target_os = "macos")]
+#[must_use]
+pub fn should_skip_frame(handle: raw_window_handle::RawWindowHandle) -> bool {
+    use objc::{msg_send, sel, sel_impl};
+
+    let view_ptr = match handle {
+        raw_window_handle::RawWindowHandle::AppKit(h) => h.ns_view,
+        _ => return false,
+    };
+    if view_ptr.is_null() {
+        return true;
+    }
+
+    unsafe {
+        let view = view_ptr.cast::<objc::runtime::Object>();
+        let window: *mut objc::runtime::Object = msg_send![view, window];
+        if window.is_null() {
+            // Detached from any window - nothing to present into.
+            return true;
+        }
+        // `NSWindowOcclusionStateVisible` == 1 << 1. Bit clear => the
+        // window is not visible (minimized or fully covered).
+        let state: u64 = msg_send![window, occlusionState];
+        state & (1 << 1) == 0
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+#[must_use]
+pub fn should_skip_frame(_handle: raw_window_handle::RawWindowHandle) -> bool {
+    false
+}
+
 /// Walk every direct subview of the host-provided parent `NSView`
 /// and pin its top edge to the parent's top in unflipped Cocoa
 /// coordinates. Used by GUI backends that don't expose their own
