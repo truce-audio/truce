@@ -2,6 +2,10 @@
 
 Notable changes per release.
 
+## 0.58.4
+
+- **Aspect-ratio editor resize fixes.** Aspect-locked editors now stay on-ratio inside the host window without clipping (CLAP, VST3, AU, LV2); CLAP editors resize from any edge instead of swallowing single-edge drags; VST3 corner drags no longer judder; LV2 honors the aspect ratio and `max_size`.
+
 ## 0.58.3
 
 - **Installers now ship your factory presets.** `cargo truce package` now carries presets for every format that has them, in both the per-plugin and suite installers, on macOS, Linux, and Windows: CLAP / AU / LV2 ride inside the bundle (sealed under the code signature), and VST3 presets are placed into the OS preset folder — merged in, so a user's own saved presets there are never wiped.
