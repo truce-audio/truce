@@ -1201,6 +1201,7 @@ fn stage_aax(
 struct WindowsSigningEnv {
     azure_account: Option<String>,
     azure_profile: Option<String>,
+    azure_endpoint: Option<String>,
     azure_dlib: Option<String>,
     cert_sha1: Option<String>,
     cert_store: Option<String>,
@@ -1214,6 +1215,7 @@ impl WindowsSigningEnv {
         Self {
             azure_account: crate::read_build_env("TRUCE_AZURE_ACCOUNT"),
             azure_profile: crate::read_build_env("TRUCE_AZURE_PROFILE"),
+            azure_endpoint: crate::read_build_env("TRUCE_AZURE_ENDPOINT"),
             azure_dlib: crate::read_build_env("TRUCE_AZURE_DLIB"),
             cert_sha1: crate::read_build_env("TRUCE_CERT_SHA1"),
             cert_store: crate::read_build_env("TRUCE_CERT_STORE"),
@@ -1255,10 +1257,11 @@ fn sign_files(files: &[PathBuf]) -> Res {
     // Credential source - Azure wins, then thumbprint, then pfx.
     if let (Some(account), Some(profile)) = (&env.azure_account, &env.azure_profile) {
         let dlib = env.azure_dlib.clone().unwrap_or_else(default_azure_dlib);
+        let endpoint = azure_endpoint(env.azure_endpoint.as_deref());
         let metadata_path = tmp_manifests().join("truce_azure_signing_metadata.json");
         let metadata = format!(
             r#"{{
-  "Endpoint": "https://eus.codesigning.azure.net/",
+  "Endpoint": "{endpoint}",
   "CodeSigningAccountName": "{account}",
   "CertificateProfileName": "{profile}"
 }}"#,
@@ -1297,6 +1300,14 @@ fn sign_files(files: &[PathBuf]) -> Res {
 fn default_azure_dlib() -> String {
     r"C:\Program Files\Microsoft Trusted Signing Client\bin\x64\Azure.CodeSigning.Dlib.dll"
         .to_string()
+}
+
+fn azure_endpoint(value: Option<&str>) -> String {
+    match value.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(v) if v.starts_with("http://") || v.starts_with("https://") => v.to_string(),
+        Some(v) => format!("https://{}.codesigning.azure.net", v.trim_matches('/')),
+        None => "https://eus.codesigning.azure.net".to_string(),
+    }
 }
 
 fn locate_signtool() -> Option<PathBuf> {
