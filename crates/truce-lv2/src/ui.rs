@@ -40,6 +40,8 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use truce_core::Float;
 use truce_core::TransportSlot;
 use truce_core::cast::{len_u32, size_of_u32};
+#[cfg(target_os = "macos")]
+use truce_core::editor::fit_size;
 use truce_core::editor::{
     ClosureBridge, Editor, PluginContext, RawWindowHandle, SendPtr, fit_logical_size,
 };
@@ -168,6 +170,13 @@ pub struct Lv2UiInstance<P: PluginExport> {
     /// to `&Lv2UiInstance<P>`) - fine on the UI thread, which hosts
     /// are required to use single-threaded.
     notify_scratch: core::cell::RefCell<Vec<u8>>,
+    /// Child `NSView`s registered for the aspect/max fit observer
+    /// (`NSViewFrameDidChangeNotification`), stored as raw pointers so
+    /// `cleanup_ui` can unregister them before the views are torn down.
+    /// Empty unless the editor is resizable with constraints the Cocoa
+    /// autoresize mask can't express.
+    #[cfg(target_os = "macos")]
+    fit_observer_children: Vec<usize>,
     _phantom: PhantomData<P>,
 }
 
@@ -345,7 +354,7 @@ pub unsafe fn instantiate_ui<P: PluginExport>(
         //   resizes - the GUI Zoo no longer opens stretched to the
         //   host's default pane.
         #[cfg(target_os = "macos")]
-        anchor_child_for_resize(parent_ptr, editor.can_resize());
+        let fit_observer_children = anchor_child_for_resize(parent_ptr, editor.as_ref());
 
         // `editor.open()` just added baseview's child NSView under the
         // host's parent. Install a `cursorUpdate:` handler on that child so
@@ -396,6 +405,8 @@ pub unsafe fn instantiate_ui<P: PluginExport>(
             atom_event_transfer_urid,
             transport_slot,
             notify_scratch: core::cell::RefCell::new(Vec::new()),
+            #[cfg(target_os = "macos")]
+            fit_observer_children,
             _phantom: PhantomData,
         });
         Box::into_raw(ui) as Lv2UiHandle
@@ -411,10 +422,15 @@ pub unsafe fn cleanup_ui<P: PluginExport>(handle: Lv2UiHandle) {
             return;
         }
         let mut ui = Box::from_raw(handle.cast::<Lv2UiInstance<P>>());
-        if ui.opened.swap(false, Ordering::AcqRel)
-            && let Some(mut ed) = ui.editor.take()
-        {
-            ed.close();
+        if ui.opened.swap(false, Ordering::AcqRel) {
+            // Unregister the fit observer before `close()` deallocates the
+            // child views: a stale `NSViewFrameDidChangeNotification`
+            // registration would send `frameChanged:` to freed memory.
+            #[cfg(target_os = "macos")]
+            remove_fit_observers(&ui.fit_observer_children);
+            if let Some(mut ed) = ui.editor.take() {
+                ed.close();
+            }
         }
         drop(ui);
     }
@@ -881,77 +897,100 @@ unsafe fn x11_first_child(
     }
 }
 
+#[cfg(target_os = "macos")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct NSPoint {
+    x: f64,
+    y: f64,
+}
+#[cfg(target_os = "macos")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct NSSize {
+    width: f64,
+    height: f64,
+}
+#[cfg(target_os = "macos")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct NSRect {
+    origin: NSPoint,
+    size: NSSize,
+}
+
+/// Per-child-view fit constraints `(min, max, aspect)`, keyed by the
+/// child `NSView` pointer. `frame_changed` reads these on every
+/// `NSViewFrameDidChangeNotification` so the resize callback stays a
+/// plain Cocoa selector (no trait object to thread through `objc`).
+/// Entries are inserted by `install_fit_observer` and removed by
+/// `remove_fit_observers` at cleanup.
+#[cfg(target_os = "macos")]
+type FitConstraints = ((u32, u32), (u32, u32), Option<(u32, u32)>);
+
+#[cfg(target_os = "macos")]
+fn fit_constraints() -> &'static std::sync::Mutex<std::collections::HashMap<usize, FitConstraints>>
+{
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    static MAP: OnceLock<Mutex<HashMap<usize, FitConstraints>>> = OnceLock::new();
+    MAP.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
 /// Reposition every direct subview of `parent` so it tracks the host's
-/// parent `NSView` correctly. `NSView` is unflipped by default, so an
-/// attached child at frame origin `(0, 0)` lands at the parent's
-/// bottom-left in Cocoa coordinates - baseview creates its child at
-/// `(0, 0)` and leaves the autoresizing mask at `NSViewNotSizable`,
-/// so without this fixup the editor renders anchored to the bottom of
-/// the host's plugin window.
+/// parent `NSView`. `NSView` is unflipped by default, so an attached
+/// child at frame origin `(0, 0)` lands at the parent's bottom-left in
+/// Cocoa coordinates; without this fixup the editor renders anchored to
+/// the bottom of the host's plugin window.
 ///
-/// - `resizable = false`: position the child so its top edge sits at
-///   the parent's top, and pin it there via
-///   `NSViewMinYMargin | NSViewMaxXMargin`. The child's frame stays
-///   fixed under future parent resizes.
-/// - `resizable = true`: snap the child to `(0, 0)` and resize it to
-///   fill the parent, then tag `NSViewWidthSizable | NSViewHeightSizable`
-///   so the child grows / shrinks in lock-step with future parent
-///   resizes. baseview's `Resized` event fires off the resulting frame
-///   change, which is what drives wgpu surface reconfigure. REAPER's
-///   LV2 runner on macOS doesn't fire `ui_resize_dispatch` from the
-///   host side when the user drags the FX window, so this cascade is
-///   what carries user-driven resize. The `ui:resize(natural)` push
-///   in `instantiate_ui` makes the host open its pane at the editor's
-///   natural size so the cascade only stretches the canvas once the
-///   user actually resizes.
+/// - non-resizable: pin the child top-left via
+///   `NSViewMinYMargin | NSViewMaxXMargin` so its frame stays fixed.
+/// - resizable, no aspect/max constraint: fill the parent and tag
+///   `NSViewWidthSizable | NSViewHeightSizable` so the child grows in
+///   lock-step with the host pane. REAPER's LV2 runner on macOS doesn't
+///   fire `ui_resize_dispatch`, so this autoresize cascade is what
+///   carries user-driven resize.
+/// - resizable with an aspect ratio, a min, or a finite max: the
+///   autoresize mask can't express those, so pin the child
+///   (`NSViewNotSizable`) and drive its frame from a frame-change
+///   observer that re-fits to the largest on-ratio, within-bounds
+///   rectangle on every host-pane resize. Returns the observed child
+///   pointers so `cleanup_ui` can unregister them.
 ///
 /// X11 and Win32 use top-left origins natively and have their own
 /// resize paths (`fit_win32_parent_to_child` on Windows, the
 /// `LV2UI_Resize` extension on X11).
 #[cfg(target_os = "macos")]
-unsafe fn anchor_child_for_resize(parent: *mut c_void, resizable: bool) {
+unsafe fn anchor_child_for_resize(parent: *mut c_void, editor: &dyn Editor) -> Vec<usize> {
     use objc::runtime::Object;
     use objc::{msg_send, sel, sel_impl};
 
-    #[repr(C)]
-    #[derive(Clone, Copy)]
-    struct NSPoint {
-        x: f64,
-        y: f64,
-    }
-    #[repr(C)]
-    #[derive(Clone, Copy)]
-    struct NSSize {
-        width: f64,
-        height: f64,
-    }
-    #[repr(C)]
-    #[derive(Clone, Copy)]
-    struct NSRect {
-        origin: NSPoint,
-        size: NSSize,
-    }
-
     // Cocoa autoresizing-mask bit flags (`NSAutoresizingMaskOptions`).
-    // `NSViewMinYMargin` keeps the gap between child-bottom and
-    // parent-bottom flexible; `NSViewMaxXMargin` keeps the gap between
-    // child-right and parent-right flexible. Together they anchor the
-    // child to the parent's top-left in unflipped NSView coordinates.
-    // `NSViewWidthSizable` / `NSViewHeightSizable` instead grow the
-    // child's frame to match the parent's width / height.
+    const NSVIEW_NOT_SIZABLE: u64 = 0;
     const NSVIEW_WIDTH_SIZABLE: u64 = 2;
     const NSVIEW_MAX_X_MARGIN: u64 = 4;
     const NSVIEW_MIN_Y_MARGIN: u64 = 8;
     const NSVIEW_HEIGHT_SIZABLE: u64 = 16;
 
+    let mut observed = Vec::new();
     if parent.is_null() {
-        return;
+        return observed;
     }
+
+    let resizable = editor.can_resize();
+    // The autoresize mask can only stretch a child to fill its parent;
+    // it can't hold an aspect ratio or clamp to a min/max. Use the fit
+    // observer whenever the editor declares any of those.
+    let needs_fit = resizable
+        && (editor.aspect_ratio().is_some()
+            || editor.min_size() != (1, 1)
+            || editor.max_size() != (u32::MAX, u32::MAX));
+
     let parent_obj = parent.cast::<Object>();
     let parent_frame: NSRect = msg_send![parent_obj, frame];
     let subviews: *mut Object = msg_send![parent_obj, subviews];
     if subviews.is_null() {
-        return;
+        return observed;
     }
     let count: usize = msg_send![subviews, count];
     for i in 0..count {
@@ -959,12 +998,15 @@ unsafe fn anchor_child_for_resize(parent: *mut c_void, resizable: bool) {
         if child.is_null() {
             continue;
         }
-        if resizable {
+        if needs_fit {
+            unsafe { install_fit_observer(parent_obj, child, editor) };
+            let _: () = msg_send![child, setAutoresizingMask: NSVIEW_NOT_SIZABLE];
+            unsafe { fit_view_into_superview(child) };
+            observed.push(child as usize);
+        } else if resizable {
             // Fill the parent. Origin `(0, 0)` is the bottom-left in
             // unflipped coords - it doesn't matter visually because
-            // the child immediately covers the entire parent. The
-            // `WidthSizable | HeightSizable` mask keeps it filling
-            // when the host resizes its parent NSView.
+            // the child immediately covers the entire parent.
             let new_frame = NSRect {
                 origin: NSPoint { x: 0.0, y: 0.0 },
                 size: parent_frame.size,
@@ -982,6 +1024,134 @@ unsafe fn anchor_child_for_resize(parent: *mut c_void, resizable: bool) {
             let _: () =
                 msg_send![child, setAutoresizingMask: NSVIEW_MIN_Y_MARGIN | NSVIEW_MAX_X_MARGIN];
         }
+    }
+    observed
+}
+
+/// Register `child` to re-fit itself whenever `parent`'s frame changes.
+/// Records the editor's constraints, adds a `frameChanged:` selector to
+/// the child's (per-window unique) class, and subscribes the child to
+/// the parent's `NSViewFrameDidChangeNotification`.
+#[cfg(target_os = "macos")]
+unsafe fn install_fit_observer(
+    parent: *mut objc::runtime::Object,
+    child: *mut objc::runtime::Object,
+    editor: &dyn Editor,
+) {
+    use objc::runtime::{Class, Object, Sel, class_addMethod};
+    use objc::{class, msg_send, sel, sel_impl};
+
+    extern "C" fn frame_changed(this: &Object, _sel: Sel, _note: *mut Object) {
+        unsafe { fit_view_into_superview(core::ptr::from_ref(this).cast_mut()) };
+    }
+    type ImpFn = unsafe extern "C" fn();
+
+    fit_constraints()
+        .lock()
+        .expect("fit constraints poisoned")
+        .insert(
+            child as usize,
+            (editor.min_size(), editor.max_size(), editor.aspect_ratio()),
+        );
+
+    let class_ptr: *mut Class = msg_send![child, class];
+    // `v@:@` → void (id self, SEL _cmd, id notification).
+    let type_encoding = c"v@:@".as_ptr();
+    // SAFETY: `frame_changed` has the canonical Cocoa `IMP` ABI
+    // (self, _cmd, sender). A fresh `BaseviewNSView_<uuid>` class per
+    // window means this adds the method rather than colliding.
+    let imp: ImpFn = unsafe {
+        core::mem::transmute::<extern "C" fn(&Object, Sel, *mut Object), ImpFn>(frame_changed)
+    };
+    unsafe { class_addMethod(class_ptr, sel!(frameChanged:), imp, type_encoding) };
+
+    let _: () = msg_send![parent, setPostsFrameChangedNotifications: true];
+    let center: *mut Object = msg_send![class!(NSNotificationCenter), defaultCenter];
+    let name = unsafe { ns_string("NSViewFrameDidChangeNotification") };
+    let _: () = msg_send![center, addObserver: child selector: sel!(frameChanged:) name: name object: parent];
+}
+
+/// Resize `child` to the largest on-ratio, within-bounds rectangle that
+/// fits its superview, anchored top-left in unflipped coords. No-op if
+/// the child has no recorded constraints or no superview.
+#[cfg(target_os = "macos")]
+unsafe fn fit_view_into_superview(child: *mut objc::runtime::Object) {
+    use objc::runtime::Object;
+    use objc::{msg_send, sel, sel_impl};
+
+    let Some((min, max, aspect)) = fit_constraints()
+        .lock()
+        .expect("fit constraints poisoned")
+        .get(&(child as usize))
+        .copied()
+    else {
+        return;
+    };
+    let superview: *mut Object = msg_send![child, superview];
+    if superview.is_null() {
+        return;
+    }
+    let sframe: NSRect = msg_send![superview, frame];
+    let (fw, fh) = fit_size(
+        pt_to_u32(sframe.size.width),
+        pt_to_u32(sframe.size.height),
+        min,
+        max,
+        aspect,
+    );
+    let new_frame = NSRect {
+        origin: NSPoint {
+            x: 0.0,
+            y: sframe.size.height - f64::from(fh),
+        },
+        size: NSSize {
+            width: f64::from(fw),
+            height: f64::from(fh),
+        },
+    };
+    let _: () = msg_send![child, setFrame: new_frame];
+}
+
+/// Unregister fit observers and drop their constraint entries. Called
+/// from `cleanup_ui` before the child views are torn down so the
+/// notification center holds no dangling reference.
+#[cfg(target_os = "macos")]
+unsafe fn remove_fit_observers(children: &[usize]) {
+    use objc::runtime::Object;
+    use objc::{class, msg_send, sel, sel_impl};
+
+    if children.is_empty() {
+        return;
+    }
+    let center: *mut Object = msg_send![class!(NSNotificationCenter), defaultCenter];
+    let mut map = fit_constraints().lock().expect("fit constraints poisoned");
+    for &child in children {
+        let obj = child as *mut Object;
+        let _: () = msg_send![center, removeObserver: obj];
+        map.remove(&child);
+    }
+}
+
+/// Build an autoreleased `NSString` from a Rust `&str` so callers can
+/// pass a notification name without linking the `AppKit` symbol.
+#[cfg(target_os = "macos")]
+unsafe fn ns_string(s: &str) -> *mut objc::runtime::Object {
+    use objc::{class, msg_send, sel, sel_impl};
+    let c = CString::new(s).expect("notification name has no interior nul");
+    msg_send![class!(NSString), stringWithUTF8String: c.as_ptr()]
+}
+
+/// Round a Cocoa point dimension to `u32`, clamping non-finite or
+/// negative values to `0` (`fit_size` floors each axis at its min).
+#[cfg(target_os = "macos")]
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn pt_to_u32(v: f64) -> u32 {
+    if !v.is_finite() || v <= 0.0 {
+        0
+    } else if v >= f64::from(u32::MAX) {
+        u32::MAX
+    } else {
+        v.round() as u32
     }
 }
 

@@ -157,8 +157,8 @@ pub trait Editor: Send {
     }
 
     /// Aspect-ratio constraint as `(numerator, denominator)`, or
-    /// `None` for free resizing. CLAP, VST3, AU v3, and standalone
-    /// honour this; VST2 / LV2 / AAX silently ignore. Integer pair
+    /// `None` for free resizing. CLAP, VST3, AU v3, standalone, and
+    /// LV2 honour this; VST2 / AAX silently ignore. Integer pair
     /// (not `f64`) avoids the Cubase-9 aspect-rounding quirk JUCE
     /// special-cases.
     fn aspect_ratio(&self) -> Option<(u32, u32)> {
@@ -631,11 +631,32 @@ impl<P: ?Sized> PluginContextReadF64 for PluginContext<P> {
 /// before the clamp lands.
 #[must_use]
 pub fn fit_logical_size(w: u32, h: u32, editor: &dyn Editor) -> (u32, u32) {
-    let (min_w, min_h) = editor.min_size();
-    let (max_w, max_h) = editor.max_size();
+    fit_size(
+        w,
+        h,
+        editor.min_size(),
+        editor.max_size(),
+        editor.aspect_ratio(),
+    )
+}
+
+/// Same fit as [`fit_logical_size`] but over raw constraints rather than
+/// an `&dyn Editor`. Lets call sites that have already captured the
+/// bounds (e.g. an Objective-C resize callback that can't carry a trait
+/// object) reuse the identical rule.
+#[must_use]
+pub fn fit_size(
+    w: u32,
+    h: u32,
+    min: (u32, u32),
+    max: (u32, u32),
+    aspect: Option<(u32, u32)>,
+) -> (u32, u32) {
+    let (min_w, min_h) = min;
+    let (max_w, max_h) = max;
     let mut w = w.clamp(min_w.max(1), max_w);
     let mut h = h.clamp(min_h.max(1), max_h);
-    if let Some((num, denom)) = editor.aspect_ratio()
+    if let Some((num, denom)) = aspect
         && num > 0
         && denom > 0
     {
