@@ -426,6 +426,12 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
         #[cfg(target_os = "macos")]
         {
             use raw_window_handle::HasRawWindowHandle;
+            // Skip the whole frame while detached or occluded - a
+            // non-visible window can't present, so rendered drawables
+            // pile up unbounded until it returns to front.
+            if truce_gui::platform::should_skip_frame(window.raw_window_handle()) {
+                return;
+            }
             truce_gui::platform::reanchor_to_superview_top(window.raw_window_handle());
         }
         // Pick up host-driven `set_size` requests since the last frame.

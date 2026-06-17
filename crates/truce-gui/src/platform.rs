@@ -177,7 +177,9 @@ pub fn main_screen_scale() -> f64 {
 // live in the `truce-gui-utils` crate so backends that don't pull
 // `truce-gui` (vizia) can still get at them. Re-exported here for
 // existing `truce_gui::platform::...` call sites.
-pub use truce_gui_utils::{reanchor_all_children_to_top, reanchor_to_superview_top};
+pub use truce_gui_utils::{
+    reanchor_all_children_to_top, reanchor_to_superview_top, should_skip_frame,
+};
 
 /// Shared, mutable editor scale factor.
 ///

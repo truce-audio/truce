@@ -108,6 +108,12 @@ impl<P: Params + 'static> GpuWindowHandler<P> {
         #[cfg(target_os = "macos")]
         {
             use raw_window_handle::HasRawWindowHandle;
+            // Skip the whole frame while detached or occluded - a
+            // non-visible window can't present, so rendered drawables
+            // pile up unbounded until it returns to front.
+            if crate::platform::should_skip_frame(window.raw_window_handle()) {
+                return;
+            }
             crate::platform::reanchor_to_superview_top(window.raw_window_handle());
         }
         if let Some(ref mut gpu) = self.gpu {
