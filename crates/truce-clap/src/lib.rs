@@ -85,7 +85,7 @@ use truce_core::bus::ChannelConfig;
 use truce_core::cast::{len_u32, size_of_u32};
 use truce_core::chunked_process::{ChunkedProcess, process_chunked};
 use truce_core::editor::{
-    ClosureBridge, Editor, PluginContext, RawWindowHandle, SendPtr, fit_logical_size,
+    ClosureBridge, Editor, PluginContext, RawWindowHandle, SendPtr, fit_dragged_logical_size,
 };
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
@@ -2281,20 +2281,19 @@ unsafe extern "C" fn gui_set_size<P: PluginExport>(
             // Host passes physical points; truce works in logical.
             // Divide by the host-applied scale before handing to
             // the editor so `set_size` receives the same units
-            // `size()` returns. Also clamp against the editor's
-            // min/max/aspect - some hosts (Reaper) skip the
-            // pre-flight `gui_adjust_size` and call `gui_set_size`
-            // with raw drag dimensions, which leaves the editor
-            // surface below `min_size` and clips content.
+            // `size()` returns. The dragged-axis fit derives the
+            // un-dragged axis from the dragged one, so a single-edge
+            // drag stays on-ratio and below `min_size` content can't
+            // clip - even for hosts (Reaper) that skip the pre-flight
+            // `gui_adjust_size` and pass raw drag dimensions.
             let req = scale_physical_to_logical(width, height, data.host_scale);
-            let (lw, lh) = fit_logical_size(req.0, req.1, editor.as_ref());
+            let (lw, lh) = fit_dragged_logical_size(req.0, req.1, editor.as_ref());
             let accepted = editor.set_size(lw, lh);
-            // The aspect fit makes the editor an on-ratio rectangle inside
-            // the host's box, so a host that skips the `gui_adjust_size`
-            // pre-flight (Reaper) is left with a window larger than the
-            // editor: an on-ratio letterbox. Ask the host to trim its window
-            // down to the size we adopted (this also pushes back up to
-            // `min_size` when the host's box was too small). The fit is
+            // The dragged-axis fit can land off the host's box on either
+            // axis: smaller (below `min_size`, or a host that skipped the
+            // pre-flight) or larger (the derived axis grew past the drag).
+            // Ask the host to resize its window to the size we adopted so
+            // the editor neither clips nor letterboxes. The fit is
             // idempotent, so the host's echoed `set_size` agrees and doesn't
             // recurse.
             let adopted = editor.size();
@@ -2329,7 +2328,7 @@ unsafe extern "C" fn gui_adjust_size<P: PluginExport>(
         };
         if editor.can_resize() {
             let req = scale_physical_to_logical(*width, *height, data.host_scale);
-            let (lw, lh) = fit_logical_size(req.0, req.1, editor.as_ref());
+            let (lw, lh) = fit_dragged_logical_size(req.0, req.1, editor.as_ref());
             // Convert clamped logical back to physical for the host.
             let (pw, ph) = scale_logical_to_physical(lw, lh, data.host_scale);
             *width = pw;

@@ -29,9 +29,10 @@ use truce_core::editor::Editor;
 // there.
 use truce_core::chunked_process::{ChunkedProcess, process_chunked};
 #[cfg(any(target_os = "macos", target_os = "ios"))]
-use truce_core::editor::{
-    ClosureBridge, PluginContext, RawWindowHandle, SendPtr, fit_logical_size,
-};
+use truce_core::editor::{ClosureBridge, PluginContext, RawWindowHandle, SendPtr};
+// Used by `cb_gui_set_size`, which the platform-agnostic `AuCallbacks` FFI
+// struct references on every target, so this import can't be apple-gated.
+use truce_core::editor::fit_logical_size;
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
 use truce_core::info::PluginCategory;
