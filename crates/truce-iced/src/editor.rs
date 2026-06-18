@@ -20,6 +20,31 @@ use crate::auto_layout;
 use crate::param_cache::ParamCache;
 use crate::param_message::{Message, ParamMessage};
 
+/// Extract a readable message from a `catch_unwind` panic payload.
+fn panic_message(e: &(dyn std::any::Any + Send)) -> String {
+    e.downcast_ref::<&str>()
+        .map(|s| (*s).to_string())
+        .or_else(|| e.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "unknown panic".to_string())
+}
+
+/// wgpu backends for the editor surface. DX12 on Windows; Metal on macOS;
+/// `PRIMARY` (Vulkan) on Linux.
+pub(crate) fn editor_backends() -> wgpu::Backends {
+    #[cfg(target_os = "windows")]
+    {
+        wgpu::Backends::DX12
+    }
+    #[cfg(target_os = "macos")]
+    {
+        wgpu::Backends::METAL
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        wgpu::Backends::PRIMARY
+    }
+}
+
 // IcedPlugin trait - what plugin authors implement
 
 /// Trait for plugin-specific iced UI logic.
@@ -394,6 +419,12 @@ struct IcedRuntime<P: Params, M: IcedPlugin<P>> {
     /// Custom font's TrueType bytes. Family name is recovered by
     /// `crate::font::apply_font` from the TTF `name` table.
     font: Option<&'static [u8]>,
+    /// Set when the wgpu device is lost (GPU reset) or a render panic is
+    /// swallowed in `on_frame`. Polled at the top of `on_frame`, which then
+    /// rebuilds the render pipeline; without it the editor would render
+    /// against a dead device (a frozen / black surface). Shared into
+    /// `set_device_lost_callback`, which fires off-thread.
+    device_lost: Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// Holds the full wgpu + iced rendering pipeline.
@@ -476,6 +507,14 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
                     return false;
                 }
             };
+        // Raise the shared flag on device loss (GPU reset) so the next
+        // `on_frame` rebuilds the pipeline instead of rendering against a dead
+        // device. The flag is per-generation (see `recover_device`).
+        let lost_flag = self.device_lost.clone();
+        device.set_device_lost_callback(move |reason, msg| {
+            lost_flag.store(true, std::sync::atomic::Ordering::Release);
+            log::warn!("iced wgpu device lost: {reason:?} - {msg}");
+        });
 
         let surface_caps = surface.get_capabilities(&adapter);
         if surface_caps.formats.is_empty() {
@@ -551,6 +590,30 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
 
         log::info!("gpu active (wgpu, {w}x{h})");
         true
+    }
+
+    /// Rebuild the device + surface + renderer after a device loss, salvaging
+    /// the plugin program. Widget state in `ui_cache` is lost. Returns whether
+    /// the rebuild succeeded; on failure `render` stays `None` and the next
+    /// `on_frame` retries.
+    fn recover_device(&mut self, window: &baseview::Window) -> bool {
+        // Give the new device generation a fresh lost-flag so the dying
+        // device's own callback can't re-arm recovery and cause a redundant
+        // second rebuild; `init_render` clones this into the new callback.
+        self.device_lost = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        // Drop the old device/surface/renderer; keep the program.
+        if let Some(RenderState { program, .. }) = self.render.take() {
+            self.program = Some(program);
+        }
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+            backends: editor_backends(),
+            ..Default::default()
+        });
+        let Some(surface) = (unsafe { crate::platform::create_wgpu_surface(&instance, window) })
+        else {
+            return false;
+        };
+        self.init_render(instance, surface)
     }
 
     /// Drive one frame: update iced state + present to surface.
@@ -747,66 +810,96 @@ fn iced_interaction_to_cursor(interaction: iced::mouse::Interaction) -> baseview
 
 impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBaseviewHandler<P, M> {
     fn on_frame(&mut self, window: &mut baseview::Window) {
-        // Re-anchor each frame so the child NSView's origin tracks
-        // size changes against the host's plug-in pane - without it
-        // the canvas drifts off-anchor as it grows, clipping the
-        // layout's top off the visible area in CLAP hosts (REAPER).
-        #[cfg(target_os = "macos")]
-        {
-            use raw_window_handle::HasRawWindowHandle;
-            // Skip the whole frame while detached or occluded - a
-            // non-visible window can't present, so rendered drawables
-            // pile up unbounded until it returns to front.
-            if truce_gui::platform::should_skip_frame(window.raw_window_handle()) {
+        // Catch panics at the FFI boundary: baseview drives this from an
+        // `extern "system"` window proc (Windows) / AppKit callback (macOS),
+        // so an unwinding panic - e.g. a wgpu device loss mid-resize - would
+        // cross a C frame and abort the host. Swallow and log instead.
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            // Re-anchor each frame so the child NSView's origin tracks
+            // size changes against the host's plug-in pane - without it
+            // the canvas drifts off-anchor as it grows, clipping the
+            // layout's top off the visible area in CLAP hosts (REAPER).
+            #[cfg(target_os = "macos")]
+            {
+                use raw_window_handle::HasRawWindowHandle;
+                // Skip the whole frame while detached or occluded - a
+                // non-visible window can't present, so rendered drawables
+                // pile up unbounded until it returns to front.
+                if truce_gui::platform::should_skip_frame(window.raw_window_handle()) {
+                    return;
+                }
+                truce_gui::platform::reanchor_to_superview_top(window.raw_window_handle());
+            }
+            let editor = unsafe { &mut *self.editor };
+            // Rebuild the pipeline if the device was lost (flagged by the
+            // device-lost callback or a swallowed render panic). Skip the rest of
+            // this frame; the next tick renders against the fresh device.
+            if let Some(ref mut runtime) = editor.runtime
+                && runtime
+                    .device_lost
+                    .load(std::sync::atomic::Ordering::Acquire)
+            {
+                let ok = runtime.recover_device(window);
+                log::warn!("iced device-loss recovery: rebuilt ok={ok}");
                 return;
             }
-            truce_gui::platform::reanchor_to_superview_top(window.raw_window_handle());
-        }
-        let editor = unsafe { &mut *self.editor };
-        // Pick up host-driven `set_size` requests since the last
-        // frame. Without this the wgpu surface would be at the new
-        // size but the platform window stays at the original
-        // dimensions, so the editor visibly fills only the old
-        // rect inside a larger host frame.
-        let packed = editor
-            .pending_size
-            .swap(0, std::sync::atomic::Ordering::Acquire);
-        if packed != 0 {
-            #[allow(clippy::cast_possible_truncation)]
-            let new_w = (packed >> 32) as u32;
-            #[allow(clippy::cast_possible_truncation)]
-            let new_h = (packed & 0xFFFF_FFFF) as u32;
-            if new_w > 0 && new_h > 0 {
-                window.resize(baseview::Size::new(f64::from(new_w), f64::from(new_h)));
-                if let Some(ref mut runtime) = editor.runtime {
-                    runtime.size = (new_w, new_h);
-                    if let Some(ref mut render) = runtime.render {
-                        let scale = editor.scale.get();
-                        let pw = truce_gui::to_physical_px(new_w, scale);
-                        let ph = truce_gui::to_physical_px(new_h, scale);
-                        #[allow(clippy::cast_possible_truncation)]
-                        let scale_f32 = scale as f32;
-                        render.viewport = iced_graphics::Viewport::with_physical_size(
-                            Size::new(pw, ph),
-                            scale_f32,
-                        );
-                        render.surface_config.width = pw;
-                        render.surface_config.height = ph;
-                        render
-                            .surface
-                            .configure(&render.device, &render.surface_config);
+            // Pick up host-driven `set_size` requests since the last
+            // frame. Without this the wgpu surface would be at the new
+            // size but the platform window stays at the original
+            // dimensions, so the editor visibly fills only the old
+            // rect inside a larger host frame.
+            let packed = editor
+                .pending_size
+                .swap(0, std::sync::atomic::Ordering::Acquire);
+            if packed != 0 {
+                #[allow(clippy::cast_possible_truncation)]
+                let new_w = (packed >> 32) as u32;
+                #[allow(clippy::cast_possible_truncation)]
+                let new_h = (packed & 0xFFFF_FFFF) as u32;
+                if new_w > 0 && new_h > 0 {
+                    window.resize(baseview::Size::new(f64::from(new_w), f64::from(new_h)));
+                    if let Some(ref mut runtime) = editor.runtime {
+                        runtime.size = (new_w, new_h);
+                        if let Some(ref mut render) = runtime.render {
+                            let scale = editor.scale.get();
+                            let pw = truce_gui::to_physical_px(new_w, scale);
+                            let ph = truce_gui::to_physical_px(new_h, scale);
+                            #[allow(clippy::cast_possible_truncation)]
+                            let scale_f32 = scale as f32;
+                            render.viewport = iced_graphics::Viewport::with_physical_size(
+                                Size::new(pw, ph),
+                                scale_f32,
+                            );
+                            render.surface_config.width = pw;
+                            render.surface_config.height = ph;
+                            render
+                                .surface
+                                .configure(&render.device, &render.surface_config);
+                        }
                     }
                 }
             }
-        }
-        if let Some(ref mut runtime) = editor.runtime {
-            runtime.tick();
-            if let Some(ref render) = runtime.render {
-                let cursor = iced_interaction_to_cursor(render.interaction);
-                if self.last_cursor != Some(cursor) {
-                    self.last_cursor = Some(cursor);
-                    window.set_mouse_cursor(cursor);
+            if let Some(ref mut runtime) = editor.runtime {
+                runtime.tick();
+                if let Some(ref render) = runtime.render {
+                    let cursor = iced_interaction_to_cursor(render.interaction);
+                    if self.last_cursor != Some(cursor) {
+                        self.last_cursor = Some(cursor);
+                        window.set_mouse_cursor(cursor);
+                    }
                 }
+            }
+        }));
+        if let Err(e) = result {
+            log::error!("iced on_frame panic swallowed: {}", panic_message(&e));
+            // A render panic almost always means the device is dead (e.g.
+            // `queue.write_buffer_with` -> None after a loss that didn't fire
+            // the callback). Arm recovery so the next frame rebuilds.
+            let editor = unsafe { &mut *self.editor };
+            if let Some(ref runtime) = editor.runtime {
+                runtime
+                    .device_lost
+                    .store(true, std::sync::atomic::Ordering::Release);
             }
         }
     }
@@ -817,95 +910,108 @@ impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBase
         window: &mut baseview::Window,
         event: baseview::Event,
     ) -> baseview::EventStatus {
-        let editor = unsafe { &mut *self.editor };
-        let Some(runtime) = editor.runtime.as_mut() else {
-            return baseview::EventStatus::Ignored;
-        };
+        // Catch panics at the FFI boundary, like `on_frame`; report the event
+        // as `Ignored` on panic instead of aborting the host.
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let editor = unsafe { &mut *self.editor };
+            let Some(runtime) = editor.runtime.as_mut() else {
+                return baseview::EventStatus::Ignored;
+            };
 
-        match event {
-            baseview::Event::Mouse(mouse) => {
-                match mouse {
-                    baseview::MouseEvent::CursorMoved { position, .. } => {
-                        // baseview reports logical points; iced widgets
-                        // hit-test in logical units against
-                        // `viewport.logical_size()`, so forward as-is.
-                        // Window dimensions stay well below 2^23 - the
-                        // f64 → f32 narrowing is invisible.
-                        #[allow(clippy::cast_possible_truncation)]
-                        let pos = (position.x as f32, position.y as f32);
-                        runtime.queue_cursor_move(pos.0, pos.1);
-                    }
-                    baseview::MouseEvent::CursorLeft => {
-                        runtime
-                            .pending_events
-                            .push(Event::Mouse(iced::mouse::Event::CursorLeft));
-                    }
-                    baseview::MouseEvent::ButtonPressed {
-                        button: baseview::MouseButton::Left,
-                        ..
-                    } => {
-                        // WS_CHILD plugin windows don't receive WM_KEYDOWN
-                        // until focused; baseview doesn't SetFocus on click,
-                        // so we do it here. Without this, text-edit widgets
-                        // never see keystrokes on Windows.
-                        #[cfg(target_os = "windows")]
-                        {
-                            if !window.has_focus() {
-                                window.focus();
-                            }
+            match event {
+                baseview::Event::Mouse(mouse) => {
+                    match mouse {
+                        baseview::MouseEvent::CursorMoved { position, .. } => {
+                            // baseview reports logical points; iced widgets
+                            // hit-test in logical units against
+                            // `viewport.logical_size()`, so forward as-is.
+                            // Window dimensions stay well below 2^23 - the
+                            // f64 → f32 narrowing is invisible.
+                            #[allow(clippy::cast_possible_truncation)]
+                            let pos = (position.x as f32, position.y as f32);
+                            runtime.queue_cursor_move(pos.0, pos.1);
                         }
-                        runtime.pending_events.push(Event::Mouse(
-                            iced::mouse::Event::ButtonPressed(iced::mouse::Button::Left),
-                        ));
+                        baseview::MouseEvent::CursorLeft => {
+                            runtime
+                                .pending_events
+                                .push(Event::Mouse(iced::mouse::Event::CursorLeft));
+                        }
+                        baseview::MouseEvent::ButtonPressed {
+                            button: baseview::MouseButton::Left,
+                            ..
+                        } => {
+                            // WS_CHILD plugin windows don't receive WM_KEYDOWN
+                            // until focused; baseview doesn't SetFocus on click,
+                            // so we do it here. Without this, text-edit widgets
+                            // never see keystrokes on Windows.
+                            #[cfg(target_os = "windows")]
+                            {
+                                if !window.has_focus() {
+                                    window.focus();
+                                }
+                            }
+                            runtime.pending_events.push(Event::Mouse(
+                                iced::mouse::Event::ButtonPressed(iced::mouse::Button::Left),
+                            ));
+                        }
+                        baseview::MouseEvent::ButtonReleased {
+                            button: baseview::MouseButton::Left,
+                            ..
+                        } => {
+                            runtime.pending_events.push(Event::Mouse(
+                                iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left),
+                            ));
+                        }
+                        baseview::MouseEvent::WheelScrolled { delta, .. } => {
+                            let dy = match delta {
+                                baseview::ScrollDelta::Lines { y, .. } => y * 30.0,
+                                baseview::ScrollDelta::Pixels { y, .. } => y,
+                            };
+                            runtime.pending_events.push(Event::Mouse(
+                                iced::mouse::Event::WheelScrolled {
+                                    delta: iced::mouse::ScrollDelta::Pixels { x: 0.0, y: dy },
+                                },
+                            ));
+                        }
+                        _ => return baseview::EventStatus::Ignored,
                     }
-                    baseview::MouseEvent::ButtonReleased {
-                        button: baseview::MouseButton::Left,
-                        ..
-                    } => {
-                        runtime.pending_events.push(Event::Mouse(
-                            iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left),
-                        ));
-                    }
-                    baseview::MouseEvent::WheelScrolled { delta, .. } => {
-                        let dy = match delta {
-                            baseview::ScrollDelta::Lines { y, .. } => y * 30.0,
-                            baseview::ScrollDelta::Pixels { y, .. } => y,
-                        };
-                        runtime.pending_events.push(Event::Mouse(
-                            iced::mouse::Event::WheelScrolled {
-                                delta: iced::mouse::ScrollDelta::Pixels { x: 0.0, y: dy },
-                            },
-                        ));
-                    }
-                    _ => return baseview::EventStatus::Ignored,
+                    baseview::EventStatus::Captured
                 }
-                baseview::EventStatus::Captured
-            }
-            baseview::Event::Window(baseview::WindowEvent::Resized(info)) => {
-                crate::platform::note_linux_scale_factor(info.scale());
-                // Mirror the OS-reported scale into the shared cell
-                // (so a follow-up `set_scale_factor` from the host
-                // reads a fresh baseline) and bump `last_applied_scale`
-                // so `tick()`'s diff-check stays a no-op - we apply
-                // the reconfigure inline below.
-                runtime.scale.set(info.scale());
-                runtime.last_applied_scale = info.scale();
-                if let Some(ref mut render) = runtime.render {
-                    let pw = info.physical_size().width;
-                    let ph = info.physical_size().height;
-                    render.surface_config.width = pw.max(1);
-                    render.surface_config.height = ph.max(1);
-                    render
-                        .surface
-                        .configure(&render.device, &render.surface_config);
-                    #[allow(clippy::cast_possible_truncation)] // display DPI; bounded
-                    let scale_f32 = info.scale() as f32;
-                    render.viewport =
-                        iced_graphics::Viewport::with_physical_size(Size::new(pw, ph), scale_f32);
+                baseview::Event::Window(baseview::WindowEvent::Resized(info)) => {
+                    crate::platform::note_linux_scale_factor(info.scale());
+                    // Mirror the OS-reported scale into the shared cell
+                    // (so a follow-up `set_scale_factor` from the host
+                    // reads a fresh baseline) and bump `last_applied_scale`
+                    // so `tick()`'s diff-check stays a no-op - we apply
+                    // the reconfigure inline below.
+                    runtime.scale.set(info.scale());
+                    runtime.last_applied_scale = info.scale();
+                    if let Some(ref mut render) = runtime.render {
+                        let pw = info.physical_size().width;
+                        let ph = info.physical_size().height;
+                        render.surface_config.width = pw.max(1);
+                        render.surface_config.height = ph.max(1);
+                        render
+                            .surface
+                            .configure(&render.device, &render.surface_config);
+                        #[allow(clippy::cast_possible_truncation)] // display DPI; bounded
+                        let scale_f32 = info.scale() as f32;
+                        render.viewport = iced_graphics::Viewport::with_physical_size(
+                            Size::new(pw, ph),
+                            scale_f32,
+                        );
+                    }
+                    baseview::EventStatus::Captured
                 }
-                baseview::EventStatus::Captured
+                _ => baseview::EventStatus::Ignored,
             }
-            _ => baseview::EventStatus::Ignored,
+        }));
+        match result {
+            Ok(status) => status,
+            Err(e) => {
+                log::error!("iced on_event panic swallowed: {}", panic_message(&e));
+                baseview::EventStatus::Ignored
+            }
         }
     }
 }
@@ -958,6 +1064,7 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
             // never reaches a render call.
             last_applied_scale: 0.0,
             font: self.font,
+            device_lost: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         });
 
         let parent_wrapper = crate::platform::ParentWindow(parent);
@@ -974,7 +1081,7 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
             options,
             move |window: &mut baseview::Window| {
                 let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-                    backends: wgpu::Backends::PRIMARY,
+                    backends: editor_backends(),
                     ..Default::default()
                 });
 

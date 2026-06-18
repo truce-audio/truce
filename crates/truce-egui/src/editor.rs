@@ -4,7 +4,7 @@
 //! Each `on_frame()` tick, runs the egui frame, tessellates, and renders.
 
 use std::marker::PhantomData;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use baseview::{Event, EventStatus, Window, WindowHandler, WindowOpenOptions, WindowScalePolicy};
@@ -333,9 +333,36 @@ struct EguiWindowHandler<P: Params + ?Sized> {
     scale: EditorScale,
     last_applied_scale: f32,
     last_cursor_pos: egui::Pos2,
+    /// Raised by the renderer's device-lost callback (or a swallowed render
+    /// panic). Polled in `on_frame`, which rebuilds the renderer + recreates
+    /// the `egui::Context` so the font atlas re-uploads to the fresh device.
+    device_lost: Arc<AtomicBool>,
+    /// Kept to rebuild on device loss: the custom font and visuals applied to
+    /// a freshly recreated `egui::Context`.
+    font: Option<&'static [u8]>,
+    visuals: egui::Visuals,
 }
 
 impl<P: Params + ?Sized> EguiWindowHandler<P> {
+    /// Rebuild the wgpu renderer and recreate the `egui::Context` after a
+    /// device loss. The new renderer starts with an empty texture map, so the
+    /// context must be recreated to re-emit the font atlas on the next frame.
+    /// UI memory (widget state) is lost - acceptable after a GPU reset.
+    fn recover_device(&mut self, window: &mut Window) {
+        let device_lost = Arc::new(AtomicBool::new(false));
+        let phys_w = truce_gui::to_physical_px(self.size.0, f64::from(self.last_applied_scale));
+        let phys_h = truce_gui::to_physical_px(self.size.1, f64::from(self.last_applied_scale));
+        self.renderer = None;
+        self.renderer =
+            unsafe { EguiRenderer::from_window(window, phys_w, phys_h, device_lost.clone()) };
+        let egui_ctx = egui::Context::default();
+        egui_ctx.set_visuals(self.visuals.clone());
+        if let Some(font_data) = self.font {
+            crate::font::apply_font(&egui_ctx, font_data);
+        }
+        self.egui_ctx = egui_ctx;
+        self.device_lost = device_lost;
+    }
     /// Apply a pending resize: `NSView` frame (baseview's
     /// `Window::resize`) first, then the wgpu surface. Reverse
     /// order would leave the surface oversized vs. the layer that
@@ -419,59 +446,86 @@ impl<P: Params + ?Sized> EguiWindowHandler<P> {
 
 impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
     fn on_frame(&mut self, window: &mut Window) {
-        // Re-anchor each frame so the child NSView's origin tracks
-        // size changes against the host's plug-in pane - without it
-        // the canvas drifts off-anchor as it grows, clipping the
-        // layout's top off the visible area in CLAP hosts (REAPER).
-        #[cfg(target_os = "macos")]
-        {
-            use raw_window_handle::HasRawWindowHandle;
-            // Skip the whole frame while detached or occluded - a
-            // non-visible window can't present, so rendered drawables
-            // pile up unbounded until it returns to front.
-            if truce_gui::platform::should_skip_frame(window.raw_window_handle()) {
+        // Catch panics at the FFI boundary: baseview drives this from an
+        // `extern "system"` window proc (Windows) / AppKit callback
+        // (macOS), so an unwinding panic - e.g. wgpu validation tripping
+        // mid-resize - would cross a C frame and abort the host. Swallow
+        // and log instead, mirroring the builtin GPU editor's handler.
+        let frame_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            // Rebuild the renderer if the device was lost (flagged by the
+            // device-lost callback or a swallowed render panic). Skip the rest
+            // of this frame; the next tick renders against the fresh device.
+            if self.device_lost.load(Ordering::Acquire) {
+                self.recover_device(window);
+                log::warn!("egui device-loss recovery: rebuilt");
                 return;
             }
-            truce_gui::platform::reanchor_to_superview_top(window.raw_window_handle());
-        }
-        // Pick up host-driven `set_size` requests since the last frame.
-        // baseview's macOS `Window::resize` doesn't synthesise a
-        // `Resized` event, so the wgpu surface has to be reconfigured
-        // here even though the OS-level resize happens via
-        // `window.resize`. Linux/Win32 backends *do* fire `Resized`,
-        // but reapplying the surface config is idempotent.
-        //
-        // Skip the draw on a resize frame so AppKit's deferred
-        // relayout (scheduled by `view.setNeedsDisplay` inside
-        // `Window::resize`) can settle before we paint. Without the
-        // skip, the egui draw races against AppKit's layout pass and
-        // can land an NSException through Reaper's main-thread
-        // callback (Metal layer mid-resize). The next `on_frame` tick
-        // picks up the freshly-sized surface.
-        let pending = unpack_size(self.pending_size.load(Ordering::Relaxed));
-        if pending != self.size && pending.0 > 0 && pending.1 > 0 {
-            // Skip the draw on a resize frame so AppKit's deferred
-            // relayout (scheduled by `view.setNeedsDisplay` inside
-            // `Window::resize`) settles before we paint, and
-            // bracket the macOS-side work in an autoreleasepool so
-            // AppKit autoreleased objects from `setFrameSize` drain
-            // before the next call rather than accumulating into
-            // the host's main-thread pool.
-            let new_size = pending;
-            let scale = self.scale.get();
+            // Re-anchor each frame so the child NSView's origin tracks
+            // size changes against the host's plug-in pane - without it
+            // the canvas drifts off-anchor as it grows, clipping the
+            // layout's top off the visible area in CLAP hosts (REAPER).
             #[cfg(target_os = "macos")]
             {
-                let renderer = self.renderer.as_mut();
-                objc::rc::autoreleasepool(|| {
-                    Self::apply_resize(window, renderer, new_size, scale);
-                });
+                use raw_window_handle::HasRawWindowHandle;
+                // Skip the whole frame while detached or occluded - a
+                // non-visible window can't present, so rendered drawables
+                // pile up unbounded until it returns to front.
+                if truce_gui::platform::should_skip_frame(window.raw_window_handle()) {
+                    return;
+                }
+                truce_gui::platform::reanchor_to_superview_top(window.raw_window_handle());
             }
-            #[cfg(not(target_os = "macos"))]
-            Self::apply_resize(window, self.renderer.as_mut(), new_size, scale);
-            self.size = new_size;
-            return;
+            // Pick up host-driven `set_size` requests since the last frame.
+            // baseview's macOS `Window::resize` doesn't synthesise a
+            // `Resized` event, so the wgpu surface has to be reconfigured
+            // here even though the OS-level resize happens via
+            // `window.resize`. Linux/Win32 backends *do* fire `Resized`,
+            // but reapplying the surface config is idempotent.
+            //
+            // Skip the draw on a resize frame so AppKit's deferred
+            // relayout (scheduled by `view.setNeedsDisplay` inside
+            // `Window::resize`) can settle before we paint. Without the
+            // skip, the egui draw races against AppKit's layout pass and
+            // can land an NSException through Reaper's main-thread
+            // callback (Metal layer mid-resize). The next `on_frame` tick
+            // picks up the freshly-sized surface.
+            let pending = unpack_size(self.pending_size.load(Ordering::Relaxed));
+            if pending != self.size && pending.0 > 0 && pending.1 > 0 {
+                // Skip the draw on a resize frame so AppKit's deferred
+                // relayout (scheduled by `view.setNeedsDisplay` inside
+                // `Window::resize`) settles before we paint, and
+                // bracket the macOS-side work in an autoreleasepool so
+                // AppKit autoreleased objects from `setFrameSize` drain
+                // before the next call rather than accumulating into
+                // the host's main-thread pool.
+                let new_size = pending;
+                let scale = self.scale.get();
+                #[cfg(target_os = "macos")]
+                {
+                    let renderer = self.renderer.as_mut();
+                    objc::rc::autoreleasepool(|| {
+                        Self::apply_resize(window, renderer, new_size, scale);
+                    });
+                }
+                #[cfg(not(target_os = "macos"))]
+                Self::apply_resize(window, self.renderer.as_mut(), new_size, scale);
+                self.size = new_size;
+                return;
+            }
+            self.run_frame();
+        }));
+        if let Err(e) = frame_result {
+            let msg = e
+                .downcast_ref::<&str>()
+                .map(|s| (*s).to_string())
+                .or_else(|| e.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "unknown panic".to_string());
+            log::error!("egui on_frame panic swallowed: {msg}");
+            // A render panic almost always means the device is dead (e.g.
+            // egui-wgpu's staging-buffer alloc failing after a loss that
+            // didn't fire the callback). Arm recovery for the next frame.
+            self.device_lost.store(true, Ordering::Release);
         }
-        self.run_frame();
     }
 
     // `_window` is unused on macOS / Linux - only the Windows
@@ -481,157 +535,179 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
     // renaming.
     #[allow(clippy::too_many_lines, clippy::used_underscore_binding)]
     fn on_event(&mut self, _window: &mut Window, event: Event) -> EventStatus {
-        match event {
-            Event::Mouse(mouse) => {
-                use baseview::MouseEvent::{
-                    ButtonPressed, ButtonReleased, CursorEntered, CursorLeft, CursorMoved,
-                    WheelScrolled,
-                };
-                // The explicit `CursorEntered => Ignored` arm signals the
-                // event was considered and intentionally ignored (vs.
-                // `CursorLeft` which we forward as `PointerGone`); the
-                // wildcard absorbs future baseview MouseEvent variants.
-                #[allow(clippy::match_same_arms)]
-                match mouse {
-                    CursorMoved {
-                        position,
-                        modifiers,
-                    } => {
-                        self.modifiers = convert_kb_modifiers(modifiers);
-                        // baseview reports cursor in f64 logical points;
-                        // egui uses f32. Window dimensions never reach
-                        // 2^23 - the narrowing is invisible.
-                        #[allow(clippy::cast_possible_truncation)]
-                        let pos = egui::pos2(position.x as f32, position.y as f32);
-                        self.last_cursor_pos = pos;
-                        self.pending_events.push(egui::Event::PointerMoved(pos));
-                        EventStatus::Captured
+        // Catch panics at the FFI boundary, like `on_frame` above: a panic
+        // in egui input handling would otherwise unwind through baseview's
+        // `extern "system"` window proc and abort the host. On panic we
+        // report the event as `Ignored`.
+        let event_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            match event {
+                Event::Mouse(mouse) => {
+                    use baseview::MouseEvent::{
+                        ButtonPressed, ButtonReleased, CursorEntered, CursorLeft, CursorMoved,
+                        WheelScrolled,
+                    };
+                    // The explicit `CursorEntered => Ignored` arm signals the
+                    // event was considered and intentionally ignored (vs.
+                    // `CursorLeft` which we forward as `PointerGone`); the
+                    // wildcard absorbs future baseview MouseEvent variants.
+                    #[allow(clippy::match_same_arms)]
+                    match mouse {
+                        CursorMoved {
+                            position,
+                            modifiers,
+                        } => {
+                            self.modifiers = convert_kb_modifiers(modifiers);
+                            // baseview reports cursor in f64 logical points;
+                            // egui uses f32. Window dimensions never reach
+                            // 2^23 - the narrowing is invisible.
+                            #[allow(clippy::cast_possible_truncation)]
+                            let pos = egui::pos2(position.x as f32, position.y as f32);
+                            self.last_cursor_pos = pos;
+                            self.pending_events.push(egui::Event::PointerMoved(pos));
+                            EventStatus::Captured
+                        }
+                        ButtonPressed { button, modifiers } => {
+                            // On Windows, a WS_CHILD plugin window doesn't receive
+                            // WM_KEYDOWN/WM_CHAR until it has HWND focus. baseview
+                            // doesn't SetFocus on mouse-down, so we do it here -
+                            // otherwise text-edit widgets never see keystrokes
+                            // (the DAW keeps eating them for transport etc.).
+                            #[cfg(target_os = "windows")]
+                            {
+                                if !_window.has_focus() {
+                                    _window.focus();
+                                }
+                            }
+                            self.modifiers = convert_kb_modifiers(modifiers);
+                            if let Some(btn) = convert_mouse_button(button) {
+                                self.pending_events.push(egui::Event::PointerButton {
+                                    pos: self.last_cursor_pos,
+                                    button: btn,
+                                    pressed: true,
+                                    modifiers: self.modifiers,
+                                });
+                            }
+                            EventStatus::Captured
+                        }
+                        ButtonReleased { button, modifiers } => {
+                            self.modifiers = convert_kb_modifiers(modifiers);
+                            if let Some(btn) = convert_mouse_button(button) {
+                                self.pending_events.push(egui::Event::PointerButton {
+                                    pos: self.last_cursor_pos,
+                                    button: btn,
+                                    pressed: false,
+                                    modifiers: self.modifiers,
+                                });
+                            }
+                            EventStatus::Captured
+                        }
+                        WheelScrolled { delta, modifiers } => {
+                            self.modifiers = convert_kb_modifiers(modifiers);
+                            let (dx, dy) = match delta {
+                                baseview::ScrollDelta::Lines { x, y } => (x * 20.0, y * 20.0),
+                                baseview::ScrollDelta::Pixels { x, y } => (x, y),
+                            };
+                            self.pending_events.push(egui::Event::MouseWheel {
+                                unit: egui::MouseWheelUnit::Point,
+                                delta: egui::vec2(dx, dy),
+                                // baseview doesn't tell us touch / inertial phase;
+                                // `Move` is egui's "unknown" recommendation.
+                                phase: egui::TouchPhase::Move,
+                                modifiers: self.modifiers,
+                            });
+                            EventStatus::Captured
+                        }
+                        CursorEntered => EventStatus::Ignored,
+                        CursorLeft => {
+                            self.pending_events.push(egui::Event::PointerGone);
+                            EventStatus::Captured
+                        }
+                        _ => EventStatus::Ignored,
                     }
-                    ButtonPressed { button, modifiers } => {
-                        // On Windows, a WS_CHILD plugin window doesn't receive
-                        // WM_KEYDOWN/WM_CHAR until it has HWND focus. baseview
-                        // doesn't SetFocus on mouse-down, so we do it here -
-                        // otherwise text-edit widgets never see keystrokes
-                        // (the DAW keeps eating them for transport etc.).
-                        #[cfg(target_os = "windows")]
-                        {
-                            if !_window.has_focus() {
-                                _window.focus();
+                }
+                Event::Keyboard(kb) => {
+                    use keyboard_types::KeyState;
+                    self.modifiers = convert_kb_modifiers(kb.modifiers);
+
+                    // Text input. Suppress Text events when Ctrl/Cmd is
+                    // held - otherwise Ctrl+A/Ctrl+C/etc. would also insert
+                    // the character into focused text fields, which egui's
+                    // shortcut handler reads through `command_pressed()`.
+                    let modifier_held = self.modifiers.command || self.modifiers.mac_cmd;
+                    if kb.state == KeyState::Down
+                        && !modifier_held
+                        && let keyboard_types::Key::Character(ref ch) = kb.key
+                    {
+                        for c in ch.chars() {
+                            if !c.is_control() {
+                                self.pending_events.push(egui::Event::Text(c.to_string()));
                             }
                         }
-                        self.modifiers = convert_kb_modifiers(modifiers);
-                        if let Some(btn) = convert_mouse_button(button) {
-                            self.pending_events.push(egui::Event::PointerButton {
-                                pos: self.last_cursor_pos,
-                                button: btn,
-                                pressed: true,
-                                modifiers: self.modifiers,
-                            });
-                        }
-                        EventStatus::Captured
                     }
-                    ButtonReleased { button, modifiers } => {
-                        self.modifiers = convert_kb_modifiers(modifiers);
-                        if let Some(btn) = convert_mouse_button(button) {
-                            self.pending_events.push(egui::Event::PointerButton {
-                                pos: self.last_cursor_pos,
-                                button: btn,
-                                pressed: false,
-                                modifiers: self.modifiers,
-                            });
-                        }
-                        EventStatus::Captured
-                    }
-                    WheelScrolled { delta, modifiers } => {
-                        self.modifiers = convert_kb_modifiers(modifiers);
-                        let (dx, dy) = match delta {
-                            baseview::ScrollDelta::Lines { x, y } => (x * 20.0, y * 20.0),
-                            baseview::ScrollDelta::Pixels { x, y } => (x, y),
-                        };
-                        self.pending_events.push(egui::Event::MouseWheel {
-                            unit: egui::MouseWheelUnit::Point,
-                            delta: egui::vec2(dx, dy),
-                            // baseview doesn't tell us touch / inertial phase;
-                            // `Move` is egui's "unknown" recommendation.
-                            phase: egui::TouchPhase::Move,
+
+                    // Key event
+                    if let Some(key) = convert_key(&kb.key) {
+                        self.pending_events.push(egui::Event::Key {
+                            key,
+                            physical_key: None,
+                            pressed: kb.state == KeyState::Down,
+                            repeat: kb.repeat,
                             modifiers: self.modifiers,
                         });
-                        EventStatus::Captured
                     }
-                    CursorEntered => EventStatus::Ignored,
-                    CursorLeft => {
-                        self.pending_events.push(egui::Event::PointerGone);
-                        EventStatus::Captured
+
+                    EventStatus::Captured
+                }
+                Event::Window(win) => {
+                    if let baseview::WindowEvent::Resized(info) = win {
+                        let pw = info.physical_size().width;
+                        let ph = info.physical_size().height;
+                        // Display scale never exceeds 4.0 in practice.
+                        #[allow(clippy::cast_possible_truncation)]
+                        let scale = info.scale() as f32;
+                        truce_gui::platform::note_linux_scale_factor(info.scale());
+                        // Store logical size - egui screen_rect uses logical
+                        // points. Round so a physical 800px@2× reports as 400
+                        // logical, not 399 (truncating cast). Window
+                        // dimensions stay well below u32::MAX.
+                        #[allow(
+                            clippy::cast_possible_truncation,
+                            clippy::cast_sign_loss,
+                            clippy::cast_precision_loss
+                        )]
+                        let logical_size = (
+                            (pw as f32 / scale).round() as u32,
+                            (ph as f32 / scale).round() as u32,
+                        );
+                        // Write through to the shared scale so `on_frame` /
+                        // `run_frame` convert with the OS-reported DPI.
+                        self.scale.set(info.scale());
+                        // Defer the surface reconfigure to `on_frame` (via the
+                        // same `pending_size` cell `set_size` uses) instead of
+                        // calling `renderer.resize()` inline here. A fast
+                        // host-driven drag fires `Resized` far quicker than
+                        // vblank - on Windows the LV2 parent-HWND subclass turns
+                        // REAPER's `WM_SIZE` storm into exactly that - and
+                        // reconfiguring the wgpu swapchain on every event backs
+                        // up the present queue until the GPU's timeout-detection
+                        // (TDR) fires and hangs the host. `on_frame` coalesces
+                        // the pending size to one reconfigure per frame.
+                        self.pending_size
+                            .store(pack_size(logical_size), Ordering::Relaxed);
                     }
-                    _ => EventStatus::Ignored,
+                    EventStatus::Ignored
                 }
             }
-            Event::Keyboard(kb) => {
-                use keyboard_types::KeyState;
-                self.modifiers = convert_kb_modifiers(kb.modifiers);
-
-                // Text input. Suppress Text events when Ctrl/Cmd is
-                // held - otherwise Ctrl+A/Ctrl+C/etc. would also insert
-                // the character into focused text fields, which egui's
-                // shortcut handler reads through `command_pressed()`.
-                let modifier_held = self.modifiers.command || self.modifiers.mac_cmd;
-                if kb.state == KeyState::Down
-                    && !modifier_held
-                    && let keyboard_types::Key::Character(ref ch) = kb.key
-                {
-                    for c in ch.chars() {
-                        if !c.is_control() {
-                            self.pending_events.push(egui::Event::Text(c.to_string()));
-                        }
-                    }
-                }
-
-                // Key event
-                if let Some(key) = convert_key(&kb.key) {
-                    self.pending_events.push(egui::Event::Key {
-                        key,
-                        physical_key: None,
-                        pressed: kb.state == KeyState::Down,
-                        repeat: kb.repeat,
-                        modifiers: self.modifiers,
-                    });
-                }
-
-                EventStatus::Captured
-            }
-            Event::Window(win) => {
-                if let baseview::WindowEvent::Resized(info) = win {
-                    let pw = info.physical_size().width;
-                    let ph = info.physical_size().height;
-                    // Display scale never exceeds 4.0 in practice.
-                    #[allow(clippy::cast_possible_truncation)]
-                    let scale = info.scale() as f32;
-                    truce_gui::platform::note_linux_scale_factor(info.scale());
-                    // Store logical size - egui screen_rect uses logical
-                    // points. Round so a physical 800px@2× reports as 400
-                    // logical, not 399 (truncating cast). Window
-                    // dimensions stay well below u32::MAX.
-                    #[allow(
-                        clippy::cast_possible_truncation,
-                        clippy::cast_sign_loss,
-                        clippy::cast_precision_loss
-                    )]
-                    let logical_size = (
-                        (pw as f32 / scale).round() as u32,
-                        (ph as f32 / scale).round() as u32,
-                    );
-                    self.size = logical_size;
-                    // Write through to the shared scale so the editor's
-                    // next `set_scale_factor` and any sibling reader
-                    // see the OS-reported value, and update
-                    // last_applied so run_frame's diff-check stays a
-                    // no-op (we already resized inline below).
-                    self.scale.set(info.scale());
-                    self.last_applied_scale = scale;
-                    if let Some(renderer) = self.renderer.as_mut() {
-                        renderer.resize(pw, ph);
-                    }
-                }
+        }));
+        match event_result {
+            Ok(status) => status,
+            Err(e) => {
+                let msg = e
+                    .downcast_ref::<&str>()
+                    .map(|s| (*s).to_string())
+                    .or_else(|| e.downcast_ref::<String>().cloned())
+                    .unwrap_or_else(|| "unknown panic".to_string());
+                log::error!("egui on_event panic swallowed: {msg}");
                 EventStatus::Ignored
             }
         }
@@ -809,6 +885,15 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
         // requests.
         self.pending_size.store(0, Ordering::Relaxed);
         let pending_size = self.pending_size.clone();
+        // Shared device-loss flag: the renderer's device-lost callback raises
+        // it, `on_frame` polls it and rebuilds. Cloned into the renderer; the
+        // handler keeps a copy and re-arms a fresh one on each rebuild.
+        let device_lost = Arc::new(AtomicBool::new(false));
+        let device_lost_for_renderer = device_lost.clone();
+        // `visuals` / `font` are kept on the handler so a device-loss rebuild
+        // can recreate the `egui::Context` (which forces the font-atlas texture
+        // to be re-uploaded to the fresh renderer).
+        let handler_visuals = visuals.clone();
 
         let window = baseview::Window::open_parented(
             &parent_wrapper,
@@ -819,7 +904,9 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
                 let scale = system_scale as f32;
                 let phys_w = truce_gui::to_physical_px(size.0, system_scale);
                 let phys_h = truce_gui::to_physical_px(size.1, system_scale);
-                let renderer = unsafe { EguiRenderer::from_window(window, phys_w, phys_h) };
+                let renderer = unsafe {
+                    EguiRenderer::from_window(window, phys_w, phys_h, device_lost_for_renderer)
+                };
 
                 if let Some(font_data) = font {
                     crate::font::apply_font(&egui_ctx, font_data);
@@ -844,6 +931,9 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
                     scale: scale_handle,
                     last_applied_scale: scale,
                     last_cursor_pos: egui::Pos2::ZERO,
+                    device_lost,
+                    font,
+                    visuals: handler_visuals,
                 }
             },
         );

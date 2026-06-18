@@ -44,15 +44,14 @@ where
     let w = truce_gui::to_physical_px(size.0, scale);
     let h = truce_gui::to_physical_px(size.1, scale);
 
-    // Headless wgpu setup. `PRIMARY` picks the platform-default backend
-    // (Metal on macOS, DX12 on Windows, Vulkan on Linux); per-backend
-    // rasterization differences are handled by the reference-platform
-    // gate in callers. `compatible_surface: None` is unavoidable
-    // headless - on multi-GPU hosts wgpu may select a different
-    // physical adapter than the editor's live path, so bake baselines
-    // on the host you gate from.
+    // Headless wgpu setup, matching the live editor's backend per platform
+    // (DX12 on Windows, Metal on macOS, Vulkan on Linux); per-backend
+    // rasterization differences are handled by the reference-platform gate in
+    // callers. `compatible_surface: None` is unavoidable headless - on
+    // multi-GPU hosts wgpu may select a different physical adapter than the
+    // editor's live path, so bake baselines on the host you gate from.
     let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::PRIMARY,
+        backends: crate::editor::editor_backends(),
         ..Default::default()
     });
 

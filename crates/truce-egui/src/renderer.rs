@@ -28,7 +28,12 @@ impl EguiRenderer {
     /// The window must remain valid for the lifetime of the renderer.
     #[cfg(not(target_os = "ios"))]
     #[must_use]
-    pub unsafe fn from_window(window: &baseview::Window, width: u32, height: u32) -> Option<Self> {
+    pub unsafe fn from_window(
+        window: &baseview::Window,
+        width: u32,
+        height: u32,
+        device_lost: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> Option<Self> {
         // Zero-sized configure panics inside wgpu. Some hosts (notably
         // VST3 in iZotope's RX shell) hand the editor a zero-extent
         // parent during a transient measurement step before the real
@@ -67,6 +72,20 @@ impl EguiRenderer {
             trace: wgpu::Trace::Off,
         }))
         .ok()?;
+        // Log the first device-level error (validation / OOM). egui-wgpu's
+        // `update_buffers` panics downstream once the device is poisoned, which
+        // only shows the symptom; this names the root cause.
+        device.on_uncaptured_error(std::sync::Arc::new(|error| {
+            log::error!("egui wgpu uncaptured error: {error}");
+        }));
+        // Device loss (GPU reset) bypasses `on_uncaptured_error`; wgpu reports
+        // it only via this callback. Raise the shared flag so the next
+        // `on_frame` rebuilds the pipeline instead of rendering against a dead
+        // device.
+        device.set_device_lost_callback(move |reason, msg| {
+            device_lost.store(true, std::sync::atomic::Ordering::Release);
+            log::warn!("egui wgpu device lost: {reason:?} - {msg}");
+        });
         let max_texture_dim = adapter_limits.max_texture_dimension_2d;
 
         let surface_caps = surface.get_capabilities(&adapter);
@@ -161,6 +180,9 @@ impl EguiRenderer {
                     trace: wgpu::Trace::Off,
                 }))
                 .ok()?;
+            device.on_uncaptured_error(std::sync::Arc::new(|error| {
+                log::error!("egui wgpu uncaptured error: {error}");
+            }));
 
             let surface_caps = surface.get_capabilities(&adapter);
             let surface_format = surface_caps

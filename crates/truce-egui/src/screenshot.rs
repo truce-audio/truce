@@ -77,9 +77,9 @@ pub(crate) fn render_with_state<P: Params + ?Sized>(
     // pick a different physical adapter than the editor's live path,
     // so the same caveat applies: bake baselines on the host you gate
     // from.
-    let mut desc = wgpu::InstanceDescriptor::new_without_display_handle();
-    desc.backends = wgpu::Backends::PRIMARY;
-    let instance = wgpu::Instance::new(desc);
+    // DX12 on Windows (Vulkan swapchain driver bug) / Metal on macOS /
+    // PRIMARY on Linux, matching the live editor path.
+    let instance = wgpu::Instance::new(truce_gui::platform::editor_instance_descriptor());
 
     let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
         power_preference: wgpu::PowerPreference::HighPerformance,
