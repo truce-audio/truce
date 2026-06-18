@@ -36,12 +36,14 @@
 #   - Other OSes' uploads are untouched.
 #
 # Sub-workspaces:
-#   The vizia / slint / gpu-examples sub-workspaces have their own
-#   `truce.toml` + `target/dist/` (see scripts/recursive-cargo-truce.sh).
-#   `cargo truce package` run inside one writes artifacts there, not to
-#   the root `target/dist/`. This script scans the root plus every
-#   sub-workspace dist, so a `recursive-cargo-truce.sh package` run
-#   uploads all of them in one pass.
+#   The slint / vizia / gpu-examples sub-workspaces have their own
+#   `truce.toml` (see scripts/recursive-cargo-truce.sh); `cargo truce
+#   package` run inside one writes artifacts to that workspace's own
+#   dist dir, not the root's. This script asks cargo for each
+#   workspace's real target dir (so `CARGO_TARGET_DIR` and a
+#   `.cargo/config.toml` `target-dir` are honored, not assumed to be
+#   `<ws>/target`) and scans every one, so a single
+#   `recursive-cargo-truce.sh package` run uploads all of them.
 #
 # Pre-reqs:
 #   - The GitHub release `vX.Y.Z` already exists (run
@@ -90,17 +92,42 @@ TAG="v$WS_VERSION"
 # Verify dist contents + release existence
 # ----------------------------------------------------------------------------
 
-# Dist directories to scan: the root workspace plus each self-contained
-# sub-workspace (vizia / slint / gpu-examples), which package into their
-# own `target/dist/`. Keep in sync with scripts/recursive-cargo-truce.sh.
-# A dir that doesn't exist (sub-workspace not packaged on this run /
-# platform) contributes nothing under `nullglob` rather than erroring.
-DIST_DIRS=(
-    "target/dist"
-    "crates/truce-slint/target/dist"
-    "crates/truce-vizia/target/dist"
-    "crates/truce-gpu-examples/target/dist"
+# Resolve a workspace's actual dist dir. `cargo truce package` writes to
+# cargo's real target directory, which honors `CARGO_TARGET_DIR` and a
+# `.cargo/config.toml` `target-dir` and is NOT always `<ws>/target`, so
+# ask cargo rather than assume. `python3` parses the JSON (it unescapes
+# Windows backslash paths correctly); `release.sh` already requires it.
+# Falls back to `<ws>/target/dist` when cargo can't be queried.
+workspace_dist_dir() {
+    local ws="$1" td
+    td="$("${CARGO:-cargo}" metadata --no-deps --format-version=1 \
+            --manifest-path "$ws/Cargo.toml" 2>/dev/null \
+          | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])' 2>/dev/null)" || true
+    if [[ -n "$td" ]]; then
+        # python prints native separators; normalise backslashes so the
+        # path globs cleanly under Git Bash / MSYS on Windows.
+        printf '%s/dist' "${td//\\//}"
+    else
+        printf '%s/target/dist' "$ws"
+    fi
+}
+
+# Workspace roots to scan: the root plus each self-contained sub-
+# workspace (slint / vizia / gpu-examples), each with its own
+# `truce.toml`. Keep in sync with scripts/recursive-cargo-truce.sh.
+# A dist dir that doesn't exist (sub-workspace not packaged on this run
+# / platform) contributes nothing under `nullglob` rather than erroring.
+WORKSPACES=(
+    "."
+    "crates/truce-slint"
+    "crates/truce-vizia"
+    "crates/truce-gpu-examples"
 )
+
+DIST_DIRS=()
+for ws in "${WORKSPACES[@]}"; do
+    DIST_DIRS+=("$(workspace_dist_dir "$ws")")
+done
 
 shopt -s nullglob
 dist_files=()

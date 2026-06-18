@@ -2,6 +2,10 @@
 
 Notable changes per release.
 
+## 0.59.0
+
+- **Honor cargo's real target directory.** `cargo truce` now reads cargo's `target_directory` via `cargo metadata` instead of assuming `<plugin>/target`, fixing installs when the plugin crate is a member of a larger workspace (artifacts land in the workspace-root `target/`). ([#124](https://github.com/truce-audio/truce/issues/124))
+
 ## 0.58.4
 
 - **Aspect-ratio editor resize fixes.** Aspect-locked editors stay on-ratio inside the host window without clipping or juddering across CLAP, VST3, AU, and LV2; corner drags track the ratio smoothly and LV2 honors the aspect ratio and `max_size`.

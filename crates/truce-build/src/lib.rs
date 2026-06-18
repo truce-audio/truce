@@ -195,18 +195,28 @@ fn default_presets_dir() -> String {
 
 /// Resolve cargo's effective target directory for a given workspace root.
 ///
-/// Honoured in priority order:
-/// 1. `CARGO_TARGET_DIR` env var (cargo's documented override; absolute
-///    paths used as-is, relative paths anchored at `root`).
-/// 2. `[build].target-dir` in `<root>/.cargo/config.toml` (the
-///    per-workspace equivalent of the env var; same anchoring rule).
-/// 3. Fall back to `<root>/target`.
+/// Asks cargo via `cargo metadata`, which is the only source that knows
+/// whether `root` is a standalone crate or a member of a larger
+/// workspace (whose target dir sits at the workspace root, not under
+/// `root`). It already folds in `CARGO_TARGET_DIR` and every
+/// `.cargo/config.toml` merged from `root` up to the home dir, so its
+/// answer is authoritative.
 ///
-/// Used by runtime callers (cargo-truce, truce-test) to anchor
-/// artifact paths against cargo's actual target dir instead of a
-/// hardcoded `target/`.
+/// When cargo can't be run (no cargo on `PATH`, offline tooling), falls
+/// back to the overrides we can read ourselves and then `<root>/target`:
+/// 1. `CARGO_TARGET_DIR` env var (absolute used as-is, relative anchored
+///    at `root`).
+/// 2. `[build].target-dir` in `<root>/.cargo/config.toml` (same rule).
+/// 3. `<root>/target`.
+///
+/// Used by runtime callers (cargo-truce, truce-test) to anchor artifact
+/// paths against cargo's actual target dir instead of a hardcoded
+/// `target/`.
 #[must_use]
 pub fn target_dir(root: &Path) -> PathBuf {
+    if let Some(dir) = cargo_metadata_target_dir(root) {
+        return dir;
+    }
     if let Ok(d) = std::env::var("CARGO_TARGET_DIR")
         && !d.is_empty()
     {
@@ -221,6 +231,60 @@ pub fn target_dir(root: &Path) -> PathBuf {
         };
     }
     root.join("target")
+}
+
+/// Cargo's authoritative `target_directory` for the workspace `root`
+/// belongs to. `None` when cargo can't be invoked or the manifest is
+/// missing, so the caller can fall back to its own heuristics.
+fn cargo_metadata_target_dir(root: &Path) -> Option<PathBuf> {
+    let manifest = root.join("Cargo.toml");
+    if !manifest.exists() {
+        return None;
+    }
+    // Use the `CARGO` cargo exports for subcommands so we hit the same
+    // toolchain it chose (rustup proxies, the Windows toolchain under
+    // WSL). Falls back to bare `cargo` for direct invocations.
+    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+    let out = std::process::Command::new(cargo)
+        .args([
+            "metadata",
+            "--no-deps",
+            "--format-version=1",
+            "--manifest-path",
+        ])
+        .arg(&manifest)
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    extract_json_string(&text, "target_directory").map(PathBuf::from)
+}
+
+/// Pull a top-level JSON string field out of `cargo metadata` output
+/// without pulling in a JSON dependency (the workspace deliberately
+/// avoids one in this tier). `target_directory` is emitted once at the
+/// top level, so the first match is the right one. Unescapes the string
+/// body so Windows paths - whose backslashes arrive doubled as `\\` -
+/// round-trip correctly.
+fn extract_json_string(json: &str, field: &str) -> Option<String> {
+    let needle = format!("\"{field}\":\"");
+    let start = json.find(&needle)? + needle.len();
+    let mut out = String::new();
+    let mut chars = json[start..].chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '"' => return Some(out),
+            '\\' => match chars.next()? {
+                'n' => out.push('\n'),
+                't' => out.push('\t'),
+                escaped => out.push(escaped),
+            },
+            _ => out.push(c),
+        }
+    }
+    None
 }
 
 /// Look for `[build].target-dir = "..."` in `<root>/.cargo/config.toml`.
@@ -286,4 +350,36 @@ pub fn load_config(path: &Path) -> Result<Config, String> {
     let content = std::fs::read_to_string(path)
         .map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
     toml::from_str(&content).map_err(|e| format!("Failed to parse {}: {e}", path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::extract_json_string;
+
+    #[test]
+    fn extracts_unix_target_directory() {
+        let json = r#"{"packages":[],"target_directory":"/work/ws/target","version":1}"#;
+        assert_eq!(
+            extract_json_string(json, "target_directory").as_deref(),
+            Some("/work/ws/target")
+        );
+    }
+
+    #[test]
+    fn unescapes_windows_backslashes() {
+        // cargo emits Windows paths with doubled backslashes.
+        let json = r#"{"target_directory":"C:\\work\\ws\\target","version":1}"#;
+        assert_eq!(
+            extract_json_string(json, "target_directory").as_deref(),
+            Some(r"C:\work\ws\target")
+        );
+    }
+
+    #[test]
+    fn missing_field_is_none() {
+        assert_eq!(
+            extract_json_string(r#"{"version":1}"#, "target_directory"),
+            None
+        );
+    }
 }
