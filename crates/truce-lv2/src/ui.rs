@@ -375,16 +375,17 @@ pub unsafe fn instantiate_ui<P: PluginExport>(
         #[cfg(target_os = "windows")]
         fit_win32_parent_to_child(parent_ptr);
 
-        // X11: REAPER ignores `ui:resize` at instantiate here too and
-        // (unlike Windows) stretches the embedded child to its pane,
-        // which bilinear-upscales a fixed-size editor's surface (blurry
-        // GUI). For a non-resizable editor, pin the host's parent and
-        // baseview's child back to the editor's natural size so it
-        // renders 1:1. Resizable editors are left to grow with the host.
+        // X11: paint the host's parent window black (so any area our
+        // editor child doesn't cover - a resizable editor smaller than
+        // the host's pane, or regions exposed when the FX window is
+        // resized - reads as black, not uninitialised server memory),
+        // and for a non-resizable editor pin the parent + child to the
+        // editor's natural size. REAPER ignores `ui:resize` here and
+        // (unlike Windows) drives the embedded child directly, so
+        // without the pin it would bilinear-upscale a fixed editor's
+        // surface (blurry GUI). Resizable editors keep host-driven size.
         #[cfg(all(unix, not(target_os = "macos")))]
-        if !editor.can_resize() {
-            fit_x11_parent_to_child(parent_ptr, pref_w, pref_h);
-        }
+        prepare_x11_parent_window(parent_ptr, pref_w, pref_h, !editor.can_resize());
 
         // Set widget out-param. Strict X11UI / CocoaUI hosts want the
         // child window / view we created; pragmatic ones (Ardour,
@@ -815,21 +816,31 @@ unsafe fn fit_win32_parent_to_child(parent: *mut c_void) {
     }
 }
 
-/// X11 analog of [`fit_win32_parent_to_child`] for hosts that ignore
-/// `ui:resize` at instantiate and stretch the embedded child to their
-/// pane (REAPER). Pins the host's parent window *and* baseview's child
-/// window to `(w, h)` - the editor's natural size - so a fixed-size
-/// editor's surface renders 1:1 instead of being bilinear-upscaled to
-/// the host's pane (the blurry GUI). Only called for non-resizable
-/// editors; resizable ones keep host-driven growth.
+/// Prepare the host's parent window for the embedded editor on X11.
+///
+/// Two fix-ups for hosts that drive the embedded window directly and
+/// ignore `ui:resize` (REAPER):
+///
+/// 1. **Black background.** Give the parent an opaque-black background
+///    pixel so any region the editor child doesn't cover - a resizable
+///    editor smaller than the host's pane, or areas newly exposed when
+///    the user resizes the FX window - reads as black instead of
+///    uninitialised server memory (the "unpainted outer window" the
+///    standalone fixes the same way). It's a persistent attribute, so
+///    the server keeps filling exposed regions on every later resize.
+/// 2. **Fit (non-resizable only).** When `fit`, pin the parent *and*
+///    baseview's child to the editor's natural `(w, h)` so the host
+///    can't stretch a fixed editor's surface (the blurry GUI). REAPER
+///    drives the child directly (unlike Windows), so the pin is the
+///    only lever. Resizable editors keep host-driven size.
 ///
 /// The LV2 UI is handed only an `xcb_window_t` (no display handle), so
-/// we open our own short-lived X connection - cross-client window
-/// resizes are valid X11. No-op if libX11 can't be dlopened or the
-/// window id looks invalid.
+/// we open our own short-lived X connection - cross-client window ops
+/// are valid X11. No-op if libX11 can't be dlopened or the window id
+/// looks invalid.
 #[cfg(all(unix, not(target_os = "macos")))]
-fn fit_x11_parent_to_child(parent: *mut c_void, w: u32, h: u32) {
-    if parent.is_null() || w == 0 || h == 0 {
+fn prepare_x11_parent_window(parent: *mut c_void, w: u32, h: u32, fit: bool) {
+    if parent.is_null() {
         return;
     }
     let Ok(lib) = xlib::Xlib::open() else {
@@ -847,14 +858,23 @@ fn fit_x11_parent_to_child(parent: *mut c_void, w: u32, h: u32) {
         if display.is_null() {
             return;
         }
-        let child = x11_first_child(&lib, display, parent_id);
-        (lib.XResizeWindow)(display, parent_id, w, h);
-        // baseview's editor window is the parent's (only) child; REAPER
-        // may have already stretched it, so pin it back too. Resizing
-        // it re-fires baseview's `Resized`, which reconfigures the wgpu
-        // surface to the natural size and re-renders crisply.
-        if let Some(c) = child {
-            (lib.XResizeWindow)(display, c, w, h);
+        // Opaque black: alpha 0xFF over RGB 0. The top byte is ignored
+        // on a 24-bit visual and makes a 32-bit ARGB visual opaque, so
+        // it reads as black on either. `XClearWindow` repaints now; the
+        // attribute makes the server fill future exposed regions too.
+        (lib.XSetWindowBackground)(display, parent_id, 0xFF00_0000);
+        (lib.XClearWindow)(display, parent_id);
+
+        if fit && w > 0 && h > 0 {
+            let child = x11_first_child(&lib, display, parent_id);
+            (lib.XResizeWindow)(display, parent_id, w, h);
+            // baseview's editor window is the parent's (only) child;
+            // REAPER may have already stretched it, so pin it back too.
+            // Resizing it re-fires baseview's `Resized`, which
+            // reconfigures the wgpu surface to natural and re-renders.
+            if let Some(c) = child {
+                (lib.XResizeWindow)(display, c, w, h);
+            }
         }
         (lib.XFlush)(display);
         (lib.XCloseDisplay)(display);
