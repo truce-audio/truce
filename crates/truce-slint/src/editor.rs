@@ -23,6 +23,31 @@ use truce_params::Params;
 use crate::blit::BlitPipeline;
 use crate::platform::{self, ParentWindow};
 
+/// Append a line to the resize diagnostic log (`truce-resize.log` in the
+/// OS temp dir). Diagnostics-only - failures are swallowed. Prefixed
+/// `[slint]` to sit alongside the `[lv2]` / `[gpu]` / `[egui]` / `[iced]`
+/// entries the other wrappers write to the same file. Remove once the
+/// resize bug is confirmed fixed.
+fn resize_log(msg: &str) {
+    use std::io::Write;
+    let path = std::env::temp_dir().join("truce-resize.log");
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        let _ = writeln!(f, "[slint] {msg}");
+    }
+}
+
+/// Extract a human-readable message from a `catch_unwind` panic payload.
+fn panic_message(e: &(dyn std::any::Any + Send)) -> String {
+    e.downcast_ref::<&str>()
+        .map(|s| (*s).to_string())
+        .or_else(|| e.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "unknown panic".to_string())
+}
+
 /// Per-frame sync closure: takes the current `PluginContext` and updates the
 /// Slint component's properties. Returned by the editor's `setup` callback.
 ///
@@ -269,15 +294,40 @@ enum SlintHandler<P: Params + ?Sized> {
 
 impl<P: Params + ?Sized + 'static> WindowHandler for SlintHandler<P> {
     fn on_frame(&mut self, window: &mut Window) {
+        // Catch panics at the FFI boundary: baseview drives this from an
+        // `extern "system"` window proc (Windows) / AppKit callback
+        // (macOS), so an unwinding panic - e.g. wgpu validation tripping
+        // mid-resize - would cross a C frame and abort the host. Swallow
+        // and log instead, mirroring the egui / iced / builtin GPU handlers.
         if let Self::Live(handler) = self {
-            handler.on_frame(window);
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                handler.on_frame(window);
+            }));
+            if let Err(e) = result {
+                resize_log(&format!(
+                    "slint on_frame panic swallowed: {}",
+                    panic_message(&e)
+                ));
+            }
         }
     }
 
     fn on_event(&mut self, window: &mut Window, event: Event) -> EventStatus {
-        match self {
+        // Catch panics at the FFI boundary, like `on_frame` above; report
+        // the event as `Ignored` on panic instead of crashing the host.
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match self {
             Self::Live(handler) => handler.on_event(window, event),
             Self::Dead => EventStatus::Ignored,
+        }));
+        match result {
+            Ok(status) => status,
+            Err(e) => {
+                resize_log(&format!(
+                    "slint on_event panic swallowed: {}",
+                    panic_message(&e)
+                ));
+                EventStatus::Ignored
+            }
         }
     }
 }
@@ -308,6 +358,11 @@ impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
         // inline so the next render lands at the new size.
         let pending = unpack_size(self.pending_size.swap(0, Ordering::Acquire));
         if pending.0 > 0 && pending.1 > 0 && pending != (self.width, self.height) {
+            resize_log(&format!(
+                "slint apply_resize (coalesced in on_frame): logical={pending:?} \
+                 scale={}",
+                self.last_applied_scale
+            ));
             let scale = f64::from(self.last_applied_scale);
             let phys_w = truce_gui::to_physical_px(pending.0, scale);
             let phys_h = truce_gui::to_physical_px(pending.1, scale);
@@ -521,36 +576,28 @@ impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
                         (f64::from(phys_w) / scale) as u32,
                         (f64::from(phys_h) / scale) as u32,
                     );
-                    self.width = lw;
-                    self.height = lh;
-                    // Mirror the OS-reported scale into the shared
-                    // cell (so a follow-up host `set_scale_factor`
-                    // reads a fresh baseline) and bump `last_applied`
-                    // so `on_frame`'s diff-check stays a no-op - we
-                    // apply the reconfigure inline below.
+                    // Mirror the OS-reported scale into the shared cell so a
+                    // follow-up host `set_scale_factor` reads a fresh
+                    // baseline. Leave `last_applied_scale` alone so
+                    // `on_frame`'s scale path applies the change there (it
+                    // dispatches `ScaleFactorChanged` + reconfigures).
                     self.scale.set(scale);
-                    #[allow(clippy::cast_possible_truncation)]
-                    let scale_f32 = scale as f32;
-                    self.last_applied_scale = scale_f32;
-
-                    self.slint_window
-                        .window()
-                        .dispatch_event(WindowEvent::ScaleFactorChanged {
-                            scale_factor: scale_f32,
-                        });
-                    self.slint_window
-                        .set_size(slint::WindowSize::Physical(PhysicalSize::new(
-                            phys_w, phys_h,
-                        )));
-
-                    self.surface_config.width = phys_w;
-                    self.surface_config.height = phys_h;
-                    self.surface.configure(&self.device, &self.surface_config);
-                    self.last_phys_w = phys_w;
-                    self.last_phys_h = phys_h;
-
-                    if let Some(ref mut blit) = self.blit {
-                        blit.resize(&self.device, phys_w, phys_h);
+                    // Defer the surface reconfigure to `on_frame` via the
+                    // shared `pending_size` cell instead of reconfiguring
+                    // inline here. A fast host-driven drag (REAPER's Win32
+                    // `WM_SIZE` storm via the LV2 parent subclass) fires
+                    // `Resized` far quicker than vblank; reconfiguring the
+                    // wgpu swapchain on every event backs up the present
+                    // queue until the GPU's timeout-detection (TDR) crashes
+                    // the host. `on_frame` coalesces the pending size to one
+                    // reconfigure per frame.
+                    if lw > 0 && lh > 0 {
+                        resize_log(&format!(
+                            "slint Resized: phys=({phys_w}, {phys_h}) scale={scale} \
+                             -> deferring logical=({lw}, {lh})"
+                        ));
+                        self.pending_size
+                            .store(pack_size((lw, lh)), Ordering::Release);
                     }
                 }
                 EventStatus::Ignored
@@ -648,6 +695,18 @@ impl<P: Params + 'static> Editor for SlintEditor<P> {
                             return SlintHandler::Dead;
                         }
                     };
+                // Capture the first device-level error (validation / OOM /
+                // lost) to the resize log. A GPU TDR during a resize drag
+                // surfaces downstream as a generic panic; this names the
+                // actual wgpu error that precedes it.
+                device.on_uncaptured_error(std::sync::Arc::new(|error| {
+                    resize_log(&format!("wgpu uncaptured error: {error}"));
+                }));
+                // Device-lost (GPU TDR / driver reset) bypasses the
+                // uncaptured-error handler; wgpu surfaces it only here.
+                device.set_device_lost_callback(|reason, msg| {
+                    resize_log(&format!("wgpu DEVICE LOST: {reason:?} - {msg}"));
+                });
 
                 let caps = surface.get_capabilities(&adapter);
                 let format = caps

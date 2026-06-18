@@ -16,6 +16,22 @@ use crate::platform::ParentWindow;
 use crate::renderer::EguiRenderer;
 use truce_gui::EditorScale;
 
+/// Append a line to the resize diagnostic log (`truce-resize.log` in the
+/// OS temp dir). Diagnostics-only - failures are swallowed. Prefixed
+/// `[egui]` to sit alongside the `[lv2]` / `[gpu]` entries the wrappers
+/// write to the same file. Remove once the resize bug is confirmed fixed.
+pub(crate) fn resize_log(msg: &str) {
+    use std::io::Write;
+    let path = std::env::temp_dir().join("truce-resize.log");
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        let _ = writeln!(f, "[egui] {msg}");
+    }
+}
+
 /// Trait for stateful egui UI implementations.
 ///
 /// Implement this for complex UIs that need internal state. For simple
@@ -347,6 +363,9 @@ impl<P: Params + ?Sized> EguiWindowHandler<P> {
         new_size: (u32, u32),
         scale: f64,
     ) {
+        resize_log(&format!(
+            "apply_resize (coalesced in on_frame): logical={new_size:?} scale={scale}"
+        ));
         window.resize(baseview::Size::new(
             f64::from(new_size.0),
             f64::from(new_size.1),
@@ -419,6 +438,12 @@ impl<P: Params + ?Sized> EguiWindowHandler<P> {
 
 impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
     fn on_frame(&mut self, window: &mut Window) {
+        // Catch panics at the FFI boundary: baseview drives this from an
+        // `extern "system"` window proc (Windows) / AppKit callback
+        // (macOS), so an unwinding panic - e.g. wgpu validation tripping
+        // mid-resize - would cross a C frame and abort the host. Swallow
+        // and log instead, mirroring the builtin GPU editor's handler.
+        let frame_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         // Re-anchor each frame so the child NSView's origin tracks
         // size changes against the host's plug-in pane - without it
         // the canvas drifts off-anchor as it grows, clipping the
@@ -472,6 +497,15 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
             return;
         }
         self.run_frame();
+        }));
+        if let Err(e) = frame_result {
+            let msg = e
+                .downcast_ref::<&str>()
+                .map(|s| (*s).to_string())
+                .or_else(|| e.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "unknown panic".to_string());
+            resize_log(&format!("egui on_frame panic swallowed: {msg}"));
+        }
     }
 
     // `_window` is unused on macOS / Linux - only the Windows
@@ -481,6 +515,11 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
     // renaming.
     #[allow(clippy::too_many_lines, clippy::used_underscore_binding)]
     fn on_event(&mut self, _window: &mut Window, event: Event) -> EventStatus {
+        // Catch panics at the FFI boundary, like `on_frame` above: a panic
+        // in egui input handling would otherwise unwind through baseview's
+        // `extern "system"` window proc and abort the host. On panic we
+        // report the event as `Ignored`.
+        let event_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         match event {
             Event::Mouse(mouse) => {
                 use baseview::MouseEvent::{
@@ -620,18 +659,35 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
                         (pw as f32 / scale).round() as u32,
                         (ph as f32 / scale).round() as u32,
                     );
-                    self.size = logical_size;
-                    // Write through to the shared scale so the editor's
-                    // next `set_scale_factor` and any sibling reader
-                    // see the OS-reported value, and update
-                    // last_applied so run_frame's diff-check stays a
-                    // no-op (we already resized inline below).
+                    // Write through to the shared scale so `on_frame` /
+                    // `run_frame` convert with the OS-reported DPI.
                     self.scale.set(info.scale());
-                    self.last_applied_scale = scale;
-                    if let Some(renderer) = self.renderer.as_mut() {
-                        renderer.resize(pw, ph);
-                    }
+                    // Defer the surface reconfigure to `on_frame` (via the
+                    // same `pending_size` cell `set_size` uses) instead of
+                    // calling `renderer.resize()` inline here. A fast
+                    // host-driven drag fires `Resized` far quicker than
+                    // vblank - on Windows the LV2 parent-HWND subclass turns
+                    // REAPER's `WM_SIZE` storm into exactly that - and
+                    // reconfiguring the wgpu swapchain on every event backs
+                    // up the present queue until the GPU's timeout-detection
+                    // (TDR) fires and hangs the host. `on_frame` coalesces
+                    // the pending size to one reconfigure per frame.
+                    self.pending_size
+                        .store(pack_size(logical_size), Ordering::Relaxed);
                 }
+                EventStatus::Ignored
+            }
+        }
+        }));
+        match event_result {
+            Ok(status) => status,
+            Err(e) => {
+                let msg = e
+                    .downcast_ref::<&str>()
+                    .map(|s| (*s).to_string())
+                    .or_else(|| e.downcast_ref::<String>().cloned())
+                    .unwrap_or_else(|| "unknown panic".to_string());
+                resize_log(&format!("egui on_event panic swallowed: {msg}"));
                 EventStatus::Ignored
             }
         }

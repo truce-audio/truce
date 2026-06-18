@@ -67,6 +67,20 @@ impl EguiRenderer {
             trace: wgpu::Trace::Off,
         }))
         .ok()?;
+        // Capture the *first* device-level error (validation / OOM / lost)
+        // to the resize log. egui-wgpu's `update_buffers` panics downstream
+        // ("Failed to create staging buffer") once the device is poisoned,
+        // which only shows the symptom; this names the root cause.
+        device.on_uncaptured_error(std::sync::Arc::new(|error| {
+            crate::editor::resize_log(&format!("wgpu uncaptured error: {error}"));
+        }));
+        // Device-lost (GPU TDR / driver reset) does NOT route through
+        // `on_uncaptured_error` - wgpu surfaces it only via this callback.
+        // The downstream "Failed to create staging buffer" panic is a
+        // symptom of the device already being lost; this names the reason.
+        device.set_device_lost_callback(|reason, msg| {
+            crate::editor::resize_log(&format!("wgpu DEVICE LOST: {reason:?} - {msg}"));
+        });
         let max_texture_dim = adapter_limits.max_texture_dimension_2d;
 
         let surface_caps = surface.get_capabilities(&adapter);
@@ -161,6 +175,9 @@ impl EguiRenderer {
                     trace: wgpu::Trace::Off,
                 }))
                 .ok()?;
+            device.on_uncaptured_error(std::sync::Arc::new(|error| {
+                crate::editor::resize_log(&format!("wgpu uncaptured error: {error}"));
+            }));
 
             let surface_caps = surface.get_capabilities(&adapter);
             let surface_format = surface_caps

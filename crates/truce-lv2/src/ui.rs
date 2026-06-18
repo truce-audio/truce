@@ -177,6 +177,12 @@ pub struct Lv2UiInstance<P: PluginExport> {
     /// autoresize mask can't express.
     #[cfg(target_os = "macos")]
     fit_observer_children: Vec<usize>,
+    /// Host parent `HWND` (as `usize`) the resize subclass is attached to.
+    /// `cleanup_ui` uses it to `RemoveWindowSubclass` before teardown so a
+    /// late `WM_SIZE` can't re-enter a freed instance. `0` if subclassing
+    /// the parent failed (resize fallback simply inactive).
+    #[cfg(target_os = "windows")]
+    win32_parent: usize,
     _phantom: PhantomData<P>,
 }
 
@@ -215,6 +221,12 @@ pub unsafe fn instantiate_ui<P: PluginExport>(
         // ui:parent, ui:resize, and urid:map in one O(n) sweep instead
         // of three. Subsequent code reads from the parsed struct.
         let parsed = parse_features(features);
+        resize_log(&format!(
+            "instantiate_ui (truce-lv2 {}): parent_present={} ui:resize_feature_present={}",
+            env!("CARGO_PKG_VERSION"),
+            parsed.parent.is_some(),
+            parsed.resize.is_some(),
+        ));
         let Some(parent_ptr) = parsed.parent else {
             return std::ptr::null_mut();
         };
@@ -407,9 +419,26 @@ pub unsafe fn instantiate_ui<P: PluginExport>(
             notify_scratch: core::cell::RefCell::new(Vec::new()),
             #[cfg(target_os = "macos")]
             fit_observer_children,
+            #[cfg(target_os = "windows")]
+            win32_parent: parent_ptr as usize,
             _phantom: PhantomData,
         });
-        Box::into_raw(ui) as Lv2UiHandle
+        let handle = Box::into_raw(ui) as Lv2UiHandle;
+
+        // Windows resize fallback: REAPER exposes `ui:resize` but never
+        // calls `ui_resize_dispatch` on a user drag, and Win32 has no
+        // autoresize mask like macOS's `anchor_child_for_resize`. Subclass
+        // the host parent HWND so each `WM_SIZE` clamps the new pane size to
+        // the editor's min/max/aspect (via `fit_logical_size`, exactly like
+        // `ui_resize_dispatch`) and resizes baseview's child to the result;
+        // baseview then emits `Resized`, which drives the surface
+        // reconfigure. The instance pointer rides along as the subclass
+        // refdata so the `WM_SIZE` handler can read those constraints back.
+        // Installed here (not earlier) because it needs the boxed instance.
+        #[cfg(target_os = "windows")]
+        track_win32_parent_resize::<P>(parent_ptr, handle);
+
+        handle
     }
 }
 
@@ -428,6 +457,11 @@ pub unsafe fn cleanup_ui<P: PluginExport>(handle: Lv2UiHandle) {
             // registration would send `frameChanged:` to freed memory.
             #[cfg(target_os = "macos")]
             remove_fit_observers(&ui.fit_observer_children);
+            // Detach the resize subclass before the child window goes away,
+            // so a `WM_SIZE` delivered mid-teardown can't dereference a
+            // freed instance through `GW_CHILD`.
+            #[cfg(target_os = "windows")]
+            remove_win32_parent_resize::<P>(ui.win32_parent);
             if let Some(mut ed) = ui.editor.take() {
                 ed.close();
             }
@@ -619,18 +653,31 @@ unsafe extern "C" fn ui_resize_dispatch<P: PluginExport>(
     width: i32,
     height: i32,
 ) -> i32 {
+    resize_log(&format!(
+        "ui_resize_dispatch called by host: req=({width}, {height})"
+    ));
     if handle.is_null() || width <= 0 || height <= 0 {
+        resize_log("ui_resize_dispatch rejected: null/non-positive");
         return 1;
     }
     unsafe {
         let inst = &mut *handle.cast::<Lv2UiInstance<P>>();
         let Some(editor) = inst.editor.as_mut() else {
+            resize_log("ui_resize_dispatch: no editor on instance");
             return 1;
         };
         #[allow(clippy::cast_sign_loss)]
         let (req_w, req_h) = (width as u32, height as u32);
+        let before = editor.size();
         let (cw, ch) = fit_logical_size(req_w, req_h, editor.as_ref());
-        editor.set_size(cw, ch);
+        let accepted = editor.set_size(cw, ch);
+        resize_log(&format!(
+            "ui_resize_dispatch: before={before:?} clamped=({cw}, {ch}) \
+             set_size_accepted={accepted} can_resize={} max={:?} aspect={:?}",
+            editor.can_resize(),
+            editor.max_size(),
+            editor.aspect_ratio(),
+        ));
     }
     0
 }
@@ -638,6 +685,23 @@ unsafe extern "C" fn ui_resize_dispatch<P: PluginExport>(
 // ---------------------------------------------------------------------------
 // Internals
 // ---------------------------------------------------------------------------
+
+/// Append a line to the resize diagnostic log (`truce-resize.log` in the
+/// OS temp dir, e.g. `%TEMP%` on Windows). Diagnostics-only — every
+/// failure is swallowed so logging can never perturb the host. Lines are
+/// prefixed `[lv2]` to distinguish them from the `[gpu]` entries the GPU
+/// editor writes to the same file. Remove once the resize bug is found.
+fn resize_log(msg: &str) {
+    use std::io::Write;
+    let path = std::env::temp_dir().join("truce-resize.log");
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        let _ = writeln!(f, "[lv2] {msg}");
+    }
+}
 
 /// Layout of the host's `urid:map` feature record - semantically
 /// identical to the private struct in `urid.rs` but expressed inline
@@ -811,6 +875,168 @@ unsafe fn fit_win32_parent_to_child(parent: *mut c_void) {
             w,
             h,
             SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
+        );
+    }
+}
+
+/// Distinguishes our subclass from any other on the host parent HWND.
+/// Arbitrary tag (`'truc'`); only has to be unique per `SUBCLASSPROC`.
+#[cfg(target_os = "windows")]
+const WIN32_RESIZE_SUBCLASS_ID: usize = 0x7472_7563;
+
+/// Matches the Win32 `SUBCLASSPROC` signature: the usual window-proc
+/// arguments plus the subclass id and the `dwRefData` registered with
+/// `SetWindowSubclass`.
+#[cfg(target_os = "windows")]
+type Win32SubclassProc =
+    unsafe extern "system" fn(*mut c_void, u32, usize, isize, usize, usize) -> isize;
+
+// `SetWindowSubclass` / `RemoveWindowSubclass` / `DefSubclassProc` live in
+// comctl32 (a core, always-present DLL), not the default-linked user32, so
+// this block needs its own `#[link]`. Names are lower-cased + `link_name`'d
+// to read as ordinary Rust fns at the call sites.
+#[cfg(target_os = "windows")]
+#[link(name = "comctl32")]
+unsafe extern "system" {
+    #[link_name = "SetWindowSubclass"]
+    fn win32_set_window_subclass(
+        hwnd: *mut c_void,
+        callback: Win32SubclassProc,
+        id: usize,
+        ref_data: usize,
+    ) -> i32;
+    #[link_name = "RemoveWindowSubclass"]
+    fn win32_remove_window_subclass(
+        hwnd: *mut c_void,
+        callback: Win32SubclassProc,
+        id: usize,
+    ) -> i32;
+    #[link_name = "DefSubclassProc"]
+    fn win32_def_subclass_proc(hwnd: *mut c_void, msg: u32, wparam: usize, lparam: isize) -> isize;
+}
+
+/// `SUBCLASSPROC` installed on the host parent HWND. On every `WM_SIZE` it
+/// clamps the new client size to the editor's min/max/aspect via
+/// [`fit_logical_size`] - the same fit `ui_resize_dispatch` applies, so a
+/// constrained editor letterboxes inside an over-sized host pane rather
+/// than stretching past its limits - then resizes baseview's first child
+/// to the clamped size. baseview's own window proc then emits a `Resized`
+/// event, which the editor turns into a surface + child-window
+/// reconfigure. The editor's constraints are read back through the
+/// instance pointer carried in `ref_data`. All other messages fall
+/// through to `DefSubclassProc` unchanged.
+///
+/// LV2 has no host scale channel, so the wrapper treats client pixels as
+/// logical points (scale 1.0) throughout, matching `ui_resize_dispatch`.
+#[cfg(target_os = "windows")]
+unsafe extern "system" fn win32_resize_subclass_proc<P: PluginExport>(
+    hwnd: *mut c_void,
+    msg: u32,
+    wparam: usize,
+    lparam: isize,
+    _id: usize,
+    ref_data: usize,
+) -> isize {
+    const WM_SIZE: u32 = 0x0005;
+    const GW_CHILD: u32 = 5;
+    const SWP_NOZORDER: u32 = 0x0004;
+    const SWP_NOACTIVATE: u32 = 0x0010;
+
+    unsafe extern "system" {
+        fn GetWindow(hwnd: *mut c_void, cmd: u32) -> *mut c_void;
+        fn SetWindowPos(
+            hwnd: *mut c_void,
+            after: *mut c_void,
+            x: i32,
+            y: i32,
+            cx: i32,
+            cy: i32,
+            flags: u32,
+        ) -> i32;
+    }
+
+    unsafe {
+        if msg == WM_SIZE && ref_data != 0 {
+            // LOWORD / HIWORD of lParam = new client width / height (px).
+            // The `& 0xFFFF` mask bounds each value to 0..=65535, so the
+            // casts can neither truncate nor lose a sign.
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let raw_w = (lparam & 0xFFFF) as u32;
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let raw_h = ((lparam >> 16) & 0xFFFF) as u32;
+            let inst = &*(ref_data as *const Lv2UiInstance<P>);
+            // Only resizable editors follow the host pane. A fixed editor
+            // must stay pinned at its natural size (baseview already sized
+            // its child there at open), so leave its child untouched and
+            // let it letterbox inside an over-sized host pane - matching
+            // the X11 (`fit_x11_parent_to_child`) and macOS (pinned-child
+            // arm of `anchor_child_for_resize`) behaviour. Without this
+            // guard a host-pane drag stretches fixed editors past their
+            // declared size.
+            if let Some(editor) = inst.editor.as_ref()
+                && editor.can_resize()
+            {
+                let (cw, ch) = fit_logical_size(raw_w, raw_h, editor.as_ref());
+                resize_log(&format!(
+                    "win32 parent WM_SIZE: raw=({raw_w}, {raw_h}) clamped=({cw}, {ch})"
+                ));
+                let child = GetWindow(hwnd, GW_CHILD);
+                #[allow(clippy::cast_possible_wrap)]
+                if !child.is_null() && cw > 0 && ch > 0 {
+                    let _ = SetWindowPos(
+                        child,
+                        std::ptr::null_mut(),
+                        0,
+                        0,
+                        cw as i32,
+                        ch as i32,
+                        SWP_NOZORDER | SWP_NOACTIVATE,
+                    );
+                }
+            }
+        }
+        win32_def_subclass_proc(hwnd, msg, wparam, lparam)
+    }
+}
+
+/// Install [`win32_resize_subclass_proc`] on the host parent HWND so
+/// host-pane resizes propagate (clamped) to the embedded child. `instance`
+/// is the boxed `Lv2UiInstance<P>` handle, passed as the subclass refdata
+/// so the handler can read the editor's constraints. No-op on a null
+/// parent. Paired with [`remove_win32_parent_resize`] in `cleanup_ui`.
+#[cfg(target_os = "windows")]
+unsafe fn track_win32_parent_resize<P: PluginExport>(parent: *mut c_void, instance: Lv2UiHandle) {
+    if parent.is_null() {
+        return;
+    }
+    unsafe {
+        let ok = win32_set_window_subclass(
+            parent,
+            win32_resize_subclass_proc::<P>,
+            WIN32_RESIZE_SUBCLASS_ID,
+            instance as usize,
+        );
+        resize_log(&format!(
+            "track_win32_parent_resize: SetWindowSubclass ok={}",
+            ok != 0
+        ));
+    }
+}
+
+/// Detach the resize subclass from the host parent HWND. `parent` is the
+/// `usize`-encoded HWND stored on the instance; `0` (subclass never
+/// installed) is a no-op. Must pass the same `P` used to install so the
+/// `win32_resize_subclass_proc::<P>` function pointer matches.
+#[cfg(target_os = "windows")]
+unsafe fn remove_win32_parent_resize<P: PluginExport>(parent: usize) {
+    if parent == 0 {
+        return;
+    }
+    unsafe {
+        win32_remove_window_subclass(
+            parent as *mut c_void,
+            win32_resize_subclass_proc::<P>,
+            WIN32_RESIZE_SUBCLASS_ID,
         );
     }
 }
@@ -1342,11 +1568,18 @@ fn build_editor_context<P: PluginExport>(
                 // display size, well below `i32::MAX`. The host
                 // returns 0 on success.
                 let Some(func) = host_resize_fn else {
+                    resize_log(&format!(
+                        "request_resize({w}, {h}): host exposes no ui:resize feature, dropping"
+                    ));
                     return false;
                 };
                 #[allow(clippy::cast_possible_wrap)]
                 let (iw, ih) = (w as i32, h as i32);
-                unsafe { func(host_resize_handle as *mut c_void, iw, ih) == 0 }
+                let ok = unsafe { func(host_resize_handle as *mut c_void, iw, ih) == 0 };
+                resize_log(&format!(
+                    "request_resize({w}, {h}) -> host ui:resize returned ok={ok}"
+                ));
+                ok
             }),
             set_param: Box::new(move |id: u32, normalized: f64| {
                 let Some((_, port_index, range)) =

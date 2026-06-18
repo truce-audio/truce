@@ -20,6 +20,30 @@ use crate::auto_layout;
 use crate::param_cache::ParamCache;
 use crate::param_message::{Message, ParamMessage};
 
+/// Append a line to the resize diagnostic log (`truce-resize.log` in the
+/// OS temp dir). Diagnostics-only - failures are swallowed. Prefixed
+/// `[iced]` to sit alongside the `[lv2]` / `[gpu]` / `[egui]` entries the
+/// other wrappers write to the same file. Remove once resize is confirmed.
+fn resize_log(msg: &str) {
+    use std::io::Write;
+    let path = std::env::temp_dir().join("truce-resize.log");
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        let _ = writeln!(f, "[iced] {msg}");
+    }
+}
+
+/// Extract a human-readable message from a `catch_unwind` panic payload.
+fn panic_message(e: &(dyn std::any::Any + Send)) -> String {
+    e.downcast_ref::<&str>()
+        .map(|s| (*s).to_string())
+        .or_else(|| e.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "unknown panic".to_string())
+}
+
 // IcedPlugin trait - what plugin authors implement
 
 /// Trait for plugin-specific iced UI logic.
@@ -394,6 +418,15 @@ struct IcedRuntime<P: Params, M: IcedPlugin<P>> {
     /// Custom font's TrueType bytes. Family name is recovered by
     /// `crate::font::apply_font` from the TTF `name` table.
     font: Option<&'static [u8]>,
+    /// Set when the wgpu device is lost (GPU TDR / driver reset) or a
+    /// render panic is swallowed in `on_frame`. Polled at the top of
+    /// `on_frame`, which rebuilds the whole render pipeline when it sees
+    /// this set. The LV2-on-Windows resize storm reliably TDRs the DX12
+    /// device with iced's MSAA targets; without rebuild the editor freezes
+    /// on its last frame forever (every subsequent `tick` panics in
+    /// `queue.write_buffer_with`). Shared into `set_device_lost_callback`,
+    /// which fires off-thread.
+    device_lost: Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// Holds the full wgpu + iced rendering pipeline.
@@ -476,6 +509,23 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
                     return false;
                 }
             };
+        // Capture the first device-level error (validation / OOM / lost)
+        // to the resize log. An AMD driver TDR during resize surfaces as a
+        // generic "unknown panic" downstream; this names the actual GPU
+        // error that precedes it.
+        device.on_uncaptured_error(std::sync::Arc::new(|error| {
+            resize_log(&format!("wgpu uncaptured error: {error}"));
+        }));
+        // Device-lost (GPU TDR / driver reset) bypasses the uncaptured-error
+        // handler; wgpu surfaces it only here. Captures the reason behind
+        // the downstream "unknown panic" the AMD driver crash produces, and
+        // raises the shared flag so the next `on_frame` rebuilds the
+        // pipeline instead of panicking forever against the dead device.
+        let lost_flag = self.device_lost.clone();
+        device.set_device_lost_callback(move |reason, msg| {
+            lost_flag.store(true, std::sync::atomic::Ordering::Release);
+            resize_log(&format!("wgpu DEVICE LOST: {reason:?} - {msg}"));
+        });
 
         let surface_caps = surface.get_capabilities(&adapter);
         if surface_caps.formats.is_empty() {
@@ -551,6 +601,39 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
 
         log::info!("gpu active (wgpu, {w}x{h})");
         true
+    }
+
+    /// Rebuild the entire wgpu + iced render pipeline after a device loss
+    /// (GPU TDR / driver reset). Drops the dead device + surface + renderer,
+    /// salvages the plugin program, then re-runs [`Self::init_render`] with a
+    /// fresh instance + surface created from `window` (same path as `open`).
+    /// Widget state cached in `ui_cache` is lost - acceptable, the
+    /// alternative is the editor frozen on its last frame forever. Returns
+    /// whether the rebuild succeeded; on failure `render` stays `None` and
+    /// the next `on_frame` retries (the device may still be resetting).
+    fn recover_device(&mut self, window: &baseview::Window) -> bool {
+        // Clear up front so a fresh loss *during* rebuild re-arms the flag
+        // rather than being masked by our reset.
+        self.device_lost
+            .store(false, std::sync::atomic::Ordering::Release);
+        // Salvage the program; the `..` fields (device, surface, renderer +
+        // engine, caches) drop here, releasing the old surface before we
+        // create a new one on the same window.
+        let Some(old) = self.render.take() else {
+            return false;
+        };
+        let RenderState { program, .. } = old;
+        self.program = Some(program);
+        // Recreate instance + surface exactly as `open()` does.
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::PRIMARY,
+            ..Default::default()
+        });
+        let Some(surface) = (unsafe { crate::platform::create_wgpu_surface(&instance, window) })
+        else {
+            return false;
+        };
+        self.init_render(instance, surface)
     }
 
     /// Drive one frame: update iced state + present to surface.
@@ -747,6 +830,12 @@ fn iced_interaction_to_cursor(interaction: iced::mouse::Interaction) -> baseview
 
 impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBaseviewHandler<P, M> {
     fn on_frame(&mut self, window: &mut baseview::Window) {
+        // Catch panics at the FFI boundary: baseview drives this from an
+        // `extern "system"` window proc (Windows) / AppKit callback
+        // (macOS), so an unwinding panic - e.g. wgpu validation tripping
+        // mid-resize - would cross a C frame and crash the host. Swallow
+        // and log instead, mirroring the egui / builtin GPU handlers.
+        let frame_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         // Re-anchor each frame so the child NSView's origin tracks
         // size changes against the host's plug-in pane - without it
         // the canvas drifts off-anchor as it grows, clipping the
@@ -763,6 +852,18 @@ impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBase
             truce_gui::platform::reanchor_to_superview_top(window.raw_window_handle());
         }
         let editor = unsafe { &mut *self.editor };
+        // Rebuild the render pipeline if the device was lost (set by the
+        // device-lost callback, or by a swallowed render panic on the
+        // previous frame). Skip the rest of this frame; the next tick
+        // renders against the fresh device. Without this the editor would
+        // panic in `queue.write_buffer_with` every frame forever.
+        if let Some(ref mut runtime) = editor.runtime
+            && runtime.device_lost.load(std::sync::atomic::Ordering::Acquire)
+        {
+            let ok = runtime.recover_device(window);
+            resize_log(&format!("iced device-loss recovery: rebuilt ok={ok}"));
+            return;
+        }
         // Pick up host-driven `set_size` requests since the last
         // frame. Without this the wgpu surface would be at the new
         // size but the platform window stays at the original
@@ -797,6 +898,12 @@ impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBase
                             .configure(&render.device, &render.surface_config);
                     }
                 }
+                // Skip this frame's render: presenting to a swapchain that
+                // was just reconfigured in the same frame can TDR AMD
+                // drivers during a resize drag. The next on_frame tick
+                // renders at the settled surface size. Mirrors the egui
+                // editor's resize-frame skip.
+                return;
             }
         }
         if let Some(ref mut runtime) = editor.runtime {
@@ -809,6 +916,23 @@ impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBase
                 }
             }
         }
+        }));
+        if let Err(e) = frame_result {
+            resize_log(&format!(
+                "iced on_frame panic swallowed: {}",
+                panic_message(&e)
+            ));
+            // A swallowed render panic means the device is almost certainly
+            // dead (e.g. `queue.write_buffer_with` -> None after a TDR, which
+            // can fire without the device-lost callback). Arm recovery so the
+            // next frame rebuilds instead of panicking again.
+            let editor = unsafe { &mut *self.editor };
+            if let Some(ref runtime) = editor.runtime {
+                runtime
+                    .device_lost
+                    .store(true, std::sync::atomic::Ordering::Release);
+            }
+        }
     }
 
     fn on_event(
@@ -817,7 +941,14 @@ impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBase
         window: &mut baseview::Window,
         event: baseview::Event,
     ) -> baseview::EventStatus {
+        // Catch panics at the FFI boundary, like `on_frame` above; report
+        // the event as `Ignored` on panic instead of crashing the host.
+        let event_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let editor = unsafe { &mut *self.editor };
+        // Clone the shared pending-size cell before the `&mut editor.runtime`
+        // borrow below so the Resized arm can post a deferred resize without
+        // a borrow conflict.
+        let pending_size = editor.pending_size.clone();
         let Some(runtime) = editor.runtime.as_mut() else {
             return baseview::EventStatus::Ignored;
         };
@@ -883,29 +1014,51 @@ impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBase
             }
             baseview::Event::Window(baseview::WindowEvent::Resized(info)) => {
                 crate::platform::note_linux_scale_factor(info.scale());
-                // Mirror the OS-reported scale into the shared cell
-                // (so a follow-up `set_scale_factor` from the host
-                // reads a fresh baseline) and bump `last_applied_scale`
-                // so `tick()`'s diff-check stays a no-op - we apply
-                // the reconfigure inline below.
+                // Mirror the OS-reported scale into the shared cell so a
+                // follow-up `set_scale_factor` from the host reads a fresh
+                // baseline.
                 runtime.scale.set(info.scale());
-                runtime.last_applied_scale = info.scale();
-                if let Some(ref mut render) = runtime.render {
-                    let pw = info.physical_size().width;
-                    let ph = info.physical_size().height;
-                    render.surface_config.width = pw.max(1);
-                    render.surface_config.height = ph.max(1);
-                    render
-                        .surface
-                        .configure(&render.device, &render.surface_config);
-                    #[allow(clippy::cast_possible_truncation)] // display DPI; bounded
-                    let scale_f32 = info.scale() as f32;
-                    render.viewport =
-                        iced_graphics::Viewport::with_physical_size(Size::new(pw, ph), scale_f32);
+                // Defer the surface reconfigure to `on_frame` via the
+                // shared `pending_size` cell instead of reconfiguring
+                // inline here. A fast host-driven drag (REAPER's Win32
+                // `WM_SIZE` storm via the LV2 parent subclass) fires
+                // `Resized` far quicker than vblank; reconfiguring the
+                // wgpu swapchain on every event backs up the present queue
+                // until the GPU's timeout-detection (TDR) crashes the host.
+                // `on_frame` coalesces the pending size to one reconfigure
+                // per frame (it reads scale from the shared cell set above).
+                let pw = info.physical_size().width;
+                let ph = info.physical_size().height;
+                let scale = info.scale();
+                #[allow(
+                    clippy::cast_possible_truncation,
+                    clippy::cast_sign_loss,
+                    clippy::cast_precision_loss
+                )]
+                let (lw, lh) = (
+                    (f64::from(pw) / scale).round() as u32,
+                    (f64::from(ph) / scale).round() as u32,
+                );
+                if lw > 0 && lh > 0 {
+                    pending_size.store(
+                        (u64::from(lw) << 32) | u64::from(lh),
+                        std::sync::atomic::Ordering::Release,
+                    );
                 }
                 baseview::EventStatus::Captured
             }
             _ => baseview::EventStatus::Ignored,
+        }
+        }));
+        match event_result {
+            Ok(status) => status,
+            Err(e) => {
+                resize_log(&format!(
+                    "iced on_event panic swallowed: {}",
+                    panic_message(&e)
+                ));
+                baseview::EventStatus::Ignored
+            }
         }
     }
 }
@@ -958,6 +1111,7 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
             // never reaches a render call.
             last_applied_scale: 0.0,
             font: self.font,
+            device_lost: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         });
 
         let parent_wrapper = crate::platform::ParentWindow(parent);

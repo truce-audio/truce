@@ -21,6 +21,23 @@ use crate::EditorScale;
 use crate::editor::BuiltinEditor;
 use crate::platform::ParentWindow;
 
+/// Append a line to the resize diagnostic log (`truce-resize.log` in the
+/// OS temp dir, e.g. `%TEMP%` on Windows). Diagnostics-only — failures are
+/// swallowed so logging can't perturb the render loop. Lines are prefixed
+/// `[gpu]` to distinguish them from the `[lv2]` entries the LV2 wrapper
+/// writes to the same file. Remove once the resize bug is found.
+fn resize_log(msg: &str) {
+    use std::io::Write;
+    let path = std::env::temp_dir().join("truce-resize.log");
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        let _ = writeln!(f, "[gpu] {msg}");
+    }
+}
+
 /// GPU-accelerated editor.
 ///
 /// On `open()`, creates a baseview child window with a wgpu surface.
@@ -151,6 +168,11 @@ impl<P: Params + 'static> GpuWindowHandler<P> {
                 // frame size during a drag; we only follow it.
                 let new_size = inner.size();
                 if new_size != self.current_size {
+                    resize_log(&format!(
+                        "on_frame applying size change {:?} -> {new_size:?} \
+                         (gpu.resize + window.resize)",
+                        self.current_size
+                    ));
                     gpu.resize(new_size.0, new_size.1);
                     window.resize(baseview::Size::new(
                         f64::from(new_size.0),
@@ -201,6 +223,11 @@ impl<P: Params + 'static> WindowHandler for GpuWindowHandler<P> {
             }
             Event::Window(win) => {
                 if let baseview::WindowEvent::Resized(info) = win {
+                    resize_log(&format!(
+                        "baseview Resized event: phys={:?} scale={}",
+                        info.physical_size(),
+                        info.scale()
+                    ));
                     // The OS-reported *scale* is authoritative: on Windows
                     // the parent HWND queried at `open()` time can report a
                     // different DPI than the child surface baseview actually
