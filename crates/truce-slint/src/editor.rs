@@ -396,7 +396,8 @@ impl<P: Params + ?Sized> SlintWindowHandler<P> {
             self.last_phys_w.max(1),
             self.last_phys_h.max(1),
             device_lost.clone(),
-        ) else {
+        )
+        else {
             return false;
         };
         self.device = device;
