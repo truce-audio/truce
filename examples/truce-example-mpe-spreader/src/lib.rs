@@ -171,4 +171,26 @@ mod tests {
         // Four notes over a width of 4 → channels 0,1,2,3.
         assert_eq!(channels, vec![0, 1, 2, 3]);
     }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn gui_screenshot_macos() {
+        truce_test::screenshot!(Plugin, "screenshots/mpe-spreader_default_macos.png").run();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn gui_screenshot_linux() {
+        truce_test::screenshot!(Plugin, "screenshots/mpe-spreader_default_linux.png")
+            .pixel_threshold(2)
+            .run();
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn gui_screenshot_windows() {
+        truce_test::screenshot!(Plugin, "screenshots/mpe-spreader_default_windows.png")
+            .pixel_threshold(2)
+            .run();
+    }
 }
