@@ -50,7 +50,7 @@ use truce_core::buffer::RawBufferScratch;
 use truce_core::cast::sample_rate_u32;
 use truce_core::cast::{len_u32, sample_count_usize};
 use truce_core::chunked_process::{ChunkedProcess, process_chunked};
-use truce_core::events::{Event, EventBody, EventList, TransportInfo};
+use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
 use truce_core::info::PluginCategory;
 use truce_core::plugin::PluginRuntime;
@@ -158,6 +158,10 @@ impl Default for CaptureSpec {
 pub struct Script {
     /// `(sample_offset, body)` - sorted by offset on `run`.
     events: Vec<(usize, EventBody)>,
+    /// `(sample_offset, inner SysEx bytes)` - carried apart from
+    /// `events` because `EventBody::SysEx` indexes a byte pool the
+    /// script doesn't hold until the per-block list is built.
+    sysex: Vec<(usize, Vec<u8>)>,
     cursor_samples: usize,
     sample_rate: f64,
 }
@@ -204,6 +208,14 @@ impl Script {
             channel: 0,
             pressure: truce_core::midi::denorm_7bit(value),
         });
+    }
+
+    /// Queue a `SysEx` message at the current cursor. `bytes` are the
+    /// inner payload, without the `0xF0` start / `0xF7` end framing -
+    /// wrappers strip those at the host boundary, so plugins see the
+    /// inner bytes (resolved via `EventList::sysex_bytes`).
+    pub fn sysex(&mut self, bytes: &[u8]) {
+        self.sysex.push((self.cursor_samples, bytes.to_vec()));
     }
 
     /// Set a parameter to a normalized [0.0, 1.0] value, sample-
@@ -293,6 +305,12 @@ pub struct DriverResult<P: PluginExport> {
     /// (cumulative across blocks). Empty unless
     /// `CaptureSpec::output_events`.
     pub output_events: Vec<Event>,
+
+    /// Inner `SysEx` payloads the plugin emitted, in order, with their
+    /// pool bytes resolved (the `SysEx` entries in `output_events`
+    /// only carry pool indices into a list the driver doesn't retain).
+    /// Empty unless `CaptureSpec::output_events`.
+    pub output_sysex: Vec<Vec<u8>>,
 
     /// Per-block param snapshots (one Vec per block), each entry
     /// `(param_id, plain_value)`. Empty unless
@@ -718,6 +736,7 @@ impl<P: PluginExport> PluginDriver<P> {
             Vec::new()
         };
         let mut output_events_capture: Vec<Event> = Vec::new();
+        let mut output_sysex_capture: Vec<Vec<u8>> = Vec::new();
         let mut per_block_meters: Vec<Vec<(u32, f32)>> = Vec::new();
         let mut block_snapshots: Vec<Vec<(u32, f64)>> = Vec::new();
 
@@ -730,7 +749,8 @@ impl<P: PluginExport> PluginDriver<P> {
             _ => None,
         };
 
-        let script_events = prepare_script_events(&mut self.script, self.sample_rate, total_frames);
+        let (script_events, script_sysex) =
+            prepare_script_events(&mut self.script, self.sample_rate, total_frames);
 
         // Transport tracker.
         let mut transport_pos_beats = self.transport.position_beats;
@@ -767,15 +787,17 @@ impl<P: PluginExport> PluginDriver<P> {
 
         let mut cursor = 0usize;
         let mut event_list = EventList::with_capacity(script_events.len().min(256));
-        // Hoisted out of the loop and reused - `EventList::default()`
-        // does the `EVENT_LIST_PREALLOC` reservation, so re-constructing
-        // it per block re-allocates on the first push.
-        let mut output_events_block = EventList::default();
+        // Hoisted out of the loop and reused. `with_capacity` reserves
+        // both the event ring and the `SysEx` byte pool (`default()`
+        // reserves neither), so the plugin's `push_sysex` into
+        // `output_events` and the chunker's rebase into the scratch
+        // stay allocation-free and don't silently drop `SysEx`.
+        let mut output_events_block = EventList::with_capacity(EVENT_LIST_PREALLOC);
         // Per-sub-block scratch + cached static info so the offline
         // render routes through the same `chunked_process` helper the
         // format wrappers use. Tests scripting `set_param` at known
         // offsets get the same deferred-apply behavior live hosts see.
-        let mut sub_event_scratch = EventList::default();
+        let mut sub_event_scratch = EventList::with_capacity(EVENT_LIST_PREALLOC);
         let param_infos = plugin.params().param_infos();
         let params_arc = plugin.params_arc();
         let min_subblock_samples = P::info().automation.min_subblock_samples;
@@ -811,6 +833,23 @@ impl<P: PluginExport> PluginDriver<P> {
                         body: *body,
                     });
                 }
+            }
+            // SysEx is carried separately so its payload lands in the
+            // list's byte pool (`push_sysex`), not as a bare body with
+            // dangling pool indices.
+            let had_sysex = script_sysex
+                .iter()
+                .any(|(off, _)| *off >= cursor && *off < cursor + block_len);
+            for (off, bytes) in &script_sysex {
+                if *off >= cursor && *off < cursor + block_len {
+                    let _ = event_list.push_sysex(len_u32(*off - cursor), bytes);
+                }
+            }
+            // The two sources were each sorted, but appending SysEx
+            // after the regular events breaks the per-block ordering the
+            // chunker walks. Restore it (only when SysEx was added).
+            if had_sysex {
+                event_list.sort();
             }
 
             if is_effect {
@@ -911,6 +950,13 @@ impl<P: PluginExport> PluginDriver<P> {
                     let mut e = *ev;
                     e.sample_offset = e.sample_offset.saturating_add(cursor_u32);
                     output_events_capture.push(e);
+                    // Resolve SysEx payloads now, while the block's pool
+                    // is still populated (the captured `Event` only
+                    // carries pool indices into a list we don't keep).
+                    if matches!(ev.body, EventBody::SysEx { .. }) {
+                        output_sysex_capture
+                            .push(output_events_block.sysex_bytes(&ev.body).to_vec());
+                    }
                 }
             }
 
@@ -960,6 +1006,7 @@ impl<P: PluginExport> PluginDriver<P> {
             total_frames,
             meters,
             output_events: output_events_capture,
+            output_sysex: output_sysex_capture,
             block_snapshots,
             plugin,
         }
@@ -974,6 +1021,8 @@ impl<P: PluginExport> PluginDriver<P> {
 /// otherwise emit events at offsets computed against the old SR -
 /// `wait_ms(100)` produced `4410` at 44100 Hz but the run uses 48000,
 /// putting "100ms" at 91.875ms instead.
+type ScriptEvents = (Vec<(usize, EventBody)>, Vec<(usize, Vec<u8>)>);
+
 // usize → f64 widening on sample offsets - driver test runs are
 // bounded well below 2^52 frames.
 #[allow(clippy::cast_precision_loss)]
@@ -981,21 +1030,27 @@ fn prepare_script_events(
     script: &mut Script,
     sample_rate: f64,
     total_frames: usize,
-) -> Vec<(usize, EventBody)> {
+) -> ScriptEvents {
     let build_sr = script.sample_rate;
     if build_sr > 0.0 && (build_sr - sample_rate).abs() > f64::EPSILON {
         let scale = sample_rate / build_sr;
         for (off, _) in &mut script.events {
             *off = sample_count_usize(((*off as f64) * scale).round());
         }
+        for (off, _) in &mut script.sysex {
+            *off = sample_count_usize(((*off as f64) * scale).round());
+        }
     }
     script.sample_rate = sample_rate;
     script.events.sort_by_key(|(off, _)| *off);
+    script.sysex.sort_by_key(|(off, _)| *off);
 
     let dropped = script
         .events
         .iter()
-        .filter(|(off, _)| *off >= total_frames)
+        .map(|(off, _)| *off)
+        .chain(script.sysex.iter().map(|(off, _)| *off))
+        .filter(|off| *off >= total_frames)
         .count();
     if dropped > 0 {
         eprintln!(
@@ -1004,7 +1059,10 @@ fn prepare_script_events(
              `.duration(...)` vs `wait_ms`/`wait_samples` calls in your script."
         );
     }
-    std::mem::take(&mut script.events)
+    (
+        std::mem::take(&mut script.events),
+        std::mem::take(&mut script.sysex),
+    )
 }
 
 /// Refill effect-input scratch for one block. Constant / Silence
