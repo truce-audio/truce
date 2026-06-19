@@ -118,6 +118,12 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
         "tool" => quote! { ::truce::core::PluginCategory::Tool },
         _ => quote! { ::truce::core::PluginCategory::Effect },
     };
+    // MIDI capability flags. Default from category; the optional
+    // `midi_input` / `midi_output` truce.toml keys override. Baked onto
+    // `PluginInfo` so every format wrapper gates its MIDI input / output
+    // declaration on one value instead of re-deriving from the category.
+    let (accepts_midi_in, emits_midi) =
+        truce_build::midi_capabilities(&plugin.category, plugin.midi_input, plugin.midi_output);
     // NoteEffect plugins map to `aumi` (Apple's MIDI Processor type).
     // Pairs with empty `bus_layouts` at the plugin level: aumi
     // plugins must not expose audio I/O. Logic routes `aumi` to the
@@ -196,6 +202,8 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
                 url: #url,
                 version: #version,
                 category: #category,
+                accepts_midi_in: #accepts_midi_in,
+                emits_midi: #emits_midi,
                 bundle_id: #bundle_id,
                 vst3_id: #plugin_id,
                 clap_id: #plugin_id,

@@ -967,6 +967,8 @@ fn register_vst2_inner<P: PluginExport>(layout: &BusLayout) {
         num_inputs: layout.total_input_channels(),
         num_outputs: layout.total_output_channels(),
         bypass_param_id,
+        accepts_midi_in: i32::from(info.accepts_midi_in),
+        emits_midi: i32::from(info.emits_midi),
     }));
 
     let callbacks = Box::leak(Box::new(Vst2Callbacks {

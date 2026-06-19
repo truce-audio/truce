@@ -34,7 +34,7 @@ use truce_core::cast::len_u32;
 use truce_core::chunked_process::{ChunkedProcess, process_chunked};
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
-use truce_core::info::{PluginCategory, PluginInfo};
+use truce_core::info::PluginInfo;
 use truce_core::plugin::PluginRuntime;
 use truce_core::state::shared_plugin_state_hash;
 use truce_core::wrapper::run_audio_block;
@@ -216,19 +216,14 @@ pub fn derive_port_layout<P: PluginExport>(plugin: &P) -> PortLayout {
     let params = plugin.params();
     let param_count = len_u32(params.param_infos().len());
     let meter_count = len_u32(params.meter_ids().len());
-    let category = P::info().category;
-    let accepts_midi_in = matches!(
-        category,
-        PluginCategory::Instrument | PluginCategory::NoteEffect
-    );
-    let has_midi_out = matches!(category, PluginCategory::NoteEffect);
+    let info = P::info();
     PortLayout {
         num_audio_in: default_layout.total_input_channels(),
         num_audio_out: default_layout.total_output_channels(),
         num_params: param_count,
         num_meters: meter_count,
-        accepts_midi_in,
-        has_midi_out,
+        accepts_midi_in: info.accepts_midi_in,
+        has_midi_out: info.emits_midi,
     }
 }
 
@@ -854,6 +849,8 @@ mod uri_consistency_tests {
             url,
             version: "0.0.0",
             category: PluginCategory::Effect,
+            accepts_midi_in: false,
+            emits_midi: false,
             bundle_id,
             vst3_id: "",
             clap_id: "",

@@ -47,10 +47,11 @@ typedef struct {
     int32_t manufacturer_id;    /* FourCC */
     int32_t product_id;         /* FourCC */
     int32_t plugin_id;          /* FourCC (unique per stem format) */
-    int wants_input_midi;       /* 1 for instruments and MIDI/note
-                                 * effects - gates the LocalInput MIDI
-                                 * node and the per-render MIDI event
-                                 * collection. */
+    int wants_input_midi;       /* 1 if the plugin accepts MIDI input -
+                                 * gates the LocalInput MIDI node and the
+                                 * per-render MIDI event collection. */
+    int emits_midi;             /* 1 if the plugin emits MIDI to the host
+                                 * - gates the LocalOutput MIDI node. */
     uint32_t category;          /* AAX_ePlugInCategory bitmask */
     int has_editor;             /* 1 if plugin provides custom GUI */
     uint32_t bypass_param_id;   /* IS_BYPASS-flagged param ID, or

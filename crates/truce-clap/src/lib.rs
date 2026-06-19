@@ -46,7 +46,8 @@ use clap_sys::ext::audio_ports::{
 };
 use clap_sys::ext::latency::{CLAP_EXT_LATENCY, clap_plugin_latency};
 use clap_sys::ext::note_ports::{
-    CLAP_EXT_NOTE_PORTS, CLAP_NOTE_DIALECT_CLAP, clap_note_port_info, clap_plugin_note_ports,
+    CLAP_EXT_NOTE_PORTS, CLAP_NOTE_DIALECT_CLAP, CLAP_NOTE_DIALECT_MIDI, clap_note_port_info,
+    clap_plugin_note_ports,
 };
 use clap_sys::ext::params::{
     CLAP_EXT_PARAMS, CLAP_PARAM_IS_AUTOMATABLE, CLAP_PARAM_IS_BYPASS, CLAP_PARAM_IS_ENUM,
@@ -1705,11 +1706,19 @@ fn make_audio_ports_extension<P: PluginExport>() -> clap_plugin_audio_ports {
 
 unsafe extern "C" fn note_ports_count<P: PluginExport>(
     _plugin: *const clap_plugin,
-    _is_input: bool,
+    is_input: bool,
 ) -> u32 {
-    // All plugins declare 1 input + 1 output note port.
-    // Effects that don't use MIDI simply ignore the events.
-    1
+    // Declare a note port only in the directions the plugin actually
+    // uses, from the one `PluginInfo` capability pair (category
+    // default, overridable via `midi_input` / `midi_output`). A plain
+    // audio effect declares neither.
+    let info = P::info();
+    let enabled = if is_input {
+        info.accepts_midi_in
+    } else {
+        info.emits_midi
+    };
+    u32::from(enabled)
 }
 
 unsafe extern "C" fn note_ports_get<P: PluginExport>(
@@ -1725,7 +1734,14 @@ unsafe extern "C" fn note_ports_get<P: PluginExport>(
 
         let out = &mut *info;
         out.id = u32::from(!is_input);
-        out.supported_dialects = CLAP_NOTE_DIALECT_CLAP;
+        // Notes go out as `CLAP_EVENT_NOTE`, but every other
+        // channel-voice message and SysEx go out as `CLAP_EVENT_MIDI`
+        // (raw MIDI dialect), so advertise both dialects or a
+        // dialect-routing host drops the raw-MIDI events. Keep CLAP
+        // preferred: our own note events are CLAP-dialect, and
+        // preferring MIDI would also pull host input through the
+        // raw-MIDI path.
+        out.supported_dialects = CLAP_NOTE_DIALECT_CLAP | CLAP_NOTE_DIALECT_MIDI;
         out.preferred_dialect = CLAP_NOTE_DIALECT_CLAP;
         out.name = [0; CLAP_NAME_SIZE];
         copy_str_to_buf(

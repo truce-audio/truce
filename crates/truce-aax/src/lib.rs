@@ -67,10 +67,13 @@ pub struct TruceAaxDescriptor {
     pub manufacturer_id: i32,
     pub product_id: i32,
     pub plugin_id: i32,
-    /// True for instruments and note effects (`aumi`). Gates the
-    /// `LocalInput` MIDI node registration in `Describe` and the
-    /// MIDI-event collection in `RenderAudio`.
+    /// `1` if the plugin accepts MIDI input. Gates the `LocalInput`
+    /// MIDI node registration in `Describe` and the MIDI-event
+    /// collection in `RenderAudio`.
     pub wants_input_midi: i32,
+    /// `1` if the plugin emits MIDI to the host. Gates the
+    /// `LocalOutput` MIDI node registration in `Describe`.
+    pub emits_midi: i32,
     pub category: u32,
     pub has_editor: i32,
     /// Param ID flagged as `IS_BYPASS`, or `u32::MAX` for "no bypass
@@ -324,7 +327,6 @@ fn register_aax_inner<P: PluginExport>(layout: &BusLayout) {
             .into_raw();
         let vendor = CString::new(info.vendor).unwrap_or_default().into_raw();
 
-        let is_instrument = info.au_type == *b"aumu";
         let is_note_effect = info.category == PluginCategory::NoteEffect;
         // Note effects need MIDI input *and* a category that lands them
         // in Pro Tools' MIDI plug-ins menu - without
@@ -385,7 +387,8 @@ fn register_aax_inner<P: PluginExport>(layout: &BusLayout) {
             product_id: fourcc(info.fourcc),
             // plugin_id must differ from product_id - XOR with a salt
             plugin_id: fourcc(info.fourcc) ^ 0x0101_0101,
-            wants_input_midi: i32::from(is_instrument || is_note_effect),
+            wants_input_midi: i32::from(info.accepts_midi_in),
+            emits_midi: i32::from(info.emits_midi),
             category,
             has_editor: 0,             // filled below
             bypass_param_id: u32::MAX, // filled below

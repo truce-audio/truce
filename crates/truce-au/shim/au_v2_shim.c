@@ -425,9 +425,16 @@ static OSStatus au_v2_get_property_info(void *self_, AudioUnitPropertyID prop,
             if (scope != kAudioUnitScope_Global) return kAudioUnitErr_InvalidScope;
             size = sizeof(HostCallbackInfo); writable = true; break;
         case kAudioUnitProperty_MIDIOutputCallbackInfo:
+            // Advertise a MIDI output port only when the plugin emits
+            // MIDI (`emits_midi`; note-effect default, overridable via
+            // `midi_output`), so a plain effect shows no phantom port.
+            if (!g_descriptor || !g_descriptor->has_midi_output)
+                return kAudioUnitErr_InvalidProperty;
             if (scope != kAudioUnitScope_Global) return kAudioUnitErr_InvalidScope;
             size = sizeof(CFArrayRef); writable = false; break;
         case kAudioUnitProperty_MIDIOutputCallback:
+            if (!g_descriptor || !g_descriptor->has_midi_output)
+                return kAudioUnitErr_InvalidProperty;
             if (scope != kAudioUnitScope_Global) return kAudioUnitErr_InvalidScope;
             size = sizeof(AUMIDIOutputCallbackStruct); writable = true; break;
         case kAudioUnitProperty_ClassInfo:

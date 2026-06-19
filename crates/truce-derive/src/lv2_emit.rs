@@ -173,11 +173,10 @@ pub(crate) fn emit_root_impl(input: TokenStream) -> TokenStream {
 
     let category = parse_category(&plugin.category);
     let (audio_in, audio_out) = audio_io_for(category);
-    let accepts_midi_in = matches!(
-        category,
-        truce_build::lv2::Lv2Category::Instrument | truce_build::lv2::Lv2Category::NoteEffect
-    );
-    let has_midi_out = matches!(category, truce_build::lv2::Lv2Category::NoteEffect);
+    // Same `(accepts_midi_in, emits_midi)` derivation baked onto
+    // `PluginInfo`, so the TTL ports and the runtime `PortLayout` agree.
+    let (accepts_midi_in, has_midi_out) =
+        truce_build::midi_capabilities(&plugin.category, plugin.midi_input, plugin.midi_output);
 
     let url = config.vendor.url.clone();
     let uri = truce_build::lv2::plugin_uri(&url, &plugin.bundle_id);

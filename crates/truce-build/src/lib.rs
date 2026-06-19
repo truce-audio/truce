@@ -32,6 +32,27 @@ pub fn plugin_id(vendor_id: &str, plugin_name: &str) -> String {
     )
 }
 
+/// Resolve a plugin's `(accepts_midi_in, emits_midi)` capability pair
+/// from its category and the optional `midi_input` / `midi_output`
+/// truce.toml overrides. Shared by `truce-derive` (bakes the result
+/// onto `PluginInfo`, which every Rust wrapper reads) and the LV2 TTL
+/// emitter, so the host-facing port declarations all agree.
+///
+/// Defaults: instruments and note effects accept MIDI input; only note
+/// effects emit MIDI. `Some(_)` overrides the derived value.
+#[must_use]
+pub fn midi_capabilities(
+    category: &str,
+    midi_input: Option<bool>,
+    midi_output: Option<bool>,
+) -> (bool, bool) {
+    let is_note_effect = matches!(category, "midi" | "note_effect");
+    let is_instrument = category == "instrument";
+    let accepts_midi_in = midi_input.unwrap_or(is_instrument || is_note_effect);
+    let emits_midi = midi_output.unwrap_or(is_note_effect);
+    (accepts_midi_in, emits_midi)
+}
+
 /// Derive-time view of `truce.toml`.
 ///
 /// `truce-derive` (proc macros) reads this to expand
@@ -163,6 +184,19 @@ pub struct PluginDef {
     /// hosts ignore this flag; they own their own output graph.
     #[serde(default)]
     pub mute_preview_output: bool,
+    /// Override the category-derived "accepts MIDI input" capability.
+    /// `None` (the default) keeps the derived value: `true` for
+    /// instruments and note effects. Set `midi_input = true` on an
+    /// audio effect that reacts to MIDI, or `false` to suppress an
+    /// unwanted MIDI input port.
+    #[serde(default)]
+    pub midi_input: Option<bool>,
+    /// Override the category-derived "emits MIDI output" capability.
+    /// `None` (the default) keeps the derived value: `true` for note
+    /// effects only. Set `midi_output = true` on an instrument or
+    /// effect that also emits MIDI to the host.
+    #[serde(default)]
+    pub midi_output: Option<bool>,
     /// Optional `[plugin.presets]` table - factory-preset opt-in.
     /// When absent, the install pipeline still picks up a `presets/`
     /// directory next to the plugin crate if one exists.
@@ -354,7 +388,33 @@ pub fn load_config(path: &Path) -> Result<Config, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::extract_json_string;
+    use super::{extract_json_string, midi_capabilities};
+
+    #[test]
+    fn midi_caps_category_defaults() {
+        // (accepts_midi_in, emits_midi)
+        assert_eq!(midi_capabilities("note_effect", None, None), (true, true));
+        assert_eq!(midi_capabilities("midi", None, None), (true, true));
+        assert_eq!(midi_capabilities("instrument", None, None), (true, false));
+        assert_eq!(midi_capabilities("effect", None, None), (false, false));
+        assert_eq!(midi_capabilities("analyzer", None, None), (false, false));
+    }
+
+    #[test]
+    fn midi_caps_overrides() {
+        // Effect opting into MIDI output (the issue-123 instrument/effect case).
+        assert_eq!(midi_capabilities("effect", None, Some(true)), (false, true));
+        // Instrument opting into MIDI input override off.
+        assert_eq!(
+            midi_capabilities("instrument", Some(false), None),
+            (false, false)
+        );
+        // Both forced on an effect.
+        assert_eq!(
+            midi_capabilities("effect", Some(true), Some(true)),
+            (true, true)
+        );
+    }
 
     #[test]
     fn extracts_unix_target_directory() {

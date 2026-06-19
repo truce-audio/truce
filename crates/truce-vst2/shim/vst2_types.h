@@ -231,6 +231,11 @@ typedef struct {
      * param". The shim handles effSetBypass (opcode 44) by writing
      * 0/1 to this param so the host's master-bypass UI tracks it. */
     uint32_t bypass_param_id;
+    /* 1 if the plugin accepts MIDI input / emits MIDI to the host.
+     * Gate the `receiveVst*` / `sendVst*` canDo replies so a plain
+     * audio effect doesn't claim MIDI it never uses. */
+    int32_t accepts_midi_in;
+    int32_t emits_midi;
 } Vst2PluginDescriptor;
 
 typedef struct {

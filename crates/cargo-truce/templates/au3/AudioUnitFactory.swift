@@ -182,14 +182,16 @@ class TruceAUAudioUnit: AUAudioUnit {
         set { _parameterTree = newValue }
     }
 
-    /// MIDI output ports exposed to the host. `aumi` (MIDI Processor)
-    /// plugins - identified here by "no audio outputs declared" -
-    /// must advertise at least one MIDI output for Apple's AU
-    /// infrastructure to accept instantiation. Plugins with audio
-    /// outputs (`aufx`, `aumu`, `aumf`) return an empty array so
-    /// hosts don't surface phantom MIDI ports.
+    /// MIDI output ports exposed to the host, gated on the plugin's
+    /// `emits_midi` capability (`has_midi_output` in the descriptor;
+    /// note-effect default, overridable via `midi_output` in
+    /// truce.toml). `aumi` MIDI Processors must advertise one for
+    /// Apple's AU infrastructure to accept instantiation; an
+    /// instrument or effect that opts in gets one too, and a plugin
+    /// that emits no MIDI returns an empty array so hosts don't
+    /// surface a phantom port.
     override var midiOutputNames: [String] {
-        if let d = g_descriptor?.pointee, d.num_outputs == 0 {
+        if let d = g_descriptor?.pointee, d.has_midi_output != 0 {
             return ["MIDI Out"]
         }
         return []

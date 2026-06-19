@@ -624,6 +624,8 @@ mod suite_tests {
                 aax_name: None,
                 lv2_name: None,
                 mute_preview_output: false,
+                midi_input: None,
+                midi_output: None,
                 presets: None,
             },
             au3_subtype: None,

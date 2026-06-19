@@ -19,12 +19,15 @@ pub struct Vst3PluginDescriptor {
     pub subcategories: *const c_char,
     pub num_inputs: u32,
     pub num_outputs: u32,
-    /// `1` if the plugin emits MIDI back to the host (note effects /
-    /// arpeggiators / chord generators). The shim gates the
-    /// `kEvent | kOutput` bus on this flag - without it the host
+    /// `1` if the plugin emits MIDI back to the host. The shim gates
+    /// the `kEvent | kOutput` bus on this flag - without it the host
     /// never allocates `ProcessData::outputEvents`, and the drain
     /// loop after `process()` is a no-op.
     pub has_midi_output: i32,
+    /// `1` if the plugin accepts MIDI input. The shim gates the
+    /// `kEvent | kInput` bus on this flag (decoupled from
+    /// `num_inputs` so an audio effect can also take MIDI).
+    pub accepts_midi_in: i32,
 }
 
 /// Parameter descriptor.

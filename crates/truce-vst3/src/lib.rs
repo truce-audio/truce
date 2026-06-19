@@ -1177,11 +1177,12 @@ fn register_vst3_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
     };
     let subcategories = CString::new(subcategory_str).unwrap_or_default();
 
-    // NoteEffect plugins (arpeggiators, chord generators) emit MIDI
-    // back to the host. Instruments could in principle, but it's rare
-    // enough that we'd rather make them opt in than advertise a
-    // phantom event-output bus on every synth.
-    let has_midi_output = i32::from(matches!(info.category, PluginCategory::NoteEffect));
+    // MIDI capability is decided once on `PluginInfo` (category
+    // default, overridable via `midi_input` / `midi_output` in
+    // truce.toml), so an instrument or audio effect can opt into a
+    // MIDI output bus rather than only note effects.
+    let has_midi_output = i32::from(info.emits_midi);
+    let accepts_midi_in = i32::from(info.accepts_midi_in);
 
     let descriptor = Box::leak(Box::new(Vst3PluginDescriptor {
         name: name.into_raw(),
@@ -1195,6 +1196,7 @@ fn register_vst3_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
         num_inputs,
         num_outputs,
         has_midi_output,
+        accepts_midi_in,
     }));
 
     let callbacks = Box::leak(Box::new(Vst3Callbacks {

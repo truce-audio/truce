@@ -269,7 +269,7 @@ AAX_Result GetEffectDescriptions(AAX_ICollection* outCollection) {
     setupInfo.mOutputStemFormat = AAX_eStemFormat_Mono;
     setupInfo.mPluginID = g_descriptor.plugin_id;
     AAX_Result err = TruceDescribeOneConfig(desc, setupInfo,
-                                             /*needsOutputMIDI=*/true,
+                                             /*needsOutputMIDI=*/g_descriptor.emits_midi != 0,
                                              g_descriptor.name);
     if (err != AAX_SUCCESS) return err;
 
@@ -280,7 +280,7 @@ AAX_Result GetEffectDescriptions(AAX_ICollection* outCollection) {
         setupInfo.mOutputStemFormat = AAX_eStemFormat_Stereo;
         setupInfo.mPluginID = g_descriptor.plugin_id ^ 0x00000002; // unique ID for stereo
         err = TruceDescribeOneConfig(desc, setupInfo,
-                                      /*needsOutputMIDI=*/true,
+                                      /*needsOutputMIDI=*/g_descriptor.emits_midi != 0,
                                       g_descriptor.name);
         if (err != AAX_SUCCESS) return err;
     }

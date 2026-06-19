@@ -35,7 +35,6 @@ use truce_core::editor::{ClosureBridge, PluginContext, RawWindowHandle, SendPtr}
 use truce_core::editor::fit_logical_size;
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
-use truce_core::info::PluginCategory;
 use truce_core::midi::{decode_short_message, pitch_bend_to_bytes};
 use truce_core::state;
 use truce_core::ump::{SysExAssembler, SysExFeed, decode_ump_channel_voice_2};
@@ -1199,11 +1198,11 @@ fn register_au_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
         .find(|pi| pi.flags.contains(ParamFlags::IS_BYPASS))
         .map_or(u32::MAX, |pi| pi.id);
 
-    // NoteEffect plugins (arpeggiators, chord generators) emit MIDI
-    // back to the host. Instruments could in theory too but it's rare
-    // and we don't want to advertise a "MIDI Out" port in every synth's
-    // host UI without an explicit opt-in. Effects and analyzers never do.
-    let has_midi_output = i32::from(matches!(info.category, PluginCategory::NoteEffect));
+    // MIDI output is decided once on `PluginInfo` (note-effect default,
+    // overridable via `midi_output` in truce.toml) so an instrument or
+    // effect can opt into a host "MIDI Out" port instead of only note
+    // effects advertising one.
+    let has_midi_output = i32::from(info.emits_midi);
 
     let descriptor = Box::leak(Box::new(AuPluginDescriptor {
         component_type: info.au_type,

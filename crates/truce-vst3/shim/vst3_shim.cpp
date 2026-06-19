@@ -120,6 +120,10 @@ struct Vst3PluginDescriptor {
      * is declared, so this flag controls whether the drain loop after
      * process() actually has somewhere to push events. */
     int32_t has_midi_output;
+    /* 1 if the plugin accepts MIDI input. Gates the
+     * `kEvent | kInput` bus, decoupled from `num_inputs` so an audio
+     * effect (with audio inputs) can still take MIDI. */
+    int32_t accepts_midi_in;
 };
 
 struct Vst3ParamDescriptor {
@@ -462,18 +466,18 @@ public:
         if (type == kAudio) {
             return (dir == kInput) ? (g_desc->num_inputs > 0 ? 1 : 0) : 1;
         }
-        if (type == kEvent && dir == kInput && g_desc->num_inputs == 0) {
-            return 1; // instrument / note-effect: one event input bus
+        if (type == kEvent && dir == kInput && g_desc->accepts_midi_in) {
+            return 1; // one event input bus
         }
         if (type == kEvent && dir == kOutput && g_desc->has_midi_output) {
-            return 1; // note-effect: one event output bus
+            return 1; // one event output bus
         }
         return 0;
     }
 
     tresult getBusInfo(int32 type, int32 dir, int32 index, BusInfo* bus) {
         if (!bus || !g_desc) return kInvalidArgument;
-        if (type == kEvent && dir == kInput && index == 0 && g_desc->num_inputs == 0) {
+        if (type == kEvent && dir == kInput && index == 0 && g_desc->accepts_midi_in) {
             bus->mediaType = kEvent; bus->direction = kInput; bus->channelCount = 1;
             str_to_char16(bus->name, "Event In", 128);
             bus->busType = kMain; bus->flags = 1; // kDefaultActive
@@ -825,44 +829,97 @@ public:
                 };
                 auto* vtbl = (OEVtbl*)eventList->vtbl;
 
+                // Note on/off and poly key pressure are first-class
+                // VST3 Event types; CC, channel pressure, pitch bend,
+                // and program change ride `kLegacyMIDICCOutEvent`, the
+                // SDK's path for a plug-in emitting MIDI controllers to
+                // the host. Type ids and controller numbers are from the
+                // VST3 SDK (`ivstevents.h`, `ivstmidicontrollers.h`);
+                // the shim doesn't vendor the SDK, so they're named here.
+                enum {
+                    kNoteOnEvent = 0,
+                    kNoteOffEvent = 1,
+                    kPolyPressureEvent = 3,
+                    kLegacyMIDICCOutEvent = 65535,
+                };
+                enum {
+                    kCtrlAfterTouch = 128, // channel pressure
+                    kCtrlPitchBend = 129,
+                    kCtrlProgramChange = 130,
+                };
+                struct alignas(8) Vst3OutEvent {
+                    int32 busIndex;
+                    int32 sampleOffset;
+                    double ppqPosition;
+                    uint16_t flags;
+                    uint16_t type;
+                    char pad[4];
+                    union {
+                        struct { int16_t channel; int16_t pitch; float tuning; float velocity; int32 length; int32 noteId; } noteOn;
+                        struct { int16_t channel; int16_t pitch; float velocity; int32 noteId; float tuning; } noteOff;
+                        struct { int16_t channel; int16_t pitch; float pressure; int32 noteId; } polyPressure;
+                        struct { uint8_t controlNumber; int8_t channel; int8_t value; int8_t value2; } midiCCOut;
+                    };
+                };
+
                 for (uint32_t i = 0; i < outCount; i++) {
                     Vst3MidiEvent mev = {};
                     g_cb->get_output_event(ctx, i, &mev);
                     if (mev.status == 0) continue;
 
-                    // Build VST3 Event
-                    struct alignas(8) Vst3OutEvent {
-                        int32 busIndex;
-                        int32 sampleOffset;
-                        double ppqPosition;
-                        uint16_t flags;
-                        uint16_t type;
-                        char pad[4];
-                        union {
-                            struct { int16_t channel; int16_t pitch; float tuning; float velocity; int32 length; int32 noteId; } noteOn;
-                            struct { int16_t channel; int16_t pitch; float velocity; int32 noteId; float tuning; } noteOff;
-                        };
-                    };
                     Vst3OutEvent ev = {};
                     ev.sampleOffset = mev.sample_offset;
                     uint8_t st = mev.status & 0xF0;
-                    uint8_t ch = mev.status & 0x0F;
-                    if (st == 0x90) {
-                        ev.type = 0; // kNoteOnEvent
+                    int16_t ch = mev.status & 0x0F;
+                    switch (st) {
+                    case 0x90: // note on
+                        ev.type = kNoteOnEvent;
                         ev.noteOn.channel = ch;
                         ev.noteOn.pitch = mev.data1;
                         ev.noteOn.velocity = mev.data2 / 127.0f;
                         ev.noteOn.noteId = -1;
-                        ev.noteOn.length = 0;
-                        ev.noteOn.tuning = 0;
-                    } else if (st == 0x80) {
-                        ev.type = 1; // kNoteOffEvent
+                        break;
+                    case 0x80: // note off
+                        ev.type = kNoteOffEvent;
                         ev.noteOff.channel = ch;
                         ev.noteOff.pitch = mev.data1;
                         ev.noteOff.velocity = mev.data2 / 127.0f;
                         ev.noteOff.noteId = -1;
-                    } else {
-                        continue; // skip non-note events for now
+                        break;
+                    case 0xA0: // poly key pressure
+                        ev.type = kPolyPressureEvent;
+                        ev.polyPressure.channel = ch;
+                        ev.polyPressure.pitch = mev.data1;
+                        ev.polyPressure.pressure = mev.data2 / 127.0f;
+                        ev.polyPressure.noteId = -1;
+                        break;
+                    case 0xB0: // control change
+                        ev.type = kLegacyMIDICCOutEvent;
+                        ev.midiCCOut.controlNumber = mev.data1;
+                        ev.midiCCOut.channel = (int8_t)ch;
+                        ev.midiCCOut.value = (int8_t)mev.data2;
+                        break;
+                    case 0xD0: // channel pressure (mono aftertouch)
+                        ev.type = kLegacyMIDICCOutEvent;
+                        ev.midiCCOut.controlNumber = kCtrlAfterTouch;
+                        ev.midiCCOut.channel = (int8_t)ch;
+                        ev.midiCCOut.value = (int8_t)mev.data1;
+                        break;
+                    case 0xE0: // pitch bend (data1 = LSB, data2 = MSB)
+                        ev.type = kLegacyMIDICCOutEvent;
+                        ev.midiCCOut.controlNumber = kCtrlPitchBend;
+                        ev.midiCCOut.channel = (int8_t)ch;
+                        ev.midiCCOut.value = (int8_t)mev.data1;
+                        ev.midiCCOut.value2 = (int8_t)mev.data2;
+                        break;
+                    case 0xC0: // program change
+                        ev.type = kLegacyMIDICCOutEvent;
+                        ev.midiCCOut.controlNumber = kCtrlProgramChange;
+                        ev.midiCCOut.channel = (int8_t)ch;
+                        ev.midiCCOut.value = (int8_t)mev.data1;
+                        break;
+                    default:
+                        continue;
                     }
                     vtbl->addEvent(data->outputEvents, &ev);
                 }

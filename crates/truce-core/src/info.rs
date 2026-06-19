@@ -7,6 +7,21 @@ pub struct PluginInfo {
     pub version: &'static str,
     pub category: PluginCategory,
 
+    /// Whether the host should route MIDI / note events *into* this
+    /// plugin. Defaults to `true` for instruments and note effects;
+    /// `truce.toml`'s `midi_input` overrides the derived value (e.g.
+    /// an audio effect that reacts to CC). Every format wrapper gates
+    /// its MIDI input port / bus / capability on this one flag.
+    pub accepts_midi_in: bool,
+
+    /// Whether this plugin emits MIDI / note events *to* the host.
+    /// Defaults to `true` for note effects only; `truce.toml`'s
+    /// `midi_output` overrides the derived value (e.g. an instrument
+    /// or effect that also emits MIDI). Every format wrapper gates its
+    /// MIDI output port / bus / capability on this one flag, so the
+    /// host actually reads what `process()` pushes to `output_events`.
+    pub emits_midi: bool,
+
     /// Short identifier (`bundle_id` in `truce.toml`). Used to derive
     /// the LV2 plugin URI (`{vendor.url}/lv2/{bundle_id}`); also a
     /// stable, vendor-agnostic key for "this plugin" that doesn't

@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <stddef.h>
 
 #ifdef _MSC_VER
 #define VST2_EXPORT __declspec(dllexport)
@@ -234,12 +235,19 @@ static VstIntPtr dispatcher(AEffect* e, int32_t opcode, int32_t index,
         case effCanDo: {
             if (!ptr) return 0;
             const char* s = (const char*)ptr;
-            if (strcmp(s, "receiveVstMidiEvent") == 0) return 1;
-            if (strcmp(s, "receiveVstEvents") == 0) return 1;
-            if (strcmp(s, "sendVstMidiEvent") == 0) return 1;
-            if (strcmp(s, "sendVstEvents") == 0) return 1;
-            if (strcmp(s, "receiveVstMidiSysExEvent") == 0) return 1;
-            if (strcmp(s, "sendVstMidiSysExEvent") == 0) return 1;
+            /* Advertise MIDI capabilities only in the directions the
+             * plugin uses, from the one `emits_midi`/`accepts_midi_in`
+             * pair (category default, overridable via `midi_input` /
+             * `midi_output` in truce.toml). A plain audio effect
+             * advertises none. */
+            int wants_in = g_vst2_descriptor && g_vst2_descriptor->accepts_midi_in;
+            int wants_out = g_vst2_descriptor && g_vst2_descriptor->emits_midi;
+            if (strcmp(s, "receiveVstMidiEvent") == 0) return wants_in;
+            if (strcmp(s, "receiveVstEvents") == 0) return wants_in;
+            if (strcmp(s, "receiveVstMidiSysExEvent") == 0) return wants_in;
+            if (strcmp(s, "sendVstMidiEvent") == 0) return wants_out;
+            if (strcmp(s, "sendVstEvents") == 0) return wants_out;
+            if (strcmp(s, "sendVstMidiSysExEvent") == 0) return wants_out;
             if (strcmp(s, "bypass") == 0) {
                 /* Advertise bypass support only if the plugin actually
                  * has an IS_BYPASS-flagged param wired into the
@@ -451,17 +459,21 @@ static void processReplacing(AEffect* e, float** inputs, float** outputs,
             VstMidiSysExEvent sxs[256];
             /* `VstEvents` declares `events[2]` for alignment; for N
              * events, lay out `numEvents`, `reserved`, then a
-             * trailing `VstEvent*[N]`. The storage buffer is sized
-             * for `midi_count + sx_count` so pointer arithmetic
-             * stays in-bounds. */
-            char vstEvents_storage[sizeof(int32_t) + sizeof(VstIntPtr)
+             * trailing `VstEvent*[N]`. Use `offsetof(VstEvents,
+             * events)` rather than summing field sizes: on LP64 the
+             * compiler pads `numEvents` out to `reserved`'s 8-byte
+             * alignment, so the pointer array starts at offset 16,
+             * not the 12 a naive `sizeof(int32_t)+sizeof(VstIntPtr)`
+             * would give. The storage buffer is sized for
+             * `midi_count + sx_count` so pointer arithmetic stays
+             * in-bounds. */
+            char vstEvents_storage[offsetof(VstEvents, events)
                                    + 512 * sizeof(VstEvent*)];
             VstEvents* vstEvents = (VstEvents*)vstEvents_storage;
             vstEvents->numEvents = (int32_t)total;
             vstEvents->reserved = 0;
             VstEvent** events_array = (VstEvent**)((char*)vstEvents
-                                                   + sizeof(int32_t)
-                                                   + sizeof(VstIntPtr));
+                                                   + offsetof(VstEvents, events));
             for (uint32_t i = 0; i < midi_count; i++) {
                 Vst2MidiEventCompact pkt = {0};
                 g_vst2_callbacks->output_event_at(inst->rust_ctx, i, &pkt);

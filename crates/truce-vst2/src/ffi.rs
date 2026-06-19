@@ -17,6 +17,12 @@ pub struct Vst2PluginDescriptor {
     /// writing `0.0`/`1.0` to this param so the host's master-bypass
     /// UI tracks the param value.
     pub bypass_param_id: u32,
+    /// `1` if the plugin accepts MIDI input. Gates the `receiveVst*`
+    /// canDo replies.
+    pub accepts_midi_in: i32,
+    /// `1` if the plugin emits MIDI to the host. Gates the `sendVst*`
+    /// canDo replies.
+    pub emits_midi: i32,
 }
 
 #[repr(C)]
