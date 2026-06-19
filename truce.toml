@@ -412,13 +412,13 @@ ios_icon_set = "static/truce-minimal.appiconset"
 # the `midi_input` / `midi_output` capability flags.
 
 [[plugin]]
-name = "Truce LFO CC"
-bundle_id = "lfo-cc"
-crate = "truce-example-lfo-cc"
+name = "Truce Envelope"
+bundle_id = "envelope"
+crate = "truce-example-envelope"
 category = "effect"
 midi_output = true
-fourcc = "TLfc"
-au3_subtype = "TLf3"
+fourcc = "TEnv"
+au3_subtype = "TEn3"
 au_tag = "MIDI"
 
 [[plugin]]

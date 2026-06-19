@@ -53,7 +53,7 @@ members = [
     "examples/truce-example-gui-zoo-egui",
     "examples/truce-example-gui-zoo-iced",
     "examples/truce-example-dasp-bitcrusher",
-    "examples/truce-example-lfo-cc",
+    "examples/truce-example-envelope",
     "examples/truce-example-chord",
     "examples/truce-example-cc-filter",
     "examples/truce-example-mpe-spreader",
