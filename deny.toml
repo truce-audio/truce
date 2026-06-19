@@ -1,0 +1,50 @@
+# cargo-deny policy for the whole truce workspace tree. Shared by the
+# main workspace and the truce-slint / truce-vizia / truce-gpu-examples
+# sub-workspaces via `cargo deny check --config <this file>` (see
+# scripts/supply-chain.sh). One file keeps the policy DRY; each
+# sub-workspace pulls a different subset of crates, so the allow lists
+# below are the union across all four.
+
+[advisories]
+# Unmaintained transitive crates with no published vulnerability. None
+# is a first-party dependency - each resolves only when an upstream GUI
+# crate bumps. Tracked here so a *new* advisory still fails the gate.
+ignore = [
+    "RUSTSEC-2024-0436", # paste - unmaintained (proc-macro, deep transitive)
+    "RUSTSEC-2025-0057", # fxhash - unmaintained (vizia_style -> vizia_core)
+]
+
+[licenses]
+# Union of every license encountered across the four workspaces. A
+# sub-workspace only sees a subset, so don't warn on allow entries it
+# never hits.
+unused-allowed-license = "allow"
+allow = [
+    "Apache-2.0",
+    "MIT",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CC0-1.0",
+    "ISC",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+    "OFL-1.1",         # epaint_default_fonts embeds OFL fonts (AND clause)
+    "Ubuntu-font-1.0", # epaint_default_fonts embeds the Ubuntu font (AND clause)
+    # slint is tri-licensed (GPL-3.0 OR royalty-free OR commercial); we
+    # consume it under the royalty-free terms, so GPL-3.0 stays out.
+    "LicenseRef-Slint-Royalty-free-2.0",
+]
+
+[bans]
+# Duplicate crate versions are unavoidable in a wide GUI/host tree
+# (windows-* generations, hashbrown, thiserror, tiny-skia, ...). Surface
+# them without failing the gate.
+multiple-versions = "warn"
+
+[sources]
+unknown-registry = "deny"
+# baseview / vizia / morphorm ship from git forks, not crates.io.
+unknown-git = "allow"

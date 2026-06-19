@@ -1,0 +1,40 @@
+name: Supply chain
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  # Advisory databases change independently of the code, so re-run weekly
+  # to surface newly-published RustSec advisories against the committed
+  # Cargo.lock files even when nothing has been pushed.
+  schedule:
+    - cron: '0 6 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    name: cargo audit + deny
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      # cargo-deny shells out to `cargo metadata`, so a toolchain must be
+      # on PATH. No workspace compilation happens - both tools only parse
+      # the committed Cargo.lock files - so no system deps or build cache.
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Prebuilt binaries instead of `cargo install` (which would compile
+      # both tools from source and add minutes to every run).
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit,cargo-deny
+
+      - name: Supply-chain audit (audit + deny, all workspaces)
+        run: ./scripts/supply-chain.sh
