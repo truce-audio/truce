@@ -63,7 +63,7 @@ impl PluginLogic for SysexEcho {
 
     fn editor(&self) -> Box<dyn Editor> {
         GridLayout::build(vec![widgets(vec![toggle(P::Enabled, "Enabled")])])
-            .with_title("SYSEX ECHO")
+            .with_title("SYSEX")
             .into_editor(&self.params)
     }
 }

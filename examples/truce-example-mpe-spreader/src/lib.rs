@@ -110,7 +110,7 @@ impl PluginLogic for Spreader {
 
     fn editor(&self) -> Box<dyn Editor> {
         GridLayout::build(vec![widgets(vec![knob(P::Channels, "Channels")])])
-            .with_title("CHANNEL SPREAD")
+            .with_title("SPREAD")
             .into_editor(&self.params)
     }
 }

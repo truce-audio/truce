@@ -139,7 +139,7 @@ impl PluginLogic for MidiSynth {
 
     fn editor(&self) -> Box<dyn Editor> {
         GridLayout::build(vec![widgets(vec![knob(P::Gain, "Gain")])])
-            .with_title("MIDI SYNTH")
+            .with_title("MSYNTH")
             .into_editor(&self.params)
     }
 }
