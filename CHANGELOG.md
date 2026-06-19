@@ -9,6 +9,7 @@ Notable changes per release.
 - **VST2 MIDI output fixed on 64-bit.** The outbound `VstEvents` block placed its pointer array at the wrong offset, so hosts read a garbage event pointer; plugins now emit MIDI correctly. ([#131](https://github.com/truce-audio/truce/issues/131))
 - **VST3 emits non-note MIDI output.** Control change, pitch bend, aftertouch, channel pressure, and program change reach the host now, not just note on/off. ([#123](https://github.com/truce-audio/truce/issues/123))
 - **CLAP advertises the MIDI note dialect.** Raw-MIDI output events (CC, pitch bend, SysEx) are no longer dropped by dialect-routing hosts.
+- **SysEx payloads under sample-accurate chunking.** The chunking layer handed `process()` a timing-rebased event list whose SysEx pool was empty, so a plugin reading a SysEx payload would index out of bounds; the rebased list now carries its own copy of the payload.
 
 ## 0.59.0
 
