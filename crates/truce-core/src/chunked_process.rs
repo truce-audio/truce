@@ -257,15 +257,13 @@ fn apply_pending_events(
 /// allocation-free as long as the wrapper sized the scratch list to
 /// match its input list's capacity.
 ///
-/// `SysEx` payload bytes are NOT copied - the rebased entry carries
-/// the same `pool_offset` / `len` indices and the wrapper holds the
-/// original `events` for the duration of this `process_chunked`
-/// call, so `EventList::sysex_bytes` continues to resolve correctly
-/// when the plugin queries via the parent list. Plugins that read
-/// `SysEx` payloads from the *scratch* list will get an empty slice
-/// because `scratch.sysex_pool` is empty; the contract here is "the
-/// scratch is a timing view, not a self-contained list" and the
-/// audio thread can resolve payloads only against `events`.
+/// `SysEx` payloads are copied into the scratch's own byte pool (via
+/// `push_sysex`), so the scratch is self-contained. The plugin only
+/// ever receives the scratch, so `EventList::sysex_bytes` must resolve
+/// against it - copying the body verbatim would leave the rebased entry
+/// pointing at the empty scratch pool and panic on access. The scratch
+/// pool is pre-sized to `SYSEX_POOL_PREALLOC` (it's built with
+/// `EventList::with_capacity`), so the copy stays allocation-free.
 fn rebase_events_into(
     events: &EventList,
     scratch: &mut EventList,
@@ -281,16 +279,24 @@ fn rebase_events_into(
         if off >= block_end {
             break;
         }
-        // Rebase the sample offset and copy the body verbatim. The
-        // cast is bounded: `off - block_start < block_end -
-        // block_start <= u32::MAX in practice` (audio blocks cap at
-        // a few thousand samples).
+        // Rebase the sample offset. The cast is bounded: `off -
+        // block_start < block_end - block_start <= u32::MAX in
+        // practice` (audio blocks cap at a few thousand samples).
         #[allow(clippy::cast_possible_truncation)]
         let rebased_offset = (off - block_start) as u32;
-        scratch.push(Event {
-            sample_offset: rebased_offset,
-            body: ev.body,
-        });
+        match ev.body {
+            // Re-copy the payload so the scratch carries its own pool
+            // entry; a pool-full drop matches the documented `SysEx`
+            // overflow behaviour and can't occur in practice (the
+            // scratch pool matches the source pool's size).
+            EventBody::SysEx { .. } => {
+                let _ = scratch.push_sysex(rebased_offset, events.sysex_bytes(&ev.body));
+            }
+            body => scratch.push(Event {
+                sample_offset: rebased_offset,
+                body,
+            }),
+        }
     }
 }
 
@@ -421,5 +427,20 @@ mod tests {
         });
         let next = find_next_split(&events, &infos, 0, 0);
         assert_eq!(next, Some((100, 0)));
+    }
+
+    #[test]
+    fn rebase_copies_sysex_payload_into_scratch() {
+        let mut events = EventList::with_capacity(EVENT_LIST_PREALLOC);
+        events.push_sysex(50, &[0x11, 0x22, 0x33, 0x44]).unwrap();
+        let mut scratch = EventList::with_capacity(EVENT_LIST_PREALLOC);
+        rebase_events_into(&events, &mut scratch, 40, 80);
+
+        let ev = scratch.iter().next().expect("sysex rebased into scratch");
+        assert_eq!(ev.sample_offset, 10); // 50 - 40
+        // Regression: the scratch used to carry the parent's pool
+        // indices against an empty pool, so this access panicked
+        // out-of-bounds. It now resolves against the scratch's own pool.
+        assert_eq!(scratch.sysex_bytes(&ev.body), &[0x11, 0x22, 0x33, 0x44]);
     }
 }
