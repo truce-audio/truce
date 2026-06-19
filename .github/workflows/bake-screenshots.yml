@@ -85,7 +85,7 @@ env:
     truce-example-gui-zoo-egui
     truce-example-gui-zoo-iced
     truce-example-dasp-bitcrusher
-    truce-example-lfo-cc
+    truce-example-envelope
     truce-example-chord
     truce-example-cc-filter
     truce-example-mpe-spreader

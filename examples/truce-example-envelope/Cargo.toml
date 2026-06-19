@@ -1,5 +1,5 @@
 [package]
-name = "truce-example-lfo-cc"
+name = "truce-example-envelope"
 # Internal-only - workspace demonstration not for crates.io.
 publish = false
 version.workspace = true
