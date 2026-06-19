@@ -53,6 +53,11 @@ members = [
     "examples/truce-example-gui-zoo-egui",
     "examples/truce-example-gui-zoo-iced",
     "examples/truce-example-dasp-bitcrusher",
+    "examples/truce-example-lfo-cc",
+    "examples/truce-example-midi-synth",
+    "examples/truce-example-cc-filter",
+    "examples/truce-example-mpe-spreader",
+    "examples/truce-example-sysex-echo",
 ]
 
 [workspace.package]

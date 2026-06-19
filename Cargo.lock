@@ -4602,6 +4602,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "truce-example-cc-filter"
+version = "0.59.0"
+dependencies = [
+ "clap-sys",
+ "truce",
+ "truce-aax",
+ "truce-au",
+ "truce-clap",
+ "truce-core",
+ "truce-gui",
+ "truce-gui-types",
+ "truce-loader",
+ "truce-lv2",
+ "truce-params",
+ "truce-test",
+ "truce-vst2",
+ "truce-vst3",
+]
+
+[[package]]
 name = "truce-example-dasp-bitcrusher"
 version = "0.59.0"
 dependencies = [
@@ -4848,6 +4868,66 @@ dependencies = [
 ]
 
 [[package]]
+name = "truce-example-lfo-cc"
+version = "0.59.0"
+dependencies = [
+ "clap-sys",
+ "truce",
+ "truce-aax",
+ "truce-au",
+ "truce-clap",
+ "truce-core",
+ "truce-gui",
+ "truce-gui-types",
+ "truce-loader",
+ "truce-lv2",
+ "truce-params",
+ "truce-test",
+ "truce-vst2",
+ "truce-vst3",
+]
+
+[[package]]
+name = "truce-example-midi-synth"
+version = "0.59.0"
+dependencies = [
+ "clap-sys",
+ "truce",
+ "truce-aax",
+ "truce-au",
+ "truce-clap",
+ "truce-core",
+ "truce-gui",
+ "truce-gui-types",
+ "truce-loader",
+ "truce-lv2",
+ "truce-params",
+ "truce-test",
+ "truce-vst2",
+ "truce-vst3",
+]
+
+[[package]]
+name = "truce-example-mpe-spreader"
+version = "0.59.0"
+dependencies = [
+ "clap-sys",
+ "truce",
+ "truce-aax",
+ "truce-au",
+ "truce-clap",
+ "truce-core",
+ "truce-gui",
+ "truce-gui-types",
+ "truce-loader",
+ "truce-lv2",
+ "truce-params",
+ "truce-test",
+ "truce-vst2",
+ "truce-vst3",
+]
+
+[[package]]
 name = "truce-example-state"
 version = "0.59.0"
 dependencies = [
@@ -4888,6 +4968,26 @@ dependencies = [
  "truce-standalone",
  "truce-test",
  "truce-utils",
+ "truce-vst2",
+ "truce-vst3",
+]
+
+[[package]]
+name = "truce-example-sysex-echo"
+version = "0.59.0"
+dependencies = [
+ "clap-sys",
+ "truce",
+ "truce-aax",
+ "truce-au",
+ "truce-clap",
+ "truce-core",
+ "truce-gui",
+ "truce-gui-types",
+ "truce-loader",
+ "truce-lv2",
+ "truce-params",
+ "truce-test",
  "truce-vst2",
  "truce-vst3",
 ]
