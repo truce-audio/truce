@@ -1215,6 +1215,7 @@ fn register_au_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
         num_outputs,
         bypass_param_id,
         has_midi_output,
+        accepts_midi_in: i32::from(info.accepts_midi_in),
     }));
 
     let callbacks = Box::leak(Box::new(AuCallbacks {

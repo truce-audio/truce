@@ -131,12 +131,16 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
     // note-shapers belong. A mismatch with the AU-type computed at
     // install / package time causes auval to report "Class Data
     // fields ... do not match component description".
+    // An audio effect that accepts MIDI input is an `aumf` MusicEffect,
+    // not a plain `aufx`: AU routes MIDI to a plugin by its component
+    // type, so an `aufx` would never be handed the events.
     let au_type = plugin
         .au_type
         .as_deref()
         .unwrap_or(match plugin.category.as_str() {
             "instrument" => "aumu",
             "midi" | "note_effect" => "aumi",
+            _ if accepts_midi_in => "aumf",
             _ => "aufx",
         });
 

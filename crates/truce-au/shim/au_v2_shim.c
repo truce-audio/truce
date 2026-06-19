@@ -218,12 +218,13 @@ void truce_au_v2_host_end_param_gesture(void *ctx, uint32_t param_id) {
     AUEventListenerNotify(NULL, NULL, &event);
 }
 
-static int is_instrument(void) {
-    if (!g_descriptor) return 0;
-    return (g_descriptor->component_type[0] == 'a' &&
-            g_descriptor->component_type[1] == 'u' &&
-            g_descriptor->component_type[2] == 'm' &&
-            g_descriptor->component_type[3] == 'u');
+/* Whether the host should hand this plugin MIDI input. Gated on the
+ * `accepts_midi_in` capability (category default, overridable via
+ * `midi_input` in truce.toml), not the component type - so an `aumu`
+ * instrument and an `aumf` MusicEffect both get the
+ * `MusicDeviceMIDIEvent` handler, while a plain `aufx` effect doesn't. */
+static int accepts_midi_input(void) {
+    return g_descriptor && g_descriptor->accepts_midi_in;
 }
 
 /* Append one packet to the in-progress `MIDIPacketList`, flushing
@@ -1418,7 +1419,7 @@ static AudioComponentMethod au_v2_lookup(SInt16 selector) {
         case kAudioUnitRemoveRenderNotifySelect:
             return (AudioComponentMethod)au_v2_remove_render_notify;
         case kMusicDeviceMIDIEventSelect:
-            return is_instrument() ? (AudioComponentMethod)au_v2_midi_event : NULL;
+            return accepts_midi_input() ? (AudioComponentMethod)au_v2_midi_event : NULL;
         // Return NULL for optional selectors (system probes for capabilities)
         case 11: // kAudioUnitRemovePropertyListenerSelect (legacy)
         case 19: case 20: case 21: // misc component selectors
