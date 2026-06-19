@@ -5,7 +5,7 @@ Notable changes per release.
 ## 0.60.0
 
 - **`midi_input` / `midi_output` capability flags.** New `[[plugin]]` truce.toml keys let an instrument or audio effect opt into MIDI input/output (or opt out), overriding the category default, consistently across every format.
-- **AU MusicEffect for MIDI-driven effects.** An audio effect with `midi_input = true` now registers as an `aumf` MusicEffect, so AU hosts route MIDI to it instead of an `aufx` they never send MIDI.
+- **AU MusicEffect for MIDI-driven effects.** An audio effect with `midi_input = true` now registers as an `aumf` MusicEffect, so AU hosts route MIDI to it instead of an `aufx`.
 - **VST2 MIDI output fixed on 64-bit.** The outbound `VstEvents` block placed its pointer array at the wrong offset, so hosts read a garbage event pointer; plugins now emit MIDI correctly. ([#131](https://github.com/truce-audio/truce/issues/131))
 - **VST3 emits non-note MIDI output.** Control change, pitch bend, aftertouch, channel pressure, and program change reach the host now, not just note on/off. ([#123](https://github.com/truce-audio/truce/issues/123))
 - **CLAP advertises the MIDI note dialect.** Raw-MIDI output events (CC, pitch bend, SysEx) are no longer dropped by dialect-routing hosts.
