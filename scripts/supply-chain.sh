@@ -1,22 +1,25 @@
 #!/usr/bin/env bash
 # Supply-chain audit for the whole workspace tree: runs `cargo audit`
 # (RustSec advisory scan) and `cargo deny check` (advisories + licenses +
-# bans + sources, policy in deny.toml) in the main workspace and every
-# sub-workspace. Both pass through scripts/recursive-cargo.sh, which owns
-# the workspace list, color forcing, and per-workspace [OK]/[FAIL]
-# reporting.
+# bans + sources) in the main workspace and every sub-workspace.
 #
 # Usage: supply-chain.sh
 #
 # Requires `cargo audit` (cargo-audit) and `cargo deny` (cargo-deny) on
-# PATH. Exits non-zero if either tool fails in any workspace. deny.toml
-# at the repo root is shared across all workspaces via `--config`, so the
-# policy stays DRY (each sub-workspace pulls a different crate subset).
+# PATH. Exits non-zero if either tool fails in any workspace.
+#
+# cargo deny uses a per-workspace policy: most workspaces share the root
+# deny.toml, but truce-vizia - the only one pulling git-sourced deps -
+# gets crates/truce-vizia/deny.toml so its git allow-list doesn't leak
+# into the others. cargo audit needs no config (it scans Cargo.lock) and
+# exits non-zero only on a real vulnerability; unmaintained-crate notices
+# stay exit 0.
 set -uo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root_dir="$(cd "$script_dir/.." && pwd)"
-recurse="$script_dir/recursive-cargo.sh"
+# shellcheck source=truce-workspaces.sh
+source "$script_dir/truce-workspaces.sh"
 
 for tool in cargo-audit cargo-deny; do
     if ! command -v "$tool" >/dev/null 2>&1; then
@@ -26,12 +29,58 @@ for tool in cargo-audit cargo-deny; do
     fi
 done
 
+# Keep colored output when our own stdout is a real terminal (off for a
+# piped / redirected run). Mirrors recursive-cargo.sh.
+if [[ -t 1 ]]; then
+    : "${CARGO_TERM_COLOR:=always}"
+    : "${CLICOLOR_FORCE:=1}"
+    export CARGO_TERM_COLOR CLICOLOR_FORCE
+fi
+
 status=0
 
+# Pretty label for a workspace path: "(main)" for the root, else the
+# path relative to it.
+ws_label() {
+    local l="${1#"$root_dir"}"
+    l="${l#/}"
+    [[ -z "$l" ]] && l="(main)"
+    printf '%s' "$l"
+}
+
+# Most workspaces share the root policy; truce-vizia carries its own.
+deny_config_for() {
+    case "$1" in
+        */crates/truce-vizia) printf '%s' "$1/deny.toml" ;;
+        *) printf '%s' "$root_dir/deny.toml" ;;
+    esac
+}
+
+report() {
+    local label="$1" rc="$2"
+    if [[ $rc -eq 0 ]]; then
+        printf '[ OK ] %s\n' "$label"
+    else
+        printf '[FAIL] %s (exit %d)\n' "$label" "$rc" >&2
+        status=$rc
+    fi
+}
+
 printf '\n########## cargo audit ##########\n'
-"$recurse" audit || status=$?
+while IFS= read -r ws; do
+    label="$(ws_label "$ws")"
+    printf '\n=== cargo audit [%s] ===\n' "$label"
+    ( cd "$ws" && cargo audit )
+    report "$label" "$?"
+done < <(truce_workspaces "$root_dir")
 
 printf '\n########## cargo deny check ##########\n'
-"$recurse" deny check --config "$root_dir/deny.toml" || status=$?
+while IFS= read -r ws; do
+    label="$(ws_label "$ws")"
+    cfg="$(deny_config_for "$ws")"
+    printf '\n=== cargo deny check [%s] (%s) ===\n' "$label" "${cfg#"$root_dir"/}"
+    ( cd "$ws" && cargo deny check --config "$cfg" )
+    report "$label" "$?"
+done < <(truce_workspaces "$root_dir")
 
 exit "$status"

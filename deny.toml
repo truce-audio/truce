@@ -1,23 +1,24 @@
-# cargo-deny policy for the whole truce workspace tree. Shared by the
-# main workspace and the truce-slint / truce-vizia / truce-gpu-examples
-# sub-workspaces via `cargo deny check --config <this file>` (see
-# scripts/supply-chain.sh). One file keeps the policy DRY; each
-# sub-workspace pulls a different subset of crates, so the allow lists
-# below are the union across all four.
+# cargo-deny policy for the main workspace and the truce-slint /
+# truce-gpu-examples sub-workspaces, applied via `cargo deny check
+# --config <this file>` (see scripts/supply-chain.sh). The truce-vizia
+# sub-workspace uses its own crates/truce-vizia/deny.toml because it is
+# the only workspace pulling git-sourced deps - keeping the git
+# allowance out of here bounds its blast radius to that one workspace.
+# cargo-deny has no config inheritance, so vizia's file repeats the
+# license/advisory policy below.
 
 [advisories]
-# Unmaintained transitive crates with no published vulnerability. None
-# is a first-party dependency - each resolves only when an upstream GUI
-# crate bumps. Tracked here so a *new* advisory still fails the gate.
+# Unmaintained transitive crate with no published vulnerability. Not a
+# first-party dependency - resolves only when an upstream proc-macro dep
+# bumps. Tracked here so a *new* advisory still fails the gate.
 ignore = [
     "RUSTSEC-2024-0436", # paste - unmaintained (proc-macro, deep transitive)
-    "RUSTSEC-2025-0057", # fxhash - unmaintained (vizia_style -> vizia_core)
 ]
 
 [licenses]
-# Union of every license encountered across the four workspaces. A
-# sub-workspace only sees a subset, so don't warn on allow entries it
-# never hits.
+# Union of every license encountered across these workspaces. A given
+# workspace only sees a subset, so don't warn on allow entries it never
+# hits.
 unused-allowed-license = "allow"
 allow = [
     "Apache-2.0",
@@ -46,5 +47,7 @@ multiple-versions = "warn"
 
 [sources]
 unknown-registry = "deny"
-# baseview / vizia / morphorm ship from git forks, not crates.io.
-unknown-git = "allow"
+# No git-sourced deps in these workspaces; any git source is unexpected.
+# The truce-vizia workspace, which does pull git forks, allow-lists them
+# in its own deny.toml.
+unknown-git = "deny"

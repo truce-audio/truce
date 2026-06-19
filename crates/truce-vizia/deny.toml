@@ -1,0 +1,48 @@
+# cargo-deny policy for the truce-vizia sub-workspace, applied via
+# `cargo deny check --config <this file>` (see scripts/supply-chain.sh).
+# This workspace is the only one pulling git-sourced deps (the vizia GUI
+# stack ships from git forks), so its git allow-list lives here rather
+# than in the root deny.toml - that keeps the allowance from applying to
+# the other workspaces. cargo-deny has no config inheritance, so the
+# license/advisory policy is restated rather than shared with the root.
+
+[advisories]
+# Unmaintained transitive crate with no published vulnerability, pulled
+# in by the vizia styling stack. Tracked here so a *new* advisory still
+# fails the gate.
+ignore = [
+    "RUSTSEC-2025-0057", # fxhash - unmaintained (vizia_style -> vizia_core)
+]
+
+[licenses]
+# Licenses actually present in this workspace's tree. self_cell
+# (Apache-2.0 OR GPL-2.0-only) and r-efi (MIT OR Apache-2.0 OR
+# LGPL-2.1-or-later) are satisfied by their permissive OR-terms, so the
+# copyleft alternatives stay out.
+allow = [
+    "Apache-2.0",
+    "MIT",
+    "BSD-3-Clause",
+    "ISC",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+
+[bans]
+# Duplicate crate versions are unavoidable in a wide GUI/host tree
+# (windows-* generations, hashbrown, ...). Surface without failing.
+multiple-versions = "warn"
+
+[sources]
+unknown-registry = "deny"
+# The vizia GUI stack and our baseview fork ship from git, not crates.io.
+# Pin the exact repos so only these are accepted - any other git source
+# still fails the gate.
+unknown-git = "deny"
+allow-git = [
+    "https://github.com/truce-audio/baseview.git",
+    "https://github.com/vizia/vizia.git",
+    "https://github.com/vizia/morphorm.git",
+]

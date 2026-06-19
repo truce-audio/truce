@@ -27,6 +27,9 @@ set -uo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root_dir="$(cd "$script_dir/.." && pwd)"
 
+# shellcheck source=truce-workspaces.sh
+source "$script_dir/truce-workspaces.sh"
+
 # Pick the cargo binary. On Windows the truce build must use the
 # Windows toolchain, so prefer `cargo.exe` whenever it's on PATH -
 # including under WSL, where bare `cargo` is the Linux toolchain that
@@ -79,12 +82,12 @@ if [[ -n "${RECURSIVE_CARGO_SKIP_PATTERN:-}" ]]; then
     skip_pattern="$skip_pattern|$RECURSIVE_CARGO_SKIP_PATTERN"
 fi
 
-workspaces=(
-    "$root_dir"
-    "$root_dir/crates/truce-slint"
-    "$root_dir/crates/truce-vizia"
-    "$root_dir/crates/truce-gpu-examples"
-)
+# `mapfile`/`readarray` is bash 4+; build the array by hand so the
+# script still runs under macOS's stock bash 3.2.
+workspaces=()
+while IFS= read -r ws_path; do
+    workspaces+=("$ws_path")
+done < <(truce_workspaces "$root_dir")
 
 overall_status=0
 for ws in "${workspaces[@]}"; do
