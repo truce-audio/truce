@@ -25,12 +25,16 @@ typedef struct {
      * The shim routes kAudioUnitProperty_BypassEffect get/set through
      * this ID so the host's master-bypass UI tracks the param value. */
     uint32_t bypass_param_id;
-    /* 1 if the plugin emits MIDI back to the host (note effects,
-     * arp/chord generators). The AU v3 shim gates `MIDIOutputNames`
-     * on this so pure audio effects don't appear with a phantom
-     * "MIDI Out" port in the host UI; the v2 shim is unconditional
-     * because v2 hosts only wire `MIDIOutputCallback` on demand. */
+    /* 1 if the plugin emits MIDI to the host. The v2 shim gates the
+     * MIDIOutputCallback property and the v3 shim gates
+     * `MIDIOutputNames` on this, so a pure audio effect doesn't show
+     * a phantom "MIDI Out" port in the host UI. */
     int32_t has_midi_output;
+    /* 1 if the plugin accepts MIDI input. The v2 shim gates its
+     * `MusicDeviceMIDIEvent` handler lookup on this - decoupled from
+     * the `aumu` component type so an `aumf` MusicEffect (audio effect
+     * that opts into MIDI input) is also handed events. */
+    int32_t accepts_midi_in;
 } AuPluginDescriptor;
 
 typedef struct {

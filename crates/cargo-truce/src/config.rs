@@ -265,16 +265,26 @@ impl PluginDef {
     }
     pub(crate) fn resolved_au_type(&self) -> &str {
         // Keep in sync with `truce-derive::plugin_info`. NoteEffect →
-        // `aumi` (Apple's MIDI Processor). `aumi` plugins declare no
-        // audio buses per Apple spec - wrappers that can't express
-        // that (AAX) synthesize dummy audio I/O internally.
-        self.au_type
-            .as_deref()
-            .unwrap_or(match self.category.as_str() {
-                "instrument" => "aumu",
-                "midi" | "note_effect" => "aumi",
-                _ => "aufx",
-            })
+        // `aumi` (Apple's MIDI Processor); an audio effect that accepts
+        // MIDI input → `aumf` (MusicEffect), since AU routes MIDI by
+        // component type. `aumi` plugins declare no audio buses per
+        // Apple spec - wrappers that can't express that (AAX)
+        // synthesize dummy audio I/O internally.
+        if let Some(t) = self.au_type.as_deref() {
+            return t;
+        }
+        match self.category.as_str() {
+            "instrument" => "aumu",
+            "midi" | "note_effect" => "aumi",
+            _ => {
+                let (accepts_midi_in, _) = truce_build::midi_capabilities(
+                    &self.category,
+                    self.midi_input,
+                    self.midi_output,
+                );
+                if accepts_midi_in { "aumf" } else { "aufx" }
+            }
+        }
     }
     pub(crate) fn au3_sub(&self) -> &str {
         self.au3_subtype
@@ -739,5 +749,27 @@ mod suite_tests {
             Ok(_) => panic!("expected resolve to error"),
         };
         assert!(err.contains("zero plugins"), "got: {err}");
+    }
+
+    #[test]
+    fn au_type_promotes_midi_effect_to_aumf() {
+        let mut p = plugin("fx", "fx");
+        // Plain audio effect stays aufx.
+        assert_eq!(p.resolved_au_type(), "aufx");
+        // Opting into MIDI input promotes it to MusicEffect.
+        p.shared.midi_input = Some(true);
+        assert_eq!(p.resolved_au_type(), "aumf");
+        // An explicit au_type override still wins.
+        p.shared.au_type = Some("aufx".into());
+        assert_eq!(p.resolved_au_type(), "aufx");
+    }
+
+    #[test]
+    fn au_type_category_defaults() {
+        let mut p = plugin("p", "p");
+        p.shared.category = "instrument".into();
+        assert_eq!(p.resolved_au_type(), "aumu");
+        p.shared.category = "note_effect".into();
+        assert_eq!(p.resolved_au_type(), "aumi");
     }
 }
