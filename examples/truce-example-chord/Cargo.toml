@@ -1,5 +1,5 @@
 [package]
-name = "truce-example-midi-synth"
+name = "truce-example-chord"
 # Internal-only - workspace demonstration not for crates.io.
 publish = false
 version.workspace = true

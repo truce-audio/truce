@@ -422,13 +422,13 @@ au3_subtype = "TLf3"
 au_tag = "MIDI"
 
 [[plugin]]
-name = "Truce MIDI Synth"
-bundle_id = "midi-synth"
-crate = "truce-example-midi-synth"
+name = "Truce Chord"
+bundle_id = "chord"
+crate = "truce-example-chord"
 category = "instrument"
 midi_output = true
-fourcc = "TMsy"
-au3_subtype = "TMs3"
+fourcc = "TChd"
+au3_subtype = "TCh3"
 au_tag = "Synthesizer"
 vst3_subcategory = "Synth"
 
