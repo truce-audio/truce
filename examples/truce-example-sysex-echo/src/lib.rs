@@ -114,6 +114,30 @@ mod tests {
         assert_eq!(echoed, vec![&payload[..]]);
     }
 
+    // Integration test through the real sample-accurate chunking path:
+    // a Transport event mid-block forces a sub-block split, so the input
+    // SysEx is delivered via the chunker's rebased scratch list - the
+    // path that previously dropped (or, with an unsized pool, panicked
+    // on) the payload. Direct `process()` tests bypass this entirely.
+    #[test]
+    fn sysex_survives_chunk_split() {
+        use std::time::Duration;
+        use truce_test::driver;
+
+        let payload = [0x7e, 0x00, 0x06, 0x01];
+        let result = driver!(Plugin)
+            .duration(Duration::from_millis(5))
+            .capture_output_events(true)
+            .script(|s| {
+                s.sysex(&payload);
+                s.wait_samples(64);
+                s.raw(EventBody::Transport(TransportInfo::default()));
+            })
+            .run();
+
+        assert_eq!(result.output_sysex, vec![payload.to_vec()]);
+    }
+
     #[cfg(target_os = "macos")]
     #[test]
     fn gui_screenshot_macos() {
