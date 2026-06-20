@@ -678,6 +678,38 @@ fn collect_fields(fields: &Fields) -> (Vec<ParamField>, Vec<NestedField>, Vec<Me
 }
 
 /// Parse a range string like "linear(-60, 24)" into tokens.
+/// Emit an `f64` as a decimal literal (`60.0`, `-60.0`) rather than the
+/// suffixed-integer form `quote! { #f64 }` produces for whole numbers
+/// (`60f64`). rustc accepts `60f64`, but rust-analyzer's proc-macro
+/// expansion (reported on 1.96) rejects it with "expected Expr". The
+/// decimal form round-trips cleanly and matches the hand-written
+/// `0.0` / `1.0` literals the range-less default path emits.
+fn f64_lit(v: f64) -> proc_macro2::TokenStream {
+    if v < 0.0 {
+        let abs = proc_macro2::Literal::f64_unsuffixed(-v);
+        quote! { -#abs }
+    } else {
+        let lit = proc_macro2::Literal::f64_unsuffixed(v);
+        quote! { #lit }
+    }
+}
+
+/// Like [`f64_lit`] for `i64` - emits `12` / `-12`, not `12i64`.
+fn i64_lit(v: i64) -> proc_macro2::TokenStream {
+    let abs = proc_macro2::Literal::u64_unsuffixed(v.unsigned_abs());
+    if v < 0 {
+        quote! { -#abs }
+    } else {
+        quote! { #abs }
+    }
+}
+
+/// Like [`f64_lit`] for `usize` - emits `2`, not `2usize`.
+fn usize_lit(v: usize) -> proc_macro2::TokenStream {
+    let lit = proc_macro2::Literal::usize_unsuffixed(v);
+    quote! { #lit }
+}
+
 fn parse_range_tokens(range: &str) -> proc_macro2::TokenStream {
     let bad = |msg: String| quote! { compile_error!(#msg) };
 
@@ -702,6 +734,7 @@ fn parse_range_tokens(range: &str) -> proc_macro2::TokenStream {
                 "linear range needs min < max, got `linear({min}, {max})`"
             ));
         }
+        let (min, max) = (f64_lit(min), f64_lit(max));
         return quote! { ::truce::params::ParamRange::Linear { min: #min, max: #max } };
     }
     if let Some(inner) = range.strip_prefix("log(").and_then(|s| s.strip_suffix(')')) {
@@ -727,6 +760,7 @@ fn parse_range_tokens(range: &str) -> proc_macro2::TokenStream {
                 "log range needs min < max, got `log({min}, {max})`"
             ));
         }
+        let (min, max) = (f64_lit(min), f64_lit(max));
         return quote! { ::truce::params::ParamRange::Logarithmic { min: #min, max: #max } };
     }
     if let Some(inner) = range
@@ -756,6 +790,7 @@ fn parse_range_tokens(range: &str) -> proc_macro2::TokenStream {
                 "discrete range needs min < max, got `discrete({min}, {max})`"
             ));
         }
+        let (min, max) = (i64_lit(min), i64_lit(max));
         return quote! { ::truce::params::ParamRange::Discrete { min: #min, max: #max } };
     }
     if let Some(inner) = range
@@ -773,6 +808,7 @@ fn parse_range_tokens(range: &str) -> proc_macro2::TokenStream {
                 "enum range needs at least 2 variants, got `enum({count})`"
             ));
         }
+        let count = usize_lit(count);
         return quote! { ::truce::params::ParamRange::Enum { count: #count } };
     }
     bad(format!(
@@ -883,10 +919,7 @@ fn gen_param_info_literal(f: &ParamField) -> Option<proc_macro2::TokenStream> {
             path_tokens: Some(t),
             ..
         }) => t.clone(),
-        Some(DefaultExpr { value, .. }) => {
-            let v = *value;
-            quote! { #v }
-        }
+        Some(DefaultExpr { value, .. }) => f64_lit(*value),
         None => quote! { 0.0 },
     };
 
