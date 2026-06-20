@@ -65,7 +65,10 @@ above grant.
 
 ## Testing
 
-Beyond the gate in [Code quality](#code-quality):
+CI runs clippy, the unit + integration suite, screenshot pixel-diff
+tests, and plugin validation (clap-validator, pluginval) across macOS,
+Linux, and Windows; all of it must pass before merge. The notes below
+cover what to add or check by hand on top of that.
 
 - **DSP / processing changes** — cover them with `truce_test::driver!`
   scripts (sample-accurate, no host needed). Add to the relevant
@@ -99,3 +102,10 @@ For the formats a host loads natively (CLAP, VST3, AU, AAX):
 
 Hosts and OSes outside the Tier 1 table fall to Tier 2, except VST2,
 which is Tier 3 everywhere — not actively tested.
+
+## Releases
+
+`main` always tracks the latest release. Feature branches and their
+PRs don't target `main` directly; they merge into the branch for the
+upcoming version, which then opens its own PR into `main` when the
+release is cut.
