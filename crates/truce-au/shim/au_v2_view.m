@@ -21,6 +21,7 @@
 @import AppKit;
 @import AudioToolbox;
 #import <AudioUnit/AUCocoaUIView.h>
+#import <dispatch/dispatch.h>
 
 #include "au_shim_types.h"
 
@@ -111,7 +112,14 @@
         [[TRUCE_AU_FIXED_CONTAINER_NAME alloc] initWithFrame:frame];
     container.rustCtx = ctx;
     container.callbacks = cb;
-    cb->gui_open(ctx, (__bridge void *)container);
+    // PATCH (cosmo): defer gui_open until the host has attached our
+    // container to its window. The Cosmo editor validates that the
+    // parent NSView already belongs to a window before embedding the
+    // WKWebView child, and AUv2 hosts often call this factory method
+    // before the view hierarchy is live.
+    dispatch_async(dispatch_get_main_queue(), ^{
+        cb->gui_open(ctx, (__bridge void *)container);
+    });
     return container;
 }
 
