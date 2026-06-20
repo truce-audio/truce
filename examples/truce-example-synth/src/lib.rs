@@ -24,14 +24,22 @@ pub enum Waveform {
 // --- Parameters ---
 
 use SynthParamsParamId as P;
+use {EnvParamsParamId as E, FilterParamsParamId as F};
+
 use std::sync::Arc;
 
+// The filter and envelope controls are two self-contained param groups.
+// Splitting each into its own `#[derive(Params)]` struct and pulling it
+// in with `#[nested]` keeps related controls together and lets the
+// groups be reused by another plugin. The parent flattens them: every
+// param keeps its own stable `id`, so state and presets are unchanged
+// from the flat layout. IDs are pinned (not auto-assigned) because a
+// nested struct's IDs are baked into its type and must not overlap the
+// parent's or another group's.
 #[derive(Params)]
-pub struct SynthParams {
-    #[param(name = "Waveform", short_name = "Wave", default = 1)]
-    pub waveform: EnumParam<Waveform>,
-
+pub struct FilterParams {
     #[param(
+        id = 1,
         name = "Filter Cutoff",
         short_name = "Cutoff",
         group = "Filter",
@@ -43,6 +51,7 @@ pub struct SynthParams {
     pub cutoff: FloatParam,
 
     #[param(
+        id = 2,
         name = "Filter Resonance",
         short_name = "Reso",
         group = "Filter",
@@ -50,8 +59,12 @@ pub struct SynthParams {
         smooth = "exp(5)"
     )]
     pub resonance: FloatParam,
+}
 
+#[derive(Params)]
+pub struct EnvParams {
     #[param(
+        id = 3,
         name = "Attack",
         short_name = "Atk",
         group = "Envelope",
@@ -62,6 +75,7 @@ pub struct SynthParams {
     pub attack: FloatParam,
 
     #[param(
+        id = 4,
         name = "Decay",
         short_name = "Dec",
         group = "Envelope",
@@ -72,6 +86,7 @@ pub struct SynthParams {
     pub decay: FloatParam,
 
     #[param(
+        id = 5,
         name = "Sustain",
         short_name = "Sus",
         group = "Envelope",
@@ -81,6 +96,7 @@ pub struct SynthParams {
     pub sustain: FloatParam,
 
     #[param(
+        id = 6,
         name = "Release",
         short_name = "Rel",
         group = "Envelope",
@@ -89,8 +105,20 @@ pub struct SynthParams {
         unit = "s"
     )]
     pub release: FloatParam,
+}
 
-    #[param(name = "Volume", short_name = "Vol",
+#[derive(Params)]
+pub struct SynthParams {
+    #[param(id = 0, name = "Waveform", short_name = "Wave", default = 1)]
+    pub waveform: EnumParam<Waveform>,
+
+    #[nested]
+    pub filter: FilterParams,
+
+    #[nested]
+    pub envelope: EnvParams,
+
+    #[param(id = 7, name = "Volume", short_name = "Vol",
             range = "linear(-60, 0)", default = -6.0,
             unit = "dB", smooth = "exp(5)")]
     pub volume: FloatParam,
@@ -117,10 +145,10 @@ impl Synth {
 
     fn note_on(&mut self, note: u8, velocity: f32) {
         let freq = midi_note_to_freq(note);
-        let attack = self.params.attack.value();
-        let decay = self.params.decay.value();
-        let sustain = self.params.sustain.value();
-        let release = self.params.release.value();
+        let attack = self.params.envelope.attack.value();
+        let decay = self.params.envelope.decay.value();
+        let sustain = self.params.envelope.sustain.value();
+        let release = self.params.envelope.release.value();
 
         self.voices.push(Voice::new(
             note,
@@ -182,8 +210,8 @@ impl PluginLogic for Synth {
             }
 
             let waveform_idx = self.params.waveform.index();
-            let cutoff = self.params.cutoff.read();
-            let resonance = self.params.resonance.read();
+            let cutoff = self.params.filter.cutoff.read();
+            let resonance = self.params.filter.resonance.read();
             let volume = db_to_linear(self.params.volume.read());
 
             let mut sample = 0.0f64;
@@ -213,15 +241,15 @@ impl PluginLogic for Synth {
             ]),
             section(
                 "FILTER",
-                vec![knob(P::Cutoff, "Cutoff"), knob(P::Resonance, "Reso")],
+                vec![knob(F::Cutoff, "Cutoff"), knob(F::Resonance, "Reso")],
             ),
             section(
                 "ENVELOPE",
                 vec![
-                    knob(P::Attack, "Attack"),
-                    knob(P::Decay, "Decay"),
-                    knob(P::Sustain, "Sustain"),
-                    knob(P::Release, "Release"),
+                    knob(E::Attack, "Attack"),
+                    knob(E::Decay, "Decay"),
+                    knob(E::Sustain, "Sustain"),
+                    knob(E::Release, "Release"),
                 ],
             ),
         ])

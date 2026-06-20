@@ -276,6 +276,7 @@ pub trait Params: __private::Sealed + Send + Sync + 'static {
             }
             seen.push((info.id, info.name));
         }
+        let mut seen_meters: Vec<u32> = Vec::new();
         for meter_id in self.meter_ids() {
             for (prev_id, prev_name) in &seen {
                 assert!(
@@ -283,6 +284,18 @@ pub trait Params: __private::Sealed + Send + Sync + 'static {
                     "meter ID {meter_id} collides with parameter ID for '{prev_name}'",
                 );
             }
+            // Meter IDs auto-assign per struct from a shared base, so two
+            // `#[nested]` structs that each declare a meter hand back the
+            // same ID and would alias in meter storage. The per-struct
+            // compile-time check can't see across nested types; surface it
+            // as a construction panic instead of silent aliasing.
+            assert!(
+                !seen_meters.contains(&meter_id),
+                "duplicate meter ID {meter_id} (two #[nested] structs each \
+                 declare a meter; nested meters aren't supported - keep \
+                 meters in a single Params struct)",
+            );
+            seen_meters.push(meter_id);
         }
     }
 }
