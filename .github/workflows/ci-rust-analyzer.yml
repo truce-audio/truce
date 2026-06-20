@@ -1,0 +1,72 @@
+name: Rust Analyzer
+
+# rust-analyzer expands proc-macros through its own token path,
+# independent of rustc. Output that rustc happily accepts can still
+# fail RA's parser, lighting up a contributor's editor with errors on
+# code that compiles. This job fails on any macro-expansion error RA
+# reports across the workspace, so those regressions are caught in CI
+# rather than in someone's editor.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+concurrency:
+  group: rust-analyzer-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  macro-expansion:
+    name: macro expansion under rust-analyzer
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      # The `rust-analyzer` rustup component tracks the stable channel,
+      # so this runs against whatever RA stable ships - the same build a
+      # contributor's editor uses.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rust-analyzer
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: rust-analyzer-ubuntu-24.04
+          cache-bin: false
+
+      - name: Linux system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config \
+            libx11-dev libx11-xcb-dev libxcb1-dev libxcb-dri2-0-dev libxcb-icccm4-dev libxcursor-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev libxrandr-dev \
+            libgl1-mesa-dev libegl1-mesa-dev libvulkan-dev mesa-vulkan-drivers \
+            libwayland-dev \
+            libasound2-dev libjack-jackd2-dev \
+            libfontconfig1-dev libfreetype-dev
+
+      # `diagnostics` is an unstable RA subcommand: it loads the
+      # workspace, runs the proc-macro server, and prints every
+      # diagnostic. We fail on the macro-expansion error classes -
+      # `macro-error` (the macro panicked or its output failed to
+      # parse) and "Syntax Error in Expansion" - so unrelated RA
+      # weak-warnings don't gate CI.
+      - name: rust-analyzer diagnostics (macro expansion)
+        run: |
+          rust-analyzer diagnostics . > ra.log 2>&1 || true
+          if grep -qE "macro-error|Syntax Error in Expansion" ra.log; then
+            echo "::error::rust-analyzer reports a macro-expansion error"
+            grep -E "macro-error|Syntax Error in Expansion" ra.log
+            exit 1
+          fi
+          echo "OK: no macro-expansion errors"
