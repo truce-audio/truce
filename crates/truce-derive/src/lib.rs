@@ -1560,6 +1560,14 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
             })
             .collect();
 
+        let nested_inits: Vec<_> = nested_fields
+            .iter()
+            .map(|f| {
+                let ident = &f.ident;
+                quote! { #ident: ::core::default::Default::default() }
+            })
+            .collect();
+
         let meter_inits: Vec<_> = meter_fields
             .iter()
             .map(|m| {
@@ -1574,6 +1582,7 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
                 pub fn new() -> Self {
                     let me = Self {
                         #(#param_inits,)*
+                        #(#nested_inits,)*
                         #(#meter_inits,)*
                     };
                     // The compile-time ID-collision check only sees
