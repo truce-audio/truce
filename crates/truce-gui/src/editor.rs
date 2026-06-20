@@ -1525,6 +1525,8 @@ mod tests {
                     flags: ParamFlags::AUTOMATABLE,
                     unit: ParamUnit::None,
                     kind: ParamValueKind::Enum,
+                    midi_map: None,
+                    midi_channel: None,
                 },
                 ParamInfo {
                     id: 1,
@@ -1536,6 +1538,8 @@ mod tests {
                     flags: ParamFlags::AUTOMATABLE,
                     unit: ParamUnit::None,
                     kind: ParamValueKind::Float,
+                    midi_map: None,
+                    midi_channel: None,
                 },
             ]
         }
@@ -1871,6 +1875,8 @@ mod tests {
                     flags: ParamFlags::AUTOMATABLE,
                     unit: ParamUnit::None,
                     kind: ParamValueKind::Enum,
+                    midi_map: None,
+                    midi_channel: None,
                 },
                 ParamInfo {
                     id: 1,
@@ -1882,6 +1888,8 @@ mod tests {
                     flags: ParamFlags::AUTOMATABLE,
                     unit: ParamUnit::None,
                     kind: ParamValueKind::Float,
+                    midi_map: None,
+                    midi_channel: None,
                 },
             ]
         }

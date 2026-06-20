@@ -83,6 +83,27 @@ pub struct Lv2Param {
     pub range: Lv2Range,
     pub unit: Lv2Unit,
     pub flags: Lv2Flags,
+    /// Default host MIDI binding for this control port, rendered as a
+    /// `midi:binding`. `None` when the param declares no `midi_cc` /
+    /// `midi_source`.
+    pub midi: Option<Lv2MidiBinding>,
+}
+
+/// A parsed `#[param(midi_cc / midi_source / midi_channel)]` binding,
+/// rendered into the control port's `midi:binding`.
+#[derive(Debug, Clone, Copy)]
+pub struct Lv2MidiBinding {
+    pub source: Lv2MidiSource,
+    /// Wire channel `0..=15`, or `None` for any channel.
+    pub channel: Option<u8>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum Lv2MidiSource {
+    Cc(u8),
+    PitchBend,
+    ChannelPressure,
+    ProgramChange,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -479,6 +500,25 @@ fn emit_control_port(f: &mut String, index: u32, p: &Lv2Param, symbol: &str) {
     if p.flags.hidden {
         let _ = writeln!(f, "        lv2:portProperty pprop:notOnGUI ;");
     }
+    if let Some(binding) = p.midi {
+        // Default host MIDI binding. The node class names the source;
+        // honoured by Ardour / jalv, ignored elsewhere (harmless).
+        let class = match binding.source {
+            Lv2MidiSource::Cc(_) => "midi:Controller",
+            Lv2MidiSource::PitchBend => "midi:Bender",
+            Lv2MidiSource::ChannelPressure => "midi:ChannelPressure",
+            Lv2MidiSource::ProgramChange => "midi:ProgramChange",
+        };
+        let _ = writeln!(f, "        midi:binding [");
+        let _ = writeln!(f, "            a {class} ;");
+        if let Lv2MidiSource::Cc(n) = binding.source {
+            let _ = writeln!(f, "            midi:controllerNumber {n} ;");
+        }
+        if let Some(ch) = binding.channel {
+            let _ = writeln!(f, "            midi:channel {ch} ;");
+        }
+        let _ = writeln!(f, "        ] ;");
+    }
 }
 
 /// Public, id-paired view of `resolve_param_symbols`: the exact
@@ -733,6 +773,7 @@ mod tests {
             range: Lv2Range::Enum { count: 4 },
             unit: Lv2Unit::None,
             flags: Lv2Flags::default(),
+            midi: None,
         }
     }
 
@@ -779,5 +820,37 @@ mod tests {
         let mut p = enum_param();
         p.default_plain = 99.0;
         assert!((p.clamped_default() - 3.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn cc_binding_renders_controller_with_channel() {
+        let mut p = enum_param();
+        p.midi = Some(Lv2MidiBinding {
+            source: Lv2MidiSource::Cc(74),
+            channel: Some(2),
+        });
+        let (_m, ttl) = render_ttls(&bundle(Lv2Category::Effect, false, vec![p]), "x.so");
+        assert!(
+            ttl.contains("midi:binding ["),
+            "binding block present:\n{ttl}"
+        );
+        assert!(ttl.contains("a midi:Controller ;"));
+        assert!(ttl.contains("midi:controllerNumber 74 ;"));
+        assert!(ttl.contains("midi:channel 2 ;"));
+    }
+
+    #[test]
+    fn pitchbend_binding_omits_controller_number() {
+        let mut p = enum_param();
+        p.midi = Some(Lv2MidiBinding {
+            source: Lv2MidiSource::PitchBend,
+            channel: None,
+        });
+        let (_m, ttl) = render_ttls(&bundle(Lv2Category::Effect, false, vec![p]), "x.so");
+        assert!(ttl.contains("a midi:Bender ;"));
+        assert!(
+            !ttl.contains("midi:controllerNumber"),
+            "non-CC binding must not emit a controller number:\n{ttl}"
+        );
     }
 }

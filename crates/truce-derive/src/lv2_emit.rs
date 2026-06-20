@@ -90,6 +90,18 @@ pub(crate) fn write_struct_sidecar(
         if let Some(f) = &p.attrs.flags {
             let _ = writeln!(buf, "flags = \"{}\"", toml_escape(f));
         }
+        if let Some(k) = p.attrs.midi_map {
+            let binding = match k {
+                crate::MidiBindKind::Cc(n) => format!("cc({n})"),
+                crate::MidiBindKind::PitchBend => "pitchbend".to_string(),
+                crate::MidiBindKind::ChannelPressure => "pressure".to_string(),
+                crate::MidiBindKind::ProgramChange => "program".to_string(),
+            };
+            let _ = writeln!(buf, "midi_binding = \"{binding}\"");
+            if let Some(ch) = p.attrs.midi_channel {
+                let _ = writeln!(buf, "midi_channel = {ch}");
+            }
+        }
         buf.push('\n');
     }
     for m in meters {
@@ -320,7 +332,31 @@ fn parse_param_entry(v: &toml::Value, sidecar_dir: &std::path::Path) -> Result<L
         range,
         unit: parse_unit_value(unit),
         flags: parse_flags_value(flags),
+        midi: parse_midi_binding(v),
     })
+}
+
+/// Parse the optional `midi_binding` / `midi_channel` sidecar keys into
+/// an [`Lv2MidiBinding`]. Mirrors the `MidiBindKind` serialization in
+/// `write_struct_sidecar`.
+fn parse_midi_binding(v: &toml::Value) -> Option<truce_build::lv2::Lv2MidiBinding> {
+    use truce_build::lv2::{Lv2MidiBinding, Lv2MidiSource};
+    let s = v.get("midi_binding").and_then(|x| x.as_str())?;
+    let source = if let Some(n) = s.strip_prefix("cc(").and_then(|x| x.strip_suffix(')')) {
+        Lv2MidiSource::Cc(n.parse().ok()?)
+    } else {
+        match s {
+            "pitchbend" => Lv2MidiSource::PitchBend,
+            "pressure" => Lv2MidiSource::ChannelPressure,
+            "program" => Lv2MidiSource::ProgramChange,
+            _ => return None,
+        }
+    };
+    let channel = v
+        .get("midi_channel")
+        .and_then(toml::Value::as_integer)
+        .and_then(|i| u8::try_from(i).ok());
+    Some(Lv2MidiBinding { source, channel })
 }
 
 fn toml_value_to_f64(v: &toml::Value) -> Option<f64> {

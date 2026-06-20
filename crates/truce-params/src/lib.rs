@@ -6,7 +6,7 @@ pub mod sample;
 mod smooth;
 mod types;
 
-pub use info::{ParamFlags, ParamInfo, ParamUnit, ParamValueKind};
+pub use info::{MidiSource, ParamFlags, ParamInfo, ParamUnit, ParamValueKind, map_source_to_param};
 pub use range::ParamRange;
 pub use sample::{Float, Sample};
 pub use smooth::{Smoother, SmoothingStyle};
@@ -306,6 +306,8 @@ mod tests {
             flags: ParamFlags::empty(),
             unit: ParamUnit::Pan,
             kind: ParamValueKind::Float,
+            midi_map: None,
+            midi_channel: None,
         }
     }
 
@@ -344,6 +346,8 @@ mod tests {
             flags: ParamFlags::empty(),
             unit,
             kind: ParamValueKind::Int,
+            midi_map: None,
+            midi_channel: None,
         }
     }
 

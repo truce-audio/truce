@@ -42,7 +42,7 @@ use truce_core::wrapper::{
     default_io_channels, log_missing_bus_layout, run_audio_block, run_extern_callback_with,
     run_register,
 };
-use truce_params::{ParamFlags, ParamInfo, Params};
+use truce_params::{MidiSource, ParamFlags, ParamInfo, Params};
 
 use ffi::{
     AuCallbacks, AuMidi2Event, AuMidiEvent, AuParamDescriptor, AuParamEvent, AuPluginDescriptor,
@@ -1163,6 +1163,18 @@ pub fn register_au<P: PluginExport>() {
     });
 }
 
+/// MIDI status high-nibble for an `AudioUnitParameterMIDIMapping`'s
+/// `mStatus`. The AU host ORs in the channel (or ignores it under the
+/// any-channel flag).
+fn midi_status_byte(source: MidiSource) -> u8 {
+    match source {
+        MidiSource::Cc(_) => 0xB0,
+        MidiSource::PitchBend => 0xE0,
+        MidiSource::ChannelPressure => 0xD0,
+        MidiSource::ProgramChange => 0xC0,
+    }
+}
+
 fn register_au_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
     let info = P::info();
 
@@ -1187,6 +1199,12 @@ fn register_au_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
             step_count: pi.range.step_count().map_or(0, std::num::NonZero::get),
             unit: cs.unit.into_raw(),
             group: cs.group.into_raw(),
+            midi_status: pi.midi_map.map_or(0, midi_status_byte),
+            midi_data1: match pi.midi_map {
+                Some(MidiSource::Cc(n)) => n,
+                _ => 0,
+            },
+            midi_channel: pi.midi_channel.map_or(-1, i16::from),
         });
     }
 

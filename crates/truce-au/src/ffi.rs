@@ -53,6 +53,14 @@ pub struct AuParamDescriptor {
     pub unit: *const c_char,
     /// Group name (empty string for top-level)
     pub group: *const c_char,
+    /// MIDI status high-nibble of the default host-learn binding
+    /// (`0xB0` CC, `0xE0` pitch bend, `0xD0` channel pressure, `0xC0`
+    /// program change), or `0` for no binding.
+    pub midi_status: u8,
+    /// CC number when `midi_status` is `0xB0`; `0` otherwise.
+    pub midi_data1: u8,
+    /// Wire channel `0..=15`, or `-1` for any channel.
+    pub midi_channel: i16,
 }
 
 /// Callbacks from the `ObjC` shim into Rust.

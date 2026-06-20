@@ -342,6 +342,13 @@ pub(crate) struct ParamAttrs {
     /// `gen_param_info_literal`. See the
     /// `parameter-dependent-chunking.md` design doc.
     pub(crate) chunk: Option<bool>,
+    /// Default host MIDI-learn binding source, set by `midi_cc = N`
+    /// or `midi_source = "pitchbend" | "pressure" | "program"` (at
+    /// most one). Baked onto `ParamInfo::midi_map`.
+    pub(crate) midi_map: Option<MidiBindKind>,
+    /// Channel scope for `midi_map`, stored as the wire channel
+    /// `0..=15` (the attribute is the user-facing `1..=16`).
+    pub(crate) midi_channel: Option<u8>,
     smooth: Option<String>,
     format_fn: Option<String>,
     parse_fn: Option<String>,
@@ -350,6 +357,37 @@ pub(crate) struct ParamAttrs {
     /// kinds surface at compile time instead of as silent default
     /// values.
     errors: Vec<proc_macro2::TokenStream>,
+}
+
+/// Derive-side mirror of `truce_params::MidiSource`, used to validate
+/// bindings across params and emit the `ParamInfo::midi_map` tokens.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MidiBindKind {
+    Cc(u8),
+    PitchBend,
+    ChannelPressure,
+    ProgramChange,
+}
+
+const MIDI_BOTH_SET: &str = "set only one of `midi_cc` / `midi_source` on a parameter";
+
+impl MidiBindKind {
+    /// The `Some(::truce::params::MidiSource::…)` tokens for a binding,
+    /// or `None`. CC values are emitted unsuffixed (`Cc(74)`) to keep
+    /// the macro output rust-analyzer-friendly.
+    fn to_tokens(self) -> proc_macro2::TokenStream {
+        match self {
+            MidiBindKind::Cc(n) => {
+                let lit = proc_macro2::Literal::u8_unsuffixed(n);
+                quote! { ::truce::params::MidiSource::Cc(#lit) }
+            }
+            MidiBindKind::PitchBend => quote! { ::truce::params::MidiSource::PitchBend },
+            MidiBindKind::ChannelPressure => {
+                quote! { ::truce::params::MidiSource::ChannelPressure }
+            }
+            MidiBindKind::ProgramChange => quote! { ::truce::params::MidiSource::ProgramChange },
+        }
+    }
 }
 
 fn type_last_segment(ty: &Type) -> Option<String> {
@@ -382,6 +420,78 @@ fn classify_param_type(ty: &Type) -> Option<ParamKind> {
         "EnumParam" => Some(ParamKind::Enum),
         _ => None,
     }
+}
+
+/// Parse the `midi_cc` / `midi_source` / `midi_channel` keys. Split out
+/// of [`parse_param_attrs`]'s loop to keep it under the line limit;
+/// errors are pushed onto `attrs.errors` like the other arms.
+fn parse_midi_attr(
+    key: &str,
+    meta: &syn::meta::ParseNestedMeta,
+    attrs: &mut ParamAttrs,
+) -> syn::Result<()> {
+    let push = |attrs: &mut ParamAttrs, e: syn::Error| attrs.errors.push(e.to_compile_error());
+    let value: Lit = meta.value()?.parse()?;
+    match (key, value) {
+        ("midi_cc", Lit::Int(lit)) => match lit.base10_parse::<u16>() {
+            Ok(cc) if cc <= 127 => {
+                let cc = u8::try_from(cc).expect("checked <= 127");
+                if attrs.midi_map.is_some() {
+                    push(attrs, meta.error(MIDI_BOTH_SET));
+                } else {
+                    attrs.midi_map = Some(MidiBindKind::Cc(cc));
+                }
+            }
+            _ => push(
+                attrs,
+                syn::Error::new_spanned(lit, "`#[param(midi_cc = …)]` must be 0..=127"),
+            ),
+        },
+        ("midi_source", Lit::Str(s)) => {
+            let kind = match s.value().as_str() {
+                "pitchbend" => Some(MidiBindKind::PitchBend),
+                "pressure" => Some(MidiBindKind::ChannelPressure),
+                "program" => Some(MidiBindKind::ProgramChange),
+                _ => None,
+            };
+            match kind {
+                _ if attrs.midi_map.is_some() => push(attrs, meta.error(MIDI_BOTH_SET)),
+                Some(k) => attrs.midi_map = Some(k),
+                None => push(
+                    attrs,
+                    syn::Error::new_spanned(
+                        s,
+                        "`#[param(midi_source = …)]` expects \"pitchbend\", \"pressure\", \
+                         or \"program\"",
+                    ),
+                ),
+            }
+        }
+        ("midi_channel", Lit::Int(lit)) => match lit.base10_parse::<u16>() {
+            Ok(ch) if (1..=16).contains(&ch) => {
+                attrs.midi_channel = Some(u8::try_from(ch - 1).expect("checked 1..=16"));
+            }
+            _ => push(
+                attrs,
+                syn::Error::new_spanned(lit, "`#[param(midi_channel = …)]` must be 1..=16"),
+            ),
+        },
+        ("midi_source", other) => push(
+            attrs,
+            syn::Error::new_spanned(
+                other,
+                "`#[param(midi_source = …)]` expects a string literal",
+            ),
+        ),
+        (k, other) => push(
+            attrs,
+            syn::Error::new_spanned(
+                other,
+                format!("`#[param({k} = …)]` expects an integer literal"),
+            ),
+        ),
+    }
+    Ok(())
 }
 
 /// Parse `#[param(...)]` attributes from a field. Errors carried in
@@ -507,13 +617,16 @@ fn parse_param_attrs(field: &syn::Field) -> ParamAttrs {
                         ),
                     }
                 }
+                "midi_cc" | "midi_source" | "midi_channel" => {
+                    parse_midi_attr(key.as_str(), &meta, &mut attrs)?;
+                }
                 other => {
                     push_err(
                         &mut attrs,
                         meta.error(format!(
                             "unknown `#[param]` key `{other}` (expected one of: id, name, \
                              short_name, group, range, default, unit, flags, smooth, format, \
-                             parse, chunk)",
+                             parse, chunk, midi_cc, midi_source, midi_channel)",
                         )),
                     );
                 }
@@ -990,6 +1103,21 @@ fn gen_param_info_literal(f: &ParamField) -> Option<proc_macro2::TokenStream> {
         ParamKind::Enum => quote! { ::truce::params::ParamValueKind::Enum },
     };
 
+    let midi_map = a.midi_map.map_or_else(
+        || quote! { None },
+        |k| {
+            let src = k.to_tokens();
+            quote! { Some(#src) }
+        },
+    );
+    let midi_channel = a.midi_channel.map_or_else(
+        || quote! { None },
+        |ch| {
+            let lit = proc_macro2::Literal::u8_unsuffixed(ch);
+            quote! { Some(#lit) }
+        },
+    );
+
     Some(quote! {
         ::truce::params::ParamInfo {
             id: #id,
@@ -1001,6 +1129,8 @@ fn gen_param_info_literal(f: &ParamField) -> Option<proc_macro2::TokenStream> {
             flags: #flags,
             unit: #unit,
             kind: #kind,
+            midi_map: #midi_map,
+            midi_channel: #midi_channel,
         }
     })
 }
@@ -1175,6 +1305,37 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
             {
                 let msg = format!("Meter ID {id} collides with a parameter ID.");
                 return syn::Error::new_spanned(&ast, msg).to_compile_error().into();
+            }
+        }
+    }
+
+    // MIDI bindings must be unambiguous: two params can't claim the same
+    // source on overlapping channels (an any-channel binding overlaps
+    // every channel), or the host's mapping query would be
+    // order-dependent.
+    {
+        let bound: Vec<(&str, MidiBindKind, Option<u8>)> = param_fields
+            .iter()
+            .filter_map(|f| {
+                f.attrs.midi_map.map(|k| {
+                    (
+                        f.attrs.name.as_deref().unwrap_or("<unnamed>"),
+                        k,
+                        f.attrs.midi_channel,
+                    )
+                })
+            })
+            .collect();
+        for (i, (na, ka, cha)) in bound.iter().enumerate() {
+            for (nb, kb, chb) in bound.iter().skip(i + 1) {
+                let overlap = cha.is_none() || chb.is_none() || cha == chb;
+                if ka == kb && overlap {
+                    let msg = format!(
+                        "conflicting MIDI binding: parameters `{na}` and `{nb}` map the \
+                         same source on overlapping channels"
+                    );
+                    return syn::Error::new_spanned(&ast, msg).to_compile_error().into();
+                }
             }
         }
     }

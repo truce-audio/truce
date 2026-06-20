@@ -943,6 +943,42 @@ unsafe extern "C" fn cb_gui_set_size<P: PluginExport>(ctx: *mut std::ffi::c_void
     }
 }
 
+/// `IMidiMapping::getMidiControllerAssignment` callback. Resolves the
+/// host's controller query to a bound parameter id from the static
+/// `midi_map` metadata - no plugin instance needed.
+//
+// `controller as u8` is guarded by the `0..=127` match arm; `channel`
+// goes through `try_from` so a negative never wraps.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+unsafe extern "C" fn cb_midi_mapping_get_param_id<P: PluginExport>(
+    _ctx: *mut std::ffi::c_void,
+    _bus_index: i32,
+    channel: i16,
+    controller: i16,
+    out_param_id: *mut u32,
+) -> i32 {
+    use truce_params::MidiSource;
+    // VST3 `ControllerNumbers`: 0..=127 are CCs; the extended values
+    // mirror the output path's encoding (`ivstmidicontrollers.h`).
+    let source = match controller {
+        0..=127 => MidiSource::Cc(controller as u8),
+        128 => MidiSource::ChannelPressure, // kAfterTouch
+        129 => MidiSource::PitchBend,
+        130 => MidiSource::ProgramChange, // kCtrlProgramChange
+        _ => return 0,                    // kResultFalse
+    };
+    let channel = u8::try_from(channel).unwrap_or(0);
+    // Returns a hit-flag (1/0); the shim maps it to kResultOk /
+    // kResultFalse for the VST3 boundary.
+    match truce_params::map_source_to_param(&P::param_infos_static(), channel, source) {
+        Some(id) => {
+            unsafe { out_param_id.write(id) };
+            1
+        }
+        None => 0,
+    }
+}
+
 /// Convert physical pixels (what the VST3 host speaks) to logical
 /// points (what `Editor` works in). Identity when `host_scale` is
 /// 1.0 or invalid.
@@ -1228,6 +1264,7 @@ fn register_vst3_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
         gui_can_resize: cb_gui_can_resize::<P>,
         gui_check_size_constraint: cb_gui_check_size_constraint::<P>,
         gui_set_size: cb_gui_set_size::<P>,
+        midi_mapping_get_param_id: cb_midi_mapping_get_param_id::<P>,
     }));
 
     // Unify with the `Box::leak(Box::new(...))` shape above so every
