@@ -179,6 +179,19 @@ pub struct Vst3Callbacks {
     /// the Rust side scales to logical using the cached host
     /// content-scale before handing to the editor.
     pub gui_set_size: unsafe extern "C" fn(ctx: *mut c_void, w: u32, h: u32),
+    /// `IMidiMapping::getMidiControllerAssignment`. Given the event-input
+    /// bus, MIDI channel (0..=15), and a VST3 `ControllerNumbers` value
+    /// (`0..=127` CC, `kAfterTouch`/`kPitchBend`/`kCtrlProgramChange`),
+    /// resolve the bound parameter from the static `midi_map` metadata.
+    /// Writes the id via `out_param_id` and returns `1` (`kResultOk`)
+    /// on a hit, `0` (`kResultFalse`) otherwise.
+    pub midi_mapping_get_param_id: unsafe extern "C" fn(
+        ctx: *mut c_void,
+        bus_index: i32,
+        channel: i16,
+        controller: i16,
+        out_param_id: *mut u32,
+    ) -> i32,
 }
 
 unsafe extern "C" {

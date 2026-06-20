@@ -46,6 +46,16 @@ typedef struct {
     uint32_t step_count;
     const char *unit;
     const char *group;
+    /* Default host MIDI-learn binding, surfaced through
+     * kAudioUnitProperty_AllParameterMIDIMappings. midi_status is the
+     * MIDI status high-nibble (0xB0 control change, 0xE0 pitch bend,
+     * 0xD0 channel pressure, 0xC0 program change) or 0 when the param
+     * declares no binding. midi_data1 is the CC number (0 for non-CC
+     * sources). midi_channel is the wire channel 0..=15, or -1 for any
+     * channel. */
+    uint8_t midi_status;
+    uint8_t midi_data1;
+    int16_t midi_channel;
 } AuParamDescriptor;
 
 typedef struct {

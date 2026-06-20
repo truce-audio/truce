@@ -707,6 +707,8 @@ mod tests {
             flags: ParamFlags::AUTOMATABLE,
             unit: ParamUnit::None,
             kind: ParamValueKind::Float,
+            midi_map: None,
+            midi_channel: None,
         }
     }
 

@@ -342,6 +342,8 @@ mod tests {
             flags,
             unit: ParamUnit::None,
             kind: ParamValueKind::Float,
+            midi_map: None,
+            midi_channel: None,
         }
     }
 
