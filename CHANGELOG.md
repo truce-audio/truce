@@ -2,6 +2,10 @@
 
 Notable changes per release.
 
+## 0.60.1
+
+- **`#[derive(Params)]` no longer trips a rust-analyzer error.** Parameters with a `range` (or numeric `default`) emitted suffixed literals like `60f64`, which rust-analyzer 1.96 rejected with "expected Expr" even though the code compiled; the derive now emits plain decimal literals. ([#135](https://github.com/truce-audio/truce/issues/135))
+
 ## 0.60.0
 
 - **`midi_input` / `midi_output` capability flags.** New `[[plugin]]` truce.toml keys let an instrument or audio effect opt into MIDI input/output (or opt out), overriding the category default, consistently across every format.
