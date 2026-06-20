@@ -31,6 +31,51 @@ use ffi::{Vst3Callbacks, Vst3MidiEvent, Vst3ParamDescriptor, Vst3PluginDescripto
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
+const VST3_MIDI_MAPPING_PARAM_BASE: u32 = 0x6d63_6d00;
+const VST3_MIDI_MAPPING_CHANNEL_COUNT: u32 = 16;
+const VST3_MIDI_MAPPING_CC_COUNT: u32 = 128;
+const VST3_MIDI_MAPPING_PARAM_COUNT: u32 =
+    VST3_MIDI_MAPPING_CHANNEL_COUNT * VST3_MIDI_MAPPING_CC_COUNT;
+
+fn is_vst3_midi_mapping_param_id(id: u32) -> bool {
+    id.checked_sub(VST3_MIDI_MAPPING_PARAM_BASE)
+        .is_some_and(|offset| offset < VST3_MIDI_MAPPING_PARAM_COUNT)
+}
+
+fn decode_vst3_midi_mapping_param_id(id: u32) -> Option<(u8, u8)> {
+    let offset = id.checked_sub(VST3_MIDI_MAPPING_PARAM_BASE)?;
+    if offset >= VST3_MIDI_MAPPING_PARAM_COUNT {
+        return None;
+    }
+    let channel = u8::try_from(offset / VST3_MIDI_MAPPING_CC_COUNT).ok()?;
+    let cc = u8::try_from(offset % VST3_MIDI_MAPPING_CC_COUNT).ok()?;
+    Some((channel, cc))
+}
+
+fn vst3_midi_mapping_param_id(channel: u8, cc: u8) -> Option<u32> {
+    if u32::from(channel) >= VST3_MIDI_MAPPING_CHANNEL_COUNT
+        || u32::from(cc) >= VST3_MIDI_MAPPING_CC_COUNT
+    {
+        return None;
+    }
+    Some(
+        VST3_MIDI_MAPPING_PARAM_BASE
+            + u32::from(channel) * VST3_MIDI_MAPPING_CC_COUNT
+            + u32::from(cc),
+    )
+}
+
+fn vst3_proxy_plain_from_normalized(normalized: f64) -> f64 {
+    normalized.clamp(0.0, 1.0) * 127.0
+}
+
+fn vst3_proxy_cc_value_from_normalized(normalized: f64) -> u8 {
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    {
+        vst3_proxy_plain_from_normalized(normalized).round() as u8
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Instance wrapper
 // ---------------------------------------------------------------------------
@@ -96,6 +141,7 @@ struct Vst3Instance<P: PluginExport> {
     /// are static for the life of the plugin instance, so caching is
     /// safe.
     param_ranges: Vec<(u32, ParamRange)>,
+    total_param_count: u32,
     editor: Option<Box<dyn Editor>>,
     /// Shared transport slot: audio thread writes each block, editor reads.
     transport_slot: Arc<truce_core::TransportSlot>,
@@ -146,6 +192,12 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
     // Sort by id so `binary_search_by_key` works in the hot lookups.
     param_ranges.sort_by_key(|(id, _)| *id);
     let params_arc = plugin.params_arc();
+    let total_param_count = len_u32(param_ranges.len())
+        + if info.accepts_midi_in {
+            VST3_MIDI_MAPPING_PARAM_COUNT
+        } else {
+            0
+        };
     let latency_cache = AtomicU32::new(plugin.latency());
     let tail_cache = AtomicU32::new(plugin.tail());
     let instance = Box::new(Vst3Instance::<P> {
@@ -165,6 +217,7 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
         prepared: false,
         scratch: truce_core::buffer::RawBufferScratch::default(),
         param_ranges,
+        total_param_count,
         editor: None,
         transport_slot: truce_core::TransportSlot::new(),
         host_scale: 1.0,
@@ -226,6 +279,8 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
     transport_ptr: *const ffi::Vst3Transport,
     param_changes: *const ffi::Vst3ParamChange,
     num_param_changes: u32,
+    midi_mapping_param_changes: *const ffi::Vst3MidiMappingParamChange,
+    num_midi_mapping_param_changes: u32,
 ) {
     let nf = num_frames as usize;
     let ok = run_audio_block::<P>("VST3", || unsafe {
@@ -348,6 +403,27 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
                 });
             }
         }
+        if !midi_mapping_param_changes.is_null() && num_midi_mapping_param_changes > 0 {
+            let changes = slice::from_raw_parts(
+                midi_mapping_param_changes,
+                num_midi_mapping_param_changes as usize,
+            );
+            for pc in changes {
+                let Some((channel, cc)) = decode_vst3_midi_mapping_param_id(pc.id) else {
+                    continue;
+                };
+                inst.event_list.push(Event {
+                    #[allow(clippy::cast_sign_loss)]
+                    sample_offset: pc.sample_offset.max(0) as u32,
+                    body: EventBody::ControlChange {
+                        group: 0,
+                        channel,
+                        cc,
+                        value: vst3_proxy_cc_value_from_normalized(pc.value),
+                    },
+                });
+            }
+        }
         // Single stable sort across the merged MIDI + param-change
         // streams. Stable sort preserves the within-group order each
         // section already pushed in.
@@ -430,13 +506,8 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
 
 unsafe extern "C" fn cb_param_count<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
     unsafe {
-        // Read the cached `param_ranges.len()` rather than walking the
-        // `Params` impl. The cache is built once at instantiation
-        // (`Vst3Instance::new`) and never grows; trait dispatch was
-        // free per-call but consistent with the cache-first pattern
-        // the rest of the file uses.
         let inst = &*ctx.cast::<Vst3Instance<P>>();
-        len_u32(inst.param_ranges.len())
+        inst.total_param_count
     }
 }
 
@@ -445,6 +516,9 @@ unsafe extern "C" fn cb_param_get_value<P: PluginExport>(
     id: u32,
 ) -> f64 {
     unsafe {
+        if is_vst3_midi_mapping_param_id(id) {
+            return 0.0;
+        }
         let inst = &*ctx.cast::<Vst3Instance<P>>();
         inst.params_arc.get_plain(id).unwrap_or(0.0)
     }
@@ -456,6 +530,9 @@ unsafe extern "C" fn cb_param_set_value<P: PluginExport>(
     value: f64,
 ) {
     unsafe {
+        if is_vst3_midi_mapping_param_id(id) {
+            return;
+        }
         let inst = &*ctx.cast::<Vst3Instance<P>>();
         inst.params_arc.set_plain(id, value);
     }
@@ -466,6 +543,9 @@ unsafe extern "C" fn cb_param_normalize<P: PluginExport>(
     id: u32,
     plain: f64,
 ) -> f64 {
+    if is_vst3_midi_mapping_param_id(id) {
+        return (plain / 127.0).clamp(0.0, 1.0);
+    }
     unsafe {
         let inst = &*ctx.cast::<Vst3Instance<P>>();
         match inst.param_ranges.binary_search_by_key(&id, |(i, _)| *i) {
@@ -480,6 +560,9 @@ unsafe extern "C" fn cb_param_denormalize<P: PluginExport>(
     id: u32,
     normalized: f64,
 ) -> f64 {
+    if is_vst3_midi_mapping_param_id(id) {
+        return vst3_proxy_plain_from_normalized(normalized);
+    }
     unsafe {
         let inst = &*ctx.cast::<Vst3Instance<P>>();
         match inst.param_ranges.binary_search_by_key(&id, |(i, _)| *i) {
@@ -505,6 +588,14 @@ unsafe extern "C" fn cb_param_format<P: PluginExport>(
             return 0;
         }
         let inst = &*ctx.cast::<Vst3Instance<P>>();
+        if is_vst3_midi_mapping_param_id(id) {
+            let text = format!("{:.0}", value.clamp(0.0, 127.0));
+            let bytes = text.as_bytes();
+            let len = bytes.len().min((out_len as usize) - 1);
+            std::ptr::copy_nonoverlapping(bytes.as_ptr().cast::<c_char>(), out, len);
+            *out.add(len) = 0;
+            return len_u32(len);
+        }
         match inst.params_arc.format_value(id, value) {
             Some(text) => {
                 let bytes = text.as_bytes();
@@ -1091,6 +1182,36 @@ fn resolved_plugin_name(info: &truce_core::info::PluginInfo) -> &'static str {
     truce_core::info::resolve_name_override(info.vst3_name, info.name)
 }
 
+fn vst3_midi_mapping_param_descriptors() -> Vec<Vst3ParamDescriptor> {
+    let mut param_descs = Vec::with_capacity(VST3_MIDI_MAPPING_PARAM_COUNT as usize);
+    for channel in 0..VST3_MIDI_MAPPING_CHANNEL_COUNT {
+        for cc in 0..VST3_MIDI_MAPPING_CC_COUNT {
+            let channel = u8::try_from(channel).expect("validated MIDI-mapping channel");
+            let cc = u8::try_from(cc).expect("validated MIDI-mapping CC");
+            let id = vst3_midi_mapping_param_id(channel, cc)
+                .expect("validated MIDI-mapping proxy range");
+            let name =
+                CString::new(format!("MIDI CC Ch {} CC {}", channel + 1, cc)).unwrap_or_default();
+            let short_name = CString::new(format!("CC {}:{}", channel + 1, cc)).unwrap_or_default();
+            let units = CString::new("").unwrap_or_default();
+            let group = CString::new("").unwrap_or_default();
+            param_descs.push(Vst3ParamDescriptor {
+                id,
+                name: name.into_raw(),
+                short_name: short_name.into_raw(),
+                units: units.into_raw(),
+                min: 0.0,
+                max: 127.0,
+                default_normalized: 0.0,
+                step_count: 0,
+                flags: 0,
+                group: group.into_raw(),
+            });
+        }
+    }
+    param_descs
+}
+
 pub fn register_vst3<P: PluginExport>() {
     // Called from the export macro's `extern "C" fn init()` static
     // initializer. Catch any panic so it doesn't cross the FFI
@@ -1114,8 +1235,25 @@ fn register_vst3_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
     // the historical runtime path inside `PluginExport`'s default
     // impl.
     let param_infos = P::param_infos_static();
+    if info.accepts_midi_in
+        && param_infos
+            .iter()
+            .any(|pi| is_vst3_midi_mapping_param_id(pi.id))
+    {
+        panic!(
+            "VST3 MIDI-mapping proxy ParamID range 0x{VST3_MIDI_MAPPING_PARAM_BASE:08x}..=0x{:08x} collides with a real parameter",
+            VST3_MIDI_MAPPING_PARAM_BASE + VST3_MIDI_MAPPING_PARAM_COUNT - 1
+        );
+    }
 
-    let mut param_descs: Vec<Vst3ParamDescriptor> = Vec::with_capacity(param_infos.len());
+    let mut param_descs: Vec<Vst3ParamDescriptor> = Vec::with_capacity(
+        param_infos.len()
+            + if info.accepts_midi_in {
+                VST3_MIDI_MAPPING_PARAM_COUNT as usize
+            } else {
+                0
+            },
+    );
     for pi in &param_infos {
         let cs = truce_core::wrapper::ParamCStrings::from_info(pi);
 
@@ -1146,6 +1284,9 @@ fn register_vst3_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
             flags,
             group: cs.group.into_raw(),
         });
+    }
+    if info.accepts_midi_in {
+        param_descs.extend(vst3_midi_mapping_param_descriptors());
     }
 
     let name = CString::new(resolved_plugin_name(&info)).unwrap_or_default();
@@ -1197,6 +1338,12 @@ fn register_vst3_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
         num_outputs,
         has_midi_output,
         accepts_midi_in,
+        midi_mapping_param_base: VST3_MIDI_MAPPING_PARAM_BASE,
+        midi_mapping_param_count: if info.accepts_midi_in {
+            VST3_MIDI_MAPPING_PARAM_COUNT
+        } else {
+            0
+        },
     }));
 
     let callbacks = Box::leak(Box::new(Vst3Callbacks {
@@ -1330,4 +1477,38 @@ macro_rules! export_vst3 {
             }
         }
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn midi_mapping_param_ids_round_trip() {
+        assert_eq!(
+            decode_vst3_midi_mapping_param_id(VST3_MIDI_MAPPING_PARAM_BASE),
+            Some((0, 0))
+        );
+        assert_eq!(
+            decode_vst3_midi_mapping_param_id(
+                VST3_MIDI_MAPPING_PARAM_BASE + VST3_MIDI_MAPPING_PARAM_COUNT - 1,
+            ),
+            Some((15, 127))
+        );
+        assert_eq!(vst3_midi_mapping_param_id(15, 127), Some(0x6d63_74ff));
+        assert_eq!(vst3_midi_mapping_param_id(16, 0), None);
+        assert_eq!(
+            decode_vst3_midi_mapping_param_id(VST3_MIDI_MAPPING_PARAM_BASE - 1),
+            None
+        );
+    }
+
+    #[test]
+    fn midi_mapping_proxy_value_conversion_clamps_and_rounds() {
+        assert_eq!(vst3_proxy_cc_value_from_normalized(-1.0), 0);
+        assert_eq!(vst3_proxy_cc_value_from_normalized(0.0), 0);
+        assert_eq!(vst3_proxy_cc_value_from_normalized(0.5), 64);
+        assert_eq!(vst3_proxy_cc_value_from_normalized(1.0), 127);
+        assert_eq!(vst3_proxy_cc_value_from_normalized(2.0), 127);
+    }
 }

@@ -66,6 +66,7 @@ static const TUID IEditController_iid = MAKE_IID(0xDCD7BBE3, 0x7742448D, 0xA874A
 static const TUID IPluginFactory_iid  = MAKE_IID(0x7A4D811C, 0x52114A1F, 0xAED9D2EE, 0x0B43BF9F);
 static const TUID IPlugView_iid       = MAKE_IID(0x5BC32507, 0xD06049EA, 0xA6151B52, 0x2B755B29);
 static const TUID IEditControllerHostEditing_iid = MAKE_IID(0x0F194781, 0x8D984ADA, 0xBBA0C1EF, 0xC011D8D0);
+static const TUID IMidiMapping_iid    = MAKE_IID(0xDF0FF9F7, 0x49B74669, 0xB63AB732, 0x7ADBF5E5);
 static const TUID IProcessContextRequirements_iid = MAKE_IID(0x2A654303, 0xEF764E3C, 0xA8E8C6F3, 0xDBAE0F77);
 static const TUID IUnitInfo_iid       = MAKE_IID(0x3D4BD6B5, 0x913A4FD2, 0xA886E768, 0xA5332E1F);
 static const TUID IPlugViewContentScaleSupport_iid =
@@ -124,6 +125,8 @@ struct Vst3PluginDescriptor {
      * `kEvent | kInput` bus, decoupled from `num_inputs` so an audio
      * effect (with audio inputs) can still take MIDI. */
     int32_t accepts_midi_in;
+    uint32_t midi_mapping_param_base;
+    uint32_t midi_mapping_param_count;
 };
 
 struct Vst3ParamDescriptor {
@@ -171,13 +174,20 @@ struct Vst3ParamChange {
     double value; // plain value
 };
 
+struct Vst3MidiMappingParamChange {
+    uint32_t id;
+    int32_t sample_offset;
+    double value; // normalized 0..=1
+};
+
 struct Vst3Callbacks {
     void* (*create)();
     void (*destroy)(void*);
     void (*reset)(void*, double, uint32_t);
     void (*process)(void*, const float**, float**, uint32_t, uint32_t, uint32_t,
                     const Vst3MidiEvent*, uint32_t,
-                    const Vst3Transport*, const Vst3ParamChange*, uint32_t);
+                    const Vst3Transport*, const Vst3ParamChange*, uint32_t,
+                    const Vst3MidiMappingParamChange*, uint32_t);
     uint32_t (*param_count)(void*);
     double (*param_get_value)(void*, uint32_t);
     void (*param_set_value)(void*, uint32_t, double);
@@ -229,6 +239,14 @@ static const Vst3PluginDescriptor* g_desc = nullptr;
 static const Vst3Callbacks* g_cb = nullptr;
 static const Vst3ParamDescriptor* g_params = nullptr;
 static uint32_t g_num_params = 0;
+
+static bool is_midi_mapping_param_id(uint32_t id) {
+    if (!g_desc || g_desc->midi_mapping_param_count == 0) {
+        return false;
+    }
+    uint32_t base = g_desc->midi_mapping_param_base;
+    return id >= base && (id - base) < g_desc->midi_mapping_param_count;
+}
 
 // Unit info (parameter groups) - built at registration time
 static const int kMaxUnits = 64;
@@ -629,6 +647,8 @@ public:
         // Collect ALL param change points (sample-accurate automation)
         Vst3ParamChange paramChanges[512];
         uint32_t numParamChanges = 0;
+        Vst3MidiMappingParamChange midiMappingParamChanges[512];
+        uint32_t numMidiMappingParamChanges = 0;
 
         if (data->inputParameterChanges) {
             auto** pcVtbl = (void**)*(void**)data->inputParameterChanges;
@@ -644,18 +664,27 @@ public:
                 auto getPoint     = (tresult (*)(void*, int32, int32*, double*))qVtbl[5];
                 uint32 paramId = getParamId(queue);
                 int32 numPoints = getPointCnt(queue);
-                for (int32 j = 0; j < numPoints && numParamChanges < 512; j++) {
+                for (int32 j = 0; j < numPoints; j++) {
                     int32 sampleOffset;
                     double value;
                     if (getPoint(queue, j, &sampleOffset, &value) == kResultOk) {
-                        double plain = g_cb->param_denormalize(ctx, paramId, value);
-                        paramChanges[numParamChanges].id = paramId;
-                        paramChanges[numParamChanges].sample_offset = sampleOffset;
-                        paramChanges[numParamChanges].value = plain;
-                        numParamChanges++;
-                        // Also set the atomic value for the last point
-                        if (j == numPoints - 1)
-                            g_cb->param_set_value(ctx, paramId, plain);
+                        if (is_midi_mapping_param_id(paramId)) {
+                            if (numMidiMappingParamChanges < 512) {
+                                midiMappingParamChanges[numMidiMappingParamChanges].id = paramId;
+                                midiMappingParamChanges[numMidiMappingParamChanges].sample_offset = sampleOffset;
+                                midiMappingParamChanges[numMidiMappingParamChanges].value = value;
+                                numMidiMappingParamChanges++;
+                            }
+                        } else if (numParamChanges < 512) {
+                            double plain = g_cb->param_denormalize(ctx, paramId, value);
+                            paramChanges[numParamChanges].id = paramId;
+                            paramChanges[numParamChanges].sample_offset = sampleOffset;
+                            paramChanges[numParamChanges].value = plain;
+                            numParamChanges++;
+                            // Also set the atomic value for the last point
+                            if (j == numPoints - 1)
+                                g_cb->param_set_value(ctx, paramId, plain);
+                        }
                     }
                 }
             }
@@ -812,7 +841,8 @@ public:
 
         g_cb->process(ctx, inPtrs, outPtrs, numIn, numOut, numFrames,
                       midiEvents, numMidi,
-                      transportPtr, paramChanges, numParamChanges);
+                      transportPtr, paramChanges, numParamChanges,
+                      midiMappingParamChanges, numMidiMappingParamChanges);
 
         // Forward output events (MIDI output from instruments/effects)
         if (data->outputEvents && g_cb->get_output_event_count) {
@@ -1355,6 +1385,13 @@ struct IEditControllerHostEditingVtbl {
     tresult (*endEditFromHost)(void*, uint32);
 };
 
+struct IMidiMappingVtbl {
+    tresult (*queryInterface)(void*, const TUID, void**);
+    uint32  (*addRef)(void*);
+    uint32  (*release)(void*);
+    tresult (*getMidiControllerAssignment)(void*, int32, int16_t, int16_t, uint32*);
+};
+
 struct IProcessContextRequirementsVtbl {
     tresult (*queryInterface)(void*, const TUID, void**);
     uint32  (*addRef)(void*);
@@ -1387,12 +1424,13 @@ struct IUnitInfoVtbl {
     tresult (*setUnitProgramData)(void*, int32, int32, void*);
 };
 
-// The actual COM object layout: 4 vtable pointers followed by the C++ object
+// The actual COM object layout: interface vtable pointers followed by the C++ object.
 struct TruceComponentCOM {
     IComponentVtbl* vtbl_component;
     IAudioProcessorVtbl* vtbl_processor;
     IEditControllerVtbl* vtbl_controller;
     IEditControllerHostEditingVtbl* vtbl_host_editing;
+    IMidiMappingVtbl* vtbl_midimapping;
     IProcessContextRequirementsVtbl* vtbl_pcr;
     IUnitInfoVtbl* vtbl_unitinfo;
     TruceComponent impl;
@@ -1444,6 +1482,11 @@ tresult TruceComponent::queryInterface(void* comBase, const TUID iid, void** obj
         *obj = &com->vtbl_host_editing;
         return kResultOk;
     }
+    if (iid_equal(iid, IMidiMapping_iid) && g_desc && g_desc->midi_mapping_param_count > 0) {
+        addRef();
+        *obj = &com->vtbl_midimapping;
+        return kResultOk;
+    }
     if (iid_equal(iid, IProcessContextRequirements_iid)) {
         addRef();
         *obj = &com->vtbl_pcr;
@@ -1474,13 +1517,17 @@ static TruceComponentCOM* com_from_host_editing(void* self) {
     return reinterpret_cast<TruceComponentCOM*>(
         reinterpret_cast<char*>(self) - 3 * sizeof(void*));
 }
-static TruceComponentCOM* com_from_pcr(void* self) {
+static TruceComponentCOM* com_from_midimapping(void* self) {
     return reinterpret_cast<TruceComponentCOM*>(
         reinterpret_cast<char*>(self) - 4 * sizeof(void*));
 }
-static TruceComponentCOM* com_from_unitinfo(void* self) {
+static TruceComponentCOM* com_from_pcr(void* self) {
     return reinterpret_cast<TruceComponentCOM*>(
         reinterpret_cast<char*>(self) - 5 * sizeof(void*));
+}
+static TruceComponentCOM* com_from_unitinfo(void* self) {
+    return reinterpret_cast<TruceComponentCOM*>(
+        reinterpret_cast<char*>(self) - 6 * sizeof(void*));
 }
 
 // --- Component vtable functions ---
@@ -1568,6 +1615,26 @@ static IEditControllerHostEditingVtbl g_hedit_vtbl = {
     hedit_beginEditFromHost, hedit_endEditFromHost
 };
 
+// --- MidiMapping vtable functions ---
+#define MMAP(self) (com_from_midimapping(self)->impl)
+static tresult mmap_qi(void* s, const TUID iid, void** obj) { return MMAP(s).queryInterface(com_from_midimapping(s), iid, obj); }
+static uint32 mmap_addRef(void* s) { return MMAP(s).addRef(); }
+static uint32 mmap_release(void* s) { auto* com = com_from_midimapping(s); auto r = com->impl.release(); if (r == 0) { com->impl.~TruceComponent(); free(com); } return r; }
+static tresult mmap_getAssignment(void*, int32 busIndex, int16_t channel, int16_t cc, uint32* id) {
+    if (!g_desc || !id || g_desc->midi_mapping_param_count == 0 || busIndex != 0) {
+        return kResultFalse;
+    }
+    if (channel < 0 || channel >= 16 || cc < 0 || cc >= 128) {
+        return kResultFalse;
+    }
+    *id = g_desc->midi_mapping_param_base + uint32(channel) * 128u + uint32(cc);
+    return kResultOk;
+}
+
+static IMidiMappingVtbl g_mmap_vtbl = {
+    mmap_qi, mmap_addRef, mmap_release, mmap_getAssignment
+};
+
 // --- ProcessContextRequirements vtable functions ---
 #define PCR(self) (com_from_pcr(self)->impl)
 static tresult pcr_qi(void* s, const TUID iid, void** obj) { return PCR(s).queryInterface(com_from_pcr(s), iid, obj); }
@@ -1632,6 +1699,7 @@ static TruceComponentCOM* create_component() {
     com->vtbl_processor = &g_proc_vtbl;
     com->vtbl_controller = &g_ctrl_vtbl;
     com->vtbl_host_editing = &g_hedit_vtbl;
+    com->vtbl_midimapping = &g_mmap_vtbl;
     com->vtbl_pcr = &g_pcr_vtbl;
     com->vtbl_unitinfo = &g_unitinfo_vtbl;
     new (&com->impl) TruceComponent();

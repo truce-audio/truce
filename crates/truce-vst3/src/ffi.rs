@@ -28,6 +28,11 @@ pub struct Vst3PluginDescriptor {
     /// `kEvent | kInput` bus on this flag (decoupled from
     /// `num_inputs` so an audio effect can also take MIDI).
     pub accepts_midi_in: i32,
+    /// Reserved VST3 MIDI-mapping proxy ID base.
+    pub midi_mapping_param_base: u32,
+    /// Number of synthetic proxy params appended after the real
+    /// params. Zero disables `IMidiMapping`.
+    pub midi_mapping_param_count: u32,
 }
 
 /// Parameter descriptor.
@@ -85,6 +90,15 @@ pub struct Vst3ParamChange {
     pub value: f64, // plain value (already denormalized)
 }
 
+/// Synthetic VST3 MIDI-mapping proxy change. `value` is
+/// still normalized 0..=1 from the host automation queue.
+#[repr(C)]
+pub struct Vst3MidiMappingParamChange {
+    pub id: u32,
+    pub sample_offset: i32,
+    pub value: f64,
+}
+
 /// Callbacks from the C++ shim into Rust.
 #[repr(C)]
 pub struct Vst3Callbacks {
@@ -103,6 +117,8 @@ pub struct Vst3Callbacks {
         transport: *const Vst3Transport,
         param_changes: *const Vst3ParamChange,
         num_param_changes: u32,
+        midi_mapping_param_changes: *const Vst3MidiMappingParamChange,
+        num_midi_mapping_param_changes: u32,
     ),
     pub param_count: unsafe extern "C" fn(ctx: *mut c_void) -> u32,
     pub param_get_value: unsafe extern "C" fn(ctx: *mut c_void, id: u32) -> f64,
