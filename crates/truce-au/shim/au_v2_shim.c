@@ -388,6 +388,15 @@ static OSStatus au_v2_reset(void *self_, AudioUnitScope scope, AudioUnitElement 
 // GetPropertyInfo / GetProperty / SetProperty
 // ---------------------------------------------------------------------------
 
+// Count parameters that declare a default MIDI-learn binding; sizes the
+// kAudioUnitProperty_AllParameterMIDIMappings array.
+static uint32_t count_midi_mapped_params(void) {
+    uint32_t n = 0;
+    for (uint32_t i = 0; i < g_num_params; i++)
+        if (g_param_descriptors[i].midi_status != 0) n++;
+    return n;
+}
+
 static OSStatus au_v2_get_property_info(void *self_, AudioUnitPropertyID prop,
                                          AudioUnitScope scope, AudioUnitElement elem,
                                          UInt32 *outSize, Boolean *outWritable) {
@@ -450,6 +459,15 @@ static OSStatus au_v2_get_property_info(void *self_, AudioUnitPropertyID prop,
             if (ensure_factory_presets((TruceAUv2 *)self_) == 0)
                 return kAudioUnitErr_InvalidProperty;
             size = sizeof(CFArrayRef); break;
+        }
+        case kAudioUnitProperty_AllParameterMIDIMappings: {
+            if (scope != kAudioUnitScope_Global) return kAudioUnitErr_InvalidScope;
+            // Defaults-only: report the declared bindings, nothing to
+            // report (and so no property) when none are declared.
+            uint32_t n = count_midi_mapped_params();
+            if (n == 0) return kAudioUnitErr_InvalidProperty;
+            size = n * sizeof(AUParameterMIDIMapping);
+            break;
         }
         case kAudioUnitProperty_Latency:
             if (scope != kAudioUnitScope_Global) return kAudioUnitErr_InvalidScope;
@@ -758,6 +776,35 @@ static OSStatus au_v2_get_property(void *self_, AudioUnitPropertyID prop,
             }
             *(CFArrayRef *)outData = arr;
             *ioSize = sizeof(CFArrayRef);
+            return noErr;
+        }
+
+        case kAudioUnitProperty_AllParameterMIDIMappings: {
+            if (scope != kAudioUnitScope_Global) return kAudioUnitErr_InvalidScope;
+            uint32_t n = count_midi_mapped_params();
+            if (n == 0) return kAudioUnitErr_InvalidProperty;
+            UInt32 needed = n * sizeof(AUParameterMIDIMapping);
+            if (*ioSize < needed) return kAudioUnitErr_InvalidPropertyValue;
+            AUParameterMIDIMapping *maps = (AUParameterMIDIMapping *)outData;
+            uint32_t w = 0;
+            for (uint32_t i = 0; i < g_num_params; i++) {
+                const AuParamDescriptor *pd = &g_param_descriptors[i];
+                if (pd->midi_status == 0) continue;
+                AUParameterMIDIMapping *m = &maps[w++];
+                memset(m, 0, sizeof(*m));
+                m->mScope = kAudioUnitScope_Global;
+                m->mParameterID = pd->id;
+                if (pd->midi_channel < 0) {
+                    // Any-channel: the channel nibble of mStatus is
+                    // ignored when the flag is set.
+                    m->mFlags = kAUParameterMIDIMapping_AnyChannelFlag;
+                    m->mStatus = pd->midi_status;
+                } else {
+                    m->mStatus = (UInt8)(pd->midi_status | (pd->midi_channel & 0x0F));
+                }
+                m->mData1 = pd->midi_data1;
+            }
+            *ioSize = needed;
             return noErr;
         }
 

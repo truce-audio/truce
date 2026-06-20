@@ -60,6 +60,8 @@ fn make_param() -> FloatParam {
         default_plain: 0.0,
         flags: ParamFlags::AUTOMATABLE,
         kind: ParamValueKind::Float,
+        midi_map: None,
+        midi_channel: None,
     };
     let p = FloatParam::new(info, SmoothingStyle::Exponential(5.0));
     p.smoother.set_sample_rate(SR);

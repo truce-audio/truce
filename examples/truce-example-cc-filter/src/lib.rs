@@ -22,7 +22,8 @@ pub struct CcFilterParams {
         range = "log(20, 20000)",
         default = 2000.0,
         unit = "Hz",
-        smooth = "exp(10)"
+        smooth = "exp(10)",
+        midi_cc = 74
     )]
     pub cutoff: FloatParam,
 
@@ -139,6 +140,20 @@ mod tests {
     #[test]
     fn info_is_valid() {
         truce_test::assert_valid_info::<Plugin>();
+    }
+
+    #[test]
+    fn cutoff_declares_cc74_binding() {
+        use truce::params::{MidiSource, Params, map_source_to_param};
+        let infos = CcFilterParams::param_infos_static();
+        // CC 74 (any channel) is declared as the cutoff's default
+        // host-mapping; the resolver the wrappers use finds it.
+        assert_eq!(
+            map_source_to_param(&infos, 0, MidiSource::Cc(74)),
+            Some(u32::from(P::Cutoff))
+        );
+        // An unbound source resolves to nothing.
+        assert_eq!(map_source_to_param(&infos, 0, MidiSource::PitchBend), None);
     }
 
     #[test]
