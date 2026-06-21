@@ -26,102 +26,86 @@ type StereoBiquad = DirectForm2Transposed<f64, StereoSample>;
 use EqParamsParamId as P;
 use std::sync::Arc;
 
+// The three bands share a shape but not their tuning: each wants its
+// own frequency range and default, so they can't be one reused type
+// (a Params struct's `default` / `range` are fixed on the type). A
+// declarative macro is the DRY answer - it stamps out three *distinct*
+// `#[derive(Params)]` structs from one template, so each band keeps its
+// own range, default, and labels without the fields written out thrice.
+// `concat!` can't build the `name` literals (the derive parses the
+// attribute value as a literal, before macros expand), so the per-band
+// strings are passed in.
+macro_rules! band_params {
+    ($ty:ident, $group:literal, $freq:literal, $freq_short:literal,
+     $gain:literal, $gain_short:literal, $q:literal, $q_short:literal,
+     $range:literal, $default:tt) => {
+        #[derive(Params)]
+        pub struct $ty {
+            #[param(name = $freq, short_name = $freq_short, group = $group,
+                            range = $range, default = $default, unit = "Hz", smooth = "exp(10)")]
+            pub freq: FloatParam,
+            #[param(name = $gain, short_name = $gain_short, group = $group,
+                            range = "linear(-18, 18)", unit = "dB", smooth = "exp(10)")]
+            pub gain: FloatParam,
+            #[param(name = $q, short_name = $q_short, group = $group,
+                            range = "log(0.1, 10)", default = 0.707, smooth = "exp(10)")]
+            pub q: FloatParam,
+        }
+    };
+}
+
+band_params!(
+    LowBand,
+    "Low",
+    "Low Freq",
+    "LFreq",
+    "Low Gain",
+    "LGain",
+    "Low Q",
+    "LQ",
+    "log(20, 1000)",
+    200.0
+);
+band_params!(
+    MidBand,
+    "Mid",
+    "Mid Freq",
+    "MFreq",
+    "Mid Gain",
+    "MGain",
+    "Mid Q",
+    "MQ",
+    "log(200, 8000)",
+    1000.0
+);
+band_params!(
+    HighBand,
+    "High",
+    "High Freq",
+    "HFreq",
+    "High Gain",
+    "HGain",
+    "High Q",
+    "HQ",
+    "log(1000, 20000)",
+    5000.0
+);
+
+// Distinct band types still need bases: each numbers its params from 0,
+// so the parent places them at 0 / 3 / 6 to keep the ranges disjoint.
+// The ids match the old flat layout (low 0-2, mid 3-5, high 6-8, output
+// 9), so state stays compatible.
 #[derive(Params)]
 pub struct EqParams {
-    #[param(
-        name = "Low Freq",
-        short_name = "LFreq",
-        group = "Low",
-        range = "log(20, 1000)",
-        default = 200.0,
-        unit = "Hz",
-        smooth = "exp(10)"
-    )]
-    pub low_freq: FloatParam,
+    #[nested(base = 0)]
+    pub low: LowBand,
+    #[nested(base = 3)]
+    pub mid: MidBand,
+    #[nested(base = 6)]
+    pub high: HighBand,
 
     #[param(
-        name = "Low Gain",
-        short_name = "LGain",
-        group = "Low",
-        range = "linear(-18, 18)",
-        unit = "dB",
-        smooth = "exp(10)"
-    )]
-    pub low_gain: FloatParam,
-
-    #[param(
-        name = "Low Q",
-        short_name = "LQ",
-        group = "Low",
-        range = "log(0.1, 10)",
-        default = 0.707,
-        smooth = "exp(10)"
-    )]
-    pub low_q: FloatParam,
-
-    #[param(
-        name = "Mid Freq",
-        short_name = "MFreq",
-        group = "Mid",
-        range = "log(200, 8000)",
-        default = 1000.0,
-        unit = "Hz",
-        smooth = "exp(10)"
-    )]
-    pub mid_freq: FloatParam,
-
-    #[param(
-        name = "Mid Gain",
-        short_name = "MGain",
-        group = "Mid",
-        range = "linear(-18, 18)",
-        unit = "dB",
-        smooth = "exp(10)"
-    )]
-    pub mid_gain: FloatParam,
-
-    #[param(
-        name = "Mid Q",
-        short_name = "MQ",
-        group = "Mid",
-        range = "log(0.1, 10)",
-        default = 0.707,
-        smooth = "exp(10)"
-    )]
-    pub mid_q: FloatParam,
-
-    #[param(
-        name = "High Freq",
-        short_name = "HFreq",
-        group = "High",
-        range = "log(1000, 20000)",
-        default = 5000.0,
-        unit = "Hz",
-        smooth = "exp(10)"
-    )]
-    pub high_freq: FloatParam,
-
-    #[param(
-        name = "High Gain",
-        short_name = "HGain",
-        group = "High",
-        range = "linear(-18, 18)",
-        unit = "dB",
-        smooth = "exp(10)"
-    )]
-    pub high_gain: FloatParam,
-
-    #[param(
-        name = "High Q",
-        short_name = "HQ",
-        group = "High",
-        range = "log(0.1, 10)",
-        default = 0.707,
-        smooth = "exp(10)"
-    )]
-    pub high_q: FloatParam,
-
-    #[param(
+        id = 9,
         name = "Output",
         short_name = "Out",
         range = "linear(-18, 18)",
@@ -227,15 +211,15 @@ impl PluginLogic for Eq {
             // still happen per sample so a fast knob sweep stays
             // click-free; only the smoother traffic moves out of the
             // inner loop.
-            self.params.low_freq.read_into(&mut low_freq[..n]);
-            self.params.low_gain.read_into(&mut low_gain[..n]);
-            self.params.low_q.read_into(&mut low_q[..n]);
-            self.params.mid_freq.read_into(&mut mid_freq[..n]);
-            self.params.mid_gain.read_into(&mut mid_gain[..n]);
-            self.params.mid_q.read_into(&mut mid_q[..n]);
-            self.params.high_freq.read_into(&mut high_freq[..n]);
-            self.params.high_gain.read_into(&mut high_gain[..n]);
-            self.params.high_q.read_into(&mut high_q[..n]);
+            self.params.low.freq.read_into(&mut low_freq[..n]);
+            self.params.low.gain.read_into(&mut low_gain[..n]);
+            self.params.low.q.read_into(&mut low_q[..n]);
+            self.params.mid.freq.read_into(&mut mid_freq[..n]);
+            self.params.mid.gain.read_into(&mut mid_gain[..n]);
+            self.params.mid.q.read_into(&mut mid_q[..n]);
+            self.params.high.freq.read_into(&mut high_freq[..n]);
+            self.params.high.gain.read_into(&mut high_gain[..n]);
+            self.params.high.q.read_into(&mut high_q[..n]);
             self.params.output.read_into(&mut output[..n]);
 
             // Vectorize the output dB → linear conversion once per
@@ -291,28 +275,31 @@ impl PluginLogic for Eq {
 
     fn editor(&self) -> Box<dyn Editor> {
         GridLayout::build(vec![
+            // Reused-group params are addressed by their flattened id
+            // (`base + local`), read off each band so the three `low` /
+            // `mid` / `high` instances resolve to distinct controls.
             section(
                 "LOW",
                 vec![
-                    knob(P::LowFreq, "Freq"),
-                    knob(P::LowGain, "Gain"),
-                    knob(P::LowQ, "Q"),
+                    knob(self.params.low.freq.id(), "Freq"),
+                    knob(self.params.low.gain.id(), "Gain"),
+                    knob(self.params.low.q.id(), "Q"),
                 ],
             ),
             section(
                 "MID",
                 vec![
-                    knob(P::MidFreq, "Freq"),
-                    knob(P::MidGain, "Gain"),
-                    knob(P::MidQ, "Q"),
+                    knob(self.params.mid.freq.id(), "Freq"),
+                    knob(self.params.mid.gain.id(), "Gain"),
+                    knob(self.params.mid.q.id(), "Q"),
                 ],
             ),
             section(
                 "HIGH",
                 vec![
-                    knob(P::HighFreq, "Freq"),
-                    knob(P::HighGain, "Gain"),
-                    knob(P::HighQ, "Q"),
+                    knob(self.params.high.freq.id(), "Freq"),
+                    knob(self.params.high.gain.id(), "Gain"),
+                    knob(self.params.high.q.id(), "Q"),
                 ],
             ),
             widgets(vec![knob(P::Output, "Output")]),

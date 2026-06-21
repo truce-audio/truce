@@ -1,11 +1,11 @@
-//! Behavioral tests for `#[nested]` params, focused on the path where
-//! a struct mixes its own `#[param]` fields with `#[nested]` children
-//! and relies on the derive-generated `new()` to initialize both. That
-//! `new()` default-initializes the nested fields; before that a mixed
-//! struct's `new()` wouldn't compile, so this file pins the behavior it
-//! enables: correct nested defaults, id ordering, cross-boundary
-//! get/set dispatch, the construction-time collision panic, and the
-//! same checks under multi-level nesting.
+//! Behavioral tests for `#[nested]` params.
+//!
+//! A nested group's params auto-number locally (0, 1, ...); the parent
+//! places the group at a base (explicit `#[nested(base = N)]` or
+//! auto-packed after the preceding params) and rebases the group's ids
+//! into its own id space at construction. That base offset is what lets
+//! the same Params type be reused in two slots without an id clash, and
+//! lets group authors write no ids at all.
 
 // Reading a param's declared default back through `get_plain` is the
 // point of several of these, so values compare bit-exact.
@@ -14,80 +14,68 @@
 use truce_derive::Params;
 use truce_params::{FloatParam, MeterSlot, Params};
 
+// A reusable group. No ids: its params number locally from 0.
 #[derive(Params)]
 struct Filter {
-    #[param(id = 0, name = "Cutoff", range = "log(20, 20000)", default = 2000.0)]
+    #[param(name = "Cutoff", range = "log(20, 20000)", default = 2000.0)]
     cutoff: FloatParam,
-    #[param(id = 1, name = "Reso", range = "linear(0, 1)", default = 0.3)]
-    reso: FloatParam,
+    #[param(name = "Reso", range = "linear(0, 1)", default = 0.3)]
+    resonance: FloatParam,
 }
 
-// Mixes an own param (`gain`) with a `#[nested]` child. This is the
-// shape whose derived `new()` only compiles once nested fields are
-// default-initialized in the struct literal.
+// Mixes an own param with a nested group at a pinned base, so the
+// flattened ids are fixed: gain 0, cutoff 1, reso 2.
 #[derive(Params)]
 struct Synth {
-    #[param(id = 10, name = "Gain", range = "linear(0, 1)", default = 0.8)]
+    #[param(id = 0, name = "Gain", range = "linear(0, 1)", default = 0.8)]
     gain: FloatParam,
-    #[nested]
+    #[nested(base = 1)]
     filter: Filter,
 }
 
 #[test]
 fn mixed_new_initializes_nested_defaults() {
     let s = Synth::new();
-    assert_eq!(s.count(), 3, "own param + two nested params");
+    assert_eq!(s.count(), 3);
 
-    // Own param first, then nested children in field order.
+    // Own param first, then the rebased group.
     let ids: Vec<u32> = s.param_infos().iter().map(|p| p.id).collect();
-    assert_eq!(ids, vec![10, 0, 1]);
+    assert_eq!(ids, vec![0, 1, 2]);
 
-    // Nested params carry their *declared* defaults, not a zeroed
-    // `FloatParam` - i.e. `Default::default()` resolved to the nested
-    // `new()`, not a blank value.
-    assert_eq!(s.get_plain(10), Some(0.8));
-    assert_eq!(s.get_plain(0), Some(2000.0));
-    assert_eq!(s.get_plain(1), Some(0.3));
+    // Group params carry their declared defaults at the rebased ids.
+    assert_eq!(s.get_plain(0), Some(0.8));
+    assert_eq!(s.get_plain(1), Some(2000.0));
+    assert_eq!(s.get_plain(2), Some(0.3));
 }
 
 #[test]
 fn default_matches_new_for_mixed() {
-    let from_new = Synth::new();
-    let from_default = Synth::default();
-    let new_pairs: Vec<(u32, f64)> = from_new
+    let a: Vec<(u32, f64)> = Synth::new()
         .param_infos()
         .iter()
         .map(|p| (p.id, p.default_plain))
         .collect();
-    let default_pairs: Vec<(u32, f64)> = from_default
+    let b: Vec<(u32, f64)> = Synth::default()
         .param_infos()
         .iter()
         .map(|p| (p.id, p.default_plain))
         .collect();
-    assert_eq!(new_pairs, default_pairs);
+    assert_eq!(a, b);
 }
 
 #[test]
 fn set_get_reaches_nested_param() {
     let s = Synth::new();
-
-    // Plain write lands on the nested param through the parent's
-    // `get_plain`/`set_plain` fallthrough.
-    s.set_plain(0, 500.0);
-    assert_eq!(s.get_plain(0), Some(500.0));
-
-    // Normalized write routes the same way (linear(0,1) -> 1.0 plain).
-    s.set_normalized(1, 1.0);
-    assert_eq!(s.get_plain(1), Some(1.0));
-
-    // Unknown id resolves to None after exhausting nested children.
+    s.set_plain(1, 500.0);
+    assert_eq!(s.get_plain(1), Some(500.0));
+    s.set_normalized(2, 1.0);
+    assert_eq!(s.get_plain(2), Some(1.0));
     assert_eq!(s.get_plain(9_999), None);
 }
 
 #[test]
 fn static_infos_match_instance_for_mixed() {
-    let inst = Synth::new();
-    let from_instance = inst.param_infos();
+    let from_instance = Synth::new().param_infos();
     let from_static = Synth::param_infos_static();
     assert_eq!(from_static.len(), from_instance.len());
     for (s, i) in from_static.iter().zip(from_instance.iter()) {
@@ -99,42 +87,86 @@ fn static_infos_match_instance_for_mixed() {
     }
 }
 
-// --- construction-time collision panic ----------------------------------
+// --- reuse: the same group type in two slots --------------------------
 
 #[derive(Params)]
-struct BadInner {
-    #[param(id = 5, name = "X", range = "linear(0, 1)")]
-    x: FloatParam,
+struct Band {
+    #[param(name = "Gain", range = "linear(-18, 18)", default = 0.0)]
+    gain: FloatParam,
+    #[param(name = "Q", range = "log(0.1, 10)", default = 0.7)]
+    q: FloatParam,
 }
 
-// Parent param id 5 collides with the nested param id 5. The per-struct
-// compile-time check can't see across nested types, so the derived
-// `new()` calls `assert_no_id_collisions`, which panics at construction.
+// Auto bases pack the groups back to back: low 0-1, high 2-3. No ids
+// anywhere - the whole point of the feature.
 #[derive(Params)]
-struct BadParent {
-    #[param(id = 5, name = "Dup", range = "linear(0, 1)")]
-    dup: FloatParam,
+struct DualBand {
     #[nested]
-    inner: BadInner,
+    low: Band,
+    #[nested]
+    high: Band,
 }
 
 #[test]
-#[should_panic(expected = "duplicate parameter ID 5")]
+fn same_group_reused_gets_distinct_ids() {
+    let d = DualBand::new();
+    assert_eq!(d.count(), 4);
+    let ids: Vec<u32> = d.param_infos().iter().map(|p| p.id).collect();
+    assert_eq!(ids, vec![0, 1, 2, 3]);
+
+    // Writing one band leaves the other at its default.
+    d.set_plain(0, -6.0);
+    assert_eq!(d.get_plain(0), Some(-6.0));
+    assert_eq!(d.get_plain(2), Some(0.0));
+}
+
+// Explicit bases place the groups by hand (wire-stability anchor).
+#[derive(Params)]
+struct PinnedBands {
+    #[nested(base = 100)]
+    low: Band,
+    #[nested(base = 200)]
+    high: Band,
+}
+
+#[test]
+fn explicit_base_places_groups() {
+    let ids: Vec<u32> = PinnedBands::new()
+        .param_infos()
+        .iter()
+        .map(|p| p.id)
+        .collect();
+    assert_eq!(ids, vec![100, 101, 200, 201]);
+}
+
+// --- construction-time collision panic --------------------------------
+
+// Own param id 1 lands inside the group pinned at base 1 (cutoff -> 1).
+#[derive(Params)]
+struct BadParent {
+    #[param(id = 1, name = "Dup", range = "linear(0, 1)")]
+    dup: FloatParam,
+    #[nested(base = 1)]
+    filter: Filter,
+}
+
+#[test]
+#[should_panic(expected = "duplicate parameter ID 1")]
 fn parent_nested_id_collision_panics() {
     let _ = BadParent::new();
 }
 
-// --- multi-level nesting -------------------------------------------------
+// --- multi-level nesting (auto bases compose) -------------------------
 
 #[derive(Params)]
 struct L2 {
-    #[param(id = 300, name = "Z", range = "linear(0, 1)", default = 0.9)]
+    #[param(name = "Z", range = "linear(0, 1)", default = 0.9)]
     z: FloatParam,
 }
 
 #[derive(Params)]
 struct L1 {
-    #[param(id = 200, name = "Y", range = "linear(0, 1)", default = 0.5)]
+    #[param(name = "Y", range = "linear(0, 1)", default = 0.5)]
     y: FloatParam,
     #[nested]
     l2: L2,
@@ -142,7 +174,7 @@ struct L1 {
 
 #[derive(Params)]
 struct L0 {
-    #[param(id = 100, name = "X", range = "linear(0, 1)", default = 0.1)]
+    #[param(name = "X", range = "linear(0, 1)", default = 0.1)]
     x: FloatParam,
     #[nested]
     l1: L1,
@@ -152,17 +184,16 @@ struct L0 {
 fn deep_nesting_flattens_in_order() {
     let p = L0::new();
     assert_eq!(p.count(), 3);
+    // x 0; l1 packs after at 1 (its own y), then l2 after that at 2.
     let ids: Vec<u32> = p.param_infos().iter().map(|i| i.id).collect();
-    assert_eq!(ids, vec![100, 200, 300]);
+    assert_eq!(ids, vec![0, 1, 2]);
 
-    // Defaults reach two levels down, and a write to the deepest leaf
-    // round-trips through both fallthrough hops.
-    assert_eq!(p.get_plain(300), Some(0.9));
-    p.set_plain(300, 0.25);
-    assert_eq!(p.get_plain(300), Some(0.25));
+    assert_eq!(p.get_plain(2), Some(0.9));
+    p.set_plain(2, 0.25);
+    assert_eq!(p.get_plain(2), Some(0.25));
 }
 
-// --- meters inside a nested struct --------------------------------------
+// --- meters inside a nested struct ------------------------------------
 
 #[derive(Params)]
 struct MeterPack {
@@ -182,18 +213,12 @@ struct WithNestedMeter {
 fn nested_meter_surfaces_through_parent() {
     let p = WithNestedMeter::new();
     let meter_ids = p.meter_ids();
-    assert_eq!(
-        meter_ids.len(),
-        1,
-        "the nested meter is visible on the parent"
-    );
-    // Meters live in their own high id range, disjoint from params.
+    assert_eq!(meter_ids.len(), 1);
     assert!(meter_ids[0] >= truce_params::METER_ID_BASE);
 }
 
-// Meter ids auto-assign per struct from a shared base, so two nested
-// meter-bearing structs alias on the same id. That can't be expressed
-// safely, so construction must panic rather than silently alias.
+// Meter ids aren't rebased (they keep their dedicated range), so two
+// nested meter-bearing groups alias and construction must reject it.
 #[derive(Params)]
 struct MeterPackB {
     #[meter]

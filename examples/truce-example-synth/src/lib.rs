@@ -24,22 +24,17 @@ pub enum Waveform {
 // --- Parameters ---
 
 use SynthParamsParamId as P;
-use {EnvParamsParamId as E, FilterParamsParamId as F};
-
 use std::sync::Arc;
 
 // The filter and envelope controls are two self-contained param groups.
 // Splitting each into its own `#[derive(Params)]` struct and pulling it
 // in with `#[nested]` keeps related controls together and lets the
-// groups be reused by another plugin. The parent flattens them: every
-// param keeps its own stable `id`, so state and presets are unchanged
-// from the flat layout. IDs are pinned (not auto-assigned) because a
-// nested struct's IDs are baked into its type and must not overlap the
-// parent's or another group's.
+// groups be reused by another plugin. The group's params auto-number
+// locally (0, 1, ...); the parent places the group at a base, so the
+// nested struct itself carries no ids.
 #[derive(Params)]
 pub struct FilterParams {
     #[param(
-        id = 1,
         name = "Filter Cutoff",
         short_name = "Cutoff",
         group = "Filter",
@@ -51,7 +46,6 @@ pub struct FilterParams {
     pub cutoff: FloatParam,
 
     #[param(
-        id = 2,
         name = "Filter Resonance",
         short_name = "Reso",
         group = "Filter",
@@ -64,7 +58,6 @@ pub struct FilterParams {
 #[derive(Params)]
 pub struct EnvParams {
     #[param(
-        id = 3,
         name = "Attack",
         short_name = "Atk",
         group = "Envelope",
@@ -75,7 +68,6 @@ pub struct EnvParams {
     pub attack: FloatParam,
 
     #[param(
-        id = 4,
         name = "Decay",
         short_name = "Dec",
         group = "Envelope",
@@ -86,7 +78,6 @@ pub struct EnvParams {
     pub decay: FloatParam,
 
     #[param(
-        id = 5,
         name = "Sustain",
         short_name = "Sus",
         group = "Envelope",
@@ -96,7 +87,6 @@ pub struct EnvParams {
     pub sustain: FloatParam,
 
     #[param(
-        id = 6,
         name = "Release",
         short_name = "Rel",
         group = "Envelope",
@@ -107,15 +97,19 @@ pub struct EnvParams {
     pub release: FloatParam,
 }
 
+// Bases are pinned so the flattened ids stay fixed across releases (the
+// state/preset wire contract): waveform 0, filter 1-2, envelope 3-6,
+// volume 7. Drop the `base = ...` to let the derive auto-pack a group
+// after the preceding ones.
 #[derive(Params)]
 pub struct SynthParams {
     #[param(id = 0, name = "Waveform", short_name = "Wave", default = 1)]
     pub waveform: EnumParam<Waveform>,
 
-    #[nested]
+    #[nested(base = 1)]
     pub filter: FilterParams,
 
-    #[nested]
+    #[nested(base = 3)]
     pub envelope: EnvParams,
 
     #[param(id = 7, name = "Volume", short_name = "Vol",
@@ -239,17 +233,23 @@ impl PluginLogic for Synth {
                 dropdown(P::Waveform, "Wave").cols(2),
                 knob(P::Volume, "Volume"),
             ]),
+            // Nested-group params are addressed by their flattened id,
+            // read off the param itself (`base + local`), so the same
+            // group type reused at another base still resolves correctly.
             section(
                 "FILTER",
-                vec![knob(F::Cutoff, "Cutoff"), knob(F::Resonance, "Reso")],
+                vec![
+                    knob(self.params.filter.cutoff.id(), "Cutoff"),
+                    knob(self.params.filter.resonance.id(), "Reso"),
+                ],
             ),
             section(
                 "ENVELOPE",
                 vec![
-                    knob(E::Attack, "Attack"),
-                    knob(E::Decay, "Decay"),
-                    knob(E::Sustain, "Sustain"),
-                    knob(E::Release, "Release"),
+                    knob(self.params.envelope.attack.id(), "Attack"),
+                    knob(self.params.envelope.decay.id(), "Decay"),
+                    knob(self.params.envelope.sustain.id(), "Sustain"),
+                    knob(self.params.envelope.release.id(), "Release"),
                 ],
             ),
         ])

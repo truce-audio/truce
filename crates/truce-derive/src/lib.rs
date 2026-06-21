@@ -293,6 +293,12 @@ pub(crate) struct NestedField {
     /// `Params::param_infos_static` for the registration-time
     /// "no temp plugin" path.
     pub(crate) ty: syn::Type,
+    /// Explicit base from `#[nested(base = N)]`, the global id of this
+    /// group's local id 0. `None` auto-assigns the base by packing the
+    /// group right after the preceding params (own params, then each
+    /// earlier nested group's span). Pin it for wire stability the same
+    /// way you pin a param `id`.
+    pub(crate) base: Option<u32>,
 }
 
 /// A meter slot field.
@@ -534,6 +540,24 @@ fn has_nested_attr(field: &syn::Field) -> bool {
     field.attrs.iter().any(|a| a.path().is_ident("nested"))
 }
 
+/// Parse the optional `base = N` from `#[nested(base = N)]`. Returns
+/// `None` when the attribute is bare (`#[nested]`), which auto-assigns
+/// the base.
+fn nested_base(field: &syn::Field) -> Option<u32> {
+    let attr = field.attrs.iter().find(|a| a.path().is_ident("nested"))?;
+    let mut base = None;
+    // A bare `#[nested]` has no parens to parse; ignore the error so it
+    // falls through to the auto-assigned base.
+    let _ = attr.parse_nested_meta(|meta| {
+        if meta.path.is_ident("base") {
+            let lit: syn::LitInt = meta.value()?.parse()?;
+            base = lit.base10_parse::<u32>().ok();
+        }
+        Ok(())
+    });
+    base
+}
+
 /// Check if a field has `#[meter]` attribute.
 fn has_meter_attr(field: &syn::Field) -> bool {
     field.attrs.iter().any(|a| a.path().is_ident("meter"))
@@ -649,6 +673,7 @@ fn collect_fields(fields: &Fields) -> (Vec<ParamField>, Vec<NestedField>, Vec<Me
             nested.push(NestedField {
                 ident,
                 ty: f.ty.clone(),
+                base: nested_base(f),
             });
             continue;
         }
@@ -1189,9 +1214,9 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
     // walks the sidecar tree to aggregate. Failures here are silent -
     // they surface at TTL-emit time when the aggregator can't find
     // the data it needs.
-    let nested_for_sidecar: Vec<(syn::Ident, syn::Type)> = nested_fields
+    let nested_for_sidecar: Vec<(syn::Ident, syn::Type, Option<u32>)> = nested_fields
         .iter()
-        .map(|n| (n.ident.clone(), n.ty.clone()))
+        .map(|n| (n.ident.clone(), n.ty.clone(), n.base))
         .collect();
     lv2_emit::write_struct_sidecar(
         struct_name,
@@ -1201,7 +1226,11 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
     );
 
     // --- Always generate new() ---
-    let generate_new = !param_fields.is_empty() || !meter_fields.is_empty();
+    // Nested structs need `new()` too: it constructs each child and
+    // rebases its ids by the group's base, so reusing one Params type in
+    // two `#[nested]` slots yields disjoint id ranges instead of a clash.
+    let generate_new =
+        !param_fields.is_empty() || !meter_fields.is_empty() || !nested_fields.is_empty();
 
     // --- Count ---
     let own_count = param_fields.len();
@@ -1264,10 +1293,34 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
         .collect();
     let nested_static_calls: Vec<proc_macro2::TokenStream> = nested_fields
         .iter()
-        .map(|n| {
+        .enumerate()
+        .map(|(i, n)| {
             let ty = &n.ty;
+            // Base = explicit `#[nested(base=N)]`, or auto-packed right
+            // after the own params and every earlier nested group's span.
+            // Counts come from each group's own static metadata, so the
+            // no-instance path produces the same ids the constructor does.
+            let base_expr = if let Some(b) = n.base {
+                quote! { #b }
+            } else {
+                let prev = nested_fields[..i].iter().map(|p| &p.ty);
+                quote! {
+                    (#own_count as u32)
+                    #(+ <#prev as ::truce::params::Params>::param_infos_static().len() as u32)*
+                }
+            };
             quote! {
-                infos.extend(<#ty as ::truce::params::Params>::param_infos_static());
+                {
+                    let __base: u32 = #base_expr;
+                    infos.extend(
+                        <#ty as ::truce::params::Params>::param_infos_static()
+                            .into_iter()
+                            .map(|mut __info| {
+                                __info.id += __base;
+                                __info
+                            }),
+                    );
+                }
             }
         })
         .collect();
@@ -1577,20 +1630,45 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
             })
             .collect();
 
+        // Rebase each nested group by its base, after construction (the
+        // child built itself at its own local ids). The base is explicit
+        // or auto-packed after the own params and each earlier group.
+        let offset_stmts: Vec<_> = nested_fields
+            .iter()
+            .enumerate()
+            .map(|(i, n)| {
+                let ident = &n.ident;
+                let base_expr = if let Some(b) = n.base {
+                    quote! { #b }
+                } else {
+                    let prev = nested_fields[..i].iter().map(|p| &p.ident);
+                    quote! {
+                        (#own_count as u32)
+                        #(+ ::truce::params::Params::count(&me.#prev) as u32)*
+                    }
+                };
+                quote! { me.#ident.offset_ids(#base_expr); }
+            })
+            .collect();
+        let me_binding = if nested_fields.is_empty() {
+            quote! { let me }
+        } else {
+            quote! { let mut me }
+        };
+
         quote! {
             impl #struct_name {
                 pub fn new() -> Self {
-                    let me = Self {
+                    #me_binding = Self {
                         #(#param_inits,)*
                         #(#nested_inits,)*
                         #(#meter_inits,)*
                     };
-                    // The compile-time ID-collision check only sees
-                    // the IDs declared in *this* struct; a parent ID
-                    // matching a nested-struct ID compiles cleanly
-                    // and would silently corrupt state round-trip.
-                    // Surface the bug as a panic at construction
-                    // instead.
+                    #(#offset_stmts)*
+                    // The per-struct compile-time ID check can't see
+                    // across nested types; a parent id matching a
+                    // (rebased) nested id would silently corrupt state
+                    // round-trip. Surface it as a construction panic.
                     <Self as ::truce::params::Params>::assert_no_id_collisions(&me);
                     me
                 }
@@ -1604,6 +1682,22 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
         }
     } else {
         quote! {}
+    };
+
+    // Shift every parameter id in this subtree by `id_base`: own params
+    // directly, nested groups by recursing with the same base (their own
+    // local spans were already applied at construction). Meters keep
+    // their dedicated id range and aren't shifted. Always emitted so a
+    // parent can rebase any nested child, leaf or not.
+    let own_param_idents: Vec<_> = param_fields.iter().map(|f| &f.ident).collect();
+    let offset_ids_impl = quote! {
+        impl #struct_name {
+            #[doc(hidden)]
+            pub fn offset_ids(&mut self, id_base: u32) {
+                #(self.#own_param_idents.info.id += id_base;)*
+                #(self.#nested_idents.offset_ids(id_base);)*
+            }
+        }
     };
 
     // --- Generate ParamId enum (includes both params and meters) ---
@@ -1692,6 +1786,8 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
         #(#attr_errors)*
 
         #new_impl
+
+        #offset_ids_impl
 
         #param_id_enum
 
