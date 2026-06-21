@@ -28,68 +28,104 @@ use std::sync::Arc;
 
 // The three bands share a shape but not their tuning: each wants its
 // own frequency range and default, so they can't be one reused type
-// (a Params struct's `default` / `range` are fixed on the type). A
-// declarative macro is the DRY answer - it stamps out three *distinct*
-// `#[derive(Params)]` structs from one template, so each band keeps its
-// own range, default, and labels without the fields written out thrice.
-// `concat!` can't build the `name` literals (the derive parses the
-// attribute value as a literal, before macros expand), so the per-band
-// strings are passed in.
-macro_rules! band_params {
-    ($ty:ident, $group:literal, $freq:literal, $freq_short:literal,
-     $gain:literal, $gain_short:literal, $q:literal, $q_short:literal,
-     $range:literal, $default:tt) => {
-        #[derive(Params)]
-        pub struct $ty {
-            #[param(name = $freq, short_name = $freq_short, group = $group,
-                            range = $range, default = $default, unit = "Hz", smooth = "exp(10)")]
-            pub freq: FloatParam,
-            #[param(name = $gain, short_name = $gain_short, group = $group,
-                            range = "linear(-18, 18)", unit = "dB", smooth = "exp(10)")]
-            pub gain: FloatParam,
-            #[param(name = $q, short_name = $q_short, group = $group,
-                            range = "log(0.1, 10)", default = 0.707, smooth = "exp(10)")]
-            pub q: FloatParam,
-        }
-    };
+// (a Params struct's `default` / `range` are fixed on the type). They
+// are three distinct `#[derive(Params)]` structs - each keeps its own
+// range, default, and labels - composed in `EqParams` with `#[nested]`.
+#[derive(Params)]
+pub struct LowBand {
+    #[param(
+        name = "Low Freq",
+        short_name = "LFreq",
+        group = "Low",
+        range = "log(20, 1000)",
+        default = 200.0,
+        unit = "Hz",
+        smooth = "exp(10)"
+    )]
+    pub freq: FloatParam,
+    #[param(
+        name = "Low Gain",
+        short_name = "LGain",
+        group = "Low",
+        range = "linear(-18, 18)",
+        unit = "dB",
+        smooth = "exp(10)"
+    )]
+    pub gain: FloatParam,
+    #[param(
+        name = "Low Q",
+        short_name = "LQ",
+        group = "Low",
+        range = "log(0.1, 10)",
+        default = 0.707,
+        smooth = "exp(10)"
+    )]
+    pub q: FloatParam,
 }
 
-band_params!(
-    LowBand,
-    "Low",
-    "Low Freq",
-    "LFreq",
-    "Low Gain",
-    "LGain",
-    "Low Q",
-    "LQ",
-    "log(20, 1000)",
-    200.0
-);
-band_params!(
-    MidBand,
-    "Mid",
-    "Mid Freq",
-    "MFreq",
-    "Mid Gain",
-    "MGain",
-    "Mid Q",
-    "MQ",
-    "log(200, 8000)",
-    1000.0
-);
-band_params!(
-    HighBand,
-    "High",
-    "High Freq",
-    "HFreq",
-    "High Gain",
-    "HGain",
-    "High Q",
-    "HQ",
-    "log(1000, 20000)",
-    5000.0
-);
+#[derive(Params)]
+pub struct MidBand {
+    #[param(
+        name = "Mid Freq",
+        short_name = "MFreq",
+        group = "Mid",
+        range = "log(200, 8000)",
+        default = 1000.0,
+        unit = "Hz",
+        smooth = "exp(10)"
+    )]
+    pub freq: FloatParam,
+    #[param(
+        name = "Mid Gain",
+        short_name = "MGain",
+        group = "Mid",
+        range = "linear(-18, 18)",
+        unit = "dB",
+        smooth = "exp(10)"
+    )]
+    pub gain: FloatParam,
+    #[param(
+        name = "Mid Q",
+        short_name = "MQ",
+        group = "Mid",
+        range = "log(0.1, 10)",
+        default = 0.707,
+        smooth = "exp(10)"
+    )]
+    pub q: FloatParam,
+}
+
+#[derive(Params)]
+pub struct HighBand {
+    #[param(
+        name = "High Freq",
+        short_name = "HFreq",
+        group = "High",
+        range = "log(1000, 20000)",
+        default = 5000.0,
+        unit = "Hz",
+        smooth = "exp(10)"
+    )]
+    pub freq: FloatParam,
+    #[param(
+        name = "High Gain",
+        short_name = "HGain",
+        group = "High",
+        range = "linear(-18, 18)",
+        unit = "dB",
+        smooth = "exp(10)"
+    )]
+    pub gain: FloatParam,
+    #[param(
+        name = "High Q",
+        short_name = "HQ",
+        group = "High",
+        range = "log(0.1, 10)",
+        default = 0.707,
+        smooth = "exp(10)"
+    )]
+    pub q: FloatParam,
+}
 
 // Distinct band types still need bases: each numbers its params from 0,
 // so the parent places them at 0 / 3 / 6 to keep the ranges disjoint.
