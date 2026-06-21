@@ -2,6 +2,12 @@
 
 Notable changes per release.
 
+## 0.60.2
+
+- **Reusable `#[nested]` param groups.** A nested `Params` struct's ids are rebased by a per-group base (auto-packed, or pinned with `#[nested(base = N)]`), so the same group type can be nested more than once without id clashes and nested groups need no per-param ids.
+- **Nested meters are caught at construction.** Two `#[nested]` groups that each declare a meter would have aliased on one id; the derive now panics at construction instead of corrupting state silently.
+- **Nested params construct through the generated `new()`.** A `Params` struct that mixes its own params with `#[nested]` groups now default-initializes the nested fields in `new()`. ([#139](https://github.com/truce-audio/truce/pull/139), by [@jedStevens](https://github.com/jedStevens))
+
 ## 0.60.1
 
 - **`#[derive(Params)]` no longer trips a rust-analyzer error.** Parameters with a `range` (or numeric `default`) emitted suffixed literals like `60f64`, which rust-analyzer 1.96 rejected with "expected Expr" even though the code compiled; the derive now emits plain decimal literals. ([#135](https://github.com/truce-audio/truce/issues/135))
