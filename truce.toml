@@ -221,7 +221,12 @@ category = "effect"
 fourcc = "TSut"
 au3_subtype = "TSu3"
 au_tag = "Effects"
+aax_category = "Effect"
 vst3_subcategory = "Tools"
+au3_name = "Truce Stereo Utility (AUv3)"
+windows_icon = "static/truce-minimal.ico"
+macos_icon = "static/truce-minimal.icns"
+ios_icon_set = "static/truce-minimal.appiconset"
 
 [[plugin]]
 name = "Truce Transpose"
