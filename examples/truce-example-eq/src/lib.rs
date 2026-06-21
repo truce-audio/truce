@@ -127,10 +127,11 @@ pub struct HighBand {
     pub q: FloatParam,
 }
 
-// Distinct band types still need bases: each numbers its params from 0,
-// so the parent places them at 0 / 3 / 6 to keep the ranges disjoint.
-// The ids match the old flat layout (low 0-2, mid 3-5, high 6-8, output
-// 9), so state stays compatible.
+// Bases are optional - bare `#[nested]` auto-packs each group after the
+// previous one. They're pinned here (0 / 3 / 6, with output at 9) to fix
+// the flattened ids: a pinned id survives reordering the fields or adding
+// a param to an earlier group, which is the stability a shipped plugin's
+// saved state and host automation depend on.
 #[derive(Params)]
 pub struct EqParams {
     #[nested(base = 0)]
