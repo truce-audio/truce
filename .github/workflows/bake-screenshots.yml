@@ -67,6 +67,7 @@ env:
     truce-example-block-gain
     truce-example-synth
     truce-example-eq
+    truce-example-stereo-utility
     truce-example-block-saturate
     truce-example-block-drywet
     truce-example-block-gate
