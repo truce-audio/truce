@@ -692,7 +692,7 @@ fn build_all_formats(
 /// inspects each plugin's `Cargo.toml` so hand-edited `[[bin]] name`
 /// values still work - falls back to the scaffold convention
 /// (`{crate_name}-standalone`) when the manifest can't be parsed.
-fn build_and_lipo_standalone(
+pub(crate) fn build_and_lipo_standalone(
     root: &Path,
     plugins: &[&PluginDef],
     archs: &[MacArch],

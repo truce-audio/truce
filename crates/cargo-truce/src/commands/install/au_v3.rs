@@ -114,6 +114,20 @@ fn build_au_v3_for_plugin(
     reuse_au_artifacts: bool,
 ) -> Res {
     let fw_name = p.fw_name();
+
+    // AU v3 app mode runs the plugin's standalone host as the containing
+    // app: launching it plays the plugin and registers the embedded
+    // appex. That requires a standalone bin; plugins without one skip AU
+    // v3 and still ship AU v2 and every other enabled format.
+    let Some(bin_stem) = crate::read_standalone_bin_name(&p.crate_name) else {
+        crate::vprintln!(
+            "  AU v3 skipped for {}: no standalone bin. Add a [[bin]] with \
+             `required-features = [\"standalone\"]` to enable AU v3.",
+            p.name
+        );
+        return Ok(());
+    };
+
     let au_v3_root = tmp_au_v3(&p.bundle_id);
     let build_dir = au_v3_root.join("build");
     let fw_build = au_v3_root.join("fw");
@@ -135,6 +149,12 @@ fn build_au_v3_for_plugin(
     write_xcode_project_files(&build_dir, &fw_build, p, config, team_id, &fw_name)?;
     let xcodebuild_app = run_xcodebuild_for_plugin(&build_dir, archs, p)?;
     embed_framework_into_app(&xcodebuild_app, &final_app, &fw_build, &fw_name)?;
+
+    // Build the standalone host and swap it in for the xcode App target's
+    // placeholder executable, before signing seals the bundle.
+    crate::commands::package::macos::build_and_lipo_standalone(root, &[p], archs, dt)?;
+    swap_app_executable(root, &final_app, &bin_stem)?;
+
     stage_au_v3_icon(&final_app, p)?;
     sign_au_v3_inside_out(&final_app, &build_dir, &fw_name, sign_id)?;
 
@@ -502,6 +522,38 @@ fn embed_framework_into_app(
     Ok(())
 }
 
+/// Replace the xcode App target's placeholder executable with the
+/// plugin's universal standalone binary (built into
+/// `target/release/<bin_stem>` by `build_and_lipo_standalone`). The
+/// standalone is statically linked and self-contained - it does not use
+/// the embedded `.framework` (that serves the appex) - so the swap is a
+/// straight overwrite that keeps the bundle's `CFBundleExecutable` name.
+/// Runs before signing so the seal covers the real binary.
+fn swap_app_executable(root: &Path, final_app: &Path, bin_stem: &str) -> Res {
+    let standalone_bin = truce_build::target_dir(root)
+        .join("release")
+        .join(bin_stem);
+    if !standalone_bin.exists() {
+        return Err(format!(
+            "AU v3: standalone binary for the app executable not found at {}.",
+            standalone_bin.display()
+        )
+        .into());
+    }
+    // The App target emitted exactly one executable into Contents/MacOS;
+    // overwrite it in place so the name keeps matching the Info.plist.
+    let macos_dir = final_app.join("Contents/MacOS");
+    let placeholder = fs::read_dir(&macos_dir)?
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .find(|path| path.is_file())
+        .ok_or("AU v3: no app executable found to replace")?;
+    // `fs::copy` carries the source's exec bits, so the standalone stays
+    // launchable at the destination.
+    fs_ctx::copy(&standalone_bin, &placeholder)?;
+    Ok(())
+}
+
 /// Drop the plugin's `macos_icon` into `Contents/Resources/icon.icns`
 /// so the outer `.app` shows up in Finder / Launchpad with the same
 /// art the standalone host uses. No-op when `macos_icon` is unset (the
@@ -570,14 +622,15 @@ fn sign_au_v3_inside_out(final_app: &Path, build_dir: &Path, fw_name: &str, sign
     args.push(appex_path.as_os_str());
     crate::run_codesign(&args, false)?;
 
-    let entitlements_app = build_dir.join("App/App.entitlements");
+    // The containing app is now the standalone host, which the normal
+    // standalone bundle ships unsandboxed (it owns audio devices and a
+    // window). Sign it without the appex's sandbox entitlements, keeping
+    // the hardened runtime for notarization. The appex above stays
+    // sandboxed via its own entitlements.
     let mut args: Vec<&OsStr> = vec![
         OsStr::new("--force"),
         OsStr::new("--sign"),
         OsStr::new(sign_id),
-        OsStr::new("--entitlements"),
-        entitlements_app.as_os_str(),
-        OsStr::new("--generate-entitlement-der"),
     ];
     args.extend_from_slice(runtime_flags);
     args.push(final_app.as_os_str());
