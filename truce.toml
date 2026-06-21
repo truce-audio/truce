@@ -214,6 +214,16 @@ macos_icon = "static/truce-minimal.icns"
 ios_icon_set = "static/truce-minimal.appiconset"
 
 [[plugin]]
+name = "Truce Stereo Utility"
+bundle_id = "stereo-utility"
+crate = "truce-example-stereo-utility"
+category = "effect"
+fourcc = "TSut"
+au3_subtype = "TSu3"
+au_tag = "Effects"
+vst3_subcategory = "Tools"
+
+[[plugin]]
 name = "Truce Transpose"
 bundle_id = "transpose"
 crate = "truce-example-transpose"

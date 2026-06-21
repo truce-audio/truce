@@ -1,0 +1,313 @@
+//! Stereo utility: independent gain, polarity, and delay per side.
+//!
+//! The left and right channels are processed by the *same* control
+//! group, so `ChannelStrip` is declared once and pulled in twice with
+//! `#[nested]`. Bare `#[nested]` (no base) auto-packs the groups: left
+//! lands at ids 0-2, right at 3-5, with no ids or bases written by hand.
+//! The two sides are symmetric (both start at 0 dB, 0 ms, non-inverted),
+//! so a single reused type with shared defaults is the honest fit here,
+//! unlike an EQ whose bands each want their own frequency tuning.
+
+use truce::prelude::*;
+use truce_gui::IntoLayoutEditor;
+use truce_gui_types::layout::{GridLayout, knob, section, toggle};
+
+use std::sync::Arc;
+
+/// Longest per-side delay, in milliseconds. Sizes the delay lines at
+/// `reset()`.
+const MAX_DELAY_MS: f64 = 50.0;
+
+/// One side's controls. Declared once, reused for both channels.
+#[derive(Params)]
+pub struct ChannelStrip {
+    #[param(
+        name = "Gain",
+        range = "linear(-60, 12)",
+        default = 0.0,
+        unit = "dB",
+        smooth = "exp(5)"
+    )]
+    pub gain: FloatParam,
+
+    #[param(name = "Invert")]
+    pub invert: BoolParam,
+
+    #[param(name = "Delay", range = "linear(0, 50)", default = 0.0, unit = "ms")]
+    pub delay: FloatParam,
+}
+
+#[derive(Params)]
+pub struct StereoUtilityParams {
+    #[nested]
+    pub left: ChannelStrip,
+    #[nested]
+    pub right: ChannelStrip,
+}
+
+pub struct StereoUtility {
+    params: Arc<StereoUtilityParams>,
+    /// One delay line per channel, sized in `reset()` for `MAX_DELAY_MS`.
+    lines: [Vec<f32>; 2],
+    write_pos: [usize; 2],
+    line_len: usize,
+    sample_rate: f64,
+}
+
+impl StereoUtility {
+    pub fn new(params: Arc<StereoUtilityParams>) -> Self {
+        Self {
+            params,
+            lines: [Vec::new(), Vec::new()],
+            write_pos: [0; 2],
+            line_len: 0,
+            sample_rate: 44100.0,
+        }
+    }
+}
+
+/// Delay-line length for `MAX_DELAY_MS` at `sr`, plus one slot so a
+/// full-range delay still reads a sample behind the write head.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn delay_line_len(sr: f64) -> usize {
+    (MAX_DELAY_MS * sr / 1000.0).ceil() as usize + 1
+}
+
+/// Milliseconds to a whole-sample delay, clamped into the line. Reads
+/// the raw target (block-rate), so the inner loop holds one offset.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn ms_to_samples(ms: f64, sr: f64, line_len: usize) -> usize {
+    let s = (ms * sr / 1000.0).round();
+    if s <= 0.0 {
+        0
+    } else {
+        (s as usize).min(line_len - 1)
+    }
+}
+
+impl PluginLogic for StereoUtility {
+    fn bus_layouts() -> Vec<BusLayout> {
+        vec![BusLayout::stereo()]
+    }
+
+    fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {
+        self.sample_rate = sample_rate;
+        self.params.set_sample_rate(sample_rate);
+        self.params.snap_smoothers();
+        let len = delay_line_len(sample_rate);
+        self.line_len = len;
+        for line in &mut self.lines {
+            line.clear();
+            line.resize(len, 0.0);
+        }
+        self.write_pos = [0; 2];
+    }
+
+    fn process(
+        &mut self,
+        buffer: &mut AudioBuffer,
+        _events: &EventList,
+        _context: &mut ProcessContext,
+    ) -> ProcessStatus {
+        let sr = self.sample_rate;
+        let len = self.line_len;
+
+        for ch in 0..buffer.channels().min(2) {
+            let strip = if ch == 0 {
+                &self.params.left
+            } else {
+                &self.params.right
+            };
+            // Delay distance and polarity are read per block; gain stays
+            // per-sample smoothed so a fader move is click-free.
+            let delay_samples = ms_to_samples(f64::from(strip.delay.value()), sr, len);
+            let sign = if strip.invert.value() { -1.0 } else { 1.0 };
+
+            let line = &mut self.lines[ch];
+            let mut wp = self.write_pos[ch];
+            let (inp, out) = buffer.io(ch);
+            for i in 0..inp.len() {
+                line[wp] = inp[i];
+                let read = (wp + len - delay_samples) % len;
+                let gain = db_to_linear(strip.gain.read());
+                out[i] = line[read] * gain * sign;
+                wp = (wp + 1) % len;
+            }
+            self.write_pos[ch] = wp;
+        }
+
+        ProcessStatus::Normal
+    }
+
+    fn editor(&self) -> Box<dyn Editor> {
+        // Reused-group params are addressed by their flattened id, read
+        // off each side, so `left` and `right` resolve to distinct
+        // controls despite sharing the `ChannelStrip` type.
+        GridLayout::build(vec![
+            section(
+                "LEFT",
+                vec![
+                    knob(self.params.left.gain.id(), "Gain"),
+                    knob(self.params.left.delay.id(), "Delay"),
+                    toggle(self.params.left.invert.id(), "Invert"),
+                ],
+            ),
+            section(
+                "RIGHT",
+                vec![
+                    knob(self.params.right.gain.id(), "Gain"),
+                    knob(self.params.right.delay.id(), "Delay"),
+                    toggle(self.params.right.invert.id(), "Invert"),
+                ],
+            ),
+        ])
+        .with_title("STEREO UTILITY")
+        .into_editor(&self.params)
+    }
+}
+
+truce::plugin! {
+    logic: StereoUtility,
+    params: StereoUtilityParams,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn info_is_valid() {
+        truce_test::assert_valid_info::<Plugin>();
+    }
+
+    #[test]
+    fn channels_reuse_one_strip_with_distinct_ids() {
+        // The headline: one `ChannelStrip` type in two `#[nested]` slots,
+        // auto-packed into disjoint id ranges (left 0-2, right 3-5).
+        let p = StereoUtilityParams::new();
+        assert_eq!(p.left.gain.id(), 0);
+        assert_eq!(p.left.invert.id(), 1);
+        assert_eq!(p.left.delay.id(), 2);
+        assert_eq!(p.right.gain.id(), 3);
+        assert_eq!(p.right.invert.id(), 4);
+        assert_eq!(p.right.delay.id(), 5);
+        assert_eq!(p.count(), 6);
+    }
+
+    #[test]
+    fn default_passes_audio_at_unity() {
+        use std::time::Duration;
+        use truce_test::{InputSource, assertions, driver};
+        // Defaults are transparent: 0 dB, 0 ms, non-inverted.
+        let result = driver!(Plugin)
+            .duration(Duration::from_millis(12))
+            .input(InputSource::Constant(0.5))
+            .run();
+        assertions::assert_no_nans(&result);
+        let max = result.output[0]
+            .iter()
+            .map(|s| s.abs())
+            .fold(0.0f32, f32::max);
+        assert!(max > 0.45, "unity passthrough expected, got {max}");
+    }
+
+    #[test]
+    fn has_editor() {
+        truce_test::assert_has_editor::<Plugin>();
+    }
+
+    #[test]
+    fn state_round_trips() {
+        truce_test::assert_state_round_trip::<Plugin>();
+    }
+
+    // --- AU metadata ---
+
+    #[test]
+    fn au_type_codes_ascii() {
+        truce_test::assert_au_type_codes_ascii::<Plugin>();
+    }
+
+    #[test]
+    fn fourcc_roundtrip() {
+        truce_test::assert_fourcc_roundtrip::<Plugin>();
+    }
+
+    #[test]
+    fn bus_config_effect() {
+        truce_test::assert_bus_config_effect::<Plugin>();
+    }
+
+    // --- GUI lifecycle ---
+
+    #[test]
+    fn editor_lifecycle() {
+        truce_test::assert_editor_lifecycle::<Plugin>();
+    }
+
+    #[test]
+    fn editor_size_consistent() {
+        truce_test::assert_editor_size_consistent::<Plugin>();
+    }
+
+    // --- Parameters ---
+
+    #[test]
+    fn param_defaults_match() {
+        truce_test::assert_param_defaults_match::<Plugin>();
+    }
+
+    #[test]
+    fn param_normalized_clamped() {
+        truce_test::assert_param_normalized_clamped::<Plugin>();
+    }
+
+    #[test]
+    fn param_normalized_roundtrip() {
+        truce_test::assert_param_normalized_roundtrip::<Plugin>();
+    }
+
+    #[test]
+    fn param_count_matches() {
+        truce_test::assert_param_count_matches::<Plugin>();
+    }
+
+    #[test]
+    fn no_duplicate_param_ids() {
+        truce_test::assert_no_duplicate_param_ids::<Plugin>();
+    }
+
+    // --- State resilience ---
+
+    #[test]
+    fn corrupt_state_no_crash() {
+        truce_test::assert_corrupt_state_no_crash::<Plugin>();
+    }
+
+    #[test]
+    fn empty_state_no_crash() {
+        truce_test::assert_empty_state_no_crash::<Plugin>();
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn gui_screenshot_macos() {
+        truce_test::screenshot!(Plugin, "screenshots/stereo_utility_default_macos.png").run();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn gui_screenshot_linux() {
+        truce_test::screenshot!(Plugin, "screenshots/stereo_utility_default_linux.png")
+            .pixel_threshold(2)
+            .run();
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn gui_screenshot_windows() {
+        truce_test::screenshot!(Plugin, "screenshots/stereo_utility_default_windows.png")
+            .pixel_threshold(2)
+            .run();
+    }
+}

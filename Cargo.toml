@@ -40,6 +40,7 @@ members = [
     "examples/truce-example-block-surround-meter",
     "examples/truce-example-synth",
     "examples/truce-example-eq",
+    "examples/truce-example-stereo-utility",
     "examples/truce-example-transpose",
     "examples/truce-example-arpeggio",
     "examples/truce-example-gain-egui",
