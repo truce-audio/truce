@@ -577,10 +577,10 @@ fn resolve_formats(
     format_str: Option<&str>,
     config: &Config,
 ) -> Result<Vec<PkgFormat>, crate::CargoTruceError> {
-    if let Some(s) = format_str {
-        PkgFormat::parse_list(s)
+    let mut fmts = if let Some(s) = format_str {
+        PkgFormat::parse_list(s)?
     } else if !config.packaging.formats.is_empty() {
-        PkgFormat::parse_list(&config.packaging.formats.join(","))
+        PkgFormat::parse_list(&config.packaging.formats.join(","))?
     } else {
         let available = detect_default_features();
         let mut fmts = Vec::new();
@@ -606,8 +606,17 @@ fn resolve_formats(
         if available.contains("standalone") {
             fmts.push(PkgFormat::Standalone);
         }
-        Ok(fmts)
+        fmts
+    };
+
+    // AU v3 app mode embeds the appex into the standalone host, so the
+    // AU v3 bundle *is* the standalone `{name}.app`. When both are
+    // requested, drop the separate Standalone format so they don't both
+    // emit (and fight over) `{name}.app`.
+    if fmts.contains(&PkgFormat::Au3) {
+        fmts.retain(|f| *f != PkgFormat::Standalone);
     }
+    Ok(fmts)
 }
 
 /// Drive Step 1 of the packaging pipeline: per-arch builds + lipo for
@@ -952,6 +961,11 @@ fn package_one_plugin(root: &Path, p: &PluginDef, dist_dir: &Path, o: &PackageOp
     fs::create_dir_all(&components_dir)?;
 
     for fmt in o.formats {
+        // AU v3 was skipped at build/stage for plugins without a
+        // standalone bin, so there's no component to package.
+        if *fmt == PkgFormat::Au3 && !crate::commands::install::au_v3::au_v3_supported(p) {
+            continue;
+        }
         let appex_id = (*fmt == PkgFormat::Au3).then(|| au3_appex_id(o.config, p));
         let scripts_dir =
             write_format_scripts(&staging, fmt, &fmt.bundle_name(p), appex_id.as_deref())?;

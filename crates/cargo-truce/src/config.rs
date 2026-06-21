@@ -324,21 +324,15 @@ impl PluginDef {
     pub(crate) fn file_stem(&self) -> String {
         truce_utils::safe_filename(&self.name)
     }
-    /// Name used for the AU v3 containing `.app` bundle directory.
-    /// When `au3_name` is set in truce.toml it wins (both display
-    /// name in host browsers and bundle path stay in sync). Otherwise
-    /// we fall back to the historical `"{name} v3"` disambiguator so
-    /// projects that haven't opted in are unaffected. Sanitised
-    /// through [`truce_utils::safe_filename`] so callers can use the
-    /// result directly as a path component. macOS-only - AU v3 only
-    /// installs to `/Applications/` on macOS.
+    /// Name of the AU v3 containing `.app`. AU v3 app mode *is* the
+    /// plugin's standalone host with the appex embedded, so the bundle
+    /// is the same `{name}.app` the standalone produces - no separate
+    /// `"{name} v3"` app. `au3_name` now only overrides the AU's
+    /// host-facing display name (the appex component), not the bundle
+    /// path. macOS-only - AU v3 only installs to `/Applications/` there.
     #[cfg(target_os = "macos")]
     pub(crate) fn au3_app_name(&self) -> String {
-        let raw = match self.au3_name.as_deref() {
-            Some(n) if !n.is_empty() => n.to_string(),
-            _ => format!("{} v3", self.name),
-        };
-        truce_utils::safe_filename(&raw)
+        truce_utils::safe_filename(&self.name)
     }
     #[cfg(target_os = "macos")]
     pub(crate) fn fw_name(&self) -> String {
