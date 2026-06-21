@@ -4,9 +4,6 @@
 //! group, so `ChannelStrip` is declared once and pulled in twice with
 //! `#[nested]`. Bare `#[nested]` (no base) auto-packs the groups: left
 //! lands at ids 0-2, right at 3-5, with no ids or bases written by hand.
-//! The two sides are symmetric (both start at 0 dB, 0 ms, non-inverted),
-//! so a single reused type with shared defaults is the honest fit here,
-//! unlike an EQ whose bands each want their own frequency tuning.
 
 use truce::prelude::*;
 use truce_gui::IntoLayoutEditor;
