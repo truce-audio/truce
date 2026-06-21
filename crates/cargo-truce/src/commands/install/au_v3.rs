@@ -406,8 +406,10 @@ fn write_xcode_project_files(
         build_dir.join("XcodeAUv3.xcodeproj/project.pbxproj"),
         generate_pbxproj(
             team_id,
-            &format!("{}.v3", p.bundle_id),
-            &format!("{}.v3.ext", p.bundle_id),
+            // Vendor-rooted (not a hardcoded `com.truce.`), so a plugin
+            // built by any author advertises an id it actually owns.
+            &format!("{}.{}.v3", config.vendor.id, p.bundle_id),
+            &format!("{}.{}.v3.ext", config.vendor.id, p.bundle_id),
             build_dir.join("AUExt").to_str().unwrap(),
             fw_build.to_str().unwrap(),
             fw_name,
@@ -530,9 +532,7 @@ fn embed_framework_into_app(
 /// straight overwrite that keeps the bundle's `CFBundleExecutable` name.
 /// Runs before signing so the seal covers the real binary.
 fn swap_app_executable(root: &Path, final_app: &Path, bin_stem: &str) -> Res {
-    let standalone_bin = truce_build::target_dir(root)
-        .join("release")
-        .join(bin_stem);
+    let standalone_bin = truce_build::target_dir(root).join("release").join(bin_stem);
     if !standalone_bin.exists() {
         return Err(format!(
             "AU v3: standalone binary for the app executable not found at {}.",
@@ -677,11 +677,9 @@ fn install_au_v3(root: &Path, config: &Config, plugins: &[&PluginDef]) -> Res {
         }
 
         let app_dir = format!("/Applications/{app_name}.app");
-        let appex_id = format!(
-            "com.{}.{}.v3.ext",
-            config.vendor.id.trim_start_matches("com."),
-            p.bundle_id
-        );
+        // Must match the appex's `PRODUCT_BUNDLE_IDENTIFIER` set in the
+        // pbxproj, or pluginkit evicts the wrong registration.
+        let appex_id = format!("{}.{}.v3.ext", config.vendor.id, p.bundle_id);
 
         // Pre-clean. `pluginkit -e ignore` only disables the registration -
         // if `pkd` auto-discovered the staging-tree appex during the build
@@ -859,7 +857,7 @@ fn generate_pbxproj(
 		11000011 = {{
 			isa = XCBuildConfiguration;
 			buildSettings = {{
-				PRODUCT_BUNDLE_IDENTIFIER = "com.truce.{app_bundle_id}";
+				PRODUCT_BUNDLE_IDENTIFIER = "{app_bundle_id}";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				INFOPLIST_FILE = "App/Info.plist";
 				CODE_SIGN_ENTITLEMENTS = "App/App.entitlements";
@@ -886,7 +884,7 @@ fn generate_pbxproj(
 		22000011 = {{
 			isa = XCBuildConfiguration;
 			buildSettings = {{
-				PRODUCT_BUNDLE_IDENTIFIER = "com.truce.{appex_bundle_id}";
+				PRODUCT_BUNDLE_IDENTIFIER = "{appex_bundle_id}";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				INFOPLIST_FILE = "AUExt/Info.plist";
 				CODE_SIGN_ENTITLEMENTS = "AUExt/AUExt.entitlements";

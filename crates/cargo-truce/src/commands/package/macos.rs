@@ -808,11 +808,9 @@ struct PackageOpts<'a> {
 /// stamps and `install_au_v3` registers - so the installer postinstall
 /// registers the same identifier.
 fn au3_appex_id(config: &Config, p: &PluginDef) -> String {
-    format!(
-        "com.{}.{}.v3.ext",
-        config.vendor.id.trim_start_matches("com."),
-        p.bundle_id
-    )
+    // Vendor-rooted, matching the appex `PRODUCT_BUNDLE_IDENTIFIER` the
+    // build's pbxproj stamps.
+    format!("{}.{}.v3.ext", config.vendor.id, p.bundle_id)
 }
 
 /// A preset file tree as `(relative path -> bytes)`.
