@@ -27,7 +27,7 @@ pedantic = { level = "warn", priority = -1 }
 
 [package]
 name = "truce-slint"
-version = "0.60.1"
+version = "0.61.0"
 edition = "2024"
 license = "Apache-2.0 OR MIT"
 rust-version = "1.92"
@@ -36,9 +36,9 @@ repository = "https://github.com/truce-audio/truce"
 homepage = "https://github.com/truce-audio/truce"
 
 [dependencies]
-truce-core = { version = "0.60.1", path = "../truce-core" }
-truce-gui = { version = "0.60.1", path = "../truce-gui", default-features = false }
-truce-params = { version = "0.60.1", path = "../truce-params" }
+truce-core = { version = "0.61.0", path = "../truce-core" }
+truce-gui = { version = "0.61.0", path = "../truce-gui", default-features = false }
+truce-params = { version = "0.61.0", path = "../truce-params" }
 slint = { version = "=1.15.1", default-features = false, features = ["compat-1-2", "renderer-software", "std"] }
 raw-window-handle = "0.5"
 bytemuck = { version = "1", features = ["derive"] }
