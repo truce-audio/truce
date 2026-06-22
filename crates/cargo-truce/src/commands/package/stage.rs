@@ -963,11 +963,12 @@ pub(crate) fn generate_distribution_xml(
 /// AU v3 postinstall: register the app-extension with `pluginkit` for
 /// the logged-in user. pkg scripts run as root, but `pluginkit`, `pkd`,
 /// and the AU cache are per-user, so the work runs as the console user
-/// via `launchctl asuser`. `$2` is the install
-/// destination (e.g. `/Applications`). `pluginkit -a` no-ops while
-/// `pkd` is mid-respawn, hence the retry loop (mirrors
-/// `install_au_v3`). No console user (CI / SSH / login window) -> skip;
-/// the appex registers on next login when `pkd` scans `/Applications`.
+/// via `launchctl asuser`. `$2` is the install destination (e.g.
+/// `/Applications`). The retry loop absorbs transient `pluginkit -a`
+/// no-ops. Crucially it leaves `pkd` running: a suite runs this script
+/// once per member, and killing `pkd` mid-batch dropped half the
+/// registrations. No console user (CI / SSH / login window) -> skip; the
+/// appex registers on next login when `pkd` scans `/Applications`.
 #[cfg(target_os = "macos")]
 const AU3_REGISTER_POSTINSTALL: &str = r#"#!/bin/bash
 set -u
@@ -993,10 +994,13 @@ asuser pluginkit -mv -i "$APPEX_ID" 2>/dev/null | awk -F'\t' 'NF>1{print $NF}' |
 done
 LSREG=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
 "$LSREG" -f -R "$APP" >/dev/null 2>&1 || true
-killall -9 pkd 2>/dev/null || true
+# Do NOT kill pkd here. A suite installs many AU v3 components, each
+# running this script; killing pkd in one makes the concurrent
+# `pluginkit -a` calls in the others no-op against a dead daemon, so only
+# a fraction of the appexs register. Leave pkd alive (it registers each
+# appex live) and only refresh the AU component cache so hosts re-scan.
 killall -9 AudioComponentRegistrar 2>/dev/null || true
 rm -rf "$home/Library/Caches/AudioUnitCache" 2>/dev/null || true
-sleep 2
 i=0
 while [ "$i" -lt 8 ]; do
     asuser pluginkit -a "$APPEX" >/dev/null 2>&1 || true
