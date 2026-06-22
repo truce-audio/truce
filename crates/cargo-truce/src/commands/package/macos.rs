@@ -58,7 +58,7 @@ pub(crate) fn cmd_package_macos(args: &[String], selection: &super::SuiteSelecti
     }
     let effective_scope = scope;
 
-    let plugins: Vec<&PluginDef> =
+    let all_plugins: Vec<&PluginDef> =
         crate::commands::pick_plugins(&config, parsed.plugin_filter.as_deref())?;
 
     eprintln!(
@@ -69,6 +69,52 @@ pub(crate) fn cmd_package_macos(args: &[String], selection: &super::SuiteSelecti
             .collect::<Vec<_>>()
             .join(", ")
     );
+
+    // Resolve the suites to build up front so a `--suite` selection can
+    // narrow the *build* to just those suites' members, not every plugin.
+    //
+    // Per-plugin installers always run pkgbuild to produce the component
+    // packages; whether we *also* run productbuild + notarize for the
+    // per-plugin .pkg is the --no-per-plugin gate. The component .pkgs are
+    // needed by the suite wrapper below.
+    //
+    // `-p <crate>` narrows to a single plugin, which can't satisfy a
+    // multi-member suite. Skip suite installers in that mode so the
+    // single-plugin run doesn't fail at the suite step looking for
+    // unstaged siblings.
+    let suites: Vec<crate::config::ResolvedSuite<'_>> = if parsed.plugin_filter.is_some() {
+        if !config.suites.is_empty() {
+            eprintln!("(-p set; skipping suite installers - they need every member plugin staged)");
+        }
+        Vec::new()
+    } else {
+        config
+            .suites
+            .iter()
+            .filter(|s| selection.want_suite(&s.name, &s.bundle_id))
+            .map(|s| s.resolve(&config.plugin))
+            .collect::<Result<_, _>>()?
+    };
+
+    // With `--suite <name>`, build only that suite's members (and their
+    // per-plugin installers) instead of every plugin; without it, build
+    // everything.
+    let plugins: Vec<&PluginDef> = if selection.only_suites.is_empty() {
+        all_plugins
+    } else {
+        let mut seen = std::collections::HashSet::new();
+        let narrowed: Vec<&PluginDef> = suites
+            .iter()
+            .flat_map(|s| s.plugins.iter().copied())
+            .filter(|p| seen.insert(p.bundle_id.clone()))
+            .collect();
+        eprintln!(
+            "Limiting to {} plugin{} for the selected suite(s).",
+            narrowed.len(),
+            if narrowed.len() == 1 { "" } else { "s" }
+        );
+        narrowed
+    };
 
     build_all_formats(&root, &config, &plugins, &archs, dt, &formats, universal)?;
 
@@ -89,28 +135,6 @@ pub(crate) fn cmd_package_macos(args: &[String], selection: &super::SuiteSelecti
         no_notarize: parsed.no_notarize,
         no_pace_sign: parsed.no_pace_sign,
         universal,
-    };
-    // Per-plugin installers always run pkgbuild to produce the
-    // component packages; whether we *also* run productbuild +
-    // notarize for the per-plugin .pkg is the --no-per-plugin gate.
-    // The component .pkgs are needed by the suite wrapper below.
-    //
-    // `-p <crate>` narrows to a single plugin, which can't satisfy a
-    // multi-member suite. Skip suite installers in that mode so the
-    // single-plugin run doesn't fail at the suite step looking for
-    // unstaged siblings.
-    let suites: Vec<crate::config::ResolvedSuite<'_>> = if parsed.plugin_filter.is_some() {
-        if !config.suites.is_empty() {
-            eprintln!("(-p set; skipping suite installers - they need every member plugin staged)");
-        }
-        Vec::new()
-    } else {
-        config
-            .suites
-            .iter()
-            .filter(|s| selection.want_suite(&s.name, &s.bundle_id))
-            .map(|s| s.resolve(&config.plugin))
-            .collect::<Result<_, _>>()?
     };
     let need_components_only = !selection.want_per_plugin() && !suites.is_empty();
 
