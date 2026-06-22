@@ -583,20 +583,6 @@ pub(crate) fn stage_aax(
     Ok(())
 }
 
-/// Where a format's staged bundle lives before `run_pkgbuild_for_format`
-/// reads it. AU v3 and Standalone both produce `{name}.app` (AU v3's
-/// being the standalone host *with* the appex, Standalone's the lean host
-/// alone); AU v3 stages under a subdir so a plugin shipping both doesn't
-/// clobber one with the other in the shared staging tree. Every other
-/// format has a unique bundle name and stages flat.
-#[cfg(target_os = "macos")]
-pub(crate) fn staged_bundle_path(staging: &Path, fmt: &PkgFormat, bundle_name: &str) -> PathBuf {
-    match fmt {
-        PkgFormat::Au3 => staging.join("_au3_app").join(bundle_name),
-        _ => staging.join(bundle_name),
-    }
-}
-
 /// Stage an AU v3 `.app` bundle into the staging directory for pkgbuild.
 ///
 /// Reads from `target/bundles/{Plugin}.app/` - the fully-signed output
@@ -618,10 +604,7 @@ pub(crate) fn stage_au3(root: &Path, p: &PluginDef, _config: &Config, staging: &
         .into());
     }
 
-    let dst = staged_bundle_path(staging, &PkgFormat::Au3, &app_name);
-    if let Some(parent) = dst.parent() {
-        fs::create_dir_all(parent)?;
-    }
+    let dst = staging.join(&app_name);
     // May be root-owned from a previous install-based run. Best-effort
     // `rm -rf` covers that case; surface a pointed error if it still
     // fails so the user knows exactly which command to run by hand.

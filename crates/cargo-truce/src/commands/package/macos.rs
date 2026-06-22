@@ -639,22 +639,18 @@ fn resolve_formats(
         fmts
     };
 
-    Ok(order_au3_after_standalone(fmts))
+    Ok(drop_standalone_if_au3(fmts))
 }
 
-/// AU v3 and Standalone both install `/Applications/{name}.app`: AU v3's
-/// bundle is the standalone host *with* the appex embedded, Standalone's
-/// is the lean host alone. Both ship as installer checkboxes - the appex
-/// must be sealed into the bundle at sign time, so "with appex" and
-/// "without appex" are two distinct signed apps, not a runtime toggle.
-/// When both are selected the installer lays their payloads down in
-/// choice order and the later same-path bundle replaces the earlier, so
-/// ordering AU v3 last makes it win: AU v3 alone or AU v3 + Standalone
-/// yield the full app, Standalone alone the lean one.
-fn order_au3_after_standalone(mut fmts: Vec<PkgFormat>) -> Vec<PkgFormat> {
-    if fmts.contains(&PkgFormat::Au3) && fmts.contains(&PkgFormat::Standalone) {
-        fmts.retain(|f| *f != PkgFormat::Au3);
-        fmts.push(PkgFormat::Au3);
+/// AU v3's bundle *is* the standalone `{name}.app` - the host with the
+/// appex embedded, installed at the same path. When both are requested,
+/// drop the separate Standalone format: a lean standalone app at that
+/// path (no appex) clobbers the AU v3 one, and once `pkd` has scanned the
+/// appex-less app first it won't register the appex the AU v3 payload
+/// later adds. The AU v3 app is itself launchable as a standalone.
+fn drop_standalone_if_au3(mut fmts: Vec<PkgFormat>) -> Vec<PkgFormat> {
+    if fmts.contains(&PkgFormat::Au3) {
+        fmts.retain(|f| *f != PkgFormat::Standalone);
     }
     fmts
 }
@@ -1184,7 +1180,7 @@ fn run_pkgbuild_for_format(
     o: &PackageOpts,
 ) -> Res {
     let bundle_name = fmt.bundle_name(p);
-    let component_path = super::stage::staged_bundle_path(staging, fmt, &bundle_name);
+    let component_path = staging.join(&bundle_name);
     let pkg_id = format!(
         "{}.{}.{}",
         o.config.vendor.id,
@@ -1620,28 +1616,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn au3_ordered_last_when_standalone_also_present() {
-        let out = order_au3_after_standalone(vec![
-            PkgFormat::Clap,
-            PkgFormat::Au3,
-            PkgFormat::Standalone,
-        ]);
-        // AU v3 moves last so its full `{name}.app` overwrites the lean
-        // Standalone one when both choices install.
-        assert_eq!(
-            out,
-            vec![PkgFormat::Clap, PkgFormat::Standalone, PkgFormat::Au3]
-        );
+    fn standalone_dropped_when_au3_present() {
+        let out =
+            drop_standalone_if_au3(vec![PkgFormat::Clap, PkgFormat::Standalone, PkgFormat::Au3]);
+        // The AU v3 app is the standalone host; the separate Standalone
+        // format is dropped so they don't fight over `{name}.app`.
+        assert_eq!(out, vec![PkgFormat::Clap, PkgFormat::Au3]);
     }
 
     #[test]
-    fn order_unchanged_without_both() {
+    fn standalone_kept_without_au3() {
         assert_eq!(
-            order_au3_after_standalone(vec![PkgFormat::Au3, PkgFormat::Clap]),
-            vec![PkgFormat::Au3, PkgFormat::Clap]
-        );
-        assert_eq!(
-            order_au3_after_standalone(vec![PkgFormat::Clap, PkgFormat::Standalone]),
+            drop_standalone_if_au3(vec![PkgFormat::Clap, PkgFormat::Standalone]),
             vec![PkgFormat::Clap, PkgFormat::Standalone]
         );
     }

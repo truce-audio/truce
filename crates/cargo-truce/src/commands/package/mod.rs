@@ -335,10 +335,9 @@ impl PkgFormat {
             // `<Plugin>.standalone.app` extension confused some indexing
             // paths and the bundle would not appear in Spotlight search.
             // AU v3 resolves to the same `<Plugin>.app` (its app *is* the
-            // standalone host with the appex), so the two share an install
-            // path on purpose - `resolve_formats` orders AU v3 last and
-            // `staged_bundle_path` isolates its staging so they don't
-            // clobber. See those for the install-time resolution.
+            // standalone host with the appex), so `resolve_formats` drops
+            // the separate Standalone format whenever AU v3 is present -
+            // they never coexist at this path.
             PkgFormat::Standalone => format!("{}.app", plugin.file_stem()),
             // LV2 bundle names follow the spec's lowercase-hyphenated
             // convention (the same slug `derive(Params)` bakes into
