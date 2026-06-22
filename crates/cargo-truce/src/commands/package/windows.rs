@@ -143,7 +143,7 @@ pub(crate) fn cmd_package_windows(args: &[String], selection: &super::SuiteSelec
         config
             .suites
             .iter()
-            .filter(|s| selection.want_suite(&s.name))
+            .filter(|s| selection.want_suite(&s.name, &s.bundle_id))
             .map(|s| s.resolve(&config.plugin))
             .collect::<std::result::Result<_, _>>()?
     };
