@@ -2,6 +2,10 @@
 
 Notable changes per release.
 
+## 0.62.0
+
+- **AU v3 app mode is the plugin's standalone host.** When a plugin exposes a standalone bin, the macOS AU v3 containing app is now the standalone host with the appex embedded, so launching `{name}.app` plays the plugin and registers the AU v3 from one bundle.
+
 ## 0.61.0
 
 - **Reusable `#[nested]` param groups.** A nested `Params` struct's ids are rebased by a per-group base (auto-packed, or pinned with `#[nested(base = N)]`), so the same group type can be nested more than once without id clashes and nested groups need no per-param ids.
