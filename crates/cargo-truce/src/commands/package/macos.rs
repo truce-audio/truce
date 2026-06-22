@@ -157,7 +157,9 @@ fn stage_components_only(root: &Path, p: &PluginDef, o: &PackageOpts) -> Res {
     let _ = fs::remove_dir_all(&staging);
     fs::create_dir_all(&staging)?;
 
-    for fmt in o.formats {
+    let plugin_formats = formats_for_plugin(o.formats, p);
+
+    for fmt in &plugin_formats {
         eprintln!("  Staging {}...", fmt.label());
         // macOS package staging reads from `target/release/` after lipo
         // has produced a universal Mach-O at the canonical path; pass
@@ -204,7 +206,7 @@ fn stage_components_only(root: &Path, p: &PluginDef, o: &PackageOpts) -> Res {
     // bound to an older identity, etc.).
     let _ = fs::remove_dir_all(&components_dir);
     fs::create_dir_all(&components_dir)?;
-    for fmt in o.formats {
+    for fmt in &plugin_formats {
         let appex_id = (*fmt == PkgFormat::Au3).then(|| au3_appex_id(o.config, p));
         let scripts_dir =
             write_format_scripts(&staging, fmt, &fmt.bundle_name(p), appex_id.as_deref())?;
@@ -344,8 +346,8 @@ fn package_one_suite(
         .plugins
         .iter()
         .flat_map(|plugin| {
-            o.formats
-                .iter()
+            formats_for_plugin(o.formats, plugin)
+                .into_iter()
                 .map(move |fmt| format!("{}-{}.pkg", plugin.file_stem(), fmt.label()))
         })
         .collect();
@@ -391,9 +393,13 @@ fn generate_suite_distribution_xml(
     // the top level. Nesting them silently drops the inner pkg-refs and
     // productbuild produces an empty (~2 KB) installer with no payload.
     for (plugin, extras) in suite.plugins.iter().zip(extras_by_plugin) {
+        // A binless plugin has no Standalone component; keep it out of
+        // this member's outline + pkg-refs so productbuild doesn't
+        // reference a `.pkg` that was never built.
+        let member_formats = formats_for_plugin(formats, plugin);
         let outer_id = sanitize_id(&plugin.bundle_id);
         let _ = writeln!(outline, "        <line choice=\"{outer_id}\">");
-        for fmt in formats {
+        for fmt in &member_formats {
             let inner_id = format!("{outer_id}-{}", fmt.pkg_id_suffix());
             let _ = writeln!(outline, "            <line choice=\"{inner_id}\"/>");
         }
@@ -408,7 +414,7 @@ fn generate_suite_distribution_xml(
             plugin_name = plugin.name,
         );
 
-        for fmt in formats {
+        for fmt in &member_formats {
             let inner_id = format!("{outer_id}-{}", fmt.pkg_id_suffix());
             let pkg_id = format!("{vendor_id}.{}.{}", plugin.bundle_id, fmt.pkg_id_suffix());
             let component_file = format!("{}-{}.pkg", plugin.file_stem(), fmt.label());
@@ -629,6 +635,20 @@ fn order_au3_after_standalone(mut fmts: Vec<PkgFormat>) -> Vec<PkgFormat> {
     fmts
 }
 
+/// The package formats that actually apply to `p`. Standalone is dropped
+/// for plugins that declare no standalone `[[bin]]` (MIDI / utility
+/// examples): they can't run as a desktop app, so they get no Standalone
+/// component or installer choice. AU v3 still ships for them - as a stub
+/// app - so it is never filtered here.
+fn formats_for_plugin(formats: &[PkgFormat], p: &PluginDef) -> Vec<PkgFormat> {
+    let has_standalone = crate::read_standalone_bin_name(&p.crate_name).is_some();
+    formats
+        .iter()
+        .filter(|f| **f != PkgFormat::Standalone || has_standalone)
+        .cloned()
+        .collect()
+}
+
 /// Drive Step 1 of the packaging pipeline: per-arch builds + lipo for
 /// every requested format. Stage functions read from the canonical
 /// `target/release/lib{stem}_{fmt}.dylib` paths populated here and
@@ -717,6 +737,16 @@ pub(crate) fn build_and_lipo_standalone(
     archs: &[MacArch],
     dt: &str,
 ) -> Res {
+    // Only plugins that declare a standalone `[[bin]]` produce a binary.
+    // MIDI / utility examples enable the `standalone` feature (so the dep
+    // is in their graph) but ship no bin, so building one for them yields
+    // nothing - skip them here, as `formats_for_plugin` does in staging /
+    // distribution.
+    let plugins: Vec<&PluginDef> = plugins
+        .iter()
+        .copied()
+        .filter(|p| crate::read_standalone_bin_name(&p.crate_name).is_some())
+        .collect();
     if plugins.is_empty() {
         return Ok(());
     }
@@ -738,7 +768,7 @@ pub(crate) fn build_and_lipo_standalone(
     // `target/<triple>/release/` dirs and run concurrently when more
     // than one arch is requested.
     let mut args: Vec<&str> = Vec::with_capacity(plugins.len() * 2 + 3);
-    for p in plugins {
+    for p in &plugins {
         args.push("-p");
         args.push(&p.crate_name);
     }
@@ -907,8 +937,10 @@ fn package_one_plugin(root: &Path, p: &PluginDef, dist_dir: &Path, o: &PackageOp
     let _ = fs::remove_dir_all(&staging);
     fs::create_dir_all(&staging)?;
 
+    let plugin_formats = formats_for_plugin(o.formats, p);
+
     // Step 2: Stage signed bundles
-    for fmt in o.formats {
+    for fmt in &plugin_formats {
         eprintln!("  Staging {}...", fmt.label());
         // macOS package staging reads from `target/release/` after lipo
         // has produced a universal Mach-O at the canonical path; pass
@@ -970,7 +1002,7 @@ fn package_one_plugin(root: &Path, p: &PluginDef, dist_dir: &Path, o: &PackageOp
     let _ = fs::remove_dir_all(&components_dir);
     fs::create_dir_all(&components_dir)?;
 
-    for fmt in o.formats {
+    for fmt in &plugin_formats {
         let appex_id = (*fmt == PkgFormat::Au3).then(|| au3_appex_id(o.config, p));
         let scripts_dir =
             write_format_scripts(&staging, fmt, &fmt.bundle_name(p), appex_id.as_deref())?;
@@ -993,7 +1025,7 @@ fn package_one_plugin(root: &Path, p: &PluginDef, dist_dir: &Path, o: &PackageOp
         &p.file_stem(),
         &o.config.vendor.id,
         &p.bundle_id,
-        o.formats,
+        &plugin_formats,
         &extras,
         o.version,
         Some(&o.config.macos.packaging),
@@ -1037,8 +1069,7 @@ fn package_one_plugin(root: &Path, p: &PluginDef, dist_dir: &Path, o: &PackageOp
     // distribution.xml class of bug where productbuild reports
     // success but drops the payload (e.g. nested <choice> elements
     // ignore their pkg-refs and produce a 2 KB metadata-only .pkg).
-    let mut expected: Vec<String> = o
-        .formats
+    let mut expected: Vec<String> = plugin_formats
         .iter()
         .map(|fmt| format!("{}-{}.pkg", p.file_stem(), fmt.label()))
         .collect();
