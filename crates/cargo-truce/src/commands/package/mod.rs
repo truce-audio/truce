@@ -126,7 +126,7 @@ pub(crate) fn extract_suite_selection(
 
 /// Parsed format flags for the package command.
 /// Used by both `cmd_package_macos` and `windows::cmd_package_windows`.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Debug)]
 pub(crate) enum PkgFormat {
     Clap,
     Vst3,
@@ -330,13 +330,15 @@ impl PkgFormat {
     pub(crate) fn bundle_name(&self, plugin: &PluginDef) -> String {
         match self {
             PkgFormat::Au3 => format!("{}.app", plugin.au3_app_name()),
-            // Plain `<Plugin>.app` so Spotlight / Launch Services
-            // index it as a regular application. The historical
-            // `<Plugin>.standalone.app` extension confused some
-            // indexing paths and the bundle would not appear in
-            // Spotlight search. AU3 stays distinct via its `v3`
-            // suffix (or the user's `au3_name` override), so there's
-            // no `/Applications/` collision.
+            // Plain `<Plugin>.app` so Spotlight / Launch Services index
+            // it as a regular application. The historical
+            // `<Plugin>.standalone.app` extension confused some indexing
+            // paths and the bundle would not appear in Spotlight search.
+            // AU v3 resolves to the same `<Plugin>.app` (its app *is* the
+            // standalone host with the appex), so the two share an install
+            // path on purpose - `resolve_formats` orders AU v3 last and
+            // `staged_bundle_path` isolates its staging so they don't
+            // clobber. See those for the install-time resolution.
             PkgFormat::Standalone => format!("{}.app", plugin.file_stem()),
             // LV2 bundle names follow the spec's lowercase-hyphenated
             // convention (the same slug `derive(Params)` bakes into

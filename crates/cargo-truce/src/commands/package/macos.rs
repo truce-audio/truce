@@ -577,7 +577,7 @@ fn resolve_formats(
     format_str: Option<&str>,
     config: &Config,
 ) -> Result<Vec<PkgFormat>, crate::CargoTruceError> {
-    let mut fmts = if let Some(s) = format_str {
+    let fmts = if let Some(s) = format_str {
         PkgFormat::parse_list(s)?
     } else if !config.packaging.formats.is_empty() {
         PkgFormat::parse_list(&config.packaging.formats.join(","))?
@@ -609,14 +609,24 @@ fn resolve_formats(
         fmts
     };
 
-    // AU v3 app mode embeds the appex into the standalone host, so the
-    // AU v3 bundle *is* the standalone `{name}.app`. When both are
-    // requested, drop the separate Standalone format so they don't both
-    // emit (and fight over) `{name}.app`.
-    if fmts.contains(&PkgFormat::Au3) {
-        fmts.retain(|f| *f != PkgFormat::Standalone);
+    Ok(order_au3_after_standalone(fmts))
+}
+
+/// AU v3 and Standalone both install `/Applications/{name}.app`: AU v3's
+/// bundle is the standalone host *with* the appex embedded, Standalone's
+/// is the lean host alone. Both ship as installer checkboxes - the appex
+/// must be sealed into the bundle at sign time, so "with appex" and
+/// "without appex" are two distinct signed apps, not a runtime toggle.
+/// When both are selected the installer lays their payloads down in
+/// choice order and the later same-path bundle replaces the earlier, so
+/// ordering AU v3 last makes it win: AU v3 alone or AU v3 + Standalone
+/// yield the full app, Standalone alone the lean one.
+fn order_au3_after_standalone(mut fmts: Vec<PkgFormat>) -> Vec<PkgFormat> {
+    if fmts.contains(&PkgFormat::Au3) && fmts.contains(&PkgFormat::Standalone) {
+        fmts.retain(|f| *f != PkgFormat::Au3);
+        fmts.push(PkgFormat::Au3);
     }
-    Ok(fmts)
+    fmts
 }
 
 /// Drive Step 1 of the packaging pipeline: per-arch builds + lipo for
@@ -1119,7 +1129,7 @@ fn run_pkgbuild_for_format(
     o: &PackageOpts,
 ) -> Res {
     let bundle_name = fmt.bundle_name(p);
-    let component_path = staging.join(&bundle_name);
+    let component_path = super::stage::staged_bundle_path(staging, fmt, &bundle_name);
     let pkg_id = format!(
         "{}.{}.{}",
         o.config.vendor.id,
@@ -1547,5 +1557,37 @@ fn fetch_notarization_log(output: &str, keychain_profile: &str) {
                 eprintln!("{log}");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn au3_ordered_last_when_standalone_also_present() {
+        let out = order_au3_after_standalone(vec![
+            PkgFormat::Clap,
+            PkgFormat::Au3,
+            PkgFormat::Standalone,
+        ]);
+        // AU v3 moves last so its full `{name}.app` overwrites the lean
+        // Standalone one when both choices install.
+        assert_eq!(
+            out,
+            vec![PkgFormat::Clap, PkgFormat::Standalone, PkgFormat::Au3]
+        );
+    }
+
+    #[test]
+    fn order_unchanged_without_both() {
+        assert_eq!(
+            order_au3_after_standalone(vec![PkgFormat::Au3, PkgFormat::Clap]),
+            vec![PkgFormat::Au3, PkgFormat::Clap]
+        );
+        assert_eq!(
+            order_au3_after_standalone(vec![PkgFormat::Clap, PkgFormat::Standalone]),
+            vec![PkgFormat::Clap, PkgFormat::Standalone]
+        );
     }
 }
