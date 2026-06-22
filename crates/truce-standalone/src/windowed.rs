@@ -284,6 +284,18 @@ where
             }
         }
 
+        // macOS: a fixed-size editor's window must stay at the editor's
+        // geometry. baseview leaves out `Resizable` (no edge-drag), but
+        // zoom / double-click-titlebar can still grow the window past the
+        // child, exposing an unpainted margin. Pin content min == max so
+        // every resize path clamps to the editor. Linux: `pin_size`;
+        // Windows: `lock_window`.
+        #[cfg(target_os = "macos")]
+        if !editor_can_resize && let RwhHandle::AppKit(h) = window.raw_window_handle() {
+            // SAFETY: live `ns_window`, main thread, baseview init done.
+            unsafe { crate::windowed_macos::pin_content_size(h.ns_window, lw, lh) };
+        }
+
         let ctx = synthesize_editor_context::<P>(&plugin, &transport, Arc::clone(&pending_resize));
         editor.open(truce_parent, ctx);
 
@@ -310,6 +322,8 @@ where
             editor,
             pending_resize,
             current_size: (lw, lh),
+            #[cfg(target_os = "macos")]
+            editor_reports_size: true,
             #[cfg(target_os = "linux")]
             size_hints_scale: 0.0,
             _plugin: plugin,
@@ -349,6 +363,14 @@ where
     /// `Resized` event -> `editor.set_size` propagation so the
     /// editor only sees real OS-driven changes.
     current_size: (u32, u32),
+    /// Whether the editor reports its rendered size through
+    /// `Editor::size` after a `set_size` (true for builtin / egui / iced
+    /// / slint). Vizia's `set_size` is a no-op returning false; its child
+    /// fills the window through baseview instead. macOS reads this each
+    /// frame to pick the child's reconcile size (editor size vs window
+    /// size). Updated wherever `set_size` is called.
+    #[cfg(target_os = "macos")]
+    editor_reports_size: bool,
     /// Scale factor the X11 WM min/max size hints were last computed
     /// at, or `0.0` if they haven't been set yet. The editor's
     /// min/max bounds are logical, so the physical-pixel hints the WM
@@ -428,38 +450,55 @@ where
             if (w, h) != self.current_size && w > 0 && h > 0 {
                 resize_outer_window(window, w, h);
                 self.current_size = (w, h);
-                self.editor.set_size(w, h);
+                let accepted = self.editor.set_size(w, h);
+                #[cfg(target_os = "macos")]
+                {
+                    self.editor_reports_size = accepted;
+                }
+                #[cfg(not(target_os = "macos"))]
+                let _ = accepted;
             }
         }
-        // OS-driven user resize poll (macOS only - other platforms
-        // emit `WindowEvent::Resized` for user drags via `on_event`).
+        // macOS: forward OS-driven resizes the editor missed and re-pin
+        // the child view's frame every frame.
         #[cfg(target_os = "macos")]
         if let RwhHandle::AppKit(h) = window.raw_window_handle()
             && let Some(os_size) =
                 unsafe { crate::windowed_macos::content_logical_size(h.ns_window) }
-            && os_size != self.current_size
             && os_size.0 > 0
             && os_size.1 > 0
         {
-            self.current_size = os_size;
-            let accepted = self.editor.set_size(os_size.0, os_size.1);
-            // Centre the child at the editor's actual rendered size.
-            // Accepting backends (builtin clamps, egui/iced/slint take
-            // it verbatim) report it via `editor.size()`; vizia's
-            // `set_size` is a no-op, so fall back to filling the window
-            // (its child follows through baseview's `setFrameSize:`).
-            let (cw, ch) = if accepted {
-                self.editor.size()
-            } else {
-                os_size
-            };
-            // SAFETY: `editor.set_size` has returned, so the child view
-            // is settled; `h.ns_view` is the live baseview view and
-            // we're on the main thread.
-            unsafe {
-                crate::windowed_macos::layout_child_centered(
-                    h.ns_view, cw, ch, os_size.0, os_size.1,
-                );
+            // Some resizes arrive as a `Resized` event (handled in
+            // `on_event`); others only surface by polling the content
+            // size here. Forward the ones `on_event` didn't see.
+            if os_size != self.current_size {
+                self.current_size = os_size;
+                self.editor_reports_size = self.editor.set_size(os_size.0, os_size.1);
+            }
+            // Re-pin the child frame every frame. The autoresize centering
+            // mask moves the (old-size) child toward the centre as the
+            // window grows, and the editor's own child-window resize then
+            // grows it in place - keeping that shifted origin; a
+            // `Resized`-event resize never corrects it either. Left as-is
+            // the child overhangs one edge and exposes an unpainted margin
+            // on the other. Re-centre at the editor's rendered size
+            // (window size for vizia, whose child fills via baseview).
+            // `layout_child_centered` no-ops once the frame matches.
+            if self.editor.can_resize() {
+                let (cw, ch) = if self.editor_reports_size {
+                    self.editor.size()
+                } else {
+                    os_size
+                };
+                if cw > 0 && ch > 0 {
+                    // SAFETY: `h.ns_view` is the live baseview view; we're
+                    // on the main thread and the child is settled.
+                    unsafe {
+                        crate::windowed_macos::layout_child_centered(
+                            h.ns_view, cw, ch, os_size.0, os_size.1,
+                        );
+                    }
+                }
             }
         }
 
@@ -556,6 +595,11 @@ where
             if (lw, lh) != self.current_size && lw > 0 && lh > 0 {
                 self.current_size = (lw, lh);
                 let accepted = self.editor.set_size(lw, lh);
+                // macOS reconciles the child frame each frame off this.
+                #[cfg(target_os = "macos")]
+                {
+                    self.editor_reports_size = accepted;
+                }
                 // Snap the outer standalone window to the editor's
                 // post-clamp / post-snap size. truce-gui's
                 // `BuiltinEditor` clamps to `min_cols` / `max_cols`,
