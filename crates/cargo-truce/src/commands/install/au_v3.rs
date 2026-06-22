@@ -155,8 +155,28 @@ fn build_au_v3_for_plugin(
     }
     sign_au_v3_inside_out(&final_app, &build_dir, &fw_name, sign_id)?;
 
+    // xcodebuild's output `.app` lives in `target/tmp` and `pkd`
+    // auto-registers its appex from there. That registration points at a
+    // transient build path and shadows the copy hosts actually load (the
+    // installed `/Applications` bundle), so AU v3 instances fail to open
+    // ("OpenAComponent: 4") even though the installed appex is valid.
+    // Evict it now, at build time, in the user's pluginkit DB - before
+    // any install (`.pkg` double-click or `cargo truce install`) lays
+    // down the real bundle. The `.pkg` path never runs our cleanup, so
+    // this is the only place that covers it.
+    evict_appex_registration(&xcodebuild_app.join("Contents/PlugIns/AUExt.appex"));
+
     crate::vprintln!("  AU v3: {}", final_app.display());
     Ok(())
+}
+
+/// Best-effort `pluginkit -r` to drop a stale appex registration. Evicts
+/// the build-tree copy `pkd` auto-registers so the installed
+/// `/Applications` appex isn't shadowed by a transient path.
+fn evict_appex_registration(appex: &Path) {
+    if let Some(path) = appex.to_str() {
+        let _ = Command::new("pluginkit").args(["-r", path]).output();
+    }
 }
 
 /// Build the Rust framework dylib once per arch, then `lipo -create`
@@ -706,6 +726,13 @@ fn install_au_v3(root: &Path, config: &Config, plugins: &[&PluginDef]) -> Res {
                 .args(["-r", staging_appex.to_str().unwrap()])
                 .output();
         }
+        // Same for the appex xcodebuild left in `target/tmp` - pkd
+        // auto-registered it there during the build, and that transient
+        // path otherwise wins the load race over the installed copy.
+        evict_appex_registration(
+            &tmp_au_v3(&p.bundle_id)
+                .join("build/build/Release/TruceAUv3.app/Contents/PlugIns/AUExt.appex"),
+        );
         let _ = Command::new("pluginkit")
             .args(["-e", "ignore", "-i", &appex_id])
             .output();

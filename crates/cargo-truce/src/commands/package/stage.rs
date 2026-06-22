@@ -981,6 +981,16 @@ if [ -z "${uid:-}" ] || [ "$user" = "root" ] || [ ! -d "$APPEX" ]; then
 fi
 home=$(eval echo "~$user")
 asuser() { launchctl asuser "$uid" sudo -u "$user" "$@"; }
+# Evict any registration of this appex id that points somewhere other
+# than the just-installed bundle - notably the build-tree copy that
+# xcodebuild's pkd auto-registers, which otherwise shadows the installed
+# appex and makes hosts fail to open the AU v3 ("OpenAComponent: 4").
+asuser pluginkit -mv -i "$APPEX_ID" 2>/dev/null | awk -F'\t' 'NF>1{print $NF}' | while read -r p; do
+    [ "$p" = "$APPEX" ] && continue
+    case "$p" in
+        /*) asuser pluginkit -r "$p" >/dev/null 2>&1 || true ;;
+    esac
+done
 LSREG=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
 "$LSREG" -f -R "$APP" >/dev/null 2>&1 || true
 killall -9 pkd 2>/dev/null || true
