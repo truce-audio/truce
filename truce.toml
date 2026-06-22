@@ -510,3 +510,10 @@ ios_icon_set = "static/truce-minimal.appiconset"
 name = "Truce Examples"
 bundle_id = "truce-examples"
 
+# Small two-plugin subset for exercising a subset install without
+# packaging every example.
+[[suite]]
+name = "Truce Examples Subset"
+bundle_id = "truce-examples-subset"
+plugins = ["synth", "gain-egui-aspect"]
+
