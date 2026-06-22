@@ -32,22 +32,20 @@ use std::process::Command;
 
 /// Build a signed AU v3 `.app` bundle in `target/bundles/`.
 ///
-/// AU v3 app mode embeds the appex into the plugin's standalone host, so
-/// the bundle *is* the standalone `{name}.app` with `Contents/PlugIns/
-/// AUExt.appex` (and its framework) added. Steps:
-/// 1. Build the standalone universal binary and assemble the standalone
-///    `.app` at `target/bundles/{name}.app` (executable, Info.plist with
-///    mic / hi-res / name, factory presets, icon).
-/// 2. Build the Rust framework dylib + `.framework` bundle, materialize
-///    the Xcode project, and `xcodebuild` the appex (the project's
-///    throwaway App target is ignored; only its appex is used).
-/// 3. Inject the appex + framework into the standalone `.app`.
-/// 4. Sign inside-out (framework → appex → app). No sudo.
+/// The bundle is a `{name}.app` with `Contents/PlugIns/AUExt.appex` (and
+/// its framework). The appex is the AU v3 deliverable; the containing app
+/// is the plugin's standalone host when it has one, else an
+/// informational stub. Steps:
+/// 1. Build the Rust framework dylib + `.framework` bundle, materialize
+///    the Xcode project, and `xcodebuild` (produces the appex + a stub
+///    App target).
+/// 2. Assemble the containing app: a standalone host with the appex
+///    injected, or the stub App target with the framework embedded.
+/// 3. Sign inside-out (framework → appex → app). No sudo.
 ///
 /// After return, the bundle at `target/bundles/{name}.app/` is a
-/// complete, properly-signed AU v3 container that also runs as the
-/// plugin's standalone host, ready to be copied into `/Applications/`
-/// by [`install_au_v3`].
+/// complete, properly-signed AU v3 container ready to be copied into
+/// `/Applications/` by [`install_au_v3`].
 pub(crate) fn emit_au_v3_bundle(
     root: &Path,
     config: &Config,
@@ -95,18 +93,13 @@ pub(crate) fn emit_au_v3_bundle(
     Ok(())
 }
 
-/// Whether a plugin can build AU v3 app mode. The bundle *is* the
-/// plugin's standalone host with the appex embedded, so a standalone
-/// bin is required; without one, AU v3 is skipped end to end (build,
-/// install, and packaging all consult this so they stay in lockstep).
-pub(crate) fn au_v3_supported(p: &PluginDef) -> bool {
-    crate::read_standalone_bin_name(&p.crate_name).is_some()
-}
-
-/// Drive the full per-plugin AU v3 build pipeline: standalone `.app` →
-/// framework dylib + xcodebuild appex → inject appex/framework →
-/// inside-out sign. Each step is its own helper so the orchestration
-/// stays readable.
+/// Drive the full per-plugin AU v3 build pipeline: framework dylib +
+/// xcodebuild appex → assemble the containing app → inside-out sign.
+///
+/// The appex is the AU v3 deliverable and always ships. The containing
+/// app is the plugin's standalone host when it exposes a standalone bin
+/// (launching it plays the plugin); otherwise it's the xcode stub - an
+/// informational container that keeps the appex shippable without one.
 #[allow(clippy::too_many_arguments)]
 fn build_au_v3_for_plugin(
     root: &Path,
@@ -120,37 +113,15 @@ fn build_au_v3_for_plugin(
     reuse_au_artifacts: bool,
 ) -> Res {
     let fw_name = p.fw_name();
-
-    // AU v3 app mode embeds the appex into the plugin's standalone host:
-    // one `{name}.app` that plays the plugin and registers the AU v3.
-    // That requires a standalone bin; plugins without one skip AU v3 and
-    // still ship AU v2 and every other enabled format.
-    if !au_v3_supported(p) {
-        crate::vprintln!(
-            "  AU v3 skipped for {}: no standalone bin. Add a [[bin]] with \
-             `required-features = [\"standalone\"]` to enable AU v3.",
-            p.name
-        );
-        return Ok(());
-    }
-
     let au_v3_root = tmp_au_v3(&p.bundle_id);
     let build_dir = au_v3_root.join("build");
     let fw_build = au_v3_root.join("fw");
-    // The app *is* the standalone bundle - `au3_app_name()` is now the
-    // plain `{name}`, so there's no separate "v3" app.
     let final_app = bundles_dir.join(format!("{}.app", p.au3_app_name()));
 
     crate::vprintln!("Building AU v3 ({})...", p.name);
 
-    // 1. Build + assemble the standalone host app at the final path. It
-    //    carries the real executable, Info.plist (mic / hi-res / name),
-    //    factory presets, and icon already.
-    crate::commands::package::macos::build_and_lipo_standalone(root, &[p], archs, dt)?;
-    crate::commands::package::stage::stage_standalone(root, p, config, bundles_dir)?;
-
-    // 2. Build the AU v3 framework + appex via xcodebuild (its throwaway
-    //    App target is ignored; only the appex is used).
+    // Framework + appex: the AU v3 deliverable, built regardless of
+    // whether a standalone host exists.
     let lipo_dst = build_rust_framework_dylib(root, p, archs, dt, reuse_au_artifacts)?;
     let factory_presets = super::presets::load_factory_presets(root, p, config)?;
     assemble_framework_bundle(
@@ -165,9 +136,23 @@ fn build_au_v3_for_plugin(
     write_xcode_project_files(&build_dir, &fw_build, p, config, team_id, &fw_name)?;
     let xcodebuild_app = run_xcodebuild_for_plugin(&build_dir, archs, p)?;
 
-    // 3. Inject the appex + framework into the standalone app, then
-    //    re-sign inside-out (the injection broke stage_standalone's seal).
-    inject_au_v3_into_app(&final_app, &xcodebuild_app, &fw_build, &fw_name)?;
+    // The containing app. With a standalone bin it's the plugin's host
+    // (the standalone `.app` with the appex injected); without one it's
+    // the xcode stub with the framework embedded.
+    if crate::read_standalone_bin_name(&p.crate_name).is_some() {
+        crate::commands::package::macos::build_and_lipo_standalone(root, &[p], archs, dt)?;
+        crate::commands::package::stage::stage_standalone(root, p, config, bundles_dir)?;
+        inject_au_v3_into_app(&final_app, &xcodebuild_app, &fw_build, &fw_name)?;
+    } else {
+        eprintln!(
+            "  AU v3 for {}: no standalone bin - shipping the appex in a stub \
+             app. Add a [[bin]] with required-features = [\"standalone\"] for a \
+             playable standalone host.",
+            p.name
+        );
+        embed_framework_into_app(&xcodebuild_app, &final_app, &fw_build, &fw_name)?;
+        stage_au_v3_icon(&final_app, p)?;
+    }
     sign_au_v3_inside_out(&final_app, &build_dir, &fw_name, sign_id)?;
 
     crate::vprintln!("  AU v3: {}", final_app.display());
@@ -374,7 +359,22 @@ fn write_xcode_project_files(
         build_dir.join("AUExt/AUExt.entitlements"),
         templates::au3::APPEX_ENTITLEMENTS,
     )?;
-    fs_ctx::write_if_changed(build_dir.join("App/main.m"), templates::au3::APP_MAIN_M)?;
+    // Substitute the plugin's display name + AU identifier codes into the
+    // stub app so it's a useful "installed, here's how to find it" window
+    // rather than a generic alert. Escape the name for an ObjC string
+    // literal (backslash first, then quote).
+    let stub_name = p
+        .au3_name
+        .as_deref()
+        .unwrap_or(p.name.as_str())
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"");
+    let main_m = templates::au3::APP_MAIN_M
+        .replace("PLUGIN_DISPLAY_NAME", &stub_name)
+        .replace("AU_TYPE_CODE", p.resolved_au_type())
+        .replace("AU_SUBTYPE_CODE", p.au3_sub())
+        .replace("AU_MANUFACTURER_CODE", &config.vendor.au_manufacturer);
+    fs_ctx::write_if_changed(build_dir.join("App/main.m"), main_m)?;
     fs_ctx::write_if_changed(
         build_dir.join("App/App.entitlements"),
         templates::au3::APP_ENTITLEMENTS,
@@ -532,6 +532,69 @@ fn inject_au_v3_into_app(app: &Path, xcodebuild_app: &Path, fw_build: &Path, fw_
     Ok(())
 }
 
+/// Stub path: `ditto` the xcodebuild App target (it already carries the
+/// appex) into `target/bundles/` and embed the Rust framework at
+/// `Contents/Frameworks/`. Used when the plugin has no standalone host -
+/// the containing app is the informational stub, the appex is the real
+/// deliverable. `ditto` preserves xattrs/ACLs and the appex's signature.
+fn embed_framework_into_app(
+    xcodebuild_app: &Path,
+    final_app: &Path,
+    fw_build: &Path,
+    fw_name: &str,
+) -> Res {
+    let _ = fs::remove_dir_all(final_app);
+    let ditto_status = Command::new("ditto")
+        .arg(xcodebuild_app)
+        .arg(final_app)
+        .status()?;
+    if !ditto_status.success() {
+        return Err(format!(
+            "ditto failed copying {} -> {}",
+            xcodebuild_app.display(),
+            final_app.display()
+        )
+        .into());
+    }
+
+    let frameworks_dir = final_app.join("Contents/Frameworks");
+    fs_ctx::create_dir_all(&frameworks_dir)?;
+    let embedded_fw = frameworks_dir.join(format!("{fw_name}.framework"));
+    let _ = fs::remove_dir_all(&embedded_fw);
+    let fw_src = fw_build.join(format!("{fw_name}.framework"));
+    let ditto_status = Command::new("ditto")
+        .arg(&fw_src)
+        .arg(&embedded_fw)
+        .status()?;
+    if !ditto_status.success() {
+        return Err("ditto failed copying framework into .app".into());
+    }
+    Ok(())
+}
+
+/// Drop the plugin's `macos_icon` into the stub app's
+/// `Contents/Resources/icon.icns`. The standalone-host path gets its
+/// icon from `stage_standalone`; the stub needs it staged here. No-op
+/// when `macos_icon` is unset.
+fn stage_au_v3_icon(final_app: &Path, p: &PluginDef) -> Res {
+    let Some(icon_rel) = &p.macos_icon else {
+        return Ok(());
+    };
+    let icon_src = crate::project_root().join(icon_rel);
+    if !icon_src.exists() {
+        return Err(format!(
+            "macos_icon for `{}` points to {} but no file is there.",
+            p.name,
+            icon_src.display()
+        )
+        .into());
+    }
+    let resources_dir = final_app.join("Contents/Resources");
+    fs_ctx::create_dir_all(&resources_dir)?;
+    fs_ctx::copy(&icon_src, resources_dir.join("icon.icns"))?;
+    Ok(())
+}
+
 /// Sign the assembled bundle inside-out: framework → appex → app.
 ///
 /// Order matters: framework first (parent bundle references its
@@ -614,11 +677,6 @@ fn install_au_v3(root: &Path, config: &Config, plugins: &[&PluginDef]) -> Res {
     let mut staged: Vec<Staged> = Vec::with_capacity(plugins.len());
 
     for p in plugins {
-        // The build phase skips plugins without a standalone bin, so no
-        // bundle exists for them - skip here too instead of erroring.
-        if !au_v3_supported(p) {
-            continue;
-        }
         let app_name = p.au3_app_name();
         let final_app = truce_build::target_dir(root)
             .join("bundles")

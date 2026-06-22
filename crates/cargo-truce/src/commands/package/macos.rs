@@ -961,11 +961,6 @@ fn package_one_plugin(root: &Path, p: &PluginDef, dist_dir: &Path, o: &PackageOp
     fs::create_dir_all(&components_dir)?;
 
     for fmt in o.formats {
-        // AU v3 was skipped at build/stage for plugins without a
-        // standalone bin, so there's no component to package.
-        if *fmt == PkgFormat::Au3 && !crate::commands::install::au_v3::au_v3_supported(p) {
-            continue;
-        }
         let appex_id = (*fmt == PkgFormat::Au3).then(|| au3_appex_id(o.config, p));
         let scripts_dir =
             write_format_scripts(&staging, fmt, &fmt.bundle_name(p), appex_id.as_deref())?;

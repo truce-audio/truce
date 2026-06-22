@@ -591,11 +591,6 @@ pub(crate) fn stage_aax(
 /// is a pure copy.
 #[cfg(target_os = "macos")]
 pub(crate) fn stage_au3(root: &Path, p: &PluginDef, _config: &Config, staging: &Path) -> Res {
-    // No standalone bin means the build phase skipped AU v3 - nothing
-    // was produced to stage.
-    if !crate::commands::install::au_v3::au_v3_supported(p) {
-        return Ok(());
-    }
     let app_name = format!("{}.app", p.au3_app_name());
     let built_app = truce_build::target_dir(root)
         .join("bundles")
