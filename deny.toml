@@ -34,6 +34,10 @@ allow = [
     "Zlib",
     "OFL-1.1",         # epaint_default_fonts embeds OFL fonts (AND clause)
     "Ubuntu-font-1.0", # epaint_default_fonts embeds the Ubuntu font (AND clause)
+    # libfuzzer-sys is `(MIT OR Apache-2.0) AND NCSA`; it rides in via
+    # rav1e <- ravif <- image (iced's image widget). NCSA is the permissive
+    # University of Illinois/NCSA license (OSI-approved, FSF Free).
+    "NCSA",
     # slint is tri-licensed (GPL-3.0 OR royalty-free OR commercial); we
     # consume it under the royalty-free terms, so GPL-3.0 stays out.
     "LicenseRef-Slint-Royalty-free-2.0",
