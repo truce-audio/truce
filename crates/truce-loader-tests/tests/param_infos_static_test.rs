@@ -16,18 +16,17 @@
 use truce_derive::Params;
 use truce_params::Params;
 
+// Reusable groups carry no ids; the parent rebases them.
 #[derive(Params)]
 struct Inner {
-    #[param(id = 100, name = "Inner A", range = "linear(0, 1)")]
+    #[param(name = "Inner A", range = "linear(0, 1)")]
     a: truce_params::FloatParam,
-    #[param(id = 101, name = "Inner B", range = "linear(-1, 1)")]
+    #[param(name = "Inner B", range = "linear(-1, 1)")]
     b: truce_params::FloatParam,
 }
 
-// Outer struct that's purely a composition of nested params. The
-// derive skips generating `new()` when the outer has no own params
-// or meters, so an Outer of this shape composes by hand from its
-// inner pieces.
+// Pure composition of nested groups. Auto bases pack them back to
+// back: Inner at 0-1, InnerB at 2.
 #[derive(Params)]
 struct Outer {
     #[nested]
@@ -38,7 +37,7 @@ struct Outer {
 
 #[derive(Params)]
 struct InnerB {
-    #[param(id = 200, name = "BB", range = "linear(0, 1)")]
+    #[param(name = "BB", range = "linear(0, 1)")]
     bb: truce_params::FloatParam,
 }
 
@@ -61,21 +60,16 @@ fn static_infos_match_instance_infos_flat() {
 
 #[test]
 fn static_infos_match_instance_infos_nested() {
-    // The derive skips auto-generating `new()` when the outer struct
-    // has only `#[nested]` fields (and no own params/meters), so we
-    // compose Outer by hand. This matches the documented usage shape.
-    let inst = Outer {
-        a: Inner::new(),
-        b: InnerB::new(),
-    };
-    let from_instance = inst.param_infos();
+    // `new()` rebases the nested groups; the static path applies the
+    // same bases, so both flatten to the same ids.
+    let from_instance = Outer::new().param_infos();
     let from_static = Outer::param_infos_static();
 
     assert_eq!(from_static.len(), from_instance.len());
     let static_ids: Vec<u32> = from_static.iter().map(|p| p.id).collect();
     let instance_ids: Vec<u32> = from_instance.iter().map(|p| p.id).collect();
     assert_eq!(static_ids, instance_ids);
-    assert_eq!(static_ids, vec![100, 101, 200]);
+    assert_eq!(static_ids, vec![0, 1, 2]);
 }
 
 #[test]

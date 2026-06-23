@@ -45,7 +45,7 @@ pub(crate) fn write_struct_sidecar(
     struct_name: &syn::Ident,
     params: &[ParamField],
     meters: &[MeterField],
-    nested: &[(syn::Ident, Type)],
+    nested: &[(syn::Ident, Type, Option<u32>)],
 ) {
     let Some(out_dir) = sidecar_dir() else {
         return;
@@ -98,10 +98,17 @@ pub(crate) fn write_struct_sidecar(
             let _ = writeln!(buf, "id = {id}\n");
         }
     }
-    for (_field, ty) in nested {
+    for (field, ty, base) in nested {
         if let Some(t) = type_last_segment(ty) {
             buf.push_str("[[nested]]\n");
-            let _ = writeln!(buf, "type = \"{t}\"\n");
+            let _ = writeln!(buf, "type = \"{t}\"");
+            // The field identifier preserves declaration order and lets
+            // the aggregator name auto-packed groups deterministically.
+            let _ = writeln!(buf, "field = \"{}\"", toml_escape(&field.to_string()));
+            if let Some(b) = base {
+                let _ = writeln!(buf, "base = {b}");
+            }
+            buf.push('\n');
         }
     }
     let _ = std::fs::write(out_dir.join(format!("{struct_name}.params.toml")), buf);
@@ -159,13 +166,18 @@ pub(crate) fn emit_root_impl(input: TokenStream) -> TokenStream {
 
     let mut params: Vec<truce_build::lv2::Lv2Param> = Vec::new();
     let mut meter_ids: Vec<u32> = Vec::new();
-    let mut visited: std::collections::HashSet<String> = std::collections::HashSet::new();
+    // Flattened `(global id, field)` for the install-time preset name
+    // resolver, which can't see the nesting structure or the bases.
+    let mut fields: Vec<(u32, String)> = Vec::new();
+    let mut ancestors: std::collections::HashSet<String> = std::collections::HashSet::new();
     if let Err(msg) = aggregate(
         &sidecar_dir,
         &root_struct,
+        0,
         &mut params,
         &mut meter_ids,
-        &mut visited,
+        &mut fields,
+        &mut ancestors,
     ) {
         let lit = msg;
         return quote! { compile_error!(#lit); }.into();
@@ -226,21 +238,47 @@ pub(crate) fn emit_root_impl(input: TokenStream) -> TokenStream {
         truce_build::presets::render_param_symbols(&symbols),
     );
 
+    // Flattened `(global id, field, name)` index. The per-struct
+    // sidecars hold struct-local ids, so a nested plugin's `[params]`
+    // keys can't resolve from them; the preset name resolver reads this
+    // single file, where every id is already in the plugin's id space.
+    let mut index = String::new();
+    for (id, field) in &fields {
+        let name = bundle
+            .params
+            .iter()
+            .find(|p| p.id == *id)
+            .map_or("", |p| p.name.as_str());
+        index.push_str("[[param]]\n");
+        let _ = writeln!(index, "id = {id}");
+        let _ = writeln!(index, "field = \"{}\"", toml_escape(field));
+        let _ = writeln!(index, "name = \"{}\"", toml_escape(name));
+        index.push('\n');
+    }
+    let _ = std::fs::write(sidecar_dir.join("param_index.toml"), index);
+
     TokenStream::new()
 }
 
 /// Recursively walk `<root>.params.toml`, then each `[[nested]]`
 /// reference, accumulating params + meter IDs into the supplied vecs.
+#[allow(clippy::too_many_arguments)]
 fn aggregate(
     sidecar_dir: &std::path::Path,
     struct_name: &str,
+    id_base: u32,
     params: &mut Vec<truce_build::lv2::Lv2Param>,
     meter_ids: &mut Vec<u32>,
-    visited: &mut std::collections::HashSet<String>,
+    fields: &mut Vec<(u32, String)>,
+    ancestors: &mut std::collections::HashSet<String>,
 ) -> Result<(), String> {
-    if !visited.insert(struct_name.to_string()) {
-        // Cycle - Rust wouldn't let one compile, but defend anyway.
-        return Ok(());
+    // Track the active path, not every visited struct: the same Params
+    // type reused in two `#[nested]` slots must be walked twice, but a
+    // true cycle (a type nesting an ancestor) still has to be rejected.
+    if !ancestors.insert(struct_name.to_string()) {
+        return Err(format!(
+            "cyclic #[nested] reference through `{struct_name}`"
+        ));
     }
     let path = sidecar_dir.join(format!("{struct_name}.params.toml"));
     let content = std::fs::read_to_string(&path).map_err(|e| {
@@ -256,11 +294,19 @@ fn aggregate(
         .parse()
         .map_err(|e| format!("malformed {}: {e}", path.display()))?;
 
+    // Own params carry struct-local ids; shift them into the parent's id
+    // space by `id_base`. Auto-packed nested groups start right after them.
+    let mut own_count = 0u32;
     if let Some(toml::Value::Array(arr)) = toml.get("param") {
         for entry in arr {
-            let p = parse_param_entry(entry, sidecar_dir)
+            let mut p = parse_param_entry(entry, sidecar_dir)
                 .map_err(|e| format!("{}: {e}", path.display()))?;
+            p.id += id_base;
+            if let Some(field) = entry.get("field").and_then(toml::Value::as_str) {
+                fields.push((p.id, field.to_string()));
+            }
             params.push(p);
+            own_count += 1;
         }
     }
     if let Some(toml::Value::Array(arr)) = toml.get("meter") {
@@ -273,12 +319,33 @@ fn aggregate(
         }
     }
     if let Some(toml::Value::Array(arr)) = toml.get("nested") {
+        // `next_base` packs each auto group after the previous one; an
+        // explicit `base` pins the group and moves the cursor past it.
+        let mut next_base = own_count;
         for entry in arr {
-            if let Some(t) = entry.get("type").and_then(|v| v.as_str()) {
-                aggregate(sidecar_dir, t, params, meter_ids, visited)?;
-            }
+            let Some(t) = entry.get("type").and_then(toml::Value::as_str) else {
+                continue;
+            };
+            let base = entry
+                .get("base")
+                .and_then(toml::Value::as_integer)
+                .and_then(|b| u32::try_from(b).ok())
+                .unwrap_or(next_base);
+            let before = params.len();
+            aggregate(
+                sidecar_dir,
+                t,
+                id_base + base,
+                params,
+                meter_ids,
+                fields,
+                ancestors,
+            )?;
+            let added = u32::try_from(params.len() - before).unwrap_or(0);
+            next_base = base + added;
         }
     }
+    ancestors.remove(struct_name);
     Ok(())
 }
 

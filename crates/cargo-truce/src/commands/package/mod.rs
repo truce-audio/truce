@@ -47,14 +47,48 @@ impl SuiteSelection {
     pub(crate) fn want_per_plugin(&self) -> bool {
         !self.no_per_plugin
     }
-    pub(crate) fn want_suite(&self, name: &str) -> bool {
+    pub(crate) fn want_suite(&self, name: &str, bundle_id: &str) -> bool {
         if self.no_suite {
             return false;
         }
         if self.only_suites.is_empty() {
             return true;
         }
-        self.only_suites.iter().any(|s| s == name)
+        // Accept either the display name or the bundle_id slug - the
+        // slug is what users naturally type (and what filenames use).
+        self.only_suites.iter().any(|s| s == name || s == bundle_id)
+    }
+
+    /// Error if a `--suite <x>` matches no declared suite by name or
+    /// `bundle_id`, so a typo / wrong identifier fails loudly instead of
+    /// silently producing no suite installer.
+    pub(crate) fn validate_against(
+        &self,
+        declared: &[crate::config::SuiteDef],
+    ) -> Result<(), CargoTruceError> {
+        let unknown: Vec<&str> = self
+            .only_suites
+            .iter()
+            .filter(|req| {
+                !declared
+                    .iter()
+                    .any(|s| &s.name == *req || &s.bundle_id == *req)
+            })
+            .map(String::as_str)
+            .collect();
+        if unknown.is_empty() {
+            return Ok(());
+        }
+        let available = if declared.is_empty() {
+            "(none declared in truce.toml)".to_string()
+        } else {
+            declared
+                .iter()
+                .map(|s| format!("{} (\"{}\")", s.bundle_id, s.name))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        Err(format!("--suite: no suite matches {unknown:?}. Available suites: {available}").into())
     }
 }
 
@@ -92,7 +126,7 @@ pub(crate) fn extract_suite_selection(
 
 /// Parsed format flags for the package command.
 /// Used by both `cmd_package_macos` and `windows::cmd_package_windows`.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Debug)]
 pub(crate) enum PkgFormat {
     Clap,
     Vst3,
@@ -296,13 +330,14 @@ impl PkgFormat {
     pub(crate) fn bundle_name(&self, plugin: &PluginDef) -> String {
         match self {
             PkgFormat::Au3 => format!("{}.app", plugin.au3_app_name()),
-            // Plain `<Plugin>.app` so Spotlight / Launch Services
-            // index it as a regular application. The historical
-            // `<Plugin>.standalone.app` extension confused some
-            // indexing paths and the bundle would not appear in
-            // Spotlight search. AU3 stays distinct via its `v3`
-            // suffix (or the user's `au3_name` override), so there's
-            // no `/Applications/` collision.
+            // Plain `<Plugin>.app` so Spotlight / Launch Services index
+            // it as a regular application. The historical
+            // `<Plugin>.standalone.app` extension confused some indexing
+            // paths and the bundle would not appear in Spotlight search.
+            // AU v3 resolves to the same `<Plugin>.app` (its app *is* the
+            // standalone host with the appex), so `resolve_formats` drops
+            // the separate Standalone format whenever AU v3 is present -
+            // they never coexist at this path.
             PkgFormat::Standalone => format!("{}.app", plugin.file_stem()),
             // LV2 bundle names follow the spec's lowercase-hyphenated
             // convention (the same slug `derive(Params)` bakes into
@@ -363,6 +398,12 @@ pub(crate) fn cmd_package(args: &[String]) -> Res {
         }
     }
     let (selection, args) = extract_suite_selection(args)?;
+    // Fail loudly on an unknown `--suite <name>` rather than silently
+    // building only the per-plugin installers. Only load config when a
+    // suite was explicitly requested.
+    if !selection.only_suites.is_empty() {
+        selection.validate_against(&crate::load_config()?.suites)?;
+    }
     #[cfg(target_os = "windows")]
     {
         windows::cmd_package_windows(&args, &selection)
@@ -511,7 +552,7 @@ mod selection_tests {
     fn empty_args_default_selection() {
         let (sel, rest) = extract_suite_selection(&[]).unwrap();
         assert!(sel.want_per_plugin());
-        assert!(sel.want_suite("studio"));
+        assert!(sel.want_suite("Studio", "studio"));
         assert!(rest.is_empty());
     }
 
@@ -519,16 +560,25 @@ mod selection_tests {
     fn suite_filter_keeps_only_named_suites() {
         let (sel, rest) =
             extract_suite_selection(&s(&["--suite", "studio", "--suite", "free"])).unwrap();
-        assert!(sel.want_suite("studio"));
-        assert!(sel.want_suite("free"));
-        assert!(!sel.want_suite("midi-tools"));
+        assert!(sel.want_suite("Studio", "studio"));
+        assert!(sel.want_suite("Free", "free"));
+        assert!(!sel.want_suite("MIDI Tools", "midi-tools"));
         assert!(rest.is_empty());
+    }
+
+    #[test]
+    fn suite_filter_matches_bundle_id_or_name() {
+        // `--suite` accepts the bundle_id slug or the display name.
+        let (by_slug, _) = extract_suite_selection(&s(&["--suite", "truce-examples"])).unwrap();
+        assert!(by_slug.want_suite("Truce Examples", "truce-examples"));
+        let (by_name, _) = extract_suite_selection(&s(&["--suite", "Truce Examples"])).unwrap();
+        assert!(by_name.want_suite("Truce Examples", "truce-examples"));
     }
 
     #[test]
     fn no_suite_drops_every_suite() {
         let (sel, _) = extract_suite_selection(&s(&["--no-suite"])).unwrap();
-        assert!(!sel.want_suite("studio"));
+        assert!(!sel.want_suite("Studio", "studio"));
         assert!(sel.want_per_plugin());
     }
 
@@ -536,7 +586,7 @@ mod selection_tests {
     fn no_per_plugin_keeps_suites() {
         let (sel, _) = extract_suite_selection(&s(&["--no-per-plugin"])).unwrap();
         assert!(!sel.want_per_plugin());
-        assert!(sel.want_suite("studio"));
+        assert!(sel.want_suite("Studio", "studio"));
     }
 
     #[test]
@@ -550,7 +600,7 @@ mod selection_tests {
         ]))
         .unwrap();
         assert_eq!(rest, s(&["-p", "truce-gain", "--no-notarize"]));
-        assert!(sel.want_suite("studio"));
+        assert!(sel.want_suite("Studio", "studio"));
     }
 
     #[test]

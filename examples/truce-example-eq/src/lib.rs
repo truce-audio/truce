@@ -26,8 +26,13 @@ type StereoBiquad = DirectForm2Transposed<f64, StereoSample>;
 use EqParamsParamId as P;
 use std::sync::Arc;
 
+// The three bands share a shape but not their tuning: each wants its
+// own frequency range and default, so they can't be one reused type
+// (a Params struct's `default` / `range` are fixed on the type). They
+// are three distinct `#[derive(Params)]` structs - each keeps its own
+// range, default, and labels - composed in `EqParams` with `#[nested]`.
 #[derive(Params)]
-pub struct EqParams {
+pub struct LowBand {
     #[param(
         name = "Low Freq",
         short_name = "LFreq",
@@ -37,8 +42,7 @@ pub struct EqParams {
         unit = "Hz",
         smooth = "exp(10)"
     )]
-    pub low_freq: FloatParam,
-
+    pub freq: FloatParam,
     #[param(
         name = "Low Gain",
         short_name = "LGain",
@@ -47,8 +51,7 @@ pub struct EqParams {
         unit = "dB",
         smooth = "exp(10)"
     )]
-    pub low_gain: FloatParam,
-
+    pub gain: FloatParam,
     #[param(
         name = "Low Q",
         short_name = "LQ",
@@ -57,8 +60,11 @@ pub struct EqParams {
         default = 0.707,
         smooth = "exp(10)"
     )]
-    pub low_q: FloatParam,
+    pub q: FloatParam,
+}
 
+#[derive(Params)]
+pub struct MidBand {
     #[param(
         name = "Mid Freq",
         short_name = "MFreq",
@@ -68,8 +74,7 @@ pub struct EqParams {
         unit = "Hz",
         smooth = "exp(10)"
     )]
-    pub mid_freq: FloatParam,
-
+    pub freq: FloatParam,
     #[param(
         name = "Mid Gain",
         short_name = "MGain",
@@ -78,8 +83,7 @@ pub struct EqParams {
         unit = "dB",
         smooth = "exp(10)"
     )]
-    pub mid_gain: FloatParam,
-
+    pub gain: FloatParam,
     #[param(
         name = "Mid Q",
         short_name = "MQ",
@@ -88,8 +92,11 @@ pub struct EqParams {
         default = 0.707,
         smooth = "exp(10)"
     )]
-    pub mid_q: FloatParam,
+    pub q: FloatParam,
+}
 
+#[derive(Params)]
+pub struct HighBand {
     #[param(
         name = "High Freq",
         short_name = "HFreq",
@@ -99,8 +106,7 @@ pub struct EqParams {
         unit = "Hz",
         smooth = "exp(10)"
     )]
-    pub high_freq: FloatParam,
-
+    pub freq: FloatParam,
     #[param(
         name = "High Gain",
         short_name = "HGain",
@@ -109,8 +115,7 @@ pub struct EqParams {
         unit = "dB",
         smooth = "exp(10)"
     )]
-    pub high_gain: FloatParam,
-
+    pub gain: FloatParam,
     #[param(
         name = "High Q",
         short_name = "HQ",
@@ -119,9 +124,25 @@ pub struct EqParams {
         default = 0.707,
         smooth = "exp(10)"
     )]
-    pub high_q: FloatParam,
+    pub q: FloatParam,
+}
+
+// Bases are optional - bare `#[nested]` auto-packs each group after the
+// previous one. They're pinned here (0 / 3 / 6, with output at 9) to fix
+// the flattened ids: a pinned id survives reordering the fields or adding
+// a param to an earlier group, which is the stability a shipped plugin's
+// saved state and host automation depend on.
+#[derive(Params)]
+pub struct EqParams {
+    #[nested(base = 0)]
+    pub low: LowBand,
+    #[nested(base = 3)]
+    pub mid: MidBand,
+    #[nested(base = 6)]
+    pub high: HighBand,
 
     #[param(
+        id = 9,
         name = "Output",
         short_name = "Out",
         range = "linear(-18, 18)",
@@ -227,15 +248,15 @@ impl PluginLogic for Eq {
             // still happen per sample so a fast knob sweep stays
             // click-free; only the smoother traffic moves out of the
             // inner loop.
-            self.params.low_freq.read_into(&mut low_freq[..n]);
-            self.params.low_gain.read_into(&mut low_gain[..n]);
-            self.params.low_q.read_into(&mut low_q[..n]);
-            self.params.mid_freq.read_into(&mut mid_freq[..n]);
-            self.params.mid_gain.read_into(&mut mid_gain[..n]);
-            self.params.mid_q.read_into(&mut mid_q[..n]);
-            self.params.high_freq.read_into(&mut high_freq[..n]);
-            self.params.high_gain.read_into(&mut high_gain[..n]);
-            self.params.high_q.read_into(&mut high_q[..n]);
+            self.params.low.freq.read_into(&mut low_freq[..n]);
+            self.params.low.gain.read_into(&mut low_gain[..n]);
+            self.params.low.q.read_into(&mut low_q[..n]);
+            self.params.mid.freq.read_into(&mut mid_freq[..n]);
+            self.params.mid.gain.read_into(&mut mid_gain[..n]);
+            self.params.mid.q.read_into(&mut mid_q[..n]);
+            self.params.high.freq.read_into(&mut high_freq[..n]);
+            self.params.high.gain.read_into(&mut high_gain[..n]);
+            self.params.high.q.read_into(&mut high_q[..n]);
             self.params.output.read_into(&mut output[..n]);
 
             // Vectorize the output dB → linear conversion once per
@@ -291,28 +312,31 @@ impl PluginLogic for Eq {
 
     fn editor(&self) -> Box<dyn Editor> {
         GridLayout::build(vec![
+            // Reused-group params are addressed by their flattened id
+            // (`base + local`), read off each band so the three `low` /
+            // `mid` / `high` instances resolve to distinct controls.
             section(
                 "LOW",
                 vec![
-                    knob(P::LowFreq, "Freq"),
-                    knob(P::LowGain, "Gain"),
-                    knob(P::LowQ, "Q"),
+                    knob(self.params.low.freq.id(), "Freq"),
+                    knob(self.params.low.gain.id(), "Gain"),
+                    knob(self.params.low.q.id(), "Q"),
                 ],
             ),
             section(
                 "MID",
                 vec![
-                    knob(P::MidFreq, "Freq"),
-                    knob(P::MidGain, "Gain"),
-                    knob(P::MidQ, "Q"),
+                    knob(self.params.mid.freq.id(), "Freq"),
+                    knob(self.params.mid.gain.id(), "Gain"),
+                    knob(self.params.mid.q.id(), "Q"),
                 ],
             ),
             section(
                 "HIGH",
                 vec![
-                    knob(P::HighFreq, "Freq"),
-                    knob(P::HighGain, "Gain"),
-                    knob(P::HighQ, "Q"),
+                    knob(self.params.high.freq.id(), "Freq"),
+                    knob(self.params.high.gain.id(), "Gain"),
+                    knob(self.params.high.q.id(), "Q"),
                 ],
             ),
             widgets(vec![knob(P::Output, "Output")]),

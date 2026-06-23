@@ -32,24 +32,20 @@ use std::process::Command;
 
 /// Build a signed AU v3 `.app` bundle in `target/bundles/`.
 ///
-/// Steps:
-/// 1. Build the Rust framework dylib once per arch, then `lipo -create`
-///    into the canonical `lib{stem}_au.dylib` path. When `reuse_au_artifacts`
-///    is true (package mode with AU2 selected first), skip the cargo +
-///    lipo redo and reuse AU2's universal dylib directly.
-/// 2. Assemble the `.framework` bundle in `tmp_dir()` (install-name
-///    fixup + Versions/Current symlinks + Info.plist + initial sign).
-/// 3. Materialize the Xcode project from embedded templates into
-///    `tmp_dir()`.
-/// 4. Run `xcodebuild` - produces `TruceAUv3.app` in the build dir.
-/// 5. Move the built `.app` to `target/bundles/{au3_app_name}.app/`
-///    and embed the Rust framework at `Contents/Frameworks/`.
-/// 6. Sign inside-out (framework → appex → app) against the
-///    `target/bundles/` paths. No sudo.
+/// The bundle is a `{name}.app` with `Contents/PlugIns/AUExt.appex` (and
+/// its framework). The appex is the AU v3 deliverable; the containing app
+/// is the plugin's standalone host when it has one, else an
+/// informational stub. Steps:
+/// 1. Build the Rust framework dylib + `.framework` bundle, materialize
+///    the Xcode project, and `xcodebuild` (produces the appex + a stub
+///    App target).
+/// 2. Assemble the containing app: a standalone host with the appex
+///    injected, or the stub App target with the framework embedded.
+/// 3. Sign inside-out (framework → appex → app). No sudo.
 ///
-/// After return, the bundle at `target/bundles/{au3_app_name}.app/`
-/// is a complete, properly-signed AU v3 container ready to be copied
-/// into `/Applications/` by [`install_au_v3`].
+/// After return, the bundle at `target/bundles/{name}.app/` is a
+/// complete, properly-signed AU v3 container ready to be copied into
+/// `/Applications/` by [`install_au_v3`].
 pub(crate) fn emit_au_v3_bundle(
     root: &Path,
     config: &Config,
@@ -97,10 +93,13 @@ pub(crate) fn emit_au_v3_bundle(
     Ok(())
 }
 
-/// Drive the full per-plugin AU v3 build pipeline: framework dylib →
-/// `.framework` bundle → Xcode scratch → xcodebuild → embed +
-/// inside-out sign. Each step is its own helper so the orchestration
-/// stays readable.
+/// Drive the full per-plugin AU v3 build pipeline: framework dylib +
+/// xcodebuild appex → assemble the containing app → inside-out sign.
+///
+/// The appex is the AU v3 deliverable and always ships. The containing
+/// app is the plugin's standalone host when it exposes a standalone bin
+/// (launching it plays the plugin); otherwise it's the xcode stub - an
+/// informational container that keeps the appex shippable without one.
 #[allow(clippy::too_many_arguments)]
 fn build_au_v3_for_plugin(
     root: &Path,
@@ -121,6 +120,8 @@ fn build_au_v3_for_plugin(
 
     crate::vprintln!("Building AU v3 ({})...", p.name);
 
+    // Framework + appex: the AU v3 deliverable, built regardless of
+    // whether a standalone host exists.
     let lipo_dst = build_rust_framework_dylib(root, p, archs, dt, reuse_au_artifacts)?;
     let factory_presets = super::presets::load_factory_presets(root, p, config)?;
     assemble_framework_bundle(
@@ -134,12 +135,48 @@ fn build_au_v3_for_plugin(
     )?;
     write_xcode_project_files(&build_dir, &fw_build, p, config, team_id, &fw_name)?;
     let xcodebuild_app = run_xcodebuild_for_plugin(&build_dir, archs, p)?;
-    embed_framework_into_app(&xcodebuild_app, &final_app, &fw_build, &fw_name)?;
-    stage_au_v3_icon(&final_app, p)?;
+
+    // The containing app. With a standalone bin it's the plugin's host
+    // (the standalone `.app` with the appex injected); without one it's
+    // the xcode stub with the framework embedded.
+    if crate::read_standalone_bin_name(&p.crate_name).is_some() {
+        crate::commands::package::macos::build_and_lipo_standalone(root, &[p], archs, dt)?;
+        crate::commands::package::stage::stage_standalone(root, p, config, bundles_dir)?;
+        inject_au_v3_into_app(&final_app, &xcodebuild_app, &fw_build, &fw_name)?;
+    } else {
+        eprintln!(
+            "  AU v3 for {}: no standalone bin - shipping the appex in a stub \
+             app. Add a [[bin]] with required-features = [\"standalone\"] for a \
+             playable standalone host.",
+            p.name
+        );
+        embed_framework_into_app(&xcodebuild_app, &final_app, &fw_build, &fw_name)?;
+        stage_au_v3_icon(&final_app, p)?;
+    }
     sign_au_v3_inside_out(&final_app, &build_dir, &fw_name, sign_id)?;
+
+    // xcodebuild's output `.app` lives in `target/tmp` and `pkd`
+    // auto-registers its appex from there. That registration points at a
+    // transient build path and shadows the copy hosts actually load (the
+    // installed `/Applications` bundle), so AU v3 instances fail to open
+    // ("OpenAComponent: 4") even though the installed appex is valid.
+    // Evict it now, at build time, in the user's pluginkit DB - before
+    // any install (`.pkg` double-click or `cargo truce install`) lays
+    // down the real bundle. The `.pkg` path never runs our cleanup, so
+    // this is the only place that covers it.
+    evict_appex_registration(&xcodebuild_app.join("Contents/PlugIns/AUExt.appex"));
 
     crate::vprintln!("  AU v3: {}", final_app.display());
     Ok(())
+}
+
+/// Best-effort `pluginkit -r` to drop a stale appex registration. Evicts
+/// the build-tree copy `pkd` auto-registers so the installed
+/// `/Applications` appex isn't shadowed by a transient path.
+fn evict_appex_registration(appex: &Path) {
+    if let Some(path) = appex.to_str() {
+        let _ = Command::new("pluginkit").args(["-r", path]).output();
+    }
 }
 
 /// Build the Rust framework dylib once per arch, then `lipo -create`
@@ -342,7 +379,22 @@ fn write_xcode_project_files(
         build_dir.join("AUExt/AUExt.entitlements"),
         templates::au3::APPEX_ENTITLEMENTS,
     )?;
-    fs_ctx::write_if_changed(build_dir.join("App/main.m"), templates::au3::APP_MAIN_M)?;
+    // Substitute the plugin's display name + AU identifier codes into the
+    // stub app so it's a useful "installed, here's how to find it" window
+    // rather than a generic alert. Escape the name for an ObjC string
+    // literal (backslash first, then quote).
+    let stub_name = p
+        .au3_name
+        .as_deref()
+        .unwrap_or(p.name.as_str())
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"");
+    let main_m = templates::au3::APP_MAIN_M
+        .replace("PLUGIN_DISPLAY_NAME", &stub_name)
+        .replace("AU_TYPE_CODE", p.resolved_au_type())
+        .replace("AU_SUBTYPE_CODE", p.au3_sub())
+        .replace("AU_MANUFACTURER_CODE", &config.vendor.au_manufacturer);
+    fs_ctx::write_if_changed(build_dir.join("App/main.m"), main_m)?;
     fs_ctx::write_if_changed(
         build_dir.join("App/App.entitlements"),
         templates::au3::APP_ENTITLEMENTS,
@@ -386,8 +438,10 @@ fn write_xcode_project_files(
         build_dir.join("XcodeAUv3.xcodeproj/project.pbxproj"),
         generate_pbxproj(
             team_id,
-            &format!("{}.v3", p.bundle_id),
-            &format!("{}.v3.ext", p.bundle_id),
+            // Vendor-rooted (not a hardcoded `com.truce.`), so a plugin
+            // built by any author advertises an id it actually owns.
+            &format!("{}.{}.v3", config.vendor.id, p.bundle_id),
+            &format!("{}.{}.v3.ext", config.vendor.id, p.bundle_id),
             build_dir.join("AUExt").to_str().unwrap(),
             fw_build.to_str().unwrap(),
             fw_name,
@@ -463,10 +517,46 @@ fn run_xcodebuild_for_plugin(
     Ok(xcodebuild_app)
 }
 
-/// `ditto` the xcodebuild output into `target/bundles/` and embed
-/// the Rust framework at `Contents/Frameworks/`. `ditto` preserves
-/// xattrs/ACLs/resource forks better than `cp -R`; macOS code
-/// signatures survive the copy cleanly.
+/// Embed the AU v3 appex (built by xcodebuild) and its framework into
+/// the already-assembled standalone `.app`. The standalone host stays
+/// the app's executable and keeps its own Info.plist / presets / icon;
+/// the appex turns the same bundle into an AU v3 container. `ditto`
+/// preserves xattrs/ACLs/resource forks and the appex's own signature
+/// across the copy. Runs before the inside-out re-sign reseals the app.
+fn inject_au_v3_into_app(app: &Path, xcodebuild_app: &Path, fw_build: &Path, fw_name: &str) -> Res {
+    let plugins_dir = app.join("Contents/PlugIns");
+    fs_ctx::create_dir_all(&plugins_dir)?;
+    let appex_dst = plugins_dir.join("AUExt.appex");
+    let _ = fs::remove_dir_all(&appex_dst);
+    let appex_src = xcodebuild_app.join("Contents/PlugIns/AUExt.appex");
+    let status = Command::new("ditto")
+        .arg(&appex_src)
+        .arg(&appex_dst)
+        .status()?;
+    if !status.success() {
+        return Err("ditto failed copying appex into app".into());
+    }
+
+    let frameworks_dir = app.join("Contents/Frameworks");
+    fs_ctx::create_dir_all(&frameworks_dir)?;
+    let embedded_fw = frameworks_dir.join(format!("{fw_name}.framework"));
+    let _ = fs::remove_dir_all(&embedded_fw);
+    let fw_src = fw_build.join(format!("{fw_name}.framework"));
+    let status = Command::new("ditto")
+        .arg(&fw_src)
+        .arg(&embedded_fw)
+        .status()?;
+    if !status.success() {
+        return Err("ditto failed copying framework into app".into());
+    }
+    Ok(())
+}
+
+/// Stub path: `ditto` the xcodebuild App target (it already carries the
+/// appex) into `target/bundles/` and embed the Rust framework at
+/// `Contents/Frameworks/`. Used when the plugin has no standalone host -
+/// the containing app is the informational stub, the appex is the real
+/// deliverable. `ditto` preserves xattrs/ACLs and the appex's signature.
 fn embed_framework_into_app(
     xcodebuild_app: &Path,
     final_app: &Path,
@@ -480,7 +570,7 @@ fn embed_framework_into_app(
         .status()?;
     if !ditto_status.success() {
         return Err(format!(
-            "ditto failed copying {} → {}",
+            "ditto failed copying {} -> {}",
             xcodebuild_app.display(),
             final_app.display()
         )
@@ -502,14 +592,10 @@ fn embed_framework_into_app(
     Ok(())
 }
 
-/// Drop the plugin's `macos_icon` into `Contents/Resources/icon.icns`
-/// so the outer `.app` shows up in Finder / Launchpad with the same
-/// art the standalone host uses. No-op when `macos_icon` is unset (the
-/// matching `CFBundleIconFile` plist key is also omitted in that case,
-/// so macOS falls back to the system default without logging a
-/// missing-resource error). Runs before signing so the icon lands
-/// inside the signed seal.
-#[cfg(target_os = "macos")]
+/// Drop the plugin's `macos_icon` into the stub app's
+/// `Contents/Resources/icon.icns`. The standalone-host path gets its
+/// icon from `stage_standalone`; the stub needs it staged here. No-op
+/// when `macos_icon` is unset.
 fn stage_au_v3_icon(final_app: &Path, p: &PluginDef) -> Res {
     let Some(icon_rel) = &p.macos_icon else {
         return Ok(());
@@ -570,14 +656,15 @@ fn sign_au_v3_inside_out(final_app: &Path, build_dir: &Path, fw_name: &str, sign
     args.push(appex_path.as_os_str());
     crate::run_codesign(&args, false)?;
 
-    let entitlements_app = build_dir.join("App/App.entitlements");
+    // The containing app is now the standalone host, which the normal
+    // standalone bundle ships unsandboxed (it owns audio devices and a
+    // window). Sign it without the appex's sandbox entitlements, keeping
+    // the hardened runtime for notarization. The appex above stays
+    // sandboxed via its own entitlements.
     let mut args: Vec<&OsStr> = vec![
         OsStr::new("--force"),
         OsStr::new("--sign"),
         OsStr::new(sign_id),
-        OsStr::new("--entitlements"),
-        entitlements_app.as_os_str(),
-        OsStr::new("--generate-entitlement-der"),
     ];
     args.extend_from_slice(runtime_flags);
     args.push(final_app.as_os_str());
@@ -624,11 +711,9 @@ fn install_au_v3(root: &Path, config: &Config, plugins: &[&PluginDef]) -> Res {
         }
 
         let app_dir = format!("/Applications/{app_name}.app");
-        let appex_id = format!(
-            "com.{}.{}.v3.ext",
-            config.vendor.id.trim_start_matches("com."),
-            p.bundle_id
-        );
+        // Must match the appex's `PRODUCT_BUNDLE_IDENTIFIER` set in the
+        // pbxproj, or pluginkit evicts the wrong registration.
+        let appex_id = format!("{}.{}.v3.ext", config.vendor.id, p.bundle_id);
 
         // Pre-clean. `pluginkit -e ignore` only disables the registration -
         // if `pkd` auto-discovered the staging-tree appex during the build
@@ -641,6 +726,13 @@ fn install_au_v3(root: &Path, config: &Config, plugins: &[&PluginDef]) -> Res {
                 .args(["-r", staging_appex.to_str().unwrap()])
                 .output();
         }
+        // Same for the appex xcodebuild left in `target/tmp` - pkd
+        // auto-registered it there during the build, and that transient
+        // path otherwise wins the load race over the installed copy.
+        evict_appex_registration(
+            &tmp_au_v3(&p.bundle_id)
+                .join("build/build/Release/TruceAUv3.app/Contents/PlugIns/AUExt.appex"),
+        );
         let _ = Command::new("pluginkit")
             .args(["-e", "ignore", "-i", &appex_id])
             .output();
@@ -806,7 +898,7 @@ fn generate_pbxproj(
 		11000011 = {{
 			isa = XCBuildConfiguration;
 			buildSettings = {{
-				PRODUCT_BUNDLE_IDENTIFIER = "com.truce.{app_bundle_id}";
+				PRODUCT_BUNDLE_IDENTIFIER = "{app_bundle_id}";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				INFOPLIST_FILE = "App/Info.plist";
 				CODE_SIGN_ENTITLEMENTS = "App/App.entitlements";
@@ -833,7 +925,7 @@ fn generate_pbxproj(
 		22000011 = {{
 			isa = XCBuildConfiguration;
 			buildSettings = {{
-				PRODUCT_BUNDLE_IDENTIFIER = "com.truce.{appex_bundle_id}";
+				PRODUCT_BUNDLE_IDENTIFIER = "{appex_bundle_id}";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				INFOPLIST_FILE = "AUExt/Info.plist";
 				CODE_SIGN_ENTITLEMENTS = "AUExt/AUExt.entitlements";

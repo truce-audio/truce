@@ -1,5 +1,5 @@
 [package]
-name = "truce-example-cc-filter"
+name = "truce-example-stereo-utility"
 # Internal-only - workspace demonstration not for crates.io.
 publish = false
 version.workspace = true
@@ -13,7 +13,7 @@ rust-version.workspace = true
 crate-type = ["cdylib", "staticlib", "rlib"]
 
 [[bin]]
-name = "truce-example-cc-filter-standalone"
+name = "truce-example-stereo-utility-standalone"
 path = "src/main.rs"
 required-features = ["standalone"]
 

@@ -27,10 +27,7 @@ use SynthParamsParamId as P;
 use std::sync::Arc;
 
 #[derive(Params)]
-pub struct SynthParams {
-    #[param(name = "Waveform", short_name = "Wave", default = 1)]
-    pub waveform: EnumParam<Waveform>,
-
+pub struct FilterParams {
     #[param(
         name = "Filter Cutoff",
         short_name = "Cutoff",
@@ -50,7 +47,10 @@ pub struct SynthParams {
         smooth = "exp(5)"
     )]
     pub resonance: FloatParam,
+}
 
+#[derive(Params)]
+pub struct EnvParams {
     #[param(
         name = "Attack",
         short_name = "Atk",
@@ -89,6 +89,18 @@ pub struct SynthParams {
         unit = "s"
     )]
     pub release: FloatParam,
+}
+
+#[derive(Params)]
+pub struct SynthParams {
+    #[param(name = "Waveform", short_name = "Wave", default = 1)]
+    pub waveform: EnumParam<Waveform>,
+
+    #[nested]
+    pub filter: FilterParams,
+
+    #[nested]
+    pub envelope: EnvParams,
 
     #[param(name = "Volume", short_name = "Vol",
             range = "linear(-60, 0)", default = -6.0,
@@ -117,10 +129,10 @@ impl Synth {
 
     fn note_on(&mut self, note: u8, velocity: f32) {
         let freq = midi_note_to_freq(note);
-        let attack = self.params.attack.value();
-        let decay = self.params.decay.value();
-        let sustain = self.params.sustain.value();
-        let release = self.params.release.value();
+        let attack = self.params.envelope.attack.value();
+        let decay = self.params.envelope.decay.value();
+        let sustain = self.params.envelope.sustain.value();
+        let release = self.params.envelope.release.value();
 
         self.voices.push(Voice::new(
             note,
@@ -182,8 +194,8 @@ impl PluginLogic for Synth {
             }
 
             let waveform_idx = self.params.waveform.index();
-            let cutoff = self.params.cutoff.read();
-            let resonance = self.params.resonance.read();
+            let cutoff = self.params.filter.cutoff.read();
+            let resonance = self.params.filter.resonance.read();
             let volume = db_to_linear(self.params.volume.read());
 
             let mut sample = 0.0f64;
@@ -213,15 +225,18 @@ impl PluginLogic for Synth {
             ]),
             section(
                 "FILTER",
-                vec![knob(P::Cutoff, "Cutoff"), knob(P::Resonance, "Reso")],
+                vec![
+                    knob(self.params.filter.cutoff.id(), "Cutoff"),
+                    knob(self.params.filter.resonance.id(), "Reso"),
+                ],
             ),
             section(
                 "ENVELOPE",
                 vec![
-                    knob(P::Attack, "Attack"),
-                    knob(P::Decay, "Decay"),
-                    knob(P::Sustain, "Sustain"),
-                    knob(P::Release, "Release"),
+                    knob(self.params.envelope.attack.id(), "Attack"),
+                    knob(self.params.envelope.decay.id(), "Decay"),
+                    knob(self.params.envelope.sustain.id(), "Sustain"),
+                    knob(self.params.envelope.release.id(), "Release"),
                 ],
             ),
         ])

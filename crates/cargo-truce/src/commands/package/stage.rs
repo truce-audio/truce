@@ -803,6 +803,7 @@ pub(crate) fn generate_distribution_xml(
     version: &str,
     resources: Option<&MacosPackagingConfig>,
     scope: PkgScope,
+    au3_is_standalone_host: bool,
 ) -> String {
     let mut choices_outline = String::new();
     let mut choices = String::new();
@@ -812,7 +813,15 @@ pub(crate) fn generate_distribution_xml(
         let id = fmt.pkg_id_suffix();
         let pkg_id = format!("{vendor_id}.{bundle_id}.{id}");
         let label = fmt.label();
-        let desc = fmt.choice_description();
+        // AU v3's app *is* the standalone host when the plugin ships a
+        // standalone bin (we drop the separate Standalone format then), so
+        // surface that the one app does both. `label` stays the format
+        // label for the component filename; only the choice text changes.
+        let (title, desc): (&str, &str) = if *fmt == PkgFormat::Au3 && au3_is_standalone_host {
+            ("AU3 + Standalone", "Audio Unit v3 (appex) + standalone app")
+        } else {
+            (label, fmt.choice_description())
+        };
         let component_file = format!("{plugin_name}-{label}.pkg");
 
         // Every format ships checked by default. Pro Tools users
@@ -864,7 +873,7 @@ pub(crate) fn generate_distribution_xml(
         let _ = write!(
             choices,
             r#"
-    <choice id="{id}" title="{label}" description="{desc}"{enabled_attr}>
+    <choice id="{id}" title="{title}" description="{desc}"{enabled_attr}>
         <pkg-ref id="{pkg_id}"{pkg_ref_auth}/>
 {extra_refs}    </choice>
 "#
@@ -943,42 +952,74 @@ pub(crate) fn generate_distribution_xml(
 /// leftovers and fails loudly with an actionable message otherwise
 /// (so the developer doing `cargo truce package --user` after a
 /// `--system` round sees what to clean up).
-/// AU v3 postinstall: register the app-extension with `pluginkit` for
-/// the logged-in user. pkg scripts run as root, but `pluginkit`, `pkd`,
-/// and the AU cache are per-user, so the work runs as the console user
-/// via `launchctl asuser`. `$2` is the install
-/// destination (e.g. `/Applications`). `pluginkit -a` no-ops while
-/// `pkd` is mid-respawn, hence the retry loop (mirrors
-/// `install_au_v3`). No console user (CI / SSH / login window) -> skip;
-/// the appex registers on next login when `pkd` scans `/Applications`.
+/// AU v3 postinstall: schedule a deferred, one-shot registration of the
+/// app-extensions with `pluginkit`.
+///
+/// Registering inline from the postinstall does not work: pkg scripts run
+/// as root in the installer sandbox, but the installer re-touches every app
+/// bundle as its final step (after all postinstalls), which makes `pkd`
+/// drop any registration made earlier in the run. A `LaunchAgent` would run
+/// late enough but trips the macOS "Background Items Added" notification,
+/// which has no place in a plugin installer. A backgrounded child of the
+/// postinstall (`nohup ... &`) doesn't survive - the installer kills the
+/// sandbox process tree on teardown.
+///
+/// So hand the one-shot to the user's `launchd` via `launchctl submit` (a
+/// transient job - no plist in a monitored folder, so no notification;
+/// launchd-owned, so it outlives the installer). The job waits until the
+/// app bundles stop changing (finalization done), then registers every AU
+/// v3 appex in `/Applications` and refreshes the AU cache. Each AU v3
+/// component re-submits, replacing any prior submission, so the last one
+/// runs after the whole install settles; the postinstall returns at once so
+/// the install never blocks. No console user (CI / SSH / login window) ->
+/// skip.
 #[cfg(target_os = "macos")]
 const AU3_REGISTER_POSTINSTALL: &str = r#"#!/bin/bash
 set -u
-APP="$2/{{BUNDLE}}"
-APPEX="$APP/Contents/PlugIns/AUExt.appex"
-APPEX_ID="{{APPEX_ID}}"
 uid=$(stat -f %u /dev/console 2>/dev/null || true)
 user=$(stat -f %Su /dev/console 2>/dev/null || true)
-if [ -z "${uid:-}" ] || [ "$user" = "root" ] || [ ! -d "$APPEX" ]; then
+if [ -z "${uid:-}" ] || [ "$user" = "root" ]; then
     exit 0
 fi
-home=$(eval echo "~$user")
-asuser() { launchctl asuser "$uid" sudo -u "$user" "$@"; }
-LSREG=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
-"$LSREG" -f -R "$APP" >/dev/null 2>&1 || true
-killall -9 pkd 2>/dev/null || true
-killall -9 AudioComponentRegistrar 2>/dev/null || true
-rm -rf "$home/Library/Caches/AudioUnitCache" 2>/dev/null || true
-sleep 2
-i=0
-while [ "$i" -lt 8 ]; do
-    asuser pluginkit -a "$APPEX" >/dev/null 2>&1 || true
-    if asuser pluginkit -m -i "$APPEX_ID" 2>/dev/null | grep -q "$APPEX_ID"; then
+DIR="/Library/Application Support/Truce"
+SCRIPT="$DIR/au3-register.sh"
+mkdir -p "$DIR"
+cat > "$SCRIPT" <<'EOF'
+#!/bin/bash
+# Deferred AU v3 registration: launchd runs this once in the user's GUI
+# session. Registration made during the install is wiped by the installer's
+# final bundle touch, so wait until the bundles stop changing, then register
+# every AU v3 appex and refresh the AU cache.
+export PATH=/usr/bin:/bin:/usr/sbin:/sbin
+prev=""
+stable=0
+for i in $(seq 1 60); do
+    cur=$(ls -dlT /Applications/*.app 2>/dev/null | md5)
+    if [ "$cur" = "$prev" ]; then
+        stable=$((stable + 1))
+    else
+        stable=0
+    fi
+    if [ "$stable" -ge 3 ]; then
         break
     fi
-    sleep 1
-    i=$((i + 1))
+    prev="$cur"
+    sleep 2
 done
+for ax in /Applications/*.app/Contents/PlugIns/AUExt.appex; do
+    if [ -d "$ax" ]; then
+        pluginkit -a "$ax" >/dev/null 2>&1
+    fi
+done
+killall -9 AudioComponentRegistrar 2>/dev/null || true
+launchctl remove com.truce.au3-register 2>/dev/null || true
+exit 0
+EOF
+chmod 755 "$SCRIPT"
+# Submit to the user's launchd. `remove` first so a re-submit replaces the
+# prior one; the last component's job is the one that runs to completion.
+launchctl asuser "$uid" sudo -u "$user" launchctl remove com.truce.au3-register 2>/dev/null || true
+launchctl asuser "$uid" sudo -u "$user" launchctl submit -l com.truce.au3-register -- /bin/bash "$SCRIPT"
 exit 0
 "#;
 
@@ -1041,18 +1082,13 @@ pub(crate) fn write_format_scripts(
 
     // AU v3 is an app-extension: dropping the `.app` into `/Applications`
     // isn't enough, the appex has to be registered with `pluginkit` or
-    // hosts get a component that lists but won't open. `cargo truce
-    // install --au3` registers it directly; the installer has to do the
-    // same from its postinstall - which is the wrinkle, since pkg
-    // scripts run as root while pluginkit + the AU cache are per-user.
-    if *fmt == PkgFormat::Au3
-        && let Some(appex_id) = appex_id
-    {
+    // hosts get a component that lists but won't open. The postinstall
+    // schedules a deferred one-shot that does this in the user's GUI
+    // session, since registering inline from the root sandbox doesn't
+    // survive the installer's final bundle touch.
+    if *fmt == PkgFormat::Au3 && appex_id.is_some() {
         let postinstall = scripts_dir.join("postinstall");
-        let script = AU3_REGISTER_POSTINSTALL
-            .replace("{{BUNDLE}}", &escaped_bundle)
-            .replace("{{APPEX_ID}}", appex_id);
-        fs::write(&postinstall, script)?;
+        fs::write(&postinstall, AU3_REGISTER_POSTINSTALL)?;
         Command::new("chmod")
             .args(["+x", postinstall.to_str().unwrap()])
             .status()?;

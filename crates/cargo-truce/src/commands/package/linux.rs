@@ -176,7 +176,7 @@ pub(crate) fn cmd_package_linux(args: &[String], selection: &SuiteSelection) -> 
         config
             .suites
             .iter()
-            .filter(|s| selection.want_suite(&s.name))
+            .filter(|s| selection.want_suite(&s.name, &s.bundle_id))
             .map(|s| s.resolve(&config.plugin))
             .collect::<Result<_, _>>()?
     };

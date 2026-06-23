@@ -2,6 +2,18 @@
 
 Notable changes per release.
 
+## 0.62.0
+
+- **AU v3 and standalone are one macOS app.** A plugin with a standalone bin ships a single `{name}.app` that is both the AU v3 container and the playable standalone host; the separate Standalone format collapses into it and the installer choice reads "AU3 + Standalone". Plugins without a standalone bin still ship the appex, in an informational stub app.
+- **Fixed macOS standalone resize leaving a white margin around the editor;** non-resizable editor windows are now pinned so they can't be zoomed open.
+- **`package --suite <name>` matches a suite by bundle id or display name** and errors on an unknown name instead of silently skipping the suite.
+
+## 0.61.0
+
+- **Reusable `#[nested]` param groups.** A nested `Params` struct's ids are rebased by a per-group base (auto-packed, or pinned with `#[nested(base = N)]`), so the same group type can be nested more than once without id clashes and nested groups need no per-param ids.
+- **Nested meters are caught at construction.** Two `#[nested]` groups that each declare a meter would have aliased on one id; the derive now panics at construction instead of corrupting state silently.
+- **Nested params construct through the generated `new()`.** A `Params` struct that mixes its own params with `#[nested]` groups now default-initializes the nested fields in `new()`. ([#137](https://github.com/truce-audio/truce/pull/137), by [@jedStevens](https://github.com/jedStevens))
+
 ## 0.60.1
 
 - **`#[derive(Params)]` no longer trips a rust-analyzer error.** Parameters with a `range` (or numeric `default`) emitted suffixed literals like `60f64`, which rust-analyzer 1.96 rejected with "expected Expr" even though the code compiled; the derive now emits plain decimal literals. ([#135](https://github.com/truce-audio/truce/issues/135))

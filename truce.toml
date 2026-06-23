@@ -214,6 +214,21 @@ macos_icon = "static/truce-minimal.icns"
 ios_icon_set = "static/truce-minimal.appiconset"
 
 [[plugin]]
+name = "Truce Stereo Utility"
+bundle_id = "stereo-utility"
+crate = "truce-example-stereo-utility"
+category = "effect"
+fourcc = "TSut"
+au3_subtype = "TSu3"
+au_tag = "Effects"
+aax_category = "Effect"
+vst3_subcategory = "Tools"
+au3_name = "Truce Stereo Utility (AUv3)"
+windows_icon = "static/truce-minimal.ico"
+macos_icon = "static/truce-minimal.icns"
+ios_icon_set = "static/truce-minimal.appiconset"
+
+[[plugin]]
 name = "Truce Transpose"
 bundle_id = "transpose"
 crate = "truce-example-transpose"
@@ -420,6 +435,11 @@ midi_output = true
 fourcc = "TEnv"
 au3_subtype = "TEn3"
 au_tag = "MIDI"
+aax_category = "Effect"
+au3_name = "Truce Envelope (AUv3)"
+windows_icon = "static/truce-minimal.ico"
+macos_icon = "static/truce-minimal.icns"
+ios_icon_set = "static/truce-minimal.appiconset"
 
 [[plugin]]
 name = "Truce Chord"
@@ -431,6 +451,10 @@ fourcc = "TChd"
 au3_subtype = "TCh3"
 au_tag = "Synthesizer"
 vst3_subcategory = "Synth"
+au3_name = "Truce Chord (AUv3)"
+windows_icon = "static/truce-minimal.ico"
+macos_icon = "static/truce-minimal.icns"
+ios_icon_set = "static/truce-minimal.appiconset"
 
 [[plugin]]
 name = "Truce CC Filter"
@@ -441,7 +465,12 @@ midi_input = true
 fourcc = "TCcf"
 au3_subtype = "TCf3"
 au_tag = "Effects"
+aax_category = "EQ"
 vst3_subcategory = "Filter"
+au3_name = "Truce CC Filter (AUv3)"
+windows_icon = "static/truce-minimal.ico"
+macos_icon = "static/truce-minimal.icns"
+ios_icon_set = "static/truce-minimal.appiconset"
 
 [[plugin]]
 name = "Truce Channel Spread"
@@ -451,6 +480,11 @@ category = "midi"
 fourcc = "TMpe"
 au3_subtype = "TMp3"
 au_tag = "MIDI"
+# See note on transpose above re: AAX MIDI category override.
+au3_name = "Truce Channel Spread (AUv3)"
+windows_icon = "static/truce-minimal.ico"
+macos_icon = "static/truce-minimal.icns"
+ios_icon_set = "static/truce-minimal.appiconset"
 
 [[plugin]]
 name = "Truce SysEx Echo"
@@ -460,6 +494,11 @@ category = "midi"
 fourcc = "TSxe"
 au3_subtype = "TSx3"
 au_tag = "MIDI"
+# See note on transpose above re: AAX MIDI category override.
+au3_name = "Truce SysEx Echo (AUv3)"
+windows_icon = "static/truce-minimal.ico"
+macos_icon = "static/truce-minimal.icns"
+ios_icon_set = "static/truce-minimal.appiconset"
 
 # Suite installer wrapping every example above. `cargo truce package`
 # (no flags) produces both per-plugin installers and this suite installer.
@@ -470,4 +509,11 @@ au_tag = "MIDI"
 [[suite]]
 name = "Truce Examples"
 bundle_id = "truce-examples"
+
+# Small two-plugin subset for exercising a subset install without
+# packaging every example.
+[[suite]]
+name = "Truce Examples Subset"
+bundle_id = "truce-examples-subset"
+plugins = ["synth", "gain-egui-aspect"]
 

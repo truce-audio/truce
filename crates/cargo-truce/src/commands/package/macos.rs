@@ -21,6 +21,65 @@ use crate::{
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+/// Run `task` over `items` on a bounded pool of OS threads, collecting
+/// failures as `<label>: <error>` strings. Errors do NOT short-circuit -
+/// every item runs so one failure can't strand the rest half-built. The
+/// per-plugin and per-suite pipelines are independent (each owns its
+/// staging dir and dist filename) and dominated by notarization's network
+/// wait, so this turns `sum(waits)` into roughly `max(wait)`.
+///
+/// `task`'s `Res` is consumed inside the worker (formatted to a `String`),
+/// so the error type never has to cross the thread boundary.
+fn parallel_for<T, L, F>(items: &[T], workers: usize, label: L, task: F) -> Res
+where
+    T: Sync,
+    L: Fn(&T) -> String + Sync,
+    F: Fn(&T) -> Res + Sync,
+{
+    if items.is_empty() {
+        return Ok(());
+    }
+    let workers = workers.clamp(1, items.len());
+    let next = AtomicUsize::new(0);
+    let errors: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    std::thread::scope(|s| {
+        for _ in 0..workers {
+            s.spawn(|| {
+                loop {
+                    let i = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(item) = items.get(i) else { break };
+                    if let Err(e) = task(item) {
+                        errors.lock().unwrap().push(format!("{}: {e}", label(item)));
+                    }
+                }
+            });
+        }
+    });
+    let errors = errors.into_inner().unwrap();
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "{} packaging task(s) failed:\n  {}",
+            errors.len(),
+            errors.join("\n  ")
+        )
+        .into())
+    }
+}
+
+/// Bounded worker count for the packaging pools: enough to overlap the
+/// notarization waits without hammering Apple's notary / timestamp
+/// services or contending on the login keychain during concurrent
+/// `codesign`.
+fn packaging_workers() -> usize {
+    std::thread::available_parallelism()
+        .map_or(4, std::num::NonZeroUsize::get)
+        .min(8)
+}
 
 pub(crate) fn cmd_package_macos(args: &[String], selection: &super::SuiteSelection) -> Res {
     let config = load_config()?;
@@ -58,7 +117,7 @@ pub(crate) fn cmd_package_macos(args: &[String], selection: &super::SuiteSelecti
     }
     let effective_scope = scope;
 
-    let plugins: Vec<&PluginDef> =
+    let all_plugins: Vec<&PluginDef> =
         crate::commands::pick_plugins(&config, parsed.plugin_filter.as_deref())?;
 
     eprintln!(
@@ -69,6 +128,52 @@ pub(crate) fn cmd_package_macos(args: &[String], selection: &super::SuiteSelecti
             .collect::<Vec<_>>()
             .join(", ")
     );
+
+    // Resolve the suites to build up front so a `--suite` selection can
+    // narrow the *build* to just those suites' members, not every plugin.
+    //
+    // Per-plugin installers always run pkgbuild to produce the component
+    // packages; whether we *also* run productbuild + notarize for the
+    // per-plugin .pkg is the --no-per-plugin gate. The component .pkgs are
+    // needed by the suite wrapper below.
+    //
+    // `-p <crate>` narrows to a single plugin, which can't satisfy a
+    // multi-member suite. Skip suite installers in that mode so the
+    // single-plugin run doesn't fail at the suite step looking for
+    // unstaged siblings.
+    let suites: Vec<crate::config::ResolvedSuite<'_>> = if parsed.plugin_filter.is_some() {
+        if !config.suites.is_empty() {
+            eprintln!("(-p set; skipping suite installers - they need every member plugin staged)");
+        }
+        Vec::new()
+    } else {
+        config
+            .suites
+            .iter()
+            .filter(|s| selection.want_suite(&s.name, &s.bundle_id))
+            .map(|s| s.resolve(&config.plugin))
+            .collect::<Result<_, _>>()?
+    };
+
+    // With `--suite <name>`, build only that suite's members (and their
+    // per-plugin installers) instead of every plugin; without it, build
+    // everything.
+    let plugins: Vec<&PluginDef> = if selection.only_suites.is_empty() {
+        all_plugins
+    } else {
+        let mut seen = std::collections::HashSet::new();
+        let narrowed: Vec<&PluginDef> = suites
+            .iter()
+            .flat_map(|s| s.plugins.iter().copied())
+            .filter(|p| seen.insert(p.bundle_id.clone()))
+            .collect();
+        eprintln!(
+            "Limiting to {} plugin{} for the selected suite(s).",
+            narrowed.len(),
+            if narrowed.len() == 1 { "" } else { "s" }
+        );
+        narrowed
+    };
 
     build_all_formats(&root, &config, &plugins, &archs, dt, &formats, universal)?;
 
@@ -90,49 +195,42 @@ pub(crate) fn cmd_package_macos(args: &[String], selection: &super::SuiteSelecti
         no_pace_sign: parsed.no_pace_sign,
         universal,
     };
-    // Per-plugin installers always run pkgbuild to produce the
-    // component packages; whether we *also* run productbuild +
-    // notarize for the per-plugin .pkg is the --no-per-plugin gate.
-    // The component .pkgs are needed by the suite wrapper below.
-    //
-    // `-p <crate>` narrows to a single plugin, which can't satisfy a
-    // multi-member suite. Skip suite installers in that mode so the
-    // single-plugin run doesn't fail at the suite step looking for
-    // unstaged siblings.
-    let suites: Vec<crate::config::ResolvedSuite<'_>> = if parsed.plugin_filter.is_some() {
-        if !config.suites.is_empty() {
-            eprintln!("(-p set; skipping suite installers - they need every member plugin staged)");
-        }
-        Vec::new()
-    } else {
-        config
-            .suites
-            .iter()
-            .filter(|s| selection.want_suite(&s.name))
-            .map(|s| s.resolve(&config.plugin))
-            .collect::<Result<_, _>>()?
-    };
     let need_components_only = !selection.want_per_plugin() && !suites.is_empty();
+    let workers = packaging_workers();
 
-    for p in &plugins {
-        if selection.want_per_plugin() {
-            package_one_plugin(&root, p, &dist_dir, &opts)?;
-        } else if need_components_only {
-            // Suite wrapping needs per-plugin components on disk.
-            // Build them without running productbuild + notarize for
-            // the per-plugin output.
-            stage_components_only(&root, p, &opts)?;
+    // Per-plugin pipelines run concurrently; output from different plugins
+    // interleaves. The pool joins before suite wrapping, which needs every
+    // member's component .pkgs staged first.
+    if selection.want_per_plugin() {
+        parallel_for(
+            &plugins,
+            workers,
+            |p| p.name.clone(),
+            |p| package_one_plugin(&root, p, &dist_dir, &opts),
+        )?;
+    } else {
+        if need_components_only {
+            // Suite wrapping needs per-plugin components on disk. Build them
+            // without running productbuild + notarize for the per-plugin
+            // output.
+            parallel_for(
+                &plugins,
+                workers,
+                |p| p.name.clone(),
+                |p| stage_components_only(&root, p, &opts),
+            )?;
         }
-    }
-    if !selection.want_per_plugin() {
         eprintln!("Skipping per-plugin .pkg installers (--no-per-plugin).");
     }
 
     if !suites.is_empty() {
         eprintln!("\nSuite installers");
-        for suite in &suites {
-            package_one_suite(&root, suite, &dist_dir, &opts)?;
-        }
+        parallel_for(
+            &suites,
+            workers,
+            |s| s.def.name.clone(),
+            |s| package_one_suite(&root, s, &dist_dir, &opts),
+        )?;
     }
 
     eprintln!("\nDone. Installers in {}", dist_dir.display());
@@ -157,7 +255,9 @@ fn stage_components_only(root: &Path, p: &PluginDef, o: &PackageOpts) -> Res {
     let _ = fs::remove_dir_all(&staging);
     fs::create_dir_all(&staging)?;
 
-    for fmt in o.formats {
+    let plugin_formats = formats_for_plugin(o.formats, p);
+
+    for fmt in &plugin_formats {
         eprintln!("  Staging {}...", fmt.label());
         // macOS package staging reads from `target/release/` after lipo
         // has produced a universal Mach-O at the canonical path; pass
@@ -204,7 +304,7 @@ fn stage_components_only(root: &Path, p: &PluginDef, o: &PackageOpts) -> Res {
     // bound to an older identity, etc.).
     let _ = fs::remove_dir_all(&components_dir);
     fs::create_dir_all(&components_dir)?;
-    for fmt in o.formats {
+    for fmt in &plugin_formats {
         let appex_id = (*fmt == PkgFormat::Au3).then(|| au3_appex_id(o.config, p));
         let scripts_dir =
             write_format_scripts(&staging, fmt, &fmt.bundle_name(p), appex_id.as_deref())?;
@@ -344,8 +444,8 @@ fn package_one_suite(
         .plugins
         .iter()
         .flat_map(|plugin| {
-            o.formats
-                .iter()
+            formats_for_plugin(o.formats, plugin)
+                .into_iter()
                 .map(move |fmt| format!("{}-{}.pkg", plugin.file_stem(), fmt.label()))
         })
         .collect();
@@ -391,9 +491,16 @@ fn generate_suite_distribution_xml(
     // the top level. Nesting them silently drops the inner pkg-refs and
     // productbuild produces an empty (~2 KB) installer with no payload.
     for (plugin, extras) in suite.plugins.iter().zip(extras_by_plugin) {
+        // A binless plugin has no Standalone component; keep it out of
+        // this member's outline + pkg-refs so productbuild doesn't
+        // reference a `.pkg` that was never built.
+        let member_formats = formats_for_plugin(formats, plugin);
+        // AU v3's app is the standalone host when this member ships a
+        // standalone bin (the Standalone format is collapsed into it).
+        let au3_is_standalone_host = crate::read_standalone_bin_name(&plugin.crate_name).is_some();
         let outer_id = sanitize_id(&plugin.bundle_id);
         let _ = writeln!(outline, "        <line choice=\"{outer_id}\">");
-        for fmt in formats {
+        for fmt in &member_formats {
             let inner_id = format!("{outer_id}-{}", fmt.pkg_id_suffix());
             let _ = writeln!(outline, "            <line choice=\"{inner_id}\"/>");
         }
@@ -408,12 +515,15 @@ fn generate_suite_distribution_xml(
             plugin_name = plugin.name,
         );
 
-        for fmt in formats {
+        for fmt in &member_formats {
             let inner_id = format!("{outer_id}-{}", fmt.pkg_id_suffix());
             let pkg_id = format!("{vendor_id}.{}.{}", plugin.bundle_id, fmt.pkg_id_suffix());
             let component_file = format!("{}-{}.pkg", plugin.file_stem(), fmt.label());
-            let label = fmt.label();
-            let desc = fmt.choice_description();
+            let (label, desc): (&str, &str) = if *fmt == PkgFormat::Au3 && au3_is_standalone_host {
+                ("AU3 + Standalone", "Audio Unit v3 (appex) + standalone app")
+            } else {
+                (fmt.label(), fmt.choice_description())
+            };
             // All formats checked by default - see matching note in
             // the per-plugin `generate_distribution_xml`.
             let enabled_attr = "";
@@ -577,10 +687,10 @@ fn resolve_formats(
     format_str: Option<&str>,
     config: &Config,
 ) -> Result<Vec<PkgFormat>, crate::CargoTruceError> {
-    if let Some(s) = format_str {
-        PkgFormat::parse_list(s)
+    let fmts = if let Some(s) = format_str {
+        PkgFormat::parse_list(s)?
     } else if !config.packaging.formats.is_empty() {
-        PkgFormat::parse_list(&config.packaging.formats.join(","))
+        PkgFormat::parse_list(&config.packaging.formats.join(","))?
     } else {
         let available = detect_default_features();
         let mut fmts = Vec::new();
@@ -606,8 +716,37 @@ fn resolve_formats(
         if available.contains("standalone") {
             fmts.push(PkgFormat::Standalone);
         }
-        Ok(fmts)
+        fmts
+    };
+
+    Ok(drop_standalone_if_au3(fmts))
+}
+
+/// AU v3's bundle *is* the standalone `{name}.app` - the host with the
+/// appex embedded, installed at the same path. When both are requested,
+/// drop the separate Standalone format: a lean standalone app at that
+/// path (no appex) clobbers the AU v3 one, and once `pkd` has scanned the
+/// appex-less app first it won't register the appex the AU v3 payload
+/// later adds. The AU v3 app is itself launchable as a standalone.
+fn drop_standalone_if_au3(mut fmts: Vec<PkgFormat>) -> Vec<PkgFormat> {
+    if fmts.contains(&PkgFormat::Au3) {
+        fmts.retain(|f| *f != PkgFormat::Standalone);
     }
+    fmts
+}
+
+/// The package formats that actually apply to `p`. Standalone is dropped
+/// for plugins that declare no standalone `[[bin]]` (MIDI / utility
+/// examples): they can't run as a desktop app, so they get no Standalone
+/// component or installer choice. AU v3 still ships for them - as a stub
+/// app - so it is never filtered here.
+fn formats_for_plugin(formats: &[PkgFormat], p: &PluginDef) -> Vec<PkgFormat> {
+    let has_standalone = crate::read_standalone_bin_name(&p.crate_name).is_some();
+    formats
+        .iter()
+        .filter(|f| **f != PkgFormat::Standalone || has_standalone)
+        .cloned()
+        .collect()
 }
 
 /// Drive Step 1 of the packaging pipeline: per-arch builds + lipo for
@@ -692,12 +831,22 @@ fn build_all_formats(
 /// inspects each plugin's `Cargo.toml` so hand-edited `[[bin]] name`
 /// values still work - falls back to the scaffold convention
 /// (`{crate_name}-standalone`) when the manifest can't be parsed.
-fn build_and_lipo_standalone(
+pub(crate) fn build_and_lipo_standalone(
     root: &Path,
     plugins: &[&PluginDef],
     archs: &[MacArch],
     dt: &str,
 ) -> Res {
+    // Only plugins that declare a standalone `[[bin]]` produce a binary.
+    // MIDI / utility examples enable the `standalone` feature (so the dep
+    // is in their graph) but ship no bin, so building one for them yields
+    // nothing - skip them here, as `formats_for_plugin` does in staging /
+    // distribution.
+    let plugins: Vec<&PluginDef> = plugins
+        .iter()
+        .copied()
+        .filter(|p| crate::read_standalone_bin_name(&p.crate_name).is_some())
+        .collect();
     if plugins.is_empty() {
         return Ok(());
     }
@@ -719,7 +868,7 @@ fn build_and_lipo_standalone(
     // `target/<triple>/release/` dirs and run concurrently when more
     // than one arch is requested.
     let mut args: Vec<&str> = Vec::with_capacity(plugins.len() * 2 + 3);
-    for p in plugins {
+    for p in &plugins {
         args.push("-p");
         args.push(&p.crate_name);
     }
@@ -808,11 +957,9 @@ struct PackageOpts<'a> {
 /// stamps and `install_au_v3` registers - so the installer postinstall
 /// registers the same identifier.
 fn au3_appex_id(config: &Config, p: &PluginDef) -> String {
-    format!(
-        "com.{}.{}.v3.ext",
-        config.vendor.id.trim_start_matches("com."),
-        p.bundle_id
-    )
+    // Vendor-rooted, matching the appex `PRODUCT_BUNDLE_IDENTIFIER` the
+    // build's pbxproj stamps.
+    format!("{}.{}.v3.ext", config.vendor.id, p.bundle_id)
 }
 
 /// A preset file tree as `(relative path -> bytes)`.
@@ -890,8 +1037,10 @@ fn package_one_plugin(root: &Path, p: &PluginDef, dist_dir: &Path, o: &PackageOp
     let _ = fs::remove_dir_all(&staging);
     fs::create_dir_all(&staging)?;
 
+    let plugin_formats = formats_for_plugin(o.formats, p);
+
     // Step 2: Stage signed bundles
-    for fmt in o.formats {
+    for fmt in &plugin_formats {
         eprintln!("  Staging {}...", fmt.label());
         // macOS package staging reads from `target/release/` after lipo
         // has produced a universal Mach-O at the canonical path; pass
@@ -953,7 +1102,7 @@ fn package_one_plugin(root: &Path, p: &PluginDef, dist_dir: &Path, o: &PackageOp
     let _ = fs::remove_dir_all(&components_dir);
     fs::create_dir_all(&components_dir)?;
 
-    for fmt in o.formats {
+    for fmt in &plugin_formats {
         let appex_id = (*fmt == PkgFormat::Au3).then(|| au3_appex_id(o.config, p));
         let scripts_dir =
             write_format_scripts(&staging, fmt, &fmt.bundle_name(p), appex_id.as_deref())?;
@@ -976,11 +1125,12 @@ fn package_one_plugin(root: &Path, p: &PluginDef, dist_dir: &Path, o: &PackageOp
         &p.file_stem(),
         &o.config.vendor.id,
         &p.bundle_id,
-        o.formats,
+        &plugin_formats,
         &extras,
         o.version,
         Some(&o.config.macos.packaging),
         o.effective_scope,
+        crate::read_standalone_bin_name(&p.crate_name).is_some(),
     );
     let dist_xml_path = staging.join("distribution.xml");
     fs::write(&dist_xml_path, &dist_xml)?;
@@ -1020,8 +1170,7 @@ fn package_one_plugin(root: &Path, p: &PluginDef, dist_dir: &Path, o: &PackageOp
     // distribution.xml class of bug where productbuild reports
     // success but drops the payload (e.g. nested <choice> elements
     // ignore their pkg-refs and produce a 2 KB metadata-only .pkg).
-    let mut expected: Vec<String> = o
-        .formats
+    let mut expected: Vec<String> = plugin_formats
         .iter()
         .map(|fmt| format!("{}-{}.pkg", p.file_stem(), fmt.label()))
         .collect();
@@ -1377,38 +1526,90 @@ fn notarize_and_staple(pkg_path: &Path, _config: &Config) -> Res {
         pkg_path.file_name().unwrap().to_str().unwrap()
     );
 
-    // Submit and capture output to check status + extract submission ID
-    let output = Command::new("xcrun")
-        .args([
-            "notarytool",
-            "submit",
-            pkg,
-            "--keychain-profile",
-            &keychain_profile,
-            "--wait",
-        ])
-        .output();
-
-    let (succeeded, output_text) = match output {
-        Ok(o) => {
-            let text = format!(
+    // Submit with the keychain profile, retrying transient failures
+    // (network blips, notary-service hiccups, `xcrun` failing to reach
+    // Apple). A single transient failure must NOT fall straight through to
+    // the explicit-credentials path - that's empty for most setups, so a
+    // momentary glitch turned into a hard "requires APP_SPECIFIC_PASSWORD"
+    // error. A `status: Invalid` / `Rejected` is a real verdict on the
+    // bundle, not transient: stop and surface it (re-submitting with other
+    // credentials yields the same verdict).
+    let mut output_text = String::new();
+    let mut succeeded = false;
+    let mut rejected = false;
+    let mut fatal = false;
+    for (attempt, delay) in [0u64, 15, 45, 90].into_iter().enumerate() {
+        if delay > 0 {
+            eprintln!(
+                "    notarytool submit didn't go through; retrying in {delay}s (attempt {})...",
+                attempt + 1
+            );
+            std::thread::sleep(std::time::Duration::from_secs(delay));
+        }
+        // A failed `xcrun` spawn falls through to another retry.
+        if let Ok(o) = Command::new("xcrun")
+            .args([
+                "notarytool",
+                "submit",
+                pkg,
+                "--keychain-profile",
+                &keychain_profile,
+                "--wait",
+            ])
+            .output()
+        {
+            output_text = format!(
                 "{}{}",
                 String::from_utf8_lossy(&o.stdout),
                 String::from_utf8_lossy(&o.stderr)
             );
-            // notarytool returns 0 even on Invalid - check the status string
-            let ok = o.status.success()
-                && !text.contains("status: Invalid")
-                && !text.contains("status: Rejected");
-            (ok, text)
+            if output_text.contains("status: Invalid") || output_text.contains("status: Rejected") {
+                rejected = true;
+                break;
+            }
+            // notarytool returns 0 even on Invalid (caught above); a clean
+            // exit now means Accepted.
+            if o.status.success() {
+                succeeded = true;
+                break;
+            }
+            // Auth / agreement failures (HTTP 401/403) are account-wide and
+            // not transient - retrying or swapping credentials can't help, so
+            // stop and surface Apple's message verbatim.
+            if output_text.contains("HTTP status code: 403")
+                || output_text.contains("HTTP status code: 401")
+                || output_text.contains("A required agreement")
+            {
+                fatal = true;
+                break;
+            }
+            // Non-zero without a verdict = couldn't reach the service /
+            // timed out: transient, retry.
         }
-        Err(_) => (false, String::new()),
-    };
+    }
+
+    if rejected {
+        fetch_notarization_log(&output_text, &keychain_profile);
+        return Err("notarization failed (status: Invalid). See log above for details.".into());
+    }
+
+    if fatal {
+        return Err(format!(
+            "notarization blocked by Apple's notary service (not a build problem):\n\n{}\n\
+             If this is a 403 / required-agreement error, sign in as the Account Holder at \
+             https://developer.apple.com/account and App Store Connect > Agreements, Tax, and \
+             Banking, accept any pending agreement, then re-run.",
+            output_text.trim()
+        )
+        .into());
+    }
 
     if !succeeded {
-        // Try explicit credentials as fallback
+        // Transient retries exhausted. Fall back to explicit credentials
+        // if the developer configured them; otherwise surface that this was
+        // a connection / profile failure, not missing credentials.
         if !apple_id.is_empty() && !team_id.is_empty() {
-            eprintln!("  Keychain profile failed, trying explicit credentials...");
+            eprintln!("  Keychain profile submit kept failing; trying explicit credentials...");
             let password = std::env::var("APP_SPECIFIC_PASSWORD").map_err(
                 |_| "notarization requires APP_SPECIFIC_PASSWORD env var or a keychain profile",
             )?;
@@ -1435,25 +1636,21 @@ fn notarize_and_staple(pkg_path: &Path, _config: &Config) -> Res {
                 || text.contains("status: Invalid")
                 || text.contains("status: Rejected")
             {
-                // Extract submission ID and fetch the log
                 fetch_notarization_log(&text, &keychain_profile);
                 return Err(
                     "notarization failed (status: Invalid). See log above for details.".into(),
                 );
             }
         } else {
-            // Extract submission ID and fetch the log
-            fetch_notarization_log(&output_text, &keychain_profile);
-            if output_text.contains("status: Invalid") || output_text.contains("status: Rejected") {
-                return Err(
-                    "notarization failed (status: Invalid). See log above for details.".into(),
-                );
-            }
-            return Err("notarization failed. Set up credentials via:\n  \
-                 xcrun notarytool store-credentials TRUCE_NOTARY\n  \
-                 or set APPLE_ID + TEAM_ID + APP_SPECIFIC_PASSWORD in \
-                 .cargo/config.toml [env]"
-                .into());
+            return Err(format!(
+                "notarization submit kept failing after retries - the notary service was \
+                 unreachable or the keychain profile '{keychain_profile}' is misconfigured. \
+                 Re-run the package step; if it persists, check the profile with \
+                 `xcrun notarytool history --keychain-profile {keychain_profile}`, or set \
+                 APPLE_ID + TEAM_ID + APP_SPECIFIC_PASSWORD as a fallback.\n\nLast output:\n{}",
+                output_text.trim()
+            )
+            .into());
         }
     }
 
@@ -1540,5 +1737,27 @@ fn fetch_notarization_log(output: &str, keychain_profile: &str) {
                 eprintln!("{log}");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn standalone_dropped_when_au3_present() {
+        let out =
+            drop_standalone_if_au3(vec![PkgFormat::Clap, PkgFormat::Standalone, PkgFormat::Au3]);
+        // The AU v3 app is the standalone host; the separate Standalone
+        // format is dropped so they don't fight over `{name}.app`.
+        assert_eq!(out, vec![PkgFormat::Clap, PkgFormat::Au3]);
+    }
+
+    #[test]
+    fn standalone_kept_without_au3() {
+        assert_eq!(
+            drop_standalone_if_au3(vec![PkgFormat::Clap, PkgFormat::Standalone]),
+            vec![PkgFormat::Clap, PkgFormat::Standalone]
+        );
     }
 }

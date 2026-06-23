@@ -40,6 +40,34 @@ pub unsafe fn make_resizable(ns_window: *mut std::ffi::c_void) {
     let _: () = unsafe { msg_send![window, setStyleMask: new_mask] };
 }
 
+/// Pin the standalone window to a fixed content size so a non-resizable
+/// editor's window can't be grown. baseview creates the window without
+/// `Resizable` (no edge-drag), but the green zoom button /
+/// double-click-titlebar `zoom:` and programmatic resizes can still
+/// enlarge it - and the fixed-size editor child doesn't follow, leaving
+/// an unpainted (white) margin. Setting content min == max == the
+/// editor's size clamps every resize path (drag, zoom, scripted) to the
+/// editor's geometry. macOS equivalent of `windowed_x11::pin_size`
+/// and `windowed_windows::lock_window`.
+///
+/// # Safety
+///
+/// Must run on the main thread and only after baseview has finished its
+/// `NSWindow` initialisation. The caller is responsible for ensuring
+/// `ns_window` is a live Objective-C pointer.
+pub unsafe fn pin_content_size(ns_window: *mut std::ffi::c_void, w: u32, h: u32) {
+    if ns_window.is_null() {
+        return;
+    }
+    let window = ns_window.cast::<Object>();
+    let size = NsSize {
+        width: f64::from(w),
+        height: f64::from(h),
+    };
+    let _: () = unsafe { msg_send![window, setContentMinSize: size] };
+    let _: () = unsafe { msg_send![window, setContentMaxSize: size] };
+}
+
 /// Disable maximize (zoom) and native fullscreen on the standalone
 /// `NSWindow` while keeping it edge-drag resizable.
 ///

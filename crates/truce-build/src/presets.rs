@@ -340,14 +340,24 @@ pub fn read_param_annotations(
     sidecar_dir: &Path,
 ) -> std::collections::BTreeMap<u32, ParamAnnotation> {
     let mut out = std::collections::BTreeMap::new();
-    let Ok(entries) = std::fs::read_dir(sidecar_dir) else {
-        return out;
+    // `param_index.toml` is the flattened, base-resolved id->field table
+    // the root `derive(Params)` writes. Prefer it: the per-struct
+    // sidecars carry struct-local ids that collide across `#[nested]`
+    // groups, so unioning them mis-resolves a nested plugin's keys.
+    let index = sidecar_dir.join("param_index.toml");
+    let sources: Vec<std::path::PathBuf> = if index.is_file() {
+        vec![index]
+    } else {
+        let Ok(entries) = std::fs::read_dir(sidecar_dir) else {
+            return out;
+        };
+        entries
+            .filter_map(Result::ok)
+            .map(|e| e.path())
+            .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("toml"))
+            .collect()
     };
-    for entry in entries.filter_map(Result::ok) {
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("toml") {
-            continue;
-        }
+    for path in sources {
         let Ok(content) = std::fs::read_to_string(&path) else {
             continue;
         };
