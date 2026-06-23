@@ -49,10 +49,10 @@ truce-loader = { workspace = true }
 # iOS; the dep list matches.
 [target.'cfg(not(target_os = "ios"))'.dependencies]
 truce-iced = { workspace = true }
-# `image` feature for the image-widget demo (the carrot.gif).
+# `image` feature for the image-widget demo (the carrot).
 iced = { version = "0.14", default-features = false, features = ["image"] }
-# Decode the embedded carrot.gif into raw RGBA for `image::Handle::from_rgba`.
-gif = "0.13"
+# Decode the shared carrot.png into raw RGBA for `image::Handle::from_rgba`.
+png = "0.17"
 
 [dev-dependencies]
 truce-test = { workspace = true }

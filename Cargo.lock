@@ -495,7 +495,7 @@ dependencies = [
  "hound",
  "libloading 0.9.0",
  "plist",
- "png",
+ "png 0.18.1",
  "serde",
  "thiserror 2.0.18",
  "tinytemplate",
@@ -1575,16 +1575,6 @@ dependencies = [
 
 [[package]]
 name = "gif"
-version = "0.13.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4ae047235e33e2829703574b54fdec96bfbad892062d97fed2f76022287de61b"
-dependencies = [
- "color_quant",
- "weezl",
-]
-
-[[package]]
-name = "gif"
 version = "0.14.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ee8cfcc411d9adbbaba82fb72661cc1bcca13e8bba98b364e62b2dba8f960159"
@@ -2018,11 +2008,11 @@ dependencies = [
  "byteorder-lite",
  "color_quant",
  "exr",
- "gif 0.14.2",
+ "gif",
  "image-webp",
  "moxcms",
  "num-traits",
- "png",
+ "png 0.18.1",
  "qoi",
  "ravif",
  "rayon",
@@ -3431,6 +3421,19 @@ dependencies = [
 
 [[package]]
 name = "png"
+version = "0.17.16"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "82151a2fc869e011c153adc57cf2789ccb8d9906ce52c0b39a6b5697749d7526"
+dependencies = [
+ "bitflags 1.3.2",
+ "crc32fast",
+ "fdeflate",
+ "flate2",
+ "miniz_oxide",
+]
+
+[[package]]
+name = "png"
 version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "60769b8b31b2a9f263dae2776c37b1b28ae246943cf719eb6946a1db05128a61"
@@ -4723,7 +4726,7 @@ dependencies = [
  "bytemuck",
  "cfg-if",
  "log",
- "png",
+ "png 0.18.1",
  "tiny-skia-path 0.12.0",
 ]
 
@@ -4947,7 +4950,7 @@ dependencies = [
 name = "truce-core"
 version = "0.63.0"
 dependencies = [
- "png",
+ "png 0.18.1",
  "truce-params",
  "truce-utils",
 ]
@@ -5428,7 +5431,7 @@ version = "0.63.0"
 dependencies = [
  "clap-sys",
  "egui",
- "gif 0.13.3",
+ "png 0.17.16",
  "truce",
  "truce-aax",
  "truce-au",
@@ -5450,8 +5453,8 @@ name = "truce-example-gui-zoo-iced"
 version = "0.63.0"
 dependencies = [
  "clap-sys",
- "gif 0.13.3",
  "iced",
+ "png 0.17.16",
  "truce",
  "truce-aax",
  "truce-au",
@@ -5796,7 +5799,7 @@ dependencies = [
 name = "truce-test"
 version = "0.63.0"
 dependencies = [
- "png",
+ "png 0.18.1",
  "toml",
  "truce-build",
  "truce-core",

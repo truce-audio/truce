@@ -141,23 +141,21 @@ pub struct ZooUi {
     carrot: image::Handle,
 }
 
-/// Decode the embedded carrot.gif (16x16, single frame) to an iced image
-/// handle. A plugin can't open a URL, so the image demo embeds the bytes.
+/// Decode the shared carrot.png (16x16 RGBA) to an iced image handle. A
+/// plugin can't open a URL, so the image demo embeds the bytes.
 fn decode_carrot() -> image::Handle {
-    let mut opts = gif::DecodeOptions::new();
-    opts.set_color_output(gif::ColorOutput::RGBA);
-    let mut decoder = opts
-        .read_info(&include_bytes!("../../../static/carrot.gif")[..])
-        .expect("decode carrot.gif header");
-    let frame = decoder
-        .read_next_frame()
-        .expect("read carrot.gif frame")
-        .expect("carrot.gif has a frame");
-    image::Handle::from_rgba(
-        u32::from(frame.width),
-        u32::from(frame.height),
-        frame.buffer.to_vec(),
-    )
+    let mut reader = png::Decoder::new(&include_bytes!("../../../static/carrot.png")[..])
+        .read_info()
+        .expect("carrot.png header");
+    let mut buf = vec![0u8; reader.output_buffer_size()];
+    let info = reader.next_frame(&mut buf).expect("carrot.png frame");
+    assert_eq!(
+        info.color_type,
+        png::ColorType::Rgba,
+        "carrot.png must be RGBA"
+    );
+    buf.truncate(info.buffer_size());
+    image::Handle::from_rgba(info.width, info.height, buf)
 }
 
 #[derive(Debug, Clone)]
@@ -618,7 +616,7 @@ mod tests {
 
     #[test]
     fn carrot_decodes_to_an_rgba_handle() {
-        // `decode_carrot` panics if the embedded gif is missing/corrupt.
+        // `decode_carrot` panics if the embedded png is missing/corrupt.
         let handle = decode_carrot();
         let image::Handle::Rgba {
             width,

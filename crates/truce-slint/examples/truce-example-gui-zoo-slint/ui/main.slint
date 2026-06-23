@@ -215,6 +215,15 @@ export component ZooUi inherits Window {
                 Button { text: "clicked \{root.click-count}x"; clicked => { root.click-count = root.click-count + 1; } }
                 CheckBox { text: "checkbox"; checked <=> root.w-check; }
                 SpinBox { width: 90px; minimum: 0; maximum: 10; value <=> root.w-spin; }
+                // Shared carrot asset (PNG - Slint's gif support is
+                // unreliable). `pixelated` keeps the 16x16 art crisp.
+                Image {
+                    width: 32px;
+                    height: 32px;
+                    source: @image-url("../../../../../static/carrot.png");
+                    image-fit: contain;
+                    image-rendering: pixelated;
+                }
             }
             HorizontalLayout {
                 spacing: 16px;

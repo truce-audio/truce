@@ -277,29 +277,36 @@ fn zoo_ui(ui: &mut egui::Ui, state: &PluginContext<ZooParams>) {
         });
 }
 
-/// Decode the embedded carrot.gif (16x16, single frame) into a GPU texture,
-/// cached in the `Context` so it uploads once. A plugin can't open a URL, so
-/// the image-widget demo embeds the bytes rather than fetching them.
+/// Decode the embedded carrot.png (16x16 RGBA) into a GPU texture, cached in
+/// the `Context` so it uploads once. A plugin can't open a URL, so the
+/// image-widget demo embeds the bytes rather than fetching them.
 fn carrot_texture(ctx: &egui::Context) -> egui::TextureHandle {
     let cache_id = egui::Id::new("zoo_carrot_tex");
     if let Some(handle) = ctx.data(|d| d.get_temp::<egui::TextureHandle>(cache_id)) {
         return handle;
     }
-    let mut opts = gif::DecodeOptions::new();
-    opts.set_color_output(gif::ColorOutput::RGBA);
-    let mut decoder = opts
-        .read_info(&include_bytes!("../../../static/carrot.gif")[..])
-        .expect("decode carrot.gif header");
-    let frame = decoder
-        .read_next_frame()
-        .expect("read carrot.gif frame")
-        .expect("carrot.gif has a frame");
-    let size = [frame.width as usize, frame.height as usize];
-    let image = egui::ColorImage::from_rgba_unmultiplied(size, &frame.buffer);
+    let (w, h, rgba) = decode_carrot();
+    let image = egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba);
     // NEAREST keeps the 16x16 pixel art crisp when scaled up.
     let handle = ctx.load_texture("zoo_carrot", image, egui::TextureOptions::NEAREST);
     ctx.data_mut(|d| d.insert_temp(cache_id, handle.clone()));
     handle
+}
+
+/// Decode the shared carrot.png to `(width, height, rgba)`.
+fn decode_carrot() -> (u32, u32, Vec<u8>) {
+    let mut reader = png::Decoder::new(&include_bytes!("../../../static/carrot.png")[..])
+        .read_info()
+        .expect("carrot.png header");
+    let mut buf = vec![0u8; reader.output_buffer_size()];
+    let info = reader.next_frame(&mut buf).expect("carrot.png frame");
+    assert_eq!(
+        info.color_type,
+        png::ColorType::Rgba,
+        "carrot.png must be RGBA"
+    );
+    buf.truncate(info.buffer_size());
+    (info.width, info.height, buf)
 }
 
 /// Native egui widgets: button, checkbox, radio, drag value, image,
@@ -451,18 +458,13 @@ mod tests {
     }
 
     #[test]
-    fn carrot_gif_decodes_to_a_real_image() {
-        let mut opts = gif::DecodeOptions::new();
-        opts.set_color_output(gif::ColorOutput::RGBA);
-        let mut decoder = opts
-            .read_info(&include_bytes!("../../../static/carrot.gif")[..])
-            .expect("header");
-        let frame = decoder.read_next_frame().expect("frame").expect("present");
-        assert_eq!((frame.width, frame.height), (16, 16));
-        assert_eq!(frame.buffer.len(), 16 * 16 * 4);
+    fn carrot_png_decodes_to_a_real_image() {
+        let (w, h, rgba) = decode_carrot();
+        assert_eq!((w, h), (16, 16));
+        assert_eq!(rgba.len(), 16 * 16 * 4);
         // Not a uniform fill - the carrot has more than one colour.
-        let first = &frame.buffer[0..4];
-        assert!(frame.buffer.chunks(4).any(|px| px != first));
+        let first = &rgba[0..4];
+        assert!(rgba.chunks(4).any(|px| px != first));
     }
 
     #[test]
