@@ -22,7 +22,7 @@ use truce_vizia::{ParamLens, ViziaEditor};
 use ZooParamsParamId as P;
 
 const WINDOW_W: u32 = 604;
-const WINDOW_H: u32 = 1140;
+const WINDOW_H: u32 = 800;
 
 // Zoo-local layout CSS. Lives in the example because it's
 // zoo-specific (section header band, inter-row gap, section title
@@ -49,10 +49,36 @@ const ZOO_CSS: &str = r"
     horizontal-gap: 14px;
     alignment: top left;
 }
+.zoo-pair-row {
+    height: auto;
+    horizontal-gap: 40px;
+    alignment: top left;
+}
+.zoo-labeled {
+    width: auto;
+    height: auto;
+    vertical-gap: 2px;
+}
+.zoo-labeled-row {
+    width: auto;
+    height: auto;
+    horizontal-gap: 14px;
+    alignment: top left;
+}
 ";
 
 fn section(cx: &mut Context, title: &str) {
     Label::new(cx, title.to_string()).class("zoo-section-title");
+}
+
+/// A titled column: the section title stacked above its widget row. Two of
+/// these in an `HStack` pack short sections side by side.
+fn labeled(cx: &mut Context, title: &str, content: impl FnOnce(&mut Context)) {
+    VStack::new(cx, |cx| {
+        section(cx, title);
+        HStack::new(cx, content).class("zoo-labeled-row");
+    })
+    .class("zoo-labeled");
 }
 
 #[derive(ParamEnum)]
@@ -263,67 +289,65 @@ fn zoo_view(cx: &mut Context, lens: ParamLens<ZooParams>) {
             })
             .class("zoo-section-row");
 
-            section(cx, "Toggles");
+            // Pair short sections side by side so the native-widget and
+            // keyboard sections land closer to the default (unscrolled) view.
             HStack::new(cx, |cx| {
-                param_toggle(cx, lens.clone(), P::TOn, "On");
-                param_toggle(cx, lens.clone(), P::TOff, "Off");
+                labeled(cx, "Toggles", |cx| {
+                    param_toggle(cx, lens.clone(), P::TOn, "On");
+                    param_toggle(cx, lens.clone(), P::TOff, "Off");
+                });
+                labeled(cx, "Dropdowns", |cx| {
+                    // Vary the per-option width arg so the difference is
+                    // visible at a glance: a tight 70px single-column
+                    // dropdown next to a wide 120px two-column one.
+                    param_dropdown(cx, lens.clone(), P::Mode, "Mode", 8, 1, 70.0);
+                    param_dropdown(cx, lens.clone(), P::ModeWide, "Mode Wide", 8, 2, 120.0);
+                });
             })
-            .class("zoo-section-row");
+            .class("zoo-pair-row");
 
-            section(cx, "Dropdowns");
             HStack::new(cx, |cx| {
-                // Vary the per-option width arg so the difference is
-                // visible at a glance: a tight 70px single-column
-                // dropdown next to a wide 120px two-column one.
-                param_dropdown(cx, lens.clone(), P::Mode, "Mode", 8, 1, 70.0);
-                param_dropdown(cx, lens.clone(), P::ModeWide, "Mode Wide", 8, 2, 120.0);
+                labeled(cx, "Meters", |cx| {
+                    level_meter(cx, lens.clone(), &[P::MIn], Pixels(140.0));
+                    level_meter(cx, lens.clone(), &[P::ML, P::MR], Pixels(140.0));
+                    level_meter(
+                        cx,
+                        lens.clone(),
+                        &[P::M6a, P::M6b, P::M6c, P::M6d, P::M6e, P::M6f],
+                        Pixels(140.0),
+                    );
+                });
+                labeled(cx, "XY Pads", |cx| {
+                    param_xy_pad(
+                        cx,
+                        lens.clone(),
+                        P::KMix,
+                        P::KGain,
+                        "small",
+                        Pixels(80.0),
+                        Pixels(80.0),
+                    );
+                    param_xy_pad(
+                        cx,
+                        lens.clone(),
+                        P::KFreq,
+                        P::KQ,
+                        "med",
+                        Pixels(130.0),
+                        Pixels(130.0),
+                    );
+                    param_xy_pad(
+                        cx,
+                        lens.clone(),
+                        P::KPan,
+                        P::KPhase,
+                        "big",
+                        Pixels(200.0),
+                        Pixels(200.0),
+                    );
+                });
             })
-            .class("zoo-section-row");
-
-            section(cx, "Meters");
-            HStack::new(cx, |cx| {
-                level_meter(cx, lens.clone(), &[P::MIn], Pixels(140.0));
-                level_meter(cx, lens.clone(), &[P::ML, P::MR], Pixels(140.0));
-                level_meter(
-                    cx,
-                    lens.clone(),
-                    &[P::M6a, P::M6b, P::M6c, P::M6d, P::M6e, P::M6f],
-                    Pixels(140.0),
-                );
-            })
-            .class("zoo-section-row");
-
-            section(cx, "XY Pads");
-            HStack::new(cx, |cx| {
-                param_xy_pad(
-                    cx,
-                    lens.clone(),
-                    P::KMix,
-                    P::KGain,
-                    "small",
-                    Pixels(80.0),
-                    Pixels(80.0),
-                );
-                param_xy_pad(
-                    cx,
-                    lens.clone(),
-                    P::KFreq,
-                    P::KQ,
-                    "med",
-                    Pixels(130.0),
-                    Pixels(130.0),
-                );
-                param_xy_pad(
-                    cx,
-                    lens.clone(),
-                    P::KPan,
-                    P::KPhase,
-                    "big",
-                    Pixels(200.0),
-                    Pixels(200.0),
-                );
-            })
-            .class("zoo-section-row");
+            .class("zoo-pair-row");
 
             // Native vizia widgets (self-contained state).
             section(cx, "Native Widgets");
