@@ -4,7 +4,7 @@ Notable changes per release.
 
 ## 0.62.0
 
-- **AU v3 app mode is the plugin's standalone host.** When a plugin exposes a standalone bin, the macOS AU v3 containing app is now the standalone host with the appex embedded, so launching `{name}.app` plays the plugin and registers the AU v3 from one bundle.
+- **AU v3 and standalone are one macOS app.** A plugin with a standalone bin ships a single `{name}.app` that is both the AU v3 container and the playable standalone host; the separate Standalone format collapses into it and the installer choice reads "AU3 + Standalone". Plugins without a standalone bin still ship the appex, in an informational stub app.
 - **Fixed macOS standalone resize leaving a white margin around the editor;** non-resizable editor windows are now pinned so they can't be zoomed open.
 - **`package --suite <name>` matches a suite by bundle id or display name** and errors on an unknown name instead of silently skipping the suite.
 
