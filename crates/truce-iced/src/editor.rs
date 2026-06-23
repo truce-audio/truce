@@ -1003,7 +1003,17 @@ impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBase
                     }
                     baseview::EventStatus::Captured
                 }
-                _ => baseview::EventStatus::Ignored,
+                baseview::Event::Keyboard(kb) => {
+                    // Feed native keys into iced's event queue; authors then
+                    // use `iced::keyboard::on_key_press` subscriptions. Keys
+                    // only arrive when the host grants the editor window OS
+                    // focus, which varies by DAW.
+                    runtime
+                        .pending_events
+                        .push(Event::Keyboard(crate::keyboard::to_iced_event(&kb)));
+                    baseview::EventStatus::Captured
+                }
+                baseview::Event::Window(_) => baseview::EventStatus::Ignored,
             }
         }));
         match result {

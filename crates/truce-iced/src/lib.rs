@@ -30,6 +30,8 @@ pub mod auto_layout;
 #[cfg(not(target_os = "ios"))]
 pub mod editor;
 pub mod font;
+#[cfg(not(target_os = "ios"))]
+mod keyboard;
 pub mod param_cache;
 pub mod param_message;
 #[cfg(not(target_os = "ios"))]
