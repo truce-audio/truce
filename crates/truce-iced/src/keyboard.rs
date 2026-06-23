@@ -1,12 +1,13 @@
 //! baseview (`keyboard_types`) -> iced keyboard-event translation.
 //!
 //! baseview delivers `Event::Keyboard` carrying `keyboard_types` data
-//! whenever the window has OS focus; iced's own event system then routes it
-//! to the author's `keyboard::on_key_press` / `on_key_release`
-//! subscriptions. Both `keyboard_types` and iced derive their key tables
-//! from the W3C UI Events spec, so the physical `Code` and logical `Named`
-//! mappings are name-for-name (a macro over the shared variants); keys iced
-//! does not model fall back to `Unidentified`.
+//! whenever the window has OS focus; the translated event is pushed onto
+//! the `UserInterface`'s event queue, so iced widgets (a focused
+//! `text_input`, or a custom `Widget` matching `Event::Keyboard`) receive
+//! it. Both `keyboard_types` and iced derive their key tables from the W3C
+//! UI Events spec, so the physical `Code` and logical `Named` mappings are
+//! name-for-name (a macro over the shared variants); keys iced does not
+//! model fall back to `Unidentified`.
 
 use iced::keyboard::key::{Code, Named, NativeCode, Physical};
 use iced::keyboard::{Key, Location, Modifiers};
@@ -256,5 +257,50 @@ mod tests {
             to_iced_event(&e),
             iced::keyboard::Event::KeyReleased { .. }
         ));
+    }
+
+    // End-to-end check of the subscription pump's mechanism (the same
+    // `Runtime` track / broadcast / drain the editor frame loop runs): a
+    // `keyboard::listen` subscription must yield a message when a key event
+    // is broadcast. Validates the pump without the GPU frame loop.
+    #[test]
+    fn subscription_pump_delivers_keyboard_events() {
+        use iced_runtime::futures::{Runtime, subscription};
+        use std::time::{Duration, Instant};
+
+        let executor = iced::futures::executor::ThreadPool::builder()
+            .pool_size(1)
+            .create()
+            .expect("executor");
+        let (tx, mut rx) = iced::futures::channel::mpsc::unbounded::<u32>();
+        let mut runtime = Runtime::new(executor, tx);
+
+        // Any keyboard event -> message 7.
+        let sub = iced::keyboard::listen().map(|_event| 7u32);
+        runtime.track(subscription::into_recipes(sub));
+
+        let key = to_iced_event(&ev(
+            KeyState::Down,
+            keyboard_types::Key::Character("a".into()),
+            keyboard_types::Code::KeyA,
+        ));
+        runtime.broadcast(subscription::Event::Interaction {
+            window: iced::window::Id::unique(),
+            event: iced::Event::Keyboard(key),
+            status: iced::event::Status::Ignored,
+        });
+
+        // The recipe stream runs on the worker thread; poll briefly.
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let got = loop {
+            if let Ok(m) = rx.try_recv() {
+                break Some(m);
+            }
+            if Instant::now() >= deadline {
+                break None;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        assert_eq!(got, Some(7));
     }
 }

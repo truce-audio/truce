@@ -69,6 +69,13 @@ pub trait IcedPlugin<P: Params>: Sized + 'static {
         Task::none()
     }
 
+    /// Event subscriptions (e.g. `iced::keyboard::listen()`,
+    /// `iced::event::listen_with`). truce-iced drives the recipes each
+    /// frame and routes their messages back through `update`. Default: none.
+    fn subscription(&self) -> iced::Subscription<Message<Self::Message>> {
+        iced::Subscription::none()
+    }
+
     /// Build the view.
     fn view<'a>(&'a self, params: &'a ParamCache<P>) -> iced::Element<'a, Message<Self::Message>>;
 
@@ -425,7 +432,23 @@ struct IcedRuntime<P: Params, M: IcedPlugin<P>> {
     /// against a dead device (a frozen / black surface). Shared into
     /// `set_device_lost_callback`, which fires off-thread.
     device_lost: Arc<std::sync::atomic::AtomicBool>,
+    /// Subscription runtime: drives `IcedPlugin::subscription` recipes
+    /// (keyboard, event listeners). A 1-thread pool polls the recipe
+    /// streams; their messages arrive on `sub_rx` and are drained each
+    /// frame. `Send` (`ThreadPool`), so `IcedRuntime` stays `Send`.
+    sub_runtime: SubRuntime<Message<M::Message>>,
+    sub_rx: iced::futures::channel::mpsc::UnboundedReceiver<Message<M::Message>>,
+    /// Stable window id stamped on broadcast events (single-window editor).
+    window_id: iced::window::Id,
 }
+
+/// The iced subscription runtime, parameterised by the editor's message
+/// type: a thread-pool executor plus the channel its recipes publish to.
+type SubRuntime<Msg> = iced_runtime::futures::Runtime<
+    iced::futures::executor::ThreadPool,
+    iced::futures::channel::mpsc::UnboundedSender<Msg>,
+    Msg,
+>;
 
 /// Holds the full wgpu + iced rendering pipeline.
 ///
@@ -684,7 +707,7 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
         );
 
         let pending_events = std::mem::take(&mut self.pending_events);
-        let (ui_state, _statuses) = user_interface.update(
+        let (ui_state, statuses) = user_interface.update(
             &pending_events,
             cursor,
             &mut render.renderer,
@@ -706,6 +729,26 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
         user_interface.draw(&mut render.renderer, &render.theme, &style, cursor);
 
         render.ui_cache = Some(user_interface.into_cache());
+
+        // Subscription pump: keep `IcedPlugin::subscription` recipes tracked
+        // and broadcast this frame's events to them, so `keyboard::listen` /
+        // `event::listen_with` fire. The worker thread polls the streams, so
+        // their messages may land a frame later; drain whatever is ready and
+        // fold it in with the widget messages.
+        let recipes =
+            iced_runtime::futures::subscription::into_recipes(render.program.plugin.subscription());
+        self.sub_runtime.track(recipes);
+        for (event, status) in pending_events.iter().zip(&statuses) {
+            self.sub_runtime
+                .broadcast(iced_runtime::futures::subscription::Event::Interaction {
+                    window: self.window_id,
+                    event: event.clone(),
+                    status: *status,
+                });
+        }
+        while let Ok(message) = self.sub_rx.try_recv() {
+            messages.push(message);
+        }
 
         // Now we can mutate the program again - drain any messages the
         // event handlers produced.
@@ -1004,10 +1047,10 @@ impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBase
                     baseview::EventStatus::Captured
                 }
                 baseview::Event::Keyboard(kb) => {
-                    // Feed native keys into iced's event queue; authors then
-                    // use `iced::keyboard::on_key_press` subscriptions. Keys
-                    // only arrive when the host grants the editor window OS
-                    // focus, which varies by DAW.
+                    // Feed native keys into the `UserInterface` event queue;
+                    // iced widgets (text_input, a custom key-capture widget)
+                    // then receive them. Keys only arrive when the host grants
+                    // the editor window OS focus, which varies by DAW.
                     runtime
                         .pending_events
                         .push(Event::Keyboard(crate::keyboard::to_iced_event(&kb)));
@@ -1063,6 +1106,14 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
             meter_ids: self.meter_ids.clone(),
         };
 
+        // One worker thread polls the subscription recipe streams; idle
+        // when no subscription is active.
+        let sub_executor = iced::futures::executor::ThreadPool::builder()
+            .pool_size(1)
+            .create()
+            .expect("spawn subscription executor thread");
+        let (sub_tx, sub_rx) = iced::futures::channel::mpsc::unbounded();
+
         self.runtime = Some(IcedRuntime {
             render: None,
             cursor_position: Point::ORIGIN,
@@ -1075,6 +1126,9 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
             last_applied_scale: 0.0,
             font: self.font,
             device_lost: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            sub_runtime: iced_runtime::futures::Runtime::new(sub_executor, sub_tx),
+            sub_rx,
+            window_id: iced::window::Id::unique(),
         });
 
         let parent_wrapper = crate::platform::ParentWindow(parent);

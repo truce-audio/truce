@@ -2,6 +2,10 @@
 
 Notable changes per release.
 
+## 0.63.0
+
+- **iced editors receive keyboard input.** `truce-iced` now forwards native key events into the iced widget tree (a focused `text_input` or a custom key-capture `Widget` reading `physical_key` / logical key), and `IcedPlugin::subscription()` (e.g. `iced::keyboard::listen`, `iced::event::listen_with`) now fires via an event pump. Keys arrive when the host grants the editor window focus. ([#134](https://github.com/truce-audio/truce/discussions/134))
+
 ## 0.62.0
 
 - **AU v3 and standalone are one macOS app.** A plugin with a standalone bin ships a single `{name}.app` that is both the AU v3 container and the playable standalone host; the separate Standalone format collapses into it and the installer choice reads "AU3 + Standalone". Plugins without a standalone bin still ship the appex, in an informational stub app.
