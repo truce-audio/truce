@@ -21,6 +21,65 @@ use crate::{
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+/// Run `task` over `items` on a bounded pool of OS threads, collecting
+/// failures as `<label>: <error>` strings. Errors do NOT short-circuit -
+/// every item runs so one failure can't strand the rest half-built. The
+/// per-plugin and per-suite pipelines are independent (each owns its
+/// staging dir and dist filename) and dominated by notarization's network
+/// wait, so this turns `sum(waits)` into roughly `max(wait)`.
+///
+/// `task`'s `Res` is consumed inside the worker (formatted to a `String`),
+/// so the error type never has to cross the thread boundary.
+fn parallel_for<T, L, F>(items: &[T], workers: usize, label: L, task: F) -> Res
+where
+    T: Sync,
+    L: Fn(&T) -> String + Sync,
+    F: Fn(&T) -> Res + Sync,
+{
+    if items.is_empty() {
+        return Ok(());
+    }
+    let workers = workers.clamp(1, items.len());
+    let next = AtomicUsize::new(0);
+    let errors: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    std::thread::scope(|s| {
+        for _ in 0..workers {
+            s.spawn(|| {
+                loop {
+                    let i = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(item) = items.get(i) else { break };
+                    if let Err(e) = task(item) {
+                        errors.lock().unwrap().push(format!("{}: {e}", label(item)));
+                    }
+                }
+            });
+        }
+    });
+    let errors = errors.into_inner().unwrap();
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "{} packaging task(s) failed:\n  {}",
+            errors.len(),
+            errors.join("\n  ")
+        )
+        .into())
+    }
+}
+
+/// Bounded worker count for the packaging pools: enough to overlap the
+/// notarization waits without hammering Apple's notary / timestamp
+/// services or contending on the login keychain during concurrent
+/// `codesign`.
+fn packaging_workers() -> usize {
+    std::thread::available_parallelism()
+        .map_or(4, std::num::NonZeroUsize::get)
+        .min(8)
+}
 
 pub(crate) fn cmd_package_macos(args: &[String], selection: &super::SuiteSelection) -> Res {
     let config = load_config()?;
@@ -137,26 +196,41 @@ pub(crate) fn cmd_package_macos(args: &[String], selection: &super::SuiteSelecti
         universal,
     };
     let need_components_only = !selection.want_per_plugin() && !suites.is_empty();
+    let workers = packaging_workers();
 
-    for p in &plugins {
-        if selection.want_per_plugin() {
-            package_one_plugin(&root, p, &dist_dir, &opts)?;
-        } else if need_components_only {
-            // Suite wrapping needs per-plugin components on disk.
-            // Build them without running productbuild + notarize for
-            // the per-plugin output.
-            stage_components_only(&root, p, &opts)?;
+    // Per-plugin pipelines run concurrently; output from different plugins
+    // interleaves. The pool joins before suite wrapping, which needs every
+    // member's component .pkgs staged first.
+    if selection.want_per_plugin() {
+        parallel_for(
+            &plugins,
+            workers,
+            |p| p.name.clone(),
+            |p| package_one_plugin(&root, p, &dist_dir, &opts),
+        )?;
+    } else {
+        if need_components_only {
+            // Suite wrapping needs per-plugin components on disk. Build them
+            // without running productbuild + notarize for the per-plugin
+            // output.
+            parallel_for(
+                &plugins,
+                workers,
+                |p| p.name.clone(),
+                |p| stage_components_only(&root, p, &opts),
+            )?;
         }
-    }
-    if !selection.want_per_plugin() {
         eprintln!("Skipping per-plugin .pkg installers (--no-per-plugin).");
     }
 
     if !suites.is_empty() {
         eprintln!("\nSuite installers");
-        for suite in &suites {
-            package_one_suite(&root, suite, &dist_dir, &opts)?;
-        }
+        parallel_for(
+            &suites,
+            workers,
+            |s| s.def.name.clone(),
+            |s| package_one_suite(&root, s, &dist_dir, &opts),
+        )?;
     }
 
     eprintln!("\nDone. Installers in {}", dist_dir.display());
