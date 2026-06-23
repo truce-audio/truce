@@ -253,8 +253,52 @@ fn zoo_ui(ui: &mut egui::Ui, state: &PluginContext<ZooParams>) {
                         param_xy_pad(ui, state, P::KFreq, P::KQ, "med", 130.0, 130.0);
                         param_xy_pad(ui, state, P::KPan, P::KPhase, "big", 200.0, 200.0);
                     });
+
+                    section(ui, "Keyboard");
+                    keyboard_section(ui);
                 });
         });
+}
+
+/// Keyboard demo: a text box (keys reach the focused widget) over a label
+/// that mirrors the last key press from anywhere. `zoo_ui` is stateless, so
+/// the box contents and last-key label live in egui's `Context` memory.
+fn keyboard_section(ui: &mut egui::Ui) {
+    let box_id = egui::Id::new("zoo_keyboard_textbox");
+    let key_id = egui::Id::new("zoo_keyboard_last");
+
+    // Immediate-mode: keys are this frame's input events. Take the most
+    // recent press (any focus) and remember it.
+    let pressed = ui.input(|i| {
+        i.events.iter().rev().find_map(|e| match e {
+            egui::Event::Key {
+                key,
+                pressed: true,
+                physical_key,
+                ..
+            } => Some(match physical_key {
+                Some(phys) => format!("{key:?}  phys={phys:?}"),
+                None => format!("{key:?}"),
+            }),
+            _ => None,
+        })
+    });
+    if let Some(label) = pressed {
+        ui.data_mut(|d| d.insert_temp(key_id, label));
+    }
+
+    let mut buf = ui.data_mut(|d| d.get_temp::<String>(box_id).unwrap_or_default());
+    ui.add(
+        egui::TextEdit::singleline(&mut buf)
+            .hint_text("type here...")
+            .desired_width(360.0),
+    );
+    ui.data_mut(|d| d.insert_temp(box_id, buf));
+
+    let last = ui
+        .data_mut(|d| d.get_temp::<String>(key_id))
+        .unwrap_or_else(|| "(press a key)".to_string());
+    ui.label(format!("last key: {last}"));
 }
 
 fn section(ui: &mut egui::Ui, title: &str) {

@@ -9,8 +9,8 @@
 
 use std::sync::Arc;
 
-use iced::widget::{Column, Row, container, text};
-use iced::{Element, Font, Length, alignment};
+use iced::widget::{Column, Row, container, text, text_input};
+use iced::{Element, Font, Length, Task, alignment};
 
 const JETBRAINS_MONO: Font = Font {
     family: iced::font::Family::Name("JetBrains Mono"),
@@ -23,8 +23,8 @@ const HEADER_TEXT: iced::Color = iced::Color::from_rgb(0.75, 0.75, 0.80);
 
 use truce::prelude::*;
 use truce_iced::{
-    IcedEditor, IcedPlugin, IntoElement, Message, ParamCache, knob, meter, param_dropdown,
-    param_slider, param_toggle, xy_pad,
+    IcedEditor, IcedPlugin, IntoElement, Message, ParamCache, PluginContext, knob, meter,
+    param_dropdown, param_slider, param_toggle, xy_pad,
 };
 
 use ZooParamsParamId as P;
@@ -112,16 +112,88 @@ pub struct ZooParams {
 
 // --- Custom iced UI ---
 
-pub struct ZooUi;
+#[derive(Default)]
+pub struct ZooUi {
+    /// Contents of the keyboard-section text box (widget-path keyboard).
+    textbox: String,
+    /// Label for the most recent key press (subscription-path keyboard).
+    last_key: String,
+}
 
 #[derive(Debug, Clone)]
-pub enum ZooMsg {}
+pub enum ZooMsg {
+    /// Text box edited (from the `text_input` widget).
+    TextChanged(String),
+    /// A key was pressed anywhere in the editor (from the subscription).
+    KeyPressed(String),
+}
+
+/// Human-readable label for a key press: logical key (or typed text) plus
+/// the layout-independent physical code.
+fn key_label(
+    key: &iced::keyboard::Key,
+    physical: iced::keyboard::key::Physical,
+    text: Option<&str>,
+) -> String {
+    use iced::keyboard::Key;
+    let logical = match key {
+        Key::Character(c) => format!("'{c}'"),
+        Key::Named(named) => format!("{named:?}"),
+        Key::Unidentified => "Unidentified".to_string(),
+    };
+    let phys = match physical {
+        iced::keyboard::key::Physical::Code(code) => format!("{code:?}"),
+        iced::keyboard::key::Physical::Unidentified(_) => "?".to_string(),
+    };
+    match text {
+        Some(t) if !t.trim().is_empty() => format!("{logical}  text={t:?}  phys={phys}"),
+        _ => format!("{logical}  phys={phys}"),
+    }
+}
 
 impl IcedPlugin<ZooParams> for ZooUi {
     type Message = ZooMsg;
 
     fn new(_params: Arc<ZooParams>) -> Self {
-        Self
+        Self {
+            textbox: String::new(),
+            last_key: String::from("(press a key)"),
+        }
+    }
+
+    fn update(
+        &mut self,
+        message: Message<ZooMsg>,
+        _params: &ParamCache<ZooParams>,
+        _ctx: &PluginContext<ZooParams>,
+    ) -> Task<Message<ZooMsg>> {
+        if let Message::Plugin(msg) = message {
+            match msg {
+                ZooMsg::TextChanged(s) => self.textbox = s,
+                ZooMsg::KeyPressed(label) => self.last_key = label,
+            }
+        }
+        Task::none()
+    }
+
+    fn subscription(&self) -> iced::Subscription<Message<ZooMsg>> {
+        // Mirror every key press, regardless of which widget has focus, by
+        // listening to the raw event stream (the truce-iced subscription
+        // pump drives this). Returning `None` skips releases / modifier
+        // changes so only presses update the label.
+        iced::event::listen_with(|event, _status, _window| match event {
+            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                key,
+                physical_key,
+                text,
+                ..
+            }) => Some(Message::Plugin(ZooMsg::KeyPressed(key_label(
+                &key,
+                physical_key,
+                text.as_deref(),
+            )))),
+            _ => None,
+        })
     }
 
     fn view<'a>(&'a self, params: &'a ParamCache<ZooParams>) -> Element<'a, Message<ZooMsg>> {
@@ -222,6 +294,27 @@ impl IcedPlugin<ZooParams> for ZooUi {
             .align_y(alignment::Vertical::Top)
             .into();
 
+        // Keyboard section: a text box (keys reach the focused widget) over
+        // a label that mirrors the last key press from anywhere (the
+        // subscription path).
+        let keyboard_row: Element<'a, Message<ZooMsg>> = Column::new()
+            .push(
+                text_input("type here...", &self.textbox)
+                    .on_input(|s| Message::Plugin(ZooMsg::TextChanged(s)))
+                    .font(JETBRAINS_MONO)
+                    .size(13)
+                    .padding(6)
+                    .width(Length::Fixed(360.0)),
+            )
+            .push(
+                text(format!("last key: {}", self.last_key))
+                    .size(12)
+                    .font(JETBRAINS_MONO)
+                    .color(HEADER_TEXT),
+            )
+            .spacing(8.0)
+            .into();
+
         let body: Element<'a, Message<ZooMsg>> = Column::new()
             .push(section_label("Knobs"))
             .push(knobs_row)
@@ -235,6 +328,8 @@ impl IcedPlugin<ZooParams> for ZooUi {
             .push(meters_row)
             .push(section_label("XY Pads"))
             .push(xy_row)
+            .push(section_label("Keyboard"))
+            .push(keyboard_row)
             .spacing(gap)
             .padding(pad)
             .into();
