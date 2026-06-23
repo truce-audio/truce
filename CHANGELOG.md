@@ -5,6 +5,7 @@ Notable changes per release.
 ## 0.63.0
 
 - **iced editors receive keyboard input.** `truce-iced` now forwards native key events into the iced widget tree (a focused `text_input` or a custom key-capture `Widget` reading `physical_key` / logical key), and `IcedPlugin::subscription()` (e.g. `iced::keyboard::listen`, `iced::event::listen_with`) now fires via an event pump. Keys arrive when the host grants the editor window focus. ([#134](https://github.com/truce-audio/truce/discussions/134))
+- **`gui-zoo` examples (iced + egui) demo native framework widgets** - button, checkbox, radio, slider, progress bar, image, etc. - plus a keyboard section, alongside the truce param widgets.
 
 ## 0.62.0
 
