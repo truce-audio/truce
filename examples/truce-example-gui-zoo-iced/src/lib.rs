@@ -358,14 +358,20 @@ impl IcedPlugin<ZooParams> for ZooUi {
             .push(knobs_row)
             .push(section_label("Sliders"))
             .push(sliders_row)
-            .push(section_label("Toggles"))
-            .push(toggles_row)
-            .push(section_label("Dropdown"))
-            .push(dropdown_row)
-            .push(section_label("Meters"))
-            .push(meters_row)
-            .push(section_label("XY Pads"))
-            .push(xy_row)
+            // Pair short sections side by side so the native-widget section
+            // below lands in the default (unscrolled) view.
+            .push(
+                Row::new()
+                    .push(labeled("Toggles", toggles_row))
+                    .push(labeled("Dropdown", dropdown_row))
+                    .spacing(40.0),
+            )
+            .push(
+                Row::new()
+                    .push(labeled("Meters", meters_row))
+                    .push(labeled("XY Pads", xy_row))
+                    .spacing(40.0),
+            )
             .push(section_label("iced Widgets"))
             .push(self.widgets_section())
             .push(section_label("Keyboard"))
@@ -511,6 +517,19 @@ fn section_label(label: &str) -> Element<'_, Message<ZooMsg>> {
         .into()
 }
 
+/// A titled sub-section (label over content), for placing two sections in
+/// one row.
+fn labeled<'a>(
+    title: &'a str,
+    content: Element<'a, Message<ZooMsg>>,
+) -> Element<'a, Message<ZooMsg>> {
+    Column::new()
+        .push(section_label(title))
+        .push(content)
+        .spacing(10.0)
+        .into()
+}
+
 // --- Plugin ---
 
 pub struct ZooIced {
@@ -595,6 +614,23 @@ mod tests {
     #[test]
     fn info_is_valid() {
         truce_test::assert_valid_info::<Plugin>();
+    }
+
+    #[test]
+    fn carrot_decodes_to_an_rgba_handle() {
+        // `decode_carrot` panics if the embedded gif is missing/corrupt.
+        let handle = decode_carrot();
+        let image::Handle::Rgba {
+            width,
+            height,
+            pixels,
+            ..
+        } = handle
+        else {
+            panic!("expected an RGBA handle");
+        };
+        assert_eq!((width, height), (16, 16));
+        assert_eq!(pixels.len(), 16 * 16 * 4);
     }
 
     #[test]

@@ -218,40 +218,54 @@ fn zoo_ui(ui: &mut egui::Ui, state: &PluginContext<ZooParams>) {
                         });
                     });
 
-                    section(ui, "Toggles");
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing = egui::vec2(20.0, 0.0);
-                        param_toggle(ui, state, P::TOn, "On");
-                        param_toggle(ui, state, P::TOff, "Off");
+                    // Pair short sections side by side so the native-widget
+                    // section below lands in the default (unscrolled) view.
+                    ui.horizontal_top(|ui| {
+                        ui.vertical(|ui| {
+                            section(ui, "Toggles");
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing = egui::vec2(20.0, 0.0);
+                                param_toggle(ui, state, P::TOn, "On");
+                                param_toggle(ui, state, P::TOff, "Off");
+                            });
+                        });
+                        ui.add_space(30.0);
+                        ui.vertical(|ui| {
+                            section(ui, "Dropdowns");
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing = egui::vec2(20.0, 0.0);
+                                // `cols` controls how the popup grid is shaped.
+                                param_dropdown(ui, state, P::Mode, "Mode", 1);
+                                param_dropdown(ui, state, P::ModeWide, "Mode Wide", 2);
+                            });
+                        });
                     });
 
-                    section(ui, "Dropdowns");
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing = egui::vec2(20.0, 0.0);
-                        // `cols` controls how the popup grid is shaped.
-                        param_dropdown(ui, state, P::Mode, "Mode", 1);
-                        param_dropdown(ui, state, P::ModeWide, "Mode Wide", 2);
-                    });
-
-                    section(ui, "Meters");
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing = egui::vec2(20.0, 0.0);
-                        level_meter(ui, state, &[P::MIn], 140.0);
-                        level_meter(ui, state, &[P::ML, P::MR], 140.0);
-                        level_meter(
-                            ui,
-                            state,
-                            &[P::M6a, P::M6b, P::M6c, P::M6d, P::M6e, P::M6f],
-                            140.0,
-                        );
-                    });
-
-                    section(ui, "XY Pads");
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing = egui::vec2(20.0, 0.0);
-                        param_xy_pad(ui, state, P::KMix, P::KGain, "small", 80.0, 80.0);
-                        param_xy_pad(ui, state, P::KFreq, P::KQ, "med", 130.0, 130.0);
-                        param_xy_pad(ui, state, P::KPan, P::KPhase, "big", 200.0, 200.0);
+                    ui.horizontal_top(|ui| {
+                        ui.vertical(|ui| {
+                            section(ui, "Meters");
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing = egui::vec2(20.0, 0.0);
+                                level_meter(ui, state, &[P::MIn], 140.0);
+                                level_meter(ui, state, &[P::ML, P::MR], 140.0);
+                                level_meter(
+                                    ui,
+                                    state,
+                                    &[P::M6a, P::M6b, P::M6c, P::M6d, P::M6e, P::M6f],
+                                    140.0,
+                                );
+                            });
+                        });
+                        ui.add_space(30.0);
+                        ui.vertical(|ui| {
+                            section(ui, "XY Pads");
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing = egui::vec2(20.0, 0.0);
+                                param_xy_pad(ui, state, P::KMix, P::KGain, "small", 80.0, 80.0);
+                                param_xy_pad(ui, state, P::KFreq, P::KQ, "med", 130.0, 130.0);
+                                param_xy_pad(ui, state, P::KPan, P::KPhase, "big", 200.0, 200.0);
+                            });
+                        });
                     });
 
                     section(ui, "egui Widgets");
@@ -306,30 +320,58 @@ fn egui_widgets_section(ui: &mut egui::Ui) {
     let mut vsval = ui.data_mut(|d| d.get_temp::<f32>(vslider_id).unwrap_or(0.6));
     let mut drag = ui.data_mut(|d| d.get_temp::<f32>(drag_id).unwrap_or(1.0));
 
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing = egui::vec2(16.0, 0.0);
-        if ui.button(format!("clicked {counter}x")).clicked() {
-            counter += 1;
-        }
-        ui.checkbox(&mut checked, "checkbox");
-        ui.radio_value(&mut radio, 0, "Alpha");
-        ui.radio_value(&mut radio, 1, "Beta");
-        ui.radio_value(&mut radio, 2, "Gamma");
-    });
+    // A label | widget grid keeps the mixed widget kinds aligned. (egui's
+    // `DragValue` is a drag-to-edit number box - labelling it avoids the
+    // "mystery text field" confusion.)
+    let carrot = carrot_texture(ui.ctx());
+    egui::Grid::new("zoo_egui_widgets")
+        .num_columns(2)
+        .spacing([16.0, 8.0])
+        .show(ui, |ui| {
+            ui.label("button");
+            if ui.button(format!("clicked {counter}x")).clicked() {
+                counter += 1;
+            }
+            ui.end_row();
 
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing = egui::vec2(16.0, 0.0);
-        ui.add(egui::DragValue::new(&mut drag).speed(0.05));
-        let carrot = carrot_texture(ui.ctx());
-        ui.add(egui::Image::from_texture(&carrot).fit_to_exact_size(egui::vec2(48.0, 48.0)));
-    });
+            ui.label("checkbox");
+            ui.checkbox(&mut checked, "");
+            ui.end_row();
 
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing = egui::vec2(20.0, 0.0);
-        ui.add(egui::Slider::new(&mut vsval, 0.0..=1.0).vertical());
-        ui.vertical(|ui| {
-            ui.add(egui::Slider::new(&mut sval, 0.0..=1.0).text("slider"));
+            ui.label("radio");
+            ui.horizontal(|ui| {
+                ui.radio_value(&mut radio, 0, "Alpha");
+                ui.radio_value(&mut radio, 1, "Beta");
+                ui.radio_value(&mut radio, 2, "Gamma");
+            });
+            ui.end_row();
+
+            ui.label("drag value");
+            ui.add(egui::DragValue::new(&mut drag).speed(0.05));
+            ui.end_row();
+
+            ui.label("slider");
+            ui.add(egui::Slider::new(&mut sval, 0.0..=1.0));
+            ui.end_row();
+
+            ui.label("progress");
             ui.add(egui::ProgressBar::new(sval).show_percentage());
+            ui.end_row();
+        });
+
+    // The tall widgets (vertical slider + image) sit side by side under the
+    // grid so they don't each stretch a grid row.
+    ui.add_space(8.0);
+    ui.horizontal_top(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(28.0, 0.0);
+        ui.vertical(|ui| {
+            ui.label("v-slider");
+            ui.spacing_mut().slider_width = 60.0;
+            ui.add(egui::Slider::new(&mut vsval, 0.0..=1.0).vertical());
+        });
+        ui.vertical(|ui| {
+            ui.label("image");
+            ui.add(egui::Image::from_texture(&carrot).fit_to_exact_size(egui::vec2(48.0, 48.0)));
         });
     });
     ui.separator();
