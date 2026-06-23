@@ -803,6 +803,7 @@ pub(crate) fn generate_distribution_xml(
     version: &str,
     resources: Option<&MacosPackagingConfig>,
     scope: PkgScope,
+    au3_is_standalone_host: bool,
 ) -> String {
     let mut choices_outline = String::new();
     let mut choices = String::new();
@@ -812,7 +813,15 @@ pub(crate) fn generate_distribution_xml(
         let id = fmt.pkg_id_suffix();
         let pkg_id = format!("{vendor_id}.{bundle_id}.{id}");
         let label = fmt.label();
-        let desc = fmt.choice_description();
+        // AU v3's app *is* the standalone host when the plugin ships a
+        // standalone bin (we drop the separate Standalone format then), so
+        // surface that the one app does both. `label` stays the format
+        // label for the component filename; only the choice text changes.
+        let (title, desc): (&str, &str) = if *fmt == PkgFormat::Au3 && au3_is_standalone_host {
+            ("AU3 + Standalone", "Audio Unit v3 (appex) + standalone app")
+        } else {
+            (label, fmt.choice_description())
+        };
         let component_file = format!("{plugin_name}-{label}.pkg");
 
         // Every format ships checked by default. Pro Tools users
@@ -864,7 +873,7 @@ pub(crate) fn generate_distribution_xml(
         let _ = write!(
             choices,
             r#"
-    <choice id="{id}" title="{label}" description="{desc}"{enabled_attr}>
+    <choice id="{id}" title="{title}" description="{desc}"{enabled_attr}>
         <pkg-ref id="{pkg_id}"{pkg_ref_auth}/>
 {extra_refs}    </choice>
 "#
