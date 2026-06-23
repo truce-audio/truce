@@ -739,6 +739,7 @@ public:
                     struct { int16_t channel; int16_t pitch; float velocity; int32 noteId; float tuning; } noteOff;
                     struct { int16_t channel; int16_t pitch; float pressure; int32 noteId; } polyPressure;
                     struct { int32 typeId; int32 noteId; double value; } noteExpressionValue; // forces 8-byte alignment
+                    struct { uint8_t controlNumber; int8_t channel; int8_t value; int8_t value2; } midiCCOut;
                     // kDataEvent - VST3 SDK `Event::DataEvent`. The
                     // `type` discriminant (0 = MIDI_SYSEX) tells us
                     // the byte stream's semantics; `bytes` is owned
@@ -771,7 +772,7 @@ public:
                         midiEvents[numMidi].note_id = 0;
                         numMidi++;
                         break;
-                    case 4: // kPolyPressureEvent
+                    case 3: // kPolyPressureEvent
                         midiEvents[numMidi].sample_offset = ev.sampleOffset;
                         midiEvents[numMidi].status = 0xA0 | (ev.polyPressure.channel & 0x0F);
                         midiEvents[numMidi].data1 = ev.polyPressure.pitch & 0x7F;
@@ -779,7 +780,7 @@ public:
                         midiEvents[numMidi].note_id = 0;
                         numMidi++;
                         break;
-                    case 6: // kNoteExpressionValueEvent
+                    case 4: // kNoteExpressionValueEvent
                         // Convert to CC-like event: status=0xF0 (custom),
                         // data1=typeId, data2=value*127
                         // typeId: 0=volume, 1=pan, 2=tuning, 3=vibrato, 4=expression, 5=brightness
@@ -790,11 +791,44 @@ public:
                         midiEvents[numMidi].note_id = (uint8_t)(ev.noteExpressionValue.noteId & 0xFF);
                         numMidi++;
                         break;
+                    case 65535: // kLegacyMIDICCOutEvent
+                        midiEvents[numMidi].sample_offset = ev.sampleOffset;
+                        midiEvents[numMidi].note_id = 0;
+                        switch (ev.midiCCOut.controlNumber) {
+                            case 128: // kCtrlAfterTouch: channel pressure
+                                midiEvents[numMidi].status = 0xD0 | (ev.midiCCOut.channel & 0x0F);
+                                midiEvents[numMidi].data1 = ev.midiCCOut.value & 0x7F;
+                                midiEvents[numMidi].data2 = 0;
+                                numMidi++;
+                                break;
+                            case 129: // kCtrlPitchBend
+                                midiEvents[numMidi].status = 0xE0 | (ev.midiCCOut.channel & 0x0F);
+                                midiEvents[numMidi].data1 = ev.midiCCOut.value & 0x7F;
+                                midiEvents[numMidi].data2 = ev.midiCCOut.value2 & 0x7F;
+                                numMidi++;
+                                break;
+                            case 130: // kCtrlProgramChange
+                                midiEvents[numMidi].status = 0xC0 | (ev.midiCCOut.channel & 0x0F);
+                                midiEvents[numMidi].data1 = ev.midiCCOut.value & 0x7F;
+                                midiEvents[numMidi].data2 = 0;
+                                numMidi++;
+                                break;
+                            default:
+                                if (ev.midiCCOut.controlNumber <= 127) {
+                                    midiEvents[numMidi].status = 0xB0 | (ev.midiCCOut.channel & 0x0F);
+                                    midiEvents[numMidi].data1 = ev.midiCCOut.controlNumber & 0x7F;
+                                    midiEvents[numMidi].data2 = ev.midiCCOut.value & 0x7F;
+                                    numMidi++;
+                                }
+                                break;
+                        }
+                        break;
                     case 2: // kDataEvent - SysEx and other variable-length blobs
                         // SDK: `ivstevents.h` enumerates Event types as
                         // kNoteOnEvent=0, kNoteOffEvent=1, kDataEvent=2,
                         // kPolyPressureEvent=3, kNoteExpression*=4..5,
-                        // kChordEvent=6, kScaleEvent=7, kLegacyMIDICCOut=8.
+                        // kChordEvent=6, kScaleEvent=7, and
+                        // kLegacyMIDICCOut=65535.
                         // The `kMidiSysEx` discriminant inside the union is
                         // separately 0 (per the SDK's `DataEvent::DataTypes`
                         // enum). Anything other than `kMidiSysEx` is
