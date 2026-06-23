@@ -405,6 +405,7 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
         // No-op for `f32` plugins.
         inst.scratch
             .finish_widening_f32(outputs, num_output_channels, len_u32(num_frames));
+        notify_process_param_changes(inst);
 
         // Refresh latency / tail caches so the host's main-thread
         // queries don't have to call into `inst.plugin`.
@@ -420,6 +421,26 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
                     std::ptr::write_bytes(ptr, 0, nf);
                 }
             }
+        }
+    }
+}
+
+fn notify_process_param_changes<P: PluginExport>(inst: &Vst2Instance<P>) {
+    if inst.aeffect_ptr.is_null() {
+        return;
+    }
+
+    for event in inst.output_events.iter() {
+        let EventBody::ParamChange { id, value } = event.body else {
+            continue;
+        };
+        let Some(info) = inst.param_infos.iter().find(|info| info.id == id) else {
+            continue;
+        };
+
+        let normalized = f32::from_f64(info.range.normalize(value));
+        unsafe {
+            truce_vst2_host_automate(inst.aeffect_ptr, id, normalized);
         }
     }
 }
