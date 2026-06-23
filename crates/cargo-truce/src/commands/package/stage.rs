@@ -960,15 +960,19 @@ pub(crate) fn generate_distribution_xml(
 /// bundle as its final step (after all postinstalls), which makes `pkd`
 /// drop any registration made earlier in the run. A `LaunchAgent` would run
 /// late enough but trips the macOS "Background Items Added" notification,
-/// which has no place in a plugin installer.
+/// which has no place in a plugin installer. A backgrounded child of the
+/// postinstall (`nohup ... &`) doesn't survive - the installer kills the
+/// sandbox process tree on teardown.
 ///
-/// So spawn a detached one-shot in the user's GUI session (via `launchctl
-/// asuser`, no plist - no notification). It waits until the app bundles
-/// stop changing (finalization done), then registers every AU v3 appex in
-/// `/Applications` and refreshes the AU cache. A `/tmp` lock makes exactly
-/// one of the AU v3 components schedule it; the rest no-op, and the
-/// postinstall returns immediately so the install never blocks. No console
-/// user (CI / SSH / login window) -> skip.
+/// So hand the one-shot to the user's `launchd` via `launchctl submit` (a
+/// transient job - no plist in a monitored folder, so no notification;
+/// launchd-owned, so it outlives the installer). The job waits until the
+/// app bundles stop changing (finalization done), then registers every AU
+/// v3 appex in `/Applications` and refreshes the AU cache. Each AU v3
+/// component re-submits, replacing any prior submission, so the last one
+/// runs after the whole install settles; the postinstall returns at once so
+/// the install never blocks. No console user (CI / SSH / login window) ->
+/// skip.
 #[cfg(target_os = "macos")]
 const AU3_REGISTER_POSTINSTALL: &str = r#"#!/bin/bash
 set -u
@@ -977,20 +981,16 @@ user=$(stat -f %Su /dev/console 2>/dev/null || true)
 if [ -z "${uid:-}" ] || [ "$user" = "root" ]; then
     exit 0
 fi
-# Atomic: exactly one AU v3 component wins the lock and schedules the sweep.
-LOCK="/tmp/.truce-au3-register.lock"
-if ! mkdir "$LOCK" 2>/dev/null; then
-    exit 0
-fi
 DIR="/Library/Application Support/Truce"
 SCRIPT="$DIR/au3-register.sh"
 mkdir -p "$DIR"
 cat > "$SCRIPT" <<'EOF'
 #!/bin/bash
-# Deferred AU v3 registration: runs once in the user's GUI session after the
-# installer finishes. Registration made during the install is wiped by the
-# installer's final bundle touch, so wait until the bundles stop changing,
-# then register every AU v3 appex.
+# Deferred AU v3 registration: launchd runs this once in the user's GUI
+# session. Registration made during the install is wiped by the installer's
+# final bundle touch, so wait until the bundles stop changing, then register
+# every AU v3 appex and refresh the AU cache.
+export PATH=/usr/bin:/bin:/usr/sbin:/sbin
 prev=""
 stable=0
 for i in $(seq 1 60); do
@@ -1012,15 +1012,14 @@ for ax in /Applications/*.app/Contents/PlugIns/AUExt.appex; do
     fi
 done
 killall -9 AudioComponentRegistrar 2>/dev/null || true
-rmdir /tmp/.truce-au3-register.lock 2>/dev/null || true
+launchctl remove com.truce.au3-register 2>/dev/null || true
 exit 0
 EOF
 chmod 755 "$SCRIPT"
-# Detached one-shot in the user's GUI session - not a LaunchAgent, so no
-# plist and no Background-Items notification. `&` lets the postinstall
-# return at once; the job outlives the installer via the user launchd
-# domain and registers after finalization.
-launchctl asuser "$uid" sudo -u "$user" /usr/bin/nohup /bin/bash "$SCRIPT" >/dev/null 2>&1 &
+# Submit to the user's launchd. `remove` first so a re-submit replaces the
+# prior one; the last component's job is the one that runs to completion.
+launchctl asuser "$uid" sudo -u "$user" launchctl remove com.truce.au3-register 2>/dev/null || true
+launchctl asuser "$uid" sudo -u "$user" launchctl submit -l com.truce.au3-register -- /bin/bash "$SCRIPT"
 exit 0
 "#;
 
