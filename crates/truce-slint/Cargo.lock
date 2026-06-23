@@ -5163,6 +5163,7 @@ version = "0.63.0"
 dependencies = [
  "baseview-truce",
  "bytemuck",
+ "keyboard-types",
  "log",
  "objc",
  "objc2 0.6.4",

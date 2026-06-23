@@ -1,4 +1,5 @@
 import { Knob, Meter, ParamSlider, Toggle, Dropdown, XYPad } from "@truce";
+import { Button, CheckBox, Slider, SpinBox, ProgressIndicator, LineEdit, Palette } from "std-widgets.slint";
 import "JetBrainsMono-Regular.ttf";
 
 export component ZooUi inherits Window {
@@ -85,6 +86,20 @@ export component ZooUi inherits Window {
     callback xy-big-changed-x(float);
     callback xy-big-changed-y(float);
 
+    // --- Self-contained demo state (native widgets + keyboard) ---
+    property <int> click-count: 0;
+    property <bool> w-check: true;
+    property <float> w-slider: 0.4;
+    property <int> w-spin: 3;
+    property <string> last-key: "(press a key)";
+
+    // The std-widgets default to Fluent's light palette (dark text on light
+    // controls), which is unreadable on the dark zoo background. Force the
+    // dark scheme so they match.
+    init => {
+        Palette.color-scheme = ColorScheme.dark;
+    }
+
     title: "GUI ZOO (slint)";
     preferred-width: 700px;
     preferred-height: 900px;
@@ -139,63 +154,94 @@ export component ZooUi inherits Window {
                 ParamSlider { width: 220px; label: "Wide (dB)"; value <=> root.s-wide; value-text: root.s-wide-text; changed(v) => { root.s-wide-changed(v); } }
             }
 
-            Text { text: "Toggles"; font-size: 11px; color: #bfbfc8; }
+            // Pair short sections side by side so the native-widget and
+            // keyboard sections below fit the fixed-height window (slint
+            // clips rather than scrolls).
             HorizontalLayout {
-                spacing: 20px;
-                Toggle { label: "On"; checked <=> root.t-on; toggled(v) => { root.t-on-toggled(v); } }
-                Toggle { label: "Off"; checked <=> root.t-off; toggled(v) => { root.t-off-toggled(v); } }
-            }
-
-            Text { text: "Dropdown"; font-size: 11px; color: #bfbfc8; }
-            HorizontalLayout {
-                spacing: 20px;
-                Dropdown {
-                    label: "Mode";
-                    options: root.mode-options;
-                    index <=> root.mode-index;
-                    changed(v) => { root.mode-changed(v); }
+                spacing: 40px;
+                alignment: start;
+                VerticalLayout {
+                    spacing: 10px;
+                    Text { text: "Toggles"; font-size: 11px; color: #bfbfc8; }
+                    HorizontalLayout {
+                        spacing: 20px;
+                        Toggle { label: "On"; checked <=> root.t-on; toggled(v) => { root.t-on-toggled(v); } }
+                        Toggle { label: "Off"; checked <=> root.t-off; toggled(v) => { root.t-off-toggled(v); } }
+                    }
+                }
+                VerticalLayout {
+                    spacing: 10px;
+                    Text { text: "Dropdown"; font-size: 11px; color: #bfbfc8; }
+                    Dropdown {
+                        label: "Mode";
+                        options: root.mode-options;
+                        index <=> root.mode-index;
+                        changed(v) => { root.mode-changed(v); }
+                    }
                 }
             }
 
-            Text { text: "Meter"; font-size: 11px; color: #bfbfc8; }
             HorizontalLayout {
-                spacing: 20px;
-                Meter { height: 140px; level-left: root.m-l; level-right: root.m-r; }
+                spacing: 40px;
+                alignment: start;
+                VerticalLayout {
+                    spacing: 10px;
+                    Text { text: "Meter"; font-size: 11px; color: #bfbfc8; }
+                    Meter { width: 40px; height: 140px; level-left: root.m-l; level-right: root.m-r; }
+                }
+                VerticalLayout {
+                    spacing: 10px;
+                    Text { text: "XY Pads"; font-size: 11px; color: #bfbfc8; }
+                    HorizontalLayout {
+                        spacing: 20px;
+                        XYPad { width: 80px; height: 92px; label: "small";
+                            value-x <=> root.xy-small-x; value-y <=> root.xy-small-y;
+                            changed-x(v) => { root.xy-small-changed-x(v); } changed-y(v) => { root.xy-small-changed-y(v); } }
+                        XYPad { width: 130px; height: 142px; label: "med";
+                            value-x <=> root.xy-med-x; value-y <=> root.xy-med-y;
+                            changed-x(v) => { root.xy-med-changed-x(v); } changed-y(v) => { root.xy-med-changed-y(v); } }
+                        XYPad { width: 200px; height: 212px; label: "big";
+                            value-x <=> root.xy-big-x; value-y <=> root.xy-big-y;
+                            changed-x(v) => { root.xy-big-changed-x(v); } changed-y(v) => { root.xy-big-changed-y(v); } }
+                    }
+                }
             }
 
-            Text { text: "XY Pads"; font-size: 11px; color: #bfbfc8; }
+            // Native slint std-widgets (self-contained demo state).
+            Text { text: "Native Widgets"; font-size: 11px; color: #bfbfc8; }
             HorizontalLayout {
-                spacing: 20px;
-                // Explicit `width` + `height` (label height + 2 px
-                // spacing on top of a square pad) so the zoo shows
-                // square pads at the three sizes; XYPad's own
-                // preferred-* lets it stretch when neither is set.
-                XYPad {
-                    width: 80px;
-                    height: 92px;
-                    label: "small";
-                    value-x <=> root.xy-small-x;
-                    value-y <=> root.xy-small-y;
-                    changed-x(v) => { root.xy-small-changed-x(v); }
-                    changed-y(v) => { root.xy-small-changed-y(v); }
+                spacing: 16px;
+                alignment: start;
+                Button { text: "clicked \{root.click-count}x"; clicked => { root.click-count = root.click-count + 1; } }
+                CheckBox { text: "checkbox"; checked <=> root.w-check; }
+                SpinBox { width: 90px; minimum: 0; maximum: 10; value <=> root.w-spin; }
+            }
+            HorizontalLayout {
+                spacing: 16px;
+                alignment: start;
+                Slider { width: 200px; minimum: 0; maximum: 1; value <=> root.w-slider; }
+                ProgressIndicator { width: 160px; height: 16px; progress: root.w-slider; }
+            }
+
+            // Keyboard: a text box (type into it) plus a focus-scope that
+            // mirrors the last key it receives. Both prove keys now reach
+            // slint widgets.
+            Text { text: "Keyboard"; font-size: 11px; color: #bfbfc8; }
+            HorizontalLayout {
+                alignment: start;
+                LineEdit { width: 360px; placeholder-text: "type here..."; }
+            }
+            key-fs := FocusScope {
+                height: 22px;
+                key-pressed(event) => {
+                    root.last-key = event.text;
+                    accept
                 }
-                XYPad {
-                    width: 130px;
-                    height: 142px;
-                    label: "med";
-                    value-x <=> root.xy-med-x;
-                    value-y <=> root.xy-med-y;
-                    changed-x(v) => { root.xy-med-changed-x(v); }
-                    changed-y(v) => { root.xy-med-changed-y(v); }
-                }
-                XYPad {
-                    width: 200px;
-                    height: 212px;
-                    label: "big";
-                    value-x <=> root.xy-big-x;
-                    value-y <=> root.xy-big-y;
-                    changed-x(v) => { root.xy-big-changed-x(v); }
-                    changed-y(v) => { root.xy-big-changed-y(v); }
+                TouchArea { clicked => { key-fs.focus(); } }
+                Text {
+                    text: "last key: " + root.last-key + (key-fs.has-focus ? "" : "   (click here, then type)");
+                    font-size: 12px;
+                    color: #bfbfc8;
                 }
             }
         }

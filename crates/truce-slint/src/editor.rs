@@ -690,9 +690,77 @@ impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
                 }
                 EventStatus::Ignored
             }
-            Event::Keyboard(_) => EventStatus::Ignored,
+            Event::Keyboard(kb) => {
+                // Keys only arrive when the host grants the editor window OS
+                // focus, which varies by DAW. Slint tracks modifier state
+                // from the modifier keys' own press/release events, so we
+                // forward every key (including Shift/Ctrl/...) verbatim.
+                let Some(text) = slint_key_text(&kb.key) else {
+                    return EventStatus::Ignored;
+                };
+                let window = self.slint_window.window();
+                match kb.state {
+                    keyboard_types::KeyState::Down if kb.repeat => {
+                        window.dispatch_event(WindowEvent::KeyPressRepeated { text });
+                    }
+                    keyboard_types::KeyState::Down => {
+                        window.dispatch_event(WindowEvent::KeyPressed { text });
+                    }
+                    keyboard_types::KeyState::Up => {
+                        window.dispatch_event(WindowEvent::KeyReleased { text });
+                    }
+                }
+                EventStatus::Captured
+            }
         }
     }
+}
+
+/// Translate a baseview logical key into the text Slint's `WindowEvent`
+/// keyboard events carry: printable keys use their character(s); named keys
+/// map to the private-use chars from `slint::platform::Key`. Keys Slint
+/// doesn't model return `None` and are dropped.
+fn slint_key_text(key: &keyboard_types::Key) -> Option<slint::SharedString> {
+    use keyboard_types::Key as K;
+    use slint::platform::Key as SK;
+    let named = match key {
+        K::Character(s) => return Some(s.as_str().into()),
+        K::Enter => SK::Return,
+        K::Tab => SK::Tab,
+        K::Backspace => SK::Backspace,
+        K::Escape => SK::Escape,
+        K::Delete => SK::Delete,
+        K::ArrowUp => SK::UpArrow,
+        K::ArrowDown => SK::DownArrow,
+        K::ArrowLeft => SK::LeftArrow,
+        K::ArrowRight => SK::RightArrow,
+        K::Home => SK::Home,
+        K::End => SK::End,
+        K::PageUp => SK::PageUp,
+        K::PageDown => SK::PageDown,
+        K::Insert => SK::Insert,
+        K::ContextMenu => SK::Menu,
+        K::Shift => SK::Shift,
+        K::Control => SK::Control,
+        K::Alt => SK::Alt,
+        K::AltGraph => SK::AltGr,
+        K::Meta => SK::Meta,
+        K::CapsLock => SK::CapsLock,
+        K::F1 => SK::F1,
+        K::F2 => SK::F2,
+        K::F3 => SK::F3,
+        K::F4 => SK::F4,
+        K::F5 => SK::F5,
+        K::F6 => SK::F6,
+        K::F7 => SK::F7,
+        K::F8 => SK::F8,
+        K::F9 => SK::F9,
+        K::F10 => SK::F10,
+        K::F11 => SK::F11,
+        K::F12 => SK::F12,
+        _ => return None,
+    };
+    Some(named.into())
 }
 
 // Editor trait

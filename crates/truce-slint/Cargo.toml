@@ -54,6 +54,9 @@ log = "0.4"
 baseview = { package = "baseview-truce", version = "0.1.1-truce.5" }
 wgpu = { version = "29", default-features = false, features = ["wgsl"] }
 pollster = "0.4"
+# Translate baseview key events into Slint key events. Pinned to the same
+# major baseview emits so the `KeyboardEvent` types unify.
+keyboard-types = "0.7"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc = "0.2"
