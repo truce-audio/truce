@@ -1463,6 +1463,7 @@ fn notarize_and_staple(pkg_path: &Path, _config: &Config) -> Res {
     let mut output_text = String::new();
     let mut succeeded = false;
     let mut rejected = false;
+    let mut fatal = false;
     for (attempt, delay) in [0u64, 15, 45, 90].into_iter().enumerate() {
         if delay > 0 {
             eprintln!(
@@ -1498,6 +1499,16 @@ fn notarize_and_staple(pkg_path: &Path, _config: &Config) -> Res {
                 succeeded = true;
                 break;
             }
+            // Auth / agreement failures (HTTP 401/403) are account-wide and
+            // not transient - retrying or swapping credentials can't help, so
+            // stop and surface Apple's message verbatim.
+            if output_text.contains("HTTP status code: 403")
+                || output_text.contains("HTTP status code: 401")
+                || output_text.contains("A required agreement")
+            {
+                fatal = true;
+                break;
+            }
             // Non-zero without a verdict = couldn't reach the service /
             // timed out: transient, retry.
         }
@@ -1506,6 +1517,17 @@ fn notarize_and_staple(pkg_path: &Path, _config: &Config) -> Res {
     if rejected {
         fetch_notarization_log(&output_text, &keychain_profile);
         return Err("notarization failed (status: Invalid). See log above for details.".into());
+    }
+
+    if fatal {
+        return Err(format!(
+            "notarization blocked by Apple's notary service (not a build problem):\n\n{}\n\
+             If this is a 403 / required-agreement error, sign in as the Account Holder at \
+             https://developer.apple.com/account and App Store Connect > Agreements, Tax, and \
+             Banking, accept any pending agreement, then re-run.",
+            output_text.trim()
+        )
+        .into());
     }
 
     if !succeeded {
@@ -1551,7 +1573,8 @@ fn notarize_and_staple(pkg_path: &Path, _config: &Config) -> Res {
                  unreachable or the keychain profile '{keychain_profile}' is misconfigured. \
                  Re-run the package step; if it persists, check the profile with \
                  `xcrun notarytool history --keychain-profile {keychain_profile}`, or set \
-                 APPLE_ID + TEAM_ID + APP_SPECIFIC_PASSWORD as a fallback."
+                 APPLE_ID + TEAM_ID + APP_SPECIFIC_PASSWORD as a fallback.\n\nLast output:\n{}",
+                output_text.trim()
             )
             .into());
         }
