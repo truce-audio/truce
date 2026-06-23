@@ -44,6 +44,8 @@ truce-font = { workspace = true }
 truce-loader = { workspace = true }
 truce-egui = { workspace = true }
 egui = "0.34"
+# Decode the embedded carrot.gif for the image-widget demo.
+gif = "0.13"
 
 [dev-dependencies]
 truce-test = { workspace = true }

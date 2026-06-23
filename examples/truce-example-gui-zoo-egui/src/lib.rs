@@ -254,10 +254,94 @@ fn zoo_ui(ui: &mut egui::Ui, state: &PluginContext<ZooParams>) {
                         param_xy_pad(ui, state, P::KPan, P::KPhase, "big", 200.0, 200.0);
                     });
 
+                    section(ui, "egui Widgets");
+                    egui_widgets_section(ui);
+
                     section(ui, "Keyboard");
                     keyboard_section(ui);
                 });
         });
+}
+
+/// Decode the embedded carrot.gif (16x16, single frame) into a GPU texture,
+/// cached in the `Context` so it uploads once. A plugin can't open a URL, so
+/// the image-widget demo embeds the bytes rather than fetching them.
+fn carrot_texture(ctx: &egui::Context) -> egui::TextureHandle {
+    let cache_id = egui::Id::new("zoo_carrot_tex");
+    if let Some(handle) = ctx.data(|d| d.get_temp::<egui::TextureHandle>(cache_id)) {
+        return handle;
+    }
+    let mut opts = gif::DecodeOptions::new();
+    opts.set_color_output(gif::ColorOutput::RGBA);
+    let mut decoder = opts
+        .read_info(&include_bytes!("../../../static/carrot.gif")[..])
+        .expect("decode carrot.gif header");
+    let frame = decoder
+        .read_next_frame()
+        .expect("read carrot.gif frame")
+        .expect("carrot.gif has a frame");
+    let size = [frame.width as usize, frame.height as usize];
+    let image = egui::ColorImage::from_rgba_unmultiplied(size, &frame.buffer);
+    // NEAREST keeps the 16x16 pixel art crisp when scaled up.
+    let handle = ctx.load_texture("zoo_carrot", image, egui::TextureOptions::NEAREST);
+    ctx.data_mut(|d| d.insert_temp(cache_id, handle.clone()));
+    handle
+}
+
+/// Native egui widgets: button, checkbox, radio, drag value, image,
+/// horizontal + vertical slider, progress bar, separator. `zoo_ui` is
+/// stateless, so each widget's value lives in egui's `Context` memory.
+fn egui_widgets_section(ui: &mut egui::Ui) {
+    let counter_id = egui::Id::new("zoo_w_counter");
+    let check_id = egui::Id::new("zoo_w_check");
+    let radio_id = egui::Id::new("zoo_w_radio");
+    let slider_id = egui::Id::new("zoo_w_slider");
+    let vslider_id = egui::Id::new("zoo_w_vslider");
+    let drag_id = egui::Id::new("zoo_w_drag");
+
+    let mut counter = ui.data_mut(|d| d.get_temp::<u32>(counter_id).unwrap_or(0));
+    let mut checked = ui.data_mut(|d| d.get_temp::<bool>(check_id).unwrap_or(true));
+    let mut radio = ui.data_mut(|d| d.get_temp::<u8>(radio_id).unwrap_or(0));
+    let mut sval = ui.data_mut(|d| d.get_temp::<f32>(slider_id).unwrap_or(0.4));
+    let mut vsval = ui.data_mut(|d| d.get_temp::<f32>(vslider_id).unwrap_or(0.6));
+    let mut drag = ui.data_mut(|d| d.get_temp::<f32>(drag_id).unwrap_or(1.0));
+
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(16.0, 0.0);
+        if ui.button(format!("clicked {counter}x")).clicked() {
+            counter += 1;
+        }
+        ui.checkbox(&mut checked, "checkbox");
+        ui.radio_value(&mut radio, 0, "Alpha");
+        ui.radio_value(&mut radio, 1, "Beta");
+        ui.radio_value(&mut radio, 2, "Gamma");
+    });
+
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(16.0, 0.0);
+        ui.add(egui::DragValue::new(&mut drag).speed(0.05));
+        let carrot = carrot_texture(ui.ctx());
+        ui.add(egui::Image::from_texture(&carrot).fit_to_exact_size(egui::vec2(48.0, 48.0)));
+    });
+
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(20.0, 0.0);
+        ui.add(egui::Slider::new(&mut vsval, 0.0..=1.0).vertical());
+        ui.vertical(|ui| {
+            ui.add(egui::Slider::new(&mut sval, 0.0..=1.0).text("slider"));
+            ui.add(egui::ProgressBar::new(sval).show_percentage());
+        });
+    });
+    ui.separator();
+
+    ui.data_mut(|d| {
+        d.insert_temp(counter_id, counter);
+        d.insert_temp(check_id, checked);
+        d.insert_temp(radio_id, radio);
+        d.insert_temp(slider_id, sval);
+        d.insert_temp(vslider_id, vsval);
+        d.insert_temp(drag_id, drag);
+    });
 }
 
 /// Keyboard demo: a text box (keys reach the focused widget) over a label
@@ -322,6 +406,21 @@ mod tests {
     #[test]
     fn info_is_valid() {
         truce_test::assert_valid_info::<Plugin>();
+    }
+
+    #[test]
+    fn carrot_gif_decodes_to_a_real_image() {
+        let mut opts = gif::DecodeOptions::new();
+        opts.set_color_output(gif::ColorOutput::RGBA);
+        let mut decoder = opts
+            .read_info(&include_bytes!("../../../static/carrot.gif")[..])
+            .expect("header");
+        let frame = decoder.read_next_frame().expect("frame").expect("present");
+        assert_eq!((frame.width, frame.height), (16, 16));
+        assert_eq!(frame.buffer.len(), 16 * 16 * 4);
+        // Not a uniform fill - the carrot has more than one colour.
+        let first = &frame.buffer[0..4];
+        assert!(frame.buffer.chunks(4).any(|px| px != first));
     }
 
     #[test]

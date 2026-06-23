@@ -9,7 +9,10 @@
 
 use std::sync::Arc;
 
-use iced::widget::{Column, Row, container, text, text_input};
+use iced::widget::{
+    Column, Row, button, checkbox, container, image, progress_bar, radio, rule, scrollable, slider,
+    text, text_input, toggler, tooltip, vertical_slider,
+};
 use iced::{Element, Font, Length, Task, alignment};
 
 const JETBRAINS_MONO: Font = Font {
@@ -20,6 +23,7 @@ const WINDOW_W: u32 = 700;
 const WINDOW_H: u32 = 900;
 const HEADER_BG: iced::Color = iced::Color::from_rgb(0.08, 0.08, 0.10);
 const HEADER_TEXT: iced::Color = iced::Color::from_rgb(0.75, 0.75, 0.80);
+const BTN_TEXT: iced::Color = iced::Color::from_rgb(0.93, 0.93, 0.96);
 
 use truce::prelude::*;
 use truce_iced::{
@@ -112,12 +116,48 @@ pub struct ZooParams {
 
 // --- Custom iced UI ---
 
-#[derive(Default)]
+/// Options for the radio buttons.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pick {
+    Alpha,
+    Beta,
+    Gamma,
+}
+
 pub struct ZooUi {
     /// Contents of the keyboard-section text box (widget-path keyboard).
     textbox: String,
     /// Label for the most recent key press (subscription-path keyboard).
     last_key: String,
+    // -- native iced widget state --
+    counter: u32,
+    checked: bool,
+    toggled: bool,
+    radio: Pick,
+    slider: f32,
+    vslider: f32,
+    /// Decoded once - `Handle::from_rgba` mints a new id per call, so
+    /// rebuilding it each frame would re-upload the texture every frame.
+    carrot: image::Handle,
+}
+
+/// Decode the embedded carrot.gif (16x16, single frame) to an iced image
+/// handle. A plugin can't open a URL, so the image demo embeds the bytes.
+fn decode_carrot() -> image::Handle {
+    let mut opts = gif::DecodeOptions::new();
+    opts.set_color_output(gif::ColorOutput::RGBA);
+    let mut decoder = opts
+        .read_info(&include_bytes!("../../../static/carrot.gif")[..])
+        .expect("decode carrot.gif header");
+    let frame = decoder
+        .read_next_frame()
+        .expect("read carrot.gif frame")
+        .expect("carrot.gif has a frame");
+    image::Handle::from_rgba(
+        u32::from(frame.width),
+        u32::from(frame.height),
+        frame.buffer.to_vec(),
+    )
 }
 
 #[derive(Debug, Clone)]
@@ -126,6 +166,12 @@ pub enum ZooMsg {
     TextChanged(String),
     /// A key was pressed anywhere in the editor (from the subscription).
     KeyPressed(String),
+    Increment,
+    Checked(bool),
+    Toggled(bool),
+    Radio(Pick),
+    Slider(f32),
+    VSlider(f32),
 }
 
 /// Human-readable label for a key press: logical key (or typed text) plus
@@ -158,6 +204,13 @@ impl IcedPlugin<ZooParams> for ZooUi {
         Self {
             textbox: String::new(),
             last_key: String::from("(press a key)"),
+            counter: 0,
+            checked: true,
+            toggled: false,
+            radio: Pick::Alpha,
+            slider: 0.4,
+            vslider: 0.6,
+            carrot: decode_carrot(),
         }
     }
 
@@ -171,6 +224,12 @@ impl IcedPlugin<ZooParams> for ZooUi {
             match msg {
                 ZooMsg::TextChanged(s) => self.textbox = s,
                 ZooMsg::KeyPressed(label) => self.last_key = label,
+                ZooMsg::Increment => self.counter += 1,
+                ZooMsg::Checked(b) => self.checked = b,
+                ZooMsg::Toggled(b) => self.toggled = b,
+                ZooMsg::Radio(p) => self.radio = p,
+                ZooMsg::Slider(v) => self.slider = v,
+                ZooMsg::VSlider(v) => self.vslider = v,
             }
         }
         Task::none()
@@ -294,10 +353,137 @@ impl IcedPlugin<ZooParams> for ZooUi {
             .align_y(alignment::Vertical::Top)
             .into();
 
-        // Keyboard section: a text box (keys reach the focused widget) over
-        // a label that mirrors the last key press from anywhere (the
-        // subscription path).
-        let keyboard_row: Element<'a, Message<ZooMsg>> = Column::new()
+        let body: Element<'a, Message<ZooMsg>> = Column::new()
+            .push(section_label("Knobs"))
+            .push(knobs_row)
+            .push(section_label("Sliders"))
+            .push(sliders_row)
+            .push(section_label("Toggles"))
+            .push(toggles_row)
+            .push(section_label("Dropdown"))
+            .push(dropdown_row)
+            .push(section_label("Meters"))
+            .push(meters_row)
+            .push(section_label("XY Pads"))
+            .push(xy_row)
+            .push(section_label("iced Widgets"))
+            .push(self.widgets_section())
+            .push(section_label("Keyboard"))
+            .push(self.keyboard_section())
+            .spacing(gap)
+            .padding(pad)
+            .into();
+
+        // Scrollable so the growing zoo fits any window height.
+        Column::new()
+            .push(header)
+            .push(scrollable(body).height(Length::Fill))
+            .into()
+    }
+}
+
+impl ZooUi {
+    /// Native iced widgets: button, tooltip, checkbox, toggler, radio,
+    /// image, slider, `vertical_slider`, `progress_bar`, rule.
+    fn widgets_section(&self) -> Element<'_, Message<ZooMsg>> {
+        let on_inc = || Message::Plugin(ZooMsg::Increment);
+        Column::new()
+            .push(
+                Row::new()
+                    .push(
+                        button(
+                            text(format!("clicked {}x", self.counter))
+                                .size(12)
+                                .font(JETBRAINS_MONO)
+                                .color(BTN_TEXT),
+                        )
+                        .on_press(on_inc()),
+                    )
+                    .push(tooltip(
+                        button(
+                            text("hover me")
+                                .size(12)
+                                .font(JETBRAINS_MONO)
+                                .color(BTN_TEXT),
+                        )
+                        .on_press(on_inc()),
+                        container(text("a tooltip").size(11)).padding(6).style(
+                            |_t: &iced::Theme| container::Style {
+                                background: Some(HEADER_BG.into()),
+                                ..Default::default()
+                            },
+                        ),
+                        tooltip::Position::Top,
+                    ))
+                    .push(
+                        checkbox(self.checked)
+                            .label("checkbox")
+                            .on_toggle(|b| Message::Plugin(ZooMsg::Checked(b))),
+                    )
+                    .push(
+                        toggler(self.toggled)
+                            .label("toggler")
+                            .on_toggle(|b| Message::Plugin(ZooMsg::Toggled(b))),
+                    )
+                    .spacing(16.0)
+                    .align_y(alignment::Vertical::Center),
+            )
+            .push(
+                Row::new()
+                    .push(radio("Alpha", Pick::Alpha, Some(self.radio), |p| {
+                        Message::Plugin(ZooMsg::Radio(p))
+                    }))
+                    .push(radio("Beta", Pick::Beta, Some(self.radio), |p| {
+                        Message::Plugin(ZooMsg::Radio(p))
+                    }))
+                    .push(radio("Gamma", Pick::Gamma, Some(self.radio), |p| {
+                        Message::Plugin(ZooMsg::Radio(p))
+                    }))
+                    // NEAREST keeps the 16x16 pixel art crisp when scaled up.
+                    .push(
+                        image(self.carrot.clone())
+                            .filter_method(image::FilterMethod::Nearest)
+                            .width(Length::Fixed(48.0))
+                            .height(Length::Fixed(48.0)),
+                    )
+                    .spacing(16.0)
+                    .align_y(alignment::Vertical::Center),
+            )
+            .push(
+                Row::new()
+                    .push(
+                        slider(0.0..=1.0, self.slider, |v| {
+                            Message::Plugin(ZooMsg::Slider(v))
+                        })
+                        // iced's slider defaults `step` to 1.0, which would
+                        // snap a 0..1 range to just its two ends.
+                        .step(0.01)
+                        .width(Length::Fixed(200.0)),
+                    )
+                    .push(
+                        vertical_slider(0.0..=1.0, self.vslider, |v| {
+                            Message::Plugin(ZooMsg::VSlider(v))
+                        })
+                        .step(0.01)
+                        .height(Length::Fixed(60.0)),
+                    )
+                    .push(
+                        progress_bar(0.0..=1.0, self.slider)
+                            .length(Length::Fixed(160.0))
+                            .girth(Length::Fixed(16.0)),
+                    )
+                    .spacing(16.0)
+                    .align_y(alignment::Vertical::Center),
+            )
+            .push(rule::horizontal(1.0))
+            .spacing(10.0)
+            .into()
+    }
+
+    /// Keyboard demo: a text box (keys reach the focused widget) over a
+    /// label that mirrors the last key press from anywhere (subscription).
+    fn keyboard_section(&self) -> Element<'_, Message<ZooMsg>> {
+        Column::new()
             .push(
                 text_input("type here...", &self.textbox)
                     .on_input(|s| Message::Plugin(ZooMsg::TextChanged(s)))
@@ -313,28 +499,7 @@ impl IcedPlugin<ZooParams> for ZooUi {
                     .color(HEADER_TEXT),
             )
             .spacing(8.0)
-            .into();
-
-        let body: Element<'a, Message<ZooMsg>> = Column::new()
-            .push(section_label("Knobs"))
-            .push(knobs_row)
-            .push(section_label("Sliders"))
-            .push(sliders_row)
-            .push(section_label("Toggles"))
-            .push(toggles_row)
-            .push(section_label("Dropdown"))
-            .push(dropdown_row)
-            .push(section_label("Meters"))
-            .push(meters_row)
-            .push(section_label("XY Pads"))
-            .push(xy_row)
-            .push(section_label("Keyboard"))
-            .push(keyboard_row)
-            .spacing(gap)
-            .padding(pad)
-            .into();
-
-        Column::new().push(header).push(body).into()
+            .into()
     }
 }
 
