@@ -952,56 +952,44 @@ pub(crate) fn generate_distribution_xml(
 /// leftovers and fails loudly with an actionable message otherwise
 /// (so the developer doing `cargo truce package --user` after a
 /// `--system` round sees what to clean up).
-/// AU v3 postinstall: register the app-extension with `pluginkit` for
-/// the logged-in user. pkg scripts run as root, but `pluginkit`, `pkd`,
-/// and the AU cache are per-user, so the work runs as the console user
-/// via `launchctl asuser`. `$2` is the install destination (e.g.
-/// `/Applications`). The retry loop absorbs transient `pluginkit -a`
-/// no-ops. Crucially it leaves `pkd` running: a suite runs this script
-/// once per member, and killing `pkd` mid-batch dropped half the
-/// registrations. No console user (CI / SSH / login window) -> skip; the
-/// appex registers on next login when `pkd` scans `/Applications`.
+/// AU v3 postinstall: register app-extensions with `pluginkit` for the
+/// logged-in user. pkg scripts run as root, but `pluginkit`, `pkd`, and
+/// the AU cache are per-user, so the work runs as the console user via
+/// `launchctl asuser`. `$2` is the install destination (e.g.
+/// `/Applications`). A multi-plugin install runs this script once per AU
+/// v3 component; registering only this component's appex is racy under
+/// the installer sandbox (half stick), so each run re-registers *every*
+/// appex in the destination - the last component then guarantees them
+/// all. No console user (CI / SSH / login window) -> skip; the appexs
+/// register on next login when `pkd` scans `/Applications`.
 #[cfg(target_os = "macos")]
 const AU3_REGISTER_POSTINSTALL: &str = r#"#!/bin/bash
 set -u
 APP="$2/{{BUNDLE}}"
-APPEX="$APP/Contents/PlugIns/AUExt.appex"
-APPEX_ID="{{APPEX_ID}}"
 uid=$(stat -f %u /dev/console 2>/dev/null || true)
 user=$(stat -f %Su /dev/console 2>/dev/null || true)
-if [ -z "${uid:-}" ] || [ "$user" = "root" ] || [ ! -d "$APPEX" ]; then
+if [ -z "${uid:-}" ] || [ "$user" = "root" ] || [ ! -d "$APP/Contents/PlugIns/AUExt.appex" ]; then
     exit 0
 fi
 home=$(eval echo "~$user")
 asuser() { launchctl asuser "$uid" sudo -u "$user" "$@"; }
-# Evict any registration of this appex id that points somewhere other
-# than the just-installed bundle - notably the build-tree copy that
-# xcodebuild's pkd auto-registers, which otherwise shadows the installed
-# appex and makes hosts fail to open the AU v3 ("OpenAComponent: 4").
-asuser pluginkit -mv -i "$APPEX_ID" 2>/dev/null | awk -F'\t' 'NF>1{print $NF}' | while read -r p; do
-    [ "$p" = "$APPEX" ] && continue
-    case "$p" in
-        /*) asuser pluginkit -r "$p" >/dev/null 2>&1 || true ;;
-    esac
-done
 LSREG=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
 "$LSREG" -f -R "$APP" >/dev/null 2>&1 || true
-# Do NOT kill pkd here. A suite installs many AU v3 components, each
-# running this script; killing pkd in one makes the concurrent
-# `pluginkit -a` calls in the others no-op against a dead daemon, so only
-# a fraction of the appexs register. Leave pkd alive (it registers each
-# appex live) and only refresh the AU component cache so hosts re-scan.
+# Register EVERY AU v3 appex in the install destination, not just this
+# component's. A multi-plugin install runs this script once per AU v3
+# component, and a single `pluginkit -a` per script races under the
+# installer sandbox - only a fraction of the appexs stick. Re-registering
+# all of them on every component gives each one many attempts, so the
+# last component to install guarantees they're all registered. `pkd` is
+# left running (killing it would no-op the concurrent registrations).
+for pass in 1 2; do
+    find "$2" -maxdepth 4 -path "*/Contents/PlugIns/AUExt.appex" 2>/dev/null | while read -r ax; do
+        asuser pluginkit -a "$ax" >/dev/null 2>&1 || true
+    done
+done
+# Refresh the AU component cache so hosts see the newly-registered units.
 killall -9 AudioComponentRegistrar 2>/dev/null || true
 rm -rf "$home/Library/Caches/AudioUnitCache" 2>/dev/null || true
-i=0
-while [ "$i" -lt 8 ]; do
-    asuser pluginkit -a "$APPEX" >/dev/null 2>&1 || true
-    if asuser pluginkit -m -i "$APPEX_ID" 2>/dev/null | grep -q "$APPEX_ID"; then
-        break
-    fi
-    sleep 1
-    i=$((i + 1))
-done
 exit 0
 "#;
 
@@ -1068,13 +1056,9 @@ pub(crate) fn write_format_scripts(
     // install --au3` registers it directly; the installer has to do the
     // same from its postinstall - which is the wrinkle, since pkg
     // scripts run as root while pluginkit + the AU cache are per-user.
-    if *fmt == PkgFormat::Au3
-        && let Some(appex_id) = appex_id
-    {
+    if *fmt == PkgFormat::Au3 && appex_id.is_some() {
         let postinstall = scripts_dir.join("postinstall");
-        let script = AU3_REGISTER_POSTINSTALL
-            .replace("{{BUNDLE}}", &escaped_bundle)
-            .replace("{{APPEX_ID}}", appex_id);
+        let script = AU3_REGISTER_POSTINSTALL.replace("{{BUNDLE}}", &escaped_bundle);
         fs::write(&postinstall, script)?;
         Command::new("chmod")
             .args(["+x", postinstall.to_str().unwrap()])
