@@ -421,6 +421,9 @@ fn generate_suite_distribution_xml(
         // this member's outline + pkg-refs so productbuild doesn't
         // reference a `.pkg` that was never built.
         let member_formats = formats_for_plugin(formats, plugin);
+        // AU v3's app is the standalone host when this member ships a
+        // standalone bin (the Standalone format is collapsed into it).
+        let au3_is_standalone_host = crate::read_standalone_bin_name(&plugin.crate_name).is_some();
         let outer_id = sanitize_id(&plugin.bundle_id);
         let _ = writeln!(outline, "        <line choice=\"{outer_id}\">");
         for fmt in &member_formats {
@@ -442,8 +445,11 @@ fn generate_suite_distribution_xml(
             let inner_id = format!("{outer_id}-{}", fmt.pkg_id_suffix());
             let pkg_id = format!("{vendor_id}.{}.{}", plugin.bundle_id, fmt.pkg_id_suffix());
             let component_file = format!("{}-{}.pkg", plugin.file_stem(), fmt.label());
-            let label = fmt.label();
-            let desc = fmt.choice_description();
+            let (label, desc): (&str, &str) = if *fmt == PkgFormat::Au3 && au3_is_standalone_host {
+                ("AU3 + Standalone", "Audio Unit v3 (appex) + standalone app")
+            } else {
+                (fmt.label(), fmt.choice_description())
+            };
             // All formats checked by default - see matching note in
             // the per-plugin `generate_distribution_xml`.
             let enabled_attr = "";
@@ -1050,6 +1056,7 @@ fn package_one_plugin(root: &Path, p: &PluginDef, dist_dir: &Path, o: &PackageOp
         o.version,
         Some(&o.config.macos.packaging),
         o.effective_scope,
+        crate::read_standalone_bin_name(&p.crate_name).is_some(),
     );
     let dist_xml_path = staging.join("distribution.xml");
     fs::write(&dist_xml_path, &dist_xml)?;
