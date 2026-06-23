@@ -52,6 +52,7 @@ struct Vst3Instance<P: PluginExport> {
     /// audio thread's stores. Params are atomic-backed and `Sync`.
     params_arc: Arc<P::Params>,
     event_list: EventList,
+    sysex_inputs_pending: bool,
     output_events: EventList,
     /// Per-sub-block scratch for `chunked_process::process_chunked`.
     /// Pre-allocated to the same capacity as `event_list`.
@@ -152,6 +153,7 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
         plugin,
         params_arc,
         event_list: EventList::with_capacity(EVENT_LIST_PREALLOC),
+        sysex_inputs_pending: false,
         output_events: EventList::with_capacity(EVENT_LIST_PREALLOC),
         sub_event_scratch: EventList::with_capacity(EVENT_LIST_PREALLOC),
         param_infos,
@@ -243,6 +245,8 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
                     std::ptr::write_bytes(ptr, 0, num_frames);
                 }
             }
+            inst.event_list.clear();
+            inst.sysex_inputs_pending = false;
             return;
         }
 
@@ -254,8 +258,14 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
             state::apply_state(&mut inst.plugin, &state);
         }
 
-        // Convert MIDI events
-        inst.event_list.clear();
+        // Convert MIDI events. SysEx input arrives through a separate
+        // callback before this process callback, so preserve the
+        // queued SysEx entries when present and append short MIDI.
+        if inst.sysex_inputs_pending {
+            inst.sysex_inputs_pending = false;
+        } else {
+            inst.event_list.clear();
+        }
         if !events.is_null() && num_events > 0 {
             let event_slice = slice::from_raw_parts(events, num_events as usize);
             for ev in event_slice {
@@ -735,6 +745,10 @@ unsafe extern "C" fn cb_push_sysex_input<P: PluginExport>(
         let inst = &mut *ctx.cast::<Vst3Instance<P>>();
         if bytes.is_null() || len == 0 {
             return;
+        }
+        if !inst.sysex_inputs_pending {
+            inst.event_list.clear();
+            inst.sysex_inputs_pending = true;
         }
         let slice = std::slice::from_raw_parts(bytes, len as usize);
         // Pool-full failure: drop the message. SysEx is atomic by
