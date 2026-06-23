@@ -1452,38 +1452,68 @@ fn notarize_and_staple(pkg_path: &Path, _config: &Config) -> Res {
         pkg_path.file_name().unwrap().to_str().unwrap()
     );
 
-    // Submit and capture output to check status + extract submission ID
-    let output = Command::new("xcrun")
-        .args([
-            "notarytool",
-            "submit",
-            pkg,
-            "--keychain-profile",
-            &keychain_profile,
-            "--wait",
-        ])
-        .output();
-
-    let (succeeded, output_text) = match output {
-        Ok(o) => {
-            let text = format!(
+    // Submit with the keychain profile, retrying transient failures
+    // (network blips, notary-service hiccups, `xcrun` failing to reach
+    // Apple). A single transient failure must NOT fall straight through to
+    // the explicit-credentials path - that's empty for most setups, so a
+    // momentary glitch turned into a hard "requires APP_SPECIFIC_PASSWORD"
+    // error. A `status: Invalid` / `Rejected` is a real verdict on the
+    // bundle, not transient: stop and surface it (re-submitting with other
+    // credentials yields the same verdict).
+    let mut output_text = String::new();
+    let mut succeeded = false;
+    let mut rejected = false;
+    for (attempt, delay) in [0u64, 15, 45, 90].into_iter().enumerate() {
+        if delay > 0 {
+            eprintln!(
+                "    notarytool submit didn't go through; retrying in {delay}s (attempt {})...",
+                attempt + 1
+            );
+            std::thread::sleep(std::time::Duration::from_secs(delay));
+        }
+        // A failed `xcrun` spawn falls through to another retry.
+        if let Ok(o) = Command::new("xcrun")
+            .args([
+                "notarytool",
+                "submit",
+                pkg,
+                "--keychain-profile",
+                &keychain_profile,
+                "--wait",
+            ])
+            .output()
+        {
+            output_text = format!(
                 "{}{}",
                 String::from_utf8_lossy(&o.stdout),
                 String::from_utf8_lossy(&o.stderr)
             );
-            // notarytool returns 0 even on Invalid - check the status string
-            let ok = o.status.success()
-                && !text.contains("status: Invalid")
-                && !text.contains("status: Rejected");
-            (ok, text)
+            if output_text.contains("status: Invalid") || output_text.contains("status: Rejected") {
+                rejected = true;
+                break;
+            }
+            // notarytool returns 0 even on Invalid (caught above); a clean
+            // exit now means Accepted.
+            if o.status.success() {
+                succeeded = true;
+                break;
+            }
+            // Non-zero without a verdict = couldn't reach the service /
+            // timed out: transient, retry.
         }
-        Err(_) => (false, String::new()),
-    };
+    }
+
+    if rejected {
+        fetch_notarization_log(&output_text, &keychain_profile);
+        return Err("notarization failed (status: Invalid). See log above for details.".into());
+    }
 
     if !succeeded {
-        // Try explicit credentials as fallback
+        // Transient retries exhausted. Fall back to explicit credentials
+        // if the developer configured them; otherwise surface that this was
+        // a connection / profile failure, not missing credentials.
         if !apple_id.is_empty() && !team_id.is_empty() {
-            eprintln!("  Keychain profile failed, trying explicit credentials...");
+            eprintln!("  Keychain profile submit kept failing; trying explicit credentials...");
             let password = std::env::var("APP_SPECIFIC_PASSWORD").map_err(
                 |_| "notarization requires APP_SPECIFIC_PASSWORD env var or a keychain profile",
             )?;
@@ -1510,25 +1540,20 @@ fn notarize_and_staple(pkg_path: &Path, _config: &Config) -> Res {
                 || text.contains("status: Invalid")
                 || text.contains("status: Rejected")
             {
-                // Extract submission ID and fetch the log
                 fetch_notarization_log(&text, &keychain_profile);
                 return Err(
                     "notarization failed (status: Invalid). See log above for details.".into(),
                 );
             }
         } else {
-            // Extract submission ID and fetch the log
-            fetch_notarization_log(&output_text, &keychain_profile);
-            if output_text.contains("status: Invalid") || output_text.contains("status: Rejected") {
-                return Err(
-                    "notarization failed (status: Invalid). See log above for details.".into(),
-                );
-            }
-            return Err("notarization failed. Set up credentials via:\n  \
-                 xcrun notarytool store-credentials TRUCE_NOTARY\n  \
-                 or set APPLE_ID + TEAM_ID + APP_SPECIFIC_PASSWORD in \
-                 .cargo/config.toml [env]"
-                .into());
+            return Err(format!(
+                "notarization submit kept failing after retries - the notary service was \
+                 unreachable or the keychain profile '{keychain_profile}' is misconfigured. \
+                 Re-run the package step; if it persists, check the profile with \
+                 `xcrun notarytool history --keychain-profile {keychain_profile}`, or set \
+                 APPLE_ID + TEAM_ID + APP_SPECIFIC_PASSWORD as a fallback."
+            )
+            .into());
         }
     }
 
