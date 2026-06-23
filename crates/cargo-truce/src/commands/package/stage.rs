@@ -952,44 +952,75 @@ pub(crate) fn generate_distribution_xml(
 /// leftovers and fails loudly with an actionable message otherwise
 /// (so the developer doing `cargo truce package --user` after a
 /// `--system` round sees what to clean up).
-/// AU v3 postinstall: register app-extensions with `pluginkit` for the
-/// logged-in user. pkg scripts run as root, but `pluginkit`, `pkd`, and
-/// the AU cache are per-user, so the work runs as the console user via
-/// `launchctl asuser`. `$2` is the install destination (e.g.
-/// `/Applications`). A multi-plugin install runs this script once per AU
-/// v3 component; registering only this component's appex is racy under
-/// the installer sandbox (half stick), so each run re-registers *every*
-/// appex in the destination - the last component then guarantees them
-/// all. No console user (CI / SSH / login window) -> skip; the appexs
-/// register on next login when `pkd` scans `/Applications`.
+/// AU v3 postinstall: schedule a deferred, one-shot registration of the
+/// app-extensions with `pluginkit`.
+///
+/// Registering inline from the postinstall does not work: pkg scripts run
+/// as root in the installer sandbox, but the installer re-touches every app
+/// bundle as its final step (after all postinstalls), which makes `pkd`
+/// drop any registration made earlier in the run. A `LaunchAgent` would run
+/// late enough but trips the macOS "Background Items Added" notification,
+/// which has no place in a plugin installer.
+///
+/// So spawn a detached one-shot in the user's GUI session (via `launchctl
+/// asuser`, no plist - no notification). It waits until the app bundles
+/// stop changing (finalization done), then registers every AU v3 appex in
+/// `/Applications` and refreshes the AU cache. A `/tmp` lock makes exactly
+/// one of the AU v3 components schedule it; the rest no-op, and the
+/// postinstall returns immediately so the install never blocks. No console
+/// user (CI / SSH / login window) -> skip.
 #[cfg(target_os = "macos")]
 const AU3_REGISTER_POSTINSTALL: &str = r#"#!/bin/bash
 set -u
-APP="$2/{{BUNDLE}}"
 uid=$(stat -f %u /dev/console 2>/dev/null || true)
 user=$(stat -f %Su /dev/console 2>/dev/null || true)
-if [ -z "${uid:-}" ] || [ "$user" = "root" ] || [ ! -d "$APP/Contents/PlugIns/AUExt.appex" ]; then
+if [ -z "${uid:-}" ] || [ "$user" = "root" ]; then
     exit 0
 fi
-home=$(eval echo "~$user")
-asuser() { launchctl asuser "$uid" sudo -u "$user" "$@"; }
-LSREG=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
-"$LSREG" -f -R "$APP" >/dev/null 2>&1 || true
-# Register EVERY AU v3 appex in the install destination, not just this
-# component's. A multi-plugin install runs this script once per AU v3
-# component, and a single `pluginkit -a` per script races under the
-# installer sandbox - only a fraction of the appexs stick. Re-registering
-# all of them on every component gives each one many attempts, so the
-# last component to install guarantees they're all registered. `pkd` is
-# left running (killing it would no-op the concurrent registrations).
-for pass in 1 2; do
-    find "$2" -maxdepth 4 -path "*/Contents/PlugIns/AUExt.appex" 2>/dev/null | while read -r ax; do
-        asuser pluginkit -a "$ax" >/dev/null 2>&1 || true
-    done
+# Atomic: exactly one AU v3 component wins the lock and schedules the sweep.
+LOCK="/tmp/.truce-au3-register.lock"
+if ! mkdir "$LOCK" 2>/dev/null; then
+    exit 0
+fi
+DIR="/Library/Application Support/Truce"
+SCRIPT="$DIR/au3-register.sh"
+mkdir -p "$DIR"
+cat > "$SCRIPT" <<'EOF'
+#!/bin/bash
+# Deferred AU v3 registration: runs once in the user's GUI session after the
+# installer finishes. Registration made during the install is wiped by the
+# installer's final bundle touch, so wait until the bundles stop changing,
+# then register every AU v3 appex.
+prev=""
+stable=0
+for i in $(seq 1 60); do
+    cur=$(ls -dlT /Applications/*.app 2>/dev/null | md5)
+    if [ "$cur" = "$prev" ]; then
+        stable=$((stable + 1))
+    else
+        stable=0
+    fi
+    if [ "$stable" -ge 3 ]; then
+        break
+    fi
+    prev="$cur"
+    sleep 2
 done
-# Refresh the AU component cache so hosts see the newly-registered units.
+for ax in /Applications/*.app/Contents/PlugIns/AUExt.appex; do
+    if [ -d "$ax" ]; then
+        pluginkit -a "$ax" >/dev/null 2>&1
+    fi
+done
 killall -9 AudioComponentRegistrar 2>/dev/null || true
-rm -rf "$home/Library/Caches/AudioUnitCache" 2>/dev/null || true
+rmdir /tmp/.truce-au3-register.lock 2>/dev/null || true
+exit 0
+EOF
+chmod 755 "$SCRIPT"
+# Detached one-shot in the user's GUI session - not a LaunchAgent, so no
+# plist and no Background-Items notification. `&` lets the postinstall
+# return at once; the job outlives the installer via the user launchd
+# domain and registers after finalization.
+launchctl asuser "$uid" sudo -u "$user" /usr/bin/nohup /bin/bash "$SCRIPT" >/dev/null 2>&1 &
 exit 0
 "#;
 
@@ -1052,14 +1083,13 @@ pub(crate) fn write_format_scripts(
 
     // AU v3 is an app-extension: dropping the `.app` into `/Applications`
     // isn't enough, the appex has to be registered with `pluginkit` or
-    // hosts get a component that lists but won't open. `cargo truce
-    // install --au3` registers it directly; the installer has to do the
-    // same from its postinstall - which is the wrinkle, since pkg
-    // scripts run as root while pluginkit + the AU cache are per-user.
+    // hosts get a component that lists but won't open. The postinstall
+    // schedules a deferred one-shot that does this in the user's GUI
+    // session, since registering inline from the root sandbox doesn't
+    // survive the installer's final bundle touch.
     if *fmt == PkgFormat::Au3 && appex_id.is_some() {
         let postinstall = scripts_dir.join("postinstall");
-        let script = AU3_REGISTER_POSTINSTALL.replace("{{BUNDLE}}", &escaped_bundle);
-        fs::write(&postinstall, script)?;
+        fs::write(&postinstall, AU3_REGISTER_POSTINSTALL)?;
         Command::new("chmod")
             .args(["+x", postinstall.to_str().unwrap()])
             .status()?;
