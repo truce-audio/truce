@@ -11,6 +11,9 @@ use std::sync::Arc;
 use truce::prelude::*;
 use truce_font::JETBRAINS_MONO;
 use truce_vizia::vizia::prelude::*;
+// Explicit imports: `truce::prelude` also exports `Event`, so the glob alone
+// is ambiguous.
+use truce_vizia::vizia::prelude::{Event, EventContext, Model, WindowEvent};
 use truce_vizia::widgets::{
     self, level_meter, param_dropdown, param_knob, param_slider, param_toggle, param_xy_pad,
 };
@@ -19,7 +22,7 @@ use truce_vizia::{ParamLens, ViziaEditor};
 use ZooParamsParamId as P;
 
 const WINDOW_W: u32 = 604;
-const WINDOW_H: u32 = 920;
+const WINDOW_H: u32 = 1140;
 
 // Zoo-local layout CSS. Lives in the example because it's
 // zoo-specific (section header band, inter-row gap, section title
@@ -202,7 +205,40 @@ impl PluginLogic for ZooVizia {
     }
 }
 
+/// Captures the last key press into a signal the keyboard section mirrors.
+/// `WindowEvent::KeyDown` propagates up to this root model even while a
+/// textbox holds focus.
+struct KeyCapture {
+    last_key: Signal<String>,
+}
+
+impl Model for KeyCapture {
+    fn event(&mut self, _cx: &mut EventContext, event: &mut Event) {
+        event.map(|e: &WindowEvent, _| {
+            if let WindowEvent::KeyDown(code, _) = e {
+                self.last_key.set(format!("{code:?}"));
+            }
+        });
+    }
+}
+
 fn zoo_view(cx: &mut Context, lens: ParamLens<ZooParams>) {
+    // Self-contained reactive state for the native-widget + keyboard demos.
+    // Signals are Copy handles, so the build closures capture them freely.
+    let counter = Signal::new(0i32);
+    let checked = Signal::new(true);
+    let nslider = Signal::new(0.4f32);
+    let text = Signal::new(String::new());
+    let last_key = Signal::new(String::from("(press a key)"));
+    KeyCapture { last_key }.build(cx);
+
+    // Shared carrot asset; skia decodes the PNG. A plugin can't open a URL,
+    // so the image demo embeds the bytes.
+    cx.load_image(
+        "zoo_carrot",
+        include_bytes!("../../../../../static/carrot.png"),
+        ImageRetentionPolicy::Forever,
+    );
     VStack::new(cx, move |cx| {
         VStack::new(cx, move |cx| {
             section(cx, "Knobs");
@@ -288,6 +324,42 @@ fn zoo_view(cx: &mut Context, lens: ParamLens<ZooParams>) {
                 );
             })
             .class("zoo-section-row");
+
+            // Native vizia widgets (self-contained state).
+            section(cx, "Native Widgets");
+            HStack::new(cx, move |cx| {
+                Button::new(cx, move |cx| {
+                    Label::new(
+                        cx,
+                        Memo::new(move |_| format!("clicked {}x", counter.get())),
+                    )
+                })
+                .on_press(move |_cx| counter.set(counter.get() + 1));
+                Checkbox::new(cx, checked).on_toggle(move |_cx| checked.set(!checked.get()));
+                Label::new(cx, "checkbox");
+                Slider::new(cx, nslider)
+                    .range(0.0f32..1.0)
+                    .on_change(move |_cx, v| nslider.set(v))
+                    .width(Pixels(180.0));
+                Image::new(cx, "zoo_carrot")
+                    .width(Pixels(48.0))
+                    .height(Pixels(48.0));
+            })
+            .class("zoo-section-row");
+
+            // Keyboard: a text box (type into it) plus a label mirroring the
+            // last key from anywhere.
+            section(cx, "Keyboard");
+            HStack::new(cx, move |cx| {
+                Textbox::new(cx, text)
+                    .on_edit(move |_cx, t| text.set(t))
+                    .width(Pixels(360.0));
+            })
+            .class("zoo-section-row");
+            Label::new(
+                cx,
+                Memo::new(move |_| format!("last key: {}", last_key.get())),
+            );
         })
         .class("zoo-body");
     })
