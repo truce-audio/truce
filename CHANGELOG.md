@@ -5,7 +5,7 @@ Notable changes per release.
 ## 0.63.1
 
 - **Slint editors receive keyboard input.** `truce-slint` translates native key events into Slint `WindowEvent` key events, so `LineEdit` / `TextInput` and `FocusScope` work in plugin editors (host focus permitting).
-- **The slint `gui-zoo` example demos native Slint widgets** - button, checkbox, spinbox, slider, progress bar - plus a keyboard section, alongside the truce param widgets.
+- **The slint `gui-zoo` example demos native Slint widgets** - button, checkbox, spinbox, slider, progress bar, image - plus a keyboard section, alongside the truce param widgets.
 
 ## 0.63.0
 
