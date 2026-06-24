@@ -187,7 +187,8 @@ export component ZooUi inherits Window {
                 VerticalLayout {
                     spacing: 10px;
                     Text { text: "Meter"; font-size: 11px; color: #bfbfc8; }
-                    Meter { width: 40px; height: 140px; level-left: root.m-l; level-right: root.m-r; }
+                    // Match the tallest XY pad ("big") so the two columns are flush.
+                    Meter { width: 40px; height: 212px; level-left: root.m-l; level-right: root.m-r; }
                 }
                 VerticalLayout {
                     spacing: 10px;

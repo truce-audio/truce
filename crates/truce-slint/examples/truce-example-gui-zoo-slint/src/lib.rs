@@ -6,6 +6,8 @@
 //! of stereo meters covers the rendering surface that slint does
 //! support.
 
+use std::cell::Cell;
+
 use truce::prelude::*;
 use truce_core::meter_display;
 use truce_slint::{PluginContext, SlintEditor, SyncFn};
@@ -13,6 +15,12 @@ use truce_slint::{PluginContext, SlintEditor, SyncFn};
 slint::include_modules!();
 
 use ZooParamsParamId as P;
+
+// Per-frame meter release. The DSP writes a peak each block, but a
+// stopped transport stops feeding blocks, so the raw slot freezes at
+// the last peak. The GUI eases the displayed level down whenever the
+// slot stops changing, instead of sticking full.
+const METER_DECAY: f32 = 0.85;
 
 #[derive(ParamEnum)]
 pub enum Mode {
@@ -193,6 +201,12 @@ impl PluginLogic for ZooSlint {
                 ui.on_xy_big_changed_y(move |v| s.automate(P::KPhase, f64::from(v)));
 
                 // -- host -> UI: per-frame sync. --
+                // Displayed meter level + last raw slot reading, kept across
+                // frames so the meter can decay when the transport stops.
+                let meter_l = Cell::new(0.0f32);
+                let meter_r = Cell::new(0.0f32);
+                let prev_raw_l = Cell::new(0.0f32);
+                let prev_raw_r = Cell::new(0.0f32);
                 Box::new(move |state: &PluginContext<ZooParams>| {
                     // Knobs.
                     ui.set_k_mix(state.get_param(P::KMix));
@@ -234,9 +248,29 @@ impl PluginLogic for ZooSlint {
                     let idx = truce_core::cast::discrete_index(norm, 8) as i32;
                     ui.set_mode_index(idx);
 
-                    // Meters.
-                    ui.set_m_l(meter_display(state.get_meter(P::ML)));
-                    ui.set_m_r(meter_display(state.get_meter(P::MR)));
+                    // Meters. A changed slot means a fresh audio block
+                    // arrived, so follow it; a frozen slot (stopped
+                    // transport) eases down instead of sticking at the
+                    // last peak.
+                    let raw_l = state.get_meter(P::ML);
+                    let disp_l = if (raw_l - prev_raw_l.get()).abs() > f32::EPSILON {
+                        meter_display(raw_l)
+                    } else {
+                        meter_l.get() * METER_DECAY
+                    };
+                    prev_raw_l.set(raw_l);
+                    meter_l.set(disp_l);
+                    ui.set_m_l(disp_l);
+
+                    let raw_r = state.get_meter(P::MR);
+                    let disp_r = if (raw_r - prev_raw_r.get()).abs() > f32::EPSILON {
+                        meter_display(raw_r)
+                    } else {
+                        meter_r.get() * METER_DECAY
+                    };
+                    prev_raw_r.set(raw_r);
+                    meter_r.set(disp_r);
+                    ui.set_m_r(disp_r);
 
                     // XY pads - read the same params back.
                     ui.set_xy_small_x(state.get_param(P::KMix));
