@@ -97,14 +97,19 @@ func forwardMIDIEventList(
                     data2: UInt8(w0 & 0xFF),
                     _pad: 0)
                 midiCount += 1
-            } else if mt == 0x4 {
-                // MIDI 2.0 CV: forward two words verbatim. The
-                // Rust decoder (`decode_ump_channel_voice_2`)
-                // reads them as `[u32; 4]` (zero-padded).
-                let w1 = (wordsPtr + Int(i) + 1).pointee
+            } else if mt == 0x3 || mt == 0x4 || mt == 0x5 {
+                // MIDI 2.0 CV (0x4), SysEx-7 (0x3), SysEx-8 (0x5):
+                // forward the packet words verbatim. The Rust side
+                // dispatches on message type - decoding CV via
+                // `decode_ump_channel_voice_2` and reassembling the
+                // SysEx-7/8 packet chains into one `EventBody::SysEx`.
+                // Reads as `[u32; 4]`; zero-pad the unused tail.
+                let w1 = packetWords > 1 ? (wordsPtr + Int(i) + 1).pointee : 0
+                let w2 = packetWords > 2 ? (wordsPtr + Int(i) + 2).pointee : 0
+                let w3 = packetWords > 3 ? (wordsPtr + Int(i) + 3).pointee : 0
                 midi2Buf[Int(midi2Count)] = AuMidi2Event(
                     sample_offset: offset,
-                    words: (w0, w1, 0, 0))
+                    words: (w0, w1, w2, w3))
                 midi2Count += 1
             }
             i += packetWords

@@ -184,6 +184,12 @@ pub struct AuCallbacks {
     /// Load the index-th factory preset - the same apply path as
     /// `state_load`. Returns 1 on success.
     pub factory_preset_load: unsafe extern "C" fn(ctx: *mut c_void, index: u32) -> i32,
+    /// Host → plugin `SysEx` input (AU v2). The shim strips the
+    /// `0xF0`/`0xF7` framing and passes the inner bytes; the Rust side
+    /// copies into the `EventList` `SysEx` pool. `sample_offset` is the
+    /// block-relative frame (0 for AU v2's untimed `MusicDeviceSysEx`).
+    pub push_sysex_input:
+        unsafe extern "C" fn(ctx: *mut c_void, sample_offset: u32, bytes: *const u8, len: u32),
 }
 
 /// A MIDI event passed across the Rust ↔ `ObjC` boundary in both

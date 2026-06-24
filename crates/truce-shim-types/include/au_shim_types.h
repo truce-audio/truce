@@ -190,6 +190,14 @@ typedef struct {
     /* Load the index-th factory preset into the plugin - the same
      * apply path as state_load. Returns 1 on success. */
     int32_t (*factory_preset_load)(void *ctx, uint32_t index);
+    /* Host → plugin SysEx input (AU v2 `MusicDeviceSysEx`). The shim
+     * strips the 0xF0/0xF7 framing and passes the inner bytes; the
+     * Rust side copies into its EventList SysEx pool. `sample_offset`
+     * is block-relative (0 for AU v2's untimed SysEx API). AU v3
+     * delivers SysEx in-line as UMP SysEx-7/8 through the `events2`
+     * slice of `process` and does not use this callback. */
+    void (*push_sysex_input)(void *ctx, uint32_t sample_offset,
+                             const uint8_t *bytes, uint32_t len);
 } AuCallbacks;
 
 // Globals shared between v2 and v3 shims.

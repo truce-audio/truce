@@ -1391,6 +1391,26 @@ static OSStatus au_v2_midi_event(void *self_, UInt32 status,
     return noErr;
 }
 
+/* kMusicDeviceSysExSelect handler. The host hands us one complete
+ * SysEx message (0xF0-framed) per call, before the render pulls
+ * audio. truce's EventBody::SysEx stores inner bytes only, so strip
+ * the 0xF0 start / 0xF7 end framing. MusicDeviceSysEx carries no
+ * timestamp, so the message lands at block start (sample_offset 0). */
+static OSStatus au_v2_sysex(void *self_, const UInt8 *inData, UInt32 inLength) {
+    TruceAUv2 *inst = (TruceAUv2 *)self_;
+    if (!g_callbacks || !g_callbacks->push_sysex_input || !inData || inLength == 0) {
+        return noErr;
+    }
+    const uint8_t *p = (const uint8_t *)inData;
+    uint32_t n = inLength;
+    if (p[0] == 0xF0) { p++; n--; }
+    if (n > 0 && p[n - 1] == 0xF7) { n--; }
+    if (n > 0) {
+        g_callbacks->push_sysex_input(inst->rustCtx, 0, p, n);
+    }
+    return noErr;
+}
+
 // ---------------------------------------------------------------------------
 // Property listeners / render notify (stubs)
 // ---------------------------------------------------------------------------
@@ -1467,11 +1487,12 @@ static AudioComponentMethod au_v2_lookup(SInt16 selector) {
             return (AudioComponentMethod)au_v2_remove_render_notify;
         case kMusicDeviceMIDIEventSelect:
             return accepts_midi_input() ? (AudioComponentMethod)au_v2_midi_event : NULL;
+        case 258: // kMusicDeviceSysExSelect
+            return accepts_midi_input() ? (AudioComponentMethod)au_v2_sysex : NULL;
         // Return NULL for optional selectors (system probes for capabilities)
         case 11: // kAudioUnitRemovePropertyListenerSelect (legacy)
         case 19: case 20: case 21: // misc component selectors
         case 513: case 514: // kAudioOutputUnitStart/Stop
-        case 258: // kMusicDeviceSysExSelect
         case 259: // kMusicDevicePrepareInstrumentSelect
         case 260: // kMusicDeviceReleaseInstrumentSelect
         case 261: // kMusicDeviceStartNoteSelect

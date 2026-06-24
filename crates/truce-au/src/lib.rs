@@ -72,6 +72,15 @@ struct AuInstance<P: PluginExport> {
     latency_cache: AtomicU32,
     tail_cache: AtomicU32,
     event_list: EventList,
+    /// Set when `cb_au_push_sysex_input` has queued `SysEx` for the
+    /// upcoming `cb_process` block. AU v2 hosts deliver `SysEx` input
+    /// through `MusicDeviceSysEx` (the shim's `au_v2_sysex`) before the
+    /// render pulls audio, so `cb_process` must not blindly clear
+    /// `event_list` or it wipes the queued `SysEx`. The first push of a
+    /// block clears + sets this; `cb_process` consumes it instead of
+    /// re-clearing. (AU v3 `SysEx` arrives in-line via `events2` after
+    /// the clear, so it doesn't touch this flag.)
+    sysex_inputs_pending: bool,
     output_events: EventList,
     /// Per-sub-block scratch for `chunked_process::process_chunked`.
     sub_event_scratch: EventList,
@@ -168,6 +177,7 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
         latency_cache,
         tail_cache,
         event_list: EventList::with_capacity(EVENT_LIST_PREALLOC),
+        sysex_inputs_pending: false,
         output_events: EventList::with_capacity(EVENT_LIST_PREALLOC),
         sub_event_scratch: EventList::with_capacity(EVENT_LIST_PREALLOC),
         param_infos,
@@ -261,6 +271,8 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
                     std::ptr::write_bytes(ptr, 0, num_frames);
                 }
             }
+            inst.event_list.clear();
+            inst.sysex_inputs_pending = false;
             return;
         }
 
@@ -272,8 +284,16 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
             state::apply_state(&mut inst.plugin, &state);
         }
 
-        // Convert MIDI events
-        inst.event_list.clear();
+        // Convert MIDI events. AU v2 `SysEx` input arrives through
+        // `MusicDeviceSysEx` (the shim's `au_v2_sysex` → `cb_au_push_sysex_input`)
+        // before this render, so preserve any queued `SysEx` instead of
+        // clearing it; otherwise clear the previous block's events
+        // before appending short MIDI.
+        if inst.sysex_inputs_pending {
+            inst.sysex_inputs_pending = false;
+        } else {
+            inst.event_list.clear();
+        }
         if !events.is_null() && num_events > 0 {
             let event_slice = slice::from_raw_parts(events, num_events as usize);
             for ev in event_slice {
@@ -813,6 +833,35 @@ unsafe extern "C" fn cb_output_event_at<P: PluginExport>(
     }
 }
 
+/// `SysEx` input for AU v2. The shim's `au_v2_sysex` strips the
+/// `0xF0`/`0xF7` framing and calls this once per complete message
+/// before the render pulls audio; we copy the inner bytes into the
+/// plugin's `EventList` `SysEx` pool synchronously. Pool-full failures
+/// drop the message rather than corrupt-split it. AU v3 takes the
+/// in-line `events2` `SysEx`-7/8 path instead and never calls this.
+unsafe extern "C" fn cb_au_push_sysex_input<P: PluginExport>(
+    ctx: *mut std::ffi::c_void,
+    sample_offset: u32,
+    bytes: *const u8,
+    len: u32,
+) {
+    unsafe {
+        let inst = &mut *ctx.cast::<AuInstance<P>>();
+        if bytes.is_null() || len == 0 {
+            return;
+        }
+        // First SysEx of the block clears the previous block's events
+        // and flags `cb_process` to keep what we queue here rather than
+        // clearing again.
+        if !inst.sysex_inputs_pending {
+            inst.event_list.clear();
+            inst.sysex_inputs_pending = true;
+        }
+        let slice = std::slice::from_raw_parts(bytes, len as usize);
+        let _ = inst.event_list.push_sysex(sample_offset, slice);
+    }
+}
+
 unsafe extern "C" fn cb_output_sysex_count<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
     unsafe {
         let inst = &*ctx.cast::<AuInstance<P>>();
@@ -1261,6 +1310,7 @@ fn register_au_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
         factory_preset_count: cb_factory_preset_count::<P>,
         factory_preset_name: cb_factory_preset_name::<P>,
         factory_preset_load: cb_factory_preset_load::<P>,
+        push_sysex_input: cb_au_push_sysex_input::<P>,
     }));
 
     let param_descs = param_descs.leak();
