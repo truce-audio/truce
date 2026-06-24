@@ -60,15 +60,15 @@ jobs:
       # (FFI mismatches, feature-flag drift, swiftc bridging-header
       # rot) is the high-value coverage here.
       #
-      # The simulator build batches every plugin the screenshot loop
-      # below exercises into a single cargo invocation so shared deps
-      # (truce-core, wgpu, baseview, ...) compile once across the
-      # workspace. Each per-crate `cargo build` inside the loop's
-      # `install_one_screenshot` then resolves to a fingerprint-only
-      # no-op. The single `-p truce-example-gain` shape is preserved
-      # for the device slice where only the framework-build smoke is
-      # exercised.
-      - name: Build framework dylib (simulator slice, all screenshot plugins)
+      # Build every iOS-targeted example in one cargo invocation so
+      # shared deps (truce-core, wgpu, baseview, ...) compile once and
+      # each per-crate `cargo build` in the screenshot loop resolves to
+      # a fingerprint-only no-op. This list is intentionally broader
+      # than the screenshot loop below: plugins dropped from the
+      # (expensive) per-plugin screenshot pass stay here so build-side
+      # regressions (FFI/ABI mismatches, feature-flag drift, swiftc
+      # bridging-header rot) are still caught on iOS.
+      - name: Build framework dylib (simulator slice, all iOS examples)
         run: |
           cargo build \
             -p truce-example-gain \
@@ -82,6 +82,7 @@ jobs:
             -p truce-example-fundsp-reverb-worker \
             -p truce-example-fundsp-reverb-simple \
             -p truce-example-transpose \
+            -p truce-example-dasp-bitcrusher \
             --target aarch64-apple-ios-sim \
             --release --no-default-features --features au
 
@@ -181,16 +182,29 @@ jobs:
       # (`baked-screenshots-ios` artifact on every PR + manual
       # dispatch).
       #
-      # `truce-example-gain-iced` is skipped: iced's iOS backend is
-      # broken upstream and its container app never wires the editor.
+      # Curated subset, not every example. The only thing that renders
+      # differently on iOS vs desktop is the editor backend's iOS path
+      # (built-in CGImage blit, egui / slint UIKit stubs) and the AU
+      # component type the appex registers, so we check one
+      # representative per (backend x type) cell and let the desktop
+      # screenshot jobs gate each plugin's editor render:
+      #   gain / gui-zoo  -> built-in editor (smoke + full)
+      #   synth           -> instrument (aumu) appex
+      #   transpose       -> MIDI-effect appex
+      #   gain-egui-aspect / gui-zoo-egui -> egui UIKit path (+ aspect)
+      # The plugins dropped from this loop (eq, tremolo, arpeggio,
+      # state, fundsp-reverb-*, dasp-bitcrusher, gain-egui) are still
+      # built above and still render-checked on desktop; their iOS
+      # baselines stay committed but unchecked. `gain-iced` /
+      # `gui-zoo-iced` never ran here — iced's iOS backend is broken
+      # upstream.
+      #
       # `cargo truce screenshot --ios` writes a single-orientation
       # `UISupportedInterfaceOrientations` into the temporary
-      # container's Info.plist (the plugin's first listed
-      # orientation, defaulting to portrait), which forces iOS to
-      # rotate the sim to that orientation when the container
-      # launches. The loop order therefore doesn't influence the
-      # captured dimensions — kept transpose last anyway as a
-      # secondary safeguard in case the lock ever regresses.
+      # container's Info.plist, which forces iOS to rotate the sim to
+      # that orientation when the container launches, so loop order
+      # doesn't influence captured dimensions — transpose is kept last
+      # anyway as a secondary safeguard in case the lock ever regresses.
       - name: iOS container screenshots (diff vs baselines)
         id: ios_diff
         run: |
@@ -198,23 +212,15 @@ jobs:
           fail=0
           # Restart the simulator between plugins to clear accumulated
           # AUExt processes + componentd lookup state + Metal contexts.
-          # Without this, plugins partway through the sequence (tremolo,
-          # arpeggio) timeout waiting for first paint.
+          # Without this, plugins partway through the sequence timeout
+          # waiting for first paint.
           for crate in \
               truce-example-gain \
-              truce-example-synth \
-              truce-example-eq \
-              truce-example-gain-egui \
-              truce-example-gain-egui-aspect \
-              truce-example-arpeggio \
-              truce-example-tremolo \
-              truce-example-state \
-              truce-example-fundsp-reverb-worker \
-              truce-example-fundsp-reverb-simple \
-              truce-example-transpose \
               truce-example-gui-zoo \
+              truce-example-synth \
+              truce-example-gain-egui-aspect \
               truce-example-gui-zoo-egui \
-              truce-example-dasp-bitcrusher; do
+              truce-example-transpose; do
             short=${crate#truce-example-}
             short_under=${short//-/_}
             echo "=== $crate ==="
@@ -227,7 +233,7 @@ jobs:
               --out "examples/$crate/screenshots/${short_under}_container_ios.png" \
               -p "$crate" || fail=$((fail + 1))
           done
-          echo "container-mode regressions: $fail / 14"
+          echo "container-mode regressions: $fail / 6"
           exit $fail
 
       # Slint examples live in the truce-slint sub-workspace; re-run

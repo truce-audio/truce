@@ -491,12 +491,22 @@ jobs:
           # rationale — accumulated AUExt / componentd / Metal state
           # otherwise wedges later plugins' first paint).
           for crate in $EXAMPLE_CRATES; do
-            if [ "$crate" = "truce-example-gain-iced" ]; then
-              continue
-            fi
-            if [ "$crate" = "truce-example-gui-zoo-iced" ]; then
-              continue
-            fi
+            # iced's iOS backend doesn't build. The rest are plugins
+            # dropped from the iOS screenshot *check* (see ci-ios.yml):
+            # their (editor-backend x AU-type) cell is already covered
+            # on the sim by gain / gui-zoo / synth / transpose /
+            # gui-zoo-egui, and their editor render is still gated on
+            # desktop. Skip the per-plugin sim reboot here too; their
+            # committed iOS baselines stay frozen. To re-enable one,
+            # drop it from this list and from the ci-ios.yml loop, then
+            # re-bake.
+            case "$crate" in
+              truce-example-gain-iced|truce-example-gui-zoo-iced) continue ;;
+              truce-example-eq|truce-example-tremolo|truce-example-arpeggio) continue ;;
+              truce-example-state|truce-example-gain-egui) continue ;;
+              truce-example-fundsp-reverb-worker|truce-example-fundsp-reverb-simple) continue ;;
+              truce-example-dasp-bitcrusher) continue ;;
+            esac
             short="${crate#truce-example-}"
             short="${short//-/_}"
             default_out="examples/${crate}/screenshots/${short}_default_ios.png"
