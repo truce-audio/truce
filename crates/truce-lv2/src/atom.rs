@@ -19,7 +19,7 @@ use std::ffi::c_void;
 
 use truce_core::cast::{len_u32, sample_pos_i64};
 use truce_core::events::{Event, EventBody, EventList, TransportInfo};
-use truce_core::midi::{pitch_bend_from_bytes, pitch_bend_to_bytes};
+use truce_core::midi::{parse_midi1, pitch_bend_to_bytes};
 
 use crate::urid::{Urid, UridMap};
 
@@ -396,66 +396,9 @@ impl<'a> AtomSequenceReader<'a> {
 // ---------------------------------------------------------------------------
 
 pub fn midi_bytes_to_event(sample_offset: u32, bytes: &[u8]) -> Option<Event> {
-    if bytes.is_empty() {
-        return None;
-    }
-    let status = bytes[0];
-    let channel = status & 0x0F;
-    let body = match status & 0xF0 {
-        0x80 if bytes.len() >= 3 => EventBody::NoteOff {
-            group: 0,
-            channel,
-            note: bytes[1] & 0x7F,
-            velocity: bytes[2] & 0x7F,
-        },
-        0x90 if bytes.len() >= 3 => {
-            let vel = bytes[2] & 0x7F;
-            if vel == 0 {
-                EventBody::NoteOff {
-                    group: 0,
-                    channel,
-                    note: bytes[1] & 0x7F,
-                    velocity: 0,
-                }
-            } else {
-                EventBody::NoteOn {
-                    group: 0,
-                    channel,
-                    note: bytes[1] & 0x7F,
-                    velocity: vel,
-                }
-            }
-        }
-        0xA0 if bytes.len() >= 3 => EventBody::Aftertouch {
-            group: 0,
-            channel,
-            note: bytes[1] & 0x7F,
-            pressure: bytes[2] & 0x7F,
-        },
-        0xB0 if bytes.len() >= 3 => EventBody::ControlChange {
-            group: 0,
-            channel,
-            cc: bytes[1] & 0x7F,
-            value: bytes[2] & 0x7F,
-        },
-        0xC0 if bytes.len() >= 2 => EventBody::ProgramChange {
-            group: 0,
-            channel,
-            program: bytes[1] & 0x7F,
-        },
-        0xD0 if bytes.len() >= 2 => EventBody::ChannelPressure {
-            group: 0,
-            channel,
-            pressure: bytes[1] & 0x7F,
-        },
-        0xE0 if bytes.len() >= 3 => EventBody::PitchBend {
-            group: 0,
-            channel,
-            value: pitch_bend_from_bytes(bytes[1], bytes[2]),
-        },
-        _ => return None,
-    };
-    Some(Event {
+    // LV2 carries legacy MIDI 1.0 byte streams with no UMP group, so
+    // decode at group 0 through the shared channel-voice decoder.
+    parse_midi1(0, bytes).map(|body| Event {
         sample_offset,
         body,
     })
