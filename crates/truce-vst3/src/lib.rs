@@ -799,6 +799,49 @@ unsafe extern "C" fn cb_get_output_sysex_event<P: PluginExport>(
     }
 }
 
+unsafe extern "C" fn cb_get_output_param_count<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
+    unsafe {
+        let inst = &*ctx.cast::<Vst3Instance<P>>();
+        len_u32(
+            inst.output_events
+                .iter()
+                .filter(|e| matches!(e.body, EventBody::ParamChange { .. }))
+                .count(),
+        )
+    }
+}
+
+unsafe extern "C" fn cb_get_output_param<P: PluginExport>(
+    ctx: *mut std::ffi::c_void,
+    index: u32,
+    out_id: *mut u32,
+    out_sample_offset: *mut i32,
+    out_value: *mut f64,
+) {
+    unsafe {
+        let inst = &*ctx.cast::<Vst3Instance<P>>();
+        if let Some(event) = inst
+            .output_events
+            .iter()
+            .filter(|e| matches!(e.body, EventBody::ParamChange { .. }))
+            .nth(index as usize)
+            && let EventBody::ParamChange { id, value } = event.body
+        {
+            // VST3 output param queues carry normalized values; the
+            // plugin emits plain. Fall back to the plain value if the
+            // id has no descriptor (shouldn't happen for real params).
+            let normalized = inst
+                .param_infos
+                .iter()
+                .find(|i| i.id == id)
+                .map_or(value, |i| i.range.normalize(value));
+            *out_id = id;
+            *out_sample_offset = i32::try_from(event.sample_offset).unwrap_or(0);
+            *out_value = normalized;
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // GUI callbacks
 // ---------------------------------------------------------------------------
@@ -1279,6 +1322,8 @@ fn register_vst3_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
         gui_check_size_constraint: cb_gui_check_size_constraint::<P>,
         gui_set_size: cb_gui_set_size::<P>,
         midi_mapping_get_param_id: cb_midi_mapping_get_param_id::<P>,
+        get_output_param_count: cb_get_output_param_count::<P>,
+        get_output_param: cb_get_output_param::<P>,
     }));
 
     // Unify with the `Box::leak(Box::new(...))` shape above so every

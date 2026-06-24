@@ -223,6 +223,12 @@ struct Vst3Callbacks {
     // IMidiMapping: resolve a (bus, channel, controllerNumber) query to
     // a parameter id. Returns 1 (kResultOk) + writes *out on a hit.
     int32_t (*midi_mapping_get_param_id)(void*, int32_t, int16_t, int16_t, uint32_t*);
+    // Process-emitted parameter output - shim queries after `process`
+    // and adds each to the host's `outputParameterChanges` queue.
+    // `value` is normalized [0,1]; `sample_offset` is block-relative.
+    uint32_t (*get_output_param_count)(void*);
+    void (*get_output_param)(void*, uint32_t /*index*/, uint32_t* /*id*/,
+                             int32_t* /*sample_offset*/, double* /*value*/);
 };
 
 // ---------------------------------------------------------------------------
@@ -1007,6 +1013,50 @@ public:
                     ev.data.dataType = 0; // kMidiSysEx
                     ev.data.bytes = bytes;
                     eventList->vtbl->addEvent(data->outputEvents, &ev);
+                }
+            }
+        }
+
+        // Forward process-emitted parameter changes to the host's
+        // output parameter queue. Hosts route these to the edit
+        // controller so the UI / automation reflect values the plugin
+        // changed during processing (e.g. an envelope follower). The
+        // Rust side already normalized each value to [0,1].
+        if (data->outputParameterChanges && g_cb->get_output_param_count) {
+            uint32_t pcount = g_cb->get_output_param_count(ctx);
+            if (pcount > 0) {
+                struct IPCVtbl {
+                    tresult (*qi)(void*, const TUID, void**);
+                    uint32 (*addRef)(void*);
+                    uint32 (*release)(void*);
+                    int32 (*getParameterCount)(void*);
+                    void* (*getParameterData)(void*, int32);
+                    void* (*addParameterData)(void*, const uint32*, int32*);
+                };
+                struct IQVtbl {
+                    tresult (*qi)(void*, const TUID, void**);
+                    uint32 (*addRef)(void*);
+                    uint32 (*release)(void*);
+                    uint32 (*getParameterId)(void*);
+                    int32 (*getPointCount)(void*);
+                    tresult (*getPoint)(void*, int32, int32*, double*);
+                    tresult (*addPoint)(void*, int32, double, int32*);
+                };
+                struct { IPCVtbl* vtbl; } *changes =
+                    (decltype(changes))data->outputParameterChanges;
+                for (uint32_t i = 0; i < pcount; i++) {
+                    uint32_t pid = 0;
+                    int32 soff = 0;
+                    double val = 0.0;
+                    g_cb->get_output_param(ctx, i, &pid, &soff, &val);
+                    int32 qidx = 0;
+                    void* queue = changes->vtbl->addParameterData(
+                        data->outputParameterChanges, &pid, &qidx);
+                    if (queue) {
+                        IQVtbl* qv = *(IQVtbl**)queue;
+                        int32 pidx = 0;
+                        qv->addPoint(queue, soff, val, &pidx);
+                    }
                 }
             }
         }

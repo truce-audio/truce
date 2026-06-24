@@ -446,6 +446,22 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
         inst.scratch
             .finish_widening_f32(outputs, num_output_channels, len_u32(num_frames));
 
+        // AU v2 (macOS): notify the host of process-emitted parameter
+        // changes so its UI / automation reflect values the plugin
+        // changed during processing. AU v3 (iOS) has no host-notify -
+        // the Swift shim polls the parameter tree - matching the
+        // editor-side `set_param` split.
+        #[cfg(target_os = "macos")]
+        for event in inst.output_events.iter() {
+            if let EventBody::ParamChange { id, value } = event.body {
+                // SAFETY (outer `unsafe` closure): `ctx` is the live
+                // instance the shim mapped to its TruceAUv2; the
+                // notifier only touches the C-side component, not
+                // `inst`. `value` is plain, as AU wants.
+                truce_au_v2_host_set_param(ctx, id, f32::from_f64(value));
+            }
+        }
+
         // Refresh latency / tail caches so the host's main-thread
         // queries don't have to call into `inst.plugin`.
         inst.latency_cache

@@ -192,6 +192,18 @@ pub struct Vst3Callbacks {
         controller: i16,
         out_param_id: *mut u32,
     ) -> i32,
+    /// Process-emitted parameter output. The shim drains these after
+    /// `process` into the host's `outputParameterChanges` queue, so
+    /// hosts see parameter changes the plugin makes during processing.
+    /// `value` is normalized `[0,1]`; `sample_offset` is block-relative.
+    pub get_output_param_count: unsafe extern "C" fn(ctx: *mut c_void) -> u32,
+    pub get_output_param: unsafe extern "C" fn(
+        ctx: *mut c_void,
+        index: u32,
+        out_id: *mut u32,
+        out_sample_offset: *mut i32,
+        out_value: *mut f64,
+    ),
 }
 
 unsafe extern "C" {
