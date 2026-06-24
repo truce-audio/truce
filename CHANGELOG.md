@@ -2,6 +2,10 @@
 
 Notable changes per release.
 
+## 0.63.2
+
+- **`cargo truce --shell` finds `[profile.shell]` at the Cargo workspace root** - the preflight no longer rejects plugin crates that are members of a larger workspace. ([#148](https://github.com/truce-audio/truce/issues/148))
+
 ## 0.63.1
 
 - **Slint editors receive keyboard input.** `truce-slint` translates native key events into Slint `WindowEvent` key events, so `LineEdit` / `TextInput` and `FocusScope` work in plugin editors (host focus permitting).
