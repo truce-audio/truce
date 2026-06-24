@@ -194,6 +194,13 @@ struct AaxInstance<P: PluginExport> {
     latency_cache: AtomicU32,
     tail_cache: AtomicU32,
     event_list: EventList,
+    /// Set when `_push_sysex_input` has queued `SysEx` for the current
+    /// `_render` block. `RenderAudio` reassembles `SysEx` from the MIDI
+    /// packet stream and pushes it before calling into Rust, so the
+    /// render must not blindly clear `event_list` or it wipes the
+    /// queued `SysEx`. The first push of a block clears + sets this;
+    /// the render consumes it instead of re-clearing.
+    sysex_inputs_pending: bool,
     output_events: EventList,
     /// Per-sub-block scratch for `chunked_process::process_chunked`.
     sub_event_scratch: EventList,
@@ -728,6 +735,7 @@ pub unsafe fn _create<P: PluginExport>() -> *mut std::ffi::c_void {
         latency_cache,
         tail_cache,
         event_list: EventList::with_capacity(EVENT_LIST_PREALLOC),
+        sysex_inputs_pending: false,
         output_events: EventList::with_capacity(EVENT_LIST_PREALLOC),
         sub_event_scratch: EventList::with_capacity(EVENT_LIST_PREALLOC),
         param_infos,
@@ -803,6 +811,8 @@ pub unsafe fn _process<P: PluginExport>(
                     unsafe { std::ptr::write_bytes(ptr, 0, num_frames) };
                 }
             }
+            inst.event_list.clear();
+            inst.sysex_inputs_pending = false;
             return;
         }
 
@@ -817,8 +827,16 @@ pub unsafe fn _process<P: PluginExport>(
             inst.state_revision.fetch_add(1, Ordering::Release);
         }
 
-        // Convert MIDI
-        inst.event_list.clear();
+        // Convert MIDI. `RenderAudio` reassembles SysEx from the MIDI
+        // packet stream and pushes it via `_push_sysex_input` before
+        // calling in here, so preserve any queued SysEx instead of
+        // clearing it; otherwise clear the previous block's events
+        // before appending short MIDI.
+        if inst.sysex_inputs_pending {
+            inst.sysex_inputs_pending = false;
+        } else {
+            inst.event_list.clear();
+        }
         if !events.is_null() && num_events > 0 {
             let ev_slice = unsafe { slice::from_raw_parts(events, num_events as usize) };
             for ev in ev_slice {
@@ -1023,6 +1041,13 @@ pub unsafe fn _push_sysex_input<P: PluginExport>(
     let inst = unsafe { &mut *ctx.cast::<AaxInstance<P>>() };
     if bytes.is_null() || len == 0 {
         return;
+    }
+    // First SysEx of the block clears the previous block's events and
+    // flags `_render` to keep what we queue here rather than clearing
+    // again.
+    if !inst.sysex_inputs_pending {
+        inst.event_list.clear();
+        inst.sysex_inputs_pending = true;
     }
     let slice = unsafe { std::slice::from_raw_parts(bytes, len as usize) };
     let _ = inst.event_list.push_sysex(delta_frames, slice);

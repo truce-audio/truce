@@ -52,6 +52,13 @@ struct Vst2Instance<P: PluginExport> {
     latency_cache: AtomicU32,
     tail_cache: AtomicU32,
     event_list: EventList,
+    /// Set when `cb_push_sysex_input` has queued `SysEx` for the
+    /// upcoming `process` block. `SysEx` input arrives through that
+    /// separate callback (during `effProcessEvents`) before `process`
+    /// runs, so `process` must not blindly clear `event_list` or it
+    /// wipes the queued `SysEx`. The first push of a block clears +
+    /// sets this; `process` consumes it instead of re-clearing.
+    sysex_inputs_pending: bool,
     output_events: EventList,
     /// Per-sub-block scratch for `chunked_process::process_chunked`.
     sub_event_scratch: EventList,
@@ -213,6 +220,7 @@ unsafe extern "C" fn cb_create<P: PluginExport>() -> *mut std::ffi::c_void {
         latency_cache,
         tail_cache,
         event_list: EventList::with_capacity(EVENT_LIST_PREALLOC),
+        sysex_inputs_pending: false,
         output_events: EventList::with_capacity(EVENT_LIST_PREALLOC),
         sub_event_scratch: EventList::with_capacity(EVENT_LIST_PREALLOC),
         param_infos,
@@ -308,6 +316,8 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
                     std::ptr::write_bytes(ptr, 0, num_frames);
                 }
             }
+            inst.event_list.clear();
+            inst.sysex_inputs_pending = false;
             return;
         }
 
@@ -319,8 +329,16 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
             state::apply_state(&mut inst.plugin, &state);
         }
 
-        // Convert MIDI events
-        inst.event_list.clear();
+        // Convert MIDI events. SysEx input arrives through
+        // `cb_push_sysex_input` during the host's `effProcessEvents`
+        // dispatch, which runs before this callback, so preserve any
+        // queued SysEx instead of clearing it; otherwise clear stale
+        // events from the previous block before appending short MIDI.
+        if inst.sysex_inputs_pending {
+            inst.sysex_inputs_pending = false;
+        } else {
+            inst.event_list.clear();
+        }
         if !events.is_null() && num_events > 0 {
             let event_slice = slice::from_raw_parts(events, num_events as usize);
             for ev in event_slice {
@@ -497,6 +515,13 @@ unsafe extern "C" fn cb_push_sysex_input<P: PluginExport>(
         let inst = &mut *ctx.cast::<Vst2Instance<P>>();
         if bytes.is_null() || len == 0 {
             return;
+        }
+        // First SysEx of the block clears the previous block's events
+        // and flags `process` to keep what we queue here rather than
+        // clearing again.
+        if !inst.sysex_inputs_pending {
+            inst.event_list.clear();
+            inst.sysex_inputs_pending = true;
         }
         let slice = std::slice::from_raw_parts(bytes, len as usize);
         let _ = inst.event_list.push_sysex(delta_frames, slice);
