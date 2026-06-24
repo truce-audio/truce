@@ -25,6 +25,13 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("cargo-cli
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
 
+# Shell-mode (hot-reload) profile. `cargo truce install --shell`
+# builds with `--profile shell`, landing the shell binary in
+# `target/shell/`. This sub-workspace needs its own copy since Cargo
+# resolves profiles from the workspace root, not the parent.
+[profile.shell]
+inherits = "release"
+
 [package]
 name = "truce-slint"
 version = "0.63.1"
