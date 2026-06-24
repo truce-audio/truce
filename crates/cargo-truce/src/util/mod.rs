@@ -258,15 +258,22 @@ pub(crate) fn resolve_target_cpu(triple: &str) -> Option<String> {
 }
 
 /// Preflight check for `cargo truce install --shell` / `build --shell`:
-/// the project's `Cargo.toml` (single-crate plugin or workspace root)
-/// must declare a `[profile.shell]` table so `cargo build --profile
-/// shell` resolves.
+/// the Cargo workspace root's `Cargo.toml` must declare a
+/// `[profile.shell]` table so `cargo build --profile shell` resolves.
+///
+/// Cargo only honors `[profile.*]` at the workspace root, which may be
+/// an ancestor of the truce project root when the plugin crate is a
+/// member of a larger Cargo workspace. We resolve that root via `cargo
+/// metadata` rather than assuming it sits next to `truce.toml`.
 ///
 /// Returns `Ok(())` when the profile is declared. Otherwise returns
 /// an error string the caller can propagate; the message includes
 /// the exact lines to add.
 pub(crate) fn verify_shell_profile_declared() -> Result<(), CargoTruceError> {
-    let cargo_toml = project_root().join("Cargo.toml");
+    let root = project_root();
+    let cargo_toml = cargo_workspace_root(&root)
+        .unwrap_or(root)
+        .join("Cargo.toml");
     let content = fs::read_to_string(&cargo_toml).map_err(|e| -> CargoTruceError {
         format!("failed to read {}: {e}", cargo_toml.display()).into()
     })?;
@@ -457,6 +464,35 @@ pub(crate) fn locate_plugin_manifest(project_root: &Path, crate_name: &str) -> O
     let mp_marker = "\"manifest_path\":\"";
     let mp_idx = after.find(mp_marker)?;
     let rest = &after[mp_idx + mp_marker.len()..];
+    let end = rest.find('"')?;
+    Some(PathBuf::from(&rest[..end]))
+}
+
+/// Resolve the Cargo *workspace* root for a manifest via `cargo
+/// metadata`. For a single-crate plugin this is the crate dir itself;
+/// for a workspace member it's the ancestor that owns `[workspace]`.
+/// Cargo only honors `[profile.*]` tables at this root.
+pub(crate) fn cargo_workspace_root(manifest_dir: &Path) -> Option<PathBuf> {
+    let out = Command::new("cargo")
+        .args([
+            "metadata",
+            "--no-deps",
+            "--format-version=1",
+            "--manifest-path",
+        ])
+        .arg(manifest_dir.join("Cargo.toml"))
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    // Substring parse to avoid a serde_json dependency here.
+    // `workspace_root` is a single top-level field, distinct from
+    // `workspace_members` / `workspace_default_members` by its `:"`.
+    let text = String::from_utf8_lossy(&out.stdout);
+    let marker = "\"workspace_root\":\"";
+    let idx = text.find(marker)?;
+    let rest = &text[idx + marker.len()..];
     let end = rest.find('"')?;
     Some(PathBuf::from(&rest[..end]))
 }
@@ -947,5 +983,65 @@ pub(crate) fn check_cmd(cmd: &str, args: &[&OsStr], label: &str) {
         }
         Ok(_) => eprintln!("    {} {label}", tag_ok()),
         Err(_) => eprintln!("    {} {label}: not found", tag_fail()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::AtomicU64;
+
+    fn fresh_tempdir(label: &str) -> PathBuf {
+        static N: AtomicU64 = AtomicU64::new(0);
+        let n = N.fetch_add(1, Ordering::Relaxed);
+        let p = env::temp_dir().join(format!("cargo-truce-ws-{}-{n}-{label}", std::process::id()));
+        let _ = fs::remove_dir_all(&p);
+        fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    fn write(path: &Path, body: &str) {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, body).unwrap();
+    }
+
+    // A plugin crate nested in a Cargo workspace must resolve the
+    // workspace root (where Cargo honors `[profile.shell]`), not its
+    // own crate dir.
+    #[test]
+    fn workspace_root_resolves_to_ancestor_for_member_crate() {
+        let ws = fresh_tempdir("member");
+        write(
+            &ws.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"my-plugin\"]\nresolver = \"2\"\n\n\
+             [profile.shell]\ninherits = \"release\"\n",
+        );
+        write(
+            &ws.join("my-plugin/Cargo.toml"),
+            "[package]\nname = \"my-plugin\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        );
+        write(&ws.join("my-plugin/src/lib.rs"), "");
+
+        let resolved = cargo_workspace_root(&ws.join("my-plugin")).unwrap();
+        assert_eq!(resolved.canonicalize().unwrap(), ws.canonicalize().unwrap());
+        let _ = fs::remove_dir_all(&ws);
+    }
+
+    // A standalone single-crate plugin is its own workspace root.
+    #[test]
+    fn workspace_root_resolves_to_self_for_single_crate() {
+        let krate = fresh_tempdir("solo");
+        write(
+            &krate.join("Cargo.toml"),
+            "[package]\nname = \"solo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        );
+        write(&krate.join("src/lib.rs"), "");
+
+        let resolved = cargo_workspace_root(&krate).unwrap();
+        assert_eq!(
+            resolved.canonicalize().unwrap(),
+            krate.canonicalize().unwrap()
+        );
+        let _ = fs::remove_dir_all(&krate);
     }
 }
