@@ -5,6 +5,8 @@ Notable changes per release.
 ## 0.63.2
 
 - **`cargo truce --shell` finds `[profile.shell]` at the Cargo workspace root** - the preflight no longer rejects plugin crates that are members of a larger workspace. ([#148](https://github.com/truce-audio/truce/issues/148))
+- **`truce-vizia` no longer risks messaging a freed parent `NSView`** on editor teardown - the per-frame macOS re-anchor stops once the editor closes.
+- **`vizia` is now documented as not recommended for production** due to teardown/resize stability issues internal to vizia.
 
 ## 0.63.1
 
