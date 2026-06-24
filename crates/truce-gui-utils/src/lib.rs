@@ -150,6 +150,14 @@ pub fn reanchor_all_children_to_top(parent: *mut std::ffi::c_void) {
     }
     unsafe {
         let parent_obj = parent.cast::<Object>();
+        // Skip a parent that's been detached from its window: a sign
+        // the host is tearing the editor down, after which walking its
+        // subviews risks messaging a freed view. Mirrors the liveness
+        // guard in `should_skip_frame`.
+        let window: *mut Object = msg_send![parent_obj, window];
+        if window.is_null() {
+            return;
+        }
         let parent_frame: NsRect = msg_send![parent_obj, frame];
         let subviews: *mut Object = msg_send![parent_obj, subviews];
         if subviews.is_null() {

@@ -3,6 +3,8 @@
 //! DAW-provided parent window.
 
 use std::sync::Arc;
+#[cfg(target_os = "macos")]
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use truce_core::editor::{Editor, PluginContext, RawWindowHandle};
 use truce_params::Params;
@@ -50,6 +52,12 @@ pub struct ViziaEditor<P: Params + ?Sized> {
     /// Upper clamp retained from the builder. See [`Self::min_size`].
     max_size: (u32, u32),
     window: Option<vizia::WindowHandle>,
+    /// Host parent `NSView` pointer the `on_idle` re-anchor walks.
+    /// Shared with the idle closure and zeroed on `close()` / `Drop`
+    /// so a late idle tick (queued past window teardown) can't message
+    /// an `NSView` the host has already freed or reused.
+    #[cfg(target_os = "macos")]
+    reanchor_parent: Arc<AtomicUsize>,
 }
 
 // SAFETY: `vizia::WindowHandle` holds an opaque baseview handle that
@@ -79,6 +87,8 @@ impl<P: Params + 'static> ViziaEditor<P> {
             min_size: (1, 1),
             max_size: (u32::MAX, u32::MAX),
             window: None,
+            #[cfg(target_os = "macos")]
+            reanchor_parent: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -277,11 +287,20 @@ impl<P: Params + 'static> Editor for ViziaEditor<P> {
         // grows under host/user resize doesn't drift its top edge
         // above the visible area (clipping the editor's header /
         // first row). No-op on other platforms.
+        //
+        // The parent pointer lives in a shared atomic that `close()` /
+        // `Drop` zero, so a late idle tick fired after teardown reads 0
+        // and skips instead of messaging a freed `NSView`.
         #[cfg(target_os = "macos")]
         let app = {
-            let ptr = parent_for_reanchor;
+            self.reanchor_parent
+                .store(parent_for_reanchor, Ordering::Relaxed);
+            let reanchor = Arc::clone(&self.reanchor_parent);
             app.on_idle(move |_cx| {
-                truce_gui_utils::reanchor_all_children_to_top(ptr as *mut std::ffi::c_void);
+                let ptr = reanchor.load(Ordering::Relaxed);
+                if ptr != 0 {
+                    truce_gui_utils::reanchor_all_children_to_top(ptr as *mut std::ffi::c_void);
+                }
             })
         };
 
@@ -290,6 +309,11 @@ impl<P: Params + 'static> Editor for ViziaEditor<P> {
     }
 
     fn close(&mut self) {
+        // Stop the idle re-anchor from touching the parent before the
+        // window tears down (both run on the GUI thread, so this is
+        // ordered ahead of any later idle tick).
+        #[cfg(target_os = "macos")]
+        self.reanchor_parent.store(0, Ordering::Relaxed);
         if let Some(mut window) = self.window.take() {
             window.close();
         }
@@ -307,6 +331,8 @@ impl<P: Params + ?Sized> Drop for ViziaEditor<P> {
         // `WindowHandle::close()` cancels the macOS frame timer so a
         // host that drops the editor without calling `Editor::close`
         // doesn't leak the underlying CFRunLoop source.
+        #[cfg(target_os = "macos")]
+        self.reanchor_parent.store(0, Ordering::Relaxed);
         if let Some(mut window) = self.window.take() {
             window.close();
         }
