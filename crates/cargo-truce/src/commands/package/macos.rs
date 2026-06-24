@@ -14,9 +14,10 @@ use crate::commands::install::presets;
 use crate::install_scope::PkgScope;
 use crate::{
     CLAP_EXPORTS, Config, MacArch, PluginDef, Res, VST2_EXPORTS, VST3_EXPORTS,
-    cargo_build_multi_arch, copy_dir_recursive, deployment_target, detect_default_features,
-    link_macos_bundle, lipo_into, load_config, project_root, read_workspace_version,
-    release_bundle_bin, release_lib_for_target, release_static_for_target,
+    cargo_build_multi_arch, cargo_build_multi_arch_with_profile, copy_dir_recursive,
+    deployment_target, detect_default_features, link_macos_bundle, lipo_into, load_config,
+    project_root, read_workspace_version, release_bundle_bin, release_lib_for_target,
+    release_static_for_target,
 };
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -891,7 +892,10 @@ pub(crate) fn build_and_lipo_standalone(
             if plugins.len() == 1 { "" } else { "s" },
         );
     }
-    cargo_build_multi_arch(archs, &args, dt)?;
+    // Always `release`, even under `install --shell` / `--debug`: the
+    // standalone host is a distribution app, not the hot-reloaded plugin
+    // binary, and the lipo paths below read from `release/`.
+    cargo_build_multi_arch_with_profile(archs, &args, dt, "release")?;
 
     // Per-plugin lipo: each plugin's per-arch bins land at
     // `target/<triple>/release/<bin_stem>` and need to be combined

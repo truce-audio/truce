@@ -24,7 +24,10 @@ pub(crate) use build::cargo_rustc_bin;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(crate) use build::rustup_has_target;
 #[cfg(target_os = "macos")]
-pub(crate) use build::{MacArch, cargo_build_for_arch, cargo_build_multi_arch, lipo_into};
+pub(crate) use build::{
+    MacArch, cargo_build_for_arch, cargo_build_multi_arch, cargo_build_multi_arch_with_profile,
+    lipo_into,
+};
 pub(crate) use build::{cargo_build, cargo_build_debug, sccache_wrapper};
 #[cfg(target_os = "macos")]
 pub(crate) use bundle_link::{

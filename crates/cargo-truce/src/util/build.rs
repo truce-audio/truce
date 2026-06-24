@@ -811,6 +811,21 @@ pub(crate) fn cargo_build_multi_arch(
     base_args: &[&str],
     dt: &str,
 ) -> crate::Res {
+    cargo_build_multi_arch_with_profile(archs, base_args, dt, &build_profile_name())
+}
+
+/// Like `cargo_build_multi_arch`, but with an explicit profile instead
+/// of the process-global one. Used to build distribution artifacts
+/// (the standalone host) in `release` even when the global profile is
+/// `shell` or `debug` - those iteration profiles apply to the plugin
+/// binary, not the host app that wraps it.
+#[cfg(target_os = "macos")]
+pub(crate) fn cargo_build_multi_arch_with_profile(
+    archs: &[MacArch],
+    base_args: &[&str],
+    dt: &str,
+    profile: &str,
+) -> crate::Res {
     let mut args: Vec<String> = Vec::with_capacity(archs.len() * 2 + base_args.len());
     for arch in archs {
         args.push("--target".into());
@@ -820,5 +835,5 @@ pub(crate) fn cargo_build_multi_arch(
         args.push((*a).into());
     }
     let arg_refs: Vec<&str> = args.iter().map(std::string::String::as_str).collect();
-    cargo_build(&[], &arg_refs, dt)
+    cargo_build_with_profile(&[], &arg_refs, dt, profile)
 }
