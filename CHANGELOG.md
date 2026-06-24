@@ -7,6 +7,7 @@ Notable changes per release.
 - **Parameters can declare a default MIDI mapping** (`#[param(..., midi_cc = N)]`) - VST3, AU v2, and LV2 expose the binding to the host's MIDI controller assignment; CLAP / VST2 / AAX leave it host-driven.
 - **VST3 accepts channel MIDI controller input** - CC, program change, channel pressure, pitch bend, and poly pressure now reach the plugin, decoded from VST3's legacy MIDI controller event forms. ([#145](https://github.com/truce-audio/truce/pull/145), by [@Boscop](https://github.com/Boscop))
 - **SysEx input fixes.** VST2 and AAX no longer drop a queued input SysEx to the per-block event-list clear; AU now accepts SysEx input (v2 via `MusicDeviceSysEx`, v3 via UMP SysEx-7/8).
+- **Plugin-process parameter changes notify the host.** A parameter the plugin changes during `process()` now updates the host's UI / automation on VST2, VST3, and AU (CLAP already did) - via `audioMasterAutomate`, the VST3 output parameter queue, and `AUEventListenerNotify` respectively. ([#147](https://github.com/truce-audio/truce/pull/147), VST2 by [@Boscop](https://github.com/Boscop))
 
 ## 0.63.3
 
