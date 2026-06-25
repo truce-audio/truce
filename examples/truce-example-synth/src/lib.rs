@@ -3,6 +3,8 @@
 // prelude makes that the buffer precision too - the format wrapper
 // widens the host's f32 audio buffer to f64 at the block boundary
 // and narrows on the way out.
+use std::f64::consts::TAU;
+
 use truce::prelude64::*;
 use truce_core::midi::{norm_7bit, norm_pitch_bend};
 use truce_gui::IntoLayoutEditor;
@@ -113,10 +115,29 @@ pub struct SynthParams {
     /// into an `EventBody::PitchBend`. Hidden because it is a MIDI
     /// proxy, not a knob the user reaches for. AU / CLAP deliver pitch
     /// bend as raw MIDI and ignore this binding.
-    #[param(name = "Pitch Bend", short_name = "Bend",
-            range = "linear(-1, 1)", default = 0.0,
-            flags = "hidden | automatable", midi_source = "pitchbend")]
+    #[param(
+        name = "Pitch Bend",
+        short_name = "Bend",
+        range = "linear(-1, 1)",
+        default = 0.0,
+        flags = "hidden | automatable",
+        midi_source = "pitchbend"
+    )]
     pub bend: FloatParam,
+
+    /// Mod-wheel (CC1) target, driving vibrato depth. Same story as
+    /// `bend`: VST3 routes the wheel here via `IMidiMapping` and the
+    /// wrapper bridges it back to an `EventBody::ControlChange`, while
+    /// AU / CLAP deliver the CC as raw MIDI. Hidden MIDI proxy.
+    #[param(
+        name = "Mod Wheel",
+        short_name = "Mod",
+        range = "linear(0, 1)",
+        default = 0.0,
+        flags = "hidden | automatable",
+        midi_cc = 1
+    )]
+    pub mod_wheel: FloatParam,
 }
 
 // --- Plugin ---
@@ -127,12 +148,21 @@ const MAX_VOICES: usize = 16;
 /// MIDI default of +/-2 semitones.
 const PITCH_BEND_RANGE: f64 = 2.0;
 
+/// Vibrato LFO rate in Hz, and its depth in semitones at a fully
+/// raised mod wheel.
+const VIBRATO_RATE_HZ: f64 = 5.0;
+const VIBRATO_DEPTH_SEMITONES: f64 = 0.5;
+
 pub struct Synth {
     pub params: Arc<SynthParams>,
     voices: Vec<Voice>,
     sample_rate: f64,
-    /// Current channel pitch bend, in semitones. `0.0` is centered.
-    pitch_bend: f64,
+    /// Channel pitch bend as a frequency multiplier. `1.0` is centered.
+    pitch_bend_mult: f64,
+    /// Mod-wheel position (CC1), `0.0..=1.0`, scaling vibrato depth.
+    mod_wheel: f64,
+    /// Vibrato LFO phase, `0.0..1.0`.
+    lfo_phase: f64,
 }
 
 impl Synth {
@@ -141,17 +171,16 @@ impl Synth {
             params,
             voices: Vec::with_capacity(MAX_VOICES),
             sample_rate: 44100.0,
-            pitch_bend: 0.0,
+            pitch_bend_mult: 1.0,
+            mod_wheel: 0.0,
+            lfo_phase: 0.0,
         }
     }
 
-    /// Map a 14-bit pitch-bend code to semitones and apply it to all
-    /// sounding voices.
+    /// Map a 14-bit pitch-bend code to a frequency multiplier.
     fn pitch_bend(&mut self, value: u16) {
-        self.pitch_bend = f64::from(norm_pitch_bend(value)) * PITCH_BEND_RANGE;
-        for voice in &mut self.voices {
-            voice.set_pitch_bend(self.pitch_bend);
-        }
+        let semitones = f64::from(norm_pitch_bend(value)) * PITCH_BEND_RANGE;
+        self.pitch_bend_mult = 2.0_f64.powf(semitones / 12.0);
     }
 
     fn note_on(&mut self, note: u8, velocity: f32) {
@@ -161,7 +190,7 @@ impl Synth {
         let sustain = self.params.envelope.sustain.value();
         let release = self.params.envelope.release.value();
 
-        let mut voice = Voice::new(
+        self.voices.push(Voice::new(
             note,
             freq,
             velocity,
@@ -170,11 +199,7 @@ impl Synth {
             decay,
             sustain,
             release,
-        );
-        // Start the new voice at the channel's current bend so it
-        // joins notes already sounding at the bent pitch.
-        voice.set_pitch_bend(self.pitch_bend);
-        self.voices.push(voice);
+        ));
         if self.voices.len() > MAX_VOICES {
             self.voices.remove(0);
         }
@@ -197,6 +222,9 @@ impl PluginLogic for Synth {
     fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {
         self.sample_rate = sample_rate;
         self.voices.clear();
+        self.pitch_bend_mult = 1.0;
+        self.mod_wheel = 0.0;
+        self.lfo_phase = 0.0;
         self.params.set_sample_rate(sample_rate);
         self.params.snap_smoothers();
     }
@@ -220,6 +248,10 @@ impl PluginLogic for Synth {
                     }
                     EventBody::NoteOff { note, .. } => self.note_off(*note),
                     EventBody::PitchBend { value, .. } => self.pitch_bend(*value),
+                    // CC1 is the mod wheel; steer vibrato depth from it.
+                    EventBody::ControlChange { cc: 1, value, .. } => {
+                        self.mod_wheel = f64::from(norm_7bit(*value));
+                    }
                     _ => {}
                 }
                 next_event += 1;
@@ -230,9 +262,26 @@ impl PluginLogic for Synth {
             let resonance = self.params.filter.resonance.read();
             let volume = db_to_linear(self.params.volume.read());
 
+            // Advance the shared vibrato LFO and fold it into the
+            // channel pitch bend, so every voice gets one combined
+            // pitch multiplier this sample.
+            let vibrato_semitones =
+                self.mod_wheel * VIBRATO_DEPTH_SEMITONES * (self.lfo_phase * TAU).sin();
+            self.lfo_phase += VIBRATO_RATE_HZ / self.sample_rate;
+            if self.lfo_phase >= 1.0 {
+                self.lfo_phase -= 1.0;
+            }
+            let pitch_mult = self.pitch_bend_mult * 2.0_f64.powf(vibrato_semitones / 12.0);
+
             let mut sample = 0.0f64;
             for voice in &mut self.voices {
-                sample += voice.render(waveform_idx, cutoff, resonance, self.sample_rate);
+                sample += voice.render(
+                    waveform_idx,
+                    cutoff,
+                    resonance,
+                    self.sample_rate,
+                    pitch_mult,
+                );
             }
             sample *= volume;
 
@@ -345,6 +394,38 @@ mod tests {
         assert!(
             bent_xings > plain_xings,
             "expected pitch bend up to raise frequency: bent={bent_xings}, plain={plain_xings}"
+        );
+    }
+
+    #[test]
+    fn mod_wheel_adds_vibrato() {
+        use std::time::Duration;
+        use truce_test::{assertions, driver};
+
+        // A raised mod wheel applies a pitch LFO, so the output diverges
+        // from the steady, unmodulated note.
+        let plain = driver!(Plugin)
+            .duration(Duration::from_millis(200))
+            .script(|s| s.note_on(60, 100.0 / 127.0))
+            .run();
+
+        let vibrato = driver!(Plugin)
+            .duration(Duration::from_millis(200))
+            .script(|s| {
+                s.note_on(60, 100.0 / 127.0);
+                s.cc(1, 1.0); // mod wheel fully up
+            })
+            .run();
+
+        assertions::assert_no_nans(&vibrato);
+        let max_diff = plain.output[0]
+            .iter()
+            .zip(&vibrato.output[0])
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0f32, f32::max);
+        assert!(
+            max_diff > 0.01,
+            "expected mod wheel to modulate the tone, but max diff was {max_diff}"
         );
     }
 
