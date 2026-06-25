@@ -5,6 +5,11 @@ pub struct Voice {
     pub releasing: bool,
     velocity: f64,
     phase: f64,
+    // `base_phase_inc` is the unbent increment for this note; the
+    // live `phase_inc` is `base_phase_inc` scaled by the current
+    // pitch bend. Keeping the base around lets a later bend event
+    // recompute the increment without drifting.
+    base_phase_inc: f64,
     phase_inc: f64,
     envelope: Envelope,
     filter: OnePoleFilter,
@@ -27,10 +32,17 @@ impl Voice {
             releasing: false,
             velocity: f64::from(velocity),
             phase: 0.0,
+            base_phase_inc: freq / sample_rate,
             phase_inc: freq / sample_rate,
             envelope: Envelope::new(attack, decay, sustain, release, sample_rate),
             filter: OnePoleFilter::new(),
         }
+    }
+
+    /// Apply a channel pitch bend, expressed in semitones, by scaling
+    /// the base phase increment. `0.0` restores the unbent pitch.
+    pub fn set_pitch_bend(&mut self, semitones: f64) {
+        self.phase_inc = self.base_phase_inc * 2.0_f64.powf(semitones / 12.0);
     }
 
     pub fn release(&mut self) {

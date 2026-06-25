@@ -346,11 +346,23 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
         if !param_changes.is_null() && num_param_changes > 0 {
             let changes = slice::from_raw_parts(param_changes, num_param_changes as usize);
             for pc in changes {
+                // VST3 delivers sampleOffset as int32; per-block
+                // offsets are non-negative and bounded by block size.
+                #[allow(clippy::cast_sign_loss)]
+                let sample_offset = pc.sample_offset as u32;
+                // MIDI-mapped controllers (pitch bend, CC, pressure,
+                // program) arrive here as parameter changes because
+                // VST3 has no native input event for them. Bridge them
+                // back into the MIDI event the plugin expects, in
+                // addition to the plain `ParamChange` so the bound
+                // parameter still tracks the controller.
+                if let Some(info) = inst.param_infos.iter().find(|i| i.id == pc.id)
+                    && let Some(body) = midi_event_from_param(info, pc.value)
+                {
+                    inst.event_list.push(Event { sample_offset, body });
+                }
                 inst.event_list.push(Event {
-                    // VST3 delivers sampleOffset as int32; per-block
-                    // offsets are non-negative and bounded by block size.
-                    #[allow(clippy::cast_sign_loss)]
-                    sample_offset: pc.sample_offset as u32,
+                    sample_offset,
                     body: EventBody::ParamChange {
                         id: pc.id,
                         value: pc.value,
@@ -692,6 +704,59 @@ fn try_encode_vst3_midi(event: &Event) -> Option<Vst3MidiEvent> {
         data1,
         data2,
         note_id: 0,
+    })
+}
+
+/// VST3 has no native CC / pitch-bend / channel-pressure / program
+/// input event. Hosts route those MIDI messages to a parameter the
+/// plugin advertises through `IMidiMapping` (see
+/// `cb_midi_mapping_get_param_id`) and deliver them as parameter
+/// changes. When `info` carries such a binding, turn the parameter
+/// change back into the MIDI event the plugin expects, so event-based
+/// plugins behave the same here as on AU / CLAP / LV2 (which hand the
+/// plugin raw MIDI). Returns `None` for unmapped parameters - the
+/// caller still emits the plain `ParamChange`.
+///
+/// `plain` is the denormalized value the shim already produced; we
+/// re-normalize through the parameter's range so the MIDI-domain
+/// mapping is independent of how the binding parameter declares its
+/// range.
+//
+// `norm as f32` is a lossless-enough narrowing of a clamped `0..=1`
+// value; the MIDI encoders take `f32`.
+#[allow(clippy::cast_possible_truncation)]
+fn midi_event_from_param(info: &ParamInfo, plain: f64) -> Option<EventBody> {
+    use truce_core::midi::{denorm_7bit, denorm_pitch_bend};
+    use truce_params::MidiSource;
+
+    let source = info.midi_map?;
+    let channel = info.midi_channel.unwrap_or(0);
+    let norm = info.range.normalize(plain) as f32; // 0.0..=1.0
+    Some(match source {
+        // Host-normalized `0..1` is the pitch-wheel position (0 = full
+        // down, 0.5 = center, 1 = full up); shift to `[-1, 1]` for the
+        // 14-bit encoder.
+        MidiSource::PitchBend => EventBody::PitchBend {
+            group: 0,
+            channel,
+            value: denorm_pitch_bend(norm * 2.0 - 1.0),
+        },
+        MidiSource::Cc(cc) => EventBody::ControlChange {
+            group: 0,
+            channel,
+            cc,
+            value: denorm_7bit(norm),
+        },
+        MidiSource::ChannelPressure => EventBody::ChannelPressure {
+            group: 0,
+            channel,
+            pressure: denorm_7bit(norm),
+        },
+        MidiSource::ProgramChange => EventBody::ProgramChange {
+            group: 0,
+            channel,
+            program: denorm_7bit(norm),
+        },
     })
 }
 
@@ -1426,4 +1491,82 @@ macro_rules! export_vst3 {
             }
         }
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use truce_core::events::EventBody;
+    use truce_params::{MidiSource, ParamFlags, ParamUnit, ParamValueKind};
+
+    fn info(range: ParamRange, midi_map: Option<MidiSource>) -> ParamInfo {
+        ParamInfo {
+            id: 1,
+            name: "p",
+            short_name: "p",
+            group: "",
+            range,
+            default_plain: 0.0,
+            flags: ParamFlags::AUTOMATABLE,
+            unit: ParamUnit::None,
+            kind: ParamValueKind::Float,
+            midi_map,
+            midi_channel: None,
+        }
+    }
+
+    #[test]
+    fn unmapped_param_does_not_bridge() {
+        let i = info(ParamRange::Linear { min: 0.0, max: 1.0 }, None);
+        assert!(midi_event_from_param(&i, 0.5).is_none());
+    }
+
+    #[test]
+    fn pitch_bend_maps_wheel_position_to_14bit() {
+        // The synth's binding range: -1..1, where the host's
+        // normalized 0/0.5/1 wheel positions land on plain -1/0/1.
+        let i = info(ParamRange::Linear { min: -1.0, max: 1.0 }, Some(MidiSource::PitchBend));
+
+        // Center wheel -> 8192.
+        assert!(matches!(
+            midi_event_from_param(&i, 0.0),
+            Some(EventBody::PitchBend { value: 8192, .. })
+        ));
+        // Full down -> 0, full up -> 16383.
+        assert!(matches!(
+            midi_event_from_param(&i, -1.0),
+            Some(EventBody::PitchBend { value: 0, .. })
+        ));
+        assert!(matches!(
+            midi_event_from_param(&i, 1.0),
+            Some(EventBody::PitchBend { value: 16383, .. })
+        ));
+    }
+
+    #[test]
+    fn cc_and_pressure_and_program_map_to_7bit() {
+        let cc = info(ParamRange::Linear { min: 0.0, max: 1.0 }, Some(MidiSource::Cc(74)));
+        assert!(matches!(
+            midi_event_from_param(&cc, 1.0),
+            Some(EventBody::ControlChange { cc: 74, value: 127, .. })
+        ));
+
+        let pressure = info(
+            ParamRange::Linear { min: 0.0, max: 1.0 },
+            Some(MidiSource::ChannelPressure),
+        );
+        assert!(matches!(
+            midi_event_from_param(&pressure, 0.0),
+            Some(EventBody::ChannelPressure { pressure: 0, .. })
+        ));
+
+        let program = info(
+            ParamRange::Linear { min: 0.0, max: 1.0 },
+            Some(MidiSource::ProgramChange),
+        );
+        assert!(matches!(
+            midi_event_from_param(&program, 1.0),
+            Some(EventBody::ProgramChange { program: 127, .. })
+        ));
+    }
 }

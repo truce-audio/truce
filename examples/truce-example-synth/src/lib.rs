@@ -4,7 +4,7 @@
 // widens the host's f32 audio buffer to f64 at the block boundary
 // and narrows on the way out.
 use truce::prelude64::*;
-use truce_core::midi::norm_7bit;
+use truce_core::midi::{norm_7bit, norm_pitch_bend};
 use truce_gui::IntoLayoutEditor;
 use truce_gui_types::layout::{GridLayout, dropdown, knob, section, widgets};
 
@@ -106,16 +106,33 @@ pub struct SynthParams {
             range = "linear(-60, 0)", default = -6.0,
             unit = "dB", smooth = "exp(5)")]
     pub volume: FloatParam,
+
+    /// Pitch-bend target. VST3 has no native pitch-bend input event,
+    /// so the host routes the pitch wheel to this parameter via
+    /// `IMidiMapping`; the wrapper bridges the resulting change back
+    /// into an `EventBody::PitchBend`. Hidden because it is a MIDI
+    /// proxy, not a knob the user reaches for. AU / CLAP deliver pitch
+    /// bend as raw MIDI and ignore this binding.
+    #[param(name = "Pitch Bend", short_name = "Bend",
+            range = "linear(-1, 1)", default = 0.0,
+            flags = "hidden | automatable", midi_source = "pitchbend")]
+    pub bend: FloatParam,
 }
 
 // --- Plugin ---
 
 const MAX_VOICES: usize = 16;
 
+/// Pitch-bend range in semitones at full deflection, matching the
+/// MIDI default of +/-2 semitones.
+const PITCH_BEND_RANGE: f64 = 2.0;
+
 pub struct Synth {
     pub params: Arc<SynthParams>,
     voices: Vec<Voice>,
     sample_rate: f64,
+    /// Current channel pitch bend, in semitones. `0.0` is centered.
+    pitch_bend: f64,
 }
 
 impl Synth {
@@ -124,6 +141,16 @@ impl Synth {
             params,
             voices: Vec::with_capacity(MAX_VOICES),
             sample_rate: 44100.0,
+            pitch_bend: 0.0,
+        }
+    }
+
+    /// Map a 14-bit pitch-bend code to semitones and apply it to all
+    /// sounding voices.
+    fn pitch_bend(&mut self, value: u16) {
+        self.pitch_bend = f64::from(norm_pitch_bend(value)) * PITCH_BEND_RANGE;
+        for voice in &mut self.voices {
+            voice.set_pitch_bend(self.pitch_bend);
         }
     }
 
@@ -134,7 +161,7 @@ impl Synth {
         let sustain = self.params.envelope.sustain.value();
         let release = self.params.envelope.release.value();
 
-        self.voices.push(Voice::new(
+        let mut voice = Voice::new(
             note,
             freq,
             velocity,
@@ -143,7 +170,11 @@ impl Synth {
             decay,
             sustain,
             release,
-        ));
+        );
+        // Start the new voice at the channel's current bend so it
+        // joins notes already sounding at the bent pitch.
+        voice.set_pitch_bend(self.pitch_bend);
+        self.voices.push(voice);
         if self.voices.len() > MAX_VOICES {
             self.voices.remove(0);
         }
@@ -188,6 +219,7 @@ impl PluginLogic for Synth {
                         self.note_on(*note, norm_7bit(*velocity));
                     }
                     EventBody::NoteOff { note, .. } => self.note_off(*note),
+                    EventBody::PitchBend { value, .. } => self.pitch_bend(*value),
                     _ => {}
                 }
                 next_event += 1;
@@ -277,6 +309,43 @@ mod tests {
             .run();
         assertions::assert_nonzero(&result);
         assertions::assert_no_nans(&result);
+    }
+
+    #[test]
+    fn pitch_bend_raises_pitch() {
+        use std::time::Duration;
+        use truce_test::driver;
+
+        // Count sign changes (a proxy for frequency) over the tail of
+        // a steady note, with and without an upward pitch bend.
+        fn zero_crossings(samples: &[f32]) -> usize {
+            samples
+                .windows(2)
+                .filter(|w| (w[0] >= 0.0) != (w[1] >= 0.0))
+                .count()
+        }
+
+        let plain = driver!(Plugin)
+            .duration(Duration::from_millis(200))
+            .script(|s| s.note_on(60, 100.0 / 127.0))
+            .run();
+
+        let bent = driver!(Plugin)
+            .duration(Duration::from_millis(200))
+            .script(|s| {
+                s.note_on(60, 100.0 / 127.0);
+                s.pitch_bend(1.0); // full bend up
+            })
+            .run();
+
+        // Compare the settled tail so the envelope attack doesn't skew
+        // the counts.
+        let plain_xings = zero_crossings(&plain.output[0][4000..]);
+        let bent_xings = zero_crossings(&bent.output[0][4000..]);
+        assert!(
+            bent_xings > plain_xings,
+            "expected pitch bend up to raise frequency: bent={bent_xings}, plain={plain_xings}"
+        );
     }
 
     #[test]
