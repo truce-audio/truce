@@ -359,7 +359,10 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
                 if let Some(info) = inst.param_infos.iter().find(|i| i.id == pc.id)
                     && let Some(body) = midi_event_from_param(info, pc.value)
                 {
-                    inst.event_list.push(Event { sample_offset, body });
+                    inst.event_list.push(Event {
+                        sample_offset,
+                        body,
+                    });
                 }
                 inst.event_list.push(Event {
                     sample_offset,
@@ -1525,7 +1528,13 @@ mod tests {
     fn pitch_bend_maps_wheel_position_to_14bit() {
         // The synth's binding range: -1..1, where the host's
         // normalized 0/0.5/1 wheel positions land on plain -1/0/1.
-        let i = info(ParamRange::Linear { min: -1.0, max: 1.0 }, Some(MidiSource::PitchBend));
+        let i = info(
+            ParamRange::Linear {
+                min: -1.0,
+                max: 1.0,
+            },
+            Some(MidiSource::PitchBend),
+        );
 
         // Center wheel -> 8192.
         assert!(matches!(
@@ -1545,10 +1554,17 @@ mod tests {
 
     #[test]
     fn cc_and_pressure_and_program_map_to_7bit() {
-        let cc = info(ParamRange::Linear { min: 0.0, max: 1.0 }, Some(MidiSource::Cc(74)));
+        let cc = info(
+            ParamRange::Linear { min: 0.0, max: 1.0 },
+            Some(MidiSource::Cc(74)),
+        );
         assert!(matches!(
             midi_event_from_param(&cc, 1.0),
-            Some(EventBody::ControlChange { cc: 74, value: 127, .. })
+            Some(EventBody::ControlChange {
+                cc: 74,
+                value: 127,
+                ..
+            })
         ));
 
         let pressure = info(

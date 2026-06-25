@@ -5,12 +5,11 @@ pub struct Voice {
     pub releasing: bool,
     velocity: f64,
     phase: f64,
-    // `base_phase_inc` is the unbent increment for this note; the
-    // live `phase_inc` is `base_phase_inc` scaled by the current
-    // pitch bend. Keeping the base around lets a later bend event
-    // recompute the increment without drifting.
+    // The unmodulated phase increment for this note. Pitch bend and
+    // vibrato are global (per-channel) pitch multipliers, so the synth
+    // passes a combined `pitch_mult` into `render` each sample rather
+    // than the voice tracking them itself.
     base_phase_inc: f64,
-    phase_inc: f64,
     envelope: Envelope,
     filter: OnePoleFilter,
 }
@@ -33,16 +32,9 @@ impl Voice {
             velocity: f64::from(velocity),
             phase: 0.0,
             base_phase_inc: freq / sample_rate,
-            phase_inc: freq / sample_rate,
             envelope: Envelope::new(attack, decay, sustain, release, sample_rate),
             filter: OnePoleFilter::new(),
         }
-    }
-
-    /// Apply a channel pitch bend, expressed in semitones, by scaling
-    /// the base phase increment. `0.0` restores the unbent pitch.
-    pub fn set_pitch_bend(&mut self, semitones: f64) {
-        self.phase_inc = self.base_phase_inc * 2.0_f64.powf(semitones / 12.0);
     }
 
     pub fn release(&mut self) {
@@ -54,7 +46,17 @@ impl Voice {
         self.envelope.is_done()
     }
 
-    pub fn render(&mut self, waveform: u32, cutoff: f64, resonance: f64, sample_rate: f64) -> f64 {
+    /// `pitch_mult` scales the base increment for this sample - the
+    /// combined pitch-bend and vibrato multiplier the synth computes
+    /// once per sample for the whole channel. `1.0` is unmodulated.
+    pub fn render(
+        &mut self,
+        waveform: u32,
+        cutoff: f64,
+        resonance: f64,
+        sample_rate: f64,
+        pitch_mult: f64,
+    ) -> f64 {
         // Explicit listing of the 0..=3 → sine/saw/square/triangle
         // mapping doubles as documentation; saw is also the default
         // so the explicit `1` arm and the wildcard share a body.
@@ -67,7 +69,7 @@ impl Voice {
             _ => self.osc_saw(),
         };
 
-        self.phase += self.phase_inc;
+        self.phase += self.base_phase_inc * pitch_mult;
         if self.phase >= 1.0 {
             self.phase -= 1.0;
         }
