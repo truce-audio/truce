@@ -95,7 +95,7 @@ use truce_core::midi::{decode_short_message, denorm_7bit, pitch_bend_to_bytes};
 use truce_core::plugin::PluginRuntime;
 use truce_core::process::ProcessStatus;
 use truce_core::state;
-use truce_core::wrapper::run_audio_block_with;
+use truce_core::wrapper::{run_audio_block_with, run_extern_callback_with};
 use truce_params::Params;
 use truce_params::{ParamFlags, ParamInfo, ParamRange};
 
@@ -1473,7 +1473,10 @@ unsafe extern "C" fn state_save<P: PluginExport>(
     plugin: *const clap_plugin,
     stream: *const clap_ostream,
 ) -> bool {
-    unsafe {
+    // Guard the user's `save_state()` against panics so a stray
+    // `unwrap` in custom-state code degrades to "save failed" instead
+    // of aborting the host across this `extern "C"` boundary.
+    run_extern_callback_with::<P, bool>("CLAP", "save_state", false, || unsafe {
         let data = data_from_plugin::<P>(plugin);
         let (ids, values) = data.params_arc.collect_values();
         // `plugin.save_state()` reads through the plugin reference: a
@@ -1507,14 +1510,17 @@ unsafe extern "C" fn state_save<P: PluginExport>(
         }
 
         true
-    }
+    })
 }
 
 unsafe extern "C" fn state_load<P: PluginExport>(
     plugin: *const clap_plugin,
     stream: *const clap_istream,
 ) -> bool {
-    unsafe {
+    // Guard the user's `load_state()` / custom deserialize against
+    // panics so a malformed blob degrades to "load failed" instead of
+    // aborting the host across this `extern "C"` boundary.
+    run_extern_callback_with::<P, bool>("CLAP", "load_state", false, || unsafe {
         let data = data_from_plugin::<P>(plugin);
 
         let Some(read_fn) = (*stream).read else {
@@ -1562,7 +1568,7 @@ unsafe extern "C" fn state_load<P: PluginExport>(
         }
 
         true
-    }
+    })
 }
 
 fn make_state_extension<P: PluginExport>() -> clap_plugin_state {
