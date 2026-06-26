@@ -30,7 +30,6 @@ pub(crate) struct EditorSnapshotClosures {
     pub get_meter: Box<dyn Fn(u32) -> f32>,
     pub get_options: Box<dyn Fn(u32) -> Vec<String>>,
     pub default_normalized: Box<dyn Fn(u32) -> f32>,
-    pub next_discrete_normalized: Box<dyn Fn(u32) -> f32>,
     pub snap_normalized: Box<dyn Fn(u32, f32) -> f32>,
     pub param_name: Box<dyn Fn(u32) -> String>,
     pub widget_type: Box<dyn Fn(u32) -> WidgetType>,
@@ -45,7 +44,6 @@ impl EditorSnapshotClosures {
             get_meter: &*self.get_meter,
             get_options: &*self.get_options,
             default_normalized: &*self.default_normalized,
-            next_discrete_normalized: &*self.next_discrete_normalized,
             snap_normalized: &*self.snap_normalized,
             param_name: &*self.param_name,
             widget_type: &*self.widget_type,
@@ -69,7 +67,6 @@ pub(crate) fn build_snapshot_closures<P: Params + 'static>(
     let p_fmt = Arc::clone(&p);
     let p_opts = Arc::clone(&p);
     let p_default = Arc::clone(&p);
-    let p_next = Arc::clone(&p);
     let p_snap = Arc::clone(&p);
     let p_name = Arc::clone(&p);
     let p_wtype = Arc::clone(&p);
@@ -131,15 +128,6 @@ pub(crate) fn build_snapshot_closures<P: Params + 'static>(
                 f32::from_f64(info.range.normalize(info.default_plain))
             })
     });
-    let next_discrete_normalized: Box<dyn Fn(u32) -> f32> = Box::new(move |id| {
-        let Some(info) = p_next.param_infos().iter().find(|i| i.id == id).copied() else {
-            return 0.0;
-        };
-        let plain = p_next.get_plain(id).unwrap_or(0.0);
-        let max = info.range.max();
-        let next = if plain >= max { 0.0 } else { plain + 1.0 };
-        f32::from_f64(info.range.normalize(next))
-    });
     let snap_normalized: Box<dyn Fn(u32, f32) -> f32> = Box::new(move |id, norm| {
         // `Discrete` / `Enum` ranges round in `denormalize`; round-
         // tripping through normalize gives the snapped normalized.
@@ -175,7 +163,6 @@ pub(crate) fn build_snapshot_closures<P: Params + 'static>(
         get_meter,
         get_options,
         default_normalized,
-        next_discrete_normalized,
         snap_normalized,
         param_name,
         widget_type,

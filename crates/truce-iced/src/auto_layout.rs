@@ -95,17 +95,9 @@ pub fn auto_view<'a, M: Clone + Debug + 'static, P: Params>(
                 WidgetKind::Toggle => widgets::param_toggle(widget.param_id, params)
                     .label(widget.label)
                     .into(),
-                // Iced has no native cycle-on-click control distinct from
-                // a pick_list, so `Dropdown` and the deprecated
-                // `Selector` collapse to the same iced widget. The
-                // variants stay separate in
-                // `truce_gui::layout::WidgetKind` because the built-in /
-                // egui backends do distinguish them.
-                WidgetKind::Selector | WidgetKind::Dropdown => {
-                    widgets::param_dropdown(widget.param_id, params)
-                        .label(widget.label)
-                        .into()
-                }
+                WidgetKind::Dropdown => widgets::param_dropdown(widget.param_id, params)
+                    .label(widget.label)
+                    .into(),
                 WidgetKind::Meter => {
                     let fallback = [widget.param_id];
                     let ids = widget.meter_ids.as_deref().unwrap_or(&fallback);

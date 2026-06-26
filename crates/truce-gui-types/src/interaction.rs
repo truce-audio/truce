@@ -28,7 +28,6 @@ fn widget_kind_to_type(kind: Option<WidgetKind>) -> WidgetType {
         Some(WidgetKind::Knob) => WidgetType::Knob,
         Some(WidgetKind::Slider) => WidgetType::Slider,
         Some(WidgetKind::Toggle) => WidgetType::Toggle,
-        Some(WidgetKind::Selector) => WidgetType::Selector,
         Some(WidgetKind::Dropdown) => WidgetType::Dropdown,
         Some(WidgetKind::Meter) => WidgetType::Meter,
         Some(WidgetKind::XYPad) => WidgetType::XYPad,
@@ -310,7 +309,6 @@ impl InteractionState {
                 WidgetType::Meter => {}
                 WidgetType::Slider
                 | WidgetType::Toggle
-                | WidgetType::Selector
                 | WidgetType::Dropdown
                 | WidgetType::XYPad => {
                     if mx >= region.x
@@ -764,9 +762,9 @@ pub fn dispatch_in(
                 }
                 if let Some(idx) = state.hit_test(x, y) {
                     // Only scroll-adjust continuous-value widgets.
-                    // Dropdowns / Selectors / Toggles are discrete UI
-                    // affordances - the user expects click to cycle,
-                    // not wheel to drag them across their whole range.
+                    // Dropdowns / Toggles are discrete UI affordances -
+                    // the user expects click to open or toggle, not
+                    // wheel to drag them across their whole range.
                     let wtype = state.knob_regions[idx].widget_type;
                     if matches!(
                         wtype,
@@ -857,15 +855,6 @@ fn handle_mouse_down(
         Some(WidgetType::Toggle) => {
             let norm = (snapshot.get_param)(param_id);
             let new_norm = if norm > 0.5 { 0.0 } else { 1.0 };
-            edits.push(ParamEdit::Begin { id: param_id });
-            edits.push(ParamEdit::Set {
-                id: param_id,
-                normalized: new_norm,
-            });
-            edits.push(ParamEdit::End { id: param_id });
-        }
-        Some(WidgetType::Selector) => {
-            let new_norm = (snapshot.next_discrete_normalized)(param_id);
             edits.push(ParamEdit::Begin { id: param_id });
             edits.push(ParamEdit::Set {
                 id: param_id,

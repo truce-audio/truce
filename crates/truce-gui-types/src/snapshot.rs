@@ -34,10 +34,6 @@ pub struct ParamSnapshot<'a> {
     /// Default normalized value, used for reset-on-double-click.
     pub default_normalized: &'a dyn Fn(u32) -> f32,
 
-    /// Compute the next normalized value after a click-to-cycle selector
-    /// advance. Wraps around at the end of the range.
-    pub next_discrete_normalized: &'a dyn Fn(u32) -> f32,
-
     /// Quantize a normalized value to the param's nearest representable
     /// step. For `IntParam` / `EnumParam` this snaps to integer steps;
     /// continuous (`FloatParam`) ranges return the input unchanged.

@@ -3,9 +3,9 @@
 //! Provides parameter-bound widgets that emit `Message::Param` messages
 //! for host communication.
 
+pub mod dropdown;
 pub mod knob;
 pub mod meter;
-pub mod selector;
 pub mod slider;
 pub mod toggle;
 pub mod xy_pad;
@@ -17,9 +17,9 @@ use truce_params::Params;
 use crate::param_cache::ParamCache;
 
 // Re-export widget types for convenience.
+pub use dropdown::DropdownWidget;
 pub use knob::KnobWidget;
 pub use meter::MeterWidget;
-pub use selector::SelectorWidget;
 pub use slider::SliderWidget;
 pub use toggle::ToggleWidget;
 pub use xy_pad::XYPadWidget;
@@ -52,17 +52,8 @@ pub fn param_toggle<M: Clone + Debug + 'static>(
 pub fn param_dropdown<M: Clone + Debug + 'static>(
     id: impl Into<u32>,
     params: &ParamCache<impl Params>,
-) -> SelectorWidget<'_, M> {
-    SelectorWidget::new(id.into(), params)
-}
-
-/// Deprecated alias for [`param_dropdown`].
-#[deprecated(since = "0.56.0", note = "use `param_dropdown` instead")]
-pub fn param_selector<M: Clone + Debug + 'static>(
-    id: impl Into<u32>,
-    params: &ParamCache<impl Params>,
-) -> SelectorWidget<'_, M> {
-    SelectorWidget::new(id.into(), params)
+) -> DropdownWidget<'_, M> {
+    DropdownWidget::new(id.into(), params)
 }
 
 /// Create a level meter display.

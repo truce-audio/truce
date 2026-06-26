@@ -4,8 +4,7 @@
 //! current label + the full option list out of the param's
 //! [`truce_params::Params::format_value`] and wires the chosen option
 //! back through [`PluginContext::automate`]. Useful for `EnumParam`
-//! or `IntParam` parameters with more options than a click-to-cycle
-//! `param_selector` reasonably fits.
+//! or `IntParam` parameters with many options.
 
 use truce_core::cast::discrete_norm;
 use truce_core::editor::{PluginContext, PluginContextReadF32};

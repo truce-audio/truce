@@ -51,7 +51,6 @@ const WIDGET_SOURCES: &[(&str, &str)] = &[
     ("widgets.slint", include_str!("../ui/widgets.slint")),
     ("knob.slint", include_str!("../ui/knob.slint")),
     ("meter.slint", include_str!("../ui/meter.slint")),
-    ("selector.slint", include_str!("../ui/selector.slint")),
     ("dropdown.slint", include_str!("../ui/dropdown.slint")),
     ("slider.slint", include_str!("../ui/slider.slint")),
     ("toggle.slint", include_str!("../ui/toggle.slint")),

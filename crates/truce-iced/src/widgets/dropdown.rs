@@ -1,4 +1,4 @@
-//! Selector widget wrapping iced's `pick_list` for enum parameters.
+//! Dropdown widget wrapping iced's `pick_list` for enum parameters.
 
 use std::fmt::Debug;
 use std::marker::PhantomData;
@@ -11,8 +11,8 @@ use crate::param_message::{Message, ParamMessage};
 use crate::theme;
 use truce_params::Params;
 
-/// Builder for a parameter-bound selector (pick list).
-pub struct SelectorWidget<'a, M> {
+/// Builder for a parameter-bound dropdown (pick list).
+pub struct DropdownWidget<'a, M> {
     id: u32,
     options: Vec<String>,
     selected: Option<String>,
@@ -20,7 +20,7 @@ pub struct SelectorWidget<'a, M> {
     _phantom: PhantomData<M>,
 }
 
-impl<'a, M: Clone + Debug + 'static> SelectorWidget<'a, M> {
+impl<'a, M: Clone + Debug + 'static> DropdownWidget<'a, M> {
     pub fn new(id: impl Into<u32>, params: &'a ParamCache<impl Params>) -> Self {
         let id = id.into();
         let value = params.get(id);
@@ -85,8 +85,8 @@ impl<'a, M: Clone + Debug + 'static> SelectorWidget<'a, M> {
     }
 }
 
-impl<'a, M: Clone + Debug + 'static> From<SelectorWidget<'a, M>> for Element<'a, Message<M>> {
-    fn from(s: SelectorWidget<'a, M>) -> Self {
+impl<'a, M: Clone + Debug + 'static> From<DropdownWidget<'a, M>> for Element<'a, Message<M>> {
+    fn from(s: DropdownWidget<'a, M>) -> Self {
         s.into_element()
     }
 }
