@@ -30,19 +30,21 @@
 //!   in the TTL until `audio_in` / `audio_out` are added to
 //!   `[[plugin]]` in `truce.toml`.
 
-use crate::{MeterField, ParamField};
+use crate::{MeterField, ParamField, name_hash_id};
 use proc_macro::TokenStream;
 use quote::quote;
 use std::fmt::Write as _;
 use std::path::PathBuf;
 use syn::Type;
 use truce_build::lv2::Lv2Param;
+use truce_params::METER_ID_BASE;
 
 /// Write the per-struct sidecar. Best-effort; errors don't fail the
 /// build (a missing sidecar will surface later when
 /// `__truce_lv2_emit_root!` aggregates).
 pub(crate) fn write_struct_sidecar(
     struct_name: &syn::Ident,
+    hash_scheme: bool,
     params: &[ParamField],
     meters: &[MeterField],
     nested: &[(syn::Ident, Type, Option<u32>)],
@@ -54,7 +56,14 @@ pub(crate) fn write_struct_sidecar(
         return;
     }
     let mut buf = String::new();
-    let _ = writeln!(buf, "struct = \"{struct_name}\"\n");
+    let _ = writeln!(buf, "struct = \"{struct_name}\"");
+    // The id scheme drives how the aggregator bases nested groups:
+    // hash -> a hash of the slot field name; ordinal -> packed counts.
+    let _ = writeln!(
+        buf,
+        "scheme = \"{}\"\n",
+        if hash_scheme { "hash" } else { "ordinal" }
+    );
     for p in params {
         buf.push_str("[[param]]\n");
         let _ = writeln!(buf, "id = {}", p.id());
@@ -306,14 +315,21 @@ fn aggregate(
         .parse()
         .map_err(|e| format!("malformed {}: {e}", path.display()))?;
 
-    // Own params carry struct-local ids; shift them into the parent's id
-    // space by `id_base`. Auto-packed nested groups start right after them.
+    // `scheme` mirrors the struct's `IdScheme` (default hash). It picks
+    // how an un-pinned nested group is based, exactly as the runtime
+    // `offset_ids` does, so this flattened table agrees with
+    // `param_infos()`.
+    let hash_scheme = toml.get("scheme").and_then(toml::Value::as_str) != Some("ordinal");
+    let mask = METER_ID_BASE - 1;
+
+    // Own params carry struct-local ids; fold them into the parent's id
+    // space by `id_base` (additive + mask, matching `offset_ids`).
     let mut own_count = 0u32;
     if let Some(toml::Value::Array(arr)) = toml.get("param") {
         for entry in arr {
             let mut p = parse_param_entry(entry, sidecar_dir)
                 .map_err(|e| format!("{}: {e}", path.display()))?;
-            p.id += id_base;
+            p.id = (p.id + id_base) & mask;
             if let Some(field) = entry.get("field").and_then(toml::Value::as_str) {
                 fields.push((p.id, field.to_string()));
             }
@@ -331,23 +347,30 @@ fn aggregate(
         }
     }
     if let Some(toml::Value::Array(arr)) = toml.get("nested") {
-        // `next_base` packs each auto group after the previous one; an
-        // explicit `base` pins the group and moves the cursor past it.
+        // Ordinal: `next_base` packs each auto group after the previous
+        // one. Hash: each group's base is a stable hash of its slot
+        // field name (no packing). An explicit `base` pins either.
         let mut next_base = own_count;
         for entry in arr {
             let Some(t) = entry.get("type").and_then(toml::Value::as_str) else {
                 continue;
             };
+            let slot_field = entry.get("field").and_then(toml::Value::as_str);
+            let auto_base = if hash_scheme {
+                slot_field.map_or(0, name_hash_id)
+            } else {
+                next_base
+            };
             let base = entry
                 .get("base")
                 .and_then(toml::Value::as_integer)
                 .and_then(|b| u32::try_from(b).ok())
-                .unwrap_or(next_base);
+                .unwrap_or(auto_base);
             let before = params.len();
             aggregate(
                 sidecar_dir,
                 t,
-                id_base + base,
+                (id_base + base) & mask,
                 params,
                 meter_ids,
                 fields,

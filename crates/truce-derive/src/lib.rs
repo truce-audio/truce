@@ -690,6 +690,67 @@ fn has_skip_attr(field: &syn::Field) -> bool {
     field.attrs.iter().any(|a| a.path().is_ident("skip"))
 }
 
+/// How auto-assigned parameter IDs are derived when `#[param(id = N)]`
+/// is omitted.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum IdScheme {
+    /// Default: a deterministic hash of the field name. Stable under
+    /// reordering / inserting fields, so a host's saved automation and
+    /// presets keep mapping to the right parameter across versions.
+    Hash,
+    /// Legacy: a sequential counter from `0` in field-declaration
+    /// order. Reordering or inserting a field shifts later IDs and
+    /// breaks compatibility with already-saved projects. Opt in with
+    /// `#[params(id_scheme = "ordinal")]` for plugins shipped before
+    /// the hash default.
+    Ordinal,
+}
+
+/// Read the struct-level `#[params(id_scheme = "hash" | "ordinal")]`.
+/// Defaults to [`IdScheme::Hash`]. Errors on an unknown key/value.
+fn parse_id_scheme(attrs: &[syn::Attribute]) -> Result<IdScheme, syn::Error> {
+    let mut scheme = IdScheme::Hash;
+    for attr in attrs {
+        if !attr.path().is_ident("params") {
+            continue;
+        }
+        attr.parse_nested_meta(|meta| {
+            if !meta.path.is_ident("id_scheme") {
+                return Err(meta.error("unknown `#[params]` key (expected `id_scheme`)"));
+            }
+            let value: syn::LitStr = meta.value()?.parse()?;
+            scheme = match value.value().as_str() {
+                "hash" => IdScheme::Hash,
+                "ordinal" => IdScheme::Ordinal,
+                other => {
+                    return Err(meta.error(format!(
+                        "unknown `id_scheme` {other:?} (expected \"hash\" or \"ordinal\")"
+                    )));
+                }
+            };
+            Ok(())
+        })?;
+    }
+    Ok(scheme)
+}
+
+/// Deterministic FNV-1a hash of a field name, masked into the
+/// parameter id space (`0..METER_ID_BASE`). Pure integer arithmetic
+/// over the name bytes, so the value is identical across toolchains,
+/// targets, and runs - the property a persisted parameter id needs.
+/// `pub(crate)` so the LV2 sidecar aggregator (`lv2_emit`) flattens
+/// nested hash ids with the exact same arithmetic the runtime uses.
+pub(crate) fn name_hash_id(name: &str) -> u32 {
+    const FNV_OFFSET: u32 = 0x811c_9dc5;
+    const FNV_PRIME: u32 = 0x0100_0193;
+    let mut h = FNV_OFFSET;
+    for b in name.bytes() {
+        h ^= u32::from(b);
+        h = h.wrapping_mul(FNV_PRIME);
+    }
+    h & (METER_ID_BASE - 1)
+}
+
 /// Coerce a `default = ...` attribute expression into an `f64`.
 ///
 /// Accepts numeric literals (positive and `-`-prefixed) and a
@@ -1271,7 +1332,7 @@ fn gen_field_constructor(f: &ParamField) -> proc_macro2::TokenStream {
 /// happens on syntactically broken input (rustc would already be
 /// rejecting the same file), so the panic surfaces a derive-internal
 /// regression rather than user error.
-#[proc_macro_derive(Params, attributes(param, nested, meter, skip))]
+#[proc_macro_derive(Params, attributes(param, nested, meter, skip, params))]
 #[allow(clippy::too_many_lines)]
 pub fn derive_params(input: TokenStream) -> TokenStream {
     let ast: DeriveInput = syn::parse(input).expect("Failed to parse input for Params derive");
@@ -1298,17 +1359,38 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
     }
 
     // --- Auto-assign parameter IDs ---
-    // Explicit IDs take priority. Auto-assigned IDs fill gaps starting at 0.
-    {
-        let explicit_ids: HashSet<u32> = param_fields.iter().filter_map(|f| f.attrs.id).collect();
-        let mut next_auto = 0u32;
-        for f in &mut param_fields {
-            if f.attrs.id.is_none() {
-                while explicit_ids.contains(&next_auto) {
+    // Explicit `#[param(id = N)]` always wins. Un-pinned params get an
+    // ID per the struct's `id_scheme`: a stable hash of the field name
+    // (default), or a sequential counter in field order (legacy
+    // `#[params(id_scheme = "ordinal")]`). See `IdScheme`.
+    let scheme = match parse_id_scheme(&ast.attrs) {
+        Ok(s) => s,
+        Err(e) => return e.to_compile_error().into(),
+    };
+    match scheme {
+        IdScheme::Ordinal => {
+            let explicit_ids: HashSet<u32> =
+                param_fields.iter().filter_map(|f| f.attrs.id).collect();
+            let mut next_auto = 0u32;
+            for f in &mut param_fields {
+                if f.attrs.id.is_none() {
+                    while explicit_ids.contains(&next_auto) {
+                        next_auto += 1;
+                    }
+                    f.attrs.id = Some(next_auto);
                     next_auto += 1;
                 }
-                f.attrs.id = Some(next_auto);
-                next_auto += 1;
+            }
+        }
+        IdScheme::Hash => {
+            // Hash the field ident (not the `name =` display string,
+            // which changes for UX reasons). Collisions - hash-vs-hash
+            // or hash-vs-explicit - are caught by the duplicate-ID check
+            // below; the author resolves by pinning one with `id = N`.
+            for f in &mut param_fields {
+                if f.attrs.id.is_none() {
+                    f.attrs.id = Some(name_hash_id(&f.ident.to_string()));
+                }
             }
         }
     }
@@ -1405,6 +1487,7 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
         .collect();
     lv2_emit::write_struct_sidecar(
         struct_name,
+        scheme == IdScheme::Hash,
         &param_fields,
         &meter_fields,
         &nested_for_sidecar,
@@ -1483,17 +1566,30 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
         .enumerate()
         .map(|(i, n)| {
             let ty = &n.ty;
-            // Base = explicit `#[nested(base=N)]`, or auto-packed right
-            // after the own params and every earlier nested group's span.
-            // Counts come from each group's own static metadata, so the
-            // no-instance path produces the same ids the constructor does.
+            // Base/salt for the group, by scheme (an explicit
+            // `#[nested(base=N)]` overrides either):
+            //  - ordinal: auto-packed right after the own params and
+            //    every earlier nested group's span (contiguous ranges).
+            //  - hash: a stable hash of the slot field name, so the
+            //    group's ids don't shift when nested groups reorder.
+            // The child's ids are then folded in additively and masked
+            // back into the param range; the constructor's `offset_ids`
+            // does the same fold, so both paths agree.
             let base_expr = if let Some(b) = n.base {
                 quote! { #b }
             } else {
-                let prev = nested_fields[..i].iter().map(|p| &p.ty);
-                quote! {
-                    (#own_count as u32)
-                    #(+ <#prev as ::truce::params::Params>::param_infos_static().len() as u32)*
+                match scheme {
+                    IdScheme::Ordinal => {
+                        let prev = nested_fields[..i].iter().map(|p| &p.ty);
+                        quote! {
+                            (#own_count as u32)
+                            #(+ <#prev as ::truce::params::Params>::param_infos_static().len() as u32)*
+                        }
+                    }
+                    IdScheme::Hash => {
+                        let salt = name_hash_id(&n.ident.to_string());
+                        quote! { #salt }
+                    }
                 }
             };
             quote! {
@@ -1503,7 +1599,8 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
                         <#ty as ::truce::params::Params>::param_infos_static()
                             .into_iter()
                             .map(|mut __info| {
-                                __info.id += __base;
+                                __info.id =
+                                    (__info.id + __base) & (::truce::params::METER_ID_BASE - 1);
                                 __info
                             }),
                     );
@@ -1836,10 +1933,18 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
                 let base_expr = if let Some(b) = n.base {
                     quote! { #b }
                 } else {
-                    let prev = nested_fields[..i].iter().map(|p| &p.ident);
-                    quote! {
-                        (#own_count as u32)
-                        #(+ ::truce::params::Params::count(&me.#prev) as u32)*
+                    match scheme {
+                        IdScheme::Ordinal => {
+                            let prev = nested_fields[..i].iter().map(|p| &p.ident);
+                            quote! {
+                                (#own_count as u32)
+                                #(+ ::truce::params::Params::count(&me.#prev) as u32)*
+                            }
+                        }
+                        IdScheme::Hash => {
+                            let salt = name_hash_id(&n.ident.to_string());
+                            quote! { #salt }
+                        }
                     }
                 };
                 quote! { me.#ident.offset_ids(#base_expr); }
@@ -1880,9 +1985,13 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
         quote! {}
     };
 
-    // Shift every parameter id in this subtree by `id_base`: own params
-    // directly, nested groups by recursing with the same base (their own
-    // local spans were already applied at construction). Meters keep
+    // Fold `id_base` into every parameter id in this subtree: own
+    // params directly, nested groups by recursing with the same base
+    // (their own local spans were already applied at construction).
+    // The fold is `(id + base) & (METER_ID_BASE - 1)` - additive so the
+    // ordinal scheme's contiguous ranges are preserved exactly (sums
+    // stay well under `METER_ID_BASE`), masked so the hash scheme's
+    // wide ids and salts wrap back into the param range. Meters keep
     // their dedicated id range and aren't shifted. Always emitted so a
     // parent can rebase any nested child, leaf or not.
     let own_param_idents: Vec<_> = param_fields.iter().map(|f| &f.ident).collect();
@@ -1890,7 +1999,9 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
         impl #struct_name {
             #[doc(hidden)]
             pub fn offset_ids(&mut self, id_base: u32) {
-                #(self.#own_param_idents.info.id += id_base;)*
+                #(self.#own_param_idents.info.id =
+                    (self.#own_param_idents.info.id + id_base)
+                        & (::truce::params::METER_ID_BASE - 1);)*
                 #(self.#nested_idents.offset_ids(id_base);)*
             }
         }

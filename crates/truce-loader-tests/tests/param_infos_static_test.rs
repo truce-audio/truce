@@ -18,6 +18,7 @@ use truce_params::Params;
 
 // Reusable groups carry no ids; the parent rebases them.
 #[derive(Params)]
+#[params(id_scheme = "ordinal")]
 struct Inner {
     #[param(name = "Inner A", range = "linear(0, 1)")]
     a: truce_params::FloatParam,
@@ -28,6 +29,7 @@ struct Inner {
 // Pure composition of nested groups. Auto bases pack them back to
 // back: Inner at 0-1, InnerB at 2.
 #[derive(Params)]
+#[params(id_scheme = "ordinal")]
 struct Outer {
     #[nested]
     a: Inner,
@@ -36,6 +38,7 @@ struct Outer {
 }
 
 #[derive(Params)]
+#[params(id_scheme = "ordinal")]
 struct InnerB {
     #[param(name = "BB", range = "linear(0, 1)")]
     bb: truce_params::FloatParam,
