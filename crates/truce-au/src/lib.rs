@@ -685,14 +685,16 @@ unsafe extern "C" {
     fn dladdr(addr: *const std::ffi::c_void, info: *mut DlInfo) -> i32;
 }
 
-/// Resolve the `Resources/Presets/` directory of the bundle this
-/// code lives in, via `dladdr` on one of our own functions. Two
-/// layouts exist:
+/// Resolve the factory-presets directory of the bundle this code lives
+/// in, via `dladdr` on one of our own functions. Three layouts exist:
 ///
-/// - AU v2 component: `<X>.component/Contents/MacOS/<X>` with presets
-///   in `Contents/Resources/Presets/` (two levels up).
-/// - AU v3 framework: `<F>.framework/Versions/A/<F>` with presets in
-///   `Versions/A/Resources/Presets/` (one level up).
+/// - AU v2 component (macOS): `<X>.component/Contents/MacOS/<X>` with
+///   presets in `Contents/Resources/Presets/` (two levels up).
+/// - AU v3 framework (macOS): `<F>.framework/Versions/A/<F>` with presets
+///   in `Versions/A/Resources/Presets/` (one level up).
+/// - AU v3 framework (iOS): `<F>.framework/<F>` - a shallow bundle, so
+///   presets live in a flat `<F>.framework/Presets/` (one level up; a
+///   `Resources/` subdir would make iOS installd reject the framework).
 fn component_presets_root<P: PluginExport>() -> Option<std::path::PathBuf> {
     let mut info = DlInfo {
         dli_fname: std::ptr::null(),
@@ -710,10 +712,17 @@ fn component_presets_root<P: PluginExport>() -> Option<std::path::PathBuf> {
     let exe = unsafe { std::ffi::CStr::from_ptr(info.dli_fname) };
     let exe = std::path::Path::new(exe.to_str().ok()?);
     let parent = exe.parent()?;
-    [parent.parent()?, parent]
-        .into_iter()
-        .map(|dir| dir.join("Resources/Presets"))
-        .find(|root| root.is_dir())
+    // Probe order: macOS `Resources/Presets` two levels up (AU v2
+    // component) and one level up (AU v3 framework), then the iOS flat
+    // `Presets/` one level up.
+    [
+        parent.parent().map(|d| d.join("Resources/Presets")),
+        Some(parent.join("Resources/Presets")),
+        Some(parent.join("Presets")),
+    ]
+    .into_iter()
+    .flatten()
+    .find(|root| root.is_dir())
 }
 
 unsafe extern "C" fn cb_factory_preset_count<P: PluginExport>(_ctx: *mut std::ffi::c_void) -> u32 {

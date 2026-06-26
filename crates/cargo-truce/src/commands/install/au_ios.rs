@@ -218,6 +218,24 @@ pub(crate) fn build_bundle(
         framework_info_plist(&fw_name, &app_bundle_id, &min_ios, target),
     )?;
 
+    // Factory presets into the framework's flat `Presets/` directory.
+    // iOS frameworks are shallow bundles (Info.plist at the root); a
+    // `Resources/` subdir makes installd misclassify the framework as a
+    // deep macOS-style bundle and reject the install, so presets sit in
+    // a plain `Presets/` dir one level up from the loaded dylib
+    // (`<F>.framework/<F>`) - where the AU v3 resolver's iOS probe looks.
+    // Staged into the source framework before it's embedded into the
+    // appex + app and before codesign, so every copy carries them and
+    // the seal covers them.
+    if let Some(fp) = super::presets::load_factory_presets(root, p, cfg)? {
+        super::presets::emit_trucepreset_tree(
+            &fp,
+            &fw_dir.join("Presets"),
+            false,
+            &format!("{}-au3", p.bundle_id),
+        )?;
+    }
+
     let stage = out.join("build/stage");
     fs_ctx::create_dir_all(&stage)?;
     // AU v3 Swift sources come from the `include_str!`-baked
@@ -698,6 +716,8 @@ pub(crate) fn build_xcframework(
     // Same `{vendor.id}.{suffix}` construction as build_bundle.
     let suffix = p.bundle_id.replace('_', "-");
     let app_bundle_id = format!("{}.{suffix}", cfg.vendor.id);
+    // Resolved once; staged into every slice's framework below.
+    let factory_presets = super::presets::load_factory_presets(root, p, &cfg)?;
     let mut slices: Vec<PathBuf> = Vec::with_capacity(2);
     for target in [IosTarget::Device, IosTarget::Simulator] {
         eprintln!(
@@ -737,6 +757,19 @@ pub(crate) fn build_xcframework(
             slice_dir.join("Info.plist"),
             framework_info_plist(&fw_name, &app_bundle_id, &min_ios, target),
         )?;
+        // Factory presets into each slice's flat `Presets/` directory
+        // (iOS frameworks are shallow bundles - a `Resources/` subdir
+        // trips installd), so an xcframework embedded in a custom
+        // container ships them like the .ipa / install path; the AU v3
+        // resolver finds them one level up from the loaded dylib.
+        if let Some(fp) = &factory_presets {
+            super::presets::emit_trucepreset_tree(
+                fp,
+                &slice_dir.join("Presets"),
+                false,
+                &format!("{}-au3", p.bundle_id),
+            )?;
+        }
         slices.push(slice_dir);
     }
     let xcfw_out = out.join(format!("{fw_name}.xcframework"));
