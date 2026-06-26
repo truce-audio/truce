@@ -1,13 +1,13 @@
 //! Theme bridge between truce-gui colors and iced Theme.
 
-use iced::Color;
+use crate::iced::Color;
 
 /// Create the default truce dark theme for iced.
 #[must_use]
-pub fn truce_dark_theme() -> iced::Theme {
-    iced::Theme::custom(
+pub fn truce_dark_theme() -> crate::iced::Theme {
+    crate::iced::Theme::custom(
         "Truce Dark".to_string(),
-        iced::theme::Palette {
+        crate::iced::theme::Palette {
             background: Color::from_rgb(0.12, 0.12, 0.14),
             text: Color::from_rgb(0.90, 0.90, 0.92),
             primary: Color::from_rgb(0.30, 0.60, 0.95),

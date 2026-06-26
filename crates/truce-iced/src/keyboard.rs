@@ -9,12 +9,12 @@
 //! name-for-name (a macro over the shared variants); keys iced does not
 //! model fall back to `Unidentified`.
 
-use iced::keyboard::key::{Code, Named, NativeCode, Physical};
-use iced::keyboard::{Key, Location, Modifiers};
+use crate::iced::keyboard::key::{Code, Named, NativeCode, Physical};
+use crate::iced::keyboard::{Key, Location, Modifiers};
 use keyboard_types::{KeyState, KeyboardEvent};
 
 /// Translate a baseview keyboard event into an iced keyboard event.
-pub(crate) fn to_iced_event(kb: &KeyboardEvent) -> iced::keyboard::Event {
+pub(crate) fn to_iced_event(kb: &KeyboardEvent) -> crate::iced::keyboard::Event {
     let modifiers = convert_modifiers(kb.modifiers);
     let key = convert_key(&kb.key);
     let physical_key = convert_code(kb.code);
@@ -25,7 +25,7 @@ pub(crate) fn to_iced_event(kb: &KeyboardEvent) -> iced::keyboard::Event {
         // applied), so `key` and `modified_key` carry the same value;
         // `physical_key` is the layout-independent code for whole-keyboard
         // and shortcut use.
-        KeyState::Down => iced::keyboard::Event::KeyPressed {
+        KeyState::Down => crate::iced::keyboard::Event::KeyPressed {
             modified_key: key.clone(),
             key,
             physical_key,
@@ -45,7 +45,7 @@ pub(crate) fn to_iced_event(kb: &KeyboardEvent) -> iced::keyboard::Event {
             modifiers,
             repeat: kb.repeat,
         },
-        KeyState::Up => iced::keyboard::Event::KeyReleased {
+        KeyState::Up => crate::iced::keyboard::Event::KeyReleased {
             modified_key: key.clone(),
             key,
             physical_key,
@@ -201,7 +201,7 @@ mod tests {
             keyboard_types::Key::Character("a".into()),
             keyboard_types::Code::KeyA,
         );
-        let iced::keyboard::Event::KeyPressed {
+        let crate::iced::keyboard::Event::KeyPressed {
             key,
             physical_key,
             text,
@@ -222,7 +222,7 @@ mod tests {
             keyboard_types::Key::Enter,
             keyboard_types::Code::Enter,
         );
-        let iced::keyboard::Event::KeyPressed { key, .. } = to_iced_event(&e) else {
+        let crate::iced::keyboard::Event::KeyPressed { key, .. } = to_iced_event(&e) else {
             panic!("expected KeyPressed");
         };
         assert_eq!(key, Key::Named(Named::Enter));
@@ -236,7 +236,7 @@ mod tests {
             keyboard_types::Code::KeyS,
         );
         e.modifiers = keyboard_types::Modifiers::CONTROL;
-        let iced::keyboard::Event::KeyPressed {
+        let crate::iced::keyboard::Event::KeyPressed {
             text, modifiers, ..
         } = to_iced_event(&e)
         else {
@@ -255,7 +255,7 @@ mod tests {
         );
         assert!(matches!(
             to_iced_event(&e),
-            iced::keyboard::Event::KeyReleased { .. }
+            crate::iced::keyboard::Event::KeyReleased { .. }
         ));
     }
 
@@ -268,15 +268,15 @@ mod tests {
         use iced_runtime::futures::{Runtime, subscription};
         use std::time::{Duration, Instant};
 
-        let executor = iced::futures::executor::ThreadPool::builder()
+        let executor = crate::iced::futures::executor::ThreadPool::builder()
             .pool_size(1)
             .create()
             .expect("executor");
-        let (tx, mut rx) = iced::futures::channel::mpsc::unbounded::<u32>();
+        let (tx, mut rx) = crate::iced::futures::channel::mpsc::unbounded::<u32>();
         let mut runtime = Runtime::new(executor, tx);
 
         // Any keyboard event -> message 7.
-        let sub = iced::keyboard::listen().map(|_event| 7u32);
+        let sub = crate::iced::keyboard::listen().map(|_event| 7u32);
         runtime.track(subscription::into_recipes(sub));
 
         let key = to_iced_event(&ev(
@@ -285,9 +285,9 @@ mod tests {
             keyboard_types::Code::KeyA,
         ));
         runtime.broadcast(subscription::Event::Interaction {
-            window: iced::window::Id::unique(),
-            event: iced::Event::Keyboard(key),
-            status: iced::event::Status::Ignored,
+            window: crate::iced::window::Id::unique(),
+            event: crate::iced::Event::Keyboard(key),
+            status: crate::iced::event::Status::Ignored,
         });
 
         // The recipe stream runs on the worker thread; poll briefly.

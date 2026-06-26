@@ -5,8 +5,8 @@
 
 use std::fmt::Debug;
 
-use iced::widget::{Column, Row, container, row, text};
-use iced::{Element, Length, alignment};
+use crate::iced::widget::{Column, Row, container, row, text};
+use crate::iced::{Element, Length, alignment};
 
 use truce_gui::layout::{GridLayout, WidgetKind};
 use truce_params::Params;
@@ -49,7 +49,7 @@ pub fn auto_view<'a, M: Clone + Debug + 'static, P: Params>(
         }
         let header = container(header_row)
             .padding(8)
-            .style(|_theme: &iced::Theme| container::Style {
+            .style(|_theme: &crate::iced::Theme| container::Style {
                 background: Some(theme::HEADER_BG.into()),
                 ..Default::default()
             })

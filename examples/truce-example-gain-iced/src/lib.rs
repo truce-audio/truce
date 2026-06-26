@@ -1,22 +1,10 @@
-// iced's `iced` umbrella crate has a non-optional dependency on
-// `iced_winit`, and iced_winit calls
-// `winit::platform::modifier_supplement::KeyEventExtModifierSupplement`
-// methods (`key_without_modifiers`, `text_with_all_modifiers`)
-// inside a `cfg(not(target_arch = "wasm32"))` block - winit only
-// provides that trait on desktop, so the path fires on iOS and
-// fails to compile. There's no feature flag to opt out of
-// iced_winit, so the iced example is desktop-only. Plugin
-// authors targeting iOS should use the built-in editor or
-// `truce-egui` / `truce-slint`.
-#![cfg(not(target_os = "ios"))]
-
 use std::sync::Arc;
 
-use iced::widget::{Column, Row, container, text};
-use iced::{Alignment, Element, Font, Length, alignment};
+use truce_iced::iced::widget::{Column, Row, container, text};
+use truce_iced::iced::{Alignment, Element, Font, Length, alignment};
 
 const JETBRAINS_MONO: Font = Font {
-    family: iced::font::Family::Name("JetBrains Mono"),
+    family: truce_iced::iced::font::Family::Name("JetBrains Mono"),
     ..Font::DEFAULT
 };
 const WINDOW_W: u32 = 176;
@@ -71,12 +59,12 @@ impl IcedPlugin<GainParams> for GainUi {
             text("GAIN (iced)")
                 .size(14)
                 .font(JETBRAINS_MONO)
-                .color(iced::Color::from_rgb(0.75, 0.75, 0.80)),
+                .color(truce_iced::iced::Color::from_rgb(0.75, 0.75, 0.80)),
         )
-        .padding(iced::Padding::from([8.0, 10.0]))
+        .padding(truce_iced::iced::Padding::from([8.0, 10.0]))
         .width(Length::Fill)
-        .style(|_theme: &iced::Theme| container::Style {
-            background: Some(iced::Color::from_rgb(0.08, 0.08, 0.10).into()),
+        .style(|_theme: &truce_iced::iced::Theme| container::Style {
+            background: Some(truce_iced::iced::Color::from_rgb(0.08, 0.08, 0.10).into()),
             ..Default::default()
         })
         .into();
@@ -87,7 +75,7 @@ impl IcedPlugin<GainParams> for GainUi {
         // fill the remaining area in both axes.
         // The knob row is wrapped in a `container` so it can
         // span the column width and centre its content -
-        // `iced::widget::Row` exposes `align_y` (cross-axis) but
+        // `truce_iced::iced::widget::Row` exposes `align_y` (cross-axis) but
         // not `align_x`, so centring the children horizontally
         // needs a container with `.align_x(Center)`.
         let knob_row: Element<'a, Message<GainMsg>> = container(

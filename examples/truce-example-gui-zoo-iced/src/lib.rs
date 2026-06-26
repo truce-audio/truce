@@ -3,27 +3,23 @@
 //! laid out through iced's containers instead of the built-in
 //! `GridLayout`.
 
-// Same iOS gate as `truce-example-gain-iced`: iced's `iced_winit`
-// dep doesn't build for iOS.
-#![cfg(not(target_os = "ios"))]
-
 use std::sync::Arc;
 
-use iced::widget::{
+use truce_iced::iced::widget::{
     Column, Row, button, checkbox, container, image, progress_bar, radio, rule, scrollable, slider,
     text, text_input, toggler, tooltip, vertical_slider,
 };
-use iced::{Element, Font, Length, Task, alignment};
+use truce_iced::iced::{Element, Font, Length, Task, alignment};
 
 const JETBRAINS_MONO: Font = Font {
-    family: iced::font::Family::Name("JetBrains Mono"),
+    family: truce_iced::iced::font::Family::Name("JetBrains Mono"),
     ..Font::DEFAULT
 };
 const WINDOW_W: u32 = 700;
 const WINDOW_H: u32 = 900;
-const HEADER_BG: iced::Color = iced::Color::from_rgb(0.08, 0.08, 0.10);
-const HEADER_TEXT: iced::Color = iced::Color::from_rgb(0.75, 0.75, 0.80);
-const BTN_TEXT: iced::Color = iced::Color::from_rgb(0.93, 0.93, 0.96);
+const HEADER_BG: truce_iced::iced::Color = truce_iced::iced::Color::from_rgb(0.08, 0.08, 0.10);
+const HEADER_TEXT: truce_iced::iced::Color = truce_iced::iced::Color::from_rgb(0.75, 0.75, 0.80);
+const BTN_TEXT: truce_iced::iced::Color = truce_iced::iced::Color::from_rgb(0.93, 0.93, 0.96);
 
 use truce::prelude::*;
 use truce_iced::{
@@ -175,19 +171,19 @@ pub enum ZooMsg {
 /// Human-readable label for a key press: logical key (or typed text) plus
 /// the layout-independent physical code.
 fn key_label(
-    key: &iced::keyboard::Key,
-    physical: iced::keyboard::key::Physical,
+    key: &truce_iced::iced::keyboard::Key,
+    physical: truce_iced::iced::keyboard::key::Physical,
     text: Option<&str>,
 ) -> String {
-    use iced::keyboard::Key;
+    use truce_iced::iced::keyboard::Key;
     let logical = match key {
         Key::Character(c) => format!("'{c}'"),
         Key::Named(named) => format!("{named:?}"),
         Key::Unidentified => "Unidentified".to_string(),
     };
     let phys = match physical {
-        iced::keyboard::key::Physical::Code(code) => format!("{code:?}"),
-        iced::keyboard::key::Physical::Unidentified(_) => "?".to_string(),
+        truce_iced::iced::keyboard::key::Physical::Code(code) => format!("{code:?}"),
+        truce_iced::iced::keyboard::key::Physical::Unidentified(_) => "?".to_string(),
     };
     match text {
         Some(t) if !t.trim().is_empty() => format!("{logical}  text={t:?}  phys={phys}"),
@@ -233,13 +229,13 @@ impl IcedPlugin<ZooParams> for ZooUi {
         Task::none()
     }
 
-    fn subscription(&self) -> iced::Subscription<Message<ZooMsg>> {
+    fn subscription(&self) -> truce_iced::iced::Subscription<Message<ZooMsg>> {
         // Mirror every key press, regardless of which widget has focus, by
         // listening to the raw event stream (the truce-iced subscription
         // pump drives this). Returning `None` skips releases / modifier
         // changes so only presses update the label.
-        iced::event::listen_with(|event, _status, _window| match event {
-            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+        truce_iced::iced::event::listen_with(|event, _status, _window| match event {
+            truce_iced::iced::Event::Keyboard(truce_iced::iced::keyboard::Event::KeyPressed {
                 key,
                 physical_key,
                 text,
@@ -263,9 +259,9 @@ impl IcedPlugin<ZooParams> for ZooUi {
                 .font(JETBRAINS_MONO)
                 .color(HEADER_TEXT),
         )
-        .padding(iced::Padding::from([8.0, 10.0]))
+        .padding(truce_iced::iced::Padding::from([8.0, 10.0]))
         .width(Length::Fill)
-        .style(|_theme: &iced::Theme| container::Style {
+        .style(|_theme: &truce_iced::iced::Theme| container::Style {
             background: Some(HEADER_BG.into()),
             ..Default::default()
         })
@@ -412,7 +408,7 @@ impl ZooUi {
                         )
                         .on_press(on_inc()),
                         container(text("a tooltip").size(11)).padding(6).style(
-                            |_t: &iced::Theme| container::Style {
+                            |_t: &truce_iced::iced::Theme| container::Style {
                                 background: Some(HEADER_BG.into()),
                                 ..Default::default()
                             },

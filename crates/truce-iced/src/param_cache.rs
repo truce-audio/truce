@@ -31,7 +31,7 @@ pub struct ParamCache<P: Params + ?Sized> {
     /// Meter values (0.0–1.0).
     meters: HashMap<u32, f32>,
     /// Font for canvas-drawn widget labels. Set via the editor's `with_font()`.
-    font: iced::Font,
+    font: crate::iced::Font,
 }
 
 impl<P: Params + ?Sized> ParamCache<P> {
@@ -56,7 +56,7 @@ impl<P: Params + ?Sized> ParamCache<P> {
             values,
             labels,
             meters: HashMap::new(),
-            font: iced::Font::DEFAULT,
+            font: crate::iced::Font::DEFAULT,
         }
     }
 
@@ -84,12 +84,12 @@ impl<P: Params + ?Sized> ParamCache<P> {
 
     /// The font set via the editor's `with_font()`, or `Font::DEFAULT`.
     #[must_use]
-    pub fn font(&self) -> iced::Font {
+    pub fn font(&self) -> crate::iced::Font {
         self.font
     }
 
     /// Set the font (called by the editor runtime).
-    pub fn set_font(&mut self, font: iced::Font) {
+    pub fn set_font(&mut self, font: crate::iced::Font) {
         self.font = font;
     }
 

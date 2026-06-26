@@ -30,12 +30,19 @@ pub mod auto_layout;
 #[cfg(not(target_os = "ios"))]
 pub mod editor;
 pub mod font;
+// Facade re-assembling the `iced` umbrella's API from its sub-crates, so
+// the crate never depends on `iced_winit` (which can't build for iOS).
+// Public so plugin crates can reach iced types without the umbrella too.
+pub mod iced;
 #[cfg(not(target_os = "ios"))]
 mod keyboard;
 pub mod param_cache;
 pub mod param_message;
 #[cfg(not(target_os = "ios"))]
 pub mod platform;
+// Surface-agnostic iced render pipeline (`IcedRuntime`/`RenderState`/
+// `IcedProgram`) shared by the desktop and iOS editors.
+mod runtime;
 #[cfg(not(target_os = "ios"))]
 mod screenshot;
 pub mod theme;
@@ -44,12 +51,16 @@ pub mod widgets;
 #[cfg(target_os = "ios")]
 mod editor_ios;
 
-// Re-export primary types for convenience.
+// Re-export primary types for convenience. The plugin-facing traits live
+// in the shared `runtime` module (all platforms); only the windowing
+// `IcedEditor` differs per platform.
+pub use runtime::{AutoPlugin, IcedPlugin};
+
 #[cfg(not(target_os = "ios"))]
-pub use editor::{AutoPlugin, IcedEditor, IcedPlugin};
+pub use editor::IcedEditor;
 
 #[cfg(target_os = "ios")]
-pub use editor_ios::{AutoPlugin, IcedEditor, IcedPlugin};
+pub use editor_ios::IcedEditor;
 pub use param_cache::ParamCache;
 pub use param_message::{Message, ParamMessage};
 // Re-export `PluginContext` so plugin authors can use it without a direct
@@ -64,7 +75,7 @@ pub use widgets::{knob, meter, param_dropdown, param_slider, param_toggle, xy_pa
 #[allow(deprecated)]
 pub use widgets::param_selector;
 
-use iced::Element;
+use crate::iced::Element;
 use std::fmt::Debug;
 
 /// Convert any truce-iced widget into an `Element` with `.el()`.

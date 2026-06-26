@@ -3,9 +3,9 @@
 use std::fmt::Debug;
 use std::marker::PhantomData;
 
-use iced::widget::Canvas;
-use iced::widget::canvas::{self, Frame, Geometry, Path};
-use iced::{Element, Length, Point, Rectangle, Renderer, Size, Theme, mouse};
+use crate::iced::widget::Canvas;
+use crate::iced::widget::canvas::{self, Frame, Geometry, Path};
+use crate::iced::{Element, Length, Point, Rectangle, Renderer, Size, Theme, mouse};
 
 use truce_core::meter_display;
 use truce_params::Params;
@@ -20,7 +20,7 @@ pub struct MeterWidget<'a, M> {
     label: Option<&'a str>,
     width: Length,
     height: Length,
-    font: iced::Font,
+    font: crate::iced::Font,
     _phantom: PhantomData<M>,
 }
 
@@ -81,7 +81,7 @@ impl<'a, M: Clone + Debug + 'static> MeterWidget<'a, M> {
     }
 
     #[must_use]
-    pub fn font(mut self, font: iced::Font) -> Self {
+    pub fn font(mut self, font: crate::iced::Font) -> Self {
         self.font = font;
         self
     }
@@ -146,7 +146,7 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for MeterProgram {
 
             // Background
             let bg = Path::rectangle(Point::new(x, 0.0), Size::new(bar_w, meter_h));
-            frame.fill(&bg, iced::Color::from_rgb(0.165, 0.165, 0.188));
+            frame.fill(&bg, crate::iced::Color::from_rgb(0.165, 0.165, 0.188));
 
             // Fill (blue, red when clipping)
             if fill_h > 0.0 {

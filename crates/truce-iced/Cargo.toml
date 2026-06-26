@@ -14,9 +14,25 @@ truce-params = { workspace = true }
 truce-gui = { workspace = true }
 
 log = "0.4"
-iced = { version = "0.14", default-features = false, features = ["canvas", "wgpu", "thread-pool"] }
+# iced's sub-crates directly, never the `iced` umbrella: the umbrella
+# hard-depends on `iced_winit`, whose keyboard conversion can't compile
+# for iOS. The `iced` facade module re-assembles the umbrella's surface
+# from these. `iced_renderer` with `wgpu` (and no `tiny-skia`) makes
+# `iced_renderer::Renderer` resolve to the `iced_wgpu::Renderer` the
+# editor renders with. truce-iced drives `UserInterface` itself, so no
+# winit event loop is needed on any platform.
+iced_core = "0.14"
+iced_widget = { version = "0.14", features = ["canvas"] }
+# Both `wgpu` (iced_wgpu default features) and `wgpu-bare` (the cfg that
+# makes `iced_renderer::Renderer` a type alias for `iced_wgpu::Renderer`
+# rather than the `()` fallback) - the umbrella's `wgpu` feature enables
+# the same pair.
+iced_renderer = { version = "0.14", features = ["wgpu", "wgpu-bare"] }
+iced_wgpu = "0.14"
 iced_runtime = "0.14"
 iced_graphics = "0.14"
+iced_futures = { version = "0.14", features = ["thread-pool"] }
+pollster = "0.4"
 raw-window-handle = "0.5"
 # `ttf-parser` reads the TTF `name` table so `with_font(bytes)` can
 # extract the family name iced needs to refer to the font afterward,
@@ -24,13 +40,9 @@ raw-window-handle = "0.5"
 # same major iced's cosmic-text uses transitively to share one copy.
 ttf-parser = "0.25"
 
-# baseview + iced_wgpu live behind these on non-iOS hosts. iOS uses
-# the stub editor in `editor_ios.rs`; iced-wgpu surface creation on
-# iOS needs the same CAMetalLayer plumbing the slint/egui backends
-# also defer. Plugin code stays portable through `IcedEditor`.
+# baseview drives the desktop editor window; iOS hosts the editor in a
+# CAMetalLayer-backed UIView instead (see `editor_ios.rs`).
 [target.'cfg(not(target_os = "ios"))'.dependencies]
-iced_wgpu = "0.14"
-pollster = "0.4"
 baseview = { workspace = true }
 # Translate baseview key events into iced keyboard events. Pinned to the
 # same major baseview emits so the `KeyboardEvent` types unify.
@@ -40,8 +52,10 @@ keyboard-types = "0.7"
 objc2 = "0.6"
 objc2-foundation = { version = "0.3", features = ["NSString", "NSGeometry"] }
 
-[target.'cfg(target_os = "linux")'.dependencies]
-iced = { version = "0.14", default-features = false, features = ["x11", "wayland"] }
+[features]
+# Opt-in iced image widget (`truce_iced::iced::widget::image`). Off by
+# default so the `image` crate only builds for plugins that use it.
+image = ["iced_widget/image"]
 
 [lints]
 workspace = true

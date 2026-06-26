@@ -1,7 +1,7 @@
 //! Font loading for iced renderers.
 
 /// Load a TrueType font into iced's font system and return the
-/// `iced::Font` to use as the renderer default.
+/// `crate::iced::Font` to use as the renderer default.
 ///
 /// The font's family name is read from its TTF `name` table - iced
 /// (cosmic-text underneath) keys loaded fonts by family name, so the
@@ -17,12 +17,12 @@
 /// in normal operation no holder panics while writing, so this is a
 /// recovery-impossible condition rather than a runtime contract.
 ///
-/// Returns `iced::Font::DEFAULT` if the bytes don't parse as a TTF
+/// Returns `crate::iced::Font::DEFAULT` if the bytes don't parse as a TTF
 /// or carry no usable `name` record; iced still loads the bytes (so
 /// a downstream `Font::with_name(family)` would still resolve) but
 /// the renderer falls back to its default family.
 #[must_use]
-pub fn apply_font(data: &'static [u8]) -> iced::Font {
+pub fn apply_font(data: &'static [u8]) -> crate::iced::Font {
     let family = extract_family_name(data);
 
     let mut fs = iced_graphics::text::font_system()
@@ -38,16 +38,16 @@ pub fn apply_font(data: &'static [u8]) -> iced::Font {
     drop(fs);
 
     match family {
-        Some(name) => iced::Font {
-            // `iced::font::Family::Name` wants a `&'static str`. The
+        Some(name) => crate::iced::Font {
+            // `crate::iced::font::Family::Name` wants a `&'static str`. The
             // caller hands us `&'static [u8]` so the bytes outlive
             // the editor; the leaked `String` is one allocation per
             // `with_font` call (typically once per plugin instance,
             // never inside `process()`).
-            family: iced::font::Family::Name(Box::leak(name.into_boxed_str())),
-            ..iced::Font::DEFAULT
+            family: crate::iced::font::Family::Name(Box::leak(name.into_boxed_str())),
+            ..crate::iced::Font::DEFAULT
         },
-        None => iced::Font::DEFAULT,
+        None => crate::iced::Font::DEFAULT,
     }
 }
 

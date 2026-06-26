@@ -53,10 +53,10 @@ env:
   # suffix on the output filename matches the convention enforced by
   # each example's `gui_screenshot_<os>` test (linux/macos/windows) or
   # the `cargo truce screenshot --ios [--crop-mode container]` pipeline.
-  # The iOS bake skips the iced examples (`gain-iced`, `gui-zoo-iced`,
-  # `midi-inspector`): iced's iOS backend is broken upstream and the
-  # crates are `#[cfg(not(target_os = "ios"))]` stubs, so there's no
-  # editor to capture.
+  # The iced examples (`gain-iced`, `gui-zoo-iced`, `midi-inspector`)
+  # render on iOS via truce-iced's CAMetalLayer host, so they're built
+  # for iOS below; like most examples they stay build-only here (the
+  # curated capture subset further down is unchanged).
   # `cargo truce screenshot --ios` locks
   # `UISupportedInterfaceOrientations` in the temporary container's
   # Info.plist to a single canonical orientation (the plugin's first
@@ -452,8 +452,8 @@ jobs:
       # carry a `cfg(target_os = "ios")` `platform` module).
       # truce-egui / truce-iced / truce-slint sidestep this with a
       # `cfg(not(target_os = "ios"))` gate on their baseview dep + an
-      # iOS-specific editor stub; vizia can't because vizia_baseview
-      # is unconditional inside the vizia crate itself. See
+      # iOS-specific CAMetalLayer editor; vizia can't because
+      # vizia_baseview is unconditional inside the vizia crate itself. See
       # `crates/truce-vizia/Cargo.toml`'s `[patch]` header for the
       # full unblocking conditions.
       - name: Pre-build iOS plugin slices
@@ -461,9 +461,6 @@ jobs:
           set -euo pipefail
           args=()
           for crate in $EXAMPLE_CRATES; do
-            [ "$crate" = "truce-example-gain-iced" ] && continue
-            [ "$crate" = "truce-example-gui-zoo-iced" ] && continue
-            [ "$crate" = "truce-example-midi-inspector" ] && continue
             args+=("-p" "$crate")
           done
           cargo build "${args[@]}" --target aarch64-apple-ios-sim \
@@ -486,8 +483,6 @@ jobs:
       # (container chrome) emitted from the same screenshot. Was
       # doing the install + launch twice per crate; `--container-out`
       # writes the second crop from the same captured PNG.
-      # iced is excluded — its iOS backend doesn't build (winit
-      # upstream issue) and its container app never wires the editor.
       - name: Bake iOS screenshots
         run: |
           set -euo pipefail
@@ -495,17 +490,18 @@ jobs:
           # rationale — accumulated AUExt / componentd / Metal state
           # otherwise wedges later plugins' first paint).
           for crate in $EXAMPLE_CRATES; do
-            # iced's iOS backend doesn't build. The rest are plugins
-            # dropped from the iOS screenshot *check* (see ci-ios.yml):
-            # their (editor-backend x AU-type) cell is already covered
-            # on the sim by gain / gui-zoo / synth / transpose /
-            # gui-zoo-egui, and their editor render is still gated on
-            # desktop. Skip the per-plugin sim reboot here too; their
-            # committed iOS baselines stay frozen. To re-enable one,
-            # drop it from this list and from the ci-ios.yml loop, then
-            # re-bake.
+            # Plugins dropped from the iOS screenshot *check* (see
+            # ci-ios.yml): their (editor-backend x AU-type) cell is
+            # already covered on the sim by gain / gui-zoo / synth /
+            # transpose / gui-zoo-egui / gui-zoo-iced, and their editor
+            # render is still gated on desktop. Skip the per-plugin sim
+            # reboot here too; their committed iOS baselines stay frozen.
+            # To re-enable one, drop it from this list and from the
+            # ci-ios.yml loop, then re-bake. (midi-inspector is the lone
+            # build-only iced example - its committed baseline stays
+            # frozen; gain-iced / gui-zoo-iced bake + check.)
             case "$crate" in
-              truce-example-gain-iced|truce-example-gui-zoo-iced|truce-example-midi-inspector) continue ;;
+              truce-example-midi-inspector) continue ;;
               truce-example-eq|truce-example-tremolo|truce-example-arpeggio) continue ;;
               truce-example-state|truce-example-gain-egui) continue ;;
               truce-example-fundsp-reverb-worker|truce-example-fundsp-reverb-simple) continue ;;

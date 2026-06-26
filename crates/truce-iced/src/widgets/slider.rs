@@ -3,9 +3,9 @@
 use std::fmt::Debug;
 use std::marker::PhantomData;
 
-use iced::widget::Canvas;
-use iced::widget::canvas::{self, Event, Frame, Geometry, Path, Stroke, Text};
-use iced::{Color, Element, Length, Point, Rectangle, Renderer, Theme, alignment, mouse};
+use crate::iced::widget::Canvas;
+use crate::iced::widget::canvas::{self, Event, Frame, Geometry, Path, Stroke, Text};
+use crate::iced::{Color, Element, Length, Point, Rectangle, Renderer, Theme, alignment, mouse};
 
 use crate::param_cache::ParamCache;
 use crate::param_message::{Message, ParamMessage};
@@ -23,7 +23,7 @@ pub struct SliderWidget<'a, M> {
     display: String,
     label: Option<&'a str>,
     width: f32,
-    font: iced::Font,
+    font: crate::iced::Font,
     _phantom: PhantomData<M>,
 }
 
@@ -54,7 +54,7 @@ impl<'a, M: Clone + Debug + 'static> SliderWidget<'a, M> {
     }
 
     #[must_use]
-    pub fn font(mut self, font: iced::Font) -> Self {
+    pub fn font(mut self, font: crate::iced::Font) -> Self {
         self.font = font;
         self
     }
@@ -90,7 +90,7 @@ struct SliderProgram {
     value: f32,
     display: String,
     label: String,
-    font: iced::Font,
+    font: crate::iced::Font,
 }
 
 #[derive(Default)]
@@ -129,7 +129,7 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for SliderProgram {
             Stroke::default()
                 .with_color(theme::KNOB_TRACK)
                 .with_width(TRACK_HEIGHT)
-                .with_line_cap(iced::widget::canvas::LineCap::Round),
+                .with_line_cap(crate::iced::widget::canvas::LineCap::Round),
         );
 
         // Filled portion
@@ -142,7 +142,7 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for SliderProgram {
                 Stroke::default()
                     .with_color(theme::KNOB_FILL)
                     .with_width(TRACK_HEIGHT)
-                    .with_line_cap(iced::widget::canvas::LineCap::Round),
+                    .with_line_cap(crate::iced::widget::canvas::LineCap::Round),
             );
         }
 
@@ -157,7 +157,7 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for SliderProgram {
             content: self.display.clone(),
             position: Point::new(cx, text_y),
             color: Color::from_rgb(0.90, 0.90, 0.92),
-            size: iced::Pixels(11.0),
+            size: crate::iced::Pixels(11.0),
             align_x: alignment::Horizontal::Center.into(),
             align_y: alignment::Vertical::Top,
             font: self.font,
@@ -171,7 +171,7 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for SliderProgram {
                 content: self.label.clone(),
                 position: Point::new(cx, label_y),
                 color: theme::TEXT_DIM,
-                size: iced::Pixels(10.0),
+                size: crate::iced::Pixels(10.0),
                 align_x: alignment::Horizontal::Center.into(),
                 align_y: alignment::Vertical::Top,
                 font: self.font,
