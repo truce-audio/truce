@@ -41,7 +41,6 @@ where
     /// diverges from `last_applied_scale`.
     scale: EditorScale,
     font: Option<&'static [u8]>,
-    runtime: Option<IcedRuntime<P, M>>,
     /// Constructor closure for the plugin model. Each constructor
     /// stores a closure that produces an `M` of the correct concrete
     /// type:
@@ -58,7 +57,14 @@ where
     /// whose `IcedPlugin::new` is `panic!("must be created via
     /// from_layout")` - going through `M::new` instead would panic on
     /// the screenshot path.
-    make_plugin: Box<dyn Fn(Arc<P>) -> M + Send + Sync>,
+    ///
+    /// `Arc` (not `Box`) so `open()` can clone it into the baseview
+    /// builder closure and construct the plugin model on the handler's
+    /// own thread - the handler owns its [`IcedRuntime`] outright rather
+    /// than reaching back into this editor through a raw pointer, which
+    /// is what lets the editor be dropped (host switching plug-ins)
+    /// without the still-live window proc dereferencing freed memory.
+    make_plugin: Arc<dyn Fn(Arc<P>) -> M + Send + Sync>,
     meter_ids: Vec<u32>,
     baseview_window: Option<baseview::WindowHandle>,
     /// Pending logical size shared with the baseview handler.
@@ -111,11 +117,12 @@ impl<P: Params + 'static, M: IcedPlugin<P> + 'static> Drop for IcedEditor<P, M> 
     /// on plugin removal under certain conditions; live-coding hosts
     /// and unit tests can also short-circuit the lifecycle. On Linux
     /// `baseview::WindowHandle` has no `Drop`, so without an explicit
-    /// `close` the render thread would keep running against a freed
-    /// `*mut IcedEditor` and later panic inside wgpu as surfaces tear
-    /// down. `close()` is idempotent - `baseview_window.take()`
-    /// no-ops on the second call - so calling it here on top of a
-    /// well-behaved host's earlier `close()` is safe.
+    /// `close` the editor's window keeps firing `on_frame`. `close()`
+    /// is idempotent - `baseview_window.take()` no-ops on the second
+    /// call - so calling it here on top of a well-behaved host's
+    /// earlier `close()` is safe. (The window handler owns its
+    /// `IcedRuntime`, so even if a frame fires after this it operates
+    /// on the handler's own state, not freed editor memory.)
     fn drop(&mut self) {
         Editor::close(self);
     }
@@ -133,8 +140,8 @@ impl<P: Params + 'static> IcedEditor<P, AutoPlugin> {
             .copied()
             .collect();
 
-        let make_plugin: Box<dyn Fn(Arc<P>) -> AutoPlugin + Send + Sync> =
-            Box::new(move |_params| AutoPlugin {
+        let make_plugin: Arc<dyn Fn(Arc<P>) -> AutoPlugin + Send + Sync> =
+            Arc::new(move |_params| AutoPlugin {
                 layout: layout.clone(),
             });
 
@@ -143,7 +150,6 @@ impl<P: Params + 'static> IcedEditor<P, AutoPlugin> {
             size,
             scale: EditorScale::new(truce_gui::backing_scale()),
             font: None,
-            runtime: None,
             make_plugin,
             meter_ids,
             baseview_window: None,
@@ -166,8 +172,7 @@ impl<P: Params + 'static, M: IcedPlugin<P> + 'static> IcedEditor<P, M> {
             size,
             scale: EditorScale::new(truce_gui::backing_scale()),
             font: None,
-            runtime: None,
-            make_plugin: Box::new(|p| M::new(p)),
+            make_plugin: Arc::new(|p| M::new(p)),
             meter_ids: Vec::new(),
             baseview_window: None,
             pending_size: Arc::new(std::sync::atomic::AtomicU64::new(0)),
@@ -256,35 +261,25 @@ impl<P: Params + 'static, M: IcedPlugin<P> + 'static> IcedEditor<P, M> {
 // Baseview window handler (all platforms)
 
 struct IcedBaseviewHandler<P: Params + 'static, M: IcedPlugin<P>> {
-    editor: *mut IcedEditor<P, M>,
+    /// The handler owns the runtime outright. It used to hold a
+    /// `*mut IcedEditor` and reach back through it each frame, but
+    /// baseview's `WindowHandle::close()` is asynchronous on Windows
+    /// (it posts a close message rather than joining), so a host that
+    /// dropped the editor while a close was still pending left the
+    /// window proc dereferencing freed memory - a crash on plug-in
+    /// switching. Owning the runtime keeps everything `on_frame` /
+    /// `on_event` touch alive for exactly as long as the window proc
+    /// can run, and drops it (including the wgpu surface) on this
+    /// handler's own thread when the window is destroyed.
+    runtime: IcedRuntime<P, M>,
+    /// Clone of the editor's pending-size cell; `Editor::set_size`
+    /// writes it, `on_frame` applies it.
+    pending_size: Arc<std::sync::atomic::AtomicU64>,
+    /// Clone of the editor's live scale factor (also held inside
+    /// `runtime`); kept here too so `on_frame` can read it without
+    /// borrowing `runtime`.
+    scale: EditorScale,
     last_cursor: Option<baseview::MouseCursor>,
-}
-
-// SAFETY: The raw `*mut IcedEditor<P, M>` is only dereferenced from
-// the baseview event thread (which `WindowHandler` is bound to). The
-// editor's host-side close path joins this thread before dropping the
-// editor, so the pointer is always valid while `WindowHandler`
-// methods run. baseview requires `Send` for its handler types so that
-// the handler can be moved onto the dedicated event thread on
-// construction; once moved, it never crosses threads again.
-unsafe impl<P: Params, M: IcedPlugin<P>> Send for IcedBaseviewHandler<P, M> {}
-
-impl<P: Params + 'static, M: IcedPlugin<P>> Drop for IcedBaseviewHandler<P, M> {
-    fn drop(&mut self) {
-        // Drop wgpu/iced render state on the baseview event thread, while
-        // any underlying display connection (e.g. X11 Display via XcbConnection)
-        // is still alive. If we let the host-thread close() path drop
-        // `runtime.render` instead, NVIDIA's Vulkan surface-destruction code
-        // tries to use a freed Display and segfaults inside _XSend.
-        //
-        // Safety: close() always calls window.close() which joins this
-        // thread before returning. While this drop runs, the host thread
-        // is blocked in join(), so `self.editor` is still valid.
-        let editor = unsafe { &mut *self.editor };
-        if let Some(ref mut runtime) = editor.runtime {
-            runtime.render = None;
-        }
-    }
 }
 
 // The explicit `Idle | None => Default` arm documents iced's known
@@ -337,16 +332,15 @@ impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBase
                 use raw_window_handle::HasRawWindowHandle;
                 truce_gui::platform::reanchor_to_superview_top(window.raw_window_handle());
             }
-            let editor = unsafe { &mut *self.editor };
             // Rebuild the pipeline if the device was lost (flagged by the
             // device-lost callback or a swallowed render panic). Skip the rest of
             // this frame; the next tick renders against the fresh device.
-            if let Some(ref mut runtime) = editor.runtime
-                && runtime
-                    .device_lost
-                    .load(std::sync::atomic::Ordering::Acquire)
+            if self
+                .runtime
+                .device_lost
+                .load(std::sync::atomic::Ordering::Acquire)
             {
-                let ok = runtime.recover_device(window);
+                let ok = self.runtime.recover_device(window);
                 log::warn!("iced device-loss recovery: rebuilt ok={ok}");
                 return;
             }
@@ -355,7 +349,7 @@ impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBase
             // size but the platform window stays at the original
             // dimensions, so the editor visibly fills only the old
             // rect inside a larger host frame.
-            let packed = editor
+            let packed = self
                 .pending_size
                 .swap(0, std::sync::atomic::Ordering::Acquire);
             if packed != 0 {
@@ -365,38 +359,34 @@ impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBase
                 let new_h = (packed & 0xFFFF_FFFF) as u32;
                 if new_w > 0 && new_h > 0 {
                     window.resize(baseview::Size::new(f64::from(new_w), f64::from(new_h)));
-                    if let Some(ref mut runtime) = editor.runtime {
-                        runtime.size = (new_w, new_h);
-                        // Reconfigured surface must be repainted next
-                        // tick even if the idle gate sees no other change.
-                        runtime.force_render = true;
-                        if let Some(ref mut render) = runtime.render {
-                            let scale = editor.scale.get();
-                            let pw = truce_gui::to_physical_px(new_w, scale);
-                            let ph = truce_gui::to_physical_px(new_h, scale);
-                            #[allow(clippy::cast_possible_truncation)]
-                            let scale_f32 = scale as f32;
-                            render.viewport = iced_graphics::Viewport::with_physical_size(
-                                Size::new(pw, ph),
-                                scale_f32,
-                            );
-                            render.surface_config.width = pw;
-                            render.surface_config.height = ph;
-                            render
-                                .surface
-                                .configure(&render.device, &render.surface_config);
-                        }
+                    self.runtime.size = (new_w, new_h);
+                    // Reconfigured surface must be repainted next tick
+                    // even if the idle gate sees no other change.
+                    self.runtime.force_render = true;
+                    let scale = self.scale.get();
+                    if let Some(ref mut render) = self.runtime.render {
+                        let pw = truce_gui::to_physical_px(new_w, scale);
+                        let ph = truce_gui::to_physical_px(new_h, scale);
+                        #[allow(clippy::cast_possible_truncation)]
+                        let scale_f32 = scale as f32;
+                        render.viewport = iced_graphics::Viewport::with_physical_size(
+                            Size::new(pw, ph),
+                            scale_f32,
+                        );
+                        render.surface_config.width = pw;
+                        render.surface_config.height = ph;
+                        render
+                            .surface
+                            .configure(&render.device, &render.surface_config);
                     }
                 }
             }
-            if let Some(ref mut runtime) = editor.runtime {
-                runtime.tick();
-                if let Some(ref render) = runtime.render {
-                    let cursor = iced_interaction_to_cursor(render.interaction);
-                    if self.last_cursor != Some(cursor) {
-                        self.last_cursor = Some(cursor);
-                        window.set_mouse_cursor(cursor);
-                    }
+            self.runtime.tick();
+            if let Some(ref render) = self.runtime.render {
+                let cursor = iced_interaction_to_cursor(render.interaction);
+                if self.last_cursor != Some(cursor) {
+                    self.last_cursor = Some(cursor);
+                    window.set_mouse_cursor(cursor);
                 }
             }
         }));
@@ -405,12 +395,9 @@ impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBase
             // A render panic almost always means the device is dead (e.g.
             // `queue.write_buffer_with` -> None after a loss that didn't fire
             // the callback). Arm recovery so the next frame rebuilds.
-            let editor = unsafe { &mut *self.editor };
-            if let Some(ref runtime) = editor.runtime {
-                runtime
-                    .device_lost
-                    .store(true, std::sync::atomic::Ordering::Release);
-            }
+            self.runtime
+                .device_lost
+                .store(true, std::sync::atomic::Ordering::Release);
         }
     }
 
@@ -423,10 +410,7 @@ impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBase
         // Catch panics at the FFI boundary, like `on_frame`; report the event
         // as `Ignored` on panic instead of aborting the host.
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let editor = unsafe { &mut *self.editor };
-            let Some(runtime) = editor.runtime.as_mut() else {
-                return baseview::EventStatus::Ignored;
-            };
+            let runtime = &mut self.runtime;
 
             match event {
                 baseview::Event::Mouse(mouse) => {
@@ -562,34 +546,23 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
         self.pending_size
             .store(0, std::sync::atomic::Ordering::Relaxed);
 
-        // Create the plugin model. The closure is `Fn`, not `FnOnce`,
-        // so destroy/recreate cycles (CLAP `gui_destroy` / `gui_create`,
-        // some VST3 hosts that close+reopen the editor) reuse it.
-        let plugin = (self.make_plugin)(self.params.clone());
-
-        let mut param_cache = ParamCache::new(self.params.clone());
-        if let Some(data) = self.font {
-            // `apply_font` is idempotent on the iced font-system side
-            // (load_font is fine to call twice with the same bytes);
-            // the redundant load here is cheap and lets the canvas
-            // widgets reuse the correct family without threading the
-            // already-derived `crate::iced::Font` from the runtime path.
-            param_cache.set_font(crate::font::apply_font(data));
-        }
+        // Everything the handler needs is moved into the builder
+        // closure, which baseview runs on the handler's own thread. The
+        // plugin model + `IcedRuntime` are built there so the handler
+        // OWNS the runtime, rather than holding a pointer back into this
+        // editor: the editor can then be dropped (host switching
+        // plug-ins) while a `WindowHandle::close()` is still pending
+        // without the live window proc dereferencing freed memory.
+        // `make_plugin` is `Fn`, not `FnOnce`, so destroy/recreate
+        // cycles (CLAP `gui_destroy` / `gui_create`) each get a fresh
+        // clone.
+        let make_plugin = Arc::clone(&self.make_plugin);
+        let params = self.params.clone();
+        let font = self.font;
+        let scale = self.scale.clone();
+        let meter_ids = self.meter_ids.clone();
+        let pending_size = Arc::clone(&self.pending_size);
         let typed_ctx = context.with_params(self.params.clone());
-        let program = IcedProgram {
-            plugin,
-            param_cache,
-            context: typed_ctx,
-            meter_ids: self.meter_ids.clone(),
-        };
-
-        self.runtime = Some(IcedRuntime::new(
-            (w, h),
-            self.scale.clone(),
-            self.font,
-            program,
-        ));
 
         let parent_wrapper = crate::platform::ParentWindow(parent);
         let options = baseview::WindowOpenOptions {
@@ -598,28 +571,39 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
             scale: baseview::WindowScalePolicy::SystemScaleFactor,
         };
 
-        let editor_addr = std::ptr::from_mut::<IcedEditor<P, M>>(self) as usize;
-
         let window = baseview::Window::open_parented(
             &parent_wrapper,
             options,
             move |window: &mut baseview::Window| {
+                let plugin = (*make_plugin)(params.clone());
+                let mut param_cache = ParamCache::new(params);
+                if let Some(data) = font {
+                    // `apply_font` is idempotent on the iced font-system
+                    // side; the redundant load is cheap and lets canvas
+                    // widgets reuse the correct family.
+                    param_cache.set_font(crate::font::apply_font(data));
+                }
+                let program = IcedProgram {
+                    plugin,
+                    param_cache,
+                    context: typed_ctx,
+                    meter_ids,
+                };
+                let mut runtime = IcedRuntime::new((w, h), scale.clone(), font, program);
+
                 let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
                     backends: editor_backends(),
                     ..Default::default()
                 });
-
                 let surface = unsafe { crate::platform::create_wgpu_surface(&instance, window) };
-
                 if let Some(surface) = surface {
-                    let editor = unsafe { &mut *(editor_addr as *mut IcedEditor<P, M>) };
-                    if let Some(ref mut runtime) = editor.runtime {
-                        runtime.init_render(instance, surface);
-                    }
+                    runtime.init_render(instance, surface);
                 }
 
                 IcedBaseviewHandler::<P, M> {
-                    editor: editor_addr as *mut IcedEditor<P, M>,
+                    runtime,
+                    pending_size,
+                    scale,
                     last_cursor: None,
                 }
             },
@@ -630,15 +614,14 @@ impl<P: Params + 'static, M: IcedPlugin<P>> Editor for IcedEditor<P, M> {
     }
 
     fn close(&mut self) {
-        // baseview's Linux WindowHandle has no Drop impl - we must call
-        // close() explicitly to request shutdown and join the render
-        // thread. Without this, the thread keeps running against a
-        // dangling self pointer after the host drops this editor, which
-        // later panics inside wgpu as surfaces get torn down.
+        // baseview's Linux WindowHandle has no Drop impl, so request
+        // teardown explicitly. The handler owns its runtime and is
+        // dropped when the window is destroyed, tearing down the wgpu
+        // surface on the handler's own thread. Idempotent via
+        // `baseview_window.take()`.
         if let Some(mut window) = self.baseview_window.take() {
             window.close();
         }
-        self.runtime = None;
         log::info!("editor closed");
     }
 
