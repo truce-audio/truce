@@ -204,68 +204,6 @@ pub fn param_toggle<P: Params + 'static>(
     .alignment(Alignment::Center);
 }
 
-/// Horizontal row of radio buttons - one per discrete step - acting
-/// as an "either/or" selector for an `EnumParam` or stepped
-/// `IntParam`. `count` is the number of options.
-#[deprecated(since = "0.56.0", note = "use `param_dropdown` instead")]
-pub fn param_selector<P: Params + 'static>(
-    cx: &mut Context,
-    lens: ParamLens<P>,
-    id: impl Into<u32> + Copy,
-    label: &str,
-    count: usize,
-) {
-    let id_u32: u32 = id.into();
-    let label_text = label.to_string();
-    // The shared value signal drives both the radio highlight and
-    // any sibling widgets bound to the same id. Snap `[0, 1]` back
-    // to a step index for hover state - matches `EnumParam::
-    // denormalize` so the highlight mirrors the audio-thread value.
-    let value_signal = lens.value_signal(id);
-
-    VStack::new(cx, move |cx| {
-        Label::new(cx, label_text);
-        HStack::new(cx, move |cx| {
-            for i in 0..count {
-                let lens_for_radio = lens.clone();
-                let lens_for_label = lens.clone();
-                let option_label = lens.step_label(id_u32, i);
-                let is_selected =
-                    Memo::new(move |_| step_from_normalized(value_signal.get(), count) == i);
-                // Shared select handler used by both the radio click
-                // and the label click. Order matches every other
-                // widget: write the store first, then the signal, so
-                // any Memo keying off the signal re-reads the
-                // freshly-automated value.
-                let select = move |lens: &ParamLens<P>| {
-                    let new_norm = normalized_for_step(i, count);
-                    lens.automate(id_u32, new_norm);
-                    #[allow(clippy::cast_possible_truncation)]
-                    value_signal.set(new_norm as f32);
-                };
-                HStack::new(cx, move |cx| {
-                    RadioButton::new(cx, is_selected).on_select(move |_cx| select(&lens_for_radio));
-                    // `.on_press` makes the label click-target select
-                    // the matching option, matching the standard radio
-                    // affordance every other GUI library implements.
-                    Label::new(cx, option_label).on_press(move |_cx| select(&lens_for_label));
-                })
-                .width(Auto)
-                .height(Auto)
-                .horizontal_gap(Pixels(4.0))
-                .alignment(Alignment::Center);
-            }
-        })
-        .horizontal_gap(Pixels(10.0))
-        .height(Auto)
-        .width(Auto);
-    })
-    .class("truce-selector")
-    .width(Auto)
-    .height(Auto)
-    .vertical_gap(Pixels(2.0));
-}
-
 /// Dropdown trigger that shows the current formatted value; popup
 /// shows `count` options arranged into `cols` columns. `option_width`
 /// is the per-option cell width in pixels and is also used for the
@@ -570,15 +508,6 @@ fn cursor_to_normalized(cx: &EventContext) -> (f32, f32) {
     let nx = (lx / bounds.w).clamp(0.0, 1.0);
     let ny = 1.0 - (ly / bounds.h).clamp(0.0, 1.0);
     (nx, ny)
-}
-
-fn step_from_normalized(value: f32, count: usize) -> usize {
-    if count == 0 {
-        return 0;
-    }
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    let step = (value * small_count_as_f32(count - 1) + 0.5) as usize;
-    step.min(count - 1)
 }
 
 fn normalized_for_step(step: usize, count: usize) -> f64 {

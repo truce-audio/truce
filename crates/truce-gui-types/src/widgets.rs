@@ -18,7 +18,6 @@ pub enum WidgetType {
     Knob,
     Slider,
     Toggle,
-    Selector,
     /// Dropdown list - click to open a popup of all options.
     Dropdown,
     Meter,
@@ -274,78 +273,6 @@ pub fn draw_toggle(
     );
 
     // Label
-    let label_size = 9.0;
-    let label_w = ctx.text_width(label, label_size);
-    ctx.draw_text(
-        label,
-        cx - label_w / 2.0,
-        y + height + 2.0,
-        label_size,
-        theme.text_dim,
-    );
-}
-
-/// Draw a selector (enum parameter - click to cycle through values).
-///
-/// Shows the current value name with < > arrows.
-pub fn draw_selector(
-    ctx: &mut dyn RenderBackend,
-    x: f32,
-    y: f32,
-    width: f32,
-    height: f32,
-    _value: f32,
-    label: &str,
-    value_text: &str,
-    theme: &Theme,
-    highlighted: bool,
-) {
-    let cx = x + width / 2.0;
-    let cy = y + height / 2.0 - 5.0;
-
-    // Background box - size to fit content
-    let val_size = 10.0;
-    let arrow_size = 8.0;
-    let arrow_pad = 9.0; // space for arrow on each side
-    let val_w = ctx.text_width(value_text, val_size);
-    let box_w = (val_w + arrow_pad * 2.0 + 5.0).max(width - 8.0);
-    let box_h = 13.0;
-    let box_x = cx - box_w / 2.0;
-    let box_y = cy - box_h / 2.0;
-    let bg = if highlighted {
-        theme.accent
-    } else {
-        theme.knob_track
-    };
-    ctx.fill_rect(box_x, box_y, box_w, box_h, bg);
-
-    // Value text (centered)
-    ctx.draw_text(
-        value_text,
-        cx - val_w / 2.0,
-        cy - val_size / 2.0,
-        val_size,
-        theme.text,
-    );
-
-    // Left/right arrows
-    ctx.draw_text(
-        "<",
-        box_x + 3.0,
-        cy - arrow_size / 2.0,
-        arrow_size,
-        theme.text_dim,
-    );
-    let gt_w = ctx.text_width(">", arrow_size);
-    ctx.draw_text(
-        ">",
-        box_x + box_w - gt_w - 3.0,
-        cy - arrow_size / 2.0,
-        arrow_size,
-        theme.text_dim,
-    );
-
-    // Label (below)
     let label_size = 9.0;
     let label_w = ctx.text_width(label, label_size);
     ctx.draw_text(
@@ -729,7 +656,6 @@ fn resolve_wkind_to_type(
         Some(WidgetKind::Knob) => WidgetType::Knob,
         Some(WidgetKind::Slider) => WidgetType::Slider,
         Some(WidgetKind::Toggle) => WidgetType::Toggle,
-        Some(WidgetKind::Selector) => WidgetType::Selector,
         Some(WidgetKind::Dropdown) => WidgetType::Dropdown,
         Some(WidgetKind::Meter) => WidgetType::Meter,
         Some(WidgetKind::XYPad) => WidgetType::XYPad,
@@ -939,18 +865,6 @@ fn draw_widget_entry(ctx: &mut WidgetDrawCtx<'_>, w: &WidgetDraw<'_>) {
             is_hovered,
         ),
         WidgetType::Slider => draw_slider(
-            ctx.backend,
-            w.x,
-            w.y,
-            w.w,
-            w.h,
-            normalized,
-            w.label,
-            &value_text,
-            ctx.theme,
-            is_hovered,
-        ),
-        WidgetType::Selector => draw_selector(
             ctx.backend,
             w.x,
             w.y,

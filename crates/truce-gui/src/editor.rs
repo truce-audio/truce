@@ -1188,7 +1188,6 @@ fn resolve_widget_type<P: Params>(
         Some(crate::layout::WidgetKind::Knob) => widgets::WidgetType::Knob,
         Some(crate::layout::WidgetKind::Slider) => widgets::WidgetType::Slider,
         Some(crate::layout::WidgetKind::Toggle) => widgets::WidgetType::Toggle,
-        Some(crate::layout::WidgetKind::Selector) => widgets::WidgetType::Selector,
         Some(crate::layout::WidgetKind::Dropdown) => widgets::WidgetType::Dropdown,
         Some(crate::layout::WidgetKind::Meter) => widgets::WidgetType::Meter,
         Some(crate::layout::WidgetKind::XYPad) => widgets::WidgetType::XYPad,

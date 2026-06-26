@@ -62,7 +62,6 @@ pub enum WidgetKind {
     Knob,
     Slider,
     Toggle,
-    Selector,
     /// Dropdown list - click to open a popup showing all options.
     Dropdown,
     /// Level meter. Shows one bar per meter ID. Supports mono, stereo, or multi-channel.
@@ -102,19 +101,6 @@ impl KnobDef {
             param_id: param_id.into(),
             label,
             widget: Some(WidgetKind::Toggle),
-            span: 1,
-            param_id_y: None,
-            meter_ids: None,
-        }
-    }
-
-    /// Selector (click-to-cycle for enum params).
-    #[deprecated(since = "0.56.0", note = "use `dropdown` instead")]
-    pub fn selector(param_id: impl Into<u32>, label: &'static str) -> Self {
-        Self {
-            param_id: param_id.into(),
-            label,
-            widget: Some(WidgetKind::Selector),
             span: 1,
             param_id_y: None,
             meter_ids: None,
@@ -325,21 +311,6 @@ impl GridWidget {
         }
     }
 
-    #[deprecated(since = "0.56.0", note = "use `dropdown` instead")]
-    pub fn selector(param_id: impl Into<u32>, label: &'static str) -> Self {
-        Self {
-            col: AUTO,
-            row: AUTO,
-            col_span: 1,
-            row_span: 1,
-            param_id: param_id.into(),
-            label,
-            widget: Some(WidgetKind::Selector),
-            param_id_y: None,
-            meter_ids: None,
-        }
-    }
-
     pub fn dropdown(param_id: impl Into<u32>, label: &'static str) -> Self {
         Self {
             col: AUTO,
@@ -449,13 +420,6 @@ pub fn slider(param_id: impl Into<u32>, label: &'static str) -> GridWidget {
 /// Toggle switch widget.
 pub fn toggle(param_id: impl Into<u32>, label: &'static str) -> GridWidget {
     GridWidget::toggle(param_id, label)
-}
-
-/// Click-to-cycle selector widget.
-#[deprecated(since = "0.56.0", note = "use `dropdown` instead")]
-#[allow(deprecated)]
-pub fn selector(param_id: impl Into<u32>, label: &'static str) -> GridWidget {
-    GridWidget::selector(param_id, label)
 }
 
 /// Dropdown list widget.

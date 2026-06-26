@@ -78,9 +78,6 @@ macro_rules! __layout_widgets {
     ( [ $($w:expr),* ] toggle($id:expr, $label:expr) .span($n:expr) $($rest:tt)* ) => {
         $crate::__layout_widgets!( [ $($w,)* $crate::layout::KnobDef::toggle($id, $label).with_span($n) ] $($rest)* )
     };
-    ( [ $($w:expr),* ] selector($id:expr, $label:expr) .span($n:expr) $($rest:tt)* ) => {
-        $crate::__layout_widgets!( [ $($w,)* $crate::layout::KnobDef::selector($id, $label).with_span($n) ] $($rest)* )
-    };
     ( [ $($w:expr),* ] meter($ids:expr, $label:expr) .span($n:expr) $($rest:tt)* ) => {
         $crate::__layout_widgets!( [ $($w,)* $crate::layout::KnobDef::meter($ids, $label).with_span($n) ] $($rest)* )
     };
@@ -98,9 +95,6 @@ macro_rules! __layout_widgets {
     };
     ( [ $($w:expr),* ] toggle($id:expr, $label:expr) $($rest:tt)* ) => {
         $crate::__layout_widgets!( [ $($w,)* $crate::layout::KnobDef::toggle($id, $label) ] $($rest)* )
-    };
-    ( [ $($w:expr),* ] selector($id:expr, $label:expr) $($rest:tt)* ) => {
-        $crate::__layout_widgets!( [ $($w,)* $crate::layout::KnobDef::selector($id, $label) ] $($rest)* )
     };
     ( [ $($w:expr),* ] meter($ids:expr, $label:expr) $($rest:tt)* ) => {
         $crate::__layout_widgets!( [ $($w,)* $crate::layout::KnobDef::meter($ids, $label) ] $($rest)* )
@@ -301,9 +295,6 @@ macro_rules! __grid_items {
     };
     ($w:ident, $b:ident, toggle($id:expr, $label:expr) $($rest:tt)*) => {
         $crate::__grid_mods!($w, $b, $crate::layout::GridWidget::toggle($id, $label), $($rest)*);
-    };
-    ($w:ident, $b:ident, selector($id:expr, $label:expr) $($rest:tt)*) => {
-        $crate::__grid_mods!($w, $b, $crate::layout::GridWidget::selector($id, $label), $($rest)*);
     };
     ($w:ident, $b:ident, meter($ids:expr, $label:expr) $($rest:tt)*) => {
         $crate::__grid_mods!($w, $b, $crate::layout::GridWidget::meter($ids, $label), $($rest)*);

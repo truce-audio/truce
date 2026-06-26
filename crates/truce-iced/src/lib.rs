@@ -69,11 +69,6 @@ pub use truce_core::editor::PluginContext;
 
 // Re-export widget helper functions.
 pub use widgets::{knob, meter, param_dropdown, param_slider, param_toggle, xy_pad};
-// `#[allow(deprecated)]` so this re-export of `param_selector`
-// (deprecated since 0.56 in favour of `param_dropdown`) doesn't
-// fire the lint here - we're surfacing the item by design.
-#[allow(deprecated)]
-pub use widgets::param_selector;
 
 use crate::iced::Element;
 use std::fmt::Debug;

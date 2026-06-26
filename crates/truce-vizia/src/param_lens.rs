@@ -207,9 +207,8 @@ impl<P: Params + 'static> ParamLens<P> {
 
     /// Formatted display string for an *arbitrary* step on a discrete
     /// range, without mutating the live param. Used by
-    /// `widgets::param_selector` / `param_dropdown` to label the
-    /// individual options without temporarily setting the param
-    /// to each step.
+    /// `widgets::param_dropdown` to label the individual options
+    /// without temporarily setting the param to each step.
     ///
     /// Dispatches through [`Params::format_value`] so `EnumParam`
     /// variant names come back as their `name`s (e.g. "Sine") rather
