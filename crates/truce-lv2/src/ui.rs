@@ -47,6 +47,7 @@ use truce_core::editor::{
 };
 use truce_core::events::TransportInfo;
 use truce_core::export::PluginExport;
+use truce_core::wrapper::log_missing_bus_layout;
 use truce_params::Params;
 
 use crate::atom::AtomSequenceReader;
@@ -226,7 +227,10 @@ pub unsafe fn instantiate_ui<P: PluginExport>(
         let params_arc = plugin.params_arc();
         let param_infos = plugin.params().param_infos();
 
-        let layout = crate::derive_port_layout::<P>(&plugin);
+        let Some(layout) = crate::derive_port_layout::<P>(&plugin) else {
+            log_missing_bus_layout::<P>("LV2 UI");
+            return std::ptr::null_mut();
+        };
         let control_start = layout.control_start();
 
         let param_slots: Vec<ParamSlot> = param_infos
