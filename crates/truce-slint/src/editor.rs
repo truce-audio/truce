@@ -195,6 +195,16 @@ fn build_wgpu(
         format,
         width: phys_w.max(1),
         height: phys_h.max(1),
+        // Windows: `on_frame` runs on the host's GUI thread, and a
+        // Fifo (AutoVsync) present blocks that thread when the
+        // child-window swapchain backs up - freezing the host (REAPER).
+        // baseview now drives frames at a steady cadence, so a blocking
+        // present stalls every frame instead of rarely; present
+        // non-blocking here to keep the host's message loop alive.
+        // Matches truce-iced / truce-egui. Other platforms keep vsync.
+        #[cfg(target_os = "windows")]
+        present_mode: wgpu::PresentMode::AutoNoVsync,
+        #[cfg(not(target_os = "windows"))]
         present_mode: wgpu::PresentMode::AutoVsync,
         desired_maximum_frame_latency: 2,
         alpha_mode: wgpu::CompositeAlphaMode::Auto,
