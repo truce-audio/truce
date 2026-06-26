@@ -506,6 +506,7 @@ bundle_id = "midi-inspector"
 crate = "truce-example-midi-inspector"
 category = "effect"
 midi_input = true
+midi_output = true
 fourcc = "TMin"
 au3_subtype = "TMi3"
 au_tag = "Effects"

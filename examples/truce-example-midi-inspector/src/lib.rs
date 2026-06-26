@@ -1,5 +1,6 @@
-//! A MIDI inspector: passes audio through untouched and shows a live,
-//! scrolling log of every event it receives in `process()`, decoded as
+//! A MIDI inspector: passes audio and MIDI through untouched and shows
+//! a live, scrolling log of every event it receives in `process()`
+//! (newest first), decoded as
 //! far as truce understands the message - with a raw line for anything
 //! it doesn't, so adding interpretations later is easy.
 //!
@@ -220,8 +221,10 @@ impl InspectorUi {
             .into();
         }
 
+        // Newest first: the back of the deque is the most recent
+        // entry, so iterate in reverse to put it at the top.
         let mut col = Column::new().spacing(1).padding(iced::Padding::from([4.0, 10.0]));
-        for entry in log.iter() {
+        for entry in log.iter().rev() {
             let interp = interpret(entry);
             if !self.shows(interp.category) {
                 continue;
@@ -290,14 +293,28 @@ impl PluginLogic for MidiInspector {
         &mut self,
         buffer: &mut AudioBuffer,
         events: &EventList,
-        _context: &mut ProcessContext,
+        context: &mut ProcessContext,
     ) -> ProcessStatus {
-        // Capture every event for the editor. `sysex_bytes` returns the
-        // resolved payload (empty for non-SysEx); the ring inlines a
-        // fixed prefix so this push never allocates.
+        // Capture every event for the editor and pass it straight
+        // through to our MIDI output. `sysex_bytes` resolves the
+        // payload (empty for non-SysEx); the ring inlines a fixed
+        // prefix so the capture push never allocates.
         for ev in events.iter() {
             let sysex = events.sysex_bytes(&ev.body);
             self.ring.push(ev.sample_offset, ev.body, sysex);
+
+            // Forward unchanged. SysEx is re-pushed by bytes so it
+            // lands in the output list's own pool - the input body's
+            // pool offset isn't valid for the output list.
+            match ev.body {
+                EventBody::SysEx { .. } => {
+                    let _ = context.output_events.push_sysex(ev.sample_offset, sysex);
+                }
+                body => context.output_events.push(Event {
+                    sample_offset: ev.sample_offset,
+                    body,
+                }),
+            }
         }
 
         // Audio passthrough (or silence when disabled) - a monitor
@@ -472,12 +489,23 @@ mod tests {
         let mut ctx = ProcessContext::new(&transport, 44_100.0, 16, &mut out_events);
 
         plugin.process(&mut buffer, &events, &mut ctx);
+        // `ctx`'s borrow of `out_events` ends here (last use above).
 
         let kinds: Vec<_> = captured(&plugin).iter().map(|e| interpret(e).kind).collect();
         assert!(kinds.contains(&"Note On"), "kinds: {kinds:?}");
         assert!(kinds.contains(&"Control Change"), "kinds: {kinds:?}");
         // Audio passed through untouched.
         assert_eq!(output[0][0], 0.5);
+        // MIDI passed through to the output unchanged.
+        let out: Vec<_> = out_events.iter().map(|e| e.body).collect();
+        assert!(
+            out.iter().any(|b| matches!(b, EventBody::NoteOn { .. })),
+            "out: {out:?}"
+        );
+        assert!(
+            out.iter().any(|b| matches!(b, EventBody::ControlChange { .. })),
+            "out: {out:?}"
+        );
     }
 
     #[test]

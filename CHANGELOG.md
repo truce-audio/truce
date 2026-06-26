@@ -2,14 +2,17 @@
 
 Notable changes per release.
 
+## 0.64.1
+
+- **New `truce-example-midi-inspector` (iced).** A MIDI-effect monitor that decodes every event truce can deliver - MIDI 1.0 + 2.0 channel voice, SysEx (with manufacturer id + hex), transport, and param automation - into a live scrolling log, with a raw line for anything not yet richly interpreted. Demonstrates streaming *structured* realtime data from `process()` to an editor via a lock-free ring, using the new `IcedEditor::with_plugin_factory`.
+- **`IcedEditor::with_plugin_factory`.** A builder that replaces the default `M::new(params)` model constructor with a custom factory, so an iced plugin can hand its UI shared state that doesn't fit the param / meter channels (e.g. a lock-free queue of audio-thread events).
+
 ## 0.64.0
 
 - **Parameters can declare a default MIDI mapping** (`#[param(..., midi_cc = N)]`) - VST3, AU v2, and LV2 expose the binding to the host's MIDI controller assignment; CLAP / VST2 / AAX leave it host-driven.
 - **VST3 accepts channel MIDI controller input** - CC, program change, channel pressure, pitch bend, and poly pressure now reach the plugin, decoded from VST3's legacy MIDI controller event forms. ([#145](https://github.com/truce-audio/truce/pull/145), by [@Boscop](https://github.com/Boscop))
 - **VST3 bridges host-mapped MIDI controllers back into MIDI events.** A parameter bound via `#[param(midi_cc = N)]` / `#[param(midi_source = …)]` is the target a VST3 host routes the matching controller to (over `IMidiMapping`); that parameter change is now also delivered as the corresponding `EventBody` (pitch bend, CC, channel pressure, program change), so plugins reading MIDI events - not the parameter - respond to the pitch and mod wheels under VST3 as they already do on AU / CLAP.
 - **The synth example responds to the pitch and mod wheels.** `truce-example-synth` now bends pitch (+/-2 semitones) and adds mod-wheel (CC1) vibrato.
-- **New `truce-example-midi-inspector` (iced).** A MIDI-effect monitor that decodes every event truce can deliver - MIDI 1.0 + 2.0 channel voice, SysEx (with manufacturer id + hex), transport, and param automation - into a live scrolling log, with a raw line for anything not yet richly interpreted. Demonstrates streaming *structured* realtime data from `process()` to an editor via a lock-free ring, using the new `IcedEditor::with_plugin_factory`.
-- **`IcedEditor::with_plugin_factory`.** A builder that replaces the default `M::new(params)` model constructor with a custom factory, so an iced plugin can hand its UI shared state that doesn't fit the param / meter channels (e.g. a lock-free queue of audio-thread events).
 - **SysEx input fixes.** VST2 and AAX no longer drop a queued input SysEx to the per-block event-list clear; AU now accepts SysEx input (v2 via `MusicDeviceSysEx`, v3 via UMP SysEx-7/8).
 - **Plugin-process parameter changes notify the host.** A parameter the plugin changes during `process()` now updates the host's UI / automation on VST2, VST3, and AU (CLAP already did) - via `audioMasterAutomate`, the VST3 output parameter queue, and `AUEventListenerNotify` respectively. ([#147](https://github.com/truce-audio/truce/pull/147), VST2 by [@Boscop](https://github.com/Boscop))
 
