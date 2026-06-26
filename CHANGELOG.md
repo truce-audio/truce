@@ -8,6 +8,8 @@ Notable changes per release.
 
 - **Auto-assigned parameter IDs are now a stable hash of the field name** instead of a declaration-order counter. Reordering or inserting parameters - including inside `#[nested]` groups - no longer shifts later IDs, so host automation and presets keep mapping to the right parameter across plugin versions. Explicit `#[param(id = N)]` still wins. *Migration:* a plugin already shipped with the old order-based IDs must add `#[params(id_scheme = "ordinal")]` to keep them, or its hosts' saved automation and presets will rebind to the wrong parameters.
 - **`truce-iced` no longer depends on the `iced` umbrella crate.** It uses iced's sub-crates directly (`iced_core` / `iced_widget` / `iced_renderer` / `iced_wgpu` / `iced_runtime` / `iced_futures`), re-exported as `truce_iced::iced`, which drops the transitive `iced_winit` dependency whose desktop-only keyboard API broke the iOS build. *Migration:* plugins that imported types from the `iced` crate import the same ones from `truce_iced::iced` instead.
+- **Removed the deprecated `selector` / `param_selector` widget.** The `selector()` layout builder and each backend's `param_selector` (egui / iced / vizia / slint), deprecated since 0.56, are gone along with the underlying `Selector` widget. *Migration:* use `dropdown()` / `param_dropdown` - the same single-choice control, click-to-open.
+- **Removed the deprecated `FloatParam::read_block`.** The const-`N` block read, deprecated since 0.53, is gone. *Migration:* use `read_into(&mut scratch[..n])`, which advances the smoother by exactly the number of samples consumed.
 
 ### Other changes
 
