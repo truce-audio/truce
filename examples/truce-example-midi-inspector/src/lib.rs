@@ -6,7 +6,7 @@
 //!
 //! Notable bit: streaming *structured* realtime data (not just scalar
 //! meters) from the audio thread to the editor. The plugin owns a
-//! lock-free [`EventRing`]; `process()` pushes decoded events into it,
+//! lock-free `EventRing`; `process()` pushes decoded events into it,
 //! and the iced editor - handed the same `Arc` through
 //! `IcedEditor::with_plugin_factory` - drains it each frame in `view()`.
 
@@ -51,17 +51,24 @@ const MAX_DISPLAY: usize = 500;
 pub struct InspectorParams {
     /// When off, the inspector mutes its output instead of passing
     /// audio through - handy on a dedicated monitor track. MIDI is
-    /// captured either way. (The inspector is a monitor, so this is
-    /// its only parameter; the editor is the event log.)
+    /// captured either way.
     #[param(name = "Passthrough", default = true)]
     pub passthrough: BoolParam,
+
+    /// Audio-thread -> editor event channel. Not a parameter: a
+    /// `#[skip]` field, so both the plugin (writer, on the audio
+    /// thread) and the editor (reader, on the GUI thread) reach the
+    /// same ring through the `Arc<InspectorParams>` they already
+    /// share. The derive default-initializes it.
+    #[skip]
+    pub ring: Arc<EventRing>,
 }
 
 // --- iced UI ---
 
 #[derive(Debug, Clone)]
 pub enum Msg {
-    /// A category filter checkbox toggled (index into [`Category::ALL`]).
+    /// A category filter checkbox toggled (index into `Category::ALL`).
     SetFilter(usize, bool),
     TogglePause,
     Clear,
@@ -74,22 +81,13 @@ pub struct InspectorUi {
     /// hook - `Tick` isn't routed to plugin `update`, and timer
     /// subscriptions don't fire without an executor) takes `&self`.
     log: RefCell<VecDeque<LogEntry>>,
-    /// Per-category visibility, indexed like [`Category::ALL`].
+    /// Per-category visibility, indexed like `Category::ALL`.
     filters: [bool; Category::ALL.len()],
     /// When paused, the display freezes (the ring keeps overwriting).
     paused: bool,
 }
 
 impl InspectorUi {
-    fn build(ring: Arc<EventRing>) -> Self {
-        Self {
-            ring,
-            log: RefCell::new(VecDeque::with_capacity(MAX_DISPLAY)),
-            filters: [true; Category::ALL.len()],
-            paused: false,
-        }
-    }
-
     fn shows(&self, category: Category) -> bool {
         Category::ALL
             .iter()
@@ -101,12 +99,16 @@ impl InspectorUi {
 impl IcedPlugin<InspectorParams> for InspectorUi {
     type Message = Msg;
 
-    // Fallback used only if the editor is built without the factory
-    // (e.g. a bare `IcedEditor::new`): a disconnected ring that never
-    // receives events. The real path is `with_plugin_factory` in
-    // `editor()`, which shares the plugin's ring.
-    fn new(_params: Arc<InspectorParams>) -> Self {
-        Self::build(Arc::new(EventRing::new()))
+    // Reaches the plugin's capture ring through the shared params Arc.
+    // `editor()` passes the live `self.params`, so this is the same
+    // ring the audio thread writes to.
+    fn new(params: Arc<InspectorParams>) -> Self {
+        Self {
+            ring: params.ring.clone(),
+            log: RefCell::new(VecDeque::with_capacity(MAX_DISPLAY)),
+            filters: [true; Category::ALL.len()],
+            paused: false,
+        }
     }
 
     fn update(
@@ -136,7 +138,8 @@ impl IcedPlugin<InspectorParams> for InspectorUi {
         // Pull whatever the audio thread has queued since the last
         // frame. Frozen while paused so the user can read a burst.
         if !self.paused {
-            self.ring.drain_into(&mut self.log.borrow_mut(), MAX_DISPLAY);
+            self.ring
+                .drain_into(&mut self.log.borrow_mut(), MAX_DISPLAY);
         }
 
         let header = self.header_bar();
@@ -197,7 +200,9 @@ impl InspectorUi {
     }
 
     fn filter_bar(&self) -> Element<'_, Message<Msg>> {
-        let mut row = Row::new().spacing(12).padding(iced::Padding::from([6.0, 10.0]));
+        let mut row = Row::new()
+            .spacing(12)
+            .padding(iced::Padding::from([6.0, 10.0]));
         for (i, (_, label)) in Category::ALL.iter().enumerate() {
             row = row.push(
                 checkbox(self.filters[i])
@@ -223,7 +228,9 @@ impl InspectorUi {
 
         // Newest first: the back of the deque is the most recent
         // entry, so iterate in reverse to put it at the top.
-        let mut col = Column::new().spacing(1).padding(iced::Padding::from([4.0, 10.0]));
+        let mut col = Column::new()
+            .spacing(1)
+            .padding(iced::Padding::from([4.0, 10.0]));
         for entry in log.iter().rev() {
             let interp = interpret(entry);
             if !self.shows(interp.category) {
@@ -241,12 +248,7 @@ impl InspectorUi {
 
             let row = Row::new()
                 .push(text(line).size(12).font(JETBRAINS_MONO).color(FG))
-                .push(
-                    text(interp.raw)
-                        .size(11)
-                        .font(JETBRAINS_MONO)
-                        .color(DIM),
-                )
+                .push(text(interp.raw).size(11).font(JETBRAINS_MONO).color(DIM))
                 .spacing(16)
                 .align_y(alignment::Vertical::Center);
             col = col.push(row);
@@ -259,23 +261,19 @@ impl InspectorUi {
 
 pub struct MidiInspector {
     params: Arc<InspectorParams>,
-    ring: Arc<EventRing>,
 }
 
 impl MidiInspector {
     #[must_use]
     pub fn new(params: Arc<InspectorParams>) -> Self {
-        Self {
-            params,
-            ring: Arc::new(EventRing::new()),
-        }
+        Self { params }
     }
 
-    /// The shared capture ring - used by tests to inspect what
-    /// `process()` recorded.
+    /// The shared capture ring (lives on the params) - used by tests to
+    /// inspect what `process()` recorded.
     #[must_use]
     pub fn ring(&self) -> &EventRing {
-        &self.ring
+        &self.params.ring
     }
 }
 
@@ -301,7 +299,7 @@ impl PluginLogic for MidiInspector {
         // prefix so the capture push never allocates.
         for ev in events.iter() {
             let sysex = events.sysex_bytes(&ev.body);
-            self.ring.push(ev.sample_offset, ev.body, sysex);
+            self.params.ring.push(ev.sample_offset, ev.body, sysex);
 
             // Forward unchanged. SysEx is re-pushed by bytes so it
             // lands in the output list's own pool - the input body's
@@ -334,20 +332,15 @@ impl PluginLogic for MidiInspector {
     }
 
     fn editor(&self) -> Box<dyn Editor> {
-        // Hand the editor the *same* ring the audio thread writes to.
-        // `with_plugin_factory` is the seam for shared realtime state
-        // the param / meter channels can't carry.
-        let ring = self.ring.clone();
-        IcedEditor::<InspectorParams, InspectorUi>::new(
-            Arc::new(InspectorParams::new()),
-            (WINDOW_W, WINDOW_H),
-        )
-        .with_plugin_factory(move |_p| InspectorUi::build(ring.clone()))
-        .with_font(truce_font::JETBRAINS_MONO)
-        .resizable(true)
-        .min_size((520, 320))
-        .max_size((1600, 1200))
-        .into_editor()
+        // Hand the editor the live params (like the built-in and egui
+        // editors do) so the UI reaches the same `#[skip]` ring the
+        // audio thread writes to - no separate plumbing needed.
+        IcedEditor::<InspectorParams, InspectorUi>::new(self.params.clone(), (WINDOW_W, WINDOW_H))
+            .with_font(truce_font::JETBRAINS_MONO)
+            .resizable(true)
+            .min_size((520, 320))
+            .max_size((1600, 1200))
+            .into_editor()
     }
 }
 
@@ -397,7 +390,11 @@ mod tests {
         }));
         assert_eq!(i.category, Category::Cc);
         assert_eq!(i.channel, Some(3));
-        assert!(i.summary.contains("Mod Wheel"), "summary was {:?}", i.summary);
+        assert!(
+            i.summary.contains("Mod Wheel"),
+            "summary was {:?}",
+            i.summary
+        );
     }
 
     #[test]
@@ -408,7 +405,11 @@ mod tests {
             value: 8192,
         }));
         assert_eq!(i.category, Category::PitchBend);
-        assert!(i.summary.contains("+0.00 st"), "summary was {:?}", i.summary);
+        assert!(
+            i.summary.contains("+0.00 st"),
+            "summary was {:?}",
+            i.summary
+        );
     }
 
     #[test]
@@ -491,7 +492,10 @@ mod tests {
         plugin.process(&mut buffer, &events, &mut ctx);
         // `ctx`'s borrow of `out_events` ends here (last use above).
 
-        let kinds: Vec<_> = captured(&plugin).iter().map(|e| interpret(e).kind).collect();
+        let kinds: Vec<_> = captured(&plugin)
+            .iter()
+            .map(|e| interpret(e).kind)
+            .collect();
         assert!(kinds.contains(&"Note On"), "kinds: {kinds:?}");
         assert!(kinds.contains(&"Control Change"), "kinds: {kinds:?}");
         // Audio passed through untouched.
@@ -503,7 +507,8 @@ mod tests {
             "out: {out:?}"
         );
         assert!(
-            out.iter().any(|b| matches!(b, EventBody::ControlChange { .. })),
+            out.iter()
+                .any(|b| matches!(b, EventBody::ControlChange { .. })),
             "out: {out:?}"
         );
     }
@@ -523,6 +528,17 @@ mod tests {
     }
 
     // -- standard plugin / editor checks --
+
+    #[test]
+    fn shared_field_is_not_a_param() {
+        use truce::params::Params;
+        let p = InspectorParams::new();
+        // `passthrough` is the only parameter; the `#[skip]` ring must
+        // be excluded from the parameter set entirely.
+        assert_eq!(Params::count(&p), 1);
+        assert_eq!(p.param_infos().len(), 1);
+        assert_eq!(p.param_infos()[0].name, "Passthrough");
+    }
 
     #[test]
     fn info_is_valid() {

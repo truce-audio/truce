@@ -681,6 +681,15 @@ fn is_meter_slot(ty: &Type) -> bool {
     type_last_segment(ty).is_some_and(|s| s == "MeterSlot")
 }
 
+/// Check if a field has the `#[skip]` attribute. Such fields are not
+/// parameters: they carry plugin-owned state the editor reaches through
+/// the shared `Arc<Params>` (e.g. a lock-free queue of audio-thread
+/// events). They're `Default`-initialized in the generated `new()` and
+/// excluded from everything else (ids, infos, state, count).
+fn has_skip_attr(field: &syn::Field) -> bool {
+    field.attrs.iter().any(|a| a.path().is_ident("skip"))
+}
+
 /// Coerce a `default = ...` attribute expression into an `f64`.
 ///
 /// Accepts numeric literals (positive and `-`-prefixed) and a
@@ -768,19 +777,34 @@ fn std_f64_const(path: &syn::Path) -> Option<f64> {
 }
 
 /// Collect parameter fields, nested fields, and meter fields from a struct.
-fn collect_fields(fields: &Fields) -> (Vec<ParamField>, Vec<NestedField>, Vec<MeterField>) {
+type CollectedFields = (
+    Vec<ParamField>,
+    Vec<NestedField>,
+    Vec<MeterField>,
+    Vec<syn::Ident>,
+);
+
+fn collect_fields(fields: &Fields) -> CollectedFields {
     let Fields::Named(named) = fields else {
-        return (Vec::new(), Vec::new(), Vec::new());
+        return (Vec::new(), Vec::new(), Vec::new(), Vec::new());
     };
 
     let mut params = Vec::new();
     let mut nested = Vec::new();
     let mut meters = Vec::new();
+    let mut skipped = Vec::new();
 
     for f in &named.named {
         let Some(ident) = f.ident.clone() else {
             continue;
         };
+
+        // Checked first: an explicit `#[skip]` opt-out always wins over
+        // whatever the field's type would otherwise classify as.
+        if has_skip_attr(f) {
+            skipped.push(ident);
+            continue;
+        }
 
         if has_nested_attr(f) {
             nested.push(NestedField {
@@ -812,7 +836,7 @@ fn collect_fields(fields: &Fields) -> (Vec<ParamField>, Vec<NestedField>, Vec<Me
         }
     }
 
-    (params, nested, meters)
+    (params, nested, meters, skipped)
 }
 
 /// Parse a range string like "linear(-60, 24)" into tokens.
@@ -1247,7 +1271,7 @@ fn gen_field_constructor(f: &ParamField) -> proc_macro2::TokenStream {
 /// happens on syntactically broken input (rustc would already be
 /// rejecting the same file), so the panic surfaces a derive-internal
 /// regression rather than user error.
-#[proc_macro_derive(Params, attributes(param, nested, meter))]
+#[proc_macro_derive(Params, attributes(param, nested, meter, skip))]
 #[allow(clippy::too_many_lines)]
 pub fn derive_params(input: TokenStream) -> TokenStream {
     let ast: DeriveInput = syn::parse(input).expect("Failed to parse input for Params derive");
@@ -1262,7 +1286,7 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
         }
     };
 
-    let (mut param_fields, nested_fields, mut meter_fields) = collect_fields(fields);
+    let (mut param_fields, nested_fields, mut meter_fields, skip_fields) = collect_fields(fields);
 
     if param_fields.is_empty() && nested_fields.is_empty() && meter_fields.is_empty() {
         return syn::Error::new_spanned(
@@ -1390,8 +1414,10 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
     // Nested structs need `new()` too: it constructs each child and
     // rebases its ids by the group's base, so reusing one Params type in
     // two `#[nested]` slots yields disjoint id ranges instead of a clash.
-    let generate_new =
-        !param_fields.is_empty() || !meter_fields.is_empty() || !nested_fields.is_empty();
+    let generate_new = !param_fields.is_empty()
+        || !meter_fields.is_empty()
+        || !nested_fields.is_empty()
+        || !skip_fields.is_empty();
 
     // --- Count ---
     let own_count = param_fields.len();
@@ -1791,6 +1817,14 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
             })
             .collect();
 
+        // `#[skip]` fields aren't parameters - default-construct them
+        // so the struct literal is complete. Everything else (ids,
+        // infos, state, count) ignores them.
+        let skip_inits: Vec<_> = skip_fields
+            .iter()
+            .map(|ident| quote! { #ident: ::core::default::Default::default() })
+            .collect();
+
         // Rebase each nested group by its base, after construction (the
         // child built itself at its own local ids). The base is explicit
         // or auto-packed after the own params and each earlier group.
@@ -1824,6 +1858,7 @@ pub fn derive_params(input: TokenStream) -> TokenStream {
                         #(#param_inits,)*
                         #(#nested_inits,)*
                         #(#meter_inits,)*
+                        #(#skip_inits,)*
                     };
                     #(#offset_stmts)*
                     // The per-struct compile-time ID check can't see

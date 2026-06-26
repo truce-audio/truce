@@ -416,7 +416,11 @@ pub fn interpret(entry: &LogEntry) -> Interpreted {
                 Category::SysEx,
                 "SysEx",
                 None,
-                format!("{} bytes · {}", entry.sysex_len, sysex_source(&entry.sysex[..n])),
+                format!(
+                    "{} bytes · {}",
+                    entry.sysex_len,
+                    sysex_source(&entry.sysex[..n])
+                ),
             )
         }
     };
