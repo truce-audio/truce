@@ -118,7 +118,7 @@ impl<P: Params + 'static, S: Sample> HotShell<P, S> {
     /// Try to construct the loaded plugin's editor.
     ///
     /// Returns `None` if the loader mutex is held by the watcher thread
-    /// for longer than [`GUI_LOCK_WAIT`] - i.e., a hot-reload is in
+    /// for longer than `GUI_LOCK_WAIT` - i.e., a hot-reload is in
     /// flight. Hosts that retry editor creation across the host's UI
     /// idle loop (CLAP, VST3, AU) pick up the editor on a later tick;
     /// the alternative is a UI hang for the full reload window (codesign
