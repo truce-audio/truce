@@ -86,9 +86,8 @@ impl PluginLogic for Gain {
         } else {
             // Slow path: vectorized envelope precompute, then SIMD
             // apply via chunks_mut. `read_into` advances each
-            // smoother by exactly `n` (matching what we consume);
-            // `read_block::<MAX_BLOCK>` would advance by MAX_BLOCK
-            // regardless, stepping the gain at the next block edge.
+            // smoother by exactly `n` (matching what we consume), so
+            // the gain doesn't step at the next block edge.
             let n = buffer.num_samples().min(MAX_BLOCK);
             let mut gain_db = [0.0_f32; MAX_BLOCK];
             let mut pan = [0.0_f32; MAX_BLOCK];

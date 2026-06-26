@@ -10,9 +10,9 @@
 //! signal-shape transformation to generate a wet that's audibly
 //! different from the dry.
 //!
-//! `mix_block`'s gain coefficients are *scalar per call*, so the
-//! per-sample mix envelope shape (`read_block`) doesn't apply
-//! directly. We read the smoothed `mix` value once per audio block
+//! `mix_block`'s gain coefficients are *scalar per call*, so a
+//! per-sample mix envelope doesn't apply directly. We read the
+//! smoothed `mix` value once per audio block
 //! (zero-order hold within the block; the smoother handles
 //! block-to-block transitions). For audio mixing this is
 //! indistinguishable from per-sample interpolation at typical
