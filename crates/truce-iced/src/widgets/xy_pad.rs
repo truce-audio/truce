@@ -166,9 +166,17 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for XYPadProgram {
         let bg = Path::rectangle(Point::ORIGIN, Size::new(pad_w, pad_h));
         frame.fill(&bg, theme::SURFACE);
 
-        // Border
+        // Border. Inset by half the 1px stroke width: a stroke is
+        // centered on its path, so stroking the full-bounds rect would
+        // draw the top/left/right edges half outside the canvas where
+        // they get clipped - dropping the top border. Insetting keeps
+        // the whole 1px line inside the bounds.
+        let border = Path::rectangle(
+            Point::new(0.5, 0.5),
+            Size::new((pad_w - 1.0).max(0.0), (pad_h - 1.0).max(0.0)),
+        );
         frame.stroke(
-            &bg,
+            &border,
             Stroke::default().with_color(theme::ACCENT).with_width(1.0),
         );
 
