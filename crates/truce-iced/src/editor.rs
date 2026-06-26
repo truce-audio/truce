@@ -316,6 +316,18 @@ impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBase
         // so an unwinding panic - e.g. a wgpu device loss mid-resize - would
         // cross a C frame and abort the host. Swallow and log instead.
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            // Skip the whole frame while the editor isn't presentable:
+            // detached / occluded on macOS, host child window hidden /
+            // minimized on Windows (no-op on Linux). On Windows this
+            // body runs on the host's GUI thread, so skipping an
+            // unpresentable frame keeps a blocking present from freezing
+            // the host while its FX window is closed.
+            {
+                use raw_window_handle::HasRawWindowHandle;
+                if truce_gui::platform::should_skip_frame(window.raw_window_handle()) {
+                    return;
+                }
+            }
             // Re-anchor each frame so the child NSView's origin tracks
             // size changes against the host's plug-in pane - without it
             // the canvas drifts off-anchor as it grows, clipping the
@@ -323,12 +335,6 @@ impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBase
             #[cfg(target_os = "macos")]
             {
                 use raw_window_handle::HasRawWindowHandle;
-                // Skip the whole frame while detached or occluded - a
-                // non-visible window can't present, so rendered drawables
-                // pile up unbounded until it returns to front.
-                if truce_gui::platform::should_skip_frame(window.raw_window_handle()) {
-                    return;
-                }
                 truce_gui::platform::reanchor_to_superview_top(window.raw_window_handle());
             }
             let editor = unsafe { &mut *self.editor };
@@ -361,6 +367,9 @@ impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBase
                     window.resize(baseview::Size::new(f64::from(new_w), f64::from(new_h)));
                     if let Some(ref mut runtime) = editor.runtime {
                         runtime.size = (new_w, new_h);
+                        // Reconfigured surface must be repainted next
+                        // tick even if the idle gate sees no other change.
+                        runtime.force_render = true;
                         if let Some(ref mut render) = runtime.render {
                             let scale = editor.scale.get();
                             let pw = truce_gui::to_physical_px(new_w, scale);
@@ -509,6 +518,10 @@ impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBase
                             scale_f32,
                         );
                     }
+                    // The reconfigured surface must be repainted, but
+                    // this path deliberately leaves `tick()`'s scale diff
+                    // a no-op, so flag the render explicitly.
+                    runtime.force_render = true;
                     baseview::EventStatus::Captured
                 }
                 baseview::Event::Keyboard(kb) => {

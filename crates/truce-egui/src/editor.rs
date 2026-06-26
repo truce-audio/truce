@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use baseview::{Event, EventStatus, Window, WindowHandler, WindowOpenOptions, WindowScalePolicy};
 
-use truce_core::editor::{Editor, PluginContext, RawWindowHandle};
+use truce_core::editor::{Editor, PluginContext, PluginContextReadF64, RawWindowHandle};
 use truce_params::Params;
 
 use crate::platform::ParentWindow;
@@ -341,6 +341,22 @@ struct EguiWindowHandler<P: Params + ?Sized> {
     /// a freshly recreated `egui::Context`.
     font: Option<&'static [u8]>,
     visuals: egui::Visuals,
+    /// Cached param IDs + the last-seen normalized values, polled each
+    /// frame to detect host automation / preset recall. The UI closure
+    /// reads params straight from `context` with no change signal of its
+    /// own, so without this poll the idle gate below would freeze
+    /// automation when the user isn't interacting.
+    param_ids: Vec<u32>,
+    param_snapshot: Vec<f64>,
+    /// Force a paint on the next frame regardless of the idle gate. Set
+    /// on the first frame, after a resize, and after a device-loss
+    /// rebuild - cases where the surface must be repainted even though
+    /// no input arrived and egui didn't request a frame.
+    force_paint: bool,
+    /// When egui next wants to paint, derived from the previous frame's
+    /// `repaint_delay`. `None` means egui reported itself idle (no
+    /// animation, caret blink, or pending `request_repaint`).
+    next_paint_at: Option<std::time::Instant>,
 }
 
 impl<P: Params + ?Sized> EguiWindowHandler<P> {
@@ -387,11 +403,14 @@ impl<P: Params + ?Sized> EguiWindowHandler<P> {
 
     // `(u32, u32)` editor sizes widen to `f32` for egui's screen rect.
     // Editor sizes are bounded by display dimensions, well below 2^23.
+    /// Run + paint one egui frame. Returns egui's requested
+    /// `repaint_delay` for the root viewport (`None` if no renderer),
+    /// which the caller folds into the idle gate: `ZERO` means animate
+    /// next frame, a finite delay schedules one, and `Duration::MAX`
+    /// means idle.
     #[allow(clippy::cast_precision_loss)]
-    fn run_frame(&mut self) {
-        let Some(renderer) = self.renderer.as_mut() else {
-            return;
-        };
+    fn run_frame(&mut self) -> Option<std::time::Duration> {
+        let renderer = self.renderer.as_mut()?;
 
         // Pick up host-driven scale changes (CLAP `set_scale`, VST3
         // `IPlugViewContentScaleSupport`) that arrived via the editor's
@@ -432,6 +451,11 @@ impl<P: Params + ?Sized> EguiWindowHandler<P> {
             }
         });
 
+        let repaint_delay = output
+            .viewport_output
+            .get(&egui::ViewportId::ROOT)
+            .map(|v| v.repaint_delay);
+
         let clipped_primitives = self
             .egui_ctx
             .tessellate(output.shapes, output.pixels_per_point);
@@ -441,6 +465,45 @@ impl<P: Params + ?Sized> EguiWindowHandler<P> {
             &clipped_primitives,
             output.pixels_per_point,
         );
+
+        repaint_delay
+    }
+
+    /// Poll params into the snapshot, returning whether any moved since
+    /// the last poll. Cheap (atomic reads); drives automation detection
+    /// for the idle gate.
+    fn params_changed(&mut self) -> bool {
+        let mut changed = false;
+        for (slot, &id) in self.param_snapshot.iter_mut().zip(&self.param_ids) {
+            let cur = self.context.get_param(id);
+            if (cur - *slot).abs() > 1e-10 {
+                *slot = cur;
+                changed = true;
+            }
+        }
+        changed
+    }
+
+    /// Whether this frame must be painted. Skipping otherwise keeps the
+    /// host's GUI thread (which drives `on_frame`) free between real
+    /// updates. Errs toward painting: any uncertainty repaints.
+    fn should_paint(&mut self) -> bool {
+        // `params_changed` must run every call to keep the snapshot
+        // current, so evaluate it before the short-circuiting `||`.
+        let params_moved = self.params_changed();
+        // Bit-compare the live scale against the applied one without
+        // mutating `last_applied_scale` (run_frame's `take_change` owns
+        // that); a host scale change must repaint.
+        #[allow(clippy::float_cmp)]
+        let scale_moved = self.scale.get_f32() != self.last_applied_scale;
+        self.force_paint
+            || !self.pending_events.is_empty()
+            || params_moved
+            || scale_moved
+            || self.egui_ctx.has_requested_repaint()
+            || self
+                .next_paint_at
+                .is_some_and(|t| std::time::Instant::now() >= t)
     }
 }
 
@@ -458,7 +521,22 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
             if self.device_lost.load(Ordering::Acquire) {
                 self.recover_device(window);
                 log::warn!("egui device-loss recovery: rebuilt");
+                // The rebuilt surface starts blank; paint next frame
+                // even if nothing else changed.
+                self.force_paint = true;
                 return;
+            }
+            // Skip the whole frame while the editor isn't presentable:
+            // detached / occluded on macOS, host child window hidden /
+            // minimized on Windows (no-op on Linux). On Windows this
+            // body runs on the host's GUI thread, so skipping an
+            // unpresentable frame keeps a blocking present from freezing
+            // the host while its FX window is closed.
+            {
+                use raw_window_handle::HasRawWindowHandle;
+                if truce_gui::platform::should_skip_frame(window.raw_window_handle()) {
+                    return;
+                }
             }
             // Re-anchor each frame so the child NSView's origin tracks
             // size changes against the host's plug-in pane - without it
@@ -467,12 +545,6 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
             #[cfg(target_os = "macos")]
             {
                 use raw_window_handle::HasRawWindowHandle;
-                // Skip the whole frame while detached or occluded - a
-                // non-visible window can't present, so rendered drawables
-                // pile up unbounded until it returns to front.
-                if truce_gui::platform::should_skip_frame(window.raw_window_handle()) {
-                    return;
-                }
                 truce_gui::platform::reanchor_to_superview_top(window.raw_window_handle());
             }
             // Pick up host-driven `set_size` requests since the last frame.
@@ -510,9 +582,31 @@ impl<P: Params + ?Sized + 'static> WindowHandler for EguiWindowHandler<P> {
                 #[cfg(not(target_os = "macos"))]
                 Self::apply_resize(window, self.renderer.as_mut(), new_size, scale);
                 self.size = new_size;
+                // The freshly-sized surface must be painted next frame
+                // regardless of the idle gate.
+                self.force_paint = true;
                 return;
             }
-            self.run_frame();
+            // Idle gate: skip the whole frame (no egui run, no present)
+            // when nothing needs redrawing. This is what keeps the host
+            // responsive - an idle editor stops doing per-tick work on
+            // the host's GUI thread.
+            if !self.should_paint() {
+                return;
+            }
+            let repaint_delay = self.run_frame();
+            self.force_paint = false;
+            // Schedule the next forced paint from egui's reported delay:
+            // `ZERO` -> paint next frame (animating), a finite delay ->
+            // paint then, and anything very large (egui's idle
+            // `Duration::MAX`) -> idle until input / automation. Cap
+            // guards `Instant + Duration` against overflow.
+            self.next_paint_at = match repaint_delay {
+                Some(d) if d <= std::time::Duration::from_hours(1) => {
+                    Some(std::time::Instant::now() + d)
+                }
+                _ => None,
+            };
         }));
         if let Err(e) = frame_result {
             let msg = e
@@ -869,6 +963,14 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
 
         let parent_wrapper = ParentWindow(parent);
         let handler_ctx = typed_ctx.clone();
+        // Seed the idle gate's param snapshot so the first automation
+        // change is detected as a change rather than as "differs from
+        // empty." IDs are fixed for the editor's lifetime.
+        let param_ids: Vec<u32> = self.params.param_infos().iter().map(|i| i.id).collect();
+        let param_snapshot: Vec<f64> = param_ids
+            .iter()
+            .map(|&id| typed_ctx.get_param(id))
+            .collect();
         let scale_handle = self.scale.clone();
         // Clear the pending-size cell so a stale `set_size` from
         // before this `open()` doesn't immediately re-resize the
@@ -912,11 +1014,13 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
                     crate::font::apply_font(&egui_ctx, font_data);
                 }
 
-                // Continuous repainting is driven by baseview's
-                // `on_frame` calling `run_frame` every vblank, not by
-                // egui's own scheduler. `egui_ctx.request_repaint()`
-                // schedules a single frame, which baseview would
-                // immediately paint anyway - the call had no effect.
+                // baseview's `on_frame` drives the frame loop, but it no
+                // longer paints unconditionally every tick: the handler's
+                // idle gate skips frames egui doesn't need. Widgets that
+                // show live data (`level_meter`) call
+                // `egui_ctx.request_repaint()` to keep the loop running;
+                // input, automation, and animations are detected by the
+                // gate directly.
 
                 EguiWindowHandler::<P> {
                     ui,
@@ -934,6 +1038,10 @@ impl<P: Params + 'static> Editor for EguiEditor<P> {
                     device_lost,
                     font,
                     visuals: handler_visuals,
+                    param_ids,
+                    param_snapshot,
+                    force_paint: true,
+                    next_paint_at: None,
                 }
             },
         );

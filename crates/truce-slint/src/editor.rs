@@ -419,6 +419,17 @@ impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
             log::warn!("slint device-loss recovery: rebuilt ok={ok}");
             return;
         }
+        // Skip the whole frame while the editor isn't presentable:
+        // detached / occluded on macOS, host child window hidden /
+        // minimized on Windows (no-op on Linux). On Windows this runs
+        // on the host's GUI thread, so skipping an unpresentable frame
+        // keeps a blocking present from freezing the host.
+        {
+            use raw_window_handle::HasRawWindowHandle;
+            if truce_gui::platform::should_skip_frame(window.raw_window_handle()) {
+                return;
+            }
+        }
         // Re-anchor on every frame so the child NSView's origin
         // tracks size changes against the host's plug-in pane.
         // Without this the editor drifts upward as the canvas grows,
@@ -426,12 +437,6 @@ impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
         #[cfg(target_os = "macos")]
         {
             use raw_window_handle::HasRawWindowHandle;
-            // Skip the whole frame while detached or occluded - a
-            // non-visible window can't present, so rendered drawables
-            // pile up unbounded until it returns to front.
-            if truce_gui::platform::should_skip_frame(window.raw_window_handle()) {
-                return;
-            }
             truce_gui::platform::reanchor_to_superview_top(window.raw_window_handle());
         }
         // Pick up host-driven `set_size` requests posted to the

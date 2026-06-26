@@ -31,6 +31,12 @@ pub fn level_meter<P: ?Sized>(
     let channels = meter_ids.len().max(1);
     let bar_h = height;
 
+    // A meter reads live DSP values that change without any UI input,
+    // so ask egui to keep painting. The editor's idle gate skips frames
+    // egui doesn't request; without this a displayed meter would freeze
+    // whenever the user stops interacting.
+    ui.ctx().request_repaint();
+
     let total_gap = BAR_GAP * (channels as f32 - 1.0).max(0.0);
     let min_packed_w = BAR_W * channels as f32 + total_gap + BAR_PAD * 2.0;
     // When the channels fit inside `MIN_METER_W`, stay at that width

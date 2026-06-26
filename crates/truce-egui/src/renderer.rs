@@ -20,6 +20,25 @@ pub struct EguiRenderer {
     max_texture_dim: u32,
 }
 
+/// Present mode for the editor's child-window swapchain.
+///
+/// Windows: `on_frame` runs on the host's GUI thread, and a Fifo
+/// (`AutoVsync`) present blocks that thread when the child-window
+/// swapchain backs up - freezing the host (REAPER) and risking a
+/// GPU-watchdog (TDR) hang. A non-blocking present (`AutoNoVsync`)
+/// keeps a slow frame from stalling the host's message loop. Other
+/// platforms keep vsync.
+fn editor_present_mode() -> wgpu::PresentMode {
+    #[cfg(target_os = "windows")]
+    {
+        wgpu::PresentMode::AutoNoVsync
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        wgpu::PresentMode::AutoVsync
+    }
+}
+
 impl EguiRenderer {
     /// Create from a baseview `Window` by bridging its rwh 0.5 handle
     /// to wgpu's rwh 0.6 via `SurfaceTargetUnsafe::RawHandle`.
@@ -101,7 +120,7 @@ impl EguiRenderer {
             format: surface_format,
             width,
             height,
-            present_mode: wgpu::PresentMode::AutoVsync,
+            present_mode: editor_present_mode(),
             desired_maximum_frame_latency: 2,
             alpha_mode: wgpu::CompositeAlphaMode::Auto,
             view_formats: vec![],
@@ -206,7 +225,7 @@ impl EguiRenderer {
                 format: surface_format,
                 width,
                 height,
-                present_mode: wgpu::PresentMode::AutoVsync,
+                present_mode: editor_present_mode(),
                 desired_maximum_frame_latency: 2,
                 alpha_mode,
                 view_formats: vec![],

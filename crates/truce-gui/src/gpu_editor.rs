@@ -105,15 +105,20 @@ struct GpuWindowHandler<P: Params> {
 
 impl<P: Params + 'static> GpuWindowHandler<P> {
     fn on_frame_inner(&mut self, window: &mut Window) {
-        #[cfg(target_os = "macos")]
+        // Skip the whole frame while the editor isn't presentable:
+        // detached / occluded on macOS, host child window hidden /
+        // minimized on Windows (no-op on Linux). On Windows this runs
+        // on the host's GUI thread, so skipping an unpresentable frame
+        // keeps a blocking present from freezing the host.
         {
             use raw_window_handle::HasRawWindowHandle;
-            // Skip the whole frame while detached or occluded - a
-            // non-visible window can't present, so rendered drawables
-            // pile up unbounded until it returns to front.
             if crate::platform::should_skip_frame(window.raw_window_handle()) {
                 return;
             }
+        }
+        #[cfg(target_os = "macos")]
+        {
+            use raw_window_handle::HasRawWindowHandle;
             crate::platform::reanchor_to_superview_top(window.raw_window_handle());
         }
         if let Some(ref mut gpu) = self.gpu {

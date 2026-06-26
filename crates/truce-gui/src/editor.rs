@@ -705,6 +705,14 @@ fn create_wgpu_backend(window: &mut baseview::Window, phys_w: u32, phys_h: u32) 
         format,
         width: init_w,
         height: init_h,
+        // Windows: `on_frame` runs on the host's GUI thread; a Fifo
+        // (AutoVsync) present blocks that thread when the child-window
+        // swapchain backs up, freezing the host (REAPER) and risking a
+        // GPU-watchdog (TDR) hang. Non-blocking present elsewhere keeps
+        // vsync. See `truce_gui::platform` notes on host-thread frames.
+        #[cfg(target_os = "windows")]
+        present_mode: wgpu::PresentMode::AutoNoVsync,
+        #[cfg(not(target_os = "windows"))]
         present_mode: wgpu::PresentMode::AutoVsync,
         desired_maximum_frame_latency: 2,
         alpha_mode: wgpu::CompositeAlphaMode::Auto,
@@ -906,15 +914,18 @@ impl<P: Params + 'static> BuiltinWindowHandler<P> {
         // one Cocoa frame query and a no-op short-circuit when
         // already anchored - and is the cleanest place to assert
         // the invariant the wrapper expects.
-        #[cfg(target_os = "macos")]
+        // Skip the whole frame while the editor isn't presentable:
+        // detached / occluded on macOS, host child window hidden /
+        // minimized on Windows (no-op on Linux).
         {
             use raw_window_handle::HasRawWindowHandle;
-            // Skip the whole frame while detached or occluded - a
-            // non-visible window can't present, so rendered drawables
-            // pile up unbounded until it returns to front.
             if crate::platform::should_skip_frame(window.raw_window_handle()) {
                 return;
             }
+        }
+        #[cfg(target_os = "macos")]
+        {
+            use raw_window_handle::HasRawWindowHandle;
             crate::platform::reanchor_to_superview_top(window.raw_window_handle());
         }
 
