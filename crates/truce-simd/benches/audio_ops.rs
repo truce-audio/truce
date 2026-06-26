@@ -99,10 +99,8 @@ fn bench_smoother_traffic(c: &mut Criterion) {
         );
     }
 
-    // Per-block path (one atomic load + one atomic store regardless
-    // of N). `read_into` is the runtime-length form on the same
-    // underlying primitive as the now-deprecated `read_block::<N>`;
-    // numbers transfer 1:1.
+    // Per-block path: one atomic load + one atomic store amortized
+    // over the whole slice, regardless of length.
     g.throughput(Throughput::Elements(8));
     g.bench_function(BenchmarkId::new("read_into", 8), |b| {
         let p = make_param();
