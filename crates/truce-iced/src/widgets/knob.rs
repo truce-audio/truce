@@ -3,9 +3,11 @@
 use std::fmt::Debug;
 use std::marker::PhantomData;
 
-use iced::widget::Canvas;
-use iced::widget::canvas::{self, Event, Frame, Geometry, LineCap, Path, Stroke, Text, path::Arc};
-use iced::{Color, Element, Length, Point, Rectangle, Renderer, Theme, alignment, mouse};
+use crate::iced::widget::Canvas;
+use crate::iced::widget::canvas::{
+    self, Event, Frame, Geometry, LineCap, Path, Stroke, Text, path::Arc,
+};
+use crate::iced::{Color, Element, Length, Point, Rectangle, Renderer, Theme, alignment, mouse};
 
 use crate::param_cache::ParamCache;
 use crate::param_message::{Message, ParamMessage};
@@ -24,7 +26,7 @@ pub struct KnobWidget<'a, M> {
     display: String,
     label: Option<&'a str>,
     size: f32,
-    font: iced::Font,
+    font: crate::iced::Font,
     _phantom: PhantomData<M>,
 }
 
@@ -55,7 +57,7 @@ impl<'a, M: Clone + Debug + 'static> KnobWidget<'a, M> {
     }
 
     #[must_use]
-    pub fn font(mut self, font: iced::Font) -> Self {
+    pub fn font(mut self, font: crate::iced::Font) -> Self {
         self.font = font;
         self
     }
@@ -92,7 +94,7 @@ struct KnobProgram {
     value: f32,
     display: String,
     label: String,
-    font: iced::Font,
+    font: crate::iced::Font,
 }
 
 #[derive(Default)]
@@ -131,8 +133,8 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for KnobProgram {
                 b.arc(Arc {
                     center: Point::new(cx, cy),
                     radius: radius + 3.0,
-                    start_angle: iced::Radians(START_ANGLE),
-                    end_angle: iced::Radians(END_ANGLE),
+                    start_angle: crate::iced::Radians(START_ANGLE),
+                    end_angle: crate::iced::Radians(END_ANGLE),
                 });
             });
             frame.stroke(
@@ -149,8 +151,8 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for KnobProgram {
             b.arc(Arc {
                 center: Point::new(cx, cy),
                 radius,
-                start_angle: iced::Radians(START_ANGLE),
-                end_angle: iced::Radians(END_ANGLE),
+                start_angle: crate::iced::Radians(START_ANGLE),
+                end_angle: crate::iced::Radians(END_ANGLE),
             });
         });
         frame.stroke(
@@ -168,8 +170,8 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for KnobProgram {
                 b.arc(Arc {
                     center: Point::new(cx, cy),
                     radius,
-                    start_angle: iced::Radians(START_ANGLE),
-                    end_angle: iced::Radians(value_angle),
+                    start_angle: crate::iced::Radians(START_ANGLE),
+                    end_angle: crate::iced::Radians(value_angle),
                 });
             });
             frame.stroke(
@@ -199,7 +201,7 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for KnobProgram {
             content: self.display.clone(),
             position: Point::new(cx, value_y),
             color: Color::from_rgb(0.90, 0.90, 0.92),
-            size: iced::Pixels(10.0),
+            size: crate::iced::Pixels(10.0),
             align_x: alignment::Horizontal::Center.into(),
             align_y: alignment::Vertical::Top,
             font: self.font,
@@ -213,7 +215,7 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for KnobProgram {
                 content: self.label.clone(),
                 position: Point::new(cx, label_y),
                 color: theme::TEXT_DIM,
-                size: iced::Pixels(10.0),
+                size: crate::iced::Pixels(10.0),
                 align_x: alignment::Horizontal::Center.into(),
                 align_y: alignment::Vertical::Top,
                 font: self.font,

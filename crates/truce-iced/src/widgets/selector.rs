@@ -3,8 +3,8 @@
 use std::fmt::Debug;
 use std::marker::PhantomData;
 
-use iced::Element;
-use iced::widget::{column, pick_list, text};
+use crate::iced::Element;
+use crate::iced::widget::{column, pick_list, text};
 
 use crate::param_cache::ParamCache;
 use crate::param_message::{Message, ParamMessage};
@@ -73,7 +73,9 @@ impl<'a, M: Clone + Debug + 'static> SelectorWidget<'a, M> {
             Message::Param(ParamMessage::SetNormalized(id, norm))
         });
 
-        let mut col = column![pl].spacing(4).align_x(iced::Alignment::Center);
+        let mut col = column![pl]
+            .spacing(4)
+            .align_x(crate::iced::Alignment::Center);
 
         if let Some(label) = self.label {
             col = col.push(text(label).size(10).color(theme::TEXT_DIM));

@@ -3,9 +3,9 @@
 use std::fmt::Debug;
 use std::marker::PhantomData;
 
-use iced::widget::Canvas;
-use iced::widget::canvas::{self, Event, Frame, Geometry, Path, Stroke};
-use iced::{Color, Element, Length, Point, Rectangle, Renderer, Size, Theme, mouse};
+use crate::iced::widget::Canvas;
+use crate::iced::widget::canvas::{self, Event, Frame, Geometry, Path, Stroke};
+use crate::iced::{Color, Element, Length, Point, Rectangle, Renderer, Size, Theme, mouse};
 
 use crate::param_cache::ParamCache;
 use crate::param_message::{Message, ParamMessage};
@@ -28,7 +28,7 @@ pub struct XYPadWidget<'a, M> {
     /// whatever size iced computes.
     width: Length,
     height: Length,
-    font: iced::Font,
+    font: crate::iced::Font,
     _phantom: PhantomData<M>,
 }
 
@@ -95,7 +95,7 @@ impl<'a, M: Clone + Debug + 'static> XYPadWidget<'a, M> {
     }
 
     #[must_use]
-    pub fn font(mut self, font: iced::Font) -> Self {
+    pub fn font(mut self, font: crate::iced::Font) -> Self {
         self.font = font;
         self
     }
@@ -135,7 +135,7 @@ struct XYPadProgram {
     x_value: f32,
     y_value: f32,
     label: String,
-    font: iced::Font,
+    font: crate::iced::Font,
 }
 
 #[derive(Default)]
@@ -194,13 +194,13 @@ impl<M: Clone + Debug + 'static> canvas::Program<Message<M>> for XYPadProgram {
 
         // Label below the pad rect.
         if !self.label.is_empty() {
-            frame.fill_text(iced::widget::canvas::Text {
+            frame.fill_text(crate::iced::widget::canvas::Text {
                 content: self.label.clone(),
                 position: Point::new(pad_w / 2.0, pad_h + 2.0),
                 color: theme::TEXT_DIM,
-                size: iced::Pixels(10.0),
-                align_x: iced::alignment::Horizontal::Center.into(),
-                align_y: iced::alignment::Vertical::Top,
+                size: crate::iced::Pixels(10.0),
+                align_x: crate::iced::alignment::Horizontal::Center.into(),
+                align_y: crate::iced::alignment::Vertical::Top,
                 font: self.font,
                 ..Default::default()
             });

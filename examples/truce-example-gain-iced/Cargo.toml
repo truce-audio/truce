@@ -44,13 +44,10 @@ truce-loader = { workspace = true }
 
 truce-lv2 = { workspace = true, optional = true }
 
-# iced transitively pulls `iced_winit` which doesn't compile
-# for iOS (winit's KeyEvent API drift). Skip the iced + truce-iced
-# deps on iOS - the example's `lib.rs` is `#[cfg(not(target_os =
-# "ios"))]`-gated to a stub, so the dep list matches.
-[target.'cfg(not(target_os = "ios"))'.dependencies]
+# truce-iced exposes iced's API through `truce_iced::iced` (a facade over
+# iced's sub-crates), so the example pulls no `iced` umbrella crate and
+# builds for iOS - the editor runs there via truce-iced's CAMetalLayer host.
 truce-iced = { workspace = true }
-iced = { version = "0.14", default-features = false }
 
 [dev-dependencies]
 truce-test = { workspace = true }

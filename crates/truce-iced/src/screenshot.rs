@@ -7,13 +7,13 @@
 
 use std::sync::Arc;
 
-use iced::{Color, Size};
+use crate::iced::{Color, Size};
 use iced_wgpu::wgpu;
 use truce_params::Params;
 
-use crate::editor::{IcedPlugin, IcedProgram};
 use crate::param_cache::ParamCache;
 use crate::param_message::Message;
+use crate::runtime::{IcedPlugin, IcedProgram};
 use truce_core::editor::for_test_params;
 
 /// Render an iced plugin UI offscreen and return RGBA pixel data.
@@ -51,7 +51,7 @@ where
     // multi-GPU hosts wgpu may select a different physical adapter than the
     // editor's live path, so bake baselines on the host you gate from.
     let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-        backends: crate::editor::editor_backends(),
+        backends: crate::runtime::editor_backends(),
         ..Default::default()
     });
 
@@ -91,9 +91,9 @@ where
     let default_font = if let Some(data) = font {
         crate::font::apply_font(data)
     } else {
-        iced::Font::DEFAULT
+        crate::iced::Font::DEFAULT
     };
-    let mut renderer = iced_wgpu::Renderer::new(engine, default_font, iced::Pixels(14.0));
+    let mut renderer = iced_wgpu::Renderer::new(engine, default_font, crate::iced::Pixels(14.0));
 
     // Build the iced program. Seeded via [`for_test_params`] so
     // transport-aware widgets render a populated readout instead of
@@ -123,7 +123,7 @@ where
     let style = iced_runtime::core::renderer::Style {
         text_color: Color::from_rgb(0.90, 0.90, 0.92),
     };
-    let cursor = iced::mouse::Cursor::Available(iced::Point::new(-1.0, -1.0));
+    let cursor = crate::iced::mouse::Cursor::Available(crate::iced::Point::new(-1.0, -1.0));
 
     let mut messages: Vec<Message<M::Message>> = Vec::new();
     let view_element = program.view();

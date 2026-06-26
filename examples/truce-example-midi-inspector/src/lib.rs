@@ -10,16 +10,12 @@
 //! and the iced editor - handed the same `Arc` through
 //! `IcedEditor::with_plugin_factory` - drains it each frame in `view()`.
 
-// Same iOS gate as the other iced examples: iced's `iced_winit` dep
-// doesn't build for iOS (winit KeyEvent API drift).
-#![cfg(not(target_os = "ios"))]
-
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::sync::Arc;
 
-use iced::widget::{Column, Row, button, checkbox, container, scrollable, text};
-use iced::{Color, Element, Font, Length, Task, alignment};
+use truce_iced::iced::widget::{Column, Row, button, checkbox, container, scrollable, text};
+use truce_iced::iced::{Color, Element, Font, Length, Task, alignment};
 
 use truce::prelude::*;
 use truce_iced::{IcedEditor, IcedPlugin, Message, ParamCache, PluginContext};
@@ -31,7 +27,7 @@ use interpret::{Category, interpret};
 use ring::{EventRing, LogEntry};
 
 const JETBRAINS_MONO: Font = Font {
-    family: iced::font::Family::Name("JetBrains Mono"),
+    family: truce_iced::iced::font::Family::Name("JetBrains Mono"),
     ..Font::DEFAULT
 };
 const WINDOW_W: u32 = 760;
@@ -190,9 +186,9 @@ impl InspectorUi {
             .align_y(alignment::Vertical::Center);
 
         container(bar)
-            .padding(iced::Padding::from([8.0, 10.0]))
+            .padding(truce_iced::iced::Padding::from([8.0, 10.0]))
             .width(Length::Fill)
-            .style(|_t: &iced::Theme| container::Style {
+            .style(|_t: &truce_iced::iced::Theme| container::Style {
                 background: Some(HEADER_BG.into()),
                 ..Default::default()
             })
@@ -202,7 +198,7 @@ impl InspectorUi {
     fn filter_bar(&self) -> Element<'_, Message<Msg>> {
         let mut row = Row::new()
             .spacing(12)
-            .padding(iced::Padding::from([6.0, 10.0]));
+            .padding(truce_iced::iced::Padding::from([6.0, 10.0]));
         for (i, (_, label)) in Category::ALL.iter().enumerate() {
             row = row.push(
                 checkbox(self.filters[i])
@@ -230,7 +226,7 @@ impl InspectorUi {
         // entry, so iterate in reverse to put it at the top.
         let mut col = Column::new()
             .spacing(1)
-            .padding(iced::Padding::from([4.0, 10.0]));
+            .padding(truce_iced::iced::Padding::from([4.0, 10.0]));
         for entry in log.iter().rev() {
             let interp = interpret(entry);
             if !self.shows(interp.category) {

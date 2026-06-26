@@ -43,14 +43,10 @@ truce-standalone = { workspace = true, features = ["gui"], optional = true }
 truce-font = { workspace = true }
 truce-loader = { workspace = true }
 
-# `iced_winit` doesn't compile for iOS (winit's `KeyEvent` API drift
-# inside a non-wasm cfg block). Like `truce-example-gain-iced`, the
-# whole crate is `#[cfg(not(target_os = "ios"))]`-gated to a stub on
-# iOS; the dep list matches.
-[target.'cfg(not(target_os = "ios"))'.dependencies]
-truce-iced = { workspace = true }
-# `image` feature for the image-widget demo (the carrot).
-iced = { version = "0.14", default-features = false, features = ["image"] }
+# truce-iced exposes iced's API through `truce_iced::iced` (a facade over
+# iced's sub-crates), so the example pulls no `iced` umbrella crate and
+# builds for iOS. `image` enables the iced image-widget demo (the carrot).
+truce-iced = { workspace = true, features = ["image"] }
 # Decode the shared carrot.png into raw RGBA for `image::Handle::from_rgba`.
 png = "0.17"
 

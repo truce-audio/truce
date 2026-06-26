@@ -83,6 +83,9 @@ jobs:
             -p truce-example-fundsp-reverb-simple \
             -p truce-example-transpose \
             -p truce-example-dasp-bitcrusher \
+            -p truce-example-gain-iced \
+            -p truce-example-gui-zoo-iced \
+            -p truce-example-midi-inspector \
             --target aarch64-apple-ios-sim \
             --release --no-default-features --features au
 
@@ -192,12 +195,14 @@ jobs:
       #   synth           -> instrument (aumu) appex
       #   transpose       -> MIDI-effect appex
       #   gain-egui-aspect / gui-zoo-egui -> egui UIKit path (+ aspect)
-      # The plugins dropped from this loop (eq, tremolo, arpeggio,
-      # state, fundsp-reverb-*, dasp-bitcrusher, gain-egui) are still
-      # built above and still render-checked on desktop; their iOS
-      # baselines stay committed but unchecked. `gain-iced` /
-      # `gui-zoo-iced` never ran here — iced's iOS backend is broken
-      # upstream.
+      #   gain-iced / gui-zoo-iced        -> iced CAMetalLayer path
+      # iced renders on iOS via truce-iced's CAMetalLayer host now that
+      # the crate uses iced's sub-crates directly (the iced_winit dep that
+      # used to break the iOS build is gone). The plugins dropped from this
+      # loop (eq, tremolo, arpeggio, state, fundsp-reverb-*,
+      # dasp-bitcrusher, gain-egui, midi-inspector) are still built above
+      # and still render-checked on desktop; their iOS baselines stay
+      # committed but unchecked.
       #
       # `cargo truce screenshot --ios` writes a single-orientation
       # `UISupportedInterfaceOrientations` into the temporary
@@ -220,6 +225,8 @@ jobs:
               truce-example-synth \
               truce-example-gain-egui-aspect \
               truce-example-gui-zoo-egui \
+              truce-example-gain-iced \
+              truce-example-gui-zoo-iced \
               truce-example-transpose; do
             short=${crate#truce-example-}
             short_under=${short//-/_}
@@ -233,7 +240,7 @@ jobs:
               --out "examples/$crate/screenshots/${short_under}_container_ios.png" \
               -p "$crate" || fail=$((fail + 1))
           done
-          echo "container-mode regressions: $fail / 6"
+          echo "container-mode regressions: $fail / 8"
           exit $fail
 
       # Slint examples live in the truce-slint sub-workspace; re-run
