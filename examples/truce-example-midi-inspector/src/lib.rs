@@ -1,8 +1,8 @@
-//! A MIDI inspector: passes audio and MIDI through untouched and shows
-//! a live, scrolling log of every event it receives in `process()`
-//! (newest first), decoded as
-//! far as truce understands the message - with a raw line for anything
-//! it doesn't, so adding interpretations later is easy.
+//! A MIDI inspector: a note effect (Apple's `aumi` MIDI processor) that
+//! forwards MIDI through untouched and shows a live, scrolling log of
+//! every event it receives in `process()` (newest first), decoded as far
+//! as truce understands the message - with a raw line for anything it
+//! doesn't, so adding interpretations later is easy.
 //!
 //! Notable bit: streaming *structured* realtime data (not just scalar
 //! meters) from the audio thread to the editor. The plugin owns a
@@ -45,11 +45,12 @@ const MAX_DISPLAY: usize = 500;
 
 #[derive(Params)]
 pub struct InspectorParams {
-    /// When off, the inspector mutes its output instead of passing
-    /// audio through - handy on a dedicated monitor track. MIDI is
-    /// captured either way.
-    #[param(name = "Passthrough", default = true)]
-    pub passthrough: BoolParam,
+    /// When on (default), forward every MIDI event to the output - an
+    /// inline monitor in the middle of a chain. Off makes it a terminal
+    /// monitor: events are still captured and displayed, just not passed
+    /// on.
+    #[param(name = "MIDI Thru", default = true)]
+    pub thru: BoolParam,
 
     /// Audio-thread -> editor event channel. Not a parameter: a
     /// `#[skip]` field, so both the plugin (writer, on the audio
@@ -274,32 +275,40 @@ impl MidiInspector {
 }
 
 impl PluginLogic for MidiInspector {
+    /// MIDI effect: no audio I/O, so AU registers it as an `aumi` MIDI
+    /// processor (it shows up in the host's MIDI-effect slot, not the
+    /// audio chain). CLAP / VST3 / AU / LV2 honor the audio-less layout;
+    /// AAX (which has no audio-less category) auto-adds a stereo
+    /// passthrough inside `truce-aax`.
     fn bus_layouts() -> Vec<BusLayout> {
-        vec![BusLayout::stereo()]
+        vec![BusLayout::new()]
     }
 
     fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {
         self.params.set_sample_rate(sample_rate);
-        self.params.snap_smoothers();
     }
 
     fn process(
         &mut self,
-        buffer: &mut AudioBuffer,
+        _buffer: &mut AudioBuffer,
         events: &EventList,
         context: &mut ProcessContext,
     ) -> ProcessStatus {
-        // Capture every event for the editor and pass it straight
-        // through to our MIDI output. `sysex_bytes` resolves the
-        // payload (empty for non-SysEx); the ring inlines a fixed
-        // prefix so the capture push never allocates.
+        let thru = self.params.thru.value();
+        // Capture every event for the editor; forward it to our MIDI
+        // output when Thru is on. `sysex_bytes` resolves the payload
+        // (empty for non-SysEx); the ring inlines a fixed prefix so the
+        // capture push never allocates.
         for ev in events.iter() {
             let sysex = events.sysex_bytes(&ev.body);
             self.params.ring.push(ev.sample_offset, ev.body, sysex);
 
-            // Forward unchanged. SysEx is re-pushed by bytes so it
-            // lands in the output list's own pool - the input body's
-            // pool offset isn't valid for the output list.
+            if !thru {
+                continue;
+            }
+            // SysEx is re-pushed by bytes so it lands in the output
+            // list's own pool - the input body's pool offset isn't valid
+            // for the output list.
             match ev.body {
                 EventBody::SysEx { .. } => {
                     let _ = context.output_events.push_sysex(ev.sample_offset, sysex);
@@ -308,19 +317,6 @@ impl PluginLogic for MidiInspector {
                     sample_offset: ev.sample_offset,
                     body,
                 }),
-            }
-        }
-
-        // Audio passthrough (or silence when disabled) - a monitor
-        // must not colour the signal.
-        let pass = self.params.passthrough.value();
-        let n_in = buffer.num_input_channels();
-        for ch in 0..buffer.channels() {
-            let (inp, out) = buffer.io(ch);
-            if pass && ch < n_in {
-                out.copy_from_slice(inp);
-            } else {
-                out.fill(0.0);
             }
         }
 
@@ -443,8 +439,6 @@ mod tests {
         out.into_iter().collect()
     }
 
-    // Passthrough is an exact copy, so an exact float compare is right.
-    #[allow(clippy::float_cmp)]
     #[test]
     fn captures_events_from_process() {
         use truce_core::buffer::AudioBuffer;
@@ -473,7 +467,8 @@ mod tests {
             },
         });
 
-        // Stereo passthrough buffer of constant 0.5.
+        // A buffer is still handed in by the signature; a note effect
+        // ignores it.
         let input = [[0.5f32; 16], [0.5f32; 16]];
         let in_refs: [&[f32]; 2] = [&input[0], &input[1]];
         let mut output = [[0.0f32; 16], [0.0f32; 16]];
@@ -494,9 +489,7 @@ mod tests {
             .collect();
         assert!(kinds.contains(&"Note On"), "kinds: {kinds:?}");
         assert!(kinds.contains(&"Control Change"), "kinds: {kinds:?}");
-        // Audio passed through untouched.
-        assert_eq!(output[0][0], 0.5);
-        // MIDI passed through to the output unchanged.
+        // MIDI forwarded to the output unchanged.
         let out: Vec<_> = out_events.iter().map(|e| e.body).collect();
         assert!(
             out.iter().any(|b| matches!(b, EventBody::NoteOn { .. })),
@@ -509,31 +502,30 @@ mod tests {
         );
     }
 
-    #[test]
-    fn passthrough_preserves_audio() {
-        use std::time::Duration;
-        use truce_test::{InputSource, assertions, driver};
-
-        let result = driver!(Plugin)
-            .channels(2)
-            .duration(Duration::from_millis(20))
-            .input(InputSource::Constant(0.5))
-            .run();
-        assertions::assert_no_nans(&result);
-        assertions::assert_nonzero(&result);
-    }
-
     // -- standard plugin / editor checks --
 
+    /// `category = "midi"` must surface as `PluginCategory::NoteEffect` so
+    /// AU registers the plugin as an `aumi` MIDI processor and hosts route
+    /// MIDI to it. Any other category turns it back into an audio effect.
     #[test]
-    fn shared_field_is_not_a_param() {
+    fn category_is_note_effect() {
+        use truce_core::info::PluginCategory;
+        use truce_core::plugin::PluginRuntime;
+        assert_eq!(
+            <Plugin as PluginRuntime>::info().category,
+            PluginCategory::NoteEffect
+        );
+    }
+
+    #[test]
+    fn skip_field_is_not_a_param() {
         use truce::params::Params;
         let p = InspectorParams::new();
-        // `passthrough` is the only parameter; the `#[skip]` ring must
-        // be excluded from the parameter set entirely.
+        // `thru` is the only parameter; the `#[skip]` ring is plugin
+        // state, excluded from the parameter set entirely.
         assert_eq!(Params::count(&p), 1);
         assert_eq!(p.param_infos().len(), 1);
-        assert_eq!(p.param_infos()[0].name, "Passthrough");
+        assert_eq!(p.param_infos()[0].name, "MIDI Thru");
     }
 
     #[test]
