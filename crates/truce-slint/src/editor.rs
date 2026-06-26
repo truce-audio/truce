@@ -342,10 +342,6 @@ struct SlintWindowHandler<P: Params + ?Sized> {
     /// Raised by the device's lost callback (or a swallowed render panic).
     /// Polled in `on_frame`, which rebuilds the wgpu device/surface/blit.
     device_lost: Arc<AtomicBool>,
-    /// Holds off the first present until a freshly-opened child window is
-    /// composited, so a blocking Fifo present can't freeze the host on
-    /// editor open (Windows only). See the gate in `on_frame`.
-    present_settle: truce_gui::platform::PresentSettle,
 }
 
 /// Wraps the live handler so a wgpu init failure at `open()` time
@@ -443,12 +439,6 @@ impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
             if truce_gui::platform::should_skip_frame(window.raw_window_handle()) {
                 return;
             }
-        }
-        // Hold off the first present(s) until the freshly-opened child
-        // window has been composited - a blocking Fifo present to an
-        // uncomposited window freezes the host on editor open (Windows).
-        if !self.present_settle.ready() {
-            return;
         }
         // Re-anchor on every frame so the child NSView's origin
         // tracks size changes against the host's plug-in pane.
@@ -889,7 +879,6 @@ impl<P: Params + 'static> Editor for SlintEditor<P> {
                     last_pos: LogicalPosition::default(),
                     pending_size: pending_size_handle,
                     device_lost,
-                    present_settle: truce_gui::platform::PresentSettle::new(),
                 }))
             },
         );

@@ -836,10 +836,6 @@ struct BuiltinWindowHandler<P: Params> {
     /// guards the lifecycle, so reading `editor.scale` is the
     /// canonical access path.
     last_applied_scale: f32,
-    /// Holds off the first present until a freshly-opened child window is
-    /// composited, so a blocking Fifo present can't freeze the host on
-    /// editor open (Windows only).
-    present_settle: crate::platform::PresentSettle,
 }
 
 // SAFETY: The raw pointer is only accessed from the GUI thread.
@@ -926,12 +922,6 @@ impl<P: Params + 'static> BuiltinWindowHandler<P> {
             if crate::platform::should_skip_frame(window.raw_window_handle()) {
                 return;
             }
-        }
-        // Hold off the first present(s) until the freshly-opened child
-        // window has been composited - a blocking Fifo present to an
-        // uncomposited window freezes the host on editor open (Windows).
-        if !self.present_settle.ready() {
-            return;
         }
         #[cfg(target_os = "macos")]
         {
@@ -1382,7 +1372,6 @@ impl<P: Params + 'static> Editor for BuiltinEditor<P> {
                     backend: shared_for_handler.clone(),
                     translator: crate::interaction::BaseviewTranslator::default(),
                     last_applied_scale: scale_f32,
-                    present_settle: crate::platform::PresentSettle::new(),
                 }
             },
         );
