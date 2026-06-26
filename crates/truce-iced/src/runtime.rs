@@ -159,8 +159,7 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedProgram<P, M> {
 
         match message {
             Message::Tick => {
-                self.param_cache.sync(&self.context);
-                self.param_cache.sync_meters(&self.context, &self.meter_ids);
+                let _ = self.poll_data();
             }
             other => {
                 let _: Task<Message<M::Message>> =
@@ -171,6 +170,16 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedProgram<P, M> {
 
     pub(crate) fn view(&self) -> crate::iced::Element<'_, Message<M::Message>> {
         self.plugin.view(&self.param_cache)
+    }
+
+    /// Sync the shadow param/meter caches from the host, returning
+    /// whether any value moved this frame. Drives the editor's idle
+    /// gate: host automation and live meters that change here force a
+    /// repaint even with no UI input.
+    pub(crate) fn poll_data(&mut self) -> bool {
+        let params_changed = !self.param_cache.sync(&self.context).is_empty();
+        let meters_changed = self.param_cache.sync_meters(&self.context, &self.meter_ids);
+        params_changed || meters_changed
     }
 }
 
@@ -213,6 +222,18 @@ pub(crate) struct IcedRuntime<P: Params, M: IcedPlugin<P>> {
     pub(crate) sub_rx: crate::iced::futures::channel::mpsc::UnboundedReceiver<Message<M::Message>>,
     /// Stable window id stamped on broadcast events (single-window editor).
     pub(crate) window_id: crate::iced::window::Id,
+    /// Idle gate: force a full render on the next `tick()` regardless of
+    /// input/data state. Set on the first frame, after a resize, and
+    /// after a device-loss rebuild.
+    pub(crate) force_render: bool,
+    /// Idle gate: a widget asked to redraw on the very next frame
+    /// (`RedrawRequest::NextFrame`) - keep rendering continuously while
+    /// set (active animation).
+    pub(crate) animate: bool,
+    /// Idle gate: the time a widget asked to be redrawn at
+    /// (`RedrawRequest::At`, e.g. a `text_input` caret blink). `tick()`
+    /// renders once this instant passes.
+    pub(crate) redraw_at: Option<std::time::Instant>,
 }
 
 /// The iced subscription runtime, parameterised by the editor's message
@@ -290,6 +311,11 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
             sub_runtime: iced_runtime::futures::Runtime::new(sub_executor, sub_tx),
             sub_rx,
             window_id: crate::iced::window::Id::unique(),
+            // Paint the first frame unconditionally; the gate takes over
+            // once there's something on screen.
+            force_render: true,
+            animate: false,
+            redraw_at: None,
         }
     }
 
@@ -379,6 +405,15 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
             format: surface_format,
             width: w.max(1),
             height: h.max(1),
+            // Windows: `on_frame` runs on the host's GUI thread, and a
+            // Fifo (AutoVsync) present blocks that thread when the
+            // child-window swapchain backs up - freezing the host
+            // (REAPER) and risking a GPU-watchdog (TDR) hang. A
+            // non-blocking present keeps a slow frame from stalling the
+            // host's message loop. Other platforms keep vsync.
+            #[cfg(target_os = "windows")]
+            present_mode: wgpu::PresentMode::AutoNoVsync,
+            #[cfg(not(target_os = "windows"))]
             present_mode: wgpu::PresentMode::AutoVsync,
             desired_maximum_frame_latency: 2,
             alpha_mode,
@@ -444,6 +479,9 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
         // device's own callback can't re-arm recovery and cause a redundant
         // second rebuild; `init_render` clones this into the new callback.
         self.device_lost = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        // The rebuilt surface starts blank - force a paint on the next
+        // tick even if the idle gate would otherwise skip it.
+        self.force_render = true;
         // Drop the old device/surface/renderer; keep the program.
         if let Some(RenderState { program, .. }) = self.render.take() {
             self.program = Some(program);
@@ -481,7 +519,8 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
         // could turn the implicit guarantee into an actual NaN-flavored
         // bug.
         let cur_scale = self.scale.get();
-        if cur_scale.to_bits() != self.last_applied_scale.to_bits() {
+        let scale_changed = cur_scale.to_bits() != self.last_applied_scale.to_bits();
+        if scale_changed {
             let (lw, lh) = self.size;
             let pw = truce_gui::to_physical_px(lw, cur_scale);
             let ph = truce_gui::to_physical_px(lh, cur_scale);
@@ -497,11 +536,45 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
             self.last_applied_scale = cur_scale;
         }
 
-        // Process the per-frame "sync params and meters" tick + any
-        // events queued by baseview before we touch iced. Tick first so
-        // the view rebuilt below sees fresh shadow values; events after
-        // are folded into the same UserInterface update pass.
-        render.program.dispatch(Message::Tick);
+        // Sync params + meters from the host first (cheap atomic reads)
+        // so the view rebuilt below sees fresh shadow values, and learn
+        // whether any host-side value moved this frame.
+        let data_changed = render.program.poll_data();
+
+        // Drain subscription messages that arrived since the last frame
+        // into a holding buffer. A non-empty drain forces a render so
+        // time-driven subscriptions (e.g. `iced::time::every`) aren't
+        // stalled by the idle gate; the messages are dispatched below.
+        let mut queued_sub_msgs: Vec<Message<M::Message>> = Vec::new();
+        while let Ok(message) = self.sub_rx.try_recv() {
+            queued_sub_msgs.push(message);
+        }
+
+        // Idle gate: skip the whole frame - no view rebuild, no GPU
+        // present - when nothing needs redrawing. This is what keeps the
+        // host responsive: baseview's frame timer still fires on the
+        // host's GUI thread every tick, but an idle editor returns
+        // immediately instead of rebuilding + presenting. Errs toward
+        // rendering; any uncertainty paints.
+        let timer_due = self
+            .redraw_at
+            .is_some_and(|t| std::time::Instant::now() >= t);
+        // iOS is exempt: it's driven by `CADisplayLink` (no host
+        // message pump to free), and its per-frame `RedrawRequested`
+        // re-issues `request_input_method` to keep the soft keyboard up,
+        // so every frame must run.
+        let should_render = cfg!(target_os = "ios")
+            || self.force_render
+            || scale_changed
+            || !self.pending_events.is_empty()
+            || data_changed
+            || self.animate
+            || timer_due
+            || !queued_sub_msgs.is_empty();
+        if !should_render {
+            return;
+        }
+        self.force_render = false;
 
         let cursor = crate::iced::mouse::Cursor::Available(self.cursor_position);
         let logical_size = render.viewport.logical_size();
@@ -551,6 +624,7 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
         if let iced_runtime::user_interface::State::Updated {
             mouse_interaction,
             input_method,
+            redraw_request,
             ..
         } = ui_state
         {
@@ -559,6 +633,27 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
             // input; the iOS host raises the soft keyboard on this.
             render.wants_keyboard =
                 matches!(input_method, crate::iced::InputMethod::Enabled { .. });
+            // Feed the idle gate: a widget that wants to animate asks for
+            // the next frame (`NextFrame`) or a specific time (`At`, e.g.
+            // a caret blink); `Wait` means it's idle until input.
+            match redraw_request {
+                crate::iced::window::RedrawRequest::NextFrame => {
+                    self.animate = true;
+                    self.redraw_at = None;
+                }
+                crate::iced::window::RedrawRequest::At(t) => {
+                    self.animate = false;
+                    self.redraw_at = Some(t);
+                }
+                crate::iced::window::RedrawRequest::Wait => {
+                    self.animate = false;
+                    self.redraw_at = None;
+                }
+            }
+        } else {
+            // `Outdated`: the widget tree changed under us; rebuild and
+            // repaint next frame rather than trusting this frame's state.
+            self.force_render = true;
         }
 
         user_interface.draw(&mut render.renderer, &render.theme, &style, cursor);
@@ -584,6 +679,9 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
         while let Ok(message) = self.sub_rx.try_recv() {
             messages.push(message);
         }
+        // Subscription messages drained before the idle gate (so they
+        // could trigger this render) still need dispatching.
+        messages.append(&mut queued_sub_msgs);
 
         // Now we can mutate the program again - drain any messages the
         // event handlers produced.

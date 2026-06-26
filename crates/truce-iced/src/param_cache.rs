@@ -123,10 +123,25 @@ impl<P: Params + ?Sized> ParamCache<P> {
         changed
     }
 
-    /// Poll meter values from the editor context.
-    pub(crate) fn sync_meters<Q: ?Sized>(&mut self, ctx: &PluginContext<Q>, meter_ids: &[u32]) {
+    /// Poll meter values from the editor context. Returns whether any
+    /// meter moved, so the editor's idle gate can repaint live meters
+    /// without forcing a repaint when every meter is steady.
+    pub(crate) fn sync_meters<Q: ?Sized>(
+        &mut self,
+        ctx: &PluginContext<Q>,
+        meter_ids: &[u32],
+    ) -> bool {
+        let mut changed = false;
         for &id in meter_ids {
-            self.meters.insert(id, ctx.get_meter(id));
+            let new_val = ctx.get_meter(id);
+            // Bit-compare (not `==`) to sidestep clippy's float_cmp and
+            // treat any distinct value - including a settle to a new
+            // exact level - as a change worth repainting.
+            let old_val = self.meters.insert(id, new_val);
+            if old_val.map(f32::to_bits) != Some(new_val.to_bits()) {
+                changed = true;
+            }
         }
+        changed
     }
 }

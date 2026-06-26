@@ -403,6 +403,14 @@ impl WgpuBackend {
             format: surface_format,
             width,
             height,
+            // Windows: `on_frame` runs on the host's GUI thread; a Fifo
+            // (AutoVsync) present blocks that thread when the child-window
+            // swapchain backs up, freezing the host (REAPER) and risking a
+            // GPU-watchdog (TDR) hang. Non-blocking present elsewhere keeps
+            // vsync.
+            #[cfg(target_os = "windows")]
+            present_mode: wgpu::PresentMode::AutoNoVsync,
+            #[cfg(not(target_os = "windows"))]
             present_mode: wgpu::PresentMode::AutoVsync,
             desired_maximum_frame_latency: 2,
             alpha_mode: wgpu::CompositeAlphaMode::Auto,

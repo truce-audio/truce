@@ -99,8 +99,18 @@ pub fn reanchor_to_superview_top(_handle: raw_window_handle::RawWindowHandle) {}
 /// `NSWindowOcclusionStateVisible` bit is the authoritative early
 /// signal, so this must be called first thing in `on_frame`.
 ///
-/// macOS-only; always `false` elsewhere - Linux/Windows hosts manage
-/// visibility natively and don't exhibit the pile-up.
+/// On macOS the `NSWindowOcclusionStateVisible` bit is the
+/// authoritative signal; on Windows we skip when the host's child
+/// window is hidden or minimized (`IsWindowVisible` / `IsIconic`).
+/// Always `false` on Linux, which manages visibility natively and
+/// doesn't exhibit the pile-up.
+///
+/// The Windows case matters for a different reason than macOS: an
+/// embedded editor is a `WS_CHILD` of the host window, so its
+/// `on_frame` runs on the host's GUI thread. Rendering + a blocking
+/// `present` to a window the user can't see burns that thread for
+/// nothing and can back up the swapchain; skipping keeps the host
+/// (REAPER, etc.) responsive while its FX window is closed.
 #[cfg(target_os = "macos")]
 #[must_use]
 pub fn should_skip_frame(handle: raw_window_handle::RawWindowHandle) -> bool {
@@ -128,7 +138,28 @@ pub fn should_skip_frame(handle: raw_window_handle::RawWindowHandle) -> bool {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
+#[must_use]
+pub fn should_skip_frame(handle: raw_window_handle::RawWindowHandle) -> bool {
+    unsafe extern "system" {
+        fn IsWindowVisible(hwnd: *mut std::ffi::c_void) -> i32;
+        fn IsIconic(hwnd: *mut std::ffi::c_void) -> i32;
+    }
+
+    let hwnd = match handle {
+        raw_window_handle::RawWindowHandle::Win32(h) => h.hwnd,
+        _ => return false,
+    };
+    if hwnd.is_null() {
+        return true;
+    }
+    // SAFETY: both are pure state queries on a window handle baseview
+    // owns for the editor's lifetime; no aliasing or threading concerns,
+    // and they're called from the GUI thread that owns the HWND.
+    unsafe { IsWindowVisible(hwnd) == 0 || IsIconic(hwnd) != 0 }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 #[must_use]
 pub fn should_skip_frame(_handle: raw_window_handle::RawWindowHandle) -> bool {
     false
