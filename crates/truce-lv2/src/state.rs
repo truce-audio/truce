@@ -11,6 +11,7 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use truce_core::export::PluginExport;
 use truce_core::state::{DeserializedState, deserialize_state, serialize_state};
+use truce_core::wrapper::run_extern_callback_with;
 use truce_params::Params;
 
 use crate::Lv2Instance;
@@ -22,7 +23,7 @@ const TRUCE_STATE_KEY_URI: &str = "urn:truce:state-blob";
 
 /// `LV2_State_Status` - returned by store/retrieve + our save/restore.
 const LV2_STATE_SUCCESS: u32 = 0;
-const _LV2_STATE_ERR_UNKNOWN: u32 = 1;
+const LV2_STATE_ERR_UNKNOWN: u32 = 1;
 
 /// `LV2_State_Flags` - bit 0 is POD (we always are), bit 1 is PORTABLE.
 const LV2_STATE_IS_POD: u32 = 1 << 0;
@@ -103,7 +104,10 @@ unsafe extern "C" fn save_cb<P: PluginExport>(
     _flags: u32,
     _features: *const *const crate::types::LV2Feature,
 ) -> u32 {
-    unsafe {
+    // Guard the user's `save_state()` against panics so a stray
+    // `unwrap` in custom-state code reports a state error instead of
+    // aborting the host across this `extern "C"` boundary.
+    run_extern_callback_with::<P, u32>("LV2", "save_state", LV2_STATE_ERR_UNKNOWN, || unsafe {
         if instance.is_null() {
             return 0;
         }
@@ -127,7 +131,7 @@ unsafe extern "C" fn save_cb<P: PluginExport>(
             flags,
         );
         LV2_STATE_SUCCESS
-    }
+    })
 }
 
 unsafe extern "C" fn restore_cb<P: PluginExport>(
@@ -137,7 +141,10 @@ unsafe extern "C" fn restore_cb<P: PluginExport>(
     _flags: u32,
     _features: *const *const crate::types::LV2Feature,
 ) -> u32 {
-    unsafe {
+    // Guard the user's `load_state()` / custom deserialize against
+    // panics so a malformed blob reports a state error instead of
+    // aborting the host across this `extern "C"` boundary.
+    run_extern_callback_with::<P, u32>("LV2", "load_state", LV2_STATE_ERR_UNKNOWN, || unsafe {
         if instance.is_null() {
             return 0;
         }
@@ -179,7 +186,7 @@ unsafe extern "C" fn restore_cb<P: PluginExport>(
             }
         }
         LV2_STATE_SUCCESS
-    }
+    })
 }
 
 // Quiet unused-import for future generic symbol lookups.
