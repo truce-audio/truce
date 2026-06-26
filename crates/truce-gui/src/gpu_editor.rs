@@ -101,6 +101,10 @@ struct GpuWindowHandler<P: Params> {
     /// `WgpuBackend::set_scale` + `resize` when they diverge.
     scale: EditorScale,
     last_applied_scale: f32,
+    /// Holds off the first present until a freshly-opened child window is
+    /// composited, so a blocking Fifo present can't freeze the host on
+    /// editor open (Windows only).
+    present_settle: crate::platform::PresentSettle,
 }
 
 impl<P: Params + 'static> GpuWindowHandler<P> {
@@ -115,6 +119,12 @@ impl<P: Params + 'static> GpuWindowHandler<P> {
             if crate::platform::should_skip_frame(window.raw_window_handle()) {
                 return;
             }
+        }
+        // Hold off the first present(s) until the freshly-opened child
+        // window has been composited - a blocking Fifo present to an
+        // uncomposited window freezes the host on editor open (Windows).
+        if !self.present_settle.ready() {
+            return;
         }
         #[cfg(target_os = "macos")]
         {
@@ -341,6 +351,7 @@ impl<P: Params + 'static> Editor for GpuEditor<P> {
                     current_size: size,
                     scale: scale_handle,
                     last_applied_scale: scale,
+                    present_settle: crate::platform::PresentSettle::new(),
                 }
             },
         );
