@@ -2,8 +2,9 @@
 //!
 //! The left and right channels are processed by the *same* control
 //! group, so `ChannelStrip` is declared once and pulled in twice with
-//! `#[nested]`. Bare `#[nested]` (no base) auto-packs the groups: left
-//! lands at ids 0-2, right at 3-5, with no ids or bases written by hand.
+//! `#[nested]`. Bare `#[nested]` (no base) rebases each slot to its own
+//! distinct id range derived from the field name, so `left` and `right`
+//! resolve to separate controls with no ids or bases written by hand.
 
 use truce::prelude::*;
 use truce_gui::IntoLayoutEditor;
@@ -179,15 +180,22 @@ mod tests {
 
     #[test]
     fn channels_reuse_one_strip_with_distinct_ids() {
+        use std::collections::HashSet;
         // The headline: one `ChannelStrip` type in two `#[nested]` slots,
-        // auto-packed into disjoint id ranges (left 0-2, right 3-5).
+        // each rebased to a disjoint id range so left/right stay separate
+        // controls despite sharing the type.
         let p = StereoUtilityParams::new();
-        assert_eq!(p.left.gain.id(), 0);
-        assert_eq!(p.left.invert.id(), 1);
-        assert_eq!(p.left.delay.id(), 2);
-        assert_eq!(p.right.gain.id(), 3);
-        assert_eq!(p.right.invert.id(), 4);
-        assert_eq!(p.right.delay.id(), 5);
+        let ids: HashSet<u32> = [
+            p.left.gain.id(),
+            p.left.invert.id(),
+            p.left.delay.id(),
+            p.right.gain.id(),
+            p.right.invert.id(),
+            p.right.delay.id(),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(ids.len(), 6, "reused strips must not share ids");
         assert_eq!(p.count(), 6);
     }
 
