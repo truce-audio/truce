@@ -53,8 +53,10 @@ env:
   # suffix on the output filename matches the convention enforced by
   # each example's `gui_screenshot_<os>` test (linux/macos/windows) or
   # the `cargo truce screenshot --ios [--crop-mode container]` pipeline.
-  # The iOS bake skips `truce-example-gain-iced`: iced's iOS backend
-  # is broken upstream and its container app never wires the editor.
+  # The iOS bake skips the iced examples (`gain-iced`, `gui-zoo-iced`,
+  # `midi-inspector`): iced's iOS backend is broken upstream and the
+  # crates are `#[cfg(not(target_os = "ios"))]` stubs, so there's no
+  # editor to capture.
   # `cargo truce screenshot --ios` locks
   # `UISupportedInterfaceOrientations` in the temporary container's
   # Info.plist to a single canonical orientation (the plugin's first
@@ -85,6 +87,7 @@ env:
     truce-example-gui-zoo
     truce-example-gui-zoo-egui
     truce-example-gui-zoo-iced
+    truce-example-midi-inspector
     truce-example-dasp-bitcrusher
     truce-example-envelope
     truce-example-chord
@@ -460,6 +463,7 @@ jobs:
           for crate in $EXAMPLE_CRATES; do
             [ "$crate" = "truce-example-gain-iced" ] && continue
             [ "$crate" = "truce-example-gui-zoo-iced" ] && continue
+            [ "$crate" = "truce-example-midi-inspector" ] && continue
             args+=("-p" "$crate")
           done
           cargo build "${args[@]}" --target aarch64-apple-ios-sim \
@@ -501,7 +505,7 @@ jobs:
             # drop it from this list and from the ci-ios.yml loop, then
             # re-bake.
             case "$crate" in
-              truce-example-gain-iced|truce-example-gui-zoo-iced) continue ;;
+              truce-example-gain-iced|truce-example-gui-zoo-iced|truce-example-midi-inspector) continue ;;
               truce-example-eq|truce-example-tremolo|truce-example-arpeggio) continue ;;
               truce-example-state|truce-example-gain-egui) continue ;;
               truce-example-fundsp-reverb-worker|truce-example-fundsp-reverb-simple) continue ;;
