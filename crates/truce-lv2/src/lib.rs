@@ -37,7 +37,9 @@ use truce_core::export::PluginExport;
 use truce_core::info::PluginInfo;
 use truce_core::plugin::PluginRuntime;
 use truce_core::state::shared_plugin_state_hash;
-use truce_core::wrapper::run_audio_block;
+use truce_core::wrapper::{
+    first_bus_layout, log_missing_bus_layout, run_audio_block, run_extern_callback_with,
+};
 use truce_params::{ParamInfo, Params};
 
 use crate::atom::AtomSequenceReader;
@@ -203,28 +205,26 @@ unsafe impl<P: PluginExport> Send for Lv2Instance<P> {}
 /// build their own plugin and the LV2 `instantiate` callback already
 /// owns one - both call this directly to skip a second `P::create()`.
 ///
-/// # Panics
-///
-/// Panics if `P::bus_layouts()` is empty - same plugin-author
-/// contract as [`truce_core::wrapper::first_bus_layout`]; zero-bus
-/// plugins must return `vec![BusLayout::new()]` explicitly.
-pub fn derive_port_layout<P: PluginExport>(plugin: &P) -> PortLayout {
-    let layouts = P::bus_layouts();
-    let default_layout = layouts
-        .first()
-        .expect("Plugin must declare at least one bus layout");
+/// Returns `None` when `P::bus_layouts()` is empty - the same
+/// plugin-author contract as [`truce_core::wrapper::first_bus_layout`];
+/// zero-bus plugins must return `vec![BusLayout::new()]` explicitly.
+/// The FFI entry points (`instantiate`, `instantiate_ui`) treat `None`
+/// as a graceful instantiation failure (log + null) rather than
+/// panicking across the host boundary.
+pub fn derive_port_layout<P: PluginExport>(plugin: &P) -> Option<PortLayout> {
+    let default_layout = first_bus_layout::<P>()?;
     let params = plugin.params();
     let param_count = len_u32(params.param_infos().len());
     let meter_count = len_u32(params.meter_ids().len());
     let info = P::info();
-    PortLayout {
+    Some(PortLayout {
         num_audio_in: default_layout.total_input_channels(),
         num_audio_out: default_layout.total_output_channels(),
         num_params: param_count,
         num_meters: meter_count,
         accepts_midi_in: info.accepts_midi_in,
         has_midi_out: info.emits_midi,
-    }
+    })
 }
 
 /// # Safety
@@ -236,74 +236,82 @@ pub unsafe fn instantiate<P: PluginExport>(
     _bundle_path: *const c_char,
     features: *const *const LV2Feature,
 ) -> *mut Lv2Instance<P> {
-    unsafe {
-        let plugin = P::create();
-        let layout = derive_port_layout::<P>(&plugin);
-        let info = P::info();
-        let param_infos = plugin.params().param_infos();
-        let params_arc = plugin.params_arc();
-        let min_subblock_samples = info.automation.min_subblock_samples;
+    run_extern_callback_with::<P, *mut Lv2Instance<P>>(
+        "LV2",
+        "instantiate",
+        ptr::null_mut(),
+        || unsafe {
+            let plugin = P::create();
+            let Some(layout) = derive_port_layout::<P>(&plugin) else {
+                log_missing_bus_layout::<P>("LV2");
+                return ptr::null_mut();
+            };
+            let info = P::info();
+            let param_infos = plugin.params().param_infos();
+            let params_arc = plugin.params_arc();
+            let min_subblock_samples = info.automation.min_subblock_samples;
 
-        let control_port_count = layout.num_params as usize;
-        let audio_in_count = layout.num_audio_in as usize;
-        let audio_out_count = layout.num_audio_out as usize;
-        let meter_ids = plugin.params().meter_ids();
-        let meter_count = meter_ids.len();
+            let control_port_count = layout.num_params as usize;
+            let audio_in_count = layout.num_audio_in as usize;
+            let audio_out_count = layout.num_audio_out as usize;
+            let meter_ids = plugin.params().meter_ids();
+            let meter_count = meter_ids.len();
 
-        let urid_map = UridMap::from_features(features);
+            let urid_map = UridMap::from_features(features);
 
-        // Build the per-param URID lookup the patch:Set decoder uses.
-        // String must match the `<plugin_uri>#p_<id>` URI the TTL emits
-        // for each `lv2:Parameter` block (see truce-build/src/lv2.rs).
-        // Skipped when the host doesn't expose URID:map - the patch
-        // path then stays inert and only the legacy control-port path
-        // contributes parameter updates.
-        let plugin_uri = truce_build::lv2::plugin_uri(info.url, info.bundle_id);
-        let mut param_urid_to_id: Vec<(Urid, u32)> = Vec::with_capacity(param_infos.len());
-        if urid_map.has_map() {
-            for pi in &param_infos {
-                let uri = format!("{plugin_uri}#p_{}", pi.id);
-                let urid = urid_map.intern(&uri);
-                if urid != 0 {
-                    param_urid_to_id.push((urid, pi.id));
+            // Build the per-param URID lookup the patch:Set decoder uses.
+            // String must match the `<plugin_uri>#p_<id>` URI the TTL emits
+            // for each `lv2:Parameter` block (see truce-build/src/lv2.rs).
+            // Skipped when the host doesn't expose URID:map - the patch
+            // path then stays inert and only the legacy control-port path
+            // contributes parameter updates.
+            let plugin_uri = truce_build::lv2::plugin_uri(info.url, info.bundle_id);
+            let mut param_urid_to_id: Vec<(Urid, u32)> = Vec::with_capacity(param_infos.len());
+            if urid_map.has_map() {
+                for pi in &param_infos {
+                    let uri = format!("{plugin_uri}#p_{}", pi.id);
+                    let urid = urid_map.intern(&uri);
+                    if urid != 0 {
+                        param_urid_to_id.push((urid, pi.id));
+                    }
                 }
             }
-        }
 
-        let instance = Box::new(Lv2Instance::<P> {
-            plugin,
-            sample_rate,
-            max_block_size: 0,
-            plugin_id_hash: shared_plugin_state_hash(&info),
-            param_infos,
-            layout,
+            let instance = Box::new(Lv2Instance::<P> {
+                plugin,
+                sample_rate,
+                max_block_size: 0,
+                plugin_id_hash: shared_plugin_state_hash(&info),
+                param_infos,
+                layout,
 
-            audio_inputs: vec![ptr::null(); audio_in_count],
-            audio_outputs: vec![ptr::null_mut(); audio_out_count],
-            control_ports: vec![ptr::null(); control_port_count],
-            meter_ports: vec![ptr::null_mut(); meter_count],
-            meter_ids,
-            atom_in_port: ptr::null(),
-            midi_out_port: ptr::null_mut(),
-            notify_out_port: ptr::null_mut(),
+                audio_inputs: vec![ptr::null(); audio_in_count],
+                audio_outputs: vec![ptr::null_mut(); audio_out_count],
+                control_ports: vec![ptr::null(); control_port_count],
+                meter_ports: vec![ptr::null_mut(); meter_count],
+                meter_ids,
+                atom_in_port: ptr::null(),
+                midi_out_port: ptr::null_mut(),
+                notify_out_port: ptr::null_mut(),
 
-            last_control: vec![None; control_port_count],
+                last_control: vec![None; control_port_count],
 
-            event_list: EventList::with_capacity(EVENT_LIST_PREALLOC),
-            output_events: EventList::with_capacity(EVENT_LIST_PREALLOC),
-            sub_event_scratch: EventList::with_capacity(EVENT_LIST_PREALLOC),
-            params_arc,
-            min_subblock_samples,
+                event_list: EventList::with_capacity(EVENT_LIST_PREALLOC),
+                output_events: EventList::with_capacity(EVENT_LIST_PREALLOC),
+                sub_event_scratch: EventList::with_capacity(EVENT_LIST_PREALLOC),
+                params_arc,
+                min_subblock_samples,
 
-            urid_map,
-            param_urid_to_id,
+                urid_map,
+                param_urid_to_id,
 
-            scratch: RawBufferScratch::default(),
+                scratch: RawBufferScratch::default(),
 
-            transport_slot: truce_core::TransportSlot::new(),
-        });
-        Box::into_raw(instance)
-    }
+                transport_slot: truce_core::TransportSlot::new(),
+            });
+            Box::into_raw(instance)
+        },
+    )
 }
 
 /// # Safety
