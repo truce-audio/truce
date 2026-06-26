@@ -2,11 +2,16 @@
 
 Notable changes per release.
 
-## 0.65.0
+## 1.0.0
 
-- **Auto-assigned parameter IDs are now a stable hash of the field name** instead of a declaration-order counter. Reordering or inserting parameters - including inside `#[nested]` groups - no longer shifts later IDs, so host automation and presets keep mapping to the right parameter across plugin versions. Explicit `#[param(id = N)]` still wins; plugins already shipped with the old order-based IDs opt back in with `#[params(id_scheme = "ordinal")]`.
+### Breaking
+
+- **Auto-assigned parameter IDs are now a stable hash of the field name** instead of a declaration-order counter. Reordering or inserting parameters - including inside `#[nested]` groups - no longer shifts later IDs, so host automation and presets keep mapping to the right parameter across plugin versions. Explicit `#[param(id = N)]` still wins. *Migration:* a plugin already shipped with the old order-based IDs must add `#[params(id_scheme = "ordinal")]` to keep them, or its hosts' saved automation and presets will rebind to the wrong parameters.
+- **`truce-iced` no longer depends on the `iced` umbrella crate.** It uses iced's sub-crates directly (`iced_core` / `iced_widget` / `iced_renderer` / `iced_wgpu` / `iced_runtime` / `iced_futures`), re-exported as `truce_iced::iced`, which drops the transitive `iced_winit` dependency whose desktop-only keyboard API broke the iOS build. *Migration:* plugins that imported types from the `iced` crate import the same ones from `truce_iced::iced` instead.
+
+### Other changes
+
 - **iced editors run on iOS.** `truce-iced` renders through a `CAMetalLayer`-backed `UIView` under AU v3 - touch input plus a soft keyboard for focused `text_input` - so iced plugins build and run on iOS like the egui backend. `gain-iced`, `gui-zoo-iced`, and `midi-inspector` are now iOS examples.
-- **`truce-iced` no longer depends on the `iced` umbrella crate.** It uses iced's sub-crates directly (`iced_core` / `iced_widget` / `iced_renderer` / `iced_wgpu` / `iced_runtime` / `iced_futures`), re-exported as `truce_iced::iced`, which drops the transitive `iced_winit` dependency whose desktop-only keyboard API broke the iOS build. Plugins that imported types from the `iced` crate can import the same ones from `truce_iced::iced`.
 - **AU v3 factory presets ship on iOS.** `cargo truce install --ios` / `package --ios` now bundle a plugin's `presets/` library into the embedded framework's `Presets/`, so AU v3 hosts list them on iOS like macOS. iOS frameworks are shallow bundles, so the presets sit in a flat `Presets/` directory rather than `Resources/Presets/` (a `Resources/` subdir makes iOS installd reject the framework).
 - **New `truce-example-midi-inspector` (iced).** A note effect (Apple `aumi` MIDI processor) that decodes every event truce can deliver - MIDI 1.0 + 2.0 channel voice, SysEx (with manufacturer id + hex), transport, and param automation - into a live scrolling log (newest first), with a raw line for anything not yet richly interpreted. Forwards MIDI through untouched (toggle with the `MIDI Thru` param) and demonstrates streaming *structured* realtime data from `process()` to an editor via a lock-free ring carried in a `#[skip]` params field.
 - **`#[derive(Params)]` supports `#[skip]` fields.** A field marked `#[skip]` is not a parameter: it's plugin-owned state that the editor reaches through the `Arc<Params>` both sides already hold (e.g. a lock-free queue of audio-thread events). The derive `Default`-initializes it in `new()` and excludes it from parameter ids, infos, state, and count.
