@@ -19,6 +19,7 @@ Notable changes per release.
 - **`#[derive(Params)]` supports `#[skip]` fields.** A field marked `#[skip]` is not a parameter: it's plugin-owned state that the editor reaches through the `Arc<Params>` both sides already hold (e.g. a lock-free queue of audio-thread events). The derive `Default`-initializes it in `new()` and excludes it from parameter ids, infos, state, and count.
 - **CLAP and LV2 state save/load are now panic-guarded** like VST3 / VST2 / AU / AAX: a panic in a user's `save_state` / `load_state` reports failure to the host instead of unwinding across the `extern "C"` boundary and aborting it.
 - **Rendering performance fixes on Windows.** Embedded editors run their frame loop on the host's GUI thread, where the iced / egui backends repainted every tick and blocked on a vsync present - so a heavy editor (GUI Zoo) made the host (REAPER) laggy and could lock out other plugin windows. Editors now skip frames when nothing changed, present non-blocking on Windows, and skip rendering while the host window is hidden or minimized.
+- **Smoother editor repaints on Windows.** Editors no longer render in slow, bursty spurts inside busy DAWs - the frame loop is now driven by a steady high-resolution timer (via the `baseview-truce` 0.1.1-truce.10 dependency), and the same fix closes a crash that heavy repainting could trigger. Applies to both the iced and egui backends.
 
 ## 0.64.0
 
