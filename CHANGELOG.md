@@ -2,7 +2,7 @@
 
 Notable changes per release.
 
-## 0.64.1
+## 0.65.0
 
 - **New `truce-example-midi-inspector` (iced).** A MIDI-effect monitor that decodes every event truce can deliver - MIDI 1.0 + 2.0 channel voice, SysEx (with manufacturer id + hex), transport, and param automation - into a live scrolling log (newest first), with a raw line for anything not yet richly interpreted. Passes audio and MIDI through untouched, and demonstrates streaming *structured* realtime data from `process()` to an editor via a lock-free ring carried in a `#[skip]` params field.
 - **`#[derive(Params)]` supports `#[skip]` fields.** A field marked `#[skip]` is not a parameter: it's plugin-owned state that the editor reaches through the `Arc<Params>` both sides already hold (e.g. a lock-free queue of audio-thread events). The derive `Default`-initializes it in `new()` and excludes it from parameter ids, infos, state, and count.
