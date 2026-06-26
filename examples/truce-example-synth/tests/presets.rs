@@ -82,3 +82,29 @@ fn presets_round_trip_through_state_envelope() {
         assert_eq!(state.extra.is_some(), !preset.extra.is_empty());
     }
 }
+
+#[test]
+fn nested_preset_names_resolve_to_exact_runtime_ids() {
+    // The aggregator-built name map (what `cargo truce install` and host
+    // preset recall resolve through) must map a *nested* param's name to
+    // the exact id the runtime assigns that param - not merely to some
+    // valid id. With hash ids a nested param's id is a fold of its field
+    // name and its slot name; if the build-time aggregator and runtime
+    // `offset_ids` disagreed, a preset would silently drive the wrong
+    // (but still valid) nested parameter. `cutoff`/`resonance` live in
+    // the nested `filter`, `attack` in the nested `envelope`.
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let annotations = read_param_annotations(
+        &truce_build::target_dir(&dir)
+            .join("lv2-meta")
+            .join("truce-example-synth"),
+    );
+    let names = ParamNameMap::from_annotations(&annotations);
+    let p = SynthParams::default();
+
+    assert_eq!(names.resolve("cutoff").unwrap(), p.filter.cutoff.id());
+    assert_eq!(names.resolve("resonance").unwrap(), p.filter.resonance.id());
+    assert_eq!(names.resolve("attack").unwrap(), p.envelope.attack.id());
+    // An own (non-nested) param resolves to its plain hash id too.
+    assert_eq!(names.resolve("volume").unwrap(), p.volume.id());
+}
