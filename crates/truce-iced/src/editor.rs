@@ -349,6 +349,26 @@ impl<P: Params + 'static, M: IcedPlugin<P> + 'static> IcedEditor<P, M> {
         self
     }
 
+    /// Replace the default `M::new(params)` model constructor with a
+    /// custom factory. This is the seam for handing the UI shared state
+    /// that doesn't fit the param or meter channels - e.g. a lock-free
+    /// queue of realtime data produced on the audio thread in
+    /// `process()`. Capture the shared handle (typically an `Arc`) in
+    /// the closure.
+    ///
+    /// The factory is `Fn`, not `FnOnce`: `open()` and `screenshot()`
+    /// each build a fresh model (hosts re-create editors, and the
+    /// screenshot path builds a separate program), so a captured `Arc`
+    /// is cloned per call rather than moved.
+    #[must_use]
+    pub fn with_plugin_factory(
+        mut self,
+        factory: impl Fn(Arc<P>) -> M + Send + Sync + 'static,
+    ) -> Self {
+        self.make_plugin = Box::new(factory);
+        self
+    }
+
     /// Opt out of host-driven resizing. iced editors default to
     /// resizable because the widget tree reflows for free; pass
     /// `false` here for plugins that ship a deliberately fixed-size

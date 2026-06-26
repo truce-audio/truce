@@ -59,6 +59,7 @@ members = [
     "examples/truce-example-cc-filter",
     "examples/truce-example-mpe-spreader",
     "examples/truce-example-sysex-echo",
+    "examples/truce-example-midi-inspector",
 ]
 
 [workspace.package]

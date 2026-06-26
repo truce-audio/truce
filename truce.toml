@@ -500,6 +500,21 @@ windows_icon = "static/truce-minimal.ico"
 macos_icon = "static/truce-minimal.icns"
 ios_icon_set = "static/truce-minimal.appiconset"
 
+[[plugin]]
+name = "Truce MIDI Inspector"
+bundle_id = "midi-inspector"
+crate = "truce-example-midi-inspector"
+category = "effect"
+midi_input = true
+fourcc = "TMin"
+au3_subtype = "TMi3"
+au_tag = "Effects"
+vst3_subcategory = "Tools"
+au3_name = "Truce MIDI Inspector (AUv3)"
+windows_icon = "static/truce-minimal.ico"
+macos_icon = "static/truce-minimal.icns"
+ios_icon_set = "static/truce-minimal.appiconset"
+
 # Suite installer wrapping every example above. `cargo truce package`
 # (no flags) produces both per-plugin installers and this suite installer.
 # Pass `--no-per-plugin` for suite-only output, `--no-suite` to drop it.

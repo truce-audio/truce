@@ -5472,6 +5472,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "truce-example-midi-inspector"
+version = "0.64.0"
+dependencies = [
+ "clap-sys",
+ "crossbeam-queue",
+ "iced",
+ "truce",
+ "truce-aax",
+ "truce-au",
+ "truce-clap",
+ "truce-core",
+ "truce-font",
+ "truce-iced",
+ "truce-loader",
+ "truce-lv2",
+ "truce-params",
+ "truce-standalone",
+ "truce-test",
+ "truce-vst2",
+ "truce-vst3",
+]
+
+[[package]]
 name = "truce-example-mpe-spreader"
 version = "0.64.0"
 dependencies = [
