@@ -2,6 +2,10 @@
 
 Notable changes per release.
 
+## 1.0.1
+
+- **`truce-example-envelope` emits sample-accurate CC.** The envelope follower pushed one control-change per block at `sample_offset: 0` carrying the block's final value; it now emits on each value change at the exact sample offset, so the CC stream stays smooth (no per-block `@0` bursts or up-to-a-block latency) and tracks level changes within a block.
+
 ## 1.0.0
 
 ### Breaking

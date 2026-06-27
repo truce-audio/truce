@@ -9,6 +9,7 @@
 //! CLAP raw-MIDI dialect).
 
 use truce::prelude::*;
+use truce_core::cast::len_u32;
 use truce_gui::IntoLayoutEditor;
 use truce_gui_types::layout::{GridLayout, knob, widgets};
 
@@ -95,9 +96,15 @@ impl PluginLogic for Envelope {
             out.copy_from_slice(inp);
         }
 
-        // Follow the peak across channels: instant attack, smoothed
-        // release.
+        // Follow the peak across channels (instant attack, smoothed
+        // release) and emit a control-change at the exact sample its
+        // 7-bit value changes. Emitting sample-accurately on change -
+        // rather than one end-of-block value stamped at `sample_offset:
+        // 0` - keeps the stream smooth and tracks rises/falls within a
+        // block; the old block-rate form showed up in a MIDI monitor as
+        // a delayed `@0` burst once per block.
         let coeff = release_coeff(self.params.release.read(), self.sample_rate);
+        let cc = self.params.cc.value_u8();
         let nch = buffer.channels();
         for i in 0..buffer.num_samples() {
             let mut peak = 0.0f32;
@@ -109,21 +116,22 @@ impl PluginLogic for Envelope {
             } else {
                 peak + (self.env - peak) * coeff
             };
-        }
 
-        // Emit the follower level as a CC once per block, on change.
-        let value = level_to_cc(self.env);
-        if self.last_sent != Some(value) {
-            self.last_sent = Some(value);
-            context.output_events.push(Event {
-                sample_offset: 0,
-                body: EventBody::ControlChange {
-                    group: 0,
-                    channel: 0,
-                    cc: self.params.cc.value_u8(),
-                    value,
-                },
-            });
+            // De-duplicated: identical consecutive values aren't re-sent,
+            // so a steady level stays quiet instead of flooding the host.
+            let value = level_to_cc(self.env);
+            if self.last_sent != Some(value) {
+                self.last_sent = Some(value);
+                context.output_events.push(Event {
+                    sample_offset: len_u32(i),
+                    body: EventBody::ControlChange {
+                        group: 0,
+                        channel: 0,
+                        cc,
+                        value,
+                    },
+                });
+            }
         }
 
         ProcessStatus::Normal
