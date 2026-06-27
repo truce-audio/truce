@@ -99,6 +99,14 @@ impl EventRing {
         self.dropped.load(Ordering::Relaxed)
     }
 
+    /// Whether the editor has undrained entries waiting. Lets the editor
+    /// repaint (and drain) only when there's something new to show
+    /// rather than every frame. Lock-free; cheap on the GUI thread.
+    #[must_use]
+    pub fn has_pending(&self) -> bool {
+        !self.queue.is_empty()
+    }
+
     /// Drop every queued entry and reset the dropped counter (the
     /// editor's "Clear" action).
     pub fn clear(&self) {

@@ -5,6 +5,7 @@ Notable changes per release.
 ## 1.0.1
 
 - **`truce-example-envelope` emits sample-accurate CC.** The envelope follower pushed one control-change per block at `sample_offset: 0` carrying the block's final value; it now emits on each value change at the exact sample offset, so the CC stream stays smooth (no per-block `@0` bursts or up-to-a-block latency) and tracks level changes within a block.
+- **`IcedPlugin::needs_redraw` keeps streaming editors live.** The iced editor's idle gate skips repaints when no UI input, param, or meter changed - which left a plugin streaming realtime data to its editor outside that system (a lock-free queue drained in `view()`) showing it late, only when a stray UI event forced a repaint. A plugin can now return `true` from `needs_redraw()` while it has new data, so the editor repaints and drains promptly and idles again when there's nothing new. `truce-example-midi-inspector` uses it so live MIDI scrolls in without lag.
 
 ## 1.0.0
 

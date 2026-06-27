@@ -98,6 +98,16 @@ pub trait IcedPlugin<P: Params>: Sized + 'static {
     /// Plugin state was restored (preset recall, undo, session load).
     /// Re-read any cached custom state. Parameter values update automatically.
     fn state_changed(&mut self) {}
+
+    /// Whether the editor should repaint this frame even with no UI
+    /// input, param, or meter change. Default `false` - the idle gate
+    /// skips redundant frames. Return `true` while the plugin has new
+    /// data the runtime can't see (e.g. a lock-free queue drained inside
+    /// `view()`) so it's drained and shown promptly instead of waiting
+    /// for a stray UI event.
+    fn needs_redraw(&self) -> bool {
+        false
+    }
 }
 
 // AutoPlugin - built-in plugin for GridLayout auto mode
@@ -570,6 +580,7 @@ impl<P: Params + 'static, M: IcedPlugin<P>> IcedRuntime<P, M> {
             || data_changed
             || self.animate
             || timer_due
+            || render.program.plugin.needs_redraw()
             || !queued_sub_msgs.is_empty();
         if !should_render {
             return;

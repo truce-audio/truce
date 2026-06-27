@@ -108,6 +108,13 @@ impl IcedPlugin<InspectorParams> for InspectorUi {
         }
     }
 
+    // Repaint (and drain the ring in `view()`) whenever the audio thread
+    // has queued events, so a live MIDI stream appears promptly instead
+    // of waiting for the next stray UI event. Frozen while paused.
+    fn needs_redraw(&self) -> bool {
+        !self.paused && self.ring.has_pending()
+    }
+
     fn update(
         &mut self,
         message: Message<Msg>,
