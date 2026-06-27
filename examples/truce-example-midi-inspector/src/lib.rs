@@ -1,8 +1,8 @@
-//! A MIDI inspector: a note effect (Apple's `aumi` MIDI processor) that
-//! forwards MIDI through untouched and shows a live, scrolling log of
-//! every event it receives in `process()` (newest first), decoded as far
-//! as truce understands the message - with a raw line for anything it
-//! doesn't, so adding interpretations later is easy.
+//! A MIDI inspector: an audio effect with MIDI in/out that passes the
+//! track's audio through untouched, forwards MIDI through, and shows a
+//! live, scrolling log of every event it receives in `process()` (newest
+//! first), decoded as far as truce understands the message - with a raw
+//! line for anything it doesn't, so adding interpretations later is easy.
 //!
 //! Notable bit: streaming *structured* realtime data (not just scalar
 //! meters) from the audio thread to the editor. The plugin owns a
@@ -275,13 +275,14 @@ impl MidiInspector {
 }
 
 impl PluginLogic for MidiInspector {
-    /// MIDI effect: no audio I/O, so AU registers it as an `aumi` MIDI
-    /// processor (it shows up in the host's MIDI-effect slot, not the
-    /// audio chain). CLAP / VST3 / AU / LV2 honor the audio-less layout;
-    /// AAX (which has no audio-less category) auto-adds a stereo
-    /// passthrough inside `truce-aax`.
+    /// Audio effect with MIDI in/out: a stereo bus passes the track's
+    /// audio through untouched while the plugin monitors and forwards
+    /// MIDI. The audio I/O is what lets it load as an ordinary insert in
+    /// audio-centric hosts (Ableton, Reaper) that don't host MIDI-only
+    /// plug-ins - the trade-off is it's no longer an `aumi` MIDI
+    /// processor for the hosts (Logic, AUM) that do.
     fn bus_layouts() -> Vec<BusLayout> {
-        vec![BusLayout::new()]
+        vec![BusLayout::stereo()]
     }
 
     fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {
@@ -290,7 +291,7 @@ impl PluginLogic for MidiInspector {
 
     fn process(
         &mut self,
-        _buffer: &mut AudioBuffer,
+        buffer: &mut AudioBuffer,
         events: &EventList,
         context: &mut ProcessContext,
     ) -> ProcessStatus {
@@ -317,6 +318,18 @@ impl PluginLogic for MidiInspector {
                     sample_offset: ev.sample_offset,
                     body,
                 }),
+            }
+        }
+
+        // Pass the track's audio through untouched - a monitor must not
+        // colour the signal.
+        let n_in = buffer.num_input_channels();
+        for ch in 0..buffer.channels() {
+            let (inp, out) = buffer.io(ch);
+            if ch < n_in {
+                out.copy_from_slice(inp);
+            } else {
+                out.fill(0.0);
             }
         }
 
@@ -439,6 +452,8 @@ mod tests {
         out.into_iter().collect()
     }
 
+    // Passthrough is an exact copy, so an exact float compare is right.
+    #[allow(clippy::float_cmp)]
     #[test]
     fn captures_events_from_process() {
         use truce_core::buffer::AudioBuffer;
@@ -467,8 +482,7 @@ mod tests {
             },
         });
 
-        // A buffer is still handed in by the signature; a note effect
-        // ignores it.
+        // Stereo passthrough buffer of constant 0.5.
         let input = [[0.5f32; 16], [0.5f32; 16]];
         let in_refs: [&[f32]; 2] = [&input[0], &input[1]];
         let mut output = [[0.0f32; 16], [0.0f32; 16]];
@@ -489,6 +503,8 @@ mod tests {
             .collect();
         assert!(kinds.contains(&"Note On"), "kinds: {kinds:?}");
         assert!(kinds.contains(&"Control Change"), "kinds: {kinds:?}");
+        // Audio passed through untouched.
+        assert_eq!(output[0][0], 0.5);
         // MIDI forwarded to the output unchanged.
         let out: Vec<_> = out_events.iter().map(|e| e.body).collect();
         assert!(
@@ -503,19 +519,6 @@ mod tests {
     }
 
     // -- standard plugin / editor checks --
-
-    /// `category = "midi"` must surface as `PluginCategory::NoteEffect` so
-    /// AU registers the plugin as an `aumi` MIDI processor and hosts route
-    /// MIDI to it. Any other category turns it back into an audio effect.
-    #[test]
-    fn category_is_note_effect() {
-        use truce_core::info::PluginCategory;
-        use truce_core::plugin::PluginRuntime;
-        assert_eq!(
-            <Plugin as PluginRuntime>::info().category,
-            PluginCategory::NoteEffect
-        );
-    }
 
     #[test]
     fn skip_field_is_not_a_param() {

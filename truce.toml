@@ -504,14 +504,17 @@ ios_icon_set = "static/truce-minimal.appiconset"
 name = "Truce MIDI Inspector"
 bundle_id = "midi-inspector"
 crate = "truce-example-midi-inspector"
-# Note effect (MIDI in -> MIDI out, no audio): AU registers it as `aumi`
-# (Apple's MIDI Processor) so hosts list it in the MIDI-effect slot.
-# `midi_input` / `midi_output` default to true for this category, and
-# AAX pins it to the MIDI-effect category regardless of `aax_category`.
-category = "midi"
+# Audio effect with a stereo passthrough that also monitors + forwards
+# MIDI (AU `aumf` MusicEffect). The audio I/O lets it load as an insert
+# in hosts that don't host MIDI-only plug-ins (Ableton, Reaper); a pure
+# MIDI processor (`category = "midi"` -> `aumi`) is invisible there.
+category = "effect"
+midi_input = true
+midi_output = true
 fourcc = "TMin"
 au3_subtype = "TMi3"
-au_tag = "MIDI"
+au_tag = "Effects"
+vst3_subcategory = "Tools"
 au3_name = "Truce MIDI Inspector (AUv3)"
 windows_icon = "static/truce-minimal.ico"
 macos_icon = "static/truce-minimal.icns"
