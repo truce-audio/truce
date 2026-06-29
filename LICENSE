@@ -1,27 +1,237 @@
-truce License
-=============
+The Truce License
+Version 1.0
 
-truce is dual-licensed under either of:
+This is the license for truce. It is a permissive license (MIT or
+Apache-2.0, your choice) with one narrow restriction that applies only
+if you redistribute truce itself as a commercial framework, or run it
+as a commercial service, for other developers. That restriction is the
+"Truce Framework Rider" in Section 2.
 
-  * Apache License, Version 2.0  (full text in LICENSE-APACHE,
-    also at <https://www.apache.org/licenses/LICENSE-2.0>)
 
-  * MIT License                  (full text in LICENSE-MIT,
-    also at <https://opensource.org/licenses/MIT>)
+PLAIN-LANGUAGE SUMMARY (informative; the numbered terms below control)
 
-at your option. The SPDX identifier is `Apache-2.0 OR MIT`. Build,
-ship, and sell **plug-ins, hosts, end-user audio software, and
-internal SDKs** under either license — no further permission, fee,
-splash screen, or revenue cap.
+  If you are building audio plug-ins, plug-in suites, or an internal
+  SDK with truce, this license is effectively just MIT / Apache-2.0.
+  Build it, ship it, sell it - no permission, no fee, no splash screen,
+  no revenue cap, no strings. Most users never need to read past this
+  summary.
 
-Additional terms apply if you intend to redistribute truce **as a
-commercial audio-plug-in framework** offered to third-party plug-in
-developers. See ADDITIONAL_TERMS.md for the boundary, the exemption
-for free / open-source frameworks, and the request procedure. Those
-terms do not affect the standard dual MIT / Apache-2.0 grant above
-for any other use.
+  The single restriction: you need written permission to take truce
+  itself and offer it to other developers as a commercial framework,
+  or to run truce as a commercial hosted service that provides its
+  framework capabilities to other developers. Free and open-source
+  frameworks are exempt. See Section 2.
 
-Contributions: unless you explicitly state otherwise, any
-contribution intentionally submitted for inclusion in the work by
-you, as defined in the Apache-2.0 license, shall be dual-licensed
-as above, without any additional terms or conditions.
+
+1.  PERMISSIVE GRANT
+
+  truce is dual-licensed under either of:
+
+    * Apache License, Version 2.0 (full text in LICENSE-APACHE, also at
+      <https://www.apache.org/licenses/LICENSE-2.0>)
+
+    * MIT License (full text in LICENSE-MIT, also at
+      <https://opensource.org/licenses/MIT>)
+
+  at your option, EXCEPT as narrowed by the Truce Framework Rider in
+  Section 2. For every use other than the one described in Section 2,
+  the Apache-2.0 / MIT grant applies with no further conditions, fee,
+  splash screen, or revenue cap. This expressly includes building,
+  shipping, and selling audio plug-ins, plug-in suites, and internal
+  SDKs.
+
+
+2.  THE TRUCE FRAMEWORK RIDER
+
+2.1  Scope - Covered Framework Offerings
+
+  For the purposes of this Section, a product or service is a
+  "Covered Framework Offering" if it is a Commercial Offering (Section
+  2.4) and it is either a Framework Product or a Framework Service.
+
+  A "Framework Product" is a product where both:
+
+    (i)  it is offered, distributed, sublicensed, or otherwise provided
+         to third-party developers as a means of building audio plug-ins
+         (CLAP, VST3, VST2, LV2, AU v2, AU v3, AAX, or successor
+         specifications) or DAW host integrations; and
+
+    (ii) the third-party developer's use of the product results in
+         audio software that the third-party developer distributes to
+         end users or to further developers.
+
+  A "Framework Service" is a service that exposes, hosts, compiles, or
+  operates truce's plug-in-building or audio-processing capabilities,
+  over a network or as a hosted offering, and makes those truce-derived
+  capabilities available to third-party developers as a means of
+  building, packaging, running, or delivering their own audio plug-ins
+  or host integrations. A service is a Framework Service whether the
+  third-party developer interacts with truce directly or only through
+  an interface the service places in front of it.
+
+2.2  What is not covered
+
+  The following are NOT Covered Framework Offerings, and their
+  distribution and operation are fully covered by the permissive grant
+  in Section 1:
+
+    - any audio plug-in, plug-in suite, analyzer, or validator;
+
+    - any hardware-vendor SDK or runtime that includes truce as an
+      internal implementation detail and does not expose truce as part
+      of its public developer interface;
+
+    - any personal-use scripting layer, prototyping kit, or research
+      library;
+
+    - any wrapper or helper library targeting a specific DSP technique,
+      GUI backend, or external dependency, even if useful to other
+      plug-in authors as a transitive dependency;
+
+    - any service whose users are end users of audio software rather
+      than developers building their own audio plug-ins or host
+      integrations, even where truce performs audio processing inside
+      that service.
+
+  A Framework License (Section 2.5), granted only by written permission
+  from the Licensor, is required to operate or distribute a Covered
+  Framework Offering. Free, OSI-licensed, non-commercial framework
+  products and services are exempt - see Section 2.3.
+
+2.3  Exemption - free, open-source frameworks
+
+  The permission requirement in Section 2.1 does NOT apply to a
+  Framework Product or Framework Service that simultaneously satisfies
+  all of the following for the entire period of its distribution or
+  operation:
+
+    (a) Its complete source code is published and made freely
+        accessible under an OSI-approved open-source license.
+        "OSI-approved" means a license appearing on the Open Source
+        Initiative's approved-licenses list at
+        <https://opensource.org/licenses> at the time of distribution.
+
+    (b) It is offered to its third-party developer users free of
+        charge. Receiving voluntary donations, patronage (e.g. GitHub
+        Sponsors, Open Collective, Patreon), or research / hobbyist
+        grants is permitted under this exemption provided no
+        contributor receives those funds as consideration for use of
+        the framework.
+
+    (c) It is not a Commercial Offering.
+
+  Frameworks meeting (a)-(c) are covered by the permissive grant in
+  Section 1 - no separate permission required. Authors of such
+  frameworks are encouraged (but not required) to notify the Licensor
+  and may be listed in the project's ecosystem documentation.
+
+  If a framework subsequently becomes a Commercial Offering, the
+  exemption ceases to apply from the date the Commercial Offering
+  begins; continued distribution or operation from that date requires a
+  written Framework License under Section 2.5. Audio software already
+  built under the prior exemption is unaffected.
+
+2.4  Commercial Offering
+
+  A "Commercial Offering" means any product, service, or arrangement
+  that:
+
+    (i)   requires payment, subscription, license fee, royalty, or
+          other monetary consideration for access to, use of,
+          modification of, or distribution of the framework or its
+          functionality;
+
+    (ii)  is dual-licensed by its publisher under commercial terms in
+          parallel with the open-source license referenced in Section
+          2.3(a);
+
+    (iii) is bundled with, or used to gate access to, a paid product,
+          paid support contract, paid hosting service, paid training,
+          paid certification, or paid consulting offering where the
+          framework itself (rather than the paying customer's own audio
+          software produced with the framework) is the primary value
+          being sold; or
+
+    (iv)  is offered to the public under any other arrangement whose
+          principal purpose is commercial advantage or monetary
+          compensation to the framework's publisher or operator.
+
+2.5  Framework License grants
+
+  The Licensor is under no obligation to grant a Framework License.
+  When granted, the Licensor may impose any terms (including but not
+  limited to attribution, contribution-back, scope limits, financial
+  terms, revocation conditions, and time limits) as a condition of the
+  grant. Past grants do not bind future decisions.
+
+  Requests should be sent to `framework-licensing@truce.audio` (or
+  initiated as a private discussion on the truce-audio GitHub
+  organization, with the maintainers tagged). A well-formed request
+  describes:
+
+    (a) the product or service being built, its developer audience, and
+        what that audience receives from it;
+
+    (b) the role truce plays inside it - core, one backend among
+        several, internal implementation detail, or otherwise;
+
+    (c) the distribution or commercialization model under which it
+        reaches its third-party developers; and
+
+    (d) the proposed terms of the requested Framework License,
+        including any attribution, time, scope, or financial terms the
+        requester is willing to accept.
+
+  The Licensor will acknowledge any well-formed request within two to
+  four weeks of receipt. Acknowledgement is not a grant. The Licensor
+  reserves the right to deny a request without detailed reasoning.
+
+  If you are unsure whether your product or service is a Covered
+  Framework Offering, or whether the Section 2.3 exemption applies,
+  contact the Licensor before shipping. Ambiguities in the boundary
+  between the permissive grant and this Rider are to be resolved in
+  favor of the permissive grant unless the use is plainly a Covered
+  Framework Offering without satisfying the Section 2.3 exemption.
+
+
+3.  TRADEMARKS
+
+  The names "truce", "Truce", "truce.audio", any associated logos, and
+  any successor identifiers are unregistered trademarks of the Licensor.
+  This license grants no license to these trademarks; the Apache-2.0
+  trademark non-grant clause (Section 6 of Apache-2.0) likewise applies
+  and is preserved.
+
+  You may factually refer to the software by its name (e.g. "built with
+  truce") and you may keep the project's name in vendored or forked
+  source code as required by the Apache-2.0 notice-preservation clause.
+  You may not use the name to identify a forked, modified, or competing
+  product, nor to suggest endorsement or sponsorship by the Licensor.
+
+
+4.  CONTRIBUTIONS
+
+  Unless you explicitly state otherwise, any contribution intentionally
+  submitted for inclusion in the work by you, as defined in the
+  Apache-2.0 license, is submitted under this Truce License (inbound =
+  outbound): the permissive grant in Section 1 together with the Truce
+  Framework Rider in Section 2, without any additional terms or
+  conditions.
+
+
+5.  DEFINITIONS
+
+  "Licensor" means the truce project maintainers, acting through the
+  contact channels listed in the project README. Where a Framework
+  License grant is required under Section 2, the grant must be in
+  writing from a maintainer with authority to bind the project.
+
+  "Framework Product", "Framework Service", and "Covered Framework
+  Offering" are defined in Section 2.1. "Commercial Offering" is
+  defined in Section 2.4.
+
+  "You" and "Your" have the meanings assigned in the Apache-2.0 license.
+
+  Apache-2.0 terms otherwise govern interpretation where this license
+  references Apache-2.0 mechanics. The SPDX identifier for this license
+  is `LicenseRef-TruceLicense-1.0`.

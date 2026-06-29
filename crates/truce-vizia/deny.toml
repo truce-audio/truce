@@ -28,6 +28,9 @@ allow = [
     "Unicode-3.0",
     "Unlicense",
     "Zlib",
+    # truce's own crates (truce-core / -params / -font / -gui-utils):
+    # dual MIT/Apache plus the framework rider, as a custom SPDX id.
+    "LicenseRef-TruceLicense-1.0",
 ]
 
 [bans]

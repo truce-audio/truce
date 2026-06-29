@@ -13,6 +13,10 @@
 # bumps. Tracked here so a *new* advisory still fails the gate.
 ignore = [
     "RUSTSEC-2024-0436", # paste - unmaintained (proc-macro, deep transitive)
+    # ttf-parser - unmaintained, no vulnerability and no upgrade exists
+    # (the crate is abandoned). Rides in via fontdue <- truce-gpu; the
+    # font stack would have to move to skrifa to drop it.
+    "RUSTSEC-2026-0192",
 ]
 
 [licenses]
@@ -41,6 +45,9 @@ allow = [
     # slint is tri-licensed (GPL-3.0 OR royalty-free OR commercial); we
     # consume it under the royalty-free terms, so GPL-3.0 stays out.
     "LicenseRef-Slint-Royalty-free-2.0",
+    # truce's own crates: the dual MIT/Apache grant plus the framework
+    # rider, carried as a custom SPDX identifier (see LICENSE).
+    "LicenseRef-TruceLicense-1.0",
 ]
 
 [bans]

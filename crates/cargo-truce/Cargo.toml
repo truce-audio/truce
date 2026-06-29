@@ -2,12 +2,9 @@
 name = "cargo-truce"
 version.workspace = true
 edition = "2024"
-# Same dual-license shape as the workspace - standard SPDX
-# (Apache-2.0 OR MIT) so enterprise compliance tooling auto-approves.
-# Framework License carve-out for redistribution as a competing
-# build tool is documented in ADDITIONAL_TERMS.md at the workspace
-# root.
-license = "Apache-2.0 OR MIT"
+# The Truce License (LicenseRef-TruceLicense-1.0), same as the
+# workspace - dual Apache-2.0 / MIT plus the framework rider in LICENSE.
+license.workspace = true
 description = "Build tool for truce audio plugins (CLAP, VST3, VST2, LV2, AU v2, AU v3, AAX, and a standalone host binary)"
 repository = "https://github.com/truce-audio/truce"
 keywords = ["audio", "plugin", "vst", "clap", "midi"]

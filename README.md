@@ -264,29 +264,31 @@ informed countless decisions here.
 
 ## License
 
-**Dual-licensed under [Apache-2.0](LICENSE-APACHE) or
-[MIT](LICENSE-MIT) at your option.** The SPDX identifier is
-`Apache-2.0 OR MIT` — pick whichever fits your project. Build,
-ship, and sell plug-ins, hosts, end-user audio software, and
-internal SDKs under either license. No fees, no splash screen, no
-revenue cap, no email needed.
+truce is licensed under **The Truce License, Version 1.0**
+([`LICENSE`](LICENSE), SPDX `LicenseRef-TruceLicense-1.0`), a dual
+[Apache-2.0](LICENSE-APACHE) / [MIT](LICENSE-MIT) permissive grant
+with one narrow rider.
 
-Contributions are dual-licensed on the same terms unless you
-explicitly state otherwise (standard Apache-2.0 §5 inbound = outbound).
+**For plug-in authors it is effectively just MIT / Apache-2.0.**
+Build, ship, and sell plug-ins, plug-in suites, and internal SDKs
+under either license - no fees, no splash screen, no revenue cap, no
+email needed. Most users never need to read past this paragraph.
 
-### Additional terms — commercial frameworks
+Contributions are inbound = outbound under the Truce License unless
+you explicitly state otherwise.
 
-One carve-out, in [`ADDITIONAL_TERMS.md`](ADDITIONAL_TERMS.md):
-if you're using truce as the core of a **commercial** plug-in
-framework that you redistribute to other developers — anything sold,
-subscription-gated, dual-licensed commercially, or bundled into a
-paid offering — a separate Framework License is required, granted
-by permission. Free, OSI-licensed framework projects on top of
-truce are exempt and need no separate permission. Plug-in / host /
-end-user-app authors and internal-SDK use are unaffected.
+### The one rider — commercial frameworks and services
 
-See [`ADDITIONAL_TERMS.md`](ADDITIONAL_TERMS.md) for the precise
-boundary, the exemption criteria, and the request procedure.
+You need a Framework License, granted by permission, only to
+redistribute truce **as a commercial framework** to other developers,
+or to run it **as a commercial service** that provides its framework
+capabilities to other developers - anything sold, subscription-gated,
+dual-licensed commercially, or bundled into a paid offering. Free,
+OSI-licensed framework projects on top of truce are exempt. Plug-in
+authors and internal-SDK use are unaffected.
+
+See [`LICENSE`](LICENSE) Section 2 for the precise boundary, the
+exemption criteria, and the request procedure.
 
 ## Contact
 
