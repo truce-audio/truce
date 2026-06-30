@@ -6,6 +6,7 @@ Notable changes per release.
 
 - **Fixed iOS AU v3 packaging bugs for App Store submission.** `cargo truce package --ios` corrects code signing, framework embedding, entitlements, and the required Info.plist keys App Store Connect upload checks.
 - **Fixed `TransportInfo.position_samples` stuck at 0 during playback.** The VST3 shim read the host's `projectTimeSamples` (an `int64`) as a `double`, so any realistic sample count decoded to ~0; it's read as an integer now. CLAP, which exposes no sample position, derives it from the seconds timeline instead of always reporting 0.
+- **Vizia editors honor the host content-scale factor.** The backend ignored `set_scale_factor` and fell back to vizia's OS-detected scale, which can disagree with the host's on an embedded view (notably Windows DPI) and render the editor oversized and clipped. It now pins vizia's scale policy to the host's reported scale; the VST3 wrapper also replays a scale that arrived before the editor existed.
 
 ## 1.0.1
 
