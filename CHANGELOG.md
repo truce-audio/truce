@@ -5,6 +5,7 @@ Notable changes per release.
 ## 1.0.2
 
 - **Fixed iOS AU v3 packaging bugs for App Store submission.** `cargo truce package --ios` corrects code signing, framework embedding, entitlements, and the required Info.plist keys App Store Connect upload checks.
+- **Fixed `TransportInfo.position_samples` stuck at 0 during playback.** The VST3 shim read the host's `projectTimeSamples` (an `int64`) as a `double`, so any realistic sample count decoded to ~0; it's read as an integer now. CLAP, which exposes no sample position, derives it from the seconds timeline instead of always reporting 0.
 
 ## 1.0.1
 

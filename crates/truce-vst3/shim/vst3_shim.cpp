@@ -301,9 +301,13 @@ struct AudioBusBuffers {
 struct Vst3ProcessContext {
     uint32 state;                 // combination of StatesAndFlags
     double sampleRate;
-    double projectTimeSamples;    // project time in samples
-    double systemTime;            // system time in nanoseconds
-    double continousTimeSamples;
+    // These three are `TSamples` (int64) in the VST3 SDK, NOT double.
+    // Same width, so the later doubles stay aligned - but reading
+    // projectTimeSamples as a double reinterprets the integer's bits
+    // (a small sample count decodes to a ~0 denormal).
+    int64_t projectTimeSamples;   // project time in samples
+    int64_t systemTime;           // system time in nanoseconds
+    int64_t continousTimeSamples;
     double projectTimeMusic;      // musical position in quarter notes
     double barPositionMusic;      // last bar start position in quarter notes
     double cycleStartMusic;       // cycle start in quarter notes
@@ -681,7 +685,7 @@ public:
             transport.tempo = (pc->state & kTempoValid) ? pc->tempo : 120.0;
             transport.time_sig_num = (pc->state & kTimeSigValid) ? pc->timeSigNumerator : 4;
             transport.time_sig_den = (pc->state & kTimeSigValid) ? pc->timeSigDenominator : 4;
-            transport.position_samples = pc->projectTimeSamples;
+            transport.position_samples = (double)pc->projectTimeSamples;
             transport.position_beats = (pc->state & kProjectTimeMusicValid) ? pc->projectTimeMusic : 0.0;
             transport.bar_start_beats = (pc->state & kBarPositionValid) ? pc->barPositionMusic : 0.0;
             transport.cycle_start_beats = (pc->state & kCycleValid) ? pc->cycleStartMusic : 0.0;
