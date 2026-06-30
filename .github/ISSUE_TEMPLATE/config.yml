@@ -1,0 +1,10 @@
+# Force one of the structured templates instead of an empty issue box -
+# the low-effort blank issues are what these forms exist to prevent.
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://truce.audio/docs/
+    about: Guides, format and feature reference, and examples. Check here before filing.
+  - name: API reference (rustdoc)
+    url: https://truce-audio.github.io/truce/
+    about: Type-level docs for the truce crates.

@@ -1,0 +1,58 @@
+name: Feature request
+description: Suggest a capability or improvement for truce or the cargo truce CLI.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Lead with the problem you are trying to solve, not just the solution. It helps us
+        find the best fit (and occasionally there is already a way to do it).
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight
+      options:
+        - label: I searched existing issues for the same request.
+          required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: >
+        The use case or problem behind the request. Concrete examples beat abstract asks -
+        e.g. "I want to enable my crate's `fancy-dsp` Cargo feature when building", not
+        "the CLI should support more options".
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What you would like truce to do, if you have something in mind (CLI shape, API surface, behavior).
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives / workarounds
+      description: What you have tried or considered, and why it falls short.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which part of truce does this touch?
+      options:
+        - cargo truce CLI (build / install / package / validate / ...)
+        - A plugin format (CLAP / VST3 / VST2 / LV2 / AU / AAX)
+        - Parameters / state
+        - GUI / editor backend
+        - Presets
+        - Standalone host
+        - Documentation
+        - Other / not sure
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Anything else - prior art in other frameworks, links, constraints.

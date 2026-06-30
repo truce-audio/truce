@@ -1,0 +1,125 @@
+name: Bug report
+description: Something in truce or the cargo truce CLI is broken or behaves incorrectly.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. truce spans many formats, platforms, and hosts, so a few
+        specifics up front (which format, which platform, which host, the version, and a
+        minimal repro) are the difference between an actionable bug and a guessing game.
+        Please fill them in.
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight
+      options:
+        - label: I searched existing issues and this is not a duplicate.
+          required: true
+        - label: I am on a recent version and the bug still reproduces.
+          required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the actual behavior. What did you see go wrong?
+      placeholder: The editor renders at roughly 2x the host-allocated size and the content is clipped.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: >
+        A minimal, ordered list. A link to a minimal repro crate or branch is the single
+        biggest factor in getting a fix quickly - please include one if you can.
+      placeholder: |
+        1. Build the vizia gain example: cargo truce install --vst3
+        2. Load it in <host> on a HiDPI display
+        3. Observe that the editor overflows the plugin window
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What did you expect to happen instead?
+    validations:
+      required: true
+  - type: checkboxes
+    id: formats
+    attributes:
+      label: Plugin format(s) affected
+      options:
+        - label: CLAP
+        - label: VST3
+        - label: VST2
+        - label: LV2
+        - label: AU v2
+        - label: AU v3
+        - label: AAX
+        - label: Standalone
+        - label: Not format-specific / N/A
+  - type: checkboxes
+    id: platforms
+    attributes:
+      label: Platform(s) affected
+      options:
+        - label: macOS
+        - label: Windows
+        - label: Linux
+        - label: iOS
+  - type: input
+    id: host
+    attributes:
+      label: Host / DAW (and version)
+      description: >
+        The host where it reproduces - many bugs are host-specific (transport, DPI,
+        threading, validation). Put "standalone" or "N/A" if it is not host-related
+        (e.g. a CLI or build bug).
+      placeholder: REAPER 7.20 / Ableton Live 12 / Bitwig 5.2 / standalone
+    validations:
+      required: true
+  - type: dropdown
+    id: gui
+    attributes:
+      label: GUI backend
+      description: Only if the bug involves the editor / GUI.
+      options:
+        - Not GUI-related
+        - Built-in
+        - egui
+        - iced
+        - Vizia
+        - Slint
+        - GPU (wgpu)
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: truce version
+      description: Workspace version or git revision (run `cargo truce --version`, or check Cargo.toml).
+      placeholder: "1.0.2 (or a commit SHA)"
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: OS and Rust version
+      placeholder: macOS 14.5 (arm64), rustc 1.92.0
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / output
+      description: >
+        Relevant `cargo truce` output, validator (auval / pluginval / clap-validator)
+        output, panic backtraces, or host logs. Paste as text rather than a screenshot
+        so it stays searchable.
+      render: shell
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Anything else - screenshots for visual bugs, related issues, things you have already ruled out.
