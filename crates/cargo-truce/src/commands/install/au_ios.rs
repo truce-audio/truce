@@ -254,7 +254,7 @@ pub(crate) fn build_bundle(
 
     eprintln!("==> [3/5] AUExt.appex (swiftc)");
     let appex_dir = out.join("build/AUExt.appex");
-    fs_ctx::create_dir_all(appex_dir.join("Frameworks"))?;
+    fs_ctx::create_dir_all(&appex_dir)?;
 
     let au_type = p.resolved_au_type();
     let au_sub = p.resolved_fourcc();
@@ -355,12 +355,10 @@ pub(crate) fn build_bundle(
     if !appex_status.success() {
         return Err(format!("swiftc appex exited {appex_status}").into());
     }
-    crate::copy_dir_recursive(
-        &fw_dir,
-        &appex_dir
-            .join("Frameworks")
-            .join(format!("{fw_name}.framework")),
-    )?;
+    // The appex does not embed its own copy of the framework: it links
+    // the container's via `-rpath @loader_path/../../Frameworks`. App
+    // Store rejects a `Frameworks/` dir inside an app extension (and the
+    // duplicate framework collides on CFBundleIdentifier).
 
     eprintln!("==> [4/5] {app_file}.app (swiftc)");
     let app_dir = out.join(format!("{app_file}.app"));
@@ -483,18 +481,9 @@ pub(crate) fn build_bundle(
     //      array in the Info.plist. Works on the simulator + ad-hoc
     //      path; App Store ingestion will reject.
     let icon_plist_additions = embed_app_icon(p, root, &app_dir, target, &min_ios)?;
-    if !icon_plist_additions.is_empty() {
-        // Splice the icon-related plist keys into the
-        // already-written `Info.plist`. Simpler than re-running
-        // `app_info_plist` with the additions because the
-        // helper's `format!` template doesn't carry the keys
-        // unconditionally - most plugins don't supply an icon.
-        let info_path = app_dir.join("Info.plist");
-        let raw = std::fs::read_to_string(&info_path)
-            .map_err(|e| format!("read {}: {e}", info_path.display()))?;
-        let patched = raw.replacen("</dict>", &format!("{icon_plist_additions}</dict>"), 1);
-        fs_ctx::write(&info_path, patched)?;
-    }
+    // Splice the icon keys into the already-written Info.plist; the
+    // template omits them since most plugins supply no icon.
+    splice_plist_keys(&app_dir.join("Info.plist"), &icon_plist_additions)?;
 
     eprintln!("==> [5/5] assemble + codesign {app_file}.app");
     crate::copy_dir_recursive(&appex_dir, &app_dir.join("PlugIns/AUExt.appex"))?;
@@ -504,6 +493,27 @@ pub(crate) fn build_bundle(
             .join("Frameworks")
             .join(format!("{fw_name}.framework")),
     )?;
+
+    // App Store ingestion requires the DT* / build-machine Info.plist
+    // keys Xcode injects automatically; truce builds with swiftc, so
+    // splice them into every bundle. Device-only: simulator builds
+    // never reach the store.
+    if matches!(target, IosTarget::Device) {
+        let meta = ios_build_metadata(target)?;
+        let appex = app_dir.join("PlugIns/AUExt.appex");
+        let app_fw = app_dir
+            .join("Frameworks")
+            .join(format!("{fw_name}.framework"));
+        splice_plist_keys(&app_dir.join("Info.plist"), &dt_plist_keys(&meta, true))?;
+        splice_plist_keys(&appex.join("Info.plist"), &dt_plist_keys(&meta, true))?;
+        splice_plist_keys(&app_fw.join("Info.plist"), &dt_plist_keys(&meta, false))?;
+        // App Store requires arm64 in UIRequiredDeviceCapabilities for a
+        // 64-bit binary (app + appex). UIRequiresFullScreen waives the
+        // "declare all four orientations for iPad multitasking" rule for
+        // the utility container.
+        splice_plist_keys(&app_dir.join("Info.plist"), APP_STORE_APP_KEYS)?;
+        splice_plist_keys(&appex.join("Info.plist"), ARM64_CAPABILITY_KEY)?;
+    }
 
     // Entitlements: written into the bundle stage dir, passed to
     // codesign via `--entitlements`. App Group (when configured)
@@ -527,16 +537,39 @@ pub(crate) fn build_bundle(
         None
     };
     let team_for_app = team_id.as_deref();
+    let identity = signing_identity_for(target);
+    // get-task-allow in the signed entitlements must exactly match the
+    // provisioning profile, or App Store ingestion rejects them. Read
+    // it from the profile (App Store profiles say false, development
+    // true) rather than guessing from the identity name - distribution
+    // certs are named "Apple Distribution" or "iPhone Distribution".
+    // Simulator ad-hoc builds have no profile; keep it for debugging.
+    let debuggable = match target {
+        IosTarget::Device => crate::ios_provisioning_profile()
+            .as_deref()
+            .and_then(profile_get_task_allow)
+            .unwrap_or(true),
+        IosTarget::Simulator => true,
+    };
     fs_ctx::write(
         &app_ent,
-        render_entitlements_plist(p.resolved_ios_app_group(), &app_bundle_id, team_for_app),
+        render_entitlements_plist(
+            p.resolved_ios_app_group(),
+            &app_bundle_id,
+            team_for_app,
+            debuggable,
+        ),
     )?;
     fs_ctx::write(
         &appex_ent,
-        render_entitlements_plist(p.resolved_ios_app_group(), &appex_bundle_id, team_for_app),
+        render_entitlements_plist(
+            p.resolved_ios_app_group(),
+            &appex_bundle_id,
+            team_for_app,
+            debuggable,
+        ),
     )?;
 
-    let identity = signing_identity_for(target);
     let appex_prof_env = crate::ios_appex_provisioning_profile();
     let mobileprovision = if matches!(target, IosTarget::Device) {
         let app_prof =
@@ -557,6 +590,15 @@ pub(crate) fn build_bundle(
         //   2. TRUCE_IOS_APPEX_PROVISIONING_PROFILE is set to a
         //      separate profile bound to the `<bundle>.AUExt` ID.
         let appex_prof = appex_prof_env.as_ref().unwrap_or(&app_prof);
+        // Fail fast when a profile's App ID doesn't cover the bundle it
+        // signs (commonly the container / appex profiles swapped). App
+        // Store ingestion only reports this after a full upload.
+        verify_profile_covers(&app_prof, &app_bundle_id, "TRUCE_IOS_PROVISIONING_PROFILE")?;
+        verify_profile_covers(
+            appex_prof,
+            &appex_bundle_id,
+            "TRUCE_IOS_APPEX_PROVISIONING_PROFILE",
+        )?;
         fs_ctx::copy(&app_prof, app_dir.join("embedded.mobileprovision"))?;
         fs_ctx::copy(
             appex_prof,
@@ -567,16 +609,8 @@ pub(crate) fn build_bundle(
         None
     };
 
-    // Inside-out: each nested framework must be signed before the
-    // bundle embedding it (codesign won't recurse). The appex has its
-    // own framework copy, separate from the container's.
-    codesign(
-        &app_dir
-            .join("PlugIns/AUExt.appex/Frameworks")
-            .join(format!("{fw_name}.framework")),
-        &identity,
-        None,
-    )?;
+    // Inside-out: the framework (embedded once, in the container) is
+    // signed before the appex and the app that load it via @rpath.
     codesign(
         &app_dir.join("PlugIns/AUExt.appex"),
         &identity,
@@ -1053,6 +1087,88 @@ fn extract_team_id_from_profile(profile: &Path) -> Option<String> {
     }
 }
 
+/// The `get-task-allow` value the profile grants (`true` for
+/// development, `false` for App Store / distribution). The signed
+/// entitlement must match it. `None` if the profile can't be decoded.
+fn profile_get_task_allow(profile: &Path) -> Option<bool> {
+    let out = Command::new("security")
+        .args(["cms", "-D", "-i"])
+        .arg(profile)
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    scan_get_task_allow(&String::from_utf8_lossy(&out.stdout))
+}
+
+/// The `application-identifier` (`<prefix>.<bundle>` or
+/// `<prefix>.*`) a provisioning profile grants. `None` if the profile
+/// can't be decoded.
+fn profile_application_id(profile: &Path) -> Option<String> {
+    let out = Command::new("security")
+        .args(["cms", "-D", "-i"])
+        .arg(profile)
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let xml = String::from_utf8_lossy(&out.stdout);
+    let after = &xml[xml.find("<key>application-identifier</key>")?..];
+    let s_start = after.find("<string>")? + "<string>".len();
+    let s_end = after[s_start..].find("</string>")?;
+    let id = after[s_start..s_start + s_end].to_string();
+    (!id.is_empty()).then_some(id)
+}
+
+/// Whether a profile's granted App ID covers `bundle_id`. Wildcard
+/// profiles (`<prefix>.*`) cover any matching bundle; concrete ones
+/// must match exactly. The team / app-id prefix is ignored - only the
+/// bundle portion after the first dot matters.
+fn profile_covers_bundle(app_id: &str, bundle_id: &str) -> bool {
+    let Some((_, suffix)) = app_id.split_once('.') else {
+        return false;
+    };
+    match suffix.strip_suffix('*') {
+        Some(prefix) => bundle_id.starts_with(prefix),
+        None => suffix == bundle_id,
+    }
+}
+
+/// Error if `profile`'s App ID doesn't cover `bundle_id`. Skips
+/// silently when the profile can't be decoded (validation, not a hard
+/// requirement).
+fn verify_profile_covers(profile: &Path, bundle_id: &str, env_label: &str) -> Res {
+    let Some(app_id) = profile_application_id(profile) else {
+        return Ok(());
+    };
+    if profile_covers_bundle(&app_id, bundle_id) {
+        return Ok(());
+    }
+    Err(format!(
+        "{env_label} grants App ID `{app_id}`, which does not cover the `{bundle_id}` bundle it \
+         signs. Point it at a provisioning profile for `{bundle_id}`. The container and appex \
+         profiles are commonly swapped: the container takes the base ID, the appex the `.AUExt` ID."
+    )
+    .into())
+}
+
+/// Read the `get-task-allow` boolean out of a decoded provisioning
+/// profile's XML. The value tag (`<true/>` / `<false/>`) immediately
+/// follows the key, so take whichever appears first after it.
+fn scan_get_task_allow(xml: &str) -> Option<bool> {
+    const KEY: &str = "<key>get-task-allow</key>";
+    let after = &xml[xml.find(KEY)? + KEY.len()..];
+    let t = after.find("<true/>").unwrap_or(usize::MAX);
+    let f = after.find("<false/>").unwrap_or(usize::MAX);
+    if t == usize::MAX && f == usize::MAX {
+        None
+    } else {
+        Some(t < f)
+    }
+}
+
 fn cargo_build_ios(crate_name: &str, target: IosTarget) -> Res {
     let status = Command::new("cargo")
         .args([
@@ -1244,6 +1360,142 @@ fn app_info_plist(
     )
 }
 
+/// Xcode / SDK build metadata App Store Connect ingestion requires in
+/// every bundle's Info.plist. Xcode injects these automatically; truce
+/// builds with `swiftc`, so it queries the active toolchain.
+struct BuildMeta {
+    platform_name: String,
+    platform_version: String,
+    sdk_name: String,
+    sdk_build: String,
+    xcode: String,
+    xcode_build: String,
+    machine_build: String,
+}
+
+fn ios_build_metadata(target: IosTarget) -> Result<BuildMeta, crate::CargoTruceError> {
+    let sdk = target.sdk_name();
+    let platform_version = run_capture("xcrun", &["--sdk", sdk, "--show-sdk-version"])?
+        .trim()
+        .to_string();
+    let sdk_build = run_capture("xcrun", &["--sdk", sdk, "--show-sdk-build-version"])?
+        .trim()
+        .to_string();
+    // `xcodebuild -version` prints "Xcode 16.2\nBuild version 16C5032a".
+    let version_out = run_capture("xcodebuild", &["-version"])?;
+    let mut xcode = String::new();
+    let mut xcode_build = String::new();
+    for line in version_out.lines() {
+        if let Some(v) = line.strip_prefix("Xcode ") {
+            xcode = format_dt_xcode(v.trim());
+        } else if let Some(b) = line.strip_prefix("Build version ") {
+            xcode_build = b.trim().to_string();
+        }
+    }
+    let machine_build = run_capture("sw_vers", &["-buildVersion"])?
+        .trim()
+        .to_string();
+    Ok(BuildMeta {
+        platform_name: sdk.to_string(),
+        sdk_name: format!("{sdk}{platform_version}"),
+        platform_version,
+        sdk_build,
+        xcode,
+        xcode_build,
+        machine_build,
+    })
+}
+
+/// Xcode encodes its version as zero-padded major + minor + patch:
+/// `16.2` -> `1620`, `9.4.1` -> `0941`.
+fn format_dt_xcode(v: &str) -> String {
+    let mut parts = v.split('.').map(|s| s.parse::<u32>().unwrap_or(0));
+    let major = parts.next().unwrap_or(0);
+    let minor = parts.next().unwrap_or(0);
+    let patch = parts.next().unwrap_or(0);
+    format!("{major:02}{minor}{patch}")
+}
+
+/// The `DT*` / build-machine keys spliced into a bundle's Info.plist.
+/// `device_family` adds `UIDeviceFamily` (iPhone + iPad), carried by
+/// the app and appex but not the framework slices.
+fn dt_plist_keys(m: &BuildMeta, device_family: bool) -> String {
+    let mut s = String::new();
+    let _ = writeln!(
+        s,
+        "    <key>DTPlatformName</key><string>{}</string>",
+        m.platform_name
+    );
+    let _ = writeln!(
+        s,
+        "    <key>DTPlatformVersion</key><string>{}</string>",
+        m.platform_version
+    );
+    let _ = writeln!(
+        s,
+        "    <key>DTPlatformBuild</key><string>{}</string>",
+        m.sdk_build
+    );
+    let _ = writeln!(s, "    <key>DTSDKName</key><string>{}</string>", m.sdk_name);
+    let _ = writeln!(
+        s,
+        "    <key>DTSDKBuild</key><string>{}</string>",
+        m.sdk_build
+    );
+    let _ = writeln!(s, "    <key>DTXcode</key><string>{}</string>", m.xcode);
+    let _ = writeln!(
+        s,
+        "    <key>DTXcodeBuild</key><string>{}</string>",
+        m.xcode_build
+    );
+    let _ = writeln!(
+        s,
+        "    <key>DTCompiler</key><string>com.apple.compilers.llvm.clang.1_0</string>"
+    );
+    let _ = writeln!(
+        s,
+        "    <key>BuildMachineOSBuild</key><string>{}</string>",
+        m.machine_build
+    );
+    if device_family {
+        let _ = writeln!(
+            s,
+            "    <key>UIDeviceFamily</key><array><integer>1</integer><integer>2</integer></array>"
+        );
+    }
+    s
+}
+
+/// App Store Info.plist keys for the container app: arm64 device
+/// capability (required for 64-bit binaries) plus full-screen, which
+/// waives the all-orientations iPad-multitasking requirement.
+const APP_STORE_APP_KEYS: &str = "    <key>UIRequiredDeviceCapabilities</key><array><string>arm64</string></array>\n    <key>UIRequiresFullScreen</key><true/>\n";
+
+/// arm64 device capability for the appex (same 64-bit requirement, but
+/// extensions don't carry orientation / full-screen keys).
+const ARM64_CAPABILITY_KEY: &str =
+    "    <key>UIRequiredDeviceCapabilities</key><array><string>arm64</string></array>\n";
+
+/// Splice extra `<key>`/value lines into an already-written
+/// Info.plist, just before the root dict's closing `</dict>`. No-op
+/// for empty additions.
+fn splice_plist_keys(path: &Path, additions: &str) -> Res {
+    if additions.is_empty() {
+        return Ok(());
+    }
+    let raw = std::fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))?;
+    // Insert before the LAST `</dict>` (the root dict's close). Nested
+    // dicts - `CFBundleIcons` in the app, `NSExtension` in the appex,
+    // and any earlier splice - mean the first `</dict>` is not the
+    // root, so the keys must land before the final one to be top-level.
+    let patched = match raw.rfind("</dict>") {
+        Some(pos) => format!("{}{additions}{}", &raw[..pos], &raw[pos..]),
+        None => return Err(format!("no </dict> in {}", path.display()).into()),
+    };
+    fs_ctx::write(path, patched)?;
+    Ok(())
+}
+
 /// Build the `<plist>` content for an `.entitlements` file.
 ///
 /// For device installs (`team_id_for_app_id.is_some()`), iOS
@@ -1258,6 +1510,7 @@ fn render_entitlements_plist(
     app_group: Option<&str>,
     bundle_id: &str,
     team_id_for_app_id: Option<&str>,
+    debuggable: bool,
 ) -> String {
     let mut keys = String::new();
     // `com.apple.security.app-sandbox` and `network.client` are
@@ -1274,17 +1527,17 @@ fn render_entitlements_plist(
         keys.push_str("    </array>\n");
     }
     if let Some(team) = team_id_for_app_id {
-        // Development builds need `get-task-allow` so lldb / `os.log`
-        // public-string capture / Instruments can attach. Production
-        // (Apple Distribution) builds must not carry it; a release
-        // path that signs with a Distribution identity needs to gate
-        // this on the identity kind before shipping.
         let _ = writeln!(keys, "    <key>application-identifier</key>");
         let _ = writeln!(keys, "    <string>{team}.{bundle_id}</string>");
         let _ = writeln!(keys, "    <key>com.apple.developer.team-identifier</key>");
         let _ = writeln!(keys, "    <string>{team}</string>");
-        let _ = writeln!(keys, "    <key>get-task-allow</key>");
-        let _ = writeln!(keys, "    <true/>");
+        if debuggable {
+            // Development / ad-hoc builds carry get-task-allow so a
+            // debugger / Instruments can attach; distribution builds
+            // omit it (App Store ingestion rejects a binary claiming it).
+            let _ = writeln!(keys, "    <key>get-task-allow</key>");
+            let _ = writeln!(keys, "    <true/>");
+        }
         let _ = writeln!(keys, "    <key>keychain-access-groups</key>");
         let _ = writeln!(keys, "    <array>");
         let _ = writeln!(keys, "        <string>{team}.{bundle_id}</string>");
@@ -1361,4 +1614,64 @@ fn render_app_main_swift(
         .replace("{vendor_url}", &vendor_url)
         .replace("{ios_scale_editor_to_fit}", bool_token(scale_editor_to_fit))
         .replace("{mute_preview_output}", bool_token(mute_preview_output))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{format_dt_xcode, profile_covers_bundle, scan_get_task_allow, splice_plist_keys};
+
+    #[test]
+    fn profile_coverage_matches_concrete_and_wildcard() {
+        let bundle = "com.truce.fundsp-reverb-worker";
+        // Exact match and wildcards cover; the appex profile does not.
+        assert!(profile_covers_bundle(
+            "45Q47UJ3C7.com.truce.fundsp-reverb-worker",
+            bundle
+        ));
+        assert!(profile_covers_bundle("45Q47UJ3C7.*", bundle));
+        assert!(profile_covers_bundle("45Q47UJ3C7.com.truce.*", bundle));
+        assert!(!profile_covers_bundle(
+            "45Q47UJ3C7.com.truce.fundsp-reverb-worker.AUExt",
+            bundle
+        ));
+        assert!(!profile_covers_bundle("45Q47UJ3C7.com.other.app", bundle));
+    }
+
+    #[test]
+    fn get_task_allow_reads_profile_value() {
+        let dev = "<key>get-task-allow</key>\n\t\t<true/>\n<key>ApplicationIdentifierPrefix</key>";
+        let store = "<key>get-task-allow</key>\n\t\t<false/>";
+        assert_eq!(scan_get_task_allow(dev), Some(true));
+        assert_eq!(scan_get_task_allow(store), Some(false));
+        assert_eq!(scan_get_task_allow("<key>other</key><true/>"), None);
+    }
+
+    #[test]
+    fn dt_xcode_is_zero_padded_major_minor_patch() {
+        assert_eq!(format_dt_xcode("16.2"), "1620");
+        assert_eq!(format_dt_xcode("9.4.1"), "0941");
+        assert_eq!(format_dt_xcode("16"), "1600");
+    }
+
+    #[test]
+    fn splice_lands_at_root_past_nested_dicts() {
+        // App / appex plists nest dicts (CFBundleIcons, NSExtension);
+        // the spliced key must sit at root, not inside a nested dict.
+        let path = std::env::temp_dir().join(format!("truce_splice_{}.plist", std::process::id()));
+        let plist = "<plist>\n<dict>\n    <key>CFBundleIcons</key>\n    <dict>\n        \
+                     <dict>\n        </dict>\n    </dict>\n</dict>\n</plist>\n";
+        std::fs::write(&path, plist).unwrap();
+        splice_plist_keys(
+            &path,
+            "    <key>DTPlatformName</key><string>iphoneos</string>\n",
+        )
+        .unwrap();
+        let out = std::fs::read_to_string(&path).unwrap();
+        let key = out.find("DTPlatformName").unwrap();
+        // The nested CFBundleIcons block precedes the key, and exactly
+        // one `</dict>` (the root) follows it.
+        assert!(key > out.find("CFBundleIcons").unwrap());
+        assert_eq!(out[key..].matches("</dict>").count(), 1);
+        let _ = std::fs::remove_file(&path);
+    }
 }

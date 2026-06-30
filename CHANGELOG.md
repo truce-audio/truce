@@ -4,7 +4,7 @@ Notable changes per release.
 
 ## 1.0.2
 
-- **iOS AU v3 builds pass App Store Connect signing validation.** The AU extension's embedded copy of the plugin framework was left unsigned by the submission certificate, so App Store upload rejected it; `cargo truce package --ios` now signs the appex's nested framework inside-out along with the container's copy.
+- **Fixed iOS AU v3 packaging bugs for App Store submission.** `cargo truce package --ios` corrects code signing, framework embedding, entitlements, and the required Info.plist keys App Store Connect upload checks.
 
 ## 1.0.1
 
