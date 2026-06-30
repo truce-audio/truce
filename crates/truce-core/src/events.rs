@@ -259,6 +259,9 @@ impl TransportInfo {
             time_sig_num: 4,
             time_sig_den: 4,
             position_beats: 4.0,
+            // 4 beats at 120 BPM is 2.0 s = 96000 samples at 48 kHz;
+            // keeps the sample + beat positions consistent in readouts.
+            position_samples: 96_000,
             ..Self::default()
         }
     }
