@@ -510,11 +510,16 @@ unsafe extern "C" fn clap_plugin_on_main_thread<P: PluginExport>(plugin: *const 
 // CLAP transport positions arrive as `i64` fixed-point counts that
 // must be divided into `f64` seconds/beats; the `i64 as f64`
 // narrowing is bounded in practice by song-length (well below 2^52).
-#[allow(clippy::cast_precision_loss)]
-fn build_transport_info(t: &clap_event_transport) -> TransportInfo {
+#[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
+fn build_transport_info(t: &clap_event_transport, sample_rate: f64) -> TransportInfo {
     let flags = t.flags;
     let beats_timeline = flags & CLAP_TRANSPORT_HAS_BEATS_TIMELINE != 0;
     let has_time_sig = flags & CLAP_TRANSPORT_HAS_TIME_SIGNATURE != 0;
+    let position_seconds = if flags & CLAP_TRANSPORT_HAS_SECONDS_TIMELINE != 0 {
+        t.song_pos_seconds as f64 / CLAP_SECTIME_FACTOR as f64
+    } else {
+        0.0
+    };
     TransportInfo {
         playing: flags & CLAP_TRANSPORT_IS_PLAYING != 0,
         recording: flags & CLAP_TRANSPORT_IS_RECORDING != 0,
@@ -529,14 +534,11 @@ fn build_transport_info(t: &clap_event_transport) -> TransportInfo {
         time_sig_num: if has_time_sig { t.tsig_num as u8 } else { 4 },
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         time_sig_den: if has_time_sig { t.tsig_denom as u8 } else { 4 },
-        // CLAP doesn't expose sample-position in transport - tracked
-        // by the plugin's own block cursor when needed.
-        position_samples: 0,
-        position_seconds: if flags & CLAP_TRANSPORT_HAS_SECONDS_TIMELINE != 0 {
-            t.song_pos_seconds as f64 / CLAP_SECTIME_FACTOR as f64
-        } else {
-            0.0
-        },
+        // CLAP transport carries no sample position; derive it from the
+        // seconds timeline (rounded to the nearest sample), the same way
+        // the host computes it. 0 when no seconds timeline is provided.
+        position_samples: (position_seconds * sample_rate).round() as i64,
+        position_seconds,
         position_beats: if beats_timeline {
             t.song_pos_beats as f64 / CLAP_BEATTIME_FACTOR as f64
         } else {
@@ -682,7 +684,10 @@ unsafe fn convert_input_events<P: PluginExport>(
                     let transport = &*header.cast::<clap_event_transport>();
                     data.event_list.push(Event {
                         sample_offset,
-                        body: EventBody::Transport(build_transport_info(transport)),
+                        body: EventBody::Transport(build_transport_info(
+                            transport,
+                            data.sample_rate,
+                        )),
                     });
                 }
                 CLAP_EVENT_MIDI => {
@@ -849,7 +854,7 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
         let transport = if proc.transport.is_null() {
             TransportInfo::default()
         } else {
-            build_transport_info(&*proc.transport)
+            build_transport_info(&*proc.transport, data.sample_rate)
         };
 
         // Build AudioBuffer from CLAP audio buffers.
@@ -2742,4 +2747,32 @@ macro_rules! export_clap {
             };
         }
     };
+}
+
+#[cfg(test)]
+mod transport_tests {
+    use super::{
+        CLAP_SECTIME_FACTOR, CLAP_TRANSPORT_HAS_SECONDS_TIMELINE, build_transport_info,
+        clap_event_transport,
+    };
+
+    #[test]
+    fn position_samples_derived_from_seconds_timeline() {
+        // SAFETY: clap_event_transport is a repr(C) POD; all-zero is a
+        // valid value (no flags set, all positions 0).
+        let mut t: clap_event_transport = unsafe { std::mem::zeroed() };
+        t.flags = CLAP_TRANSPORT_HAS_SECONDS_TIMELINE;
+        // 1.5 seconds, in CLAP's power-of-two fixed point (no float cast).
+        t.song_pos_seconds = CLAP_SECTIME_FACTOR + CLAP_SECTIME_FACTOR / 2;
+        let info = build_transport_info(&t, 48_000.0);
+        assert_eq!(info.position_samples, 72_000); // 1.5 s * 48 kHz
+        assert!((info.position_seconds - 1.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn position_samples_zero_without_seconds_timeline() {
+        // SAFETY: see above - zeroed POD, no seconds-timeline flag.
+        let t: clap_event_transport = unsafe { std::mem::zeroed() };
+        assert_eq!(build_transport_info(&t, 48_000.0).position_samples, 0);
+    }
 }
