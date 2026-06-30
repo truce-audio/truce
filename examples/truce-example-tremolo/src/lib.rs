@@ -16,7 +16,7 @@ use truce_egui::widgets::{param_dropdown, param_knob};
 use truce_font::JETBRAINS_MONO;
 
 const WINDOW_W: u32 = 270;
-const WINDOW_H: u32 = 162;
+const WINDOW_H: u32 = 180;
 
 // --- Parameters ---
 
@@ -225,31 +225,50 @@ fn tremolo_ui(ui: &mut egui::Ui, state: &PluginContext<TremoloParams>) {
         });
 }
 
-/// Read the editor's transport closure and render a compact readout
-/// like `▶ 128.0 BPM 4/4 ♩ 12.25` (or `■ - BPM` when stopped).
+/// Read the editor's transport closure and render the readout as a
+/// 2x2 grid so the tempo/beat and sig/samples columns line up:
+/// ```text
+/// ▶ 128.0 BPM   4/4
+/// ♩ 12.25       smp 132300
+/// ```
 fn draw_transport_readout(ui: &mut egui::Ui, state: &PluginContext<TremoloParams>) {
     let transport = state.transport();
-    let line = format_transport(transport.as_ref());
-
-    ui.horizontal(|ui| {
+    let cell = |ui: &mut egui::Ui, text: &str| {
         ui.label(
-            egui::RichText::new(line)
+            egui::RichText::new(text)
                 .monospace()
                 .size(13.0)
                 .color(HEADER_TEXT),
         );
-    });
+    };
+    match transport_cells(transport.as_ref()) {
+        None => cell(ui, "(no host transport)"),
+        Some([tempo, sig, beat, samples]) => {
+            egui::Grid::new("transport")
+                .num_columns(2)
+                .spacing(egui::vec2(16.0, 2.0))
+                .show(ui, |ui| {
+                    cell(ui, &tempo);
+                    cell(ui, &sig);
+                    ui.end_row();
+                    cell(ui, &beat);
+                    cell(ui, &samples);
+                    ui.end_row();
+                });
+        }
+    }
 }
 
-fn format_transport(info: Option<&TransportInfo>) -> String {
-    let Some(t) = info else {
-        return "(no host transport)".into();
-    };
+/// The four readout cells, laid out as two columns / two rows:
+/// `[state+tempo, time-sig, beat, samples]`. `None` when the host
+/// exposes no transport.
+fn transport_cells(info: Option<&TransportInfo>) -> Option<[String; 4]> {
+    let t = info?;
     let state = if t.playing { "\u{25B6}" } else { "\u{25A0}" };
     let tempo = if t.tempo > 0.0 {
-        format!("{:.1} BPM", t.tempo)
+        format!("{state} {:.1} BPM", t.tempo)
     } else {
-        "- BPM".into()
+        format!("{state} - BPM")
     };
     let sig = if t.time_sig_num > 0 && t.time_sig_den > 0 {
         format!("{}/{}", t.time_sig_num, t.time_sig_den)
@@ -261,7 +280,9 @@ fn format_transport(info: Option<&TransportInfo>) -> String {
     } else {
         "\u{2669} -".into()
     };
-    format!("{state} {tempo} {sig} {beat}")
+    // Host timeline position in samples (0 at song start).
+    let samples = format!("smp {}", t.position_samples);
+    Some([tempo, sig, beat, samples])
 }
 
 truce::plugin! {
@@ -305,30 +326,34 @@ mod tests {
     }
 
     #[test]
-    fn format_transport_stopped_default() {
-        assert_eq!(format_transport(None), "(no host transport)");
-        let stopped = TransportInfo::default();
-        let s = format_transport(Some(&stopped));
+    fn transport_cells_stopped_default() {
+        assert!(transport_cells(None).is_none());
+        let cells = transport_cells(Some(&TransportInfo::default())).unwrap();
+        let joined = cells.join(" ");
         // Stopped, no tempo reported → square + em dash placeholders.
-        assert!(s.contains('\u{25A0}'));
-        assert!(s.contains("- BPM"));
+        assert!(joined.contains('\u{25A0}'));
+        assert!(joined.contains("- BPM"));
+        assert!(joined.contains("smp 0"));
     }
 
     #[test]
-    fn format_transport_playing() {
+    fn transport_cells_playing() {
         let playing = TransportInfo {
             playing: true,
             tempo: 128.0,
             time_sig_num: 4,
             time_sig_den: 4,
             position_beats: 12.25,
+            position_samples: 132_300,
             ..TransportInfo::default()
         };
-        let s = format_transport(Some(&playing));
-        assert!(s.contains('\u{25B6}'));
-        assert!(s.contains("128.0 BPM"));
-        assert!(s.contains("4/4"));
-        assert!(s.contains("12.25"));
+        let cells = transport_cells(Some(&playing)).unwrap();
+        let joined = cells.join(" ");
+        assert!(joined.contains('\u{25B6}'));
+        assert!(joined.contains("128.0 BPM"));
+        assert!(joined.contains("4/4"));
+        assert!(joined.contains("12.25"));
+        assert!(joined.contains("smp 132300"));
     }
 
     #[test]
