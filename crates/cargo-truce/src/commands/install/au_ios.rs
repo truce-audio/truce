@@ -567,9 +567,12 @@ pub(crate) fn build_bundle(
         None
     };
 
+    // Inside-out: each nested framework must be signed before the
+    // bundle embedding it (codesign won't recurse). The appex has its
+    // own framework copy, separate from the container's.
     codesign(
         &app_dir
-            .join("Frameworks")
+            .join("PlugIns/AUExt.appex/Frameworks")
             .join(format!("{fw_name}.framework")),
         &identity,
         None,
@@ -578,6 +581,13 @@ pub(crate) fn build_bundle(
         &app_dir.join("PlugIns/AUExt.appex"),
         &identity,
         Some(&appex_ent),
+    )?;
+    codesign(
+        &app_dir
+            .join("Frameworks")
+            .join(format!("{fw_name}.framework")),
+        &identity,
+        None,
     )?;
     codesign(&app_dir, &identity, Some(&app_ent))?;
 
