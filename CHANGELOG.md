@@ -2,6 +2,10 @@
 
 Notable changes per release.
 
+## 1.0.2
+
+- **iOS AU v3 builds pass App Store Connect signing validation.** The AU extension's embedded copy of the plugin framework was left unsigned by the submission certificate, so App Store upload rejected it; `cargo truce package --ios` now signs the appex's nested framework inside-out along with the container's copy.
+
 ## 1.0.1
 
 - **`IcedPlugin::needs_redraw` keeps streaming editors live.** The iced editor's idle gate skips repaints when no UI input, param, or meter changed - which left a plugin streaming realtime data to its editor outside that system (a lock-free queue drained in `view()`) showing it late, only when a stray UI event forced a repaint. A plugin can now return `true` from `needs_redraw()` while it has new data, so the editor repaints and drains promptly and idles again when there's nothing new. `truce-example-midi-inspector` uses it so live MIDI scrolls in without lag.
