@@ -51,6 +51,10 @@ pub struct ViziaEditor<P: Params + ?Sized> {
     min_size: (u32, u32),
     /// Upper clamp retained from the builder. See [`Self::min_size`].
     max_size: (u32, u32),
+    /// Host content-scale factor (`Editor::set_scale_factor`); pins
+    /// vizia's window scale policy in `open()`. `None` -> vizia's OS
+    /// `SystemScaleFactor` default.
+    scale: Option<f64>,
     window: Option<vizia::WindowHandle>,
     /// Host parent `NSView` pointer the `on_idle` re-anchor walks.
     /// Shared with the idle closure and zeroed on `close()` / `Drop`
@@ -86,6 +90,7 @@ impl<P: Params + 'static> ViziaEditor<P> {
             font: None,
             min_size: (1, 1),
             max_size: (u32::MAX, u32::MAX),
+            scale: None,
             window: None,
             #[cfg(target_os = "macos")]
             reanchor_parent: Arc::new(AtomicUsize::new(0)),
@@ -193,6 +198,18 @@ impl<P: Params + 'static> Editor for ViziaEditor<P> {
         true
     }
 
+    fn set_scale_factor(&mut self, factor: f64) {
+        // Capture the host's content scale (VST3
+        // `IPlugViewContentScaleSupport` / CLAP `set_scale`) so `open()`
+        // pins vizia to it instead of the OS-detected scale, which can
+        // differ from the host's and mis-size the editor against the
+        // allocated rect. Applies on the next `open()` - vizia_baseview
+        // has no live rescale entry point for an already-open window.
+        if factor.is_finite() && factor > 0.0 {
+            self.scale = Some(factor);
+        }
+    }
+
     fn screenshot(
         &mut self,
         _params: Arc<dyn truce_params::Params>,
@@ -281,6 +298,17 @@ impl<P: Params + 'static> Editor for ViziaEditor<P> {
             cx.start_timer(timer);
         })
         .inner_size((lw, lh));
+
+        // Pin the window scale to the host's reported content scale when
+        // we have one, rather than vizia's default `SystemScaleFactor`
+        // (the OS-detected DPI). The two can disagree for an embedded
+        // plug-in view - notably on Windows - which renders the editor at
+        // the wrong scale and overflows/clips the host-allocated rect.
+        // `None` (no host report, e.g. standalone) keeps the OS default.
+        let app = match self.scale {
+            Some(scale) => app.with_scale_policy(WindowScalePolicy::ScaleFactor(scale)),
+            None => app,
+        };
 
         // Per-frame re-anchor on macOS: pin every child NSView of the
         // host's plug-in pane to the parent's top so a canvas that

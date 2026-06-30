@@ -922,6 +922,18 @@ unsafe extern "C" fn cb_gui_has_editor<P: PluginExport>(ctx: *mut std::ffi::c_vo
         let inst = &mut *ctx.cast::<Vst3Instance<P>>();
         if inst.editor.is_none() {
             inst.editor = inst.plugin.editor();
+            // Replay a content scale the host reported before the editor
+            // existed (a valid VST3 ordering - `setContentScaleFactor`
+            // can precede the editor object). macOS drives Retina through
+            // AppKit, not this callback, so `host_scale` stays 1.0 there;
+            // pinning it would force 1x rendering, so skip macOS.
+            #[cfg(not(target_os = "macos"))]
+            {
+                let scale = inst.host_scale;
+                if let Some(ref mut editor) = inst.editor {
+                    editor.set_scale_factor(scale);
+                }
+            }
         }
         i32::from(inst.editor.is_some())
     }
