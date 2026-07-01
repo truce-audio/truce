@@ -37,6 +37,16 @@ pub struct AuPluginDescriptor {
     /// the `aumu` component type, so an `aumf` `MusicEffect` - an audio
     /// effect that opts into MIDI input - is also handed events).
     pub accepts_midi_in: i32,
+    /// Number of MIDI input ports. AU v2 ignores this (single stream);
+    /// AU v3 multi-cable input is not wired yet, so it's informational.
+    pub midi_input_ports: u32,
+    /// Number of MIDI output ports. The AU v3 appex sizes
+    /// `MIDIOutputNames` to this and routes each event to its cable.
+    pub midi_output_ports: u32,
+    /// `1` if the MIDI input port is MIDI 2.0 dialect. The appex
+    /// declares `audioUnitMIDIProtocol` = 2.0 when set (host delivers
+    /// native UMP 2.0), else 1.0 (host down-converts). AU v2 ignores it.
+    pub midi2_input: i32,
 }
 
 /// Parameter descriptor for the `ObjC` shim.
@@ -206,11 +216,12 @@ pub struct AuMidiEvent {
     pub data1: u8,
     /// MIDI data byte 2 (velocity for note on/off)
     pub data2: u8,
-    // Trailing 1-byte pad keeping the struct's 8-byte alignment to
-    // match `AuMidiEvent` in `au_shim_types.h`. Public so the C
-    // shim's offset calculations agree.
-    #[allow(clippy::pub_underscore_fields)]
-    pub _pad: u8,
+    /// MIDI cable / port. Output: the AU v3 appex passes it as the
+    /// `cable` to `midiOutputEventBlock` (0 on AU v2, single stream).
+    /// Input: currently always 0 (multi-cable input unwired). Occupies
+    /// the trailing byte that keeps the struct 8-byte aligned to match
+    /// `au_shim_types.h`.
+    pub port: u8,
 }
 
 /// Universal MIDI Packet container - carries MIDI 2.0 channel-voice

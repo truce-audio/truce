@@ -35,6 +35,7 @@ use truce_core::editor::{ClosureBridge, PluginContext, RawWindowHandle, SendPtr}
 use truce_core::editor::fit_logical_size;
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
+use truce_core::info::MidiDialect;
 use truce_core::midi::{decode_short_message, pitch_bend_to_bytes};
 use truce_core::state;
 use truce_core::ump::{SysExAssembler, SysExFeed, decode_ump_channel_voice_2};
@@ -827,7 +828,7 @@ fn try_encode_au_midi(event: &Event) -> Option<AuMidiEvent> {
         status,
         data1,
         data2,
-        _pad: 0,
+        port: event.port,
     })
 }
 
@@ -850,12 +851,18 @@ unsafe extern "C" fn cb_output_event_at<P: PluginExport>(
 ) {
     unsafe {
         let inst = &*ctx.cast::<AuInstance<P>>();
-        if let Some(packet) = inst
+        if let Some(mut packet) = inst
             .output_events
             .iter()
             .filter_map(try_encode_au_midi)
             .nth(index as usize)
         {
+            // Route to the plugin's chosen MIDI output cable, clamped to
+            // the declared count so an out-of-range port lands on 0. The
+            // appex passes `port` straight to `midiOutputEventBlock`.
+            packet.port = packet
+                .port
+                .min(P::info().midi_output_ports.saturating_sub(1));
             *out = packet;
         }
     }
@@ -1298,10 +1305,13 @@ fn register_au_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
     // effect can opt into a host "MIDI Out" port instead of only note
     // effects advertising one.
     let has_midi_output = i32::from(info.emits_midi);
-    // AU exposes a single MIDI stream per direction; clamp a multi-port
-    // declaration to one and warn rather than truncate silently.
+    // AU v3 carries multi-port MIDI *output* (`MIDIOutputNames` array,
+    // cable-indexed); the appex sizes its output ports to
+    // `midi_output_ports` and routes each event by `Event::port`. MIDI
+    // *input* is still single-cable on both v2 and v3 (the appex's UMP
+    // read doesn't capture the cable yet), so clamp + warn on input only.
+    // AU v2 is single-stream in both directions and ignores the counts.
     log_midi_ports_clamped("AU", "input", info.midi_input_ports);
-    log_midi_ports_clamped("AU", "output", info.midi_output_ports);
 
     let descriptor = Box::leak(Box::new(AuPluginDescriptor {
         component_type: info.au_type,
@@ -1315,6 +1325,9 @@ fn register_au_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
         bypass_param_id,
         has_midi_output,
         accepts_midi_in: i32::from(info.accepts_midi_in),
+        midi_input_ports: u32::from(info.midi_input_ports),
+        midi_output_ports: u32::from(info.midi_output_ports),
+        midi2_input: i32::from(info.midi_input_dialect == MidiDialect::Midi2),
     }));
 
     let callbacks = Box::leak(Box::new(AuCallbacks {
