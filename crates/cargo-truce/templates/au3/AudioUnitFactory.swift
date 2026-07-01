@@ -445,7 +445,7 @@ class TruceAUAudioUnit: AUAudioUnit {
         // within-block `delta` is added to the buffer's starting
         // sample. The block is nil when the host doesn't accept
         // MIDI output; skipping the drain is correct in that case.
-        let bufStart = Int64(timestamp.pointee.mSampleTime)
+        // `bufStart` is already bound above (input timing); reuse it.
         let use2 = (g_descriptor?.pointee.midi2_input ?? 0) != 0
 
         // Channel-voice output. In MIDI 2.0 protocol mode (`midi2 =
