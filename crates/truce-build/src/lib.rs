@@ -197,6 +197,12 @@ pub struct PluginDef {
     /// effect that also emits MIDI to the host.
     #[serde(default)]
     pub midi_output: Option<bool>,
+    /// Opt this plugin's MIDI ports into MIDI 2.0 / UMP. `false` (the
+    /// default) keeps MIDI 1.0. Only formats with a UMP transport (CLAP)
+    /// honor it; others deliver MIDI 1.0 regardless. Requires a MIDI
+    /// port to exist (see `midi_input` / `midi_output` / category).
+    #[serde(default)]
+    pub midi2: bool,
     /// Optional `[plugin.presets]` table - factory-preset opt-in.
     /// When absent, the install pipeline still picks up a `presets/`
     /// directory next to the plugin crate if one exists.

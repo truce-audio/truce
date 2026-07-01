@@ -124,6 +124,15 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
     // declaration on one value instead of re-deriving from the category.
     let (accepts_midi_in, emits_midi) =
         truce_build::midi_capabilities(&plugin.category, plugin.midi_input, plugin.midi_output);
+    // MIDI 2.0 opt-in (`midi2` in truce.toml) sets both ports' dialect;
+    // per-port granularity arrives with multi-port support.
+    let midi_dialect = if plugin.midi2 {
+        quote! { ::truce::core::info::MidiDialect::Midi2 }
+    } else {
+        quote! { ::truce::core::info::MidiDialect::Midi1 }
+    };
+    let midi_input_dialect = midi_dialect.clone();
+    let midi_output_dialect = midi_dialect;
     // NoteEffect plugins map to `aumi` (Apple's MIDI Processor type).
     // Pairs with empty `bus_layouts` at the plugin level: aumi
     // plugins must not expose audio I/O. Logic routes `aumi` to the
@@ -208,6 +217,8 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
                 category: #category,
                 accepts_midi_in: #accepts_midi_in,
                 emits_midi: #emits_midi,
+                midi_input_dialect: #midi_input_dialect,
+                midi_output_dialect: #midi_output_dialect,
                 bundle_id: #bundle_id,
                 vst3_id: #plugin_id,
                 clap_id: #plugin_id,

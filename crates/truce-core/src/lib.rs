@@ -23,7 +23,7 @@ pub use bus::{BusConfig, BusKind, BusLayout, ChannelConfig};
 pub use editor::{Editor, IntoEditor, PluginContext};
 pub use events::{Event, EventBody, EventList, PushError, SYSEX_POOL_PREALLOC, TransportInfo};
 pub use export::PluginExport;
-pub use info::{AutomationConfig, PluginCategory, PluginInfo};
+pub use info::{AutomationConfig, MidiDialect, PluginCategory, PluginInfo};
 pub use plugin::PluginRuntime;
 pub use process::{ProcessContext, ProcessStatus};
 pub use transport::TransportSlot;

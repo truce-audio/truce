@@ -6,10 +6,11 @@
 //! channel | <status-specific 16 bits>`, word 1 carries the
 //! status-specific value (velocity + attribute, controller value,
 //! pitch-bend, etc.). Many UMP transports embed 64-bit packets in a
-//! fixed 128-bit slot, so [`decode_ump_channel_voice_2`] works in
-//! terms of `[u32; 4]` with the upper two words zeroed for
-//! channel-voice. The matching encoder is intentionally not exposed
-//! today - see the note next to the decoder.
+//! fixed 128-bit slot, so [`decode_ump_channel_voice_2`] and
+//! [`encode_ump_channel_voice_2`] work in terms of `[u32; 4]` with the
+//! upper two words zeroed for channel-voice. Encoding is gated behind a
+//! port's declared [`crate::MidiDialect::Midi2`] so a MIDI-1.0 host
+//! never receives UMP.
 //!
 //! Spec reference: MIDI 2.0 M2-104-UM §4.1.
 //!
@@ -166,12 +167,105 @@ pub fn decode_ump_channel_voice_2(words: [u32; 4]) -> Option<EventBody> {
     Some(body)
 }
 
-// The matching `encode_ump_channel_voice_2` is intentionally
-// absent: until plug-ins can declare a MIDI version preference
-// that wrappers honour at port-negotiation time, no wrapper has
-// a sanctioned path to emit MIDI 2.0 channel-voice events, and
-// shipping a dormant encoder would invite ad-hoc callers that
-// bypass the eventual downconvert gate.
+/// Encode a MIDI 2.0 channel-voice [`EventBody`] into a 64-bit UMP
+/// packet, returned in the low two words of a `[u32; 4]` (the upper two
+/// are zero, matching the 128-bit slot [`decode_ump_channel_voice_2`]
+/// reads). Returns `None` for bodies that aren't MIDI 2.0 channel voice
+/// (MIDI 1.0 variants, transport, param automation, `SysEx`) - those ride
+/// their own emit paths. Only a port whose declared dialect is
+/// [`crate::MidiDialect::Midi2`] routes output through here; MIDI 1.0
+/// ports keep down-converting, so a dormant encoder can't leak 2.0
+/// packets to a host that negotiated 1.0.
+#[must_use]
+pub fn encode_ump_channel_voice_2(body: &EventBody) -> Option<[u32; 4]> {
+    // Inverse of `decode_ump_channel_voice_2`: `byte_a` is word 0 bits
+    // 15..8 (note / cc / bank), `byte_b` bits 7..0 (attribute-type /
+    // index / flags / bank-valid), and `w1` the 32-bit value word.
+    let (status, byte_a, byte_b, w1): (u8, u8, u8, u32) = match *body {
+        EventBody::NoteOff2 {
+            note,
+            velocity,
+            attribute_type,
+            attribute,
+            ..
+        } => (0x8, note, attribute_type, cv2_value16(velocity, attribute)),
+        EventBody::NoteOn2 {
+            note,
+            velocity,
+            attribute_type,
+            attribute,
+            ..
+        } => (0x9, note, attribute_type, cv2_value16(velocity, attribute)),
+        EventBody::PolyPressure2 { note, pressure, .. } => (0xA, note, 0, pressure),
+        EventBody::PerNoteCC {
+            note,
+            cc,
+            value,
+            registered,
+            ..
+            // Status 0x0 = registered per-note controller, 0x1 = assignable.
+        } => (u8::from(!registered), note, cc, value),
+        EventBody::PerNotePitchBend { note, value, .. } => (0x6, note, 0, value),
+        EventBody::PerNoteManagement { note, flags, .. } => (0xF, note, flags, 0),
+        EventBody::ControlChange2 { cc, value, .. } => (0xB, cc, 0, value),
+        EventBody::ChannelPressure2 { pressure, .. } => (0xD, 0, 0, pressure),
+        EventBody::PitchBend2 { value, .. } => (0xE, 0, 0, value),
+        EventBody::RegisteredController {
+            bank, index, value, ..
+        } => (0x2, bank, index, value),
+        EventBody::AssignableController {
+            bank, index, value, ..
+        } => (0x3, bank, index, value),
+        EventBody::ProgramChange2 { program, bank, .. } => {
+            // "B" (bank-valid) flag rides byte_b bit 0; the bank pair
+            // sits in word 1 bytes 1..0, program in word 1 byte 3.
+            let (option, w1) = match bank {
+                Some((msb, lsb)) => (
+                    0x01,
+                    (u32::from(program & 0x7F) << 24)
+                        | (u32::from(msb & 0x7F) << 8)
+                        | u32::from(lsb & 0x7F),
+                ),
+                None => (0x00, u32::from(program & 0x7F) << 24),
+            };
+            (0xC, 0, option, w1)
+        }
+        _ => return None,
+    };
+    let (group, channel) = cv2_addr(body)?;
+    let w0 = (0x4 << 28)
+        | (u32::from(group & 0x0F) << 24)
+        | (u32::from(status) << 20)
+        | (u32::from(channel & 0x0F) << 16)
+        | (u32::from(byte_a) << 8)
+        | u32::from(byte_b);
+    Some([w0, w1, 0, 0])
+}
+
+const fn cv2_value16(hi: u16, lo: u16) -> u32 {
+    ((hi as u32) << 16) | lo as u32
+}
+
+/// Pull `(group, channel)` off any channel-voice body. Returns `None`
+/// for non-channel-voice bodies (which `encode_ump_channel_voice_2`
+/// has already rejected before calling this).
+fn cv2_addr(body: &EventBody) -> Option<(u8, u8)> {
+    Some(match *body {
+        EventBody::NoteOff2 { group, channel, .. }
+        | EventBody::NoteOn2 { group, channel, .. }
+        | EventBody::PolyPressure2 { group, channel, .. }
+        | EventBody::PerNoteCC { group, channel, .. }
+        | EventBody::PerNotePitchBend { group, channel, .. }
+        | EventBody::PerNoteManagement { group, channel, .. }
+        | EventBody::ControlChange2 { group, channel, .. }
+        | EventBody::ChannelPressure2 { group, channel, .. }
+        | EventBody::PitchBend2 { group, channel, .. }
+        | EventBody::RegisteredController { group, channel, .. }
+        | EventBody::AssignableController { group, channel, .. }
+        | EventBody::ProgramChange2 { group, channel, .. } => (group, channel),
+        _ => return None,
+    })
+}
 
 /// One reassembled `SysEx` payload, in the form
 /// [`crate::events::EventList::push_sysex`] expects: just the inner
@@ -542,6 +636,162 @@ mod tests {
         assert!(decode_ump_channel_voice_2([0x0000_0000, 0, 0, 0]).is_none());
         // mt = 0x3 (SysEx-7)
         assert!(decode_ump_channel_voice_2([0x3000_0000, 0, 0, 0]).is_none());
+    }
+
+    // `EventBody` has no `PartialEq` (it carries float-bearing
+    // `TransportInfo`), so assert the encode/decode pair is mutually
+    // consistent by re-encoding the decoded body and comparing the
+    // 128-bit packet. `encode_bits_match_spec` anchors the encoder to
+    // the wire independently, so a shared-bug false pass can't hide.
+    #[track_caller]
+    fn cv2_round_trip(body: EventBody) {
+        let packet = encode_ump_channel_voice_2(&body).expect("2.0 channel voice encodes");
+        let decoded = decode_ump_channel_voice_2(packet).expect("decodes");
+        let re_encoded = encode_ump_channel_voice_2(&decoded).expect("re-encodes");
+        assert_eq!(packet, re_encoded, "round trip mismatch for {body:?}");
+    }
+
+    #[test]
+    fn encode_bits_match_spec() {
+        // mt=0x4, group=4, status=0x9 (NoteOn), channel=2, note=64,
+        // attribute_type=3; word 1 = velocity<<16 | attribute.
+        let packet = encode_ump_channel_voice_2(&EventBody::NoteOn2 {
+            group: 4,
+            channel: 2,
+            note: 64,
+            velocity: 0xBEEF,
+            attribute_type: 3,
+            attribute: 0x1234,
+        })
+        .unwrap();
+        assert_eq!(
+            packet,
+            [
+                (0x4 << 28) | (4 << 24) | (0x9 << 20) | (2 << 16) | (64 << 8) | 0x03,
+                (0xBEEF << 16) | 0x1234,
+                0,
+                0,
+            ]
+        );
+    }
+
+    #[test]
+    fn channel_voice_2_round_trips() {
+        cv2_round_trip(EventBody::NoteOn2 {
+            group: 4,
+            channel: 2,
+            note: 64,
+            velocity: 0xBEEF,
+            attribute_type: 3,
+            attribute: 0x1234,
+        });
+        cv2_round_trip(EventBody::NoteOff2 {
+            group: 0,
+            channel: 15,
+            note: 127,
+            velocity: 0,
+            attribute_type: 0,
+            attribute: 0,
+        });
+        cv2_round_trip(EventBody::ControlChange2 {
+            group: 15,
+            channel: 0,
+            cc: 11,
+            value: 0xDEAD_BEEF,
+        });
+        cv2_round_trip(EventBody::PerNoteCC {
+            group: 1,
+            channel: 3,
+            note: 72,
+            cc: 5,
+            value: 0x0102_0304,
+            registered: true,
+        });
+        cv2_round_trip(EventBody::PerNoteCC {
+            group: 1,
+            channel: 3,
+            note: 72,
+            cc: 5,
+            value: 0x0102_0304,
+            registered: false,
+        });
+        cv2_round_trip(EventBody::PitchBend2 {
+            group: 1,
+            channel: 8,
+            value: 0x8000_0000,
+        });
+        cv2_round_trip(EventBody::RegisteredController {
+            group: 2,
+            channel: 4,
+            bank: 1,
+            index: 2,
+            value: 0xCAFE_0000,
+        });
+        cv2_round_trip(EventBody::PolyPressure2 {
+            group: 0,
+            channel: 0,
+            note: 60,
+            pressure: 0x1234_5678,
+        });
+        cv2_round_trip(EventBody::PerNoteManagement {
+            group: 0,
+            channel: 0,
+            note: 60,
+            flags: 0x03,
+        });
+    }
+
+    #[test]
+    fn program_change_2_bank_option_round_trips() {
+        cv2_round_trip(EventBody::ProgramChange2 {
+            group: 0,
+            channel: 0,
+            program: 10,
+            bank: Some((3, 7)),
+        });
+        cv2_round_trip(EventBody::ProgramChange2 {
+            group: 0,
+            channel: 0,
+            program: 10,
+            bank: None,
+        });
+    }
+
+    #[test]
+    fn group_nibble_survives_round_trip() {
+        for group in 0..=15u8 {
+            let packet = encode_ump_channel_voice_2(&EventBody::NoteOn2 {
+                group,
+                channel: 0,
+                note: 60,
+                velocity: 1,
+                attribute_type: 0,
+                attribute: 0,
+            })
+            .unwrap();
+            let Some(EventBody::NoteOn2 { group: g, .. }) = decode_ump_channel_voice_2(packet)
+            else {
+                panic!("expected NoteOn2");
+            };
+            assert_eq!(g, group);
+        }
+    }
+
+    #[test]
+    fn non_channel_voice_2_body_does_not_encode() {
+        // MIDI 1.0 variants and automation aren't 2.0 channel voice.
+        assert!(
+            encode_ump_channel_voice_2(&EventBody::NoteOn {
+                group: 0,
+                channel: 0,
+                note: 60,
+                velocity: 100,
+            })
+            .is_none()
+        );
+        assert!(
+            encode_ump_channel_voice_2(&EventBody::ParamChange { id: 0, value: 0.0 }).is_none()
+        );
     }
 
     // -- SysEx-7 assembler --
