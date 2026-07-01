@@ -94,9 +94,9 @@ following the tiered matrix below.
 
 | OS | Tier 1 hosts |
 |----|--------------|
-| macOS | Ableton Live, Logic Pro, Pro Tools, Cubase, Bitwig, REAPER, Ardour |
-| Windows | Ableton Live, Pro Tools, Cubase, Bitwig, REAPER, Ardour |
-| Linux | REAPER, Ardour |
+| macOS | Ableton Live, Logic Pro, Pro Tools, Cubase, Bitwig, REAPER |
+| Windows | Ableton Live, Pro Tools, Cubase, Bitwig, REAPER |
+| Linux | Bitwig, REAPER |
 
 Hosts and OSes outside the Tier 1 table fall to Tier 2, except VST2,
 which is Tier 3 everywhere — not actively tested.
