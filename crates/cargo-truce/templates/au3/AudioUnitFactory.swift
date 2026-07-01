@@ -53,21 +53,24 @@ func forwardMIDIEventList(
     midiBuf: UnsafeMutablePointer<AuMidiEvent>, midiStart: UInt32,
     midi2Buf: UnsafeMutablePointer<AuMidi2Event>, midi2Start: UInt32
 ) -> (UInt32, UInt32) {
-    // AURenderEvent is a tagged union; reach into the
-    // `MIDIEventsList` slot via raw pointer arithmetic so the code
-    // compiles on Xcodes that haven't yet imported the symbol.
-    // Layout: AURenderEventHeader (16 bytes) + AUMIDIEventList payload.
-    // AUMIDIEventList: { AURenderEventHeader head; uint64_t
-    //                    eventSampleTime; MIDIEventList eventList; }
+    // AURenderEvent is a tagged union; reach into the variable-length
+    // `MIDIEventsList` tail via raw pointer arithmetic so the code
+    // compiles on Xcodes that haven't imported the overlay symbol.
+    // Only the tail needs hand offsets - the fixed header (timing) is
+    // read through the Swift overlay to avoid mis-offsetting it:
+    //   AUMIDIEventList { AURenderEventHeader head; MIDIEventList list; }
+    // `eventSampleTime` lives inside `head`; the list begins one
+    // aligned `AURenderEventHeader` past the event base. Reading the
+    // timestamp from a hand offset instead traps on `Int64` overflow
+    // when the offset lands on header padding.
     let raw = UnsafeRawPointer(event)
-    let payload = raw.advanced(by: 16)
-    let absTime = payload.assumingMemoryBound(to: Int64.self).pointee
+    let absTime = event.pointee.head.eventSampleTime
     let relOffset = max(0, absTime - bufStart)
     let offset = UInt32(min(relOffset, Int64(frameCount - 1)))
     // MIDIEventList layout (CoreMIDI/MIDIServices.h):
     //   MIDIProtocolID protocol; uint32_t numPackets;
     //   MIDIEventPacket packet[1];  // variable-length tail
-    let listBase = payload.advanced(by: 8)
+    let listBase = raw.advanced(by: MemoryLayout<AURenderEventHeader>.stride)
     let proto = listBase.assumingMemoryBound(to: UInt32.self).pointee
     let numPackets = listBase.advanced(by: 4).assumingMemoryBound(to: UInt32.self).pointee
     // Protocol 1 = MIDI 1.0 UMP, 2 = MIDI 2.0 UMP. We accept both.
