@@ -2,13 +2,10 @@
 
 Notable changes per release.
 
-## 1.1.0
-
-- **VST3 advertises all 16 MIDI channels.** The event bus reported `channelCount = 1`, which could make a channel-aware host route only MIDI channel 1; it now reports 16, matching the channels truce delivers and emits.
-
 ## 1.0.4
 
 - **`cargo truce build` / `install` / `package` accept `--features`.** Pass extra Cargo features for the plugin crate (comma/space-separated); they apply to every underlying build (per-format, shell logic, iOS, standalone bin) so the set stays uniform. Format features (`clap`/`vst3`/...) are reserved for the format flags.
+- **VST3 advertises all 16 MIDI channels.** The event bus reported `channelCount = 1`, which could make a channel-aware host route only MIDI channel 1; it now reports 16, matching the channels truce delivers and emits.
 
 ## 1.0.3
 
