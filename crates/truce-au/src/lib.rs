@@ -36,7 +36,7 @@ use truce_core::editor::fit_logical_size;
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
 use truce_core::info::MidiDialect;
-use truce_core::midi::{decode_short_message, pitch_bend_to_bytes};
+use truce_core::midi::{decode_short_message, downconvert_to_midi1, pitch_bend_to_bytes};
 use truce_core::state;
 use truce_core::ump::{
     SysExAssembler, SysExFeed, decode_ump_channel_voice_2, encode_ump_channel_voice_1,
@@ -792,7 +792,11 @@ unsafe extern "C" fn cb_factory_preset_load<P: PluginExport>(
 /// `None` for event types that don't fit (MIDI 2.0, `ParamChange`,
 /// Transport, etc.).
 fn try_encode_au_midi(event: &Event) -> Option<AuMidiEvent> {
-    let (status, data1, data2) = match &event.body {
+    // The MIDI 1.0 byte output path (AU v2, and AU v3 in 1.0-protocol
+    // mode). AU v3 in 2.0 mode emits UMP via `try_encode_au_ump`, so a
+    // 2.0 variant only reaches here on a 1.0 transport - down-convert it.
+    let body = downconvert_to_midi1(&event.body).unwrap_or(event.body);
+    let (status, data1, data2) = match &body {
         EventBody::NoteOn {
             channel,
             note,

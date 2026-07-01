@@ -19,7 +19,7 @@ use std::ffi::c_void;
 
 use truce_core::cast::{len_u32, sample_pos_i64};
 use truce_core::events::{Event, EventBody, EventList, TransportInfo};
-use truce_core::midi::{parse_midi1, pitch_bend_to_bytes};
+use truce_core::midi::{downconvert_to_midi1, parse_midi1, pitch_bend_to_bytes};
 
 use crate::urid::{Urid, UridMap};
 
@@ -470,7 +470,10 @@ pub unsafe fn write_midi_out_sequence(
                 continue;
             }
             let mut buf = [0u8; 3];
-            let (n, frame) = match &event.body {
+            // LV2 carries MIDI 1.0 byte streams only; down-convert any
+            // 2.0 output so it isn't dropped.
+            let cv = downconvert_to_midi1(&event.body).unwrap_or(event.body);
+            let (n, frame) = match &cv {
                 EventBody::NoteOn {
                     channel,
                     note,

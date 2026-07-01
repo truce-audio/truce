@@ -91,7 +91,9 @@ use truce_core::editor::{
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
 use truce_core::info::{MidiDialect, PluginCategory, PluginInfo};
-use truce_core::midi::{decode_short_message, denorm_7bit, pitch_bend_to_bytes};
+use truce_core::midi::{
+    decode_short_message, denorm_7bit, downconvert_to_midi1, pitch_bend_to_bytes,
+};
 use truce_core::plugin::PluginRuntime;
 use truce_core::process::ProcessStatus;
 use truce_core::state;
@@ -752,19 +754,24 @@ unsafe fn convert_input_events<P: PluginExport>(
                     };
                     let _ = data.event_list.push_sysex(sample_offset, bytes);
                 }
-                // A host only routes UMP here when we advertised
-                // `CLAP_NOTE_DIALECT_MIDI2` on the input port, which only
-                // happens for a `Midi2`-dialect plugin. Decode the packet
-                // into the native 2.0 `EventBody` variants (group nibble
-                // included). A MIDI-1.0 port never advertises the
-                // dialect, so this arm is inert there and 2.0 traffic (if
-                // any leaks) falls through to the skip below rather than
-                // being mis-delivered as 1.0.
-                CLAP_EVENT_MIDI2 if data.info.midi_input_dialect == MidiDialect::Midi2 => {
+                // Decode the UMP packet. A `Midi2`-dialect plugin gets
+                // the native 2.0 `EventBody` variants (group nibble
+                // included); a plugin that didn't opt into MIDI 2.0 gets
+                // the 1.0 down-conversion instead of a dropped event -
+                // hosts don't always honor the advertised dialect, so a
+                // 2.0 packet can still arrive at a 1.0 plugin.
+                CLAP_EVENT_MIDI2 => {
                     let midi2 = &*header.cast::<clap_event_midi2>();
-                    if let Some(body) = truce_core::ump::decode_ump_channel_voice_2(midi2.data) {
-                        data.event_list
-                            .push(Event::on_port(sample_offset, port, body));
+                    if let Some(decoded) = truce_core::ump::decode_ump_channel_voice_2(midi2.data) {
+                        let body = if data.info.midi_input_dialect == MidiDialect::Midi2 {
+                            Some(decoded)
+                        } else {
+                            downconvert_to_midi1(&decoded)
+                        };
+                        if let Some(body) = body {
+                            data.event_list
+                                .push(Event::on_port(sample_offset, port, body));
+                        }
                     }
                 }
                 _ => {

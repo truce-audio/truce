@@ -669,8 +669,16 @@ unsafe extern "C" fn cb_get_tail<P: PluginExport>(ctx: *mut std::ffi::c_void) ->
 /// rather than emitted as a zeroed packet (which earlier hosts
 /// interpreted as a `note 0` Note-Off).
 fn try_encode_vst3_midi(event: &Event) -> Option<Vst3MidiEvent> {
-    use truce_core::midi::pitch_bend_to_bytes;
-    let (status, data1, data2) = match &event.body {
+    use truce_core::midi::{downconvert_to_midi1, pitch_bend_to_bytes};
+    // MIDI 2.0 channel-voice output has no UMP transport on VST3, so
+    // down-convert to 1.0 (per-note variants are excluded - those ride
+    // note expression via `note_expression_of`, so converting them here
+    // too would double-emit).
+    let body = match event.body {
+        EventBody::PerNoteCC { .. } | EventBody::PerNotePitchBend { .. } => return None,
+        other => downconvert_to_midi1(&other).unwrap_or(other),
+    };
+    let (status, data1, data2) = match &body {
         EventBody::NoteOn {
             channel,
             note,
