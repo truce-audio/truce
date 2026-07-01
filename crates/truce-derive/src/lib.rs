@@ -124,15 +124,18 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
     // declaration on one value instead of re-deriving from the category.
     let (accepts_midi_in, emits_midi) =
         truce_build::midi_capabilities(&plugin.category, plugin.midi_input, plugin.midi_output);
-    // MIDI 2.0 opt-in (`midi2` in truce.toml) sets both ports' dialect;
-    // per-port granularity arrives with multi-port support.
-    let midi_dialect = if plugin.midi2 {
-        quote! { ::truce::core::info::MidiDialect::Midi2 }
-    } else {
-        quote! { ::truce::core::info::MidiDialect::Midi1 }
+    // MIDI 2.0 opt-in. `midi2` sets both ports' dialect; the optional
+    // `midi2_input` / `midi2_output` keys override one direction (a
+    // 1.0 -> 2.0 promoter wants 1.0 in, 2.0 out).
+    let dialect_tokens = |on: bool| {
+        if on {
+            quote! { ::truce::core::info::MidiDialect::Midi2 }
+        } else {
+            quote! { ::truce::core::info::MidiDialect::Midi1 }
+        }
     };
-    let midi_input_dialect = midi_dialect.clone();
-    let midi_output_dialect = midi_dialect;
+    let midi_input_dialect = dialect_tokens(plugin.midi2_input.unwrap_or(plugin.midi2));
+    let midi_output_dialect = dialect_tokens(plugin.midi2_output.unwrap_or(plugin.midi2));
     // MIDI port counts: one per enabled direction by default, raised by
     // the `midi_input_ports` / `midi_output_ports` truce.toml keys.
     let (midi_input_ports, midi_output_ports) = truce_build::midi_port_counts(

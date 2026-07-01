@@ -222,6 +222,16 @@ pub struct PluginDef {
     /// port to exist (see `midi_input` / `midi_output` / category).
     #[serde(default)]
     pub midi2: bool,
+    /// Override the *input* port's MIDI 2.0 dialect independently of
+    /// `midi2`. `None` follows `midi2`. Set `false` for a plugin that
+    /// emits 2.0 but wants 1.0 input (a 1.0 -> 2.0 promoter): the host
+    /// then delivers 1.0 to promote, instead of converting up front.
+    #[serde(default)]
+    pub midi2_input: Option<bool>,
+    /// Override the *output* port's MIDI 2.0 dialect independently of
+    /// `midi2`. `None` follows `midi2`.
+    #[serde(default)]
+    pub midi2_output: Option<bool>,
     /// Number of MIDI input ports. Absent -> one port when the plugin
     /// accepts MIDI input, none otherwise. Set `>1` for a multi-port
     /// plugin; only CLAP / VST3 / LV2 carry more than one, others clamp
