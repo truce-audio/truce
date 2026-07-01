@@ -39,8 +39,8 @@ use truce_core::midi::{decode_short_message, pitch_bend_to_bytes};
 use truce_core::state;
 use truce_core::ump::{SysExAssembler, SysExFeed, decode_ump_channel_voice_2};
 use truce_core::wrapper::{
-    default_io_channels, log_missing_bus_layout, run_audio_block, run_extern_callback_with,
-    run_register,
+    default_io_channels, log_midi_ports_clamped, log_missing_bus_layout, run_audio_block,
+    run_extern_callback_with, run_register,
 };
 use truce_params::{MidiSource, ParamFlags, ParamInfo, Params};
 
@@ -300,6 +300,7 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
                 if let Some(body) = decode_short_message(ev.status, ev.data1, ev.data2) {
                     inst.event_list.push(Event {
                         sample_offset: ev.sample_offset,
+                        port: 0,
                         body,
                     });
                 }
@@ -323,6 +324,7 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
                         if let Some(body) = decode_ump_channel_voice_2(ev.words) {
                             inst.event_list.push(Event {
                                 sample_offset: ev.sample_offset,
+                                port: 0,
                                 body,
                             });
                         }
@@ -371,6 +373,7 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
             for pe in pe_slice {
                 inst.event_list.push(Event {
                     sample_offset: pe.sample_offset,
+                    port: 0,
                     body: EventBody::ParamChange {
                         id: pe.param_id,
                         value: f64::from(pe.value),
@@ -1295,6 +1298,10 @@ fn register_au_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
     // effect can opt into a host "MIDI Out" port instead of only note
     // effects advertising one.
     let has_midi_output = i32::from(info.emits_midi);
+    // AU exposes a single MIDI stream per direction; clamp a multi-port
+    // declaration to one and warn rather than truncate silently.
+    log_midi_ports_clamped("AU", "input", info.midi_input_ports);
+    log_midi_ports_clamped("AU", "output", info.midi_output_ports);
 
     let descriptor = Box::leak(Box::new(AuPluginDescriptor {
         component_type: info.au_type,

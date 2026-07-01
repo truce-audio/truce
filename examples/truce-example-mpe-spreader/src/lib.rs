@@ -74,15 +74,15 @@ impl PluginLogic for Spreader {
                     let channel = self.next % width;
                     self.next = (self.next + 1) % width;
                     self.note_channel[*note as usize] = Some(channel);
-                    context.output_events.push(Event {
-                        sample_offset: event.sample_offset,
-                        body: EventBody::NoteOn {
+                    context.output_events.push(Event::new(
+                        event.sample_offset,
+                        EventBody::NoteOn {
                             group: *group,
                             channel,
                             note: *note,
                             velocity: *velocity,
                         },
-                    });
+                    ));
                 }
                 EventBody::NoteOff {
                     group,
@@ -91,15 +91,15 @@ impl PluginLogic for Spreader {
                     ..
                 } => {
                     let channel = self.note_channel[*note as usize].take().unwrap_or(0);
-                    context.output_events.push(Event {
-                        sample_offset: event.sample_offset,
-                        body: EventBody::NoteOff {
+                    context.output_events.push(Event::new(
+                        event.sample_offset,
+                        EventBody::NoteOff {
                             group: *group,
                             channel,
                             note: *note,
                             velocity: *velocity,
                         },
-                    });
+                    ));
                 }
                 _ => {}
             }
@@ -145,15 +145,15 @@ mod tests {
 
         let mut events = EventList::default();
         for note in 60..64u8 {
-            events.push(Event {
-                sample_offset: 0,
-                body: EventBody::NoteOn {
+            events.push(Event::new(
+                0,
+                EventBody::NoteOn {
                     group: 0,
                     channel: 0,
                     note,
                     velocity: 100,
                 },
-            });
+            ));
         }
 
         let transport = TransportInfo::default();

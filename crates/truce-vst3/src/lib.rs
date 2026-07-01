@@ -22,8 +22,8 @@ use truce_core::info::PluginCategory;
 use truce_core::midi::decode_short_message;
 use truce_core::state;
 use truce_core::wrapper::{
-    default_io_channels, log_missing_bus_layout, run_audio_block, run_extern_callback_with,
-    run_register,
+    default_io_channels, log_midi_ports_clamped, log_missing_bus_layout, run_audio_block,
+    run_extern_callback_with, run_register,
 };
 use truce_params::{ParamInfo, ParamRange, Params};
 
@@ -313,6 +313,7 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
                 if let Some(body) = body {
                     inst.event_list.push(Event {
                         sample_offset: ev.sample_offset,
+                        port: 0,
                         body,
                     });
                 }
@@ -361,11 +362,13 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
                 {
                     inst.event_list.push(Event {
                         sample_offset,
+                        port: 0,
                         body,
                     });
                 }
                 inst.event_list.push(Event {
                     sample_offset,
+                    port: 0,
                     body: EventBody::ParamChange {
                         id: pc.id,
                         value: pc.value,
@@ -1356,6 +1359,10 @@ fn register_vst3_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
     // MIDI output bus rather than only note effects.
     let has_midi_output = i32::from(info.emits_midi);
     let accepts_midi_in = i32::from(info.accepts_midi_in);
+    // VST3 multi-port MIDI (N event buses) isn't wired yet; clamp to one
+    // and warn so a multi-port declaration isn't silently truncated.
+    log_midi_ports_clamped("VST3", "input", info.midi_input_ports);
+    log_midi_ports_clamped("VST3", "output", info.midi_output_ports);
 
     let descriptor = Box::leak(Box::new(Vst3PluginDescriptor {
         name: name.into_raw(),

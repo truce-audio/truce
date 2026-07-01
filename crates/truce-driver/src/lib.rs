@@ -830,6 +830,7 @@ impl<P: PluginExport> PluginDriver<P> {
                 if *off >= cursor && *off < cursor + block_len {
                     event_list.push(Event {
                         sample_offset: len_u32(*off - cursor),
+                        port: 0,
                         body: *body,
                     });
                 }

@@ -290,12 +290,13 @@ fn rebase_events_into(
             // overflow behaviour and can't occur in practice (the
             // scratch pool matches the source pool's size).
             EventBody::SysEx { .. } => {
-                let _ = scratch.push_sysex(rebased_offset, events.sysex_bytes(&ev.body));
+                let _ = scratch.push_sysex_on_port(
+                    rebased_offset,
+                    ev.port,
+                    events.sysex_bytes(&ev.body),
+                );
             }
-            body => scratch.push(Event {
-                sample_offset: rebased_offset,
-                body,
-            }),
+            body => scratch.push(Event::on_port(rebased_offset, ev.port, body)),
         }
     }
 }
@@ -351,14 +352,14 @@ mod tests {
     fn split_only_on_chunked_params() {
         let infos = [info(0, true), info(1, false)];
         let mut events = EventList::with_capacity(EVENT_LIST_PREALLOC);
-        events.push(Event {
-            sample_offset: 100,
-            body: EventBody::ParamChange { id: 1, value: 0.5 },
-        });
-        events.push(Event {
-            sample_offset: 200,
-            body: EventBody::ParamChange { id: 0, value: 0.5 },
-        });
+        events.push(Event::new(
+            100,
+            EventBody::ParamChange { id: 1, value: 0.5 },
+        ));
+        events.push(Event::new(
+            200,
+            EventBody::ParamChange { id: 0, value: 0.5 },
+        ));
         // Non-chunked param at 100 doesn't split; chunked at 200 does.
         let next = find_next_split(&events, &infos, 0, 0);
         assert_eq!(next, Some((200, 1)));
@@ -368,14 +369,8 @@ mod tests {
     fn min_offset_skips_close_events() {
         let infos = [info(0, true)];
         let mut events = EventList::with_capacity(EVENT_LIST_PREALLOC);
-        events.push(Event {
-            sample_offset: 5,
-            body: EventBody::ParamChange { id: 0, value: 0.5 },
-        });
-        events.push(Event {
-            sample_offset: 50,
-            body: EventBody::ParamChange { id: 0, value: 0.6 },
-        });
+        events.push(Event::new(5, EventBody::ParamChange { id: 0, value: 0.5 }));
+        events.push(Event::new(50, EventBody::ParamChange { id: 0, value: 0.6 }));
         // min_offset = 32: first event (offset 5) coalesces, second (50) splits.
         let next = find_next_split(&events, &infos, 0, 32);
         assert_eq!(next, Some((50, 1)));
@@ -385,14 +380,14 @@ mod tests {
     fn poly_mod_never_splits() {
         let infos = [info(0, true)];
         let mut events = EventList::with_capacity(EVENT_LIST_PREALLOC);
-        events.push(Event {
-            sample_offset: 100,
-            body: EventBody::ParamMod {
+        events.push(Event::new(
+            100,
+            EventBody::ParamMod {
                 id: 0,
                 note_id: 7,
                 value: 0.1,
             },
-        });
+        ));
         let next = find_next_split(&events, &infos, 0, 0);
         assert_eq!(next, None);
     }
@@ -400,18 +395,9 @@ mod tests {
     #[test]
     fn rebase_drops_out_of_window() {
         let mut events = EventList::with_capacity(EVENT_LIST_PREALLOC);
-        events.push(Event {
-            sample_offset: 10,
-            body: EventBody::ParamChange { id: 0, value: 0.1 },
-        });
-        events.push(Event {
-            sample_offset: 50,
-            body: EventBody::ParamChange { id: 0, value: 0.2 },
-        });
-        events.push(Event {
-            sample_offset: 90,
-            body: EventBody::ParamChange { id: 0, value: 0.3 },
-        });
+        events.push(Event::new(10, EventBody::ParamChange { id: 0, value: 0.1 }));
+        events.push(Event::new(50, EventBody::ParamChange { id: 0, value: 0.2 }));
+        events.push(Event::new(90, EventBody::ParamChange { id: 0, value: 0.3 }));
         let mut scratch = EventList::with_capacity(EVENT_LIST_PREALLOC);
         rebase_events_into(&events, &mut scratch, 40, 80);
         let collected: Vec<u32> = scratch.iter().map(|e| e.sample_offset).collect();
@@ -420,13 +406,33 @@ mod tests {
     }
 
     #[test]
+    fn rebase_preserves_midi_port() {
+        // The chunker splits the input list into sub-blocks; a
+        // multi-port plugin's per-event port must survive that copy.
+        let mut events = EventList::with_capacity(EVENT_LIST_PREALLOC);
+        events.push(Event::on_port(
+            20,
+            3,
+            EventBody::NoteOn {
+                group: 0,
+                channel: 0,
+                note: 60,
+                velocity: 100,
+            },
+        ));
+        let mut scratch = EventList::with_capacity(EVENT_LIST_PREALLOC);
+        rebase_events_into(&events, &mut scratch, 0, 64);
+        assert_eq!(scratch.iter().map(|e| e.port).collect::<Vec<_>>(), vec![3]);
+    }
+
+    #[test]
     fn transport_always_splits() {
         let infos: [ParamInfo; 0] = [];
         let mut events = EventList::with_capacity(EVENT_LIST_PREALLOC);
-        events.push(Event {
-            sample_offset: 100,
-            body: EventBody::Transport(TransportInfo::default()),
-        });
+        events.push(Event::new(
+            100,
+            EventBody::Transport(TransportInfo::default()),
+        ));
         let next = find_next_split(&events, &infos, 0, 0);
         assert_eq!(next, Some((100, 0)));
     }

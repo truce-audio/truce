@@ -83,15 +83,15 @@ impl PluginLogic for Transpose {
                 } => {
                     let transposed = shift_midi(*note, shift);
                     self.active_notes[*note as usize] = Some(transposed);
-                    context.output_events.push(Event {
-                        sample_offset: event.sample_offset,
-                        body: EventBody::NoteOn {
+                    context.output_events.push(Event::new(
+                        event.sample_offset,
+                        EventBody::NoteOn {
                             group: *group,
                             channel: *channel,
                             note: transposed,
                             velocity: *velocity,
                         },
-                    });
+                    ));
                 }
                 EventBody::NoteOff {
                     group,
@@ -105,15 +105,15 @@ impl PluginLogic for Transpose {
                     let output_note = self.active_notes[*note as usize]
                         .take()
                         .unwrap_or_else(|| shift_midi(*note, shift));
-                    context.output_events.push(Event {
-                        sample_offset: event.sample_offset,
-                        body: EventBody::NoteOff {
+                    context.output_events.push(Event::new(
+                        event.sample_offset,
+                        EventBody::NoteOff {
                             group: *group,
                             channel: *channel,
                             note: output_note,
                             velocity: *velocity,
                         },
-                    });
+                    ));
                 }
                 _ => {}
             }
@@ -159,15 +159,15 @@ mod tests {
         let mut buffer = unsafe { AudioBuffer::from_slices(&input_refs, &mut output_refs, 512) };
 
         let mut events = EventList::default();
-        events.push(Event {
-            sample_offset: 0,
-            body: EventBody::NoteOn {
+        events.push(Event::new(
+            0,
+            EventBody::NoteOn {
                 group: 0,
                 channel: 0,
                 note: 60,
                 velocity: 102,
             },
-        });
+        ));
 
         let transport = TransportInfo::default();
         let mut output_events = EventList::default();

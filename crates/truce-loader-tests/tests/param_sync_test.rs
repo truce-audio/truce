@@ -87,6 +87,7 @@ fn plain_param_not_double_denormalized() {
     let mut events = EventList::default();
     events.push(Event {
         sample_offset: 0,
+        port: 0,
         body: EventBody::ParamChange {
             id: 0,
             value: -27.0,

@@ -38,7 +38,8 @@ use truce_core::info::PluginInfo;
 use truce_core::plugin::PluginRuntime;
 use truce_core::state::shared_plugin_state_hash;
 use truce_core::wrapper::{
-    first_bus_layout, log_missing_bus_layout, run_audio_block, run_extern_callback_with,
+    first_bus_layout, log_midi_ports_clamped, log_missing_bus_layout, run_audio_block,
+    run_extern_callback_with,
 };
 use truce_params::{ParamInfo, Params};
 
@@ -247,6 +248,10 @@ pub unsafe fn instantiate<P: PluginExport>(
                 return ptr::null_mut();
             };
             let info = P::info();
+            // LV2 multi-port MIDI (N atom ports) isn't wired yet; clamp
+            // to one atom-in / atom-out and warn.
+            log_midi_ports_clamped("LV2", "input", info.midi_input_ports);
+            log_midi_ports_clamped("LV2", "output", info.midi_output_ports);
             let param_infos = plugin.params().param_infos();
             let params_arc = plugin.params_arc();
             let min_subblock_samples = info.automation.min_subblock_samples;
@@ -440,13 +445,13 @@ pub unsafe fn run<P: PluginExport>(handle: *mut Lv2Instance<P>, n_samples: u32) 
                 // LV2 control-port reads land at sample 0 of the block
                 // so the chunker applies them on entry to the first
                 // sub-block, equivalent to the prior eager behaviour.
-                inst.event_list.push(Event {
-                    sample_offset: 0,
-                    body: EventBody::ParamChange {
+                inst.event_list.push(Event::new(
+                    0,
+                    EventBody::ParamChange {
                         id: pid,
                         value: plain,
                     },
-                });
+                ));
             }
         }
 
@@ -476,10 +481,10 @@ pub unsafe fn run<P: PluginExport>(handle: *mut Lv2Instance<P>, n_samples: u32) 
                     if let Some(&(_, pid)) =
                         inst.param_urid_to_id.iter().find(|(u, _)| *u == property)
                     {
-                        inst.event_list.push(Event {
+                        inst.event_list.push(Event::new(
                             sample_offset,
-                            body: EventBody::ParamChange { id: pid, value },
-                        });
+                            EventBody::ParamChange { id: pid, value },
+                        ));
                     }
                 });
             }
@@ -861,6 +866,8 @@ mod uri_consistency_tests {
             emits_midi: false,
             midi_input_dialect: truce_core::info::MidiDialect::Midi1,
             midi_output_dialect: truce_core::info::MidiDialect::Midi1,
+            midi_input_ports: 0,
+            midi_output_ports: 0,
             bundle_id,
             vst3_id: "",
             clap_id: "",

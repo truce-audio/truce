@@ -191,6 +191,7 @@ const MIDI_PROCESS_BODY: &str = r"    fn process(&mut self, _buffer: &mut AudioB
                         .clamp(0, 127) as u8;
                     context.output_events.push(Event {
                         sample_offset: event.sample_offset,
+                        port: 0,
                         body: EventBody::NoteOn {
                             group: *group, channel: *channel, note: shifted, velocity: *velocity,
                         },
@@ -201,6 +202,7 @@ const MIDI_PROCESS_BODY: &str = r"    fn process(&mut self, _buffer: &mut AudioB
                         .clamp(0, 127) as u8;
                     context.output_events.push(Event {
                         sample_offset: event.sample_offset,
+                        port: 0,
                         body: EventBody::NoteOff {
                             group: *group, channel: *channel, note: shifted, velocity: *velocity,
                         },

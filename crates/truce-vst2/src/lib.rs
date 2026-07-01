@@ -20,8 +20,8 @@ use truce_core::export::PluginExport;
 use truce_core::midi::decode_short_message;
 use truce_core::state;
 use truce_core::wrapper::{
-    default_io_channels, first_bus_layout, log_missing_bus_layout, run_audio_block,
-    run_extern_callback_with, run_register,
+    default_io_channels, first_bus_layout, log_midi_ports_clamped, log_missing_bus_layout,
+    run_audio_block, run_extern_callback_with, run_register,
 };
 use truce_params::{ParamFlags, ParamInfo, Params};
 
@@ -345,6 +345,7 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
                 if let Some(body) = decode_short_message(ev.status, ev.data1, ev.data2) {
                     inst.event_list.push(Event {
                         sample_offset: ev.delta_frames,
+                        port: 0,
                         body,
                     });
                 }
@@ -1003,6 +1004,11 @@ fn register_vst2_inner<P: PluginExport>(layout: &BusLayout) {
         .iter()
         .find(|pi| pi.flags.contains(ParamFlags::IS_BYPASS))
         .map_or(u32::MAX, |pi| pi.id);
+
+    // VST2 has a single MIDI stream per direction; clamp a multi-port
+    // declaration to one and warn.
+    log_midi_ports_clamped("VST2", "input", info.midi_input_ports);
+    log_midi_ports_clamped("VST2", "output", info.midi_output_ports);
 
     let descriptor = Box::leak(Box::new(Vst2PluginDescriptor {
         component_type: info.au_type,

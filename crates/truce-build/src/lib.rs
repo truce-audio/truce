@@ -53,6 +53,25 @@ pub fn midi_capabilities(
     (accepts_midi_in, emits_midi)
 }
 
+/// Resolve the MIDI port counts `(input, output)` baked onto
+/// `PluginInfo`. Each defaults to one port when the matching capability
+/// is present (from [`midi_capabilities`]) and zero otherwise; the
+/// `midi_input_ports` / `midi_output_ports` overrides raise (or, at 0,
+/// drop) the count. A non-zero override implies the capability, so a
+/// port count is authoritative: capability is `count > 0`. Wrappers on
+/// single-port formats clamp the count to one.
+#[must_use]
+pub fn midi_port_counts(
+    accepts_midi_in: bool,
+    emits_midi: bool,
+    input_override: Option<u8>,
+    output_override: Option<u8>,
+) -> (u8, u8) {
+    let input = input_override.unwrap_or(u8::from(accepts_midi_in));
+    let output = output_override.unwrap_or(u8::from(emits_midi));
+    (input, output)
+}
+
 /// Derive-time view of `truce.toml`.
 ///
 /// `truce-derive` (proc macros) reads this to expand
@@ -203,6 +222,15 @@ pub struct PluginDef {
     /// port to exist (see `midi_input` / `midi_output` / category).
     #[serde(default)]
     pub midi2: bool,
+    /// Number of MIDI input ports. Absent -> one port when the plugin
+    /// accepts MIDI input, none otherwise. Set `>1` for a multi-port
+    /// plugin; only CLAP / VST3 / LV2 carry more than one, others clamp
+    /// to one and log a skip.
+    #[serde(default)]
+    pub midi_input_ports: Option<u8>,
+    /// Number of MIDI output ports. See `midi_input_ports`.
+    #[serde(default)]
+    pub midi_output_ports: Option<u8>,
     /// Optional `[plugin.presets]` table - factory-preset opt-in.
     /// When absent, the install pipeline still picks up a `presets/`
     /// directory next to the plugin crate if one exists.
@@ -394,7 +422,7 @@ pub fn load_config(path: &Path) -> Result<Config, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{extract_json_string, midi_capabilities};
+    use super::{extract_json_string, midi_capabilities, midi_port_counts};
 
     #[test]
     fn midi_caps_category_defaults() {
@@ -420,6 +448,18 @@ mod tests {
             midi_capabilities("effect", Some(true), Some(true)),
             (true, true)
         );
+    }
+
+    #[test]
+    fn midi_port_counts_default_and_override() {
+        // Default: one port per enabled direction, zero otherwise.
+        assert_eq!(midi_port_counts(true, false, None, None), (1, 0));
+        assert_eq!(midi_port_counts(true, true, None, None), (1, 1));
+        assert_eq!(midi_port_counts(false, false, None, None), (0, 0));
+        // Override raises the count (and implies the capability).
+        assert_eq!(midi_port_counts(true, true, Some(3), Some(2)), (3, 2));
+        // Override on a MIDI-less direction is authoritative.
+        assert_eq!(midi_port_counts(false, false, Some(2), None), (2, 0));
     }
 
     #[test]

@@ -45,6 +45,19 @@ pub struct PluginInfo {
     /// [`Self::midi_input_dialect`].
     pub midi_output_dialect: MidiDialect,
 
+    /// Number of MIDI input ports the plugin exposes. `0` when it
+    /// accepts no MIDI, `1` for the ordinary single-port case, `>1` for
+    /// a multi-port plugin (e.g. a merger). Derived from the MIDI-input
+    /// capability by default; `midi_input_ports` in `truce.toml` raises
+    /// it. Formats without a multi-port MIDI transport clamp to `1` and
+    /// route everything to [`crate::Event::port`] `0`. Always `>= 1` when
+    /// [`Self::accepts_midi_in`] is set, and `0` otherwise.
+    pub midi_input_ports: u8,
+
+    /// Number of MIDI output ports the plugin exposes. See
+    /// [`Self::midi_input_ports`]; mirrors [`Self::emits_midi`].
+    pub midi_output_ports: u8,
+
     /// Short identifier (`bundle_id` in `truce.toml`). Used to derive
     /// the LV2 plugin URI (`{vendor.url}/lv2/{bundle_id}`); also a
     /// stable, vendor-agnostic key for "this plugin" that doesn't

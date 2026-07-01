@@ -85,15 +85,15 @@ impl Chord {
     fn stop(&mut self, out: &mut EventList, offset: u32, group: u8, channel: u8) {
         for note in &mut self.notes {
             if let Some(n) = note.take() {
-                out.push(Event {
-                    sample_offset: offset,
-                    body: EventBody::NoteOff {
+                out.push(Event::new(
+                    offset,
+                    EventBody::NoteOff {
                         group,
                         channel,
                         note: n,
                         velocity: 0,
                     },
-                });
+                ));
             }
         }
         self.root = None;
@@ -158,15 +158,15 @@ impl PluginLogic for Chord {
                         self.phases[voice] = 0.0;
                         // Emit the chord note so a downstream instrument
                         // can play the same harmony.
-                        context.output_events.push(Event {
-                            sample_offset: event.sample_offset,
-                            body: EventBody::NoteOn {
+                        context.output_events.push(Event::new(
+                            event.sample_offset,
+                            EventBody::NoteOn {
                                 group: *group,
                                 channel: *channel,
                                 note: chord_note,
                                 velocity: *velocity,
                             },
-                        });
+                        ));
                     }
                 }
                 EventBody::NoteOff {
@@ -249,15 +249,15 @@ mod tests {
         let mut buffer = unsafe { AudioBuffer::from_slices(&input_refs, &mut output_refs, 256) };
 
         let mut events = EventList::default();
-        events.push(Event {
-            sample_offset: 0,
-            body: EventBody::NoteOn {
+        events.push(Event::new(
+            0,
+            EventBody::NoteOn {
                 group: 0,
                 channel: 0,
                 note: 60, // C4, default chord = Major
                 velocity: 100,
             },
-        });
+        ));
 
         let transport = TransportInfo::default();
         let mut output_events = EventList::default();
