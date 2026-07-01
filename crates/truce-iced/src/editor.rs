@@ -304,6 +304,21 @@ fn iced_interaction_to_cursor(
     }
 }
 
+// All buttons forward to iced, not just Left - widgets rely on
+// right-click (reset to default) and middle-click. `None` skips buttons
+// iced has no variant for.
+fn convert_mouse_button(button: baseview::MouseButton) -> Option<crate::iced::mouse::Button> {
+    use crate::iced::mouse::Button;
+    match button {
+        baseview::MouseButton::Left => Some(Button::Left),
+        baseview::MouseButton::Right => Some(Button::Right),
+        baseview::MouseButton::Middle => Some(Button::Middle),
+        baseview::MouseButton::Back => Some(Button::Back),
+        baseview::MouseButton::Forward => Some(Button::Forward),
+        baseview::MouseButton::Other(_) => None,
+    }
+}
+
 impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBaseviewHandler<P, M> {
     fn on_frame(&mut self, window: &mut baseview::Window) {
         // Catch panics at the FFI boundary: baseview drives this from an
@@ -430,10 +445,10 @@ impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBase
                                 .pending_events
                                 .push(Event::Mouse(crate::iced::mouse::Event::CursorLeft));
                         }
-                        baseview::MouseEvent::ButtonPressed {
-                            button: baseview::MouseButton::Left,
-                            ..
-                        } => {
+                        baseview::MouseEvent::ButtonPressed { button, .. } => {
+                            let Some(button) = convert_mouse_button(button) else {
+                                return baseview::EventStatus::Ignored;
+                            };
                             // WS_CHILD plugin windows don't receive WM_KEYDOWN
                             // until focused; baseview doesn't SetFocus on click,
                             // so we do it here. Without this, text-edit widgets
@@ -445,19 +460,15 @@ impl<P: Params + 'static, M: IcedPlugin<P>> baseview::WindowHandler for IcedBase
                                 }
                             }
                             runtime.pending_events.push(Event::Mouse(
-                                crate::iced::mouse::Event::ButtonPressed(
-                                    crate::iced::mouse::Button::Left,
-                                ),
+                                crate::iced::mouse::Event::ButtonPressed(button),
                             ));
                         }
-                        baseview::MouseEvent::ButtonReleased {
-                            button: baseview::MouseButton::Left,
-                            ..
-                        } => {
+                        baseview::MouseEvent::ButtonReleased { button, .. } => {
+                            let Some(button) = convert_mouse_button(button) else {
+                                return baseview::EventStatus::Ignored;
+                            };
                             runtime.pending_events.push(Event::Mouse(
-                                crate::iced::mouse::Event::ButtonReleased(
-                                    crate::iced::mouse::Button::Left,
-                                ),
+                                crate::iced::mouse::Event::ButtonReleased(button),
                             ));
                         }
                         baseview::MouseEvent::WheelScrolled { delta, .. } => {
