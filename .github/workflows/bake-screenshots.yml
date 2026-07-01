@@ -53,7 +53,7 @@ env:
   # suffix on the output filename matches the convention enforced by
   # each example's `gui_screenshot_<os>` test (linux/macos/windows) or
   # the `cargo truce screenshot --ios [--crop-mode container]` pipeline.
-  # The iced examples (`gain-iced`, `gui-zoo-iced`, `midi-inspector`)
+  # The iced examples (`gain-iced`, `gui-zoo-iced`)
   # render on iOS via truce-iced's CAMetalLayer host, so they're built
   # for iOS below; like most examples they stay build-only here (the
   # curated capture subset further down is unchanged).
@@ -87,7 +87,6 @@ env:
     truce-example-gui-zoo
     truce-example-gui-zoo-egui
     truce-example-gui-zoo-iced
-    truce-example-midi-inspector
     truce-example-dasp-bitcrusher
     truce-example-envelope
     truce-example-chord
@@ -497,11 +496,9 @@ jobs:
             # render is still gated on desktop. Skip the per-plugin sim
             # reboot here too; their committed iOS baselines stay frozen.
             # To re-enable one, drop it from this list and from the
-            # ci-ios.yml loop, then re-bake. (midi-inspector is the lone
-            # build-only iced example - its committed baseline stays
-            # frozen; gain-iced / gui-zoo-iced bake + check.)
+            # ci-ios.yml loop, then re-bake. (gain-iced / gui-zoo-iced
+            # bake + check.)
             case "$crate" in
-              truce-example-midi-inspector) continue ;;
               truce-example-eq|truce-example-tremolo|truce-example-arpeggio) continue ;;
               truce-example-state|truce-example-gain-egui) continue ;;
               truce-example-fundsp-reverb-worker|truce-example-fundsp-reverb-simple) continue ;;
