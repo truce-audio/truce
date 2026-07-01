@@ -1,4 +1,4 @@
-//! `multitimbral` - a multi-port MIDI **input** instrument.
+//! `multiport` - a multi-port MIDI **input** instrument.
 //!
 //! One instance exposes two MIDI input ports; the host routes a separate
 //! track to each and both play from the same plugin. This is the
@@ -25,12 +25,12 @@ use truce_core::midi::norm_7bit;
 use truce_gui::IntoLayoutEditor;
 use truce_gui_types::layout::{GridLayout, knob, widgets};
 
-use MultiParamsParamId as P;
+use MultiportParamsParamId as P;
 
 const NUM_VOICES: usize = 16;
 
 #[derive(Params)]
-pub struct MultiParams {
+pub struct MultiportParams {
     #[param(name = "Cutoff", range = "linear(0, 1)", default = 0.7, unit = "%")]
     pub cutoff: FloatParam,
     #[param(name = "Release", range = "linear(0.01, 4)", default = 0.3, unit = "s")]
@@ -57,15 +57,15 @@ struct Voice {
     lp: f32,
 }
 
-pub struct Multi {
-    params: Arc<MultiParams>,
+pub struct Multiport {
+    params: Arc<MultiportParams>,
     sample_rate: f64,
     voices: [Voice; NUM_VOICES],
 }
 
-impl Multi {
+impl Multiport {
     #[must_use]
-    pub fn new(params: Arc<MultiParams>) -> Self {
+    pub fn new(params: Arc<MultiportParams>) -> Self {
         Self {
             params,
             sample_rate: 44100.0,
@@ -132,7 +132,7 @@ fn osc(port: u8, phase: f64) -> f32 {
     s as f32
 }
 
-impl PluginLogic for Multi {
+impl PluginLogic for Multiport {
     fn bus_layouts() -> Vec<BusLayout> {
         vec![BusLayout::new().with_output("Main", ChannelConfig::Stereo)]
     }
@@ -203,23 +203,23 @@ impl PluginLogic for Multi {
             knob(P::Release, "Release"),
             knob(P::Volume, "Volume"),
         ])])
-        .with_title("MULTI")
+        .with_title("MULTIPORT")
         .into_editor(&self.params)
     }
 }
 
 truce::plugin! {
-    logic: Multi,
-    params: MultiParams,
+    logic: Multiport,
+    params: MultiportParams,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn render(input: &[Event]) -> (Multi, Vec<f32>) {
-        let params = Arc::new(MultiParams::new());
-        let mut plugin = Multi::new(Arc::clone(&params));
+    fn render(input: &[Event]) -> (Multiport, Vec<f32>) {
+        let params = Arc::new(MultiportParams::new());
+        let mut plugin = Multiport::new(Arc::clone(&params));
         plugin.reset(44100.0, 64);
 
         let in_refs: Vec<&[f32]> = Vec::new();
@@ -290,13 +290,13 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn gui_screenshot_macos() {
-        truce_test::screenshot!(Plugin, "screenshots/multitimbral_default_macos.png").run();
+        truce_test::screenshot!(Plugin, "screenshots/multiport_default_macos.png").run();
     }
 
     #[cfg(target_os = "linux")]
     #[test]
     fn gui_screenshot_linux() {
-        truce_test::screenshot!(Plugin, "screenshots/multitimbral_default_linux.png")
+        truce_test::screenshot!(Plugin, "screenshots/multiport_default_linux.png")
             .pixel_threshold(2)
             .run();
     }
@@ -304,7 +304,7 @@ mod tests {
     #[cfg(target_os = "windows")]
     #[test]
     fn gui_screenshot_windows() {
-        truce_test::screenshot!(Plugin, "screenshots/multitimbral_default_windows.png")
+        truce_test::screenshot!(Plugin, "screenshots/multiport_default_windows.png")
             .pixel_threshold(2)
             .run();
     }

@@ -4292,7 +4292,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "truce-example-multitimbral"
+name = "truce-example-multiport"
 version = "1.0.4"
 dependencies = [
  "clap-sys",
