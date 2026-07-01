@@ -32,13 +32,13 @@ use std::sync::{Arc, OnceLock};
 
 use clap_sys::events::{
     CLAP_CORE_EVENT_SPACE_ID, CLAP_EVENT_IS_LIVE, CLAP_EVENT_MIDI, CLAP_EVENT_MIDI_SYSEX,
-    CLAP_EVENT_NOTE_OFF, CLAP_EVENT_NOTE_ON, CLAP_EVENT_PARAM_GESTURE_BEGIN,
+    CLAP_EVENT_MIDI2, CLAP_EVENT_NOTE_OFF, CLAP_EVENT_NOTE_ON, CLAP_EVENT_PARAM_GESTURE_BEGIN,
     CLAP_EVENT_PARAM_GESTURE_END, CLAP_EVENT_PARAM_MOD, CLAP_EVENT_PARAM_VALUE,
     CLAP_EVENT_TRANSPORT, CLAP_TRANSPORT_HAS_BEATS_TIMELINE, CLAP_TRANSPORT_HAS_SECONDS_TIMELINE,
     CLAP_TRANSPORT_HAS_TEMPO, CLAP_TRANSPORT_HAS_TIME_SIGNATURE, CLAP_TRANSPORT_IS_LOOP_ACTIVE,
     CLAP_TRANSPORT_IS_PLAYING, CLAP_TRANSPORT_IS_RECORDING, clap_event_header, clap_event_midi,
-    clap_event_midi_sysex, clap_event_note, clap_event_param_gesture, clap_event_param_value,
-    clap_event_transport, clap_input_events, clap_output_events,
+    clap_event_midi_sysex, clap_event_midi2, clap_event_note, clap_event_param_gesture,
+    clap_event_param_value, clap_event_transport, clap_input_events, clap_output_events,
 };
 use clap_sys::ext::audio_ports::{
     CLAP_AUDIO_PORT_IS_MAIN, CLAP_EXT_AUDIO_PORTS, CLAP_PORT_MONO, CLAP_PORT_STEREO,
@@ -46,8 +46,8 @@ use clap_sys::ext::audio_ports::{
 };
 use clap_sys::ext::latency::{CLAP_EXT_LATENCY, clap_plugin_latency};
 use clap_sys::ext::note_ports::{
-    CLAP_EXT_NOTE_PORTS, CLAP_NOTE_DIALECT_CLAP, CLAP_NOTE_DIALECT_MIDI, clap_note_port_info,
-    clap_plugin_note_ports,
+    CLAP_EXT_NOTE_PORTS, CLAP_NOTE_DIALECT_CLAP, CLAP_NOTE_DIALECT_MIDI, CLAP_NOTE_DIALECT_MIDI2,
+    clap_note_port_info, clap_plugin_note_ports,
 };
 use clap_sys::ext::params::{
     CLAP_EXT_PARAMS, CLAP_PARAM_IS_AUTOMATABLE, CLAP_PARAM_IS_BYPASS, CLAP_PARAM_IS_ENUM,
@@ -90,7 +90,7 @@ use truce_core::editor::{
 };
 use truce_core::events::{EVENT_LIST_PREALLOC, Event, EventBody, EventList, TransportInfo};
 use truce_core::export::PluginExport;
-use truce_core::info::{PluginCategory, PluginInfo};
+use truce_core::info::{MidiDialect, PluginCategory, PluginInfo};
 use truce_core::midi::{decode_short_message, denorm_7bit, pitch_bend_to_bytes};
 use truce_core::plugin::PluginRuntime;
 use truce_core::process::ProcessStatus;
@@ -726,13 +726,26 @@ unsafe fn convert_input_events<P: PluginExport>(
                     };
                     let _ = data.event_list.push_sysex(sample_offset, bytes);
                 }
+                // A host only routes UMP here when we advertised
+                // `CLAP_NOTE_DIALECT_MIDI2` on the input port, which only
+                // happens for a `Midi2`-dialect plugin. Decode the packet
+                // into the native 2.0 `EventBody` variants (group nibble
+                // included). A MIDI-1.0 port never advertises the
+                // dialect, so this arm is inert there and 2.0 traffic (if
+                // any leaks) falls through to the skip below rather than
+                // being mis-delivered as 1.0.
+                CLAP_EVENT_MIDI2 if data.info.midi_input_dialect == MidiDialect::Midi2 => {
+                    let midi2 = &*header.cast::<clap_event_midi2>();
+                    if let Some(body) = truce_core::ump::decode_ump_channel_voice_2(midi2.data) {
+                        data.event_list.push(Event {
+                            sample_offset,
+                            body,
+                        });
+                    }
+                }
                 _ => {
-                    // Unsupported event type (system real-time,
-                    // MIDI 2.0) - skip silently. MIDI 2.0 demux is
-                    // gated behind a per-plug-in version opt-in
-                    // that's not wired yet; until then the channel
-                    // voice 1.0 + `SysEx` paths above are the only
-                    // ones surfaced.
+                    // Unsupported event type (system real-time, utility)
+                    // - skip silently.
                 }
             }
         }
@@ -1253,13 +1266,30 @@ unsafe extern "C" fn clap_plugin_process<P: PluginExport>(
                         };
                         try_push(proc.out_events, &raw const ev.header);
                     }
-                    // MIDI 2.0, ParamMod, Transport, and per-note
-                    // events: the plugin-output direction isn't
-                    // routinely emitted by truce plugins; leave them
-                    // as silent skips rather than building partial
-                    // encoders. MIDI 2.0 emission stays parked
-                    // until a per-plug-in version opt-in lands.
-                    _ => {}
+                    // MIDI 2.0 channel-voice + per-note events go out as
+                    // UMP (`CLAP_EVENT_MIDI2`) when the output port
+                    // declared the `Midi2` dialect. ParamMod / Transport
+                    // have no wire form here and stay silent skips (the
+                    // encoder returns `None` for them). A MIDI-1.0 port
+                    // never advertised MIDI2, so nothing is emitted.
+                    body => {
+                        if data.info.midi_output_dialect == MidiDialect::Midi2
+                            && let Some(packet) = truce_core::ump::encode_ump_channel_voice_2(body)
+                        {
+                            let ev = clap_event_midi2 {
+                                header: clap_event_header {
+                                    size: size_of_u32::<clap_event_midi2>(),
+                                    time: event.sample_offset,
+                                    space_id: CLAP_CORE_EVENT_SPACE_ID,
+                                    type_: CLAP_EVENT_MIDI2,
+                                    flags: 0,
+                                },
+                                port_index: 0,
+                                data: packet,
+                            };
+                            try_push(proc.out_events, &raw const ev.header);
+                        }
+                    }
                 }
             }
         }
@@ -1754,6 +1784,18 @@ unsafe extern "C" fn note_ports_get<P: PluginExport>(
         // raw-MIDI path.
         out.supported_dialects = CLAP_NOTE_DIALECT_CLAP | CLAP_NOTE_DIALECT_MIDI;
         out.preferred_dialect = CLAP_NOTE_DIALECT_CLAP;
+        // A port that opted into MIDI 2.0 also carries UMP: advertise
+        // the MIDI2 dialect so the host routes `CLAP_EVENT_MIDI2` to us
+        // (in) and reads it back (out). Still CLAP-preferred - MIDI2 is
+        // the opt-in native path, not the default.
+        let dialect = if is_input {
+            P::info().midi_input_dialect
+        } else {
+            P::info().midi_output_dialect
+        };
+        if dialect == MidiDialect::Midi2 {
+            out.supported_dialects |= CLAP_NOTE_DIALECT_MIDI2;
+        }
         out.name = [0; CLAP_NAME_SIZE];
         copy_str_to_buf(
             &mut out.name,

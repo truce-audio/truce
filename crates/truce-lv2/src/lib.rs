@@ -859,6 +859,8 @@ mod uri_consistency_tests {
             category: PluginCategory::Effect,
             accepts_midi_in: false,
             emits_midi: false,
+            midi_input_dialect: truce_core::info::MidiDialect::Midi1,
+            midi_output_dialect: truce_core::info::MidiDialect::Midi1,
             bundle_id,
             vst3_id: "",
             clap_id: "",

@@ -2,6 +2,10 @@
 
 Notable changes per release.
 
+## 1.1.0
+
+- **MIDI 2.0 / UMP on CLAP (opt-in).** Set `midi2 = true` in `truce.toml` to have a plugin's CLAP note ports carry UMP: the wrapper advertises `CLAP_NOTE_DIALECT_MIDI2`, decodes inbound `CLAP_EVENT_MIDI2` into the native 2.0 `EventBody` variants (16/32-bit + per-note, with UMP group), and emits them back out. MIDI-1.0 plugins are unchanged.
+
 ## 1.0.4
 
 - **`cargo truce build` / `install` / `package` accept `--features`.** Pass extra Cargo features for the plugin crate (comma/space-separated); they apply to every underlying build (per-format, shell logic, iOS, standalone bin) so the set stays uniform. Format features (`clap`/`vst3`/...) are reserved for the format flags.
