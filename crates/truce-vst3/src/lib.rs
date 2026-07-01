@@ -22,8 +22,8 @@ use truce_core::info::PluginCategory;
 use truce_core::midi::decode_short_message;
 use truce_core::state;
 use truce_core::wrapper::{
-    default_io_channels, log_midi_ports_clamped, log_missing_bus_layout, run_audio_block,
-    run_extern_callback_with, run_register,
+    default_io_channels, log_missing_bus_layout, run_audio_block, run_extern_callback_with,
+    run_register,
 };
 use truce_params::{ParamInfo, ParamRange, Params};
 
@@ -313,7 +313,7 @@ unsafe extern "C" fn cb_process<P: PluginExport>(
                 if let Some(body) = body {
                     inst.event_list.push(Event {
                         sample_offset: ev.sample_offset,
-                        port: 0,
+                        port: ev.port,
                         body,
                     });
                 }
@@ -710,6 +710,7 @@ fn try_encode_vst3_midi(event: &Event) -> Option<Vst3MidiEvent> {
         data1,
         data2,
         note_id: 0,
+        port: event.port,
     })
 }
 
@@ -809,6 +810,7 @@ unsafe extern "C" fn cb_get_output_event<P: PluginExport>(
 unsafe extern "C" fn cb_push_sysex_input<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     sample_offset: u32,
+    port: u8,
     bytes: *const u8,
     len: u32,
 ) {
@@ -826,7 +828,9 @@ unsafe extern "C" fn cb_push_sysex_input<P: PluginExport>(
         // spec; truncating would corrupt it. The plug-in surfaces
         // the loss via the `EventList`'s pool usage metrics if it
         // cares.
-        let _ = inst.event_list.push_sysex(sample_offset, slice);
+        let _ = inst
+            .event_list
+            .push_sysex_on_port(sample_offset, port, slice);
     }
 }
 
@@ -846,6 +850,7 @@ unsafe extern "C" fn cb_get_output_sysex_event<P: PluginExport>(
     ctx: *mut std::ffi::c_void,
     index: u32,
     out_sample_offset: *mut u32,
+    out_port: *mut u8,
     out_bytes: *mut *const u8,
     out_len: *mut u32,
 ) {
@@ -864,6 +869,7 @@ unsafe extern "C" fn cb_get_output_sysex_event<P: PluginExport>(
         {
             let bytes = inst.output_events.sysex_bytes(&event.body);
             *out_sample_offset = event.sample_offset;
+            *out_port = event.port;
             *out_bytes = bytes.as_ptr();
             *out_len = len_u32(bytes.len());
         }
@@ -1353,16 +1359,12 @@ fn register_vst3_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
     };
     let subcategories = CString::new(subcategory_str).unwrap_or_default();
 
-    // MIDI capability is decided once on `PluginInfo` (category
-    // default, overridable via `midi_input` / `midi_output` in
-    // truce.toml), so an instrument or audio effect can opt into a
-    // MIDI output bus rather than only note effects.
-    let has_midi_output = i32::from(info.emits_midi);
-    let accepts_midi_in = i32::from(info.accepts_midi_in);
-    // VST3 multi-port MIDI (N event buses) isn't wired yet; clamp to one
-    // and warn so a multi-port declaration isn't silently truncated.
-    log_midi_ports_clamped("VST3", "input", info.midi_input_ports);
-    log_midi_ports_clamped("VST3", "output", info.midi_output_ports);
+    // MIDI port counts are decided once on `PluginInfo` (category
+    // default, overridable via `midi_input` / `midi_output` /
+    // `midi_input_ports` / `midi_output_ports` in truce.toml). The shim
+    // advertises this many event buses per direction.
+    let midi_output_ports = i32::from(info.midi_output_ports);
+    let midi_input_ports = i32::from(info.midi_input_ports);
 
     let descriptor = Box::leak(Box::new(Vst3PluginDescriptor {
         name: name.into_raw(),
@@ -1375,8 +1377,8 @@ fn register_vst3_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
         subcategories: subcategories.into_raw(),
         num_inputs,
         num_outputs,
-        has_midi_output,
-        accepts_midi_in,
+        midi_output_ports,
+        midi_input_ports,
     }));
 
     let callbacks = Box::leak(Box::new(Vst3Callbacks {
@@ -1541,6 +1543,24 @@ mod tests {
     fn unmapped_param_does_not_bridge() {
         let i = info(ParamRange::Linear { min: 0.0, max: 1.0 }, None);
         assert!(midi_event_from_param(&i, 0.5).is_none());
+    }
+
+    #[test]
+    fn output_encode_carries_port() {
+        // The plug-in stamps an outbound event's MIDI port; the shim
+        // reads it back off `Vst3MidiEvent::port` to pick the event bus.
+        let event = Event::on_port(
+            5,
+            2,
+            EventBody::NoteOn {
+                group: 0,
+                channel: 0,
+                note: 60,
+                velocity: 100,
+            },
+        );
+        let packet = try_encode_vst3_midi(&event).expect("note-on encodes");
+        assert_eq!(packet.port, 2);
     }
 
     #[test]
