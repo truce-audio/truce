@@ -1,19 +1,66 @@
-//! Spreads incoming notes round-robin across N MIDI channels - a
-//! minimal MPE-style voice allocator.
+//! Promotes MIDI 1.0 to MIDI 2.0 (UMP) and spreads notes across the
+//! channel / port / group address space - a test vehicle for truce's
+//! 2.0 **encode** and **multi-port output** surface.
 //!
-//! Exercises multi-channel MIDI output (up to all 16 channels), the
-//! `status | channel` nibble packing in every wrapper, and higher
-//! event counts against `EVENT_LIST_PREALLOC`.
+//! Every incoming 1.0 channel-voice message is re-emitted as its native
+//! 2.0 `EventBody` (7-bit velocity -> 16-bit, 7/14-bit controller/bend
+//! values -> 32-bit). An `Algo` mode chooses how notes are addressed:
+//!
+//! - **Passthrough**   - promotion only, addressing untouched.
+//! - **Channel Fan**   - round-robin each note across `Channels` MIDI
+//!   channels (an MPE-style voice allocator).
+//! - **Port Fan**      - alternate notes between output ports 0 and 1.
+//! - **Group Spread**  - map the input channel onto the UMP `group`.
+//! - **Auto Vibrato**  - a per-held-note pitch-bend LFO emitted as
+//!   `PerNotePitchBend` (32-bit) on the expression port.
+//! - **Mod Brightness** - the mod wheel (CC 1) routed to per-note
+//!   brightness (`PerNoteCC` 74) on every held note, on the expression
+//!   port.
+//!
+//! `midi2 = true` in `truce.toml` makes the output carry native UMP on
+//! CLAP / AU v3; on formats without a UMP transport the wrapper (or host)
+//! down-converts to 1.0. Non-1.0-channel-voice input is ignored.
+
+use std::f64::consts::TAU;
+use std::sync::Arc;
 
 use truce::prelude::*;
 use truce_gui::IntoLayoutEditor;
-use truce_gui_types::layout::{GridLayout, knob, widgets};
+use truce_gui_types::layout::{GridLayout, dropdown, knob, widgets};
 
 use SpreaderParamsParamId as P;
-use std::sync::Arc;
+
+/// Promoted notes leave here (and, for `Port Fan`, port 1 too).
+const PORT_MAIN: u8 = 0;
+/// Generated per-note expression (vibrato / brightness) leaves here.
+const PORT_EXPR: u8 = 1;
+/// MIDI mod-wheel CC number.
+const CC_MOD_WHEEL: u8 = 1;
+/// MIDI 2.0 per-note brightness controller number.
+const CC_BRIGHTNESS: u8 = 74;
+
+/// Note addressing. `ParamEnum` derives `Clone` / `Copy` / `PartialEq`.
+#[derive(ParamEnum)]
+pub enum Algo {
+    #[name = "Passthrough"]
+    Passthrough,
+    #[name = "Channel Fan"]
+    ChannelFan,
+    #[name = "Port Fan"]
+    PortFan,
+    #[name = "Group Spread"]
+    GroupSpread,
+    #[name = "Auto Vibrato"]
+    AutoVibrato,
+    #[name = "Mod Brightness"]
+    ModBrightness,
+}
 
 #[derive(Params)]
 pub struct SpreaderParams {
+    // Default index 1 = Channel Fan, the plugin's namesake behavior.
+    #[param(name = "Algorithm", short_name = "Algo", default = 1)]
+    pub algo: EnumParam<Algo>,
     #[param(
         name = "Channels",
         short_name = "Chans",
@@ -21,25 +68,85 @@ pub struct SpreaderParams {
         default = 16
     )]
     pub channels: IntParam,
+    #[param(
+        name = "Vibrato Rate",
+        range = "log(0.1, 12)",
+        default = 5.0,
+        unit = "Hz"
+    )]
+    pub vib_rate: FloatParam,
+    #[param(
+        name = "Vibrato Depth",
+        range = "linear(0, 1)",
+        default = 0.25,
+        unit = "%"
+    )]
+    pub vib_depth: FloatParam,
+}
+
+/// A held input note, so `NoteOff` and per-note expression reach the same
+/// voice even if the mode or fan width changes mid-hold.
+#[derive(Clone, Copy)]
+struct Held {
+    port: u8,
+    group: u8,
+    channel: u8,
+    /// Vibrato LFO phase in turns (0..1), advanced per block.
+    phase: f64,
 }
 
 pub struct Spreader {
     params: Arc<SpreaderParams>,
-    /// Channel each held input note was assigned, so its `NoteOff` lands
-    /// on the same channel even if the spread width changes mid-hold.
-    note_channel: [Option<u8>; 128],
-    /// Next channel to hand out.
-    next: u8,
+    sample_rate: f64,
+    /// Held notes indexed by note number. One entry per pitch - a second
+    /// `NoteOn` of the same pitch overwrites (a test tool, not a full
+    /// voice allocator).
+    held: [Option<Held>; 128],
+    /// Next channel to hand out for `Channel Fan`.
+    next_channel: u8,
+    /// Next output port to hand out for `Port Fan`.
+    next_port: u8,
 }
 
 impl Spreader {
+    #[must_use]
     pub fn new(params: Arc<SpreaderParams>) -> Self {
         Self {
             params,
-            note_channel: [None; 128],
-            next: 0,
+            sample_rate: 44100.0,
+            held: [None; 128],
+            next_channel: 0,
+            next_port: 0,
         }
     }
+}
+
+// 7-bit -> 16-bit, exact endpoints (0->0, 127->65535). The masked
+// division fits the narrower type; the lint can't prove it.
+#[allow(clippy::cast_possible_truncation)]
+fn vel7_to_16(v: u8) -> u16 {
+    ((u32::from(v) * 0xFFFF) / 127) as u16
+}
+
+// 7-bit -> 32-bit controller value.
+#[allow(clippy::cast_possible_truncation)]
+fn cc7_to_32(v: u8) -> u32 {
+    ((u64::from(v) * u64::from(u32::MAX)) / 127) as u32
+}
+
+// 14-bit -> 32-bit pitch bend; 8192 (centre) -> ~0x8000_0000.
+#[allow(clippy::cast_possible_truncation)]
+fn bend14_to_32(v: u16) -> u32 {
+    ((u64::from(v) * u64::from(u32::MAX)) / 16383) as u32
+}
+
+// LFO sample -> 32-bit per-note pitch bend around centre.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn lfo_bend(depth: f64, s: f64) -> u32 {
+    let half = f64::from(u32::MAX) / 2.0;
+    (half + depth * s * half)
+        .round()
+        .clamp(0.0, f64::from(u32::MAX)) as u32
 }
 
 impl PluginLogic for Spreader {
@@ -51,67 +158,251 @@ impl PluginLogic for Spreader {
     fn reset(&mut self, sample_rate: f64, _max_block_size: usize) {
         self.params.set_sample_rate(sample_rate);
         self.params.snap_smoothers();
-        self.note_channel = [None; 128];
-        self.next = 0;
+        self.sample_rate = sample_rate;
+        self.held = [None; 128];
+        self.next_channel = 0;
+        self.next_port = 0;
     }
 
+    // One arm per promoted event type - long but flat.
+    #[allow(clippy::too_many_lines)]
     fn process(
         &mut self,
-        _buffer: &mut AudioBuffer,
+        buffer: &mut AudioBuffer,
         events: &EventList,
         context: &mut ProcessContext,
     ) -> ProcessStatus {
+        let algo = self.params.algo.value();
         let width = self.params.channels.value_u8().clamp(1, 16);
 
         for event in events.iter() {
-            match &event.body {
+            let off = event.sample_offset;
+            match event.body {
                 EventBody::NoteOn {
                     group,
+                    channel,
                     note,
                     velocity,
-                    ..
                 } => {
-                    let channel = self.next % width;
-                    self.next = (self.next + 1) % width;
-                    self.note_channel[*note as usize] = Some(channel);
-                    context.output_events.push(Event::new(
-                        event.sample_offset,
-                        EventBody::NoteOn {
-                            group: *group,
-                            channel,
-                            note: *note,
-                            velocity: *velocity,
+                    let (port, g, ch) = self.route(algo, width, group, channel);
+                    self.held[usize::from(note)] = Some(Held {
+                        port,
+                        group: g,
+                        channel: ch,
+                        phase: 0.0,
+                    });
+                    context.output_events.push(Event::on_port(
+                        off,
+                        port,
+                        EventBody::NoteOn2 {
+                            group: g,
+                            channel: ch,
+                            note,
+                            velocity: vel7_to_16(velocity),
+                            attribute_type: 0,
+                            attribute: 0,
                         },
                     ));
                 }
                 EventBody::NoteOff {
                     group,
+                    channel,
                     note,
                     velocity,
-                    ..
                 } => {
-                    let channel = self.note_channel[*note as usize].take().unwrap_or(0);
-                    context.output_events.push(Event::new(
-                        event.sample_offset,
-                        EventBody::NoteOff {
-                            group: *group,
-                            channel,
-                            note: *note,
-                            velocity: *velocity,
+                    let (port, g, ch) = self.held[usize::from(note)]
+                        .take()
+                        .map_or((PORT_MAIN, group, channel), |h| {
+                            (h.port, h.group, h.channel)
+                        });
+                    context.output_events.push(Event::on_port(
+                        off,
+                        port,
+                        EventBody::NoteOff2 {
+                            group: g,
+                            channel: ch,
+                            note,
+                            velocity: vel7_to_16(velocity),
+                            attribute_type: 0,
+                            attribute: 0,
                         },
                     ));
                 }
+                EventBody::ControlChange { cc, value, .. }
+                    if algo == Algo::ModBrightness && cc == CC_MOD_WHEEL =>
+                {
+                    // Route the mod wheel to per-note brightness on every
+                    // held note, on the expression port.
+                    for note in 0u8..128 {
+                        if let Some(h) = self.held[usize::from(note)] {
+                            context.output_events.push(Event::on_port(
+                                off,
+                                PORT_EXPR,
+                                EventBody::PerNoteCC {
+                                    group: h.group,
+                                    channel: h.channel,
+                                    note,
+                                    cc: CC_BRIGHTNESS,
+                                    value: cc7_to_32(value),
+                                    registered: true,
+                                },
+                            ));
+                        }
+                    }
+                }
+                EventBody::ControlChange {
+                    group,
+                    channel,
+                    cc,
+                    value,
+                } => {
+                    context.output_events.push(Event::on_port(
+                        off,
+                        PORT_MAIN,
+                        EventBody::ControlChange2 {
+                            group,
+                            channel,
+                            cc,
+                            value: cc7_to_32(value),
+                        },
+                    ));
+                }
+                EventBody::PitchBend {
+                    group,
+                    channel,
+                    value,
+                } => {
+                    context.output_events.push(Event::on_port(
+                        off,
+                        PORT_MAIN,
+                        EventBody::PitchBend2 {
+                            group,
+                            channel,
+                            value: bend14_to_32(value),
+                        },
+                    ));
+                }
+                EventBody::Aftertouch {
+                    group,
+                    channel,
+                    note,
+                    pressure,
+                } => {
+                    context.output_events.push(Event::on_port(
+                        off,
+                        PORT_MAIN,
+                        EventBody::PolyPressure2 {
+                            group,
+                            channel,
+                            note,
+                            pressure: cc7_to_32(pressure),
+                        },
+                    ));
+                }
+                EventBody::ChannelPressure {
+                    group,
+                    channel,
+                    pressure,
+                } => {
+                    context.output_events.push(Event::on_port(
+                        off,
+                        PORT_MAIN,
+                        EventBody::ChannelPressure2 {
+                            group,
+                            channel,
+                            pressure: cc7_to_32(pressure),
+                        },
+                    ));
+                }
+                EventBody::ProgramChange {
+                    group,
+                    channel,
+                    program,
+                } => {
+                    context.output_events.push(Event::on_port(
+                        off,
+                        PORT_MAIN,
+                        EventBody::ProgramChange2 {
+                            group,
+                            channel,
+                            program,
+                            bank: None,
+                        },
+                    ));
+                }
+                // Already-2.0, SysEx, transport, param automation: ignored
+                // (this is a 1.0 -> 2.0 promoter, fed 1.0).
                 _ => {}
             }
+        }
+
+        if algo == Algo::AutoVibrato {
+            self.emit_vibrato(buffer.num_samples(), context);
         }
 
         ProcessStatus::Normal
     }
 
     fn editor(&self) -> Box<dyn Editor> {
-        GridLayout::build(vec![widgets(vec![knob(P::Channels, "Channels")])])
-            .with_title("SPREAD")
-            .into_editor(&self.params)
+        GridLayout::build(vec![
+            widgets(vec![dropdown(P::Algo, "Algorithm").cols(3)]),
+            widgets(vec![
+                knob(P::Channels, "Channels"),
+                knob(P::VibRate, "Rate"),
+                knob(P::VibDepth, "Depth"),
+            ]),
+        ])
+        .with_title("SPREAD")
+        .into_editor(&self.params)
+    }
+}
+
+impl Spreader {
+    /// Resolve the output `(port, group, channel)` for a fresh note and
+    /// advance any round-robin counters. Only called on `NoteOn`.
+    fn route(&mut self, algo: Algo, width: u8, group: u8, channel: u8) -> (u8, u8, u8) {
+        match algo {
+            Algo::ChannelFan => {
+                let ch = self.next_channel % width;
+                self.next_channel = (self.next_channel + 1) % width;
+                (PORT_MAIN, group, ch)
+            }
+            Algo::PortFan => {
+                let port = self.next_port;
+                self.next_port ^= 1;
+                (port, group, channel)
+            }
+            // Map the input channel onto the UMP group (channel 0).
+            Algo::GroupSpread => (PORT_MAIN, channel, 0),
+            Algo::Passthrough | Algo::AutoVibrato | Algo::ModBrightness => {
+                (PORT_MAIN, group, channel)
+            }
+        }
+    }
+
+    /// Advance every held note's vibrato LFO by one block and emit a
+    /// `PerNotePitchBend` for it on the expression port.
+    fn emit_vibrato(&mut self, block_samples: usize, context: &mut ProcessContext) {
+        let rate = self.params.vib_rate.raw_target();
+        let depth = self.params.vib_depth.raw_target();
+        let n = u32::try_from(block_samples).unwrap_or(0);
+        let inc = rate * f64::from(n) / self.sample_rate;
+        for note in 0u8..128 {
+            if let Some(h) = self.held[usize::from(note)].as_mut() {
+                h.phase = (h.phase + inc).fract();
+                let value = lfo_bend(depth, (h.phase * TAU).sin());
+                context.output_events.push(Event::on_port(
+                    0,
+                    PORT_EXPR,
+                    EventBody::PerNotePitchBend {
+                        group: h.group,
+                        channel: h.channel,
+                        note,
+                        value,
+                    },
+                ));
+            }
+        }
     }
 }
 
@@ -124,52 +415,172 @@ truce::plugin! {
 mod tests {
     use super::*;
 
+    fn run(algo: Algo, width: i64, input: &[EventBody]) -> EventList {
+        let params = Arc::new(SpreaderParams::new());
+        params.algo.set_value(algo);
+        params.channels.set_value(width);
+        let mut plugin = Spreader::new(Arc::clone(&params));
+        plugin.reset(44100.0, 64);
+
+        let in_refs: Vec<&[f32]> = Vec::new();
+        let mut out_refs: Vec<&mut [f32]> = Vec::new();
+        let mut buffer = unsafe { AudioBuffer::from_slices(&in_refs, &mut out_refs, 64) };
+
+        let mut events = EventList::default();
+        for body in input {
+            events.push(Event::new(0, *body));
+        }
+        let transport = TransportInfo::default();
+        let mut output = EventList::default();
+        let mut ctx = ProcessContext::new(&transport, 44100.0, 64, &mut output);
+        plugin.process(&mut buffer, &events, &mut ctx);
+        output
+    }
+
+    fn note_on(channel: u8, note: u8) -> EventBody {
+        EventBody::NoteOn {
+            group: 0,
+            channel,
+            note,
+            velocity: 100,
+        }
+    }
+
     #[test]
     fn info_is_valid() {
         truce_test::assert_valid_info::<Plugin>();
     }
 
     #[test]
-    fn spreads_notes_across_channels() {
-        let params = Arc::new(SpreaderParams::new());
-        let mut plugin = Spreader::new(Arc::clone(&params));
-        plugin.params.channels.set_value(4);
-        plugin.reset(44100.0, 64);
-
-        let input: Vec<Vec<f32>> = Vec::new();
-        let input_refs: Vec<&[f32]> = input.iter().map(std::vec::Vec::as_slice).collect();
-        let mut output: Vec<Vec<f32>> = Vec::new();
-        let mut output_refs: Vec<&mut [f32]> =
-            output.iter_mut().map(std::vec::Vec::as_mut_slice).collect();
-        let mut buffer = unsafe { AudioBuffer::from_slices(&input_refs, &mut output_refs, 64) };
-
-        let mut events = EventList::default();
-        for note in 60..64u8 {
-            events.push(Event::new(
-                0,
-                EventBody::NoteOn {
-                    group: 0,
-                    channel: 0,
-                    note,
-                    velocity: 100,
-                },
-            ));
+    fn promotes_note_velocity_to_16_bit() {
+        let out = run(
+            Algo::Passthrough,
+            16,
+            &[EventBody::NoteOn {
+                group: 0,
+                channel: 0,
+                note: 60,
+                velocity: 127,
+            }],
+        );
+        let ev = out.iter().next().expect("one event");
+        assert_eq!(ev.port, PORT_MAIN);
+        match ev.body {
+            EventBody::NoteOn2 { velocity, note, .. } => {
+                assert_eq!(note, 60);
+                assert_eq!(velocity, 0xFFFF); // full 7-bit -> full 16-bit
+            }
+            other => panic!("expected NoteOn2, got {other:?}"),
         }
+    }
 
-        let transport = TransportInfo::default();
-        let mut output_events = EventList::default();
-        let mut context = ProcessContext::new(&transport, 44100.0, 64, &mut output_events);
-        plugin.process(&mut buffer, &events, &mut context);
-
-        let channels: Vec<u8> = output_events
+    #[test]
+    fn channel_fan_spreads_notes_across_channels() {
+        let out = run(
+            Algo::ChannelFan,
+            4,
+            &[
+                note_on(0, 60),
+                note_on(0, 61),
+                note_on(0, 62),
+                note_on(0, 63),
+            ],
+        );
+        let channels: Vec<u8> = out
             .iter()
             .filter_map(|e| match e.body {
-                EventBody::NoteOn { channel, .. } => Some(channel),
+                EventBody::NoteOn2 { channel, .. } => Some(channel),
                 _ => None,
             })
             .collect();
-        // Four notes over a width of 4 → channels 0,1,2,3.
+        // Four notes over a width of 4 -> channels 0,1,2,3.
         assert_eq!(channels, vec![0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn port_fan_alternates_output_ports() {
+        let out = run(Algo::PortFan, 16, &[note_on(0, 60), note_on(0, 61)]);
+        let ports: Vec<u8> = out
+            .iter()
+            .filter(|e| matches!(e.body, EventBody::NoteOn2 { .. }))
+            .map(|e| e.port)
+            .collect();
+        assert_eq!(ports, vec![0, 1]);
+    }
+
+    #[test]
+    fn group_spread_maps_channel_to_group() {
+        let out = run(Algo::GroupSpread, 16, &[note_on(3, 64)]);
+        match out.iter().next().unwrap().body {
+            EventBody::NoteOn2 { group, channel, .. } => {
+                assert_eq!(group, 3);
+                assert_eq!(channel, 0);
+            }
+            other => panic!("expected NoteOn2, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn mod_brightness_routes_mod_wheel_to_per_note() {
+        let out = run(
+            Algo::ModBrightness,
+            16,
+            &[
+                note_on(0, 60),
+                EventBody::ControlChange {
+                    group: 0,
+                    channel: 0,
+                    cc: CC_MOD_WHEEL,
+                    value: 127,
+                },
+            ],
+        );
+        let per_note = out
+            .iter()
+            .find(|e| matches!(e.body, EventBody::PerNoteCC { .. }))
+            .expect("a per-note CC");
+        assert_eq!(per_note.port, PORT_EXPR);
+        match per_note.body {
+            EventBody::PerNoteCC {
+                note, cc, value, ..
+            } => {
+                assert_eq!(note, 60);
+                assert_eq!(cc, CC_BRIGHTNESS);
+                assert_eq!(value, u32::MAX);
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn auto_vibrato_emits_per_note_pitch_bend() {
+        let out = run(Algo::AutoVibrato, 16, &[note_on(0, 60)]);
+        let bend = out
+            .iter()
+            .find(|e| matches!(e.body, EventBody::PerNotePitchBend { .. }))
+            .expect("a per-note pitch bend");
+        assert_eq!(bend.port, PORT_EXPR);
+    }
+
+    #[test]
+    fn pitch_bend_upsamples_to_32_bit() {
+        let out = run(
+            Algo::Passthrough,
+            16,
+            &[EventBody::PitchBend {
+                group: 0,
+                channel: 0,
+                value: 8192, // centre
+            }],
+        );
+        match out.iter().next().unwrap().body {
+            EventBody::PitchBend2 { value, .. } => {
+                // 8192 / 16383 * u32::MAX ~ half scale.
+                let half = u32::MAX / 2;
+                assert!(value.abs_diff(half) < u32::MAX / 1000);
+            }
+            other => panic!("expected PitchBend2, got {other:?}"),
+        }
     }
 
     #[cfg(target_os = "macos")]

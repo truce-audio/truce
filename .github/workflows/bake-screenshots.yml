@@ -93,6 +93,8 @@ env:
     truce-example-cc-filter
     truce-example-mpe-spreader
     truce-example-sysex-echo
+    truce-example-hyper-synth
+    truce-example-midi-inspector
   # Slint + vizia examples live in their own Cargo sub-workspaces
   # under `crates/<name>/` (skia-bindings `links` collision for slint;
   # vizia's hard-pinned baseview rev for vizia - see the respective
