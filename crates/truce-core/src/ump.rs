@@ -14,16 +14,17 @@
 //!
 //! Spec reference: MIDI 2.0 M2-104-UM §4.1.
 //!
-//! Format wrappers that speak UMP (AU v3 on iOS 17+ / macOS 14+ via
+//! Format wrappers that speak UMP (AU v3 on macOS 12+ / iOS 15+ via
 //! `MIDIEventList`, CLAP's `CLAP_EVENT_MIDI2`) call into here so the
-//! channel-voice + `SysEx` decoders aren't reimplemented per
-//! wrapper.
+//! channel-voice + `SysEx` codecs aren't reimplemented per wrapper.
 //!
-//! Out of scope today: utility messages (mt 0x0), system real-time
-//! (mt 0x1), legacy MIDI 1.0 channel-voice over UMP (mt 0x2),
-//! `SysEx`-7 (mt 0x3), data messages (mt 0x5), flex-data (mt 0xD),
-//! UMP stream (mt 0xF). `SysEx` over UMP has its own assembler;
-//! everything else awaits demand from a wrapper that needs it.
+//! MIDI 1.0 channel voice over UMP (mt 0x2) has an *encoder*
+//! ([`encode_ump_channel_voice_1`]) for emitting 1.0 events on a
+//! 2.0-protocol transport; there's no mt-0x2 decoder yet (wrappers
+//! receive 1.0 as bytes). Out of scope: utility (mt 0x0), system
+//! real-time (mt 0x1), flex-data (mt 0xD), UMP stream (mt 0xF).
+//! `SysEx`-7 (mt 0x3) / data (mt 0x5) have the assembler; everything
+//! else awaits demand.
 
 use crate::events::EventBody;
 
@@ -244,6 +245,74 @@ pub fn encode_ump_channel_voice_2(body: &EventBody) -> Option<[u32; 4]> {
 
 const fn cv2_value16(hi: u16, lo: u16) -> u32 {
     ((hi as u32) << 16) | lo as u32
+}
+
+/// UMP message type for MIDI 1.0 channel-voice messages (one word).
+const MT_CHANNEL_VOICE_1: u8 = 0x2;
+
+/// Encode a MIDI 1.0 channel-voice [`EventBody`] into a 32-bit UMP
+/// packet (message type 0x2), returned in the low word of a `[u32; 4]`.
+/// Used to carry a plugin's MIDI 1.0 output over a UMP transport (AU
+/// v3's `midiOutputEventListBlock`) when the negotiated protocol is 2.0,
+/// where the byte-based output path is unavailable so even 1.0 events
+/// must ride UMP. Returns `None` for bodies that aren't MIDI 1.0 channel
+/// voice (the 2.0 variants go through [`encode_ump_channel_voice_2`]).
+#[must_use]
+pub fn encode_ump_channel_voice_1(body: &EventBody) -> Option<[u32; 4]> {
+    let (opcode, channel, group, data1, data2): (u8, u8, u8, u8, u8) = match *body {
+        EventBody::NoteOff {
+            group,
+            channel,
+            note,
+            velocity,
+        } => (0x8, channel, group, note, velocity),
+        EventBody::NoteOn {
+            group,
+            channel,
+            note,
+            velocity,
+        } => (0x9, channel, group, note, velocity),
+        EventBody::Aftertouch {
+            group,
+            channel,
+            note,
+            pressure,
+        } => (0xA, channel, group, note, pressure),
+        EventBody::ControlChange {
+            group,
+            channel,
+            cc,
+            value,
+        } => (0xB, channel, group, cc, value),
+        EventBody::ProgramChange {
+            group,
+            channel,
+            program,
+        } => (0xC, channel, group, program, 0),
+        EventBody::ChannelPressure {
+            group,
+            channel,
+            pressure,
+        } => (0xD, channel, group, pressure, 0),
+        EventBody::PitchBend {
+            group,
+            channel,
+            value,
+        } => {
+            // 14-bit value splits into LSB (low 7 bits) then MSB. The
+            // masked `try_from`s can't fail, so no truncating cast.
+            let lsb = u8::try_from(value & 0x7F).unwrap_or(0);
+            let msb = u8::try_from((value >> 7) & 0x7F).unwrap_or(0);
+            (0xE, channel, group, lsb, msb)
+        }
+        _ => return None,
+    };
+    let w0 = (u32::from(MT_CHANNEL_VOICE_1) << 28)
+        | (u32::from(group & 0x0F) << 24)
+        | (u32::from((opcode << 4) | (channel & 0x0F)) << 16)
+        | (u32::from(data1 & 0x7F) << 8)
+        | u32::from(data2 & 0x7F);
+    Some([w0, 0, 0, 0])
 }
 
 /// Pull `(group, channel)` off any channel-voice body. Returns `None`
@@ -791,6 +860,49 @@ mod tests {
         );
         assert!(
             encode_ump_channel_voice_2(&EventBody::ParamChange { id: 0, value: 0.0 }).is_none()
+        );
+    }
+
+    #[test]
+    fn channel_voice_1_encodes_mt2() {
+        // NoteOn: mt=0x2, group=3, status=0x9|channel(5), note=60, vel=100.
+        let packet = encode_ump_channel_voice_1(&EventBody::NoteOn {
+            group: 3,
+            channel: 5,
+            note: 60,
+            velocity: 100,
+        })
+        .expect("note on encodes");
+        assert_eq!(
+            packet,
+            [
+                (0x2 << 28) | (0x3 << 24) | (0x95 << 16) | (0x3C << 8) | 0x64,
+                0,
+                0,
+                0
+            ]
+        );
+
+        // PitchBend 14-bit splits LSB then MSB: 0x2000 -> lsb 0, msb 0x40.
+        let bend = encode_ump_channel_voice_1(&EventBody::PitchBend {
+            group: 0,
+            channel: 0,
+            value: 0x2000,
+        })
+        .unwrap();
+        assert_eq!(bend[0], (0x2 << 28) | (0xE0 << 16) | 0x40);
+
+        // 2.0 variants and automation don't encode as MT 0x2.
+        assert!(
+            encode_ump_channel_voice_1(&EventBody::NoteOn2 {
+                group: 0,
+                channel: 0,
+                note: 60,
+                velocity: 1,
+                attribute_type: 0,
+                attribute: 0,
+            })
+            .is_none()
         );
     }
 
