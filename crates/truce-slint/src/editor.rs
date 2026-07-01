@@ -601,10 +601,10 @@ impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
                             });
                         EventStatus::Captured
                     }
-                    ButtonPressed {
-                        button: baseview::MouseButton::Left,
-                        ..
-                    } => {
+                    ButtonPressed { button, .. } => {
+                        let Some(button) = convert_mouse_button(button) else {
+                            return EventStatus::Ignored;
+                        };
                         // WS_CHILD plugin windows don't receive WM_KEYDOWN
                         // until focused; baseview doesn't SetFocus on click,
                         // so we do it here. Without this, text-edit widgets
@@ -619,19 +619,19 @@ impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
                             .window()
                             .dispatch_event(WindowEvent::PointerPressed {
                                 position: self.last_pos,
-                                button: PointerEventButton::Left,
+                                button,
                             });
                         EventStatus::Captured
                     }
-                    ButtonReleased {
-                        button: baseview::MouseButton::Left,
-                        ..
-                    } => {
+                    ButtonReleased { button, .. } => {
+                        let Some(button) = convert_mouse_button(button) else {
+                            return EventStatus::Ignored;
+                        };
                         self.slint_window
                             .window()
                             .dispatch_event(WindowEvent::PointerReleased {
                                 position: self.last_pos,
-                                button: PointerEventButton::Left,
+                                button,
                             });
                         EventStatus::Captured
                     }
@@ -728,6 +728,20 @@ impl<P: Params + ?Sized + 'static> WindowHandler for SlintWindowHandler<P> {
                 EventStatus::Captured
             }
         }
+    }
+}
+
+// All buttons forward to Slint, not just Left - widgets rely on
+// right-click (reset to default) and middle-click. `None` skips buttons
+// Slint has no variant for.
+fn convert_mouse_button(button: baseview::MouseButton) -> Option<PointerEventButton> {
+    match button {
+        baseview::MouseButton::Left => Some(PointerEventButton::Left),
+        baseview::MouseButton::Right => Some(PointerEventButton::Right),
+        baseview::MouseButton::Middle => Some(PointerEventButton::Middle),
+        baseview::MouseButton::Back => Some(PointerEventButton::Back),
+        baseview::MouseButton::Forward => Some(PointerEventButton::Forward),
+        baseview::MouseButton::Other(_) => None,
     }
 }
 
