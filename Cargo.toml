@@ -60,6 +60,7 @@ members = [
     "examples/truce-example-mpe-spreader",
     "examples/truce-example-sysex-echo",
     "examples/truce-example-mpe-synth",
+    "examples/truce-example-multitimbral",
     "examples/truce-example-midi-inspector",
 ]
 
