@@ -876,6 +876,99 @@ unsafe extern "C" fn cb_get_output_sysex_event<P: PluginExport>(
     }
 }
 
+/// Map a truce per-note MIDI 2.0 event to a VST3 note-expression tuple
+/// `(type_id, note_id, value)`. VST3 has no UMP; per-note richness rides
+/// `INoteExpressionController` value events keyed by `note_id`. We key
+/// `note_id` deterministically as `(channel << 7) | note` - the shim
+/// stamps the plugin's `NoteOn` with the same id, so notes and their
+/// expression correlate without any per-instance tracking state. Returns
+/// `None` for per-note controllers VST3 has no predefined type for; the
+/// value is normalized `0..=1` (VST3's `NoteExpressionValue` domain).
+fn note_expression_of(body: &EventBody) -> Option<(u32, i32, f64)> {
+    // Predefined VST3 NoteExpressionTypeIDs (reverse of the input map):
+    // Volume=0, Pan=1, Tuning=2, Vibrato=3, Expression=4, Brightness=5.
+    let (type_id, channel, note, value) = match *body {
+        EventBody::PerNoteCC {
+            channel,
+            note,
+            cc,
+            value,
+            ..
+        } => {
+            let type_id = match cc {
+                7 => 0,
+                10 => 1,
+                1 => 3,
+                11 => 4,
+                74 => 5,
+                _ => return None,
+            };
+            (type_id, channel, note, u32_to_unit(value))
+        }
+        EventBody::PerNotePitchBend {
+            channel,
+            note,
+            value,
+            ..
+        } => (2, channel, note, u32_to_unit(value)),
+        _ => return None,
+    };
+    Some((type_id, vst3_note_id(channel, note), value))
+}
+
+/// Deterministic VST3 `noteId` for a truce note: `(channel << 7) | note`.
+/// The C++ shim stamps every emitted note-on/off with the same formula,
+/// so a plug-in's note-expression events address the live note without
+/// any shared correlation state.
+fn vst3_note_id(channel: u8, note: u8) -> i32 {
+    (i32::from(channel & 0x0F) << 7) | i32::from(note & 0x7F)
+}
+
+/// Normalize a wire-native 32-bit per-note value into VST3's `0..=1`
+/// `NoteExpressionValue` domain.
+fn u32_to_unit(v: u32) -> f64 {
+    f64::from(v) / f64::from(u32::MAX)
+}
+
+unsafe extern "C" fn cb_get_output_note_expression_count<P: PluginExport>(
+    ctx: *mut std::ffi::c_void,
+) -> u32 {
+    unsafe {
+        let inst = &*ctx.cast::<Vst3Instance<P>>();
+        len_u32(
+            inst.output_events
+                .iter()
+                .filter(|e| note_expression_of(&e.body).is_some())
+                .count(),
+        )
+    }
+}
+
+unsafe extern "C" fn cb_get_output_note_expression<P: PluginExport>(
+    ctx: *mut std::ffi::c_void,
+    index: u32,
+    out_type_id: *mut u32,
+    out_note_id: *mut i32,
+    out_sample_offset: *mut u32,
+    out_value: *mut f64,
+) {
+    unsafe {
+        let inst = &*ctx.cast::<Vst3Instance<P>>();
+        if let Some(event) = inst
+            .output_events
+            .iter()
+            .filter(|e| note_expression_of(&e.body).is_some())
+            .nth(index as usize)
+            && let Some((type_id, note_id, value)) = note_expression_of(&event.body)
+        {
+            *out_type_id = type_id;
+            *out_note_id = note_id;
+            *out_sample_offset = event.sample_offset;
+            *out_value = value;
+        }
+    }
+}
+
 unsafe extern "C" fn cb_get_output_param_count<P: PluginExport>(ctx: *mut std::ffi::c_void) -> u32 {
     unsafe {
         let inst = &*ctx.cast::<Vst3Instance<P>>();
@@ -1402,6 +1495,8 @@ fn register_vst3_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
         push_sysex_input: cb_push_sysex_input::<P>,
         get_output_sysex_count: cb_get_output_sysex_count::<P>,
         get_output_sysex_event: cb_get_output_sysex_event::<P>,
+        get_output_note_expression_count: cb_get_output_note_expression_count::<P>,
+        get_output_note_expression: cb_get_output_note_expression::<P>,
         gui_has_editor: cb_gui_has_editor::<P>,
         gui_get_size: cb_gui_get_size::<P>,
         gui_open: cb_gui_open::<P>,
@@ -1543,6 +1638,54 @@ mod tests {
     fn unmapped_param_does_not_bridge() {
         let i = info(ParamRange::Linear { min: 0.0, max: 1.0 }, None);
         assert!(midi_event_from_param(&i, 0.5).is_none());
+    }
+
+    #[test]
+    fn note_expression_maps_per_note_cc_and_bend() {
+        // Volume CC (7) -> VST3 type 0; noteId = (channel<<7)|note.
+        let (type_id, note_id, value) = note_expression_of(&EventBody::PerNoteCC {
+            group: 0,
+            channel: 2,
+            note: 60,
+            cc: 7,
+            value: u32::MAX,
+            registered: true,
+        })
+        .expect("volume maps");
+        assert_eq!(type_id, 0);
+        assert_eq!(note_id, vst3_note_id(2, 60));
+        assert!((value - 1.0).abs() < 1e-9);
+
+        // Pitch bend -> tuning (type 2), center value ~0.5.
+        let (type_id, _, value) = note_expression_of(&EventBody::PerNotePitchBend {
+            group: 0,
+            channel: 0,
+            note: 64,
+            value: 0x8000_0000,
+        })
+        .expect("bend maps");
+        assert_eq!(type_id, 2);
+        assert!((value - 0.5).abs() < 1e-3);
+
+        // A CC with no predefined VST3 note-expression type is skipped.
+        assert!(
+            note_expression_of(&EventBody::PerNoteCC {
+                group: 0,
+                channel: 0,
+                note: 60,
+                cc: 20,
+                value: 0,
+                registered: true,
+            })
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn note_id_is_deterministic() {
+        assert_eq!(vst3_note_id(0, 0), 0);
+        assert_eq!(vst3_note_id(2, 60), 0x013C); // (2 << 7) | 60
+        assert_eq!(vst3_note_id(15, 127), 0x07FF); // (15 << 7) | 127
     }
 
     #[test]

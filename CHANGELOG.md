@@ -6,6 +6,7 @@ Notable changes per release.
 
 - **MIDI 2.0 / UMP on CLAP (opt-in).** Set `midi2 = true` in `truce.toml` to have a plugin's CLAP note ports carry UMP: the wrapper advertises `CLAP_NOTE_DIALECT_MIDI2`, decodes inbound `CLAP_EVENT_MIDI2` into the native 2.0 `EventBody` variants (16/32-bit + per-note, with UMP group), and emits them back out. MIDI-1.0 plugins are unchanged.
 - **Multiple MIDI ports.** `Event` gains a `port` field and `truce.toml` gains `midi_input_ports` / `midi_output_ports`. A plugin filters inbound events by `event.port` and stamps outbound ones with the target port. CLAP (N note ports), VST3 (N event buses), and LV2 (N atom ports) route by port; VST2 / AU / AAX carry one and log a skip when more are declared. Single-port plugins are unchanged (`port` is always `0`; construct events with `Event::new`).
+- **VST3 note-expression output.** A plugin's per-note `PerNoteCC` (volume/pan/vibrato/expression/brightness) and `PerNotePitchBend` events now go out to VST3 hosts as `kNoteExpressionValueEvent`, keyed by a deterministic `noteId` so they track the note. VST3 has no UMP, so this is the lossy note-expression path (input already decoded it; output was missing).
 
 ## 1.0.5
 
