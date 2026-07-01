@@ -28,10 +28,11 @@ Across formats:
 
 ### Multiple MIDI ports
 
-A plugin can expose more than one MIDI input or output port. The headline use is a multi-timbral instrument (the Kontakt / Vienna Ensemble Pro shape): one instance with several 16-channel input ports, so the host routes a separate track to each and each plays its own sound. Declare counts with `midi_input_ports` / `midi_output_ports` in `truce.toml`; a plugin reads `event.port` on input and stamps the target port on output (see the `Event` change above).
+A plugin can expose more than one MIDI **input** port. The headline use is a multi-timbral instrument (the Kontakt / Vienna Ensemble Pro shape): one instance with several 16-channel input ports, so the host routes a separate track to each and each plays its own sound. Declare the count with `midi_input_ports` in `truce.toml`; the plugin reads `event.port` to tell them apart (see the `Event` change above).
 
-- **CLAP (N note ports), VST3 (N event buses), and LV2 (N atom ports) carry the port both ways.** AU v3 exposes N named MIDI *outputs* (`MIDIOutputNames`, cable-indexed); its MIDI input, plus VST2 / AU v2 / AAX, carry a single port and log a skip when a plugin declares more.
-- `truce-example-multitimbral` is the reference: two input ports, a distinct patch per port.
+- **CLAP (N note ports), VST3 (N event buses), and LV2 (N atom ports) deliver the port on input.** VST2 / AU v2 / AU v3 / AAX carry a single input port and log a skip when a plugin declares more.
+- `truce-example-multiport` is the reference: two input ports, a distinct patch per port.
+- `midi_output_ports` declares output ports the same way; while host routing support matures, treat multi-port *output* as wire-level plumbing, not a feature to build on yet.
 
 ## 1.0.4
 

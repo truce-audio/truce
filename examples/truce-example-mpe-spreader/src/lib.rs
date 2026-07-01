@@ -357,7 +357,7 @@ impl PluginLogic for Spreader {
                 knob(P::VibDepth, "Depth"),
             ]),
         ])
-        .with_title("SPREAD")
+        .with_title("MPE SPREAD")
         .into_editor(&self.params)
     }
 }
