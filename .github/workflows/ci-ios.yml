@@ -85,7 +85,6 @@ jobs:
             -p truce-example-dasp-bitcrusher \
             -p truce-example-gain-iced \
             -p truce-example-gui-zoo-iced \
-            -p truce-example-midi-inspector \
             --target aarch64-apple-ios-sim \
             --release --no-default-features --features au
 
@@ -200,7 +199,7 @@ jobs:
       # the crate uses iced's sub-crates directly (the iced_winit dep that
       # used to break the iOS build is gone). The plugins dropped from this
       # loop (eq, tremolo, arpeggio, state, fundsp-reverb-*,
-      # dasp-bitcrusher, gain-egui, midi-inspector) are still built above
+      # dasp-bitcrusher, gain-egui) are still built above
       # and still render-checked on desktop; their iOS baselines stay
       # committed but unchecked.
       #
