@@ -214,6 +214,15 @@ struct Vst3Callbacks {
                                    uint8_t* /*port*/,
                                    const uint8_t** /*bytes*/,
                                    uint32_t* /*len*/);
+    // Note-expression output - per-note MIDI 2.0 events the plug-in
+    // pushed, mapped to VST3 `kNoteExpressionValueEvent` (VST3 has no
+    // UMP). `note_id` correlates to the emitted note on/off.
+    uint32_t (*get_output_note_expression_count)(void*);
+    void (*get_output_note_expression)(void*, uint32_t /*index*/,
+                                       uint32_t* /*type_id*/,
+                                       int32_t* /*note_id*/,
+                                       uint32_t* /*sample_offset*/,
+                                       double* /*value*/);
     // GUI
     int32_t (*gui_has_editor)(void*);
     void (*gui_get_size)(void*, uint32_t*, uint32_t*);
@@ -927,6 +936,7 @@ public:
                         struct { int16_t channel; int16_t pitch; float velocity; int32 noteId; float tuning; } noteOff;
                         struct { int16_t channel; int16_t pitch; float pressure; int32 noteId; } polyPressure;
                         struct { uint8_t controlNumber; int8_t channel; int8_t value; int8_t value2; } midiCCOut;
+                        struct { uint32_t typeId; int32 noteId; double value; } noteExpression;
                     };
                 };
 
@@ -942,20 +952,25 @@ public:
                     ev.busIndex = (mev.port < g_desc->midi_output_ports) ? mev.port : 0;
                     uint8_t st = mev.status & 0xF0;
                     int16_t ch = mev.status & 0x0F;
+                    // Deterministic noteId `(channel << 7) | pitch` so a
+                    // plug-in's note-expression events (drained below) can
+                    // correlate to the note without shared state. Mirrors
+                    // `vst3_note_id` on the Rust side.
+                    int32 note_id = (int32(ch) << 7) | (mev.data1 & 0x7F);
                     switch (st) {
                     case 0x90: // note on
                         ev.type = kNoteOnEvent;
                         ev.noteOn.channel = ch;
                         ev.noteOn.pitch = mev.data1;
                         ev.noteOn.velocity = mev.data2 / 127.0f;
-                        ev.noteOn.noteId = -1;
+                        ev.noteOn.noteId = note_id;
                         break;
                     case 0x80: // note off
                         ev.type = kNoteOffEvent;
                         ev.noteOff.channel = ch;
                         ev.noteOff.pitch = mev.data1;
                         ev.noteOff.velocity = mev.data2 / 127.0f;
-                        ev.noteOff.noteId = -1;
+                        ev.noteOff.noteId = note_id;
                         break;
                     case 0xA0: // poly key pressure
                         ev.type = kPolyPressureEvent;
@@ -993,6 +1008,48 @@ public:
                         continue;
                     }
                     vtbl->addEvent(data->outputEvents, &ev);
+                }
+            }
+
+            // Note-expression output - the plug-in's per-note MIDI 2.0
+            // events (PerNoteCC / PerNotePitchBend) mapped to VST3
+            // `kNoteExpressionValueEvent`. `noteId` matches the note-on
+            // emitted above (both use `(channel << 7) | pitch`). Bus 0.
+            if (g_cb->get_output_note_expression_count && g_cb->get_output_note_expression) {
+                struct OEVtbl {
+                    tresult (*qi)(void*, const TUID, void**);
+                    uint32 (*addRef)(void*);
+                    uint32 (*release)(void*);
+                    int32 (*getEventCount)(void*);
+                    tresult (*getEvent)(void*, int32, void*);
+                    tresult (*addEvent)(void*, void*);
+                };
+                struct { OEVtbl* vtbl; } *eventList =
+                    (decltype(eventList))data->outputEvents;
+                struct alignas(8) Vst3OutNoteExprEvent {
+                    int32 busIndex;
+                    int32 sampleOffset;
+                    double ppqPosition;
+                    uint16_t flags;
+                    uint16_t type;
+                    char pad[4];
+                    struct { uint32_t typeId; int32 noteId; double value; } noteExpression;
+                };
+                uint32_t neCount = g_cb->get_output_note_expression_count(ctx);
+                for (uint32_t i = 0; i < neCount; i++) {
+                    uint32_t typeId = 0;
+                    int32 noteId = -1;
+                    uint32_t sampleOffset = 0;
+                    double value = 0.0;
+                    g_cb->get_output_note_expression(ctx, i, &typeId, &noteId,
+                                                     &sampleOffset, &value);
+                    Vst3OutNoteExprEvent ev = {};
+                    ev.type = 4; // kNoteExpressionValueEvent (SDK ivstevents.h)
+                    ev.sampleOffset = sampleOffset;
+                    ev.noteExpression.typeId = typeId;
+                    ev.noteExpression.noteId = noteId;
+                    ev.noteExpression.value = value;
+                    eventList->vtbl->addEvent(data->outputEvents, &ev);
                 }
             }
 
