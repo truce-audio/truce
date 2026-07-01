@@ -133,6 +133,14 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
     };
     let midi_input_dialect = midi_dialect.clone();
     let midi_output_dialect = midi_dialect;
+    // MIDI port counts: one per enabled direction by default, raised by
+    // the `midi_input_ports` / `midi_output_ports` truce.toml keys.
+    let (midi_input_ports, midi_output_ports) = truce_build::midi_port_counts(
+        accepts_midi_in,
+        emits_midi,
+        plugin.midi_input_ports,
+        plugin.midi_output_ports,
+    );
     // NoteEffect plugins map to `aumi` (Apple's MIDI Processor type).
     // Pairs with empty `bus_layouts` at the plugin level: aumi
     // plugins must not expose audio I/O. Logic routes `aumi` to the
@@ -219,6 +227,8 @@ pub fn plugin_info(_input: TokenStream) -> TokenStream {
                 emits_midi: #emits_midi,
                 midi_input_dialect: #midi_input_dialect,
                 midi_output_dialect: #midi_output_dialect,
+                midi_input_ports: #midi_input_ports,
+                midi_output_ports: #midi_output_ports,
                 bundle_id: #bundle_id,
                 vst3_id: #plugin_id,
                 clap_id: #plugin_id,

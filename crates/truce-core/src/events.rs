@@ -22,7 +22,40 @@
 pub struct Event {
     /// Sample offset within the block (`0..num_samples`).
     pub sample_offset: u32,
+    /// MIDI port this event arrived on / goes out on (0-based). Single-
+    /// port plugins - the vast majority - always see `0` and can ignore
+    /// it. A plugin that declares more than one MIDI port (see
+    /// `PluginInfo::midi_input_ports` / `midi_output_ports`) filters
+    /// inbound events by `port` and stamps outbound ones with the port
+    /// they should leave on. Formats without a multi-port MIDI transport
+    /// clamp everything to `0`.
+    pub port: u8,
     pub body: EventBody,
+}
+
+impl Event {
+    /// Event on the default MIDI port (`0`). The common constructor -
+    /// single-port plugins and every non-MIDI event use this.
+    #[must_use]
+    pub fn new(sample_offset: u32, body: EventBody) -> Self {
+        Self {
+            sample_offset,
+            port: 0,
+            body,
+        }
+    }
+
+    /// Event addressed to / from a specific MIDI port. Only meaningful
+    /// for plugins that declared more than one MIDI port; wrappers on
+    /// single-port formats route it to port `0` regardless.
+    #[must_use]
+    pub fn on_port(sample_offset: u32, port: u8, body: EventBody) -> Self {
+        Self {
+            sample_offset,
+            port,
+            body,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -375,6 +408,22 @@ impl EventList {
     /// # Errors
     /// [`PushError::PoolFull`] when the pool is at capacity.
     pub fn push_sysex(&mut self, sample_offset: u32, data: &[u8]) -> Result<(), PushError> {
+        self.push_sysex_on_port(sample_offset, 0, data)
+    }
+
+    /// Like [`Self::push_sysex`] but stamps the event with a MIDI
+    /// [`Event::port`]. Single-port callers use [`Self::push_sysex`]
+    /// (port `0`); a multi-port wrapper preserves the port a `SysEx`
+    /// arrived on.
+    ///
+    /// # Errors
+    /// [`PushError::PoolFull`] when the pool is at capacity.
+    pub fn push_sysex_on_port(
+        &mut self,
+        sample_offset: u32,
+        port: u8,
+        data: &[u8],
+    ) -> Result<(), PushError> {
         let pool_offset = self.sysex_pool.len();
         if pool_offset + data.len() > self.sysex_pool.capacity() {
             return Err(PushError::PoolFull);
@@ -388,6 +437,7 @@ impl EventList {
         #[allow(clippy::cast_possible_truncation)]
         self.events.push(Event {
             sample_offset,
+            port,
             body: EventBody::SysEx {
                 pool_offset: pool_offset as u32,
                 len: data.len() as u32,
@@ -565,5 +615,24 @@ mod tests {
             velocity: 100,
         };
         assert!(list.sysex_bytes(&body).is_empty());
+    }
+
+    #[test]
+    fn event_constructors_set_port() {
+        let body = EventBody::NoteOn {
+            group: 0,
+            channel: 0,
+            note: 60,
+            velocity: 100,
+        };
+        assert_eq!(Event::new(10, body).port, 0);
+        assert_eq!(Event::on_port(10, 4, body).port, 4);
+    }
+
+    #[test]
+    fn push_sysex_on_port_stamps_port() {
+        let mut list = EventList::with_capacity(8);
+        list.push_sysex_on_port(0, 2, b"\x10\x11").unwrap();
+        assert_eq!(list.iter().next().unwrap().port, 2);
     }
 }
