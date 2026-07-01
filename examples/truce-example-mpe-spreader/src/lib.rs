@@ -115,8 +115,8 @@ pub struct Spreader {
     next_group: u8,
     /// Next output port to hand out for `Port Fan`.
     next_port: u8,
-    /// Whether `Auto Vibrato` emitted bends last block, so leaving the
-    /// mode can recentre held notes instead of leaving them detuned.
+    /// Whether `Auto Vibrato` emitted bends last block, so a note-off or
+    /// a mode change can recentre the note instead of leaving it detuned.
     vibrato_active: bool,
 }
 
@@ -226,11 +226,26 @@ impl PluginLogic for Spreader {
                     note,
                     velocity,
                 } => {
-                    let (port, g, ch) = self.held[usize::from(note)]
-                        .take()
-                        .map_or((PORT_MAIN, group, channel), |h| {
-                            (h.port, h.group, h.channel)
-                        });
+                    let held = self.held[usize::from(note)].take();
+                    let (port, g, ch) = held.map_or((PORT_MAIN, group, channel), |h| {
+                        (h.port, h.group, h.channel)
+                    });
+                    // Recentre a note that was being vibrato'd before it
+                    // ends, so its release tail isn't stuck at the last
+                    // bend. (Playback stop sends note-offs, so this covers
+                    // "recentre on stop" too.)
+                    if self.vibrato_active && held.is_some() {
+                        context.output_events.push(Event::on_port(
+                            off,
+                            port,
+                            EventBody::PerNotePitchBend {
+                                group: g,
+                                channel: ch,
+                                note,
+                                value: PITCH_CENTER,
+                            },
+                        ));
+                    }
                     context.output_events.push(Event::on_port(
                         off,
                         port,
@@ -354,12 +369,15 @@ impl PluginLogic for Spreader {
             }
         }
 
+        // Vibrato runs whenever notes are held - live on a stopped
+        // transport or during playback. Leaving the mode recentres held
+        // notes; a released note is recentred at its note-off (in the arm
+        // above) so its release tail isn't left detuned - which also
+        // covers a transport stop, since the host sends note-offs then.
         if algo == Algo::AutoVibrato {
             self.emit_vibrato(buffer.num_samples(), context);
             self.vibrato_active = true;
         } else if self.vibrato_active {
-            // Left Auto Vibrato: recentre held notes so they don't stay
-            // stuck at the LFO's last bend value.
             self.recentre_held(context);
             self.vibrato_active = false;
         }
@@ -624,8 +642,10 @@ mod tests {
         assert_eq!(bend.port, PORT_MAIN);
     }
 
-    #[test]
-    fn leaving_vibrato_recentres_held_notes() {
+    // Hold note 60 under Auto Vibrato (bends it), then run one more block
+    // with the given mode + events; returns the recentre bend for note 60
+    // if one was emitted.
+    fn recentre_after(second_algo: Algo, second_events: &[EventBody]) -> Option<u32> {
         let params = Arc::new(SpreaderParams::new());
         params.algo.set_value(Algo::AutoVibrato);
         let mut plugin = Spreader::new(Arc::clone(&params));
@@ -636,27 +656,49 @@ mod tests {
         let mut buffer = unsafe { AudioBuffer::from_slices(&in_refs, &mut out_refs, 64) };
         let transport = TransportInfo::default();
 
-        // Hold a note under Auto Vibrato (emits a bend, marks active).
         let mut on = EventList::default();
         on.push(Event::new(0, note_on(0, 60)));
         let mut out1 = EventList::default();
         let mut ctx1 = ProcessContext::new(&transport, 44100.0, 64, &mut out1);
         plugin.process(&mut buffer, &on, &mut ctx1);
 
-        // Switch away: the held note must be recentred, not left bent.
-        params.algo.set_value(Algo::Passthrough);
-        let empty = EventList::default();
+        params.algo.set_value(second_algo);
+        let mut ev2 = EventList::default();
+        for b in second_events {
+            ev2.push(Event::new(0, *b));
+        }
         let mut out2 = EventList::default();
         let mut ctx2 = ProcessContext::new(&transport, 44100.0, 64, &mut out2);
-        plugin.process(&mut buffer, &empty, &mut ctx2);
+        plugin.process(&mut buffer, &ev2, &mut ctx2);
 
-        let centre = out2.iter().find_map(|e| match e.body {
+        out2.iter().find_map(|e| match e.body {
             EventBody::PerNotePitchBend {
                 note: 60, value, ..
             } => Some(value),
             _ => None,
-        });
-        assert_eq!(centre, Some(PITCH_CENTER));
+        })
+    }
+
+    #[test]
+    fn leaving_vibrato_recentres_held_notes() {
+        // Switching mode away from Auto Vibrato recentres held notes.
+        assert_eq!(recentre_after(Algo::Passthrough, &[]), Some(PITCH_CENTER));
+    }
+
+    #[test]
+    fn note_off_under_vibrato_recentres_the_note() {
+        // A note-off while vibrato is active recentres the note - which is
+        // also how a transport stop lands (the host sends note-offs).
+        let off = EventBody::NoteOff {
+            group: 0,
+            channel: 0,
+            note: 60,
+            velocity: 0,
+        };
+        assert_eq!(
+            recentre_after(Algo::AutoVibrato, &[off]),
+            Some(PITCH_CENTER)
+        );
     }
 
     #[test]
