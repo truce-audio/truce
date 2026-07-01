@@ -1170,20 +1170,21 @@ fn scan_get_task_allow(xml: &str) -> Option<bool> {
 }
 
 fn cargo_build_ios(crate_name: &str, target: IosTarget) -> Res {
-    let status = Command::new("cargo")
-        .args([
-            "build",
-            "-p",
-            crate_name,
-            "--target",
-            target.rust_triple(),
-            "--release",
-            "--no-default-features",
-            "--features",
-            "au",
-        ])
-        .status()
-        .map_err(|e| format!("cargo build: {e}"))?;
+    let mut cmd = Command::new("cargo");
+    cmd.args([
+        "build",
+        "-p",
+        crate_name,
+        "--target",
+        target.rust_triple(),
+        "--release",
+        "--no-default-features",
+        "--features",
+        "au",
+    ]);
+    // Additive; merges with `--features au` above.
+    crate::apply_extra_features(&mut cmd);
+    let status = cmd.status().map_err(|e| format!("cargo build: {e}"))?;
     if !status.success() {
         return Err(format!("cargo build exited {status}").into());
     }

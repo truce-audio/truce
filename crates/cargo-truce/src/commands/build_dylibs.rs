@@ -295,6 +295,12 @@ pub(crate) fn build_logic_dylibs(
         if let Some(wrapper) = crate::util::sccache_wrapper() {
             cmd.env("RUSTC_WRAPPER", wrapper);
         }
+        // The shell-mode logic dylib is a separate build from the shell;
+        // it must carry the same extra features or the ABI canary that
+        // gates the dlopen mismatches (feature-dependent ABI like sample
+        // precision). Applied here, not via a param, so it can't be
+        // forgotten while the format build gets features.
+        crate::apply_extra_features(&mut cmd);
         let status = cmd.status()?;
         if !status.success() {
             return Err(format!("{logic_profile} build of {} failed", p.crate_name).into());
