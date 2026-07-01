@@ -12,10 +12,10 @@
 //! - **Port Fan**      - alternate notes between output ports 0 and 1.
 //! - **Group Spread**  - map the input channel onto the UMP `group`.
 //! - **Auto Vibrato**  - a per-held-note pitch-bend LFO emitted as
-//!   `PerNotePitchBend` (32-bit) on the expression port.
+//!   `PerNotePitchBend` (32-bit) on each note's own port/channel.
 //! - **Mod Brightness** - the mod wheel (CC 1) routed to per-note
-//!   brightness (`PerNoteCC` 74) on every held note, on the expression
-//!   port.
+//!   brightness (`PerNoteCC` 74) on every held note, on each note's own
+//!   port/channel.
 //!
 //! `midi2 = true` in `truce.toml` makes the output carry native UMP on
 //! CLAP / AU v3; on formats without a UMP transport the wrapper (or host)
@@ -30,14 +30,15 @@ use truce_gui_types::layout::{GridLayout, dropdown, knob, widgets};
 
 use SpreaderParamsParamId as P;
 
-/// Promoted notes leave here (and, for `Port Fan`, port 1 too).
+/// Promoted notes leave here (and, for `Port Fan`, port 1 too). Per-note
+/// expression rides the note's own port, never a fixed one.
 const PORT_MAIN: u8 = 0;
-/// Generated per-note expression (vibrato / brightness) leaves here.
-const PORT_EXPR: u8 = 1;
 /// MIDI mod-wheel CC number.
 const CC_MOD_WHEEL: u8 = 1;
 /// MIDI 2.0 per-note brightness controller number.
 const CC_BRIGHTNESS: u8 = 74;
+/// Centre of a 32-bit per-note pitch bend (no detune).
+const PITCH_CENTER: u32 = 0x8000_0000;
 
 /// Note addressing. `ParamEnum` derives `Clone` / `Copy` / `PartialEq`.
 #[derive(ParamEnum)]
@@ -106,6 +107,9 @@ pub struct Spreader {
     next_channel: u8,
     /// Next output port to hand out for `Port Fan`.
     next_port: u8,
+    /// Whether `Auto Vibrato` emitted bends last block, so leaving the
+    /// mode can recentre held notes instead of leaving them detuned.
+    vibrato_active: bool,
 }
 
 impl Spreader {
@@ -117,6 +121,7 @@ impl Spreader {
             held: [None; 128],
             next_channel: 0,
             next_port: 0,
+            vibrato_active: false,
         }
     }
 }
@@ -162,6 +167,7 @@ impl PluginLogic for Spreader {
         self.held = [None; 128];
         self.next_channel = 0;
         self.next_port = 0;
+        self.vibrato_active = false;
     }
 
     // One arm per promoted event type - long but flat.
@@ -232,12 +238,14 @@ impl PluginLogic for Spreader {
                     if algo == Algo::ModBrightness && cc == CC_MOD_WHEEL =>
                 {
                     // Route the mod wheel to per-note brightness on every
-                    // held note, on the expression port.
+                    // held note. Per-note expression must ride the same
+                    // port/channel as the note so a downstream voice keyed
+                    // by (port, channel, note) actually receives it.
                     for note in 0u8..128 {
                         if let Some(h) = self.held[usize::from(note)] {
                             context.output_events.push(Event::on_port(
                                 off,
-                                PORT_EXPR,
+                                h.port,
                                 EventBody::PerNoteCC {
                                     group: h.group,
                                     channel: h.channel,
@@ -338,6 +346,12 @@ impl PluginLogic for Spreader {
 
         if algo == Algo::AutoVibrato {
             self.emit_vibrato(buffer.num_samples(), context);
+            self.vibrato_active = true;
+        } else if self.vibrato_active {
+            // Left Auto Vibrato: recentre held notes so they don't stay
+            // stuck at the LFO's last bend value.
+            self.recentre_held(context);
+            self.vibrato_active = false;
         }
 
         ProcessStatus::Normal
@@ -380,6 +394,26 @@ impl Spreader {
         }
     }
 
+    /// Emit a centre `PerNotePitchBend` for every held note, cancelling
+    /// residual vibrato detune when the mode leaves Auto Vibrato.
+    fn recentre_held(&mut self, context: &mut ProcessContext) {
+        for note in 0u8..128 {
+            if let Some(h) = self.held[usize::from(note)].as_mut() {
+                h.phase = 0.0;
+                context.output_events.push(Event::on_port(
+                    0,
+                    h.port,
+                    EventBody::PerNotePitchBend {
+                        group: h.group,
+                        channel: h.channel,
+                        note,
+                        value: PITCH_CENTER,
+                    },
+                ));
+            }
+        }
+    }
+
     /// Advance every held note's vibrato LFO by one block and emit a
     /// `PerNotePitchBend` for it on the expression port.
     fn emit_vibrato(&mut self, block_samples: usize, context: &mut ProcessContext) {
@@ -393,7 +427,7 @@ impl Spreader {
                 let value = lfo_bend(depth, (h.phase * TAU).sin());
                 context.output_events.push(Event::on_port(
                     0,
-                    PORT_EXPR,
+                    h.port,
                     EventBody::PerNotePitchBend {
                         group: h.group,
                         channel: h.channel,
@@ -539,7 +573,7 @@ mod tests {
             .iter()
             .find(|e| matches!(e.body, EventBody::PerNoteCC { .. }))
             .expect("a per-note CC");
-        assert_eq!(per_note.port, PORT_EXPR);
+        assert_eq!(per_note.port, PORT_MAIN);
         match per_note.body {
             EventBody::PerNoteCC {
                 note, cc, value, ..
@@ -559,7 +593,42 @@ mod tests {
             .iter()
             .find(|e| matches!(e.body, EventBody::PerNotePitchBend { .. }))
             .expect("a per-note pitch bend");
-        assert_eq!(bend.port, PORT_EXPR);
+        assert_eq!(bend.port, PORT_MAIN);
+    }
+
+    #[test]
+    fn leaving_vibrato_recentres_held_notes() {
+        let params = Arc::new(SpreaderParams::new());
+        params.algo.set_value(Algo::AutoVibrato);
+        let mut plugin = Spreader::new(Arc::clone(&params));
+        plugin.reset(44100.0, 64);
+
+        let in_refs: Vec<&[f32]> = Vec::new();
+        let mut out_refs: Vec<&mut [f32]> = Vec::new();
+        let mut buffer = unsafe { AudioBuffer::from_slices(&in_refs, &mut out_refs, 64) };
+        let transport = TransportInfo::default();
+
+        // Hold a note under Auto Vibrato (emits a bend, marks active).
+        let mut on = EventList::default();
+        on.push(Event::new(0, note_on(0, 60)));
+        let mut out1 = EventList::default();
+        let mut ctx1 = ProcessContext::new(&transport, 44100.0, 64, &mut out1);
+        plugin.process(&mut buffer, &on, &mut ctx1);
+
+        // Switch away: the held note must be recentred, not left bent.
+        params.algo.set_value(Algo::Passthrough);
+        let empty = EventList::default();
+        let mut out2 = EventList::default();
+        let mut ctx2 = ProcessContext::new(&transport, 44100.0, 64, &mut out2);
+        plugin.process(&mut buffer, &empty, &mut ctx2);
+
+        let centre = out2.iter().find_map(|e| match e.body {
+            EventBody::PerNotePitchBend {
+                note: 60, value, ..
+            } => Some(value),
+            _ => None,
+        });
+        assert_eq!(centre, Some(PITCH_CENTER));
     }
 
     #[test]
