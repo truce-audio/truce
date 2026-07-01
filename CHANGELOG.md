@@ -4,12 +4,27 @@ Notable changes per release.
 
 ## 1.1.0
 
-- **MIDI 2.0 / UMP on CLAP (opt-in).** Set `midi2 = true` in `truce.toml` to have a plugin's CLAP note ports carry UMP: the wrapper advertises `CLAP_NOTE_DIALECT_MIDI2`, decodes inbound `CLAP_EVENT_MIDI2` into the native 2.0 `EventBody` variants (16/32-bit + per-note, with UMP group), and emits them back out. MIDI-1.0 plugins are unchanged.
-- **Multiple MIDI ports.** `Event` gains a `port` field and `truce.toml` gains `midi_input_ports` / `midi_output_ports`. A plugin filters inbound events by `event.port` and stamps outbound ones with the target port. CLAP (N note ports), VST3 (N event buses), and LV2 (N atom ports) route by port; VST2 / AU / AAX carry one and log a skip when more are declared. Single-port plugins are unchanged - `port` is always `0`. Construct events with `Event::new(offset, body)` (port implicit `0`) or `Event::on_port(offset, port, body)` (port explicit); a struct literal still works but, like `on_port`, must spell `port` out - `Event::new` is the only form that omits it.
-- **VST3 note-expression output.** A plugin's per-note `PerNoteCC` (volume/pan/vibrato/expression/brightness) and `PerNotePitchBend` events now go out to VST3 hosts as `kNoteExpressionValueEvent`, keyed by a deterministic `noteId` so they track the note. VST3 has no UMP, so this is the lossy note-expression path (input already decoded it; output was missing).
-- **AU v3 multi-port MIDI output.** A multi-port plugin now exposes N named `MIDIOutputNames` on AU v3 and routes each event to its `Event::port` (cable), matching CLAP/VST3/LV2. AU v2 stays single-stream; AU v3 MIDI input remains single-port for now.
-- **AU v3 honors the `midi2` opt-in.** The appex now declares `audioUnitMIDIProtocol` = 2.0 only when `midi2 = true`, so native MIDI 2.0 input (`NoteOn2` / `PerNoteCC` / …) reaches the plugin exactly when opted in - the same contract as CLAP. Previously the 2.0 decode path was present but dormant (the appex never requested the 2.0 protocol).
-- **AU v3 MIDI 2.0 output.** In `midi2` mode the appex emits channel voice as UMP through `midiOutputEventListBlock` (MIDI 1.0 events as MT 0x2, 2.0 as MT 0x4), so a plugin's `NoteOn2` / `PerNoteCC` / … reach the host at full resolution - end-to-end 2.0 in and out on AU v3, matching CLAP. SysEx output in 2.0 mode is best-effort (byte block only).
+A MIDI overhaul: MIDI 2.0 / UMP and multiple MIDI ports, wired across every
+format that can carry them. Both are opt-in and leave existing MIDI-1.0,
+single-port plugins unchanged at runtime - but the shared `Event` change
+below is a breaking API change.
+
+### Breaking
+
+- **`Event` gained a `port` field** - the MIDI port an event arrived on / should go out on (`0` for single-port plugins). Constructing an `Event` with a struct literal now requires it. *Migration:* build events with `Event::new(offset, body)` (port `0`, the common case) or `Event::on_port(offset, port, body)`; `Event::new` is the only form that omits `port`, so a struct literal must spell it out. Reading events (`event.port`) is unaffected.
+
+### MIDI 2.0 / UMP
+
+Opt in per plugin with `midi2 = true` in `truce.toml`. Without it a plugin only ever sees MIDI 1.0 - the host down-converts before delivery (no truce-side down-convert step), so a 1.0-only `match` never breaks.
+
+- **CLAP and AU v3 carry native MIDI 2.0 end-to-end, in and out.** The native 16/32-bit + per-note `EventBody` variants (`NoteOn2`, `PerNoteCC`, …) and the UMP `group` are both delivered and emitted. CLAP advertises `CLAP_NOTE_DIALECT_MIDI2` and decodes/encodes `CLAP_EVENT_MIDI2`; AU v3 declares `audioUnitMIDIProtocol` = 2.0 and uses the host's UMP `MIDIEventList` path (macOS 12+ / iOS 15+) both directions. (AU v3 SysEx output in 2.0 mode is best-effort.)
+- **VST3 maps the per-note subset through note expression** (it has no UMP): `PerNoteCC` (volume/pan/vibrato/expression/brightness) and `PerNotePitchBend` round-trip to/from `kNoteExpressionValueEvent`, keyed by a deterministic `noteId`, both directions - a lossy translation, not UMP. VST2 / AU v2 / AAX / LV2 stay MIDI 1.0.
+
+### Multiple MIDI ports
+
+Declare counts with `midi_input_ports` / `midi_output_ports` in `truce.toml`. A plugin filters inbound events by `event.port` and stamps outbound ones with the target port (see the `Event` change above).
+
+- **CLAP (N note ports), VST3 (N event buses), and LV2 (N atom ports) route by port.** AU v3 exposes N named MIDI *outputs* (`MIDIOutputNames`, cable-indexed); its MIDI input, plus VST2 / AU v2 / AAX, carry a single port and log a skip when a plugin declares more.
 
 ## 1.0.5
 
