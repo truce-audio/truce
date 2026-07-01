@@ -411,7 +411,17 @@ pub fn midi_bytes_to_event(sample_offset: u32, bytes: &[u8]) -> Option<Event> {
 /// # Safety
 /// `out` must point to a writable atom sequence buffer with capacity the
 /// host allocated (typically a few KB).
-pub unsafe fn write_midi_out_sequence(out: *mut AtomSequence, events: &EventList, urid: &UridMap) {
+/// Write the events destined for MIDI output port `port` into `out`.
+/// `port_count` is the plugin's declared output-port count; an event
+/// whose [`truce_core::Event::port`] exceeds it routes to port 0.
+/// Single-port plugins call with `port = 0`, `port_count = 1`.
+pub unsafe fn write_midi_out_sequence(
+    out: *mut AtomSequence,
+    events: &EventList,
+    urid: &UridMap,
+    port: u8,
+    port_count: u8,
+) {
     unsafe {
         if out.is_null() || urid.midi_event == 0 {
             return;
@@ -428,6 +438,11 @@ pub unsafe fn write_midi_out_sequence(out: *mut AtomSequence, events: &EventList
         (*out).body.unit = 0;
         (*out).body.pad = 0;
         for event in events.iter() {
+            // Only this port's events land in this sequence; an
+            // out-of-range port collapses to port 0.
+            if event.port.min(port_count.saturating_sub(1)) != port {
+                continue;
+            }
             // `SysEx` events have a variable-length payload that
             // can't fit in the fixed-size `buf` below; handle them
             // here, reading the bytes out of the `EventList`'s pool
@@ -844,7 +859,7 @@ mod tests {
         ));
 
         unsafe {
-            write_midi_out_sequence(seq, &source, &urid);
+            write_midi_out_sequence(seq, &source, &urid, 0, 1);
         }
 
         let reader = AtomSequenceReader::new(seq.cast_const(), &urid);
