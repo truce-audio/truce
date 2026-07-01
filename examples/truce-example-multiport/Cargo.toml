@@ -1,5 +1,5 @@
 [package]
-name = "truce-example-multitimbral"
+name = "truce-example-multiport"
 publish = false
 version.workspace = true
 repository.workspace = true
@@ -12,7 +12,7 @@ rust-version.workspace = true
 crate-type = ["cdylib", "staticlib", "rlib"]
 
 [[bin]]
-name = "truce-example-multitimbral-standalone"
+name = "truce-example-multiport-standalone"
 path = "src/main.rs"
 required-features = ["standalone"]
 

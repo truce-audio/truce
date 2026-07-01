@@ -522,9 +522,9 @@ macos_icon = "static/truce-minimal.icns"
 ios_icon_set = "static/truce-minimal.appiconset"
 
 [[plugin]]
-name = "Truce Multitimbral"
-bundle_id = "multitimbral"
-crate = "truce-example-multitimbral"
+name = "Truce Multiport"
+bundle_id = "multiport"
+crate = "truce-example-multiport"
 # Multi-port MIDI *input* demo: two input ports, each a distinct patch.
 # Route a separate track to each port (the Kontakt / VEP paradigm) and both
 # play from one instance. VST3 event buses / CLAP note ports carry the port;
@@ -535,7 +535,7 @@ fourcc = "TMlt"
 au3_subtype = "TMl3"
 au_tag = "Synthesizer"
 vst3_subcategory = "Instrument|Synth"
-au3_name = "Truce Multitimbral (AUv3)"
+au3_name = "Truce Multiport (AUv3)"
 windows_icon = "static/truce-minimal.ico"
 macos_icon = "static/truce-minimal.icns"
 ios_icon_set = "static/truce-minimal.appiconset"
