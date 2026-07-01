@@ -47,6 +47,12 @@ typedef struct {
      * UMP 2.0; otherwise it declares 1.0 and the host down-converts.
      * AU v2 ignores it (single-stream MIDI 1.0). */
     int32_t midi2_input;
+    /* 1 if the plugin's MIDI output port is MIDI 2.0 dialect. The AU v3
+     * appex's output drain emits UMP via `midiOutputEventListBlock` when
+     * set; the framework converts to the host's protocol. AU v2 ignores
+     * it. Independent of `midi2_input` (a 1.0 -> 2.0 promoter is 1.0 in,
+     * 2.0 out). */
+    int32_t midi2_output;
 } AuPluginDescriptor;
 
 typedef struct {

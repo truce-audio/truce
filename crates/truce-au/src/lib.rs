@@ -1390,6 +1390,7 @@ fn register_au_inner<P: PluginExport>(num_inputs: u32, num_outputs: u32) {
         midi_input_ports: u32::from(info.midi_input_ports),
         midi_output_ports: u32::from(info.midi_output_ports),
         midi2_input: i32::from(info.midi_input_dialect == MidiDialect::Midi2),
+        midi2_output: i32::from(info.midi_output_dialect == MidiDialect::Midi2),
     }));
 
     let callbacks = Box::leak(Box::new(AuCallbacks {

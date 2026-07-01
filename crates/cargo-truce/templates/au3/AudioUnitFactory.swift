@@ -449,7 +449,7 @@ class TruceAUAudioUnit: AUAudioUnit {
         // sample. The block is nil when the host doesn't accept
         // MIDI output; skipping the drain is correct in that case.
         // `bufStart` is already bound above (input timing); reuse it.
-        let use2 = (g_descriptor?.pointee.midi2_input ?? 0) != 0
+        let use2 = (g_descriptor?.pointee.midi2_output ?? 0) != 0
 
         // Channel-voice output. In MIDI 2.0 protocol mode (`midi2 =
         // true`, so `audioUnitMIDIProtocol` = 2.0) the byte block is
