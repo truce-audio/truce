@@ -491,14 +491,18 @@ public:
 
     tresult getBusInfo(int32 type, int32 dir, int32 index, BusInfo* bus) {
         if (!bus || !g_desc) return kInvalidArgument;
+        // For an event bus, `channelCount` is the number of MIDI channels
+        // the bus carries. truce delivers/emits all 16 (the `channel`
+        // nibble round-trips end-to-end), so advertise 16 - `1` would let
+        // a channel-aware host route only channel 1.
         if (type == kEvent && dir == kInput && index == 0 && g_desc->accepts_midi_in) {
-            bus->mediaType = kEvent; bus->direction = kInput; bus->channelCount = 1;
+            bus->mediaType = kEvent; bus->direction = kInput; bus->channelCount = 16;
             str_to_char16(bus->name, "Event In", 128);
             bus->busType = kMain; bus->flags = 1; // kDefaultActive
             return kResultOk;
         }
         if (type == kEvent && dir == kOutput && index == 0 && g_desc->has_midi_output) {
-            bus->mediaType = kEvent; bus->direction = kOutput; bus->channelCount = 1;
+            bus->mediaType = kEvent; bus->direction = kOutput; bus->channelCount = 16;
             str_to_char16(bus->name, "Event Out", 128);
             bus->busType = kMain; bus->flags = 1; // kDefaultActive
             return kResultOk;
