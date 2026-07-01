@@ -115,16 +115,14 @@ struct Vst3PluginDescriptor {
     const char* subcategories;
     uint32_t num_inputs;
     uint32_t num_outputs;
-    /* 1 if the plugin emits MIDI back to the host. Gates the
-     * `kEvent | kOutput` bus advertisement; the host only allocates
-     * `ProcessData::outputEvents` when at least one event output bus
-     * is declared, so this flag controls whether the drain loop after
-     * process() actually has somewhere to push events. */
-    int32_t has_midi_output;
-    /* 1 if the plugin accepts MIDI input. Gates the
-     * `kEvent | kInput` bus, decoupled from `num_inputs` so an audio
-     * effect (with audio inputs) can still take MIDI. */
-    int32_t accepts_midi_in;
+    /* Number of MIDI output ports (event output buses). Zero means the
+     * host never allocates `ProcessData::outputEvents`, so the drain
+     * loop after process() has nowhere to push and is a no-op. */
+    int32_t midi_output_ports;
+    /* Number of MIDI input ports (event input buses), decoupled from
+     * `num_inputs` so an audio effect (with audio inputs) can still
+     * take MIDI. Zero means no MIDI input. */
+    int32_t midi_input_ports;
 };
 
 struct Vst3ParamDescriptor {
@@ -150,6 +148,10 @@ struct Vst3MidiEvent {
     // pads the struct to 4-byte alignment. Mirrors `note_id` in
     // `truce-vst3/src/ffi.rs`.
     uint8_t note_id;
+    // Event bus index the event arrived on / goes out on, mapped to
+    // `Event::port`. Zero for single-port plugins. Mirrors `port` in
+    // `truce-vst3/src/ffi.rs`.
+    uint8_t port;
 };
 
 struct Vst3Transport {
@@ -200,7 +202,7 @@ struct Vst3Callbacks {
     // 0xF0 / 0xF7 framing; VST3 hosts deliver the inner data per
     // the SDK convention). Pointer is valid for the duration of
     // this call only.
-    void (*push_sysex_input)(void*, uint32_t /*sample_offset*/,
+    void (*push_sysex_input)(void*, uint32_t /*sample_offset*/, uint8_t /*port*/,
                              const uint8_t* /*bytes*/, uint32_t /*len*/);
     // SysEx output - shim queries after `process` to drain
     // SysEx-shaped events the plug-in pushed. Bytes are the inner
@@ -209,6 +211,7 @@ struct Vst3Callbacks {
     uint32_t (*get_output_sysex_count)(void*);
     void (*get_output_sysex_event)(void*, uint32_t /*index*/,
                                    uint32_t* /*sample_offset*/,
+                                   uint8_t* /*port*/,
                                    const uint8_t** /*bytes*/,
                                    uint32_t* /*len*/);
     // GUI
@@ -480,11 +483,11 @@ public:
         if (type == kAudio) {
             return (dir == kInput) ? (g_desc->num_inputs > 0 ? 1 : 0) : 1;
         }
-        if (type == kEvent && dir == kInput && g_desc->accepts_midi_in) {
-            return 1; // one event input bus
+        if (type == kEvent && dir == kInput) {
+            return g_desc->midi_input_ports;
         }
-        if (type == kEvent && dir == kOutput && g_desc->has_midi_output) {
-            return 1; // one event output bus
+        if (type == kEvent && dir == kOutput) {
+            return g_desc->midi_output_ports;
         }
         return 0;
     }
@@ -495,15 +498,23 @@ public:
         // the bus carries. truce delivers/emits all 16 (the `channel`
         // nibble round-trips end-to-end), so advertise 16 - `1` would let
         // a channel-aware host route only channel 1.
-        if (type == kEvent && dir == kInput && index == 0 && g_desc->accepts_midi_in) {
+        if (type == kEvent && dir == kInput && index >= 0 && index < g_desc->midi_input_ports) {
             bus->mediaType = kEvent; bus->direction = kInput; bus->channelCount = 16;
-            str_to_char16(bus->name, "Event In", 128);
+            // Number the ports only when there's more than one so the
+            // single-port case keeps its plain "Event In" label.
+            char name[32];
+            if (g_desc->midi_input_ports > 1) snprintf(name, sizeof(name), "Event In %d", index + 1);
+            else snprintf(name, sizeof(name), "Event In");
+            str_to_char16(bus->name, name, 128);
             bus->busType = kMain; bus->flags = 1; // kDefaultActive
             return kResultOk;
         }
-        if (type == kEvent && dir == kOutput && index == 0 && g_desc->has_midi_output) {
+        if (type == kEvent && dir == kOutput && index >= 0 && index < g_desc->midi_output_ports) {
             bus->mediaType = kEvent; bus->direction = kOutput; bus->channelCount = 16;
-            str_to_char16(bus->name, "Event Out", 128);
+            char name[32];
+            if (g_desc->midi_output_ports > 1) snprintf(name, sizeof(name), "Event Out %d", index + 1);
+            else snprintf(name, sizeof(name), "Event Out");
+            str_to_char16(bus->name, name, 128);
             bus->busType = kMain; bus->flags = 1; // kDefaultActive
             return kResultOk;
         }
@@ -773,6 +784,10 @@ public:
                 if (eventList->vtbl->getEvent(eventList, i, &ev) != kResultOk)
                     continue;
 
+                // Stamp the event bus index onto whatever slot the
+                // switch fills next (numMidi only advances on a fill).
+                midiEvents[numMidi].port = ev.busIndex < 0 ? 0 : (uint8_t)ev.busIndex;
+
                 switch (ev.type) {
                     case 0: // kNoteOnEvent
                         midiEvents[numMidi].sample_offset = ev.sampleOffset;
@@ -855,6 +870,7 @@ public:
                         if (ev.data.dataType == 0 && ev.data.bytes && ev.data.size > 0
                                 && g_cb && g_cb->push_sysex_input) {
                             g_cb->push_sysex_input(ctx, ev.sampleOffset,
+                                                   ev.busIndex < 0 ? 0 : (uint8_t)ev.busIndex,
                                                    ev.data.bytes, ev.data.size);
                         }
                         break;
@@ -921,6 +937,9 @@ public:
 
                     Vst3OutEvent ev = {};
                     ev.sampleOffset = mev.sample_offset;
+                    // Route to the plug-in's chosen event output bus,
+                    // clamped to the declared count (fall back to bus 0).
+                    ev.busIndex = (mev.port < g_desc->midi_output_ports) ? mev.port : 0;
                     uint8_t st = mev.status & 0xF0;
                     int16_t ch = mev.status & 0x0F;
                     switch (st) {
@@ -1000,9 +1019,10 @@ public:
                 uint32_t sysexCount = g_cb->get_output_sysex_count(ctx);
                 for (uint32_t i = 0; i < sysexCount; i++) {
                     uint32_t sampleOffset = 0;
+                    uint8_t port = 0;
                     const uint8_t* bytes = nullptr;
                     uint32_t len = 0;
-                    g_cb->get_output_sysex_event(ctx, i, &sampleOffset, &bytes, &len);
+                    g_cb->get_output_sysex_event(ctx, i, &sampleOffset, &port, &bytes, &len);
                     if (!bytes || len == 0) continue;
                     struct alignas(8) Vst3OutDataEvent {
                         int32 busIndex;
@@ -1016,6 +1036,7 @@ public:
                     };
                     Vst3OutDataEvent ev = {};
                     ev.sampleOffset = sampleOffset;
+                    ev.busIndex = (port < g_desc->midi_output_ports) ? port : 0;
                     ev.type = 2; // kDataEvent (SDK ivstevents.h)
                     ev.data.size = len;
                     ev.data.dataType = 0; // kMidiSysEx
