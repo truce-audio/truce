@@ -71,6 +71,7 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
     let mut target_cpu_arg: Option<String> = None;
     let mut plugin_filter: Option<String> = None;
     let mut cli_scope: Option<InstallScope> = None;
+    let mut user_features: Vec<String> = Vec::new();
 
     let mut i = 0;
     while i < args.len() {
@@ -106,6 +107,13 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
             "-p" => {
                 plugin_filter = Some(crate::util::arg_value(args, &mut i, "-p")?.to_string());
             }
+            "--features" => {
+                user_features.extend(crate::parse_extra_features(crate::util::arg_value(
+                    args,
+                    &mut i,
+                    "--features",
+                )?)?);
+            }
             "--help" | "-h" => {
                 print_help();
                 return Ok(());
@@ -114,6 +122,11 @@ pub(crate) fn cmd_install(args: &[String]) -> Res {
         }
         i += 1;
     }
+
+    // Extra Cargo features apply to every underlying build (desktop
+    // formats, shell logic, iOS) via the global read by
+    // `apply_extra_features`. Set before the iOS short-circuit below.
+    crate::set_extra_features(user_features);
 
     // Scope is resolved per-format inside `scope_for` / `effective_scope`:
     // - explicit `--user` / `--system` wins (subject to hard upgrades);
@@ -376,6 +389,10 @@ Options:
   --shell          Build dynamic shells + per-plugin logic dylibs.
   --debug          Cargo dev profile (faster compile, slower DSP).
   --no-build       Skip build, install existing artifacts.
+  --features <list>
+                   Extra Cargo features for the plugin crate, comma/space-
+                   separated. Additive, applied to every underlying build.
+                   Format features (clap/vst3/...) are reserved.
   -p <crate>       Install only the plugin with this cargo crate name.
   --target-cpu <value>
                    Override the x86_64 default. Accepted values:

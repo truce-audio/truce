@@ -37,6 +37,7 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
     let mut target_cpu_arg: Option<String> = None;
     let mut plugin_filter: Option<String> = None;
     let mut targets: Vec<String> = Vec::new();
+    let mut user_features: Vec<String> = Vec::new();
 
     let mut i = 0;
     while i < args.len() {
@@ -57,6 +58,13 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
             "-p" => plugin_filter = Some(crate::util::arg_value(args, &mut i, "-p")?.to_string()),
             "--target" => {
                 targets.push(crate::util::arg_value(args, &mut i, "--target")?.to_string());
+            }
+            "--features" => {
+                user_features.extend(crate::parse_extra_features(crate::util::arg_value(
+                    args,
+                    &mut i,
+                    "--features",
+                )?)?);
             }
             "--help" | "-h" => {
                 print_help();
@@ -109,6 +117,9 @@ pub(crate) fn cmd_build(args: &[String]) -> Res {
         crate::set_debug_profile(debug);
     }
     crate::set_target_cpu(target_cpu);
+    // Extra Cargo features apply to every underlying build in this
+    // invocation via the global read by `apply_extra_features`.
+    crate::set_extra_features(user_features);
 
     // AU v3 + shell is unreliable due to the appex sandbox. Same
     // warning as `cargo truce install --shell --au3`.
@@ -423,6 +434,12 @@ Options:
                    Shell-mode is host-only; cross-target invocations
                    log_skip it.
   --shell          Build dynamic shells + per-plugin logic dylibs
+  --features <list>
+                   Extra Cargo features to enable for the plugin crate,
+                   comma/space-separated (e.g. --features fancy-dsp,extra).
+                   Additive, applied to every underlying build. Format
+                   features (clap/vst3/...) are reserved - use the format
+                   flags instead.
   --debug          Cargo dev profile (faster compile, slower DSP)
   --target-cpu <value>
                    Override the x86_64 default. Accepted values:

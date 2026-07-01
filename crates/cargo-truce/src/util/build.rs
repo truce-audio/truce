@@ -409,6 +409,7 @@ fn cargo_build_inner(
     for arg in extra_args {
         cmd.arg(arg);
     }
+    apply_extra_features(&mut cmd);
 
     #[cfg(target_os = "windows")]
     if let Some((vcvarsall, arch_arg)) = msvc_plan {
@@ -420,6 +421,18 @@ fn cargo_build_inner(
         return Err("cargo build failed".into());
     }
     Ok(())
+}
+
+/// Append the invocation's extra Cargo features (from `--features`) to a
+/// `cargo build` / `cargo rustc` command. Additive: cargo merges this
+/// with any `--features` the caller set, and `--no-default-features`
+/// still applies. Called at every plugin-build sink so the feature set
+/// stays uniform across the fan-out.
+pub(crate) fn apply_extra_features(cmd: &mut Command) {
+    let extra = super::extra_features();
+    if !extra.is_empty() {
+        cmd.arg("--features").arg(extra.join(","));
+    }
 }
 
 fn build_cargo_command(profile: &str) -> Command {
@@ -586,6 +599,9 @@ pub(crate) fn cargo_rustc_bin(
     for arg in base_args {
         cmd.arg(arg);
     }
+    // Before the `--` separator: everything after it is a rustc link
+    // arg, not a cargo flag, so `--features` must precede it.
+    apply_extra_features(&mut cmd);
     if !link_args.is_empty() {
         cmd.arg("--");
         for a in link_args {

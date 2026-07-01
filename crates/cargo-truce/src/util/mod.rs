@@ -28,7 +28,7 @@ pub(crate) use build::{
     MacArch, cargo_build_for_arch, cargo_build_multi_arch, cargo_build_multi_arch_with_profile,
     lipo_into,
 };
-pub(crate) use build::{cargo_build, cargo_build_debug, sccache_wrapper};
+pub(crate) use build::{apply_extra_features, cargo_build, cargo_build_debug, sccache_wrapper};
 #[cfg(target_os = "macos")]
 pub(crate) use bundle_link::{
     CLAP_EXPORTS, VST2_EXPORTS, VST3_EXPORTS, link_macos_bundle, missing_staticlib_error,
@@ -258,6 +258,63 @@ pub(crate) fn resolve_target_cpu(triple: &str) -> Option<String> {
         TargetCpu::Named(value) => Some(value),
         TargetCpu::Native => Some("native".to_string()),
     }
+}
+
+/// Extra Cargo features to enable for every build in this invocation, on
+/// top of the format features truce selects itself. Chosen once via
+/// `--features` during arg parsing and read by every `cargo` command
+/// sink through `apply_extra_features`, so the feature set stays uniform
+/// across the fan-out (per-format builds, the shell-mode logic dylib,
+/// iOS, the standalone bin). Same once-per-invocation lifecycle as
+/// `PROFILE` / `TARGET_CPU`.
+static EXTRA_FEATURES: OnceLock<Vec<String>> = OnceLock::new();
+
+/// Set the invocation's extra Cargo features. Idempotent (first set
+/// wins), so a command that re-invokes `cmd_build` doesn't clobber the
+/// features the outer command already chose.
+pub(crate) fn set_extra_features(features: Vec<String>) {
+    EXTRA_FEATURES.get_or_init(|| features);
+}
+
+/// The extra Cargo features set for this invocation, or an empty slice.
+pub(crate) fn extra_features() -> &'static [String] {
+    EXTRA_FEATURES.get().map_or(&[], Vec::as_slice)
+}
+
+/// Format-gating features truce enables itself per-build. Passing one
+/// through `--features` would cross-contaminate other formats' builds
+/// (a `--clap` build also lighting up VST3), so they are rejected with a
+/// pointer to the format flag.
+const RESERVED_FORMAT_FEATURES: &[&str] = &[
+    "clap",
+    "vst3",
+    "vst2",
+    "lv2",
+    "au",
+    "aax",
+    "standalone",
+    "shell",
+];
+
+/// Split a `--features` value (`"a, b c"`) into individual feature
+/// names, rejecting the format features truce drives via its own flags.
+pub(crate) fn parse_extra_features(value: &str) -> Result<Vec<String>, CargoTruceError> {
+    let mut out = Vec::new();
+    for f in value
+        .split([',', ' '])
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        if RESERVED_FORMAT_FEATURES.contains(&f) {
+            return Err(format!(
+                "`{f}` is a format feature truce enables itself; select it with the \
+                 matching format flag (--clap / --vst3 / --au2 / ...), not --features."
+            )
+            .into());
+        }
+        out.push(f.to_string());
+    }
+    Ok(out)
 }
 
 /// Preflight check for `cargo truce install --shell` / `build --shell`:
@@ -993,6 +1050,33 @@ pub(crate) fn check_cmd(cmd: &str, args: &[&OsStr], label: &str) {
 mod tests {
     use super::*;
     use std::sync::atomic::AtomicU64;
+
+    #[test]
+    fn extra_features_split_on_comma_and_space() {
+        assert_eq!(
+            parse_extra_features("a, b c").unwrap(),
+            vec!["a".to_string(), "b".to_string(), "c".to_string()]
+        );
+        assert!(parse_extra_features("").unwrap().is_empty());
+        assert_eq!(
+            parse_extra_features(" fancy-dsp ").unwrap(),
+            vec!["fancy-dsp".to_string()]
+        );
+    }
+
+    #[test]
+    fn extra_features_reject_format_features() {
+        for reserved in ["clap", "vst3", "au", "standalone", "shell"] {
+            assert!(
+                parse_extra_features(reserved).is_err(),
+                "`{reserved}` should be rejected"
+            );
+        }
+        // A reserved name anywhere in the list rejects the whole value.
+        assert!(parse_extra_features("fancy-dsp,vst3").is_err());
+        // Normal features pass.
+        assert!(parse_extra_features("fancy-dsp,extra").is_ok());
+    }
 
     fn fresh_tempdir(label: &str) -> PathBuf {
         static N: AtomicU64 = AtomicU64::new(0);

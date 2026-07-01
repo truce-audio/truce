@@ -96,6 +96,26 @@ impl SuiteSelection {
 /// per-platform parser sees them. Returns the parsed selection plus a
 /// new `args` vector with those flags removed.
 #[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
+/// Pull `--features <list>` occurrences out of the package args and
+/// return `(features, remaining_args)`. Kept separate from the per-OS
+/// arg parsers so they never see the flag; the features flow to the
+/// builds via the invocation global instead.
+fn extract_features_arg(args: &[String]) -> Result<(Vec<String>, Vec<String>), CargoTruceError> {
+    let mut features = Vec::new();
+    let mut rest = Vec::with_capacity(args.len());
+    let mut i = 0;
+    while i < args.len() {
+        if args[i] == "--features" {
+            let value = crate::util::arg_value(args, &mut i, "--features")?;
+            features.extend(crate::parse_extra_features(value)?);
+        } else {
+            rest.push(args[i].clone());
+        }
+        i += 1;
+    }
+    Ok((features, rest))
+}
+
 pub(crate) fn extract_suite_selection(
     args: &[String],
 ) -> Result<(SuiteSelection, Vec<String>), CargoTruceError> {
@@ -382,6 +402,11 @@ pub(crate) fn cmd_package(args: &[String]) -> Res {
         print_help();
         return Ok(());
     }
+    // Pull `--features` out first and set the invocation global, so it
+    // reaches every build the fan-out spawns (iOS, per-OS, universal)
+    // via `apply_extra_features` without each per-OS parser handling it.
+    let (user_features, args) = extract_features_arg(args)?;
+    crate::set_extra_features(user_features);
     // iOS short-circuit: AU v3 inside an `.ipa` is the only viable
     // iOS distribution shape and doesn't share any of the macOS /
     // Windows / Linux packaging pipeline (no productbuild, no Inno
@@ -390,14 +415,14 @@ pub(crate) fn cmd_package(args: &[String]) -> Res {
     if args.iter().any(|a| a == "--ios") {
         #[cfg(target_os = "macos")]
         {
-            return package_ios(args);
+            return package_ios(&args);
         }
         #[cfg(not(target_os = "macos"))]
         {
             return Err("--ios packaging requires macOS (Xcode-only).".into());
         }
     }
-    let (selection, args) = extract_suite_selection(args)?;
+    let (selection, args) = extract_suite_selection(&args)?;
     // Fail loudly on an unknown `--suite <name>` rather than silently
     // building only the per-plugin installers. Only load config when a
     // suite was explicitly requested.
@@ -505,6 +530,10 @@ Format selection:
                        (clap,vst3,vst2,au2,au3,aax,standalone).
                        Default: every format in the plugin's
                        `[features].default`.
+  --features <list>    Extra Cargo features for the plugin crate,
+                       comma/space-separated. Additive, applied to every
+                       underlying build. Format features are reserved -
+                       use --formats.
 
 Install scope (where the resulting installer puts files at the end user's machine):
   --ask                End user picks at install time. Default.
