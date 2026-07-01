@@ -19,15 +19,18 @@ pub struct Vst3PluginDescriptor {
     pub subcategories: *const c_char,
     pub num_inputs: u32,
     pub num_outputs: u32,
-    /// `1` if the plugin emits MIDI back to the host. The shim gates
-    /// the `kEvent | kOutput` bus on this flag - without it the host
-    /// never allocates `ProcessData::outputEvents`, and the drain
-    /// loop after `process()` is a no-op.
-    pub has_midi_output: i32,
-    /// `1` if the plugin accepts MIDI input. The shim gates the
-    /// `kEvent | kInput` bus on this flag (decoupled from
-    /// `num_inputs` so an audio effect can also take MIDI).
-    pub accepts_midi_in: i32,
+    /// Number of MIDI output ports (event output buses). `0` disables
+    /// output events entirely - the host never allocates
+    /// `ProcessData::outputEvents` and the drain loop after `process()`
+    /// is a no-op. The shim advertises this many `kEvent | kOutput`
+    /// buses; the plugin routes each event to a bus via `Event::port`.
+    pub midi_output_ports: i32,
+    /// Number of MIDI input ports (event input buses). `0` means the
+    /// plugin takes no MIDI (decoupled from `num_inputs` so an audio
+    /// effect can also take MIDI). The shim advertises this many
+    /// `kEvent | kInput` buses and stamps each event's `Event::port`
+    /// from the bus it arrived on.
+    pub midi_input_ports: i32,
 }
 
 /// Parameter descriptor.
@@ -59,6 +62,9 @@ pub struct Vst3MidiEvent {
     // (status 0xF0); zero on regular MIDI events where the byte just
     // pads the struct to 4-byte alignment.
     pub note_id: u8,
+    /// Event bus index the event arrived on / goes out on, mapped to
+    /// [`truce_core::Event::port`]. `0` for single-port plugins.
+    pub port: u8,
 }
 
 /// Transport info passed from the C++ shim to Rust.
@@ -135,8 +141,13 @@ pub struct Vst3Callbacks {
     // valid only for the duration of this call. The Rust side
     // copies into [`truce_core::EventList::sysex_pool`] so the
     // plug-in's `process()` sees a stable view.
-    pub push_sysex_input:
-        unsafe extern "C" fn(ctx: *mut c_void, sample_offset: u32, bytes: *const u8, len: u32),
+    pub push_sysex_input: unsafe extern "C" fn(
+        ctx: *mut c_void,
+        sample_offset: u32,
+        port: u8,
+        bytes: *const u8,
+        len: u32,
+    ),
     /// Count of `SysEx`-shaped events the plug-in pushed during
     /// `process()`. The shim queries this once after the call to
     /// drain into the host's output event list.
@@ -150,6 +161,7 @@ pub struct Vst3Callbacks {
         ctx: *mut c_void,
         index: u32,
         out_sample_offset: *mut u32,
+        out_port: *mut u8,
         out_bytes: *mut *const u8,
         out_len: *mut u32,
     ),
