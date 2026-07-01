@@ -10,7 +10,13 @@
 //! - **Channel Fan**   - round-robin each note across `Channels` MIDI
 //!   channels (an MPE-style voice allocator).
 //! - **Port Fan**      - alternate notes between output ports 0 and 1.
-//! - **Group Spread**  - map the input channel onto the UMP `group`.
+//!   A wire-level exerciser: both ports are emitted with correct
+//!   `port_index` / cable, but no current DAW routes a plugin's separate
+//!   note ports through a device chain, so it isn't audible yet.
+//! - **Group Fan**     - round-robin each note across `Channels` UMP
+//!   groups (a multi-timbral spread). Group only survives native-2.0
+//!   transports (AU v3); CLAP's note model has no group field, so it's a
+//!   no-op there.
 //! - **Auto Vibrato**  - a per-held-note pitch-bend LFO emitted as
 //!   `PerNotePitchBend` (32-bit) on each note's own port/channel.
 //! - **Mod Brightness** - the mod wheel (CC 1) routed to per-note
@@ -49,8 +55,8 @@ pub enum Algo {
     ChannelFan,
     #[name = "Port Fan"]
     PortFan,
-    #[name = "Group Spread"]
-    GroupSpread,
+    #[name = "Group Fan"]
+    GroupFan,
     #[name = "Auto Vibrato"]
     AutoVibrato,
     #[name = "Mod Brightness"]
@@ -105,6 +111,8 @@ pub struct Spreader {
     held: [Option<Held>; 128],
     /// Next channel to hand out for `Channel Fan`.
     next_channel: u8,
+    /// Next UMP group to hand out for `Group Fan`.
+    next_group: u8,
     /// Next output port to hand out for `Port Fan`.
     next_port: u8,
     /// Whether `Auto Vibrato` emitted bends last block, so leaving the
@@ -120,6 +128,7 @@ impl Spreader {
             sample_rate: 44100.0,
             held: [None; 128],
             next_channel: 0,
+            next_group: 0,
             next_port: 0,
             vibrato_active: false,
         }
@@ -166,6 +175,7 @@ impl PluginLogic for Spreader {
         self.sample_rate = sample_rate;
         self.held = [None; 128];
         self.next_channel = 0;
+        self.next_group = 0;
         self.next_port = 0;
         self.vibrato_active = false;
     }
@@ -386,8 +396,15 @@ impl Spreader {
                 self.next_port ^= 1;
                 (port, group, channel)
             }
-            // Map the input channel onto the UMP group (channel 0).
-            Algo::GroupSpread => (PORT_MAIN, channel, 0),
+            // Round-robin each note across `width` UMP groups. A
+            // multi-timbral downstream synth voices each group differently.
+            // Group only survives on native-2.0 transports (AU v3); CLAP's
+            // note model has no group field, so this is a no-op there.
+            Algo::GroupFan => {
+                let g = self.next_group % width;
+                self.next_group = (self.next_group + 1) % width;
+                (PORT_MAIN, g, channel)
+            }
             Algo::Passthrough | Algo::AutoVibrato | Algo::ModBrightness => {
                 (PORT_MAIN, group, channel)
             }
@@ -543,15 +560,26 @@ mod tests {
     }
 
     #[test]
-    fn group_spread_maps_channel_to_group() {
-        let out = run(Algo::GroupSpread, 16, &[note_on(3, 64)]);
-        match out.iter().next().unwrap().body {
-            EventBody::NoteOn2 { group, channel, .. } => {
-                assert_eq!(group, 3);
-                assert_eq!(channel, 0);
-            }
-            other => panic!("expected NoteOn2, got {other:?}"),
-        }
+    fn group_fan_round_robins_groups() {
+        let out = run(
+            Algo::GroupFan,
+            4,
+            &[
+                note_on(0, 60),
+                note_on(0, 61),
+                note_on(0, 62),
+                note_on(0, 63),
+            ],
+        );
+        let groups: Vec<u8> = out
+            .iter()
+            .filter_map(|e| match e.body {
+                EventBody::NoteOn2 { group, .. } => Some(group),
+                _ => None,
+            })
+            .collect();
+        // Four notes over a width of 4 -> groups 0,1,2,3.
+        assert_eq!(groups, vec![0, 1, 2, 3]);
     }
 
     #[test]
