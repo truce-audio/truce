@@ -1,24 +1,20 @@
 //! `mpe-synth` - a per-note-expressive MIDI 2.0 synth.
 //!
-//! A test vehicle for truce's 1.1.0 MIDI 2.0 **decode** and **multi-port
-//! input** surface, and the render half of the `mpe-spreader` pair: it
-//! makes every address dimension the spreader fans over audible.
+//! A test vehicle for truce's 1.1.0 MIDI 2.0 **decode** surface, and the
+//! render half of `mpe-spreader`: it makes the per-note expression the
+//! spreader emits audible.
 //!
 //! - `NoteOn2` 16-bit velocity -> amplitude (finer than 7-bit steps).
 //! - `PerNotePitchBend` (32-bit) -> per-voice detune (MPE-style).
 //! - `PerNoteCC` 74 (brightness) -> per-voice filter cutoff.
 //! - `PitchBend2` (32-bit) -> channel-wide bend.
 //! - `ControlChange2` 74 -> the master-cutoff macro (drives the param).
-//! - UMP **group** -> oscillator waveform (multi-timbral).
 //! - MIDI **channel** -> equal-power stereo pan (`Channel Fan` spreads a
 //!   chord across the field).
-//! - `Event.port` -> octave, and part of the voice key: a note on port 1
-//!   is a distinct voice an octave above the same note on port 0.
 //!
 //! Every 2.0 arm has a 1.0 sibling, so it plays on VST2 / AU v2 / AAX /
-//! LV2 too - just at 7/14-bit resolution and group 0.
+//! LV2 too - just at 7/14-bit resolution.
 
-use std::f64::consts::TAU;
 use std::sync::Arc;
 
 use truce::prelude::*;
@@ -33,9 +29,6 @@ const NUM_VOICES: usize = 32;
 const PER_NOTE_BEND_SEMIS: f64 = 48.0;
 /// Channel pitch-bend range, in semitones each way.
 const CHANNEL_BEND_SEMIS: f64 = 2.0;
-/// Input port -> octave: port 1 plays an octave above port 0, so a
-/// `Port Fan` note stream splits into octaves.
-const PORT_OCTAVE_SEMIS: f64 = 12.0;
 /// MIDI 2.0 per-note brightness controller number.
 const CC_BRIGHTNESS: u8 = 74;
 /// `0x8000_0000` as f64 - the centre of a 32-bit signed-ish control.
@@ -60,8 +53,6 @@ pub struct SynthParams {
 struct Voice {
     active: bool,
     releasing: bool,
-    port: u8,
-    group: u8,
     channel: u8,
     note: u8,
     phase: f64,
@@ -100,14 +91,12 @@ impl Synth {
         }
     }
 
-    fn note_on(&mut self, port: u8, group: u8, channel: u8, note: u8, amp: f32) {
+    fn note_on(&mut self, channel: u8, note: u8, amp: f32) {
         let slot = self.voices.iter().position(|v| !v.active).unwrap_or(0); // steal voice 0 if the pool is full
         let (pan_l, pan_r) = pan_gains(channel);
         self.voices[slot] = Voice {
             active: true,
             releasing: false,
-            port,
-            group,
             channel,
             note,
             phase: 0.0,
@@ -122,62 +111,50 @@ impl Synth {
         };
     }
 
-    fn find(&mut self, port: u8, group: u8, channel: u8, note: u8) -> Option<&mut Voice> {
-        self.voices.iter_mut().find(|v| {
-            v.active && v.port == port && v.group == group && v.channel == channel && v.note == note
-        })
+    fn find(&mut self, channel: u8, note: u8) -> Option<&mut Voice> {
+        self.voices
+            .iter_mut()
+            .find(|v| v.active && v.channel == channel && v.note == note)
     }
 
-    fn handle(&mut self, port: u8, body: EventBody) {
+    fn handle(&mut self, body: EventBody) {
         match body {
             EventBody::NoteOn {
-                group,
                 channel,
                 note,
                 velocity,
-            } => self.note_on(port, group, channel, note, norm_7bit(velocity)),
+                ..
+            } => self.note_on(channel, note, norm_7bit(velocity)),
             EventBody::NoteOn2 {
-                group,
                 channel,
                 note,
                 velocity,
                 ..
-            } => self.note_on(port, group, channel, note, amp16(velocity)),
-            EventBody::NoteOff {
-                group,
-                channel,
-                note,
-                ..
-            }
-            | EventBody::NoteOff2 {
-                group,
-                channel,
-                note,
-                ..
-            } => {
-                if let Some(v) = self.find(port, group, channel, note) {
+            } => self.note_on(channel, note, amp16(velocity)),
+            EventBody::NoteOff { channel, note, .. }
+            | EventBody::NoteOff2 { channel, note, .. } => {
+                if let Some(v) = self.find(channel, note) {
                     v.releasing = true;
                 }
             }
             EventBody::PerNotePitchBend {
-                group,
                 channel,
                 note,
                 value,
+                ..
             } => {
-                if let Some(v) = self.find(port, group, channel, note) {
+                if let Some(v) = self.find(channel, note) {
                     v.bend_semis = bend32_semis(value, PER_NOTE_BEND_SEMIS);
                 }
             }
             EventBody::PerNoteCC {
-                group,
                 channel,
                 note,
                 cc: CC_BRIGHTNESS,
                 value,
                 ..
             } => {
-                if let Some(v) = self.find(port, group, channel, note) {
+                if let Some(v) = self.find(channel, note) {
                     v.cutoff = unit32(value);
                 }
             }
@@ -238,16 +215,10 @@ fn pan_gains(channel: u8) -> (f32, f32) {
     (angle.cos(), angle.sin())
 }
 
-// Naive (not band-limited) oscillator; waveform picked by UMP group.
+// Naive (not band-limited) saw oscillator.
 #[allow(clippy::cast_possible_truncation)]
-fn osc(group: u8, phase: f64) -> f32 {
-    let s = match group % 4 {
-        0 => 2.0 * phase - 1.0,                             // saw
-        1 => f64::from(i8::from(phase >= 0.5)) * 2.0 - 1.0, // square
-        2 => 4.0 * (phase - 0.5).abs() - 1.0,               // triangle
-        _ => (phase * TAU).sin(),                           // sine
-    };
-    s as f32
+fn osc(phase: f64) -> f32 {
+    (2.0 * phase - 1.0) as f32
 }
 
 impl PluginLogic for Synth {
@@ -283,18 +254,16 @@ impl PluginLogic for Synth {
                 if event.sample_offset as usize > i {
                     break;
                 }
-                self.handle(event.port, event.body);
+                self.handle(event.body);
                 next += 1;
             }
 
             let mut left = 0.0f32;
             let mut right = 0.0f32;
             for v in self.voices.iter_mut().filter(|v| v.active) {
-                let semis = v.bend_semis
-                    + self.channel_bend[usize::from(v.channel)]
-                    + f64::from(v.port) * PORT_OCTAVE_SEMIS;
+                let semis = v.bend_semis + self.channel_bend[usize::from(v.channel)];
                 let freq = v.base_freq * 2.0_f64.powf(semis / 12.0);
-                let raw = osc(v.group, v.phase);
+                let raw = osc(v.phase);
                 v.phase = (v.phase + freq / self.sample_rate).fract();
                 // Per-voice cutoff scaled by the master macro.
                 let co = (v.cutoff * master).clamp(0.002, 1.0);
@@ -388,17 +357,7 @@ mod tests {
 
     #[test]
     fn note_on_2_makes_sound() {
-        let (_p, out) = render(&[Event::new(
-            0,
-            EventBody::NoteOn2 {
-                group: 0,
-                channel: 0,
-                note: 69,
-                velocity: 0xFFFF,
-                attribute_type: 0,
-                attribute: 0,
-            },
-        )]);
+        let (_p, out) = render(&[note2(0xFFFF)]);
         assert!(peak(&out) > 0.0, "a full-velocity note should be audible");
     }
 
@@ -413,17 +372,9 @@ mod tests {
     }
 
     #[test]
-    fn port_and_group_key_distinct_voices() {
-        // Same pitch on two ports and two groups = up to four voices.
-        let (p, _) = render(&[note_on(0, 0, 60), note_on(1, 0, 60), note_on(0, 1, 60)]);
-        let active = p.voices.iter().filter(|v| v.active).count();
-        assert_eq!(active, 3);
-    }
-
-    #[test]
     fn per_note_pitch_bend_detunes_one_voice() {
         let (p, _) = render(&[
-            note_on(0, 0, 60),
+            note_on_ch(0, 60),
             Event::new(
                 0,
                 EventBody::PerNotePitchBend {
@@ -436,20 +387,6 @@ mod tests {
         ]);
         let bent = p.voices.iter().find(|v| v.active).unwrap().bend_semis;
         assert!(bent > 0.0, "up-bend should raise the voice");
-    }
-
-    #[test]
-    fn port_shifts_an_octave() {
-        // Same note on port 0 and port 1; port 1 renders an octave up, so
-        // its oscillator phase advances ~twice as far over the block.
-        let (p, _) = render(&[note_on(0, 0, 60), note_on(1, 0, 60)]);
-        let v0 = p.voices.iter().find(|v| v.active && v.port == 0).unwrap();
-        let v1 = p.voices.iter().find(|v| v.active && v.port == 1).unwrap();
-        let ratio = v1.phase / v0.phase;
-        assert!(
-            (ratio - 2.0).abs() < 0.05,
-            "port 1 should be an octave up (got {ratio}x)"
-        );
     }
 
     #[test]
@@ -489,21 +426,6 @@ mod tests {
                 channel: 0,
                 note: 69,
                 velocity,
-                attribute_type: 0,
-                attribute: 0,
-            },
-        )
-    }
-
-    fn note_on(port: u8, group: u8, note: u8) -> Event {
-        Event::on_port(
-            0,
-            port,
-            EventBody::NoteOn2 {
-                group,
-                channel: 0,
-                note,
-                velocity: 0x8000,
                 attribute_type: 0,
                 attribute: 0,
             },
